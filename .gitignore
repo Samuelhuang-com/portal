@@ -12,7 +12,7 @@ node_modules/
 dist/
 .vite/
 
-# Database / data
+# Database / local data
 *.db
 *.sqlite
 *.sqlite3
@@ -22,8 +22,8 @@ logs/
 uploads/
 *.log
 
-# OS / IDE
-.DS_Store
-Thumbs.db
+# IDE / OS
 .vscode/
 .idea/
+.DS_Store
+Thumbs.db
