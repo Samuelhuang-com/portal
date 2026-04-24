@@ -18,6 +18,8 @@ dist/
 *.sqlite3
 *.db-wal
 *.db-shm
+*.sqlite-shm
+*.sqlite-wal
 
 # Logs / uploads
 logs/
