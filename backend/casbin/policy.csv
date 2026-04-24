@@ -1,0 +1,5 @@
+p, system_admin, *, *
+p, tenant_admin, ${tenant}/*, *
+p, module_manager, */finance, read
+p, module_manager, */finance, export
+p, viewer, ${tenant}/${module}, read

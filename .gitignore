@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+.env.*
+!.env.example
+
+# Node / Frontend
+node_modules/
+dist/
+.vite/
+
+# Database / data
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs / uploads
+logs/
+uploads/
+*.log
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

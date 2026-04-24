@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- 深藍圓角背景 -->
+  <rect width="100" height="100" rx="18" fill="#1B3A5C"/>
+
+  <!-- 左上：天藍（主色調） -->
+  <rect x="14" y="14" width="32" height="32" rx="6" fill="#4BA8E8"/>
+
+  <!-- 右上：金黃（活力） -->
+  <rect x="54" y="14" width="32" height="32" rx="6" fill="#F6C84B"/>
+
+  <!-- 左下：翠綠（成長） -->
+  <rect x="14" y="54" width="32" height="32" rx="6" fill="#4CAF7D"/>
+
+  <!-- 右下：珊瑚紅（熱情） -->
+  <rect x="54" y="54" width="32" height="32" rx="6" fill="#FF6B6B"/>
+
+  <!-- 中心白色小圓點（統一感） -->
+  <circle cx="50" cy="50" r="5" fill="white" opacity="0.9"/>
+</svg>

@@ -1,0 +1,56 @@
+version: '3.9'
+
+services:
+  # ── Backend (FastAPI) ────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: portal-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./backend/.env
+    volumes:
+      - ./backend:/app
+    networks:
+      - portal-net
+
+  # ── Frontend (Vite dev server) ───────────────────────────────────────────────
+  frontend:
+    image: node:20-alpine
+    container_name: portal-frontend
+    working_dir: /app
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+    networks:
+      - portal-net
+    depends_on:
+      - backend
+
+  # ── PostgreSQL（生產環境使用，開發可用 SQLite）──────────────────────────────
+  # db:
+  #   image: postgres:16-alpine
+  #   container_name: portal-db
+  #   restart: unless-stopped
+  #   environment:
+  #     POSTGRES_DB: portal_db
+  #     POSTGRES_USER: portal_user
+  #     POSTGRES_PASSWORD: portal_pass
+  #   ports:
+  #     - "5432:5432"
+  #   volumes:
+  #     - postgres_data:/var/lib/postgresql/data
+  #   networks:
+  #     - portal-net
+
+networks:
+  portal-net:
+    driver: bridge
+
+volumes:
+  postgres_data:
