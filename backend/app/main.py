@@ -642,3 +642,12 @@ app.include_router(
     prefix=f"{API_PREFIX}/budget",
     tags=["預算管理"],
 )
+
+# ── 前端靜態檔案（放在所有路由之後）─────────────────────────────────────────
+import os as _os
+from fastapi.staticfiles import StaticFiles as _StaticFiles
+
+_frontend_dist = _os.path.join(_os.path.dirname(__file__), "..", "..", "frontend", "dist")
+if _os.path.isdir(_frontend_dist):
+    app.mount("/", _StaticFiles(directory=_frontend_dist, html=True), name="frontend")
+    print(f"[Portal] Frontend static files served from: {_frontend_dist}")
