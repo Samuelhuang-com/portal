@@ -1,6 +1,5 @@
 「繼續開發 portal 專案，現在要新增＿＿功能」
 
-
 ## 後端
 
 cd C:\OneDrive\_Ragic\portal\frontend
@@ -37,7 +36,6 @@ npm run build
 
 uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 2
 
-
 uvicorn app.main:app --reload --port **8000**
 
 cd portal/frontend
@@ -61,3 +59,5 @@ npx vite preview --host 127.0.0.1
 # → http://localhost:4173
 
 # 正式部署：用 nginx 或任何 web server 指向 dist/ 目錄
+
+

@@ -37,6 +37,32 @@ from app.services.ihg_room_maintenance_sync import sync_from_ragic
 
 router = APIRouter()
 
+# ── 保養檢查欄位：忽略清單 ────────────────────────────────────────────────────
+# 明確不屬於保養檢查項目的欄位名稱（精確匹配）
+_IGNORE_FIELD_NAMES: frozenset[str] = frozenset({
+    # 使用者指定忽略
+    "項目", "更換日期", "費用", "設備保養上傳照片", "設備",
+    # 已知 metadata 欄位
+    "保養月份", "保養人員", "保養時間起", "保養時間迄", "保養日期",
+    "工時計算", "房號", "複核人員", "是否有陽台",
+})
+
+def _is_check_field(key: str, value: object) -> bool:
+    """
+    判斷是否為有效的保養檢查項目欄位。
+    符合條件的欄位值：正常 / 當時維護完成 / 等待維護(待料中) / ""（未檢查）
+    """
+    if key in _IGNORE_FIELD_NAMES:
+        return False
+    if "上傳照片" in key:
+        return False
+    if isinstance(value, str) and value in ("正常", "當時維護完成", "等待維護(待料中)", ""):
+        return True
+    # None 視為未檢查
+    if value is None:
+        return True
+    return False
+
 
 # ── 輔助 ─────────────────────────────────────────────────────────────────────
 
@@ -159,23 +185,27 @@ async def get_stats(
     pending_count   = 0
 
     for r in all_recs:
-        normal_c = done_c = maint_c = 0
+        normal_c = done_c = maint_c = unchecked_c = 0
         try:
             raw_data = json.loads(r.raw_json or "{}")
-            for v in raw_data.values():
-                if isinstance(v, str):
-                    if v == "正常":
-                        normal_c += 1
-                    elif v == "當時維護完成":
-                        done_c += 1
-                    elif v == "等待維護(待料中)":
-                        maint_c += 1
+            for k, v in raw_data.items():
+                if not _is_check_field(k, v):
+                    continue
+                val = v if isinstance(v, str) else ""
+                if val == "正常":
+                    normal_c += 1
+                elif val == "當時維護完成":
+                    done_c += 1
+                elif val == "等待維護(待料中)":
+                    maint_c += 1
+                else:
+                    unchecked_c += 1
         except Exception:
             pass
 
         if maint_c > 0:
             abnormal_count += 1
-        elif normal_c + done_c > 0:
+        elif normal_c + done_c > 0 and unchecked_c == 0:
             completed_count += 1
         else:
             pending_count += 1
@@ -237,7 +267,8 @@ async def get_matrix(
     all_recs = q.all()
 
     # 按房號分組，建立矩陣
-    room_map: dict[str, dict] = {}  # room_no → {floor, cells}
+    room_map: dict[str, dict] = {}           # room_no → {floor, cells}
+    month_minutes: dict[str, float] = {}     # month_key → 分鐘加總
     for rec in all_recs:
         rno = rec.room_no or "??"
         if rno not in room_map:
@@ -245,29 +276,45 @@ async def get_matrix(
         month_key = str(int(rec.maint_month)) if rec.maint_month else "?"
         cell_stat = _cell_status(rec)
 
-        # ── 解析 raw_json 統計保養項目結果 ─────────────────────────────────
-        normal_count = done_count = maint_count = 0
+        # ── 解析 raw_json 統計保養項目結果 + 工時計算 ──────────────────────
+        normal_count = done_count = maint_count = unchecked_count = 0
+        work_minutes: float = 0.0
         try:
             raw_data = json.loads(rec.raw_json or "{}")
-            for v in raw_data.values():
-                if isinstance(v, str):
-                    if v == "正常":
-                        normal_count += 1
-                    elif v == "當時維護完成":
-                        done_count += 1
-                    elif v == "等待維護(待料中)":
-                        maint_count += 1
+            for k, v in raw_data.items():
+                # 單筆工時（分鐘）— 先獨立抽取，不受 _is_check_field 影響
+                if k == "工時計算" and v not in (None, "", "None"):
+                    try:
+                        work_minutes = float(v)
+                        month_minutes[month_key] = (
+                            month_minutes.get(month_key, 0.0) + work_minutes
+                        )
+                    except (ValueError, TypeError):
+                        pass
+
+                # 保養檢查項目計數
+                if not _is_check_field(k, v):
+                    continue
+                val = v if isinstance(v, str) else ""
+                if val == "正常":
+                    normal_count += 1
+                elif val == "當時維護完成":
+                    done_count += 1
+                elif val == "等待維護(待料中)":
+                    maint_count += 1
+                else:                    # "" 或 None → 未檢查
+                    unchecked_count += 1
         except Exception:
             pass
 
         # ── 以 check 欄位結果決定狀態（優先於日期邏輯）────────────────────
-        # 有「等待維護(待料中)」→ 異常
         if maint_count > 0:
+            # 有「等待維護(待料中)」→ 異常
             cell_stat = "abnormal"
-        # check 欄位有資料且全部正常/完成 → 已完成（不再用日期判逾期）
-        elif normal_count + done_count > 0:
+        elif normal_count + done_count > 0 and unchecked_count == 0:
+            # 有 check 資料且全部正常/完成（無未檢查）→ 已完成
             cell_stat = "completed"
-        # 無 check 資料 → 保持日期邏輯（overdue / scheduled / pending）
+        # 否則（有未檢查 or 無 check 資料）→ 保持日期邏輯（scheduled / pending）
 
         # 狀態篩選（後端過濾）
         if cell_status and cell_stat != cell_status:
@@ -281,9 +328,11 @@ async def get_matrix(
             "completion_date": rec.completion_date,
             "maint_type":   rec.maint_type,
             "notes":        rec.notes,
-            "normal_count": normal_count,
-            "done_count":   done_count,
-            "maint_count":  maint_count,
+            "normal_count":    normal_count,
+            "done_count":      done_count,
+            "maint_count":     maint_count,
+            "unchecked_count": unchecked_count,
+            "work_minutes":    int(work_minutes) if work_minutes else None,
         }
 
     # 依樓層排序
@@ -295,11 +344,19 @@ async def get_matrix(
         key=lambda f: _room_sort_key(f.replace("F", "00"))
     )
 
+    # 分鐘 → 小時（小數點後 2 位），key 轉 int
+    month_hours = {
+        int(mk): round(mins / 60, 2)
+        for mk, mins in month_minutes.items()
+        if mk.lstrip("-").isdigit()
+    }
+
     return {
         "year": year,
         "months": list(range(1, 13)),
         "floors": floors,
         "rooms": sorted_rooms,
+        "month_hours": month_hours,   # {1: 12.50, 4: 10.33, ...} 只含有資料的月份
     }
 
 

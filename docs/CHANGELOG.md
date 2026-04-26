@@ -32,6 +32,30 @@
 
 ---
 
+## [1.38.9] - 2026-04-25
+
+### Changed
+- **4.3 報修類型 Tab — 類別定義與說明文字同步更新（樂群 & 大直）**
+  - `REPAIR_TYPE_ORDER`：新增 5 個類別（凍&藏類設備、內裝、廚房&吧台設備、會議設備、瓦斯類設備），插入於「專櫃」之後、「公區」之前
+  - `REPAIR_TYPE_EXAMPLES`：所有類別內容依規格書 Markdown 表格全面更新（建築/衛廁/消防/機電/給排水/排煙/弱電/照明/公區/後勤空間 均有補充）
+  - 前端欄位標題「內容舉例」→「MD內容」（LuqunRepair & DazhiRepair 皆更新）
+
+## [1.38.8] - 2026-04-25
+
+### Fixed
+- **樂群工務報修 — 所有明細彈跳視窗統一加入「詳情」功能**
+  - 委外+維修費用明細（全年）：寬度 900→1100、加詳情欄、加狀態欄、改分頁顯示、加 scroll
+  - 扣款費用明細（全年）：寬度 760→1050、加詳情欄、加狀態欄、改分頁顯示、加 scroll
+  - 費用明細（金額統計 drilldown）：寬度 800→1100、加詳情欄、加 scroll、新增 CaseDetailDrawer
+  - CaseListModal：`scroll={{ x: 880 }}` 改為 `scroll={{ x: 'max-content' }}` 避免固定寬截斷
+
+## [1.38.7] - 2026-04-25
+
+### Fixed
+- **報修詳情 — 管理單位回應 HTML 正確渲染**
+  - `luqun_repair_service.py` 新增 `_ragic_html()` 函式：將 Ragic 以方括號儲存的 HTML tag（如 `[br]`、`[table]`、`[/td]`）還原為正常 HTML
+  - `LuqunRepair/index.tsx` 詳情 Modal 與 Drawer 的「管理單位回應」欄位：改用 `dangerouslySetInnerHTML` 渲染，顯示格式化的 HTML 內容而非原始 tag 字串
+
 ## [1.38.6] - 2026-04-24
 
 ### Fixed

@@ -127,7 +127,7 @@ function CaseListModal({
               size="small"
               dataSource={cases}
               rowKey="ragic_id"
-              scroll={{ x: 880 }}
+              scroll={{ x: 'max-content' }}
               pagination={{ pageSize: 20, showSizeChanger: false, showTotal: t => `共 ${t} 筆` }}
               summary={tableSummary}
               columns={[
@@ -285,9 +285,11 @@ function CaseDetailDrawer({
         )}
         {caseData.mgmt_response && (
           <Descriptions.Item label="管理單位回應">
-            <span style={{ fontSize: 11, color: '#666', whiteSpace: 'pre-wrap' }}>
-              {caseData.mgmt_response}
-            </span>
+            <div
+              style={{ fontSize: 11, color: '#444', lineHeight: 1.7, maxHeight: 260, overflowY: 'auto' }}
+              // eslint-disable-next-line react/no-danger
+              dangerouslySetInnerHTML={{ __html: caseData.mgmt_response }}
+            />
           </Descriptions.Item>
         )}
         <Descriptions.Item label="財務備註">{caseData.finance_note || '-'}</Descriptions.Item>
@@ -384,7 +386,7 @@ function DashboardTab({
       {/* KPI 明細 Modals */}
       <CaseListModal title={<><ToolOutlined style={{ color: '#1B3A5C', marginRight: 8 }} />本月相關案件</>}
         cases={kpi_total_detail ?? []} open={kpiModal === 'total'} onClose={() => setKpiModal(null)}
-        extra={<Space><Tag color="blue">共 {kpi.total} 筆</Tag><Tag color="default" style={{ fontSize: 11 }}>口徑：有完工時間者依完工月、未完成依報修月</Tag></Space>} />
+        extra={<Space><Tag color="blue">共 {kpi.total} 筆</Tag><Tag color="default" style={{ fontSize: 11 }}>有完工時間者依完工月、未完成依報修月</Tag></Space>} />
       <CaseListModal title={<><CheckCircleOutlined style={{ color: '#52C41A', marginRight: 8 }} />已完成案件</>}
         cases={kpi_completed_detail ?? []} open={kpiModal === 'completed'} onClose={() => setKpiModal(null)}
         extra={<Space><Tag color="success">已完成 {kpi.completed} 筆</Tag><Tag color="default" style={{ fontSize: 11 }}>有完工時間者一律視為完工（含跨月案件）</Tag></Space>}
@@ -561,29 +563,37 @@ function DashboardTab({
         open={feeModal === 'fee'}
         onCancel={() => setFeeModal(null)}
         footer={<Button onClick={() => setFeeModal(null)}>關閉</Button>}
-        width={900}
+        width={1100}
       >
         <div style={{ marginBottom: 10 }}>
           <Tag color="purple" style={{ fontSize: 13 }}>委外費用合計：{fmtMoney(kpi.annual_outsource_fee)}</Tag>
           <Tag color="blue"   style={{ fontSize: 13 }}>維修費用合計：{fmtMoney(kpi.annual_maintenance_fee)}</Tag>
           <Tag color="geekblue" style={{ fontSize: 13 }}>總計：{fmtMoney(kpi.annual_fee)}</Tag>
+          <Tag style={{ fontSize: 12 }}>共 {annual_fee_detail?.length ?? 0} 筆</Tag>
         </div>
         <Table
           size="small"
           dataSource={annual_fee_detail ?? []}
           rowKey="ragic_id"
-          pagination={false}
+          scroll={{ x: 900 }}
+          pagination={{ pageSize: 20, showSizeChanger: false, showTotal: t => `共 ${t} 筆` }}
           columns={[
-            { title: '報修編號', dataIndex: 'case_no', width: 120 },
-            { title: '標題',     dataIndex: 'title',   width: 180, ellipsis: true },
-            { title: '樓層',     dataIndex: 'floor',   width: 80 },
-            { title: '日期',     dataIndex: 'occurred_at', width: 120 },
-            { title: '委外費用', dataIndex: 'outsource_fee',   width: 100, align: 'right' as const,
+            { title: '報修編號', dataIndex: 'case_no',          width: 130, fixed: 'left' as const },
+            { title: '標題',     dataIndex: 'title',             width: 200, ellipsis: true },
+            { title: '樓層',     dataIndex: 'floor',             width: 70 },
+            { title: '日期',     dataIndex: 'occurred_at',       width: 120 },
+            { title: '狀態',     dataIndex: 'status',            width: 90,
+              render: (s: string) => statusTag(s) },
+            { title: '委外費用', dataIndex: 'outsource_fee',     width: 100, align: 'right' as const,
               render: (v: number) => v > 0 ? <span style={{ color: '#722ED1' }}>{fmtMoney(v)}</span> : '-' },
-            { title: '維修費用', dataIndex: 'maintenance_fee', width: 100, align: 'right' as const,
+            { title: '維修費用', dataIndex: 'maintenance_fee',   width: 100, align: 'right' as const,
               render: (v: number) => v > 0 ? <span style={{ color: '#1890ff' }}>{fmtMoney(v)}</span> : '-' },
-            { title: '總計',     dataIndex: 'total_fee', width: 100, align: 'right' as const,
+            { title: '總計',     dataIndex: 'total_fee',         width: 100, align: 'right' as const,
               render: (v: number) => <strong style={{ color: '#722ED1' }}>{fmtMoney(v)}</strong> },
+            { title: '', width: 60, fixed: 'right' as const,
+              render: (_: unknown, rec: RepairCase) => (
+                <Button size="small" type="link" onClick={() => setDrawerCase(rec)}>詳情</Button>
+              ) },
           ]}
         />
       </Modal>
@@ -594,7 +604,7 @@ function DashboardTab({
         open={feeModal === 'deduction'}
         onCancel={() => setFeeModal(null)}
         footer={<Button onClick={() => setFeeModal(null)}>關閉</Button>}
-        width={760}
+        width={1050}
       >
         <div style={{ marginBottom: 10 }}>
           <Tag color="red" style={{ fontSize: 13 }}>扣款費用合計：{fmtMoney(kpi.annual_deduction_fee)}</Tag>
@@ -607,14 +617,21 @@ function DashboardTab({
               size="small"
               dataSource={annual_deduction_detail}
               rowKey="ragic_id"
-              pagination={false}
+              scroll={{ x: 860 }}
+              pagination={{ pageSize: 20, showSizeChanger: false, showTotal: t => `共 ${t} 筆` }}
               columns={[
-                { title: '報修編號', dataIndex: 'case_no',        width: 120 },
-                { title: '標題',     dataIndex: 'title',           width: 180, ellipsis: true },
+                { title: '報修編號', dataIndex: 'case_no',        width: 130, fixed: 'left' as const },
+                { title: '標題',     dataIndex: 'title',           width: 200, ellipsis: true },
                 { title: '日期',     dataIndex: 'occurred_at',     width: 120 },
-                { title: '扣款事項', dataIndex: 'deduction_item',  width: 120, ellipsis: true },
+                { title: '狀態',     dataIndex: 'status',          width: 90,
+                  render: (s: string) => statusTag(s) },
+                { title: '扣款事項', dataIndex: 'deduction_item',  width: 140, ellipsis: true },
                 { title: '扣款費用', dataIndex: 'deduction_fee',   width: 110, align: 'right' as const,
                   render: (v: number) => <strong style={{ color: '#FF4D4F' }}>{fmtMoney(v)}</strong> },
+                { title: '', width: 60, fixed: 'right' as const,
+                  render: (_: unknown, rec: RepairCase) => (
+                    <Button size="small" type="link" onClick={() => setDrawerCase(rec)}>詳情</Button>
+                  ) },
               ]}
             />
           )
@@ -1200,7 +1217,7 @@ function RepairTypeTab({ year, focusMonth }: { year: number; focusMonth: number 
           <thead>
             <tr style={{ background: '#1B3A5C', color: '#fff' }}>
               <th style={{ padding: '8px 10px', textAlign: 'left', minWidth: 80, position: 'sticky', left: 0, background: '#1B3A5C', zIndex: 1 }}>類別</th>
-              <th style={{ padding: '8px 10px', textAlign: 'left', minWidth: 200 }}>內容舉例</th>
+              <th style={{ padding: '8px 10px', textAlign: 'left', minWidth: 200 }}>MD內容</th>
               {MONTHS.map(m => (
                 <th key={m} style={{
                   padding: '8px 6px', textAlign: 'center', minWidth: 44,
@@ -1475,6 +1492,7 @@ function FeeStatsTab({ year }: { year: number }) {
     feeLabel: string
     color: string
   } | null>(null)
+  const [drawerCase, setDrawerCase] = useState<RepairCase | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true); setError(null)
@@ -1616,7 +1634,7 @@ function FeeStatsTab({ year }: { year: number }) {
         open={drilldown != null}
         onCancel={() => setDrilldown(null)}
         footer={<Button onClick={() => setDrilldown(null)}>關閉</Button>}
-        width={800}
+        width={1100}
       >
         {drilldown && (
           <>
@@ -1633,28 +1651,31 @@ function FeeStatsTab({ year }: { year: number }) {
                   size="small"
                   dataSource={drillCases}
                   rowKey="ragic_id"
-                  pagination={false}
+                  scroll={{ x: 900 }}
+                  pagination={{ pageSize: 20, showSizeChanger: false, showTotal: t => `共 ${t} 筆` }}
                   columns={[
-                    { title: '報修編號', dataIndex: 'case_no',  width: 120 },
-                    { title: '標題',     dataIndex: 'title',    width: 180, ellipsis: true },
-                    { title: '樓層',     dataIndex: 'floor',    width: 70 },
-                    { title: '日期',     dataIndex: 'occurred_at', width: 110 },
-                    { title: '狀態',     dataIndex: 'status',   width: 90,
+                    { title: '報修編號', dataIndex: 'case_no',     width: 130, fixed: 'left' as const },
+                    { title: '標題',     dataIndex: 'title',        width: 200, ellipsis: true },
+                    { title: '樓層',     dataIndex: 'floor',        width: 70 },
+                    { title: '日期',     dataIndex: 'occurred_at',  width: 120 },
+                    { title: '狀態',     dataIndex: 'status',       width: 90,
                       render: (s: string) => statusTag(s) },
                     {
                       title: drilldown.feeLabel,
                       dataIndex: drilldown.feeKey,
-                      width: 110,
+                      width: 120,
                       align: 'right' as const,
                       render: (v: number, record: RepairCase) => {
-                        // deduction_counter 欄在 record 上永遠為 0；
-                        // 實際金額存在 deduction_fee，直接取之。
                         const amount = drilldown.feeKey === 'deduction_counter'
                           ? (record as unknown as Record<string, number>)['deduction_fee'] ?? 0
                           : v
                         return <strong style={{ color: drilldown.color }}>{fmtMoney(amount)}</strong>
                       },
                     },
+                    { title: '', width: 60, fixed: 'right' as const,
+                      render: (_: unknown, rec: RepairCase) => (
+                        <Button size="small" type="link" onClick={() => setDrawerCase(rec)}>詳情</Button>
+                      ) },
                   ]}
                 />
               )
@@ -1662,6 +1683,9 @@ function FeeStatsTab({ year }: { year: number }) {
           </>
         )}
       </Modal>
+
+      {/* 報修詳情 Drawer */}
+      <CaseDetailDrawer caseData={drawerCase} onClose={() => setDrawerCase(null)} />
 
       {/* 說明文字 */}
       <div style={{ color: '#999', fontSize: 12, marginTop: 4 }}>
@@ -1864,9 +1888,11 @@ function DetailTab({
             )}
             {drawerCase.mgmt_response && (
               <Descriptions.Item label="管理單位回應">
-                <span style={{ fontSize: 11, color: '#666', whiteSpace: 'pre-wrap' }}>
-                  {drawerCase.mgmt_response}
-                </span>
+                <div
+                  style={{ fontSize: 11, color: '#444', lineHeight: 1.7, maxHeight: 260, overflowY: 'auto' }}
+                  // eslint-disable-next-line react/no-danger
+                  dangerouslySetInnerHTML={{ __html: drawerCase.mgmt_response }}
+                />
               </Descriptions.Item>
             )}
             <Descriptions.Item label="財務備註">{drawerCase.finance_note || '-'}</Descriptions.Item>

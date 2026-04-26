@@ -179,27 +179,37 @@ REPAIR_TYPE_ORDER = [
     "停車",
     "其他",
     "專櫃",
+    "凍&藏類設備",
+    "內裝",
+    "廚房&吧台設備",
+    "會議設備",
+    "瓦斯類設備",
     "公區",
     "後勤空間",
 ]
 
-# 各類型的「內容舉例」說明文字
+# 各類型的「MD內容」說明文字（依規格書 Markdown 表格）
 REPAIR_TYPE_EXAMPLES: dict[str, str] = {
-    "建築": "連續壁 / 外觀玻璃 / 外觀門窗 / 電梯 / 手扶梯 / 招牌",
-    "衛廁": "馬桶 / 洗手槽 / 烘手機 / 哺給乳室",
-    "消防": "瓦斯 / 偵煙感知器 / 灑水頭 / 鐵捲門 / 安全門",
-    "空調": "主機 / 送風機 / 冷卻水塔 / 補風機 / 分離式冷氣 / 導流風機",
-    "機電": "機房 / 發電機",
-    "給排水": "漏水 / 水塔 / 污水處理",
-    "排煙": "靜電機 / 水洗機 / 截油槽 / 排煙管",
-    "監控": "CCTV / 監控主機",
-    "弱電": "交換機 / 電話 / 網路",
-    "照明": "建築外觀",
-    "停車": "車牌辨識 / 自動繳費機 / 柵欄機",
-    "其他": "人流計數器 / 入金機",
-    "專櫃": "（可擴充）",
-    "公區": "商場 / 停車場 / 梯廳 / 廣場；飯店：LOBBY / 4F接待區 / 4F露台 / 各層梯廳",
-    "後勤空間": "辦公室 / 儲藏室 / 員工餐區",
+    "建築":       "連續壁 / 外觀玻璃 / 外觀門窗 / 電梯 / 手扶梯 / 招牌 / 植栽",
+    "衛廁":       "馬桶 / 洗手槽 / 烘手機 / 哺給乳室 / 衛生紙架 / 淋浴間 / 浴簾 / 吹風機",
+    "消防":       "偵煙感知器 / 灑水頭 / 鐵捲門 / 安全門 / 緊急廣播系統 / 煙霧偵測器 / R型受信總機 / 消防圖控 / 緊急消防加壓送水泵",
+    "空調":       "主機 / 送風機 / 冷卻水塔 / 補風機 / 分離式冷氣 / 導流風機",
+    "機電":       "機房 / 緊急發電機 / 不斷電系統 / 鍋爐",
+    "給排水":     "漏水 / 水塔 / 污水處理 / 排水系統 / 截油槽",
+    "排煙":       "靜電機 / 水洗機 / 截油槽 / 排煙管 / 排風扇",
+    "監控":       "CCTV / 監控主機",
+    "弱電":       "交換機 / 電話 / 網路 / 插座",
+    "照明":       "建築外觀 / 燈具",
+    "停車":       "車牌辨識 / 自動繳費機 / 柵欄機",
+    "其他":       "人流計數器 / 入金機",
+    "專櫃":       "",
+    "凍&藏類設備": "冰箱（冷凍 & 藏）/ 凍庫 / 飲料機 / 製冰機",
+    "內裝":       "天花板 / 牆壁 / 地板 / 門 / 窗簾 / 遮光簾 / 紗簾 / 家具 / 櫃子 / 地毯 / 保險箱",
+    "廚房&吧台設備": "蒸烤爐 / 洗碗機 / 封口機 / 洗杯機 / 層架 / 捕蚊燈 / 熱水壺 / 咖啡機",
+    "會議設備":   "宴會顯示器 / 投影機 / 電視 / 影音設備",
+    "瓦斯類設備": "天然氣緊急遮斷系統 / 熱盤櫃 / 單口爐 / 雙口爐",
+    "公區":       "電扶梯、商場、停車場 / 機廳 / 廚場、飯店、LOBBY / 4F接待區 / 4F餐台 / 各層梯廳",
+    "後勤空間":   "辦公室 / 儲藏室 / 員工餐區 / 更衣室",
 }
 
 
@@ -362,6 +372,29 @@ def _str(v: Any) -> str:
             return _str(v["label"])
         return ""
     return str(v).strip()
+
+
+_RAGIC_HTML_TAGS = re.compile(
+    r'\[(/?)('
+    r'br|p|b|i|u|s|em|strong|span|div|table|thead|tbody|tfoot|tr|th|td|ul|ol|li|a|img|hr'
+    r')(\s[^\]]*)?(/?)\]',
+    re.IGNORECASE,
+)
+
+def _ragic_html(text: str) -> str:
+    """
+    Ragic 將 HTML tag 以方括號儲存（如 [br]、[table]、[/td]），
+    此函式將其還原為正常的 HTML 角括號格式供前端 dangerouslySetInnerHTML 渲染。
+    """
+    if not text:
+        return text
+    def _replace(m: re.Match) -> str:
+        slash  = m.group(1)   # "/" or ""
+        tag    = m.group(2)
+        attrs  = m.group(3) or ""
+        self_c = m.group(4)   # "/" or ""
+        return f"<{slash}{tag}{attrs}{self_c}>"
+    return _RAGIC_HTML_TAGS.sub(_replace, text)
 
 
 def _float(v: Any) -> float:
@@ -589,7 +622,7 @@ class RepairCase:
             counter_raw = "、".join(str(v).strip() for v in counter_val if v)
         else:
             counter_raw = _str(counter_val)
-        self.mgmt_response     = _str(_get_field(raw, RK_MGMT_RESPONSE))
+        self.mgmt_response     = _ragic_html(_str(_get_field(raw, RK_MGMT_RESPONSE)))
         self.finance_note      = _str(_get_field(raw, RK_FINANCE_NOTE))
         self.deduction_counter_name = counter_raw
         # 多櫃 → 解析財務備註；一般 → 直接用店名

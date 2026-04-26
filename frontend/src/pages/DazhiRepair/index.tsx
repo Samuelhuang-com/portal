@@ -1078,7 +1078,7 @@ function RepairTypeTab({ year, month }: { year: number; month: number | null }) 
           <thead>
             <tr style={{ background: '#1B3A5C', color: '#fff' }}>
               <th style={{ padding: '8px 12px', textAlign: 'left', minWidth: 70, position: 'sticky', left: 0, background: '#1B3A5C' }}>類別</th>
-              <th style={{ padding: '8px 12px', textAlign: 'left', minWidth: 200 }}>內容舉例</th>
+              <th style={{ padding: '8px 12px', textAlign: 'left', minWidth: 200 }}>MD內容</th>
               {MONTHS.map(m => (
                 <th key={m} style={{
                   padding: '8px 6px', textAlign: 'center', minWidth: 44,

@@ -125,10 +125,11 @@ function MatrixCellComp({
           <div>狀態：{cfg.label}</div>
           {hasChecks && (
             <div>
-              正常 {cell.normal_count} ／ 完成 {cell.done_count} ／ 維護 {cell.maint_count}
+              正常 {cell.normal_count} ／ 完成 {cell.done_count} ／
+              維護 {cell.maint_count} ／ 未檢查 {cell.unchecked_count ?? 0}
             </div>
           )}
-          {cell.date && <div>日期：{cell.date}</div>}
+          {cell.date && <div>日期：{cell.date}{cell.work_minutes ? ` (${cell.work_minutes}m)` : ''}</div>}
           {cell.assignee && <div>人員：{cell.assignee}</div>}
           {cell.completion_date && <div>完成：{cell.completion_date}</div>}
           {cell.notes && <div>備註：{cell.notes}</div>}
@@ -161,16 +162,18 @@ function MatrixCellComp({
             </span>
             <span style={{
               fontSize: 9,
-              color: (cell.maint_count ?? 0) > 0 ? '#d46b08' : '#8c8c8c',
-              fontWeight: (cell.maint_count ?? 0) > 0 ? 700 : 400,
+              color: (cell.maint_count ?? 0) > 0 ? '#d46b08'
+                   : (cell.unchecked_count ?? 0) > 0 ? '#faad14' : '#8c8c8c',
+              fontWeight: ((cell.maint_count ?? 0) > 0 || (cell.unchecked_count ?? 0) > 0) ? 700 : 400,
               lineHeight: 1.4,
               whiteSpace: 'nowrap',
             }}>
-              維護 {cell.maint_count}
+              維護 {cell.maint_count ?? 0} / 未 {cell.unchecked_count ?? 0}
             </span>
             {cell.date && (
               <span style={{ fontSize: 9, color: '#999', lineHeight: 1.4 }}>
                 {cell.date.replace(/^\d{4}\//, '')}
+                {cell.work_minutes ? ` (${cell.work_minutes}m)` : ''}
               </span>
             )}
           </>
@@ -181,6 +184,7 @@ function MatrixCellComp({
             {cell.date && (
               <span style={{ fontSize: 9, color: '#999' }}>
                 {cell.date.replace(/^\d{4}\//, '')}
+                {cell.work_minutes ? ` (${cell.work_minutes}m)` : ''}
               </span>
             )}
           </>
@@ -190,15 +194,30 @@ function MatrixCellComp({
   )
 }
 
+// ── 保養檢查欄位：忽略規則（與後端 _IGNORE_FIELD_NAMES / _is_check_field 同步）──
+const IGNORE_FIELD_NAMES = new Set([
+  '項目', '更換日期', '費用', '設備保養上傳照片', '設備',
+  '保養月份', '保養人員', '保養時間起', '保養時間迄', '保養日期',
+  '工時計算', '房號', '複核人員', '是否有陽台',
+])
+
+function isCheckField(key: string, value: unknown): boolean {
+  if (IGNORE_FIELD_NAMES.has(key)) return false
+  if (key.includes('上傳照片')) return false
+  if (typeof value === 'string' && ['正常', '當時維護完成', '等待維護(待料中)', ''].includes(value)) return true
+  if (value === null || value === undefined) return true
+  return false
+}
+
 // ── 保養檢查項目面板（Drawer 內）────────────────────────────────────────────
-const CHECK_VALUES = ['正常', '當時維護完成', '等待維護(待料中)'] as const
-type CheckValue = typeof CHECK_VALUES[number]
+type CheckValue = '正常' | '當時維護完成' | '等待維護(待料中)' | ''
 
 const CHECK_FILTER_OPTIONS = [
-  { label: 'ALL',  value: 'ALL'        },
-  { label: '正常',  value: '正常'        },
-  { label: '完成',  value: '當時維護完成' },
+  { label: 'ALL',  value: 'ALL'            },
+  { label: '正常',  value: '正常'            },
+  { label: '完成',  value: '當時維護完成'     },
   { label: '維護',  value: '等待維護(待料中)' },
+  { label: '未檢查', value: '__UNCHECKED__'  },
 ]
 
 function CheckItemsPanel({ rawFields }: { rawFields: Record<string, unknown> }) {
@@ -207,29 +226,45 @@ function CheckItemsPanel({ rawFields }: { rawFields: Record<string, unknown> }) 
   const allItems = useMemo(
     () =>
       Object.entries(rawFields)
-        .filter(([, v]) => typeof v === 'string' && (CHECK_VALUES as readonly string[]).includes(v as string))
-        .map(([k, v], i) => ({ key: i, field: k, value: v as CheckValue })),
+        .filter(([k, v]) => isCheckField(k, v))
+        .map(([k, v], i) => ({
+          key: i,
+          field: k,
+          value: (typeof v === 'string' ? v : '') as CheckValue,
+        })),
     [rawFields]
   )
 
-  const hasMaint = allItems.some(r => r.value === '等待維護(待料中)')
-  if (!hasMaint) return null
+  if (allItems.length === 0) return null
 
-  const counts = {
-    '正常':          allItems.filter(r => r.value === '正常').length,
-    '當時維護完成':   allItems.filter(r => r.value === '當時維護完成').length,
+  const hasMaint = allItems.some(r => r.value === '等待維護(待料中)')
+
+  const counts: Record<string, number> = {
+    '正常':            allItems.filter(r => r.value === '正常').length,
+    '當時維護完成':     allItems.filter(r => r.value === '當時維護完成').length,
     '等待維護(待料中)': allItems.filter(r => r.value === '等待維護(待料中)').length,
+    '__UNCHECKED__':    allItems.filter(r => r.value === '').length,
   }
 
-  const filtered = filter === 'ALL' ? allItems : allItems.filter(r => r.value === filter)
+  const filtered = filter === 'ALL'
+    ? allItems
+    : filter === '__UNCHECKED__'
+      ? allItems.filter(r => r.value === '')
+      : allItems.filter(r => r.value === filter)
 
   return (
     <>
-      <Divider orientation="left" style={{ fontSize: 12, color: '#d46b08' }}>
-        <WarningOutlined style={{ marginRight: 4 }} />
-        維護異常項目
+      <Divider
+        orientation="left"
+        style={{ fontSize: 12, color: hasMaint ? '#d46b08' : '#1677ff' }}
+      >
+        {hasMaint
+          ? <WarningOutlined style={{ marginRight: 4 }} />
+          : <CheckCircleOutlined style={{ marginRight: 4 }} />}
+        {hasMaint ? '維護異常項目' : '保養檢查項目'}
         <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 400, color: '#8c8c8c' }}>
-          正常 {counts['正常']} ／ 完成 {counts['當時維護完成']} ／ 維護 {counts['等待維護(待料中)']}
+          正常 {counts['正常']} ／ 完成 {counts['當時維護完成']} ／
+          維護 {counts['等待維護(待料中)']} ／ 未檢查 {counts['__UNCHECKED__']}
         </span>
       </Divider>
 
@@ -240,9 +275,9 @@ function CheckItemsPanel({ rawFields }: { rawFields: Record<string, unknown> }) 
         onChange={(v) => setFilter(v as string)}
         style={{ marginBottom: 8 }}
         options={CHECK_FILTER_OPTIONS.map((o) => {
-          const cnt = o.value === 'ALL'
-            ? allItems.length
-            : counts[o.value as CheckValue] ?? 0
+          const cnt = o.value === 'ALL' ? allItems.length : (counts[o.value] ?? 0)
+          const isWarn = o.value === '等待維護(待料中)'
+          const isUnchecked = o.value === '__UNCHECKED__'
           return {
             value: o.value,
             label: (
@@ -250,8 +285,8 @@ function CheckItemsPanel({ rawFields }: { rawFields: Record<string, unknown> }) 
                 {o.label}
                 <span style={{
                   marginLeft: 4, fontSize: 10,
-                  color: o.value === '等待維護(待料中)' ? '#d46b08' : '#8c8c8c',
-                  fontWeight: o.value === '等待維護(待料中)' ? 700 : 400,
+                  color: isWarn ? '#d46b08' : isUnchecked ? '#faad14' : '#8c8c8c',
+                  fontWeight: (isWarn || isUnchecked) ? 700 : 400,
                 }}>
                   {cnt}
                 </span>
@@ -267,7 +302,6 @@ function CheckItemsPanel({ rawFields }: { rawFields: Record<string, unknown> }) 
         rowKey="key"
         pagination={false}
         style={{ marginBottom: 16 }}
-        rowClassName={(row) => row.value === '等待維護(待料中)' ? 'ihg-maint-abnormal-row' : ''}
         columns={[
           {
             title: '項目名稱',
@@ -276,8 +310,9 @@ function CheckItemsPanel({ rawFields }: { rawFields: Record<string, unknown> }) 
             ellipsis: true,
             render: (f: string, row) => (
               <span style={{
-                color: row.value === '等待維護(待料中)' ? '#d46b08' : undefined,
-                fontWeight: row.value === '等待維護(待料中)' ? 600 : undefined,
+                color: row.value === '等待維護(待料中)' ? '#d46b08'
+                     : row.value === '' ? '#faad14' : undefined,
+                fontWeight: row.value === '等待維護(待料中)' || row.value === '' ? 600 : undefined,
               }}>
                 {f}
               </span>
@@ -287,15 +322,12 @@ function CheckItemsPanel({ rawFields }: { rawFields: Record<string, unknown> }) 
             title: '狀態',
             dataIndex: 'value',
             key: 'value',
-            width: 130,
+            width: 140,
             render: (v: string) => {
-              const color = v === '正常' ? 'success' : v === '當時維護完成' ? 'processing' : 'warning'
-              const icon  = v === '正常'
-                ? <CheckCircleOutlined />
-                : v === '當時維護完成'
-                  ? <ClockCircleOutlined />
-                  : <WarningOutlined />
-              return <Tag color={color}>{icon} {v}</Tag>
+              if (v === '正常')          return <Tag color="success"><CheckCircleOutlined /> 正常</Tag>
+              if (v === '當時維護完成')   return <Tag color="processing"><ClockCircleOutlined /> 當時維護完成</Tag>
+              if (v === '等待維護(待料中)') return <Tag color="warning"><WarningOutlined /> 等待維護(待料中)</Tag>
+              return <Tag color="default"><QuestionCircleOutlined /> 未檢查</Tag>
             },
           },
         ]}
@@ -312,7 +344,7 @@ export default function IHGRoomMaintenancePage() {
   const [statusFilter, setStatusFilter] = useState<string>('')
 
   const [stats, setStats]       = useState<IHGStats | null>(null)
-  const [matrix, setMatrix]     = useState<{ rooms: MatrixRoom[]; floors: string[] } | null>(null)
+  const [matrix, setMatrix]     = useState<{ rooms: MatrixRoom[]; floors: string[]; month_hours: Partial<Record<number, number>> } | null>(null)
   const [loading, setLoading]   = useState(false)
   const [syncing, setSyncing]   = useState(false)
 
@@ -336,7 +368,7 @@ export default function IHGRoomMaintenancePage() {
         }),
       ])
       setStats(s)
-      setMatrix({ rooms: m.rooms, floors: m.floors })
+      setMatrix({ rooms: m.rooms, floors: m.floors, month_hours: m.month_hours ?? {} })
     } catch {
       message.error('載入 IHG 客房保養資料失敗')
     } finally {
@@ -401,12 +433,20 @@ export default function IHGRoomMaintenancePage() {
     },
     // 月份欄
     ...([1,2,3,4,5,6,7,8,9,10,11,12] as const).map((month) => ({
-      title: (
-        <div style={{ textAlign: 'center', fontSize: 11 }}>
-          <div style={{ color: '#999', fontSize: 9 }}>{QUARTER_MAP[month]}</div>
-          <div>{MONTH_LABELS[month]}</div>
-        </div>
-      ),
+      title: (() => {
+        const hrs = matrix?.month_hours?.[month]
+        return (
+          <div style={{ textAlign: 'center', fontSize: 11 }}>
+            <div style={{ color: '#999', fontSize: 9 }}>{QUARTER_MAP[month]}</div>
+            <div>{MONTH_LABELS[month]}</div>
+            {hrs !== undefined && (
+              <div style={{ fontSize: 9, color: '#4BA8E8', marginTop: 1 }}>
+                {hrs.toFixed(2)}hr
+              </div>
+            )}
+          </div>
+        )
+      })(),
       key: `m${month}`,
       width: 76,
       render: (_: unknown, row: MatrixRoom) => {

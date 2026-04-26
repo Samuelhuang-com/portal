@@ -181,7 +181,7 @@ function DonutChart({ data, colors }: { data: { name: string; value: number; pct
           iconType="circle"
           iconSize={8}
           wrapperStyle={{ fontSize: 11, color: T.textSecond }}
-          formatter={(v: string, entry: { payload?: { pct?: number } }) => `${v}  ${entry?.payload?.pct ?? 0}%`}
+          formatter={(v: string, entry: any) => `${v}  ${entry?.payload?.pct ?? 0}%`}
         />
       </PieChart>
     </ResponsiveContainer>

@@ -13,9 +13,11 @@ export interface MatrixCell {
   completion_date: string
   maint_type: string
   notes: string
-  normal_count: number   // raw_json 中值="正常" 的欄位數
-  done_count: number     // raw_json 中值="當時維護完成" 的欄位數
-  maint_count: number    // raw_json 中值="等待維護(待料中)" 的欄位數
+  normal_count: number        // raw_json 中值="正常" 的欄位數
+  done_count: number          // raw_json 中值="當時維護完成" 的欄位數
+  maint_count: number         // raw_json 中值="等待維護(待料中)" 的欄位數
+  unchecked_count: number     // raw_json 中值="" 的欄位數（未檢查）
+  work_minutes: number | null // 工時計算（分鐘）
 }
 
 // 某個房號的矩陣列
@@ -28,9 +30,10 @@ export interface MatrixRoom {
 // 矩陣 API 回傳
 export interface MatrixResponse {
   year: string
-  months: number[]       // [1, 2, ..., 12]
-  floors: string[]       // 所有已出現的樓層，如 ["5F","6F","7F"]
+  months: number[]                         // [1, 2, ..., 12]
+  floors: string[]                         // 所有已出現的樓層，如 ["5F","6F","7F"]
   rooms: MatrixRoom[]
+  month_hours: Partial<Record<number, number>>  // {4: 10.33} 分鐘已轉小時
 }
 
 // ── KPI 統計 ──────────────────────────────────────────────────────────────────

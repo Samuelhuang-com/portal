@@ -55,6 +55,7 @@ export interface DashboardKpi {
   total_deduction_fee:      number
   total_deduction_counter:  number        // 保持 0
   total_counter_stores:     number        // 本月有扣款的專櫃家數
+  total_counter_fee:        number        // 本月扣款專櫃費用合計
   counter_store_names:      string[]      // 本月專櫃名稱列表
   total_work_hours:         number
   room_cases:               number
