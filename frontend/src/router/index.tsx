@@ -1,8 +1,20 @@
 /**
  * App Router
  */
-import { Routes, Route, Navigate } from 'react-router-dom'
+import { useEffect } from 'react'
+import { Routes, Route, Navigate, useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/stores/authStore'
+
+// ── JWT 過期判斷（純前端解碼，不送 request）──────────────────────────────────
+function isJwtExpired(token: string | null): boolean {
+  if (!token) return true
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1]))
+    return typeof payload.exp === 'number' && payload.exp * 1000 < Date.now()
+  } catch {
+    return true
+  }
+}
 
 import MainLayout          from '@/components/Layout/MainLayout'
 import LoginPage           from '@/pages/Login'
@@ -70,6 +82,33 @@ import BudgetMappingsPage              from '@/pages/Budget/Mappings'
 // ── Route Guard ───────────────────────────────────────────────────────────────
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated)
+  const token           = useAuthStore((s) => s.token)
+  const logout          = useAuthStore((s) => s.logout)
+  const navigate        = useNavigate()
+
+  useEffect(() => {
+    const checkExpiry = () => {
+      if (isJwtExpired(token)) {
+        logout()
+        navigate('/login', { replace: true })
+      }
+    }
+
+    checkExpiry()                                     // 掛載時立即檢查
+    const timer = setInterval(checkExpiry, 60_000)   // 每 60 秒再檢查一次
+
+    // 切換回分頁時重新確認（使用者放置很久再回來）
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') checkExpiry()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+
+    return () => {
+      clearInterval(timer)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+  }, [token, logout, navigate])
+
   return isAuthenticated ? <>{children}</> : <Navigate to="/login" replace />
 }
 

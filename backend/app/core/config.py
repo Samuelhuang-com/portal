@@ -118,6 +118,8 @@ class Settings(BaseSettings):
     RAGIC_LUQUN_REPAIR_SERVER_URL: str = "ap12.ragic.com"
     RAGIC_LUQUN_REPAIR_ACCOUNT: str = "soutlet001"
     RAGIC_LUQUN_REPAIR_PATH: str = "luqun-public-works-repair-reporting-system/6"
+    # 圖片 attachment 欄位存在 /8（同大直工務部）；清單抓 /6，圖片抓 /8
+    RAGIC_LUQUN_REPAIR_IMAGE_PATH: str = "lequn-public-works/8"
 
     # ── Ragic — 大直工務部（ap12 / soutlet001）──────────────────────────────
     # URL: https://ap12.ragic.com/soutlet001/lequn-public-works/8?PAGEID=fV8

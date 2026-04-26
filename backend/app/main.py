@@ -116,6 +116,37 @@ def _migrate_pm_batch_item():
             print(f"[Migration] is_completed 回填 {backfill.rowcount} 筆")
 
 
+def _migrate_luqun_repair_images():
+    """
+    輕量欄位補丁：為 luqun_repair_case 加入 images_json 欄位（若尚未存在）。
+    儲存 parse_images() 結果的 JSON 序列化字串，供 Drawer 顯示圖片。
+    """
+    from sqlalchemy import text
+
+    with engine.connect() as conn:
+        result = conn.execute(text("PRAGMA table_info(luqun_repair_case)"))
+        existing = {row[1] for row in result.fetchall()}
+        if "images_json" not in existing:
+            conn.execute(text("ALTER TABLE luqun_repair_case ADD COLUMN images_json TEXT"))
+            conn.commit()
+            print("[Migration] luqun_repair_case.images_json 欄位已新增")
+
+
+def _migrate_dazhi_repair_images():
+    """
+    輕量欄位補丁：為 dazhi_repair_case 加入 images_json 欄位（若尚未存在）。
+    """
+    from sqlalchemy import text
+
+    with engine.connect() as conn:
+        result = conn.execute(text("PRAGMA table_info(dazhi_repair_case)"))
+        existing = {row[1] for row in result.fetchall()}
+        if "images_json" not in existing:
+            conn.execute(text("ALTER TABLE dazhi_repair_case ADD COLUMN images_json TEXT"))
+            conn.commit()
+            print("[Migration] dazhi_repair_case.images_json 欄位已新增")
+
+
 def _cleanup_security_patrol_photo_items():
     """
     一次性清除 security_patrol_item 中 item_name 含「拍照」的記錄。
@@ -409,6 +440,14 @@ async def lifespan(app: FastAPI):
     _migrate_pm_batch_item()
     print("[Portal] PM batch_item migration checked.")
 
+    # 輕量欄位補丁：為 luqun_repair_case 加入 images_json（若尚未存在）
+    _migrate_luqun_repair_images()
+    print("[Portal] luqun_repair_case images_json migration checked.")
+
+    # 輕量欄位補丁：為 dazhi_repair_case 加入 images_json（若尚未存在）
+    _migrate_dazhi_repair_images()
+    print("[Portal] dazhi_repair_case images_json migration checked.")
+
     # 清除保全巡檢中的拍照欄位 item（Ragic 必填但不屬於巡檢評分項目）
     _cleanup_security_patrol_photo_items()
     print("[Portal] Security patrol photo items cleanup checked.")
@@ -643,11 +682,32 @@ app.include_router(
     tags=["預算管理"],
 )
 
-# ── 前端靜態檔案（放在所有路由之後）─────────────────────────────────────────
+# ── 前端靜態檔案（SPA 模式，放在所有路由之後）────────────────────────────
 import os as _os
+import mimetypes as _mimetypes
 from fastapi.staticfiles import StaticFiles as _StaticFiles
+from fastapi.responses import FileResponse as _FileResponse
 
 _frontend_dist = _os.path.join(_os.path.dirname(__file__), "..", "..", "frontend", "dist")
 if _os.path.isdir(_frontend_dist):
-    app.mount("/", _StaticFiles(directory=_frontend_dist, html=True), name="frontend")
-    print(f"[Portal] Frontend static files served from: {_frontend_dist}")
+    # /assets 靜態資源用 StaticFiles（有 ETag/快取標頭）
+    _assets_dir = _os.path.join(_frontend_dist, "assets")
+    if _os.path.isdir(_assets_dir):
+        app.mount("/assets", _StaticFiles(directory=_assets_dir), name="assets")
+
+    # SPA 萬用路由：所有未匹配路徑回傳 index.html，讓 React Router 處理
+    # 注意：此路由必須在所有 include_router 之後宣告，否則會遮蔽 API 路由
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def _serve_spa(full_path: str):
+        # 根目錄下的真實靜態檔（favicon.ico、robots.txt 等）
+        candidate = _os.path.join(_frontend_dist, full_path)
+        if full_path and _os.path.isfile(candidate):
+            media_type, _ = _mimetypes.guess_type(candidate)
+            return _FileResponse(candidate, media_type=media_type or "application/octet-stream")
+        # SPA fallback：交由前端 React Router 路由
+        return _FileResponse(
+            _os.path.join(_frontend_dist, "index.html"),
+            media_type="text/html",
+        )
+
+    print(f"[Portal] Frontend static files (SPA mode) served from: {_frontend_dist}")

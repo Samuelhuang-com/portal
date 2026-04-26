@@ -26,6 +26,7 @@ Prefix: /api/v1/luqun-repair
 from __future__ import annotations
 
 import io
+import re
 import time
 from collections import Counter
 from datetime import datetime
@@ -38,6 +39,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.database import get_db
+from app.services.ragic_adapter import RagicAdapter
 from app.dependencies import get_current_user, require_roles
 from app.models.luqun_repair import LuqunRepairCase
 from app.services import luqun_repair_service as svc
@@ -50,6 +52,151 @@ router = APIRouter(dependencies=[Depends(get_current_user)])
 def load_cases_from_db(db: Session) -> list[LuqunRepairCase]:
     """從本地 SQLite 載入所有樂群報修案件（ORM 物件與 RepairCase 介面相容）。"""
     return db.query(LuqunRepairCase).all()
+
+
+# ── /db-images/{ragic_id} — 直接從 DB 讀 images_json ────────────────────────
+
+@router.get("/db-images/{ragic_id}", summary="直接從 DB 讀取案件圖片（不依賴 Ragic）")
+def get_db_images(ragic_id: str, db: Session = Depends(get_db)):
+    """從本地 SQLite luqun_repair_case.images_json 讀取圖片，完全不打 Ragic。"""
+    import json
+    case = db.get(LuqunRepairCase, ragic_id)
+    if not case:
+        return {"ragic_id": ragic_id, "images": [], "source": "db_not_found"}
+    try:
+        images = json.loads(case.images_json) if case.images_json else []
+    except Exception:
+        images = []
+    return {"ragic_id": ragic_id, "images": images, "source": "db"}
+
+
+# ── /case-images/{ragic_id} ───────────────────────────────────────────────────
+
+@router.get("/case-images/{ragic_id}", summary="直接從 Ragic 抓取單筆案件圖片（Drawer 用）")
+async def get_case_images(ragic_id: str):
+    """
+    直接向 Ragic 的 /8 sheet（lequn-public-works/8）抓取單筆案件圖片。
+    圖片 attachment 欄位存在 form view（/8），不在清單 sheet（/6）。
+    邏輯與大直工務部 /images/{ragic_id} 相同。
+    """
+    import logging
+    from app.services.ragic_data_service import parse_images
+    _log = logging.getLogger(__name__)
+
+    # 圖片用 /8 sheet（form view），清單用 /6
+    img_adapter = RagicAdapter(
+        sheet_path=settings.RAGIC_LUQUN_REPAIR_IMAGE_PATH,
+        api_key=settings.RAGIC_API_KEY,
+        server_url=settings.RAGIC_LUQUN_REPAIR_SERVER_URL,
+        account=settings.RAGIC_LUQUN_REPAIR_ACCOUNT,
+    )
+    IMAGE_FIELDS = ["上傳圖片", "上傳圖片.1", "維修照上傳", "維修照", "圖片"]
+    server = settings.RAGIC_LUQUN_REPAIR_SERVER_URL
+    account = settings.RAGIC_LUQUN_REPAIR_ACCOUNT
+
+    try:
+        resp = await img_adapter.fetch_one(ragic_id)
+        if not isinstance(resp, dict):
+            return {"ragic_id": ragic_id, "images": []}
+
+        # ── Step 1: 找正確的數字 _ragicId（同大直邏輯）────────────────────────
+        numeric_id: str | None = None
+        direct = resp.get(ragic_id) or resp.get(str(ragic_id))
+        if isinstance(direct, dict):
+            numeric_id = str(ragic_id)
+        else:
+            for _key, record in resp.items():
+                if isinstance(record, dict):
+                    if str(record.get("_ragicId", "")) == str(ragic_id):
+                        numeric_id = str(record.get("_ragicId", _key))
+                        _log.info(f"[LuqunRepair] images: {ragic_id} → _ragicId={numeric_id}")
+                        break
+
+        if not numeric_id:
+            _log.warning(f"[LuqunRepair] images: no record found for {ragic_id}")
+            return {"ragic_id": ragic_id, "images": []}
+
+        # ── Step 2: 如有必要，用數字 ID 重新發 detail 請求 ──────────────────
+        if numeric_id != str(ragic_id):
+            resp2 = await img_adapter.fetch_one(numeric_id)
+            if isinstance(resp2, dict):
+                data = resp2.get(numeric_id) or resp2.get(str(numeric_id))
+                if not isinstance(data, dict):
+                    data = {k: v for k, v in resp2.items() if not str(k).lstrip("-").isdigit()}
+            else:
+                data = {}
+        else:
+            data = direct or {}
+
+        if not data:
+            _log.warning(f"[LuqunRepair] images: empty detail for {ragic_id}")
+            return {"ragic_id": ragic_id, "images": []}
+
+        # ── Step 3: 解析所有可能的圖片欄位 ───────────────────────────────────
+        images: list[dict] = []
+        for fk in IMAGE_FIELDS:
+            val = data.get(fk)
+            if val:
+                _log.info(f"[LuqunRepair] images {ragic_id} field {fk!r}={repr(val)[:150]}")
+                parsed = parse_images(val, server=server, account=account)
+                for img in parsed:
+                    if not any(r["url"] == img["url"] for r in images):
+                        images.append(img)
+
+        # 若仍無圖，回傳 debug 資訊（含所有欄位名稱 + 含圖片關鍵字的欄位值）
+        debug_info: dict = {}
+        if not images:
+            debug_info["raw_keys"] = list(data.keys())
+            debug_info["img_like_fields"] = {
+                k: str(v)[:500]
+                for k, v in data.items()
+                if re.search(r"圖|照|upload|photo|image|file|attach|IMG|jpg|jpeg|png",
+                             str(k) + str(v), re.IGNORECASE)
+            }
+            debug_info["raw_data"] = {k: str(v)[:300] for k, v in data.items()}
+
+        _log.info(f"[LuqunRepair] images {ragic_id}: found {len(images)}")
+        return {"images": images, "ragic_id": ragic_id, **debug_info}
+
+    except Exception as exc:
+        _log.warning(f"[LuqunRepair] images {ragic_id} failed: {exc}")
+        raise HTTPException(status_code=502, detail=f"無法從 Ragic 取得圖片：{exc}")
+
+
+# ── /raw-json/{ragic_id} — 臨時 debug 端點，回傳 Ragic 原始 JSON ─────────────
+
+@router.get("/raw-json/{ragic_id}", summary="[DEBUG] 直接回傳 Ragic 單筆 raw JSON（含所有欄位與值）")
+async def get_raw_json(
+    ragic_id: str,
+    pageid: str = Query(default="", description="Ragic PAGEID（可選）"),
+    sheet: str = Query(default="", description="sheet path，空值用 lequn-public-works/8"),
+):
+    """
+    臨時診斷端點：回傳 Ragic 指定 record 的完整原始 JSON，包含所有欄位名稱與值。
+    用來確認圖片欄位的正確名稱。
+    """
+    import httpx
+    _sheet = sheet or settings.RAGIC_LUQUN_REPAIR_IMAGE_PATH  # 預設 lequn-public-works/8
+    url = f"https://{settings.RAGIC_LUQUN_REPAIR_SERVER_URL}/{settings.RAGIC_LUQUN_REPAIR_ACCOUNT}/{_sheet}/{ragic_id}"
+    params: dict = {"api": "", "version": "2025-01-01", "naming": ""}
+    if pageid:
+        params["PAGEID"] = pageid
+    headers = {
+        "Authorization": f"Basic {settings.RAGIC_API_KEY}",
+        "Accept": "application/json",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=20.0, verify=False) as client:
+            resp = await client.get(url, headers=headers, params=params)
+            resp.raise_for_status()
+            raw = resp.json()
+        return {
+            "request_url": str(resp.url),
+            "status": resp.status_code,
+            "raw": raw,
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Ragic 呼叫失敗：{exc}")
 
 
 # ── /raw-fields ───────────────────────────────────────────────────────────────

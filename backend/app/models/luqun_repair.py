@@ -49,6 +49,7 @@ class LuqunRepairCase(Base):
     is_room_case:      Mapped[bool]  = mapped_column(Boolean,     default=False)
     room_no:           Mapped[str]   = mapped_column(String(20),  default="")
     room_category:     Mapped[str]   = mapped_column(String(50),  default="")
+    images_json:       Mapped[str | None] = mapped_column(Text, nullable=True, default=None)  # JSON 序列化圖片列表
     synced_at:         Mapped[datetime] = mapped_column(DateTime, default=twnow)
 
     @property
@@ -114,5 +115,15 @@ class LuqunRepairCase(Base):
             "is_room_case":       self.is_room_case,
             "room_no":            self.room_no,
             "room_category":      self.room_category,
-            "images":             [],
+            "images":             self._parse_images_json(),
         }
+
+    def _parse_images_json(self) -> list:
+        """從 images_json 欄位還原圖片列表"""
+        import json
+        if not self.images_json:
+            return []
+        try:
+            return json.loads(self.images_json)
+        except Exception:
+            return []

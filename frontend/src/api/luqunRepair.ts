@@ -187,3 +187,17 @@ export async function fetchSync(): Promise<SyncResult> {
   const res = await apiClient.get<SyncResult>(`${BASE}/sync`)
   return res.data
 }
+
+// ── 單筆案件圖片 ─────────────────────────────────────────────────────────────
+// 1. 優先 DB /db-images（不打 Ragic，最可靠）
+// 2. Fallback：/case-images（即時打 Ragic /8 sheet）
+export async function fetchCaseImages(
+  ragicId: string
+): Promise<{ images: Array<{ url: string; filename: string }>; ragic_id: string }> {
+  try {
+    const res = await apiClient.get(`${BASE}/db-images/${encodeURIComponent(ragicId)}`)
+    if ((res.data?.images ?? []).length > 0) return res.data
+  } catch { /* fallthrough */ }
+  const res = await apiClient.get(`${BASE}/case-images/${encodeURIComponent(ragicId)}`)
+  return res.data
+}

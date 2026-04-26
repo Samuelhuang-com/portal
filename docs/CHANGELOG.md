@@ -4,6 +4,94 @@
 
 ---
 
+## [1.39.13] - 2026-04-26
+
+### Fixed
+- **大直工務部 明細 Tab — 報修詳情 Drawer 新增「維修圖片」顯示**
+  - 找出根本原因：`DetailTab` 內的 inline Drawer（第 1704 行）從未包含「維修圖片」欄，先前修改均針對錯誤的 `CaseDetailDrawer` 函式元件
+  - 在 `DetailTab` 新增 `drawerImages` / `drawerImgLoading` state + `useEffect` 呼叫 `fetchCaseImages`（DB-first）
+  - inline Drawer 末尾新增「維修圖片」`Descriptions.Item`，支援縮圖預覽（`Image.PreviewGroup`）
+
+---
+
+## [1.39.12] - 2026-04-26
+
+### Fixed
+- **dazhi + luqun 報修詳情 Drawer — 維修圖片顯示邏輯修正**
+  - 修正渲染順序：圖片優先顯示（`images.length > 0` 先判斷），loading spinner 只在「DB 無圖且正在抓 Ragic」時才出現
+  - dazhi Drawer `useEffect`：若 `caseData.images` 已有資料則跳過 Ragic lazy-fetch；優先用 DB 圖片（`dbImages > liveImages`）
+  - luqun Drawer 同步修正渲染順序（邏輯原已正確，統一調整呈現優先順序）
+
+---
+
+## [1.39.11] - 2026-04-26
+
+### Fixed
+- **Session 過期自動跳轉登入頁**
+  - `PrivateRoute`：新增 JWT 過期主動偵測（掛載時、每 60 秒、切回分頁時），過期立即 `logout()` + 導向 `/login`
+  - `apiClient`：401 攔截器改呼叫 `useAuthStore.getState().logout()` 同步清除 store；加入 `_redirecting` flag 避免同批次多次跳轉
+  - `main.py`：靜態檔案服務改 SPA 模式，未知路徑一律回傳 `index.html`，修正直接存取前端路由（如 `/dazhi-repair/dashboard`）會 404 的問題
+
+---
+
+## [1.39.11] - 2026-04-26
+
+### Fixed
+- **大直工務部 `dazhi_repair_case` — 完整建置 images_json 鏈路**
+  - Model：新增 `images_json TEXT` 欄位、`_parse_images_json()` 方法、`to_dict()` 加入 `"images"` 欄位
+  - Sync：`dazhi_repair_sync.py` UPDATE & INSERT 路徑均寫入 `images_json = json.dumps(case.images)`
+  - Migration：`main.py` 新增 `_migrate_dazhi_repair_images()`，啟動時自動為舊 DB 補欄位
+  - Drawer 圖片顯示路徑：`caseData.images`（DB 同步值）→ lazy-fetch `/images/{ragic_id}`（即時 fallback）
+
+---
+
+## [1.39.10] - 2026-04-26
+
+### Fixed
+- **樂群報修詳情 Drawer — 維修圖片（三次修正）：改呼叫正確的 Ragic sheet**
+  - 根本原因：圖片 attachment 欄位在 `lequn-public-works/8`（form view），不在清單 sheet `luqun-public-works-repair-reporting-system/6`；原端點呼叫 `/6`，永遠取不到圖片
+  - 新增 `RAGIC_LUQUN_REPAIR_IMAGE_PATH=lequn-public-works/8`（.env + config.py）
+  - 端點 `/case-images/{ragic_id}` 改用新的 `img_adapter`（指向 `/8`），邏輯與大直 `/images/{ragic_id}` 完全一致：Step1 找 numeric_id → Step2 fetch detail → Step3 解析圖片欄位
+  - 搜尋欄位清單：`["上傳圖片", "上傳圖片.1", "維修照上傳", "維修照", "圖片"]`
+  - 無圖時仍回傳 `raw_keys` + `img_like_fields` + `raw_data` 供診斷
+
+---
+
+## [1.39.9] - 2026-04-26
+
+### Fixed
+- **樂群報修詳情 Drawer — 維修圖片（二次修正）：lazy-fetch 直接向 Ragic 抓**
+  - 根本原因：Ragic 圖片欄位在 main list 不保證存在，sync 時有可能抓不到
+  - 後端：新增 `GET /api/v1/luqun-repair/case-images/{ragic_id}` 端點，直接呼叫 `adapter.fetch_one()` 解析圖片，不依賴 DB 或 cache
+  - 前端 `CaseDetailDrawer`：`useEffect` 監控 `ragic_id`，若 `caseData.images` 為空則自動呼叫新端點；圖片載入中顯示 Spin；載入完顯示縮圖；「維修圖片」欄位始終顯示（改為固定 row）
+  - `api/luqunRepair.ts`：新增 `fetchCaseImages()` 封裝函式
+
+---
+
+## [1.39.8] - 2026-04-26
+
+### Added
+- **KPI Tooltip — 各儀表板 KPI 卡新增「?」說明圖示**
+  - 新增獨立說明檔：`constants/kpiDesc/luqunRepair.ts`、`dazhiRepair.ts`、`securityDashboard.ts`、`mallDashboard.ts`
+  - 樂群、大直 `KpiCard` 元件加入 `desc` prop + `QuestionCircleOutlined` Tooltip；保全巡檢、商場管理同步套用
+  - 完全不改動版型、顏色、欄位，僅在標題旁附加說明圖示
+- **照片縮圖 + Modal — 樂群 / 大直報修 Drawer 圖片改為縮圖預覽**
+  - 從文字連結（`<a>` 📷）升級為 72×72 縮圖（`antd Image`）+ `Image.PreviewGroup` 輪播放大
+  - 大直保留 `imgLoading` loading 狀態，僅替換渲染方式
+
+---
+
+## [1.39.8] - 2026-04-26
+
+### Fixed
+- **樂群報修詳情 Drawer — 維修圖片不顯示（images 永遠空陣列）**
+  - 根本原因：`LuqunRepairCase` ORM 的 `to_dict()` 回傳 `"images": []`，images 資料從未同步至 SQLite
+  - `luqun_repair.py`：新增 `images_json` (Text, nullable) 欄位；`to_dict()` 改從 `_parse_images_json()` 讀取；`_parse_images_json()` 安全 JSON 解析，例外時回傳 `[]`
+  - `main.py`：新增 `_migrate_luqun_repair_images()` — ALTER TABLE 補欄位，startup 自動執行
+  - `luqun_repair_sync.py`：sync 時將 `case.images` 序列化為 JSON 存入 `images_json`（existing + insert 兩段均補上）
+
+---
+
 ## [1.39.7] - 2026-04-26
 
 ### Fixed

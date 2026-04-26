@@ -7,12 +7,12 @@ import { useNavigate } from 'react-router-dom'
 import {
   Row, Col, Card, Statistic, Table, Tag, Button, Space,
   Typography, Breadcrumb, Tabs, Alert, DatePicker, Badge,
-  message, Progress,
+  message, Progress, Tooltip,
 } from 'antd'
 import {
   HomeOutlined, SyncOutlined, ReloadOutlined,
   WarningOutlined, CheckCircleOutlined, ExclamationCircleOutlined,
-  DashboardOutlined, RightOutlined, CalendarOutlined,
+  DashboardOutlined, RightOutlined, CalendarOutlined, QuestionCircleOutlined,
 } from '@ant-design/icons'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RcTooltip,
@@ -34,6 +34,7 @@ import type {
   SheetStats,
 } from '@/types/securityPatrol'
 import { NAV_GROUP, NAV_PAGE } from '@/constants/navLabels'
+import { SECURITY_KPI_DESC } from '@/constants/kpiDesc/securityDashboard'
 
 const { Title, Text } = Typography
 
@@ -201,12 +202,14 @@ export default function SecurityDashboardPage() {
         {[
           {
             title: '今日巡檢場次',
+            descKey: '今日巡檢場次',
             value: summary?.total_batches_all ?? 0,
             color: '#1B3A5C',
             icon: <DashboardOutlined />,
           },
           {
             title: `已巡檢項目`,
+            descKey: '已巡檢項目',
             value: summary?.checked_items_all ?? 0,
             suffix: `/${summary?.total_items_all ?? 0}`,
             color: '#4BA8E8',
@@ -214,12 +217,14 @@ export default function SecurityDashboardPage() {
           },
           {
             title: '異常 + 待處理',
+            descKey: '異常待處理',
             value: summary?.abnormal_items_all ?? 0,
             color: '#FF4D4F',
             icon: <WarningOutlined />,
           },
           {
             title: '整體完成率',
+            descKey: '整體完成率',
             value: summary?.completion_rate_all ?? 0,
             suffix: '%',
             color: (summary?.completion_rate_all ?? 0) >= 80 ? '#52C41A' : '#FAAD14',
@@ -229,7 +234,14 @@ export default function SecurityDashboardPage() {
           <Col xs={12} sm={12} lg={6} key={card.title}>
             <Card size="small" hoverable>
               <Statistic
-                title={card.title}
+                title={
+                  <span>
+                    {card.title}
+                    <Tooltip title={SECURITY_KPI_DESC[card.descKey]} placement="top">
+                      <QuestionCircleOutlined style={{ color: '#bbb', fontSize: 11, marginLeft: 4, cursor: 'help' }} />
+                    </Tooltip>
+                  </span>
+                }
                 value={card.value}
                 suffix={card.suffix}
                 prefix={<span style={{ color: card.color }}>{card.icon}</span>}

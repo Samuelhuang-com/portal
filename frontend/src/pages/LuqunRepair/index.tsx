@@ -11,7 +11,7 @@ import {
   Row, Col, Card, Statistic, Table, Tag, Button, Space,
   Typography, Breadcrumb, Select, Spin, Alert, Tabs, Modal,
   Tooltip, Badge, Drawer, Descriptions, message,
-  Empty, Divider, Progress,
+  Empty, Divider, Progress, Image,
 } from 'antd'
 import {
   HomeOutlined, ReloadOutlined, ToolOutlined,
@@ -32,7 +32,7 @@ import {
   fetchDashboard, fetchRepairStats, fetchClosingStats,
   fetchTypeStats, fetchRoomRepairTable, fetchDetail,
   fetchYears, fetchFilterOptions, buildExportUrl,
-  fetchSync, fetchPing, fetchFeeStats,
+  fetchSync, fetchPing, fetchFeeStats, fetchCaseImages,
 } from '@/api/luqunRepair'
 import type { SyncResult, PingResult, SyncFeeTotals } from '@/api/luqunRepair'
 import type {
@@ -237,7 +237,28 @@ function QueryBar({
 function CaseDetailDrawer({
   caseData, onClose,
 }: { caseData: RepairCase | null; onClose: () => void }) {
+  // 圖片 lazy-fetch：caseData.images 為空時直接向 Ragic 抓 detail 取圖
+  const [liveImages, setLiveImages] = useState<Array<{ url: string; filename: string }> | null>(null)
+  const [imgLoading, setImgLoading] = useState(false)
+
+  useEffect(() => {
+    setLiveImages(null)
+    if (!caseData) return
+    if ((caseData.images ?? []).length > 0) return  // DB 已有圖，不需要再抓
+    // DB 無圖 → 直接從 Ragic 抓 detail
+    setImgLoading(true)
+    fetchCaseImages(caseData.ragic_id)
+      .then(res => setLiveImages(res.images))
+      .catch(() => setLiveImages([]))
+      .finally(() => setImgLoading(false))
+  }, [caseData?.ragic_id])
+
   if (!caseData) return null
+
+  const displayImages = (caseData.images ?? []).length > 0
+    ? caseData.images
+    : (liveImages ?? [])
+
   return (
     <Drawer
       title={
@@ -305,18 +326,24 @@ function CaseDetailDrawer({
           </Descriptions.Item>
         )}
         <Descriptions.Item label="財務備註">{caseData.finance_note || '-'}</Descriptions.Item>
-        {(caseData.images ?? []).length > 0 && (
-          <Descriptions.Item label="維修圖片" span={2}>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              {caseData.images.map((img, i) => (
-                <a key={i} href={img.url} target="_blank" rel="noopener noreferrer"
-                  style={{ fontSize: 13, color: '#1677ff' }}>
-                  📷 {img.filename || `圖片${i + 1}`}
-                </a>
-              ))}
-            </div>
-          </Descriptions.Item>
-        )}
+        <Descriptions.Item label="維修圖片" span={2}>
+          {displayImages.length > 0
+            ? (
+              <Image.PreviewGroup>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  {displayImages.map((img, i) => (
+                    <Image key={i} width={72} height={72} src={img.url}
+                      alt={img.filename || `圖片${i + 1}`}
+                      style={{ objectFit: 'cover', borderRadius: 4, cursor: 'pointer' }} />
+                  ))}
+                </div>
+              </Image.PreviewGroup>
+            )
+            : imgLoading
+              ? <Spin size="small" tip="載入圖片…" />
+              : <Text style={{ color: '#bbb', fontSize: 12 }}>無圖片</Text>
+          }
+        </Descriptions.Item>
       </Descriptions>
     </Drawer>
   )

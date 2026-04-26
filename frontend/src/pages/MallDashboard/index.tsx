@@ -16,7 +16,7 @@ import {
   HomeOutlined, ReloadOutlined, WarningOutlined,
   CheckCircleOutlined, ClockCircleOutlined, ExclamationCircleOutlined,
   BarChartOutlined, SafetyOutlined, CalendarOutlined,
-  DashboardOutlined, RightOutlined, AlertOutlined,
+  DashboardOutlined, RightOutlined, AlertOutlined, QuestionCircleOutlined,
 } from '@ant-design/icons'
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
@@ -35,6 +35,7 @@ import type {
   DashboardSummary, FloorInspectionStats, IssueItem, TrendPoint,
 } from '@/types/mallDashboard'
 import { NAV_GROUP, NAV_PAGE } from '@/constants/navLabels'
+import { MALL_KPI_DESC } from '@/constants/kpiDesc/mallDashboard'
 
 const { Title, Text } = Typography
 const { RangePicker } = DatePicker
@@ -68,11 +69,12 @@ const PIE_STATUS_MAP = [
 // ── 子元件：KPI 卡片 ──────────────────────────────────────────────────────────
 
 function KpiCard({
-  title, value, suffix = '', color, icon, sub, onClick,
+  title, value, suffix = '', color, icon, sub, onClick, desc,
 }: {
   title: string; value: string | number; suffix?: string
   color: string; icon: React.ReactNode; sub?: string
   onClick?: () => void
+  desc?: string  // KPI 卡說明，顯示為 ? Tooltip
 }) {
   return (
     <Card
@@ -91,7 +93,17 @@ function KpiCard({
         {value}
         {suffix && <span style={{ fontSize: 14, marginLeft: 4, fontWeight: 400 }}>{suffix}</span>}
       </div>
-      <div style={{ color: '#666', fontSize: 12, marginTop: 4 }}>{title}</div>
+      <div style={{ color: '#666', fontSize: 12, marginTop: 4 }}>
+        {title}
+        {desc && (
+          <Tooltip title={desc} placement="top">
+            <QuestionCircleOutlined
+              style={{ color: '#bbb', fontSize: 11, marginLeft: 4, cursor: 'help' }}
+              onClick={e => e.stopPropagation()}
+            />
+          </Tooltip>
+        )}
+      </div>
       {sub && <div style={{ color: '#999', fontSize: 11, marginTop: 2 }}>{sub}</div>}
     </Card>
   )
@@ -369,28 +381,32 @@ export default function MallDashboardPage() {
           <KpiCard title="今日應完成巡檢"
             value={ins?.total_items ?? 0} suffix="項"
             color="#1B3A5C" icon={<SafetyOutlined />}
-            sub={`${ins?.total_batches ?? 0} 場次 · ${targetDate}`} />
+            sub={`${ins?.total_batches ?? 0} 場次 · ${targetDate}`}
+            desc={MALL_KPI_DESC['今日巡檢應巡件數']} />
         </Col>
         <Col xs={12} sm={6}>
           <KpiCard title="今日已完成巡檢"
             value={ins?.checked_items ?? 0} suffix="項"
             color="#52C41A" icon={<CheckCircleOutlined />}
             sub={ins && ins.total_items > 0 ? `完成率 ${ins.completion_rate}%` : ins ? '尚無巡檢資料' : ''}
-            onClick={() => handleKpiClick('all')} />
+            onClick={() => handleKpiClick('all')}
+            desc={MALL_KPI_DESC['今日已完成巡檢']} />
         </Col>
         <Col xs={12} sm={6}>
           <KpiCard title="今日未完成巡檢"
             value={ins?.unchecked_items ?? 0} suffix="項"
             color={ins?.unchecked_items ? '#FAAD14' : '#52C41A'}
             icon={<ClockCircleOutlined />}
-            onClick={() => handleKpiClick('unchecked')} />
+            onClick={() => handleKpiClick('unchecked')}
+            desc={MALL_KPI_DESC['今日未完成巡檢']} />
         </Col>
         <Col xs={12} sm={6}>
           <KpiCard title="今日異常件數"
             value={ins?.abnormal_items ?? 0} suffix="件"
             color={ins?.abnormal_items ? '#FF4D4F' : '#52C41A'}
             icon={<WarningOutlined />}
-            sub="含待處理" onClick={() => handleKpiClick('abnormal')} />
+            sub="含待處理" onClick={() => handleKpiClick('abnormal')}
+            desc={MALL_KPI_DESC['今日異常件數']} />
         </Col>
 
         {/* 保養 KPI */}
@@ -398,27 +414,31 @@ export default function MallDashboardPage() {
           <KpiCard title="本月保養應執行"
             value={pm?.total_items ?? 0} suffix="項"
             color="#1B3A5C" icon={<BarChartOutlined />}
-            sub={pm?.period_month ?? ''} />
+            sub={pm?.period_month ?? ''}
+            desc={MALL_KPI_DESC['本月保養應執行']} />
         </Col>
         <Col xs={12} sm={6}>
           <KpiCard title="本月保養已完成"
             value={pm?.completed_items ?? 0} suffix="項"
             color="#52C41A" icon={<CheckCircleOutlined />}
-            sub={pm ? `完成率 ${pm.completion_rate}%` : ''} />
+            sub={pm ? `完成率 ${pm.completion_rate}%` : ''}
+            desc={MALL_KPI_DESC['本月保養已完成']} />
         </Col>
         <Col xs={12} sm={6}>
           <KpiCard title="逾期未保養"
             value={pm?.overdue_items ?? 0} suffix="項"
             color={pm?.overdue_items ? '#FF4D4F' : '#52C41A'}
             icon={<ExclamationCircleOutlined />}
-            onClick={() => handleKpiClick('overdue')} />
+            onClick={() => handleKpiClick('overdue')}
+            desc={MALL_KPI_DESC['逾期未保養']} />
         </Col>
         <Col xs={12} sm={6}>
           <KpiCard title="異常待追蹤"
             value={(ins?.abnormal_items ?? 0) + (pm?.abnormal_items ?? 0)} suffix="件"
             color={((ins?.abnormal_items ?? 0) + (pm?.abnormal_items ?? 0)) > 0 ? '#FF4D4F' : '#52C41A'}
             icon={<AlertOutlined />}
-            onClick={() => handleKpiClick('abnormal')} />
+            onClick={() => handleKpiClick('abnormal')}
+            desc={MALL_KPI_DESC['異常待追蹤']} />
         </Col>
       </Row>
 

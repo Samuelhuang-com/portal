@@ -2,9 +2,13 @@
 
 > 跨據點統一管理平台 — FastAPI + React + TypeScript
 
-**最後更新：2026-04-26（v1.39.8）**
+**最後更新：2026-04-26（v1.39.11）**
 
 ## 最近變更
+- v1.39.11：**Session 過期自動跳轉登入** — `PrivateRoute` 加 JWT 到期主動偵測（掛載/60s/visibilitychange）；apiClient 401 攔截器加 `_redirecting` flag；後端 SPA catch-all 路由修正前端路由 404 問題
+- v1.39.10（原）：**樂群 Drawer 圖片 lazy-fetch（終極修正）** — 新增 `GET /case-images/{ragic_id}` 端點直接呼叫 Ragic detail；Drawer 開啟時若 DB 無圖則自動抓，顯示 Spin → 縮圖，不再依賴 sync 時機
+- v1.39.10：**樂群報修詳情 Drawer — 維修圖片修正** — ORM 補 `images_json` 欄位；startup migration；sync 時儲存；`to_dict()` 解析還原，Drawer 現在能顯示 Ragic 圖片
+- v1.39.9：**照片縮圖 + KPI Tooltip 全模組完成** — 樂群/大直報修 Drawer 圖片改 72×72 縮圖（`Image.PreviewGroup`）；保全巡檢、商場管理 Dashboard KPI 卡同步補 `?` 說明 Tooltip；說明檔共 4 個（`constants/kpiDesc/`）
 - v1.39.8：**樂群 金額統計 Tab — 扣款專櫃改家數、排除月份小計** — 後端改計唯一專櫃家數（整數）、全年跨月去重；月份小計 / grand_total 只含金額欄位；前端顯示「N 家」
 - v1.39.7：**樂群 Dashboard — 扣款專櫃 KPI 卡改全年統計** — 後端新增 `annual_counter_fee` / `annual_counter_store_names`；`DashboardKpi` 補型別宣告；KPI 卡與 Modal 切換至全年欄位
 - v1.39.6：**KPI 卡說明 Tooltip** — 樂群 & 大直工務 Dashboard 各 KPI 卡標題加 `?` 說明圖示；說明文字獨立維護於 `constants/kpiDesc/` 目錄，各模組一個檔案

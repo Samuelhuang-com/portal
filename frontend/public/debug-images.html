@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<title>圖片診斷</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,sans-serif;background:#f0f4f8;color:#1B3A5C;padding:20px;font-size:13px}
+h1{font-size:16px;font-weight:700;margin-bottom:12px}
+h2{font-size:13px;font-weight:700;margin:12px 0 6px;color:#1B3A5C}
+.card{background:#fff;border-radius:8px;border:1px solid #dde5f0;padding:14px;margin-bottom:12px}
+input{width:100%;padding:7px 10px;border:1px solid #c8d6e5;border-radius:5px;font-size:12px;color:#1B3A5C;background:#f8fafc;margin-bottom:8px}
+button{padding:7px 18px;border-radius:5px;border:none;cursor:pointer;font-size:12px;font-weight:700;color:#fff;background:#1B3A5C;margin-right:8px}
+button:hover{background:#2a5285}
+.tag{display:inline-block;padding:1px 7px;border-radius:9px;font-size:11px;font-weight:700}
+.ok{background:#e6ffed;color:#155724;border:1px solid #b7dfbe}
+.err{background:#fff5f5;color:#a02020;border:1px solid #f5c6c6}
+.warn{background:#fffbea;color:#856404;border:1px solid #ffe083}
+.info{background:#e8f4fd;color:#1a5276;border:1px solid #a9cce3}
+.row{display:flex;gap:12px;flex-wrap:wrap}
+.col{flex:1;min-width:160px}
+.fbox{background:#f8fafc;border:1px solid #e5edf5;border-radius:5px;padding:7px 10px;margin-bottom:5px}
+.fk{font-size:10px;color:#888;margin-bottom:2px}
+.fv{font-size:11px;color:#1B3A5C;word-break:break-all}
+pre{font-size:10px;color:#444;background:#f4f7fa;border:1px solid #dde5f0;border-radius:4px;padding:7px;overflow:auto;max-height:160px;white-space:pre-wrap;word-break:break-all;margin-top:5px}
+.imgrow{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.imgwrap{text-align:center}
+.imgwrap img{width:120px;height:120px;object-fit:cover;border-radius:5px;border:1px solid #dde5f0;display:block}
+.imgwrap a{font-size:10px;color:#4BA8E8;display:block;margin-top:2px}
+.sp{display:inline-block;width:12px;height:12px;border:2px solid #ccc;border-top-color:#4BA8E8;border-radius:50%;animation:sp .7s linear infinite;vertical-align:middle;margin-right:5px}
+@keyframes sp{to{transform:rotate(360deg)}}
+#log{font-size:11px;color:#666;margin-top:8px;line-height:1.7}
+</style>
+</head>
+<body>
+
+<h1>🔍 樂群維修圖片診斷</h1>
+<p style="color:#666;font-size:12px;margin-bottom:12px">
+  請從 <strong>http://127.0.0.1:5173/debug-images.html</strong> 開啟（Vite proxy /api → :8000）
+</p>
+
+<div class="card">
+  <h2>設定</h2>
+  <div class="row">
+    <div class="col">
+      <label style="font-size:11px;color:#666;display:block;margin-bottom:3px">
+        Ragic 數字 ID（從 Ragic URL 最後一段，例：2364）
+      </label>
+      <input id="ragicId" value="2364" />
+    </div>
+    <div class="col">
+      <label style="font-size:11px;color:#666;display:block;margin-bottom:3px">
+        案件編號（DB 搜尋用，例：In202604-046）
+      </label>
+      <input id="caseNo" value="In202604-046" />
+    </div>
+  </div>
+  <label style="font-size:11px;color:#666;display:block;margin-bottom:3px">JWT Token（自動讀取）</label>
+  <input id="jwt" type="password" placeholder="eyJhbGci..." />
+  <div style="display:flex;gap:8px;flex-wrap:wrap">
+    <button onclick="runB()">Step B：測試 /case-images</button>
+    <button onclick="runRaw()" style="background:#e17055">Step R：Ragic 原始 JSON</button>
+    <button onclick="runC()" style="background:#4BA8E8">Step C：查 DB images</button>
+    <button onclick="runAll()" style="background:#636e72">全部執行</button>
+  </div>
+  <div id="log"></div>
+</div>
+
+<div id="sB" class="card" style="display:none">
+  <h2>Step B — 新端點 /case-images/{ragic_id}</h2>
+  <p style="font-size:11px;color:#888;margin-bottom:6px">直接呼叫 Ragic detail，解析圖片欄位（不依賴 DB/cache）</p>
+  <div id="sBs"></div><div id="sBb"></div>
+</div>
+
+<div id="sC" class="card" style="display:none">
+  <h2>Step C — DB 案件 images 欄位</h2>
+  <p style="font-size:11px;color:#888;margin-bottom:6px">從 SQLite /detail 端點取案件，看 images 是否有值</p>
+  <div id="sCs"></div><div id="sCb"></div>
+</div>
+
+<div id="sD" class="card" style="display:none">
+  <h2>Step D — Ragic 原始 JSON（Debug）</h2>
+  <p style="font-size:11px;color:#888;margin-bottom:6px">直接顯示 Ragic fetch_one 回傳的完整 JSON</p>
+  <div id="sDs"></div><div id="sDb"></div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id)
+
+function token() {
+  let t = $('jwt').value.trim()
+  if (!t) {
+    for (const k of ['token','access_token','jwt','authToken','auth_token']) {
+      const v = localStorage.getItem(k)
+      if (v && v.startsWith('ey')) { t = v; break }
+    }
+  }
+  return t
+}
+
+function hdr() { return { Authorization: 'Bearer ' + token() } }
+function tag(txt, cls) { return `<span class="tag ${cls}">${txt}</span>` }
+function spin(msg) { return `<span class="sp"></span>${msg}` }
+function log(msg) { $('log').innerHTML += '<br>' + msg }
+
+async function apiFetch(url) {
+  log(`→ GET ${url}`)
+  const r = await fetch(url, { headers: hdr() })
+  const data = await r.json()
+  if (!r.ok) throw new Error(`HTTP ${r.status}: ${JSON.stringify(data).substring(0,200)}`)
+  return { data, status: r.status }
+}
+
+async function runAll() { await runB(); await runRaw(); await runC() }
+
+// ── Step R: Ragic 原始 JSON ──────────────────────────────────────────────────
+async function runRaw() {
+  const ragicId = $('ragicId').value.trim()
+  if (!ragicId) { alert('請輸入 Ragic 數字 ID'); return }
+  $('sD').style.display = 'block'
+  $('sDs').innerHTML = spin(`呼叫 /raw-json/${ragicId}?pageid=3FY...`)
+  $('sDb').innerHTML = ''
+
+  try {
+    // 先試 PAGEID=3FY
+    const { data } = await apiFetch(`/api/v1/luqun-repair/raw-json/${encodeURIComponent(ragicId)}?pageid=3FY`)
+    const raw = data.raw || {}
+    const keys = Object.keys(raw)
+    $('sDs').innerHTML = tag(`Ragic 回傳 ${keys.length} 個頂層 key`, 'info')
+      + ` <small style="color:#888">請求 URL：${data.request_url}</small>`
+
+    // 找有圖片關鍵字的欄位
+    let imgHtml = ''
+    const flat = (typeof raw[ragicId] === 'object' && raw[ragicId]) ? raw[ragicId]
+               : (typeof raw[String(ragicId)] === 'object' && raw[String(ragicId)]) ? raw[String(ragicId)]
+               : raw
+    const imgKeys = Object.entries(flat).filter(([k,v]) =>
+      /圖|照|upload|photo|image|file|attach|IMG|jpg|jpeg|png/i.test(String(k)+String(v))
+    )
+    if (imgKeys.length > 0) {
+      imgHtml = `<div class="fbox" style="background:#e8f4fd;border-color:#a9cce3;margin-bottom:6px">
+        <div class="fk" style="color:#1a5276">🔍 含圖片關鍵字的欄位（最可能是圖片欄位）</div>
+        <pre>${JSON.stringify(Object.fromEntries(imgKeys), null, 2)}</pre>
+      </div>`
+    } else {
+      imgHtml = `<div class="fbox" style="background:#fff8f0;border-color:#fbd38d">
+        <div class="fk" style="color:#c05621">⚠ 未找到含圖片關鍵字的欄位</div>
+      </div>`
+    }
+    imgHtml += `<div class="fbox"><div class="fk">完整 Ragic raw JSON</div><pre>${JSON.stringify(raw, null, 2)}</pre></div>`
+    $('sDb').innerHTML = imgHtml
+
+  } catch(e) {
+    $('sDs').innerHTML = tag('ERROR', 'err') + ' ' + e.message
+  }
+}
+
+// ── Step B: /case-images/{ragic_id} ─────────────────────────────────────────
+async function runB() {
+  const ragicId = $('ragicId').value.trim()
+  if (!ragicId) { alert('請輸入 Ragic 數字 ID'); return }
+  $('sB').style.display = 'block'
+  $('sBs').innerHTML = spin(`呼叫 /case-images/${ragicId}...`)
+  $('sBb').innerHTML = ''
+
+  try {
+    const { data } = await apiFetch(`/api/v1/luqun-repair/case-images/${encodeURIComponent(ragicId)}`)
+    const imgs = data.images || []
+
+    $('sBs').innerHTML = imgs.length > 0
+      ? tag(`✓ 找到 ${imgs.length} 張圖片`, 'ok')
+      : tag('回傳空陣列 — Ragic 無圖', 'warn')
+
+    if (imgs.length > 0) {
+      let html = '<div class="imgrow">'
+      imgs.forEach((img, i) => {
+        html += `<div class="imgwrap">
+          <img src="${img.url}" alt="${img.filename || ''}"
+               onerror="this.parentElement.querySelector('.err-msg').style.display='block';this.style.display='none'" />
+          <div class="err-msg" style="display:none;color:red;font-size:10px;padding:4px">載入失敗<br>可能需要登入 Ragic</div>
+          <a href="${img.url}" target="_blank">${(img.filename || '圖' + (i+1)).substring(0,20)}</a>
+        </div>`
+      })
+      html += '</div>'
+      html += '<pre>' + JSON.stringify(imgs, null, 2) + '</pre>'
+      $('sBb').innerHTML = html
+    } else {
+      // 顯示所有 Ragic 欄位名稱（幫助找正確圖片欄位名稱）
+      let html = ''
+
+      if (data.img_like_fields && Object.keys(data.img_like_fields).length > 0) {
+        html += `<div class="fbox" style="background:#e8f4fd;border-color:#a9cce3;margin-bottom:6px">
+          <div class="fk" style="color:#1a5276">🔍 含圖片關鍵字的欄位（最可能是圖片欄位）</div>
+          <pre style="margin-top:4px">${JSON.stringify(data.img_like_fields, null, 2)}</pre>
+        </div>`
+      } else {
+        html += `<div class="fbox" style="background:#fff8f0;border-color:#fbd38d">
+          <div class="fk" style="color:#c05621">⚠ 未找到含圖片關鍵字的欄位</div>
+          <div class="fv">Ragic 欄位值中沒有包含「圖/照/upload/photo/image」等字樣</div>
+        </div>`
+      }
+
+      if (data.raw_keys) {
+        html += `<div class="fbox" style="margin-bottom:6px">
+          <div class="fk">Ragic 回傳所有欄位名稱（共 ${data.raw_keys.length} 個）</div>
+          <pre style="margin-top:4px">${JSON.stringify(data.raw_keys, null, 2)}</pre>
+        </div>`
+      }
+
+      if (data.raw_data) {
+        html += `<div class="fbox">
+          <div class="fk">Ragic 完整 raw_data（找含 IMG 或圖片檔名的欄位）</div>
+          <pre style="margin-top:4px">${JSON.stringify(data.raw_data, null, 2)}</pre>
+        </div>`
+      }
+
+      $('sBb').innerHTML = html
+    }
+  } catch(e) {
+    $('sBs').innerHTML = tag('ERROR', 'err') + ' ' + e.message
+  }
+}
+
+// ── Step C: DB /detail ───────────────────────────────────────────────────────
+async function runC() {
+  const caseNo = $('caseNo').value.trim()
+  $('sC').style.display = 'block'
+  $('sCs').innerHTML = spin('查詢 /detail...')
+  $('sCb').innerHTML = ''
+
+  try {
+    const { data } = await apiFetch(`/api/v1/luqun-repair/detail?keyword=${encodeURIComponent(caseNo)}&page_size=10`)
+    const items = data.items || []
+    const ragicId = $('ragicId').value.trim()
+    const found = items.find(c =>
+      c.case_no === caseNo ||
+      String(c.ragic_id) === ragicId ||
+      c.case_no.toLowerCase() === caseNo.toLowerCase()
+    )
+
+    if (!found) {
+      $('sCs').innerHTML = tag('未找到', 'warn') + ` 搜尋「${caseNo}」，共 ${items.length} 筆，無符合`
+      $('sCb').innerHTML = items.length > 0
+        ? `<pre>前幾筆案件編號：\n${items.slice(0,5).map(c => `${c.ragic_id}: ${c.case_no}`).join('\n')}</pre>`
+        : '<p style="color:#888">DB 無資料或關鍵字不符</p>'
+      return
+    }
+
+    const imgs = found.images || []
+    $('sCs').innerHTML = imgs.length > 0
+      ? tag(`✓ DB 有 ${imgs.length} 張圖`, 'ok')
+      : tag('DB images = []', 'warn') + ' 需重新 sync 才有值（Drawer 已改走即時端點不受影響）'
+
+    let html = `<div class="fbox">
+      <div class="fk">ragic_id / case_no</div>
+      <div class="fv">${found.ragic_id} / ${found.case_no}</div>
+    </div>`
+
+    if (imgs.length > 0) {
+      html += '<div class="imgrow">'
+      imgs.forEach((img, i) => {
+        html += `<div class="imgwrap">
+          <img src="${img.url}" alt="${img.filename || ''}" onerror="this.style.outline='2px solid red'" />
+          <a href="${img.url}" target="_blank">${(img.filename || '圖' + (i+1)).substring(0,20)}</a>
+        </div>`
+      })
+      html += '</div>'
+    } else {
+      html += `<div class="fbox" style="background:#fff8f0;border-color:#fbd38d">
+        <div class="fk" style="color:#c05621">images_json 欄位狀態</div>
+        <div class="fv">空陣列 []<br>→ 同步後會填入；Drawer 開啟時已走即時端點補圖</div>
+      </div>`
+    }
+    $('sCb').innerHTML = html
+
+  } catch(e) {
+    $('sCs').innerHTML = tag('ERROR', 'err') + ' ' + e.message
+  }
+}
+
+// ── Step D: raw Ragic JSON ────────────────────────────────────────────────────
+async function runD() {
+  const ragicId = $('ragicId').value.trim()
+  $('sD').style.display = 'block'
+  $('sDs').innerHTML = spin(`呼叫 Ragic fetch_one(${ragicId}) 原始 JSON...`)
+  $('sDb').innerHTML = ''
+
+  try {
+    const { data } = await apiFetch(`/api/v1/luqun-repair/case-images/${encodeURIComponent(ragicId)}`)
+
+    const imgs = data.images || []
+    $('sDs').innerHTML = tag(imgs.length > 0 ? `有 ${imgs.length} 張` : '無圖', imgs.length > 0 ? 'ok' : 'warn')
+
+    $('sDb').innerHTML = `
+      <p style="font-size:11px;color:#666;margin-bottom:5px">端點回傳完整 JSON：</p>
+      <pre>${JSON.stringify(data, null, 2)}</pre>
+      <p style="font-size:11px;color:#666;margin:8px 0 5px">
+        如果 images=[] 且確定 Ragic 有圖，請聯絡工程師確認 Ragic 圖片欄位名稱
+      </p>`
+  } catch(e) {
+    $('sDs').innerHTML = tag('ERROR', 'err') + ' ' + e.message
+  }
+}
+
+window.onload = () => {
+  const t = token()
+  if (t) { $('jwt').value = t; log('Token 已從 localStorage 自動讀取') }
+  else log('⚠ 未找到 Token，請先登入 Portal 再開此頁')
+}
+</script>
+</body>
+</html>

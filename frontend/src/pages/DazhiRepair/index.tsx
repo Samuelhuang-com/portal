@@ -11,14 +11,14 @@ import {
   Row, Col, Card, Statistic, Table, Tag, Button, Space,
   Typography, Breadcrumb, Select, Spin, Alert, Tabs,
   Tooltip, Badge, Drawer, Descriptions, message, Modal,
-  Empty, Divider, Progress,
+  Empty, Divider, Progress, Image,
 } from 'antd'
 import {
   HomeOutlined, ReloadOutlined, ToolOutlined,
   CheckCircleOutlined, ClockCircleOutlined, ExclamationCircleOutlined,
   DashboardOutlined, FileTextOutlined, DownloadOutlined,
   WarningOutlined, DollarOutlined, SearchOutlined, BuildOutlined,
-  SyncOutlined, ApiOutlined, QuestionCircleOutlined,
+  SyncOutlined, ApiOutlined, QuestionCircleOutlined, PictureOutlined,
 } from '@ant-design/icons'
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
@@ -242,20 +242,21 @@ function QueryBar({
 function CaseDetailDrawer({
   caseData, onClose,
 }: { caseData: RepairCase | null; onClose: () => void }) {
-  const [liveImages, setLiveImages] = useState<CaseImageItem[]>([])
+  const [images, setImages] = useState<CaseImageItem[]>([])
   const [imgLoading, setImgLoading] = useState(false)
 
   useEffect(() => {
-    if (!caseData?.ragic_id) { setLiveImages([]); return }
+    setImages([])
+    if (!caseData?.ragic_id) return
+    // 每次開 Drawer 都主動打 /db-images（直接讀 DB，不依賴 caseData.images 也不打 Ragic）
     setImgLoading(true)
     fetchCaseImages(caseData.ragic_id)
-      .then(imgs => setLiveImages(imgs))
-      .catch(() => setLiveImages([]))
+      .then(imgs => setImages(imgs))
+      .catch(() => setImages([]))
       .finally(() => setImgLoading(false))
   }, [caseData?.ragic_id])
 
   if (!caseData) return null
-  const images = liveImages.length > 0 ? liveImages : (caseData.images ?? [])
 
   return (
     <Drawer
@@ -302,17 +303,18 @@ function CaseDetailDrawer({
         </Descriptions.Item>
         <Descriptions.Item label="財務備註">{caseData.finance_note || '-'}</Descriptions.Item>
         <Descriptions.Item label="維修圖片">
-          {imgLoading
-            ? <span style={{ color: '#aaa', fontSize: 12 }}>圖片載入中…</span>
-            : images.length > 0
-              ? <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {images.length > 0
+            ? <Image.PreviewGroup>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                   {images.map((img, i) => (
-                    <a key={i} href={img.url} target="_blank" rel="noopener noreferrer"
-                      style={{ fontSize: 13, color: '#1677ff', display: 'flex', alignItems: 'center', gap: 4 }}>
-                      📷 {img.filename || `圖片${i + 1}`}
-                    </a>
+                    <Image key={i} width={72} height={72} src={img.url}
+                      alt={img.filename || `圖片${i + 1}`}
+                      style={{ objectFit: 'cover', borderRadius: 4, cursor: 'pointer' }} />
                   ))}
                 </div>
+              </Image.PreviewGroup>
+            : imgLoading
+              ? <span style={{ color: '#aaa', fontSize: 12 }}>圖片載入中…</span>
               : <span style={{ color: '#ccc', fontSize: 12 }}>-</span>
           }
         </Descriptions.Item>
@@ -1550,6 +1552,18 @@ function DetailTab({
   const [result, setResult]         = useState<DetailResult | null>(null)
   const [loading, setLoading]       = useState(false)
   const [drawerCase, setDrawerCase] = useState<RepairCase | null>(null)
+  const [drawerImages, setDrawerImages] = useState<CaseImageItem[]>([])
+  const [drawerImgLoading, setDrawerImgLoading] = useState(false)
+
+  useEffect(() => {
+    setDrawerImages([])
+    if (!drawerCase?.ragic_id) return
+    setDrawerImgLoading(true)
+    fetchCaseImages(drawerCase.ragic_id)
+      .then(imgs => setDrawerImages(imgs))
+      .catch(() => setDrawerImages([]))
+      .finally(() => setDrawerImgLoading(false))
+  }, [drawerCase?.ragic_id])
 
   // 搜尋條件
   const [qYear,   setQYear]   = useState<number | undefined>(year || undefined)
@@ -1586,7 +1600,14 @@ function DetailTab({
     { title: '報修編號', dataIndex: 'case_no', width: 110, ellipsis: true,
       render: (v, row) => <a onClick={() => setDrawerCase(row)} style={{ color: '#1B3A5C' }}>{v || row.ragic_id}</a> },
     { title: '標題', dataIndex: 'title', ellipsis: true, minWidth: 180,
-      render: (v, row) => <a onClick={() => setDrawerCase(row)} style={{ color: '#333' }}>{v || '-'}</a> },
+      render: (v, row) => (
+        <a onClick={() => setDrawerCase(row)} style={{ color: '#333', display: 'flex', alignItems: 'center', gap: 4 }}>
+          {v || '-'}
+          {(row.images ?? []).length > 0 && (
+            <PictureOutlined style={{ color: '#4BA8E8', fontSize: 13, flexShrink: 0 }} title="有維修圖片" />
+          )}
+        </a>
+      )},
     { title: '類型', dataIndex: 'repair_type', width: 80 },
     { title: '樓層', dataIndex: 'floor', width: 70, ellipsis: true },
     { title: '報修人', dataIndex: 'reporter_name', width: 80, ellipsis: true },
@@ -1728,6 +1749,28 @@ function DetailTab({
             <Descriptions.Item label="扣款事項">{drawerCase.deduction_item || '-'}</Descriptions.Item>
             <Descriptions.Item label="扣款費用">{fmtMoney(drawerCase.deduction_fee)}</Descriptions.Item>
             <Descriptions.Item label="財務備註">{drawerCase.finance_note || '-'}</Descriptions.Item>
+            <Descriptions.Item label="維修圖片">
+              {drawerImgLoading ? (
+                <Spin size="small" />
+              ) : drawerImages.length > 0 ? (
+                <Image.PreviewGroup>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                    {drawerImages.map((img, i) => (
+                      <Image
+                        key={i}
+                        src={img.url}
+                        width={80}
+                        height={80}
+                        style={{ objectFit: 'cover', borderRadius: 4, border: '1px solid #eee' }}
+                        alt={img.filename}
+                      />
+                    ))}
+                  </div>
+                </Image.PreviewGroup>
+              ) : (
+                <span style={{ color: '#aaa' }}>—</span>
+              )}
+            </Descriptions.Item>
           </Descriptions>
         )}
       </Drawer>

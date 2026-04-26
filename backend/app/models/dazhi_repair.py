@@ -45,6 +45,7 @@ class DazhiRepairCase(Base):
     is_room_case:     Mapped[bool]  = mapped_column(Boolean,     default=False)
     room_no:          Mapped[str]   = mapped_column(String(20),  default="")
     room_category:    Mapped[str]   = mapped_column(String(50),  default="")
+    images_json:      Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
     synced_at:        Mapped[datetime] = mapped_column(DateTime, default=twnow)
 
     @property
@@ -56,6 +57,15 @@ class DazhiRepairCase(Base):
     def is_excluded_flag(self) -> bool:
         """RepairCase 相容屬性：排除「取消」等不計入統計的案件"""
         return self.status.strip() in {"取消"}
+
+    def _parse_images_json(self) -> list:
+        import json
+        if not self.images_json:
+            return []
+        try:
+            return json.loads(self.images_json)
+        except Exception:
+            return []
 
     def to_dict(self) -> dict:
         """轉換為 API 回傳用 dict（與 RepairCase.to_dict 介面相同）"""
@@ -95,4 +105,5 @@ class DazhiRepairCase(Base):
             "is_room_case":     self.is_room_case,
             "room_no":          self.room_no,
             "room_category":    self.room_category,
+            "images":           self._parse_images_json(),
         }

@@ -46,7 +46,11 @@ git commit -m "fix: 說明內容"
 git push
 ```
 
-> `.env`、`portal.db` 在 `.gitignore` 裡，不會被推上去。
+> **所有程式碼與檔案異動都會被推上 GitHub**，並在下次 `update.bat` 時同步到正式機。  
+> 唯獨以下項目在 `.gitignore` 裡，永遠不會被推上去：
+> - `backend/.env`（API 金鑰、JWT 密鑰等敏感設定）
+> - `backend/portal.db`、`*.sqlite`（資料庫）
+> - `CLAUDE.md`、`_Runme.md`、`docs/CLAUDE_SOP.md`（Claude AI 開發過程的對話與設定）
 
 ---
 

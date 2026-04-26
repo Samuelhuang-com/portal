@@ -338,9 +338,28 @@ def get_detail(
     )
 
 
+# ── /db-images/{ragic_id} — 直接從 DB 讀 images_json，不打 Ragic ─────────────
+
+@router.get("/db-images/{ragic_id}", summary="直接從 DB 讀取案件圖片（不依賴 Ragic）")
+def get_db_images(ragic_id: str, db: Session = Depends(get_db)):
+    """
+    從本地 SQLite dazhi_repair_case.images_json 讀取圖片，完全不打 Ragic。
+    Drawer 優先用此端點；Ragic 版本 /images/{ragic_id} 作為 fallback。
+    """
+    import json
+    case = db.get(DazhiRepairCase, ragic_id)
+    if not case:
+        return {"ragic_id": ragic_id, "images": [], "source": "db_not_found"}
+    try:
+        images = json.loads(case.images_json) if case.images_json else []
+    except Exception:
+        images = []
+    return {"ragic_id": ragic_id, "images": images, "source": "db"}
+
+
 # ── /images/{ragic_id} ────────────────────────────────────────────────────────
 
-@router.get("/images/{ragic_id}", summary="取得單筆案件的圖片 URL 清單")
+@router.get("/images/{ragic_id}", summary="取得單筆案件的圖片 URL 清單（Ragic 即時）")
 async def get_case_images(ragic_id: str):
     """
     取得指定案件的圖片 URL。

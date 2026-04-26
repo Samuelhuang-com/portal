@@ -8,6 +8,7 @@
 
 不改動任何 RepairCase 欄位解析邏輯，確保統計與同步行為一致。
 """
+import json
 import logging
 from datetime import datetime, timezone
 from app.core.time import twnow
@@ -82,6 +83,7 @@ async def sync_from_ragic() -> dict:
                     existing.is_room_case      = case.is_room_case
                     existing.room_no           = case.room_no
                     existing.room_category     = case.room_category
+                    existing.images_json       = json.dumps(case.images, ensure_ascii=False) if case.images else None
                     existing.synced_at         = now
                 else:
                     db.add(LuqunRepairCase(
@@ -118,6 +120,7 @@ async def sync_from_ragic() -> dict:
                         is_room_case       = case.is_room_case,
                         room_no            = case.room_no,
                         room_category      = case.room_category,
+                        images_json        = json.dumps(case.images, ensure_ascii=False) if case.images else None,
                         synced_at          = now,
                     ))
                 upserted += 1

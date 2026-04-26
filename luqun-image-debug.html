@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<title>樂群圖片診斷工具</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, sans-serif; background: #f0f4f8; color: #1B3A5C; padding: 24px; }
+  h1 { font-size: 18px; font-weight: 600; margin-bottom: 16px; color: #1B3A5C; }
+  h2 { font-size: 14px; font-weight: 600; margin: 16px 0 8px; color: #1B3A5C; }
+  .card { background: #fff; border-radius: 8px; border: 1px solid #e0e7ef; padding: 16px; margin-bottom: 16px; }
+  label { font-size: 12px; color: #666; display: block; margin-bottom: 4px; }
+  input[type=text], input[type=password] {
+    width: 100%; padding: 8px 10px; border: 1px solid #d0dae8; border-radius: 6px;
+    font-size: 13px; color: #1B3A5C; background: #f8fafc; margin-bottom: 10px;
+  }
+  button {
+    padding: 8px 20px; border-radius: 6px; border: none; cursor: pointer;
+    font-size: 13px; font-weight: 600; color: #fff;
+  }
+  .btn-primary { background: #1B3A5C; }
+  .btn-primary:hover { background: #2a5285; }
+  .btn-sm { padding: 4px 12px; font-size: 12px; background: #4BA8E8; }
+  .result { font-size: 12px; line-height: 1.6; }
+  .step { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid #f0f4f8; }
+  .step:last-child { border-bottom: none; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
+  .badge-ok { background: #f0fff4; color: #276749; border: 1px solid #68d391; }
+  .badge-err { background: #fff5f5; color: #c53030; border: 1px solid #fc8181; }
+  .badge-info { background: #ebf8ff; color: #2b6cb0; border: 1px solid #90cdf4; }
+  .badge-warn { background: #fffbeb; color: #92400e; border: 1px solid #fcd34d; }
+  .field-box { background: #f8fafc; border: 1px solid #e0e7ef; border-radius: 6px; padding: 8px 12px; margin-bottom: 6px; }
+  .field-name { font-size: 11px; color: #888; }
+  .field-val { font-size: 12px; color: #1B3A5C; word-break: break-all; margin-top: 2px; }
+  .img-grid { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; }
+  .img-item { text-align: center; }
+  .img-item img { width: 120px; height: 120px; object-fit: cover; border-radius: 6px; border: 1px solid #e0e7ef; display: block; }
+  .img-item .img-label { font-size: 10px; color: #888; margin-top: 4px; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  pre { font-size: 11px; color: #444; background: #f8fafc; border: 1px solid #e8edf2; border-radius: 4px; padding: 8px; overflow: auto; max-height: 200px; white-space: pre-wrap; word-break: break-all; margin-top: 6px; }
+  .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #ccc; border-top-color: #4BA8E8; border-radius: 50%; animation: spin .7s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .row { display: flex; gap: 10px; }
+  .row .col { flex: 1; }
+</style>
+</head>
+<body>
+
+<h1>🔍 樂群維修圖片診斷工具</h1>
+
+<div class="card">
+  <h2>Step 1 — 設定連線</h2>
+
+  <div class="row">
+    <div class="col">
+      <label>後端 URL（預設 localhost:8000）</label>
+      <input id="apiBase" type="text" value="http://localhost:8000/api/v1" />
+    </div>
+    <div class="col">
+      <label>報修單編號</label>
+      <input id="caseNo" type="text" value="ln202604-046" />
+    </div>
+  </div>
+
+  <label>JWT Token（從 Portal 登入後，開 DevTools → Application → LocalStorage → token 欄位複製）</label>
+  <input id="jwt" type="password" placeholder="eyJhbGci..." />
+
+  <button class="btn-primary" onclick="runDiag()">開始診斷</button>
+  <button class="btn-sm" style="margin-left:10px;" onclick="getTokenFromPage()">自動抓 Token</button>
+</div>
+
+<div id="results" style="display:none;">
+
+  <div class="card" id="card-rawrecord">
+    <h2>Step 2 — Ragic 原始資料（主表 + Detail）</h2>
+    <div id="rawrecord-status"><span class="spinner"></span> 查詢中…</div>
+    <div id="rawrecord-body"></div>
+  </div>
+
+  <div class="card" id="card-caseimages">
+    <h2>Step 3 — 新端點 /case-images/{ragic_id}</h2>
+    <div id="caseimages-status"><span class="spinner"></span> 等待 ragic_id…</div>
+    <div id="caseimages-body"></div>
+  </div>
+
+  <div class="card" id="card-dbrecord">
+    <h2>Step 4 — DB 中的案件（dashboard API 回傳）</h2>
+    <div id="dbrecord-status"><span class="spinner"></span> 查詢 dashboard…</div>
+    <div id="dbrecord-body"></div>
+  </div>
+
+</div>
+
+<script>
+const $ = id => document.getElementById(id)
+
+function getTokenFromPage() {
+  const t = localStorage.getItem('token') || localStorage.getItem('access_token') || localStorage.getItem('jwt')
+  if (t) { $('jwt').value = t; alert('Token 已取得！') }
+  else { alert('找不到 localStorage token，請手動貼上') }
+}
+
+function hdr() {
+  return { 'Authorization': 'Bearer ' + $('jwt').value.trim(), 'Content-Type': 'application/json' }
+}
+
+function badge(text, type) {
+  return `<span class="badge badge-${type}">${text}</span>`
+}
+
+async function runDiag() {
+  const base = $('apiBase').value.trim().replace(/\/$/, '')
+  const caseNo = $('caseNo').value.trim()
+  $('results').style.display = 'block'
+
+  await diagRawRecord(base, caseNo)
+}
+
+async function diagRawRecord(base, caseNo) {
+  const el = $('rawrecord-status')
+  const body = $('rawrecord-body')
+  el.innerHTML = '<span class="spinner"></span> 呼叫 /raw-record...'
+  body.innerHTML = ''
+
+  try {
+    const r = await fetch(`${base}/luqun-repair/raw-record/${encodeURIComponent(caseNo)}`, { headers: hdr() })
+    const data = await r.json()
+
+    if (data.error) {
+      el.innerHTML = badge('ERROR', 'err') + ' ' + data.error
+      return
+    }
+
+    const ragicId = data.ragic_id
+    el.innerHTML = badge('OK', 'ok') + ` ragic_id = <strong>${ragicId}</strong>`
+
+    // 顯示所有圖片相關欄位
+    const imageKeys = ['維修照上傳', '上傳圖片', '維修照', '圖片']
+    const mainFull = data.main_list_full || {}
+    const allKeys = data.main_list_all_keys || []
+    const detailKeys = data.detail_all_keys || []
+
+    let html = `<p class="result" style="margin:8px 0 4px;color:#666;">主表共 ${allKeys.length} 個欄位　Detail 共 ${detailKeys.length} 個欄位</p>`
+
+    html += '<h2 style="font-size:13px;margin:10px 0 6px;">圖片欄位（主表值）</h2>'
+    let hasAnyImg = false
+    imageKeys.forEach(k => {
+      const v = mainFull[k]
+      const found = v !== undefined && v !== null && v !== ''
+      hasAnyImg = hasAnyImg || found
+      html += `<div class="field-box">
+        <div class="field-name">${k} ${found ? badge('有值', 'ok') : badge('空/不存在', 'warn')}</div>
+        <div class="field-val">${found ? String(v).substring(0, 300) : '（無值）'}</div>
+      </div>`
+    })
+
+    if (!hasAnyImg) {
+      html += `<p class="result" style="color:#c05621;margin-top:6px;">⚠ 主表無圖片欄位值 → sync 時 images 必定為空，需走 /case-images 端點即時抓</p>`
+    }
+
+    // 主表是否有任何含 "圖" 或 "照" 或 "upload" 的欄位
+    const imgLikeKeys = allKeys.filter(k => /圖|照|upload|photo|image/i.test(k))
+    if (imgLikeKeys.length > 0) {
+      html += `<p class="result" style="margin-top:6px;">主表中含「圖/照/upload」的欄位：${imgLikeKeys.map(k => `<code>${k}</code> = ${String(mainFull[k] || '').substring(0,60)}`).join('　')}</p>`
+    }
+
+    body.innerHTML = html
+
+    // 繼續抓 case-images
+    await diagCaseImages(base, String(ragicId))
+    await diagDbRecord(base, caseNo)
+
+  } catch (e) {
+    el.innerHTML = badge('ERROR', 'err') + ' ' + e.message
+    $('caseimages-status').innerHTML = badge('跳過', 'warn') + ' 需先完成 Step 2'
+    $('dbrecord-status').innerHTML = badge('跳過', 'warn') + ' 需先完成 Step 2'
+  }
+}
+
+async function diagCaseImages(base, ragicId) {
+  const el = $('caseimages-status')
+  const body = $('caseimages-body')
+  el.innerHTML = `<span class="spinner"></span> 呼叫 /case-images/${ragicId}...`
+  body.innerHTML = ''
+
+  try {
+    const r = await fetch(`${base}/luqun-repair/case-images/${encodeURIComponent(ragicId)}`, { headers: hdr() })
+    const data = await r.json()
+
+    if (!r.ok) {
+      el.innerHTML = badge('HTTP ' + r.status, 'err') + ' ' + (data.detail || '')
+      return
+    }
+
+    const images = data.images || []
+    el.innerHTML = badge(images.length > 0 ? `找到 ${images.length} 張圖` : '無圖片', images.length > 0 ? 'ok' : 'warn')
+
+    if (images.length === 0) {
+      body.innerHTML = `<p class="result" style="color:#888;">端點回傳空陣列 → Ragic detail 中也沒有圖片欄位，或欄位名稱不符</p>
+        <pre>${JSON.stringify(data, null, 2)}</pre>`
+      return
+    }
+
+    let html = '<div class="img-grid">'
+    images.forEach((img, i) => {
+      html += `<div class="img-item">
+        <img src="${img.url}" alt="${img.filename}" onerror="this.style.border='2px solid red';this.alt='載入失敗';" />
+        <div class="img-label">${img.filename || '圖片' + (i+1)}</div>
+        <div style="font-size:10px;color:#aaa;margin-top:2px;">
+          <a href="${img.url}" target="_blank" style="color:#4BA8E8;">開啟</a>
+        </div>
+      </div>`
+    })
+    html += '</div>'
+    html += `<pre style="margin-top:10px;">${JSON.stringify(images, null, 2)}</pre>`
+    body.innerHTML = html
+
+  } catch (e) {
+    el.innerHTML = badge('ERROR', 'err') + ' ' + e.message
+  }
+}
+
+async function diagDbRecord(base, caseNo) {
+  const el = $('dbrecord-status')
+  const body = $('dbrecord-body')
+  el.innerHTML = '<span class="spinner"></span> 查詢 /detail...'
+
+  try {
+    const r = await fetch(`${base}/luqun-repair/detail?keyword=${encodeURIComponent(caseNo)}&page_size=5`, { headers: hdr() })
+    const data = await r.json()
+    const items = data.items || []
+    const found = items.find(c => c.case_no === caseNo || c.ragic_id.toString() === caseNo)
+
+    if (!found) {
+      el.innerHTML = badge('未找到', 'warn') + ' DB 中無此案件'
+      body.innerHTML = `<p class="result" style="color:#888;">搜尋結果共 ${items.length} 筆，無完全符合</p>`
+      return
+    }
+
+    const imgs = found.images || []
+    el.innerHTML = badge(imgs.length > 0 ? `DB 有 ${imgs.length} 張圖` : 'DB 無圖片', imgs.length > 0 ? 'ok' : 'warn')
+
+    let html = `<div class="field-box">
+      <div class="field-name">images 欄位（DB 儲存值）${badge(imgs.length > 0 ? '有圖' : '空陣列', imgs.length > 0 ? 'ok' : 'err')}</div>
+      <div class="field-val">${imgs.length > 0 ? JSON.stringify(imgs) : '[]　← 需要重新同步才能填入'}</div>
+    </div>`
+
+    if (imgs.length > 0) {
+      html += '<div class="img-grid">'
+      imgs.forEach((img, i) => {
+        html += `<div class="img-item">
+          <img src="${img.url}" alt="${img.filename}" onerror="this.style.border='2px solid red';" />
+          <div class="img-label">${img.filename || '圖片' + (i+1)}</div>
+        </div>`
+      })
+      html += '</div>'
+    } else {
+      html += `<p class="result" style="color:#c05621;margin-top:6px;">DB images = []，但前端 Drawer 應已改為走 /case-images 即時抓，不依賴 DB</p>`
+    }
+    body.innerHTML = html
+
+  } catch (e) {
+    el.innerHTML = badge('ERROR', 'err') + ' ' + e.message
+  }
+}
+</script>
+</body>
+</html>

@@ -114,11 +114,27 @@ export function buildExportUrl(params: {
   return `${apiBase}/dazhi-repair/export?${query.toString()}`
 }
 
-// ── 單筆案件圖片（lazy fetch from Ragic cache）────────────────────────────────
+// ── 單筆案件圖片 ─────────────────────────────────────────────────────────────
 export interface CaseImageItem { url: string; filename: string }
+
+/**
+ * 取得案件圖片：
+ * 1. 優先從 DB /db-images（不打 Ragic，最快最可靠）
+ * 2. DB 無圖時 fallback 到 /images（即時打 Ragic）
+ */
 export async function fetchCaseImages(ragicId: string): Promise<CaseImageItem[]> {
-  const res = await apiClient.get(`${BASE}/images/${ragicId}`)
-  return res.data?.images ?? []
+  try {
+    const res = await apiClient.get(`${BASE}/db-images/${ragicId}`)
+    const imgs: CaseImageItem[] = res.data?.images ?? []
+    if (imgs.length > 0) return imgs
+  } catch { /* fallthrough */ }
+  // fallback: Ragic 即時
+  try {
+    const res = await apiClient.get(`${BASE}/images/${ragicId}`)
+    return res.data?.images ?? []
+  } catch {
+    return []
+  }
 }
 
 // ── Ragic 欄位 debug ─────────────────────────────────────────────────────────
