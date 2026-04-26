@@ -25,6 +25,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.dependencies import get_current_user, require_roles
 from app.models.rf_inspection import RFInspectionBatch, RFInspectionItem
 from app.schemas.rf_inspection import (
     RFInspectionBatchOut, RFInspectionItemOut, RFInspectionBatchKPI,
@@ -33,7 +34,7 @@ from app.schemas.rf_inspection import (
 from app.services.rf_inspection_sync import sync_from_ragic
 from app.services.ragic_adapter import RagicAdapter
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_user)])
 
 # ── 狀態設定 ──────────────────────────────────────────────────────────────────
 STATUS_LABELS = {
@@ -103,7 +104,7 @@ def _calc_kpi(items: list[RFInspectionItem]) -> RFInspectionBatchKPI:
 # ══════════════════════════════════════════════════════════════════════════════
 # POST /sync
 # ══════════════════════════════════════════════════════════════════════════════
-@router.post("/sync", summary="從 Ragic 同步 RF 巡檢資料（背景執行）")
+@router.post("/sync", summary="從 Ragic 同步 RF 巡檢資料（背景執行）", dependencies=[Depends(require_roles("system_admin", "module_manager"))])
 async def sync_rf_inspection(background_tasks: BackgroundTasks):
     """觸發背景同步：Ragic → SQLite，立即回傳，不阻塞畫面"""
     background_tasks.add_task(sync_from_ragic)
@@ -386,7 +387,7 @@ def get_item_history(
 # ══════════════════════════════════════════════════════════════════════════════
 # GET /debug/ragic-raw
 # ══════════════════════════════════════════════════════════════════════════════
-@router.get("/debug/ragic-raw", summary="[除錯] 顯示 Ragic Sheet 1 原始欄位")
+@router.get("/debug/ragic-raw", summary="[除錯] 顯示 Ragic Sheet 1 原始欄位", dependencies=[Depends(require_roles("system_admin", "module_manager"))])
 async def debug_ragic_raw():
     from app.services.rf_inspection_sync import (
         RF_SERVER_URL, RF_ACCOUNT, RF_SHEET_PATH, SESSION_FIELDS, _extract_check_items,

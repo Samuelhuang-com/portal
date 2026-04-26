@@ -32,10 +32,11 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.time import twnow
+from app.dependencies import get_current_user, require_roles
 from app.models.ihg_room_maintenance import IHGRoomMaintenanceMaster, IHGRoomMaintenanceDetail
 from app.services.ihg_room_maintenance_sync import sync_from_ragic
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_user)])
 
 # ── 保養檢查欄位：忽略清單 ────────────────────────────────────────────────────
 # 明確不屬於保養檢查項目的欄位名稱（精確匹配）
@@ -98,7 +99,7 @@ def _room_sort_key(room_no: str) -> tuple:
 
 # ── GET /debug-raw ────────────────────────────────────────────────────────────
 
-@router.get("/debug-raw", summary="[除錯] 查看 Ragic IHG Sheet 4 原始欄位結構")
+@router.get("/debug-raw", summary="[除錯] 查看 Ragic IHG Sheet 4 原始欄位結構", dependencies=[Depends(require_roles("system_admin", "module_manager"))])
 async def debug_raw():
     """
     直接回傳 Ragic Sheet 4 第一筆記錄的原始 key/value，
@@ -147,7 +148,7 @@ async def debug_raw():
 
 # ── POST /sync ────────────────────────────────────────────────────────────────
 
-@router.post("/sync", summary="從 Ragic 同步 IHG 客房保養資料（背景執行）")
+@router.post("/sync", summary="從 Ragic 同步 IHG 客房保養資料（背景執行）", dependencies=[Depends(require_roles("system_admin", "module_manager"))])
 async def sync_records(background_tasks: BackgroundTasks):
     """觸發背景同步：Ragic Sheet 4 → ihg_rm_master + ihg_rm_detail"""
     background_tasks.add_task(sync_from_ragic)

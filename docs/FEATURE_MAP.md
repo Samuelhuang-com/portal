@@ -87,7 +87,8 @@
 | 前端 API | `frontend/src/api/ihgRoomMaintenance.ts` |
 | 前端路由 | `/hotel/ihg-room-maintenance` |
 | Ragic 來源 | `ap12.ragic.com / soutlet001 / periodic-maintenance/4` |
-| **缺口** | 季度視角 (`?view=quarter`)、IHG 代碼對照表 尚未開發 |
+| 季度視角 | `?view=quarter` 前端聚合，月份/季度切換 Segmented，QuarterCellComp，季度 Drawer |
+| **缺口** | IHG 代碼對照表 尚未開發 |
 
 ---
 
@@ -332,19 +333,43 @@
 
 ---
 
+## 安全與基礎補強（已完成）
+
+| 項目 | 路徑 | 說明 |
+|------|------|------|
+| 全域 API 身份驗證 | 19 個 `backend/app/routers/*.py` | 補 `APIRouter(dependencies=[Depends(get_current_user)])` |
+| sync/debug 角色限制 | 13 個 router 的 30 個 endpoint | 補 `require_roles("system_admin","module_manager")` |
+| 前端 JWT 統一（保全） | `frontend/src/api/securityPatrol.ts` | 改用 `apiClient`，BASE 移除 `/api/v1` |
+| 前端 JWT 統一（商場巡檢） | `frontend/src/api/mallFacilityInspection.ts` | 改用 `apiClient`，BASE 移除 `/api/v1` |
+| DEV bypass 修正 | `frontend/src/pages/Login/index.tsx` | `devLogin()` 改呼叫真實 `/api/v1/auth/login` |
+| 商場巡檢 0/0=0% 修正 | `backend/app/schemas/mall_dashboard.py`, `routers/mall_dashboard.py`, `frontend/src/types/mallDashboard.ts`, `pages/MallDashboard/index.tsx` | `has_data` 欄位控制顯示邏輯 |
+| IHG 保養表季度視角 | `frontend/src/pages/IHGRoomMaintenance/index.tsx` | `?view=quarter` URL 參數切換；前端聚合 Q1–Q4，不需新 API |
+
+---
+
 ## 待開發模組（缺口）
 
 > 來源：04-23 整合會議決議，詳見 `docs/DEV_LOG.md` 與 `04-23整合會議_差異分析.xlsx`
 
-| 功能 | 預計路徑 | 優先級 | 對應會議決議 |
-|------|---------|--------|------------|
-| 事件單 (上級交辦/緊急事件) | `models/event_order.py`, `routers/event_orders.py` | P1 | §事件單與導覽 |
-| 案件進度雙欄位 (case_progress) | `models/luqun_repair.py`, `dazhi_repair.py` | P1 | §案件雙欄位 |
-| 作業類型結構化欄位 (work_type) | `models/luqun_repair.py`, `dazhi_repair.py` | P1 | §作業類型 |
-| IHG 代碼對照表 | `models/ihg_code_reference.py`, `routers/ihg_codes.py` | P2 | §客房保養/巡檢 |
-| IHG 保養表季度視角 | `routers/ihg_room_maintenance.py` (?view=quarter) | P1 | §客房保養/巡檢 |
-| 預算使用月份欄位 (YYYY-MM) | `core/budget_database.py` budget_transactions | P2 | §預算與請款 |
-| 財務解鎖/留痕機制 | `core/budget_database.py` budget_adjustments | P2 | §預算與請款 |
-| 照片縮圖+放大 Modal | `frontend/pages/LuqunRepair/`, `DazhiRepair/` | P2 | §儀表板導覽 |
+| 功能 | 預計路徑 | 優先級 | 備註 |
+|------|---------|--------|------|
+| 事件單 (上級交辦/緊急事件) | `models/event_order.py`, `routers/event_orders.py` | P1 | Ragic 端欄位尚未就緒，待確認後開發 |
+| 案件進度雙欄位 (case_progress) | `models/luqun_repair.py`, `dazhi_repair.py` | P1 | 同上，Ragic 端未完成 |
+| 作業類型結構化欄位 (work_type) | `models/luqun_repair.py`, `dazhi_repair.py` | P1 | 同上 |
+| IHG 代碼對照表 | `models/ihg_code_reference.py`, `routers/ihg_codes.py` | P2 | 見下方說明；正式定義文件版本待確認 |
+| 預算使用月份欄位 (YYYY-MM) | `core/budget_database.py` → `budget_transactions.budget_usage_month` | P2 | 欄位尚缺，待財務確認口徑後新增 |
+| 財務解鎖/留痕機制 | `core/budget_database.py` → `budget_adjustments` table | P2 | 記錄異動歷程，需設計 schema 後開發 |
+| 照片縮圖+放大 Modal | `frontend/pages/LuqunRepair/`, `DazhiRepair/` Drawer | P2 | 目前只有文字連結，有時間再處理 |
 | 問號 Tooltip（KPI 說明） | 各前端儀表板頁面 | P2 | §儀表板導覽 |
+
+### IHG 代碼對照表說明
+
+IHG 保養表裡有許多 **數字代碼**（如 `5.2`、`3.1`…），代表不同的保養項目類別或驗收標準。目前 Ragic 的欄位直接存這些原始代碼，前端直接顯示，使用者看不懂。
+
+**這個功能要做的事**：
+- 建一張 DB 表（`ihg_code_reference`）存 `code → 中文說明` 的對照
+- 提供 API 端點讓前端查詢（`GET /api/v1/ihg-codes`）
+- 前端在 Matrix 格子 Tooltip 或 Modal 明細中，把代碼換成可讀說明
+
+**為什麼還沒做**：IHG 代碼的正式定義文件版本尚未確認（DEV_LOG 2026-04-25 有記錄），需要業主提供完整對照表再建資料。
 | 五級權限矩陣 | `dependencies.py`, `models/role.py` | P2 | §數據品質與權限 |

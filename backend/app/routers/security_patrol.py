@@ -21,6 +21,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.dependencies import get_current_user, require_roles
 from app.models.security_patrol import SecurityPatrolBatch, SecurityPatrolItem
 from app.schemas.security_patrol import (
     PatrolBatchOut, PatrolItemOut, PatrolBatchKPI,
@@ -32,7 +33,7 @@ from app.services.security_patrol_sync import (
 from app.services.ragic_adapter import RagicAdapter
 from app.services.security_patrol_sync import SP_SERVER_URL, SP_ACCOUNT
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_user)])
 
 # ── 狀態設定 ──────────────────────────────────────────────────────────────────
 STATUS_LABELS = {
@@ -114,7 +115,7 @@ def _calc_kpi(items: list[SecurityPatrolItem]) -> PatrolBatchKPI:
 # ══════════════════════════════════════════════════════════════════════════════
 # POST /sync
 # ══════════════════════════════════════════════════════════════════════════════
-@router.post("/sync", summary="從 Ragic 同步保全巡檢資料（背景執行）")
+@router.post("/sync", summary="從 Ragic 同步保全巡檢資料（背景執行）", dependencies=[Depends(require_roles("system_admin", "module_manager"))])
 async def sync_patrol(
     background_tasks: BackgroundTasks,
     sheet_key: Optional[str] = Query(None, description="指定 sheet_key 同步（空白 = 全部）"),

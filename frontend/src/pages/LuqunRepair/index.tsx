@@ -18,7 +18,7 @@ import {
   CheckCircleOutlined, ClockCircleOutlined, ExclamationCircleOutlined,
   DashboardOutlined, FileTextOutlined, DownloadOutlined,
   WarningOutlined, DollarOutlined, SearchOutlined,
-  SyncOutlined, ApiOutlined,
+  SyncOutlined, ApiOutlined, QuestionCircleOutlined,
 } from '@ant-design/icons'
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
@@ -40,6 +40,7 @@ import type {
   RoomRepairTableData, DetailResult, FilterOptions, RepairCase,
 } from '@/types/luqunRepair'
 import { NAV_GROUP } from '@/constants/navLabels'
+import { LUQUN_KPI_DESC } from '@/constants/kpiDesc/luqunRepair'
 
 const { Title, Text } = Typography
 const { Option } = Select
@@ -153,11 +154,12 @@ function CaseListModal({
 // KPI 卡片子元件
 // ═════════════════════════════════════════════════════════════════════════════
 function KpiCard({
-  title, value, suffix = '', color, icon, sub, onClick,
+  title, value, suffix = '', color, icon, sub, onClick, desc,
 }: {
   title: string; value: string | number; suffix?: string
   color: string; icon: React.ReactNode; sub?: string
   onClick?: () => void
+  desc?: string  // KPI 卡說明，顯示為 ? Tooltip
 }) {
   return (
     <Card
@@ -171,7 +173,17 @@ function KpiCard({
         {value}
         {suffix && <span style={{ fontSize: 13, marginLeft: 4, fontWeight: 400 }}>{suffix}</span>}
       </div>
-      <div style={{ color: '#666', fontSize: 12, marginTop: 4 }}>{title}</div>
+      <div style={{ color: '#666', fontSize: 12, marginTop: 4 }}>
+        {title}
+        {desc && (
+          <Tooltip title={desc} placement="top">
+            <QuestionCircleOutlined
+              style={{ color: '#bbb', fontSize: 11, marginLeft: 4, cursor: 'help' }}
+              onClick={e => e.stopPropagation()}
+            />
+          </Tooltip>
+        )}
+      </div>
       {sub && <div style={{ color: '#999', fontSize: 11, marginTop: 2 }}>{sub}</div>}
       {onClick && <div style={{ color: '#bbb', fontSize: 10, marginTop: 3 }}>點擊查看明細</div>}
     </Card>
@@ -355,31 +367,37 @@ function DashboardTab({
       <div style={{ display: 'flex', gap: 12, marginBottom: 12, flexWrap: 'nowrap', overflowX: 'auto' }}>
         <div style={{ flex: '1 1 0', minWidth: 110 }}>
           <KpiCard title="本月相關案件" value={fmt(kpi.total)} color="#1B3A5C" icon={<ToolOutlined />}
-            sub="完工月＋未完成報修月" onClick={() => setKpiModal('total')} />
+            sub="完工月＋未完成報修月" onClick={() => setKpiModal('total')}
+            desc={LUQUN_KPI_DESC['本月相關案件']} />
         </div>
         <div style={{ flex: '1 1 0', minWidth: 110 }}>
           <KpiCard title="已完成件數" value={fmt(kpi.completed)} color="#52C41A" icon={<CheckCircleOutlined />}
             sub={`完成率 ${kpi.total > 0 ? fmtDec(kpi.completed / kpi.total * 100) : '-'}% ｜ 依完工時間`}
-            onClick={() => setKpiModal('completed')} />
+            onClick={() => setKpiModal('completed')}
+            desc={LUQUN_KPI_DESC['已完成件數']} />
         </div>
         <div style={{ flex: '1 1 0', minWidth: 110 }}>
           <KpiCard title="未完成件數" value={fmt(kpi.uncompleted)} color="#FF4D4F" icon={<ExclamationCircleOutlined />}
-            sub="無完工時間的案件" onClick={() => setKpiModal('uncompleted')} />
+            sub="無完工時間的案件" onClick={() => setKpiModal('uncompleted')}
+            desc={LUQUN_KPI_DESC['未完成件數']} />
         </div>
         <div style={{ flex: '1 1 0', minWidth: 110 }}>
           <KpiCard title="平均結案天數" value={kpi.avg_close_days != null ? fmtDec(kpi.avg_close_days, 1) : '-'}
             suffix="天" color="#4BA8E8" icon={<ClockCircleOutlined />}
-            onClick={() => setKpiModal('close_days')} />
+            onClick={() => setKpiModal('close_days')}
+            desc={LUQUN_KPI_DESC['平均結案天數']} />
         </div>
         <div style={{ flex: '1 1 0', minWidth: 110 }}>
           <KpiCard title="本月工時統計" value={fmtDec(kpi.total_work_hours, 2)} suffix="hr"
             color="#13C2C2" icon={<ClockCircleOutlined />}
             sub={`${fmtDec(kpi.total_work_hours / 24, 2)} 天（花費工時 ÷24）`}
-            onClick={() => setKpiModal('hours')} />
+            onClick={() => setKpiModal('hours')}
+            desc={LUQUN_KPI_DESC['本月工時統計']} />
         </div>
         <div style={{ flex: '1 1 0', minWidth: 110 }}>
           <KpiCard title="客房報修件數" value={fmt(kpi.room_cases)} color="#FA8C16" icon={<HomeOutlined />}
-            onClick={() => setKpiModal('room')} />
+            onClick={() => setKpiModal('room')}
+            desc={LUQUN_KPI_DESC['客房報修件數']} />
         </div>
       </div>
 
@@ -494,24 +512,24 @@ function DashboardTab({
           </Card>
         </div>
 
-        {/* 扣款專櫃（本月家數 + 金額） */}
+        {/* 扣款專櫃（全年家數 + 金額） */}
         <div style={{ flex: '1 1 0', cursor: 'pointer' }} onClick={() => setFeeModal('counter')}>
           <Card size="small" style={{ textAlign: 'center', borderTop: '3px solid #FA8C16', transition: 'box-shadow .15s' }}
             hoverable>
             <div style={{ color: '#FA8C16', fontSize: 26, marginBottom: 2 }}><DollarOutlined /></div>
             <div style={{ color: '#FA8C16', fontSize: 22, fontWeight: 700, lineHeight: 1.3 }}>
-              {kpi.total_counter_stores ?? 0} 家
+              {kpi.annual_counter_stores ?? 0} 家
             </div>
-            {(kpi.total_counter_fee ?? 0) > 0 && (
+            {(kpi.annual_counter_fee ?? 0) > 0 && (
               <div style={{ color: '#FA8C16', fontSize: 16, fontWeight: 600 }}>
-                {fmtMoney(kpi.total_counter_fee ?? 0)}
+                {fmtMoney(kpi.annual_counter_fee ?? 0)}
               </div>
             )}
             <div style={{ color: '#666', fontSize: 12, marginTop: 4 }}>扣款專櫃</div>
             <div style={{ color: '#999', fontSize: 11, marginTop: 2 }}>
-              {kpi.counter_store_names?.length
-                ? kpi.counter_store_names.slice(0, 2).join('、') + (kpi.counter_store_names.length > 2 ? '…' : '')
-                : '本月無扣款專櫃'}
+              {kpi.annual_counter_store_names?.length
+                ? kpi.annual_counter_store_names.slice(0, 2).join('、') + (kpi.annual_counter_store_names.length > 2 ? '…' : '')
+                : '全年無扣款專櫃'}
             </div>
             <div style={{ color: '#bbb', fontSize: 10, marginTop: 3 }}>點擊查看明細</div>
           </Card>
@@ -638,33 +656,34 @@ function DashboardTab({
         }
       </Modal>
 
-      {/* ── 扣款專櫃 明細 Modal（本月）─────────────────────────────────────── */}
+      {/* ── 扣款專櫃 明細 Modal（全年）─────────────────────────────────────── */}
       <Modal
-        title={<><DollarOutlined style={{ color: '#FA8C16', marginRight: 8 }} />扣款專櫃明細（本月 {year}年{month}月）</>}
+        title={<><DollarOutlined style={{ color: '#FA8C16', marginRight: 8 }} />扣款專櫃明細（全年 {year}年）</>}
         open={feeModal === 'counter'}
         onCancel={() => setFeeModal(null)}
         footer={<Button onClick={() => setFeeModal(null)}>關閉</Button>}
         width={1050}
       >
         <div style={{ marginBottom: 10 }}>
-          <Tag color="orange" style={{ fontSize: 13 }}>本月 {kpi.total_counter_stores ?? 0} 家</Tag>
-          {(kpi.counter_store_names?.length ?? 0) > 0 && (
+          <Tag color="orange" style={{ fontSize: 13 }}>全年 {kpi.annual_counter_stores ?? 0} 家</Tag>
+          {(kpi.annual_counter_store_names?.length ?? 0) > 0 && (
             <Tag color="default" style={{ fontSize: 11 }}>
-              {kpi.counter_store_names!.join('、')}
+              {kpi.annual_counter_store_names!.join('、')}
             </Tag>
           )}
-          <Tag style={{ fontSize: 12 }}>{kpi_counter_stores_detail?.length ?? 0} 筆案件</Tag>
+          <Tag style={{ fontSize: 12 }}>{annual_counter_detail?.length ?? 0} 筆案件</Tag>
         </div>
-        {(kpi_counter_stores_detail?.length ?? 0) === 0
-          ? <Empty description="本月無扣款專櫃資料" />
+        {(annual_counter_detail?.length ?? 0) === 0
+          ? <Empty description="全年無扣款專櫃資料" />
           : (
             <Table
               size="small"
-              dataSource={kpi_counter_stores_detail}
+              dataSource={annual_counter_detail}
               rowKey="ragic_id"
-              pagination={{ pageSize: 20 }}
+              scroll={{ x: 900 }}
+              pagination={{ pageSize: 20, showSizeChanger: false, showTotal: t => `共 ${t} 筆` }}
               columns={[
-                { title: '報修編號', dataIndex: 'case_no',               width: 120 },
+                { title: '報修編號', dataIndex: 'case_no',               width: 130, fixed: 'left' as const },
                 { title: '標題',     dataIndex: 'title',                  width: 180, ellipsis: true },
                 { title: '日期',     dataIndex: 'occurred_at',            width: 120 },
                 { title: '扣款專櫃', dataIndex: 'deduction_counter_name', width: 120,
@@ -1561,12 +1580,13 @@ function FeeStatsTab({ year }: { year: number }) {
       }
       if (val <= 0) return <span style={{ color: '#ddd' }}>-</span>
       const fd = FEE_DEFS.find(f => f.key === row.key)!
+      const displayVal = fd.key === 'deduction_counter' ? `${val} 家` : fmtMoney(val)
       return (
         <span
           style={cellStyle(val, fd.color, true)}
           onClick={() => setDrilldown({ feeKey: fd.key, month: m, feeLabel: fd.label, color: fd.color })}
         >
-          {fmtMoney(val)}
+          {displayVal}
         </span>
       )
     },
@@ -1593,9 +1613,15 @@ function FeeStatsTab({ year }: { year: number }) {
       fixed: 'right' as const,
       width: 110,
       align: 'right' as const,
-      render: (val: number, row: RowData) => (
-        <strong style={{ color: row.color, fontSize: 13 }}>{fmtMoney(val)}</strong>
-      ),
+      render: (val: number, row: RowData) => {
+        if (row.isTotal) {
+          return <strong style={{ color: row.color, fontSize: 13 }}>{fmtMoney(val)}</strong>
+        }
+        if (row.key === 'deduction_counter') {
+          return <strong style={{ color: row.color, fontSize: 13 }}>{val > 0 ? `${val} 家` : '-'}</strong>
+        }
+        return <strong style={{ color: row.color, fontSize: 13 }}>{fmtMoney(val)}</strong>
+      },
     },
   ]
 
@@ -1641,7 +1667,9 @@ function FeeStatsTab({ year }: { year: number }) {
             <div style={{ marginBottom: 10 }}>
               <Tag color="blue">共 {drillCases.length} 筆</Tag>
               <Tag style={{ background: drilldown.color + '15', borderColor: drilldown.color, color: drilldown.color }}>
-                合計：{fmtMoney(data.monthly_totals[drilldown.month]?.[drilldown.feeKey] ?? 0)}
+                {drilldown.feeKey === 'deduction_counter'
+                  ? `${data.monthly_totals[drilldown.month]?.[drilldown.feeKey] ?? 0} 家`
+                  : `合計：${fmtMoney(data.monthly_totals[drilldown.month]?.[drilldown.feeKey] ?? 0)}`}
               </Tag>
             </div>
             {drillCases.length === 0

@@ -16,6 +16,7 @@ export interface FloorInspectionStats {
   checked_items:   number
   completion_rate: number
   normal_rate:     number
+  has_data:        boolean  // 當日是否有巡檢場次；false 時顯示「尚無資料」
 }
 
 export interface InspectionSummary {

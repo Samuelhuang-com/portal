@@ -20,6 +20,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.dependencies import get_current_user, require_roles
 from app.models.mall_periodic_maintenance import MallPeriodicMaintenanceBatch, MallPeriodicMaintenanceItem
 from app.schemas.periodic_maintenance import (
     PMBatchOut, PMItemOut, PMBatchKPI, PMBatchDetail,
@@ -29,7 +30,7 @@ from app.services.mall_periodic_maintenance_sync import sync_from_ragic
 from app.services.ragic_adapter import RagicAdapter
 from app.core.config import settings
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_user)])
 
 # ── 狀態色彩對照 ──────────────────────────────────────────────────────────────
 STATUS_COLORS = {
@@ -180,7 +181,7 @@ def _batch_to_out(batch: MallPeriodicMaintenanceBatch) -> PMBatchOut:
 # ══════════════════════════════════════════════════════════════════════════════
 # POST /sync
 # ══════════════════════════════════════════════════════════════════════════════
-@router.post("/sync", summary="從 Ragic 同步商場週期保養資料（背景執行）")
+@router.post("/sync", summary="從 Ragic 同步商場週期保養資料（背景執行）", dependencies=[Depends(require_roles("system_admin", "module_manager"))])
 async def sync_mall_periodic_maintenance(background_tasks: BackgroundTasks):
     """手動觸發：Ragic → SQLite，立即回傳，不阻塞畫面"""
     background_tasks.add_task(sync_from_ragic)
@@ -476,7 +477,7 @@ def get_item_task_history(
 # ══════════════════════════════════════════════════════════════════════════════
 # GET /debug/ragic-raw  — 除錯用
 # ══════════════════════════════════════════════════════════════════════════════
-@router.get("/debug/ragic-raw", summary="[除錯] 顯示 Ragic Sheet 18 原始欄位 key")
+@router.get("/debug/ragic-raw", summary="[除錯] 顯示 Ragic Sheet 18 原始欄位 key", dependencies=[Depends(require_roles("system_admin", "module_manager"))])
 async def debug_ragic_raw():
     from app.services.mall_periodic_maintenance_sync import (
         MALL_PM_SERVER_URL, MALL_PM_ACCOUNT,

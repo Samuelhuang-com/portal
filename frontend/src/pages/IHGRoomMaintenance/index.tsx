@@ -10,6 +10,7 @@
  *   - 同步 Ragic 按鈕
  */
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import {
   Breadcrumb, Button, Card, Col, Descriptions, Divider,
   Drawer, Row, Select, Segmented, Spin, Statistic, Table, Tag, Tooltip,
@@ -336,8 +337,113 @@ function CheckItemsPanel({ rawFields }: { rawFields: Record<string, unknown> }) 
   )
 }
 
+// ── 季度視角型別與常數 ─────────────────────────────────────────────────────────
+type QuarterName = 'Q1' | 'Q2' | 'Q3' | 'Q4'
+
+const QUARTER_MONTHS_MAP: Record<QuarterName, number[]> = {
+  Q1: [1, 2, 3],
+  Q2: [4, 5, 6],
+  Q3: [7, 8, 9],
+  Q4: [10, 11, 12],
+}
+
+interface QuarterCellData {
+  status: CellStatus
+  normal_total: number
+  done_total: number
+  maint_total: number
+  unchecked_total: number
+  work_minutes_total: number   // 分鐘
+  active_cells: { month: number; cell: MatrixCell }[]
+}
+
+interface QuarterRoomData {
+  room_no: string
+  floor: string
+  quarters: Partial<Record<QuarterName, QuarterCellData>>
+}
+
+// ── 季度格元件 ────────────────────────────────────────────────────────────────
+function QuarterCellComp({
+  qdata,
+  qname,
+  onClick,
+}: {
+  qdata: QuarterCellData | undefined
+  qname: QuarterName
+  onClick: () => void
+}) {
+  const today = dayjs()
+  const currentQ = (['Q1','Q2','Q3','Q4'] as QuarterName[])[Math.floor((today.month()) / 3)]
+  const isCurrentQ = qname === currentQ
+
+  if (!qdata || qdata.active_cells.length === 0) {
+    return (
+      <div style={{
+        minWidth: 88, height: 66, background: '#f5f5f5',
+        borderRadius: 4, border: '1px dashed #d9d9d9',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        fontSize: 10, color: '#bfbfbf',
+      }}>—</div>
+    )
+  }
+
+  const cfg = STATUS_CFG[qdata.status] ?? STATUS_CFG.pending
+  const borderColor = isCurrentQ ? '#1677ff' : `${cfg.text}44`
+  const defaultShadow = isCurrentQ ? '0 0 0 2px #1677ff40' : 'none'
+  const hrs = qdata.work_minutes_total > 0 ? (qdata.work_minutes_total / 60).toFixed(2) : null
+
+  return (
+    <Tooltip title={
+      <div style={{ fontSize: 12 }}>
+        <div>狀態：{cfg.label}</div>
+        <div>正常 {qdata.normal_total} ／ 完成 {qdata.done_total} ／ 維護 {qdata.maint_total} ／ 未檢查 {qdata.unchecked_total}</div>
+        {hrs && <div>工時：{hrs} hr</div>}
+        <div style={{ color: '#aaa', marginTop: 4 }}>
+          {qdata.active_cells.map(a => MONTH_LABELS[a.month]).join('、')} 共 {qdata.active_cells.length} 筆
+        </div>
+        <div style={{ color: '#aaa' }}>點擊查看月份明細</div>
+      </div>
+    }>
+      <div
+        onClick={onClick}
+        style={{
+          minWidth: 88, height: 66, background: cfg.bg,
+          borderRadius: 4, border: `1px solid ${borderColor}`,
+          cursor: 'pointer', padding: '4px 6px',
+          display: 'flex', flexDirection: 'column',
+          alignItems: 'center', justifyContent: 'center', gap: 2,
+          transition: 'box-shadow 0.15s', boxShadow: defaultShadow,
+        }}
+        onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.boxShadow = '0 2px 8px rgba(0,0,0,0.18)' }}
+        onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.boxShadow = defaultShadow }}
+      >
+        <span style={{ fontSize: 9, color: cfg.text, fontWeight: 600, lineHeight: 1.4, whiteSpace: 'nowrap' }}>
+          正常 {qdata.normal_total} / 完成 {qdata.done_total}
+        </span>
+        <span style={{
+          fontSize: 9, lineHeight: 1.4, whiteSpace: 'nowrap',
+          color: qdata.maint_total > 0 ? '#d46b08' : qdata.unchecked_total > 0 ? '#faad14' : '#8c8c8c',
+          fontWeight: (qdata.maint_total > 0 || qdata.unchecked_total > 0) ? 700 : 400,
+        }}>
+          維護 {qdata.maint_total} / 未 {qdata.unchecked_total}
+        </span>
+        {hrs && (
+          <span style={{ fontSize: 9, color: '#4BA8E8', lineHeight: 1.4 }}>{hrs} hr</span>
+        )}
+        <span style={{ fontSize: 9, color: '#bbb', lineHeight: 1.4 }}>
+          {qdata.active_cells.map(a => MONTH_LABELS[a.month]).join(' ')}
+        </span>
+      </div>
+    </Tooltip>
+  )
+}
+
 // ── 主元件 ────────────────────────────────────────────────────────────────────
 export default function IHGRoomMaintenancePage() {
+  const [searchParams, setSearchParams] = useSearchParams()
+  const viewMode = (searchParams.get('view') === 'quarter' ? 'quarter' : 'month') as 'month' | 'quarter'
+
   const [year, setYear]         = useState<string>(String(thisYear))
   const [roomFilter, setRoomFilter]   = useState<string>('')
   const [floorFilter, setFloorFilter] = useState<string>('')
@@ -348,11 +454,15 @@ export default function IHGRoomMaintenancePage() {
   const [loading, setLoading]   = useState(false)
   const [syncing, setSyncing]   = useState(false)
 
-  // Drawer 狀態
+  // 月份 Drawer 狀態
   const [drawerOpen, setDrawerOpen]     = useState(false)
   const [drawerRecord, setDrawerRecord] = useState<IHGRecord | null>(null)
   const [drawerLoading, setDrawerLoading] = useState(false)
   const [drawerCell, setDrawerCell]     = useState<{ room_no: string; month: number } | null>(null)
+
+  // 季度彙整 Drawer 狀態
+  const [qDrawerOpen, setQDrawerOpen]   = useState(false)
+  const [qDrawerData, setQDrawerData]   = useState<{ room_no: string; qname: QuarterName; qdata: QuarterCellData } | null>(null)
 
   // ── 載入資料 ───────────────────────────────────────────────────────────────
   const loadData = useCallback(async () => {
@@ -415,6 +525,98 @@ export default function IHGRoomMaintenancePage() {
     () => (matrix?.floors ?? []).map((f) => ({ value: f, label: f })),
     [matrix]
   )
+
+  // ── 季度聚合（前端計算，不需新 API）────────────────────────────────────────
+  const quarterRooms = useMemo<QuarterRoomData[]>(() => {
+    if (!matrix) return []
+    return matrix.rooms.map((room) => {
+      const quarters: Partial<Record<QuarterName, QuarterCellData>> = {}
+      for (const [qname, months] of Object.entries(QUARTER_MONTHS_MAP) as [QuarterName, number[]][]) {
+        const active_cells: { month: number; cell: MatrixCell }[] = []
+        let normal_total = 0, done_total = 0, maint_total = 0, unchecked_total = 0, work_minutes_total = 0
+
+        for (const m of months) {
+          const cell = room.cells[String(m)]
+          if (cell) {
+            active_cells.push({ month: m, cell })
+            normal_total    += cell.normal_count    ?? 0
+            done_total      += cell.done_count      ?? 0
+            maint_total     += cell.maint_count     ?? 0
+            unchecked_total += cell.unchecked_count ?? 0
+            work_minutes_total += cell.work_minutes ?? 0
+          }
+        }
+
+        if (active_cells.length === 0) continue
+
+        // 季度狀態：最嚴重優先
+        let status: CellStatus = 'pending'
+        if (maint_total > 0) {
+          status = 'abnormal'
+        } else if (normal_total + done_total > 0 && unchecked_total === 0) {
+          status = 'completed'
+        } else {
+          // 若有當季月份→ scheduled
+          const today = dayjs()
+          const currentM = today.month() + 1
+          const isCurrentQ = months.includes(currentM) && today.year() === Number(year)
+          status = isCurrentQ ? 'scheduled' : 'pending'
+        }
+
+        quarters[qname] = { status, normal_total, done_total, maint_total, unchecked_total, work_minutes_total, active_cells }
+      }
+      return { room_no: room.room_no, floor: room.floor, quarters }
+    })
+  }, [matrix, year])
+
+  // ── 季度 Table columns ──────────────────────────────────────────────────
+  const quarterColumns: ColumnsType<QuarterRoomData> = [
+    {
+      title: '房號',
+      dataIndex: 'room_no',
+      key: 'room_no',
+      fixed: 'left',
+      width: 76,
+      render: (rn: string, row: QuarterRoomData) => (
+        <div style={{ textAlign: 'center' }}>
+          <div style={{ fontWeight: 600, fontSize: 13 }}>{rn}</div>
+          <div style={{ fontSize: 10, color: '#999' }}>{row.floor}</div>
+        </div>
+      ),
+    },
+    ...(['Q1','Q2','Q3','Q4'] as QuarterName[]).map((qname) => {
+      const qMonths = QUARTER_MONTHS_MAP[qname]
+      const qHrs = qMonths.reduce((sum, m) => sum + (matrix?.month_hours?.[m] ?? 0), 0)
+      return {
+        title: (
+          <div style={{ textAlign: 'center', fontSize: 11 }}>
+            <div style={{ fontWeight: 600 }}>{qname}</div>
+            <div style={{ color: '#999', fontSize: 9 }}>{qMonths.map(m => MONTH_LABELS[m]).join(' ')}</div>
+            {qHrs > 0 && (
+              <div style={{ fontSize: 9, color: '#4BA8E8', marginTop: 1 }}>
+                {(qHrs / 60).toFixed(2)} hr
+              </div>
+            )}
+          </div>
+        ),
+        key: qname,
+        width: 100,
+        render: (_: unknown, row: QuarterRoomData) => {
+          const qdata = row.quarters[qname]
+          return (
+            <QuarterCellComp
+              qdata={qdata}
+              qname={qname}
+              onClick={() => {
+                if (qdata) setQDrawerData({ room_no: row.room_no, qname, qdata })
+                if (qdata) setQDrawerOpen(true)
+              }}
+            />
+          )
+        },
+      }
+    }),
+  ]
 
   // ── 矩陣 Table columns ───────────────────────────────────────────────────
   const columns: ColumnsType<MatrixRoom> = [
@@ -577,6 +779,25 @@ export default function IHGRoomMaintenancePage() {
               清除篩選
             </Button>
           </Col>
+          <Col>
+            <Segmented
+              size="small"
+              value={viewMode}
+              onChange={(v) => {
+                const newParams = new URLSearchParams(searchParams)
+                if (v === 'quarter') {
+                  newParams.set('view', 'quarter')
+                } else {
+                  newParams.delete('view')
+                }
+                setSearchParams(newParams)
+              }}
+              options={[
+                { label: '月份', value: 'month' },
+                { label: '季度', value: 'quarter' },
+              ]}
+            />
+          </Col>
           <Col flex={1} style={{ textAlign: 'right' }}>
             {/* 圖例 */}
             <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
@@ -598,6 +819,9 @@ export default function IHGRoomMaintenancePage() {
           title={
             <span style={{ fontSize: 13 }}>
               {year} 年度客房保養矩陣
+              <span style={{ marginLeft: 8, fontSize: 11, color: '#4BA8E8', fontWeight: 400 }}>
+                {viewMode === 'quarter' ? '季度視角' : '月份視角'}
+              </span>
               {matrix && (
                 <Text type="secondary" style={{ marginLeft: 12, fontSize: 11 }}>
                   共 {matrix.rooms.length} 個房號
@@ -610,6 +834,18 @@ export default function IHGRoomMaintenancePage() {
             <div style={{ padding: 40, textAlign: 'center', color: '#999' }}>
               尚無資料，請點擊「同步 Ragic」載入資料
             </div>
+          ) : viewMode === 'quarter' ? (
+            <Table
+              columns={quarterColumns}
+              dataSource={quarterRooms}
+              rowKey="room_no"
+              size="small"
+              pagination={false}
+              scroll={{ x: 'max-content', y: 'calc(100vh - 340px)' }}
+              sticky
+              loading={loading}
+              style={{ fontSize: 12 }}
+            />
           ) : (
             <Table
               columns={columns}
@@ -754,6 +990,143 @@ export default function IHGRoomMaintenancePage() {
           <div style={{ textAlign: 'center', color: '#999', padding: 40 }}>
             無法載入資料
           </div>
+        )}
+      </Drawer>
+
+      {/* ── 季度彙整 Drawer ────────────────────────────────────────── */}
+      <Drawer
+        title={
+          <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <ToolOutlined style={{ color: '#1B3A5C' }} />
+            {qDrawerData
+              ? `${qDrawerData.room_no}  ${qDrawerData.qname} 季度彙整`
+              : '季度彙整'}
+          </span>
+        }
+        open={qDrawerOpen}
+        onClose={() => setQDrawerOpen(false)}
+        width={480}
+        destroyOnClose
+      >
+        {qDrawerData && (
+          <>
+            {/* 季度合計摘要 */}
+            <Descriptions
+              column={2}
+              bordered
+              size="small"
+              labelStyle={{ width: 80, fontWeight: 500, background: '#f8f9fb' }}
+              style={{ marginBottom: 16 }}
+            >
+              <Descriptions.Item label="房號" span={2}>
+                <strong>{qDrawerData.room_no}</strong>
+              </Descriptions.Item>
+              <Descriptions.Item label="季度">
+                <Tag color={STATUS_CFG[qDrawerData.qdata.status].tagColor}>
+                  {STATUS_CFG[qDrawerData.qdata.status].icon}{' '}
+                  {STATUS_CFG[qDrawerData.qdata.status].label}
+                </Tag>
+                <span style={{ marginLeft: 6, fontWeight: 600 }}>{qDrawerData.qname}</span>
+              </Descriptions.Item>
+              <Descriptions.Item label="工時合計">
+                {qDrawerData.qdata.work_minutes_total > 0
+                  ? `${(qDrawerData.qdata.work_minutes_total / 60).toFixed(2)} hr`
+                  : '—'}
+              </Descriptions.Item>
+              <Descriptions.Item label="正常">
+                {qDrawerData.qdata.normal_total}
+              </Descriptions.Item>
+              <Descriptions.Item label="完成">
+                {qDrawerData.qdata.done_total}
+              </Descriptions.Item>
+              <Descriptions.Item label="維護">
+                <span style={{
+                  color: qDrawerData.qdata.maint_total > 0 ? '#d46b08' : undefined,
+                  fontWeight: qDrawerData.qdata.maint_total > 0 ? 700 : undefined,
+                }}>
+                  {qDrawerData.qdata.maint_total}
+                </span>
+              </Descriptions.Item>
+              <Descriptions.Item label="未檢查">
+                <span style={{
+                  color: qDrawerData.qdata.unchecked_total > 0 ? '#faad14' : undefined,
+                  fontWeight: qDrawerData.qdata.unchecked_total > 0 ? 700 : undefined,
+                }}>
+                  {qDrawerData.qdata.unchecked_total}
+                </span>
+              </Descriptions.Item>
+            </Descriptions>
+
+            <Divider orientation="left" style={{ fontSize: 12 }}>各月份明細</Divider>
+
+            <Table
+              size="small"
+              dataSource={qDrawerData.qdata.active_cells}
+              rowKey="month"
+              pagination={false}
+              style={{ marginBottom: 16 }}
+              columns={[
+                {
+                  title: '月份',
+                  dataIndex: 'month',
+                  key: 'month',
+                  width: 56,
+                  render: (m: number) => <strong>{MONTH_LABELS[m]}</strong>,
+                },
+                {
+                  title: '狀態',
+                  key: 'status',
+                  width: 100,
+                  render: (_: unknown, row: { month: number; cell: MatrixCell }) => {
+                    const cfg = STATUS_CFG[row.cell.status]
+                    return <Tag color={cfg.tagColor}>{cfg.icon} {cfg.label}</Tag>
+                  },
+                },
+                {
+                  title: '正/完/維/未',
+                  key: 'counts',
+                  render: (_: unknown, row: { month: number; cell: MatrixCell }) => (
+                    <span style={{ fontSize: 11, whiteSpace: 'nowrap' }}>
+                      {row.cell.normal_count}/{row.cell.done_count}/
+                      <span style={{ color: (row.cell.maint_count ?? 0) > 0 ? '#d46b08' : undefined, fontWeight: (row.cell.maint_count ?? 0) > 0 ? 700 : undefined }}>
+                        {row.cell.maint_count ?? 0}
+                      </span>/
+                      <span style={{ color: (row.cell.unchecked_count ?? 0) > 0 ? '#faad14' : undefined, fontWeight: (row.cell.unchecked_count ?? 0) > 0 ? 700 : undefined }}>
+                        {row.cell.unchecked_count ?? 0}
+                      </span>
+                    </span>
+                  ),
+                },
+                {
+                  title: '工時',
+                  key: 'work',
+                  width: 58,
+                  render: (_: unknown, row: { month: number; cell: MatrixCell }) =>
+                    row.cell.work_minutes ? (
+                      <span style={{ color: '#4BA8E8', fontSize: 11 }}>{row.cell.work_minutes}m</span>
+                    ) : '—',
+                },
+                {
+                  title: '',
+                  key: 'action',
+                  width: 52,
+                  render: (_: unknown, row: { month: number; cell: MatrixCell }) => (
+                    <Button
+                      type="link"
+                      size="small"
+                      style={{ padding: 0 }}
+                      onClick={() => {
+                        setQDrawerOpen(false)
+                        handleCellClick(row.cell.ragic_id, qDrawerData.room_no, row.month)
+                      }}
+                    >
+                      查看
+                    </Button>
+                  ),
+                },
+              ]}
+            />
+          </>
         )}
       </Drawer>
     </div>

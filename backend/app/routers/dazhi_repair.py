@@ -41,10 +41,11 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.database import get_db
+from app.dependencies import get_current_user, require_roles
 from app.models.dazhi_repair import DazhiRepairCase
 from app.services import dazhi_repair_service as svc
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_user)])
 
 
 # ── 共用 DB 讀取 helper ────────────────────────────────────────────────────────
@@ -56,7 +57,7 @@ def load_cases_from_db(db: Session) -> list[DazhiRepairCase]:
 
 # ── /raw-fields ───────────────────────────────────────────────────────────────
 
-@router.get("/raw-fields", summary="回傳 Ragic 第一筆欄位名稱（debug 用）")
+@router.get("/raw-fields", summary="回傳 Ragic 第一筆欄位名稱（debug 用）", dependencies=[Depends(require_roles("system_admin", "module_manager"))])
 async def get_raw_fields():
     """
     回傳 Ragic 第一筆資料的 key 列表。
@@ -67,7 +68,7 @@ async def get_raw_fields():
 
 # ── /ping ─────────────────────────────────────────────────────────────────────
 
-@router.get("/ping", summary="快速連線診斷（5 秒 timeout，直接回傳裸 HTTP 結果）")
+@router.get("/ping", summary="快速連線診斷（5 秒 timeout，直接回傳裸 HTTP 結果）", dependencies=[Depends(require_roles("system_admin", "module_manager"))])
 async def ping_ragic():
     """
     直接對 Ragic URL 發一次 GET（limit=1），5 秒內沒回應就 timeout。
@@ -156,7 +157,7 @@ async def ping_ragic():
 
 # ── /sync ─────────────────────────────────────────────────────────────────────
 
-@router.get("/sync", summary="同步診斷：直接抓 Ragic 回傳統計摘要（debug 用）")
+@router.get("/sync", summary="同步診斷：直接抓 Ragic 回傳統計摘要（debug 用）", dependencies=[Depends(require_roles("system_admin", "module_manager"))])
 async def sync_diagnostic():
     """
     完整從 Ragic 抓取所有資料並回傳診斷摘要，用於：
@@ -212,7 +213,7 @@ async def sync_diagnostic():
     }
 
 
-@router.post("/sync", summary="觸發背景同步：Ragic → SQLite（非阻塞）")
+@router.post("/sync", summary="觸發背景同步：Ragic → SQLite（非阻塞）", dependencies=[Depends(require_roles("system_admin", "module_manager"))])
 async def sync_from_ragic(background_tasks: BackgroundTasks):
     """
     將大直工務報修資料從 Ragic 同步到本地 SQLite（背景執行）。

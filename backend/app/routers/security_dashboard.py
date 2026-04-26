@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.dependencies import get_current_user, require_roles
 from app.models.security_patrol import SecurityPatrolBatch, SecurityPatrolItem
 from app.schemas.security_dashboard import (
     DashboardSummary, SheetStats, IssueItem, IssueListResponse,
@@ -22,7 +23,7 @@ from app.schemas.security_dashboard import (
 )
 from app.services.security_patrol_sync import SHEET_CONFIGS
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_user)])
 
 ALL_SHEET_KEYS = list(SHEET_CONFIGS.keys())
 

@@ -10,6 +10,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, s
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.dependencies import get_current_user, require_roles
 from app.schemas.inventory import (
     InventoryListResponse,
     InventorySingleResponse,
@@ -18,11 +19,11 @@ from app.schemas.inventory import (
 from app.services import inventory_service as svc
 from app.services.inventory_sync import sync_from_ragic
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_user)])
 
 
 # ── GET /debug-raw — 查看 Ragic 原始回傳格式（除錯用）───────────────────────
-@router.get("/debug-raw", summary="[除錯] 查看 Ragic 原始 JSON key 格式")
+@router.get("/debug-raw", summary="[除錯] 查看 Ragic 原始 JSON key 格式", dependencies=[Depends(require_roles("system_admin", "module_manager"))])
 async def debug_raw():
     """直接回傳 Ragic 第一筆記錄的原始 key，用於確認欄位 ID 格式"""
     from app.services.ragic_adapter import RagicAdapter
@@ -42,7 +43,7 @@ async def debug_raw():
 
 
 # ── POST /sync — 從 Ragic 同步資料到本地 DB ────────────────────────────────────
-@router.post("/sync", summary="從 Ragic 同步倉庫庫存資料到本地 DB（背景執行）")
+@router.post("/sync", summary="從 Ragic 同步倉庫庫存資料到本地 DB（背景執行）", dependencies=[Depends(require_roles("system_admin", "module_manager"))])
 async def sync_records(background_tasks: BackgroundTasks):
     """觸發背景同步：Ragic → SQLite，立即回傳，不阻塞畫面"""
     background_tasks.add_task(sync_from_ragic)

@@ -19,6 +19,7 @@ class FloorInspectionStats(BaseModel):
     checked_items:   int   = 0
     completion_rate: float = 0.0
     normal_rate:     float = 0.0
+    has_data:        bool  = False  # 當日是否有巡檢場次；False 時前端顯示「尚無資料」
 
 
 class InspectionSummary(BaseModel):

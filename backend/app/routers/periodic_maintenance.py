@@ -20,6 +20,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.dependencies import get_current_user, require_roles
 from app.models.periodic_maintenance import PeriodicMaintenanceBatch, PeriodicMaintenanceItem
 from app.schemas.periodic_maintenance import (
     PMBatchOut, PMItemOut, PMBatchKPI, PMBatchDetail,
@@ -29,7 +30,7 @@ from app.services.periodic_maintenance_sync import sync_from_ragic
 from app.services.ragic_adapter import RagicAdapter
 from app.core.config import settings
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_user)])
 
 # ── 狀態色彩對照 ──────────────────────────────────────────────────────────────
 STATUS_COLORS = {
@@ -197,7 +198,7 @@ def _get_check_month(period_month: str) -> int:
 # ══════════════════════════════════════════════════════════════════════════════
 # POST /sync
 # ══════════════════════════════════════════════════════════════════════════════
-@router.post("/sync", summary="從 Ragic 同步週期保養資料（背景執行）")
+@router.post("/sync", summary="從 Ragic 同步週期保養資料（背景執行）", dependencies=[Depends(require_roles("system_admin", "module_manager"))])
 async def sync_periodic_maintenance(background_tasks: BackgroundTasks):
     """手動觸發：Ragic Sheet 6 + Sheet 8 → SQLite，立即回傳，不阻塞畫面"""
     background_tasks.add_task(sync_from_ragic)
@@ -521,7 +522,7 @@ def get_item_task_history(
 # ══════════════════════════════════════════════════════════════════════════════
 # GET /debug/ragic-raw  — 除錯用：直接回傳 Ragic 原始資料
 # ══════════════════════════════════════════════════════════════════════════════
-@router.get("/debug/ragic-raw", summary="[除錯] 顯示 Ragic Sheet 8 原始欄位 key")
+@router.get("/debug/ragic-raw", summary="[除錯] 顯示 Ragic Sheet 8 原始欄位 key", dependencies=[Depends(require_roles("system_admin", "module_manager"))])
 async def debug_ragic_raw():
     """
     直接向 Ragic 拉取 Sheet 8（附表），回傳原始 dict 的欄位名稱與第一筆值。

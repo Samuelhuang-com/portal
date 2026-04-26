@@ -19,11 +19,12 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, s
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.dependencies import get_current_user, require_roles
 from app.models.room import Room
 from app.models.room_maintenance_detail import RoomMaintenanceDetailRecord
 from app.services.room_maintenance_detail_sync import sync_from_ragic
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_user)])
 
 # ── 常數：所有檢查項目欄位名稱 ────────────────────────────────────────────────
 CHECK_FIELDS = [
@@ -75,7 +76,7 @@ def _record_to_dict(r: RoomMaintenanceDetailRecord) -> dict:
 
 
 # ── POST /sync ────────────────────────────────────────────────────────────────
-@router.post("/sync", summary="從 Ragic 同步客房保養明細資料到本地 DB（背景執行）")
+@router.post("/sync", summary="從 Ragic 同步客房保養明細資料到本地 DB（背景執行）", dependencies=[Depends(require_roles("system_admin", "module_manager"))])
 async def sync_records(background_tasks: BackgroundTasks):
     """觸發背景同步：Ragic → SQLite，立即回傳，不阻塞畫面"""
     background_tasks.add_task(sync_from_ragic)

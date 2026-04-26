@@ -65,6 +65,10 @@ export interface DashboardKpi {
   annual_maintenance_fee:        number
   annual_deduction_fee:          number
   annual_deduction_counter:      number
+  // 年度扣款專櫃（全年統計，與費用 KPI 卡片對齊）
+  annual_counter_stores:         number        // 全年有扣款的專櫃家數
+  annual_counter_fee:            number        // 全年扣款專櫃費用合計
+  annual_counter_store_names:    string[]      // 全年專櫃名稱列表
   // 當月費用（費用 KPI 卡片用，依年+月篩選）
   month_outsource_fee:     number
   month_maintenance_fee:   number

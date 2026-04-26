@@ -20,6 +20,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.dependencies import get_current_user, require_roles
 from app.models.b2f_inspection import B2FInspectionBatch, B2FInspectionItem
 from app.schemas.b2f_inspection import (
     B2FInspectionBatchOut, B2FInspectionItemOut, B2FInspectionBatchKPI,
@@ -28,7 +29,7 @@ from app.schemas.b2f_inspection import (
 from app.services.b2f_inspection_sync import sync_from_ragic
 from app.services.ragic_adapter import RagicAdapter
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_user)])
 
 STATUS_LABELS = {
     "normal":    "正常",
@@ -88,7 +89,7 @@ def _calc_kpi(items: list[B2FInspectionItem]) -> B2FInspectionBatchKPI:
     )
 
 
-@router.post("/sync", summary="從 Ragic 同步 B2F 巡檢資料（背景執行）")
+@router.post("/sync", summary="從 Ragic 同步 B2F 巡檢資料（背景執行）", dependencies=[Depends(require_roles("system_admin", "module_manager"))])
 async def sync_b2f_inspection(background_tasks: BackgroundTasks):
     """觸發背景同步：Ragic → SQLite，立即回傳，不阻塞畫面"""
     background_tasks.add_task(sync_from_ragic)
@@ -331,7 +332,7 @@ def get_item_history(
     }
 
 
-@router.get("/debug/ragic-raw", summary="[除錯] 顯示 Ragic Sheet 3 原始欄位")
+@router.get("/debug/ragic-raw", summary="[除錯] 顯示 Ragic Sheet 3 原始欄位", dependencies=[Depends(require_roles("system_admin", "module_manager"))])
 async def debug_ragic_raw():
     from app.services.b2f_inspection_sync import (
         B2F_SERVER_URL, B2F_ACCOUNT, B2F_SHEET_PATH,

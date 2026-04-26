@@ -18,7 +18,7 @@ import {
   CheckCircleOutlined, ClockCircleOutlined, ExclamationCircleOutlined,
   DashboardOutlined, FileTextOutlined, DownloadOutlined,
   WarningOutlined, DollarOutlined, SearchOutlined, BuildOutlined,
-  SyncOutlined, ApiOutlined,
+  SyncOutlined, ApiOutlined, QuestionCircleOutlined,
 } from '@ant-design/icons'
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
@@ -41,6 +41,7 @@ import type {
   FeeStatsData,
 } from '@/types/dazhiRepair'
 import { NAV_GROUP } from '@/constants/navLabels'
+import { DAZHI_KPI_DESC } from '@/constants/kpiDesc/dazhiRepair'
 
 const { Title, Text } = Typography
 const { Option } = Select
@@ -158,11 +159,12 @@ function CaseListModal({
 // KPI 卡片子元件
 // ═════════════════════════════════════════════════════════════════════════════
 function KpiCard({
-  title, value, suffix = '', color, icon, sub, onClick,
+  title, value, suffix = '', color, icon, sub, onClick, desc,
 }: {
   title: string; value: string | number; suffix?: string
   color: string; icon: React.ReactNode; sub?: string
   onClick?: () => void
+  desc?: string  // KPI 卡說明，顯示為 ? Tooltip
 }) {
   return (
     <Card
@@ -176,7 +178,17 @@ function KpiCard({
         {value}
         {suffix && <span style={{ fontSize: 13, marginLeft: 4, fontWeight: 400 }}>{suffix}</span>}
       </div>
-      <div style={{ color: '#666', fontSize: 12, marginTop: 4 }}>{title}</div>
+      <div style={{ color: '#666', fontSize: 12, marginTop: 4 }}>
+        {title}
+        {desc && (
+          <Tooltip title={desc} placement="top">
+            <QuestionCircleOutlined
+              style={{ color: '#bbb', fontSize: 11, marginLeft: 4, cursor: 'help' }}
+              onClick={e => e.stopPropagation()}
+            />
+          </Tooltip>
+        )}
+      </div>
       {sub && <div style={{ color: '#999', fontSize: 11, marginTop: 2 }}>{sub}</div>}
       {onClick && <div style={{ color: '#bbb', fontSize: 10, marginTop: 3 }}>點擊查看明細</div>}
     </Card>
@@ -353,31 +365,37 @@ function DashboardTab({
       <div style={{ display: 'flex', gap: 12, marginBottom: 12, flexWrap: 'nowrap', overflowX: 'auto' }}>
         <div style={{ flex: '1 1 0', minWidth: 110 }}>
           <KpiCard title="本月相關案件" value={fmt(kpi.total)} color="#1B3A5C" icon={<ToolOutlined />}
-            sub="完工月＋未完成報修月" onClick={() => setKpiModal('total')} />
+            sub="完工月＋未完成報修月" onClick={() => setKpiModal('total')}
+            desc={DAZHI_KPI_DESC['本月相關案件']} />
         </div>
         <div style={{ flex: '1 1 0', minWidth: 110 }}>
           <KpiCard title="已完成件數" value={fmt(kpi.completed)} color="#52C41A" icon={<CheckCircleOutlined />}
             sub={`完成率 ${kpi.total > 0 ? fmtDec(kpi.completed / kpi.total * 100) : '-'}% ｜ 依完工時間`}
-            onClick={() => setKpiModal('completed')} />
+            onClick={() => setKpiModal('completed')}
+            desc={DAZHI_KPI_DESC['已完成件數']} />
         </div>
         <div style={{ flex: '1 1 0', minWidth: 110 }}>
           <KpiCard title="未完成件數" value={fmt(kpi.uncompleted)} color="#FF4D4F" icon={<ExclamationCircleOutlined />}
-            sub="無完工時間的案件" onClick={() => setKpiModal('uncompleted')} />
+            sub="無完工時間的案件" onClick={() => setKpiModal('uncompleted')}
+            desc={DAZHI_KPI_DESC['未完成件數']} />
         </div>
         <div style={{ flex: '1 1 0', minWidth: 110 }}>
           <KpiCard title="平均結案天數" value={kpi.avg_close_days != null ? fmtDec(kpi.avg_close_days, 1) : '-'}
             suffix="天" color="#4BA8E8" icon={<ClockCircleOutlined />}
-            onClick={() => setKpiModal('close_days')} />
+            onClick={() => setKpiModal('close_days')}
+            desc={DAZHI_KPI_DESC['平均結案天數']} />
         </div>
         <div style={{ flex: '1 1 0', minWidth: 110 }}>
           <KpiCard title="本月工時統計" value={fmtDec(kpi.total_work_hours, 2)} suffix="hr"
             color="#13C2C2" icon={<ClockCircleOutlined />}
             sub={`${fmtDec(kpi.total_work_hours / 24, 2)} 天（維修天數×24 ÷24）`}
-            onClick={() => setKpiModal('hours')} />
+            onClick={() => setKpiModal('hours')}
+            desc={DAZHI_KPI_DESC['本月工時統計']} />
         </div>
         <div style={{ flex: '1 1 0', minWidth: 110 }}>
           <KpiCard title="客房報修件數" value={fmt(kpi.room_cases)} color="#FA8C16" icon={<HomeOutlined />}
-            onClick={() => setKpiModal('room')} />
+            onClick={() => setKpiModal('room')}
+            desc={DAZHI_KPI_DESC['客房報修件數']} />
         </div>
       </div>
 

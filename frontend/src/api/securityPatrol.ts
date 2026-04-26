@@ -1,7 +1,7 @@
 /**
  * 保全巡檢 API 封裝
  */
-import axios from 'axios'
+import apiClient from '@/api/client'
 import type {
   SheetConfig,
   PatrolBatchListItem,
@@ -12,12 +12,12 @@ import type {
   SecurityDashboardTrend,
 } from '@/types/securityPatrol'
 
-const BASE = '/api/v1/security'
+const BASE = '/security'
 
 // ── Sheet 設定 ────────────────────────────────────────────────────────────────
 
 export async function fetchSheetConfigs(): Promise<SheetConfig[]> {
-  const { data } = await axios.get(`${BASE}/patrol/sheets`)
+  const { data } = await apiClient.get(`${BASE}/patrol/sheets`)
   return data
 }
 
@@ -26,7 +26,7 @@ export async function fetchSheetConfigs(): Promise<SheetConfig[]> {
 export async function syncPatrolFromRagic(sheetKey?: string): Promise<{ status: string; result: unknown }> {
   const params: Record<string, string> = {}
   if (sheetKey) params.sheet_key = sheetKey
-  const { data } = await axios.post(`${BASE}/patrol/sync`, null, { params })
+  const { data } = await apiClient.post(`${BASE}/patrol/sync`, null, { params })
   return data
 }
 
@@ -36,7 +36,7 @@ export async function fetchPatrolBatches(
   sheetKey: string,
   opts?: { year_month?: string; start_date?: string; end_date?: string },
 ): Promise<PatrolBatchListItem[]> {
-  const { data } = await axios.get(`${BASE}/patrol/${sheetKey}/batches`, { params: opts ?? {} })
+  const { data } = await apiClient.get(`${BASE}/patrol/${sheetKey}/batches`, { params: opts ?? {} })
   return data
 }
 
@@ -47,7 +47,7 @@ export async function fetchPatrolBatchDetail(
   batchId: string,
   opts?: { status?: string; search?: string },
 ): Promise<PatrolBatchDetail> {
-  const { data } = await axios.get(
+  const { data } = await apiClient.get(
     `${BASE}/patrol/${sheetKey}/batches/${batchId}`,
     { params: opts ?? {} },
   )
@@ -57,7 +57,7 @@ export async function fetchPatrolBatchDetail(
 // ── Stats（Dashboard 用）──────────────────────────────────────────────────────
 
 export async function fetchPatrolStats(sheetKey: string): Promise<PatrolStats> {
-  const { data } = await axios.get(`${BASE}/patrol/${sheetKey}/stats`)
+  const { data } = await apiClient.get(`${BASE}/patrol/${sheetKey}/stats`)
   return data
 }
 
@@ -66,7 +66,7 @@ export async function fetchPatrolStats(sheetKey: string): Promise<PatrolStats> {
 export async function fetchSecurityDashboardSummary(
   targetDate?: string,
 ): Promise<SecurityDashboardSummary> {
-  const { data } = await axios.get(`${BASE}/dashboard/summary`, {
+  const { data } = await apiClient.get(`${BASE}/dashboard/summary`, {
     params: targetDate ? { target_date: targetDate } : {},
   })
   return data
@@ -80,13 +80,13 @@ export async function fetchSecurityDashboardIssues(opts?: {
   start_date?: string
   end_date?:   string
 }): Promise<SecurityIssueListResponse> {
-  const { data } = await axios.get(`${BASE}/dashboard/issues`, { params: opts ?? {} })
+  const { data } = await apiClient.get(`${BASE}/dashboard/issues`, { params: opts ?? {} })
   return data
 }
 
 // ── Dashboard Trend ───────────────────────────────────────────────────────────
 
 export async function fetchSecurityDashboardTrend(days = 7): Promise<SecurityDashboardTrend> {
-  const { data } = await axios.get(`${BASE}/dashboard/trend`, { params: { days } })
+  const { data } = await apiClient.get(`${BASE}/dashboard/trend`, { params: { days } })
   return data
 }

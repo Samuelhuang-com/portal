@@ -8,11 +8,13 @@ Prefix: /api/v1/full-building-inspection
 端點：
   GET /sheets  — 取得所有樓層巡檢 Sheet 設定（Ragic URL 等）
 """
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from typing import List
 from pydantic import BaseModel
 
-router = APIRouter()
+from app.dependencies import get_current_user
+
+router = APIRouter(dependencies=[Depends(get_current_user)])
 
 
 # ── Schema ────────────────────────────────────────────────────────────────────

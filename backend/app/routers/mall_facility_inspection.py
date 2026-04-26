@@ -18,9 +18,10 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.dependencies import get_current_user, require_roles
 from app.models.mall_facility_inspection import MallFIBatch, MallFIItem
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_user)])
 
 
 # ── Schema ────────────────────────────────────────────────────────────────────

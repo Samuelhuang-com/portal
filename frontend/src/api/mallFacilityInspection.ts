@@ -2,9 +2,9 @@
  * 春大直商場工務巡檢 API 封裝
  * Prefix: /api/v1/mall-facility-inspection
  */
-import axios from 'axios'
+import apiClient from '@/api/client'
 
-const BASE = '/api/v1/mall-facility-inspection'
+const BASE = '/mall-facility-inspection'
 
 // ── 型別 ─────────────────────────────────────────────────────────────────────
 
@@ -90,7 +90,7 @@ export async function fetchMallFacilityStats(
   targetDate?: string,
 ): Promise<MallFIStats> {
   const params = targetDate ? { target_date: targetDate } : {}
-  const res = await axios.get<MallFIStats>(`${BASE}/${sheetKey}/stats`, { params })
+  const res = await apiClient.get<MallFIStats>(`${BASE}/${sheetKey}/stats`, { params })
   return res.data
 }
 
@@ -101,7 +101,7 @@ export async function fetchMallFacilityBatches(
   sheetKey:  string,
   params: { year_month?: string },
 ): Promise<MallFIBatchRow[]> {
-  const res = await axios.get<MallFIBatchRow[]>(`${BASE}/${sheetKey}/batches`, { params })
+  const res = await apiClient.get<MallFIBatchRow[]>(`${BASE}/${sheetKey}/batches`, { params })
   return res.data
 }
 
@@ -109,14 +109,14 @@ export async function fetchMallFacilityBatches(
  * 觸發指定樓層 Ragic 同步（背景執行）
  */
 export async function syncMallFacilityFromRagic(sheetKey: string): Promise<void> {
-  await axios.post(`${BASE}/${sheetKey}/sync`)
+  await apiClient.post(`${BASE}/${sheetKey}/sync`)
 }
 
 /**
  * 觸發全部 5 張 Sheet Ragic 同步（背景執行）
  */
 export async function syncMallFacilityAllFromRagic(): Promise<void> {
-  await axios.post(`${BASE}/sync/all`)
+  await apiClient.post(`${BASE}/sync/all`)
 }
 
 /**
@@ -126,6 +126,6 @@ export async function fetchMallFacilityDashboardSummary(
   targetDate?: string,
 ): Promise<MallFIDashboardSummary> {
   const params = targetDate ? { target_date: targetDate } : {}
-  const res = await axios.get<MallFIDashboardSummary>(`${BASE}/dashboard/summary`, { params })
+  const res = await apiClient.get<MallFIDashboardSummary>(`${BASE}/dashboard/summary`, { params })
   return res.data
 }

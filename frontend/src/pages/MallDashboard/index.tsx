@@ -375,7 +375,7 @@ export default function MallDashboardPage() {
           <KpiCard title="今日已完成巡檢"
             value={ins?.checked_items ?? 0} suffix="項"
             color="#52C41A" icon={<CheckCircleOutlined />}
-            sub={ins ? `完成率 ${ins.completion_rate}%` : ''}
+            sub={ins && ins.total_items > 0 ? `完成率 ${ins.completion_rate}%` : ins ? '尚無巡檢資料' : ''}
             onClick={() => handleKpiClick('all')} />
         </Col>
         <Col xs={12} sm={6}>
@@ -474,12 +474,16 @@ export default function MallDashboardPage() {
                       >
                         <Text strong style={{ color: FLOOR_COLORS[f.floor] }}>{f.floor_label}</Text>
                         <div style={{ marginTop: 4 }}>
-                          <Progress
-                            percent={f.completion_rate}
-                            size="small"
-                            strokeColor={FLOOR_COLORS[f.floor]}
-                            format={() => `${f.completion_rate}%`}
-                          />
+                          {f.has_data ? (
+                            <Progress
+                              percent={f.completion_rate}
+                              size="small"
+                              strokeColor={FLOOR_COLORS[f.floor]}
+                              format={() => `${f.completion_rate}%`}
+                            />
+                          ) : (
+                            <Text type="secondary" style={{ fontSize: 11 }}>尚無資料</Text>
+                          )}
                         </div>
                         <Row gutter={4} style={{ marginTop: 4 }}>
                           <Col span={12}>

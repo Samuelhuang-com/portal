@@ -38,10 +38,11 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.database import get_db
+from app.dependencies import get_current_user, require_roles
 from app.models.luqun_repair import LuqunRepairCase
 from app.services import luqun_repair_service as svc
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_user)])
 
 
 # ── 共用 DB 讀取 helper ────────────────────────────────────────────────────────
@@ -53,12 +54,12 @@ def load_cases_from_db(db: Session) -> list[LuqunRepairCase]:
 
 # ── /raw-fields ───────────────────────────────────────────────────────────────
 
-@router.get("/raw-fields", summary="回傳 Ragic 第一筆欄位名稱（debug 用）")
+@router.get("/raw-fields", summary="回傳 Ragic 第一筆欄位名稱（debug 用）", dependencies=[Depends(require_roles("system_admin", "module_manager"))])
 async def get_raw_fields():
     return await svc.fetch_raw_fields()
 
 
-@router.get("/test-parse/{case_no}", summary="單筆案件解析測試：直接從 Ragic 抓取並顯示解析結果")
+@router.get("/test-parse/{case_no}", summary="單筆案件解析測試：直接從 Ragic 抓取並顯示解析結果", dependencies=[Depends(require_roles("system_admin", "module_manager"))])
 async def test_parse_case(case_no: str):
     """
     從 Ragic 直接抓取指定案件，用最新程式碼解析後回傳 deduction_counter_name 等欄位。
@@ -87,7 +88,7 @@ async def test_parse_case(case_no: str):
         return {"error": str(exc)}
 
 
-@router.get("/raw-record/{case_no}", summary="直接從 Ragic 取得單筆完整 JSON（debug 用）")
+@router.get("/raw-record/{case_no}", summary="直接從 Ragic 取得單筆完整 JSON（debug 用）", dependencies=[Depends(require_roles("system_admin", "module_manager"))])
 async def get_raw_record(case_no: str):
     """
     從 Ragic 主表找出指定案件編號的完整原始 JSON，包含所有欄位名稱與值。
@@ -124,7 +125,7 @@ async def get_raw_record(case_no: str):
 
 # ── /ping ─────────────────────────────────────────────────────────────────────
 
-@router.get("/ping", summary="快速連線診斷（5 秒 timeout）")
+@router.get("/ping", summary="快速連線診斷（5 秒 timeout）", dependencies=[Depends(require_roles("system_admin", "module_manager"))])
 async def ping_ragic():
     """直接對 Ragic URL 發一次 GET（limit=1），5 秒內回傳裸 HTTP 結果。"""
     base_url = (
@@ -197,7 +198,7 @@ async def ping_ragic():
 
 # ── /sync ─────────────────────────────────────────────────────────────────────
 
-@router.get("/sync", summary="同步診斷：直接抓 Ragic 回傳統計摘要（debug 用）")
+@router.get("/sync", summary="同步診斷：直接抓 Ragic 回傳統計摘要（debug 用）", dependencies=[Depends(require_roles("system_admin", "module_manager"))])
 async def sync_diagnostic():
     """
     完整從 Ragic 抓取所有資料並回傳診斷摘要（含費用合計）。
@@ -277,7 +278,7 @@ async def sync_diagnostic():
     }
 
 
-@router.post("/sync", summary="觸發背景同步：Ragic → SQLite（非阻塞）")
+@router.post("/sync", summary="觸發背景同步：Ragic → SQLite（非阻塞）", dependencies=[Depends(require_roles("system_admin", "module_manager"))])
 async def sync_from_ragic(background_tasks: BackgroundTasks):
     """
     將樂群工務報修資料從 Ragic 同步到本地 SQLite（背景執行）。

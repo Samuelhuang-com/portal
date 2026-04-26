@@ -2,10 +2,11 @@
 ★工項類別分析 API Router  (v2 — 主管決策 Dashboard)
 Prefix: /api/v1/work-category-analysis
 
-資料來源（三合一）：
-  luqun      → LuqunRepairCase      (work_hours = 花費工時 HR；fallback: 工務處理天數×24)
-  dazhi      → DazhiRepairCase      (work_hours = 花費工時 HR；fallback: 工務處理天數/維修天數×24)
-  hotel_room → RoomMaintenanceDetailRecord (work_hours 單位：分鐘，÷60 轉小時)
+資料來源（四合一）：
+  luqun      → LuqunRepairCase               (work_hours = 花費工時 HR；fallback: 工務處理天數×24)
+  dazhi      → DazhiRepairCase               (work_hours = 花費工時 HR；fallback: 工務處理天數/維修天數×24)
+  hotel_room → RoomMaintenanceDetailRecord   (work_hours 單位：分鐘，÷60 轉小時；類別=每日巡檢)
+  ihg_room   → IHGRoomMaintenanceMaster      (raw_json["工時計算"] 分鐘，÷60 轉小時；類別=例行維護)
 
 端點：
   GET /years          — 有資料的年份清單
@@ -37,11 +38,13 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.dependencies import get_current_user
 from app.models.luqun_repair import LuqunRepairCase
 from app.models.dazhi_repair import DazhiRepairCase
 from app.models.room_maintenance_detail import RoomMaintenanceDetailRecord
+from app.models.ihg_room_maintenance import IHGRoomMaintenanceMaster
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_user)])
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 常數
@@ -53,6 +56,7 @@ SOURCE_LABELS = {
     "luqun":      "樂群工務",
     "dazhi":      "大直工務",
     "hotel_room": "房務保養",
+    "ihg_room":   "IHG客房保養",
 }
 
 # 關鍵字 → 工項類別（先匹配者優先；hotel_room 強制「每日巡檢」）
@@ -179,12 +183,44 @@ def _load_all(db: Session, sources: set[str]) -> list[dict]:
                 "case_id":    r.ragic_id,
             })
 
+    # ── IHG 客房保養 ──────────────────────────────────────────────────────────
+    # 工時：raw_json["工時計算"] 分鐘 ÷ 60 → HR（與 /matrix 端點同一來源）
+    # 類別：固定「例行維護」（定期客房保養性質）
+    # 日期：maint_date（優先）；無效則以 maint_year/maint_month 第 1 日為準
+    if "ihg_room" in sources:
+        for rec in db.query(IHGRoomMaintenanceMaster).all():
+            raw = rec.get_raw()
+            mins_val = raw.get("工時計算", "")
+            if mins_val in (None, "", "None"):
+                continue
+            hours = _parse_minutes_to_hours(str(mins_val))
+            if hours <= 0:
+                continue
+            # 嘗試 maint_date 取日級精度
+            yd = _parse_hotel_date(rec.maint_date) if rec.maint_date else None
+            if yd is None:
+                # fallback：年/月已知，day=1（確保月累計仍正確計入）
+                try:
+                    yd = (int(rec.maint_year), int(rec.maint_month), 1)
+                except (ValueError, TypeError):
+                    continue
+            rows.append({
+                "year":       yd[0],
+                "month":      yd[1],
+                "day":        yd[2],
+                "work_hours": hours,
+                "category":   "例行維護",
+                "person":     (rec.assignee_name or "").strip() or "未指定",
+                "source":     "ihg_room",
+                "case_id":    rec.ragic_id,
+            })
+
     return rows
 
 
 def _parse_sources(sources_str: str) -> set[str]:
     if sources_str.strip().lower() == "all":
-        return {"luqun", "dazhi", "hotel_room"}
+        return {"luqun", "dazhi", "hotel_room", "ihg_room"}
     return {s.strip() for s in sources_str.split(",") if s.strip()}
 
 
@@ -243,7 +279,7 @@ def _build_kpi(rows: list[dict], prev_rows: list[dict]) -> dict:
             "hours":  round(source_hours.get(s, 0), 1),
             "pct":    round(source_hours.get(s, 0) / total_hours * 100, 1) if total_hours else 0,
         }
-        for s in ["luqun", "dazhi", "hotel_room"]
+        for s in ["luqun", "dazhi", "hotel_room", "ihg_room"]
         if source_hours.get(s, 0) > 0
     ]
 
@@ -376,10 +412,12 @@ def _build_source_breakdown(rows: list[dict]) -> list[dict]:
     total = sum(r["work_hours"] for r in rows)
     data: dict[str, dict] = {
         s: {"hours": 0.0, "cases": set(), "persons": set(), "cat": defaultdict(float)}
-        for s in ["luqun", "dazhi", "hotel_room"]
+        for s in ["luqun", "dazhi", "hotel_room", "ihg_room"]
     }
     for r in rows:
         s = r["source"]
+        if s not in data:
+            continue
         data[s]["hours"] += r["work_hours"]
         data[s]["cases"].add(r["case_id"])
         if r["person"] != "未指定":
@@ -387,7 +425,7 @@ def _build_source_breakdown(rows: list[dict]) -> list[dict]:
         data[s]["cat"][r["category"]] += r["work_hours"]
 
     result = []
-    for s in ["luqun", "dazhi", "hotel_room"]:
+    for s in ["luqun", "dazhi", "hotel_room", "ihg_room"]:
         h = data[s]["hours"]
         if h <= 0:
             continue
@@ -520,7 +558,7 @@ def _build_person_table(rows: list[dict]) -> dict:
 
 @router.get("/years", summary="有資料的年份清單")
 def get_years(db: Session = Depends(get_db)):
-    rows = _load_all(db, {"luqun", "dazhi", "hotel_room"})
+    rows = _load_all(db, _parse_sources("all"))
     years = sorted({r["year"] for r in rows}, reverse=True)
     return {"years": years or [datetime.now().year]}
 
@@ -547,7 +585,7 @@ def get_persons(
 def get_stats(
     year:     int = Query(..., description="年度"),
     month:    int = Query(0,     description="月份（0=全年）"),
-    sources:  str = Query("all", description="all / luqun / dazhi / hotel_room"),
+    sources:  str = Query("all", description="all / luqun / dazhi / hotel_room / ihg_room"),
     category: str = Query("all", description="all / 現場報修 / ..."),
     person:   str = Query("all", description="all / <人員姓名>"),
     db: Session = Depends(get_db),

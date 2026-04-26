@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.dependencies import get_current_user
 from app.models.b1f_inspection import B1FInspectionBatch, B1FInspectionItem
 from app.models.b2f_inspection import B2FInspectionBatch, B2FInspectionItem
 from app.models.rf_inspection  import RFInspectionBatch,  RFInspectionItem
@@ -26,7 +27,7 @@ from app.schemas.mall_dashboard import (
     IssueItem, IssueListResponse, TrendPoint, DashboardTrend,
 )
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_user)])
 
 # ── 樓層設定 ──────────────────────────────────────────────────────────────────
 FLOOR_CONFIGS = [
@@ -87,6 +88,7 @@ def _floor_stats(
         checked_items   = checked,
         completion_rate = round(checked / total * 100, 1) if total > 0 else 0.0,
         normal_rate     = round(normal  / checked * 100, 1) if checked > 0 else 0.0,
+        has_data        = len(batches) > 0,
     )
 
 

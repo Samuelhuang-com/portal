@@ -4,6 +4,86 @@
 
 ---
 
+## [1.39.7] - 2026-04-26
+
+### Fixed
+- **樂群 金額統計 Tab — 扣款專櫃改為家數統計、排除月份小計**
+  - 後端 `compute_fee_stats`：`deduction_counter` 從「費用加總」改為「當月唯一專櫃家數（整數）」；全年小計跨月去重；`month_totals` / `grand_total` 僅加三個金額欄位（委外/維修/扣款費用）
+  - 前端 月份格顯示「N 家」、全年小計欄顯示「N 家」；月份小計行不含此欄（後端已排除）；drilldown Modal Tag 改顯示家數
+
+---
+
+## [1.39.6] - 2026-04-26
+
+### Fixed
+- **樂群 Dashboard — 扣款專櫃 KPI 卡改為全年統計**
+  - `luqun_repair_service.py` 新增 `annual_counter_fee`、`annual_counter_store_names` 欄位（對應既有 `annual_deduction_counter` 年度邏輯）
+  - `DashboardKpi` 介面（`types/luqunRepair.ts`）補上 `annual_counter_stores`、`annual_counter_fee`、`annual_counter_store_names` 型別宣告
+  - 前端 KPI 卡、Modal 標題/Tag/dataSource 全部切換至全年欄位；「當月金額」摘要卡仍保留月度 `total_counter_stores`（語義正確）
+
+---
+
+## [1.39.5] - 2026-04-26
+
+### Changed
+- **工項類別分析 + 主管 Dashboard — 納入 IHG 客房保養工時**
+  - `work_category_analysis.py` 新增第 4 個資料來源 `ihg_room`（`IHGRoomMaintenanceMaster`），零前端改動
+  - 工時取自 `raw_json["工時計算"]`（分鐘 ÷ 60），與 IHG `/matrix` 端點同一計算邏輯
+  - 類別固定為「例行維護」；日期優先取 `maint_date`，無效則以年/月第 1 日為 fallback
+  - `SOURCE_LABELS` 新增 `ihg_room: "IHG客房保養"`
+  - `_parse_sources("all")` / `_build_kpi()` / `_build_source_breakdown()` / `get_years()` 同步更新
+  - `ExecDashboard` 與 `WorkCategoryAnalysis` 共用同一 `/stats` API，**無需前端修改，自動取得新數據**
+  - 若 IHG API 回傳空值（無工時記錄），Dashboard 視為 0.00 hr，不影響其他分類統計
+
+---
+
+## [1.39.4] - 2026-04-26
+
+### Added
+- **IHG 客房保養 — 季度視角（`?view=quarter`）**
+  - 前端 `useMemo` 對 `/matrix` 資料做季度聚合，無需新 API；每季彙總 `normal/done/maint/unchecked` 計數與工時
+  - 新增 `QuarterCellComp`：88×66px 格子，顯示季度計數＋工時（hr）＋所涵蓋月份；狀態顏色與月份視角一致
+  - 篩選列新增 **月份 ｜ 季度** `Segmented` 切換，更新 URL 參數 `?view=quarter`
+  - 季度 Table header 顯示 Q1–Q4 及各季工時合計（hr）
+  - 點擊季度格開啟**季度彙整 Drawer**：顯示合計統計摘要，各月份明細表含狀態 Tag、各計數、工時，「查看」按鈕穿透至月份明細 Drawer
+  - Card 標題同步顯示「月份視角 / 季度視角」文字提示
+
+---
+
+## [1.39.6] - 2026-04-26
+
+### Added
+- **KPI 卡說明 Tooltip（樂群 & 大直工務報修 Dashboard）**
+  - 每張 KPI 卡標題右側新增 `?` 圖示，hover 顯示說明文字，不影響原有版型與樣式
+  - 說明文字獨立維護於 `frontend/src/constants/kpiDesc/luqunRepair.ts` 及 `dazhiRepair.ts`，方便各模組獨立調整
+  - 涵蓋 6 張 KPI 卡：本月相關案件、已完成件數、未完成件數、平均結案天數、本月工時統計、客房報修件數
+
+### Fixed
+- IHG 保養表季度視角：確認已實作（`?view=quarter` URL 參數，前端聚合，不需新 API）；於 FEATURE_MAP 標記完成
+
+---
+
+## [1.39.3] - 2026-04-26
+
+### Fixed
+- **前端 API client 統一**：`securityPatrol.ts`、`mallFacilityInspection.ts` 改用 `apiClient`（帶 JWT interceptor），不再直接用裸 `axios`，確保 API 請求正確帶 `Authorization: Bearer` header
+- **DEV bypass token 修正**：`Login/index.tsx` 的 `devLogin()` 改呼叫真實後端 `admin/admin1234`，不再寫入無效 `'dev-token'` 造成後續所有 API 返回 401
+- **商場巡檢 0/0 = 0% 顯示修正**：
+  - 後端 `FloorInspectionStats` schema 新增 `has_data: bool` 欄位，`_floor_stats_for_date()` 依 `len(batches) > 0` 設定
+  - 前端 `FloorInspectionStats` 型別同步補上 `has_data: boolean`
+  - 商場 Dashboard 樓層卡片：`has_data=false` 時改顯示「尚無資料」而非進度條 0%
+  - KPI「已完成巡檢」sub-label：無資料時顯示「尚無巡檢資料」而非「完成率 0%」
+
+## [1.39.2] - 2026-04-26
+
+### Security
+- **全域 API 身份驗證補強（安全性修正）**
+  - 19 個業務 router 補上 `APIRouter(dependencies=[Depends(get_current_user)])`，未登入無法讀取任何業務資料
+  - 受保護 router 清單：luqun_repair、dazhi_repair、ihg_room_maintenance、b1f/b2f/b4f/rf_inspection、periodic_maintenance、mall_periodic_maintenance、room_maintenance、room_maintenance_detail、security_patrol、security_dashboard、mall_dashboard、mall_facility_inspection、inventory、calendar、work_category_analysis、full_building_inspection
+  - 30 個 sync/debug endpoint（`POST /sync`、`GET /debug-raw`、`GET /debug/ragic-raw`、`GET /raw-fields`、`GET /ping`、`GET /sync` 診斷版等）加上 `require_roles("system_admin", "module_manager")`，防止一般使用者觸發 Ragic 同步或讀取診斷資料
+
+---
+
 ## [1.39.1] - 2026-04-24
 
 ### Changed

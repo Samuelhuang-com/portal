@@ -28,6 +28,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.dependencies import get_current_user
 from app.models.calendar_event import CalendarCustomEvent
 from app.models.periodic_maintenance import PeriodicMaintenanceBatch, PeriodicMaintenanceItem
 from app.models.mall_periodic_maintenance import (
@@ -52,7 +53,7 @@ from app.schemas.calendar import (
     EVENT_TYPE_LABELS,
 )
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_user)])
 
 
 # ─────────────────────────────────────────────────────────────────────────────

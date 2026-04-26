@@ -57,11 +57,9 @@ export default function LoginPage() {
     }
   }
 
-  // Dev bypass — 僅 DEV 環境顯示
+  // Dev bypass — 僅 DEV 環境顯示（呼叫真實後端，避免 fake token 造成 API 401）
   const devLogin = () => {
-    setToken('dev-token')
-    setUser({ id: 'dev', email: 'admin@portal.local', name: 'Admin', full_name: 'Admin', roles: ['system_admin'] })
-    navigate('/dashboard')
+    onFinish({ identifier: 'admin', password: 'admin1234' })
   }
 
   return (

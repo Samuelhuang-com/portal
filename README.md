@@ -2,9 +2,16 @@
 
 > 跨據點統一管理平台 — FastAPI + React + TypeScript
 
-**最後更新：2026-04-24（v1.39.0）**
+**最後更新：2026-04-26（v1.39.8）**
 
 ## 最近變更
+- v1.39.8：**樂群 金額統計 Tab — 扣款專櫃改家數、排除月份小計** — 後端改計唯一專櫃家數（整數）、全年跨月去重；月份小計 / grand_total 只含金額欄位；前端顯示「N 家」
+- v1.39.7：**樂群 Dashboard — 扣款專櫃 KPI 卡改全年統計** — 後端新增 `annual_counter_fee` / `annual_counter_store_names`；`DashboardKpi` 補型別宣告；KPI 卡與 Modal 切換至全年欄位
+- v1.39.6：**KPI 卡說明 Tooltip** — 樂群 & 大直工務 Dashboard 各 KPI 卡標題加 `?` 說明圖示；說明文字獨立維護於 `constants/kpiDesc/` 目錄，各模組一個檔案
+- v1.39.5：**工項類別分析 + 主管 Dashboard — 納入 IHG 客房保養工時** — `work_category_analysis.py` 新增第 4 來源 `ihg_room`（IHGRoomMaintenanceMaster），工時取 `raw_json["工時計算"]`÷60，類別=「例行維護」；ExecDashboard + WorkCategoryAnalysis 自動納入，零前端改動
+- v1.39.4：**IHG 客房保養 — 季度視角（`?view=quarter`）** — 前端 useMemo 聚合季度統計、QuarterCellComp（88×66格）、月份/季度切換 Segmented、季度彙整 Drawer（含各月「查看」穿透明細）；FEATURE_MAP / DEV_LOG / CHANGELOG 同步更新
+- v1.39.3：**前端安全補強 + 商場巡檢顯示修正** — `securityPatrol.ts`/`mallFacilityInspection.ts` 改用 `apiClient`（JWT interceptor）；DEV bypass 改呼叫真實登入；商場巡檢無資料時顯示「尚無資料」而非進度條 0%
+- v1.39.2：**全域 API 身份驗證補強（安全性）** — 19 個業務 router 補 `get_current_user`；30 個 sync/debug endpoint 補 `require_roles(system_admin, module_manager)`；未登入無法存取任何業務資料，非授權角色無法觸發 Ragic 同步
 - v1.39.0：**IHG 客房保養模組（新功能）** — 年度保養矩陣表（房號×月份）；KPI 統計卡（全年/已完成/未完成/逾期/完成率）；Ragic Sheet 4 同步（Master+Detail）；同步按鈕；狀態顏色（已完成/逾期/本月應保養/未完成）；點擊格子 Modal 明細；篩選（年度/樓層/狀態）；Menu：飯店管理→2.IHG客房保養
 - v1.38.7：**樂群完工判定修正** — `is_completed_flag` 改為「有完工時間即算完工」，灰色地帶（處理中/待辦驗有完工時間）正確歸入已完成；2026/04驗算：已完成 20→38筆，未完成 17→9筆
 - v1.38.6：**統一 Ragic 資料存取層 + 花費工時 48624hr 修正 + 圖片整合** — `ragic_data_service.py`（merge+cache）；`safe_work_days_to_hours` 上限 365 天；Drawer 新增 📷 圖片連結
