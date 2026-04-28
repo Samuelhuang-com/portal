@@ -40,6 +40,7 @@
  *   2026-04-28  新增 mallPmGroup（商場例行維護）L2 群組，整合 mallDashboard + mallPeriodicMaintenance + fullBuildingMaintenance 為三層 menu
  *   2026-04-28  修正 applyMenuConfig 三層 merge 邏輯；DB seed 隱藏 custom_1777348120465；MenuConfig 設定頁支援三層 L3
  *   2026-04-28  新增 mallMgmtDashboard（商場管理 Dashboard）整合 5 來源總覽，route /mall/overview
+ *   2026-04-29  新增 hotelDailyInspection（飯店每日巡檢）5 張 Sheet（RF/4F-10F/4F/2F/1F），route /hotel/daily-inspection
  */
 
 // ── 系統標題 ──────────────────────────────────────────────────────────────────
@@ -82,6 +83,7 @@ export const NAV_PAGE = {
   calendarMain:          '行事曆總覽',    // 超級行事曆主頁
 
   // 飯店管理
+  hotelDailyInspection:   '飯店每日巡檢',
   roomMaintenance:        '客房保養',
   roomMaintenanceDetail:  '※1.1飯店客房保養管理',       // ← 原「客房保養明細」
   periodicMaintenance:    '1. 飯店週期保養表',

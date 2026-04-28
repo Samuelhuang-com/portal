@@ -88,6 +88,7 @@ export const menuItems = [
       { key: '/hotel/room-maintenance-detail',  icon: <ToolOutlined />,    label: NAV_PAGE.roomMaintenanceDetail },
       { key: '/hotel/periodic-maintenance',     icon: <FileTextOutlined />, label: NAV_PAGE.periodicMaintenance },
       { key: '/hotel/ihg-room-maintenance',     icon: <ToolOutlined />,    label: NAV_PAGE.ihgRoomMaintenance },
+      { key: '/hotel/daily-inspection',         icon: <SafetyOutlined />,  label: NAV_PAGE.hotelDailyInspection },
       // { key: '/hotel/repairs',                 icon: <ToolOutlined />, label: NAV_PAGE.repairs },
     ],
   },

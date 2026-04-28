@@ -2,9 +2,11 @@
 
 > 跨據點統一管理平台 — FastAPI + React + TypeScript
 
-**最後更新：2026-04-28（v1.39.40）**
+**最後更新：2026-04-29（v1.39.42）**
 
 ## 最近變更
+- v1.39.42：**飯店每日巡檢模組（新功能）** — 5 張 Ragic Sheet（RF/4F-10F/4F/2F/1F）同步至本地 DB；6-Tab 整合頁（Dashboard + 各區域巡檢紀錄）；route `/hotel/daily-inspection`；menu 掛於「飯店管理」下
+- v1.39.41：**商場管理 Dashboard — KPI 卡片版型調整** — 兩列 KPI（商場例行維護/全棟例行維護/商場工務巡檢/整棟巡檢 + 大直報修/交辦/緊急事件）
 - v1.39.40：**商場管理 Dashboard（新功能）** — 整合 5 來源（商場例行維護/全棟例行維護/商場工務巡檢/整棟巡檢/大直工務報修）的總覽 Dashboard；前端 Normalize adapter；KPI 卡片 + 各來源狀態卡 + 4 張圖表；route `/mall/overview`
 - v1.39.39：**系統設定 RBAC** — `系統設定` 選單及 `/settings/*` 路由僅限 `system_admin` 可見；前端 `SettingsGuard` + `MainLayout` 過濾 + `authStore` JWT decode；後端 `menu_config` / `ragic` GET endpoints 補 `is_system_admin` 保護
 - v1.39.34：**全棟例行維護（新功能）** — Ragic Sheet 21 同步；`full_bldg_pm_batch` + `full_bldg_pm_batch_item` 雙表；`/api/v1/mall/full-building-maintenance` API；前端 `FullBuildingMaintenance` 儀表板 + 批次清單 + 批次明細 + ItemHistoryDrawer；商場管理 menu 重構為三層（`mall-pm-group` → 商場週期保養 / 商場例行維護 / 全棟例行維護）

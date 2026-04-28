@@ -4,6 +4,22 @@
 
 ---
 
+## [1.39.42] - 2026-04-29
+
+### Added
+- **飯店每日巡檢模組（新功能）** — 仿照春大直商場工務巡檢架構，新增飯店 5 個區域巡檢整合頁，route `/hotel/daily-inspection`：
+  - Ragic 來源：RF（Sheet 17）/ 4F-10F（Sheet 18）/ 4F（Sheet 19）/ 2F（Sheet 20）/ 1F（Sheet 21）
+  - 後端 ORM：`hotel_di_inspection_batch` + `hotel_di_inspection_item` 雙表（寬表格 Pivot 架構）
+  - 後端 Sync Service：`hotel_daily_inspection_sync.py`（動態欄位偵測、5 張 Sheet 同步）
+  - 後端 Router：`/api/v1/hotel-daily-inspection`（sheets / sync / stats / batches / dashboard/summary）
+  - 前端常數：`constants/hotelDailyInspection.ts`（5 Sheet 設定）
+  - 前端 API：`api/hotelDailyInspection.ts`（axios 封裝函式）
+  - 前端頁面：`pages/HotelDailyInspection/index.tsx`（6-Tab：Dashboard + RF/4F-10F/4F/2F/1F，懶載入 + URL ?tab=）
+  - Menu：飯店管理 → 飯店每日巡檢（SafetyOutlined 圖示）
+  - APScheduler 自動同步：納入 `_auto_sync` 排程
+
+---
+
 ## [1.39.41] - 2026-04-28
 
 ### Changed

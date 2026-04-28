@@ -21,6 +21,7 @@ from app.routers import (
     b1f_inspection,
     calendar,
     dazhi_repair,
+    hotel_daily_inspection,
     ihg_room_maintenance,
     mall_dashboard,
     mall_facility_inspection,
@@ -441,6 +442,7 @@ async def _auto_sync():
     from app.services.luqun_repair_sync import sync_from_ragic as sync_luqun
     from app.services.security_patrol_sync import sync_all as sync_security
     from app.services.mall_facility_inspection_sync import sync_all as sync_mfi
+    from app.services.hotel_daily_inspection_sync import sync_all as sync_hdi
     from app.services.ihg_room_maintenance_sync import sync_from_ragic as sync_ihg_rm
 
     await _run_and_log("客房保養", sync_rm())
@@ -457,6 +459,7 @@ async def _auto_sync():
     await _run_and_log("樂群工務報修", sync_luqun())
     await _run_and_log("保全巡檢", sync_security())
     await _run_and_log("商場工務巡檢", sync_mfi())
+    await _run_and_log("飯店每日巡檢", sync_hdi())
     await _run_and_log("IHG客房保養", sync_ihg_rm())
 
 
@@ -488,6 +491,7 @@ async def lifespan(app: FastAPI):
     import app.models.module_sync_log  # noqa: F401
     import app.models.ragic_app_directory  # noqa: F401
     import app.models.mall_facility_inspection  # noqa: F401
+    import app.models.hotel_daily_inspection  # noqa: F401
     import app.models.ihg_room_maintenance  # noqa: F401
     import app.models.menu_config  # noqa: F401
 
@@ -765,6 +769,13 @@ app.include_router(
     budget.router,
     prefix=f"{API_PREFIX}/budget",
     tags=["預算管理"],
+)
+
+# ── 新增：飯店每日巡檢 ───────────────────────────────────────────────────────
+app.include_router(
+    hotel_daily_inspection.router,
+    prefix=f"{API_PREFIX}/hotel-daily-inspection",
+    tags=["飯店每日巡檢"],
 )
 
 # ── 新增：選單設定（改名 + 排序 + 歷史）──────────────────────────────────────

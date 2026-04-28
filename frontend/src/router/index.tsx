@@ -70,6 +70,9 @@ import WorkCategoryAnalysisPage        from '@/pages/WorkCategoryAnalysis'
 import ExecDashboardPage               from '@/pages/ExecDashboard'
 import DataPreparingPage              from '@/pages/DataPreparing'
 
+// ── 飯店每日巡檢 ───────────────────────────────────────────────────────────────
+import HotelDailyInspectionDashboard   from '@/pages/HotelDailyInspection'
+
 // ── IHG 客房保養 ───────────────────────────────────────────────────────────────
 import IHGRoomMaintenancePage          from '@/pages/IHGRoomMaintenance'
 
@@ -156,6 +159,7 @@ export default function AppRouter() {
           <Route path="periodic-maintenance"             element={<PeriodicMaintenancePage />} />
           <Route path="periodic-maintenance/:batchId"    element={<PeriodicMaintenanceDetailPage />} />
           <Route path="ihg-room-maintenance"    element={<IHGRoomMaintenancePage />} />
+          <Route path="daily-inspection"        element={<HotelDailyInspectionDashboard />} />
         </Route>
 
         {/* ── 商場管理 ──────────────────────────────────────────────── */}
