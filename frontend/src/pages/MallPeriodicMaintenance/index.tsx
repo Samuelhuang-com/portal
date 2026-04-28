@@ -1,7 +1,7 @@
 /**
  * 商場週期保養表主頁
  *
- * Tab 1「主管儀表板」：KPI 四卡 + 類別 Bar 圖 + 狀態 Donut 圖 + 逾期/即將到期預警
+ * Tab 1「Dashboard」：KPI 五卡（含保養時間）+ 類別 Bar 圖 + 狀態 Donut 圖 + 逾期/即將到期預警
  * Tab 2「批次清單」：保養批次列表，含進度條、狀態標籤、操作入口
  */
 import { useEffect, useState, useCallback } from 'react'
@@ -156,8 +156,8 @@ export default function MallPeriodicMaintenancePage() {
             color: '#722ED1',
           },
         ].map((card) => (
-          <Col xs={24} sm={12} lg={6} key={card.title}>
-            <Card size="small" hoverable>
+          <Col flex={1} style={{ minWidth: 140 }} key={card.title}>
+            <Card size="small" hoverable style={{ height: '100%' }}>
               <Statistic
                 title={card.title}
                 value={card.value}
@@ -168,6 +168,17 @@ export default function MallPeriodicMaintenancePage() {
             </Card>
           </Col>
         ))}
+        <Col flex={1} style={{ minWidth: 140 }}>
+          <Card size="small" hoverable style={{ height: '100%' }}>
+            <Statistic
+              title="保養時間"
+              value={Math.round((kpi?.planned_minutes ?? 0) / 60 * 10) / 10}
+              suffix="小時"
+              prefix={<span style={{ color: '#4BA8E8' }}><ClockCircleOutlined /></span>}
+              valueStyle={{ color: '#4BA8E8', fontSize: 28 }}
+            />
+          </Card>
+        </Col>
       </Row>
 
       {/* 完成率進度條 */}
@@ -181,9 +192,6 @@ export default function MallPeriodicMaintenancePage() {
                 strokeColor={{ from: '#4BA8E8', to: '#52C41A' }}
                 format={(p) => `${p}%（${kpi.completed}/${kpi.total}）`}
               />
-            </Col>
-            <Col flex="120px">
-              <Text type="secondary">預估工時：{Math.round(kpi.planned_minutes / 60 * 10) / 10} 小時</Text>
             </Col>
           </Row>
         </Card>
@@ -495,7 +503,7 @@ export default function MallPeriodicMaintenancePage() {
         activeKey={activeTab}
         onChange={setActiveTab}
         items={[
-          { key: 'dashboard', label: '主管儀表板', children: DashboardTab },
+          { key: 'dashboard', label: 'Dashboard', children: DashboardTab },
           { key: 'list',      label: '批次清單',   children: ListTab },
         ]}
       />

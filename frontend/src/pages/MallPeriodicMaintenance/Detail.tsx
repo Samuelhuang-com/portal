@@ -472,14 +472,14 @@ export default function MallPeriodicMaintenanceDetailPage() {
         style={{ marginBottom: 16 }}
         items={[
           { title: '商場管理' },
-          { title: <a onClick={() => navigate('/mall/dashboard?tab=pm')}>商場週期保養</a> },
+          { title: <a onClick={() => navigate('/mall/periodic-maintenance')}>商場週期保養</a> },
           { title: detail?.batch.journal_no ?? batchId },
         ]}
       />
 
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
         <Space>
-          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/mall/dashboard?tab=pm')}>
+          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/mall/periodic-maintenance')}>
             返回列表
           </Button>
           <Title level={4} style={{ margin: 0 }}>

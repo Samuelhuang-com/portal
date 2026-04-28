@@ -121,7 +121,8 @@ export interface MonthRepairStat {
   // 明細（點擊展開）
   prev_uncompleted_detail:     RepairCase[]
   closed_from_prev_detail:     RepairCase[]
-  prev_remaining_detail:       RepairCase[]
+  prev_remaining_detail:          RepairCase[]
+  this_month_uncompleted_detail:  RepairCase[]
   this_month_total_detail:     RepairCase[]
   this_month_completed_detail: RepairCase[]
 }
@@ -154,13 +155,14 @@ export interface ClosingTimeData {
 
 // ── 4.3 報修類型統計 ──────────────────────────────────────────────────────────
 export interface TypeStatRow {
-  type:       string
-  example:    string
-  monthly:    Record<number, number>
-  row_total:  number
-  prev_month: number
-  this_month: number
-  cum_pct:    number
+  type:           string
+  example:        string
+  monthly:        Record<number, number>
+  monthly_detail: Record<number, RepairCase[]>
+  row_total:      number
+  prev_month:     number
+  this_month:     number
+  cum_pct:        number
 }
 
 export interface TypeStatsData {

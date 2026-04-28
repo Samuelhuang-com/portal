@@ -948,7 +948,7 @@ function RepairStatsTab({ year, focusMonth }: { year: number; focusMonth: number
     { key: 'cum_completion_rate',                                                   label: '④ 累計項目完成率（%）', isPct: true },
     { key: 'this_month_total',           detailKey: 'this_month_total_detail',     label: '⑤ 本月報修項目數' },
     { key: 'this_month_completed',       detailKey: 'this_month_completed_detail', label: '⑥ 本月報修項目完成數' },
-    { key: 'this_month_uncompleted',                                                label: '⑦ 本月未完成數' },
+    { key: 'this_month_uncompleted', detailKey: 'this_month_uncompleted_detail',   label: '⑦ 本月未完成數' },
     { key: 'this_month_completion_rate',                                            label: '⑧ 本月報修項目完成率（%）', isPct: true },
   ]
 

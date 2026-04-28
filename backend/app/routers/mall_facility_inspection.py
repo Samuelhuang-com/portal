@@ -316,6 +316,23 @@ def list_batches(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# ── 工時解析輔助函式 ─────────────────────────────────────────────────────────────
+
+def _parse_minutes(start: str, end: str) -> int:
+    """解析 HH:MM 格式的開始/結束時間，回傳分鐘數差值；格式無效時回傳 0。"""
+    import re
+    def to_min(t: str):
+        m = re.match(r'^(\d{1,2}):(\d{2})$', t.strip())
+        if m:
+            return int(m.group(1)) * 60 + int(m.group(2))
+        return None
+    s, e = to_min(start), to_min(end)
+    if s is None or e is None:
+        return 0
+    diff = e - s
+    return diff + 24 * 60 if diff < 0 else diff
+
+
 # GET /dashboard/summary  — 跨 Sheet 統計（index.tsx Dashboard 用）
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -354,6 +371,7 @@ def get_dashboard_summary(
         abnormal_items  = 0
         pending_items   = 0
         unchecked_items = 0
+        total_minutes   = 0
 
         for b in day_batches:
             items = (
@@ -370,6 +388,7 @@ def get_dashboard_summary(
             abnormal_items  += kpi["abnormal"]
             pending_items   += kpi["pending"]
             unchecked_items += kpi["unchecked"]
+            total_minutes   += _parse_minutes(b.start_time or "", b.end_time or "")
 
         completion_rate = (
             round(checked_items / total_items * 100, 1) if total_items > 0 else 0.0
@@ -387,6 +406,7 @@ def get_dashboard_summary(
             "unchecked_items": unchecked_items,
             "completion_rate": completion_rate,
             "has_data":        total_batches > 0,
+            "total_minutes":   total_minutes,
         })
 
     return {"target_date": target_date, "sheets": results}

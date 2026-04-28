@@ -137,7 +137,8 @@ export interface MonthRepairStat {
   // 明細（點擊展開）
   prev_uncompleted_detail:    RepairCase[]
   closed_from_prev_detail:    RepairCase[]
-  prev_remaining_detail:      RepairCase[]
+  prev_remaining_detail:          RepairCase[]
+  this_month_uncompleted_detail:  RepairCase[]
   this_month_total_detail:    RepairCase[]
   this_month_completed_detail:RepairCase[]
 }

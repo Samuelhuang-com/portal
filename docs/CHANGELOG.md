@@ -4,6 +4,13 @@
 
 ---
 
+## [1.39.38] - 2026-04-28
+
+### Changed
+- **mall/periodic-maintenance & mall/full-building-maintenance Dashboard** — TAB 名稱由「主管儀表板」改為「Dashboard」；新增第 5 個 KPI 卡片「保養時間」（`planned_minutes` 轉換為小時，藍色 `ClockCircleOutlined`）；原進度條旁的「預估工時」移除（資訊已整合至 KPI 卡）；KPI 卡欄寬由 `lg={6}` 調整為 `lg={4}` 以容納 5 欄
+
+---
+
 ## [1.39.37] - 2026-04-28
 
 ### Fixed

@@ -21,7 +21,7 @@ import {
 import {
   HomeOutlined, SyncOutlined, ReloadOutlined,
   WarningOutlined, CheckCircleOutlined, ExclamationCircleOutlined,
-  DashboardOutlined, ToolOutlined,
+  DashboardOutlined, ToolOutlined, ClockCircleOutlined,
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { NAV_GROUP, NAV_PAGE } from '@/constants/navLabels'
@@ -245,11 +245,12 @@ function SummaryTabContent() {
     }
   }
 
-  const totalBatches = sheets.reduce((s, r) => s + r.total_batches, 0)
-  const checkedAll   = sheets.reduce((s, r) => s + r.checked_items, 0)
-  const totalAll     = sheets.reduce((s, r) => s + r.total_items,   0)
-  const abnormalAll  = sheets.reduce((s, r) => s + r.abnormal_items + r.pending_items, 0)
-  const rateAll      = totalAll > 0 ? Math.round((checkedAll / totalAll) * 100) : 0
+  const totalBatches   = sheets.reduce((s, r) => s + r.total_batches, 0)
+  const checkedAll     = sheets.reduce((s, r) => s + r.checked_items, 0)
+  const totalAll       = sheets.reduce((s, r) => s + r.total_items,   0)
+  const abnormalAll    = sheets.reduce((s, r) => s + r.abnormal_items + r.pending_items, 0)
+  const rateAll        = totalAll > 0 ? Math.round((checkedAll / totalAll) * 100) : 0
+  const totalMinutes   = sheets.reduce((s, r) => s + (r.total_minutes ?? 0), 0)
 
   const sheetCols = [
     {
@@ -341,8 +342,8 @@ function SummaryTabContent() {
           { title: '異常 + 待處理', value: abnormalAll, color: '#FF4D4F', icon: <WarningOutlined /> },
           { title: '整體完成率',    value: rateAll, suffix: '%', color: rateAll >= 80 ? '#52C41A' : '#FAAD14', icon: <ExclamationCircleOutlined /> },
         ].map((card) => (
-          <Col xs={12} sm={12} lg={6} key={card.title}>
-            <Card size="small" hoverable>
+          <Col flex={1} style={{ minWidth: 140 }} key={card.title}>
+            <Card size="small" hoverable style={{ height: '100%' }}>
               <Statistic
                 title={card.title}
                 value={card.value}
@@ -353,6 +354,17 @@ function SummaryTabContent() {
             </Card>
           </Col>
         ))}
+        <Col flex={1} style={{ minWidth: 140 }}>
+          <Card size="small" hoverable style={{ height: '100%' }}>
+            <Statistic
+              title="巡檢時間"
+              value={Math.round(totalMinutes / 60 * 10) / 10}
+              suffix="小時"
+              prefix={<span style={{ color: '#4BA8E8' }}><ClockCircleOutlined /></span>}
+              valueStyle={{ color: '#4BA8E8', fontSize: 26 }}
+            />
+          </Card>
+        </Col>
       </Row>
 
       <Card size="small">
@@ -425,7 +437,7 @@ export default function MallFacilityInspectionDashboard() {
         items={[
           {
             key:      'summary',
-            label:    '統計總覽',
+            label:    'Dashboard',
             children: openedTabs.has('summary') ? <SummaryTabContent /> : null,
           },
           {

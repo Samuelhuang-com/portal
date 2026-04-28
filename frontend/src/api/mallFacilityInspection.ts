@@ -73,6 +73,7 @@ export interface MallFISheetSummary {
   unchecked_items: number
   completion_rate: number
   has_data:        boolean
+  total_minutes:   number
 }
 
 export interface MallFIDashboardSummary {

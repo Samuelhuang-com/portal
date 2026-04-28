@@ -21,7 +21,7 @@ import {
 import {
   HomeOutlined, SyncOutlined, ReloadOutlined,
   WarningOutlined, CheckCircleOutlined, ExclamationCircleOutlined,
-  DashboardOutlined, SafetyOutlined,
+  DashboardOutlined, SafetyOutlined, ClockCircleOutlined,
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { NAV_GROUP, NAV_PAGE } from '@/constants/navLabels'
@@ -328,8 +328,8 @@ function SummaryTabContent() {
           { title: '異常 + 待處理', value: abnormalAll,  color: '#FF4D4F',                          icon: <WarningOutlined /> },
           { title: '整體完成率',    value: rateAll,      suffix: '%', color: rateAll >= 80 ? '#52C41A' : '#FAAD14', icon: <ExclamationCircleOutlined /> },
         ].map((card) => (
-          <Col xs={12} sm={12} lg={6} key={card.title}>
-            <Card size="small" hoverable>
+          <Col flex={1} style={{ minWidth: 140 }} key={card.title}>
+            <Card size="small" hoverable style={{ height: '100%' }}>
               <Statistic
                 title={card.title}
                 value={card.value}
@@ -340,6 +340,17 @@ function SummaryTabContent() {
             </Card>
           </Col>
         ))}
+        <Col flex={1} style={{ minWidth: 140 }}>
+          <Card size="small" hoverable style={{ height: '100%' }}>
+            <Statistic
+              title="巡檢時間"
+              value={0}
+              suffix="小時"
+              prefix={<span style={{ color: '#4BA8E8' }}><ClockCircleOutlined /></span>}
+              valueStyle={{ color: '#4BA8E8', fontSize: 26 }}
+            />
+          </Card>
+        </Col>
       </Row>
 
       {/* 各 Sheet 明細表 */}
@@ -414,7 +425,7 @@ export default function FullBuildingInspectionDashboard() {
         items={[
           {
             key:      'summary',
-            label:    '統計總覽',
+            label:    'Dashboard',
             children: openedTabs.has('summary') ? <SummaryTabContent /> : null,
           },
           {

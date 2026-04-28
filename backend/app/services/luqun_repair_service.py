@@ -1278,7 +1278,8 @@ def compute_repair_stats(
         this_completed = len(this_completed_cases)
 
         # ⑥ 本月未完成數
-        this_uncompleted = this_total - this_completed
+        this_uncompleted_cases = [c for c in this_month_cases if not _completed_in(c, year, month)]
+        this_uncompleted = len(this_uncompleted_cases)
 
         # ⑦ 本月完成率
         this_rate = round(this_completed / this_total * 100, 1) if this_total > 0 else None
@@ -1297,8 +1298,9 @@ def compute_repair_stats(
             "prev_uncompleted_detail": [c.to_dict() for c in prev_uncompleted],
             "closed_from_prev_detail": [c.to_dict() for c in closed_from_prev_cases],
             "prev_remaining_detail":   [c.to_dict() for c in prev_remaining_cases],
-            "this_month_total_detail": [c.to_dict() for c in this_month_cases],
-            "this_month_completed_detail": [c.to_dict() for c in this_completed_cases],
+            "this_month_total_detail":       [c.to_dict() for c in this_month_cases],
+            "this_month_completed_detail":   [c.to_dict() for c in this_completed_cases],
+            "this_month_uncompleted_detail": [c.to_dict() for c in this_uncompleted_cases],
         }
 
     return {"year": year, "months": months_data}

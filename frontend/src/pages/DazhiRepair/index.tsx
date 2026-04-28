@@ -786,7 +786,7 @@ function RepairStatsTab({ year, focusMonth }: { year: number; focusMonth: number
     { key: 'cum_completion_rate',                                                   label: '④ 累計項目完成率（%）', isPct: true },
     { key: 'this_month_total',           detailKey: 'this_month_total_detail',     label: '⑤ 本月報修項目數' },
     { key: 'this_month_completed',       detailKey: 'this_month_completed_detail', label: '⑥ 本月報修項目完成數' },
-    { key: 'this_month_uncompleted',                                                label: '⑦ 本月未完成數' },
+    { key: 'this_month_uncompleted', detailKey: 'this_month_uncompleted_detail',   label: '⑦ 本月未完成數' },
     { key: 'this_month_completion_rate',                                            label: '⑧ 本月報修項目完成率（%）', isPct: true },
   ]
 
@@ -1052,6 +1052,7 @@ function ClosingTimeTab({ year, month }: { year: number; month: number | null })
 function RepairTypeTab({ year, month }: { year: number; month: number | null }) {
   const [data, setData]       = useState<TypeStatsData | null>(null)
   const [loading, setLoading] = useState(false)
+  const [modal, setModal]     = useState<{ title: string; cases: RepairCase[] } | null>(null)
 
   useEffect(() => {
     setLoading(true)
@@ -1125,7 +1126,9 @@ function RepairTypeTab({ year, month }: { year: number; month: number | null }) 
             </tr>
           </thead>
           <tbody>
-            {data.rows.map((row, rowIdx) => (
+            {data.rows.map((row, rowIdx) => {
+              const allRowCases = Object.values(row.monthly_detail ?? {}).flat()
+              return (
               <tr key={row.type} style={{ background: rowIdx % 2 === 0 ? '#fafafa' : '#fff' }}>
                 <td style={{
                   padding: '6px 12px', fontWeight: 600, color: '#1B3A5C',
@@ -1140,23 +1143,33 @@ function RepairTypeTab({ year, month }: { year: number; month: number | null }) 
                 {MONTHS.map(m => {
                   const v = row.monthly[m] || 0
                   const isFocus = m === focusM
+                  const detail = row.monthly_detail?.[m] ?? []
+                  const canClick = v > 0 && detail.length > 0
                   return (
-                    <td key={m} style={{
-                      padding: '6px 6px', textAlign: 'center',
-                      borderBottom: '1px solid #e8e8e8',
-                      background: isFocus ? '#e6f7ff' : undefined,
-                      color: v > 0 ? '#1B3A5C' : '#ccc',
-                      fontWeight: isFocus && v > 0 ? 700 : 400,
-                    }}>
+                    <td key={m}
+                      onClick={() => canClick && setModal({ title: `${m}月 ${row.type}（${v} 件）`, cases: detail })}
+                      style={{
+                        padding: '6px 6px', textAlign: 'center',
+                        borderBottom: '1px solid #e8e8e8',
+                        background: isFocus ? '#e6f7ff' : undefined,
+                        color: v > 0 ? '#1B3A5C' : '#ccc',
+                        fontWeight: isFocus && v > 0 ? 700 : 400,
+                        cursor: canClick ? 'pointer' : 'default',
+                        textDecoration: canClick ? 'underline dotted' : undefined,
+                      }}>
                       {v || '-'}
                     </td>
                   )
                 })}
-                <td style={{
-                  padding: '6px 8px', textAlign: 'center', fontWeight: 700,
-                  borderBottom: '1px solid #e8e8e8', color: '#1B3A5C',
-                  background: '#f0f4f8',
-                }}>
+                <td
+                  onClick={() => allRowCases.length > 0 && setModal({ title: `${row.type} 全年（${row.row_total} 件）`, cases: allRowCases })}
+                  style={{
+                    padding: '6px 8px', textAlign: 'center', fontWeight: 700,
+                    borderBottom: '1px solid #e8e8e8', color: '#1B3A5C',
+                    background: '#f0f4f8',
+                    cursor: allRowCases.length > 0 ? 'pointer' : 'default',
+                    textDecoration: allRowCases.length > 0 ? 'underline dotted' : undefined,
+                  }}>
                   {row.row_total || '-'}
                 </td>
                 <td style={{
@@ -1167,7 +1180,8 @@ function RepairTypeTab({ year, month }: { year: number; month: number | null }) 
                   {row.row_total > 0 ? `${row.cum_pct}%` : '-'}
                 </td>
               </tr>
-            ))}
+              )
+            })}
             {/* 合計行 */}
             <tr style={{ background: '#1B3A5C', color: '#fff', fontWeight: 700 }}>
               <td style={{ padding: '7px 12px', position: 'sticky', left: 0, background: '#1B3A5C' }}>合計</td>
@@ -1189,6 +1203,10 @@ function RepairTypeTab({ year, month }: { year: number; month: number | null }) 
           </tbody>
         </table>
       </div>
+
+      <CaseListModal title={modal?.title ?? ''} cases={modal?.cases ?? []}
+        open={!!modal} onClose={() => setModal(null)}
+        extra={<Tag color="blue">共 {modal?.cases.length ?? 0} 筆</Tag>} />
     </div>
   )
 }
