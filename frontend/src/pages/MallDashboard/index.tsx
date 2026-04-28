@@ -246,6 +246,7 @@ function InspectionListTab({
   batches, loading, syncing, yearMonth,
   onYearMonthChange, onReload, onSync, detailPath,
 }: {
+  floor?: string
   batches: GenericBatchItem[]; loading: boolean; syncing: boolean
   yearMonth: string
   onYearMonthChange: (ym: string) => void

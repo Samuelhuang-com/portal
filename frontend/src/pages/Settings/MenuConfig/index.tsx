@@ -132,7 +132,7 @@ function buildWorkItems(
   })
 
   // ② 建立 base 樹（L1 + L2），re-parented 項目從原位置排除，但 key 仍加入 structureKeys
-  const result = structure.map((parent, pi) => {
+  const result: WorkItem[] = structure.map((parent, pi) => {
     structureKeys.add(parent.key)
     const pCfg = configMap.get(parent.key)
     const children = (parent.children ?? [])

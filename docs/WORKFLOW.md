@@ -46,6 +46,12 @@ git commit -m "fix: 說明內容"
 git push
 ```
 
+> ⚠️ **若 `git add` 出現 `index.lock` 錯誤**（Another git process seems to be running），先執行以下指令刪除殘留鎖檔，再重新 add / commit / push：
+> ```powershell
+> del C:\OneDrive\_Ragic\portal\.git\index.lock
+> ```
+> lock 檔是上一個 git 操作被強制中斷留下的殘檔，刪掉沒有任何風險。
+
 > **所有程式碼與檔案異動都會被推上 GitHub**，並在下次 `update.bat` 時同步到正式機。  
 > 唯獨以下項目在 `.gitignore` 裡，永遠不會被推上去：
 > - `backend/.env`（API 金鑰、JWT 密鑰等敏感設定）
