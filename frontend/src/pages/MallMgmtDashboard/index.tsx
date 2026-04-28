@@ -56,6 +56,18 @@ import { NAV_GROUP, NAV_PAGE } from '@/constants/navLabels'
 
 const { Title, Text } = Typography
 
+// ── Normalize 共用型別 ────────────────────────────────────────────────────────
+export interface NormalizedSummary {
+  work_hours:       number
+  case_count:       number
+  completed_count:  number
+  completion_rate:  number
+  abnormal_count:   number
+  overdue_count:    number
+  is_placeholder:   boolean
+  category_breakdown?: { name: string; count: number; rate: number }[]
+}
+
 // ── Normalize 型別 ─────────────────────────────────────────────────────────────
 export interface SourceSummary {
   source_key:       string
@@ -84,9 +96,9 @@ const SOURCE_CONFIG_ROW1 = [
 
 // 第二列：報修 / 交辦 / 緊急事件
 const SOURCE_CONFIG_ROW2 = [
-  { key: 'dazhi_repair',      label: '大直工務報修', color: '#FA8C16', icon: <WarningOutlined />,          route: '/dazhi-repair/dashboard' },
-  { key: 'mall_supervisor',   label: '商場主管交辦', color: '#C0392B', icon: <ExclamationCircleOutlined />, route: '/dashboard' },
-  { key: 'mall_emergency',    label: '商場緊急事件', color: '#D4380D', icon: <WarningOutlined />,           route: '/dashboard' },
+  { key: 'dazhi_repair',    label: '大直工務報修', color: '#FA8C16', icon: <WarningOutlined />,          route: '/dazhi-repair/dashboard' },
+  { key: 'mall_supervisor', label: '商場主管交辦', color: '#C0392B', icon: <ExclamationCircleOutlined />, route: '/dashboard' },
+  { key: 'mall_emergency',  label: '商場緊急事件', color: '#D4380D', icon: <WarningOutlined />,           route: '/dashboard' },
 ] as const
 
 const SOURCE_CONFIG = [...SOURCE_CONFIG_ROW1, ...SOURCE_CONFIG_ROW2] as const
@@ -107,7 +119,7 @@ function normalizePM(data: PMStats | null) {
 }
 
 function normalizeFacility(data: MallFIDashboardSummary | null) {
-  if (!data?.sheets?.length) return { work_hours: 0, case_count: 0, completed_count: 0, completion_rate: 0, abnormal_count: 0, overdue_count: 0, is_placeholder: !data }
+  if (!data?.sheets?.length) return { work_hours: 0, case_count: 0, completed_count: 0, completion_rate: 0, abnormal_count: 0, overdue_count: 0, is_placeholder: !data, category_breakdown: undefined }
   const sheets = data.sheets
   const total_items    = sheets.reduce((s, sh) => s + sh.total_items,    0)
   const checked_items  = sheets.reduce((s, sh) => s + sh.checked_items,  0)
@@ -126,7 +138,7 @@ function normalizeFacility(data: MallFIDashboardSummary | null) {
 }
 
 function normalizeDazhi(data: DashboardData | null) {
-  if (!data) return { work_hours: 0, case_count: 0, completed_count: 0, completion_rate: 0, abnormal_count: 0, overdue_count: 0, is_placeholder: true }
+  if (!data) return { work_hours: 0, case_count: 0, completed_count: 0, completion_rate: 0, abnormal_count: 0, overdue_count: 0, is_placeholder: true, category_breakdown: undefined }
   const kpi = data.kpi
   const case_count = kpi.total
   return {
@@ -146,7 +158,7 @@ function SourceCard({
   config, summary, loading, error,
 }: {
   config:   typeof SOURCE_CONFIG[number]
-  summary:  ReturnType<typeof normalizePM> | null
+  summary:  NormalizedSummary | null
   loading:  boolean
   error:    string | null
 }) {
@@ -331,10 +343,10 @@ export default function MallMgmtDashboardPage() {
   const fullBldgPmSummary   = useMemo(() => normalizePM(fullBldgPmData),           [fullBldgPmData])
   const mallFacilitySummary = useMemo(() => normalizeFacility(mallFacilityData),   [mallFacilityData])
   const dazhiSummary        = useMemo(() => normalizeDazhi(dazhiData),             [dazhiData])
-  const placeholderSummary = useMemo(() => ({ work_hours: 0, case_count: 0, completed_count: 0, completion_rate: 0, abnormal_count: 0, overdue_count: 0, is_placeholder: true }), [])
+  const placeholderSummary = useMemo((): NormalizedSummary => ({ work_hours: 0, case_count: 0, completed_count: 0, completion_rate: 0, abnormal_count: 0, overdue_count: 0, is_placeholder: true, category_breakdown: undefined }), [])
   const fullBldgInspSummary = placeholderSummary
 
-  const summaryMap  = {
+  const summaryMap: Record<string, NormalizedSummary> = {
     mall_pm:          mallPmSummary,
     full_bldg_pm:     fullBldgPmSummary,
     mall_facility:    mallFacilitySummary,
@@ -343,11 +355,11 @@ export default function MallMgmtDashboardPage() {
     mall_supervisor:  placeholderSummary,
     mall_emergency:   placeholderSummary,
   }
-  const loadingMap  = {
+  const loadingMap: Record<string, boolean> = {
     mall_pm: loadingMallPm, full_bldg_pm: loadingFullBldgPm, mall_facility: loadingMallFacility,
-    full_bldg_insp: false, dazhi_repair: loadingDazhi, mall_supervisor: false, mall_emergency: false,
+    full_bldg_insp: false,  dazhi_repair: loadingDazhi, mall_supervisor: false, mall_emergency: false,
   }
-  const errorMap    = {
+  const errorMap: Record<string, string | null> = {
     mall_pm: errorMallPm, full_bldg_pm: errorFullBldgPm, mall_facility: errorMallFacility,
     full_bldg_insp: null, dazhi_repair: errorDazhi, mall_supervisor: null, mall_emergency: null,
   }
@@ -541,9 +553,9 @@ export default function MallMgmtDashboardPage() {
         {SOURCE_CONFIG_ROW1.map((cfg) => (
           <Col key={cfg.key} xs={24} sm={12} md={6}>
             <SourceCard config={cfg}
-              summary={summaryMap[cfg.key as keyof typeof summaryMap]}
-              loading={loadingMap[cfg.key as keyof typeof loadingMap]}
-              error={errorMap[cfg.key as keyof typeof errorMap]}
+              summary={summaryMap[cfg.key]}
+              loading={loadingMap[cfg.key]}
+              error={errorMap[cfg.key]}
             />
           </Col>
         ))}
@@ -553,9 +565,9 @@ export default function MallMgmtDashboardPage() {
         {SOURCE_CONFIG_ROW2.map((cfg) => (
           <Col key={cfg.key} xs={24} sm={12} md={8}>
             <SourceCard config={cfg}
-              summary={summaryMap[cfg.key as keyof typeof summaryMap]}
-              loading={loadingMap[cfg.key as keyof typeof loadingMap]}
-              error={errorMap[cfg.key as keyof typeof errorMap]}
+              summary={summaryMap[cfg.key]}
+              loading={loadingMap[cfg.key]}
+              error={errorMap[cfg.key]}
             />
           </Col>
         ))}
