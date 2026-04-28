@@ -4,6 +4,43 @@
 
 ---
 
+## [1.39.41] - 2026-04-28
+
+### Changed
+- **商場管理 Dashboard — KPI 來源卡片版型調整**：
+  - 第一列（4 欄）：商場例行維護 / 全棟例行維護 / 商場工務巡檢 / 整棟巡檢
+  - 第二列（3 欄）：大直工務報修 / 商場主管交辦（數據準備中）/ 商場緊急事件（數據準備中）
+  - 無資料狀態文字改為「數據準備中」（原「資料建置中」）
+
+---
+
+## [1.39.40] - 2026-04-28
+
+### Added
+- **商場管理 Dashboard（新功能）** — 整合 5 個既有模組資料的總覽 Dashboard，route `/mall/overview`：
+  - 資料來源：商場例行維護（`fetchMallPMStats`）、全棟例行維護（`fetchFullBldgPMStats`）、商場工務巡檢（`fetchMallFacilityDashboardSummary`）、大直工務報修（`fetchDashboard`）；整棟巡檢（API 建置中，佔位顯示）
+  - 前端 Normalize adapter：各模組回傳格式統一轉為 `SourceSummary`（`work_hours`/`case_count`/`completed_count`/`completion_rate`/`abnormal_count`/`overdue_count`）
+  - KPI 卡片：本期總工項、已完成工項、整體完成率（圓形進度）、工時合計、異常件數、逾期未保養
+  - 各來源狀態卡片（5 張，各含工項數、完成率 Progress bar、異常/逾期/工時）
+  - 圖表：各來源工項數比較橫條圖、各來源完成率比較橫條圖、大直報修 12 個月案件趨勢折線圖、各來源工時占比圓餅圖
+  - 篩選：大直工務年/月篩選；工務巡檢日期篩選；例行維護顯示當期批次（不受篩選影響）
+  - 新增 `frontend/src/pages/MallMgmtDashboard/index.tsx`
+  - 更新 `router/index.tsx`（新增 `/mall/overview` 路由）、`MainLayout.tsx`（商場管理群組頂部新增 Dashboard 入口）、`navLabels.ts`（新增 `mallMgmtDashboard`）
+
+---
+
+## [1.39.39] - 2026-04-28
+
+### Security
+- **系統設定 RBAC 管控** — `系統設定` 選單及 `/settings/*` 路由現在僅限 `system_admin` 角色可見與進入：
+  - `authStore`：新增 `decodeUserFromToken()`，頁面重整時從 JWT 還原 `user.roles`，避免 guard 誤判
+  - `MainLayout`：依 `user.roles` 過濾 `settings` 選單群組；`useState` 初始值同步由 JWT 決定，避免閃現
+  - `router/index.tsx`：新增 `SettingsGuard`，直接輸入 `/settings/*` URL 時若無 `system_admin` 角色一律 redirect 至 `/dashboard`
+  - 後端 `menu_config.py`：`PUT /`（儲存設定）與 `GET /history` 改為 `is_system_admin`（`GET /` 保持開放供所有已登入使用者載入側欄動態選單）
+  - 後端 `ragic.py`：`GET /connections`、`GET /connections/{id}/logs`、`GET /snapshots/{id}/latest`、`GET /scheduler/status`、`GET /scheduler/module-interval`、`GET /sync-logs/recent`、`GET /app-directory/annotations` 全部改為 `is_system_admin`
+
+---
+
 ## [1.39.38] - 2026-04-28
 
 ### Changed

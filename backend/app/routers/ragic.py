@@ -27,7 +27,7 @@ from app.core.scheduler import (
     register_connection_job,
     set_module_sync_interval,
 )
-from app.dependencies import get_current_user, is_system_admin
+from app.dependencies import is_system_admin
 from app.models.ragic_connection import RagicConnection
 from app.models.sync_log import SyncLog
 from app.schemas.ragic import (
@@ -44,7 +44,7 @@ router = APIRouter()
 
 @router.get("/connections", response_model=List[RagicConnectionOut])
 def list_connections(
-    current_user=Depends(get_current_user),
+    current_user=Depends(is_system_admin),
     db: Session = Depends(get_db),
 ):
     """列出所有連線（含停用的）。"""
@@ -191,7 +191,7 @@ def trigger_sync(
 def get_sync_logs(
     conn_id: str,
     limit: int = 50,
-    current_user=Depends(get_current_user),
+    current_user=Depends(is_system_admin),
     db: Session = Depends(get_db),
 ):
     """取得連線同步日誌（預設最新 50 筆）。"""
@@ -213,7 +213,7 @@ def get_sync_logs(
 @router.get("/snapshots/{conn_id}/latest")
 def get_latest_snapshot(
     conn_id: str,
-    current_user=Depends(get_current_user),
+    current_user=Depends(is_system_admin),
     db: Session = Depends(get_db),
 ):
     """取得連線最新資料快照。"""
@@ -240,7 +240,7 @@ def get_latest_snapshot(
 # ── GET /scheduler/status ─────────────────────────────────────────────────────
 
 @router.get("/scheduler/status")
-def get_scheduler_status(current_user=Depends(get_current_user)):
+def get_scheduler_status(current_user=Depends(is_system_admin)):
     """列出所有 RagicConnection 排程任務的目前狀態（下次執行時間等）。"""
     return {"jobs": list_connection_jobs()}
 
@@ -248,7 +248,7 @@ def get_scheduler_status(current_user=Depends(get_current_user)):
 # ── GET/POST /scheduler/module-interval ───────────────────────────────────────
 
 @router.get("/scheduler/module-interval")
-def get_module_interval(current_user=Depends(get_current_user)):
+def get_module_interval(current_user=Depends(is_system_admin)):
     """取得目前硬編碼模組（客房保養、工務報修等）的自動同步間隔（分鐘）。"""
     return {"interval_minutes": get_module_sync_interval()}
 
@@ -272,7 +272,7 @@ def trigger_all_modules_sync(
 @router.get("/sync-logs/recent")
 def get_recent_sync_logs(
     hours: int = 24,
-    current_user=Depends(get_current_user),
+    current_user=Depends(is_system_admin),
     db: Session = Depends(get_db),
 ):
     """
@@ -316,7 +316,7 @@ from app.models.ragic_app_directory import RagicAppPortalAnnotation
 @router.get("/app-directory/annotations")
 def get_app_directory_annotations(
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(is_system_admin),
 ):
     """
     取得所有 Portal 標註（portal_name / portal_url）。

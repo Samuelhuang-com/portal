@@ -39,6 +39,7 @@
  *   2026-04-28  新增 fullBuildingMaintenance（全棟例行維護）Ragic Sheet 21，route /mall/full-building-maintenance
  *   2026-04-28  新增 mallPmGroup（商場例行維護）L2 群組，整合 mallDashboard + mallPeriodicMaintenance + fullBuildingMaintenance 為三層 menu
  *   2026-04-28  修正 applyMenuConfig 三層 merge 邏輯；DB seed 隱藏 custom_1777348120465；MenuConfig 設定頁支援三層 L3
+ *   2026-04-28  新增 mallMgmtDashboard（商場管理 Dashboard）整合 5 來源總覽，route /mall/overview
  */
 
 // ── 系統標題 ──────────────────────────────────────────────────────────────────
@@ -88,6 +89,7 @@ export const NAV_PAGE = {
   repairs:                '報修管理',
 
   // 商場管理
+  mallMgmtDashboard:          '商場管理 Dashboard',  // ← 新增：5 來源整合總覽
   mallDashboard:              '商場週期保養',
   mallPeriodicMaintenance:    '商場例行維護',
   fullBuildingMaintenance:    '全棟例行維護',   // ← 新增：Ragic Sheet 21

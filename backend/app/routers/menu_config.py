@@ -12,7 +12,7 @@ from typing import Optional
 from app.core.time import twnow
 
 from app.core.database import get_db
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, is_system_admin
 from app.models.menu_config import MenuConfig, MenuConfigHistory
 from app.models.user import User
 
@@ -68,7 +68,7 @@ def get_menu_config(
 def save_menu_config(
     payload: MenuConfigSaveRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(is_system_admin),
 ):
     """
     批次覆寫全部 menu 設定。
@@ -155,7 +155,7 @@ def save_menu_config(
 @router.get("/history", response_model=list[MenuConfigHistoryOut])
 def get_menu_config_history(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(is_system_admin),
 ):
     """取得最近 5 筆變更記錄"""
     rows = (

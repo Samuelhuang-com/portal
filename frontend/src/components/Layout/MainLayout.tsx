@@ -3,7 +3,7 @@
  * ⚠️  選單文字請勿在此直接修改，統一至 @/constants/navLabels.ts 修改
  * ✅  執行期自訂 label 與排序由 /api/v1/settings/menu-config 動態載入
  */
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { Layout, Menu, Typography, Avatar, Dropdown, Space, theme } from 'antd'
 import {
   DashboardOutlined,
@@ -96,6 +96,8 @@ export const menuItems = [
     icon: <ShopOutlined />,
     label: NAV_GROUP.mall,
     children: [
+      // ── 商場管理 Dashboard（整合 5 來源總覽，置於群組最頂）─────────────
+      { key: '/mall/overview', icon: <DashboardOutlined />, label: NAV_PAGE.mallMgmtDashboard },
       // ── 商場例行維護（L2 群組）→ 三個 L3 子項目 ──────────────────────
       {
         key: 'mall-pm-group',
@@ -399,25 +401,49 @@ export function applyMenuConfig(base: any[], configs: MenuConfigItem[]): any[] {
 
 export default function MainLayout() {
   const [collapsed, setCollapsed] = useState(false)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const [dynamicMenuItems, setDynamicMenuItems] = useState<any[]>(menuItems)
   const navigate = useNavigate()
   const location = useLocation()
   const logout = useAuthStore((s) => s.logout)
   const user = useAuthStore((s) => s.user)
   const { token: designToken } = theme.useToken()
 
+  // ── 系統設定選單僅限 system_admin 可見 ────────────────────────────────────
+  const isSystemAdmin = !!(user?.roles?.includes('system_admin'))
+
+  // base items：非 system_admin 時過濾掉 settings 群組
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const baseItems = useMemo<any[]>(
+    () => isSystemAdmin ? menuItems : menuItems.filter((item) => item.key !== 'settings'),
+    [isSystemAdmin]
+  )
+
+  // 初始值也要過濾，避免頁面重整時短暫閃現 settings 選單：
+  // 直接從 localStorage token 解出 roles，不依賴非同步的 user state。
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [dynamicMenuItems, setDynamicMenuItems] = useState<any[]>(() => {
+    try {
+      const token = localStorage.getItem('access_token')
+      if (!token) return menuItems.filter((item) => item.key !== 'settings')
+      const payload = JSON.parse(atob(token.split('.')[1]))
+      const ok = Array.isArray(payload.roles) && payload.roles.includes('system_admin')
+      return ok ? menuItems : menuItems.filter((item) => item.key !== 'settings')
+    } catch {
+      return menuItems.filter((item) => item.key !== 'settings')
+    }
+  })
+
   // 啟動時拉取 menu config，靜默套用（失敗不影響正常使用）
   const loadMenuConfig = useCallback(async () => {
     try {
       const configs = await fetchMenuConfig()
-      if (configs.length > 0) {
-        setDynamicMenuItems(applyMenuConfig(menuItems, configs))
-      }
+      setDynamicMenuItems(
+        configs.length > 0 ? applyMenuConfig(baseItems, configs) : baseItems
+      )
     } catch {
-      // 拉取失敗：使用預設值，不顯示錯誤
+      // 拉取失敗：回退至 baseItems（已依角色過濾）
+      setDynamicMenuItems(baseItems)
     }
-  }, [])
+  }, [baseItems])
 
   useEffect(() => {
     loadMenuConfig()

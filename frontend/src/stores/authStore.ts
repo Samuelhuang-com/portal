@@ -23,10 +23,33 @@ interface AuthState {
   isAuthenticated: boolean
 }
 
+/**
+ * 從 JWT token 解析出基本使用者資訊（id / email / roles）。
+ * 供頁面重新整理後在呼叫 /me 之前先取得角色，避免閃爍或誤判。
+ */
+function decodeUserFromToken(token: string | null): AuthUser | null {
+  if (!token) return null
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1]))
+    if (typeof payload.exp === 'number' && payload.exp * 1000 < Date.now()) return null
+    return {
+      id:        payload.sub   || '',
+      email:     payload.email || '',
+      name:      '',
+      full_name: '',
+      roles:     Array.isArray(payload.roles) ? payload.roles : [],
+    }
+  } catch {
+    return null
+  }
+}
+
+const _storedToken = localStorage.getItem('access_token')
+
 export const useAuthStore = create<AuthState>((set) => ({
-  token: localStorage.getItem('access_token'),
-  user: null,
-  isAuthenticated: !!localStorage.getItem('access_token'),
+  token: _storedToken,
+  user: decodeUserFromToken(_storedToken),
+  isAuthenticated: !!_storedToken,
 
   setToken: (token) => {
     localStorage.setItem('access_token', token)

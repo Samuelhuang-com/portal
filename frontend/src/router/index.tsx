@@ -2,7 +2,7 @@
  * App Router
  */
 import { useEffect } from 'react'
-import { Routes, Route, Navigate, useNavigate } from 'react-router-dom'
+import { Routes, Route, Navigate, Outlet, useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/stores/authStore'
 
 // ── JWT 過期判斷（純前端解碼，不送 request）──────────────────────────────────
@@ -24,6 +24,7 @@ import RoomMaintenanceDetailPage from '@/pages/RoomMaintenanceDetail'
 import InventoryPage             from '@/pages/Inventory'
 import PeriodicMaintenancePage       from '@/pages/PeriodicMaintenance'
 import PeriodicMaintenanceDetailPage from '@/pages/PeriodicMaintenance/Detail'
+import MallMgmtDashboardPage             from '@/pages/MallMgmtDashboard'
 import MallDashboardPage                 from '@/pages/MallDashboard'
 import MallPeriodicMaintenancePage       from '@/pages/MallPeriodicMaintenance'
 import MallPeriodicMaintenanceDetailPage from '@/pages/MallPeriodicMaintenance/Detail'
@@ -83,7 +84,17 @@ import BudgetAccountCodesPage          from '@/pages/Budget/Masters/AccountCodes
 import BudgetItemsPage                 from '@/pages/Budget/Masters/BudgetItems'
 import BudgetMappingsPage              from '@/pages/Budget/Mappings'
 
-// ── Route Guard ───────────────────────────────────────────────────────────────
+// ── Route Guards ──────────────────────────────────────────────────────────────
+/**
+ * 系統設定守衛 — 只有 system_admin 角色可進入 /settings/*
+ * 其餘使用者直接導回 /dashboard，防止直接輸入網址繞過選單控制。
+ */
+function SettingsGuard({ children }: { children: React.ReactNode }) {
+  const user = useAuthStore((s) => s.user)
+  const isSystemAdmin = !!(user?.roles?.includes('system_admin'))
+  return isSystemAdmin ? <>{children}</> : <Navigate to="/dashboard" replace />
+}
+
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated)
   const token           = useAuthStore((s) => s.token)
@@ -149,6 +160,7 @@ export default function AppRouter() {
 
         {/* ── 商場管理 ──────────────────────────────────────────────── */}
         <Route path="mall">
+          <Route path="overview"                      element={<MallMgmtDashboardPage />} />
           <Route path="dashboard"                     element={<MallDashboardPage />} />
           <Route path="periodic-maintenance"                    element={<MallPeriodicMaintenancePage />} />
           <Route path="periodic-maintenance/:batchId"          element={<MallPeriodicMaintenanceDetailPage />} />
@@ -240,13 +252,16 @@ export default function AppRouter() {
           <Route path=":id"  element={<MemoDetailPage />} />
         </Route>
 
-        {/* ── 系統設定 ────────────────────────────────────────────────── */}
-        <Route path="settings">
-          <Route path="users"              element={<UsersPage />} />
-          <Route path="roles"              element={<RolesPage />} />
-          <Route path="ragic-connections"    element={<RagicConnectionsPage />} />
+        {/* ── 系統設定（僅限 system_admin）──────────────────────────────── */}
+        <Route
+          path="settings"
+          element={<SettingsGuard><Outlet /></SettingsGuard>}
+        >
+          <Route path="users"               element={<UsersPage />} />
+          <Route path="roles"               element={<RolesPage />} />
+          <Route path="ragic-connections"   element={<RagicConnectionsPage />} />
           <Route path="ragic-app-directory" element={<RagicAppDirectoryPage />} />
-          <Route path="menu-config"          element={<MenuConfigPage />} />
+          <Route path="menu-config"         element={<MenuConfigPage />} />
         </Route>
 
         {/* 自訂選單佔位頁（custom_* key 點擊時導向此處）*/}
