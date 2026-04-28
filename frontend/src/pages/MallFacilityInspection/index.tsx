@@ -205,6 +205,7 @@ function SummaryTabContent() {
       pending_items:   0,
       unchecked_items: 0,
       completion_rate: 0,
+      total_minutes:   0,
       has_data:        false,
     }))
 
@@ -220,7 +221,7 @@ function SummaryTabContent() {
           ? { ...s, ...apiSheet }
           : { ...s, total_batches: 0, total_items: 0, checked_items: 0,
               abnormal_items: 0, pending_items: 0, unchecked_items: 0,
-              completion_rate: 0, has_data: false }
+              completion_rate: 0, total_minutes: 0, has_data: false }
       })
       setSheets(merged)
     } catch {
