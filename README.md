@@ -2,9 +2,10 @@
 
 > 跨據點統一管理平台 — FastAPI + React + TypeScript
 
-**最後更新：2026-04-28（v1.39.20）**
+**最後更新：2026-04-28（v1.39.34）**
 
 ## 最近變更
+- v1.39.34：**全棟例行維護（新功能）** — Ragic Sheet 21 同步；`full_bldg_pm_batch` + `full_bldg_pm_batch_item` 雙表；`/api/v1/mall/full-building-maintenance` API；前端 `FullBuildingMaintenance` 儀表板 + 批次清單 + 批次明細 + ItemHistoryDrawer；商場管理 menu 重構為三層（`mall-pm-group` → 商場週期保養 / 商場例行維護 / 全棟例行維護）
 - v1.39.20：**春大直商場工務巡檢整合** — 獨立群組移至「商場管理」下；六 Tab 整合頁（統計總覽 + 4F/3F/1F~3F/1F/B1F~B4F 巡檢紀錄），真實 API 保留，懶載入 + URL ?tab= 支援；側邊欄簡化
 - v1.39.19：**整棟巡檢整合** — 「整棟巡檢」獨立群組移至「商場管理」下；五 Tab 整合頁（統計總覽 / RF / B4F / B2F / B1F 巡檢紀錄），懶載入 + URL ?tab= 支援；側邊欄簡化
 - v1.39.18：**商場管理整合** — 「商場管理」群組六個子頁面合併為單一「商場週期保養」頁；新增六 Tab（統計總覽 / 週期保養 / B4F / RF / B2F / B1F 巡檢紀錄），各 Tab 懶載入 + 同步 Ragic；側邊欄簡化為單一入口

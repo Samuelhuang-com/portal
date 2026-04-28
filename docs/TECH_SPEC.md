@@ -28,6 +28,7 @@
 | v1.39.0 | 2026-04-24 | **IHG 客房保養模組**：`ihg_rm_master` + `ihg_rm_detail` 雙表（Ragic `periodic-maintenance/4`）；多候選欄位 key 自動挑選策略（`_pick()`）；年度保養矩陣 `/matrix`（房號×月份）；KPI `/stats`；`/debug-raw` 欄位結構診斷；Menu 位置：飯店管理→2.IHG客房保養 |
 | v1.39.15 | 2026-04-27 | **ExecMetrics 共用元件**：`src/components/ExecMetrics/index.tsx` 抽取 `HeroKpi`/`ExecHeroLayer`/`ExecSourceCards`/`ExecMetricsCard`；Dashboard 頂部以 `ExecMetricsCard` 取代隱藏的 `BudgetSummaryCard`；ExecDashboard 重構使用共用元件，行為不變；補 `CategoryStats.meta.last_sync_at?` 型別 |
 | v1.39.17 | 2026-04-28 | **選單管理**：新增 `menu_configs`（key/custom_label/sort_order）+ `menu_config_history`（diff_json/snapshot_json，最多 5 筆）資料表；後端 `routers/menu_config.py`（GET/PUT config, GET history）；前端 `pages/Settings/MenuConfig/index.tsx`（@dnd-kit 拖拉排序 + inline 改名 + 歷史 Drawer）；`MainLayout` 動態載入覆蓋設定，失敗 fallback 預設值；安裝 @dnd-kit/core v6 / @dnd-kit/sortable v10 / @dnd-kit/utilities v3 |
+| v1.39.34 | 2026-04-28 | **全棟例行維護**：`full_bldg_pm_batch` + `full_bldg_pm_batch_item` 雙表（Ragic Sheet 21）；`full_building_maintenance_sync.py` 子表格四模式解析；`/api/v1/mall/full-building-maintenance` Router（共用 PM schema）；前端 `FullBuildingMaintenance` 頁 + `fullBuildingMaintenance.ts`；mall menu 重構為三層（mall-pm-group → 商場週期保養 / 商場例行維護 / 全棟例行維護） |
 
 ---
 

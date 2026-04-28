@@ -238,7 +238,7 @@ RK_ALIASES: dict[str, list[str]] = {
     RK_FLOOR:           ["維修地點", "發生樓層", "樓層", "位置"],
     RK_OCCURRED_AT:     ["報修日期", "發生時間", "報修時間", "申報時間"],
     RK_RESPONSIBLE:     ["處理工務", "反應單位", "負責單位", "負責人", "承辦單位"],  # 2026-04-23: 處理工務優先
-    RK_WORK_HOURS:      ["花費工時", "工時"],    # 主欄位；fallback 工務處理天數/維修天數在 __init__ 手動處理
+    RK_WORK_HOURS:      ["花費工時", "工時"],    # 備用；主欄位「維修天數(天)」/「維修天數」在 __init__ 手動讀取
     RK_STATUS:          ["處理狀態", "處理狀況", "狀態", "進度"],
     RK_OUTSOURCE_FEE:   ["委外費用", "外包費用"],
     RK_MAINTENANCE_FEE: ["維修費用", "費用"],
@@ -406,8 +406,10 @@ class RepairCase:
         self.floor            = _str(_get_field(raw, RK_FLOOR))
         self.occurred_at      = _parse_datetime(_get_field(raw, RK_OCCURRED_AT))
         self.responsible_unit = _str(_get_field(raw, RK_RESPONSIBLE))
-        # 工時：① 維修天數（天 ×24，上限 365 天防誤植年份如 2026→48624hr）→ ② 花費工時
-        _work_hrs = safe_work_days_to_hours(raw.get("維修天數", ""))
+        # 工時：① 維修天數(天)（Ragic 實際欄位名含括號）→ ② 維修天數（備用，不含括號）→ ③ 花費工時
+        _work_hrs = safe_work_days_to_hours(
+            raw.get("維修天數(天)") or raw.get("維修天數", "")
+        )
         if _work_hrs <= 0:
             _work_hrs = _float(_get_field(raw, RK_WORK_HOURS))  # 花費工時（備用）
         self.work_hours = _work_hrs
@@ -849,6 +851,10 @@ def compute_repair_stats(
         closed_from_prev_list = [c for c in prev_uncompleted if _completed_in(c, year, month)]
         closed_this_month_from_prev = len(closed_from_prev_list)
 
+        # 2b. 上月累計完成數 = ① - ② = 上月累計未完成中，本月後仍未結案的案件
+        prev_remaining_list = [c for c in prev_uncompleted if not _completed_in(c, year, month)]
+        prev_remaining_count = prev_uncompleted_count - closed_this_month_from_prev
+
         # 3. 累計完成率（截至本月底，以 completed_at 為準）
         cases_up_to_this = [
             c for c in all_cases
@@ -878,6 +884,7 @@ def compute_repair_stats(
             "month":                      month,
             "prev_uncompleted":           prev_uncompleted_count,
             "closed_from_prev":           closed_this_month_from_prev,
+            "prev_remaining":             prev_remaining_count,
             "cum_completion_rate":        cum_rate,
             "this_month_total":           this_total,
             "this_month_completed":       this_completed,
@@ -886,6 +893,7 @@ def compute_repair_stats(
             # 明細（可點擊展開）
             "prev_uncompleted_detail":     [c.to_dict() for c in prev_uncompleted],
             "closed_from_prev_detail":     [c.to_dict() for c in closed_from_prev_list],
+            "prev_remaining_detail":       [c.to_dict() for c in prev_remaining_list],
             "this_month_total_detail":     [c.to_dict() for c in this_month_cases],
             "this_month_completed_detail": [c.to_dict() for c in this_completed_list],
         }

@@ -1253,6 +1253,10 @@ def compute_repair_stats(
         closed_from_prev_cases = [c for c in prev_uncompleted if _completed_in(c, year, month)]
         closed_this_month_from_prev = len(closed_from_prev_cases)
 
+        # ②b 上月累計完成數 = ① - ② = 上月累計未完成中，本月後仍未結案的案件
+        prev_remaining_cases = [c for c in prev_uncompleted if not _completed_in(c, year, month)]
+        prev_remaining_count = prev_uncompleted_count - closed_this_month_from_prev
+
         # ③ 累計完成率：報修在本月底以前，且完工日期也在本月底以前
         cases_up_to_this = [
             c for c in all_cases
@@ -1283,6 +1287,7 @@ def compute_repair_stats(
             "month": month,
             "prev_uncompleted": prev_uncompleted_count,
             "closed_from_prev": closed_this_month_from_prev,
+            "prev_remaining":   prev_remaining_count,
             "cum_completion_rate": cum_rate,
             "this_month_total": this_total,
             "this_month_completed": this_completed,
@@ -1291,6 +1296,7 @@ def compute_repair_stats(
             # 明細（點擊展開用）
             "prev_uncompleted_detail": [c.to_dict() for c in prev_uncompleted],
             "closed_from_prev_detail": [c.to_dict() for c in closed_from_prev_cases],
+            "prev_remaining_detail":   [c.to_dict() for c in prev_remaining_cases],
             "this_month_total_detail": [c.to_dict() for c in this_month_cases],
             "this_month_completed_detail": [c.to_dict() for c in this_completed_cases],
         }

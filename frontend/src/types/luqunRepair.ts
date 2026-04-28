@@ -128,6 +128,7 @@ export interface MonthRepairStat {
   month:                      number
   prev_uncompleted:           number
   closed_from_prev:           number
+  prev_remaining:             number
   cum_completion_rate:        number | null
   this_month_total:           number
   this_month_completed:       number
@@ -136,6 +137,7 @@ export interface MonthRepairStat {
   // 明細（點擊展開）
   prev_uncompleted_detail:    RepairCase[]
   closed_from_prev_detail:    RepairCase[]
+  prev_remaining_detail:      RepairCase[]
   this_month_total_detail:    RepairCase[]
   this_month_completed_detail:RepairCase[]
 }

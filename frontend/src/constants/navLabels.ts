@@ -36,6 +36,9 @@
  *   2026-04-28  整合整棟巡檢：fullBuildingDashboard 改名「整棟巡檢」，移至商場管理群組下，RF/B4F/B2F/B1F 合併為 Tab
  *   2026-04-28  整合春大直商場工務巡檢：mallFacilityDashboard 改名「春大直工務巡檢」，移至商場管理群組下，5 個樓層巡檢紀錄合併為 Tab
  *   2026-04-28  /exec-dashboard 與 /work-category-analysis 從 luqun-repair / dazhi-repair 子層提升為獨立一階（Dashboard 正後方）
+ *   2026-04-28  新增 fullBuildingMaintenance（全棟例行維護）Ragic Sheet 21，route /mall/full-building-maintenance
+ *   2026-04-28  新增 mallPmGroup（商場例行維護）L2 群組，整合 mallDashboard + mallPeriodicMaintenance + fullBuildingMaintenance 為三層 menu
+ *   2026-04-28  修正 applyMenuConfig 三層 merge 邏輯；DB seed 隱藏 custom_1777348120465；MenuConfig 設定頁支援三層 L3
  */
 
 // ── 系統標題 ──────────────────────────────────────────────────────────────────
@@ -48,6 +51,7 @@ export const NAV_GROUP = {
   calendar:   '行事曆',           // ← 新增：Command Calendar（在 dashboard 之後、hotel 之前）
   hotel:      '飯店管理',
   mall:                     '商場管理',
+  mallPmGroup:              '商場例行維護',   // ← L2 群組：商場例行維護 + 全棟例行維護
   luqun_repair:             '樂群工務報修',
   dazhi_repair:             '大直工務部',
   mall_facility_inspection:  '春大直商場工務巡檢',
@@ -84,8 +88,9 @@ export const NAV_PAGE = {
   repairs:                '報修管理',
 
   // 商場管理
-  mallDashboard:           '商場週期保養',
-  mallPeriodicMaintenance: '1.2 商場週期保養',
+  mallDashboard:              '商場週期保養',
+  mallPeriodicMaintenance:    '商場例行維護',
+  fullBuildingMaintenance:    '全棟例行維護',   // ← 新增：Ragic Sheet 21
   b4fInspection:           '工務巡檢 - B4F',
   rfInspection:            '工務巡檢 - RF',
   b2fInspection:           '工務巡檢 - B2F',

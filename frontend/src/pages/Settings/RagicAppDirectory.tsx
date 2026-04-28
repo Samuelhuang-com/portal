@@ -30,6 +30,7 @@ import {
   SaveOutlined,
 } from '@ant-design/icons'
 import apiClient from '@/api/client'
+import { menuItems } from '@/components/Layout/MainLayout'
 
 const { Title, Text, Link } = Typography
 
@@ -329,6 +330,37 @@ const TYPE_COLOR: Record<string, string> = {
   '其他':      'default',
 }
 
+// ── Portal 選單層級 + 名稱查找表 ─────────────────────────────────────────────
+// 從 menuItems 掃描三層結構，建立 portalUrl → { level, label } 的對照
+// 每次前端重新載入自動同步，不需要手動維護
+interface PortalMenuInfo { level: 1 | 2 | 3; label: string }
+
+function buildPortalInfoMap(): Map<string, PortalMenuInfo> {
+  const map = new Map<string, PortalMenuInfo>()
+  for (const l1 of menuItems) {
+    map.set(l1.key as string, { level: 1, label: l1.label as string })
+    for (const l2 of ((l1 as any).children ?? []) as any[]) {
+      map.set(l2.key as string, { level: 2, label: l2.label as string })
+      for (const l3 of ((l2 as any).children ?? []) as any[]) {
+        map.set(l3.key as string, { level: 3, label: l3.label as string })
+      }
+    }
+  }
+  return map
+}
+const PORTAL_INFO_MAP = buildPortalInfoMap()
+
+function getPortalInfo(portalUrl: string): PortalMenuInfo | null {
+  if (!portalUrl || !portalUrl.startsWith('/')) return null
+  return PORTAL_INFO_MAP.get(portalUrl) ?? null
+}
+
+const LEVEL_CONFIG: Record<1 | 2 | 3, { label: string; color: string; bg: string; border: string }> = {
+  1: { label: '一階', color: '#1677ff', bg: '#e6f4ff', border: '#91caff'  },
+  2: { label: '二階', color: '#389e0d', bg: '#f6ffed', border: '#b7eb8f'  },
+  3: { label: '三階', color: '#d46b08', bg: '#fff7e6', border: '#ffd591'  },
+}
+
 // ── 已知 Portal 對應預設值 ────────────────────────────────────────────────────
 // 優先度：DB 使用者標註 > 此處預設 > 空白
 // 規則：以 Ragic 模組/URL 推斷對應的 Portal 頁面
@@ -599,6 +631,53 @@ const RagicAppDirectory: React.FC = () => {
         </div>
       ),
     },
+    // ── 選單位置（由 portalUrl 推導）
+    {
+      title: (
+        <Tooltip title="此 Ragic 應用程式對應的 Portal 選單層級與名稱（由 Portal 超連結自動推導）">
+          <span style={{ color: '#1B3A5C', fontWeight: 700 }}>選單位置</span>
+        </Tooltip>
+      ),
+      key: 'menuLevel',
+      width: 150,
+      sorter: (a: RagicApp, b: RagicApp) => {
+        const la = getPortalInfo(a.portalUrl)?.level ?? 9
+        const lb = getPortalInfo(b.portalUrl)?.level ?? 9
+        return la - lb
+      },
+      filters: [
+        { text: '一階', value: 1 },
+        { text: '二階', value: 2 },
+        { text: '三階', value: 3 },
+        { text: '— 未對應', value: 0 },
+      ],
+      onFilter: (v: unknown, r: RagicApp) => {
+        const level = getPortalInfo(r.portalUrl)?.level ?? 0
+        return level === (v as number)
+      },
+      render: (_: unknown, row: RagicApp) => {
+        const info = getPortalInfo(row.portalUrl)
+        if (!info) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>
+        const cfg = LEVEL_CONFIG[info.level]
+        return (
+          <Space direction="vertical" size={2} style={{ lineHeight: 1.3 }}>
+            <Tag
+              style={{
+                fontSize: 11,
+                lineHeight: '18px',
+                color: cfg.color,
+                background: cfg.bg,
+                borderColor: cfg.border,
+                margin: 0,
+              }}
+            >
+              {cfg.label}
+            </Tag>
+            <Text style={{ fontSize: 11, color: '#374151' }}>{info.label}</Text>
+          </Space>
+        )
+      },
+    },
     // ── 靜態欄位
     {
       title: '序號',
@@ -784,7 +863,7 @@ const RagicAppDirectory: React.FC = () => {
           rowKey="itemNo"
           loading={loading}
           size="small"
-          scroll={{ x: 1460 }}
+          scroll={{ x: 1610 }}
           pagination={{
             pageSize: 50,
             showSizeChanger: true,

@@ -26,6 +26,7 @@ from app.routers import (
     mall_facility_inspection,
     full_building_inspection,
     mall_periodic_maintenance,
+    full_building_maintenance,
     menu_config,
     memos,
     uploads,
@@ -164,6 +165,73 @@ def _cleanup_security_patrol_photo_items():
         if result.rowcount > 0:
             conn.commit()
             print(f"[Migration] 保全巡檢拍照項目已清除 {result.rowcount} 筆")
+
+
+def _seed_menu_config_mall_pm_group():
+    """
+    選單設定補丁（2026-04-28）：
+    1. 隱藏舊的 custom_1777348120465（商場例行維護舊群組），改由 base mall-pm-group 取代
+    2. 為 mall-pm-group 的三個子頁面補齊 DB 記錄（若不存在或 parent_key 有誤）：
+       - /mall/dashboard            → sort_order 10
+       - /mall/periodic-maintenance → sort_order 20
+       - /mall/full-building-maintenance → sort_order 30
+    操作冪等：重複執行不會造成重複或錯誤。
+    """
+    from sqlalchemy import text
+
+    CHILDREN = [
+        ("/mall/dashboard",                 10),
+        ("/mall/periodic-maintenance",      20),
+        ("/mall/full-building-maintenance", 30),
+    ]
+
+    with engine.connect() as conn:
+        # ── 1. 隱藏舊的 custom_ 群組（商場例行維護舊入口）──────────────────────
+        conn.execute(
+            text(
+                "UPDATE menu_configs SET is_visible = 0 "
+                "WHERE menu_key = 'custom_1777348120465' AND is_visible = 1"
+            )
+        )
+
+        # ── 2. 確保 mall-pm-group 本身有 DB 記錄且為可見 ──────────────────────
+        row = conn.execute(
+            text("SELECT menu_key FROM menu_configs WHERE menu_key = 'mall-pm-group'")
+        ).fetchone()
+        if row is None:
+            conn.execute(
+                text(
+                    "INSERT INTO menu_configs (menu_key, parent_key, custom_label, sort_order, is_visible, updated_at, updated_by) "
+                    "VALUES ('mall-pm-group', 'mall', NULL, 10, 1, datetime('now'), 'system-seed')"
+                )
+            )
+
+        # ── 3. 補齊三個子頁面的 DB 記錄（parent_key = mall-pm-group）─────────
+        for menu_key, sort_order in CHILDREN:
+            existing = conn.execute(
+                text("SELECT menu_key, parent_key FROM menu_configs WHERE menu_key = :k"),
+                {"k": menu_key},
+            ).fetchone()
+            if existing is None:
+                conn.execute(
+                    text(
+                        "INSERT INTO menu_configs (menu_key, parent_key, custom_label, sort_order, is_visible, updated_at, updated_by) "
+                        "VALUES (:k, 'mall-pm-group', NULL, :o, 1, datetime('now'), 'system-seed')"
+                    ),
+                    {"k": menu_key, "o": sort_order},
+                )
+            elif existing[1] != "mall-pm-group":
+                # parent_key 不對（可能掛在舊群組下），修正
+                conn.execute(
+                    text(
+                        "UPDATE menu_configs SET parent_key = 'mall-pm-group', sort_order = :o "
+                        "WHERE menu_key = :k"
+                    ),
+                    {"k": menu_key, "o": sort_order},
+                )
+
+        conn.commit()
+        print("[Portal] menu_config mall-pm-group seed checked.")
 
 
 def _migrate_luqun_counter_name():
@@ -366,6 +434,9 @@ async def _auto_sync():
     from app.services.mall_periodic_maintenance_sync import (
         sync_from_ragic as sync_mall_pm,
     )
+    from app.services.full_building_maintenance_sync import (
+        sync_from_ragic as sync_full_bldg_pm,
+    )
     from app.services.dazhi_repair_sync import sync_from_ragic as sync_dazhi
     from app.services.luqun_repair_sync import sync_from_ragic as sync_luqun
     from app.services.security_patrol_sync import sync_all as sync_security
@@ -381,6 +452,7 @@ async def _auto_sync():
     await _run_and_log("B2F巡檢", sync_b2f())
     await _run_and_log("B1F巡檢", sync_b1f())
     await _run_and_log("商場週期保養", sync_mall_pm())
+    await _run_and_log("全棟例行維護", sync_full_bldg_pm())
     await _run_and_log("大直工務報修", sync_dazhi())
     await _run_and_log("樂群工務報修", sync_luqun())
     await _run_and_log("保全巡檢", sync_security())
@@ -401,6 +473,7 @@ async def lifespan(app: FastAPI):
     import app.models.room  # noqa: F401
     import app.models.periodic_maintenance  # noqa: F401
     import app.models.mall_periodic_maintenance  # noqa: F401
+    import app.models.full_building_maintenance  # noqa: F401
     import app.models.b4f_inspection  # noqa: F401
     import app.models.rf_inspection  # noqa: F401
     import app.models.b2f_inspection  # noqa: F401
@@ -461,6 +534,9 @@ async def lifespan(app: FastAPI):
     # 樂群扣款專櫃欄位補丁（2026-04-24）
     _migrate_luqun_counter_name()
     print("[Portal] Luqun deduction_counter_name migration checked.")
+
+    # 選單設定補丁（2026-04-28）：隱藏舊 custom_1777348120465，補齊 mall-pm-group 子項 DB 記錄
+    _seed_menu_config_mall_pm_group()
 
     # 客房主檔 seed（若 rooms 表為空，自動填入樓層 × 房號資料）
     from app.services.room_seed import seed_rooms
@@ -562,6 +638,13 @@ app.include_router(
     mall_periodic_maintenance.router,
     prefix=f"{API_PREFIX}/mall/periodic-maintenance",
     tags=["商場週期保養表"],
+)
+
+# ── 新增：全棟例行維護 ──────────────────────────────────────────────────────────
+app.include_router(
+    full_building_maintenance.router,
+    prefix=f"{API_PREFIX}/mall/full-building-maintenance",
+    tags=["全棟例行維護"],
 )
 
 # ── 新增：整棟工務每日巡檢 B4F ────────────────────────────────────────────────

@@ -96,7 +96,17 @@ export const menuItems = [
     icon: <ShopOutlined />,
     label: NAV_GROUP.mall,
     children: [
-      { key: '/mall/dashboard',                       icon: <DashboardOutlined />, label: NAV_PAGE.mallDashboard },
+      // ── 商場例行維護（L2 群組）→ 三個 L3 子項目 ──────────────────────
+      {
+        key: 'mall-pm-group',
+        icon: <FileTextOutlined />,
+        label: NAV_GROUP.mallPmGroup,
+        children: [
+          { key: '/mall/dashboard',                    icon: <DashboardOutlined />, label: NAV_PAGE.mallDashboard },
+          { key: '/mall/periodic-maintenance',         icon: <FileTextOutlined />, label: NAV_PAGE.mallPeriodicMaintenance },
+          { key: '/mall/full-building-maintenance',    icon: <ToolOutlined />,     label: NAV_PAGE.fullBuildingMaintenance },
+        ],
+      },
       { key: '/full-building-inspection/dashboard',   icon: <SafetyOutlined />,   label: NAV_PAGE.fullBuildingDashboard },
       { key: '/mall-facility-inspection/dashboard',   icon: <ToolOutlined />,     label: NAV_PAGE.mallFacilityDashboard },
     ],
@@ -274,14 +284,43 @@ export function applyMenuConfig(base: any[], configs: MenuConfigItem[]): any[] {
               })
               .map((child: any) => {
                 // L3：DB 中 parent_key === child.key 且不在 base 裡的項目
-                const grandchildren = (childrenByParent.get(child.key) ?? [])
+                const dbGrandchildren = (childrenByParent.get(child.key) ?? [])
                   .filter((g) => !baseL1Keys.has(g.menu_key) && !baseL2Keys.has(g.menu_key) && g.is_visible !== false)
                   .sort((a, b) => a.sort_order - b.sort_order)
                   .map((g) => buildItem(g))
+
+                // 若 child 本身是群組（base 已有子項目），合併而非覆寫：
+                // 保留 base 子項目（可套用 DB 的 label/visibility），再附加 DB 中額外新增的子項
+                if (Array.isArray(child.children) && child.children.length > 0) {
+                  const baseGcKeys = new Set((child.children as any[]).map((g: any) => g.key))
+                  const extraDbGc = dbGrandchildren.filter((g: any) => !baseGcKeys.has(g.key))
+                  const mergedGc = [
+                    ...(child.children as any[])
+                      .filter((g: any) => {
+                        const gcfg = cfgMap.get(g.key)
+                        return gcfg === undefined || gcfg.is_visible !== false
+                      })
+                      .map((g: any) => ({
+                        ...g,
+                        label: cfgMap.get(g.key)?.custom_label || g.label,
+                      })),
+                    ...extraDbGc,
+                  ].sort((a: any, b: any) => {
+                    const ao = cfgMap.get(a.key)?.sort_order ?? 9999
+                    const bo = cfgMap.get(b.key)?.sort_order ?? 9999
+                    return ao - bo
+                  })
+                  return {
+                    ...child,
+                    label: cfgMap.get(child.key)?.custom_label || child.label,
+                    children: mergedGc,
+                  }
+                }
+
                 return {
                   ...child,
                   label: cfgMap.get(child.key)?.custom_label || child.label,
-                  ...(grandchildren.length > 0 ? { children: grandchildren } : {}),
+                  ...(dbGrandchildren.length > 0 ? { children: dbGrandchildren } : {}),
                 }
               })
 
@@ -304,9 +343,17 @@ export function applyMenuConfig(base: any[], configs: MenuConfigItem[]): any[] {
                 }]
               })
 
-            // 使用者在此 L1 下新增的 custom_ L2 項目（不在 base structure 裡）
+            // DB 中此 L1 下、不在 base structure 裡的額外 L2 項目
+            // （包含 custom_ 自訂項目，以及舊版無前綴的使用者項目如 mall-pm-group）
+            // ⚠️  必須用全域 baseL2Keys（所有群組的 L2），而非只有本群組的 base L2，
+            //     否則跨群組移過來的 base L2 項目（如 /dazhi-repair/dashboard → mall）
+            //     會同時出現在 movedHere 與 customL2Here，造成側欄重複顯示。
             const customL2Here = (childrenByParent.get(parent.key) ?? [])
-              .filter((c) => c.menu_key.startsWith('custom_') && c.is_visible !== false)
+              .filter((c) =>
+                !baseL2Keys.has(c.menu_key) &&
+                !baseL1Keys.has(c.menu_key) &&
+                c.is_visible !== false
+              )
               .sort((a, b) => a.sort_order - b.sort_order)
               .map((c) => buildItem(c))
 

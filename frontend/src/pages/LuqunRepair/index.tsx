@@ -944,11 +944,12 @@ function RepairStatsTab({ year, focusMonth }: { year: number; focusMonth: number
   const rows: { key: string; detailKey?: string; label: string; isPct?: boolean }[] = [
     { key: 'prev_uncompleted',           detailKey: 'prev_uncompleted_detail',     label: '① 上月累計未完成項目數' },
     { key: 'closed_from_prev',           detailKey: 'closed_from_prev_detail',     label: '② 上月未完成，本月結案數' },
-    { key: 'cum_completion_rate',                                                   label: '③ 累計項目完成率（%）', isPct: true },
-    { key: 'this_month_total',           detailKey: 'this_month_total_detail',     label: '④ 本月報修項目數' },
-    { key: 'this_month_completed',       detailKey: 'this_month_completed_detail', label: '⑤ 本月報修項目完成數' },
-    { key: 'this_month_uncompleted',                                                label: '⑥ 本月未完成數' },
-    { key: 'this_month_completion_rate',                                            label: '⑦ 本月報修項目完成率（%）', isPct: true },
+    { key: 'prev_remaining',             detailKey: 'prev_remaining_detail',       label: '③ 上月累計完成數（① - ②）' },
+    { key: 'cum_completion_rate',                                                   label: '④ 累計項目完成率（%）', isPct: true },
+    { key: 'this_month_total',           detailKey: 'this_month_total_detail',     label: '⑤ 本月報修項目數' },
+    { key: 'this_month_completed',       detailKey: 'this_month_completed_detail', label: '⑥ 本月報修項目完成數' },
+    { key: 'this_month_uncompleted',                                                label: '⑦ 本月未完成數' },
+    { key: 'this_month_completion_rate',                                            label: '⑧ 本月報修項目完成率（%）', isPct: true },
   ]
 
   // 未來月份判定：選擇的年份超過今年，或同年但月份超過當前月份

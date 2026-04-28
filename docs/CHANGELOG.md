@@ -4,6 +4,45 @@
 
 ---
 
+## [1.39.37] - 2026-04-28
+
+### Fixed
+- **側欄跨群組移動後重複顯示** — `applyMenuConfig` 的 `customL2Here` 過濾器改用全域 `baseL2Keys`（所有群組的 L2 keys），而非只有當前 L1 群組的 `baseL2KeysForParent`；修正跨群組移動的 base L2 項目（如 `/dazhi-repair/dashboard` 移至 `mall`）同時出現在 `movedHere` 與 `customL2Here`，造成側欄重複顯示的問題
+
+---
+
+## [1.39.36] - 2026-04-28
+
+### Added
+- **RagicAppDirectory 選單位置欄** — `settings/ragic-app-directory` 新增「選單位置」欄，從 `menuItems` 自動推導 `portalUrl` 對應的階層（一階/二階/三階）與選單名稱，Tag 顯示階層（藍=一階、綠=二階、橘=三階），下方顯示對應選單項目名稱；支援篩選與排序；新增 `buildPortalInfoMap()` 工具函式，選單結構異動時自動同步
+
+---
+
+## [1.39.35] - 2026-04-28
+
+### Fixed
+- **Menu 三層架構顯示錯誤** — 修正 `applyMenuConfig` 對 L2 群組（有 base children 的項目如 `mall-pm-group`）的處理：改為 merge 而非覆寫，確保 `/mall/dashboard`、`/mall/periodic-maintenance`、`/mall/full-building-maintenance` 三個子項目正確顯示於「商場例行維護」群組下
+- **商場管理選單重複「商場例行維護」** — `main.py` 啟動時自動隱藏舊 `custom_1777348120465`（DB 中殘留的舊商場例行維護群組），消除側邊欄兩個同名 L2 群組並存的問題
+- **Settings/MenuConfig 未顯示三階子項** — `DEFAULT_MENU_STRUCTURE` 擴充為三層（L1→L2→L3）；`buildWorkItems` 步驟② 處理 grandchildren；`itemMap` 步驟③ 納入 L3 keys；`全棟例行維護` 等三階系統模組現可在選單管理頁面正常顯示與設定
+
+---
+
+## [1.39.34] - 2026-04-28
+
+### Added
+- **全棟例行維護模組（新功能）** — Ragic Sheet 21（`periodic-maintenance/21`）同步；後端新增 `full_bldg_pm_batch` + `full_bldg_pm_batch_item` 資料表、`full_building_maintenance_sync.py`（子表格 A/B/C/D 四模式解析）、`full_building_maintenance.py` Router（`/api/v1/mall/full-building-maintenance`）；前端新增 `FullBuildingMaintenance` 頁面（主管儀表板 + 批次清單 + 批次明細 + ItemHistoryDrawer）、`fullBuildingMaintenance.ts` API client；`_auto_sync()` 納入全棟例行維護排程
+- **Menu 三層架構重構（商場管理）** — `mall` 群組下新增 `mall-pm-group`（商場例行維護）L2 中間層，整合「商場週期保養（/mall/dashboard）」、「商場例行維護（/mall/periodic-maintenance）」、「全棟例行維護（/mall/full-building-maintenance）」為三層 sidebar；navLabels.ts 補 `mallPmGroup`、`fullBuildingMaintenance` 標籤
+
+---
+
+## [1.39.34] - 2026-04-28
+
+### Fixed
+- **三階項目跨 L2 移動失敗（mall-pm-group 類舊版 key）** — `buildWorkItems` Phase ④ 的 `extra` 過濾器移除 `c.menu_key.startsWith('custom_')` 限制，改為只排除 `structureKeys` 中的 base 項目；早期未帶 `custom_` 前綴的使用者建立項目（如 `mall-pm-group`）現可正確加入 itemMap，Phase ⑤ 才能找到父層並插入 reparented 項目
+- **sidebar 同步修正** — `applyMenuConfig` 的 `customL2Here` 過濾條件同步調整，移除 `custom_` 前綴限制，改為排除 `baseL2KeysForParent`（當前 L1 的 base 子項）與 `baseL1Keys`，確保舊版 key 的 L2 項目也出現在側邊欄
+
+---
+
 ## [1.39.33] - 2026-04-28
 
 ### Added
@@ -185,6 +224,26 @@
 
 ### Fixed
 - `@/api/workCategoryAnalysis` `CategoryStats.meta` 型別補上 `last_sync_at?: string`，消除 ExecDashboard TS2339 錯誤
+
+---
+
+## [1.39.16] - 2026-04-26
+
+### Added
+- **dazhi + luqun 4.1 報修統計 — 新增「上月累計完成數（① - ②）」列**
+  - 公式：上月累計未完成 - 上月未完成本月結案數 = 本月後仍滾存的未結案件數
+  - 位置：插入在①（上月累計未完成）和②（本月結案數）之間
+  - 可點擊展開明細：顯示從上月累計未完成中，本月未結案的案件清單
+
+---
+
+## [1.39.15] - 2026-04-26
+
+### Fixed
+- **大直工務部 — 本月工時統計 KPI 永遠顯示 0.00 hr**
+  - 根因：`dazhi_repair_service.py` 讀工時欄位用 `raw.get("維修天數", "")` ，但 Ragic 實際欄位名為 `"維修天數(天)"`（含括號），導致永遠讀不到值
+  - 修正：改為 `raw.get("維修天數(天)") or raw.get("維修天數", "")` 兼容兩種名稱
+  - 修復後需執行一次手動同步（Settings → 同步大直工務部）讓 DB `work_hours` 欄位更新
 
 ---
 

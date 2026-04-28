@@ -61,6 +61,8 @@ import FullBuildingInspectionRF        from '@/pages/FullBuildingInspection/RF'
 import FullBuildingInspectionB4F       from '@/pages/FullBuildingInspection/B4F'
 import FullBuildingInspectionB2F       from '@/pages/FullBuildingInspection/B2F'
 import FullBuildingInspectionB1F       from '@/pages/FullBuildingInspection/B1F'
+import FullBuildingMaintenancePage       from '@/pages/FullBuildingMaintenance'
+import FullBuildingMaintenanceDetailPage from '@/pages/FullBuildingMaintenance/Detail'
 import LuqunRepairPage                 from '@/pages/LuqunRepair'
 import DazhiRepairPage                 from '@/pages/DazhiRepair'
 import WorkCategoryAnalysisPage        from '@/pages/WorkCategoryAnalysis'
@@ -148,8 +150,10 @@ export default function AppRouter() {
         {/* ── 商場管理 ──────────────────────────────────────────────── */}
         <Route path="mall">
           <Route path="dashboard"                     element={<MallDashboardPage />} />
-          <Route path="periodic-maintenance"          element={<MallPeriodicMaintenancePage />} />
-          <Route path="periodic-maintenance/:batchId" element={<MallPeriodicMaintenanceDetailPage />} />
+          <Route path="periodic-maintenance"                    element={<MallPeriodicMaintenancePage />} />
+          <Route path="periodic-maintenance/:batchId"          element={<MallPeriodicMaintenanceDetailPage />} />
+          <Route path="full-building-maintenance"              element={<FullBuildingMaintenancePage />} />
+          <Route path="full-building-maintenance/:batchId"     element={<FullBuildingMaintenanceDetailPage />} />
           <Route path="b4f-inspection"                element={<B4FInspectionPage />} />
           <Route path="b4f-inspection/:batchId"       element={<B4FInspectionDetailPage />} />
           <Route path="rf-inspection"                 element={<RFInspectionPage />} />

@@ -49,6 +49,7 @@ import { menuItems, computeReparentedL2 } from '@/components/Layout/MainLayout'
 const { Text, Title } = Typography
 
 // ── 預設結構：直接從 MainLayout.menuItems 派生，icon（JSX）去除只保留 key + label ─
+// 支援三層：L1 → L2 → L3（例如 mall > mall-pm-group > /mall/dashboard）
 // 這樣 sidebar 改版時 MenuConfig 自動同步，不需要手動維護第二份清單
 const DEFAULT_MENU_STRUCTURE = menuItems.map((item) => ({
   key: item.key as string,
@@ -56,7 +57,11 @@ const DEFAULT_MENU_STRUCTURE = menuItems.map((item) => ({
   children: (item as any).children?.map((child: any) => ({
     key: child.key as string,
     label: child.label as string,
-  })) as Array<{ key: string; label: string }> | undefined,
+    children: (child as any).children?.map((gc: any) => ({
+      key: gc.key as string,
+      label: gc.label as string,
+    })) as Array<{ key: string; label: string }> | undefined,
+  })) as Array<{ key: string; label: string; children?: Array<{ key: string; label: string }> }> | undefined,
 }))
 
 // ── 工作用型別 ─────────────────────────────────────────────────────────────────
@@ -131,7 +136,7 @@ function buildWorkItems(
     })
   })
 
-  // ② 建立 base 樹（L1 + L2），re-parented 項目從原位置排除，但 key 仍加入 structureKeys
+  // ② 建立 base 樹（L1 + L2 + L3），re-parented 項目從原位置排除，但 key 仍加入 structureKeys
   const result: WorkItem[] = structure.map((parent, pi) => {
     structureKeys.add(parent.key)
     const pCfg = configMap.get(parent.key)
@@ -140,6 +145,23 @@ function buildWorkItems(
       .map((child, ci) => {
         structureKeys.add(child.key)
         const cCfg = configMap.get(child.key)
+
+        // 處理 L3 子項目（base 中的三階項目，如 mall-pm-group 的三個子頁面）
+        const gcItems: WorkItem[] = ((child as any).children ?? []).map((gc: any, gi: number) => {
+          structureKeys.add(gc.key)
+          const gcCfg = configMap.get(gc.key)
+          return {
+            menu_key: gc.key,
+            parent_key: child.key,
+            defaultLabel: gc.label,
+            customLabel: gcCfg?.custom_label ?? '',
+            sort_order: gcCfg?.sort_order ?? gi * 10,
+            is_visible: gcCfg?.is_visible ?? true,
+            children: [] as WorkItem[],
+          }
+        })
+        gcItems.sort((a, b) => a.sort_order - b.sort_order)
+
         return {
           menu_key: child.key,
           parent_key: parent.key,
@@ -147,11 +169,14 @@ function buildWorkItems(
           customLabel: cCfg?.custom_label ?? '',
           sort_order: cCfg?.sort_order ?? ci * 10,
           is_visible: cCfg?.is_visible ?? true,
-          children: [] as WorkItem[],
+          children: gcItems,
         }
       })
     // re-parented 的 key 也要加入 structureKeys（防止 extra 迴圈重複插入）
-    ;(parent.children ?? []).forEach((child) => structureKeys.add(child.key))
+    ;(parent.children ?? []).forEach((child) => {
+      structureKeys.add(child.key)
+      ;((child as any).children ?? []).forEach((gc: any) => structureKeys.add(gc.key))
+    })
     children.sort((a, b) => a.sort_order - b.sort_order)
     return {
       menu_key: parent.key,
@@ -164,15 +189,20 @@ function buildWorkItems(
     }
   }).sort((a, b) => a.sort_order - b.sort_order)
 
-  // ③ 建立 itemMap（用來掛 L3 及 re-parented 項目）
+  // ③ 建立 itemMap（用來掛 L3 及 re-parented 項目）— 包含三階
   const itemMap = new Map<string, WorkItem>()
   result.forEach((p) => {
     itemMap.set(p.menu_key, p)
-    p.children.forEach((c) => itemMap.set(c.menu_key, c))
+    p.children.forEach((c) => {
+      itemMap.set(c.menu_key, c)
+      c.children.forEach((g) => itemMap.set(g.menu_key, g))
+    })
   })
 
-  // ④ custom_ 項目：從 DB 插入（最多 3 輪以處理深層依賴）
-  const extra = configs.filter((c) => !structureKeys.has(c.menu_key) && c.menu_key.startsWith('custom_'))
+  // ④ 非 base 結構的 DB 項目（custom_ 或舊版無前綴的使用者項目）：從 DB 插入
+  // 只排除已在 structureKeys 的 base 項目；不再強制要求 custom_ 前綴，
+  // 以相容「mall-pm-group」等早期建立的非 custom_ 自訂 key
+  const extra = configs.filter((c) => !structureKeys.has(c.menu_key))
   for (let round = 0; round < 3; round++) {
     extra.forEach((cfg) => {
       if (itemMap.has(cfg.menu_key)) return
