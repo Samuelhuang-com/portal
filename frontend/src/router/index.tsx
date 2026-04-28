@@ -65,6 +65,7 @@ import LuqunRepairPage                 from '@/pages/LuqunRepair'
 import DazhiRepairPage                 from '@/pages/DazhiRepair'
 import WorkCategoryAnalysisPage        from '@/pages/WorkCategoryAnalysis'
 import ExecDashboardPage               from '@/pages/ExecDashboard'
+import DataPreparingPage              from '@/pages/DataPreparing'
 
 // ── IHG 客房保養 ───────────────────────────────────────────────────────────────
 import IHGRoomMaintenancePage          from '@/pages/IHGRoomMaintenance'
@@ -243,6 +244,9 @@ export default function AppRouter() {
           <Route path="ragic-app-directory" element={<RagicAppDirectoryPage />} />
           <Route path="menu-config"          element={<MenuConfigPage />} />
         </Route>
+
+        {/* 自訂選單佔位頁（custom_* key 點擊時導向此處）*/}
+        <Route path="data-preparing" element={<DataPreparingPage />} />
 
         {/* Catch-all */}
         <Route path="*" element={<Navigate to="/dashboard" replace />} />

@@ -456,7 +456,11 @@ export default function MainLayout() {
           defaultOpenKeys={openKeys}
           items={dynamicMenuItems}
           style={{ border: 'none', marginTop: 8 }}
-          onClick={({ key }) => navigate(key)}
+          onClick={({ key }) => {
+            // 自訂選單（尚無對應模組）→ 導向「數據準備中」佔位頁
+            if (key.startsWith('custom_')) navigate('/data-preparing')
+            else navigate(key)
+          }}
         />
       </Sider>
 
