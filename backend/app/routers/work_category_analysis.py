@@ -37,6 +37,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
+from sqlalchemy import func
 from app.core.database import get_db
 from app.dependencies import get_current_user
 from app.models.luqun_repair import LuqunRepairCase
@@ -553,6 +554,33 @@ def _build_person_table(rows: list[dict]) -> dict:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# 同步時間輔助
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _get_last_sync_at(db: Session, src: set[str]) -> str | None:
+    """各來源資料表中最新的 synced_at，回傳 ISO 字串供前端顯示"""
+    candidates = []
+    if "luqun" in src:
+        v = db.query(func.max(LuqunRepairCase.synced_at)).scalar()
+        if v:
+            candidates.append(v)
+    if "dazhi" in src:
+        v = db.query(func.max(DazhiRepairCase.synced_at)).scalar()
+        if v:
+            candidates.append(v)
+    if "hotel_room" in src:
+        v = db.query(func.max(RoomMaintenanceDetailRecord.synced_at)).scalar()
+        if v:
+            candidates.append(v)
+    if "ihg_room" in src:
+        v = db.query(func.max(IHGRoomMaintenanceMaster.synced_at)).scalar()
+        if v:
+            candidates.append(v)
+    latest = max(candidates, default=None)
+    return latest.isoformat() if latest else None
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # 端點
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -632,5 +660,6 @@ def get_stats(
             "category": category,
             "person":   person,
             "total_rows": len(year_rows),
+            "last_sync_at": _get_last_sync_at(db, src),
         },
     }

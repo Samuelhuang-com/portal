@@ -22,6 +22,7 @@ import {
   RiseOutlined,
   FallOutlined,
   WarningOutlined,
+  ExclamationCircleOutlined,
 } from '@ant-design/icons'
 import { getBudgetDashboard, getBudgetYears, type DashboardData, type BudgetYear } from '@/api/budget'
 
@@ -29,6 +30,29 @@ const { Title, Text } = Typography
 
 const fmt = (n: number) =>
   new Intl.NumberFormat('zh-TW', { maximumFractionDigits: 0 }).format(n)
+
+// ── 列狀態 ──────────────────────────────────────────────────────────────────
+type DeptRow = { exec_rate: number }
+
+/** 部門摘要表列背景色 class */
+const deptRowClass = (r: DeptRow) => {
+  if (r.exec_rate >= 100) return 'budget-row-overrun'
+  if (r.exec_rate >= 85)  return 'budget-row-near-overrun'
+  return ''
+}
+
+/** 部門名稱前警示 Icon */
+const DeptNameCell = ({ name, execRate }: { name: string; execRate: number }) => (
+  <>
+    {execRate >= 100 && (
+      <WarningOutlined style={{ color: '#cf1322', marginRight: 5, fontSize: 13 }} />
+    )}
+    {execRate >= 85 && execRate < 100 && (
+      <ExclamationCircleOutlined style={{ color: '#faad14', marginRight: 5, fontSize: 13 }} />
+    )}
+    {name}
+  </>
+)
 
 const STORAGE_KEY = 'budget_dashboard_year_id'
 
@@ -69,6 +93,16 @@ export default function BudgetDashboardPage() {
 
   return (
     <div>
+      {/* ── 超支警示 CSS ── */}
+      <style>{`
+        .budget-row-overrun td      { background-color: #fff1f0 !important; }
+        .budget-row-near-overrun td { background-color: #fffbe6 !important; }
+        .budget-row-overrun:hover td      { background-color: #ffe7e6 !important; }
+        .budget-row-near-overrun:hover td { background-color: #fff3cd !important; }
+        .budget-row-overrun-static td { background-color: #fff1f0 !important; }
+        .budget-row-overrun-static:hover td { background-color: #ffe7e6 !important; }
+      `}</style>
+
       {/* ── Header ── */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
         <Title level={4} style={{ margin: 0 }}>預算管理 Dashboard</Title>
@@ -166,8 +200,17 @@ export default function BudgetDashboardPage() {
           rowKey="dept_name"
           size="small"
           pagination={false}
+          rowClassName={(r) => deptRowClass(r as DeptRow)}
           columns={[
-            { title: '部門', dataIndex: 'dept_name', key: 'dept_name', width: 120 },
+            {
+              title: '部門',
+              dataIndex: 'dept_name',
+              key: 'dept_name',
+              width: 140,
+              render: (v: string, r) => (
+                <DeptNameCell name={v} execRate={(r as DeptRow).exec_rate} />
+              ),
+            },
             {
               title: '年度預算',
               dataIndex: 'plan_budget',
@@ -188,7 +231,10 @@ export default function BudgetDashboardPage() {
               key: 'variance',
               align: 'right',
               render: (v: number) => (
-                <span style={{ color: v >= 0 ? '#3f8600' : '#cf1322' }}>{fmt(v)}</span>
+                <span style={{ color: v >= 0 ? '#3f8600' : '#cf1322', fontWeight: v < 0 ? 600 : 400 }}>
+                  {v < 0 && <WarningOutlined style={{ marginRight: 4, fontSize: 11 }} />}
+                  {fmt(v)}
+                </span>
               ),
             },
             {
@@ -211,20 +257,34 @@ export default function BudgetDashboardPage() {
 
       {/* ── Overrun Items ── */}
       {(data?.overrun_items?.length ?? 0) > 0 && (
-        <Card style={{ marginTop: 16 }} title={<><Tag color="red">超支</Tag> 科目清單</>}>
+        <Card
+          style={{ marginTop: 16, borderColor: '#ffccc7' }}
+          headStyle={{ background: 'linear-gradient(135deg, #c0392b, #e74c3c, #e67e22)', color: '#fff' }}
+          title={<span style={{ color: '#fff' }}><WarningOutlined style={{ marginRight: 6 }} />超支科目清單（共 {data!.overrun_items.length} 項）</span>}
+        >
           <Table
             dataSource={data!.overrun_items}
             rowKey={(r) => `${r.dept_name}-${r.account_code_name}`}
             size="small"
             pagination={false}
+            rowClassName={() => 'budget-row-overrun-static'}
             columns={[
-              { title: '部門', dataIndex: 'dept_name', width: 120 },
+              {
+                title: '部門',
+                dataIndex: 'dept_name',
+                width: 120,
+                render: (v: string) => (
+                  <span><WarningOutlined style={{ color: '#cf1322', marginRight: 5, fontSize: 12 }} />{v}</span>
+                ),
+              },
               { title: '會計科目', dataIndex: 'account_code_name' },
               { title: '年度預算', dataIndex: 'annual_budget', align: 'right', render: (v: number) => fmt(v) },
-              { title: '年度實績', dataIndex: 'annual_actual', align: 'right', render: (v: number) => fmt(v) },
+              { title: '年度實績', dataIndex: 'annual_actual', align: 'right', render: (v: number) => <span style={{ color: '#cf1322', fontWeight: 600 }}>{fmt(v)}</span> },
               {
                 title: '超支金額', dataIndex: 'annual_variance', align: 'right',
-                render: (v: number) => <span style={{ color: '#cf1322' }}>{fmt(Math.abs(v))}</span>,
+                render: (v: number) => (
+                  <span style={{ color: '#cf1322', fontWeight: 700 }}>▲ {fmt(Math.abs(v))}</span>
+                ),
               },
             ]}
           />

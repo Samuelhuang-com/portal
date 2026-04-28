@@ -26,6 +26,7 @@ from app.routers import (
     mall_facility_inspection,
     full_building_inspection,
     mall_periodic_maintenance,
+    menu_config,
     memos,
     uploads,
     dashboard,
@@ -415,6 +416,7 @@ async def lifespan(app: FastAPI):
     import app.models.ragic_app_directory  # noqa: F401
     import app.models.mall_facility_inspection  # noqa: F401
     import app.models.ihg_room_maintenance  # noqa: F401
+    import app.models.menu_config  # noqa: F401
 
     # B4F 扁平化遷移：刪除舊 batch 表 + 檢查 item 表欄位（必須在 create_all 之前）
     _migrate_b4f_flatten()
@@ -680,6 +682,13 @@ app.include_router(
     budget.router,
     prefix=f"{API_PREFIX}/budget",
     tags=["預算管理"],
+)
+
+# ── 新增：選單設定（改名 + 排序 + 歷史）──────────────────────────────────────
+app.include_router(
+    menu_config.router,
+    prefix=f"{API_PREFIX}/settings/menu-config",
+    tags=["選單設定"],
 )
 
 # ── 前端靜態檔案（SPA 模式，放在所有路由之後）────────────────────────────

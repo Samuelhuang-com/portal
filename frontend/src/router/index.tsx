@@ -42,6 +42,7 @@ import UsersPage           from '@/pages/Settings/Users'
 import RolesPage           from '@/pages/Settings/Roles'
 import RagicConnectionsPage from '@/pages/Settings/RagicConnections'
 import RagicAppDirectoryPage from '@/pages/Settings/RagicAppDirectory'
+import MenuConfigPage        from '@/pages/Settings/MenuConfig'
 import ApprovalListPage   from '@/pages/Approvals/List'
 import ApprovalNewPage    from '@/pages/Approvals/New'
 import ApprovalDetailPage from '@/pages/Approvals/Detail'
@@ -240,6 +241,7 @@ export default function AppRouter() {
           <Route path="roles"              element={<RolesPage />} />
           <Route path="ragic-connections"    element={<RagicConnectionsPage />} />
           <Route path="ragic-app-directory" element={<RagicAppDirectoryPage />} />
+          <Route path="menu-config"          element={<MenuConfigPage />} />
         </Route>
 
         {/* Catch-all */}

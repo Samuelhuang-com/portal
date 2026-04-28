@@ -12,10 +12,9 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { Breadcrumb, Card, Collapse, Divider, Progress, Select, Space, Spin, Statistic, Table, Tag, Tooltip, Typography } from 'antd'
 import {
-  ArrowUpOutlined, ArrowDownOutlined,
   MinusOutlined, FireOutlined, CheckCircleOutlined,
   HomeOutlined, FundOutlined,
-  TeamOutlined, ClockCircleOutlined, WarningOutlined, TrophyOutlined,
+  TeamOutlined, ClockCircleOutlined, WarningOutlined, SyncOutlined,
 } from '@ant-design/icons'
 import {
   LineChart, Line, BarChart, Bar, PieChart, Pie, Cell,
@@ -30,6 +29,7 @@ import {
   CATEGORIES, SOURCE_LABELS, CATEGORY_COLORS, CATEGORY_TAG_COLORS,
   type CategoryStats, type PersonRankingItem, type HoursRow, type PersonHoursRow,
 } from '@/api/workCategoryAnalysis'
+import { HeroKpi, ExecHeroLayer, ExecSourceCards, SOURCE_PIE_COLORS } from '@/components/ExecMetrics'
 import { NAV_GROUP, NAV_PAGE } from '@/constants/navLabels'
 
 const { Text, Title } = Typography
@@ -53,12 +53,6 @@ const T = {
   amber:      '#faad14',
   green:      '#52c41a',
   blue:       '#1B3A5C',
-}
-
-const SOURCE_PIE_COLORS: Record<string, string> = {
-  luqun:      '#1B3A5C',
-  dazhi:      '#4BA8E8',
-  hotel_room: '#722ED1',
 }
 
 const PIE_COLORS  = ['#4BA8E8', '#52C41A', '#FF4D4F', '#FA8C16', '#722ED1']
@@ -129,29 +123,7 @@ function AlertBar({ alerts }: { alerts: AlertItem[] }) {
   )
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// Hero KPI 卡片（大數字）
-// ══════════════════════════════════════════════════════════════════════════════
-function HeroKpi({ label, value, unit, sub, size = 36, color = T.primary, extra }:
-  { label: string; value: React.ReactNode; unit?: string; sub?: React.ReactNode; size?: number; color?: string; extra?: React.ReactNode }) {
-  return (
-    <Card
-      size="small"
-      bodyStyle={{ padding: '14px 18px' }}
-      style={{ borderTop: `3px solid ${color}`, height: '100%' }}
-    >
-      <div style={{ fontSize: 12, color: T.textMuted, marginBottom: 6, letterSpacing: '0.04em' }}>{label}</div>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 4, flexWrap: 'wrap' }}>
-        <span style={{ fontSize: size, fontWeight: 800, color, lineHeight: 1.1, letterSpacing: '-1px' }}>
-          {value}
-        </span>
-        {unit && <span style={{ fontSize: 13, color: T.textMuted }}>{unit}</span>}
-        {extra}
-      </div>
-      {sub && <div style={{ fontSize: 11, color: T.textMuted, marginTop: 4 }}>{sub}</div>}
-    </Card>
-  )
-}
+// HeroKpi 已移至 @/components/ExecMetrics（共用元件），此處直接 import 使用
 
 // ══════════════════════════════════════════════════════════════════════════════
 // Donut 圖（recharts PieChart innerRadius）
@@ -261,95 +233,16 @@ export default function ExecDashboardPage() {
     )
   }
 
-  // ════════════════════════════════════════════════════════════════════════════
-  // 第一層：Hero KPI
-  // ════════════════════════════════════════════════════════════════════════════
+  // HeroLayer / SourceCards — 已改用 @/components/ExecMetrics 共用元件
+  // 以 wrapper function 保留呼叫點，讓 Render 區段不需改動
   function HeroLayer() {
     if (!kpi || !conc) return null
-    const momPct  = kpi.mom_change_pct
-    const momUp   = momPct !== null && momPct >= 0
-    const momColor = momPct === null ? T.textMuted : momUp ? T.red : T.green
-    const topSrc  = [...(kpi.source_breakdown)].sort((a, b) => b.hours - a.hours)[0]
-
-    return (
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
-        gap: 12,
-        marginBottom: 16,
-      }}>
-        <HeroKpi
-          label="本期總工時"
-          value={kpi.total_hours.toFixed(1)}
-          unit="HR"
-          size={44}
-          color={T.primary}
-          sub={`${kpi.total_cases} 筆工項 · ${kpi.total_persons} 位人員`}
-        />
-        <HeroKpi
-          label="人均工時"
-          value={kpi.avg_person_hours.toFixed(1)}
-          unit="HR / 人"
-          size={38}
-          color={T.accent}
-          sub="人均負荷指標"
-        />
-        <HeroKpi
-          label="最高工時類別"
-          value={kpi.top_category.name}
-          size={20}
-          color={CATEGORY_COLORS[kpi.top_category.name] ?? T.primary}
-          sub={`${kpi.top_category.hours} HR · 占 ${kpi.top_category.pct}%`}
-        />
-        <HeroKpi
-          label="最高工時人員"
-          value={kpi.top_person.name}
-          size={20}
-          color={T.primary}
-          sub={`${kpi.top_person.hours} HR · 占 ${kpi.top_person.pct}%`}
-          extra={<TrophyOutlined style={{ color: T.warning, fontSize: 16, marginLeft: 4 }} />}
-        />
-        <HeroKpi
-          label="最高工時來源"
-          value={topSrc ? topSrc.label : '–'}
-          size={20}
-          color="#722ED1"
-          sub={topSrc ? `${topSrc.hours} HR · ${topSrc.pct}%` : ''}
-        />
-        <HeroKpi
-          label="環比變化"
-          value={
-            momPct === null ? '–'
-              : `${momUp ? '+' : ''}${momPct}%`
-          }
-          size={36}
-          color={momColor}
-          sub={kpi.prev_month_hours > 0 ? `對比上期 ${kpi.prev_month_hours} HR` : '無上期資料'}
-          extra={momPct !== null
-            ? (momUp
-              ? <ArrowUpOutlined style={{ color: momColor, fontSize: 18, marginLeft: 4 }} />
-              : <ArrowDownOutlined style={{ color: momColor, fontSize: 18, marginLeft: 4 }} />)
-            : undefined}
-        />
-      </div>
-    )
+    return <ExecHeroLayer kpi={kpi} conc={conc} />
   }
 
-  // 來源摘要小卡
   function SourceCards() {
     if (!kpi?.source_breakdown.length) return null
-    return (
-      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 16 }}>
-        {kpi.source_breakdown.map(s => (
-          <Card key={s.source} size="small" bodyStyle={{ padding: '8px 14px' }}
-            style={{ borderLeft: `3px solid ${SOURCE_PIE_COLORS[s.source] ?? T.accent}`, flex: '1 0 130px' }}>
-            <div style={{ fontSize: 11, color: T.textMuted }}>{s.label}</div>
-            <Text strong style={{ fontSize: 16, color: T.primary }}>{s.hours} HR</Text>
-            <Text type="secondary" style={{ fontSize: 11, marginLeft: 6 }}>{s.pct}%</Text>
-          </Card>
-        ))}
-      </div>
-    )
+    return <ExecSourceCards sourceBreakdown={kpi.source_breakdown} />
   }
 
   // ════════════════════════════════════════════════════════════════════════════
@@ -712,6 +605,12 @@ export default function ExecDashboardPage() {
         <Text type="secondary" style={{ fontSize: 12 }}>
           樂群工務 · 大直工務 · 房務保養 — 整合工時決策分析
         </Text>
+        {stats?.meta?.last_sync_at && (
+          <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 2 }}>
+            <SyncOutlined style={{ marginRight: 4 }} />
+            資料同步：{dayjs(stats.meta.last_sync_at).format('MM/DD HH:mm')}
+          </Text>
+        )}
       </div>
 
       {/* 篩選列 */}

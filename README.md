@@ -2,9 +2,14 @@
 
 > 跨據點統一管理平台 — FastAPI + React + TypeScript
 
-**最後更新：2026-04-26（v1.39.11）**
+**最後更新：2026-04-28（v1.39.20）**
 
 ## 最近變更
+- v1.39.20：**春大直商場工務巡檢整合** — 獨立群組移至「商場管理」下；六 Tab 整合頁（統計總覽 + 4F/3F/1F~3F/1F/B1F~B4F 巡檢紀錄），真實 API 保留，懶載入 + URL ?tab= 支援；側邊欄簡化
+- v1.39.19：**整棟巡檢整合** — 「整棟巡檢」獨立群組移至「商場管理」下；五 Tab 整合頁（統計總覽 / RF / B4F / B2F / B1F 巡檢紀錄），懶載入 + URL ?tab= 支援；側邊欄簡化
+- v1.39.18：**商場管理整合** — 「商場管理」群組六個子頁面合併為單一「商場週期保養」頁；新增六 Tab（統計總覽 / 週期保養 / B4F / RF / B2F / B1F 巡檢紀錄），各 Tab 懶載入 + 同步 Ragic；側邊欄簡化為單一入口
+- v1.39.17：**選單管理（新功能）** — 系統設定新增「選單管理」頁；支援拖拉調整一級群組與子選單順序（@dnd-kit）、雙擊 inline 改名、最近 5 筆變更歷史記錄（diff + 快照）；MainLayout 啟動時動態套用設定，失敗時 fallback 至預設
+- v1.39.15：**ExecMetrics 共用元件** — 抽取 `src/components/ExecMetrics/index.tsx`（`HeroKpi`/`ExecHeroLayer`/`ExecSourceCards`/`ExecMetricsCard`）；Dashboard 頂部以 `ExecMetricsCard` 取代隱藏的 `BudgetSummaryCard`；ExecDashboard 重構使用共用元件，顯示行為不變
 - v1.39.11：**Session 過期自動跳轉登入** — `PrivateRoute` 加 JWT 到期主動偵測（掛載/60s/visibilitychange）；apiClient 401 攔截器加 `_redirecting` flag；後端 SPA catch-all 路由修正前端路由 404 問題
 - v1.39.10（原）：**樂群 Drawer 圖片 lazy-fetch（終極修正）** — 新增 `GET /case-images/{ragic_id}` 端點直接呼叫 Ragic detail；Drawer 開啟時若 DB 無圖則自動抓，顯示 Spin → 縮圖，不再依賴 sync 時機
 - v1.39.10：**樂群報修詳情 Drawer — 維修圖片修正** — ORM 補 `images_json` 欄位；startup migration；sync 時儲存；`to_dict()` 解析還原，Drawer 現在能顯示 Ragic 圖片

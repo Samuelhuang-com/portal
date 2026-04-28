@@ -4,6 +4,193 @@
 
 ---
 
+## [1.39.32] - 2026-04-28
+
+### Changed
+- **高階主管 Dashboard / ★工項類別分析 提升為一階** — `/exec-dashboard` 與 `/work-category-analysis` 從 `luqun-repair`、`dazhi-repair` 兩個群組的子項移除，改為獨立一階選單項目，位置緊接在 Dashboard 之後；兩個工務群組各自僅保留自身 Dashboard 子項
+
+---
+
+## [1.39.31] - 2026-04-28
+
+### Fixed
+- **base 模組掛到三階時顯示路由 key（如 `/mall/dashboard`）** — `applyMenuConfig` 的 `buildItem` 新增 `baseItemInfo` 查找表（遍歷 base L1/L2），label 優先序改為 `custom_label > base 原始 label > menu_key`，icon 同步取用 base 圖示
+
+### Added
+- **MenuConfig 刪除功能** — `custom_` 前綴項目右側新增紅色垃圾桶按鈕，搭配 `Popconfirm` 確認；若內含系統模組子項目，刪除時自動退回上一父層（`handleDeleteItem`）；pure custom 子項目則一併遞迴刪除
+
+---
+
+## [1.39.29] - 2026-04-28
+
+### Fixed
+- **新增 custom L2 不出現在側邊欄** — `applyMenuConfig` 在每個 base L1 的 children 中補入 `customL2Here`：從 `childrenByParent.get(parent.key)` 取出 `custom_` 前綴且 is_visible 的項目，以 `buildItem` 渲染（FileTextOutlined icon）後加入 children 並按 sort_order 排序
+- **custom L2 移為 L3 後側邊欄可正確顯示** — base L2 的 grandchildren 注入邏輯原本就允許 custom_ 孫項目通過 filter，確認邏輯無誤
+
+---
+
+## [1.39.28] - 2026-04-28
+
+### Changed
+- **MenuConfig ↔ sidebar 同步架構重構** — 抽出 `computeReparentedL2()` 共用函式（export from MainLayout），`applyMenuConfig` 與 `buildWorkItems` 都呼叫同一份「哪個 L2 被換了父層」的判斷邏輯，不再各自維護，無法漂移
+- **儲存後 MenuConfig 立即從 DB 重拉** — `handleSave` 在 `saveMenuConfig` 成功後呼叫 `fetchMenuConfig` 重建 items state，確保 MenuConfig 顯示與 DB 完全一致；同時發送 `menuConfigSaved` 事件讓 sidebar 同步
+
+---
+
+## [1.39.27] - 2026-04-28
+
+### Fixed
+- **MenuConfig 重新載入後移動過的項目回到原位** — `buildWorkItems` 新增 `reparentedL2` 邏輯：先掃 DB 找出 `parent_key` 與 base 結構不符的 L2 項目，建樹時從原 L1 排除，待 custom_ 項目注入後再插入新父層；解決「大直工務部 Dashboard / 樂群工務報修 Dashboard 移走後仍顯示在原群組」問題
+
+---
+
+## [1.39.26] - 2026-04-28
+
+### Fixed
+- **跨 L1 移動 base L2 項目後側邊欄不反映** — `applyMenuConfig` 新增 `reparentedBaseL2` 追蹤被換父層的 base L2 項目：
+  - 原 L1 的 children 過濾時排除已移走的項目（避免在舊位置殘留）
+  - 新 L1 的 children 注入被移來的項目（保留原始 icon 與 label）
+
+---
+
+## [1.39.25] - 2026-04-28
+
+### Fixed
+- **「移動到」按鈕完全無反應** — 根本原因：Select 的 `key` prop 包含 `moveOpen`，導致每次點擊時 key 變化觸發 remount，useState 重置，dropdown 永遠打不開。改用 Ant Design `Dropdown` + `Button` 取代 Select 偽裝按鈕，行為正確穩定；同時移除不再需要的 `moveOpen` state
+
+---
+
+## [1.39.24] - 2026-04-28
+
+### Changed
+- **選單管理結構同步機制重構** — `DEFAULT_MENU_STRUCTURE` 改為直接從 `MainLayout.menuItems` 派生（strip icon），不再手動維護第二份清單；sidebar 新增/移除路由後 MenuConfig 自動同步，「整棟巡檢」、「春大直商場工務巡檢」等已整合的舊 L1 群組不再出現
+
+### Fixed
+- `mall-facility-inspection`、`full-building-inspection` L1 群組殘留問題：因現在直接讀 menuItems，這兩個已不在 sidebar 的 L1 群組自然消失
+
+---
+
+## [1.39.23] - 2026-04-28
+
+### Fixed
+- **「移動到」按鈕不一定出現** — 移除一階項目「必須無子項目才顯示移動選項」的限制；一階項目現在永遠可選擇移到其他群組下（子項目一併跟著成為三階）
+- **「移動到」重複選同一選項無反應** — Select 改用 `value={undefined}` 並加 `key` prop，確保每次開啟都重置選中狀態
+
+---
+
+## [1.39.22] - 2026-04-28
+
+### Fixed
+- **選單管理模組顯示已整合的舊路由** — 從 `DEFAULT_MENU_STRUCTURE` 的 `mall` 群組移除已整合為 Tab 的舊子路由（`/mall/b4f-inspection`、`/mall/rf-inspection`、`/mall/b2f-inspection`、`/mall/b1f-inspection`）
+- **DB 殘留項目死而復生** — `buildWorkItems` 的 extra DB 注入邏輯改為只插入 `custom_` 前綴項目，非 custom 的 DB 殘留紀錄不再被撿回；使用者下次儲存後 DB 將自動清除舊紀錄
+
+---
+
+## [1.39.21] - 2026-04-28
+
+### Fixed
+- **側邊欄與選單管理模組不同步** — 儲存後立即透過 `menuConfigSaved` 自訂事件通知 `MainLayout` 重新載入，無需手動重新整理頁面
+- **側邊欄多出基底項目（附圖二）** — `customL1` 注入邏輯改為只注入 `custom_` 前綴的使用者自建項目，防止 `mall-facility-inspection`、`full-building-inspection` 等基底 key 被錯誤注入為文件圖示獨立選單
+
+---
+
+## [1.39.20] - 2026-04-28
+
+### Changed
+- **春大直商場工務巡檢整合（商場管理）** — 將「春大直商場工務巡檢」獨立群組（原含 Dashboard + 4F/3F/1F~3F/1F/B1F~B4F 五個子頁面）整合為商場管理群組下的單一「春大直工務巡檢」入口
+  - `MallFacilityInspection/index.tsx` 全面重寫：新增 `type="card"` 六 Tab 架構（統計總覽 / 4F / 3F / 1F~3F / 1F / B1F~B4F 巡檢紀錄）
+  - 各樓層 Tab 共用 `FloorListTab` 元件；使用真實 API（`fetchMallFacilityBatches` + `syncMallFacilityFromRagic`）；懶載入，首次切入才掛載
+  - 統計總覽 Tab 保留原有真實 API 呼叫（`fetchMallFacilityDashboardSummary` + `syncMallFacilityAllFromRagic`）
+  - `MainLayout` 側邊欄「春大直商場工務巡檢」獨立群組移除；改於「商場管理」群組下新增 `/mall-facility-inspection/dashboard` 子項目（第三個，排於整棟巡檢之後）
+  - `navLabels.ts` `mallFacilityDashboard` 改名為「春大直工務巡檢」
+  - Breadcrumb 更新為「商場管理 › 春大直工務巡檢」
+  - URL query param `?tab=summary|4f|3f|1f-3f|1f|b1f-b4f` 支援直接導航至指定 Tab
+
+---
+
+## [1.39.19] - 2026-04-28
+
+### Changed
+- **整棟巡檢整合（商場管理）** — 將「整棟巡檢」群組（原含 Dashboard + RF/B4F/B2F/B1F 四個獨立子頁面）整合為商場管理群組下的單一「整棟巡檢」入口
+  - `FullBuildingInspection/index.tsx` 全面重寫：新增 `type="card"` 五 Tab 架構（統計總覽 / RF 巡檢 / B4F 巡檢 / B2F 巡檢 / B1F 巡檢）
+  - 各樓層 Tab 共用 `FloorInspectionListTab` 元件（月份篩選、重新整理、同步 Ragic、場次列表）；懶載入，首次切入才掛載
+  - `MainLayout` 側邊欄「整棟巡檢」獨立群組移除；改於「商場管理」群組下新增 `/full-building-inspection/dashboard` 子項目
+  - `navLabels.ts` `fullBuildingDashboard` 改名為「整棟巡檢」（去除「Dashboard」後綴）
+  - Breadcrumb 從原「整棟巡檢群組」更新為「商場管理 › 整棟巡檢」
+  - URL query param `?tab=summary|rf|b4f|b2f|b1f` 支援直接導航至指定 Tab
+
+---
+
+## [1.39.18] - 2026-04-28
+
+### Changed
+- **商場管理整合（商場週期保養）** — 將「商場管理」群組原有的六個獨立子頁面（商場週期保養、B4F / RF / B2F / B1F 巡檢紀錄、Dashboard）整合為單一「商場週期保養」頁面
+  - `MallDashboard/index.tsx` 全面重寫：新增 `type="card"` 六 Tab 架構（統計總覽 / 週期保養 / B4F 巡檢 / RF 巡檢 / B2F 巡檢 / B1F 巡檢）
+  - 各巡檢 Tab 支援月份篩選、重新整理、同步 Ragic；切換 Tab 時懶載入資料（首次切入才呼叫 API）
+  - `MainLayout` 側邊欄「商場管理」群組簡化為單一入口 `/mall/dashboard`，移除五個個別子選單
+  - `navLabels.ts` `mallDashboard` 改名為「商場週期保養」
+  - Detail 路由（`/:batchId`）與後端 API 不變，各模組明細頁保持原有功能
+
+---
+
+## [1.39.17] - 2026-04-28
+
+### Added
+- **選單管理（系統設定 → 選單管理）**
+  - 新增 `menu_configs` / `menu_config_history` 資料表與後端 Router（`GET/PUT /api/v1/settings/menu-config`、`GET /api/v1/settings/menu-config/history`）
+  - 前端新增 `/settings/menu-config` 頁面：拖拉調整一級群組與各子選單順序（`@dnd-kit/sortable`）、雙擊或點擊鉛筆 inline 改名、DragOverlay 懸浮預覽
+  - 儲存時自動記錄變更差異（diff_json）與全量快照（snapshot_json），保留最近 5 筆歷史；右側 Drawer 顯示操作者、時間與詳細 diff
+  - `MainLayout` 啟動時靜默拉取設定，動態合併自訂 label 與排序；拉取失敗時 fallback 至預設值不影響使用
+  - 安裝 `@dnd-kit/core` v6、`@dnd-kit/sortable` v10、`@dnd-kit/utilities` v3
+  - **新增選單**：「新增一階選單」按鈕（Header）與各群組內「新增子選單」按鈕，自動產生 `custom_${timestamp}` key，輸入顯示名稱即可建立
+  - **隱藏/顯示**：每列新增眼睛圖示（`EyeOutlined`/`EyeInvisibleOutlined`）；隱藏父層時子層一併隱藏；隱藏項目以刪除線 + 灰底 + "已隱藏" Tag 標示；`MainLayout` 同步過濾 `is_visible: false` 項目不顯示於側邊欄
+  - **跨層移動**：子項目可升為一階選單或移到其他父層下；無子項目的一階選單可降為任一父層的子選單；使用 `ArrowsAltOutlined` 圖示 + Ant Design `Select` Dropdown 操作
+  - **三層結構支援**：選單管理與側邊欄均支援三層結構（一階群組 → 二階子選單 → 三階孫選單）；每個二階列新增「新增子選單」按鈕；移動選項涵蓋三層間任意升降；`MainLayout.applyMenuConfig` 及 `openKeys` 同步更新支援三層展開
+  - **UI 整理**：新增圖示說明列（拖拉/改名/顯隱/移動）、各行顯示一/二/三階色票 Tag、新增按鈕依階層配色（藍/綠/橘）、Modal 標題顯示目標階層與父層名稱、修正更名 Bug（移除 onBlur 衝突、InputRef 型別、custom_ 項目清空邏輯）
+
+---
+
+## [1.39.16] - 2026-04-28
+
+### Fixed
+- **RagicAppDirectory（Ragic 應用程式對應表）**
+  - 搜尋邏輯補入 `url` 欄位，現在可用 Ragic URL 路徑（如 `luqun-public-works-repair-reporting-system/6`）在 Search 框直接查到對應項目
+  - Ragic URL 欄由純圖示改為「圖示 + 路徑文字（截斷）」，Tooltip 顯示完整 URL；欄寬 80 → 220px
+  - 搜尋框 placeholder 補充提示「Ragic URL」可搜
+  - `scroll.x` 1320 → 1460 配合欄寬調整
+
+---
+
+## [1.39.15] - 2026-04-27
+
+### Added
+- **共用元件 `src/components/ExecMetrics/index.tsx`**
+  - 匯出 `HeroKpi`（單張 KPI 卡）、`ExecHeroLayer`（6 KPI 卡網格）、`ExecSourceCards`（來源小卡列）、`SOURCE_PIE_COLORS`
+  - 預設匯出 `ExecMetricsCard`：自帶資料的主管指標摘要卡，沿用 `@/api/workCategoryAnalysis` fetchStats，不新增任何 API
+
+### Changed
+- **Dashboard（集團管理總覽）**
+  - 原「預算管理」區塊暫時隱藏（`HIDDEN_BUDGET` 註解保留，程式碼與 API 路由不刪除）
+  - 插入 `ExecMetricsCard` 至原預算管理位置（最上方）
+- **ExecDashboard（高階主管 Dashboard）**
+  - `HeroKpi`、`SOURCE_PIE_COLORS`、`HeroLayer`、`SourceCards` 改用共用元件，消除重複定義
+  - 頁面顯示與行為與重構前完全一致
+
+### Fixed
+- `@/api/workCategoryAnalysis` `CategoryStats.meta` 型別補上 `last_sync_at?: string`，消除 ExecDashboard TS2339 錯誤
+
+---
+
+## [1.39.14] - 2026-04-26
+
+### Changed
+- **dazhi + luqun Dashboard — 高工時/高費用 Top 10 加結案狀態圖示**
+  - 每筆案件標題右側加小圖示：✅ 綠色 `CheckCircleOutlined`（已結案）/ 🕐 橘色 `ClockCircleOutlined`（未結案）
+  - 滑鼠 hover 顯示 tooltip（「已結案」/「未結案」）
+  - 不拆分清單，不動版型與其他模組
+
+---
+
 ## [1.39.13] - 2026-04-26
 
 ### Fixed

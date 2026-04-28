@@ -349,7 +349,7 @@ export default function B4FInspectionDetailPage() {
         style={{ marginBottom: 16 }}
         items={[
           { title: '商場管理' },
-          { title: <a onClick={() => navigate('/mall/b4f-inspection')}>整棟工務每日巡檢 - B4F</a> },
+          { title: <a onClick={() => navigate('/mall/dashboard?tab=b4f')}>工務巡檢 - B4F</a> },
           { title: batch?.inspection_date ?? batchId },
         ]}
       />
@@ -357,7 +357,7 @@ export default function B4FInspectionDetailPage() {
       {/* 頁首 */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
         <Space>
-          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/mall/b4f-inspection')}>
+          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/mall/dashboard?tab=b4f')}>
             返回列表
           </Button>
           <Title level={4} style={{ margin: 0 }}>

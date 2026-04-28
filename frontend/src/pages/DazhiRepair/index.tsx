@@ -694,8 +694,14 @@ function DashboardTab({
                   }}>
                   <Badge count={i + 1} style={{ background: '#722ED1', minWidth: 22, fontSize: 11 }} />
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 12, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#1B3A5C' }}>
-                      {c.title || c.case_no || '-'}
+                    <div style={{ fontSize: 12, fontWeight: 500, display: 'flex', alignItems: 'center', gap: 4, color: '#1B3A5C' }}>
+                      <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {c.title || c.case_no || '-'}
+                      </span>
+                      {c.is_completed
+                        ? <CheckCircleOutlined style={{ color: '#52c41a', fontSize: 12, flexShrink: 0 }} title="已結案" />
+                        : <ClockCircleOutlined style={{ color: '#fa8c16', fontSize: 12, flexShrink: 0 }} title="未結案" />
+                      }
                     </div>
                     <div style={{ fontSize: 11, color: '#722ED1', fontWeight: 600 }}>
                       {fmtMoney(c.total_fee)}
@@ -722,8 +728,14 @@ function DashboardTab({
                   }}>
                   <Badge count={i + 1} style={{ background: '#4BA8E8', minWidth: 22, fontSize: 11 }} />
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 12, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#1B3A5C' }}>
-                      {c.title || c.case_no || '-'}
+                    <div style={{ fontSize: 12, fontWeight: 500, display: 'flex', alignItems: 'center', gap: 4, color: '#1B3A5C' }}>
+                      <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {c.title || c.case_no || '-'}
+                      </span>
+                      {c.is_completed
+                        ? <CheckCircleOutlined style={{ color: '#52c41a', fontSize: 12, flexShrink: 0 }} title="已結案" />
+                        : <ClockCircleOutlined style={{ color: '#fa8c16', fontSize: 12, flexShrink: 0 }} title="未結案" />
+                      }
                     </div>
                     <div style={{ fontSize: 11, color: '#4BA8E8', fontWeight: 600 }}>
                       工時 {fmtDec(c.work_hours, 2)} hr

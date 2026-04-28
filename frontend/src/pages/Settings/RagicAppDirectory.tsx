@@ -518,7 +518,8 @@ const RagicAppDirectory: React.FC = () => {
       row.name.toLowerCase().includes(q) ||
       row.module.toLowerCase().includes(q) ||
       row.portalName.toLowerCase().includes(q) ||
-      row.note.toLowerCase().includes(q)
+      row.note.toLowerCase().includes(q) ||
+      row.url.toLowerCase().includes(q)
     const matchModule = !filterModule || row.module === filterModule
     return matchSearch && matchModule
   })
@@ -628,15 +629,35 @@ const RagicAppDirectory: React.FC = () => {
       title: 'Ragic URL',
       dataIndex: 'url',
       key: 'url',
-      width: 80,
-      align: 'center',
-      render: (url: string) => (
-        <Tooltip title={url}>
-          <a href={url} target="_blank" rel="noreferrer">
-            <ExportOutlined style={{ color: '#4BA8E8' }} />
-          </a>
-        </Tooltip>
-      ),
+      width: 220,
+      ellipsis: true,
+      render: (url: string) => {
+        // 擷取 domain 後的路徑，例：/soutlet001/luqun-.../6
+        const path = url.replace(/^https?:\/\/[^/]+/, '')
+        return (
+          <Tooltip title={url}>
+            <a
+              href={url}
+              target="_blank"
+              rel="noreferrer"
+              style={{ fontSize: 11, color: '#4BA8E8', display: 'flex', alignItems: 'center', gap: 4 }}
+            >
+              <ExportOutlined style={{ flexShrink: 0 }} />
+              <span
+                style={{
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                  maxWidth: 175,
+                  display: 'inline-block',
+                }}
+              >
+                {path}
+              </span>
+            </a>
+          </Tooltip>
+        )
+      },
     },
     {
       title: '類型',
@@ -731,7 +752,7 @@ const RagicAppDirectory: React.FC = () => {
       >
         <Space wrap>
           <Input.Search
-            placeholder="搜尋名稱、模組、Portal 名稱…"
+            placeholder="搜尋名稱、模組、Portal 名稱、Ragic URL…"
             allowClear
             style={{ width: 280 }}
             value={searchText}
@@ -763,7 +784,7 @@ const RagicAppDirectory: React.FC = () => {
           rowKey="itemNo"
           loading={loading}
           size="small"
-          scroll={{ x: 1320 }}
+          scroll={{ x: 1460 }}
           pagination={{
             pageSize: 50,
             showSizeChanger: true,

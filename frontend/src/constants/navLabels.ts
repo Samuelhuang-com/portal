@@ -31,6 +31,11 @@
  *   2026-04-23  新增 workCategoryAnalysis（★工項類別分析）掛於 luqun_repair + dazhi_repair 下
  *   2026-04-23  新增 execDashboard（◆ 董事長簡報 Dashboard）黑金風格獨立新功能，route /exec-dashboard
  *   2026-04-24  新增 ihgRoomMaintenance（IHG客房保養）年度矩陣保養計畫，route /hotel/ihg-room-maintenance
+ *   2026-04-28  新增 menuConfig（選單管理）動態改名＋排序＋5筆歷史，route /settings/menu-config
+ *   2026-04-28  整合商場管理：mallDashboard 改名「商場週期保養」，將 6 個子頁面巡檢紀錄合併為 Tab
+ *   2026-04-28  整合整棟巡檢：fullBuildingDashboard 改名「整棟巡檢」，移至商場管理群組下，RF/B4F/B2F/B1F 合併為 Tab
+ *   2026-04-28  整合春大直商場工務巡檢：mallFacilityDashboard 改名「春大直工務巡檢」，移至商場管理群組下，5 個樓層巡檢紀錄合併為 Tab
+ *   2026-04-28  /exec-dashboard 與 /work-category-analysis 從 luqun-repair / dazhi-repair 子層提升為獨立一階（Dashboard 正後方）
  */
 
 // ── 系統標題 ──────────────────────────────────────────────────────────────────
@@ -79,7 +84,7 @@ export const NAV_PAGE = {
   repairs:                '報修管理',
 
   // 商場管理
-  mallDashboard:           '商場管理Dashboard',
+  mallDashboard:           '商場週期保養',
   mallPeriodicMaintenance: '1.2 商場週期保養',
   b4fInspection:           '工務巡檢 - B4F',
   rfInspection:            '工務巡檢 - RF',
@@ -99,7 +104,7 @@ export const NAV_PAGE = {
   execDashboard:           '高階主管 Dashboard',
 
   // 春大直商場工務巡檢
-  mallFacilityDashboard:   '工務巡檢 Dashboard',
+  mallFacilityDashboard:   '春大直工務巡檢',
   mallFacility4F:          '工務巡檢 - 4F',
   mallFacility3F:          '工務巡檢 - 3F',
   mallFacility1F3F:        '工務巡檢 - 1F ~ 3F',
@@ -107,7 +112,7 @@ export const NAV_PAGE = {
   mallFacilityB1FB4F:      '工務巡檢 - B1F ~ B4F',
 
   // 整棟巡檢
-  fullBuildingDashboard:   '整棟巡檢 Dashboard',
+  fullBuildingDashboard:   '整棟巡檢',
   fullBuildingRF:          '整棟巡檢 - RF',
   fullBuildingB4F:         '整棟巡檢 - B4F',
   fullBuildingB2F:         '整棟巡檢 - B2F',
@@ -143,6 +148,7 @@ export const NAV_PAGE = {
   rolesManage:           '角色管理',
   ragicConnections:      'Ragic 連線',
   ragicAppDirectory:     'Ragic 對應表',
+  menuConfig:            '選單管理',
 } as const
 
 // ── 型別輔助 ────────────────────────────────────────────────────────────────────────────

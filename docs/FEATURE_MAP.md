@@ -147,7 +147,7 @@
 | 前端 API | `frontend/src/api/luqunRepair.ts` |
 | 前端路由 | `/luqun-repair/dashboard` |
 | Ragic 來源 | `ap12.ragic.com / soutlet001 / luqun-public-works-repair-reporting-system/6` |
-| **缺口** | case_progress 雙欄位、work_type 結構化、completed_at timestamp、照片縮圖、匯出說明列 |
+| **缺口** | case_progress 雙欄位、work_type 結構化、completed_at timestamp、匯出說明列 |
 
 ### 大直工務報修（DazhiRepair）
 | 層次 | 路徑 |

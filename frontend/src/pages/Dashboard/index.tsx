@@ -45,6 +45,7 @@ import { fetchDashboard as fetchLuqunDashboard } from '@/api/luqunRepair'
 import { fetchDashboard as fetchDazhiDashboard } from '@/api/dazhiRepair'
 import type { DashboardData as RepairDashboardData } from '@/types/luqunRepair'
 import { getBudgetDashboard, type DashboardData as BudgetDashboardData } from '@/api/budget'
+import ExecMetricsCard from '@/components/ExecMetrics'
 import GraphView from '@/components/GraphView'
 
 dayjs.extend(relativeTime)
@@ -747,23 +748,41 @@ export default function DashboardPage() {
             {dayjs(today, 'YYYY/MM/DD').format('YYYY 年 MM 月 DD 日')} 即時概況
           </Text>
         </div>
-        <Space>
-          <Text type="secondary" style={{ fontSize: 12 }}>
-            <ClockCircleOutlined style={{ marginRight: 4 }} />
-            更新於 {dayjs(refreshed).format('HH:mm:ss')}
-          </Text>
-          <Button size="small" icon={<ReloadOutlined />} onClick={loadAll} loading={loading}>
-            重新整理
-          </Button>
+        <Space direction="vertical" align="end" size={2}>
+          {sys?.last_sync_at && (
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              <SyncOutlined style={{ marginRight: 4 }} />
+              資料同步：{dayjs(sys.last_sync_at).format('MM/DD HH:mm')}
+            </Text>
+          )}
+          <Space>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              <ClockCircleOutlined style={{ marginRight: 4 }} />
+              更新於 {dayjs(refreshed).format('HH:mm:ss')}
+            </Text>
+            <Button size="small" icon={<ReloadOutlined />} onClick={loadAll} loading={loading}>
+              重新整理
+            </Button>
+          </Space>
         </Space>
       </div>
 
       {/* ══════════════════════════════════════════════════════════════
-          ROW 0 — 預算管理摘要卡（P1-E：最上方主管財務視角）
+          ROW 0 — 主管指標（ExecMetricsCard，沿用 exec-dashboard 同一套 API）
+          ── HIDDEN_BUDGET START ── 預算管理摘要卡暫時隱藏，程式碼與 API 保留，
+          待完整預算功能確認後移除此註解並恢復下方 BudgetSummaryCard Row ──
       ══════════════════════════════════════════════════════════════ */}
+      {/*
       <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
         <Col xs={24}>
           <BudgetSummaryCard data={budgetData} onNavigate={navigate} />
+        </Col>
+      </Row>
+      ── HIDDEN_BUDGET END ──
+      */}
+      <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+        <Col xs={24}>
+          <ExecMetricsCard onNavigate={navigate} />
         </Col>
       </Row>
 

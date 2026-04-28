@@ -245,13 +245,13 @@ export default function B2FInspectionDetailPage() {
     <div style={{ padding: '0 0 32px' }}>
       <Breadcrumb style={{ marginBottom: 16 }} items={[
         { title: '商場管理' },
-        { title: <a onClick={() => navigate('/mall/b2f-inspection')}>整棟工務每日巡檢 - B2F</a> },
+        { title: <a onClick={() => navigate('/mall/dashboard?tab=b2f')}>工務巡檢 - B2F</a> },
         { title: batch?.inspection_date ?? batchId },
       ]} />
 
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
         <Space>
-          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/mall/b2f-inspection')}>返回列表</Button>
+          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/mall/dashboard?tab=b2f')}>返回列表</Button>
           <Title level={4} style={{ margin: 0 }}>
             {batch?.inspection_date ?? '巡檢明細'}
             {batch?.inspector_name && (

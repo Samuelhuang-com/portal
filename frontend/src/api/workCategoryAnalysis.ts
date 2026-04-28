@@ -106,7 +106,7 @@ export interface CategoryStats {
   daily_hours:            DailyHours
   monthly_hours:          MonthlyHours
   person_hours:           PersonHours
-  meta:                   { year: number; month: number; sources: string[]; category: string; person: string; total_rows: number }
+  meta:                   { year: number; month: number; sources: string[]; category: string; person: string; total_rows: number; last_sync_at?: string }
 }
 
 export interface StatsParams {

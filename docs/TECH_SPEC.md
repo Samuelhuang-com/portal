@@ -26,6 +26,8 @@
 | v1.33.9 | 2026-04-20 | **台灣時區統一**：新增 `app/core/time.py`（`twnow()` helper）；34 個服務/模型/路由檔案由 `datetime.now(timezone.utc)` / `datetime.utcnow` 全面改為 `twnow()`；`TECH_SPEC.md` 新增「Taiwan Time Policy」時區政策規格 |
 | v1.34.0 | 2026-04-20 | **Dashboard 主管視角優化**：`BudgetSummaryCard`（P1-E）/ `TodaySummaryCard`（P1-C）新元件；`totalAlerts` 計算擴充工務+預算子項（P1-D）；群組卡一句話結論 helper（P1-B）；Login 頁環境標示 + loading 狀態 + DEV-only bypass（P1-A）；後端零改動，僅呼叫現有 `GET /api/v1/budget/dashboard` |
 | v1.39.0 | 2026-04-24 | **IHG 客房保養模組**：`ihg_rm_master` + `ihg_rm_detail` 雙表（Ragic `periodic-maintenance/4`）；多候選欄位 key 自動挑選策略（`_pick()`）；年度保養矩陣 `/matrix`（房號×月份）；KPI `/stats`；`/debug-raw` 欄位結構診斷；Menu 位置：飯店管理→2.IHG客房保養 |
+| v1.39.15 | 2026-04-27 | **ExecMetrics 共用元件**：`src/components/ExecMetrics/index.tsx` 抽取 `HeroKpi`/`ExecHeroLayer`/`ExecSourceCards`/`ExecMetricsCard`；Dashboard 頂部以 `ExecMetricsCard` 取代隱藏的 `BudgetSummaryCard`；ExecDashboard 重構使用共用元件，行為不變；補 `CategoryStats.meta.last_sync_at?` 型別 |
+| v1.39.17 | 2026-04-28 | **選單管理**：新增 `menu_configs`（key/custom_label/sort_order）+ `menu_config_history`（diff_json/snapshot_json，最多 5 筆）資料表；後端 `routers/menu_config.py`（GET/PUT config, GET history）；前端 `pages/Settings/MenuConfig/index.tsx`（@dnd-kit 拖拉排序 + inline 改名 + 歷史 Drawer）；`MainLayout` 動態載入覆蓋設定，失敗 fallback 預設值；安裝 @dnd-kit/core v6 / @dnd-kit/sortable v10 / @dnd-kit/utilities v3 |
 
 ---
 
@@ -62,6 +64,7 @@
 | Calendar | @fullcalendar/react + plugins | 6.1.20 | 超級行事曆月/週/日/清單視圖 |
 | Graph | @xyflow/react | 12.10.2 | Dashboard 操作流程關聯圖譜（react-flow v12） |
 | Date | dayjs | 1.11.11 | 日期處理 |
+| DnD | @dnd-kit/core + sortable + utilities | 6/10/3 | 選單管理拖拉排序 |
 
 ---
 

@@ -27,6 +27,26 @@
 
 ---
 
+## 2026-04-27
+
+### ✅ 完成
+- `backend/app/services/luqun_repair_service.py`, `dazhi_repair_service.py` `compute_dashboard()` 將 `top_fee` / `top_hours` 各拆為已結案／未結案兩組（`top_fee_completed`, `top_fee_pending`, `top_hours_completed`, `top_hours_pending`）→ 04-23 整合會議 §高工時/高費用雙清單 P2
+- `backend/app/routers/work_category_analysis.py` 新增 `_get_last_sync_at()` helper（`func.max(synced_at)` 查四來源資料表最新同步時間），`/stats` meta 回傳 `last_sync_at` ISO 字串 → 資料更新時間戳
+- `frontend/src/pages/Dashboard/index.tsx` 頁頭右側新增「資料同步：MM/DD HH:mm」顯示（讀 `sys.last_sync_at`，`SyncOutlined` 圖示）→ 資料更新時間戳
+- `frontend/src/pages/ExecDashboard/index.tsx` 標題區新增同步時間列（讀 `stats.meta.last_sync_at`，補 import `SyncOutlined`）→ 資料更新時間戳
+- `frontend/src/pages/Budget/index.tsx` 超支警示視覺：部門摘要表列加 `rowClassName`（超支紅底/預警黃底）、部門名稱前加警示 Icon、超支科目清單卡改用紅色漸層標題 + 全列紅底 + 超支金額前綴 `▲` → 04-23 整合會議 §預算看板 P2
+
+### 🔧 進行中
+- 無
+
+### ⏸ 暫緩
+- 完工時間格式修正（`models/luqun_repair.py`, `dazhi_repair.py` `to_dict()` strftime 補時分）→ 業主暫不要求，擇期處理
+
+### ❓ 問題 / 待釐清
+- 無
+
+---
+
 ## 2026-04-26（補充）
 
 ### ✅ 完成
@@ -57,6 +77,8 @@
 - `frontend/src/pages/IHGRoomMaintenance/index.tsx` 季度視角（`?view=quarter`）完整實作：`quarterRooms` useMemo 聚合、`QuarterCellComp`、月份/季度切換 `Segmented`、季度彙整 Drawer（含各月「查看」穿透至月份明細）→ 04-23 整合會議 §客房保養/巡檢 P1 缺口
 - `docs/FEATURE_MAP.md` IHG 區塊補上季度視角說明列，`§待開發模組` 移除 IHG 季度視角缺口項目 → 同上
 - `backend/app/routers/work_category_analysis.py` 新增第 4 來源 `ihg_room`（`IHGRoomMaintenanceMaster`），工時=`raw_json["工時計算"]`÷60，類別=「例行維護」→ ExecDashboard + WorkCategoryAnalysis 自動納入，零前端改動
+- 照片縮圖 + 放大 Modal：明細列加入 `<Image.PreviewGroup>`；後端確認 Ragic 圖片 URL 正確解析至 `images[]` → 04-23 整合會議 §儀表板導覽 P2
+- 問號 Tooltip（KPI 公式說明）：各儀表板統計卡標題旁加 `<Tooltip title='...'><QuestionCircleOutlined /></Tooltip>`，定義各 KPI 計算口徑文字 → 04-23 整合會議 §儀表板導覽 P2
 
 ### 🔧 進行中
 - 無
