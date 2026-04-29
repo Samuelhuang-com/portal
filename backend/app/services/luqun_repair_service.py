@@ -645,9 +645,9 @@ class RepairCase:
         )
         self.completed_at = _parse_datetime(completed_raw)
 
-        # 完工判定：只要有「完工時間」即視為已完工，無論處理狀況
-        # 備用：狀態字串本身也可判定完工（如已辦驗、結案等）
-        self.is_completed_flag = (self.completed_at is not None) or is_completed(self.status)
+        # 完工判定：以「處理狀況」(status) 為唯一依據
+        # completed_at 保留供查閱/close_days 計算，不作為完成判斷條件
+        self.is_completed_flag = is_completed(self.status)
 
         # 結案天數
         if self.is_completed_flag and self.occurred_at and self.completed_at:
@@ -801,19 +801,14 @@ async def fetch_raw_fields() -> dict:
 
 
 def _stat_year(c) -> Optional[int]:
-    """統計年份：有完工時間 → 完工年；否則 → 儲存的 year（報修年）。
-    直接讀 completed_at 避免 ORM 物件因舊資料導致 year 欄位不正確。"""
-    at = getattr(c, 'completed_at', None)
-    if at is not None:
-        return at.year
+    """統計年份：直接讀 c.year（RepairCase.__init__ 已依 status 正確計算：
+    已完成(status) AND 有 completed_at → 完工年；否則 → 報修年）。"""
     return getattr(c, 'year', None)
 
 
 def _stat_month(c) -> Optional[int]:
-    """統計月份：有完工時間 → 完工月；否則 → 儲存的 month（報修月）。"""
-    at = getattr(c, 'completed_at', None)
-    if at is not None:
-        return at.month
+    """統計月份：直接讀 c.month（RepairCase.__init__ 已依 status 正確計算：
+    已完成(status) AND 有 completed_at → 完工月；否則 → 報修月）。"""
     return getattr(c, 'month', None)
 
 
@@ -822,9 +817,7 @@ def filter_cases(
     year: Optional[int] = None,
     month: Optional[int] = None,
 ) -> list[RepairCase]:
-    """依統計年/月過濾案件。
-    統計月份直接從 completed_at 計算（不依賴儲存的 year/month 欄位），
-    確保即使 SQLite 資料尚未重新同步，也能正確篩選跨月完工案件。"""
+    """依統計年/月過濾案件（統計年月由 RepairCase.__init__ 依 status 計算）。"""
     result = cases
     if year is not None:
         result = [c for c in result if _stat_year(c) == year]
@@ -892,7 +885,8 @@ def compute_dashboard(
             if c.occ_year is not None
             and (c.occ_year < _prev_y or (c.occ_year == _prev_y and c.occ_month <= _prev_m))
         ]
-        _prev_uncompleted = [c for c in _cases_up_to_prev if not _db_completed_by(c, _prev_y, _prev_m)]
+        # 上期未結：以 status 判斷（不再使用 completed_at 時間戳）
+        _prev_uncompleted = [c for c in _cases_up_to_prev if not is_completed(c.status)]
         _this_month_new   = [c for c in all_cases if c.occ_year == year and c.occ_month == month]
         this_month_cases  = _prev_uncompleted + _this_month_new
     else:
@@ -900,18 +894,19 @@ def compute_dashboard(
 
     # ── KPI ──────────────────────────────────────────────────────────────────
     total = len(this_month_cases)
-    # 月份檢視：完成 = 本月有 completed_at；全年：is_completed_flag
-    if month:
-        completed = sum(1 for c in this_month_cases if _db_completed_in(c, year, month))
-    else:
-        completed = sum(1 for c in this_month_cases if c.is_completed_flag)
-    uncompleted = total - completed
+    # 已完成：status in COMPLETED_STATUSES（以處理狀況為準）
+    completed = sum(1 for c in this_month_cases if is_completed(c.status))
+    # 待辦驗：先算，供 uncompleted 扣除（三類互斥）
+    pending_verify_cases = [c for c in this_month_cases if c.status.strip() == "待辦驗"]
+    pending_verify_count = len(pending_verify_cases)
+    # 未完成 = 總數 - 已完成 - 待辦驗（三類互斥，不重疊）
+    uncompleted = total - completed - pending_verify_count
     room_cases = [c for c in this_month_cases if c.is_room_case]
 
     close_days_list = [
         c.close_days
         for c in this_month_cases
-        if c.is_completed_flag and c.close_days is not None
+        if is_completed(c.status) and c.close_days is not None
     ]
     avg_close_days = (
         round(sum(close_days_list) / len(close_days_list), 2)
@@ -955,7 +950,7 @@ def compute_dashboard(
                 "year": y,
                 "month": m,
                 "total": len(mc),
-                "completed": sum(1 for c in mc if c.is_completed_flag),
+                "completed": sum(1 for c in mc if is_completed(c.status)),
             }
         )
 
@@ -975,9 +970,8 @@ def compute_dashboard(
     for c in this_month_cases:
         status_dist[c.status] = status_dist.get(c.status, 0) + 1
 
-    # ── 未完成 Top10（completed_at 為空 = 真正未完成，依等待天數降序）──────────
-    # 範圍：all_cases 中 completed_at 為空的案件（不限月份，找出積壓最久的）
-    all_uncompleted = [c for c in all_cases if c.completed_at is None and c.occurred_at]
+    # ── 未完成 Top10（status 非完成非排除，依等待天數降序）──────────────────────
+    all_uncompleted = [c for c in all_cases if not is_completed(c.status) and not is_excluded(c.status) and c.occurred_at]
     all_uncompleted.sort(
         key=lambda x: (datetime.now() - x.occurred_at).total_seconds(),
         reverse=True,
@@ -1000,18 +994,26 @@ def compute_dashboard(
     month_deduction_counter = round(sum(c.deduction_counter for c in fee_month_cases), 2)
     month_total_fee         = round(month_outsource_fee + month_maintenance_fee + month_deduction_fee + month_deduction_counter, 2)
 
-    # ── 年度費用合計（全年，不限月份）─────────────────────────────────────────
-    year_cases = filter_cases(all_cases, year, None)  # year only, no month filter
+    # ── 累計費用（月份選定時：1月~M月 YTD；全年檢視：全年）────────────────────
+    if month:
+        ytd_cases = [
+            c for c in all_cases
+            if _stat_year(c) == year
+            and _stat_month(c) is not None
+            and _stat_month(c) <= month
+        ]
+    else:
+        ytd_cases = filter_cases(all_cases, year, None)
 
-    annual_outsource = round(sum(c.outsource_fee for c in year_cases), 2)
-    annual_maintenance = round(sum(c.maintenance_fee for c in year_cases), 2)
+    annual_outsource = round(sum(c.outsource_fee for c in ytd_cases), 2)
+    annual_maintenance = round(sum(c.maintenance_fee for c in ytd_cases), 2)
     annual_fee = round(annual_outsource + annual_maintenance, 2)
-    annual_deduction_fee = round(sum(c.deduction_fee for c in year_cases), 2)
-    annual_deduction_counter = round(sum(c.deduction_counter for c in year_cases), 2)
+    annual_deduction_fee = round(sum(c.deduction_fee for c in ytd_cases), 2)
+    annual_deduction_counter = round(sum(c.deduction_counter for c in ytd_cases), 2)
 
-    # 年度費用明細 — 委外+維修 Top20（點擊卡片時顯示）
+    # 累計費用明細 — 委外+維修 Top20（點擊卡片時顯示）
     annual_fee_records = sorted(
-        [c for c in year_cases if c.total_fee > 0],
+        [c for c in ytd_cases if c.total_fee > 0],
         key=lambda x: x.total_fee,
         reverse=True,
     )
@@ -1024,17 +1026,17 @@ def compute_dashboard(
         for c in annual_fee_records[:20]
     ]
 
-    # 年度扣款費用明細 Top20
+    # 累計扣款費用明細 Top20
     annual_deduction_records = sorted(
-        [c for c in year_cases if c.deduction_fee > 0],
+        [c for c in ytd_cases if c.deduction_fee > 0],
         key=lambda x: x.deduction_fee,
         reverse=True,
     )
     annual_deduction_detail = [c.to_dict() for c in annual_deduction_records[:20]]
 
-    # 年度扣款專櫃明細（有扣款費用且有專櫃名稱）Top30
+    # 累計扣款專櫃明細（有扣款費用且有專櫃名稱）Top30
     annual_counter_records = sorted(
-        [c for c in year_cases if c.deduction_fee > 0 and getattr(c, 'deduction_counter_name', '')],
+        [c for c in ytd_cases if c.deduction_fee > 0 and getattr(c, 'deduction_counter_name', '')],
         key=lambda x: x.deduction_fee,
         reverse=True,
     )
@@ -1042,9 +1044,8 @@ def compute_dashboard(
 
     # 本月扣款專櫃明細（點擊卡片時用）
     counter_cases_sorted = sorted(counter_cases, key=lambda x: x.deduction_fee, reverse=True)
-    # 排序也要 getattr 安全
 
-    # 年度有扣款的唯一專櫃集合
+    # 累計有扣款的唯一專櫃集合（YTD 跨月去重）
     _annual_counter_set: set[str] = set()
     for _c in annual_counter_records:
         _stores2 = getattr(_c, 'counter_stores', None) or [getattr(_c, 'deduction_counter_name', '')]
@@ -1055,15 +1056,13 @@ def compute_dashboard(
     annual_counter_fee         = round(sum(c.deduction_fee for c in annual_counter_records), 2)
     annual_counter_store_names = sorted(_annual_counter_set)
 
-    # KPI 明細（點擊卡片時用）
-    if month:
-        completed_cases   = [c for c in this_month_cases if _db_completed_in(c, year, month)]
-        uncompleted_cases = [c for c in this_month_cases if not _db_completed_in(c, year, month)]
-        close_days_cases  = [c for c in completed_cases if c.close_days is not None]
-    else:
-        completed_cases   = [c for c in this_month_cases if c.is_completed_flag]
-        uncompleted_cases = [c for c in this_month_cases if not c.is_completed_flag]
-        close_days_cases  = [c for c in this_month_cases if c.is_completed_flag and c.close_days is not None]
+    # KPI 明細（點擊卡片時用）— 三類互斥，以 status 為準
+    completed_cases   = [c for c in this_month_cases if is_completed(c.status)]
+    # 未完成明細：排除已完成 AND 排除待辦驗（與 KPI 數字一致）
+    uncompleted_cases = [c for c in this_month_cases
+                         if not is_completed(c.status) and c.status.strip() != "待辦驗"]
+    close_days_cases  = [c for c in completed_cases if c.close_days is not None]
+    # pending_verify_cases / pending_verify_count 已在上方 KPI 區段計算
     work_hours_cases = sorted(
         [c for c in this_month_cases if c.work_hours > 0],
         key=lambda x: x.work_hours, reverse=True
@@ -1099,15 +1098,17 @@ def compute_dashboard(
             "annual_counter_stores":       annual_deduction_counter,
             "annual_counter_fee":          annual_counter_fee,
             "annual_counter_store_names":  annual_counter_store_names,
+            "pending_verify":              pending_verify_count,
         },
         # KPI 明細清單
-        "kpi_total_detail":      [c.to_dict() for c in sorted(this_month_cases, key=lambda x: x.occurred_at or datetime.min, reverse=True)],
-        "kpi_completed_detail":  [c.to_dict() for c in sorted(completed_cases, key=lambda x: x.completed_at or datetime.min, reverse=True)],
-        "kpi_uncompleted_detail":[c.to_dict() for c in sorted(uncompleted_cases, key=lambda x: x.occurred_at or datetime.min)],
-        "kpi_close_days_detail": [c.to_dict() for c in sorted(close_days_cases, key=lambda x: x.close_days or 0, reverse=True)],
-        "kpi_room_detail":       [c.to_dict() for c in sorted(room_cases, key=lambda x: x.occurred_at or datetime.min, reverse=True)],
-        "kpi_hours_detail":          [c.to_dict() for c in work_hours_cases],
-        "kpi_counter_stores_detail": [c.to_dict() for c in counter_cases_sorted],
+        "kpi_total_detail":           [c.to_dict() for c in sorted(this_month_cases, key=lambda x: x.occurred_at or datetime.min, reverse=True)],
+        "kpi_completed_detail":       [c.to_dict() for c in sorted(completed_cases, key=lambda x: x.completed_at or datetime.min, reverse=True)],
+        "kpi_uncompleted_detail":     [c.to_dict() for c in sorted(uncompleted_cases, key=lambda x: x.occurred_at or datetime.min)],
+        "kpi_pending_verify_detail":  [c.to_dict() for c in sorted(pending_verify_cases, key=lambda x: x.occurred_at or datetime.min)],
+        "kpi_close_days_detail":      [c.to_dict() for c in sorted(close_days_cases, key=lambda x: x.close_days or 0, reverse=True)],
+        "kpi_room_detail":            [c.to_dict() for c in sorted(room_cases, key=lambda x: x.occurred_at or datetime.min, reverse=True)],
+        "kpi_hours_detail":           [c.to_dict() for c in work_hours_cases],
+        "kpi_counter_stores_detail":  [c.to_dict() for c in counter_cases_sorted],
         "trend_12m": trend_12m,
         "type_dist": [{"type": k, "count": v} for k, v in type_dist.items()],
         "floor_dist": [
@@ -1244,9 +1245,8 @@ def compute_repair_stats(
     7. 本月報修項目完成率
 
     ⚠️ 時間規則：
-    - 「完成」的定義 = completed_at（完工日期）落在指定的年/月內
-    - 不使用 is_completed_flag（當前狀態），避免跨月完工被錯誤計入報修月
-    - 例：3月報修、4月完工 → 3月的⑤=0，4月的②才計入
+    - 「完成」的定義 = status in COMPLETED_STATUSES AND completed_at 落在指定的年/月內
+    - 例：3月報修、4月完工且驗收 → 3月的⑤=0，4月的②才計入
     """
     # 排除「取消」等不計入統計的案件（明細總表仍完整保留）
     all_cases = [c for c in all_cases if not c.is_excluded_flag]
@@ -1254,13 +1254,17 @@ def compute_repair_stats(
     # ── 輔助函式（定義在迴圈外，避免 closure 問題）────────────────────────────
 
     def _completed_by(c: RepairCase, y: int, m: int) -> bool:
-        """completed_at 是否在 y/m 月底（含）之前"""
+        """status 為完成 且 completed_at 在 y/m 月底（含）之前"""
+        if not is_completed(c.status):
+            return False
         if c.completed_at is None:
             return False
         return c.completed_at.year < y or (c.completed_at.year == y and c.completed_at.month <= m)
 
     def _completed_in(c: RepairCase, y: int, m: int) -> bool:
-        """completed_at 是否恰好落在 y/m 月"""
+        """status 為完成 且 completed_at 恰好落在 y/m 月"""
+        if not is_completed(c.status):
+            return False
         if c.completed_at is None:
             return False
         return c.completed_at.year == y and c.completed_at.month == m
@@ -1354,15 +1358,16 @@ def compute_closing_time(
     分類邏輯：is_large_repair() 可集中修改
 
     ⚠️ 時間規則：
-    - 「結案」的定義 = completed_at（完工日期）落在指定的年/月內
-    - 不使用 is_completed_flag（當前狀態），確保跨月完工正確歸屬
-    - 例：3月報修、4月完工 → 歸屬於 4月 的結案統計
+    - 「結案」的定義 = status in COMPLETED_STATUSES AND completed_at 落在指定的年/月內
+    - 例：3月報修、4月驗收完成 → 歸屬於 4月 的結案統計
     """
     # 排除「取消」等不計入統計的案件
     all_cases = [c for c in all_cases if not c.is_excluded_flag]
 
     def _closed_in(c: RepairCase, y: int, m: Optional[int]) -> bool:
-        """completed_at 是否落在指定年份（+月份）內"""
+        """status 為完成 且 completed_at 落在指定年份（+月份）內"""
+        if not is_completed(c.status):
+            return False
         if c.completed_at is None or c.close_days is None:
             return False
         if c.completed_at.year != y:

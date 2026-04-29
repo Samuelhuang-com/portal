@@ -59,6 +59,7 @@ export interface DashboardKpi {
   counter_store_names:      string[]      // 本月專櫃名稱列表
   total_work_hours:         number
   room_cases:               number
+  pending_verify:           number          // 待辦驗件數
   // 年度費用（費用 KPI 卡片用，不受月份篩選影響）
   annual_fee:                    number
   annual_outsource_fee:          number
@@ -110,11 +111,12 @@ export interface DashboardData {
   top_fee:           RepairCase[]
   top_hours:         RepairCase[]
   // KPI 明細（點擊 KPI 卡片時用）
-  kpi_total_detail:       RepairCase[]
-  kpi_completed_detail:   RepairCase[]
-  kpi_uncompleted_detail: RepairCase[]
-  kpi_close_days_detail:  RepairCase[]
-  kpi_room_detail:        RepairCase[]
+  kpi_total_detail:            RepairCase[]
+  kpi_completed_detail:        RepairCase[]
+  kpi_uncompleted_detail:      RepairCase[]
+  kpi_pending_verify_detail:   RepairCase[]
+  kpi_close_days_detail:       RepairCase[]
+  kpi_room_detail:             RepairCase[]
   kpi_hours_detail:            RepairCase[]
   kpi_counter_stores_detail:   RepairCase[]
   // 年度費用明細（點擊費用卡片時用）

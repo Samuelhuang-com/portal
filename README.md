@@ -2,9 +2,11 @@
 
 > 跨據點統一管理平台 — FastAPI + React + TypeScript
 
-**最後更新：2026-04-29（v1.39.42）**
+**最後更新：2026-04-29（v1.39.45）**
 
 ## 最近變更
+- v1.39.45：**樂群 報修清單總表「報修詳情」補附圖顯示** — `DetailTab` 內嵌 Drawer 改為共用 `<CaseDetailDrawer>`，統一顯示維修圖片（DB 圖片優先、Ragic lazy-fetch 備援）
+- v1.39.44：**樂群／大直 Dashboard KPI 邏輯修正** — `is_completed_flag` 改以 `status`（處理狀況）為唯一依據；`未完成 = 總數 - 已完成 - 待辦驗`（三類互斥）；`_prev_uncompleted`、`kpi_uncompleted_detail`、`trend_12m`、`top_uncompleted` 全數同步改用 status 判斷
 - v1.39.42：**飯店每日巡檢模組（新功能）** — 5 張 Ragic Sheet（RF/4F-10F/4F/2F/1F）同步至本地 DB；6-Tab 整合頁（Dashboard + 各區域巡檢紀錄）；route `/hotel/daily-inspection`；menu 掛於「飯店管理」下
 - v1.39.41：**商場管理 Dashboard — KPI 卡片版型調整** — 兩列 KPI（商場例行維護/全棟例行維護/商場工務巡檢/整棟巡檢 + 大直報修/交辦/緊急事件）
 - v1.39.40：**商場管理 Dashboard（新功能）** — 整合 5 來源（商場例行維護/全棟例行維護/商場工務巡檢/整棟巡檢/大直工務報修）的總覽 Dashboard；前端 Normalize adapter；KPI 卡片 + 各來源狀態卡 + 4 張圖表；route `/mall/overview`

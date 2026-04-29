@@ -18,7 +18,7 @@ import {
   CheckCircleOutlined, ClockCircleOutlined, ExclamationCircleOutlined,
   DashboardOutlined, FileTextOutlined, DownloadOutlined,
   WarningOutlined, DollarOutlined, SearchOutlined, BuildOutlined,
-  SyncOutlined, ApiOutlined, QuestionCircleOutlined, PictureOutlined,
+  SyncOutlined, ApiOutlined, QuestionCircleOutlined, PictureOutlined, AuditOutlined,
 } from '@ant-design/icons'
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
@@ -336,6 +336,8 @@ function DashboardTab({
   const [drawerCase, setDrawerCase] = useState<RepairCase | null>(null)
   const [feeModal, setFeeModal] = useState<'fee' | 'deduction' | null>(null)
   const [kpiModal, setKpiModal] = useState<'total' | 'completed' | 'uncompleted' | 'close_days' | 'room' | 'hours' | null>(null)
+  // 費用 KPI 副標題：月份選定時顯示「累計至M月」，全年（month=0）顯示「全年」
+  const ytdLabel = month > 0 ? `累計至 ${month} 月` : '全年'
 
   const load = useCallback(async () => {
     setLoading(true); setError(null)
@@ -359,6 +361,7 @@ function DashboardTab({
   const { kpi, trend_12m, type_dist, floor_dist, status_dist, top_uncompleted, top_fee, top_hours,
           annual_fee_detail, annual_deduction_detail,
           kpi_total_detail, kpi_completed_detail, kpi_uncompleted_detail,
+          kpi_pending_verify_detail,
           kpi_close_days_detail, kpi_room_detail, kpi_hours_detail } = data
 
   return (
@@ -367,18 +370,23 @@ function DashboardTab({
       <div style={{ display: 'flex', gap: 12, marginBottom: 12, flexWrap: 'nowrap', overflowX: 'auto' }}>
         <div style={{ flex: '1 1 0', minWidth: 110 }}>
           <KpiCard title="本月相關案件" value={fmt(kpi.total)} color="#1B3A5C" icon={<ToolOutlined />}
-            sub="上月累計未完成 + 本月報修" onClick={() => setKpiModal('total')}
+            sub="上期未結 + 本期報修件數" onClick={() => setKpiModal('total')}
             desc={DAZHI_KPI_DESC['本月相關案件']} />
         </div>
         <div style={{ flex: '1 1 0', minWidth: 110 }}>
           <KpiCard title="已完成件數" value={fmt(kpi.completed)} color="#52C41A" icon={<CheckCircleOutlined />}
-            sub={`完成率 ${kpi.total > 0 ? fmtDec(kpi.completed / kpi.total * 100) : '-'}% ｜ 依完工時間`}
+            sub="累計已完成 + 本期已完成"
             onClick={() => setKpiModal('completed')}
             desc={DAZHI_KPI_DESC['已完成件數']} />
         </div>
         <div style={{ flex: '1 1 0', minWidth: 110 }}>
+          <KpiCard title="待辦驗件數" value={fmt(kpi.pending_verify)} color="#FAAD14" icon={<AuditOutlined />}
+            sub="處理狀況 = 待辦驗" onClick={() => setKpiModal('pending_verify')}
+            desc={DAZHI_KPI_DESC['待辦驗件數']} />
+        </div>
+        <div style={{ flex: '1 1 0', minWidth: 110 }}>
           <KpiCard title="未完成件數" value={fmt(kpi.uncompleted)} color="#FF4D4F" icon={<ExclamationCircleOutlined />}
-            sub="無完工時間的案件" onClick={() => setKpiModal('uncompleted')}
+            sub="累計未完成 + 本期未完成" onClick={() => setKpiModal('uncompleted')}
             desc={DAZHI_KPI_DESC['未完成件數']} />
         </div>
         <div style={{ flex: '1 1 0', minWidth: 110 }}>
@@ -404,10 +412,10 @@ function DashboardTab({
       {/* KPI 明細 Modals */}
       <CaseListModal title={<><ToolOutlined style={{ color: '#1B3A5C', marginRight: 8 }} />本月相關案件</>}
         cases={kpi_total_detail ?? []} open={kpiModal === 'total'} onClose={() => setKpiModal(null)}
-        extra={<Space><Tag color="blue">共 {kpi.total} 筆</Tag><Tag color="default" style={{ fontSize: 11 }}>上月累計未完成項目數 + 本月報修項目數</Tag></Space>} />
+        extra={<Space><Tag color="blue">共 {kpi.total} 筆</Tag><Tag color="default" style={{ fontSize: 11 }}>上期未結 + 本期報修件數</Tag></Space>} />
       <CaseListModal title={<><CheckCircleOutlined style={{ color: '#52C41A', marginRight: 8 }} />已完成案件</>}
         cases={kpi_completed_detail ?? []} open={kpiModal === 'completed'} onClose={() => setKpiModal(null)}
-        extra={<Space><Tag color="success">已完成 {kpi.completed} 筆</Tag><Tag color="default" style={{ fontSize: 11 }}>有完工時間一律視為完工（含跨月案件）</Tag></Space>}
+        extra={<Space><Tag color="success">已完成 {kpi.completed} 筆</Tag><Tag color="default" style={{ fontSize: 11 }}>累計已完成 + 本期已完成（已驗收為標準）</Tag></Space>}
         extraColumns={[{
           title: '完工時間', dataIndex: 'completed_at', width: 110, align: 'center' as const,
           render: (v: string) => v
@@ -415,9 +423,12 @@ function DashboardTab({
             : <span style={{ color: '#ccc' }}>-</span>,
         }]}
       />
+      <CaseListModal title={<><AuditOutlined style={{ color: '#FAAD14', marginRight: 8 }} />待辦驗案件</>}
+        cases={kpi_pending_verify_detail ?? []} open={kpiModal === 'pending_verify'} onClose={() => setKpiModal(null)}
+        extra={<Space><Tag color="warning">待辦驗 {kpi.pending_verify} 筆</Tag><Tag color="default" style={{ fontSize: 11 }}>處理狀況欄位 = 待辦驗</Tag></Space>} />
       <CaseListModal title={<><ExclamationCircleOutlined style={{ color: '#FF4D4F', marginRight: 8 }} />未完成案件</>}
         cases={kpi_uncompleted_detail ?? []} open={kpiModal === 'uncompleted'} onClose={() => setKpiModal(null)}
-        extra={<Space><Tag color="error">未完成 {kpi.uncompleted} 筆</Tag><Tag color="default" style={{ fontSize: 11 }}>完工時間為空的案件</Tag></Space>} />
+        extra={<Space><Tag color="error">未完成 {kpi.uncompleted} 筆</Tag><Tag color="default" style={{ fontSize: 11 }}>累計未完成 + 本期未完成（非當月驗收）</Tag></Space>} />
       <CaseListModal title={<><ClockCircleOutlined style={{ color: '#4BA8E8', marginRight: 8 }} />結案天數明細（已完成）</>}
         cases={kpi_close_days_detail ?? []} open={kpiModal === 'close_days'} onClose={() => setKpiModal(null)}
         extra={<Space><Tag color="blue">平均 {kpi.avg_close_days != null ? fmtDec(kpi.avg_close_days, 1) : '-'} 天</Tag><Tag color="default" style={{ fontSize: 11 }}>完工時間 − 報修日期</Tag></Space>} />
@@ -428,9 +439,9 @@ function DashboardTab({
         cases={kpi_room_detail ?? []} open={kpiModal === 'room'} onClose={() => setKpiModal(null)}
         extra={<Tag color="orange">共 {kpi.room_cases} 筆</Tag>} />
 
-      {/* 年度費用 KPI + 當月金額 — 3 張一排 */}
+      {/* 費用 KPI（累計至選定月）+ 當月金額 — 3 張一排 */}
       <div style={{ display: 'flex', gap: 12, marginBottom: 20 }}>
-        {/* 委外+維修費用（全年） */}
+        {/* 委外+維修費用（累計 YTD） */}
         <div style={{ flex: '1 1 0', cursor: 'pointer' }} onClick={() => setFeeModal('fee')}>
           <Card size="small" style={{ textAlign: 'center', borderTop: '3px solid #722ED1', transition: 'box-shadow .15s' }}
             hoverable>
@@ -446,7 +457,7 @@ function DashboardTab({
           </Card>
         </div>
 
-        {/* 扣款費用（全年） */}
+        {/* 扣款費用（累計 YTD） */}
         <div style={{ flex: '1 1 0', cursor: 'pointer' }} onClick={() => setFeeModal('deduction')}>
           <Card size="small" style={{ textAlign: 'center', borderTop: '3px solid #FF4D4F', transition: 'box-shadow .15s' }}
             hoverable>
@@ -455,7 +466,7 @@ function DashboardTab({
               {fmtMoney(kpi.annual_deduction_fee ?? 0)}
             </div>
             <div style={{ color: '#666', fontSize: 12, marginTop: 4 }}>扣款費用</div>
-            <div style={{ color: '#999', fontSize: 11, marginTop: 2 }}>全年扣款費用合計</div>
+            <div style={{ color: '#999', fontSize: 11, marginTop: 2 }}>{ytdLabel}扣款費用合計</div>
             <div style={{ color: '#bbb', fontSize: 10, marginTop: 3 }}>點擊查看明細</div>
           </Card>
         </div>
@@ -500,7 +511,7 @@ function DashboardTab({
 
       {/* ── 委外+維修費用 明細 Modal ─────────────────────────────────────────── */}
       <Modal
-        title={<><DollarOutlined style={{ color: '#722ED1', marginRight: 8 }} />委外+維修費用明細（全年）</>}
+        title={<><DollarOutlined style={{ color: '#722ED1', marginRight: 8 }} />委外+維修費用明細（{ytdLabel}）</>}
         open={feeModal === 'fee'}
         onCancel={() => setFeeModal(null)}
         footer={<Button onClick={() => setFeeModal(null)}>關閉</Button>}
@@ -533,7 +544,7 @@ function DashboardTab({
 
       {/* ── 扣款費用 明細 Modal ──────────────────────────────────────────────── */}
       <Modal
-        title={<><DollarOutlined style={{ color: '#FF4D4F', marginRight: 8 }} />扣款費用明細（全年）</>}
+        title={<><DollarOutlined style={{ color: '#FF4D4F', marginRight: 8 }} />扣款費用明細（{ytdLabel}）</>}
         open={feeModal === 'deduction'}
         onCancel={() => setFeeModal(null)}
         footer={<Button onClick={() => setFeeModal(null)}>關閉</Button>}
@@ -544,7 +555,7 @@ function DashboardTab({
           <Tag style={{ fontSize: 12 }}>共 {annual_deduction_detail?.length ?? 0} 筆</Tag>
         </div>
         {(annual_deduction_detail?.length ?? 0) === 0
-          ? <Empty description="全年無扣款費用資料" />
+          ? <Empty description={`${ytdLabel}無扣款費用資料`} />
           : (
             <Table
               size="small"

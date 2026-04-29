@@ -4,6 +4,35 @@
 
 ---
 
+## [1.39.45] - 2026-04-29
+
+### Fixed
+- **樂群 報修清單總表「報修詳情」缺少附圖問題** — `DetailTab` 原用內嵌 `<Drawer>` + `<Descriptions>` 顯示詳情，缺少圖片區塊；改為統一呼叫共用 `<CaseDetailDrawer>` 元件（與 4.1 報修 Tab 點擊「詳情→報修詳情」完全一致），自動支援 DB 圖片優先、Ragic lazy-fetch 備援之圖片顯示邏輯
+  - 修改範圍：`frontend/src/pages/LuqunRepair/index.tsx`（大直 DetailTab 原本已有圖片處理，無需變動）
+
+---
+
+## [1.39.44] - 2026-04-29
+
+### Fixed
+- **樂群／大直 Dashboard KPI 計算邏輯修正（稽核報告 P1/P2/P3）**
+  - `is_completed_flag` 改以 `status`（處理狀況）為唯一判斷依據，移除 `completed_at IS NOT NULL` 的條件；`completed_at` 欄位保留供 `close_days` 計算與查閱，不再影響完成判定
+  - `_prev_uncompleted`（上期未結）改用 `not is_completed(c.status)` 判斷，與 `completed` 邏輯一致
+  - `未完成件數 = 總數 - 已完成 - 待辦驗`（三類互斥），修正原本 `total - completed` 導致待辦驗重複計入未完成的錯誤（樂群 2026/04：24 → 17）
+  - `kpi_uncompleted_detail` 明細清單同步排除 `status == "待辦驗"` 案件，與卡片數字對齊
+  - `pending_verify_cases` 計算移至 KPI 區段（completed 之後），確保 `uncompleted` 計算可直接引用
+  - `trend_12m` completed、`top_uncompleted` 均改用 `is_completed(c.status)` 判斷
+  - 修改範圍：`backend/app/services/luqun_repair_service.py`、`backend/app/services/dazhi_repair_service.py`
+- **費用 KPI 前三張卡改為 YTD（累計至選定月）口徑**
+  - 後端：`compute_dashboard` 中 `year_cases`（全年）改為 `ytd_cases`（1月~M月），`annual_fee`/`annual_deduction_fee`/`annual_counter_*` 及對應明細清單全部跟進；全年檢視（month=0）維持原全年邏輯
+  - 前端：`LuqunRepair` / `DazhiRepair` Dashboard Tab 加入 `ytdLabel` 衍生字串（月份選定時 `累計至M月`，全年時 `全年`）；費用卡片副標題、Modal 標題、Empty 訊息全部套用
+- **4.1/4.2/4.3 其他 Tab 同步修正**
+  - `_completed_by`/`_completed_in`（luqun 內層、dazhi 模組級）加上 `is_completed(c.status)` 前提，status 非完成的案件即使有 `completed_at` 也不計為完成
+  - `_closed_in`（4.2 結案時間統計）同步加 status gate（dazhi 委派給 `_completed_in`，luqun 直接修改）
+  - `_stat_year`/`_stat_month`：luqun 簡化為直接讀 `c.year`/`c.month`（`__init__` 已依 status 正確計算）；dazhi 加 `is_completed(status)` gate 再讀 `completed_at`（dazhi `c.year`/`c.month` 永遠是報修月）
+
+---
+
 ## [1.39.43] - 2026-04-29
 
 ### Changed
