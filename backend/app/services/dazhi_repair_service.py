@@ -644,11 +644,30 @@ def compute_dashboard(
     """
     # 排除「取消」等不計入統計的案件（明細總表仍完整保留）
     all_cases = [c for c in all_cases if not c.is_excluded_flag]
-    this_month_cases = filter_cases(all_cases, year, month if month else None)
+
+    # ── 本月相關案件口徑：① 上月累計未完成 + ⑤ 本月報修 ──────────────────────
+    # 與 4.1 報修統計 Tab 口徑對齊；全年檢視（month=0）沿用舊邏輯
+    # 大直以 c.year/c.month（= occurred_at 年月）為報修月基準
+    if month:
+        _prev_y, _prev_m = _month_offset(year, month, -1)
+        _cases_up_to_prev = [
+            c for c in all_cases
+            if c.year is not None
+            and (c.year < _prev_y or (c.year == _prev_y and c.month <= _prev_m))
+        ]
+        _prev_uncompleted = [c for c in _cases_up_to_prev if not _completed_by(c, _prev_y, _prev_m)]
+        _this_month_new   = filter_cases(all_cases, year, month)
+        this_month_cases  = _prev_uncompleted + _this_month_new
+    else:
+        this_month_cases = filter_cases(all_cases, year, None)
 
     # ── KPI ──────────────────────────────────────────────────────────────────
     total       = len(this_month_cases)
-    completed   = sum(1 for c in this_month_cases if c.is_completed_flag)
+    # 月份檢視：完成 = 本月有 completed_at；全年：is_completed_flag
+    if month:
+        completed   = sum(1 for c in this_month_cases if _completed_in(c, year, month))
+    else:
+        completed   = sum(1 for c in this_month_cases if c.is_completed_flag)
     uncompleted = total - completed
     room_cases  = [c for c in this_month_cases if c.is_room_case]
 
@@ -742,9 +761,14 @@ def compute_dashboard(
     ]
 
     # ── KPI 明細（點擊卡片時用）──────────────────────────────────────────────
-    completed_cases   = [c for c in this_month_cases if c.is_completed_flag]
-    uncompleted_cases = [c for c in this_month_cases if not c.is_completed_flag]
-    close_days_cases  = [c for c in this_month_cases if c.is_completed_flag and c.close_days is not None]
+    if month:
+        completed_cases   = [c for c in this_month_cases if _completed_in(c, year, month)]
+        uncompleted_cases = [c for c in this_month_cases if not _completed_in(c, year, month)]
+        close_days_cases  = [c for c in completed_cases if c.close_days is not None]
+    else:
+        completed_cases   = [c for c in this_month_cases if c.is_completed_flag]
+        uncompleted_cases = [c for c in this_month_cases if not c.is_completed_flag]
+        close_days_cases  = [c for c in this_month_cases if c.is_completed_flag and c.close_days is not None]
     work_hours_cases  = sorted([c for c in this_month_cases if c.work_hours > 0], key=lambda x: x.work_hours, reverse=True)
 
     return {

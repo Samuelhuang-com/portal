@@ -394,7 +394,7 @@ function DashboardTab({
       <div style={{ display: 'flex', gap: 12, marginBottom: 12, flexWrap: 'nowrap', overflowX: 'auto' }}>
         <div style={{ flex: '1 1 0', minWidth: 110 }}>
           <KpiCard title="本月相關案件" value={fmt(kpi.total)} color="#1B3A5C" icon={<ToolOutlined />}
-            sub="完工月＋未完成報修月" onClick={() => setKpiModal('total')}
+            sub="上月累計未完成 + 本月報修" onClick={() => setKpiModal('total')}
             desc={LUQUN_KPI_DESC['本月相關案件']} />
         </div>
         <div style={{ flex: '1 1 0', minWidth: 110 }}>
@@ -431,7 +431,7 @@ function DashboardTab({
       {/* KPI 明細 Modals */}
       <CaseListModal title={<><ToolOutlined style={{ color: '#1B3A5C', marginRight: 8 }} />本月相關案件</>}
         cases={kpi_total_detail ?? []} open={kpiModal === 'total'} onClose={() => setKpiModal(null)}
-        extra={<Space><Tag color="blue">共 {kpi.total} 筆</Tag><Tag color="default" style={{ fontSize: 11 }}>有完工時間者依完工月、未完成依報修月</Tag></Space>} />
+        extra={<Space><Tag color="blue">共 {kpi.total} 筆</Tag><Tag color="default" style={{ fontSize: 11 }}>上月累計未完成項目數 + 本月報修項目數</Tag></Space>} />
       <CaseListModal title={<><CheckCircleOutlined style={{ color: '#52C41A', marginRight: 8 }} />已完成案件</>}
         cases={kpi_completed_detail ?? []} open={kpiModal === 'completed'} onClose={() => setKpiModal(null)}
         extra={<Space><Tag color="success">已完成 {kpi.completed} 筆</Tag><Tag color="default" style={{ fontSize: 11 }}>有完工時間者一律視為完工（含跨月案件）</Tag></Space>}

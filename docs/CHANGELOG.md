@@ -4,6 +4,15 @@
 
 ---
 
+## [1.39.43] - 2026-04-29
+
+### Changed
+- **樂群／大直 Dashboard「本月相關案件」口徑調整** — 由「完工月＋未完成報修月」改為「① 上月累計未完成 + ⑤ 本月報修」，與 4.1 報修統計 Tab 口徑完全對齊；KPI 完成數／未完成數、明細清單、avg_close_days 同步調整（全年 month=0 檢視保持舊邏輯）
+  - `backend/app/services/luqun_repair_service.py` — 新增 `_db_completed_by`/`_db_completed_in` 模組函式，更新 `compute_dashboard`
+  - `backend/app/services/dazhi_repair_service.py` — 更新 `compute_dashboard`（使用既有模組層級 `_completed_by`/`_completed_in`）
+
+---
+
 ## [1.39.42] - 2026-04-29
 
 ### Added
