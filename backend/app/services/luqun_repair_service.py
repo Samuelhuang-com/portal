@@ -917,15 +917,21 @@ def compute_dashboard(
     total_fee = sum(c.total_fee for c in this_month_cases)
     total_deduction_fee = sum(c.deduction_fee for c in this_month_cases)
     total_deduction_counter = sum(c.deduction_counter for c in this_month_cases)  # 保持 0
-    # 本月有扣款專櫃的案件金額合計（deduction_counter_name 非空）
+
+    # ── 當月費用（口徑與「金額統計」Tab 一致：c.year/c.month，結案以結案月份為準）
+    # 注意：必須在 counter_cases 之前計算，因為扣款專櫃也要用此口徑
+    fee_month_cases = filter_cases(all_cases, year, month if month else None)
+
+    # 扣款專櫃（當月）：只計 is_completed 且有扣款的案件
+    # 口徑：fee_month_cases（_stat_month == 當月），與金額統計 tab 一致
+    # is_completed gate：確保 completed_at 落在當月（避免待辦驗案件的 completed_at 跨月汙染）
     total_counter_fee = round(sum(
-        c.deduction_fee for c in this_month_cases
-        if getattr(c, 'deduction_counter_name', '')
+        c.deduction_fee for c in fee_month_cases
+        if is_completed(c.status) and getattr(c, 'deduction_counter_name', '')
     ), 2)
-    # 本月有扣款的專櫃：計算唯一專櫃家數（含多櫃解析）
-    # getattr 保護：ORM 物件在舊 sync 前可能沒有 deduction_counter_name
-    counter_cases = [c for c in this_month_cases
-                     if c.deduction_fee > 0 and getattr(c, 'deduction_counter_name', '')]
+    counter_cases = [c for c in fee_month_cases
+                     if is_completed(c.status) and c.deduction_fee > 0
+                     and getattr(c, 'deduction_counter_name', '')]
     _counter_set: set[str] = set()
     for _c in counter_cases:
         _stores = getattr(_c, 'counter_stores', None) or [getattr(_c, 'deduction_counter_name', '')]
@@ -986,8 +992,7 @@ def compute_dashboard(
     hours_list = sorted(this_month_cases, key=lambda x: x.work_hours, reverse=True)
     top_hours = [c.to_dict() for c in hours_list[:10] if c.work_hours > 0]
 
-    # ── 當月費用（口徑與「金額統計」Tab 一致：c.year/c.month，結案以結案月份為準）
-    fee_month_cases = filter_cases(all_cases, year, month if month else None)
+    # fee_month_cases 已在 counter_cases 區段前計算，此處直接使用
     month_outsource_fee     = round(sum(c.outsource_fee     for c in fee_month_cases), 2)
     month_maintenance_fee   = round(sum(c.maintenance_fee   for c in fee_month_cases), 2)
     month_deduction_fee     = round(sum(c.deduction_fee     for c in fee_month_cases), 2)
@@ -1034,9 +1039,13 @@ def compute_dashboard(
     )
     annual_deduction_detail = [c.to_dict() for c in annual_deduction_records[:20]]
 
-    # 累計扣款專櫃明細（有扣款費用且有專櫃名稱）Top30
+    # 累計扣款專櫃明細（已完成 + 有扣款費用 + 有專櫃名稱）Top30
+    # is_completed gate：確保 c.month = completed_at.month，ytd_cases 的 _stat_month <= month
+    # 過濾才能有效排除「結案時間落在選定月之後」的待辦驗案件
     annual_counter_records = sorted(
-        [c for c in ytd_cases if c.deduction_fee > 0 and getattr(c, 'deduction_counter_name', '')],
+        [c for c in ytd_cases
+         if is_completed(c.status) and c.deduction_fee > 0
+         and getattr(c, 'deduction_counter_name', '')],
         key=lambda x: x.deduction_fee,
         reverse=True,
     )
@@ -1161,10 +1170,11 @@ def compute_fee_stats(all_cases: list[RepairCase], year: int) -> dict:
         monthly_totals[m] = {}
         for fk in FEE_KEYS:
             if fk == "deduction_counter":
-                # 扣款專櫃：計算當月有扣款的唯一專櫃家數（整數，非金額）
+                # 扣款專櫃：計算當月「已完成且有扣款」的唯一專櫃家數（整數，非金額）
+                # is_completed gate：只算 completed_at 落在當月（stat_month == m）的已結案案件
                 _m_stores: set[str] = set()
                 for _c in mc:
-                    if _c.deduction_fee > 0 and getattr(_c, 'deduction_counter_name', ''):
+                    if is_completed(_c.status) and _c.deduction_fee > 0 and getattr(_c, 'deduction_counter_name', ''):
                         _sl = getattr(_c, 'counter_stores', None) or [getattr(_c, 'deduction_counter_name', '')]
                         for _s in _sl:
                             if _s:
@@ -1177,7 +1187,7 @@ def compute_fee_stats(all_cases: list[RepairCase], year: int) -> dict:
         for fk in FEE_KEYS:
             if fk == "deduction_counter":
                 cases_with_fee = sorted(
-                    [c for c in mc if getattr(c, 'deduction_counter_name', '') and c.deduction_fee > 0],
+                    [c for c in mc if is_completed(c.status) and getattr(c, 'deduction_counter_name', '') and c.deduction_fee > 0],
                     key=lambda c: c.deduction_fee, reverse=True,
                 )
             else:
@@ -1188,11 +1198,11 @@ def compute_fee_stats(all_cases: list[RepairCase], year: int) -> dict:
             if cases_with_fee:
                 monthly_detail[f"{m}_{fk}"] = [c.to_dict() for c in cases_with_fee]
 
-    # 全年唯一扣款專櫃家數（跨月去重，不能直接加總各月）
+    # 全年唯一扣款專櫃家數（跨月去重，不能直接加總各月；只計已完成案件）
     _annual_fee_stores: set[str] = set()
     _year_cases_all = filter_cases(all_cases, year, None)
     for _c in _year_cases_all:
-        if _c.deduction_fee > 0 and getattr(_c, 'deduction_counter_name', ''):
+        if is_completed(_c.status) and _c.deduction_fee > 0 and getattr(_c, 'deduction_counter_name', ''):
             _sl2 = getattr(_c, 'counter_stores', None) or [getattr(_c, 'deduction_counter_name', '')]
             for _s in _sl2:
                 if _s:

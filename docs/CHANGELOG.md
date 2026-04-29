@@ -4,6 +4,17 @@
 
 ---
 
+## [1.39.46] - 2026-04-29
+
+### Fixed
+- **樂群 扣款專櫃計算邏輯修正（兩處 bug）**
+  - **當月金額 扣款專櫃家數/金額** — 原用 `this_month_cases`（本月相關案件，含上期累計未結），導致 1 月尚未結案但已設扣款的案件會出現在 3 月的「當月金額」欄；改為 `fee_month_cases`（`_stat_month == 選定月`，與金額統計 tab 完全一致）
+  - **YTD/全年 扣款專櫃（Dashboard KPI 卡 + 彈窗）** — 原包含 `status = 待辦驗` 等未結案件，其 `c.month = occurred_at.month`，使得選定 3 月時 1 月的未結案件（`completed_at` 可能為 4 月）錯誤出現在 popup；加上 `is_completed(c.status)` gate，確保計入的案件 `c.month = completed_at.month`，ytd 過濾 `_stat_month <= month` 才能精確排除超出期間的案件
+  - 同步修正 `compute_fee_stats` 的 `deduction_counter` 逐月家數計算及全年去重計算，加 `is_completed` gate，使金額統計 tab 與 Dashboard 口徑完全一致
+  - 修改範圍：`backend/app/services/luqun_repair_service.py`（大直無 `deduction_counter` 欄位，無需變動）
+
+---
+
 ## [1.39.45] - 2026-04-29
 
 ### Fixed
