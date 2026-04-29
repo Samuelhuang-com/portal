@@ -361,7 +361,7 @@ function DashboardTab({
   const [error, setError]     = useState<string | null>(null)
   const [drawerCase, setDrawerCase] = useState<RepairCase | null>(null)
   const [feeModal, setFeeModal] = useState<'fee' | 'deduction' | 'counter' | null>(null)
-  const [kpiModal, setKpiModal] = useState<'total' | 'completed' | 'uncompleted' | 'close_days' | 'room' | 'hours' | null>(null)
+  const [kpiModal, setKpiModal] = useState<'total' | 'completed' | 'uncompleted' | 'pending_verify' | 'close_days' | 'room' | 'hours' | null>(null)
   // 費用 KPI 副標題：月份選定時顯示「累計至M月」，全年（month=0）顯示「全年」
   const ytdLabel = month > 0 ? `累計至 ${month} 月` : '全年'
 
