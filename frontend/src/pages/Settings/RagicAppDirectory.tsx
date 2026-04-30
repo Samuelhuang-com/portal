@@ -367,10 +367,10 @@ const LEVEL_CONFIG: Record<1 | 2 | 3, { label: string; color: string; bg: string
 interface PortalDefault { portalName: string; portalUrl: string }
 
 const PORTAL_DEFAULTS: Record<number, PortalDefault> = {
-  // ── 保全巡檢 (5~18) → 保全管理 ──────────────────────────────────────────────
+  // ── 保全巡檢 (5~18) → 保全巡檢（整合後統一入口）──────────────────────────────
   ...(Object.fromEntries(
     [5,6,7,8,9,10,11,12,13,14,15,16,17,18].map((n) => [
-      n, { portalName: '保全管理', portalUrl: '/security/dashboard' },
+      n, { portalName: '保全巡檢', portalUrl: '/security/dashboard' },
     ])
   ) as Record<number, PortalDefault>),
 

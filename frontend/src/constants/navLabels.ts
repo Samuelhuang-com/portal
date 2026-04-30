@@ -41,6 +41,8 @@
  *   2026-04-28  修正 applyMenuConfig 三層 merge 邏輯；DB seed 隱藏 custom_1777348120465；MenuConfig 設定頁支援三層 L3
  *   2026-04-28  新增 mallMgmtDashboard（商場管理 Dashboard）整合 5 來源總覽，route /mall/overview
  *   2026-04-29  新增 hotelDailyInspection（飯店每日巡檢）5 張 Sheet（RF/4F-10F/4F/2F/1F），route /hotel/daily-inspection
+ *   2026-04-30  新增 hotelMeterReadings（每日數值登錄表）4 張 Sheet（全棟電錶/商場空調箱電錶/專櫃電錶/專櫃水錶），route /hotel/daily-meter-readings
+ *   2026-04-30  整合保全巡檢：security 從群組（8 items）→ 單一入口 /security/dashboard；各 Sheet 改為頁面內外層 TAB；NAV_GROUP.security 改名「保全巡檢」
  */
 
 // ── 系統標題 ──────────────────────────────────────────────────────────────────
@@ -58,7 +60,7 @@ export const NAV_GROUP = {
   dazhi_repair:             '大直工務部',
   mall_facility_inspection:  '春大直商場工務巡檢',
   full_building_inspection:  '整棟巡檢',
-  security:                  '保全管理',
+  security:                  '保全巡檢',
   warehouse:  '倉庫管理',
   reports:    '報表',
   approvals:  '簽核管理',
@@ -84,6 +86,7 @@ export const NAV_PAGE = {
 
   // 飯店管理
   hotelDailyInspection:   '飯店每日巡檢',
+  hotelMeterReadings:     '每日數值登錄表',
   roomMaintenance:        '客房保養',
   roomMaintenanceDetail:  '※1.1飯店客房保養管理',       // ← 原「客房保養明細」
   periodicMaintenance:    '1. 飯店週期保養表',

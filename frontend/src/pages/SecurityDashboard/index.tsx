@@ -1,18 +1,27 @@
 /**
- * 保全巡檢統計 Dashboard
- * 顯示所有 7 張 Sheet 的今日巡檢統計、異常清單、近 7 日趨勢
+ * 保全巡檢 統一入口頁
+ *
+ * 外層 TAB（8 個）：
+ *   Tab 0「保全巡檢Dashboard」：一頁式綜合 Dashboard（無子 Tab）
+ *   Tab 1-7：各巡檢 Sheet — 直接顯示巡檢紀錄清單（無主管儀表板）
+ *
+ * ── 2026-04-30 整合 ──────────────────────────────────────────────────────────
+ * ── 2026-04-30 重構 ──────────────────────────────────────────────────────────
+ * Dashboard 改為一頁式：KPI + 7 Sheet 狀態卡 + 今日統計表 + 異常清單 + 趨勢圖
+ * 各 Sheet Tab 移除主管儀表板，直接顯示巡檢紀錄
  */
 import { useEffect, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Row, Col, Card, Statistic, Table, Tag, Button, Space,
   Typography, Breadcrumb, Tabs, Alert, DatePicker, Badge,
-  message, Progress, Tooltip,
+  message, Progress, Tooltip, Divider,
 } from 'antd'
 import {
   HomeOutlined, SyncOutlined, ReloadOutlined,
   WarningOutlined, CheckCircleOutlined, ExclamationCircleOutlined,
   DashboardOutlined, RightOutlined, CalendarOutlined, QuestionCircleOutlined,
+  SafetyOutlined, ClockCircleOutlined,
 } from '@ant-design/icons'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RcTooltip,
@@ -33,21 +42,44 @@ import type {
   SecurityTrendPoint,
   SheetStats,
 } from '@/types/securityPatrol'
-import { NAV_GROUP, NAV_PAGE } from '@/constants/navLabels'
+import { NAV_GROUP } from '@/constants/navLabels'
 import { SECURITY_KPI_DESC } from '@/constants/kpiDesc/securityDashboard'
+import { SecurityPatrolContent } from '@/pages/SecurityPatrol'
+
+// ── 外層 TAB 定義 ─────────────────────────────────────────────────────────────
+const OUTER_TABS = [
+  { key: 'dashboard', label: '保全巡檢Dashboard', icon: <DashboardOutlined /> },
+  { key: 'b1f-b4f',  label: 'B1F~B4F夜間巡檢',  icon: <SafetyOutlined /> },
+  { key: '1f-3f',    label: '1F~3F夜間巡檢',     icon: <SafetyOutlined /> },
+  { key: '5f-10f',   label: '5F~10F夜間巡檢',    icon: <SafetyOutlined /> },
+  { key: '4f',       label: '4F夜間巡檢',         icon: <SafetyOutlined /> },
+  { key: '1f-hotel', label: '1F飯店大廳',         icon: <SafetyOutlined /> },
+  { key: '1f-close', label: '1F閉店巡檢',         icon: <SafetyOutlined /> },
+  { key: '1f-open',  label: '1F開店準備',         icon: <SafetyOutlined /> },
+] as const
 
 const { Title, Text } = Typography
 
-// ── 狀態設定 ──────────────────────────────────────────────────────────────────
+// ── 狀態 Tag 顏色 ──────────────────────────────────────────────────────────────
 const STATUS_TAG: Record<string, string> = {
   abnormal:  'error',
   pending:   'warning',
   unchecked: 'default',
 }
 
+// ── Sheet 狀態 mini-card 顏色 ──────────────────────────────────────────────────
+function sheetCardBorder(sheet: SheetStats): string {
+  if (!sheet.has_data) return '#d9d9d9'
+  if (sheet.abnormal_items > 0) return '#ff4d4f'
+  if (sheet.pending_items > 0)  return '#faad14'
+  if (sheet.completion_rate >= 100) return '#52c41a'
+  return '#4BA8E8'
+}
+
 export default function SecurityDashboardPage() {
   const navigate = useNavigate()
-  const [activeTab, setActiveTab]   = useState('summary')
+
+  const [outerTab, setOuterTab]     = useState('dashboard')
   const [targetDate, setTargetDate] = useState<string>(dayjs().format('YYYY/MM/DD'))
   const [summary, setSummary]       = useState<SecurityDashboardSummary | null>(null)
   const [issues, setIssues]         = useState<SecurityIssueItem[]>([])
@@ -55,54 +87,33 @@ export default function SecurityDashboardPage() {
   const [loading, setLoading]       = useState(false)
   const [syncing, setSyncing]       = useState(false)
 
-  const loadSummary = useCallback(async () => {
+  // 一次並行載入三個資料源
+  const loadAll = useCallback(async () => {
     setLoading(true)
     try {
-      const data = await fetchSecurityDashboardSummary(targetDate)
-      setSummary(data)
+      const [sumData, issueData, trendData] = await Promise.all([
+        fetchSecurityDashboardSummary(targetDate),
+        fetchSecurityDashboardIssues({ start_date: targetDate, end_date: targetDate }),
+        fetchSecurityDashboardTrend(7),
+      ])
+      setSummary(sumData)
+      setIssues(issueData.items)
+      setTrend(trendData.trend)
     } catch {
-      message.error('載入統計失敗')
+      message.error('載入 Dashboard 失敗')
     } finally {
       setLoading(false)
     }
   }, [targetDate])
 
-  const loadIssues = useCallback(async () => {
-    setLoading(true)
-    try {
-      const res = await fetchSecurityDashboardIssues({ start_date: targetDate, end_date: targetDate })
-      setIssues(res.items)
-    } catch {
-      message.error('載入異常清單失敗')
-    } finally {
-      setLoading(false)
-    }
-  }, [targetDate])
-
-  const loadTrend = useCallback(async () => {
-    setLoading(true)
-    try {
-      const res = await fetchSecurityDashboardTrend(7)
-      setTrend(res.trend)
-    } catch {
-      message.error('載入趨勢失敗')
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  useEffect(() => { loadSummary() }, [loadSummary])
-  useEffect(() => {
-    if (activeTab === 'issues') loadIssues()
-    if (activeTab === 'trend')  loadTrend()
-  }, [activeTab, loadIssues, loadTrend])
+  useEffect(() => { loadAll() }, [loadAll])
 
   const handleSync = async () => {
     setSyncing(true)
     try {
       await syncPatrolFromRagic()
       message.success('全部 Sheet 同步完成')
-      await loadSummary()
+      await loadAll()
     } catch {
       message.error('同步失敗')
     } finally {
@@ -110,15 +121,52 @@ export default function SecurityDashboardPage() {
     }
   }
 
-  // ── 摘要 Tab ───────────────────────────────────────────────────────────────
+  // ── Section 1：全局 KPI 卡片 ──────────────────────────────────────────────
+  const kpiCards = [
+    {
+      title: '今日巡檢場次',
+      descKey: '今日巡檢場次',
+      value: summary?.total_batches_all ?? 0,
+      color: '#1B3A5C',
+      icon: <DashboardOutlined />,
+    },
+    {
+      title: '已巡檢項目',
+      descKey: '已巡檢項目',
+      value: summary?.checked_items_all ?? 0,
+      suffix: `/${summary?.total_items_all ?? 0}`,
+      color: '#4BA8E8',
+      icon: <CheckCircleOutlined />,
+    },
+    {
+      title: '異常 + 待處理',
+      descKey: '異常待處理',
+      value: summary?.abnormal_items_all ?? 0,
+      color: '#FF4D4F',
+      icon: <WarningOutlined />,
+    },
+    {
+      title: '整體完成率',
+      descKey: '整體完成率',
+      value: summary?.completion_rate_all ?? 0,
+      suffix: '%',
+      color: (summary?.completion_rate_all ?? 0) >= 80 ? '#52C41A' : '#FAAD14',
+      icon: <ExclamationCircleOutlined />,
+    },
+  ]
+
+  // ── Section 2：7 Sheet 狀態 mini-cards ───────────────────────────────────
+  const sheets = summary?.sheets ?? []
+
+  // ── Section 3：各 Sheet 今日統計表（左欄）────────────────────────────────
   const sheetCols: ColumnsType<SheetStats> = [
     {
-      title: 'Sheet',
+      title: '巡檢表',
       dataIndex: 'sheet_name',
       ellipsis: true,
       render: (v, row) => (
-        <Button type="link" style={{ padding: 0, textAlign: 'left' }}
-          onClick={() => navigate(`/security/patrol/${row.sheet_key}`)}>
+        <Button type="link" style={{ padding: 0, textAlign: 'left', fontSize: 12 }}
+          onClick={() => setOuterTab(row.sheet_key)}>
           {v}
         </Button>
       ),
@@ -126,246 +174,279 @@ export default function SecurityDashboardPage() {
     {
       title: '場次',
       dataIndex: 'total_batches',
-      width: 60,
+      width: 52,
       align: 'center',
-      render: (v) => v > 0 ? <Badge count={v} color="#1B3A5C" showZero /> : <Text type="secondary">—</Text>,
+      render: (v) => v > 0
+        ? <Badge count={v} color="#1B3A5C" showZero />
+        : <Text type="secondary" style={{ fontSize: 11 }}>—</Text>,
     },
     {
       title: '完成率',
       dataIndex: 'completion_rate',
-      width: 130,
-      render: (v, row) => row.has_data ? (
-        <Progress
-          percent={v} size="small"
-          strokeColor={{ from: v < 50 ? '#FF4D4F' : '#FAAD14', to: '#52C41A' }}
-          format={(p) => `${p}%`}
-        />
-      ) : <Text type="secondary">無資料</Text>,
+      width: 120,
+      render: (v, row) => row.has_data
+        ? <Progress percent={v} size="small"
+            strokeColor={{ from: v < 50 ? '#FF4D4F' : '#FAAD14', to: '#52C41A' }}
+            format={(p) => `${p}%`} />
+        : <Text type="secondary" style={{ fontSize: 11 }}>無資料</Text>,
     },
     {
       title: '異常',
       dataIndex: 'abnormal_items',
-      width: 60,
+      width: 52,
       align: 'center',
       render: (v) => v > 0 ? <Badge count={v} color="#FF4D4F" /> : <Text type="secondary">—</Text>,
     },
     {
       title: '待處理',
       dataIndex: 'pending_items',
-      width: 65,
+      width: 58,
       align: 'center',
       render: (v) => v > 0 ? <Badge count={v} color="#FAAD14" /> : <Text type="secondary">—</Text>,
     },
     {
-      title: '未巡檢',
-      dataIndex: 'unchecked_items',
-      width: 65,
-      align: 'center',
-      render: (v) => v > 0 ? <Badge count={v} color="#999" /> : <Text type="secondary">—</Text>,
-    },
-    {
-      title: '操作',
-      width: 80,
+      title: '',
+      width: 60,
       render: (_, row) => (
-        <Button type="primary" size="small" icon={<RightOutlined />}
-          style={{ background: '#1B3A5C' }}
-          onClick={() => navigate(`/security/patrol/${row.sheet_key}`)}>
-          詳情
+        <Button size="small" icon={<RightOutlined />}
+          onClick={() => setOuterTab(row.sheet_key)}>
+          前往
         </Button>
       ),
     },
   ]
 
-  const SummaryTab = (
+  // ── Section 4：今日異常 & 待處理清單（右欄）──────────────────────────────
+  const issueColsCompact: ColumnsType<SecurityIssueItem> = [
+    {
+      title: '巡檢點',
+      dataIndex: 'item_name',
+      ellipsis: true,
+      render: (v, row) => (
+        <span>
+          <Tag color={STATUS_TAG[row.status] ?? 'default'} style={{ fontSize: 10, padding: '0 4px' }}>
+            {row.status_label}
+          </Tag>
+          <span style={{ fontSize: 12 }}>{v}</span>
+        </span>
+      ),
+    },
+    {
+      title: '表單',
+      dataIndex: 'sheet_name',
+      width: 100,
+      ellipsis: true,
+      render: (v, row) => (
+        <Button type="link" size="small" style={{ padding: 0, fontSize: 11 }}
+          onClick={() => navigate(`/security/patrol/${row.sheet_key}/${row.batch_id}`, { state: { returnPath: '/security/dashboard' } })}>
+          {v}
+        </Button>
+      ),
+    },
+  ]
+
+  // ── Section 5：近 7 日趨勢圖 ─────────────────────────────────────────────
+  const trendChartData = trend.map(t => ({
+    date:   t.date.slice(5),
+    異常數量: t.abnormal_count,
+    場次數:  t.total_batches,
+  }))
+
+  // ── Dashboard 主體 ────────────────────────────────────────────────────────
+  const DashboardContent = (
     <div>
-      <Row style={{ marginBottom: 16 }} align="middle" gutter={8}>
+      {/* Header 工具列 */}
+      <Row align="middle" justify="space-between" style={{ marginBottom: 16 }} gutter={8}>
         <Col>
-          <Text strong>查詢日期：</Text>
+          <Space size={8}>
+            <Text strong style={{ fontSize: 13 }}>查詢日期：</Text>
+            <DatePicker
+              value={dayjs(targetDate, 'YYYY/MM/DD')}
+              format="YYYY/MM/DD"
+              allowClear={false}
+              size="small"
+              onChange={(d) => { if (d) setTargetDate(d.format('YYYY/MM/DD')) }}
+            />
+            <Button size="small" icon={<ReloadOutlined />} onClick={loadAll} loading={loading}>
+              重新整理
+            </Button>
+          </Space>
         </Col>
         <Col>
-          <DatePicker
-            value={dayjs(targetDate, 'YYYY/MM/DD')}
-            format="YYYY/MM/DD"
-            allowClear={false}
-            onChange={(d) => { if (d) setTargetDate(d.format('YYYY/MM/DD')) }}
-          />
-        </Col>
-        <Col>
-          <Button icon={<ReloadOutlined />} onClick={loadSummary} loading={loading}>
-            重新整理
-          </Button>
+          <Space size={8}>
+            <Text type="secondary" style={{ fontSize: 11 }}>
+              {summary?.generated_at ? `更新：${summary.generated_at}` : ''}
+            </Text>
+            <Button size="small" icon={<SyncOutlined spin={syncing} />} loading={syncing} onClick={handleSync}>
+              同步全部 Sheet
+            </Button>
+          </Space>
         </Col>
       </Row>
 
-      {/* 全體 KPI */}
-      <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
-        {[
-          {
-            title: '今日巡檢場次',
-            descKey: '今日巡檢場次',
-            value: summary?.total_batches_all ?? 0,
-            color: '#1B3A5C',
-            icon: <DashboardOutlined />,
-          },
-          {
-            title: `已巡檢項目`,
-            descKey: '已巡檢項目',
-            value: summary?.checked_items_all ?? 0,
-            suffix: `/${summary?.total_items_all ?? 0}`,
-            color: '#4BA8E8',
-            icon: <CheckCircleOutlined />,
-          },
-          {
-            title: '異常 + 待處理',
-            descKey: '異常待處理',
-            value: summary?.abnormal_items_all ?? 0,
-            color: '#FF4D4F',
-            icon: <WarningOutlined />,
-          },
-          {
-            title: '整體完成率',
-            descKey: '整體完成率',
-            value: summary?.completion_rate_all ?? 0,
-            suffix: '%',
-            color: (summary?.completion_rate_all ?? 0) >= 80 ? '#52C41A' : '#FAAD14',
-            icon: <ExclamationCircleOutlined />,
-          },
-        ].map(card => (
+      {/* Section 1：全局 KPI */}
+      <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
+        {kpiCards.map(card => (
           <Col xs={12} sm={12} lg={6} key={card.title}>
             <Card size="small" hoverable>
               <Statistic
                 title={
-                  <span>
+                  <span style={{ fontSize: 12 }}>
                     {card.title}
                     <Tooltip title={SECURITY_KPI_DESC[card.descKey]} placement="top">
-                      <QuestionCircleOutlined style={{ color: '#bbb', fontSize: 11, marginLeft: 4, cursor: 'help' }} />
+                      <QuestionCircleOutlined style={{ color: '#bbb', fontSize: 10, marginLeft: 4, cursor: 'help' }} />
                     </Tooltip>
                   </span>
                 }
                 value={card.value}
                 suffix={card.suffix}
                 prefix={<span style={{ color: card.color }}>{card.icon}</span>}
-                valueStyle={{ color: card.color, fontSize: 26 }}
+                valueStyle={{ color: card.color, fontSize: 24 }}
               />
             </Card>
           </Col>
         ))}
       </Row>
 
-      {/* 各 Sheet 明細表 */}
-      <Card title={<><CalendarOutlined /> 各巡檢 Sheet 今日統計</>} size="small">
-        <Table<SheetStats>
-          dataSource={summary?.sheets ?? []}
-          rowKey="sheet_key"
-          columns={sheetCols}
-          loading={loading}
-          size="small"
-          pagination={false}
-          locale={{ emptyText: '尚無資料' }}
-        />
-      </Card>
+      {/* Section 2：7 Sheet 狀態 mini-cards */}
+      <Row gutter={[8, 8]} style={{ marginBottom: 16 }}>
+        {sheets.length === 0
+          ? Array(7).fill(null).map((_, i) => (
+              <Col xs={12} sm={8} lg={24 / 7} key={i}>
+                <Card size="small" loading style={{ borderRadius: 6 }} />
+              </Col>
+            ))
+          : sheets.map(sheet => (
+              <Col xs={12} sm={8} lg={Math.floor(24 / 7)} key={sheet.sheet_key}
+                style={{ minWidth: 120 }}>
+                <Card
+                  size="small"
+                  hoverable
+                  onClick={() => setOuterTab(sheet.sheet_key)}
+                  style={{
+                    borderRadius: 6,
+                    borderLeft: `3px solid ${sheetCardBorder(sheet)}`,
+                    cursor: 'pointer',
+                    height: '100%',
+                  }}
+                  bodyStyle={{ padding: '8px 10px' }}
+                >
+                  <Text strong style={{ fontSize: 11, display: 'block', marginBottom: 4, lineHeight: 1.3 }}>
+                    {sheet.sheet_name.replace('保全巡檢 - ', '').replace('保全每日巡檢 - ', '')}
+                  </Text>
+                  {sheet.has_data ? (
+                    <>
+                      <Progress
+                        percent={sheet.completion_rate} size="small"
+                        strokeColor={{ from: sheet.completion_rate < 50 ? '#FF4D4F' : '#FAAD14', to: '#52C41A' }}
+                        format={(p) => `${p}%`}
+                        style={{ marginBottom: 4 }}
+                      />
+                      <Space size={4}>
+                        {sheet.abnormal_items > 0 && (
+                          <Badge count={sheet.abnormal_items} color="#FF4D4F"
+                            title={`異常 ${sheet.abnormal_items} 項`} />
+                        )}
+                        {sheet.pending_items > 0 && (
+                          <Badge count={sheet.pending_items} color="#FAAD14"
+                            title={`待處理 ${sheet.pending_items} 項`} />
+                        )}
+                        {sheet.abnormal_items === 0 && sheet.pending_items === 0 && (
+                          <Tag color="success" style={{ fontSize: 10, padding: '0 4px', margin: 0 }}>正常</Tag>
+                        )}
+                      </Space>
+                    </>
+                  ) : (
+                    <Text type="secondary" style={{ fontSize: 11 }}>今日無資料</Text>
+                  )}
+                </Card>
+              </Col>
+            ))}
+      </Row>
 
-      {/* 注意：無資料時顯示提示 */}
-      {!loading && (summary?.total_items_all ?? 0) === 0 && (
-        <Alert
-          style={{ marginTop: 16 }}
-          type="info"
-          message={`${targetDate} 尚無任何保全巡檢記錄，請確認巡檢是否已執行並同步。`}
-          showIcon
-        />
-      )}
-    </div>
-  )
-
-  // ── 異常清單 Tab ───────────────────────────────────────────────────────────
-  const issueColumns: ColumnsType<SecurityIssueItem> = [
-    { title: '日期',   dataIndex: 'issue_date',  width: 110 },
-    {
-      title: 'Sheet',
-      dataIndex: 'sheet_name',
-      width: 200,
-      ellipsis: true,
-      render: (v, row) => (
-        <Button type="link" style={{ padding: 0 }}
-          onClick={() => navigate(`/security/patrol/${row.sheet_key}`)}>
-          {v}
-        </Button>
-      ),
-    },
-    { title: '巡檢點', dataIndex: 'item_name',   ellipsis: true },
-    {
-      title: '狀態', dataIndex: 'status_label', width: 80,
-      render: (v, row) => <Tag color={STATUS_TAG[row.status] ?? 'default'}>{v}</Tag>,
-    },
-    { title: '巡檢人員', dataIndex: 'inspector', width: 90 },
-    { title: '原始值',   dataIndex: 'note',      width: 100, ellipsis: true },
-    {
-      title: '操作', width: 80,
-      render: (_, row) => (
-        <Button type="link" size="small" icon={<RightOutlined />}
-          onClick={() => navigate(`/security/patrol/${row.sheet_key}/${row.batch_id}`)}>
-          明細
-        </Button>
-      ),
-    },
-  ]
-
-  const IssuesTab = (
-    <div>
-      <Row style={{ marginBottom: 16 }} align="middle" gutter={8}>
-        <Col>
-          <Text type="secondary">顯示 {issues.length} 筆異常記錄（{targetDate}）</Text>
+      {/* Section 3 + 4：統計表（左） + 異常清單（右） */}
+      <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
+        <Col xs={24} lg={14}>
+          <Card
+            title={<><CalendarOutlined /> 各巡檢 Sheet 今日統計</>}
+            size="small"
+            style={{ height: '100%' }}
+          >
+            <Table<SheetStats>
+              dataSource={sheets}
+              rowKey="sheet_key"
+              columns={sheetCols}
+              loading={loading}
+              size="small"
+              pagination={false}
+              locale={{ emptyText: '尚無資料' }}
+            />
+            {!loading && (summary?.total_items_all ?? 0) === 0 && (
+              <Alert
+                style={{ marginTop: 8 }}
+                type="info"
+                message={`${targetDate} 尚無任何保全巡檢記錄，請確認巡檢是否已執行並同步。`}
+                showIcon
+              />
+            )}
+          </Card>
         </Col>
-        <Col>
-          <Button icon={<ReloadOutlined />} onClick={loadIssues} loading={loading}>
-            重新整理
-          </Button>
+
+        <Col xs={24} lg={10}>
+          <Card
+            title={
+              <Space>
+                <WarningOutlined style={{ color: '#FF4D4F' }} />
+                <span>今日異常 & 待處理</span>
+                {issues.length > 0 && <Badge count={issues.length} color="#FF4D4F" />}
+              </Space>
+            }
+            size="small"
+            style={{ height: '100%' }}
+          >
+            {loading ? (
+              <div style={{ padding: '20px 0', textAlign: 'center', color: '#999' }}>載入中…</div>
+            ) : issues.length === 0 ? (
+              <Alert message="今日無異常記錄" type="success" showIcon />
+            ) : (
+              <Table<SecurityIssueItem>
+                dataSource={issues}
+                rowKey="id"
+                columns={issueColsCompact}
+                size="small"
+                pagination={{ pageSize: 10, showTotal: (t) => `共 ${t} 筆`, size: 'small' }}
+                locale={{ emptyText: '無異常' }}
+              />
+            )}
+          </Card>
         </Col>
       </Row>
-      {issues.length === 0 && !loading ? (
-        <Alert message="今日無異常記錄" type="success" showIcon />
-      ) : (
-        <Table<SecurityIssueItem>
-          dataSource={issues}
-          rowKey="id"
-          columns={issueColumns}
-          loading={loading}
-          size="small"
-          pagination={{ pageSize: 50, showTotal: (t) => `共 ${t} 筆` }}
-        />
-      )}
-    </div>
-  )
 
-  // ── 趨勢 Tab ───────────────────────────────────────────────────────────────
-  const trendChartData = trend.map(t => ({
-    date:    t.date.slice(5),
-    異常數量:  t.abnormal_count,
-    場次數:   t.total_batches,
-  }))
-
-  const TrendTab = (
-    <div>
-      <Row style={{ marginBottom: 16 }} justify="end">
-        <Button icon={<ReloadOutlined />} onClick={loadTrend} loading={loading}>
-          重新整理
-        </Button>
-      </Row>
-      <Card title="近 7 日異常趨勢" size="small">
+      {/* Section 5：近 7 日趨勢圖 */}
+      <Card
+        title={
+          <Space>
+            <ClockCircleOutlined style={{ color: '#4BA8E8' }} />
+            <span>近 7 日巡檢趨勢</span>
+            <Text type="secondary" style={{ fontSize: 11, fontWeight: 400 }}>（場次數 + 異常數量）</Text>
+          </Space>
+        }
+        size="small"
+      >
         {trendChartData.some(t => t.場次數 > 0) ? (
-          <ResponsiveContainer width="100%" height={280}>
-            <BarChart data={trendChartData} margin={{ left: 0, right: 20 }}>
+          <ResponsiveContainer width="100%" height={240}>
+            <BarChart data={trendChartData} margin={{ left: 0, right: 20, top: 8 }}>
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey="date" tick={{ fontSize: 12 }} />
               <YAxis allowDecimals={false} />
               <RcTooltip />
               <Legend />
-              <Bar dataKey="場次數" fill="#4BA8E8" radius={[3, 3, 0, 0]} />
+              <Bar dataKey="場次數"  fill="#4BA8E8" radius={[3, 3, 0, 0]} />
               <Bar dataKey="異常數量" fill="#FF4D4F" radius={[3, 3, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         ) : (
-          <div style={{ textAlign: 'center', padding: '60px 0', color: '#999' }}>
+          <div style={{ textAlign: 'center', padding: '50px 0', color: '#999' }}>
             暫無趨勢資料（請先確認資料已同步）
           </div>
         )}
@@ -381,40 +462,35 @@ export default function SecurityDashboardPage() {
         items={[
           { title: <HomeOutlined /> },
           { title: NAV_GROUP.security },
-          { title: NAV_PAGE.securityDashboard },
         ]}
       />
 
-      <Row align="middle" justify="space-between" style={{ marginBottom: 16 }}>
+      <Row align="middle" style={{ marginBottom: 16 }}>
         <Col>
           <Title level={4} style={{ margin: 0, color: '#1B3A5C' }}>
-            <DashboardOutlined /> {NAV_PAGE.securityDashboard}
+            <SafetyOutlined /> {NAV_GROUP.security}
           </Title>
-        </Col>
-        <Col>
-          <Space>
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              {summary?.generated_at ? `更新：${summary.generated_at}` : ''}
-            </Text>
-            <Button
-              icon={<SyncOutlined spin={syncing} />}
-              loading={syncing}
-              onClick={handleSync}
-            >
-              同步全部 Sheet
-            </Button>
-          </Space>
         </Col>
       </Row>
 
+      {/* 外層 TAB */}
       <Tabs
-        activeKey={activeTab}
-        onChange={setActiveTab}
-        items={[
-          { key: 'summary', label: '今日統計', children: SummaryTab },
-          { key: 'issues',  label: '異常清單', children: IssuesTab },
-          { key: 'trend',   label: '趨勢分析', children: TrendTab },
-        ]}
+        activeKey={outerTab}
+        onChange={setOuterTab}
+        type="card"
+        style={{ marginBottom: 0 }}
+        items={OUTER_TABS.map((tab) => ({
+          key: tab.key,
+          label: (
+            <span>
+              {tab.icon}
+              <span style={{ marginLeft: 6 }}>{tab.label}</span>
+            </span>
+          ),
+          children: tab.key === 'dashboard'
+            ? DashboardContent
+            : <SecurityPatrolContent key={tab.key} sheetKey={tab.key} returnPath="/security/dashboard" />,
+        }))}
       />
     </div>
   )

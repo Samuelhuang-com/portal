@@ -28,6 +28,9 @@ class MenuConfig(Base):
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
     # 保留欄位：未來可做隱藏功能
     is_visible: Mapped[bool] = mapped_column(Boolean, default=True)
+    # 權限控制：NULL = 公開顯示；有值 = 需具備對應 permission_key 才顯示
+    # 例：settings_menu_manage、mall_dashboard_view
+    permission_key: Mapped[str | None] = mapped_column(String(100), nullable=True, default=None)
 
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
     updated_by: Mapped[str | None] = mapped_column(String(100), nullable=True, default=None)

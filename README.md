@@ -2,9 +2,15 @@
 
 > 跨據點統一管理平台 — FastAPI + React + TypeScript
 
-**最後更新：2026-04-29（v1.39.46）**
+**最後更新：2026-04-30（v1.43.2）**
 
 ## 最近變更
+- v1.43.2：**樂群 扣款費用口徑統一** — `month_deduction_fee`、`annual_deduction_fee`、`compute_fee_stats` 扣款費用欄全數加入 `is_completed + deduction_counter_name` 篩選，與扣款專櫃完全同口徑；消除有扣款費但無專櫃名稱案件（資料缺漏）造成的金額差異
+- v1.43.0：**保全巡檢模組整合** — 8 個獨立選單整合為單一入口 `/security/dashboard`；外層 TAB（Dashboard + 7 張 Sheet）；SecurityPatrolContent prop 拆分；Menu 簡化；後端零改動
+- v1.42.0：**每日數值登錄表模組（新功能）** — 4 張 Ragic Sheet（全棟電錶/商場空調箱電錶/專櫃電錶/專櫃水錶）整合；Dashboard + 各 Sheet 列表；route `/hotel/daily-meter-readings`；Menu「飯店管理 > 每日數值登錄表」；权限 `hotel_meter_readings_view`
+- v1.41.4：**樂群報修 Dashboard 計算標籤對齊** — 扣款專櫃 Modal 三處「全年」改用動態 `ytdLabel`；確認後端三類互斥邏輯（completed / pending_verify / uncompleted）與 YTD 費用累計已全數到位
+- v1.41.0：**自訂角色 CRUD** — 「角色管理」頁可新增（Modal 表單）/刪除自訂角色（Popconfirm 確認），內建角色受保護；後端 POST/DELETE `/api/v1/roles`，cascade 清除 role_permissions 與 user_roles；Roles.tsx 完全改寫為動態架構，「權限設定」Tab 支援所有角色（含自訂）
+- v1.40.0：**Menu 權限管控機制（RBAC）** — 三層防護（sidebar 過濾 → PermissionGuard → API require_permission）；新增 `role_permissions` 表；`/auth/me` 回傳 `permissions`；Roles.tsx 加「權限設定」Tab；MenuConfig 加 permission_key 欄；新模組開發規則：permissionKey='system_admin_only'，測試完成後手工授予
 - v1.39.46：**樂群 扣款專櫃計算邏輯修正** — 當月金額改用 `fee_month_cases`（與金額統計 tab 口徑對齊）；YTD/全年加 `is_completed` gate，排除待辦驗案件的 `completed_at` 跨月汙染
 - v1.39.45：**樂群 報修清單總表「報修詳情」補附圖顯示** — `DetailTab` 內嵌 Drawer 改為共用 `<CaseDetailDrawer>`，統一顯示維修圖片（DB 圖片優先、Ragic lazy-fetch 備援）
 - v1.39.44：**樂群／大直 Dashboard KPI 邏輯修正** — `is_completed_flag` 改以 `status`（處理狀況）為唯一依據；`未完成 = 總數 - 已完成 - 待辦驗`（三類互斥）；`_prev_uncompleted`、`kpi_uncompleted_detail`、`trend_12m`、`top_uncompleted` 全數同步改用 status 判斷

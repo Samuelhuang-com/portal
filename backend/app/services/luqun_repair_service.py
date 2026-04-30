@@ -995,7 +995,12 @@ def compute_dashboard(
     # fee_month_cases 已在 counter_cases 區段前計算，此處直接使用
     month_outsource_fee     = round(sum(c.outsource_fee     for c in fee_month_cases), 2)
     month_maintenance_fee   = round(sum(c.maintenance_fee   for c in fee_month_cases), 2)
-    month_deduction_fee     = round(sum(c.deduction_fee     for c in fee_month_cases), 2)
+    # 扣款費用：口徑與扣款專櫃一致（is_completed + deduction_counter_name 必填）
+    # 有扣款費用但無專櫃名稱的案件屬資料缺漏，不計入統計（與 total_counter_fee 同口徑）
+    month_deduction_fee     = round(sum(
+        c.deduction_fee for c in fee_month_cases
+        if is_completed(c.status) and getattr(c, 'deduction_counter_name', '')
+    ), 2)
     month_deduction_counter = round(sum(c.deduction_counter for c in fee_month_cases), 2)
     month_total_fee         = round(month_outsource_fee + month_maintenance_fee + month_deduction_fee + month_deduction_counter, 2)
 
@@ -1013,7 +1018,11 @@ def compute_dashboard(
     annual_outsource = round(sum(c.outsource_fee for c in ytd_cases), 2)
     annual_maintenance = round(sum(c.maintenance_fee for c in ytd_cases), 2)
     annual_fee = round(annual_outsource + annual_maintenance, 2)
-    annual_deduction_fee = round(sum(c.deduction_fee for c in ytd_cases), 2)
+    # 扣款費用 YTD：口徑與扣款專櫃一致（is_completed + deduction_counter_name 必填）
+    annual_deduction_fee = round(sum(
+        c.deduction_fee for c in ytd_cases
+        if is_completed(c.status) and getattr(c, 'deduction_counter_name', '')
+    ), 2)
     annual_deduction_counter = round(sum(c.deduction_counter for c in ytd_cases), 2)
 
     # 累計費用明細 — 委外+維修 Top20（點擊卡片時顯示）
@@ -1031,9 +1040,10 @@ def compute_dashboard(
         for c in annual_fee_records[:20]
     ]
 
-    # 累計扣款費用明細 Top20
+    # 累計扣款費用明細 Top20（口徑與扣款費用一致：is_completed + deduction_counter_name 必填）
     annual_deduction_records = sorted(
-        [c for c in ytd_cases if c.deduction_fee > 0],
+        [c for c in ytd_cases
+         if is_completed(c.status) and getattr(c, 'deduction_counter_name', '') and c.deduction_fee > 0],
         key=lambda x: x.deduction_fee,
         reverse=True,
     )
@@ -1180,12 +1190,19 @@ def compute_fee_stats(all_cases: list[RepairCase], year: int) -> dict:
                             if _s:
                                 _m_stores.add(_s)
                 monthly_totals[m][fk] = len(_m_stores)
+            elif fk == "deduction_fee":
+                # 扣款費用：口徑與扣款專櫃一致（is_completed + deduction_counter_name 必填）
+                monthly_totals[m][fk] = round(sum(
+                    c.deduction_fee for c in mc
+                    if is_completed(c.status) and getattr(c, 'deduction_counter_name', '')
+                ), 2)
             else:
                 monthly_totals[m][fk] = round(sum(getattr(c, fk) for c in mc), 2)
 
         # 明細：每個費用類型 × 月份，只取有值的案件
         for fk in FEE_KEYS:
-            if fk == "deduction_counter":
+            if fk in ("deduction_counter", "deduction_fee"):
+                # 扣款相關：只取已完成且有專櫃名稱的案件
                 cases_with_fee = sorted(
                     [c for c in mc if is_completed(c.status) and getattr(c, 'deduction_counter_name', '') and c.deduction_fee > 0],
                     key=lambda c: c.deduction_fee, reverse=True,

@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from app.core.time import twnow
 from app.core.database import get_db
 from app.core.security import verify_password, create_access_token, decode_token
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, get_user_permissions
 from app.models.user import User
 from app.models.user_role import UserRole
 from app.models.role import Role
@@ -34,6 +34,7 @@ def _build_user_info(user: User, db: Session) -> UserInfo:
         tenant_id=user.tenant_id,
         tenant_name=tenant.name if tenant else "",
         roles=_get_user_roles(user.id, db),
+        permissions=get_user_permissions(user.id, db),
         is_active=user.is_active,
     )
 

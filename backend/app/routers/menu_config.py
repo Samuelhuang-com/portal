@@ -12,7 +12,7 @@ from typing import Optional
 from app.core.time import twnow
 
 from app.core.database import get_db
-from app.dependencies import get_current_user, is_system_admin
+from app.dependencies import get_current_user, is_system_admin, require_permission
 from app.models.menu_config import MenuConfig, MenuConfigHistory
 from app.models.user import User
 
@@ -26,6 +26,8 @@ class MenuConfigItem(BaseModel):
     custom_label: Optional[str] = None
     sort_order: int
     is_visible: bool = True
+    # 權限控制：NULL = 公開；有值 = 需具備此 permission_key
+    permission_key: Optional[str] = None
 
 
 class MenuConfigSaveRequest(BaseModel):
@@ -38,6 +40,7 @@ class MenuConfigItemOut(BaseModel):
     custom_label: Optional[str] = None
     sort_order: int
     is_visible: bool
+    permission_key: Optional[str] = None
 
     model_config = {"from_attributes": True}
 
@@ -118,6 +121,7 @@ def save_menu_config(
                     "custom_label": item.custom_label.strip() if item.custom_label and item.custom_label.strip() else None,
                     "sort_order": item.sort_order,
                     "is_visible": item.is_visible,
+                    "permission_key": item.permission_key or None,
                     "updated_at": now,
                     "updated_by": actor,
                 }

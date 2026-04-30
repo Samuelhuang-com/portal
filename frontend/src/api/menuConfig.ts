@@ -10,6 +10,8 @@ export interface MenuConfigItem {
   custom_label: string | null
   sort_order: number
   is_visible: boolean
+  // 權限控制：null = 公開顯示；有值 = 需具備對應 permission_key
+  permission_key: string | null
 }
 
 export interface MenuConfigHistoryItem {

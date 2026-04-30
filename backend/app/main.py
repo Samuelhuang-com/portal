@@ -22,6 +22,7 @@ from app.routers import (
     calendar,
     dazhi_repair,
     hotel_daily_inspection,
+    hotel_meter_readings,
     ihg_room_maintenance,
     mall_dashboard,
     mall_facility_inspection,
@@ -36,6 +37,8 @@ from app.routers import (
     luqun_repair,
     periodic_maintenance,
     ragic,
+    role_permissions,
+    roles,
     room_maintenance,
     room_maintenance_detail,
     security_patrol,
@@ -255,6 +258,25 @@ def _migrate_luqun_counter_name():
                 print(f"[Migration] luqun_repair_case.{col} 欄位已新增")
 
 
+def _migrate_menu_config_permission_key():
+    """
+    輕量欄位補丁（2026-04-29）：
+    為 menu_configs 表新增 permission_key 欄位（nullable TEXT）。
+    NULL = 公開顯示；有值 = 需具備對應 permission_key 才顯示。
+    """
+    from sqlalchemy import text
+
+    with engine.connect() as conn:
+        result = conn.execute(text("PRAGMA table_info(menu_configs)"))
+        existing = {row[1] for row in result.fetchall()}
+        if "permission_key" not in existing:
+            conn.execute(
+                text("ALTER TABLE menu_configs ADD COLUMN permission_key TEXT")
+            )
+            conn.commit()
+            print("[Migration] menu_configs.permission_key 欄位已新增")
+
+
 def _migrate_security_patrol_is_note():
     """
     欄位遷移 + 回填：
@@ -443,6 +465,7 @@ async def _auto_sync():
     from app.services.security_patrol_sync import sync_all as sync_security
     from app.services.mall_facility_inspection_sync import sync_all as sync_mfi
     from app.services.hotel_daily_inspection_sync import sync_all as sync_hdi
+    from app.services.hotel_meter_readings_sync import sync_all as sync_hmr
     from app.services.ihg_room_maintenance_sync import sync_from_ragic as sync_ihg_rm
 
     await _run_and_log("客房保養", sync_rm())
@@ -460,6 +483,7 @@ async def _auto_sync():
     await _run_and_log("保全巡檢", sync_security())
     await _run_and_log("商場工務巡檢", sync_mfi())
     await _run_and_log("飯店每日巡檢", sync_hdi())
+    await _run_and_log("每日數值登錄", sync_hmr())
     await _run_and_log("IHG客房保養", sync_ihg_rm())
 
 
@@ -492,8 +516,10 @@ async def lifespan(app: FastAPI):
     import app.models.ragic_app_directory  # noqa: F401
     import app.models.mall_facility_inspection  # noqa: F401
     import app.models.hotel_daily_inspection  # noqa: F401
-    import app.models.ihg_room_maintenance  # noqa: F401
+    import app.models.hotel_meter_readings   # noqa: F401
+    import app.models.ihg_room_maintenance   # noqa: F401
     import app.models.menu_config  # noqa: F401
+    import app.models.role_permission  # noqa: F401
 
     # B4F 扁平化遷移：刪除舊 batch 表 + 檢查 item 表欄位（必須在 create_all 之前）
     _migrate_b4f_flatten()
@@ -538,6 +564,10 @@ async def lifespan(app: FastAPI):
     # 樂群扣款專櫃欄位補丁（2026-04-24）
     _migrate_luqun_counter_name()
     print("[Portal] Luqun deduction_counter_name migration checked.")
+
+    # Menu 權限欄位補丁（2026-04-29）：menu_configs.permission_key
+    _migrate_menu_config_permission_key()
+    print("[Portal] menu_configs permission_key migration checked.")
 
     # 選單設定補丁（2026-04-28）：隱藏舊 custom_1777348120465，補齊 mall-pm-group 子項 DB 記錄
     _seed_menu_config_mall_pm_group()
@@ -778,11 +808,32 @@ app.include_router(
     tags=["飯店每日巡檢"],
 )
 
+# ── 新增：每日數值登錄表（電錶/水錶）────────────────────────────────────────
+app.include_router(
+    hotel_meter_readings.router,
+    prefix=f"{API_PREFIX}/hotel-meter-readings",
+    tags=["每日數值登錄表"],
+)
+
 # ── 新增：選單設定（改名 + 排序 + 歷史）──────────────────────────────────────
 app.include_router(
     menu_config.router,
     prefix=f"{API_PREFIX}/settings/menu-config",
     tags=["選單設定"],
+)
+
+# ── 新增：角色權限管理（role_permissions CRUD）────────────────────────────────
+app.include_router(
+    role_permissions.router,
+    prefix=f"{API_PREFIX}/role-permissions",
+    tags=["角色權限"],
+)
+
+# ── 新增：角色 CRUD（取得/新增/刪除自訂角色）─────────────────────────────────
+app.include_router(
+    roles.router,
+    prefix=f"{API_PREFIX}/roles",
+    tags=["角色管理"],
 )
 
 # ── 前端靜態檔案（SPA 模式，放在所有路由之後）────────────────────────────

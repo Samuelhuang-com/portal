@@ -73,6 +73,9 @@ import DataPreparingPage              from '@/pages/DataPreparing'
 // ── 飯店每日巡檢 ───────────────────────────────────────────────────────────────
 import HotelDailyInspectionDashboard   from '@/pages/HotelDailyInspection'
 
+// ── 每日數值登錄表 ─────────────────────────────────────────────────────────────
+import HotelMeterReadingsDashboard     from '@/pages/HotelMeterReadings'
+
 // ── IHG 客房保養 ───────────────────────────────────────────────────────────────
 import IHGRoomMaintenancePage          from '@/pages/IHGRoomMaintenance'
 
@@ -90,12 +93,59 @@ import BudgetMappingsPage              from '@/pages/Budget/Mappings'
 // ── Route Guards ──────────────────────────────────────────────────────────────
 /**
  * 系統設定守衛 — 只有 system_admin 角色可進入 /settings/*
- * 其餘使用者直接導回 /dashboard，防止直接輸入網址繞過選單控制。
+ * 保留此守衛作為整個 settings group 的第一道防線。
  */
 function SettingsGuard({ children }: { children: React.ReactNode }) {
   const user = useAuthStore((s) => s.user)
   const isSystemAdmin = !!(user?.roles?.includes('system_admin'))
   return isSystemAdmin ? <>{children}</> : <Navigate to="/dashboard" replace />
+}
+
+/**
+ * 細粒度權限守衛 — 檢查使用者是否具備指定的 permission_key。
+ * - system_admin（permissions=["*"]）永遠通過
+ * - permissions 尚未從 /me 載入時，以 roles 判斷 system_admin
+ * - 無權限：顯示 403 提示頁，不跳轉（讓使用者知道頁面存在但無權限）
+ *
+ * 使用方式：
+ *   <Route path="users" element={
+ *     <PermissionGuard permissionKey="settings_users_manage">
+ *       <UsersPage />
+ *     </PermissionGuard>
+ *   } />
+ */
+function PermissionGuard({
+  permissionKey,
+  children,
+}: {
+  permissionKey: string
+  children: React.ReactNode
+}) {
+  const hasPermission = useAuthStore((s) => s.hasPermission)
+  if (!hasPermission(permissionKey)) {
+    return (
+      <div
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          minHeight: '60vh',
+          gap: 12,
+        }}
+      >
+        <div style={{ fontSize: 48 }}>🔒</div>
+        <div style={{ fontSize: 18, fontWeight: 600, color: '#1B3A5C' }}>存取被拒絕</div>
+        <div style={{ color: '#64748b', fontSize: 14 }}>
+          您沒有存取此頁面的權限（{permissionKey}）
+        </div>
+        <div style={{ color: '#94a3b8', fontSize: 12 }}>
+          請聯絡系統管理員調整角色權限
+        </div>
+      </div>
+    )
+  }
+  return <>{children}</>
 }
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
@@ -160,6 +210,11 @@ export default function AppRouter() {
           <Route path="periodic-maintenance/:batchId"    element={<PeriodicMaintenanceDetailPage />} />
           <Route path="ihg-room-maintenance"    element={<IHGRoomMaintenancePage />} />
           <Route path="daily-inspection"        element={<HotelDailyInspectionDashboard />} />
+          <Route path="daily-meter-readings"    element={
+            <PermissionGuard permissionKey="hotel_meter_readings_view">
+              <HotelMeterReadingsDashboard />
+            </PermissionGuard>
+          } />
         </Route>
 
         {/* ── 商場管理 ──────────────────────────────────────────────── */}
@@ -256,16 +311,36 @@ export default function AppRouter() {
           <Route path=":id"  element={<MemoDetailPage />} />
         </Route>
 
-        {/* ── 系統設定（僅限 system_admin）──────────────────────────────── */}
+        {/* ── 系統設定（僅限 system_admin + 各頁細粒度 permission）────────── */}
         <Route
           path="settings"
           element={<SettingsGuard><Outlet /></SettingsGuard>}
         >
-          <Route path="users"               element={<UsersPage />} />
-          <Route path="roles"               element={<RolesPage />} />
-          <Route path="ragic-connections"   element={<RagicConnectionsPage />} />
-          <Route path="ragic-app-directory" element={<RagicAppDirectoryPage />} />
-          <Route path="menu-config"         element={<MenuConfigPage />} />
+          <Route path="users" element={
+            <PermissionGuard permissionKey="settings_users_manage">
+              <UsersPage />
+            </PermissionGuard>
+          } />
+          <Route path="roles" element={
+            <PermissionGuard permissionKey="settings_roles_manage">
+              <RolesPage />
+            </PermissionGuard>
+          } />
+          <Route path="ragic-connections" element={
+            <PermissionGuard permissionKey="settings_ragic_manage">
+              <RagicConnectionsPage />
+            </PermissionGuard>
+          } />
+          <Route path="ragic-app-directory" element={
+            <PermissionGuard permissionKey="settings_ragic_manage">
+              <RagicAppDirectoryPage />
+            </PermissionGuard>
+          } />
+          <Route path="menu-config" element={
+            <PermissionGuard permissionKey="settings_menu_manage">
+              <MenuConfigPage />
+            </PermissionGuard>
+          } />
         </Route>
 
         {/* 自訂選單佔位頁（custom_* key 點擊時導向此處）*/}

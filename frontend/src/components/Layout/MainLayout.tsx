@@ -33,13 +33,26 @@ import { useAuthStore } from '@/stores/authStore'
 import { SITE_TITLE, NAV_GROUP, NAV_PAGE } from '@/constants/navLabels'
 import { fetchMenuConfig, MenuConfigItem } from '@/api/menuConfig'
 
+// ── 內部型別：帶 permissionKey 的 menu item ───────────────────────────────────
+interface MenuItem {
+  key: string
+  icon?: React.ReactNode
+  label: React.ReactNode
+  // 靜態預設權限：null = 公開；有值 = 需具備此 key 才顯示
+  // 【新模組開發規則】開發期間設 'system_admin_only'，測試後改為正確 key
+  permissionKey?: string | null
+  children?: MenuItem[]
+}
+
 const { Header, Sider, Content } = Layout
 const { Text } = Typography
 
 // ── Menu 定義 ─────────────────────────────────────────────────────────────────
 // ⚠️  修改文字請去 src/constants/navLabels.ts，不要改這裡的 label 值
 // ⚠️  此陣列是 MenuConfig 選單管理的唯一來源，新增/移除路由請同時維護此處
-export const menuItems = [
+// ⚠️  新增模組時 permissionKey 設為 'system_admin_only'，測試完成後改為正確 key
+//     並在角色管理頁面授予對應角色
+export const menuItems: MenuItem[] = [
   {
     key: '/dashboard',
     icon: <DashboardOutlined />,
@@ -50,27 +63,30 @@ export const menuItems = [
     key: '/exec-dashboard',
     icon: <FundOutlined />,
     label: NAV_PAGE.execDashboard,
+    permissionKey: 'exec_dashboard_view',
   },
   // ── ★工項類別分析（高階主管 Dashboard 之後，獨立一階）──────────────────────
   {
     key: '/work-category-analysis',
     icon: <BarChartOutlined />,
     label: NAV_PAGE.workCategoryAnalysis,
+    permissionKey: 'work_category_analysis_view',
   },
   // ── 預算管理（dashboard 之後）──────────────────────────────────────────────
   {
     key: 'budget',
     icon: <DollarOutlined />,
     label: NAV_GROUP.budget,
+    permissionKey: 'budget_view',
     children: [
-      { key: '/budget/dashboard',           icon: <DashboardOutlined />,  label: NAV_PAGE.budgetDashboard },
-      { key: '/budget/plans',               icon: <FileTextOutlined />,   label: NAV_PAGE.budgetPlans },
-      { key: '/budget/transactions',        icon: <DatabaseOutlined />,   label: NAV_PAGE.budgetTransactions },
-      { key: '/budget/reports/budget-vs-actual', icon: <AuditOutlined />, label: NAV_PAGE.budgetReport },
-      { key: '/budget/masters/departments', icon: <SettingOutlined />,    label: NAV_PAGE.budgetDeptMaster },
-      { key: '/budget/masters/account-codes', icon: <SettingOutlined />,  label: NAV_PAGE.budgetAccountMaster },
-      { key: '/budget/masters/budget-items', icon: <SettingOutlined />,   label: NAV_PAGE.budgetItemMaster },
-      { key: '/budget/mappings',            icon: <ApiOutlined />,        label: NAV_PAGE.budgetMappings },
+      { key: '/budget/dashboard',                icon: <DashboardOutlined />,  label: NAV_PAGE.budgetDashboard,     permissionKey: 'budget_view'   },
+      { key: '/budget/plans',                    icon: <FileTextOutlined />,   label: NAV_PAGE.budgetPlans,         permissionKey: 'budget_view'   },
+      { key: '/budget/transactions',             icon: <DatabaseOutlined />,   label: NAV_PAGE.budgetTransactions,  permissionKey: 'budget_manage' },
+      { key: '/budget/reports/budget-vs-actual', icon: <AuditOutlined />,      label: NAV_PAGE.budgetReport,        permissionKey: 'budget_view'   },
+      { key: '/budget/masters/departments',      icon: <SettingOutlined />,    label: NAV_PAGE.budgetDeptMaster,    permissionKey: 'budget_admin'  },
+      { key: '/budget/masters/account-codes',    icon: <SettingOutlined />,    label: NAV_PAGE.budgetAccountMaster, permissionKey: 'budget_admin'  },
+      { key: '/budget/masters/budget-items',     icon: <SettingOutlined />,    label: NAV_PAGE.budgetItemMaster,    permissionKey: 'budget_admin'  },
+      { key: '/budget/mappings',                 icon: <ApiOutlined />,        label: NAV_PAGE.budgetMappings,      permissionKey: 'budget_admin'  },
     ],
   },
   // ── 行事曆（dashboard 之後、hotel 之前）────────────────────────────────────
@@ -78,17 +94,20 @@ export const menuItems = [
     key: '/calendar',
     icon: <CalendarOutlined />,
     label: NAV_GROUP.calendar,
+    permissionKey: 'calendar_view',
   },
   {
     key: 'hotel',
     icon: <HomeOutlined />,
     label: NAV_GROUP.hotel,
+    permissionKey: 'hotel_view',
     children: [
       // { key: '/hotel/room-maintenance',        icon: <ToolOutlined />, label: NAV_PAGE.roomMaintenance },
-      { key: '/hotel/room-maintenance-detail',  icon: <ToolOutlined />,    label: NAV_PAGE.roomMaintenanceDetail },
-      { key: '/hotel/periodic-maintenance',     icon: <FileTextOutlined />, label: NAV_PAGE.periodicMaintenance },
-      { key: '/hotel/ihg-room-maintenance',     icon: <ToolOutlined />,    label: NAV_PAGE.ihgRoomMaintenance },
-      { key: '/hotel/daily-inspection',         icon: <SafetyOutlined />,  label: NAV_PAGE.hotelDailyInspection },
+      { key: '/hotel/room-maintenance-detail',  icon: <ToolOutlined />,    label: NAV_PAGE.roomMaintenanceDetail, permissionKey: 'hotel_room_maintenance_view'      },
+      { key: '/hotel/periodic-maintenance',     icon: <FileTextOutlined />, label: NAV_PAGE.periodicMaintenance,  permissionKey: 'hotel_periodic_maintenance_view'  },
+      { key: '/hotel/ihg-room-maintenance',     icon: <ToolOutlined />,    label: NAV_PAGE.ihgRoomMaintenance,   permissionKey: 'hotel_ihg_room_maintenance_view'  },
+      { key: '/hotel/daily-inspection',         icon: <SafetyOutlined />,  label: NAV_PAGE.hotelDailyInspection, permissionKey: 'hotel_daily_inspection_view'      },
+      { key: '/hotel/daily-meter-readings',     icon: <DatabaseOutlined />, label: NAV_PAGE.hotelMeterReadings,   permissionKey: 'hotel_meter_readings_view'        },
       // { key: '/hotel/repairs',                 icon: <ToolOutlined />, label: NAV_PAGE.repairs },
     ],
   },
@@ -96,22 +115,23 @@ export const menuItems = [
     key: 'mall',
     icon: <ShopOutlined />,
     label: NAV_GROUP.mall,
+    permissionKey: 'mall_view',
     children: [
       // ── 商場管理 Dashboard（整合 5 來源總覽，置於群組最頂）─────────────
-      { key: '/mall/overview', icon: <DashboardOutlined />, label: NAV_PAGE.mallMgmtDashboard },
+      { key: '/mall/overview', icon: <DashboardOutlined />, label: NAV_PAGE.mallMgmtDashboard, permissionKey: 'mall_overview_view' },
       // ── 商場例行維護（L2 群組）→ 三個 L3 子項目 ──────────────────────
       {
         key: 'mall-pm-group',
         icon: <FileTextOutlined />,
         label: NAV_GROUP.mallPmGroup,
         children: [
-          { key: '/mall/dashboard',                    icon: <DashboardOutlined />, label: NAV_PAGE.mallDashboard },
-          { key: '/mall/periodic-maintenance',         icon: <FileTextOutlined />, label: NAV_PAGE.mallPeriodicMaintenance },
-          { key: '/mall/full-building-maintenance',    icon: <ToolOutlined />,     label: NAV_PAGE.fullBuildingMaintenance },
+          { key: '/mall/dashboard',                 icon: <DashboardOutlined />, label: NAV_PAGE.mallDashboard,            permissionKey: 'mall_dashboard_view'              },
+          { key: '/mall/periodic-maintenance',      icon: <FileTextOutlined />,  label: NAV_PAGE.mallPeriodicMaintenance,  permissionKey: 'mall_periodic_maintenance_view'   },
+          { key: '/mall/full-building-maintenance', icon: <ToolOutlined />,      label: NAV_PAGE.fullBuildingMaintenance,  permissionKey: 'mall_full_building_maintenance_view' },
         ],
       },
-      { key: '/full-building-inspection/dashboard',   icon: <SafetyOutlined />,   label: NAV_PAGE.fullBuildingDashboard },
-      { key: '/mall-facility-inspection/dashboard',   icon: <ToolOutlined />,     label: NAV_PAGE.mallFacilityDashboard },
+      { key: '/full-building-inspection/dashboard', icon: <SafetyOutlined />, label: NAV_PAGE.fullBuildingDashboard, permissionKey: 'mall_full_building_inspection_view' },
+      { key: '/mall-facility-inspection/dashboard', icon: <ToolOutlined />,    label: NAV_PAGE.mallFacilityDashboard, permissionKey: 'mall_facility_inspection_view'      },
     ],
   },
   // ── 樂群工務報修（商場管理之後）──────────────────────────────────────────
@@ -120,8 +140,9 @@ export const menuItems = [
     key: 'luqun-repair',
     icon: <ToolOutlined />,
     label: NAV_GROUP.luqun_repair,
+    permissionKey: 'luqun_repair_view',
     children: [
-      { key: '/luqun-repair/dashboard', icon: <DashboardOutlined />, label: NAV_PAGE.luqunRepairDashboard },
+      { key: '/luqun-repair/dashboard', icon: <DashboardOutlined />, label: NAV_PAGE.luqunRepairDashboard, permissionKey: 'luqun_repair_view' },
     ],
   },
   // ── 大直工務部（樂群工務報修之後）──────────────────────────────────────────
@@ -130,26 +151,19 @@ export const menuItems = [
     key: 'dazhi-repair',
     icon: <ToolOutlined />,
     label: NAV_GROUP.dazhi_repair,
+    permissionKey: 'dazhi_repair_view',
     children: [
-      { key: '/dazhi-repair/dashboard', icon: <DashboardOutlined />, label: NAV_PAGE.dazhiRepairDashboard },
+      { key: '/dazhi-repair/dashboard', icon: <DashboardOutlined />, label: NAV_PAGE.dazhiRepairDashboard, permissionKey: 'dazhi_repair_view' },
     ],
   },
   // 春大直商場工務巡檢已整合至商場管理群組，不再獨立顯示
-  // 整棟巡檢已整合至商場管理群組，不再獨立顯示
+  // ── 保全巡檢（整合為單一入口，各 Sheet 改為頁面內 TAB）───────────────────────
+  // 舊路由 /security/patrol/:sheetKey 保留可直接存取，但不顯示於選單
   {
-    key: 'security',
+    key: '/security/dashboard',
     icon: <SafetyOutlined />,
     label: NAV_GROUP.security,
-    children: [
-      { key: '/security/dashboard',                  icon: <DashboardOutlined />, label: NAV_PAGE.securityDashboard },
-      { key: '/security/patrol/b1f-b4f',             icon: <SafetyOutlined />,   label: NAV_PAGE.securityB1fB4f },
-      { key: '/security/patrol/1f-3f',               icon: <SafetyOutlined />,   label: NAV_PAGE.security1f3f },
-      { key: '/security/patrol/5f-10f',              icon: <SafetyOutlined />,   label: NAV_PAGE.security5f10f },
-      { key: '/security/patrol/4f',                  icon: <SafetyOutlined />,   label: NAV_PAGE.security4f },
-      { key: '/security/patrol/1f-hotel',            icon: <SafetyOutlined />,   label: NAV_PAGE.security1fHotel },
-      { key: '/security/patrol/1f-close',            icon: <SafetyOutlined />,   label: NAV_PAGE.security1fClose },
-      { key: '/security/patrol/1f-open',             icon: <SafetyOutlined />,   label: NAV_PAGE.security1fOpen },
-    ],
+    permissionKey: 'security_view',
   },
   // {
   //   key: 'warehouse',
@@ -172,18 +186,20 @@ export const menuItems = [
     key: 'approvals',
     icon: <AuditOutlined />,
     label: NAV_GROUP.approvals,
+    permissionKey: 'approvals_view',
     children: [
-      { key: '/approvals/list', icon: <FileTextOutlined />,  label: NAV_PAGE.approvalsList },
-      { key: '/approvals/new',  icon: <FileTextOutlined />,  label: NAV_PAGE.approvalsNew  },
+      { key: '/approvals/list', icon: <FileTextOutlined />, label: NAV_PAGE.approvalsList, permissionKey: 'approvals_view'   },
+      { key: '/approvals/new',  icon: <FileTextOutlined />, label: NAV_PAGE.approvalsNew,  permissionKey: 'approvals_manage' },
     ],
   },
   {
     key: 'memos',
     icon: <NotificationOutlined />,
     label: NAV_GROUP.memos,
+    permissionKey: 'memos_view',
     children: [
-      { key: '/memos/list', icon: <NotificationOutlined />, label: NAV_PAGE.memosList },
-      { key: '/memos/new',  icon: <PlusCircleOutlined />,   label: NAV_PAGE.memosNew  },
+      { key: '/memos/list', icon: <NotificationOutlined />, label: NAV_PAGE.memosList, permissionKey: 'memos_view'   },
+      { key: '/memos/new',  icon: <PlusCircleOutlined />,   label: NAV_PAGE.memosNew,  permissionKey: 'memos_manage' },
     ],
   },
   {
@@ -191,11 +207,11 @@ export const menuItems = [
     icon: <SettingOutlined />,
     label: NAV_GROUP.settings,
     children: [
-      { key: '/settings/users',               icon: <UserOutlined />,    label: NAV_PAGE.usersManage },
-      { key: '/settings/roles',               icon: <SettingOutlined />, label: NAV_PAGE.rolesManage },
-      { key: '/settings/ragic-app-directory', icon: <DatabaseOutlined />, label: NAV_PAGE.ragicAppDirectory },
-      { key: '/settings/ragic-connections',   icon: <ApiOutlined />,     label: NAV_PAGE.ragicConnections },
-      { key: '/settings/menu-config',         icon: <MenuOutlined />,    label: '選單管理' },
+      { key: '/settings/users',               icon: <UserOutlined />,     label: NAV_PAGE.usersManage,       permissionKey: 'settings_users_manage' },
+      { key: '/settings/roles',               icon: <SettingOutlined />,  label: NAV_PAGE.rolesManage,       permissionKey: 'settings_roles_manage' },
+      { key: '/settings/ragic-app-directory', icon: <DatabaseOutlined />, label: NAV_PAGE.ragicAppDirectory, permissionKey: 'settings_ragic_manage' },
+      { key: '/settings/ragic-connections',   icon: <ApiOutlined />,      label: NAV_PAGE.ragicConnections,  permissionKey: 'settings_ragic_manage' },
+      { key: '/settings/menu-config',         icon: <MenuOutlined />,     label: '選單管理',                  permissionKey: 'settings_menu_manage' },
     ],
   },
 ]
@@ -267,9 +283,19 @@ export function applyMenuConfig(base: any[], configs: MenuConfigItem[]): any[] {
   // 找出「被 DB 換了父層」的 base L2 項目（複用共用函式）
   const reparentedBaseL2 = computeReparentedL2(base, configs)
 
+  // 找出「被降為二階」的 base L1 項目（原本是一階，DB 中有 parent_key）
+  // 例：「保全管理」被移到「飯店管理」下成為 L2
+  const reparentedBaseL1 = new Map<string, string>() // menu_key -> new_parent_key
+  configs.forEach((cfg) => {
+    if (cfg.parent_key && baseL1Keys.has(cfg.menu_key)) {
+      reparentedBaseL1.set(cfg.menu_key, cfg.parent_key)
+    }
+  })
+
   // 套用到預設 base（L1 + L2），並補充 L3
   const cloned = base
     .filter((parent) => {
+      if (reparentedBaseL1.has(parent.key)) return false  // 已降為二階，從 L1 移除
       const cfg = cfgMap.get(parent.key)
       return cfg === undefined || cfg.is_visible !== false
     })
@@ -347,14 +373,16 @@ export function applyMenuConfig(base: any[], configs: MenuConfigItem[]): any[] {
               })
 
             // DB 中此 L1 下、不在 base structure 裡的額外 L2 項目
-            // （包含 custom_ 自訂項目，以及舊版無前綴的使用者項目如 mall-pm-group）
+            // （包含 custom_ 自訂項目、舊版無前綴的使用者項目如 mall-pm-group，
+            //   以及被降階的 base L1 項目如「保全管理」→「飯店管理」下）
             // ⚠️  必須用全域 baseL2Keys（所有群組的 L2），而非只有本群組的 base L2，
-            //     否則跨群組移過來的 base L2 項目（如 /dazhi-repair/dashboard → mall）
-            //     會同時出現在 movedHere 與 customL2Here，造成側欄重複顯示。
+            //     否則跨群組移過來的 base L2 項目會同時出現在 movedHere 與 customL2Here。
+            // ⚠️  reparentedBaseL1 的項目：雖是 baseL1Keys 成員，但已降階到此 L1 下，
+            //     必須放行（且只放行移到「這個」L1 下的，防止出現在別的 L1）。
             const customL2Here = (childrenByParent.get(parent.key) ?? [])
               .filter((c) =>
                 !baseL2Keys.has(c.menu_key) &&
-                !baseL1Keys.has(c.menu_key) &&
+                (!baseL1Keys.has(c.menu_key) || reparentedBaseL1.get(c.menu_key) === parent.key) &&
                 c.is_visible !== false
               )
               .sort((a, b) => a.sort_order - b.sort_order)
@@ -400,6 +428,55 @@ export function applyMenuConfig(base: any[], configs: MenuConfigItem[]): any[] {
   })
 }
 
+/**
+ * 依使用者 permissions 過濾 menu items（applyMenuConfig 之後呼叫）。
+ * - item.permissionKey 為 null/undefined → 公開顯示
+ * - item.permissionKey 有值 → 使用者需具備該 key（或 "*"）才顯示
+ * - DB config 的 permission_key 優先於靜態預設的 permissionKey
+ * - 父層的所有子項都被過濾掉時，父層本身也不顯示
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function filterMenuByPermissions(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  items: any[],
+  permissions: string[],
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  dbPermMap: Map<string, string | null>
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+): any[] {
+  const hasPermission = (key: string | null | undefined): boolean => {
+    if (!key) return true                     // 無設定 = 公開
+    if (permissions.includes('*')) return true // system_admin 萬用符
+    return permissions.includes(key)
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const filterItem = (item: any): any | null => {
+    // 優先用 DB 設定的 permission_key（非 null 才算有效覆蓋），否則 fallback 到靜態預設
+    // ⚠️  DB 值為 null 代表「MenuConfig 頁面未設定」，不應蓋掉程式碼的靜態 permissionKey
+    const dbVal = dbPermMap.has(item.key) ? dbPermMap.get(item.key) : undefined
+    const effectiveKey: string | null | undefined =
+      dbVal != null ? dbVal : item.permissionKey
+
+    if (Array.isArray(item.children) && item.children.length > 0) {
+      const filteredChildren = item.children
+        .map(filterItem)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .filter((c: any) => c !== null)
+
+      // 群組：有子項才顯示，且群組本身也需通過權限
+      if (filteredChildren.length === 0) return null
+      if (!hasPermission(effectiveKey)) return null
+      return { ...item, children: filteredChildren }
+    }
+
+    // 葉節點
+    return hasPermission(effectiveKey) ? item : null
+  }
+
+  return items.map(filterItem).filter(Boolean)
+}
+
 export default function MainLayout() {
   const [collapsed, setCollapsed] = useState(false)
   const navigate = useNavigate()
@@ -410,8 +487,13 @@ export default function MainLayout() {
 
   // ── 系統設定選單僅限 system_admin 可見 ────────────────────────────────────
   const isSystemAdmin = !!(user?.roles?.includes('system_admin'))
+  // 取得 permissions 陣列（用於 filterMenuByPermissions）
+  const userPermissions = useMemo<string[]>(
+    () => user?.permissions ?? (isSystemAdmin ? ['*'] : []),
+    [user?.permissions, isSystemAdmin]
+  )
 
-  // base items：非 system_admin 時過濾掉 settings 群組
+  // base items：非 system_admin 時過濾掉 settings 群組（保留舊行為 + 被 filter 再次過濾）
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const baseItems = useMemo<any[]>(
     () => isSystemAdmin ? menuItems : menuItems.filter((item) => item.key !== 'settings'),
@@ -427,7 +509,10 @@ export default function MainLayout() {
       if (!token) return menuItems.filter((item) => item.key !== 'settings')
       const payload = JSON.parse(atob(token.split('.')[1]))
       const ok = Array.isArray(payload.roles) && payload.roles.includes('system_admin')
-      return ok ? menuItems : menuItems.filter((item) => item.key !== 'settings')
+      // 初始化階段 permissions 尚未從 /me 取得，先以角色判斷
+      const initPerms: string[] = ok ? ['*'] : []
+      const filtered = ok ? menuItems : menuItems.filter((item) => item.key !== 'settings')
+      return filterMenuByPermissions(filtered, initPerms, new Map())
     } catch {
       return menuItems.filter((item) => item.key !== 'settings')
     }
@@ -437,14 +522,17 @@ export default function MainLayout() {
   const loadMenuConfig = useCallback(async () => {
     try {
       const configs = await fetchMenuConfig()
-      setDynamicMenuItems(
-        configs.length > 0 ? applyMenuConfig(baseItems, configs) : baseItems
+      // 建立 DB permission_key 覆蓋 Map（menu_key → permission_key）
+      const dbPermMap = new Map<string, string | null>(
+        configs.map((c) => [c.menu_key, c.permission_key])
       )
+      const applied = configs.length > 0 ? applyMenuConfig(baseItems, configs) : baseItems
+      setDynamicMenuItems(filterMenuByPermissions(applied, userPermissions, dbPermMap))
     } catch {
-      // 拉取失敗：回退至 baseItems（已依角色過濾）
-      setDynamicMenuItems(baseItems)
+      // 拉取失敗：回退至 baseItems（已依角色過濾），並套用靜態 permissionKey 過濾
+      setDynamicMenuItems(filterMenuByPermissions(baseItems, userPermissions, new Map()))
     }
-  }, [baseItems])
+  }, [baseItems, userPermissions])
 
   useEffect(() => {
     loadMenuConfig()

@@ -3,7 +3,7 @@
  * Route: /security/patrol/:sheetKey/:batchId
  */
 import { useEffect, useState, useCallback } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import {
   Breadcrumb, Button, Card, Col, Row, Space,
   Table, Tag, Typography, message, Statistic, Divider,
@@ -44,7 +44,15 @@ const STATUS_TABS = [
 export default function SecurityPatrolDetailPage() {
   const { sheetKey = '', batchId = '' } = useParams<{ sheetKey: string; batchId: string }>()
   const navigate  = useNavigate()
+  const location  = useLocation()
   const sheetName = SECURITY_SHEETS[sheetKey]?.name ?? sheetKey
+
+  // 「返回清單」的目標路徑：
+  //   - 從 SecurityDashboard TAB 進入時，state.returnPath = '/security/dashboard'
+  //   - 從舊路由 /security/patrol/:sheetKey 進入時，state 為空，fallback 到舊路由
+  const returnPath: string =
+    (location.state as { returnPath?: string } | null)?.returnPath
+    ?? `/security/patrol/${sheetKey}`
 
   const [detail, setDetail]   = useState<PatrolBatchDetail | null>(null)
   const [loading, setLoading] = useState(false)
@@ -125,7 +133,7 @@ export default function SecurityPatrolDetailPage() {
         style={{ marginBottom: 12 }}
         items={[
           { title: NAV_GROUP.security },
-          { title: sheetName, onClick: () => navigate(`/security/patrol/${sheetKey}`), className: 'cursor-pointer' },
+          { title: sheetName, onClick: () => navigate(returnPath), className: 'cursor-pointer' },
           { title: '巡檢明細' },
         ]}
       />
@@ -133,7 +141,7 @@ export default function SecurityPatrolDetailPage() {
       <Row align="middle" justify="space-between" style={{ marginBottom: 16 }}>
         <Col>
           <Space>
-            <Button icon={<ArrowLeftOutlined />} onClick={() => navigate(`/security/patrol/${sheetKey}`)}>
+            <Button icon={<ArrowLeftOutlined />} onClick={() => navigate(returnPath)}>
               返回清單
             </Button>
             <Title level={4} style={{ margin: 0, color: '#1B3A5C' }}>

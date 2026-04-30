@@ -418,6 +418,7 @@ function DashboardTab({
         <div style={{ flex: '1 1 0', minWidth: 110 }}>
           <KpiCard title="平均結案天數" value={kpi.avg_close_days != null ? fmtDec(kpi.avg_close_days, 1) : '-'}
             suffix="天" color="#4BA8E8" icon={<ClockCircleOutlined />}
+            sub="平均結案天數 = 處理天數總和 ÷ 已結件數"
             onClick={() => setKpiModal('close_days')}
             desc={LUQUN_KPI_DESC['平均結案天數']} />
         </div>
@@ -529,7 +530,7 @@ function DashboardTab({
             </div>
             <div style={{ color: '#666', fontSize: 12, marginTop: 4 }}>委外+維修費用</div>
             <div style={{ color: '#999', fontSize: 11, marginTop: 2 }}>
-              委外 {fmtMoney(kpi.annual_outsource_fee)} ／ 維修 {fmtMoney(kpi.annual_maintenance_fee)}
+              累計 委外 {fmtMoney(kpi.annual_outsource_fee)} ／ 維修 {fmtMoney(kpi.annual_maintenance_fee)}
             </div>
             <div style={{ color: '#bbb', fontSize: 10, marginTop: 3 }}>點擊查看明細</div>
           </Card>
@@ -693,16 +694,16 @@ function DashboardTab({
         }
       </Modal>
 
-      {/* ── 扣款專櫃 明細 Modal（全年）─────────────────────────────────────── */}
+      {/* ── 扣款專櫃 明細 Modal（YTD）────────────────────────────────────────── */}
       <Modal
-        title={<><DollarOutlined style={{ color: '#FA8C16', marginRight: 8 }} />扣款專櫃明細（全年 {year}年）</>}
+        title={<><DollarOutlined style={{ color: '#FA8C16', marginRight: 8 }} />扣款專櫃明細（{ytdLabel}）</>}
         open={feeModal === 'counter'}
         onCancel={() => setFeeModal(null)}
         footer={<Button onClick={() => setFeeModal(null)}>關閉</Button>}
         width={1050}
       >
         <div style={{ marginBottom: 10 }}>
-          <Tag color="orange" style={{ fontSize: 13 }}>全年 {kpi.annual_counter_stores ?? 0} 家</Tag>
+          <Tag color="orange" style={{ fontSize: 13 }}>{ytdLabel} {kpi.annual_counter_stores ?? 0} 家</Tag>
           {(kpi.annual_counter_store_names?.length ?? 0) > 0 && (
             <Tag color="default" style={{ fontSize: 11 }}>
               {kpi.annual_counter_store_names!.join('、')}
@@ -711,7 +712,7 @@ function DashboardTab({
           <Tag style={{ fontSize: 12 }}>{annual_counter_detail?.length ?? 0} 筆案件</Tag>
         </div>
         {(annual_counter_detail?.length ?? 0) === 0
-          ? <Empty description="全年無扣款專櫃資料" />
+          ? <Empty description={`${ytdLabel}無扣款專櫃資料`} />
           : (
             <Table
               size="small"

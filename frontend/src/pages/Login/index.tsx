@@ -40,14 +40,15 @@ export default function LoginPage() {
       const data = await res.json()
       setToken(data.access_token)
       setUser({
-        id:        data.user?.id        || '',
-        email:     data.user?.email     || values.identifier,
-        name:      data.user?.full_name || values.identifier,
-        full_name: data.user?.full_name || values.identifier,
+        id:          data.user?.id          || '',
+        email:       data.user?.email       || values.identifier,
+        name:        data.user?.full_name   || values.identifier,
+        full_name:   data.user?.full_name   || values.identifier,
         tenant_id:   data.user?.tenant_id   || '',
         tenant_name: data.user?.tenant_name || '',
-        roles:     data.user?.roles     || [],
-        is_active: data.user?.is_active ?? true,
+        roles:       data.user?.roles       || [],
+        permissions: data.user?.permissions || [],
+        is_active:   data.user?.is_active   ?? true,
       })
       navigate('/dashboard')
     } catch (err: any) {

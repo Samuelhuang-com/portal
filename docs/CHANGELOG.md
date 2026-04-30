@@ -4,6 +4,138 @@
 
 ---
 
+## [1.43.2] - 2026-04-30
+
+### Fixed
+- **luqun 扣款費用口徑統一** — Dashboard `month_deduction_fee` 與 YTD `annual_deduction_fee` 加入 `is_completed + deduction_counter_name` 篩選，與扣款專櫃 `total_counter_fee` 口徑一致；修正前兩者會計入有扣款費用但無專櫃名稱案件（資料缺漏）導致數字偏大的問題
+- **金額統計 Tab `deduction_fee` 欄位** — `compute_fee_stats` 月份迴圈中 `deduction_fee` 列同步加入相同篩選；明細展開清單（`deduction_fee` 與 `deduction_counter` 統一使用相同條件）
+
+---
+
+## [1.43.1] - 2026-04-30
+
+### Changed
+- **保全巡檢 Dashboard 重新設計（一頁式）** — 移除今日統計/異常清單/趨勢分析三個子 Tab；改為一頁式綜合 Dashboard：全局 KPI 卡 + 7 Sheet 狀態 mini-cards（點擊直跳 Tab）+ 今日統計表（前往按鈕切換 Tab）+ 今日異常清單 + 近7日趨勢圖；三個資料源並行載入（`Promise.all`）
+- **各巡檢 Sheet TAB 簡化** — 移除「主管儀表板」內層 Tab；直接呈現巡檢紀錄清單（月份篩選 + 批次表格 + 明細連結）；`SecurityPatrolContent` 精簡，移除 `fetchPatrolStats` 相關邏輯
+
+---
+
+## [1.43.0] - 2026-04-30
+
+### Changed
+- **保全巡檢模組整合** — 將原本 8 個獨立選單項目（Dashboard + 7 張巡檢 Sheet）整合為單一入口「保全巡檢」
+  - 主路由 `/security/dashboard` 新增外層 TAB（type="card"）：Dashboard + B1F~B4F + 1F~3F + 5F~10F + 4F + 1F飯店大廳 + 1F閉店巡檢 + 1F開店準備
+  - `SecurityPatrolContent` 元件拆分：接受 `sheetKey` prop，原路由包裝層保留（舊路由 `/security/patrol/:sheetKey` 仍可直接存取）
+  - MainLayout 保全選單簡化為單一 `/security/dashboard` 直連（原 8 items → 1 item）
+  - `NAV_GROUP.security` 從「保全管理」改為「保全巡檢」
+  - `RagicAppDirectory.tsx` `PORTAL_DEFAULTS` items 5~18 portalName 同步更新為「保全巡檢」
+  - 新增 `backend/scripts/seed_security_app_directory.py` — 後端停機時補充 DB 記錄的工具腳本
+  - 規劃文件：`docs/integration-security-tabs.md`
+  - 後端零改動；所有既有 API / Service / Router / Schema / Permission 不受影響
+
+---
+
+## [1.42.0] - 2026-04-30
+
+### Added
+- **每日數值登錄表模組（飯店管理）** — 整合 4 張 Ragic Sheet（全棟電錶 /11、商場空調箱電錶 /12、專櫃電錶 /14、專櫃水錶 /15），route `/hotel/daily-meter-readings`
+  - Dashboard Tab：今日登錄狀態、本月缺漏天數、近 7 天趨勢、4 張表格各自統計卡片
+  - 各 Sheet Tab：月份篩選 + 關鍵字搜尋 + 登錄清單 + 連回 Ragic 原始資料
+  - 後端：`HotelMRBatch` + `HotelMRReading` ORM（動態欄位 Pivot 架構）
+  - 同步服務：`hotel_meter_readings_sync.py`（動態欄位偵測，排除 metadata 後所有欄位均視為讀數）
+  - API：`GET /api/v1/hotel-meter-readings/dashboard/summary`、`/{sheet_key}/batches`、`/sync/all`
+  - 권限：`hotel_meter_readings_view`（已加入 `PERMISSION_DEFINITIONS`）
+  - Menu：飯店管理 > 每日數值登錄表（`DatabaseOutlined` 圖示）
+  - 自動排程同步：已加入 `_auto_sync` 每 30 分鐘執行
+
+---
+
+## [1.41.6] - 2026-04-29
+
+### Fixed
+- **商場管理 Dashboard — Tab B 每日累計無資料問題修正** — 原本呼叫 `fetchLuqunDetail(page_size=500)` 觸發後端上限 `le=200` 驗證錯誤導致空白；改為呼叫 `fetchLuqunDash(year, month)` 直接取得 `kpi_total_detail`（含當月全部案件），不受 page_size 限制
+- **商場管理 Dashboard — Tab B 標籤文字修正** — 「大直工務報修 日別統計」改為「商場報修 日別統計」；說明文字同步更新為「樂群工務報修」
+
+---
+
+## [1.41.5] - 2026-04-29
+
+### Changed
+- **商場管理 Dashboard — 工務報修來源改用樂群** — KPI 第二列「大直工務報修」更名為「樂群工務報修」，資料來源由 `/api/v1/dazhi-repair/*` 改為 `/api/v1/luqun-repair/*`（`fetchLuqunDash`）；types 改用 `@/types/luqunRepair`；route 連結改為 `/luqun-repair/dashboard`
+
+---
+
+## [1.41.4] - 2026-04-29
+
+### Fixed
+- **樂群報修 Dashboard — 計算邏輯與標籤對齊重構**
+  - 扣款專櫃 Modal 三處硬編碼「全年」改用動態 `ytdLabel`（月份選定時顯示「累計至 M 月」，全年檢視顯示「全年」）
+  - `luqunRepair.ts` 型別註解更新：`annual_*` 欄位說明改為 YTD 累計語義，與費用 KPI 卡片邏輯一致
+  - 確認後端 `luqun_repair_service.py` 已完整對齊：以 `is_completed(status)` 為唯一完工判準、三類互斥（completed / pending_verify / uncompleted）、YTD 費用按月份篩選累計（1~M 月或全年）
+
+---
+
+## [1.41.3] - 2026-04-29
+
+### Fixed
+- **角色管理權限設定補齊「一階選單」群組** — `PERMISSION_DEFINITIONS` 新增「一階選單」分類，將 `exec_dashboard_view`（高階主管 Dashboard）、`work_category_analysis_view`（工項類別分析）、`calendar_view`（行事曆）從原本的「財務」/「工務報修」/「協作工具」移出，集中顯示；角色管理頁面現在能直接在最頂端看到這三個獨立一階選單的權限設定
+
+---
+
+## [1.41.2] - 2026-04-29
+
+### Fixed
+- **一階選單項目補齊 permissionKey** — `MainLayout.tsx` 的 `menuItems` 中，所有一階（父層群組 + 獨立一階）與其子項目補上對應 `permissionKey`，使「角色管理」頁面的權限勾選能實際控制側欄顯示/隱藏
+  - 獨立一階：`/exec-dashboard`（exec_dashboard_view）、`/work-category-analysis`（work_category_analysis_view）、`/calendar`（calendar_view）
+  - 群組父層：budget、hotel、mall、luqun-repair、dazhi-repair、security、approvals、memos 各補上對應 permissionKey
+  - 子項目細粒度控制：飯店（4項）、商場（5項）、保全（dashboard + 7條巡檢路線）、預算（view/manage/admin 三級）、簽核/公告（view/manage 兩級）各自對應精確 permission_key
+
+---
+
+## [1.41.1] - 2026-04-29
+
+### Fixed
+- **人員管理角色下拉選單支援自訂角色** — `Users.tsx` 原本使用 `ROLE_OPTIONS`（硬編碼 4 個內建角色），改為在頁面載入時呼叫 `GET /api/v1/roles` 動態取得所有角色（含自訂）；自訂角色在選單中標示「（自訂）」；Table 角色 Tag 顯示邏輯同步更新（fallback 至識別碼顯示，顏色改用 geekblue）
+
+---
+
+## [1.41.0] - 2026-04-29
+
+### Added
+- **自訂角色 CRUD（角色管理 v2）** — 可在「角色管理」頁面新增/刪除自訂角色（如 hotel_manager、mall_manager），並分別指派不同 permission_key
+  - 新增後端 `POST /api/v1/roles`：建立自訂角色（名稱限小寫英文+底線，不可與內建角色同名）
+  - 新增後端 `DELETE /api/v1/roles/{id}`：刪除自訂角色（cascade 清除 role_permissions 與 user_roles）
+  - 內建角色（system_admin / tenant_admin / module_manager / viewer）受保護，不可刪除
+  - 新增前端 `src/api/roles.ts`：封裝 fetchRoles / createRole / deleteRole
+  - 完全改寫 `Roles.tsx` 為動態架構：從後端取得角色清單（含 `is_builtin` 欄位）
+  - 「角色清單」Tab：統一顯示內建 + 自訂角色，自訂角色有 Popconfirm 刪除按鈕，右上角「新增自訂角色」Button
+  - 「新增自訂角色」Modal：name / description 表單，含格式驗證與說明提示
+  - 「權限設定」Tab：左側角色清單動態顯示所有角色，內建與自訂以 Divider 分隔，可為任意自訂角色設定 permission_key
+  - 重構 `backend/app/main.py`：移除 inline `/roles` GET endpoint，改為 include `roles.router`
+
+---
+
+## [1.40.0] - 2026-04-29
+
+### Added
+- **Menu 權限管控機制（RBAC）** — 三層防護：sidebar 過濾 → 前端 PermissionGuard → 後端 API require_permission
+  - 新增 `role_permissions` 資料表，多對多關聯角色與 permission_key
+  - 新增 `menu_configs.permission_key` 欄位，可在 MenuConfig 頁面 UI 設定
+  - 新增後端 `get_user_permissions()`、`require_permission()` dependency 工廠
+  - 擴充 `GET /auth/me` 回應加入 `permissions: list[str]`（system_admin 回傳 ["*"]）
+  - 新增 `GET/PUT /api/v1/role-permissions/{role_id}` API，供 Roles 頁面管理角色權限
+  - 新增 `GET /api/v1/role-permissions/keys` API，回傳所有已知 permission_key 定義
+  - 新增 `GET /api/v1/roles` API，回傳角色清單（含 id）
+  - 前端 `authStore` 加入 `permissions` + `hasPermission()` 方法
+  - 前端 `MainLayout` 加入 `filterMenuByPermissions()`（DB permission_key 優先於靜態預設）
+  - 前端 `PermissionGuard` 元件，無權限顯示 🔒 403 提示頁
+  - `Roles.tsx` 新增「權限設定」Tab，以 Checkbox 群組管理各角色的 permission_key
+  - `MenuConfig` 頁面編輯模式加入 permission_key 輸入欄
+  - 新增開發規格書：`docs/PERMISSION_SPEC.md`（含新模組開發期使用 system_admin_only 的流程）
+  - **新模組預設規則**：開發期間 `permissionKey: 'system_admin_only'`，測試完成後透過角色管理手工授予
+
+---
+
 ## [1.39.46] - 2026-04-29
 
 ### Fixed
@@ -110,6 +242,23 @@
 
 ### Changed
 - **mall/periodic-maintenance & mall/full-building-maintenance Dashboard** — TAB 名稱由「主管儀表板」改為「Dashboard」；新增第 5 個 KPI 卡片「保養時間」（`planned_minutes` 轉換為小時，藍色 `ClockCircleOutlined`）；原進度條旁的「預估工時」移除（資訊已整合至 KPI 卡）；KPI 卡欄寬由 `lg={6}` 調整為 `lg={4}` 以容納 5 欄
+
+---
+
+## [1.39.39] - 2026-04-30
+
+### Added
+- **Base L1 → L2 降階移動支援** — `applyMenuConfig`（sidebar）與 `buildWorkItems`（MenuConfig UI）新增對「base L1 被移為其他 L1 之 L2 子項目」的完整支援：
+  - `applyMenuConfig`：新增 `reparentedBaseL1` Map 偵測，base traversal 過濾已降階項目（防止仍顯示為 L1），`customL2Here` 允許 reparented L1 通過（限定指向目標 L1）；`buildItem` 自動展開其 DB 子項目為 L3
+  - `buildWorkItems`：step ① 新增 reparentedBaseL1 偵測；step ② .filter() 排除已降階的 L1；新增 step ⑥ 將 base L1 連同 base 子項目插入新父層，維持 MenuConfig UI reload 後的正確位置
+  - 例：「保全管理」可被移到「飯店管理」下成為二階，其八個巡檢子項目自動升格為三階
+
+---
+
+## [1.39.38] - 2026-04-30
+
+### Fixed
+- **MenuConfig 新增二/三階選單後儲存失敗** — `handleAddConfirm` 建立新 `WorkItem` 時漏掉 `permissionKey: ''` 欄位，導致 `flattenWorkItems` 呼叫 `undefined.trim()` 拋出 TypeError 被 catch 後顯示「儲存失敗，請再試一次」；補齊一階與子階 new item 的 `permissionKey: ''` 初始值即修復
 
 ---
 

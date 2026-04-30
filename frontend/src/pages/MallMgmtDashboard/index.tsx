@@ -43,14 +43,13 @@ import { fetchMallPMStats, fetchMallPMBatches }          from '@/api/mallPeriodi
 import { fetchFullBldgPMStats, fetchFullBldgPMBatches }  from '@/api/fullBuildingMaintenance'
 import { fetchMallFacilityDashboardSummary }             from '@/api/mallFacilityInspection'
 import {
-  fetchDashboard as fetchDazhiDash,
-  fetchDetail    as fetchDazhiDetail,
-} from '@/api/dazhiRepair'
+  fetchDashboard as fetchLuqunDash,
+} from '@/api/luqunRepair'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 import type { PMStats, PMBatchListItem }      from '@/types/periodicMaintenance'
 import type { MallFIDashboardSummary }        from '@/api/mallFacilityInspection'
-import type { DashboardData, RepairCase }     from '@/types/dazhiRepair'
+import type { DashboardData, RepairCase }     from '@/types/luqunRepair'
 
 import { NAV_GROUP, NAV_PAGE } from '@/constants/navLabels'
 
@@ -96,7 +95,7 @@ const SOURCE_CONFIG_ROW1 = [
 
 // 第二列：報修 / 交辦 / 緊急事件
 const SOURCE_CONFIG_ROW2 = [
-  { key: 'dazhi_repair',    label: '大直工務報修', color: '#FA8C16', icon: <WarningOutlined />,          route: '/dazhi-repair/dashboard' },
+  { key: 'luqun_repair',    label: '樂群工務報修', color: '#FA8C16', icon: <WarningOutlined />,          route: '/luqun-repair/dashboard' },
   { key: 'mall_supervisor', label: '商場主管交辦', color: '#C0392B', icon: <ExclamationCircleOutlined />, route: '/dashboard' },
   { key: 'mall_emergency',  label: '商場緊急事件', color: '#D4380D', icon: <WarningOutlined />,           route: '/dashboard' },
 ] as const
@@ -137,7 +136,7 @@ function normalizeFacility(data: MallFIDashboardSummary | null) {
   }
 }
 
-function normalizeDazhi(data: DashboardData | null) {
+function normalizeLuqun(data: DashboardData | null) {
   if (!data) return { work_hours: 0, case_count: 0, completed_count: 0, completion_rate: 0, abnormal_count: 0, overdue_count: 0, is_placeholder: true, category_breakdown: undefined }
   const kpi = data.kpi
   const case_count = kpi.total
@@ -212,7 +211,7 @@ function buildPMMonthMap(batches: PMBatchListItem[]): Record<number, { total: nu
   return map
 }
 
-// ── 每日累計：把 dazhi detail 記錄按日聚合 ────────────────────────────────────
+// ── 每日累計：把 luqun detail 記錄按日聚合 ────────────────────────────────────
 interface DailyAgg { date: string; day: number; total: number; completed: number; work_hours: number }
 function aggregateByDay(cases: RepairCase[]): DailyAgg[] {
   const map: Record<string, DailyAgg> = {}
@@ -245,25 +244,25 @@ export default function MallMgmtDashboardPage() {
   const [mallPmData,       setMallPmData]       = useState<PMStats | null>(null)
   const [fullBldgPmData,   setFullBldgPmData]   = useState<PMStats | null>(null)
   const [mallFacilityData, setMallFacilityData] = useState<MallFIDashboardSummary | null>(null)
-  const [dazhiData,        setDazhiData]        = useState<DashboardData | null>(null)
+  const [luqunData,        setLuqunData]        = useState<DashboardData | null>(null)
 
   const [loadingMallPm,       setLoadingMallPm]       = useState(false)
   const [loadingFullBldgPm,   setLoadingFullBldgPm]   = useState(false)
   const [loadingMallFacility, setLoadingMallFacility] = useState(false)
-  const [loadingDazhi,        setLoadingDazhi]        = useState(false)
+  const [loadingLuqun,        setLoadingLuqun]        = useState(false)
 
   const [errorMallPm,       setErrorMallPm]       = useState<string | null>(null)
   const [errorFullBldgPm,   setErrorFullBldgPm]   = useState<string | null>(null)
   const [errorMallFacility, setErrorMallFacility] = useState<string | null>(null)
-  const [errorDazhi,        setErrorDazhi]        = useState<string | null>(null)
+  const [errorLuqun,        setErrorLuqun]        = useState<string | null>(null)
 
   // ── Tab C：每月累計 extra 資料 ─────────────────────────────────────────────
   const [mallPmBatches,     setMallPmBatches]     = useState<PMBatchListItem[]>([])
   const [fullBldgPmBatches, setFullBldgPmBatches] = useState<PMBatchListItem[]>([])
   const [loadingMonthly,    setLoadingMonthly]    = useState(false)
 
-  // ── Tab B：每日累計 dazhi detail ───────────────────────────────────────────
-  const [dailyCases,    setDailyCases]    = useState<RepairCase[]>([])
+  // ── Tab B：每日累計 luqun detail ───────────────────────────────────────────
+  const [dailyLuqunData, setDailyLuqunData] = useState<DashboardData | null>(null)
   const [loadingDaily,  setLoadingDaily]  = useState(false)
   const [dailyMonth,    setDailyMonth]    = useState<number>(thisMonth)
   const [dailyYear,     setDailyYear]     = useState<number>(thisYear)
@@ -290,16 +289,16 @@ export default function MallMgmtDashboardPage() {
     finally { setLoadingMallFacility(false) }
   }, [targetDate])
 
-  const loadDazhi = useCallback(async (y?: number, m?: number) => {
-    setLoadingDazhi(true); setErrorDazhi(null)
-    try     { setDazhiData(await fetchDazhiDash(y ?? year, m ?? month)) }
-    catch   { setErrorDazhi('大直工務報修載入失敗') }
-    finally { setLoadingDazhi(false) }
+  const loadLuqun = useCallback(async (y?: number, m?: number) => {
+    setLoadingLuqun(true); setErrorLuqun(null)
+    try     { setLuqunData(await fetchLuqunDash(y ?? year, m ?? month)) }
+    catch   { setErrorLuqun('樂群工務報修載入失敗') }
+    finally { setLoadingLuqun(false) }
   }, [year, month])
 
   const loadAll = useCallback(() => {
-    loadMallPm(); loadFullBldgPm(); loadMallFacility(); loadDazhi()
-  }, [loadMallPm, loadFullBldgPm, loadMallFacility, loadDazhi])
+    loadMallPm(); loadFullBldgPm(); loadMallFacility(); loadLuqun()
+  }, [loadMallPm, loadFullBldgPm, loadMallFacility, loadLuqun])
 
   useEffect(() => { loadAll() }, []) // eslint-disable-line
 
@@ -318,16 +317,16 @@ export default function MallMgmtDashboardPage() {
     finally { setLoadingMonthly(false) }
   }, [year])
 
-  // ── 載入 Tab B（每日累計）──────────────────────────────────────────────────
+  // ── 載入 Tab B（每日累計）：使用 luqun dashboard kpi_total_detail ────────────
   const loadDaily = useCallback(async (y?: number, m?: number) => {
     const dy = y ?? dailyYear
     const dm = m ?? dailyMonth
     if (!dm) return
     setLoadingDaily(true)
     try {
-      const res = await fetchDazhiDetail({ year: dy, month: dm, page: 1, page_size: 500 })
-      setDailyCases(res.items ?? [])
-    } catch { setDailyCases([]) }
+      const data = await fetchLuqunDash(dy, dm)
+      setDailyLuqunData(data)
+    } catch { setDailyLuqunData(null) }
     finally { setLoadingDaily(false) }
   }, [dailyYear, dailyMonth])
 
@@ -335,14 +334,14 @@ export default function MallMgmtDashboardPage() {
   const handleTabChange = (key: string) => {
     setActiveTab(key)
     if (key === 'monthly' && mallPmBatches.length === 0) loadMonthly()
-    if (key === 'daily'   && dailyCases.length   === 0) loadDaily()
+    if (key === 'daily'   && !dailyLuqunData) loadDaily()
   }
 
   // ── Normalize ──────────────────────────────────────────────────────────────
   const mallPmSummary       = useMemo(() => normalizePM(mallPmData),               [mallPmData])
   const fullBldgPmSummary   = useMemo(() => normalizePM(fullBldgPmData),           [fullBldgPmData])
   const mallFacilitySummary = useMemo(() => normalizeFacility(mallFacilityData),   [mallFacilityData])
-  const dazhiSummary        = useMemo(() => normalizeDazhi(dazhiData),             [dazhiData])
+  const luqunSummary        = useMemo(() => normalizeLuqun(luqunData),             [luqunData])
   const placeholderSummary = useMemo((): NormalizedSummary => ({ work_hours: 0, case_count: 0, completed_count: 0, completion_rate: 0, abnormal_count: 0, overdue_count: 0, is_placeholder: true, category_breakdown: undefined }), [])
   const fullBldgInspSummary = placeholderSummary
 
@@ -351,21 +350,21 @@ export default function MallMgmtDashboardPage() {
     full_bldg_pm:     fullBldgPmSummary,
     mall_facility:    mallFacilitySummary,
     full_bldg_insp:   fullBldgInspSummary,
-    dazhi_repair:     dazhiSummary,
+    luqun_repair:     luqunSummary,
     mall_supervisor:  placeholderSummary,
     mall_emergency:   placeholderSummary,
   }
   const loadingMap: Record<string, boolean> = {
     mall_pm: loadingMallPm, full_bldg_pm: loadingFullBldgPm, mall_facility: loadingMallFacility,
-    full_bldg_insp: false,  dazhi_repair: loadingDazhi, mall_supervisor: false, mall_emergency: false,
+    full_bldg_insp: false,  luqun_repair: loadingLuqun, mall_supervisor: false, mall_emergency: false,
   }
   const errorMap: Record<string, string | null> = {
     mall_pm: errorMallPm, full_bldg_pm: errorFullBldgPm, mall_facility: errorMallFacility,
-    full_bldg_insp: null, dazhi_repair: errorDazhi, mall_supervisor: null, mall_emergency: null,
+    full_bldg_insp: null, luqun_repair: errorLuqun, mall_supervisor: null, mall_emergency: null,
   }
 
   // ── 彙總 KPI ───────────────────────────────────────────────────────────────
-  const allSummaries   = [mallPmSummary, fullBldgPmSummary, mallFacilitySummary, dazhiSummary]
+  const allSummaries   = [mallPmSummary, fullBldgPmSummary, mallFacilitySummary, luqunSummary]
   const totalCases     = allSummaries.reduce((s, x) => s + (x?.case_count      ?? 0), 0)
   const totalCompleted = allSummaries.reduce((s, x) => s + (x?.completed_count ?? 0), 0)
   const totalAbnormal  = allSummaries.reduce((s, x) => s + (x?.abnormal_count  ?? 0), 0)
@@ -391,28 +390,28 @@ export default function MallMgmtDashboardPage() {
     return { name: c.label, value: s?.work_hours ?? 0, fill: c.color }
   }).filter(d => d.value > 0)
 
-  const trendData = (dazhiData?.trend_12m ?? []).map(t => ({
+  const trendData = (luqunData?.trend_12m ?? []).map(t => ({
     label: t.label, 總案件: t.total, 已結案: t.completed,
   }))
 
-  // ── Tab B：每日累計資料 ─────────────────────────────────────────────────────
-  const dailyAggData = useMemo(() => aggregateByDay(dailyCases), [dailyCases])
+  // ── Tab B：每日累計資料（kpi_total_detail 含當月全部案件）─────────────────────
+  const dailyAggData = useMemo(() => aggregateByDay(dailyLuqunData?.kpi_total_detail ?? []), [dailyLuqunData])
 
   // ── Tab C：每月累計資料 ─────────────────────────────────────────────────────
   const mallPmMonthMap     = useMemo(() => buildPMMonthMap(mallPmBatches),     [mallPmBatches])
   const fullBldgPmMonthMap = useMemo(() => buildPMMonthMap(fullBldgPmBatches), [fullBldgPmBatches])
-  const dazhiMonthMap      = useMemo(() => {
+  const luqunMonthMap      = useMemo(() => {
     const map: Record<number, { total: number; completed: number }> = {}
-    ;(dazhiData?.trend_12m ?? []).forEach(t => { if (t.month) map[t.month] = { total: t.total, completed: t.completed } })
+    ;(luqunData?.trend_12m ?? []).forEach(t => { if (t.month) map[t.month] = { total: t.total, completed: t.completed } })
     return map
-  }, [dazhiData])
+  }, [luqunData])
 
   const monthlyRows = useMemo(() =>
     Array.from({ length: 12 }, (_, i) => {
       const m = i + 1
       const pmRow   = mallPmMonthMap[m]
       const fbpmRow = fullBldgPmMonthMap[m]
-      const dzRow   = dazhiMonthMap[m]
+      const dzRow   = luqunMonthMap[m]
       return {
         key:  m,
         month: m,
@@ -429,11 +428,11 @@ export default function MallMgmtDashboardPage() {
         dz_rate:       dzRow ? (dzRow.total > 0 ? Math.round((dzRow.completed / dzRow.total) * 100) : 0) : 0,
       }
     })
-  , [mallPmMonthMap, fullBldgPmMonthMap, dazhiMonthMap])
+  , [mallPmMonthMap, fullBldgPmMonthMap, luqunMonthMap])
 
   // ── Tab D/E：人員資料（大直工務 top_hours）────────────────────────────────
   const personRanking = useMemo(() => {
-    const all = [...(dazhiData?.top_hours ?? [])]
+    const all = [...(luqunData?.top_hours ?? [])]
     // 以 acceptor（結案人）聚合工時
     const map: Record<string, { name: string; work_hours: number; cases: number }> = {}
     all.forEach(c => {
@@ -445,7 +444,7 @@ export default function MallMgmtDashboardPage() {
     return Object.values(map)
       .sort((a, b) => b.work_hours - a.work_hours)
       .map((r, i) => ({ ...r, rank: i + 1, key: i }))
-  }, [dazhiData])
+  }, [luqunData])
 
   const totalPersonHours = personRanking.reduce((s, r) => s + r.work_hours, 0)
 
@@ -464,10 +463,10 @@ export default function MallMgmtDashboardPage() {
         <Row gutter={[16, 8]} align="middle">
           <Col><Text type="secondary" style={{ fontSize: 12 }}>大直工務篩選：</Text></Col>
           <Col>
-            <Select value={year} options={yearOptions} style={{ width: 100 }} onChange={(v) => { setYear(v); loadDazhi(v, month) }} />
+            <Select value={year} options={yearOptions} style={{ width: 100 }} onChange={(v) => { setYear(v); loadLuqun(v, month) }} />
           </Col>
           <Col>
-            <Select value={month} options={monthOptions} style={{ width: 90 }} onChange={(v) => { setMonth(v); loadDazhi(year, v) }} />
+            <Select value={month} options={monthOptions} style={{ width: 90 }} onChange={(v) => { setMonth(v); loadLuqun(year, v) }} />
           </Col>
           <Col><Divider type="vertical" /></Col>
           <Col><Text type="secondary" style={{ fontSize: 12 }}>工務巡檢日期：</Text></Col>
@@ -617,8 +616,8 @@ export default function MallMgmtDashboardPage() {
         <Col xs={24} lg={16}>
           <Card title={<><LineChartOutlined /> 大直工務報修 — 12 個月案件趨勢</>} size="small"
             extra={<Text type="secondary" style={{ fontSize: 11 }}>{year} 年{month > 0 ? ` ${month} 月` : '（全年）'}</Text>}>
-            {trendData.length === 0 || loadingDazhi ? (
-              <div style={{ textAlign: 'center', color: '#bbb', padding: '40px 0' }}>{loadingDazhi ? '載入中…' : '暫無資料'}</div>
+            {trendData.length === 0 || loadingLuqun ? (
+              <div style={{ textAlign: 'center', color: '#bbb', padding: '40px 0' }}>{loadingLuqun ? '載入中…' : '暫無資料'}</div>
             ) : (
               <ResponsiveContainer width="100%" height={220}>
                 <LineChart data={trendData} margin={{ left: 0, right: 20 }}>
@@ -662,7 +661,7 @@ export default function MallMgmtDashboardPage() {
   )
 
   // ════════════════════════════════════════════════════════════════════════════
-  // TAB B：每日累計（大直工務報修日別）
+  // TAB B：每日累計（商場報修日別，來源：luqun dashboard kpi_total_detail）
   // ════════════════════════════════════════════════════════════════════════════
   const dailyCols: ColumnsType<DailyAgg & { key: number }> = [
     {
@@ -705,7 +704,7 @@ export default function MallMgmtDashboardPage() {
     <>
       <Card size="small" style={{ marginBottom: 12, background: '#f9fbff' }}>
         <Row gutter={[12, 8]} align="middle">
-          <Col><Text strong style={{ fontSize: 13 }}>大直工務報修 日別統計</Text></Col>
+          <Col><Text strong style={{ fontSize: 13 }}>商場報修 日別統計</Text></Col>
           <Col>
             <Select value={dailyYear} options={yearOptions} style={{ width: 100 }}
               onChange={(v) => { setDailyYear(v); loadDaily(v, dailyMonth) }} />
@@ -725,7 +724,7 @@ export default function MallMgmtDashboardPage() {
       </Card>
 
       <Alert type="warning" showIcon
-        description="每日累計目前僅統計大直工務報修案件（以報修發生日聚合）。商場 PM、全棟 PM、工務巡檢等模組以批次/場次為單位，無每日工項分解，請至個別模組查看。"
+        description="每日累計統計商場報修案件（以報修發生日聚合，來源：樂群工務報修）。商場 PM、全棟 PM、工務巡檢等模組以批次/場次為單位，無每日工項分解，請至個別模組查看。"
         style={{ marginBottom: 12 }} />
 
       {dailyAggData.length > 0 && (
@@ -841,7 +840,7 @@ export default function MallMgmtDashboardPage() {
           <Col><Text strong style={{ fontSize: 13 }}>月別完成率矩陣</Text></Col>
           <Col>
             <Select value={year} options={yearOptions} style={{ width: 100 }}
-              onChange={(v) => { setYear(v); loadMonthly(v); loadDazhi(v, month) }} />
+              onChange={(v) => { setYear(v); loadMonthly(v); loadLuqun(v, month) }} />
           </Col>
           <Col>
             <Button icon={<ReloadOutlined />} onClick={() => loadMonthly()} loading={loadingMonthly}>重新整理</Button>

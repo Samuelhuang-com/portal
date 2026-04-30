@@ -72,6 +72,8 @@ interface WorkItem {
   customLabel: string   // '' = 使用預設
   sort_order: number
   is_visible: boolean
+  // 權限控制：'' = 公開（null）；有值 = 需具備此 permission_key
+  permissionKey: string
   children: WorkItem[]
 }
 
@@ -120,6 +122,16 @@ function buildWorkItems(
   const configMap = new Map(configs.map((c) => [c.menu_key, c]))
   const structureKeys = new Set<string>()
 
+  // ① 找出「被降為二階」的 base L1 項目（原本是一階，DB 中有 parent_key）
+  // 例：「保全管理」被移到「飯店管理」下 → { 'security': 'hotel' }
+  const reparentedBaseL1 = new Map<string, string>() // menu_key -> new_parent_key
+  structure.forEach((p) => {
+    const cfg = configMap.get(p.key)
+    if (cfg?.parent_key) {
+      reparentedBaseL1.set(p.key, cfg.parent_key)
+    }
+  })
+
   // ① 找出「被 DB 換了父層」的 base L2（與 MainLayout.applyMenuConfig 共用同一份邏輯）
   const reparentedMap = computeReparentedL2(
     structure.map((p) => ({ key: p.key, children: p.children?.map((c) => ({ key: c.key })) })),
@@ -157,6 +169,7 @@ function buildWorkItems(
             customLabel: gcCfg?.custom_label ?? '',
             sort_order: gcCfg?.sort_order ?? gi * 10,
             is_visible: gcCfg?.is_visible ?? true,
+            permissionKey: gcCfg?.permission_key ?? '',
             children: [] as WorkItem[],
           }
         })
@@ -169,6 +182,7 @@ function buildWorkItems(
           customLabel: cCfg?.custom_label ?? '',
           sort_order: cCfg?.sort_order ?? ci * 10,
           is_visible: cCfg?.is_visible ?? true,
+          permissionKey: cCfg?.permission_key ?? '',
           children: gcItems,
         }
       })
@@ -185,9 +199,14 @@ function buildWorkItems(
       customLabel: pCfg?.custom_label ?? '',
       sort_order: pCfg?.sort_order ?? pi * 10,
       is_visible: pCfg?.is_visible ?? true,
+      permissionKey: pCfg?.permission_key ?? '',
       children,
     }
-  }).sort((a, b) => a.sort_order - b.sort_order)
+  })
+  // 排除已降為二階的 base L1（structureKeys 已正確建立，不影響 extra 篩選）
+  // 它們的實際位置會在步驟⑥插入新父層
+  .filter((item) => !reparentedBaseL1.has(item.menu_key))
+  .sort((a, b) => a.sort_order - b.sort_order)
 
   // ③ 建立 itemMap（用來掛 L3 及 re-parented 項目）— 包含三階
   const itemMap = new Map<string, WorkItem>()
@@ -215,6 +234,7 @@ function buildWorkItems(
         customLabel: cfg.custom_label ?? '',
         sort_order: cfg.sort_order,
         is_visible: cfg.is_visible,
+        permissionKey: cfg.permission_key ?? '',
         children: [],
       }
       if (!parentItem) {
@@ -240,11 +260,56 @@ function buildWorkItems(
       customLabel: cfg?.custom_label ?? '',
       sort_order: cfg?.sort_order ?? 9999,
       is_visible: cfg?.is_visible ?? true,
+      permissionKey: cfg?.permission_key ?? '',
       children: [],
     }
     newParent.children.push(newItem)
     newParent.children.sort((a, b) => a.sort_order - b.sort_order)
     itemMap.set(menuKey, newItem)
+  })
+
+  // ⑥ 將「被降為二階」的 base L1 項目插入新父層，連同其 base 子項目（現為三階）
+  //    此時 itemMap 已有所有 L1/custom/extra，newParentKey 一定找得到
+  reparentedBaseL1.forEach((newParentKey, l1Key) => {
+    const newParent = itemMap.get(newParentKey)
+    if (!newParent) return  // 新父層不存在，略過
+
+    const origStructItem = structure.find((p) => p.key === l1Key)
+    if (!origStructItem) return
+
+    const cfg = configMap.get(l1Key)
+
+    // 原本的 L2 子項目現在成為 L3（套用 DB 的 label/sort/visibility）
+    const gcItems: WorkItem[] = ((origStructItem as any).children ?? []).map((child: any, ci: number) => {
+      const childCfg = configMap.get(child.key)
+      return {
+        menu_key: child.key,
+        parent_key: l1Key,
+        defaultLabel: child.label,
+        customLabel: childCfg?.custom_label ?? '',
+        sort_order: childCfg?.sort_order ?? ci * 10,
+        is_visible: childCfg?.is_visible ?? true,
+        permissionKey: childCfg?.permission_key ?? '',
+        children: [] as WorkItem[],
+      }
+    })
+    gcItems.sort((a, b) => a.sort_order - b.sort_order)
+
+    const newItem: WorkItem = {
+      menu_key: l1Key,
+      parent_key: newParentKey,
+      defaultLabel: origStructItem.label,
+      customLabel: cfg?.custom_label ?? '',
+      sort_order: cfg?.sort_order ?? 9999,
+      is_visible: cfg?.is_visible ?? true,
+      permissionKey: cfg?.permission_key ?? '',
+      children: gcItems,
+    }
+
+    newParent.children.push(newItem)
+    newParent.children.sort((a, b) => a.sort_order - b.sort_order)
+    itemMap.set(l1Key, newItem)
+    gcItems.forEach((g) => itemMap.set(g.menu_key, g))
   })
 
   return result.sort((a, b) => a.sort_order - b.sort_order)
@@ -264,6 +329,7 @@ function flattenWorkItems(items: WorkItem[]): MenuConfigItem[] {
       custom_label: item.customLabel.trim() || null,
       sort_order: order,
       is_visible: item.is_visible,
+      permission_key: item.permissionKey.trim() || null,
     })
     item.children.forEach((child, ci) => visit(child, item.menu_key, ci * 10))
   }
@@ -307,6 +373,7 @@ interface SortableRowProps {
   onVisibleChange: (key: string, visible: boolean) => void
   onMoveItem: (key: string, newParentKey: string | null) => void
   onDeleteItem: (key: string) => void
+  onPermissionKeyChange: (key: string, permKey: string) => void
 }
 
 function SortableRow({
@@ -319,6 +386,7 @@ function SortableRow({
   onVisibleChange,
   onMoveItem,
   onDeleteItem,
+  onPermissionKeyChange,
 }: SortableRowProps) {
   const {
     attributes,
@@ -468,15 +536,26 @@ function SortableRow({
       {/* 名稱區 */}
       <div style={{ flex: 1, minWidth: 0 }}>
         {editing ? (
-          <Input
-            ref={inputRef}
-            size="small"
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onPressEnter={confirmEdit}
-            style={{ width: '100%', maxWidth: 280 }}
-            autoFocus
-          />
+          <Space direction="vertical" size={4} style={{ width: '100%' }}>
+            <Input
+              ref={inputRef}
+              size="small"
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onPressEnter={confirmEdit}
+              style={{ width: '100%', maxWidth: 280 }}
+              placeholder="顯示名稱（空白 = 使用預設）"
+              autoFocus
+            />
+            <Input
+              size="small"
+              value={item.permissionKey}
+              onChange={(e) => onPermissionKeyChange(item.menu_key, e.target.value)}
+              style={{ width: '100%', maxWidth: 280, fontSize: 11 }}
+              placeholder="permission_key（空白 = 公開顯示）"
+              prefix={<span style={{ fontSize: 10, color: '#94a3b8' }}>🔑</span>}
+            />
+          </Space>
         ) : (
           <Space size={4} onDoubleClick={startEdit} style={{ cursor: 'text' }}>
             <Text
@@ -495,6 +574,15 @@ function SortableRow({
             {!item.is_visible && (
               <Tag color="default" style={{ fontSize: 11, lineHeight: '18px', padding: '0 4px' }}>
                 已隱藏
+              </Tag>
+            )}
+            {item.permissionKey && (
+              <Tag
+                color="orange"
+                style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px' }}
+                title={`權限保護：${item.permissionKey}`}
+              >
+                🔑 {item.permissionKey}
               </Tag>
             )}
           </Space>
@@ -654,6 +742,26 @@ export default function MenuConfigPage() {
     setDirty(true)
   }, [])
 
+  // ── 權限 key 修改（支援三層）─────────────────────────────────────────────
+  const handlePermissionKeyChange = useCallback((key: string, permKey: string) => {
+    setItems((prev) => prev.map((parent) => {
+      if (parent.menu_key === key) return { ...parent, permissionKey: permKey }
+      return {
+        ...parent,
+        children: parent.children.map((child) => {
+          if (child.menu_key === key) return { ...child, permissionKey: permKey }
+          return {
+            ...child,
+            children: child.children.map((g) =>
+              g.menu_key === key ? { ...g, permissionKey: permKey } : g
+            ),
+          }
+        }),
+      }
+    }))
+    setDirty(true)
+  }, [])
+
   // ── 顯示/隱藏（隱藏時三層一起隱藏）──────────────────────────────────────
   const handleVisibleChange = useCallback((key: string, visible: boolean) => {
     setItems((prev) => prev.map((parent) => {
@@ -799,6 +907,7 @@ export default function MenuConfigPage() {
             customLabel: label,
             sort_order: maxOrder,
             is_visible: true,
+            permissionKey: '',
             children: [],
           },
         ]
@@ -820,6 +929,7 @@ export default function MenuConfigPage() {
                 customLabel: label,
                 sort_order: maxOrder,
                 is_visible: true,
+                permissionKey: '',
                 children: [],
               },
             ],
@@ -1041,6 +1151,7 @@ export default function MenuConfigPage() {
                   onVisibleChange={handleVisibleChange}
                   onMoveItem={handleMoveItem}
                   onDeleteItem={handleDeleteItem}
+                  onPermissionKeyChange={handlePermissionKeyChange}
                 />
 
                 {/* L2 子層 */}
@@ -1063,6 +1174,7 @@ export default function MenuConfigPage() {
                             onVisibleChange={handleVisibleChange}
                             onMoveItem={handleMoveItem}
                             onDeleteItem={handleDeleteItem}
+                            onPermissionKeyChange={handlePermissionKeyChange}
                           />
 
                           {/* L3 孫層 */}
@@ -1083,6 +1195,7 @@ export default function MenuConfigPage() {
                                   onVisibleChange={handleVisibleChange}
                                   onMoveItem={handleMoveItem}
                                   onDeleteItem={handleDeleteItem}
+                                  onPermissionKeyChange={handlePermissionKeyChange}
                                 />
                               ))}
                             </SortableContext>

@@ -11,18 +11,24 @@ import { tenantsApi } from '../../api/tenants';
 import type { User, Tenant } from '../../types';
 import { ROLE_LABELS } from '../../types';
 import { useAuthStore } from '../../stores/authStore';
+import { fetchRoles, type RoleData } from '@/api/roles';
 
 const { Title, Text } = Typography;
 
-const ROLE_OPTIONS = Object.entries(ROLE_LABELS).map(([value, label]) => ({ value, label }));
 const ROLE_COLORS: Record<string, string> = {
   system_admin: 'blue', tenant_admin: 'purple', module_manager: 'cyan', viewer: 'default',
 };
+
+/** 取得角色的顯示名稱（內建角色用中文，自訂角色顯示識別碼） */
+function getRoleLabel(roleName: string): string {
+  return ROLE_LABELS[roleName] || roleName;
+}
 
 const UserManagement: React.FC = () => {
   const { user: me } = useAuthStore();
   const [users, setUsers]     = useState<User[]>([]);
   const [tenants, setTenants] = useState<Tenant[]>([]);
+  const [allRoles, setAllRoles] = useState<RoleData[]>([]);
   const [total, setTotal]     = useState(0);
   const [loading, setLoading] = useState(false);
   const [search, setSearch]   = useState('');
@@ -49,6 +55,7 @@ const UserManagement: React.FC = () => {
 
   useEffect(() => {
     tenantsApi.list().then(r => setTenants(r.data)).catch(() => {});
+    fetchRoles().then(setAllRoles).catch(() => {});
   }, []);
 
   const openCreate = () => {
@@ -153,8 +160,8 @@ const UserManagement: React.FC = () => {
       render: (roles: string[]) => (
         <Space size={4} wrap>
           {roles.map(r => (
-            <Tag key={r} color={ROLE_COLORS[r] || 'default'} style={{ fontSize: 12 }}>
-              {ROLE_LABELS[r] || r}
+            <Tag key={r} color={ROLE_COLORS[r] || 'geekblue'} style={{ fontSize: 12 }}>
+              {getRoleLabel(r)}
             </Tag>
           ))}
         </Space>
@@ -277,7 +284,26 @@ const UserManagement: React.FC = () => {
           )}
           <Form.Item name="role_names" label="角色"
             rules={[{ required: true, message: '請選擇至少一個角色' }]}>
-            <Select mode="multiple" placeholder="選擇角色" options={ROLE_OPTIONS} />
+            <Select
+              mode="multiple"
+              placeholder="選擇角色"
+              options={allRoles.map(r => ({
+                value: r.name,
+                label: getRoleLabel(r.name),
+              }))}
+              optionRender={(opt) => {
+                const color = ROLE_COLORS[opt.value as string] || 'geekblue';
+                return (
+                  <Space>
+                    <Tag color={color} style={{ margin: 0, fontSize: 12 }} />
+                    {opt.label}
+                    {!ROLE_LABELS[opt.value as string] && (
+                      <span style={{ fontSize: 11, color: '#94a3b8' }}>（自訂）</span>
+                    )}
+                  </Space>
+                );
+              }}
+            />
           </Form.Item>
           {editUser && (
             <Form.Item name="is_active" label="帳號狀態" valuePropName="checked">

@@ -5,6 +5,8 @@ export interface User {
   tenant_id: string;
   tenant_name: string;
   roles: string[];
+  // 使用者所有 permission_key；system_admin 為 ["*"]
+  permissions?: string[];
   is_active: boolean;
   last_login?: string;
   created_at?: string;

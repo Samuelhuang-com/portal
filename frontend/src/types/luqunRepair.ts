@@ -60,16 +60,16 @@ export interface DashboardKpi {
   total_work_hours:         number
   room_cases:               number
   pending_verify:           number          // 待辦驗件數
-  // 年度費用（費用 KPI 卡片用，不受月份篩選影響）
+  // 累計費用（YTD：月份選定時 = 1月~M月；全年檢視 = 全年；費用 KPI 卡片用）
   annual_fee:                    number
   annual_outsource_fee:          number
   annual_maintenance_fee:        number
   annual_deduction_fee:          number
   annual_deduction_counter:      number
-  // 年度扣款專櫃（全年統計，與費用 KPI 卡片對齊）
-  annual_counter_stores:         number        // 全年有扣款的專櫃家數
-  annual_counter_fee:            number        // 全年扣款專櫃費用合計
-  annual_counter_store_names:    string[]      // 全年專櫃名稱列表
+  // 累計扣款專櫃（YTD，與費用 KPI 卡片對齊）
+  annual_counter_stores:         number        // 累計有扣款的專櫃家數
+  annual_counter_fee:            number        // 累計扣款專櫃費用合計
+  annual_counter_store_names:    string[]      // 累計專櫃名稱列表
   // 當月費用（費用 KPI 卡片用，依年+月篩選）
   month_outsource_fee:     number
   month_maintenance_fee:   number
