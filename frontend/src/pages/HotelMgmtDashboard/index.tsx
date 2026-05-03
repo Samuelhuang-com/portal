@@ -46,10 +46,13 @@ import {
   fetchSecurityDashboardSummary,
   fetchSecurityDashboardTrend,
   fetchSecurityMonthlyDashboard,
-  type SecurityDashboardSummary,
-  type SecurityDashboardTrend,
   type SecurityMonthlyDashboard,
 } from '@/api/securityPatrol'
+import type {
+  SecurityDashboardSummary,
+  SecurityDashboardTrend,
+  SecurityTrendPoint,
+} from '@/types/securityPatrol'
 import { fetchDashboard }                from '@/api/dazhiRepair'
 import {
   fetchHotelDailyHours,
@@ -422,8 +425,8 @@ export default function HotelMgmtDashboardPage() {
 
   // 4. 保全巡檢近 30 日異常趨勢
   const secTrendData = (secTrend?.trend ?? [])
-    .filter(t => t.has_data)
-    .map(t => ({ date: t.date.slice(5), abnormal: t.abnormal_count }))
+    .filter((t: SecurityTrendPoint) => t.has_data)
+    .map((t: SecurityTrendPoint) => ({ date: t.date.slice(5), abnormal: t.abnormal_count }))
     .slice(-14) // 最近 14 天有資料的
 
   // ── 來源卡片（6 有資料 + 2 佔位，共 8 張，2 排 × 4 欄）──────────────────

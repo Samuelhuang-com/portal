@@ -235,7 +235,7 @@ export default function TabRiskRadar({ year, month, monthStr, refreshKey }: TabR
     // 9. 商場工務巡檢
     if (rFacility.status === 'fulfilled') {
       const sheets = rFacility.value.sheets ?? []
-      const total   = sheets.reduce((a, s) => a + (s.expected_days ?? 30), 0)
+      const total   = sheets.length * 30
       const missing = sheets.reduce((a, s) => a + s.missing_count, 0)
       const comp    = total > 0 ? Math.round(((total - missing) / total) * 100) : null
       const h       = comp !== null ? calcModuleHealth({ total, completed: total - missing, overdue: missing, anomaly: 0 }) : null

@@ -99,7 +99,7 @@ function getMetricsFacilityDI(s: MallSourceState): SourceMetrics {
   if (!sheets || sheets.length === 0) return { total: null, completed: null, overdue: null, abnormal: null, compRate: null }
   const totalCount   = sheets.reduce((a, sh) => a + sh.month_count,   0)
   const missingCount = sheets.reduce((a, sh) => a + sh.missing_count, 0)
-  const expectedDays = sheets[0]?.expected_days ?? 30
+  const expectedDays = 30
   const totalExpected = expectedDays * sheets.length
   const compRate = totalExpected > 0
     ? Math.round(((totalExpected - missingCount * sheets.length) / totalExpected) * 100)

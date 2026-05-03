@@ -131,7 +131,7 @@ export default function TabTrend({ year, month, monthStr, refreshKey }: TabTrend
               <XAxis dataKey="date" tick={{ fontSize: 10 }} interval={days <= 7 ? 0 : 4} />
               <YAxis tick={{ fontSize: 10 }} domain={[0, 100]} unit="%" />
               <RechartTooltip
-                formatter={(v: number | null) => v !== null ? [`${v}%`] : ['無資料']}
+                formatter={(v: unknown) => v !== null && v !== undefined ? [`${v}%`] : ['無資料']}
                 contentStyle={{ fontSize: 11 }}
               />
               <Legend iconSize={10} wrapperStyle={{ fontSize: 11 }} />
@@ -160,7 +160,7 @@ export default function TabTrend({ year, month, monthStr, refreshKey }: TabTrend
             <XAxis dataKey="name" tick={{ fontSize: 10 }} />
             <YAxis tick={{ fontSize: 10 }} unit="hr" />
             <RechartTooltip
-              formatter={(v: number | null) => v !== null ? [`${v} hr`] : ['無資料']}
+              formatter={(v: unknown) => v !== null && v !== undefined ? [`${v} hr`] : ['無資料']}
               contentStyle={{ fontSize: 11 }}
             />
             <Legend iconSize={10} wrapperStyle={{ fontSize: 11 }} />
