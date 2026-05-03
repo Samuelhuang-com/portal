@@ -94,6 +94,13 @@ import BudgetAccountCodesPage          from '@/pages/Budget/Masters/AccountCodes
 import BudgetItemsPage                 from '@/pages/Budget/Masters/BudgetItems'
 import BudgetMappingsPage              from '@/pages/Budget/Mappings'
 
+// ── 首頁重定向（讀取 menu-config 設定，fallback 到 /dashboard）─────────────────
+export const HOME_PAGE_STORAGE_KEY = 'portal_home_page_route'
+function HomeRedirect() {
+  const route = localStorage.getItem(HOME_PAGE_STORAGE_KEY) || '/dashboard'
+  return <Navigate to={route} replace />
+}
+
 // ── Route Guards ──────────────────────────────────────────────────────────────
 /**
  * 系統設定守衛 — 只有 system_admin 角色可進入 /settings/*
@@ -200,7 +207,7 @@ export default function AppRouter() {
           </PrivateRoute>
         }
       >
-        <Route index element={<Navigate to="/dashboard" replace />} />
+        <Route index element={<HomeRedirect />} />
         <Route path="dashboard" element={<DashboardPage />} />
 
         {/* ── ◆ 決策駕駛艙（高階主管決策入口，整合三大模組精華）────────── */}

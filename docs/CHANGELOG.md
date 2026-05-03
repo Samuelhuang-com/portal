@@ -599,6 +599,20 @@
 
 ---
 
+## [1.39.41] - 2026-05-03
+
+### Fixed
+- **登入後未跳轉首頁設定** — `Login/index.tsx` 登入成功後改為讀取 `localStorage('portal_home_page_route')` 決定跳轉目標，fallback `/dashboard`；原本固定跳轉 `/dashboard` 導致 menu-config 設定的首頁無效
+
+---
+
+## [1.39.40] - 2026-05-03
+
+### Added
+- **選單管理首頁設定** — `settings/menu-config` 新增「設為首頁」功能：每個以 `/` 開頭的真實路由旁顯示 🏠 圖示按鈕，點擊即設為系統首頁；目前首頁顯示綠色「首頁」Tag；設定存入 `localStorage`（key: `portal_home_page_route`）。`router/index.tsx` index route 改為讀取 localStorage 並重定向，fallback 為 `/dashboard`
+
+---
+
 ## [1.39.39] - 2026-04-30
 
 ### Added

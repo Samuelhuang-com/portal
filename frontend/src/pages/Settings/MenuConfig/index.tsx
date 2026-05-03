@@ -18,7 +18,7 @@ import {
   MenuOutlined, EditOutlined, CheckOutlined, CloseOutlined,
   HistoryOutlined, SaveOutlined, ReloadOutlined, InfoCircleOutlined,
   CaretRightOutlined, EyeOutlined, EyeInvisibleOutlined, PlusOutlined,
-  ArrowsAltOutlined, DeleteOutlined,
+  ArrowsAltOutlined, DeleteOutlined, HomeOutlined,
 } from '@ant-design/icons'
 import {
   DndContext,
@@ -45,6 +45,7 @@ import {
   MenuConfigHistoryItem,
 } from '@/api/menuConfig'
 import { menuItems, computeReparentedL2 } from '@/components/Layout/MainLayout'
+import { HOME_PAGE_STORAGE_KEY } from '@/router'
 
 const { Text, Title } = Typography
 
@@ -369,11 +370,13 @@ interface SortableRowProps {
   parentKey: string | null        // 直接父層 key（L1=null, L2=L1key, L3=L2key）
   grandparentKey: string | null   // 祖父層 key（L3 才有值）
   allTopLevel: WorkItem[]         // 全部 L1 項目（含其 children）
+  homePageRoute: string           // 目前設定的首頁 route
   onLabelChange: (key: string, value: string) => void
   onVisibleChange: (key: string, visible: boolean) => void
   onMoveItem: (key: string, newParentKey: string | null) => void
   onDeleteItem: (key: string) => void
   onPermissionKeyChange: (key: string, permKey: string) => void
+  onSetHomePage: (route: string) => void
 }
 
 function SortableRow({
@@ -382,11 +385,13 @@ function SortableRow({
   parentKey,
   grandparentKey,
   allTopLevel,
+  homePageRoute,
   onLabelChange,
   onVisibleChange,
   onMoveItem,
   onDeleteItem,
   onPermissionKeyChange,
+  onSetHomePage,
 }: SortableRowProps) {
   const {
     attributes,
@@ -566,6 +571,15 @@ function SortableRow({
             >
               {displayLabel}
             </Text>
+            {item.menu_key === homePageRoute && (
+              <Tag
+                icon={<HomeOutlined />}
+                color="success"
+                style={{ fontSize: 11, lineHeight: '18px', padding: '0 5px' }}
+              >
+                首頁
+              </Tag>
+            )}
             {isModified && (
               <Tag color="blue" style={{ fontSize: 11, lineHeight: '18px', padding: '0 4px' }}>
                 已改名
@@ -655,6 +669,25 @@ function SortableRow({
             </Dropdown>
           )}
 
+          {/* 設為首頁（只限以 / 開頭的真實路由） */}
+          {item.menu_key.startsWith('/') && (
+            <Tooltip title={item.menu_key === homePageRoute ? '目前首頁' : '設為首頁'}>
+              <Button
+                size="small"
+                type="text"
+                icon={
+                  <HomeOutlined
+                    style={{ color: item.menu_key === homePageRoute ? '#52c41a' : '#bbb' }}
+                  />
+                }
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onSetHomePage(item.menu_key)
+                }}
+              />
+            </Tooltip>
+          )}
+
           {/* 刪除（只限自訂項目） */}
           {item.menu_key.startsWith('custom_') && (
             <Tooltip title="刪除此自訂項目">
@@ -697,6 +730,9 @@ export default function MenuConfigPage() {
   const [history, setHistory]           = useState<MenuConfigHistoryItem[]>([])
   const [historyLoading, setHistoryLoading] = useState(false)
   const [activeId, setActiveId]         = useState<string | null>(null)
+  const [homePageRoute, setHomePageRoute] = useState<string>(
+    () => localStorage.getItem(HOME_PAGE_STORAGE_KEY) || '/dashboard'
+  )
 
   // 新增選單 Modal
   const [addModal, setAddModal]         = useState<{ open: boolean; parentKey: string | null }>({ open: false, parentKey: null })
@@ -824,6 +860,13 @@ export default function MenuConfigPage() {
       return next
     })
     setDirty(true)
+  }, [])
+
+  // ── 設定首頁 ──────────────────────────────────────────────────────────────
+  const handleSetHomePage = useCallback((route: string) => {
+    localStorage.setItem(HOME_PAGE_STORAGE_KEY, route)
+    setHomePageRoute(route)
+    message.success(`已設為首頁：${route}`)
   }, [])
 
   // ── 刪除自訂項目（non-custom 子項目退回上一層）────────────────────────────
@@ -1095,6 +1138,7 @@ export default function MenuConfigPage() {
         <Space size={4}><EditOutlined style={{ color: '#666' }} /><span>改名（雙擊也可）</span></Space>
         <Space size={4}><EyeOutlined style={{ color: '#666' }} /><span>顯示／隱藏</span></Space>
         <Space size={4}><ArrowsAltOutlined style={{ color: '#666' }} /><span>跨層移動</span></Space>
+        <Space size={4}><HomeOutlined style={{ color: '#52c41a' }} /><span>設為首頁</span></Space>
         <Space size={4}><DeleteOutlined style={{ color: '#ff4d4f' }} /><span>刪除（自訂項目）</span></Space>
         <Space size={4}>
           <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 2, background: '#e6f4ff', border: '1px solid #91caff' }} />
@@ -1147,11 +1191,13 @@ export default function MenuConfigPage() {
                   parentKey={null}
                   grandparentKey={null}
                   allTopLevel={items}
+                  homePageRoute={homePageRoute}
                   onLabelChange={handleLabelChange}
                   onVisibleChange={handleVisibleChange}
                   onMoveItem={handleMoveItem}
                   onDeleteItem={handleDeleteItem}
                   onPermissionKeyChange={handlePermissionKeyChange}
+                  onSetHomePage={handleSetHomePage}
                 />
 
                 {/* L2 子層 */}
@@ -1170,11 +1216,13 @@ export default function MenuConfigPage() {
                             parentKey={parent.menu_key}
                             grandparentKey={null}
                             allTopLevel={items}
+                            homePageRoute={homePageRoute}
                             onLabelChange={handleLabelChange}
                             onVisibleChange={handleVisibleChange}
                             onMoveItem={handleMoveItem}
                             onDeleteItem={handleDeleteItem}
                             onPermissionKeyChange={handlePermissionKeyChange}
+                            onSetHomePage={handleSetHomePage}
                           />
 
                           {/* L3 孫層 */}
@@ -1191,11 +1239,13 @@ export default function MenuConfigPage() {
                                   parentKey={child.menu_key}
                                   grandparentKey={parent.menu_key}
                                   allTopLevel={items}
+                                  homePageRoute={homePageRoute}
                                   onLabelChange={handleLabelChange}
                                   onVisibleChange={handleVisibleChange}
                                   onMoveItem={handleMoveItem}
                                   onDeleteItem={handleDeleteItem}
                                   onPermissionKeyChange={handlePermissionKeyChange}
+                                  onSetHomePage={handleSetHomePage}
                                 />
                               ))}
                             </SortableContext>

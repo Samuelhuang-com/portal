@@ -50,7 +50,7 @@ export default function LoginPage() {
         permissions: data.user?.permissions || [],
         is_active:   data.user?.is_active   ?? true,
       })
-      navigate('/dashboard')
+      navigate(localStorage.getItem('portal_home_page_route') || '/dashboard')
     } catch (err: any) {
       message.error({ content: err.message || '登入失敗，請稍後再試', duration: 4 })
     } finally {
