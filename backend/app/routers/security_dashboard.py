@@ -233,3 +233,95 @@ def get_trend(
         ))
 
     return DashboardTrend(trend=trend_points, days=days)
+
+
+# ── /monthly-summary — 月份彙總（供 hotel/overview Dashboard 使用）─────────────
+
+def _parse_minutes_sec(start: str, end: str) -> int:
+    """解析 HH:MM 格式開始/結束時間，回傳分鐘差值；格式無效回傳 0。"""
+    import re as _re
+    def to_min(t: str) -> Optional[int]:
+        m = _re.match(r"^(\d{1,2}):(\d{2})$", (t or "").strip())
+        return int(m.group(1)) * 60 + int(m.group(2)) if m else None
+    s, e = to_min(start), to_min(end)
+    if s is None or e is None:
+        return 0
+    diff = e - s
+    return diff + 24 * 60 if diff < 0 else diff
+
+
+@router.get("/monthly-summary", summary="保全巡檢月份彙總統計（供飯店管理 Dashboard 使用）")
+def get_monthly_summary(
+    year:  int = Query(..., ge=2020, le=2030, description="年份"),
+    month: int = Query(..., ge=1,    le=12,   description="月份（1–12）"),
+    db: Session = Depends(get_db),
+):
+    """
+    彙整指定年月內所有保全巡檢的月份統計（跨所有巡檢表），
+    供飯店管理 Dashboard KPI Card「保全巡檢」顯示月份口徑資料。
+
+    回傳：
+      year_month      — 查詢年月（如 "2026/04"）
+      total_items     — 月內所有巡檢項目總數
+      checked_items   — 已確認項目數
+      abnormal_items  — 異常項目數（abnormal + pending）
+      total_minutes   — 月內總巡檢時間（分鐘，由 start_time/end_time 計算）
+      completion_rate — 完成率（%）
+      sheets          — 各巡檢表的月份彙總明細
+    """
+    year_month_prefix = f"{year}/{month:02d}/"
+
+    sheets_result = []
+    for sk in ALL_SHEET_KEYS:
+        month_batches = db.query(SecurityPatrolBatch).filter(
+            SecurityPatrolBatch.sheet_key == sk,
+            SecurityPatrolBatch.inspection_date.like(f"{year_month_prefix}%"),
+        ).all()
+
+        total = normal = abnormal = pending = unchecked = total_minutes = 0
+        for b in month_batches:
+            items = db.query(SecurityPatrolItem).filter(
+                SecurityPatrolItem.batch_ragic_id == b.ragic_id,
+                SecurityPatrolItem.is_note == False,  # noqa: E712
+            ).all()
+            for it in items:
+                total += 1
+                if   it.result_status == "normal":   normal   += 1
+                elif it.result_status == "abnormal": abnormal += 1
+                elif it.result_status == "pending":  pending  += 1
+                else:                                unchecked += 1
+            total_minutes += _parse_minutes_sec(b.start_time or "", b.end_time or "")
+
+        checked = normal + abnormal + pending
+        sheets_result.append({
+            "sheet_key":       sk,
+            "sheet_name":      SHEET_CONFIGS[sk]["name"],
+            "total_batches":   len(month_batches),
+            "total_items":     total,
+            "checked_items":   checked,
+            "abnormal_items":  abnormal + pending,
+            "unchecked_items": unchecked,
+            "completion_rate": round(checked / total * 100, 1) if total > 0 else 0.0,
+            "has_data":        total > 0,
+            "total_minutes":   total_minutes,
+        })
+
+    total_items_all    = sum(s["total_items"]    for s in sheets_result)
+    checked_items_all  = sum(s["checked_items"]  for s in sheets_result)
+    abnormal_items_all = sum(s["abnormal_items"] for s in sheets_result)
+    total_minutes_all  = sum(s["total_minutes"]  for s in sheets_result)
+    overall_rate = (
+        round(checked_items_all / total_items_all * 100, 1) if total_items_all > 0 else 0.0
+    )
+
+    return {
+        "year":            year,
+        "month":           month,
+        "year_month":      f"{year}/{month:02d}",
+        "total_items":     total_items_all,
+        "checked_items":   checked_items_all,
+        "abnormal_items":  abnormal_items_all,
+        "total_minutes":   total_minutes_all,
+        "completion_rate": overall_rate,
+        "sheets":          sheets_result,
+    }

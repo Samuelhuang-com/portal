@@ -54,6 +54,22 @@ STATUS_LABELS = {
 
 # ── 業務邏輯輔助函式 ──────────────────────────────────────────────────────────
 
+_TIME_FMTS = ["%Y/%m/%d %H:%M:%S", "%Y/%m/%d %H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"]
+
+def _time_diff_minutes(start: str, end: str) -> int:
+    """計算 start_time ~ end_time 差值（分鐘），解析失敗回傳 0。"""
+    if not start or not end:
+        return 0
+    for fmt in _TIME_FMTS:
+        try:
+            st = datetime.strptime(start.strip(), fmt)
+            et = datetime.strptime(end.strip(), fmt)
+            return max(0, int((et - st).total_seconds() / 60))
+        except ValueError:
+            continue
+    return 0
+
+
 def _calc_status(item: FullBldgPMItem, check_month: int) -> str:
     exec_months: list[int] = []
     try:
@@ -120,6 +136,7 @@ def _calc_kpi(items: list[FullBldgPMItem], check_month: int) -> PMBatchKPI:
     overdue     = sum(1 for _, s in current_items if s == "overdue")
     abnormal    = sum(1 for it in items if it.abnormal_flag)
     planned     = sum(it.estimated_minutes for it, s in current_items)
+    actual      = sum(_time_diff_minutes(it.start_time, it.end_time) for it in items if it.start_time and it.end_time)
     rate = round(completed / total_all * 100, 1) if total_all > 0 else 0.0
 
     return PMBatchKPI(
@@ -133,6 +150,7 @@ def _calc_kpi(items: list[FullBldgPMItem], check_month: int) -> PMBatchKPI:
         abnormal            = abnormal,
         completion_rate     = rate,
         planned_minutes     = planned,
+        actual_minutes      = actual,
     )
 
 
@@ -307,16 +325,22 @@ def list_items(
 # GET /stats
 # ══════════════════════════════════════════════════════════════════════════════
 @router.get("/stats", summary="全站統計（Dashboard 資料來源）", response_model=PMStats)
-def get_stats(db: Session = Depends(get_db)):
+def get_stats(
+    year:  Optional[int] = Query(None, description="篩選年份，如 2026"),
+    month: Optional[int] = Query(None, ge=1, le=12, description="篩選月份，如 5"),
+    db:    Session = Depends(get_db),
+):
     today = date.today()
-    current_ym  = today.strftime("%Y/%m")
-    check_month = today.month
+    target_year  = year  or today.year
+    target_month = month or today.month
+    check_month  = target_month
+    target_ym    = f"{target_year}/{target_month:02d}"
 
     current_batch = db.query(FullBldgPMBatch).filter(
-        FullBldgPMBatch.period_month == current_ym
+        FullBldgPMBatch.period_month == target_ym
     ).first()
 
-    if not current_batch:
+    if not current_batch and not (year or month):
         current_batch = db.query(FullBldgPMBatch).order_by(
             FullBldgPMBatch.period_month.desc()
         ).first()
@@ -341,19 +365,23 @@ def get_stats(db: Session = Depends(get_db)):
             if _calc_status(it, check_month) == "overdue"
         ][:10]
 
+        is_current_month = (target_year == today.year and target_month == today.month)
         upcoming_items = []
         for it in items:
             s = _calc_status(it, check_month)
             if s == "scheduled" and it.scheduled_date:
-                try:
-                    sched = datetime.strptime(
-                        f"{today.year}/{it.scheduled_date}", "%Y/%m/%d"
-                    ).date()
-                    days_left = (sched - today).days
-                    if 0 <= days_left <= 7:
-                        upcoming_items.append(_item_to_out(it, check_month))
-                except Exception:
-                    pass
+                if is_current_month:
+                    try:
+                        sched = datetime.strptime(
+                            f"{today.year}/{it.scheduled_date}", "%Y/%m/%d"
+                        ).date()
+                        days_left = (sched - today).days
+                        if 0 <= days_left <= 7:
+                            upcoming_items.append(_item_to_out(it, check_month))
+                    except Exception:
+                        pass
+                else:
+                    upcoming_items.append(_item_to_out(it, check_month))
         upcoming_items = upcoming_items[:10]
 
         from collections import Counter

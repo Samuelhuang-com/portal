@@ -19,10 +19,12 @@ export async function syncIHGFromRagic(): Promise<{ success: boolean; message: s
 }
 
 // ── KPI 統計 ──────────────────────────────────────────────────────────────────
-export async function fetchIHGStats(year?: string): Promise<IHGStats> {
-  const res = await apiClient.get<IHGStats>(`${BASE}/stats`, {
-    params: year ? { year } : {},
-  })
+/** year: 年度（如 "2026"）；month: 月份（如 "4"），傳入月份時回傳當月房間數與工時 */
+export async function fetchIHGStats(year?: string, month?: string): Promise<IHGStats> {
+  const params: Record<string, string> = {}
+  if (year)  params.year  = year
+  if (month) params.month = month
+  const res = await apiClient.get<IHGStats>(`${BASE}/stats`, { params })
   return res.data
 }
 

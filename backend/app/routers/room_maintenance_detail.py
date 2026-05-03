@@ -461,7 +461,9 @@ async def get_staff_hours(
 # ── GET /maintenance-stats — 保養統計分析（Phase 1+2+3）───────────────────────
 @router.get("/maintenance-stats", summary="保養統計分析（完成率趨勢、異常項目、樓層分析、高風險房間、月份對比）")
 async def get_maintenance_stats(
-    months: int = Query(12, ge=1, le=36, description="顯示最近幾個月（預設 12）"),
+    months: int           = Query(12,   ge=1,    le=36,  description="顯示最近幾個月（預設 12）"),
+    year:   Optional[int] = Query(None, ge=2020, le=2030, description="統計基準年（不填則取今年）"),
+    month:  Optional[int] = Query(None, ge=1,    le=12,  description="統計基準月（不填則取今月）"),
     db: Session = Depends(get_db),
 ):
     """
@@ -481,7 +483,8 @@ async def get_maintenance_stats(
     kpi：主管 KPI 摘要（6 個指標）
     """
     today = date.today()
-    cur_year, cur_month = today.year, today.month
+    cur_year  = year  or today.year
+    cur_month = month or today.month
     cur_ym = f"{cur_year}/{cur_month:02d}"
 
     # ── 建立月份標籤列表（由舊到新）──────────────────────────────────────────

@@ -68,13 +68,20 @@ export async function fetchStaffHours(
   return data
 }
 
-/** 保養統計分析（近 N 個月完成率趨勢、異常項目、樓層分析、高風險房間、月份對比） */
+/** 保養統計分析（近 N 個月完成率趨勢、異常項目、樓層分析、高風險房間、月份對比）
+ *  year/month：指定統計基準年月，不填則以 server 今日為基準。
+ */
 export async function fetchMaintenanceStats(
+  year?:  number,
+  month?: number,
   months = 12,
 ): Promise<MaintenanceStatsResponse> {
+  const params: Record<string, number> = { months }
+  if (year)  params.year  = year
+  if (month) params.month = month
   const { data } = await apiClient.get<MaintenanceStatsResponse>(
     `${BASE}/maintenance-stats`,
-    { params: { months } },
+    { params },
   )
   return data
 }

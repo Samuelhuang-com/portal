@@ -38,13 +38,15 @@ export interface MatrixResponse {
 
 // ── KPI 統計 ──────────────────────────────────────────────────────────────────
 export interface IHGStats {
-  year: string
-  total_scheduled: number
-  completed: number   // check 欄位全正常/完成
-  abnormal: number    // 有「等待維護(待料中)」欄位
-  pending: number     // 無 check 資料（尚未填寫）
-  completion_rate: number
-  synced_at: string
+  year:             string
+  month?:           string | null   // 有傳 month 參數時出現（當月統計）
+  total_scheduled:  number          // 有執行的房間數（distinct room_no）
+  completed:        number          // check 欄位全正常/完成
+  abnormal:         number          // 有「等待維護(待料中)」欄位
+  pending:          number          // 無 check 資料（尚未填寫）
+  completion_rate:  number
+  work_hours:       number          // 工時合計（小時，來自 raw_json「工時計算」加總 / 60）
+  synced_at:        string
 }
 
 // ── 單筆記錄明細 ──────────────────────────────────────────────────────────────

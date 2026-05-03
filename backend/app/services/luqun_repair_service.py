@@ -320,7 +320,7 @@ RK_ALIASES: dict[str, list[str]] = {
     RK_OCCURRED_AT: ["報修日期", "發生時間", "實際報修時間", "報修時間", "申報時間", "建立時間"],  # 報修日期優先，發生時間備用
     RK_RESPONSIBLE: ["處理工務", "負責單位", "負責人", "承辦單位", "交辦主管"],
     RK_WORK_HOURS: ["花費工時", "工時", "預估工時"],  # 主欄位；fallback 工務處理天數在 __init__ 手動處理
-    RK_STATUS: ["處理狀況", "問題狀態", "狀態", "進度"],  # 實測：問題狀態/狀態
+    RK_STATUS: ["處理狀況"],
     RK_OUTSOURCE_FEE: ["委外費用", "外包費用"],
     RK_MAINTENANCE_FEE: ["維修費用", "費用"],
     RK_ACCEPTOR: ["驗收者", "驗收人"],

@@ -159,16 +159,18 @@ async def sync_records(background_tasks: BackgroundTasks):
 
 @router.get("/stats", summary="IHG 客房保養 KPI 統計")
 async def get_stats(
-    year: Optional[str] = Query(None, description="篩選年度，如 2026；空白=當年"),
+    year:  Optional[str] = Query(None, description="篩選年度，如 2026；空白=當年"),
+    month: Optional[str] = Query(None, description="篩選月份（不補零，如 4）；空白=全年"),
     db: Session = Depends(get_db),
 ):
     """
     回傳統計卡：
-      total_scheduled  — 全年應保養數
-      completed        — 已完成數
-      pending          — 未完成數（不含逾期）
-      overdue          — 逾期數
+      total_scheduled  — 有執行的房間數（distinct room_no；指定月份時為當月房間數，否則全年）
+      completed        — 已完成房間數
+      pending          — 未完成數（不含異常）
+      abnormal         — 異常數
       completion_rate  — 完成率（%）
+      work_hours       — 工時合計（小時，來自 raw_json「工時計算」欄位加總 / 60）
     """
     if not year:
         year = str(twnow().year)
@@ -176,20 +178,31 @@ async def get_stats(
     q = db.query(IHGRoomMaintenanceMaster).filter(
         IHGRoomMaintenanceMaster.maint_year == year
     )
+    if month:
+        q = q.filter(IHGRoomMaintenanceMaster.maint_month == month.zfill(2))
     all_recs = q.all()
 
-    total = len(all_recs)
+    # 有執行的房間數 = distinct room_no（而非主表筆數）
+    total = len({r.room_no for r in all_recs})
 
     # 以 raw_json check 欄位計算各狀態（與 /matrix 邏輯一致）
     completed_count = 0
     abnormal_count  = 0
     pending_count   = 0
+    total_work_minutes = 0.0
 
     for r in all_recs:
         normal_c = done_c = maint_c = unchecked_c = 0
         try:
             raw_data = json.loads(r.raw_json or "{}")
             for k, v in raw_data.items():
+                # 工時計算欄位（單位：分鐘）
+                if k == "工時計算" and v not in (None, "", "None"):
+                    try:
+                        total_work_minutes += float(v)
+                    except (ValueError, TypeError):
+                        pass
+                    continue
                 if not _is_check_field(k, v):
                     continue
                 val = v if isinstance(v, str) else ""
@@ -212,14 +225,17 @@ async def get_stats(
             pending_count += 1
 
     rate = round(completed_count / total * 100, 1) if total else 0.0
+    work_hours = round(total_work_minutes / 60, 2)
 
     return {
-        "year": year,
+        "year":            year,
+        "month":           month,
         "total_scheduled": total,
-        "completed": completed_count,
-        "abnormal": abnormal_count,
-        "pending": pending_count,
+        "completed":       completed_count,
+        "abnormal":        abnormal_count,
+        "pending":         pending_count,
         "completion_rate": rate,
+        "work_hours":      work_hours,
         "synced_at": (
             db.query(func.max(IHGRoomMaintenanceMaster.synced_at)).scalar() or ""
         ),

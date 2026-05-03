@@ -25,6 +25,7 @@ router = APIRouter()
 # 待開發測試完成後，管理員再透過 Roles 頁面手動勾選授予。
 PERMISSION_DEFINITIONS = [
     # ── 一階選單（獨立一階，不屬於任何群組）──────────────────────────────────
+    {"key": "decision_cockpit_view",      "label": "決策駕駛艙",         "group": "一階選單"},
     {"key": "exec_dashboard_view",        "label": "高階主管 Dashboard", "group": "一階選單"},
     {"key": "work_category_analysis_view","label": "工項類別分析",       "group": "一階選單"},
     {"key": "calendar_view",              "label": "行事曆",             "group": "一階選單"},

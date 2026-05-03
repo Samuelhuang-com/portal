@@ -90,3 +90,77 @@ export async function fetchSecurityDashboardTrend(days = 7): Promise<SecurityDas
   const { data } = await apiClient.get(`${BASE}/dashboard/trend`, { params: { days } })
   return data
 }
+
+// ── 月份彙總（供飯店管理 Dashboard KPI Card 使用）────────────────────────────
+
+export interface SecurityMonthlyDashboard {
+  year:            number
+  month:           number
+  year_month:      string
+  total_items:     number
+  checked_items:   number
+  abnormal_items:  number
+  total_minutes:   number
+  completion_rate: number
+  sheets: {
+    sheet_key:       string
+    sheet_name:      string
+    total_batches:   number
+    total_items:     number
+    checked_items:   number
+    abnormal_items:  number
+    unchecked_items: number
+    completion_rate: number
+    has_data:        boolean
+    total_minutes:   number
+  }[]
+}
+
+export async function fetchSecurityMonthlyDashboard(
+  year: number,
+  month: number,
+): Promise<SecurityMonthlyDashboard> {
+  const { data } = await apiClient.get<SecurityMonthlyDashboard>(
+    `${BASE}/dashboard/monthly-summary`,
+    { params: { year, month } },
+  )
+  return data
+}
+
+// ── Monthly Summary ───────────────────────────────────────────────────────────
+
+export interface SecurityMonthlySheetStats {
+  sheet_key:       string
+  sheet_name:      string
+  total_batches:   number
+  total_items:     number
+  checked_items:   number
+  abnormal_items:  number   // abnormal + pending 已合併
+  unchecked_items: number
+  completion_rate: number
+  has_data:        boolean
+  total_minutes:   number
+}
+
+export interface SecurityMonthlySummary {
+  year:            number
+  month:           number
+  year_month:      string
+  total_items:     number
+  checked_items:   number
+  abnormal_items:  number
+  total_minutes:   number
+  completion_rate: number
+  sheets:          SecurityMonthlySheetStats[]
+}
+
+export async function fetchSecurityDashboardMonthlySummary(
+  year: number,
+  month: number,
+): Promise<SecurityMonthlySummary> {
+  const { data } = await apiClient.get<SecurityMonthlySummary>(
+    `${BASE}/dashboard/monthly-summary`,
+    { params: { year, month } },
+  )
+  return data
+}

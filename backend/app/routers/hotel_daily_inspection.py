@@ -405,3 +405,108 @@ def get_dashboard_summary(
         })
 
     return {"target_date": target_date, "sheets": results}
+
+
+# ── GET /dashboard/monthly-summary — 月份彙總（供 hotel/overview Dashboard 使用）──
+@router.get(
+    "/dashboard/monthly-summary",
+    summary="飯店每日巡檢月份彙總統計（跨 Sheet，供飯店管理 Dashboard 使用）",
+    tags=["飯店每日巡檢"],
+)
+def get_dashboard_monthly_summary(
+    year:  int = Query(..., ge=2020, le=2030, description="年份"),
+    month: int = Query(..., ge=1,    le=12,   description="月份（1–12）"),
+    db: Session = Depends(get_db),
+):
+    """
+    彙整指定年月內所有飯店每日巡檢的月份統計（跨所有 Sheet），
+    供飯店管理 Dashboard KPI Card「飯店每日巡檢」顯示月份口徑資料。
+
+    回傳：
+      year_month      — 查詢年月（如 "2026/04"）
+      total_items     — 月內所有巡檢項目總數
+      checked_items   — 已確認項目數
+      abnormal_items  — 異常項目數
+      total_minutes   — 月內總巡檢時間（分鐘）
+      completion_rate — 完成率（%）
+      sheets          — 各 Sheet 的月份彙總明細
+    """
+    year_month_prefix = f"{year}/{month:02d}/"
+
+    results = []
+    for cfg in SHEET_CONFIGS:
+        key = cfg.key
+
+        # 指定月份的所有批次
+        month_batches = (
+            db.query(HotelDIBatch)
+            .filter(
+                HotelDIBatch.sheet_key == key,
+                HotelDIBatch.inspection_date.like(f"{year_month_prefix}%"),
+            )
+            .all()
+        )
+
+        total_batches   = len(month_batches)
+        total_items     = 0
+        checked_items   = 0
+        abnormal_items  = 0
+        pending_items   = 0
+        unchecked_items = 0
+        total_minutes   = 0
+
+        for b in month_batches:
+            items = (
+                db.query(HotelDIItem)
+                .filter(
+                    HotelDIItem.batch_ragic_id == b.ragic_id,
+                    HotelDIItem.is_note == False,
+                )
+                .all()
+            )
+            kpi = _calc_kpi(items)
+            total_items     += kpi["total"]
+            checked_items   += kpi["checked"]
+            abnormal_items  += kpi["abnormal"]
+            pending_items   += kpi["pending"]
+            unchecked_items += kpi["unchecked"]
+            total_minutes   += _parse_minutes(b.start_time or "", b.end_time or "")
+
+        completion_rate = (
+            round(checked_items / total_items * 100, 1) if total_items > 0 else 0.0
+        )
+
+        results.append({
+            "key":             key,
+            "floor":           cfg.floor,
+            "title":           cfg.title,
+            "total_batches":   total_batches,
+            "total_items":     total_items,
+            "checked_items":   checked_items,
+            "abnormal_items":  abnormal_items,
+            "pending_items":   pending_items,
+            "unchecked_items": unchecked_items,
+            "completion_rate": completion_rate,
+            "has_data":        total_batches > 0,
+            "total_minutes":   total_minutes,
+        })
+
+    total_items_all    = sum(s["total_items"]    for s in results)
+    checked_items_all  = sum(s["checked_items"]  for s in results)
+    abnormal_items_all = sum(s["abnormal_items"] for s in results)
+    total_minutes_all  = sum(s["total_minutes"]  for s in results)
+    overall_rate = (
+        round(checked_items_all / total_items_all * 100, 1) if total_items_all > 0 else 0.0
+    )
+
+    return {
+        "year":            year,
+        "month":           month,
+        "year_month":      f"{year}/{month:02d}",
+        "total_items":     total_items_all,
+        "checked_items":   checked_items_all,
+        "abnormal_items":  abnormal_items_all,
+        "total_minutes":   total_minutes_all,
+        "completion_rate": overall_rate,
+        "sheets":          results,
+    }

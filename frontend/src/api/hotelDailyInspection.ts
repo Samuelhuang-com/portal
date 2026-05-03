@@ -81,6 +81,19 @@ export interface HotelDIDashboardSummary {
   sheets:      HotelDISheetSummary[]
 }
 
+/** 月份彙總統計（供飯店管理 Dashboard KPI Card 使用） */
+export interface HotelDIMonthlyDashboard {
+  year:            number
+  month:           number
+  year_month:      string
+  total_items:     number
+  checked_items:   number
+  abnormal_items:  number
+  total_minutes:   number
+  completion_rate: number
+  sheets:          HotelDISheetSummary[]
+}
+
 // ── API 函式 ──────────────────────────────────────────────────────────────────
 
 /**
@@ -121,12 +134,27 @@ export async function syncHotelDailyAllFromRagic(): Promise<void> {
 }
 
 /**
- * 取得全體飯店每日巡檢 Dashboard 統計（跨 Sheet）
+ * 取得全體飯店每日巡檢 Dashboard 統計（跨 Sheet）— 單日口徑
  */
 export async function fetchHotelDailyDashboardSummary(
   targetDate?: string,
 ): Promise<HotelDIDashboardSummary> {
   const params = targetDate ? { target_date: targetDate } : {}
   const res = await apiClient.get<HotelDIDashboardSummary>(`${BASE}/dashboard/summary`, { params })
+  return res.data
+}
+
+/**
+ * 取得飯店每日巡檢月份彙總統計（跨 Sheet）— 月份口徑
+ * 供飯店管理 Dashboard KPI Card 使用
+ */
+export async function fetchHotelDailyMonthlyDashboard(
+  year: number,
+  month: number,
+): Promise<HotelDIMonthlyDashboard> {
+  const res = await apiClient.get<HotelDIMonthlyDashboard>(
+    `${BASE}/dashboard/monthly-summary`,
+    { params: { year, month } },
+  )
   return res.data
 }

@@ -2,9 +2,38 @@
 
 > 跨據點統一管理平台 — FastAPI + React + TypeScript
 
-**最後更新：2026-04-30（v1.43.2）**
+**最後更新：2026-05-03（v1.54.0）**
 
 ## 最近變更
+- v1.54.9：**決策駕駛艙 Phase 3~8 全部完成** — B.飯店(6來源SourceCard) / C.商場(4工項+2灰燈) / D.工務(雙欄+12M折線) / E.人員工時(Top10 Bar) / F.風險雷達(10模組燈號矩陣) / G.趨勢(日度+月工時LineChart) / H.晨會摘要(規則式文字+複製) / I.資料品質(完整度Table) / Phase7 window.print / Phase8 後端 decision_cockpit_view
+- v1.54.1：**決策駕駛艙 Phase 2 — A.決策總覽** — `healthScore.ts` 計算工具（4 維度權重、燈號判斷、群組加權）；`TabOverview.tsx` 健康分數矩陣大圓 + 三子分數 + 工務/客房 KPI 彙整列 + 規則式 5 件事
+- v1.54.0：**決策駕駛艙 Phase 1** — 新一級選單 `/decision-cockpit`（PermissionGuard: `decision_cockpit_view`）；9 TAB 懶載入框架；月份選擇器（24 個月）；3 份規劃 MD（PLANNING / KPI_DATASOURCE_MAP / HEALTH_SCORE_SPEC）；9 個 TAB stub 元件
+- v1.53.8：**`mall/overview` 版型對齊飯店版** — 年月 Select + 匯出按鈕移至右上角 header Card；Tab A 篩選列簡化
+- v1.53.7：**`mall/overview` 匯出 PowerPoint（5 張投影片）** — 後端 `mall_overview.py` POST endpoint + `_build_mall_pptx()` 三層 KPI Slide；前端 `mallOverview.ts` 新增 Payload 型別 + `exportMallOverviewPptx`；MallMgmtDashboard 加入匯出按鈕（月份為 0 時 disabled）
+- v1.53.6：**`hotel/overview` 匯出 PowerPoint — Slide 2 三層 KPI 總覽（方向 B）** — POST endpoint 接收前端 KPI payload（主管摘要/各來源狀態/費用）；Slide 2 渲染 5 KPI box + 2×4 來源卡 + 3 費用 box；Slide 3-5 後端自行查 DB；前端組裝 payload 後 POST 下載
+- v1.53.5：**飯店每日巡檢 & 保全巡檢 Dashboard 全月篩選** — Segmented「單日/全月」切換；全月模式呼叫 monthly-summary 端點；保全新增 `fetchSecurityDashboardMonthlySummary`；趨勢圖僅單日顯示
+- v1.53.4：**`hotel/overview` KPI 月份口徑全面修正** — room_maintenance_detail / IHG stats / hotel_daily_inspection / security_dashboard 全部改傳 year/month；每日巡檢 & 保全改用月份彙總新端點；IHG 改 distinct room_no + work_hours；移除整體完成率圓餅；工務部「異常」→「未完成」
+- v1.53.3：**`hotel/periodic-maintenance` 同步 Ragic「工時計算」欄位** — Model 新增 `ragic_work_minutes`；sync service 讀取「工時計算」；KPI `actual_minutes` 優先用 Ragic 欄位，NULL 則 fallback end−start；startup 自動 ALTER TABLE migration
+- v1.53.2：**`hotel/periodic-maintenance` Dashboard 新增「預估工時」和「保養時間」KPI 卡片** — 後端補 `_time_diff_minutes()` + `actual_minutes` 計算；前端新增兩張 Statistic 卡（比照 mall 模組）
+- v1.53.1：**`dazhi-repair/dashboard` 計算口徑對齊 luqun** — 新增 occ_year/occ_month；修正 this_month_new 雙重計入、fee_month_cases 口徑、trend_12m 報修月基準、_str() falsy-0 bug；移除畫面「大直」文字（4 處）
+- v1.53.0：**`hotel/overview` 來源卡片加入「預估工時 / 保養時間」雙行（Option A）** — NormalizedSource 新增 actual_hours?；飯店週期保養 SourceCard 顯示計劃工時（藍）與保養時間（綠）
+- v1.52.6：**`mall/overview` 全模組文字放大 2 級** — 89 處 fontSize 統一 +2（11→13、12→14、13→15 ... 22→24）
+- v1.52.5：**`mall/overview` 各來源卡依年月篩選重算** — 年月變更同步觸發商場/全棟例行維護（PM stats year/month）、商場工務巡檢（monthly-summary 月統計）、樂群報修四卡重載；新增 `normalizeFacilityMonthly`
+- v1.52.4：**`mall/overview` KPI 卡工時拆分「預估工時（藍）＋保養時間（綠）」** — `NormalizedSummary.actual_hours`；`normalizePM` 讀 `kpi.actual_minutes`；`daily/monthly/person-hours` 例行維護改用 `start_time`/`end_time` 實際差值
+- v1.52.3：**三大監控模組 Dashboard 查詢月份功能**（每日數值登錄 / 商場工務巡檢 / 整棟巡檢）— 月份選擇器 + URL `?month=YYYY-MM` + KPI 依月份重算 + 今/末日 Badge + 共用 `date_utils.get_month_range`
+- v1.52.3：**商場 / 全棟保養 Dashboard 新增「預估工時」KPI 卡**；「保養時間」改為實際 end−start 差值合計；後端 PMBatchKPI 加 actual_minutes
+- v1.52.2：**三大保養模組 Dashboard 年月篩選**（飯店週期保養 / 商場週期保養 / 全棟例行維護）— 各模組 Dashboard 頂部加年月 Select；KPI/圖表/預警清單隨選月份同步重算；三支後端 `/stats` 均加 `year`/`month` query params
+- v1.52.1：**mall/overview Tab B「例行維護」0 值修正** — period_month 改用 LIKE + Python 月份過濾（相容零填充/非零填充格式）；無 scheduled_date 的未排定項目落回第 1 天，確保合計與 planned_minutes / 60 一致
+- v1.49.1：**飯店管理 Dashboard Tab B「現場報修」工時口徑修正** — `hotel_overview.py` 大直工務部選案邏輯由 occurred_at 月改為對齊 dashboard：已完工案件按 completed_at 月、未完工按 occurred_at 月（daily/monthly 兩端點同步修正）
+- v1.49.0：**飯店管理 Dashboard Tab B「每日累計」版型修正** — 五項工作類別（現場報修/上級交辦/緊急事件/例行維護/每日巡檢）取代六項來源；Tag badge 渲染；Card 包裝（標題+year月）；欄位「工項類別」/「TOTAL」/「%」格式；後端 API 不變
+- v1.48.0：**飯店管理 Dashboard 移除三個 Tab（保養管理/巡檢管理/大直工務）** — 刪除 3 個 Tab 項目及 8 個對應內嵌函式（SecurityTrendChart / HotelDICards / SecuritySheetCards / CompletionRateRow / DazhiSummary / PMSummary / IHGSummary 等）；保留 DazhiTrendChart / SourcePieChart（總覽 Tab 仍使用）
+- v1.47.0：**飯店管理 Dashboard 新增三大區塊** — 總覽 Tab 加入篩選列（大直工務年月+巡檢日期 DatePicker+今日）；報修費用摘要（委外+維修/扣款/本月費用 3 卡）；決策分析圖表（橫向案件數比較+完成率比較 BarChart，Donut Pie+趨勢折線）
+- v1.46.0：**飯店管理 Dashboard 版型全面對齊 mall/overview** — KpiAggregate 重構（6 標準卡：總工項/已完成/整體完成率圓餅/工時/異常/逾期，移除 size=small，fontSize 11）；SourceCards 重構（Card title+icon+色彩+詳情按鈕，雙欄 Statistic+漸層 Progress+底部異常/逾期/工時）；NormalizedSource 新增 completed_count/overdue_count
+- v1.45.0：**飯店管理 Dashboard Tab B/C/D/人員排名** — 後端 3 支新 API（`/hotel/daily-hours` / `/hotel/monthly-hours` / `/hotel/person-hours`），`hotel_overview.py` + `main.py` 掛載；前端 `api/hotelOverview.ts` + 4 個懶載入 Tab（每日累計/每月累計/人員工時%/人員排名）；人員排名橫向 Bar + 明細表
+- v1.44.0：**飯店管理 Dashboard（新功能）** — 整合 6 來源（客房保養管理/飯店週期保養/IHG客房保養/飯店每日巡檢/保全巡檢/大直工務部）跨模組總覽；前端 Normalize adapter 層；KPI 卡 + 各來源狀態卡 + 4 張圖表；route `/hotel/overview`；Menu 飯店管理群組置頂
+- v1.43.5：**商場管理 Dashboard Tab D 重寫** — 後端新增 `GET /api/v1/mall/person-hours`（Top-15 人員 × 5 工項）；Tab D 改為 WCA 格式工項×人員交叉表（%色彩編碼）；移除舊 Pie chart、集中度分析
+- v1.43.4：**商場管理 Dashboard Tab C 重寫** — 移除舊 PM 完成率矩陣；後端新增 `GET /api/v1/mall/monthly-hours`；Tab C 改為五工項 × 12 月工時交叉表，格式與 work-category-analysis Tab C 一致
+- v1.43.3：**商場管理 Dashboard Tab B 重寫** — 後端新增 `GET /api/v1/mall/daily-hours`，彙整五項工作類別（現場報修/上級交辦/緊急事件/例行維護/每日巡檢）每日 HR；前端新增 `api/mallOverview.ts`；Tab B 改為五工項 × 日期交叉表，格式與 work-category-analysis 一致
 - v1.43.2：**樂群 扣款費用口徑統一** — `month_deduction_fee`、`annual_deduction_fee`、`compute_fee_stats` 扣款費用欄全數加入 `is_completed + deduction_counter_name` 篩選，與扣款專櫃完全同口徑；消除有扣款費但無專櫃名稱案件（資料缺漏）造成的金額差異
 - v1.43.0：**保全巡檢模組整合** — 8 個獨立選單整合為單一入口 `/security/dashboard`；外層 TAB（Dashboard + 7 張 Sheet）；SecurityPatrolContent prop 拆分；Menu 簡化；後端零改動
 - v1.42.0：**每日數值登錄表模組（新功能）** — 4 張 Ragic Sheet（全棟電錶/商場空調箱電錶/專櫃電錶/專櫃水錶）整合；Dashboard + 各 Sheet 列表；route `/hotel/daily-meter-readings`；Menu「飯店管理 > 每日數值登錄表」；权限 `hotel_meter_readings_view`

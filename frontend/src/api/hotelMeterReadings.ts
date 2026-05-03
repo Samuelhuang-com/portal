@@ -20,14 +20,15 @@ export interface HotelMRSheetSummary {
   key:                string
   title:              string
   ragic_url:          string
-  has_today:          boolean          // 今日是否已登錄
-  month_count:        number           // 本月登錄筆數
-  latest_record_date: string           // 最近登錄日期 YYYY/MM/DD
-  total_readings:     number           // 本月讀數欄位總筆數
-  missing_days:       string[]         // 缺漏日期清單
-  missing_count:      number           // 缺漏天數
+  has_today:          boolean             // 今日（或末日）是否已登錄
+  is_current_month:   boolean             // 是否為當月查詢
+  month_count:        number              // 查詢月份登錄筆數
+  latest_record_date: string              // 查詢月份內最近登錄日期 YYYY/MM/DD
+  total_readings:     number              // 查詢月份讀數欄位總筆數
+  missing_days:       string[]            // 缺漏日期清單
+  missing_count:      number              // 缺漏天數
   trend_7d:           HotelMRTrendPoint[] // 近 7 天趨勢
-  has_data:           boolean          // 是否有任何資料
+  has_data:           boolean             // 是否有任何資料
 }
 
 export interface HotelMRTrendPoint {
@@ -37,8 +38,9 @@ export interface HotelMRTrendPoint {
 
 /** 跨 Sheet Dashboard 總覽 */
 export interface HotelMRDashboardSummary {
-  target_date: string
-  year_month:  string
+  month:       string   // YYYY-MM 查詢月份
+  target_date: string   // 向後相容
+  year_month:  string   // YYYY/MM
   sheets:      HotelMRSheetSummary[]
 }
 
@@ -56,14 +58,14 @@ export interface HotelMRBatchRow {
 
 /**
  * 取得全體每日數值登錄 Dashboard 統計（跨 Sheet）
+ * @param month  查詢月份，YYYY-MM 格式（如 "2026-05"）。不填則後端自動使用當月。
  */
 export async function fetchHotelMeterDashboardSummary(
-  targetDate?: string,
+  params?: { month?: string; target_date?: string },
 ): Promise<HotelMRDashboardSummary> {
-  const params = targetDate ? { target_date: targetDate } : {}
   const res = await apiClient.get<HotelMRDashboardSummary>(
     `${BASE}/dashboard/summary`,
-    { params },
+    { params: params ?? {} },
   )
   return res.data
 }

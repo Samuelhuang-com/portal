@@ -75,20 +75,20 @@ def _count_readings(db: Session, batch_ragic_id: str) -> int:
     )
 
 
-def _missing_days_this_month(
+def _get_missing_days(
     db: Session,
     sheet_key: str,
-    target_date: date,
+    start_date: date,
+    end_date: date,
 ) -> list[str]:
     """
-    計算本月 1 日到 target_date（含），哪些日期沒有任何登錄紀錄。
+    計算 start_date 到 end_date（含）之間，哪些日期沒有任何登錄紀錄。
     返回缺漏日期清單 ['YYYY/MM/DD', ...]
     使用 timedelta 逐日遞增，確保月底邊界正確。
     """
-    first_day = target_date.replace(day=1)
     missing = []
-    current = first_day
-    while current <= target_date:
+    current = start_date
+    while current <= end_date:
         d_str = current.strftime("%Y/%m/%d")
         exists = (
             db.query(HotelMRBatch)
@@ -121,7 +121,7 @@ def get_sheets():
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# POST /sync/all  ← 必須在 /{sheet_key}/sync 之前定義（路由優先順序）
+# POST /sync/all  <- 必須在 /{sheet_key}/sync 之前定義（路由優先順序）
 # ══════════════════════════════════════════════════════════════════════════════
 
 @router.post(
@@ -192,7 +192,6 @@ def list_batches(
     result = []
     for b in batches:
         readings_count = _count_readings(db, b.ragic_id)
-        # 找出各 Sheet 的 Ragic URL
         cfg = next((c for c in SHEET_CONFIGS if c.key == sheet_key), None)
         result.append({
             "id":             b.ragic_id,
@@ -207,7 +206,7 @@ def list_batches(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# GET /dashboard/summary  — 跨 Sheet 統計（Dashboard 總覽用）
+# GET /dashboard/summary  — 跨 Sheet 月份統計（Dashboard 總覽用）
 # ══════════════════════════════════════════════════════════════════════════════
 
 @router.get(
@@ -216,40 +215,61 @@ def list_batches(
     tags=["每日數值登錄表"],
 )
 def get_dashboard_summary(
+    month: Optional[str] = Query(
+        None,
+        description="查詢月份 YYYY-MM（如 2026-05），不填則取當月"
+    ),
     target_date: Optional[str] = Query(
         None,
-        description="查詢日期 YYYY/MM/DD，不填則取今日"
+        description="[已棄用] 查詢日期 YYYY/MM/DD，請改用 month 參數"
     ),
     db: Session = Depends(get_db),
 ):
+    """
+    跨 Sheet 月份統計。
+    優先使用 month 參數（YYYY-MM）；若僅提供舊版 target_date，自動轉換為對應月份。
+    """
+    from app.core.date_utils import get_month_range, to_ragic_year_month
+
     today = date.today()
-    if not target_date:
-        target_date = today.strftime("%Y/%m/%d")
 
-    year_month = target_date[:7]  # e.g. "2026/04"
+    # ── 決定查詢月份 ─────────────────────────────────────────────────────────
+    if month:
+        query_month = month  # e.g. "2026-05"
+    elif target_date:
+        # 舊版向後相容：從 target_date 取月份
+        query_month = target_date[:7].replace("/", "-")  # "2026/04" -> "2026-04"
+    else:
+        query_month = today.strftime("%Y-%m")
 
-    # target_date 轉 date 物件（用於計算缺漏天數）
-    try:
-        td = date.fromisoformat(target_date.replace("/", "-"))
-    except ValueError:
-        td = today
+    start_date, end_date = get_month_range(query_month)
+    year_month  = to_ragic_year_month(query_month)          # "2026/05"
+    is_current  = (start_date.year == today.year and start_date.month == today.month)
+
+    # 缺漏天數計算上界：當月用今日，過去月用月末
+    missing_end = today if is_current else end_date
+
+    # 趨勢參考日：當月用今日，過去月用月末
+    trend_ref   = today if is_current else end_date
+
+    # 「今日 / 末日」登錄判斷基準
+    ref_date_str = today.strftime("%Y/%m/%d") if is_current else end_date.strftime("%Y/%m/%d")
 
     results = []
     for cfg in SHEET_CONFIGS:
         key = cfg.key
 
-        # ── 今日是否已登錄 ─────────────────────────────────────────────────
-        today_batch = (
+        # ── 今日（或末日）是否已登錄 ──────────────────────────────────────
+        has_today = (
             db.query(HotelMRBatch)
             .filter(
                 HotelMRBatch.sheet_key == key,
-                HotelMRBatch.record_date == target_date,
+                HotelMRBatch.record_date == ref_date_str,
             )
             .first()
-        )
-        has_today = today_batch is not None
+        ) is not None
 
-        # ── 本月登錄筆數 ────────────────────────────────────────────────────
+        # ── 查詢月份登錄筆數 ───────────────────────────────────────────────
         month_count = (
             db.query(HotelMRBatch)
             .filter(
@@ -259,16 +279,19 @@ def get_dashboard_summary(
             .count()
         )
 
-        # ── 最近登錄日期 ────────────────────────────────────────────────────
+        # ── 查詢月份內最近登錄日期 ─────────────────────────────────────────
         latest = (
             db.query(HotelMRBatch)
-            .filter(HotelMRBatch.sheet_key == key)
+            .filter(
+                HotelMRBatch.sheet_key == key,
+                HotelMRBatch.record_date.like(f"{year_month}%"),
+            )
             .order_by(HotelMRBatch.record_date.desc())
             .first()
         )
         latest_record_date = latest.record_date if latest else ""
 
-        # ── 本月讀數欄位總筆數 ──────────────────────────────────────────────
+        # ── 查詢月份讀數欄位總筆數 ─────────────────────────────────────────
         month_batches = (
             db.query(HotelMRBatch)
             .filter(
@@ -281,13 +304,13 @@ def get_dashboard_summary(
             _count_readings(db, b.ragic_id) for b in month_batches
         )
 
-        # ── 缺漏日期（本月 1 日到 target_date）─────────────────────────────
-        missing_days = _missing_days_this_month(db, key, td)
+        # ── 缺漏日期（月初到 missing_end）────────────────────────────────
+        missing_days = _get_missing_days(db, key, start_date, missing_end)
 
-        # ── 近 7 天是否有登錄（趨勢）──────────────────────────────────────
+        # ── 近 7 天是否有登錄（依 trend_ref 往前 7 天）───────────────────
         trend_7d = []
         for i in range(6, -1, -1):
-            d     = today - timedelta(days=i)
+            d     = trend_ref - timedelta(days=i)
             d_str = d.strftime("%Y/%m/%d")
             has   = (
                 db.query(HotelMRBatch)
@@ -304,6 +327,7 @@ def get_dashboard_summary(
             "title":              cfg.title,
             "ragic_url":          cfg.ragic_url,
             "has_today":          has_today,
+            "is_current_month":   is_current,
             "month_count":        month_count,
             "latest_record_date": latest_record_date,
             "total_readings":     total_readings,
@@ -314,7 +338,8 @@ def get_dashboard_summary(
         })
 
     return {
-        "target_date": target_date,
+        "month":       query_month,
+        "target_date": ref_date_str,    # 向後相容
         "year_month":  year_month,
         "sheets":      results,
     }

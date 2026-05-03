@@ -52,7 +52,8 @@ export interface PMBatchKPI {
   overdue:              number
   abnormal:             number
   completion_rate:      number
-  planned_minutes:      number
+  planned_minutes:      number   // 預估工時合計（estimated_minutes 加總，分鐘）
+  actual_minutes:       number   // 實際工時合計（end_time - start_time 加總，分鐘）
 }
 
 export interface CategoryStat {

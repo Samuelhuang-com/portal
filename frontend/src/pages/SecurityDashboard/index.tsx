@@ -15,7 +15,7 @@ import { useNavigate } from 'react-router-dom'
 import {
   Row, Col, Card, Statistic, Table, Tag, Button, Space,
   Typography, Breadcrumb, Tabs, Alert, DatePicker, Badge,
-  message, Progress, Tooltip, Divider,
+  message, Progress, Tooltip, Divider, Segmented,
 } from 'antd'
 import {
   HomeOutlined, SyncOutlined, ReloadOutlined,
@@ -34,7 +34,9 @@ import {
   fetchSecurityDashboardSummary,
   fetchSecurityDashboardIssues,
   fetchSecurityDashboardTrend,
+  fetchSecurityDashboardMonthlySummary,
   syncPatrolFromRagic,
+  type SecurityMonthlySummary,
 } from '@/api/securityPatrol'
 import type {
   SecurityDashboardSummary,
@@ -79,32 +81,50 @@ function sheetCardBorder(sheet: SheetStats): string {
 export default function SecurityDashboardPage() {
   const navigate = useNavigate()
 
-  const [outerTab, setOuterTab]     = useState('dashboard')
-  const [targetDate, setTargetDate] = useState<string>(dayjs().format('YYYY/MM/DD'))
-  const [summary, setSummary]       = useState<SecurityDashboardSummary | null>(null)
-  const [issues, setIssues]         = useState<SecurityIssueItem[]>([])
-  const [trend, setTrend]           = useState<SecurityTrendPoint[]>([])
-  const [loading, setLoading]       = useState(false)
-  const [syncing, setSyncing]       = useState(false)
+  const [outerTab,     setOuterTab]     = useState('dashboard')
+  const [viewMode,     setViewMode]     = useState<'day' | 'month'>('day')
+  const [targetDate,   setTargetDate]   = useState<string>(dayjs().format('YYYY/MM/DD'))
+  const [yearMonth,    setYearMonth]    = useState<string>(dayjs().format('YYYY/MM'))
+  const [summary,      setSummary]      = useState<SecurityDashboardSummary | null>(null)
+  const [monthlyData,  setMonthlyData]  = useState<SecurityMonthlySummary | null>(null)
+  const [issues,       setIssues]       = useState<SecurityIssueItem[]>([])
+  const [trend,        setTrend]        = useState<SecurityTrendPoint[]>([])
+  const [loading,      setLoading]      = useState(false)
+  const [syncing,      setSyncing]      = useState(false)
 
-  // 一次並行載入三個資料源
+  // 並行載入資料（依篩選模式）
   const loadAll = useCallback(async () => {
     setLoading(true)
     try {
-      const [sumData, issueData, trendData] = await Promise.all([
-        fetchSecurityDashboardSummary(targetDate),
-        fetchSecurityDashboardIssues({ start_date: targetDate, end_date: targetDate }),
-        fetchSecurityDashboardTrend(7),
-      ])
-      setSummary(sumData)
-      setIssues(issueData.items)
-      setTrend(trendData.trend)
+      if (viewMode === 'day') {
+        const [sumData, issueData, trendData] = await Promise.all([
+          fetchSecurityDashboardSummary(targetDate),
+          fetchSecurityDashboardIssues({ start_date: targetDate, end_date: targetDate }),
+          fetchSecurityDashboardTrend(7),
+        ])
+        setSummary(sumData)
+        setMonthlyData(null)
+        setIssues(issueData.items)
+        setTrend(trendData.trend)
+      } else {
+        const [y, m] = yearMonth.split('/').map(Number)
+        const firstDay = `${yearMonth}/01`
+        const lastDay  = dayjs(yearMonth, 'YYYY/MM').endOf('month').format('YYYY/MM/DD')
+        const [monthData, issueData] = await Promise.all([
+          fetchSecurityDashboardMonthlySummary(y, m),
+          fetchSecurityDashboardIssues({ start_date: firstDay, end_date: lastDay }),
+        ])
+        setMonthlyData(monthData)
+        setSummary(null)
+        setIssues(issueData.items)
+        setTrend([])
+      }
     } catch {
       message.error('載入 Dashboard 失敗')
     } finally {
       setLoading(false)
     }
-  }, [targetDate])
+  }, [viewMode, targetDate, yearMonth])
 
   useEffect(() => { loadAll() }, [loadAll])
 
@@ -121,42 +141,77 @@ export default function SecurityDashboardPage() {
     }
   }
 
+  // ── Derived display values（單日 or 全月 皆適用）────────────────────────
+  const modeLabel = viewMode === 'month' ? '本月' : '今日'
+
+  const displaySheets: SheetStats[] = viewMode === 'day'
+    ? (summary?.sheets ?? [])
+    : (monthlyData?.sheets ?? []).map((s) => ({
+        sheet_key:       s.sheet_key,
+        sheet_name:      s.sheet_name,
+        total_batches:   s.total_batches,
+        total_items:     s.total_items,
+        checked_items:   s.checked_items,
+        unchecked_items: s.unchecked_items,
+        abnormal_items:  s.abnormal_items,
+        pending_items:   0,   // 月份彙總已合併至 abnormal_items
+        completion_rate: s.completion_rate,
+        normal_rate:     0,
+        has_data:        s.has_data,
+      }))
+
+  const displayTotalBatches   = viewMode === 'day'
+    ? (summary?.total_batches_all ?? 0)
+    : displaySheets.reduce((acc, s) => acc + s.total_batches, 0)
+  const displayCheckedItems   = viewMode === 'day'
+    ? (summary?.checked_items_all ?? 0)
+    : (monthlyData?.checked_items ?? 0)
+  const displayTotalItems     = viewMode === 'day'
+    ? (summary?.total_items_all ?? 0)
+    : (monthlyData?.total_items ?? 0)
+  const displayAbnormalItems  = viewMode === 'day'
+    ? (summary?.abnormal_items_all ?? 0)
+    : (monthlyData?.abnormal_items ?? 0)
+  const displayCompletionRate = viewMode === 'day'
+    ? (summary?.completion_rate_all ?? 0)
+    : (monthlyData?.completion_rate ?? 0)
+
   // ── Section 1：全局 KPI 卡片 ──────────────────────────────────────────────
   const kpiCards = [
     {
-      title: '今日巡檢場次',
+      title: `${modeLabel}巡檢場次`,
       descKey: '今日巡檢場次',
-      value: summary?.total_batches_all ?? 0,
+      value: displayTotalBatches,
       color: '#1B3A5C',
       icon: <DashboardOutlined />,
     },
     {
       title: '已巡檢項目',
       descKey: '已巡檢項目',
-      value: summary?.checked_items_all ?? 0,
-      suffix: `/${summary?.total_items_all ?? 0}`,
+      value: displayCheckedItems,
+      suffix: `/${displayTotalItems}`,
       color: '#4BA8E8',
       icon: <CheckCircleOutlined />,
     },
     {
       title: '異常 + 待處理',
       descKey: '異常待處理',
-      value: summary?.abnormal_items_all ?? 0,
+      value: displayAbnormalItems,
       color: '#FF4D4F',
       icon: <WarningOutlined />,
     },
     {
       title: '整體完成率',
       descKey: '整體完成率',
-      value: summary?.completion_rate_all ?? 0,
+      value: displayCompletionRate,
       suffix: '%',
-      color: (summary?.completion_rate_all ?? 0) >= 80 ? '#52C41A' : '#FAAD14',
+      color: displayCompletionRate >= 80 ? '#52C41A' : '#FAAD14',
       icon: <ExclamationCircleOutlined />,
     },
   ]
 
   // ── Section 2：7 Sheet 狀態 mini-cards ───────────────────────────────────
-  const sheets = summary?.sheets ?? []
+  const sheets = displaySheets
 
   // ── Section 3：各 Sheet 今日統計表（左欄）────────────────────────────────
   const sheetCols: ColumnsType<SheetStats> = [
@@ -258,15 +313,37 @@ export default function SecurityDashboardPage() {
       {/* Header 工具列 */}
       <Row align="middle" justify="space-between" style={{ marginBottom: 16 }} gutter={8}>
         <Col>
-          <Space size={8}>
-            <Text strong style={{ fontSize: 13 }}>查詢日期：</Text>
-            <DatePicker
-              value={dayjs(targetDate, 'YYYY/MM/DD')}
-              format="YYYY/MM/DD"
-              allowClear={false}
+          <Space size={8} wrap>
+            <Segmented
               size="small"
-              onChange={(d) => { if (d) setTargetDate(d.format('YYYY/MM/DD')) }}
+              value={viewMode}
+              onChange={(v) => setViewMode(v as 'day' | 'month')}
+              options={[
+                { label: '單日', value: 'day' },
+                { label: '全月', value: 'month' },
+              ]}
             />
+            <Text strong style={{ fontSize: 13 }}>
+              查詢{viewMode === 'month' ? '月份' : '日期'}：
+            </Text>
+            {viewMode === 'day' ? (
+              <DatePicker
+                value={dayjs(targetDate, 'YYYY/MM/DD')}
+                format="YYYY/MM/DD"
+                allowClear={false}
+                size="small"
+                onChange={(d) => { if (d) setTargetDate(d.format('YYYY/MM/DD')) }}
+              />
+            ) : (
+              <DatePicker
+                picker="month"
+                value={dayjs(yearMonth, 'YYYY/MM')}
+                format="YYYY/MM"
+                allowClear={false}
+                size="small"
+                onChange={(d) => { if (d) setYearMonth(d.format('YYYY/MM')) }}
+              />
+            )}
             <Button size="small" icon={<ReloadOutlined />} onClick={loadAll} loading={loading}>
               重新整理
             </Button>
@@ -275,7 +352,7 @@ export default function SecurityDashboardPage() {
         <Col>
           <Space size={8}>
             <Text type="secondary" style={{ fontSize: 11 }}>
-              {summary?.generated_at ? `更新：${summary.generated_at}` : ''}
+              {viewMode === 'day' && summary?.generated_at ? `更新：${summary.generated_at}` : ''}
             </Text>
             <Button size="small" icon={<SyncOutlined spin={syncing} />} loading={syncing} onClick={handleSync}>
               同步全部 Sheet
@@ -357,7 +434,7 @@ export default function SecurityDashboardPage() {
                       </Space>
                     </>
                   ) : (
-                    <Text type="secondary" style={{ fontSize: 11 }}>今日無資料</Text>
+                    <Text type="secondary" style={{ fontSize: 11 }}>{modeLabel}無資料</Text>
                   )}
                 </Card>
               </Col>
@@ -368,7 +445,7 @@ export default function SecurityDashboardPage() {
       <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
         <Col xs={24} lg={14}>
           <Card
-            title={<><CalendarOutlined /> 各巡檢 Sheet 今日統計</>}
+            title={<><CalendarOutlined /> 各巡檢 Sheet {modeLabel}統計</>}
             size="small"
             style={{ height: '100%' }}
           >
@@ -381,11 +458,15 @@ export default function SecurityDashboardPage() {
               pagination={false}
               locale={{ emptyText: '尚無資料' }}
             />
-            {!loading && (summary?.total_items_all ?? 0) === 0 && (
+            {!loading && displayTotalItems === 0 && (
               <Alert
                 style={{ marginTop: 8 }}
                 type="info"
-                message={`${targetDate} 尚無任何保全巡檢記錄，請確認巡檢是否已執行並同步。`}
+                message={
+                  viewMode === 'month'
+                    ? `${yearMonth} 整月尚無任何保全巡檢記錄，請確認資料是否已同步。`
+                    : `${targetDate} 尚無任何保全巡檢記錄，請確認巡檢是否已執行並同步。`
+                }
                 showIcon
               />
             )}
@@ -397,7 +478,7 @@ export default function SecurityDashboardPage() {
             title={
               <Space>
                 <WarningOutlined style={{ color: '#FF4D4F' }} />
-                <span>今日異常 & 待處理</span>
+                <span>{modeLabel}異常 {'&'} 待處理</span>
                 {issues.length > 0 && <Badge count={issues.length} color="#FF4D4F" />}
               </Space>
             }
@@ -407,7 +488,7 @@ export default function SecurityDashboardPage() {
             {loading ? (
               <div style={{ padding: '20px 0', textAlign: 'center', color: '#999' }}>載入中…</div>
             ) : issues.length === 0 ? (
-              <Alert message="今日無異常記錄" type="success" showIcon />
+              <Alert message={`${modeLabel}無異常記錄`} type="success" showIcon />
             ) : (
               <Table<SecurityIssueItem>
                 dataSource={issues}
@@ -422,8 +503,8 @@ export default function SecurityDashboardPage() {
         </Col>
       </Row>
 
-      {/* Section 5：近 7 日趨勢圖 */}
-      <Card
+      {/* Section 5：近 7 日趨勢圖（僅單日模式顯示） */}
+      {viewMode === 'day' && <Card
         title={
           <Space>
             <ClockCircleOutlined style={{ color: '#4BA8E8' }} />
@@ -450,7 +531,7 @@ export default function SecurityDashboardPage() {
             暫無趨勢資料（請先確認資料已同步）
           </div>
         )}
-      </Card>
+      </Card>}
     </div>
   )
 

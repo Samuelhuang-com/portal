@@ -13,7 +13,7 @@
 
 Ragic naming="" 時，子表格列的中文欄位 key：
   項次、類別、頻率、執行月份、項目、預估耗時、排定日期、排定人員、
-  備註、執行人員、保養時間啟、保養時間迄
+  備註、執行人員、保養時間啟、保養時間迄、工時計算
 """
 import json
 import logging
@@ -47,6 +47,7 @@ CK_NOTE         = "備註"        # Ragic 備註欄 → result_note（Portal 未
 CK_EXECUTOR     = "執行人員"
 CK_START_TIME   = "保養時間啟"
 CK_END_TIME     = "保養時間迄"
+CK_WORK_HOURS   = "工時計算"    # Ragic 實際工時欄位（分鐘），直接採用，不重算
 
 # ── Ragic 連線設定 ────────────────────────────────────────────────────────────
 PM_SERVER_URL = getattr(settings, "RAGIC_PM_SERVER_URL", "ap12.ragic.com")
@@ -154,6 +155,10 @@ def _ragic_item_to_model(
     rec.executor_name     = _stringify(row_raw.get(CK_EXECUTOR, ""))
     rec.start_time        = _stringify(row_raw.get(CK_START_TIME, ""))
     rec.end_time          = _stringify(row_raw.get(CK_END_TIME, ""))
+
+    # 工時計算：直接採用 Ragic「工時計算」欄位（分鐘整數）；若空值存 None
+    _wh_raw = row_raw.get(CK_WORK_HOURS)
+    rec.ragic_work_minutes = _to_int(_wh_raw) if _wh_raw not in (None, "", "None") else None
 
     # 完成標記：保養時間啟 AND 保養時間迄 均有值 → 視為完成
     rec.is_completed = bool(rec.start_time and rec.end_time)
@@ -408,9 +413,10 @@ async def sync_items_from_ragic() -> dict:
                         existing.scheduler_name    = new_rec.scheduler_name
                         existing.result_note       = new_rec.result_note
                         existing.executor_name     = new_rec.executor_name
-                        existing.start_time        = new_rec.start_time
-                        existing.end_time          = new_rec.end_time
-                        existing.is_completed      = new_rec.is_completed
+                        existing.start_time           = new_rec.start_time
+                        existing.end_time             = new_rec.end_time
+                        existing.ragic_work_minutes   = new_rec.ragic_work_minutes
+                        existing.is_completed         = new_rec.is_completed
                         existing.synced_at         = now
                     else:
                         db.add(new_rec)

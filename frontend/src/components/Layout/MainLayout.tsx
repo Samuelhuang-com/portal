@@ -27,6 +27,7 @@ import {
   DollarOutlined,
   BarChartOutlined,
   FundOutlined,
+  RadarChartOutlined,
 } from '@ant-design/icons'
 import { useNavigate, useLocation, Outlet } from 'react-router-dom'
 import { useAuthStore } from '@/stores/authStore'
@@ -57,6 +58,13 @@ export const menuItems: MenuItem[] = [
     key: '/dashboard',
     icon: <DashboardOutlined />,
     label: NAV_GROUP.dashboard,
+  },
+  // ── 決策駕駛艙（dashboard 正後方，高階主管決策入口）─────────────────────────
+  {
+    key: '/decision-cockpit',
+    icon: <RadarChartOutlined />,
+    label: NAV_PAGE.decisionCockpit,
+    permissionKey: 'decision_cockpit_view',
   },
   // ── 高階主管 Dashboard（dashboard 正後方，獨立一階）────────────────────────
   {
@@ -102,6 +110,7 @@ export const menuItems: MenuItem[] = [
     label: NAV_GROUP.hotel,
     permissionKey: 'hotel_view',
     children: [
+      { key: '/hotel/overview',                 icon: <DashboardOutlined />, label: NAV_PAGE.hotelMgmtDashboard,   permissionKey: 'hotel_view'                       },
       // { key: '/hotel/room-maintenance',        icon: <ToolOutlined />, label: NAV_PAGE.roomMaintenance },
       { key: '/hotel/room-maintenance-detail',  icon: <ToolOutlined />,    label: NAV_PAGE.roomMaintenanceDetail, permissionKey: 'hotel_room_maintenance_view'      },
       { key: '/hotel/periodic-maintenance',     icon: <FileTextOutlined />, label: NAV_PAGE.periodicMaintenance,  permissionKey: 'hotel_periodic_maintenance_view'  },

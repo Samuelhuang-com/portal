@@ -1578,7 +1578,7 @@ function FeeStatsTab({ year }: { year: number }) {
         💡 點擊有金額的格子可查看該月該費用類型的案件明細
       </div>
       <div style={{ color: '#aaa', fontSize: 11, marginTop: 4 }}>
-        ℹ️ 大直工務部目前 Ragic 無「委外費用」/「維修費用」/「扣款費用」欄位，待 Ragic 補上後數字將自動顯示。
+        ℹ️ 工務部目前 Ragic 無「委外費用」/「維修費用」/「扣款費用」欄位，待 Ragic 補上後數字將自動顯示。
       </div>
     </div>
   )
@@ -1956,7 +1956,7 @@ export default function DazhiRepairPage() {
     },
     {
       key: 'detail',
-      label: <><FileTextOutlined /> 大直工務部</>,
+      label: <><FileTextOutlined /> 工務部</>,
       children: (
         <DetailTab
           year={appliedYear}
@@ -1972,7 +1972,7 @@ export default function DazhiRepairPage() {
       {/* 麵包屑 */}
       <Breadcrumb style={{ marginBottom: 12 }}>
         <Breadcrumb.Item><HomeOutlined /></Breadcrumb.Item>
-        <Breadcrumb.Item>大直工務部</Breadcrumb.Item>
+        <Breadcrumb.Item>工務部</Breadcrumb.Item>
         <Breadcrumb.Item>Dashboard</Breadcrumb.Item>
       </Breadcrumb>
 
@@ -1980,7 +1980,7 @@ export default function DazhiRepairPage() {
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <BuildOutlined style={{ fontSize: 22, color: '#1B3A5C' }} />
-          <Title level={4} style={{ margin: 0, color: '#1B3A5C' }}>大直工務部</Title>
+          <Title level={4} style={{ margin: 0, color: '#1B3A5C' }}>工務部</Title>
           <Tag color="blue">{appliedYear} 年{appliedMonth ? ` ${appliedMonth} 月` : ' 全年'}</Tag>
         </div>
         <Space>

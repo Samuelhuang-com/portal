@@ -23,6 +23,7 @@ from app.routers import (
     dazhi_repair,
     hotel_daily_inspection,
     hotel_meter_readings,
+    hotel_overview,
     ihg_room_maintenance,
     mall_dashboard,
     mall_facility_inspection,
@@ -46,6 +47,7 @@ from app.routers import (
     tenants,
     users,
     work_category_analysis,
+    mall_overview,
 )
 
 
@@ -120,6 +122,26 @@ def _migrate_pm_batch_item():
         if backfill.rowcount > 0:
             conn.commit()
             print(f"[Migration] is_completed 回填 {backfill.rowcount} 筆")
+
+
+def _migrate_pm_work_minutes():
+    """
+    輕量欄位補丁（2026-05-03）：
+    為 pm_batch_item 加入 ragic_work_minutes（Ragic「工時計算」欄位，分鐘，nullable INTEGER）。
+    此欄位於重新同步後由 sync service 填入；加入前歷史資料維持 NULL，
+    _calc_kpi() 會以 NULL fallback 到 _time_diff_minutes(start_time, end_time)。
+    """
+    from sqlalchemy import text
+
+    with engine.connect() as conn:
+        result = conn.execute(text("PRAGMA table_info(pm_batch_item)"))
+        existing = {row[1] for row in result.fetchall()}
+        if "ragic_work_minutes" not in existing:
+            conn.execute(
+                text("ALTER TABLE pm_batch_item ADD COLUMN ragic_work_minutes INTEGER")
+            )
+            conn.commit()
+            print("[Migration] pm_batch_item.ragic_work_minutes 欄位已新增")
 
 
 def _migrate_luqun_repair_images():
@@ -545,6 +567,10 @@ async def lifespan(app: FastAPI):
     _migrate_pm_batch_item()
     print("[Portal] PM batch_item migration checked.")
 
+    # 輕量欄位補丁：為 pm_batch_item 加入 ragic_work_minutes（Ragic「工時計算」欄位）
+    _migrate_pm_work_minutes()
+    print("[Portal] PM batch_item ragic_work_minutes migration checked.")
+
     # 輕量欄位補丁：為 luqun_repair_case 加入 images_json（若尚未存在）
     _migrate_luqun_repair_images()
     print("[Portal] luqun_repair_case images_json migration checked.")
@@ -707,6 +733,20 @@ app.include_router(
     b1f_inspection.router,
     prefix=f"{API_PREFIX}/mall/b1f-inspection",
     tags=["整棟工務每日巡檢 B1F"],
+)
+
+# ── 新增：商場管理 Overview — 跨模組彙整（daily-hours 等）────────────────────
+app.include_router(
+    mall_overview.router,
+    prefix=f"{API_PREFIX}",
+    tags=["商場管理 Dashboard"],
+)
+
+# ── 新增：飯店管理 Overview — 跨模組彙整（daily/monthly/person-hours）────────
+app.include_router(
+    hotel_overview.router,
+    prefix=f"{API_PREFIX}",
+    tags=["飯店管理 Dashboard"],
 )
 
 # ── 新增：商場管理統計 Dashboard ──────────────────────────────────────────────

@@ -410,3 +410,104 @@ def get_dashboard_summary(
         })
 
     return {"target_date": target_date, "sheets": results}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GET /dashboard/monthly-summary  — 跨 Sheet 月份統計（Dashboard 查詢月份用）
+# ══════════════════════════════════════════════════════════════════════════════
+
+@router.get(
+    "/dashboard/monthly-summary",
+    summary="取得全體商場工務巡檢 Dashboard 月份統計（跨 Sheet）",
+    tags=["春大直商場工務巡檢"],
+)
+def get_dashboard_monthly_summary(
+    month: Optional[str] = Query(
+        None,
+        description="查詢月份 YYYY-MM（如 2026-05），不填則取當月"
+    ),
+    db: Session = Depends(get_db),
+):
+    """
+    依查詢月份回傳各 Sheet 的月份 KPI：
+      - 本月登錄筆數（batch count）
+      - 缺漏天數（days without any batch）
+      - 最近登錄日期（within the query month）
+      - 缺漏日期清單
+      - 今日 / 末日是否登錄
+      - 近 7 天趨勢
+    """
+    from app.core.date_utils import get_month_range, to_ragic_year_month
+
+    today = date.today()
+    if not month:
+        month = today.strftime("%Y-%m")
+
+    start_date, end_date = get_month_range(month)
+    year_month  = to_ragic_year_month(month)        # "2026/05"
+    is_current  = (start_date.year == today.year and start_date.month == today.month)
+    missing_end = today if is_current else end_date
+    trend_ref   = today if is_current else end_date
+    ref_date_str = today.strftime("%Y/%m/%d") if is_current else end_date.strftime("%Y/%m/%d")
+
+    results = []
+    for cfg in SHEET_CONFIGS:
+        key = cfg.key
+
+        # ── 查詢月份所有 batch ─────────────────────────────────────────────
+        month_batches = (
+            db.query(MallFIBatch)
+            .filter(
+                MallFIBatch.sheet_key == key,
+                MallFIBatch.inspection_date.like(f"{year_month}%"),
+            )
+            .all()
+        )
+        month_count = len(month_batches)
+
+        # ── 查詢月份內最近登錄日期 ─────────────────────────────────────────
+        latest_batch_date = ""
+        if month_batches:
+            latest_batch_date = max(b.inspection_date for b in month_batches)
+
+        # ── 已登錄日期集合 ─────────────────────────────────────────────────
+        inspected_days = {b.inspection_date for b in month_batches}
+
+        # ── 今日（或末日）是否已登錄 ──────────────────────────────────────
+        has_today = ref_date_str in inspected_days
+
+        # ── 缺漏日期（月初到 missing_end）────────────────────────────────
+        missing_days: list[str] = []
+        current = start_date
+        while current <= missing_end:
+            d_str = current.strftime("%Y/%m/%d")
+            if d_str not in inspected_days:
+                missing_days.append(d_str)
+            current += timedelta(days=1)
+
+        # ── 近 7 天趨勢（依 trend_ref 往前 7 天）─────────────────────────
+        trend_7d = []
+        for i in range(6, -1, -1):
+            d     = trend_ref - timedelta(days=i)
+            d_str = d.strftime("%Y/%m/%d")
+            trend_7d.append({"date": d_str, "has_record": d_str in inspected_days})
+
+        results.append({
+            "key":               key,
+            "floor":             cfg.floor,
+            "title":             cfg.title,
+            "month_count":       month_count,
+            "missing_count":     len(missing_days),
+            "missing_days":      missing_days,
+            "latest_batch_date": latest_batch_date,
+            "has_today":         has_today,
+            "is_current_month":  is_current,
+            "trend_7d":          trend_7d,
+            "has_data":          month_count > 0,
+        })
+
+    return {
+        "month":      month,
+        "year_month": year_month,
+        "sheets":     results,
+    }

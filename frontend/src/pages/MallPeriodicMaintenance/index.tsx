@@ -62,6 +62,10 @@ export default function MallPeriodicMaintenancePage() {
   const [activeTab, setActiveTab] = useState('dashboard')
   const [stats, setStats]     = useState<PMStats | null>(null)
   const [batches, setBatches] = useState<PMBatchListItem[]>([])
+  // Dashboard 篩選：年月（預設當月）
+  const [dashYear,  setDashYear]  = useState(dayjs().format('YYYY'))
+  const [dashMonth, setDashMonth] = useState(dayjs().month() + 1)
+  // 批次清單篩選：年
   const [year, setYear]       = useState(dayjs().format('YYYY'))
   const [loading, setLoading] = useState(false)
   const [syncing, setSyncing] = useState(false)
@@ -69,14 +73,14 @@ export default function MallPeriodicMaintenancePage() {
   const loadDashboard = useCallback(async () => {
     setLoading(true)
     try {
-      const s = await fetchMallPMStats()
+      const s = await fetchMallPMStats(dashYear, dashMonth)
       setStats(s)
     } catch {
       message.error('載入統計資料失敗')
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [dashYear, dashMonth])
 
   const loadBatches = useCallback(async () => {
     setLoading(true)
@@ -111,6 +115,10 @@ export default function MallPeriodicMaintenancePage() {
     value: String(y),
     label: `${y} 年`,
   }))
+  const monthOptions = Array.from({ length: 12 }, (_, i) => ({
+    value: i + 1,
+    label: `${i + 1} 月`,
+  }))
 
   // ── Dashboard Tab ──────────────────────────────────────────────────────────
   const kpi = stats?.current_kpi
@@ -124,11 +132,39 @@ export default function MallPeriodicMaintenancePage() {
 
   const DashboardTab = (
     <div>
+      {/* 年月篩選列 */}
+      <Row gutter={8} align="middle" style={{ marginBottom: 16 }}>
+        <Col>
+          <Text type="secondary" style={{ marginRight: 4 }}>查詢月份：</Text>
+        </Col>
+        <Col>
+          <Select
+            value={dashYear}
+            onChange={(v) => setDashYear(v)}
+            options={yearOptions}
+            style={{ width: 100 }}
+          />
+        </Col>
+        <Col>
+          <Select
+            value={dashMonth}
+            onChange={(v) => setDashMonth(v)}
+            options={monthOptions}
+            style={{ width: 85 }}
+          />
+        </Col>
+        <Col>
+          <Button icon={<ReloadOutlined />} onClick={loadDashboard} loading={loading}>
+            重新整理
+          </Button>
+        </Col>
+      </Row>
+
       {/* KPI 卡片 */}
       <Row gutter={[16, 16]} style={{ marginBottom: 20 }}>
         {[
           {
-            title: '本月有效項目',
+            title: `${dashYear}/${String(dashMonth).padStart(2, '0')} 有效項目`,
             value: kpi?.current_month_total ?? 0,
             suffix: '筆',
             icon: <ToolOutlined />,
@@ -171,11 +207,22 @@ export default function MallPeriodicMaintenancePage() {
         <Col flex={1} style={{ minWidth: 140 }}>
           <Card size="small" hoverable style={{ height: '100%' }}>
             <Statistic
-              title="保養時間"
+              title="預估工時"
               value={Math.round((kpi?.planned_minutes ?? 0) / 60 * 10) / 10}
               suffix="小時"
               prefix={<span style={{ color: '#4BA8E8' }}><ClockCircleOutlined /></span>}
               valueStyle={{ color: '#4BA8E8', fontSize: 28 }}
+            />
+          </Card>
+        </Col>
+        <Col flex={1} style={{ minWidth: 140 }}>
+          <Card size="small" hoverable style={{ height: '100%' }}>
+            <Statistic
+              title="保養時間"
+              value={Math.round((kpi?.actual_minutes ?? 0) / 60 * 10) / 10}
+              suffix="小時"
+              prefix={<span style={{ color: '#52C41A' }}><ClockCircleOutlined /></span>}
+              valueStyle={{ color: '#52C41A', fontSize: 28 }}
             />
           </Card>
         </Col>
@@ -185,7 +232,7 @@ export default function MallPeriodicMaintenancePage() {
       {kpi && kpi.current_month_total > 0 && (
         <Card size="small" style={{ marginBottom: 16 }}>
           <Row align="middle" gutter={16}>
-            <Col flex="100px"><Text strong>本月完成率</Text></Col>
+            <Col flex="100px"><Text strong>{dashYear}/{String(dashMonth).padStart(2, '0')} 完成率</Text></Col>
             <Col flex="auto">
               <Progress
                 percent={kpi.completion_rate}
@@ -260,7 +307,7 @@ export default function MallPeriodicMaintenancePage() {
             size="small"
           >
             {(stats?.overdue_items ?? []).length === 0 ? (
-              <Alert message="本月無逾期項目" type="success" showIcon />
+              <Alert message="該月無逾期項目" type="success" showIcon />
             ) : (
               <Table<PMItem>
                 dataSource={stats?.overdue_items ?? []}
@@ -296,11 +343,11 @@ export default function MallPeriodicMaintenancePage() {
 
         <Col xs={24} lg={12}>
           <Card
-            title={<><ClockCircleOutlined style={{ color: '#FAAD14' }} /> 本週待執行（排定中）</>}
+            title={<><ClockCircleOutlined style={{ color: '#FAAD14' }} /> 待執行項目（排定中）</>}
             size="small"
           >
             {(stats?.upcoming_items ?? []).length === 0 ? (
-              <Alert message="本週無即將到期項目" type="info" showIcon />
+              <Alert message="該月無待執行項目" type="info" showIcon />
             ) : (
               <Table<PMItem>
                 dataSource={stats?.upcoming_items ?? []}

@@ -239,7 +239,7 @@ RK_ALIASES: dict[str, list[str]] = {
     RK_OCCURRED_AT:     ["報修日期", "發生時間", "報修時間", "申報時間"],
     RK_RESPONSIBLE:     ["處理工務", "反應單位", "負責單位", "負責人", "承辦單位"],  # 2026-04-23: 處理工務優先
     RK_WORK_HOURS:      ["花費工時", "工時"],    # 備用；主欄位「維修天數(天)」/「維修天數」在 __init__ 手動讀取
-    RK_STATUS:          ["處理狀態", "處理狀況", "狀態", "進度"],
+    RK_STATUS:          ["處理狀態"],
     RK_OUTSOURCE_FEE:   ["委外費用", "外包費用"],
     RK_MAINTENANCE_FEE: ["維修費用", "費用"],
     RK_ACCEPTOR:        ["驗收人員", "驗收者", "驗收人"],
@@ -271,14 +271,22 @@ def _get_field(raw: dict, canonical_key: str, fallback: str = "") -> Any:
 # ═════════════════════════════════════════════════════════════════════════════
 
 def _str(v: Any) -> str:
-    """任意值轉字串，dict 取 value/label，list 用逗號連接"""
+    """
+    任意值轉字串，dict 取 value/label，list 用逗號連接。
+    ⚠️ 不可用 `v.get("value") or ...`，因為 0 / 0.0 / False 是 falsy，
+       會被誤判為「無值」。改用 `is not None` 判斷（與 luqun_repair_service 一致）。
+    """
     if v is None:
         return ""
     if isinstance(v, list):
         return ", ".join(_str(x) for x in v)
     if isinstance(v, dict):
-        val = v.get("value") or v.get("label") or ""
-        return _str(val)
+        # 優先取 "value" key（即使值為 0 也要保留）
+        if "value" in v and v["value"] is not None:
+            return _str(v["value"])
+        if "label" in v and v["label"] is not None:
+            return _str(v["label"])
+        return ""
     return str(v).strip()
 
 
@@ -390,6 +398,7 @@ class RepairCase:
         "total_fee", "is_completed_flag", "is_excluded_flag", "completed_at", "close_days",
         "pending_days",
         "year", "month",
+        "occ_year", "occ_month",   # 報修月份（永遠以 occurred_at 為準，供 Dashboard/報修統計用）
         "is_room_case", "room_no", "floor_normalized", "room_category",
         "images",
         "_raw",
@@ -458,13 +467,25 @@ class RepairCase:
         else:
             self.pending_days = None
 
-        # 年月（以發生時間為準）
-        if self.occurred_at:
+        # 統計月份：結案案件以「結案月份」為準，未結案以「報修月份」為準
+        # （與 luqun_repair_service 口徑一致）
+        if self.is_completed_flag and self.completed_at:
+            self.year  = self.completed_at.year
+            self.month = self.completed_at.month
+        elif self.occurred_at:
             self.year  = self.occurred_at.year
             self.month = self.occurred_at.month
         else:
             self.year  = None
             self.month = None
+
+        # 報修月份（4.1 報修統計、Dashboard「本月新增」專用；永遠以 occurred_at 為準）
+        if self.occurred_at:
+            self.occ_year  = self.occurred_at.year
+            self.occ_month = self.occurred_at.month
+        else:
+            self.occ_year  = None
+            self.occ_month = None
 
         # 客房相關
         self.is_room_case     = _is_room_case(self.floor, self.title, raw_type)
@@ -581,7 +602,10 @@ async def fetch_raw_fields() -> dict:
 
 def _stat_year(c) -> Optional[int]:
     """統計年份：已完成(status) AND 有 completed_at → 完工年；否則 → 報修年。
-    大直 c.year 永遠是報修年，所以完成案必須從 completed_at 取完工年。"""
+    動態計算確保相容：
+      ① 服務層 RepairCase（c.year 已正確）
+      ② 舊版 DB DazhiRepairCase（c.year = occurred_at.year，需從 completed_at 補算）
+    """
     if is_completed(getattr(c, 'status', '')):
         at = getattr(c, 'completed_at', None)
         if at is not None:
@@ -590,7 +614,11 @@ def _stat_year(c) -> Optional[int]:
 
 
 def _stat_month(c) -> Optional[int]:
-    """統計月份：已完成(status) AND 有 completed_at → 完工月；否則 → 報修月。"""
+    """統計月份：已完成(status) AND 有 completed_at → 完工月；否則 → 報修月。
+    動態計算確保相容：
+      ① 服務層 RepairCase（c.month 已正確）
+      ② 舊版 DB DazhiRepairCase（c.month = occurred_at.month，需從 completed_at 補算）
+    """
     if is_completed(getattr(c, 'status', '')):
         at = getattr(c, 'completed_at', None)
         if at is not None:
@@ -650,17 +678,18 @@ def compute_dashboard(
 
     # ── 本月相關案件口徑：① 上月累計未完成 + ⑤ 本月報修 ──────────────────────
     # 與 4.1 報修統計 Tab 口徑對齊；全年檢視（month=0）沿用舊邏輯
-    # 大直以 c.year/c.month（= occurred_at 年月）為報修月基準
+    # 使用 occ_year/occ_month（= occurred_at 年月）避免跨月結案被重複計入
     if month:
         _prev_y, _prev_m = _month_offset(year, month, -1)
         _cases_up_to_prev = [
             c for c in all_cases
-            if c.year is not None
-            and (c.year < _prev_y or (c.year == _prev_y and c.month <= _prev_m))
+            if c.occ_year is not None
+            and (c.occ_year < _prev_y or (c.occ_year == _prev_y and c.occ_month <= _prev_m))
         ]
         # 上期未結：以 status 判斷（不再使用 completed_at 時間戳）
         _prev_uncompleted = [c for c in _cases_up_to_prev if not is_completed(c.status)]
-        _this_month_new   = filter_cases(all_cases, year, month)
+        # 本月新增：永遠以「報修月份」(occ_year/occ_month) 為準，避免跨月結案雙重計入
+        _this_month_new   = [c for c in all_cases if c.occ_year == year and c.occ_month == month]
         this_month_cases  = _prev_uncompleted + _this_month_new
     else:
         this_month_cases = filter_cases(all_cases, year, None)
@@ -689,10 +718,11 @@ def compute_dashboard(
     total_work_hours = round(sum(c.work_hours for c in this_month_cases), 2)
 
     # ── 近 12 個月趨勢 ────────────────────────────────────────────────────────
+    # 趨勢以「報修月份」(occ_year/occ_month) 為準，反映各月實際新增報修件數
     trend_12m = []
     for m_offset in range(11, -1, -1):
         y, m = _month_offset(year, month if month else datetime.now().month, -m_offset)
-        mc = filter_cases(all_cases, y, m)
+        mc = [c for c in all_cases if c.occ_year == y and c.occ_month == m]
         trend_12m.append({
             "label":     f"{y}/{m:02d}",
             "year":      y,
@@ -733,11 +763,13 @@ def compute_dashboard(
     hours_list = sorted(this_month_cases, key=lambda x: x.work_hours, reverse=True)
     top_hours = [c.to_dict() for c in hours_list[:10] if c.work_hours > 0]
 
-    # ── 當月費用（依篩選月份，月份=0 時為全年）────────────────────────────────
-    month_outsource_fee     = round(sum(c.outsource_fee   for c in this_month_cases), 2)
-    month_maintenance_fee   = round(sum(c.maintenance_fee for c in this_month_cases), 2)
-    month_deduction_fee     = round(sum(c.deduction_fee   for c in this_month_cases), 2)
-    month_deduction_counter = 0.0  # 大直無此欄位
+    # ── 當月費用（口徑與「金額統計」Tab 一致：c.year/c.month，結案以結案月份為準）
+    # 注意：不可用 this_month_cases（含上月未結），費用必須用獨立的「當月完工」口徑
+    fee_month_cases = filter_cases(all_cases, year, month if month else None)
+    month_outsource_fee     = round(sum(c.outsource_fee   for c in fee_month_cases), 2)
+    month_maintenance_fee   = round(sum(c.maintenance_fee for c in fee_month_cases), 2)
+    month_deduction_fee     = round(sum(c.deduction_fee   for c in fee_month_cases), 2)
+    month_deduction_counter = 0.0  # 大直目前 Ragic 無此欄位
     month_total_fee         = round(month_outsource_fee + month_maintenance_fee + month_deduction_fee, 2)
 
     # ── 累計費用（月份選定時：1月~M月 YTD；全年檢視：全年）────────────────────
@@ -877,12 +909,12 @@ def compute_repair_stats(
     months_data = {}
 
     for month in range(1, 13):
-        # 截至上月底的累計案件（occurred_at <= 上月底）
+        # 截至上月底的累計案件（以「報修月份」occ_year/occ_month 為準）
         prev_y, prev_m = _month_offset(year, month, -1)
         cases_up_to_prev = [
             c for c in all_cases
-            if c.year is not None and (
-                c.year < prev_y or (c.year == prev_y and c.month <= prev_m)
+            if c.occ_year is not None and (
+                c.occ_year < prev_y or (c.occ_year == prev_y and c.occ_month <= prev_m)
             )
         ]
         # 1. 上月累計未完成（截至上月底尚未完成）
@@ -897,19 +929,21 @@ def compute_repair_stats(
         prev_remaining_list = [c for c in prev_uncompleted if not _completed_in(c, year, month)]
         prev_remaining_count = prev_uncompleted_count - closed_this_month_from_prev
 
-        # 3. 累計完成率（截至本月底，以 completed_at 為準）
+        # 3. 累計完成率（截至本月底，以 occurred_at 為報修基準、completed_at 為完工基準）
         cases_up_to_this = [
             c for c in all_cases
-            if c.year is not None and (
-                c.year < year or (c.year == year and c.month <= month)
+            if c.occ_year is not None and (
+                c.occ_year < year or (c.occ_year == year and c.occ_month <= month)
             )
         ]
         cum_total = len(cases_up_to_this)
         cum_completed = sum(1 for c in cases_up_to_this if _completed_by(c, year, month))
         cum_rate = round(cum_completed / cum_total * 100, 1) if cum_total > 0 else None
 
-        # 4. 本月報修項目數
-        this_month_cases = filter_cases(all_cases, year, month)
+        # 4. 本月報修項目數（以「報修月份」occ_year/occ_month 為準，不受結案月影響）
+        this_month_cases = [
+            c for c in all_cases if c.occ_year == year and c.occ_month == month
+        ]
         this_total = len(this_month_cases)
 
         # 5. 本月報修項目完成數（completed_at 落在本月）

@@ -60,6 +60,7 @@ class PeriodicMaintenanceItem(Base):
     executor_name   = Column(String(100), nullable=False, default="", comment="執行人員（多人以空格分隔）")
     start_time      = Column(String(30),  nullable=False, default="", comment="保養開始時間")
     end_time        = Column(String(30),  nullable=False, default="", comment="保養結束時間（空白=尚未完成）")
+    ragic_work_minutes = Column(Integer, nullable=True,               comment="Ragic「工時計算」欄位（分鐘，直接同步）")
 
     # ── 完成標記（Ragic 同步時自動計算：start_time + end_time 均有值 → True）──
     # Portal 亦可手動覆寫（設定後即受 portal_edited_at 保護）

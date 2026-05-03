@@ -31,8 +31,11 @@ export async function fetchPMBatchDetail(
 }
 
 /** 全站統計（Dashboard 資料來源） */
-export async function fetchPMStats(): Promise<PMStats> {
-  const res = await apiClient.get<PMStats>(`${BASE}/stats`)
+export async function fetchPMStats(year?: string, month?: number): Promise<PMStats> {
+  const params: Record<string, string | number> = {}
+  if (year)  params.year  = year
+  if (month) params.month = month
+  const res = await apiClient.get<PMStats>(`${BASE}/stats`, { params })
   return res.data
 }
 

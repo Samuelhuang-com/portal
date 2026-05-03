@@ -37,9 +37,10 @@ class PMItemOut(BaseModel):
     scheduled_date:    str
     scheduler_name:    str
     executor_name:     str
-    start_time:        str
-    end_time:          str
-    is_completed:      bool = False        # 保養是否完成（啟+迄均有值則自動 True）
+    start_time:           str
+    end_time:             str
+    ragic_work_minutes:   Optional[int] = None  # Ragic「工時計算」欄位（分鐘）；NULL = 未填
+    is_completed:         bool = False           # 保養是否完成（啟+迄均有值則自動 True）
     result_note:       str
     abnormal_flag:     bool
     abnormal_note:     str
@@ -72,7 +73,8 @@ class PMBatchKPI(BaseModel):
     overdue:              int     = 0
     abnormal:             int     = 0
     completion_rate:      float   = 0.0
-    planned_minutes:      int     = 0
+    planned_minutes:      int     = 0   # 預估工時合計（estimated_minutes 加總）
+    actual_minutes:       int     = 0   # 實際工時合計（end_time - start_time 加總）
 
 
 class CategoryStat(BaseModel):

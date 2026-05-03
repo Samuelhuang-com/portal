@@ -43,6 +43,8 @@
  *   2026-04-29  新增 hotelDailyInspection（飯店每日巡檢）5 張 Sheet（RF/4F-10F/4F/2F/1F），route /hotel/daily-inspection
  *   2026-04-30  新增 hotelMeterReadings（每日數值登錄表）4 張 Sheet（全棟電錶/商場空調箱電錶/專櫃電錶/專櫃水錶），route /hotel/daily-meter-readings
  *   2026-04-30  整合保全巡檢：security 從群組（8 items）→ 單一入口 /security/dashboard；各 Sheet 改為頁面內外層 TAB；NAV_GROUP.security 改名「保全巡檢」
+ *   2026-04-30  新增 hotelMgmtDashboard（★飯店管理 Dashboard）整合 6 來源總覽，route /hotel/overview
+ *   2026-05-03  新增 decisionCockpit（決策駕駛艙）高階主管決策入口，整合三大模組精華，route /decision-cockpit
  */
 
 // ── 系統標題 ──────────────────────────────────────────────────────────────────
@@ -85,6 +87,7 @@ export const NAV_PAGE = {
   calendarMain:          '行事曆總覽',    // 超級行事曆主頁
 
   // 飯店管理
+  hotelMgmtDashboard:     '★ 飯店管理 Dashboard',  // ← 新增：6 來源整合總覽
   hotelDailyInspection:   '飯店每日巡檢',
   hotelMeterReadings:     '每日數值登錄表',
   roomMaintenance:        '客房保養',
@@ -111,6 +114,9 @@ export const NAV_PAGE = {
 
   // ★工項類別分析
   workCategoryAnalysis:    '★工項類別分析',
+
+  // 決策駕駛艙（高階主管決策入口，整合三大模組精華）
+  decisionCockpit:         '決策駕駛艙',
 
   // 高階主管 Dashboard（新功能，獨立路由）
   execDashboard:           '高階主管 Dashboard',

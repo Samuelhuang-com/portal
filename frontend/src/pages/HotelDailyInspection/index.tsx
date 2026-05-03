@@ -16,7 +16,7 @@ import { useSearchParams } from 'react-router-dom'
 import {
   Row, Col, Card, Statistic, Table, Tag, Button, Space,
   Typography, Breadcrumb, Tabs, Alert, DatePicker, Badge,
-  message, Progress,
+  message, Progress, Segmented,
 } from 'antd'
 import {
   HomeOutlined, SyncOutlined, ReloadOutlined,
@@ -31,6 +31,7 @@ import {
 } from '@/constants/hotelDailyInspection'
 import {
   fetchHotelDailyDashboardSummary,
+  fetchHotelDailyMonthlyDashboard,
   fetchHotelDailyBatches,
   syncHotelDailyAllFromRagic,
   syncHotelDailyFromRagic,
@@ -191,7 +192,9 @@ function FloorListTab({ sheetKey }: { sheetKey: string }) {
 // Summary tab
 
 function SummaryTabContent() {
+  const [viewMode,   setViewMode]   = useState<'day' | 'month'>('day')
   const [targetDate, setTargetDate] = useState<string>(dayjs().format('YYYY/MM/DD'))
+  const [yearMonth,  setYearMonth]  = useState<string>(dayjs().format('YYYY/MM'))
   const [loading,    setLoading]    = useState(false)
   const [syncing,    setSyncing]    = useState(false)
 
@@ -214,9 +217,17 @@ function SummaryTabContent() {
   const loadSummary = useCallback(async () => {
     setLoading(true)
     try {
-      const data = await fetchHotelDailyDashboardSummary(targetDate)
+      let apiSheets: HotelDISheetSummary[]
+      if (viewMode === 'day') {
+        const data = await fetchHotelDailyDashboardSummary(targetDate)
+        apiSheets = data.sheets
+      } else {
+        const [y, m] = yearMonth.split('/').map(Number)
+        const data = await fetchHotelDailyMonthlyDashboard(y, m)
+        apiSheets = data.sheets
+      }
       const merged: SheetStats[] = HOTEL_DAILY_INSPECTION_SHEET_LIST.map((s) => {
-        const apiSheet = data.sheets.find((d) => d.key === s.key)
+        const apiSheet = apiSheets.find((d) => d.key === s.key)
         return apiSheet
           ? { ...s, ...apiSheet }
           : { ...s, total_batches: 0, total_items: 0, checked_items: 0,
@@ -229,7 +240,7 @@ function SummaryTabContent() {
     } finally {
       setLoading(false)
     }
-  }, [targetDate])
+  }, [viewMode, targetDate, yearMonth])
 
   useEffect(() => { loadSummary() }, [loadSummary])
 
@@ -314,14 +325,32 @@ function SummaryTabContent() {
     <div>
       <Row style={{ marginBottom: 16 }} align="middle" gutter={8}>
         <Col>
-          <Space>
-            <Text strong>查詢日期：</Text>
-            <DatePicker
-              value={dayjs(targetDate, 'YYYY/MM/DD')}
-              format="YYYY/MM/DD"
-              allowClear={false}
-              onChange={(d) => { if (d) setTargetDate(d.format('YYYY/MM/DD')) }}
+          <Space wrap>
+            <Segmented
+              value={viewMode}
+              onChange={(v) => setViewMode(v as 'day' | 'month')}
+              options={[
+                { label: '單日', value: 'day' },
+                { label: '全月', value: 'month' },
+              ]}
             />
+            <Text strong>查詢{viewMode === 'month' ? '月份' : '日期'}：</Text>
+            {viewMode === 'day' ? (
+              <DatePicker
+                value={dayjs(targetDate, 'YYYY/MM/DD')}
+                format="YYYY/MM/DD"
+                allowClear={false}
+                onChange={(d) => { if (d) setTargetDate(d.format('YYYY/MM/DD')) }}
+              />
+            ) : (
+              <DatePicker
+                picker="month"
+                value={dayjs(yearMonth, 'YYYY/MM')}
+                format="YYYY/MM"
+                allowClear={false}
+                onChange={(d) => { if (d) setYearMonth(d.format('YYYY/MM')) }}
+              />
+            )}
             <Button icon={<ReloadOutlined />} onClick={loadSummary} loading={loading}>
               重新整理
             </Button>
@@ -338,7 +367,7 @@ function SummaryTabContent() {
 
       <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
         {[
-          { title: '今日巡檢場次',  value: totalBatches, color: '#1B3A5C', icon: <DashboardOutlined /> },
+          { title: viewMode === 'month' ? '本月巡檢場次' : '今日巡檢場次', value: totalBatches, color: '#1B3A5C', icon: <DashboardOutlined /> },
           { title: '已巡檢項目',    value: checkedAll, suffix: `/${totalAll}`, color: '#4BA8E8', icon: <CheckCircleOutlined /> },
           { title: '異常 + 待處理', value: abnormalAll, color: '#FF4D4F', icon: <WarningOutlined /> },
           { title: '整體完成率',    value: rateAll, suffix: '%', color: rateAll >= 80 ? '#52C41A' : '#FAAD14', icon: <ExclamationCircleOutlined /> },
@@ -384,7 +413,11 @@ function SummaryTabContent() {
         <Alert
           style={{ marginTop: 16 }}
           type="info"
-          message={`${targetDate} 尚無任何飯店每日巡檢記錄，請確認巡檢是否已執行並同步。`}
+          message={
+            viewMode === 'month'
+              ? `${yearMonth} 整月尚無任何飯店每日巡檢記錄，請確認資料是否已同步。`
+              : `${targetDate} 尚無任何飯店每日巡檢記錄，請確認巡檢是否已執行並同步。`
+          }
           showIcon
         />
       )}

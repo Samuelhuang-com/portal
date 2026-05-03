@@ -1740,7 +1740,8 @@ export default function RoomMaintenanceDetailPage() {
     work_hours_total: 0, unserviced_count: 0,
   })
   const [summaryLoading, setSummaryLoading] = useState(false)
-  const [dateRange,      setDateRange]      = useState<[dayjs.Dayjs | null, dayjs.Dayjs | null]>([null, null])
+  const [filterYear,     setFilterYear]     = useState<number>(dayjs().year())
+  const [filterMonth,    setFilterMonth]    = useState<number>(dayjs().month() + 1) // 1-based
   const [tableFilter,    setTableFilter]    = useState<TableFilter>('all')
 
   // ── 明細列表狀態 ─────────────────────────────────────────────────
@@ -1816,7 +1817,7 @@ export default function RoomMaintenanceDetailPage() {
   const loadMaintStats = useCallback(async () => {
     setMaintStatsLoading(true)
     try {
-      const res = await fetchMaintenanceStats(12)
+      const res = await fetchMaintenanceStats(undefined, undefined, 12)
       setMaintStatsData(res)
     } catch {
       message.error('載入保養統計失敗')
@@ -1826,7 +1827,8 @@ export default function RoomMaintenanceDetailPage() {
   }, [])
 
   useEffect(() => {
-    loadSummary()
+    const base = dayjs().startOf('month')
+    loadSummary(base.format('YYYY/MM/DD'), base.endOf('month').format('YYYY/MM/DD'))
     loadRecords(listFilters)
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1864,13 +1866,12 @@ export default function RoomMaintenanceDetailPage() {
   const summaryColumns = useMemo(() => buildSummaryColumns(openRoomHistory), [openRoomHistory])
   const detailColumns  = useMemo(() => buildDetailColumns(openRoomHistory),  [openRoomHistory])
 
-  // ── 日期區間（總表） ──────────────────────────────────────────────
-  const handleDateRangeChange = (vals: [dayjs.Dayjs | null, dayjs.Dayjs | null] | null) => {
-    const range: [dayjs.Dayjs | null, dayjs.Dayjs | null] = vals ?? [null, null]
-    setDateRange(range)
+  // ── 年月全月篩選（總表） ──────────────────────────────────────────
+  const handleMonthFilterChange = useCallback((year: number, month: number) => {
+    const base = dayjs(`${year}-${String(month).padStart(2, '0')}-01`)
     setTableFilter('all')
-    loadSummary(range[0]?.format('YYYY/MM/DD'), range[1]?.format('YYYY/MM/DD'))
-  }
+    loadSummary(base.format('YYYY/MM/DD'), base.endOf('month').format('YYYY/MM/DD'))
+  }, [loadSummary])
 
   // ── KPI 篩選 ──────────────────────────────────────────────────────
   const handleAbnormalClick   = () => setTableFilter(p => p === 'abnormal'   ? 'all' : 'abnormal')
@@ -1883,9 +1884,8 @@ export default function RoomMaintenanceDetailPage() {
       const res = await syncRoomDetailFromRagic()
       if (res.errors?.length) message.warning(`同步完成，有 ${res.errors.length} 筆錯誤`)
       else message.success(`同步完成：共 ${res.fetched} 筆，更新 ${res.upserted} 筆`)
-      const from = dateRange[0]?.format('YYYY/MM/DD')
-      const to   = dateRange[1]?.format('YYYY/MM/DD')
-      await loadSummary(from, to)
+      const base = dayjs(`${filterYear}-${String(filterMonth).padStart(2, '0')}-01`)
+      await loadSummary(base.format('YYYY/MM/DD'), base.endOf('month').format('YYYY/MM/DD'))
       await loadRecords(listFilters)
     } catch { message.error('同步失敗') }
     finally { setSyncing(false) }
@@ -1942,9 +1942,8 @@ export default function RoomMaintenanceDetailPage() {
               <Button
                 icon={<ReloadOutlined />}
                 onClick={() => {
-                  const from = dateRange[0]?.format('YYYY/MM/DD')
-                  const to   = dateRange[1]?.format('YYYY/MM/DD')
-                  loadSummary(from, to)
+                  const base = dayjs(`${filterYear}-${String(filterMonth).padStart(2, '0')}-01`)
+                  loadSummary(base.format('YYYY/MM/DD'), base.endOf('month').format('YYYY/MM/DD'))
                   loadRecords(listFilters)
                 }}
               >
@@ -1972,27 +1971,52 @@ export default function RoomMaintenanceDetailPage() {
             label: <span><HomeOutlined /> 保養總表</span>,
             children: (
               <div>
-                {/* 日期區間 */}
+                {/* 年月篩選（全月） */}
                 <Card size="small" style={{ marginBottom: 16 }}>
                   <Row gutter={16} align="middle">
                     <Col>
-                      <Text strong style={{ marginRight: 8 }}>日期區間：</Text>
-                      <RangePicker
-                        format="YYYY/MM/DD"
-                        value={dateRange}
-                        onChange={v => handleDateRangeChange(v as [dayjs.Dayjs | null, dayjs.Dayjs | null] | null)}
-                        allowClear
-                        placeholder={['起始日期', '結束日期']}
-                        style={{ width: 260 }}
+                      <Text strong style={{ marginRight: 8 }}>篩選月份：</Text>
+                      <Select
+                        value={filterYear}
+                        onChange={(y: number) => {
+                          setFilterYear(y)
+                          handleMonthFilterChange(y, filterMonth)
+                        }}
+                        style={{ width: 90, marginRight: 8 }}
+                        options={Array.from({ length: 5 }, (_, i) => {
+                          const yr = dayjs().year() - 2 + i
+                          return { label: `${yr} 年`, value: yr }
+                        })}
                       />
+                      <Select
+                        value={filterMonth}
+                        onChange={(m: number) => {
+                          setFilterMonth(m)
+                          handleMonthFilterChange(filterYear, m)
+                        }}
+                        style={{ width: 80, marginRight: 8 }}
+                        options={Array.from({ length: 12 }, (_, i) => ({
+                          label: `${i + 1} 月`, value: i + 1,
+                        }))}
+                      />
+                      <Button
+                        size="small"
+                        onClick={() => {
+                          const y = dayjs().year()
+                          const m = dayjs().month() + 1
+                          setFilterYear(y)
+                          setFilterMonth(m)
+                          handleMonthFilterChange(y, m)
+                        }}
+                      >
+                        本月
+                      </Button>
                     </Col>
-                    {dateRange[0] && (
-                      <Col>
-                        <Tag color="blue">
-                          {dateRange[0].format('YYYY/MM/DD')} ～ {dateRange[1]?.format('YYYY/MM/DD') || '今日'}
-                        </Tag>
-                      </Col>
-                    )}
+                    <Col>
+                      <Tag color="blue">
+                        {filterYear} 年 {filterMonth} 月（全月）
+                      </Tag>
+                    </Col>
                     <Col>
                       <Text type="secondary" style={{ fontSize: 12 }}>
                         （房號可點擊查看保養歷史追蹤）

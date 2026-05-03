@@ -81,6 +81,28 @@ export interface MallFIDashboardSummary {
   sheets:      MallFISheetSummary[]
 }
 
+/** 月份統計 — 單一 Sheet */
+export interface MallFIMonthlySheetSummary {
+  key:               string
+  floor:             string
+  title:             string
+  month_count:       number              // 查詢月份內登錄筆數
+  missing_count:     number              // 缺漏天數
+  missing_days:      string[]            // 缺漏日期清單
+  latest_batch_date: string              // 查詢月份內最近登錄日期
+  has_today:         boolean             // 今日（或末日）是否已登錄
+  is_current_month:  boolean             // 是否為當月查詢
+  trend_7d:          Array<{ date: string; has_record: boolean }>
+  has_data:          boolean
+}
+
+/** 月份統計 — 跨 Sheet 總覽 */
+export interface MallFIMonthlyDashboardSummary {
+  month:      string   // YYYY-MM
+  year_month: string   // YYYY/MM
+  sheets:     MallFIMonthlySheetSummary[]
+}
+
 // ── API 函式 ──────────────────────────────────────────────────────────────────
 
 /**
@@ -128,5 +150,20 @@ export async function fetchMallFacilityDashboardSummary(
 ): Promise<MallFIDashboardSummary> {
   const params = targetDate ? { target_date: targetDate } : {}
   const res = await apiClient.get<MallFIDashboardSummary>(`${BASE}/dashboard/summary`, { params })
+  return res.data
+}
+
+/**
+ * 取得商場工務巡檢 Dashboard 月份統計（跨 Sheet）
+ * @param month  查詢月份 YYYY-MM （如 "2026-05"）。不填則後端自動使用當月。
+ */
+export async function fetchMallFacilityMonthlyDashboard(
+  month?: string,
+): Promise<MallFIMonthlyDashboardSummary> {
+  const params = month ? { month } : {}
+  const res = await apiClient.get<MallFIMonthlyDashboardSummary>(
+    `${BASE}/dashboard/monthly-summary`,
+    { params },
+  )
   return res.data
 }

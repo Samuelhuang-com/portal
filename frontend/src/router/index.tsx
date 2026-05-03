@@ -69,6 +69,10 @@ import DazhiRepairPage                 from '@/pages/DazhiRepair'
 import WorkCategoryAnalysisPage        from '@/pages/WorkCategoryAnalysis'
 import ExecDashboardPage               from '@/pages/ExecDashboard'
 import DataPreparingPage              from '@/pages/DataPreparing'
+import DecisionCockpitPage            from '@/pages/DecisionCockpit'
+
+// ── 飯店管理 Dashboard（跨模組總覽）───────────────────────────────────────────
+import HotelMgmtDashboardPage          from '@/pages/HotelMgmtDashboard'
 
 // ── 飯店每日巡檢 ───────────────────────────────────────────────────────────────
 import HotelDailyInspectionDashboard   from '@/pages/HotelDailyInspection'
@@ -199,11 +203,19 @@ export default function AppRouter() {
         <Route index element={<Navigate to="/dashboard" replace />} />
         <Route path="dashboard" element={<DashboardPage />} />
 
+        {/* ── ◆ 決策駕駛艙（高階主管決策入口，整合三大模組精華）────────── */}
+        <Route path="decision-cockpit" element={
+          <PermissionGuard permissionKey="decision_cockpit_view">
+            <DecisionCockpitPage />
+          </PermissionGuard>
+        } />
+
         {/* ── 行事曆 ────────────────────────────────────────────────── */}
         <Route path="calendar" element={<CalendarPage />} />
 
         {/* ── 飯店管理 ──────────────────────────────────────────────── */}
         <Route path="hotel">
+          <Route path="overview"                element={<HotelMgmtDashboardPage />} />
           <Route path="room-maintenance"        element={<RoomMaintenancePage />} />
           <Route path="room-maintenance-detail" element={<RoomMaintenanceDetailPage />} />
           <Route path="periodic-maintenance"             element={<PeriodicMaintenancePage />} />

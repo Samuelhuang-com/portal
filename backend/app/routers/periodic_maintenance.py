@@ -54,6 +54,22 @@ STATUS_LABELS = {
 
 # ── 業務邏輯輔助函式 ──────────────────────────────────────────────────────────
 
+_TIME_FMTS = ["%Y/%m/%d %H:%M:%S", "%Y/%m/%d %H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"]
+
+def _time_diff_minutes(start: str, end: str) -> int:
+    """計算 start_time ~ end_time 差值（分鐘），解析失敗回傳 0。"""
+    if not start or not end:
+        return 0
+    for fmt in _TIME_FMTS:
+        try:
+            st = datetime.strptime(start.strip(), fmt)
+            et = datetime.strptime(end.strip(), fmt)
+            return max(0, int((et - st).total_seconds() / 60))
+        except ValueError:
+            continue
+    return 0
+
+
 def _calc_status(item: PeriodicMaintenanceItem, check_month: int) -> str:
     """
     依 Ragic 欄位值推導保養項目狀態（唯讀，不依賴任何 Portal 編輯欄位）。
@@ -118,10 +134,11 @@ def _item_to_out(item: PeriodicMaintenanceItem, check_month: int) -> PMItemOut:
         scheduled_date    = item.scheduled_date,
         scheduler_name    = item.scheduler_name,
         executor_name     = item.executor_name,
-        start_time        = item.start_time,
-        end_time          = item.end_time,
+        start_time           = item.start_time,
+        end_time             = item.end_time,
+        ragic_work_minutes   = item.ragic_work_minutes,
         # 動態計算：啟+迄均有值 = 完成（與 _calc_status 邏輯一致，不依賴 DB 舊存值）
-        is_completed      = bool(item.start_time and item.end_time),
+        is_completed         = bool(item.start_time and item.end_time),
         result_note       = item.result_note,
         abnormal_flag     = item.abnormal_flag,
         abnormal_note     = item.abnormal_note,
@@ -146,6 +163,13 @@ def _calc_kpi(items: list[PeriodicMaintenanceItem], check_month: int) -> PMBatch
     overdue     = sum(1 for _, s in current_items if s == "overdue")
     abnormal    = sum(1 for it in items if it.abnormal_flag)
     planned     = sum(it.estimated_minutes for it, s in current_items)
+    # 優先使用 Ragic「工時計算」欄位（ragic_work_minutes）；
+    # 若該欄位為 None（舊資料或 Ragic 未填），fallback 到 end_time - start_time 計算
+    actual      = sum(
+        it.ragic_work_minutes if it.ragic_work_minutes is not None
+        else _time_diff_minutes(it.start_time, it.end_time)
+        for it in items if it.start_time and it.end_time
+    )
     # 完成率：已完成 / 全部項目（含非本月），與 KPI「已完成」定義一致
     rate = round(completed / total_all * 100, 1) if total_all > 0 else 0.0
 
@@ -160,6 +184,7 @@ def _calc_kpi(items: list[PeriodicMaintenanceItem], check_month: int) -> PMBatch
         abnormal            = abnormal,
         completion_rate     = rate,
         planned_minutes     = planned,
+        actual_minutes      = actual,
     )
 
 
@@ -325,18 +350,24 @@ def list_items(
 # GET /stats  — Dashboard 資料來源
 # ══════════════════════════════════════════════════════════════════════════════
 @router.get("/stats", summary="全站統計（Dashboard 資料來源）", response_model=PMStats)
-def get_stats(db: Session = Depends(get_db)):
+def get_stats(
+    year:  Optional[int] = Query(None, description="篩選年份，如 2026"),
+    month: Optional[int] = Query(None, ge=1, le=12, description="篩選月份，如 5"),
+    db:    Session = Depends(get_db),
+):
     today = date.today()
-    current_ym = today.strftime("%Y/%m")
-    check_month = today.month
+    target_year  = year  or today.year
+    target_month = month or today.month
+    check_month  = target_month
+    target_ym    = f"{target_year}/{target_month:02d}"
 
-    # 本月批次
+    # 目標年月批次
     current_batch = db.query(PeriodicMaintenanceBatch).filter(
-        PeriodicMaintenanceBatch.period_month == current_ym
+        PeriodicMaintenanceBatch.period_month == target_ym
     ).first()
 
-    # 若無本月批次，取最新批次
-    if not current_batch:
+    # 若無指定篩選且找不到批次，退而取最新批次
+    if not current_batch and not (year or month):
         current_batch = db.query(PeriodicMaintenanceBatch).order_by(
             PeriodicMaintenanceBatch.period_month.desc()
         ).first()
@@ -362,20 +393,26 @@ def get_stats(db: Session = Depends(get_db)):
             if _calc_status(it, check_month) == "overdue"
         ][:10]
 
-        # 今日 / 本週即將到期（已排定但 start_time 為空）
+        # 即將到期清單：
+        #   - 本月：顯示本週 7 天內已排定項目
+        #   - 其他月：顯示該批次所有已排定項目（最多 10 筆）
+        is_current_month = (target_year == today.year and target_month == today.month)
         upcoming_items = []
         for it in items:
             s = _calc_status(it, check_month)
             if s == "scheduled" and it.scheduled_date:
-                try:
-                    sched = datetime.strptime(
-                        f"{today.year}/{it.scheduled_date}", "%Y/%m/%d"
-                    ).date()
-                    days_left = (sched - today).days
-                    if 0 <= days_left <= 7:
-                        upcoming_items.append(_item_to_out(it, check_month))
-                except Exception:
-                    pass
+                if is_current_month:
+                    try:
+                        sched = datetime.strptime(
+                            f"{today.year}/{it.scheduled_date}", "%Y/%m/%d"
+                        ).date()
+                        days_left = (sched - today).days
+                        if 0 <= days_left <= 7:
+                            upcoming_items.append(_item_to_out(it, check_month))
+                    except Exception:
+                        pass
+                else:
+                    upcoming_items.append(_item_to_out(it, check_month))
         upcoming_items = upcoming_items[:10]
 
         # 狀態分布

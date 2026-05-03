@@ -12,38 +12,31 @@
  * 資料來源：尚未建立本地同步，各欄位顯示空狀態，保留結構供日後擴充。
  */
 import { useEffect, useState, useCallback } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useSearchParams } from 'react-router-dom'
 import {
   Row, Col, Card, Statistic, Table, Tag, Button, Space,
   Typography, Breadcrumb, Tabs, Alert, DatePicker, Badge,
-  message, Progress,
+  message, Progress, Tooltip,
 } from 'antd'
 import {
   HomeOutlined, SyncOutlined, ReloadOutlined,
   WarningOutlined, CheckCircleOutlined, ExclamationCircleOutlined,
-  DashboardOutlined, SafetyOutlined, ClockCircleOutlined,
+  DashboardOutlined, SafetyOutlined, ClockCircleOutlined, LinkOutlined,
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { NAV_GROUP, NAV_PAGE } from '@/constants/navLabels'
 import {
-  FULL_BUILDING_INSPECTION_SHEET_LIST,
-  type FullBuildingInspectionSheet,
+  FULL_BUILDING_INSPECTION_SHEETS,
 } from '@/constants/fullBuildingInspection'
+import {
+  fetchFullBuildingMonthlyDashboard,
+  type FullBuildingMonthlySheetSummary,
+} from '@/api/fullBuildingInspection'
 
 const { Title, Text } = Typography
 
 // ── 型別 ─────────────────────────────────────────────────────────────────────
-
-interface SheetStats extends FullBuildingInspectionSheet {
-  total_batches:   number
-  total_items:     number
-  checked_items:   number
-  abnormal_items:  number
-  pending_items:   number
-  unchecked_items: number
-  completion_rate: number
-  has_data:        boolean
-}
+// (SheetStats 已替換為 FullBuildingMonthlySheetSummary，來自 API 型別定義)
 
 interface BatchRow {
   id:              string
@@ -186,150 +179,100 @@ function FloorInspectionListTab({ sheetKey }: { sheetKey: string }) {
   )
 }
 
-// ── 統計總覽 Tab ──────────────────────────────────────────────────────────────
+// ── 統計總覽 Tab — 月份統計版 ─────────────────────────────────────────────────
 
 function SummaryTabContent() {
-  const [targetDate, setTargetDate] = useState<string>(dayjs().format('YYYY/MM/DD'))
+  const [searchParams, setSearchParams] = useSearchParams()
+
+  const initMonth = searchParams.get('month') ?? dayjs().format('YYYY-MM')
+  const [queryMonth, setQueryMonth] = useState<string>(initMonth)
   const [loading,    setLoading]    = useState(false)
-  const [syncing,    setSyncing]    = useState(false)
+  const [sheets,     setSheets]     = useState<FullBuildingMonthlySheetSummary[]>([])
+  const [error,      setError]      = useState<string | null>(null)
 
-  const buildEmptyStats = (): SheetStats[] =>
-    FULL_BUILDING_INSPECTION_SHEET_LIST.map((s) => ({
-      ...s,
-      total_batches:   0,
-      total_items:     0,
-      checked_items:   0,
-      abnormal_items:  0,
-      pending_items:   0,
-      unchecked_items: 0,
-      completion_rate: 0,
-      has_data:        false,
-    }))
+  const isCurrentMonth = queryMonth === dayjs().format('YYYY-MM')
+  const monthLabel     = dayjs(queryMonth, 'YYYY-MM').format('YYYY年M月')
 
-  const [sheets, setSheets] = useState<SheetStats[]>(buildEmptyStats())
+  const handleMonthChange = (m: string) => {
+    setQueryMonth(m)
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev)
+      next.set('month', m)
+      return next
+    }, { replace: true })
+  }
 
   const loadSummary = useCallback(async () => {
     setLoading(true)
-    // TODO: 接 API → fetchFullBuildingDashboardSummary(targetDate)
-    await new Promise((r) => setTimeout(r, 100))
-    setSheets(buildEmptyStats())
-    setLoading(false)
-  }, [targetDate])
+    setError(null)
+    try {
+      const data = await fetchFullBuildingMonthlyDashboard(queryMonth)
+      setSheets(data.sheets)
+    } catch {
+      setError('取得統計資料失敗，請稍後再試')
+      setSheets([])
+    } finally {
+      setLoading(false)
+    }
+  }, [queryMonth])
 
   useEffect(() => { loadSummary() }, [loadSummary])
 
-  const handleSync = async () => {
-    setSyncing(true)
-    try {
-      // TODO: 接 API → syncFullBuildingAllFromRagic()
-      await new Promise((r) => setTimeout(r, 800))
-      message.info('同步功能開發中，請直接至 Ragic 填寫巡檢表單')
-    } catch {
-      message.error('同步失敗')
-    } finally {
-      setSyncing(false)
-    }
-  }
-
-  const totalBatches = sheets.reduce((s, r) => s + r.total_batches, 0)
-  const checkedAll   = sheets.reduce((s, r) => s + r.checked_items, 0)
-  const totalAll     = sheets.reduce((s, r) => s + r.total_items,   0)
-  const abnormalAll  = sheets.reduce((s, r) => s + r.abnormal_items + r.pending_items, 0)
-  const rateAll      = totalAll > 0 ? Math.round((checkedAll / totalAll) * 100) : 0
-
-  const sheetCols = [
-    {
-      title: '巡檢樓層',
-      dataIndex: 'title',
-      ellipsis: true,
-      render: (v: string) => <Text strong>{v}</Text>,
-    },
-    {
-      title: '場次',
-      dataIndex: 'total_batches',
-      width: 60,
-      align: 'center' as const,
-      render: (v: number) =>
-        v > 0 ? <Badge count={v} color="#1B3A5C" showZero /> : <Text type="secondary">—</Text>,
-    },
-    {
-      title: '完成率',
-      dataIndex: 'completion_rate',
-      width: 130,
-      render: (v: number, row: SheetStats) =>
-        row.has_data ? (
-          <Progress
-            percent={v}
-            size="small"
-            strokeColor={{ from: v < 50 ? '#FF4D4F' : '#FAAD14', to: '#52C41A' }}
-            format={(p) => `${p}%`}
-          />
-        ) : (
-          <Text type="secondary">無資料</Text>
-        ),
-    },
-    {
-      title: '異常',
-      dataIndex: 'abnormal_items',
-      width: 60,
-      align: 'center' as const,
-      render: (v: number) =>
-        v > 0 ? <Badge count={v} color="#FF4D4F" /> : <Text type="secondary">—</Text>,
-    },
-    {
-      title: '待處理',
-      dataIndex: 'pending_items',
-      width: 65,
-      align: 'center' as const,
-      render: (v: number) =>
-        v > 0 ? <Badge count={v} color="#FAAD14" /> : <Text type="secondary">—</Text>,
-    },
-    {
-      title: '未巡檢',
-      dataIndex: 'unchecked_items',
-      width: 65,
-      align: 'center' as const,
-      render: (v: number) =>
-        v > 0 ? <Badge count={v} color="#999" /> : <Text type="secondary">—</Text>,
-    },
-  ]
+  const totalLogged  = sheets.filter((s) => s.has_today).length
+  const totalMissing = sheets.reduce((acc, s) => acc + s.missing_count, 0)
+  const totalCount   = sheets.reduce((acc, s) => acc + s.month_count, 0)
+  const hasAllToday  = sheets.length > 0 && totalLogged === sheets.length
+  const todayLabel   = isCurrentMonth ? '今日已登錄' : '末日已登錄'
 
   return (
     <div>
+      {/* ── 操作列 ────────────────────────────────────────────────────────── */}
       <Row style={{ marginBottom: 16 }} align="middle" gutter={8}>
         <Col>
           <Space>
-            <Text strong>查詢日期：</Text>
+            <Text strong>查詢月份：</Text>
             <DatePicker
-              value={dayjs(targetDate, 'YYYY/MM/DD')}
-              format="YYYY/MM/DD"
+              picker="month"
+              value={dayjs(queryMonth, 'YYYY-MM')}
+              format="YYYY/MM"
               allowClear={false}
-              onChange={(d) => { if (d) setTargetDate(d.format('YYYY/MM/DD')) }}
+              onChange={(d) => { if (d) handleMonthChange(d.format('YYYY-MM')) }}
             />
             <Button icon={<ReloadOutlined />} onClick={loadSummary} loading={loading}>
               重新整理
             </Button>
             <Button
-              icon={<SyncOutlined spin={syncing} />}
-              loading={syncing}
-              onClick={handleSync}
+              icon={<SyncOutlined />}
+              onClick={() => message.info('整棟巡檢同步功能開發中，請直接至 Ragic 填寫巡檢表單')}
             >
-              同步全部 Sheet
+              同步 Ragic
             </Button>
           </Space>
         </Col>
+        <Col flex="auto" />
+        <Col>
+          <Text type="secondary" style={{ fontSize: 12 }}>{monthLabel}統計</Text>
+        </Col>
       </Row>
 
-      {/* 全體 KPI */}
+      {error && (
+        <Alert type="error" message={error} style={{ marginBottom: 16 }} closable onClose={() => setError(null)} />
+      )}
+
+      {/* ── 頂部 KPI 卡片 ─────────────────────────────────────────────────── */}
       <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
         {[
-          { title: '今日巡檢場次',  value: totalBatches, color: '#1B3A5C',                          icon: <DashboardOutlined /> },
-          { title: '已巡檢項目',    value: checkedAll,   suffix: `/${totalAll}`, color: '#4BA8E8',  icon: <CheckCircleOutlined /> },
-          { title: '異常 + 待處理', value: abnormalAll,  color: '#FF4D4F',                          icon: <WarningOutlined /> },
-          { title: '整體完成率',    value: rateAll,      suffix: '%', color: rateAll >= 80 ? '#52C41A' : '#FAAD14', icon: <ExclamationCircleOutlined /> },
+          { title: todayLabel,              value: totalLogged,  suffix: `/ ${sheets.length} 樓層`,
+            color: hasAllToday ? '#52C41A' : '#FAAD14',          icon: hasAllToday ? <CheckCircleOutlined /> : <ExclamationCircleOutlined /> },
+          { title: `${monthLabel}累計缺漏`, value: totalMissing, suffix: '天',
+            color: totalMissing > 0 ? '#FF4D4F' : '#52C41A',    icon: totalMissing > 0 ? <WarningOutlined /> : <CheckCircleOutlined /> },
+          { title: `${monthLabel}登錄場次`, value: totalCount,  suffix: '筆',
+            color: '#1B3A5C',                                     icon: <DashboardOutlined /> },
+          { title: '監控樓層數',             value: sheets.length, suffix: '層',
+            color: '#4BA8E8',                                     icon: <SafetyOutlined /> },
         ].map((card) => (
           <Col flex={1} style={{ minWidth: 140 }} key={card.title}>
-            <Card size="small" hoverable style={{ height: '100%' }}>
+            <Card size="small" hoverable loading={loading} style={{ height: '100%' }}>
               <Statistic
                 title={card.title}
                 value={card.value}
@@ -340,37 +283,99 @@ function SummaryTabContent() {
             </Card>
           </Col>
         ))}
-        <Col flex={1} style={{ minWidth: 140 }}>
-          <Card size="small" hoverable style={{ height: '100%' }}>
-            <Statistic
-              title="巡檢時間"
-              value={0}
-              suffix="小時"
-              prefix={<span style={{ color: '#4BA8E8' }}><ClockCircleOutlined /></span>}
-              valueStyle={{ color: '#4BA8E8', fontSize: 26 }}
-            />
-          </Card>
-        </Col>
       </Row>
 
-      {/* 各 Sheet 明細表 */}
-      <Card size="small">
-        <Table<SheetStats>
-          dataSource={sheets}
-          rowKey="key"
-          columns={sheetCols}
-          loading={loading}
-          size="small"
-          pagination={false}
-          locale={{ emptyText: '尚無資料' }}
-        />
-      </Card>
+      {/* ── 各 Sheet 狀態卡片 ─────────────────────────────────────────────── */}
+      <Row gutter={[16, 16]}>
+        {sheets.map((sheet) => {
+          const sheetCfg = FULL_BUILDING_INSPECTION_SHEETS[sheet.key]
+          const color    = sheetCfg?.color ?? '#1B3A5C'
 
-      {!loading && totalAll === 0 && (
+          return (
+            <Col xs={24} sm={12} md={12} lg={6} key={sheet.key}>
+              <Card
+                size="small"
+                loading={loading}
+                title={
+                  <Space>
+                    <span style={{ color }}>{sheet.title}</span>
+                    {sheet.has_today
+                      ? <Tag color="success">{isCurrentMonth ? '今日已登錄' : '末日已登錄'}</Tag>
+                      : <Tag color="warning">{isCurrentMonth ? '今日未登錄' : '末日未登錄'}</Tag>}
+                  </Space>
+                }
+                extra={
+                  sheetCfg && (
+                    <Tooltip title="前往 Ragic 原始表單">
+                      <a href={sheetCfg.ragicUrl} target="_blank" rel="noreferrer">
+                        <LinkOutlined />
+                      </a>
+                    </Tooltip>
+                  )
+                }
+              >
+                <Row gutter={8}>
+                  <Col span={12}>
+                    <Statistic
+                      title={`${monthLabel}登錄`}
+                      value={sheet.month_count}
+                      suffix="筆"
+                      valueStyle={{ fontSize: 18 }}
+                    />
+                  </Col>
+                  <Col span={12}>
+                    <Statistic
+                      title="缺漏天數"
+                      value={sheet.missing_count}
+                      suffix="天"
+                      valueStyle={{
+                        fontSize: 18,
+                        color: sheet.missing_count > 0 ? '#ff4d4f' : '#52c41a',
+                      }}
+                    />
+                  </Col>
+                </Row>
+
+                <div style={{ marginTop: 8, color: '#64748b', fontSize: 12 }}>
+                  最近登錄：{sheet.latest_batch_date || '（無資料）'}
+                </div>
+
+                {sheet.missing_count > 0 && (
+                  <div style={{ marginTop: 6 }}>
+                    <Text type="danger" style={{ fontSize: 11 }}>
+                      缺漏：{sheet.missing_days.slice(0, 5).join('、')}
+                      {sheet.missing_count > 5 && ` 等 ${sheet.missing_count} 天`}
+                    </Text>
+                  </div>
+                )}
+
+                <div style={{ marginTop: 8, display: 'flex', gap: 3 }}>
+                  {sheet.trend_7d.map((t) => (
+                    <Tooltip key={t.date} title={t.date}>
+                      <div
+                        style={{
+                          width: 10, height: 10, borderRadius: '50%',
+                          backgroundColor: t.has_record ? '#52c41a' : '#ff7875',
+                        }}
+                      />
+                    </Tooltip>
+                  ))}
+                  <Text type="secondary" style={{ fontSize: 10, marginLeft: 4 }}>
+                    近 7 天
+                  </Text>
+                </div>
+              </Card>
+            </Col>
+          )
+        })}
+      </Row>
+
+      {!loading && (
         <Alert
           style={{ marginTop: 16 }}
           type="info"
-          message={`${targetDate} 尚無任何整棟巡檢記錄，請確認巡檢是否已執行並同步。`}
+          message="整棟巡檢本地同步功能開發中"
+          description="目前統計資料尚未接通本地 DB，請直接至 Ragic 查看各樓層巡檢表單。接通後數據將自動顯示於此。"
           showIcon
         />
       )}

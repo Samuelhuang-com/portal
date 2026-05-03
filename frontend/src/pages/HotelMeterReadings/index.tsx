@@ -47,17 +47,33 @@ const { Search } = Input
 // ─────────────────────────────────────────────────────────────────────────────
 
 function DashboardTab() {
-  const [targetDate, setTargetDate] = useState<string>(dayjs().format('YYYY/MM/DD'))
+  const [searchParams, setSearchParams] = useSearchParams()
+
+  // URL ?month=YYYY-MM 決定查詢月份，預設當月
+  const initMonth = searchParams.get('month') ?? dayjs().format('YYYY-MM')
+  const [queryMonth, setQueryMonth] = useState<string>(initMonth)
   const [loading,    setLoading]    = useState(false)
   const [syncing,    setSyncing]    = useState(false)
   const [sheets,     setSheets]     = useState<HotelMRSheetSummary[]>([])
   const [error,      setError]      = useState<string | null>(null)
 
+  const isCurrentMonth = queryMonth === dayjs().format('YYYY-MM')
+  const monthLabel     = dayjs(queryMonth, 'YYYY-MM').format('YYYY年M月')
+
+  const handleMonthChange = (m: string) => {
+    setQueryMonth(m)
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev)
+      next.set('month', m)
+      return next
+    }, { replace: true })
+  }
+
   const load = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      const data = await fetchHotelMeterDashboardSummary(targetDate)
+      const data = await fetchHotelMeterDashboardSummary({ month: queryMonth })
       setSheets(data.sheets)
     } catch (err) {
       setError('取得統計資料失敗，請檢查網路或稍後重試')
@@ -65,7 +81,7 @@ function DashboardTab() {
     } finally {
       setLoading(false)
     }
-  }, [targetDate])
+  }, [queryMonth])
 
   useEffect(() => { load() }, [load])
 
@@ -85,18 +101,23 @@ function DashboardTab() {
   const totalLogged  = sheets.filter((s) => s.has_today).length
   const totalMissing = sheets.reduce((acc, s) => acc + s.missing_count, 0)
   const hasAllToday  = sheets.length > 0 && totalLogged === sheets.length
+  const todayLabel   = isCurrentMonth ? '今日已登錄' : '末日已登錄'
 
   return (
     <div>
       {/* ── 操作列 ────────────────────────────────────────────────────────── */}
       <Row gutter={12} align="middle" style={{ marginBottom: 16 }}>
         <Col>
-          <DatePicker
-            value={dayjs(targetDate, 'YYYY/MM/DD')}
-            onChange={(d) => d && setTargetDate(d.format('YYYY/MM/DD'))}
-            format="YYYY/MM/DD"
-            allowClear={false}
-          />
+          <Space>
+            <Text strong>查詢月份：</Text>
+            <DatePicker
+              picker="month"
+              value={dayjs(queryMonth, 'YYYY-MM')}
+              onChange={(d) => d && handleMonthChange(d.format('YYYY-MM'))}
+              format="YYYY/MM"
+              allowClear={false}
+            />
+          </Space>
         </Col>
         <Col>
           <Button icon={<ReloadOutlined />} onClick={load} loading={loading}>
@@ -116,7 +137,7 @@ function DashboardTab() {
         <Col flex="auto" />
         <Col>
           <Text type="secondary" style={{ fontSize: 12 }}>
-            查詢日期：{targetDate}
+            {monthLabel}統計
           </Text>
         </Col>
       </Row>
@@ -137,7 +158,7 @@ function DashboardTab() {
         <Col xs={24} sm={12} md={6}>
           <Card size="small" loading={loading}>
             <Statistic
-              title="今日已登錄"
+              title={todayLabel}
               value={totalLogged}
               suffix={`/ ${sheets.length} 張表`}
               valueStyle={{ color: hasAllToday ? '#52c41a' : '#faad14' }}
@@ -148,7 +169,7 @@ function DashboardTab() {
         <Col xs={24} sm={12} md={6}>
           <Card size="small" loading={loading}>
             <Statistic
-              title="本月累計缺漏天數"
+              title={`${monthLabel}累計缺漏天數`}
               value={totalMissing}
               suffix="天"
               valueStyle={{ color: totalMissing > 0 ? '#ff4d4f' : '#52c41a' }}
@@ -159,7 +180,7 @@ function DashboardTab() {
         <Col xs={24} sm={12} md={6}>
           <Card size="small" loading={loading}>
             <Statistic
-              title="本月讀數欄位總數"
+              title={`${monthLabel}讀數欄位總數`}
               value={sheets.reduce((acc, s) => acc + s.total_readings, 0)}
               suffix="筆"
             />
@@ -191,8 +212,8 @@ function DashboardTab() {
                   <Space>
                     <span style={{ color }}>{sheet.title}</span>
                     {sheet.has_today
-                      ? <Tag color="success">今日已登錄</Tag>
-                      : <Tag color="warning">今日未登錄</Tag>}
+                      ? <Tag color="success">{isCurrentMonth ? '今日已登錄' : '末日已登錄'}</Tag>
+                      : <Tag color="warning">{isCurrentMonth ? '今日未登錄' : '末日未登錄'}</Tag>}
                   </Space>
                 }
                 extra={
@@ -206,7 +227,7 @@ function DashboardTab() {
                 <Row gutter={8}>
                   <Col span={12}>
                     <Statistic
-                      title="本月登錄"
+                      title={`${monthLabel}登錄`}
                       value={sheet.month_count}
                       suffix="筆"
                       valueStyle={{ fontSize: 18 }}

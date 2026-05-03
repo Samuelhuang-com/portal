@@ -6,10 +6,13 @@ Prefix: /api/v1/full-building-inspection
 各樓層巡檢實際填寫作業在 Ragic 系統執行。
 
 端點：
-  GET /sheets  — 取得所有樓層巡檢 Sheet 設定（Ragic URL 等）
+  GET /sheets                    — 取得所有樓層巡檢 Sheet 設定（Ragic URL 等）
+  GET /dashboard/monthly-summary — Dashboard 月份統計（目前回傳空結構，待同步功能實作後填充）
 """
-from fastapi import APIRouter, Depends
-from typing import List
+from datetime import date, timedelta
+from typing import List, Optional
+
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
 from app.dependencies import get_current_user
@@ -75,3 +78,63 @@ def get_sheets():
     包含 Ragic URL 供前端導頁或顯示摘要使用。
     """
     return SHEET_CONFIGS
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GET /dashboard/monthly-summary  — Dashboard 月份統計
+# ══════════════════════════════════════════════════════════════════════════════
+
+@router.get(
+    "/dashboard/monthly-summary",
+    summary="取得整棟巡檢 Dashboard 月份統計（跨 Sheet）",
+    tags=["整棟巡檢"],
+)
+def get_dashboard_monthly_summary(
+    month: Optional[str] = Query(
+        None,
+        description="查詢月份 YYYY-MM（如 2026-05），不填則取當月"
+    ),
+):
+    """
+    回傳各 Sheet 的月份 KPI 結構。
+    目前此模組尚未實作本地資料同步，故全部統計回傳零值。
+    待後續接入本地同步後，可直接在此填充真實資料。
+    """
+    from app.core.date_utils import get_month_range, to_ragic_year_month
+
+    today = date.today()
+    if not month:
+        month = today.strftime("%Y-%m")
+
+    start_date, end_date = get_month_range(month)
+    year_month = to_ragic_year_month(month)
+    is_current = (start_date.year == today.year and start_date.month == today.month)
+    trend_ref  = today if is_current else end_date
+
+    # 近 7 天趨勢（空資料結構，待同步實作後填充）
+    default_trend = []
+    for i in range(6, -1, -1):
+        d = trend_ref - timedelta(days=i)
+        default_trend.append({"date": d.strftime("%Y/%m/%d"), "has_record": False})
+
+    results = []
+    for cfg in SHEET_CONFIGS:
+        results.append({
+            "key":               cfg.key,
+            "floor":             cfg.floor,
+            "title":             cfg.title,
+            "month_count":       0,
+            "missing_count":     0,
+            "missing_days":      [],
+            "latest_batch_date": "",
+            "has_today":         False,
+            "is_current_month":  is_current,
+            "trend_7d":          list(default_trend),
+            "has_data":          False,
+        })
+
+    return {
+        "month":      month,
+        "year_month": year_month,
+        "sheets":     results,
+    }

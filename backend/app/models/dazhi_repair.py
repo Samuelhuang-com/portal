@@ -54,6 +54,18 @@ class DazhiRepairCase(Base):
         return (self.completed_at is not None) or self.is_completed
 
     @property
+    def occ_year(self) -> int | None:
+        """報修年份（永遠 = occurred_at.year，不受結案月影響）
+        計算屬性，不存 DB — 相容尚未重新 sync 的舊資料。"""
+        return self.occurred_at.year if self.occurred_at else None
+
+    @property
+    def occ_month(self) -> int | None:
+        """報修月份（永遠 = occurred_at.month，不受結案月影響）
+        計算屬性，不存 DB — 相容尚未重新 sync 的舊資料。"""
+        return self.occurred_at.month if self.occurred_at else None
+
+    @property
     def is_excluded_flag(self) -> bool:
         """RepairCase 相容屬性：排除「取消」等不計入統計的案件"""
         return self.status.strip() in {"取消"}
