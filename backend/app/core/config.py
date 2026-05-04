@@ -131,6 +131,9 @@ class Settings(BaseSettings):
     # ── OpenAI ────────────────────────────────────────────────────────────────
     OPENAI_API_KEY: str = ""
 
+    # ── Anthropic Claude（知識庫 AI 問答）─────────────────────────────────────
+    ANTHROPIC_API_KEY: str = ""
+
     # ── Encryption（Fernet key）───────────────────────────────────────────────
     ENCRYPTION_KEY: str = ""
 

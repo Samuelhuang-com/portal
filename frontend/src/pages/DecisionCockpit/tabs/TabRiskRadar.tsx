@@ -189,18 +189,18 @@ export default function TabRiskRadar({ year, month, monthStr, refreshKey }: TabR
       newRows.push({ key: 'security', group: '飯店管理', module: '保全巡檢', compRate: null, overdueRate: null, abnRate: null, health: null, light: 'gray' })
     }
 
-    // 6. 大直工務部
+    // 6. 飯店工務
     if (rDazhi.status === 'fulfilled') {
       const k = rDazhi.value.kpi
       const rate = k.total > 0 ? Math.round((k.completed / k.total) * 100) : null
       const h = calcModuleHealth({ total: k.total, completed: k.completed, overdue: k.uncompleted, anomaly: 0 })
       newRows.push({
-        key: 'dazhi', group: '飯店管理', module: '大直工務部',
+        key: 'dazhi', group: '飯店管理', module: '飯店工務',
         compRate: rate, overdueRate: k.total > 0 ? Math.round((k.uncompleted / k.total) * 100) : 0,
         abnRate: 0, health: h, light: getTrafficLight(h),
       })
     } else {
-      newRows.push({ key: 'dazhi', group: '飯店管理', module: '大直工務部', compRate: null, overdueRate: null, abnRate: null, health: null, light: 'gray' })
+      newRows.push({ key: 'dazhi', group: '飯店管理', module: '飯店工務', compRate: null, overdueRate: null, abnRate: null, health: null, light: 'gray' })
     }
 
     // ── 商場群組 ────────────────────────────────────────────────────────────

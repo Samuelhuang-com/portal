@@ -80,20 +80,20 @@ function generateBriefing(params: {
   if (lk) {
     const rate = lk.total > 0 ? Math.round((lk.completed / lk.total) * 100) : null
     const status = rate === null ? '無資料' : rate >= 80 ? '正常' : rate >= 60 ? '需關注' : '警告'
-    lines.push(`  • 樂群工務報修：本月 ${lk.total} 件，已完成 ${lk.completed} 件，完成率 ${rate ?? '—'}%（${status}）`)
+    lines.push(`  • 商場工務：本月 ${lk.total} 件，已完成 ${lk.completed} 件，完成率 ${rate ?? '—'}%（${status}）`)
     if (lk.uncompleted > 0) lines.push(`    ⚠ 未完成 ${lk.uncompleted} 件，待驗收 ${lk.pending_verify} 件，請督促跟進`)
     if (lk.month_total_fee > 0) lines.push(`    本月費用：NT$ ${lk.month_total_fee.toLocaleString()}`)
   } else {
-    lines.push('  • 樂群工務報修：資料準備中')
+    lines.push('  • 商場工務：資料準備中')
   }
   if (dk) {
     const rate = dk.total > 0 ? Math.round((dk.completed / dk.total) * 100) : null
     const status = rate === null ? '無資料' : rate >= 80 ? '正常' : rate >= 60 ? '需關注' : '警告'
-    lines.push(`  • 大直工務部：本月 ${dk.total} 件，已完成 ${dk.completed} 件，完成率 ${rate ?? '—'}%（${status}）`)
+    lines.push(`  • 飯店工務：本月 ${dk.total} 件，已完成 ${dk.completed} 件，完成率 ${rate ?? '—'}%（${status}）`)
     if (dk.uncompleted > 0) lines.push(`    ⚠ 未完成 ${dk.uncompleted} 件，待驗收 ${dk.pending_verify} 件`)
     if (dk.month_total_fee > 0) lines.push(`    本月費用：NT$ ${dk.month_total_fee.toLocaleString()}`)
   } else {
-    lines.push('  • 大直工務部：資料準備中')
+    lines.push('  • 飯店工務：資料準備中')
   }
   if (lk && dk) {
     const totalFee = lk.month_total_fee + dk.month_total_fee

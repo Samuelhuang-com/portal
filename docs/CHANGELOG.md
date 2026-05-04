@@ -2,6 +2,65 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)
 
+## [1.55.3] - 2026-05-04
+
+### Changed
+- **決策駕駛艙（DecisionCockpit）全模組術語統一**
+  - 「大直工務部」→「飯店工務」；「樂群工務報修」→「商場工務」
+  - 涉及 7 個檔案：`TabRepair.tsx`、`TabOverview.tsx`、`TabHotel.tsx`、`TabMall.tsx`、`TabRiskRadar.tsx`、`TabBriefing.tsx`、`TabDataQuality.tsx`
+
+---
+
+## [1.55.2] - 2026-05-03
+
+### Added
+- **知識庫 Graph View（路線 A — Portal 內建）**
+  - 後端 `wiki_service.build_graph()`：計算 nodes（id / title / category / tags）+ edges（標籤重疊→虛線 / `[[連結]]`→實線）
+  - 後端 `POST /api/v1/wiki/auto-link`：掃描所有文章，依標籤重疊與同分類自動在 body 加入「## 相關文章」`[[連結]]` 區塊（冪等，dry_run 預覽模式）
+  - 後端 `GET /api/v1/wiki/graph`：回傳 `{ nodes, edges }` JSON
+  - 前端 `api/wiki.ts`：新增 `fetchWikiGraph()`、`autoLinkArticles()` 及對應型別
+  - 前端 `pages/Wiki/WikiGraph.tsx`：`@xyflow/react` 繪製力導向圖；自訂 `WikiArticleNode`（顏色區分 SOP / Dev、標籤 Tag、選取高亮）；SOP 左環形 / Dev 右環形佈局；`MiniMap`、`Controls`、圖例浮層；點節點 → 切回清單並開啟文章
+  - 前端 `pages/Wiki/index.tsx`：Header 加 `Segmented`「清單 / 圖譜」切換；圖譜模式時搜尋列隱藏；同步 Dropdown 新增「自動補充 `[[連結]]`」選項
+
+---
+
+## [1.55.1] - 2026-05-03
+
+### Added
+- **知識庫 Obsidian 雙向同步**
+  - 後端 `wiki_service.py`：`export_to_obsidian()`（DB → `docs/wiki/*.md`）、`import_from_obsidian()`（`.md` → DB）；以 `updated_at` 比較時間戳決定是否覆寫；import 時若 `.md` 無 `id` 則寫回新 id
+  - 後端 `routers/wiki.py`：`POST /api/v1/wiki/export-obsidian`、`POST /api/v1/wiki/import-obsidian`
+  - 前端 `api/wiki.ts`：`exportToObsidian()`、`importFromObsidian()`、`ObsidianSyncResult` interface
+  - 前端 `pages/Wiki/index.tsx`：Header 加入「同步 Obsidian」Dropdown 按鈕（含 `ExportOutlined` / `ImportOutlined` 兩選項）；同步完成後顯示結果 Modal（新增/更新/跳過/錯誤明細）
+
+### Fixed
+- `wiki_service._wiki_dir()`：修正 `.parent` 呼叫次數（5 → 4），確保 `docs/wiki/` 路徑正確解析至 `portal/docs/wiki/`
+
+---
+
+## [1.55.0] - 2026-05-03
+
+### Added
+- **知識庫（LLM Wiki）— 全新功能 `/wiki`**
+  - **後端**：
+    - `backend/app/models/wiki.py`：`WikiArticle` ORM model（id / title / slug / body / summary / category / tags / author / is_published）
+    - `backend/app/schemas/wiki.py`：Create / Update / Out / ListResponse / AskRequest / AskResponse Pydantic schemas
+    - `backend/app/services/wiki_service.py`：CRUD + 關鍵字搜尋 + AI 問答（Anthropic Claude API）
+    - `backend/app/routers/wiki.py`：`GET /api/v1/wiki/`（清單）、`GET /{id}`、`POST /`（新增）、`PATCH /{id}`（更新）、`DELETE /{id}`（刪除）、`POST /ask`（AI 問答）
+    - `backend/app/services/wiki_seed.py`：首次啟動自動植入 15 篇範例文章（10 SOP + 5 Dev）
+    - `backend/requirements.txt` 加入 `anthropic>=0.25.0`
+    - `backend/.env` 加入 `ANTHROPIC_API_KEY=`（含說明註解）
+    - `backend/app/core/config.py` 加入 `ANTHROPIC_API_KEY: str = ""`
+  - **前端**：
+    - `frontend/src/types/wiki.ts`：完整 TypeScript 型別定義
+    - `frontend/src/api/wiki.ts`：fetchWikiArticles / fetchWikiArticle / createWikiArticle / updateWikiArticle / deleteWikiArticle / askWiki
+    - `frontend/src/pages/Wiki/index.tsx`：三欄式 Layout（Header 分類 Tabs / 左側文章清單 / 右側 Markdown 瀏覽）+ 新增/編輯 Drawer + AI 問答浮動 Modal（對話紀錄 + 參考來源 Tag）+ 自製 `MarkdownRenderer`（支援標題、粗體、斜體、inline code、code block、列表、引用、分隔線）
+    - Sidebar 新增「知識庫」選單項目（`ReadOutlined`）
+    - Router 新增 `/wiki` 路由
+    - `navLabels.ts` 新增 `wiki` 群組與 `wikiMain` 頁面常數
+
+---
+
 ## [1.54.9] - 2026-05-03
 
 ### Added

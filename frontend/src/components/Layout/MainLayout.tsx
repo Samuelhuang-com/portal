@@ -28,6 +28,7 @@ import {
   BarChartOutlined,
   FundOutlined,
   RadarChartOutlined,
+  ReadOutlined,
 } from '@ant-design/icons'
 import { useNavigate, useLocation, Outlet } from 'react-router-dom'
 import { useAuthStore } from '@/stores/authStore'
@@ -210,6 +211,12 @@ export const menuItems: MenuItem[] = [
       { key: '/memos/list', icon: <NotificationOutlined />, label: NAV_PAGE.memosList, permissionKey: 'memos_view'   },
       { key: '/memos/new',  icon: <PlusCircleOutlined />,   label: NAV_PAGE.memosNew,  permissionKey: 'memos_manage' },
     ],
+  },
+  // ── 知識庫（LLM Wiki）────────────────────────────────────────────────────
+  {
+    key: '/wiki',
+    icon: <ReadOutlined />,
+    label: NAV_GROUP.wiki,
   },
   {
     key: 'settings',

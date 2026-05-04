@@ -48,6 +48,7 @@ from app.routers import (
     users,
     work_category_analysis,
     mall_overview,
+    wiki,
 )
 
 
@@ -542,6 +543,7 @@ async def lifespan(app: FastAPI):
     import app.models.ihg_room_maintenance   # noqa: F401
     import app.models.menu_config  # noqa: F401
     import app.models.role_permission  # noqa: F401
+    import app.models.wiki  # noqa: F401
 
     # B4F 扁平化遷移：刪除舊 batch 表 + 檢查 item 表欄位（必須在 create_all 之前）
     _migrate_b4f_flatten()
@@ -603,6 +605,10 @@ async def lifespan(app: FastAPI):
 
     seed_rooms()
     print("[Portal] Room seed checked.")
+
+    # 知識庫範例資料植入（首次啟動時若 wiki_articles 為空）
+    from app.services.wiki_seed import seed_wiki_articles
+    seed_wiki_articles()
 
     # 排程對齊整點自動同步（預設 30 分鐘 → :00/:30）；啟動時不再立即同步，
     # 以確保伺服器能立即接受請求並從本地 DB 回傳資料。
@@ -874,6 +880,13 @@ app.include_router(
     roles.router,
     prefix=f"{API_PREFIX}/roles",
     tags=["角色管理"],
+)
+
+# ── 新增：知識庫（LLM Wiki）────────────────────────────────────────────────
+app.include_router(
+    wiki.router,
+    prefix=f"{API_PREFIX}/wiki",
+    tags=["知識庫 Wiki"],
 )
 
 # ── 前端靜態檔案（SPA 模式，放在所有路由之後）────────────────────────────

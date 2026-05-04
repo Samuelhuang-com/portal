@@ -6,7 +6,7 @@
  * 1. 商場例行維護          /mall/periodic-maintenance/stats
  * 2. 全棟例行維護          /mall/full-building-maintenance/stats
  * 3. 商場工務巡檢          /mall-facility-inspection/dashboard/monthly-summary
- * 4. 現場報修（樂群）      /luqun-repair/dashboard
+ * 4. 現場報修（商場工務）  /luqun-repair/dashboard
  * 5. 上級交辦              → 灰燈（資料準備中）
  * 6. 緊急事件              → 灰燈（資料準備中）
  */
@@ -145,7 +145,7 @@ const SOURCE_CARDS: SourceCardConfig[] = [
   { key: 'mallPM',   title: '商場例行維護', color: '#4BA8E8', getMetrics: getMetricsMallPM   },
   { key: 'fullBldg', title: '全棟例行維護', color: '#1B3A5C', getMetrics: getMetricsFullBldg },
   { key: 'facility', title: '商場工務巡檢', color: '#13c2c2', getMetrics: getMetricsFacilityDI },
-  { key: 'luqun',    title: '現場報修（樂群）', color: '#52c41a', getMetrics: getMetricsLuqun },
+  { key: 'luqun',    title: '現場報修（商場工務）', color: '#52c41a', getMetrics: getMetricsLuqun },
   { key: 'assign',   title: '上級交辦', color: '#8c8c8c', gray: true, grayNote: '資料接入中',
     getMetrics: () => ({ total: null, completed: null, overdue: null, abnormal: null, compRate: null }) },
   { key: 'urgent',   title: '緊急事件', color: '#ff4d4f', gray: true, grayNote: '資料接入中',

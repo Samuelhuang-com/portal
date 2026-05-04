@@ -105,13 +105,13 @@ export default function TabDataQuality({ year, month, monthStr, refreshKey }: Ta
     const withHours  = k.total_work_hours > 0 ? Math.round(k.total_work_hours) : 0
     const comp = k.total > 0 ? Math.round(((k.completed + k.uncompleted) / k.total) * 100) : null
     rows.push({
-      key: 'luqun', group: '工務報修', module: '樂群工務報修',
+      key: 'luqun', group: '工務報修', module: '商場工務',
       total: k.total, withStatus: k.total, withHours: k.total_work_hours > 0 ? k.total : null,
       completeness: comp,
       note: `工時合計 ${k.total_work_hours.toFixed(1)} hr，費用登錄 ${k.month_total_fee > 0 ? '✓' : '✗'}`,
     })
   } else {
-    rows.push({ key: 'luqun', group: '工務報修', module: '樂群工務報修', total: null, withStatus: null, withHours: null, completeness: null, note: '資料準備中' })
+    rows.push({ key: 'luqun', group: '工務報修', module: '商場工務', total: null, withStatus: null, withHours: null, completeness: null, note: '資料準備中' })
   }
 
   // 2. 大直工務
@@ -119,13 +119,13 @@ export default function TabDataQuality({ year, month, monthStr, refreshKey }: Ta
     const k = dazhi.kpi
     const comp = k.total > 0 ? Math.round(((k.completed + k.uncompleted) / k.total) * 100) : null
     rows.push({
-      key: 'dazhi', group: '工務報修', module: '大直工務部',
+      key: 'dazhi', group: '工務報修', module: '飯店工務',
       total: k.total, withStatus: k.total, withHours: k.total_work_hours > 0 ? k.total : null,
       completeness: comp,
       note: `工時合計 ${k.total_work_hours.toFixed(1)} hr，費用登錄 ${k.month_total_fee > 0 ? '✓' : '✗'}`,
     })
   } else {
-    rows.push({ key: 'dazhi', group: '工務報修', module: '大直工務部', total: null, withStatus: null, withHours: null, completeness: null, note: '資料準備中' })
+    rows.push({ key: 'dazhi', group: '工務報修', module: '飯店工務', total: null, withStatus: null, withHours: null, completeness: null, note: '資料準備中' })
   }
 
   // 3. 飯店週期保養

@@ -1,0 +1,217 @@
+{
+  "main": {
+    "id": "9a3021bf861162f9",
+    "type": "split",
+    "children": [
+      {
+        "id": "f5b7e4c4ba63ecd3",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "25933a3e745314df",
+            "type": "leaf",
+            "state": {
+              "type": "graph",
+              "state": {},
+              "icon": "lucide-git-fork",
+              "title": "Graph view"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "vertical"
+  },
+  "left": {
+    "id": "4f4b72c31c2155de",
+    "type": "split",
+    "children": [
+      {
+        "id": "fa0505a6be59deaf",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "96834202b5f1eff3",
+            "type": "leaf",
+            "state": {
+              "type": "file-explorer",
+              "state": {
+                "sortOrder": "alphabetical",
+                "autoReveal": false
+              },
+              "icon": "lucide-folder-closed",
+              "title": "Files"
+            }
+          },
+          {
+            "id": "2b28c71fc472da40",
+            "type": "leaf",
+            "state": {
+              "type": "search",
+              "state": {
+                "query": "[\"title\"]",
+                "matchingCase": false,
+                "explainSearch": false,
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical"
+              },
+              "icon": "lucide-search",
+              "title": "Search"
+            }
+          },
+          {
+            "id": "35905f412340d92d",
+            "type": "leaf",
+            "state": {
+              "type": "bookmarks",
+              "state": {},
+              "icon": "lucide-bookmark",
+              "title": "Bookmarks"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300
+  },
+  "right": {
+    "id": "b0bee6fdbdce64fc",
+    "type": "split",
+    "children": [
+      {
+        "id": "ac3468cdfa649f25",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "233ac2da7e70ad2a",
+            "type": "leaf",
+            "state": {
+              "type": "backlink",
+              "state": {
+                "file": "_Runme.md",
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical",
+                "showSearch": false,
+                "searchQuery": "",
+                "backlinkCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-coming-in",
+              "title": "Backlinks for _Runme"
+            }
+          },
+          {
+            "id": "f58e85dbdba4f847",
+            "type": "leaf",
+            "state": {
+              "type": "outgoing-link",
+              "state": {
+                "file": "_Runme.md",
+                "linksCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-going-out",
+              "title": "Outgoing links from _Runme"
+            }
+          },
+          {
+            "id": "c1e0cc66eff7daef",
+            "type": "leaf",
+            "state": {
+              "type": "tag",
+              "state": {
+                "sortOrder": "frequency",
+                "useHierarchy": true,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-tags",
+              "title": "Tags"
+            }
+          },
+          {
+            "id": "8c40b58e6a9589d4",
+            "type": "leaf",
+            "state": {
+              "type": "all-properties",
+              "state": {
+                "sortOrder": "frequency",
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-archive",
+              "title": "All properties"
+            }
+          },
+          {
+            "id": "7fbbd47338f5fb00",
+            "type": "leaf",
+            "state": {
+              "type": "outline",
+              "state": {
+                "file": "_Runme.md",
+                "followCursor": false,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-list",
+              "title": "Outline of _Runme"
+            }
+          }
+        ],
+        "currentTab": 3
+      }
+    ],
+    "direction": "horizontal",
+    "width": 284.5,
+    "collapsed": true
+  },
+  "left-ribbon": {
+    "hiddenItems": {
+      "switcher:Open quick switcher": false,
+      "graph:Open graph view": false,
+      "canvas:Create new canvas": false,
+      "daily-notes:Open today's daily note": false,
+      "templates:Insert template": false,
+      "command-palette:Open command palette": false,
+      "bases:Create new base": false
+    }
+  },
+  "active": "25933a3e745314df",
+  "lastOpenFiles": [
+    "backend/portal.db-shm",
+    "backend/portal.db-wal",
+    "frontend/src/pages/Wiki/WikiGraph.tsx",
+    "docs/WORK_HOURS_REFACTOR_PLAN.md",
+    "docs/WORKFLOW.md",
+    "docs/CHANGELOG.md",
+    "frontend/node_modules/fast-equals/README.md",
+    "docs/wiki/sop/保全夜間巡檢路線與注意事項.md",
+    "frontend/node_modules/is-extglob/README.md",
+    "docs/wiki/dev/新增模組標準作業流程後端-前端.md",
+    "docs/wiki/sop/冷氣異常故障排查-sop.md",
+    "docs/樂群工務報修功能設計規格書_v1.0.md",
+    "TECH_SPEC.md",
+    "README.md",
+    "CLAUDE.md",
+    "AGENTS.md",
+    "_Runme.md",
+    "docs/wiki/sop/領班sop與流程細化作業.md",
+    "docs/wiki/sop/電梯月保養記錄-sop.md",
+    "docs/wiki/sop/緊急停電應變-sop.md",
+    "docs/wiki/sop/清潔外包廠商驗收-sop.md",
+    "docs/wiki/sop/消防設備月巡檢-sop.md",
+    "docs/wiki/sop/每日水電錶數值登錄作業-sop.md",
+    "docs/wiki/sop/新進員工-portal-系統使用導覽.md",
+    "docs/wiki/sop/客房報修快速處理流程.md",
+    "docs/wiki/sop/保養工單新增與完成確認-sop.md",
+    "docs/wiki/dev/sqlite-wal-模式與-onedrive-環境注意事項.md",
+    "docs/wiki/dev/jwt-認證架構與角色權限設計.md",
+    "docs/wiki/sop",
+    "docs/wiki/dev",
+    "docs/wiki"
+  ]
+}

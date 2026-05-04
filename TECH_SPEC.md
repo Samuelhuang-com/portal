@@ -747,6 +747,30 @@ frontend/
 
 ---
 
+## 9.7 知識庫（Wiki）API
+
+| 路由 | 方法 | 說明 |
+|------|------|------|
+| `/api/v1/wiki/` | GET | 文章清單（分頁 + 關鍵字 + 分類篩選） |
+| `/api/v1/wiki/{id}` | GET | 文章詳情 |
+| `/api/v1/wiki/` | POST | 新增文章 |
+| `/api/v1/wiki/{id}` | PATCH | 更新文章 |
+| `/api/v1/wiki/{id}` | DELETE | 刪除文章 |
+| `/api/v1/wiki/ask` | POST | AI 問答（Anthropic Claude API） |
+
+**資料表**：`wiki_articles`（id / title / slug / body / summary / category / tags / author / is_published / created_at / updated_at）
+
+**category 分類**：`sop`（員工 SOP 知識庫）/ `dev`（開發者技術 Wiki）
+
+**AI 問答設計**：
+- 無 API key → 退化為關鍵字搜尋摘要模式（不報錯）
+- 有 `ANTHROPIC_API_KEY` → 呼叫 `claude-haiku-4-5-20251001`，以相關文章內容作 context
+- 關鍵字比對：問題拆詞（2 字以上），在 title + body + tags 計分排序，取前 5 篇
+
+**重要設計決策**（2026-05-03）：不使用向量搜尋/Embedding（避免外部依賴），改用 SQLite LIKE + 問題拆詞計分排序，在小資料量（< 500 篇）下效果足夠且零維運成本。
+
+---
+
 ## 10. 同步排程設計
 
 ### 10.1 排程策略

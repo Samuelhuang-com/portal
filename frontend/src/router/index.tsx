@@ -71,6 +71,9 @@ import ExecDashboardPage               from '@/pages/ExecDashboard'
 import DataPreparingPage              from '@/pages/DataPreparing'
 import DecisionCockpitPage            from '@/pages/DecisionCockpit'
 
+// ── 知識庫（LLM Wiki）──────────────────────────────────────────────────────────
+import WikiPage                        from '@/pages/Wiki'
+
 // ── 飯店管理 Dashboard（跨模組總覽）───────────────────────────────────────────
 import HotelMgmtDashboardPage          from '@/pages/HotelMgmtDashboard'
 
@@ -216,6 +219,9 @@ export default function AppRouter() {
             <DecisionCockpitPage />
           </PermissionGuard>
         } />
+
+        {/* ── 知識庫（LLM Wiki）─────────────────────────────────── */}
+        <Route path="wiki" element={<WikiPage />} />
 
         {/* ── 行事曆 ────────────────────────────────────────────────── */}
         <Route path="calendar" element={<CalendarPage />} />

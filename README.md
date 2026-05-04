@@ -2,9 +2,12 @@
 
 > 跨據點統一管理平台 — FastAPI + React + TypeScript
 
-**最後更新：2026-05-03（v1.54.0）**
+**最後更新：2026-05-03（v1.55.2）**
 
 ## 最近變更
+- v1.55.2：**知識庫 Graph View** — Portal 內建圖譜視圖（`@xyflow/react`）；`GET /api/v1/wiki/graph`（標籤重疊邊 + `[[連結]]`邊）；`POST /auto-link`（自動補充相關文章連結）；Header 清單/圖譜 Segmented 切換；SOP 左環 / Dev 右環佈局；MiniMap + 圖例；點節點跳轉文章
+- v1.55.1：**知識庫 Obsidian 雙向同步** — `POST /api/v1/wiki/export-obsidian`（DB→.md）、`POST /api/v1/wiki/import-obsidian`（.md→DB）；前端 Header「同步 Obsidian」Dropdown；同步結果 Modal（新增/更新/跳過/錯誤）；修正 `_wiki_dir()` parent 計數錯誤
+- v1.55.0：**知識庫（LLM Wiki）** — 新功能 `/wiki`；員工 SOP 知識庫 + 開發者技術 Wiki 雙分類；Markdown 渲染；AI 問答助手（Claude API，ANTHROPIC_API_KEY）；10 篇 SOP 範例 + 5 篇開發者 Wiki 自動植入；後端 `/api/v1/wiki/` CRUD + `/ask` endpoint；`anthropic>=0.25.0` 加入 requirements.txt
 - v1.54.9：**決策駕駛艙 Phase 3~8 全部完成** — B.飯店(6來源SourceCard) / C.商場(4工項+2灰燈) / D.工務(雙欄+12M折線) / E.人員工時(Top10 Bar) / F.風險雷達(10模組燈號矩陣) / G.趨勢(日度+月工時LineChart) / H.晨會摘要(規則式文字+複製) / I.資料品質(完整度Table) / Phase7 window.print / Phase8 後端 decision_cockpit_view
 - v1.54.1：**決策駕駛艙 Phase 2 — A.決策總覽** — `healthScore.ts` 計算工具（4 維度權重、燈號判斷、群組加權）；`TabOverview.tsx` 健康分數矩陣大圓 + 三子分數 + 工務/客房 KPI 彙整列 + 規則式 5 件事
 - v1.54.0：**決策駕駛艙 Phase 1** — 新一級選單 `/decision-cockpit`（PermissionGuard: `decision_cockpit_view`）；9 TAB 懶載入框架；月份選擇器（24 個月）；3 份規劃 MD（PLANNING / KPI_DATASOURCE_MAP / HEALTH_SCORE_SPEC）；9 個 TAB stub 元件

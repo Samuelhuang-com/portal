@@ -100,7 +100,7 @@ function buildAlerts(
       level: totalUncomp >= 10 ? 'error' : 'warning',
       icon:  <WarningOutlined />,
       title: `工務未完成報修 ${totalUncomp} 件`,
-      desc:  `樂群 ${luqunUncomp} 件 · 大直 ${dazhiUncomp} 件，請確認處理進度`,
+      desc:  `商場 ${luqunUncomp} 件 · 飯店 ${dazhiUncomp} 件，請確認處理進度`,
     })
   }
 
@@ -113,7 +113,7 @@ function buildAlerts(
       level: 'warning',
       icon:  <ClockCircleOutlined />,
       title: `待辦驗件 ${totalPending} 件尚未驗收`,
-      desc:  `樂群 ${luqunPending} 件 · 大直 ${dazhiPending} 件，請安排驗收`,
+      desc:  `商場 ${luqunPending} 件 · 飯店 ${dazhiPending} 件，請安排驗收`,
     })
   }
 
@@ -139,7 +139,7 @@ function buildAlerts(
       level: 'info',
       icon:  <InfoCircleOutlined />,
       title: `本月工務費用合計 NT$ ${totalFee.toLocaleString()}`,
-      desc:  `樂群 NT$ ${luqunFee.toLocaleString()} · 大直 NT$ ${dazhiFee.toLocaleString()}`,
+      desc:  `商場 NT$ ${luqunFee.toLocaleString()} · 飯店 NT$ ${dazhiFee.toLocaleString()}`,
     })
   }
 
@@ -437,7 +437,7 @@ export default function TabOverview({ year, month, monthStr, refreshKey }: TabOv
                   partial={repairPartial}
                 />
                 <div style={{ textAlign: 'center', marginTop: 4, fontSize: 11, color: T.textMuted }}>
-                  (大直 60% + 樂群 40%)
+                  (飯店工務 60% + 商場工務 40%)
                 </div>
               </Col>
             </Row>
@@ -458,7 +458,7 @@ export default function TabOverview({ year, month, monthStr, refreshKey }: TabOv
             <KpiCard
               title="工務總件數"
               value={kpiTotal}
-              tooltip="樂群 + 大直 本月總報修件數"
+              tooltip="商場 + 飯店 本月總報修件數"
             />
           </Col>
           <Col xs={12} sm={4}>

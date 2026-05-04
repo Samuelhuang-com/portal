@@ -45,6 +45,7 @@
  *   2026-04-30  整合保全巡檢：security 從群組（8 items）→ 單一入口 /security/dashboard；各 Sheet 改為頁面內外層 TAB；NAV_GROUP.security 改名「保全巡檢」
  *   2026-04-30  新增 hotelMgmtDashboard（★飯店管理 Dashboard）整合 6 來源總覽，route /hotel/overview
  *   2026-05-03  新增 decisionCockpit（決策駕駛艙）高階主管決策入口，整合三大模組精華，route /decision-cockpit
+ *   2026-05-03  新增 wiki（知識庫）LLM Wiki 知識庫，含員工 SOP + 開發者 Wiki + AI 問答，route /wiki
  */
 
 // ── 系統標題 ──────────────────────────────────────────────────────────────────
@@ -67,6 +68,7 @@ export const NAV_GROUP = {
   reports:    '報表',
   approvals:  '簽核管理',
   memos:      '公告牆',
+  wiki:       '知識庫',
   audit:      '稽核日誌',
   settings:   '系統設定',
 } as const
@@ -160,6 +162,9 @@ export const NAV_PAGE = {
   // 公告牆
   memosList:             '公告清單',
   memosNew:              '新增公告',
+
+  // 知識庫
+  wikiMain:              '知識庫',
 
   // 系統設定
   usersManage:           '使用者管理',

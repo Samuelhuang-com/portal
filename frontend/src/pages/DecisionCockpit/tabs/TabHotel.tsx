@@ -8,7 +8,7 @@
  * 3. IHG 客房保養          /ihg-room-maintenance/stats
  * 4. 飯店每日巡檢          /hotel-daily-inspection/dashboard/monthly-summary
  * 5. 保全巡檢              /security/dashboard/monthly-summary
- * 6. 大直工務部            /dazhi-repair/dashboard
+ * 6. 飯店工務              /dazhi-repair/dashboard
  */
 import { useEffect, useState, useCallback } from 'react'
 import {
@@ -170,7 +170,7 @@ const SOURCES: SourceDef[] = [
     },
   },
   {
-    key: 'dazhi', title: '大直工務部', color: '#52c41a',
+    key: 'dazhi', title: '飯店工務', color: '#52c41a',
     getMetrics: (s) => {
       if (!s.dazhi) return { total: null, completed: null, overdue: null, abnormal: null, compRate: null }
       const k = s.dazhi.kpi
@@ -356,7 +356,7 @@ export default function TabHotel({ year, month, monthStr, refreshKey }: TabHotel
               B. 飯店管理摘要 — {monthStr}
             </Title>
             <Text type="secondary" style={{ fontSize: 12 }}>
-              整合 6 大來源：客房保養管理 · 飯店週期保養 · IHG 客房保養 · 飯店每日巡檢 · 保全巡檢 · 大直工務部
+              整合 6 大來源：客房保養管理 · 飯店週期保養 · IHG 客房保養 · 飯店每日巡檢 · 保全巡檢 · 飯店工務
             </Text>
             <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
               {subScores.map((score, i) => {

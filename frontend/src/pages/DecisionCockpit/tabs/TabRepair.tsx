@@ -1,6 +1,6 @@
 /**
  * TAB D — 工務與報修
- * Phase 4：大直工務部 + 樂群工務報修 合併摘要 + 12 個月趨勢折線
+ * Phase 4：飯店工務 + 商場工務 合併摘要 + 12 個月趨勢折線
  *
  * API:
  *   - /api/v1/dazhi-repair/dashboard
@@ -241,7 +241,7 @@ export default function TabRepair({ year, month, monthStr, refreshKey }: TabRepa
               D. 工務與報修 — {monthStr}
             </Title>
             <Text type="secondary" style={{ fontSize: 12 }}>
-              大直工務部（60%）+ 樂群工務報修（40%）加權平均
+              飯店工務（60%）+ 商場工務（40%）加權平均
             </Text>
             <Row gutter={[16, 0]} style={{ marginTop: 8 }}>
               <Col><Statistic title="合計件數" value={totalCases} valueStyle={{ fontSize: 18, color: T.primary }} /></Col>
@@ -255,10 +255,10 @@ export default function TabRepair({ year, month, monthStr, refreshKey }: TabRepa
       {/* ── 左右雙欄：大直 | 樂群 ──────────────────────────────────────── */}
       <Row gutter={[16, 16]}>
         <Col xs={24} lg={12}>
-          <RepairSideCard title="大直工務部" color="#1B3A5C" data={dazhi} loading={loading} />
+          <RepairSideCard title="飯店工務" color="#1B3A5C" data={dazhi} loading={loading} />
         </Col>
         <Col xs={24} lg={12}>
-          <RepairSideCard title="樂群工務報修" color="#4BA8E8" data={luqun} loading={loading} />
+          <RepairSideCard title="商場工務" color="#4BA8E8" data={luqun} loading={loading} />
         </Col>
       </Row>
     </div>
