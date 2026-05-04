@@ -14,6 +14,7 @@ import {
   useNodesState,
   useEdgesState,
   type Node,
+  type Edge,
   type NodeTypes,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
@@ -124,8 +125,8 @@ interface WikiGraphProps {
 }
 
 export default function WikiGraph({ category, onNodeClick }: WikiGraphProps) {
-  const [nodes, setNodes, onNodesChange] = useNodesState([])
-  const [edges, setEdges, onEdgesChange] = useEdgesState([])
+  const [nodes, setNodes, onNodesChange] = useNodesState<Node>([])
+  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
   const [loading, setLoading] = useState(false)
   const [empty, setEmpty]     = useState(false)
 
