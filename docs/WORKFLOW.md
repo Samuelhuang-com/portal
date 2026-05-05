@@ -2,7 +2,30 @@
 
 > 開發機：`C:\OneDrive\_Ragic\portal`  
 > 正式機：`192.168.0.210`，路徑 `D:\portal`  
-> 最後更新：2026-04-26（補充 git reset --hard 說明）
+> 最後更新：2026-04-29（新增首次設定、gc.auto 與 index.lock 說明）
+
+---
+
+## ⚡ 首次設定（每台機器只需執行一次）
+
+repo 放在 OneDrive 資料夾內，git 自動垃圾回收（gc）會與 OneDrive 同步衝突，導致 push 後出現大量：
+```
+Deletion of directory '.git/objects/xx' failed. Should I try again? (y/n)
+```
+
+**開發機**（PowerShell）：
+```powershell
+cd C:\OneDrive\_Ragic\portal
+git config gc.auto 0
+```
+
+**正式機**（管理員 cmd）：
+```cmd
+cd D:\portal
+git config gc.auto 0
+```
+
+設定後永久生效，push 不再跳出確認提示。
 
 ---
 

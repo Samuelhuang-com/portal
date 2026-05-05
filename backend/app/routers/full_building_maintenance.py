@@ -922,6 +922,85 @@ def get_period_stats(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# GET /calendar  — 月曆格（類別 × 日期）
+# ══════════════════════════════════════════════════════════════════════════════
+@router.get("/calendar", summary="全棟例行維護月曆格（類別 × 日）")
+def get_calendar(
+    year:  int = Query(..., description="年份，如 2026"),
+    month: int = Query(..., ge=1, le=12, description="月份，如 5"),
+    db:    Session = Depends(get_db),
+):
+    """
+    回傳指定年月的類別 × 日期月曆格資料。
+    cell key = str(d)（非零填充，配合 MonthlyCalendarGrid）。
+    """
+    import calendar as cal_mod
+    max_day   = cal_mod.monthrange(year, month)[1]
+    target_ym = f"{year}/{month:02d}"
+
+    batch = db.query(FullBldgPMBatch).filter(
+        FullBldgPMBatch.period_month == target_ym
+    ).first()
+
+    # 已知類別順序
+    CATEGORY_ORDER = ["水電", "空調", "照明", "消防", "申報", "整體"]
+
+    def _empty_daily() -> dict:
+        return {
+            str(d): {"has_record": False, "completion_rate": 0, "abnormal_count": 0, "pending_count": 0}
+            for d in range(1, max_day + 1)
+        }
+
+    if not batch:
+        return {
+            "year": year, "month": month, "max_day": max_day,
+            "rows": [{"key": c, "label": c, "daily": _empty_daily()} for c in CATEGORY_ORDER],
+        }
+
+    items = db.query(FullBldgPMItem).filter(
+        FullBldgPMItem.batch_ragic_id == batch.ragic_id
+    ).all()
+
+    # 依類別 × 日分組（用 scheduled_date 的 MM/DD 推算日期）
+    from collections import defaultdict
+    cat_day: dict[str, dict[int, list]] = defaultdict(lambda: defaultdict(list))
+    for it in items:
+        fd = _reconstruct_full_date(it.scheduled_date, batch.period_month)
+        if fd is None or fd.year != year or fd.month != month:
+            continue
+        cat_day[it.category or "其他"][fd.day].append(it)
+
+    # 確保所有已知類別都出現；額外類別附加在後
+    all_cats = list(CATEGORY_ORDER)
+    for c in cat_day:
+        if c not in all_cats:
+            all_cats.append(c)
+
+    rows_out = []
+    for cat in all_cats:
+        daily: dict[str, dict] = {}
+        for d in range(1, max_day + 1):
+            day_items = cat_day[cat].get(d, [])
+            if not day_items:
+                daily[str(d)] = {"has_record": False, "completion_rate": 0, "abnormal_count": 0, "pending_count": 0}
+            else:
+                total     = len(day_items)
+                completed = sum(1 for it in day_items if it.start_time and it.end_time)
+                abnormal  = sum(1 for it in day_items if it.abnormal_flag)
+                pending   = total - completed
+                rate      = round(completed / total * 100, 1) if total > 0 else 0.0
+                daily[str(d)] = {
+                    "has_record":      True,
+                    "completion_rate": rate,
+                    "abnormal_count":  abnormal,
+                    "pending_count":   pending,
+                }
+        rows_out.append({"key": cat, "label": cat, "daily": daily})
+
+    return {"year": year, "month": month, "max_day": max_day, "rows": rows_out}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # GET /debug/ragic-raw  — 除錯用
 # ══════════════════════════════════════════════════════════════════════════════
 @router.get("/debug/ragic-raw", summary="[除錯] 顯示 Ragic Sheet 21 原始欄位 key", dependencies=[Depends(require_roles("system_admin", "module_manager"))])

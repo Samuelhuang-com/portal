@@ -2,6 +2,41 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)
 
+## [1.57.17] - 2026-05-05
+
+### Changed
+- **`hotel/ihg-room-maintenance` 固定規範房號清單** — router 新增 `CANONICAL_ROOMS`（149 間：5F×28、6F×28、7F×28、8F×27、9F×21、10F×17）；矩陣表以規範清單為基礎初始化，無資料的房號顯示空列、Ragic 資料中不在清單內的房號一律排除；`/stats`、`/records` 端點同步套用清單過濾
+
+---
+
+## [1.57.16] - 2026-05-05
+
+### Added
+- **`mall/full-building-maintenance` Dashboard 新增月曆格** — 後端新增 `GET /api/v1/mall/full-building-maintenance/calendar?year=&month=`（類別 × 日，6 類別：水電/空調/照明/消防/申報/整體，依 `scheduled_date` MM/DD 推算日期）；`loadDashboard` 改為 `Promise.all` 平行載入（calendar 失敗不阻斷 stats）；Dashboard 底部新增「全棟例行維護排程狀況」月曆格 Card（`rowHeaderLabel="保養類別"`）
+
+---
+
+## [1.57.15] - 2026-05-05
+
+### Added
+- **`mall/full-building-maintenance` 新增「每月保養表」TAB** — 插入第二 TAB（key=`form`，Dashboard 後）；獨立 `formYear`/`formMonth` state + `loadFormItems` useCallback（`fetchFullBldgPMBatches` 找批次 → `fetchFullBldgPMBatchDetail`）；類別 rowSpan 分組（水電/空調/照明/消防/申報/整體）；欄位：序號/類別/頻率/執行月份/項目+區域/預估(分)/排定日期+人員/執行人員/狀態Tag/備註；異常列 #fff1f0，非本月列 #bbb；`handleSync` 時若在此 TAB 一併重刷
+
+---
+
+## [1.57.14] - 2026-05-05
+
+### Added
+- **`mall-facility-inspection` 新增「每日巡檢表」TAB** — 後端新增 `GET /api/v1/mall-facility-inspection/daily-form?year=&month=&inspection_date=`（整合 `mall_daily_inspection_builder.build_mall_daily_inspection_table`）；前端插入第二 TAB（key=`daily-form`），直接複用 `MallDailyInspectionFormTab` 元件（獨立年/月/日期篩選、rowSpan 分組、異常列底色 #fff1f0）；`VALID_TABS` 新增 `daily-form`
+
+---
+
+## [1.57.13] - 2026-05-05
+
+### Added
+- **`mall-facility-inspection` Dashboard 新增月曆格** — 後端新增 `GET /api/v1/mall-facility-inspection/daily-calendar?year=&month=`（5 樓層 × 日期，依 `MallFIBatch` + `MallFIItem` 計算每日 completion_rate/abnormal/pending）；前端 `SummaryTabContent` 新增 `calRows/calMaxDay` state，`loadSummary` 改為 `Promise.all` 平行載入（calendar 失敗不阻斷主統計）；Dashboard 底部新增「商場工務每日巡檢狀況」月曆格 Card，`rowHeaderLabel="巡檢區域"`
+
+---
+
 ## [1.57.12] - 2026-05-05
 
 ### Changed

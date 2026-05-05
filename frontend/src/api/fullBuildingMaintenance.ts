@@ -75,3 +75,12 @@ export async function fetchFullBldgPMYearMatrix(year?: number): Promise<PMYearMa
   const res = await apiClient.get<PMYearMatrix>(`${BASE}/period-stats/year-matrix`, { params })
   return res.data
 }
+
+/** 月曆格（類別 × 日） */
+export async function fetchFullBldgPMCalendar(
+  year: number,
+  month: number,
+): Promise<{ year: number; month: number; max_day: number; rows: import('@/components/MonthlyCalendarGrid').CalendarRow[] }> {
+  const res = await apiClient.get(`${BASE}/calendar`, { params: { year, month } })
+  return res.data
+}

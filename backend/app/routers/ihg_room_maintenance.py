@@ -34,9 +34,36 @@ from app.core.database import get_db
 from app.core.time import twnow
 from app.dependencies import get_current_user, require_roles
 from app.models.ihg_room_maintenance import IHGRoomMaintenanceMaster, IHGRoomMaintenanceDetail
-from app.services.ihg_room_maintenance_sync import sync_from_ragic
+from app.services.ihg_room_maintenance_sync import sync_from_ragic, _derive_floor
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
+
+# ── IHG 規範房號清單（單一來源，新增/移除房號只改這裡）────────────────────────
+CANONICAL_ROOMS: list[str] = [
+    # 5F
+    "501","502","503","505","506","507","508","509","510","511","512","513",
+    "515","516","517","518","519","520","521","522","523","525","526","527",
+    "528","529","530","531",
+    # 6F
+    "601","602","603","605","606","607","608","609","610","611","612","613",
+    "615","616","617","618","619","620","621","622","623","625","626","627",
+    "628","629","630","631",
+    # 7F
+    "701","702","703","705","706","707","708","709","710","711","712","713",
+    "715","716","717","718","719","720","721","722","723","725","726","727",
+    "728","729","730","731",
+    # 8F
+    "801","803","805","806","807","808","809","810","811","812","813",
+    "815","816","817","818","819","820","821","822","823","825","826","827",
+    "828","829","830","831",
+    # 9F
+    "909","910","911","912","913","915","916","917","918","919","920","921",
+    "922","923","925","926","927","928","929","930","931",
+    # 10F
+    "1013","1015","1016","1017","1018","1019","1020","1021","1022","1023",
+    "1025","1026","1027","1028","1029","1030","1031",
+]
+CANONICAL_ROOM_SET: frozenset[str] = frozenset(CANONICAL_ROOMS)
 
 # ── 保養檢查欄位：忽略清單 ────────────────────────────────────────────────────
 # 明確不屬於保養檢查項目的欄位名稱（精確匹配）
@@ -176,7 +203,8 @@ async def get_stats(
         year = str(twnow().year)
 
     q = db.query(IHGRoomMaintenanceMaster).filter(
-        IHGRoomMaintenanceMaster.maint_year == year
+        IHGRoomMaintenanceMaster.maint_year == year,
+        IHGRoomMaintenanceMaster.room_no.in_(CANONICAL_ROOM_SET),
     )
     if month:
         q = q.filter(IHGRoomMaintenanceMaster.maint_month == month.zfill(2))
@@ -274,7 +302,8 @@ async def get_matrix(
         year = str(twnow().year)
 
     q = db.query(IHGRoomMaintenanceMaster).filter(
-        IHGRoomMaintenanceMaster.maint_year == year
+        IHGRoomMaintenanceMaster.maint_year == year,
+        IHGRoomMaintenanceMaster.room_no.in_(CANONICAL_ROOM_SET),
     )
     if room_no:
         q = q.filter(IHGRoomMaintenanceMaster.room_no.ilike(f"{room_no}%"))
@@ -283,13 +312,24 @@ async def get_matrix(
 
     all_recs = q.all()
 
-    # 按房號分組，建立矩陣
-    room_map: dict[str, dict] = {}           # room_no → {floor, cells}
+    # ── 以規範清單為基礎初始化 room_map（保證所有規範房號都出現，即使無資料）──
+    # 若有 room_no / floor 篩選條件，也要套用到初始化清單
+    canonical_filtered = [
+        rn for rn in CANONICAL_ROOMS
+        if (not room_no or rn.startswith(room_no))
+        and (not floor or _derive_floor(rn) == floor)
+    ]
+    room_map: dict[str, dict] = {
+        rn: {"room_no": rn, "floor": _derive_floor(rn), "cells": {}}
+        for rn in canonical_filtered
+    }
+
     month_minutes: dict[str, float] = {}     # month_key → 分鐘加總
     for rec in all_recs:
         rno = rec.room_no or "??"
+        # 只處理規範清單內的房號（非規範房號的 Ragic 資料跳過）
         if rno not in room_map:
-            room_map[rno] = {"room_no": rno, "floor": rec.floor, "cells": {}}
+            continue
         month_key = str(int(rec.maint_month)) if rec.maint_month else "?"
         cell_stat = _cell_status(rec)
 
@@ -352,6 +392,10 @@ async def get_matrix(
             "work_minutes":    int(work_minutes) if work_minutes else None,
         }
 
+    # 狀態篩選時，移除沒有任何符合 cell 的房號（空列無意義）
+    if cell_status:
+        room_map = {rn: rd for rn, rd in room_map.items() if rd["cells"]}
+
     # 依樓層排序
     sorted_rooms = sorted(room_map.values(), key=lambda r: _room_sort_key(r["room_no"]))
 
@@ -391,7 +435,9 @@ async def list_records(
     db: Session = Depends(get_db),
 ):
     """原始清單，支援多維篩選與分頁"""
-    q = db.query(IHGRoomMaintenanceMaster)
+    q = db.query(IHGRoomMaintenanceMaster).filter(
+        IHGRoomMaintenanceMaster.room_no.in_(CANONICAL_ROOM_SET)
+    )
     if year:
         q = q.filter(IHGRoomMaintenanceMaster.maint_year == year)
     if month:

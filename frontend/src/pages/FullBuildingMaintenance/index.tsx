@@ -28,9 +28,12 @@ import type { ColumnsType } from 'antd/es/table'
 import dayjs from 'dayjs'
 
 import {
-  fetchFullBldgPMStats, fetchFullBldgPMBatches, syncFullBldgPMFromRagic,
-  fetchFullBldgPMPeriodStats, fetchFullBldgPMYearMatrix,
+  fetchFullBldgPMStats, fetchFullBldgPMBatches, fetchFullBldgPMBatchDetail,
+  syncFullBldgPMFromRagic, fetchFullBldgPMPeriodStats, fetchFullBldgPMYearMatrix,
+  fetchFullBldgPMCalendar,
 } from '@/api/fullBuildingMaintenance'
+import MonthlyCalendarGrid from '@/components/MonthlyCalendarGrid'
+import type { CalendarRow } from '@/components/MonthlyCalendarGrid'
 import type {
   PMStats, PMBatchListItem, PMItem,
   PMPeriodStats, PMIncompleteItem, PMSubPeriodBreakdown,
@@ -533,11 +536,30 @@ export default function FullBuildingMaintenancePage() {
   const [yearlyYear,    setYearlyYear]    = useState(dayjs().year())
   const [yearlyLoading, setYearlyLoading] = useState(false)
 
+  // ── Dashboard 月曆格 state ───────────────────────────────────────────────
+  const [calRows,   setCalRows]   = useState<CalendarRow[]>([])
+  const [calMaxDay, setCalMaxDay] = useState(31)
+
+  // ── 每月保養表 state ─────────────────────────────────────────────────────
+  const [formYear,    setFormYear]    = useState(dayjs().format('YYYY'))
+  const [formMonth,   setFormMonth]   = useState(dayjs().month() + 1)
+  const [formItems,   setFormItems]   = useState<PMItem[]>([])
+  const [formLoading, setFormLoading] = useState(false)
+
   const loadDashboard = useCallback(async () => {
     setLoading(true)
     try {
-      const s = await fetchFullBldgPMStats(dashYear, dashMonth)
+      const yr = parseInt(dashYear)
+      const mo = dashMonth
+      const [s, calData] = await Promise.all([
+        fetchFullBldgPMStats(dashYear, dashMonth),
+        fetchFullBldgPMCalendar(yr, mo).catch(() => null),
+      ])
       setStats(s)
+      if (calData) {
+        setCalMaxDay(calData.max_day)
+        setCalRows(calData.rows)
+      }
     } catch {
       message.error('載入統計資料失敗')
     } finally {
@@ -617,6 +639,24 @@ export default function FullBuildingMaintenancePage() {
     }
   }, [yearlyYear])
 
+  const loadFormItems = useCallback(async () => {
+    setFormLoading(true)
+    try {
+      const batchList = await fetchFullBldgPMBatches(formYear)
+      const targetPM  = `${formYear}/${String(formMonth).padStart(2, '0')}`
+      const found     = batchList.find((b) => b.batch.period_month === targetPM)
+      if (!found) { setFormItems([]); return }
+      const detail = await fetchFullBldgPMBatchDetail(found.batch.ragic_id, { currentMonthOnly: true })
+      setFormItems(detail.items)
+    } catch {
+      setFormItems([])
+    } finally {
+      setFormLoading(false)
+    }
+  }, [formYear, formMonth])
+
+  useEffect(() => { loadFormItems() }, [loadFormItems])
+
   useEffect(() => { loadDashboard() }, [loadDashboard])
 
   useEffect(() => {
@@ -636,6 +676,7 @@ export default function FullBuildingMaintenancePage() {
       await syncFullBldgPMFromRagic()
       message.success('同步完成')
       await loadDashboard()
+      if (activeTab === 'form')      await loadFormItems()
       if (activeTab === 'list')      await loadBatches()
       if (activeTab === 'monthly')   { await loadYearMatrix(); await loadMonthlyStats() }
       if (activeTab === 'quarterly') { await loadQuarterlyMatrix(); await loadQuarterlyStats() }
@@ -937,6 +978,34 @@ export default function FullBuildingMaintenancePage() {
           </Row>
         </Card>
       )}
+
+      {/* 月曆格：類別 × 日期 */}
+      <Card
+        size="small"
+        style={{ marginTop: 16 }}
+        title={
+          <Space>
+            <CalendarOutlined />
+            <Text strong>全棟例行維護排程狀況</Text>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              （{dashYear}/{String(dashMonth).padStart(2, '0')}）
+            </Text>
+          </Space>
+        }
+        loading={loading}
+      >
+        {calRows.length > 0 ? (
+          <MonthlyCalendarGrid
+            year={parseInt(dashYear)}
+            month={dashMonth}
+            maxDay={calMaxDay}
+            rows={calRows}
+            rowHeaderLabel="保養類別"
+          />
+        ) : (
+          <Text type="secondary">尚無月曆資料</Text>
+        )}
+      </Card>
     </div>
   )
 
@@ -1213,6 +1282,180 @@ export default function FullBuildingMaintenancePage() {
     </div>
   )
 
+  // ── 每月保養表 Tab ────────────────────────────────────────────────────────
+  type FormRow = PMItem & { _catSpan: number }
+
+  const formRowsWithSpan: FormRow[] = (() => {
+    const result: FormRow[] = []
+    let i = 0
+    while (i < formItems.length) {
+      const cat = formItems[i].category
+      let j = i
+      while (j < formItems.length && formItems[j].category === cat) j++
+      const span = j - i
+      for (let k = i; k < j; k++) {
+        result.push({ ...formItems[k], _catSpan: k === i ? span : 0 })
+      }
+      i = j
+    }
+    return result
+  })()
+
+  const formColumns: ColumnsType<FormRow> = [
+    {
+      title:     '序號',
+      dataIndex: 'seq_no',
+      width:     55,
+      align:     'center' as const,
+      render:    (v: number) => <Text type="secondary" style={{ fontSize: 12 }}>{v || '—'}</Text>,
+    },
+    {
+      title:     '類別',
+      dataIndex: 'category',
+      width:     70,
+      onCell:    (row) => ({ rowSpan: row._catSpan }),
+      render:    (v: string) => <Text strong style={{ color: '#1B3A5C' }}>{v}</Text>,
+    },
+    {
+      title:     '頻率',
+      dataIndex: 'frequency',
+      width:     65,
+      render:    (v: string) => v || <Text type="secondary">—</Text>,
+    },
+    {
+      title:     '執行月份',
+      dataIndex: 'exec_months_raw',
+      width:     75,
+      render:    (v: string) => v
+        ? <Text style={{ fontSize: 11 }}>{v}</Text>
+        : <Text type="secondary">—</Text>,
+    },
+    {
+      title:   '項目 / 區域',
+      width:   240,
+      ellipsis: true,
+      render:  (_, row) => (
+        <div>
+          {row.task_name && <div style={{ fontWeight: 500 }}>{row.task_name}</div>}
+          {row.location  && <div style={{ fontSize: 11, color: '#666' }}>{row.location}</div>}
+        </div>
+      ),
+    },
+    {
+      title:     '預估(分)',
+      dataIndex: 'estimated_minutes',
+      width:     72,
+      align:     'right' as const,
+      render:    (v: number) => v ? v : <Text type="secondary">—</Text>,
+    },
+    {
+      title:     '排定日期',
+      dataIndex: 'scheduled_date',
+      width:     90,
+      render:    (v: string) => v || <Text type="secondary">—</Text>,
+    },
+    {
+      title:     '排定人員',
+      dataIndex: 'scheduler_name',
+      width:     80,
+      ellipsis:  true,
+      render:    (v: string) => v || <Text type="secondary">—</Text>,
+    },
+    {
+      title:     '執行人員',
+      dataIndex: 'executor_name',
+      width:     80,
+      ellipsis:  true,
+      render:    (v: string) => v || <Text type="secondary">—</Text>,
+    },
+    {
+      title:  '狀態',
+      width:  80,
+      render: (_, row) => {
+        const cfg = STATUS_CFG[row.status] ?? { label: row.status, tagColor: 'default' }
+        return <Tag color={cfg.tagColor}>{cfg.label}</Tag>
+      },
+    },
+    {
+      title:     '備註',
+      dataIndex: 'result_note',
+      ellipsis:  true,
+      render:    (v: string) => v
+        ? <Tooltip title={v}><Text style={{ fontSize: 11 }}>{v}</Text></Tooltip>
+        : <Text type="secondary">—</Text>,
+    },
+  ]
+
+  const MonthlyFormTab = (
+    <div>
+      <Row gutter={8} align="middle" style={{ marginBottom: 16 }}>
+        <Col>
+          <Text type="secondary">年份：</Text>
+        </Col>
+        <Col>
+          <Select
+            value={formYear}
+            onChange={(v) => setFormYear(v)}
+            options={yearOptions}
+            style={{ width: 100 }}
+          />
+        </Col>
+        <Col>
+          <Text type="secondary">月份：</Text>
+        </Col>
+        <Col>
+          <Select
+            value={formMonth}
+            onChange={(v) => setFormMonth(v)}
+            options={monthOptions}
+            style={{ width: 85 }}
+          />
+        </Col>
+        <Col>
+          <Button icon={<ReloadOutlined />} onClick={loadFormItems} loading={formLoading}>
+            重新整理
+          </Button>
+        </Col>
+        <Col flex="auto" />
+        <Col>
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            {formYear} 年 {formMonth} 月 保養計畫
+          </Text>
+        </Col>
+      </Row>
+
+      {!formLoading && formItems.length === 0 ? (
+        <Alert
+          type="info"
+          showIcon
+          message={`${formYear} 年 ${formMonth} 月 尚無保養批次資料，請確認是否已建立批次並完成同步。`}
+        />
+      ) : (
+        <>
+          <Table<FormRow>
+            dataSource={formRowsWithSpan}
+            rowKey="ragic_id"
+            columns={formColumns}
+            loading={formLoading}
+            size="small"
+            pagination={false}
+            scroll={{ x: 'max-content' }}
+            bordered
+            rowClassName={(row) => {
+              if (row.abnormal_flag)                  return 'full-bldg-form-row--abnormal'
+              if (row.status === 'non_current_month') return 'full-bldg-form-row--non-current'
+              return ''
+            }}
+          />
+          <style>{`
+            .full-bldg-form-row--abnormal > td { background: #fff1f0 !important; }
+            .full-bldg-form-row--non-current > td { color: #bbb !important; }
+          `}</style>
+        </>
+      )}
+    </div>
+  )
+
   // ── 頁面渲染 ──────────────────────────────────────────────────────────────
   return (
     <div style={{ padding: '0 4px' }}>
@@ -1247,6 +1490,11 @@ export default function FullBuildingMaintenancePage() {
         onChange={setActiveTab}
         items={[
           { key: 'dashboard', label: 'Dashboard', children: DashboardTab },
+          {
+            key:      'form',
+            label:    <span><CalendarOutlined /> 每月保養表</span>,
+            children: MonthlyFormTab,
+          },
           {
             key: 'monthly',
             label: <span><CalendarOutlined /> 每月維護</span>,

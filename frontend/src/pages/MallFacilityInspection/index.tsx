@@ -9,7 +9,7 @@
  *   Tab 5 1F 巡檢      — 同上
  *   Tab 6 B1F~B4F 巡檢 — 同上
  *
- * URL query param：?tab=summary|4f|3f|1f-3f|1f|b1f-b4f
+ * URL query param：?tab=summary|daily-form|4f|3f|1f-3f|1f|b1f-b4f
  */
 import { useEffect, useState, useCallback } from 'react'
 import { useSearchParams } from 'react-router-dom'
@@ -22,6 +22,7 @@ import {
   HomeOutlined, SyncOutlined, ReloadOutlined,
   WarningOutlined, CheckCircleOutlined, ExclamationCircleOutlined,
   DashboardOutlined, ToolOutlined, ClockCircleOutlined, LinkOutlined,
+  CalendarOutlined,
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { NAV_GROUP, NAV_PAGE } from '@/constants/navLabels'
@@ -35,8 +36,12 @@ import {
   fetchMallFacilityBatches,
   syncMallFacilityAllFromRagic,
   syncMallFacilityFromRagic,
+  fetchMallFIDailyCalendar,
   type MallFIMonthlySheetSummary,
 } from '@/api/mallFacilityInspection'
+import MonthlyCalendarGrid from '@/components/MonthlyCalendarGrid'
+import type { CalendarRow } from '@/components/MonthlyCalendarGrid'
+import MallDailyInspectionFormTab from '@/pages/MallPeriodicMaintenance/MallDailyInspectionFormTab'
 
 const { Title, Text } = Typography
 
@@ -198,6 +203,8 @@ function SummaryTabContent() {
   const [syncing,    setSyncing]    = useState(false)
   const [sheets,     setSheets]     = useState<MallFIMonthlySheetSummary[]>([])
   const [error,      setError]      = useState<string | null>(null)
+  const [calRows,    setCalRows]    = useState<CalendarRow[]>([])
+  const [calMaxDay,  setCalMaxDay]  = useState(31)
 
   const isCurrentMonth = queryMonth === dayjs().format('YYYY-MM')
   const monthLabel     = dayjs(queryMonth, 'YYYY-MM').format('YYYY年M月')
@@ -215,8 +222,20 @@ function SummaryTabContent() {
     setLoading(true)
     setError(null)
     try {
-      const data = await fetchMallFacilityMonthlyDashboard(queryMonth)
+      const [yr, mo] = queryMonth.split('-').map(Number)
+      const [data, calData] = await Promise.all([
+        fetchMallFacilityMonthlyDashboard(queryMonth),
+        fetchMallFIDailyCalendar(yr, mo).catch(() => null),
+      ])
       setSheets(data.sheets)
+      if (calData) {
+        setCalMaxDay(calData.max_day)
+        setCalRows(calData.sheets.map((s) => ({
+          key:   s.key,
+          label: s.floor,
+          daily: s.daily,
+        })))
+      }
     } catch {
       setError('取得統計資料失敗，請稍後再試')
       setSheets([])
@@ -396,6 +415,34 @@ function SummaryTabContent() {
         })}
       </Row>
 
+      {/* 月曆格：樓層 × 日期 */}
+      <Card
+        size="small"
+        style={{ marginTop: 16 }}
+        title={
+          <Space>
+            <CalendarOutlined />
+            <Text strong>商場工務每日巡檢狀況</Text>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              （{monthLabel}）
+            </Text>
+          </Space>
+        }
+        loading={loading}
+      >
+        {calRows.length > 0 ? (
+          <MonthlyCalendarGrid
+            year={parseInt(queryMonth.split('-')[0])}
+            month={parseInt(queryMonth.split('-')[1])}
+            maxDay={calMaxDay}
+            rows={calRows}
+            rowHeaderLabel="巡檢區域"
+          />
+        ) : (
+          <Text type="secondary">尚無月曆資料</Text>
+        )}
+      </Card>
+
       {!loading && sheets.length === 0 && !error && (
         <Alert
           style={{ marginTop: 16 }}
@@ -410,7 +457,7 @@ function SummaryTabContent() {
 
 // Main component
 
-const VALID_TABS = ['summary', '4f', '3f', '1f-3f', '1f', 'b1f-b4f']
+const VALID_TABS = ['summary', 'daily-form', '4f', '3f', '1f-3f', '1f', 'b1f-b4f']
 
 export default function MallFacilityInspectionDashboard() {
   const [searchParams] = useSearchParams()
@@ -456,6 +503,11 @@ export default function MallFacilityInspectionDashboard() {
             key:      'summary',
             label:    'Dashboard',
             children: openedTabs.has('summary') ? <SummaryTabContent /> : null,
+          },
+          {
+            key:      'daily-form',
+            label:    <span><CalendarOutlined /> 每日巡檢表</span>,
+            children: openedTabs.has('daily-form') ? <MallDailyInspectionFormTab /> : null,
           },
           {
             key:      '4f',

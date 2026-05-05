@@ -2,9 +2,13 @@
 
 > 跨據點統一管理平台 — FastAPI + React + TypeScript
 
-**最後更新：2026-05-05（v1.57.12）**
+**最後更新：2026-05-05（v1.57.16）**
 
 ## 最近變更
+- v1.57.16：**`mall/full-building-maintenance` Dashboard 新增月曆格** — 後端 `GET /calendar`（6 類別 × 日，依 scheduled_date 推算）；Promise.all 平行載入；Dashboard 底部「全棟例行維護排程狀況」月曆格 Card
+- v1.57.15：**`mall/full-building-maintenance` 新增「每月保養表」TAB** — 第二 TAB（Dashboard 後）；獨立年/月篩選（formYear/formMonth）；類別 rowSpan 分組；`handleSync` 時若在此 TAB 一併重刷
+- v1.57.14：**`mall-facility-inspection` 新增「每日巡檢表」TAB** — 後端新增 `GET /daily-form`（整合 `mall_daily_inspection_builder`）；前端插入第二 TAB（key=`daily-form`），複用 `MallDailyInspectionFormTab`（獨立年/月/日期篩選、rowSpan 分組、異常列底色 #fff1f0）
+- v1.57.13：**`mall-facility-inspection` Dashboard 新增月曆格** — 後端新增 `GET /daily-calendar`（5 樓層：4F/3F/1F~3F/1F/B1F~B4F × 日期）；前端 `SummaryTabContent` 以 `Promise.all` 平行載入，底部新增「商場工務每日巡檢狀況」月曆格 Card
 - v1.57.12：**`hotel/periodic-maintenance` 每月保養表 TAB 加獨立年/月篩選** — 頂部新增年份+月份 Select（與 Dashboard 完全獨立）；切換後自動從 `/batches` 找對應批次再載入項目；空批次顯示動態年月提示；同步 Ragic 時 form TAB 也一併重刷
 - v1.57.11：**`hotel/periodic-maintenance` 新增「每月保養表」TAB** — Dashboard 後第二個 TAB；類別分組（水電/空調/機修/裝修/弱電 rowSpan）、欄位：序號/頻率/項目+區域/預估時間/排定日期+人員/執行人員/狀態/備註；異常淺紅底；月份跟隨 Dashboard；`docs/DEV_PATTERNS.md` 新增模組命名對照表 + TAB 順序規範 + 開發三必要條件
 - v1.57.10：**月曆格標準化 + hotel/periodic-maintenance & mall/periodic-maintenance Dashboard 月曆格** — 抽取 `MonthlyCalendarGrid` 可重用元件（✓/⚠/%/— 四狀態、今日/週末高亮、圖例）；`hotel/periodic-maintenance` 後端新增 `GET /calendar`（5 類別 × 日期）+ Dashboard 月曆格 Card；`mall/periodic-maintenance` Dashboard 複用現有 daily-calendar endpoint + 月曆格 Card；新增 `docs/DEV_PATTERNS.md` 月曆格開發 SOP
