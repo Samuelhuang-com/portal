@@ -337,6 +337,16 @@ function CheckItemsPanel({ rawFields }: { rawFields: Record<string, unknown> }) 
   )
 }
 
+// ── KPI 明細列型別 ────────────────────────────────────────────────────────────
+interface KpiDetailRow {
+  room_no: string; floor: string; month: number
+  ragic_id: string; status: CellStatus
+  date: string; assignee: string; completion_date: string
+  normal_count: number; done_count: number
+  maint_count: number; unchecked_count: number
+  work_minutes: number | null
+}
+
 // ── 季度視角型別與常數 ─────────────────────────────────────────────────────────
 type QuarterName = 'Q1' | 'Q2' | 'Q3' | 'Q4'
 
@@ -464,6 +474,12 @@ export default function IHGRoomMaintenancePage() {
   const [qDrawerOpen, setQDrawerOpen]   = useState(false)
   const [qDrawerData, setQDrawerData]   = useState<{ room_no: string; qname: QuarterName; qdata: QuarterCellData } | null>(null)
 
+  // KPI 卡片點擊明細 Drawer 狀態
+  const [kpiDrawer, setKpiDrawer] = useState<{
+    open: boolean; title: string; color: string
+    filter: string | null; loading: boolean; rows: KpiDetailRow[]
+  }>({ open: false, title: '', color: '#1B3A5C', filter: null, loading: false, rows: [] })
+
   // ── 載入資料 ───────────────────────────────────────────────────────────────
   const loadData = useCallback(async () => {
     setLoading(true)
@@ -501,6 +517,47 @@ export default function IHGRoomMaintenancePage() {
       message.error('同步失敗')
     } finally {
       setSyncing(false)
+    }
+  }
+
+  // ── 點擊 KPI 卡片 → 展開對應狀態的房號明細 ─────────────────────────────
+  const handleKpiClick = async (filter: string, title: string, color: string) => {
+    setKpiDrawer({ open: true, title, color, filter, loading: true, rows: [] })
+    try {
+      const m = await fetchIHGMatrix({
+        year,
+        cell_status: filter === 'all' ? undefined : filter,
+      })
+      const rows: KpiDetailRow[] = []
+      for (const room of m.rooms) {
+        for (const [monthStr, cell] of Object.entries(room.cells)) {
+          if (!cell) continue
+          rows.push({
+            room_no: room.room_no,
+            floor:   room.floor,
+            month:   Number(monthStr),
+            ragic_id: cell.ragic_id,
+            status:   cell.status,
+            date:             cell.date,
+            assignee:         cell.assignee,
+            completion_date:  cell.completion_date,
+            normal_count:     cell.normal_count    ?? 0,
+            done_count:       cell.done_count      ?? 0,
+            maint_count:      cell.maint_count     ?? 0,
+            unchecked_count:  cell.unchecked_count ?? 0,
+            work_minutes:     cell.work_minutes,
+          })
+        }
+      }
+      rows.sort((a, b) => {
+        const na = parseInt(a.room_no), nb = parseInt(b.room_no)
+        if (na !== nb) return na - nb
+        return a.month - b.month
+      })
+      setKpiDrawer(prev => ({ ...prev, loading: false, rows }))
+    } catch {
+      message.error('載入明細失敗')
+      setKpiDrawer(prev => ({ ...prev, loading: false }))
     }
   }
 
@@ -669,13 +726,63 @@ export default function IHGRoomMaintenancePage() {
   // ── KPI 卡顏色 ───────────────────────────────────────────────────────────
   const kpiCards = stats
     ? [
-        { title: '全年應保養', value: stats.total_scheduled, color: '#1B3A5C', icon: <HomeOutlined /> },
-        { title: '已完成',     value: stats.completed,       color: '#52c41a', icon: <CheckCircleOutlined /> },
-        { title: '異常',       value: stats.abnormal,        color: '#d46b08', icon: <WarningOutlined /> },
-        { title: '待保養',     value: stats.pending,         color: '#8c8c8c', icon: <ClockCircleOutlined /> },
-        { title: '完成率',     value: `${stats.completion_rate}%`, color: '#4BA8E8', icon: <CheckCircleOutlined /> },
+        { title: '全年應保養', value: stats.total_scheduled, color: '#1B3A5C', icon: <HomeOutlined />,        filter: 'all'       },
+        { title: '已完成',     value: stats.completed,       color: '#52c41a', icon: <CheckCircleOutlined />, filter: 'completed' },
+        { title: '異常',       value: stats.abnormal,        color: '#d46b08', icon: <WarningOutlined />,     filter: 'abnormal'  },
+        { title: '待保養',     value: stats.pending,         color: '#8c8c8c', icon: <ClockCircleOutlined />, filter: 'pending'   },
+        { title: '完成率',     value: `${stats.completion_rate}%`, color: '#4BA8E8', icon: <CheckCircleOutlined />, filter: null  },
       ]
     : []
+
+  // ── KPI 明細 Table columns（定義在 return 外，避免在 JSX 內宣告造成 TS 解析混亂）──
+  const kpiCols: ColumnsType<KpiDetailRow> = [
+    {
+      title: '房號', dataIndex: 'room_no', key: 'room_no', width: 64, fixed: 'left',
+      render: (rn: string, row: KpiDetailRow) => (
+        <div style={{ textAlign: 'center' }}>
+          <div style={{ fontWeight: 700, fontSize: 13 }}>{rn}</div>
+          <div style={{ fontSize: 10, color: '#999' }}>{row.floor}</div>
+        </div>
+      ),
+    },
+    {
+      title: '月份', dataIndex: 'month', key: 'month', width: 52,
+      render: (m: number) => <strong>{MONTH_LABELS[m]}</strong>,
+    },
+    {
+      title: '狀態', dataIndex: 'status', key: 'status', width: 100,
+      render: (s: CellStatus) => {
+        const cfg = STATUS_CFG[s] ?? STATUS_CFG.pending
+        return <Tag color={cfg.tagColor}>{cfg.icon} {cfg.label}</Tag>
+      },
+    },
+    {
+      title: '正/完/維/未', key: 'counts', width: 100,
+      render: (_: unknown, row: KpiDetailRow) => (
+        <span style={{ fontSize: 11, whiteSpace: 'nowrap' }}>
+          {row.normal_count} ／ {row.done_count} ／{' '}
+          <span style={{ color: row.maint_count > 0 ? '#d46b08' : undefined, fontWeight: row.maint_count > 0 ? 700 : undefined }}>
+            {row.maint_count}
+          </span>
+          {' '}／{' '}
+          <span style={{ color: row.unchecked_count > 0 ? '#faad14' : undefined, fontWeight: row.unchecked_count > 0 ? 700 : undefined }}>
+            {row.unchecked_count}
+          </span>
+        </span>
+      ),
+    },
+    { title: '保養日期', dataIndex: 'date', key: 'date', width: 100, render: (d: string) => d || '—' },
+    { title: '完成日期', dataIndex: 'completion_date', key: 'completion_date', width: 100, render: (d: string) => d || '—' },
+    { title: '保養人員', dataIndex: 'assignee', key: 'assignee', ellipsis: true, render: (a: string) => a || '—' },
+    {
+      title: '', key: 'action', width: 52, fixed: 'right',
+      render: (_: unknown, row: KpiDetailRow) => (
+        <Button type="link" size="small" style={{ padding: 0 }}
+          onClick={() => { setKpiDrawer(prev => ({ ...prev, open: false })); handleCellClick(row.ragic_id, row.room_no, row.month) }}
+        >查看</Button>
+      ),
+    },
+  ]
 
   return (
     <div style={{ padding: '0 4px' }}>
@@ -708,9 +815,27 @@ export default function IHGRoomMaintenancePage() {
       <Row gutter={[12, 12]} style={{ marginBottom: 20 }}>
         {kpiCards.map((k) => (
           <Col key={k.title} xs={12} sm={8} md={6} lg={4}>
-            <Card size="small" style={{ borderTop: `3px solid ${k.color}` }}>
+            <Card
+              size="small"
+              hoverable={!!k.filter}
+              onClick={() => k.filter && handleKpiClick(k.filter, k.title, k.color)}
+              style={{
+                borderTop: `3px solid ${k.color}`,
+                cursor: k.filter ? 'pointer' : 'default',
+                transition: 'box-shadow 0.2s',
+              }}
+            >
               <Statistic
-                title={<span style={{ fontSize: 12 }}>{k.icon} {k.title}</span>}
+                title={
+                  <span style={{ fontSize: 12 }}>
+                    {k.icon} {k.title}
+                    {k.filter && (
+                      <span style={{ marginLeft: 6, fontSize: 10, color: '#bfbfbf', fontWeight: 400 }}>
+                        點擊查看
+                      </span>
+                    )}
+                  </span>
+                }
                 value={k.value}
                 valueStyle={{ color: k.color, fontSize: 22 }}
               />
@@ -1127,6 +1252,46 @@ export default function IHGRoomMaintenancePage() {
               ]}
             />
           </>
+        )}
+      </Drawer>
+      {/* ── KPI 明細 Drawer ────────────────────────────────────────────── */}
+      <Drawer
+        title={
+          <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{
+              width: 10, height: 10, borderRadius: '50%',
+              background: kpiDrawer.color, display: 'inline-block',
+            }} />
+            {kpiDrawer.title}
+            {!kpiDrawer.loading && (
+              <span style={{ fontSize: 12, color: '#8c8c8c', fontWeight: 400, marginLeft: 4 }}>
+                共 {kpiDrawer.rows.length} 筆
+              </span>
+            )}
+          </span>
+        }
+        open={kpiDrawer.open}
+        onClose={() => setKpiDrawer(prev => ({ ...prev, open: false }))}
+        width={640}
+        destroyOnClose
+      >
+        {kpiDrawer.loading ? (
+          <div style={{ textAlign: 'center', padding: 60 }}>
+            <Spin tip="載入中..." />
+          </div>
+        ) : kpiDrawer.rows.length === 0 ? (
+          <div style={{ textAlign: 'center', color: '#999', padding: 60 }}>
+            此篩選條件無資料
+          </div>
+        ) : (
+          <Table
+            size="small"
+            dataSource={kpiDrawer.rows}
+            rowKey={(r: KpiDetailRow) => `${r.room_no}-${r.month}`}
+            pagination={{ pageSize: 20, showSizeChanger: false, showTotal: (t) => `共 ${t} 筆` }}
+            scroll={{ x: 560 }}
+            columns={kpiCols}
+          />
         )}
       </Drawer>
     </div>

@@ -8,44 +8,42 @@ export type CellStatus = 'completed' | 'pending' | 'scheduled' | 'abnormal'
 export interface MatrixCell {
   ragic_id: string
   status: CellStatus
-  date: string           // 保養日期
-  assignee: string       // 保養人員
+  date: string
+  assignee: string
   completion_date: string
   maint_type: string
   notes: string
-  normal_count: number        // raw_json 中值="正常" 的欄位數
-  done_count: number          // raw_json 中值="當時維護完成" 的欄位數
-  maint_count: number         // raw_json 中值="等待維護(待料中)" 的欄位數
-  unchecked_count: number     // raw_json 中值="" 的欄位數（未檢查）
-  work_minutes: number | null // 工時計算（分鐘）
+  normal_count: number
+  done_count: number
+  maint_count: number
+  unchecked_count: number
+  work_minutes: number | null
 }
 
-// 某個房號的矩陣列
 export interface MatrixRoom {
   room_no: string
   floor: string
-  cells: Partial<Record<string, MatrixCell>>  // key = "1"~"12"（月份）
+  cells: Partial<Record<string, MatrixCell>>
 }
 
-// 矩陣 API 回傳
 export interface MatrixResponse {
   year: string
-  months: number[]                         // [1, 2, ..., 12]
-  floors: string[]                         // 所有已出現的樓層，如 ["5F","6F","7F"]
+  months: number[]
+  floors: string[]
   rooms: MatrixRoom[]
-  month_hours: Partial<Record<number, number>>  // {4: 10.33} 分鐘已轉小時
+  month_hours: Partial<Record<number, number>>
 }
 
 // ── KPI 統計 ──────────────────────────────────────────────────────────────────
 export interface IHGStats {
   year:             string
-  month?:           string | null   // 有傳 month 參數時出現（當月統計）
-  total_scheduled:  number          // 有執行的房間數（distinct room_no）
-  completed:        number          // check 欄位全正常/完成
-  abnormal:         number          // 有「等待維護(待料中)」欄位
-  pending:          number          // 無 check 資料（尚未填寫）
+  month?:           string | null
+  total_scheduled:  number
+  completed:        number
+  abnormal:         number
+  pending:          number
   completion_rate:  number
-  work_hours:       number          // 工時合計（小時，來自 raw_json「工時計算」加總 / 60）
+  work_hours:       number
   synced_at:        string
 }
 
@@ -66,7 +64,7 @@ export interface IHGRecord {
   maint_year: string
   maint_month: string
   maint_date: string
-  status: CellStatus   // may be 'abnormal' when maint_count > 0
+  status: CellStatus
   is_completed: boolean
   assignee_name: string
   checker_name: string

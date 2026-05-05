@@ -210,16 +210,22 @@ async def get_stats(
         q = q.filter(IHGRoomMaintenanceMaster.maint_month == month.zfill(2))
     all_recs = q.all()
 
-    # 有執行的房間數 = distinct room_no（而非主表筆數）
-    total = len({r.room_no for r in all_recs})
+    # 去重：若同一房號同一月份有多筆 Ragic 記錄，只取最後一筆（與矩陣表行為一致）
+    dedup: dict[tuple[str, str], "IHGRoomMaintenanceMaster"] = {}
+    for r in all_recs:
+        key = (r.room_no, r.maint_month or "")
+        dedup[key] = r  # 後者覆蓋前者，與 /matrix 寫入 room_map 的行為一致
 
-    # 以 raw_json check 欄位計算各狀態（與 /matrix 邏輯一致）
+    # 有執行的房間數 = distinct room_no（不受月份去重影響）
+    total = len({r.room_no for r in dedup.values()})
+
+    # 以 raw_json check 欄位計算各狀態（與 /matrix 邏輯完全一致）
     completed_count = 0
     abnormal_count  = 0
     pending_count   = 0
     total_work_minutes = 0.0
 
-    for r in all_recs:
+    for r in dedup.values():
         normal_c = done_c = maint_c = unchecked_c = 0
         try:
             raw_data = json.loads(r.raw_json or "{}")

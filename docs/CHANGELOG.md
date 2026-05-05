@@ -2,6 +2,16 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)
 
+## [1.57.18] - 2026-05-05
+
+### Added
+- **`hotel/ihg-room-maintenance` KPI 卡片點擊明細** — 全年應保養/已完成/異常/待保養卡片加入 `onClick`（完成率不可點擊）；點擊後右側 Drawer 顯示對應狀態的房號×月份清單（房號、月份、狀態Tag、正/完/維/未計數、保養日期、完成日期、保養人員、查看按鈕跳轉到保養明細）；每頁 20 筆分頁
+
+### Fixed
+- **`hotel/ihg-room-maintenance` KPI 數字與明細筆數不一致** — `/stats` 端點改為先對 `(room_no, maint_month)` 去重（後者覆蓋前者，與矩陣表行為一致），排除同一房號同月份存在多筆 Ragic 記錄時重複計數的問題
+
+---
+
 ## [1.57.17] - 2026-05-05
 
 ### Changed
