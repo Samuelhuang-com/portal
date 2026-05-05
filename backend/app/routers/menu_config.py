@@ -28,6 +28,8 @@ class MenuConfigItem(BaseModel):
     is_visible: bool = True
     # 權限控制：NULL = 公開；有值 = 需具備此 permission_key
     permission_key: Optional[str] = None
+    # 自訂圖示：NULL = 使用 base 預設；'none' = 不顯示；其他 = iconMap key
+    icon_key: Optional[str] = None
 
 
 class MenuConfigSaveRequest(BaseModel):
@@ -41,6 +43,7 @@ class MenuConfigItemOut(BaseModel):
     sort_order: int
     is_visible: bool
     permission_key: Optional[str] = None
+    icon_key: Optional[str] = None
 
     model_config = {"from_attributes": True}
 
@@ -122,6 +125,7 @@ def save_menu_config(
                     "sort_order": item.sort_order,
                     "is_visible": item.is_visible,
                     "permission_key": item.permission_key or None,
+                    "icon_key": item.icon_key or None,
                     "updated_at": now,
                     "updated_by": actor,
                 }

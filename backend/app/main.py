@@ -49,6 +49,7 @@ from app.routers import (
     work_category_analysis,
     mall_overview,
     wiki,
+    employee_manual_export,
 )
 
 
@@ -298,6 +299,12 @@ def _migrate_menu_config_permission_key():
             )
             conn.commit()
             print("[Migration] menu_configs.permission_key 欄位已新增")
+        if "icon_key" not in existing:
+            conn.execute(
+                text("ALTER TABLE menu_configs ADD COLUMN icon_key TEXT")
+            )
+            conn.commit()
+            print("[Migration] menu_configs.icon_key 欄位已新增")
 
 
 def _migrate_security_patrol_is_note():
@@ -887,6 +894,13 @@ app.include_router(
     wiki.router,
     prefix=f"{API_PREFIX}/wiki",
     tags=["知識庫 Wiki"],
+)
+
+# ── 新增：員工操作手冊匯出 ────────────────────────────────────────────────
+app.include_router(
+    employee_manual_export.router,
+    prefix=f"{API_PREFIX}/employee-manual-export",
+    tags=["員工操作手冊匯出"],
 )
 
 # ── 前端靜態檔案（SPA 模式，放在所有路由之後）────────────────────────────

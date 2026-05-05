@@ -1,7 +1,18 @@
 import apiClient from '@/api/client'
 import type {
   PMBatchListItem, PMBatchDetail, PMStats, PMItem, PMTaskHistory,
+  PMPeriodStats, PMYearMatrix,
 } from '@/types/periodicMaintenance'
+import type { CalendarRow } from '@/components/MonthlyCalendarGrid'
+
+// ── 月曆格資料型別 ────────────────────────────────────────────────────────────
+
+export interface PMCalendarResponse {
+  year:    number
+  month:   number
+  max_day: number
+  rows:    CalendarRow[]
+}
 
 const BASE = '/periodic-maintenance'
 
@@ -44,6 +55,31 @@ export async function fetchPMStats(year?: string, month?: number): Promise<PMSta
 /** 手動觸發 Ragic 同步 */
 export async function syncPMFromRagic(): Promise<{ status: string; result: unknown }> {
   const res = await apiClient.post(`${BASE}/sync`)
+  return res.data
+}
+
+/** 週期統計（月 / 季 / 年） */
+export async function fetchPMPeriodStats(params: {
+  period_type: 'month' | 'quarter' | 'year'
+  year?: number
+  month?: number
+  quarter?: number
+}): Promise<PMPeriodStats> {
+  const res = await apiClient.get<PMPeriodStats>(`${BASE}/period-stats`, { params })
+  return res.data
+}
+
+/** 全年 12 個月矩陣統計 */
+export async function fetchPMYearMatrix(year?: number): Promise<PMYearMatrix> {
+  const params: Record<string, number> = {}
+  if (year) params.year = year
+  const res = await apiClient.get<PMYearMatrix>(`${BASE}/period-stats/year-matrix`, { params })
+  return res.data
+}
+
+/** 週期保養月曆格（類別 × 日期） */
+export async function fetchPMCalendar(year: number, month: number): Promise<PMCalendarResponse> {
+  const res = await apiClient.get<PMCalendarResponse>(`${BASE}/calendar`, { params: { year, month } })
   return res.data
 }
 

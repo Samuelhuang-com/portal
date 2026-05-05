@@ -1,16 +1,15 @@
 """
 飯店管理 Dashboard — 跨模組彙整 API
-GET /api/v1/hotel/daily-hours   每日工時彙總（六項來源）
-GET /api/v1/hotel/monthly-hours 每月工時彙總（六項來源）
-GET /api/v1/hotel/person-hours  人員工時佔比（六項來源，Top-15）
+GET /api/v1/hotel/daily-hours   每日工時彙總（五項來源）
+GET /api/v1/hotel/monthly-hours 每月工時彙總（五項來源）
+GET /api/v1/hotel/person-hours  人員工時佔比（五項來源，Top-15）
 
 來源（均查本地 DB，不打 Ragic）：
-  ① 客房保養管理 — room_maintenance_detail_records（maintain_date, work_hours=分鐘字串）
-  ② 飯店週期保養 — pm_batch + pm_batch_item（period_month, estimated_minutes）
-  ③ IHG客房保養  — ihg_rm_master（maint_date，每筆固定 0.5 hr）
-  ④ 飯店每日巡檢 — hotel_di_inspection_batch（inspection_date, start/end_time）
-  ⑤ 保全巡檢     — security_patrol_batch（inspection_date, start/end_time）
-  ⑥ 大直工務部   — dazhi_repair_case（occurred_at, work_hours=float）
+  ① 飯店週期保養 — pm_batch + pm_batch_item（period_month, estimated_minutes）
+  ② IHG客房保養  — ihg_rm_master（maint_date，每筆固定 0.5 hr）
+  ③ 飯店每日巡檢 — hotel_di_inspection_batch（inspection_date, start/end_time）
+  ④ 保全巡檢     — security_patrol_batch（inspection_date, start/end_time）
+  ⑤ 大直工務部   — dazhi_repair_case（occurred_at, work_hours=float）
 
 回傳格式與 mall_overview.py 完全一致，供前端直接套用相同表格元件。
 """
@@ -35,14 +34,12 @@ from app.models.periodic_maintenance import (
     PeriodicMaintenanceBatch,
     PeriodicMaintenanceItem,
 )
-from app.models.room_maintenance_detail import RoomMaintenanceDetailRecord
 from app.models.security_patrol import SecurityPatrolBatch
 
 router = APIRouter(prefix="/hotel", tags=["飯店管理 Dashboard"])
 
-# 固定六項來源（順序即表格列順序）
+# 固定五項來源（順序即表格列順序）
 HOTEL_CATEGORIES = [
-    "客房保養管理",
     "飯店週期保養",
     "IHG客房保養",
     "飯店每日巡檢",
@@ -70,17 +67,6 @@ def _parse_minutes(start: str, end: str) -> int:
     return diff + 24 * 60 if diff < 0 else diff
 
 
-def _parse_work_hours_str(val: str) -> float:
-    """
-    將 room_maintenance_detail.work_hours（分鐘字串）轉為小時。
-    例："90" → 1.5，空值 / 非數字 → 0.0。
-    """
-    try:
-        return float(val) / 60
-    except (TypeError, ValueError):
-        return 0.0
-
-
 # ─────────────────────────────────────────────────────────────────────────────
 # B. 每日累計
 # ─────────────────────────────────────────────────────────────────────────────
@@ -92,7 +78,7 @@ def get_hotel_daily_hours(
     db: Session = Depends(get_db),
 ):
     """
-    彙整六項飯店來源的每日工時（HR），供「B. 每日累計」Tab 使用。
+    彙整五項飯店來源的每日工時（HR），供「B. 每日累計」Tab 使用。
 
     回傳格式：
     ```json
@@ -101,7 +87,7 @@ def get_hotel_daily_hours(
       "days": [1, 2, ..., 30],
       "weekdays": ["二", "三", ...],
       "rows": [
-        {"category": "客房保養管理", "hours": [1.5, 0.0, ...], "total": 10.5, "pct": 35.0},
+        {"category": "飯店週期保養", "hours": [1.5, 0.0, ...], "total": 10.5, "pct": 35.0},
         ...
         {"category": "TOTAL", "hours": [...], "total": 30.0, "pct": 100.0}
       ]
@@ -118,20 +104,7 @@ def get_hotel_daily_hours(
     date_prefix = f"{year}/{month:02d}/"
     period_prefix = f"{year}/{month:02d}"
 
-    # ── ① 客房保養管理：maintain_date "YYYY/MM/DD"，work_hours = 分鐘字串 ────────
-    for r in (
-        db.query(RoomMaintenanceDetailRecord)
-        .filter(RoomMaintenanceDetailRecord.maintain_date.like(f"{date_prefix}%"))
-        .all()
-    ):
-        try:
-            day = int(r.maintain_date.split("/")[2])
-            if 1 <= day <= days_in_month:
-                bucket["客房保養管理"][day] += _parse_work_hours_str(r.work_hours)
-        except (ValueError, IndexError):
-            pass
-
-    # ── ② 飯店週期保養：pm_batch.period_month + pm_batch_item.scheduled_date ──
+    # ── ① 飯店週期保養：pm_batch.period_month + pm_batch_item.scheduled_date ──
     pm_batch_ids = [
         row[0]
         for row in (
@@ -258,7 +231,7 @@ def get_hotel_monthly_hours(
     db: Session = Depends(get_db),
 ):
     """
-    彙整六項飯店來源的每月工時（HR），供「C. 每月累計」Tab 使用。
+    彙整五項飯店來源的每月工時（HR），供「C. 每月累計」Tab 使用。
 
     回傳格式：
     ```json
@@ -266,7 +239,7 @@ def get_hotel_monthly_hours(
       "year": 2026,
       "months": [1, 2, ..., 12],
       "rows": [
-        {"category": "客房保養管理", "hours": [1.5, 3.0, ...], "total": 45.0, "pct": 35.0},
+        {"category": "飯店週期保養", "hours": [1.5, 3.0, ...], "total": 45.0, "pct": 35.0},
         ...
         {"category": "TOTAL", "hours": [...], "total": 128.0, "pct": 100.0}
       ]
@@ -276,20 +249,7 @@ def get_hotel_monthly_hours(
     bucket: dict[str, dict[int, float]] = {c: defaultdict(float) for c in HOTEL_CATEGORIES}
     year_prefix = f"{year}/"
 
-    # ── ① 客房保養管理 ─────────────────────────────────────────────────────────
-    for r in (
-        db.query(RoomMaintenanceDetailRecord)
-        .filter(RoomMaintenanceDetailRecord.maintain_date.like(f"{year_prefix}%"))
-        .all()
-    ):
-        try:
-            m = int(r.maintain_date.split("/")[1])
-            if 1 <= m <= 12:
-                bucket["客房保養管理"][m] += _parse_work_hours_str(r.work_hours)
-        except (ValueError, IndexError):
-            pass
-
-    # ── ② 飯店週期保養 ─────────────────────────────────────────────────────────
+    # ── ① 飯店週期保養 ─────────────────────────────────────────────────────────
     for batch in (
         db.query(PeriodicMaintenanceBatch)
         .filter(PeriodicMaintenanceBatch.period_month.like(f"{year_prefix}%"))
@@ -406,15 +366,14 @@ def get_hotel_person_hours(
     db: Session = Depends(get_db),
 ):
     """
-    彙整六項飯店來源各人員工時佔比，供「D. 人員工時%」與「人員排名」Tab 使用。
+    彙整五項飯店來源各人員工時佔比，供「D. 人員工時%」與「人員排名」Tab 使用。
 
     人員識別規則：
-      ① 客房保養管理 — RoomMaintenanceDetailRecord.staff_name
-      ② 飯店週期保養 — PeriodicMaintenanceItem.executor_name（空格分隔多人）
-      ③ IHG客房保養  — IHGRoomMaintenanceMaster.assignee_name
-      ④ 飯店每日巡檢 — HotelDIBatch.inspector_name
-      ⑤ 保全巡檢     — SecurityPatrolBatch.inspector_name
-      ⑥ 大直工務部   — DazhiRepairCase.acceptor
+      ① 飯店週期保養 — PeriodicMaintenanceItem.executor_name（空格分隔多人）
+      ② IHG客房保養  — IHGRoomMaintenanceMaster.assignee_name
+      ③ 飯店每日巡檢 — HotelDIBatch.inspector_name
+      ④ 保全巡檢     — SecurityPatrolBatch.inspector_name
+      ⑤ 大直工務部   — DazhiRepairCase.acceptor
 
     回傳格式：
     ```json
@@ -434,19 +393,7 @@ def get_hotel_person_hours(
     # person → category → hours
     ph: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
 
-    # ── ① 客房保養管理：staff_name ─────────────────────────────────────────────
-    for r in (
-        db.query(RoomMaintenanceDetailRecord)
-        .filter(RoomMaintenanceDetailRecord.maintain_date.like(f"{year_prefix}%"))
-        .all()
-    ):
-        person = (r.staff_name or "").strip()
-        if person and person != "未指定":
-            h = _parse_work_hours_str(r.work_hours)
-            if h > 0:
-                ph[person]["客房保養管理"] += h
-
-    # ── ② 飯店週期保養：executor_name（可多人空格分隔）────────────────────────────
+    # ── ① 飯店週期保養：executor_name（可多人空格分隔）────────────────────────────
     for batch in (
         db.query(PeriodicMaintenanceBatch)
         .filter(PeriodicMaintenanceBatch.period_month.like(f"{year_prefix}%"))

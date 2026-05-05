@@ -10,9 +10,11 @@ Prefix: /api/v1/periodic-maintenance
   GET  /batches/{batch_id}/kpi       — 批次 KPI 統計
   GET  /items                        — 所有項目跨批次查詢
   GET  /stats                        — 全站統計（Dashboard 資料來源）
+  GET  /period-stats                 — 週期統計（月/季/年）
   PATCH /items/{item_id}             — Portal 回填（執行時間/異常等）
 """
 import json
+from calendar import monthrange
 from datetime import date, datetime, timezone
 from typing import Optional, List
 
@@ -25,6 +27,8 @@ from app.models.periodic_maintenance import PeriodicMaintenanceBatch, PeriodicMa
 from app.schemas.periodic_maintenance import (
     PMBatchOut, PMItemOut, PMBatchKPI, PMBatchDetail,
     CategoryStat, StatusDistItem, PMStats, PMItemUpdate,
+    PMPeriodStats, PMSubPeriodBreakdown, PMIncompleteItem,
+    PMYearMatrix, PMYearMatrixMonth,
 )
 from app.services.periodic_maintenance_sync import sync_from_ragic
 from app.services.ragic_adapter import RagicAdapter
@@ -218,6 +222,357 @@ def _get_check_month(period_month: str) -> int:
         return int(period_month.split("/")[1])
     except Exception:
         return date.today().month
+
+
+# ── 週期統計輔助函式 ──────────────────────────────────────────────────────────
+
+def _reconstruct_full_date(scheduled_date: str, period_month: str) -> "date | None":
+    """
+    'MM/DD' + 'YYYY/MM' → date(YYYY, MM, DD)
+    月份以 scheduled_date 為準，年份從 period_month 取。
+    空值或解析失敗回傳 None。
+    """
+    if not scheduled_date:
+        return None
+    try:
+        parts = scheduled_date.strip().split("/")
+        if len(parts) != 2:
+            return None
+        month = int(parts[0])
+        day   = int(parts[1])
+        year  = int(period_month.strip().split("/")[0])
+        return date(year, month, day)
+    except Exception:
+        return None
+
+
+def _parse_end_date(end_time: str) -> "date | None":
+    """
+    'YYYY/MM/DD HH:MM:SS' → date(YYYY, MM, DD)
+    解析失敗回傳 None。
+    """
+    if not end_time:
+        return None
+    for fmt in _TIME_FMTS:
+        try:
+            return datetime.strptime(end_time.strip(), fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _get_period_bounds(
+    period_type: str,
+    year: int,
+    month: Optional[int] = None,
+    quarter: Optional[int] = None,
+) -> "tuple[date, date, date]":
+    """
+    回傳 (period_start, period_end, prev_period_end)
+
+    period_type = "month"   → 月區間
+    period_type = "quarter" → 季區間（quarter 1-4）
+    period_type = "year"    → 年區間
+    """
+    today = date.today()
+
+    if period_type == "month":
+        m = month or today.month
+        _, last_day = monthrange(year, m)
+        p_start = date(year, m, 1)
+        p_end   = date(year, m, last_day)
+        if m == 1:
+            _, prev_last = monthrange(year - 1, 12)
+            prev_end = date(year - 1, 12, prev_last)
+        else:
+            _, prev_last = monthrange(year, m - 1)
+            prev_end = date(year, m - 1, prev_last)
+
+    elif period_type == "quarter":
+        q = quarter or ((today.month - 1) // 3 + 1)
+        q_start_m = (q - 1) * 3 + 1
+        q_end_m   = q * 3
+        _, last_day = monthrange(year, q_end_m)
+        p_start = date(year, q_start_m, 1)
+        p_end   = date(year, q_end_m, last_day)
+        if q == 1:
+            _, prev_last = monthrange(year - 1, 12)
+            prev_end = date(year - 1, 12, prev_last)
+        else:
+            prev_q_end_m = (q - 1) * 3
+            _, prev_last = monthrange(year, prev_q_end_m)
+            prev_end = date(year, prev_q_end_m, prev_last)
+
+    else:  # year
+        p_start  = date(year, 1, 1)
+        p_end    = date(year, 12, 31)
+        prev_end = date(year - 1, 12, 31)
+
+    return p_start, p_end, prev_end
+
+
+def _calc_period_stats_core(
+    db: Session,
+    period_start: date,
+    period_end: date,
+    prev_period_end: date,
+) -> dict:
+    """
+    共用統計核心。
+    回傳 dict 含：
+      prev_carry_over, prev_resolved_in_period, carry_over_rate,
+      period_total, period_completed, period_rate,
+      incomplete_items, period_items_list（供子期間分布使用）
+    """
+    rows = (
+        db.query(PeriodicMaintenanceItem, PeriodicMaintenanceBatch)
+        .join(
+            PeriodicMaintenanceBatch,
+            PeriodicMaintenanceItem.batch_ragic_id == PeriodicMaintenanceBatch.ragic_id,
+        )
+        .all()
+    )
+
+    prev_carry_over_list: list[dict] = []
+    period_items_list:    list[dict] = []
+
+    for item, batch in rows:
+        # ── 跳過 scheduled_date 空白的項目 ──
+        if not item.scheduled_date:
+            continue
+
+        # ── 僅計算本批次月份有效的項目（排除 non_current_month）──
+        try:
+            exec_months = json.loads(item.exec_months_json or "[]")
+        except Exception:
+            exec_months = []
+        batch_month = int(batch.period_month.split("/")[1])
+        if exec_months and batch_month not in exec_months:
+            continue
+
+        # ── 重建完整表定日期 ──
+        full_date = _reconstruct_full_date(item.scheduled_date, batch.period_month)
+        if full_date is None:
+            continue
+
+        end_date = _parse_end_date(item.end_time)
+        is_done  = bool(item.start_time and item.end_time)
+
+        entry = {
+            "item":      item,
+            "batch":     batch,
+            "full_date": full_date,
+            "end_date":  end_date,
+            "is_done":   is_done,
+        }
+
+        # ── 上期累計未完成 ──
+        # 表定日期 <= 上期末，且截至上期末仍未完成
+        if full_date <= prev_period_end:
+            done_before = (
+                is_done
+                and end_date is not None
+                and end_date <= prev_period_end
+            )
+            if not done_before:
+                prev_carry_over_list.append(entry)
+
+        # ── 本期項目 ──
+        if period_start <= full_date <= period_end:
+            period_items_list.append(entry)
+
+    # 上期未完成，本期結案
+    prev_resolved_list = [
+        x for x in prev_carry_over_list
+        if x["end_date"] is not None
+        and period_start <= x["end_date"] <= period_end
+    ]
+
+    # 本期完成
+    period_completed_list = [x for x in period_items_list if x["is_done"]]
+
+    # 未完成事項說明（result_note 非空才列入；空白不計算）
+    incomplete_items = [
+        PMIncompleteItem(
+            task_name           = x["item"].task_name,
+            category            = x["item"].category or "未歸類位置",
+            scheduled_date_full = x["full_date"].strftime("%Y/%m/%d"),
+            result_note         = x["item"].result_note,
+            frequency           = x["item"].frequency,
+        )
+        for x in period_items_list
+        if not x["is_done"] and x["item"].result_note
+    ]
+
+    n_carry    = len(prev_carry_over_list)
+    n_resolved = len(prev_resolved_list)
+    n_total    = len(period_items_list)
+    n_done     = len(period_completed_list)
+
+    return {
+        "prev_carry_over":         n_carry,
+        "prev_resolved_in_period": n_resolved,
+        "carry_over_rate":         round(n_resolved / n_carry * 100, 1) if n_carry > 0 else None,
+        "period_total":            n_total,
+        "period_completed":        n_done,
+        "period_rate":             round(n_done / n_total * 100, 1) if n_total > 0 else None,
+        "incomplete_items":        incomplete_items,
+        "period_items_list":       period_items_list,   # 供子期間分布使用，caller 負責 pop
+    }
+
+
+def _calc_sub_breakdown(
+    period_type: str,
+    period_start: date,
+    period_items_list: list[dict],
+) -> list[PMSubPeriodBreakdown]:
+    """
+    季統計 → 3 個月分布
+    年統計 → Q1-Q4 分布
+    月統計 → 空清單
+    """
+    if period_type == "month":
+        return []
+
+    breakdown: list[PMSubPeriodBreakdown] = []
+    year = period_start.year
+
+    if period_type == "quarter":
+        start_m = period_start.month          # Q 的第一個月
+        for i in range(3):
+            m = start_m + i
+            _, last_day = monthrange(year, m)
+            m_start = date(year, m, 1)
+            m_end   = date(year, m, last_day)
+            items_m = [x for x in period_items_list if m_start <= x["full_date"] <= m_end]
+            total     = len(items_m)
+            completed = sum(1 for x in items_m if x["is_done"])
+            breakdown.append(PMSubPeriodBreakdown(
+                label     = f"{m}月",
+                total     = total,
+                completed = completed,
+                rate      = round(completed / total * 100, 1) if total > 0 else None,
+            ))
+
+    elif period_type == "year":
+        for q in range(1, 5):
+            q_start_m = (q - 1) * 3 + 1
+            q_end_m   = q * 3
+            _, last_day = monthrange(year, q_end_m)
+            q_start = date(year, q_start_m, 1)
+            q_end   = date(year, q_end_m, last_day)
+            items_q = [x for x in period_items_list if q_start <= x["full_date"] <= q_end]
+            total     = len(items_q)
+            completed = sum(1 for x in items_q if x["is_done"])
+            breakdown.append(PMSubPeriodBreakdown(
+                label     = f"Q{q}",
+                total     = total,
+                completed = completed,
+                rate      = round(completed / total * 100, 1) if total > 0 else None,
+            ))
+
+    return breakdown
+
+
+_MONTH_LABELS_ZH = ["1月","2月","3月","4月","5月","6月",
+                    "7月","8月","9月","10月","11月","12月"]
+
+
+def _calc_year_matrix(db: Session, year: int) -> PMYearMatrix:
+    """
+    全年 12 個月矩陣統計。
+    策略：一次 JOIN 查詢撈全部有效行，再用純 Python 按月分組計算，
+    避免對 DB 發出 12 次獨立查詢。
+    """
+    # ── 一次撈出全部有效 item+batch ──────────────────────────────────────────
+    rows = (
+        db.query(PeriodicMaintenanceItem, PeriodicMaintenanceBatch)
+        .join(
+            PeriodicMaintenanceBatch,
+            PeriodicMaintenanceItem.batch_ragic_id == PeriodicMaintenanceBatch.ragic_id,
+        )
+        .all()
+    )
+
+    # ── 預處理：只保留有效（有表定日期 + 非 non_current_month）的行 ──────────
+    processed: list[dict] = []
+    for item, batch in rows:
+        if not item.scheduled_date:
+            continue
+        try:
+            exec_months = json.loads(item.exec_months_json or "[]")
+        except Exception:
+            exec_months = []
+        batch_month = int(batch.period_month.split("/")[1])
+        if exec_months and batch_month not in exec_months:
+            continue
+        full_date = _reconstruct_full_date(item.scheduled_date, batch.period_month)
+        if full_date is None:
+            continue
+        end_date = _parse_end_date(item.end_time)
+        is_done  = bool(item.start_time and item.end_time)
+        processed.append({
+            "item":      item,
+            "full_date": full_date,
+            "end_date":  end_date,
+            "is_done":   is_done,
+        })
+
+    # ── 逐月計算 ─────────────────────────────────────────────────────────────
+    month_results: list[PMYearMatrixMonth] = []
+    for m in range(1, 13):
+        p_start, p_end, prev_end = _get_period_bounds("month", year, month=m)
+
+        prev_carry_over_list: list[dict] = []
+        period_items_list:    list[dict] = []
+
+        for e in processed:
+            fd       = e["full_date"]
+            is_done  = e["is_done"]
+            end_date = e["end_date"]
+
+            # 上期累計未完成
+            if fd <= prev_end:
+                done_before = is_done and end_date is not None and end_date <= prev_end
+                if not done_before:
+                    prev_carry_over_list.append(e)
+
+            # 本期項目
+            if p_start <= fd <= p_end:
+                period_items_list.append(e)
+
+        prev_resolved_list = [
+            x for x in prev_carry_over_list
+            if x["end_date"] is not None
+            and p_start <= x["end_date"] <= p_end
+        ]
+        period_completed_list = [x for x in period_items_list if x["is_done"]]
+
+        # 未完成備註（非空才列入）
+        notes_parts = [
+            f"{x['item'].task_name}：{x['item'].result_note}"
+            for x in period_items_list
+            if not x["is_done"] and x["item"].result_note
+        ]
+
+        n_carry    = len(prev_carry_over_list)
+        n_resolved = len(prev_resolved_list)
+        n_total    = len(period_items_list)
+        n_done     = len(period_completed_list)
+
+        month_results.append(PMYearMatrixMonth(
+            month                   = m,
+            label                   = _MONTH_LABELS_ZH[m - 1],
+            prev_carry_over         = n_carry,
+            prev_resolved_in_period = n_resolved,
+            carry_over_rate         = round(n_resolved / n_carry * 100, 1) if n_carry > 0 else None,
+            period_total            = n_total,
+            period_completed        = n_done,
+            period_rate             = round(n_done / n_total * 100, 1) if n_total > 0 else None,
+            incomplete_notes        = "\n".join(notes_parts),
+        ))
+
+    return PMYearMatrix(year=year, months=month_results)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -450,6 +805,90 @@ def get_stats(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# GET /period-stats/year-matrix  — 全年 12 個月矩陣統計
+# ══════════════════════════════════════════════════════════════════════════════
+@router.get("/period-stats/year-matrix", summary="全年 12 個月矩陣統計", response_model=PMYearMatrix)
+def get_period_stats_year_matrix(
+    year: Optional[int] = Query(None, description="年份，如 2026；預設今年"),
+    db:   Session = Depends(get_db),
+):
+    """
+    一次回傳指定年份全部 12 個月的統計矩陣。
+    前端以「月份為欄、指標為列」的表格呈現。
+    單次 DB 查詢，效率優於逐月呼叫 /period-stats。
+    """
+    target_year = year or date.today().year
+    return _calc_year_matrix(db, target_year)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GET /period-stats  — 週期統計（月 / 季 / 年）
+# ══════════════════════════════════════════════════════════════════════════════
+@router.get("/period-stats", summary="週期統計（月/季/年）", response_model=PMPeriodStats)
+def get_period_stats(
+    period_type: str           = Query("month", description="month | quarter | year"),
+    year:        Optional[int] = Query(None, description="年份，如 2026；預設今年"),
+    month:       Optional[int] = Query(None, ge=1, le=12, description="月份（period_type=month 時使用）"),
+    quarter:     Optional[int] = Query(None, ge=1, le=4,  description="季度 1-4（period_type=quarter 時使用）"),
+    db:          Session = Depends(get_db),
+):
+    """
+    共用週期統計端點。
+
+    - **period_type=month**   → 指定 year + month（預設當月）
+    - **period_type=quarter** → 指定 year + quarter（預設當季）
+    - **period_type=year**    → 指定 year（預設今年）
+
+    回傳統計指標：
+      - 上期累計未完成數 / 本期結案數 / 累計完成率
+      - 本期項目數 / 本期完成數 / 本期完成率
+      - 子期間分布（季→月、年→Q1-Q4、月→空）
+      - 未完成事項說明（僅含有備註的項目）
+    """
+    today = date.today()
+    target_year = year or today.year
+
+    if period_type not in ("month", "quarter", "year"):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="period_type 須為 month | quarter | year")
+
+    p_start, p_end, prev_end = _get_period_bounds(period_type, target_year, month, quarter)
+
+    # 組 period_label
+    if period_type == "month":
+        m = month or today.month
+        period_label = f"{target_year}年{m}月"
+    elif period_type == "quarter":
+        q = quarter or ((today.month - 1) // 3 + 1)
+        period_label = f"{target_year} Q{q}"
+    else:
+        period_label = f"{target_year}年"
+
+    # 核心計算
+    core = _calc_period_stats_core(db, p_start, p_end, prev_end)
+    period_items_list = core.pop("period_items_list")
+
+    # 子期間分布
+    breakdown = _calc_sub_breakdown(period_type, p_start, period_items_list)
+
+    return PMPeriodStats(
+        period_type              = period_type,
+        period_label             = period_label,
+        period_start             = p_start.strftime("%Y-%m-%d"),
+        period_end               = p_end.strftime("%Y-%m-%d"),
+        prev_period_end          = prev_end.strftime("%Y-%m-%d"),
+        prev_carry_over          = core["prev_carry_over"],
+        prev_resolved_in_period  = core["prev_resolved_in_period"],
+        carry_over_rate          = core["carry_over_rate"],
+        period_total             = core["period_total"],
+        period_completed         = core["period_completed"],
+        period_rate              = core["period_rate"],
+        sub_period_breakdown     = breakdown,
+        incomplete_items         = core["incomplete_items"],
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # PATCH /items/{item_id}  — 已停用（Portal 不提供編輯功能，資料來源全部為 Ragic）
 # ══════════════════════════════════════════════════════════════════════════════
 # @router.patch("/items/{item_id}", summary="[已停用] Portal 回填")
@@ -599,4 +1038,115 @@ async def debug_ragic_raw():
             "record_ids": list(raw_batch.keys()),
             "first_record_fields": first_batch,
         },
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GET /calendar  — Dashboard 月曆格（類別 × 日期）
+# ══════════════════════════════════════════════════════════════════════════════
+@router.get("/calendar", summary="週期保養月曆格（依類別 × 日期）")
+def get_pm_calendar(
+    year:  int = Query(..., ge=2020, le=2099, description="年份，如 2026"),
+    month: int = Query(..., ge=1, le=12, description="月份，如 5"),
+    db:    Session = Depends(get_db),
+):
+    """
+    回傳指定年月的「類別 × 日期」月曆格資料。
+
+    - rows：固定類別順序（水電 / 空調 / 機修 / 裝修 / 弱電 / 其他）
+    - daily：key = "1" ~ "31"，value = { has_record, completion_rate, abnormal_count, pending_count }
+      - has_record       = 該日該類別有排定保養項目
+      - completion_rate  = round(completed / total * 100)
+      - abnormal_count   = 逾期項目數（scheduled_date 已過且未完成）
+      - pending_count    = 進行中項目數
+
+    cell 格式與 hotel/daily-inspection GET /daily-calendar 一致，
+    可直接傳入 MonthlyCalendarGrid 元件。
+    """
+    from calendar import monthrange
+
+    _, max_day = monthrange(year, month)
+    target_period_month = f"{year}/{month:02d}"
+    today = date.today()
+
+    # 取得當月所有 batch + 跨月 batch（scheduled_date 月份可能與 period_month 不同）
+    batches = (
+        db.query(PeriodicMaintenanceBatch)
+        .filter(PeriodicMaintenanceBatch.period_month == target_period_month)
+        .all()
+    )
+
+    # 固定類別順序；額外類別歸入「其他」
+    CATEGORIES = ["水電", "空調", "機修", "裝修", "弱電"]
+
+    # cat → day → {total, completed, in_progress, overdue}
+    grid: dict[str, dict[int, dict[str, int]]] = {
+        cat: {d: {"total": 0, "completed": 0, "in_progress": 0, "overdue": 0}
+              for d in range(1, max_day + 1)}
+        for cat in CATEGORIES + ["其他"]
+    }
+
+    for batch in batches:
+        items = db.query(PeriodicMaintenanceItem).filter(
+            PeriodicMaintenanceItem.batch_ragic_id == batch.ragic_id
+        ).all()
+        check_month = _get_check_month(batch.period_month)
+
+        for it in items:
+            if not it.scheduled_date:
+                continue
+            full_date = _reconstruct_full_date(it.scheduled_date, batch.period_month)
+            if not full_date:
+                continue
+            # 只取落在目標 year/month 的項目
+            if full_date.year != year or full_date.month != month:
+                continue
+
+            day = full_date.day
+            cat = it.category or "其他"
+            if cat not in CATEGORIES:
+                cat = "其他"
+
+            grid[cat][day]["total"] += 1
+            status = _calc_status(it, check_month)
+            if status == "completed":
+                grid[cat][day]["completed"] += 1
+            elif status == "in_progress":
+                grid[cat][day]["in_progress"] += 1
+            elif status == "overdue":
+                grid[cat][day]["overdue"] += 1
+
+    # 組裝回傳格式
+    rows_out = []
+    for cat in CATEGORIES + ["其他"]:
+        daily_out: dict[str, dict] = {}
+        has_any = False
+        for d in range(1, max_day + 1):
+            cell = grid[cat][d]
+            total       = cell["total"]
+            completed   = cell["completed"]
+            in_progress = cell["in_progress"]
+            overdue     = cell["overdue"]
+            if total > 0:
+                has_any = True
+            rate = round(completed / total * 100) if total > 0 else 0
+            daily_out[str(d)] = {
+                "has_record":      total > 0,
+                "completion_rate": rate,
+                "abnormal_count":  overdue,
+                "pending_count":   in_progress,
+            }
+        # 只輸出該類別在這個月有資料，或固定類別（始終輸出，讓前端顯示空列）
+        if has_any or cat in CATEGORIES:
+            rows_out.append({
+                "key":   cat,
+                "label": cat,
+                "daily": daily_out,
+            })
+
+    return {
+        "year":    year,
+        "month":   month,
+        "max_day": max_day,
+        "rows":    rows_out,
     }

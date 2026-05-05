@@ -167,3 +167,84 @@ export async function fetchMallFacilityMonthlyDashboard(
   )
   return res.data
 }
+
+// ── 每日巡檢表彙整 型別 ───────────────────────────────────────────────────────
+
+export interface MallFIDailyFormRow {
+  // 模板欄位
+  floor:           string
+  item:            string
+  check_content:   string
+  result_options:  string
+  minutes:         number
+  source_tab:      string
+  item_first_row:  boolean
+  floor_first_row: boolean
+  floor_row_count: number
+  item_row_count:  number
+  // 比對結果欄位
+  inspector:       string
+  result_text:     string
+  result_status:   'normal' | 'abnormal' | 'pending' | 'unchecked'
+  abnormal_note:   string
+  matched:         boolean
+  abnormal:        boolean
+  actual_minutes:  number   // 該 Sheet 本次／本月實際巡檢時間（分），0 = 無資料
+}
+
+export interface MallFIDailyFormResponse {
+  year:             number
+  month:            number
+  inspection_date:  string | null
+  has_data_today:   boolean | null   // null = 整月模式；true/false = 單日模式
+  rows:             MallFIDailyFormRow[]
+}
+
+export interface MallFIDailyCalendarDay {
+  has_record:      boolean
+  completion_rate: number
+  abnormal_count:  number
+  pending_count:   number
+}
+
+export interface MallFIDailyCalendarSheet {
+  key:   string
+  floor: string
+  title: string
+  daily: Record<string, MallFIDailyCalendarDay>  // key = "1" ~ "31"
+}
+
+export interface MallFIDailyCalendarResponse {
+  year:    number
+  month:   number
+  max_day: number
+  sheets:  MallFIDailyCalendarSheet[]
+}
+
+/**
+ * 取得商場工務每日巡檢表彙整資料（依標準模板 + 年月篩選）
+ * inspectionDate 選填：填入時只取該日結果
+ */
+export async function fetchMallFIDailyForm(
+  year: number,
+  month: number,
+  inspectionDate?: string,
+): Promise<MallFIDailyFormResponse> {
+  const params: Record<string, unknown> = { year, month }
+  if (inspectionDate) params.inspection_date = inspectionDate
+  const res = await apiClient.get<MallFIDailyFormResponse>(`${BASE}/daily-form`, { params })
+  return res.data
+}
+
+/**
+ * 取得商場工務指定月份每日巡檢狀況格（Dashboard 月曆格用）
+ */
+export async function fetchMallFIDailyCalendar(
+  year: number,
+  month: number,
+): Promise<MallFIDailyCalendarResponse> {
+  const res = await apiClient.get<MallFIDailyCalendarResponse>(`${BASE}/daily-calendar`, {
+    params: { year, month },
+  })
+  return res.data
+}

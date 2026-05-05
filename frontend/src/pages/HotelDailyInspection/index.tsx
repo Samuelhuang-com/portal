@@ -1,27 +1,29 @@
 /**
  * 飯店每日巡檢 — 統一整合頁面（掛於飯店管理群組）
  *
- * 將各區域 Dashboard + 巡檢紀錄整合為 Tabs
- *   Tab 1 統計總覽      — 今日各區域 KPI + Sheet 完成率彙整
- *   Tab 2 RF 巡檢       — 月份篩選 + 場次清單
- *   Tab 3 4F-10F 巡檢   — 同上
- *   Tab 4 4F 巡檢       — 同上
- *   Tab 5 2F 巡檢       — 同上
- *   Tab 6 1F 巡檢       — 同上
+ * TAB 順序：
+ *   1. Dashboard   — 月份彙整 KPI + 各 Sheet 摘要 + 每日狀況月曆格
+ *   2. 每日巡檢表  — 標準模板彙整（YYYY+M + 可選日期篩選）
+ *   3. RF 巡檢     — 月份篩選 + 場次清單
+ *   4. 4F~10F 巡檢 — 同上
+ *   5. 4F 巡檢     — 同上
+ *   6. 2F 巡檢     — 同上
+ *   7. 1F 巡檢     — 同上
  *
- * URL query param：?tab=summary|rf|4f-10f|4f|2f|1f
+ * URL query param：?tab=summary|daily-form|rf|4f-10f|4f|2f|1f
  */
 import { useEffect, useState, useCallback } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
-  Row, Col, Card, Statistic, Table, Tag, Button, Space,
+  Row, Col, Card, Statistic, Table, Button, Space, Tooltip,
   Typography, Breadcrumb, Tabs, Alert, DatePicker, Badge,
-  message, Progress, Segmented,
+  message, Progress,
 } from 'antd'
 import {
   HomeOutlined, SyncOutlined, ReloadOutlined,
   WarningOutlined, CheckCircleOutlined, ExclamationCircleOutlined,
   DashboardOutlined, ToolOutlined, ClockCircleOutlined,
+  CalendarOutlined as CalendarOutlinedIcon,
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { NAV_GROUP, NAV_PAGE } from '@/constants/navLabels'
@@ -30,17 +32,20 @@ import {
   type HotelDailyInspectionSheet,
 } from '@/constants/hotelDailyInspection'
 import {
-  fetchHotelDailyDashboardSummary,
   fetchHotelDailyMonthlyDashboard,
+  fetchHotelDailyCalendar,
   fetchHotelDailyBatches,
   syncHotelDailyAllFromRagic,
   syncHotelDailyFromRagic,
   type HotelDISheetSummary,
+  type DailyCalendarSheet,
 } from '@/api/hotelDailyInspection'
+import DailyInspectionFormTab from './DailyInspectionFormTab'
+import MonthlyCalendarGrid from '@/components/MonthlyCalendarGrid'
 
 const { Title, Text } = Typography
 
-// Type definitions
+// ── 型別 ─────────────────────────────────────────────────────────────────────
 
 interface SheetStats extends HotelDailyInspectionSheet, HotelDISheetSummary {}
 
@@ -55,7 +60,7 @@ interface BatchRow {
   pending:         number
 }
 
-// Shared floor inspection list tab
+// ── 共用：巡檢場次清單 TAB ───────────────────────────────────────────────────
 
 function FloorListTab({ sheetKey }: { sheetKey: string }) {
   const [yearMonth, setYearMonth] = useState<string>(dayjs().format('YYYY/MM'))
@@ -95,23 +100,18 @@ function FloorListTab({ sheetKey }: { sheetKey: string }) {
       title: '巡檢日期',
       dataIndex: 'inspection_date',
       width: 110,
-      sorter: (a: BatchRow, b: BatchRow) =>
-        a.inspection_date.localeCompare(b.inspection_date),
+      sorter: (a: BatchRow, b: BatchRow) => a.inspection_date.localeCompare(b.inspection_date),
       defaultSortOrder: 'descend' as const,
     },
-    {
-      title: '巡檢人員',
-      dataIndex: 'inspector_name',
-      width: 100,
-    },
+    { title: '巡檢人員', dataIndex: 'inspector_name', width: 100 },
     {
       title: '狀態',
       width: 90,
       render: (_: unknown, row: BatchRow) => {
-        if (row.abnormal > 0)                          return <Tag color="#FF4D4F">有異常</Tag>
-        if (row.pending  > 0)                          return <Tag color="#FAAD14">待處理</Tag>
-        if (row.checked >= row.total && row.total > 0) return <Tag color="#52C41A">已完成</Tag>
-        return <Tag color="#4BA8E8">巡檢中</Tag>
+        if (row.abnormal > 0)                          return <Badge status="error"   text="有異常" />
+        if (row.pending  > 0)                          return <Badge status="warning" text="待處理" />
+        if (row.checked >= row.total && row.total > 0) return <Badge status="success" text="已完成" />
+        return <Badge status="processing" text="巡檢中" />
       },
     },
     {
@@ -132,18 +132,12 @@ function FloorListTab({ sheetKey }: { sheetKey: string }) {
       ),
     },
     {
-      title: '異常',
-      dataIndex: 'abnormal',
-      width: 65,
-      align: 'center' as const,
+      title: '異常', dataIndex: 'abnormal', width: 65, align: 'center' as const,
       render: (v: number) =>
         v > 0 ? <Badge count={v} color="#FF4D4F" /> : <Text type="secondary">—</Text>,
     },
     {
-      title: '待處理',
-      dataIndex: 'pending',
-      width: 65,
-      align: 'center' as const,
+      title: '待處理', dataIndex: 'pending', width: 65, align: 'center' as const,
       render: (v: number) =>
         v > 0 ? <Badge count={v} color="#FAAD14" /> : <Text type="secondary">—</Text>,
     },
@@ -162,16 +156,10 @@ function FloorListTab({ sheetKey }: { sheetKey: string }) {
           />
         </Col>
         <Col>
-          <Button icon={<ReloadOutlined />} onClick={load} loading={loading}>
-            重新整理
-          </Button>
+          <Button icon={<ReloadOutlined />} onClick={load} loading={loading}>重新整理</Button>
         </Col>
         <Col>
-          <Button
-            icon={<SyncOutlined spin={syncing} />}
-            loading={syncing}
-            onClick={handleSync}
-          >
+          <Button icon={<SyncOutlined spin={syncing} />} loading={syncing} onClick={handleSync}>
             同步 Ragic
           </Button>
         </Col>
@@ -189,14 +177,12 @@ function FloorListTab({ sheetKey }: { sheetKey: string }) {
   )
 }
 
-// Summary tab
+// ── Dashboard TAB 內容 ────────────────────────────────────────────────────────
 
 function SummaryTabContent() {
-  const [viewMode,   setViewMode]   = useState<'day' | 'month'>('day')
-  const [targetDate, setTargetDate] = useState<string>(dayjs().format('YYYY/MM/DD'))
-  const [yearMonth,  setYearMonth]  = useState<string>(dayjs().format('YYYY/MM'))
-  const [loading,    setLoading]    = useState(false)
-  const [syncing,    setSyncing]    = useState(false)
+  const [yearMonth, setYearMonth] = useState<string>(dayjs().format('YYYY/MM'))
+  const [loading,   setLoading]   = useState(false)
+  const [syncing,   setSyncing]   = useState(false)
 
   const buildEmptyStats = (): SheetStats[] =>
     HOTEL_DAILY_INSPECTION_SHEET_LIST.map((s) => ({
@@ -212,35 +198,38 @@ function SummaryTabContent() {
       has_data:        false,
     }))
 
-  const [sheets, setSheets] = useState<SheetStats[]>(buildEmptyStats())
+  const [sheets,    setSheets]    = useState<SheetStats[]>(buildEmptyStats())
+  const [calSheets, setCalSheets] = useState<DailyCalendarSheet[]>([])
+  const [maxDay,    setMaxDay]    = useState<number>(31)
 
   const loadSummary = useCallback(async () => {
     setLoading(true)
+    const [y, m] = yearMonth.split('/').map(Number)
     try {
-      let apiSheets: HotelDISheetSummary[]
-      if (viewMode === 'day') {
-        const data = await fetchHotelDailyDashboardSummary(targetDate)
-        apiSheets = data.sheets
-      } else {
-        const [y, m] = yearMonth.split('/').map(Number)
-        const data = await fetchHotelDailyMonthlyDashboard(y, m)
-        apiSheets = data.sheets
-      }
+      // 月份彙整 + 月曆格 並行取得
+      const [monthData, calData] = await Promise.all([
+        fetchHotelDailyMonthlyDashboard(y, m),
+        fetchHotelDailyCalendar(y, m),
+      ])
+
       const merged: SheetStats[] = HOTEL_DAILY_INSPECTION_SHEET_LIST.map((s) => {
-        const apiSheet = apiSheets.find((d) => d.key === s.key)
-        return apiSheet
-          ? { ...s, ...apiSheet }
+        const api = monthData.sheets.find((d) => d.key === s.key)
+        return api
+          ? { ...s, ...api }
           : { ...s, total_batches: 0, total_items: 0, checked_items: 0,
               abnormal_items: 0, pending_items: 0, unchecked_items: 0,
               completion_rate: 0, total_minutes: 0, has_data: false }
       })
       setSheets(merged)
+      setCalSheets(calData.sheets)
+      setMaxDay(calData.max_day)
     } catch {
       setSheets(buildEmptyStats())
+      setCalSheets([])
     } finally {
       setLoading(false)
     }
-  }, [viewMode, targetDate, yearMonth])
+  }, [yearMonth])
 
   useEffect(() => { loadSummary() }, [loadSummary])
 
@@ -257,12 +246,13 @@ function SummaryTabContent() {
     }
   }
 
-  const totalBatches   = sheets.reduce((s, r) => s + r.total_batches, 0)
-  const checkedAll     = sheets.reduce((s, r) => s + r.checked_items, 0)
-  const totalAll       = sheets.reduce((s, r) => s + r.total_items,   0)
-  const abnormalAll    = sheets.reduce((s, r) => s + r.abnormal_items + r.pending_items, 0)
-  const rateAll        = totalAll > 0 ? Math.round((checkedAll / totalAll) * 100) : 0
-  const totalMinutes   = sheets.reduce((s, r) => s + (r.total_minutes ?? 0), 0)
+  const [y, m]       = yearMonth.split('/').map(Number)
+  const totalBatches = sheets.reduce((s, r) => s + r.total_batches, 0)
+  const checkedAll   = sheets.reduce((s, r) => s + r.checked_items, 0)
+  const totalAll     = sheets.reduce((s, r) => s + r.total_items,   0)
+  const abnormalAll  = sheets.reduce((s, r) => s + r.abnormal_items + r.pending_items, 0)
+  const rateAll      = totalAll > 0 ? Math.round((checkedAll / totalAll) * 100) : 0
+  const totalMinutes = sheets.reduce((s, r) => s + (r.total_minutes ?? 0), 0)
 
   const sheetCols = [
     {
@@ -272,22 +262,16 @@ function SummaryTabContent() {
       render: (v: string) => <Text strong>{v}</Text>,
     },
     {
-      title: '場次',
-      dataIndex: 'total_batches',
-      width: 60,
-      align: 'center' as const,
+      title: '場次', dataIndex: 'total_batches', width: 60, align: 'center' as const,
       render: (v: number) =>
         v > 0 ? <Badge count={v} color="#1B3A5C" showZero /> : <Text type="secondary">—</Text>,
     },
     {
-      title: '完成率',
-      dataIndex: 'completion_rate',
-      width: 130,
+      title: '完成率', dataIndex: 'completion_rate', width: 130,
       render: (v: number, row: SheetStats) =>
         row.has_data ? (
           <Progress
-            percent={v}
-            size="small"
+            percent={v} size="small"
             strokeColor={{ from: v < 50 ? '#FF4D4F' : '#FAAD14', to: '#52C41A' }}
             format={(p) => `${p}%`}
           />
@@ -296,26 +280,17 @@ function SummaryTabContent() {
         ),
     },
     {
-      title: '異常',
-      dataIndex: 'abnormal_items',
-      width: 60,
-      align: 'center' as const,
+      title: '異常', dataIndex: 'abnormal_items', width: 60, align: 'center' as const,
       render: (v: number) =>
         v > 0 ? <Badge count={v} color="#FF4D4F" /> : <Text type="secondary">—</Text>,
     },
     {
-      title: '待處理',
-      dataIndex: 'pending_items',
-      width: 65,
-      align: 'center' as const,
+      title: '待處理', dataIndex: 'pending_items', width: 65, align: 'center' as const,
       render: (v: number) =>
         v > 0 ? <Badge count={v} color="#FAAD14" /> : <Text type="secondary">—</Text>,
     },
     {
-      title: '未巡檢',
-      dataIndex: 'unchecked_items',
-      width: 65,
-      align: 'center' as const,
+      title: '未巡檢', dataIndex: 'unchecked_items', width: 65, align: 'center' as const,
       render: (v: number) =>
         v > 0 ? <Badge count={v} color="#999" /> : <Text type="secondary">—</Text>,
     },
@@ -323,51 +298,32 @@ function SummaryTabContent() {
 
   return (
     <div>
+      {/* 篩選列 */}
       <Row style={{ marginBottom: 16 }} align="middle" gutter={8}>
         <Col>
           <Space wrap>
-            <Segmented
-              value={viewMode}
-              onChange={(v) => setViewMode(v as 'day' | 'month')}
-              options={[
-                { label: '單日', value: 'day' },
-                { label: '全月', value: 'month' },
-              ]}
+            <Text strong>查詢月份：</Text>
+            <DatePicker
+              picker="month"
+              value={dayjs(yearMonth, 'YYYY/MM')}
+              format="YYYY/MM"
+              allowClear={false}
+              onChange={(d) => { if (d) setYearMonth(d.format('YYYY/MM')) }}
             />
-            <Text strong>查詢{viewMode === 'month' ? '月份' : '日期'}：</Text>
-            {viewMode === 'day' ? (
-              <DatePicker
-                value={dayjs(targetDate, 'YYYY/MM/DD')}
-                format="YYYY/MM/DD"
-                allowClear={false}
-                onChange={(d) => { if (d) setTargetDate(d.format('YYYY/MM/DD')) }}
-              />
-            ) : (
-              <DatePicker
-                picker="month"
-                value={dayjs(yearMonth, 'YYYY/MM')}
-                format="YYYY/MM"
-                allowClear={false}
-                onChange={(d) => { if (d) setYearMonth(d.format('YYYY/MM')) }}
-              />
-            )}
             <Button icon={<ReloadOutlined />} onClick={loadSummary} loading={loading}>
               重新整理
             </Button>
-            <Button
-              icon={<SyncOutlined spin={syncing} />}
-              loading={syncing}
-              onClick={handleSync}
-            >
+            <Button icon={<SyncOutlined spin={syncing} />} loading={syncing} onClick={handleSync}>
               同步全部 Sheet
             </Button>
           </Space>
         </Col>
       </Row>
 
+      {/* KPI 卡片 */}
       <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
         {[
-          { title: viewMode === 'month' ? '本月巡檢場次' : '今日巡檢場次', value: totalBatches, color: '#1B3A5C', icon: <DashboardOutlined /> },
+          { title: '本月巡檢場次',  value: totalBatches, color: '#1B3A5C', icon: <DashboardOutlined /> },
           { title: '已巡檢項目',    value: checkedAll, suffix: `/${totalAll}`, color: '#4BA8E8', icon: <CheckCircleOutlined /> },
           { title: '異常 + 待處理', value: abnormalAll, color: '#FF4D4F', icon: <WarningOutlined /> },
           { title: '整體完成率',    value: rateAll, suffix: '%', color: rateAll >= 80 ? '#52C41A' : '#FAAD14', icon: <ExclamationCircleOutlined /> },
@@ -387,7 +343,7 @@ function SummaryTabContent() {
         <Col flex={1} style={{ minWidth: 140 }}>
           <Card size="small" hoverable style={{ height: '100%' }}>
             <Statistic
-              title="巡檢時間"
+              title="本月巡檢時間"
               value={Math.round(totalMinutes / 60 * 10) / 10}
               suffix="小時"
               prefix={<span style={{ color: '#4BA8E8' }}><ClockCircleOutlined /></span>}
@@ -397,7 +353,8 @@ function SummaryTabContent() {
         </Col>
       </Row>
 
-      <Card size="small">
+      {/* Sheet 摘要表 */}
+      <Card size="small" style={{ marginBottom: 16 }}>
         <Table<SheetStats>
           dataSource={sheets}
           rowKey="key"
@@ -409,15 +366,34 @@ function SummaryTabContent() {
         />
       </Card>
 
+      {/* 每日巡檢月曆格 */}
+      <Card
+        size="small"
+        title={
+          <Space>
+            <CalendarOutlinedIcon style={{ color: '#4BA8E8' }} />
+            <Text strong style={{ color: '#1B3A5C' }}>
+              {yearMonth} 每日巡檢狀況
+            </Text>
+          </Space>
+        }
+        loading={loading}
+      >
+        {calSheets.length > 0 ? (
+          <MonthlyCalendarGrid
+            year={y} month={m} maxDay={maxDay}
+            rows={calSheets.map((s) => ({ key: s.key, label: s.floor, daily: s.daily }))}
+          />
+        ) : (
+          <Text type="secondary">尚無資料</Text>
+        )}
+      </Card>
+
       {!loading && totalAll === 0 && (
         <Alert
           style={{ marginTop: 16 }}
           type="info"
-          message={
-            viewMode === 'month'
-              ? `${yearMonth} 整月尚無任何飯店每日巡檢記錄，請確認資料是否已同步。`
-              : `${targetDate} 尚無任何飯店每日巡檢記錄，請確認巡檢是否已執行並同步。`
-          }
+          message={`${yearMonth} 整月尚無任何飯店每日巡檢記錄，請確認資料是否已同步。`}
           showIcon
         />
       )}
@@ -425,9 +401,9 @@ function SummaryTabContent() {
   )
 }
 
-// Main component
+// ── Main component ────────────────────────────────────────────────────────────
 
-const VALID_TABS = ['summary', 'rf', '4f-10f', '4f', '2f', '1f']
+const VALID_TABS = ['summary', 'daily-form', 'rf', '4f-10f', '4f', '2f', '1f']
 
 export default function HotelDailyInspectionDashboard() {
   const [searchParams] = useSearchParams()
@@ -473,6 +449,11 @@ export default function HotelDailyInspectionDashboard() {
             key:      'summary',
             label:    'Dashboard',
             children: openedTabs.has('summary') ? <SummaryTabContent /> : null,
+          },
+          {
+            key:      'daily-form',
+            label:    '每日巡檢表',
+            children: openedTabs.has('daily-form') ? <DailyInspectionFormTab /> : null,
           },
           {
             key:      'rf',

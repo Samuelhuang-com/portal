@@ -41,10 +41,9 @@ const { Option } = Select
 const MONTHS     = Array.from({ length: 12 }, (_, i) => i + 1)
 const PIE_COLORS = ['#4BA8E8', '#52C41A', '#FF4D4F', '#FA8C16', '#722ED1']
 const SOURCE_OPTIONS = [
-  { value: 'all',        label: '全部來源' },
-  { value: 'luqun',      label: '樂群工務' },
-  { value: 'dazhi',      label: '大直工務' },
-  { value: 'hotel_room', label: '房務保養' },
+  { value: 'all',   label: '全部來源' },
+  { value: 'luqun', label: '樂群工務' },
+  { value: 'dazhi', label: '大直工務' },
 ]
 
 // ── 共用渲染 ───────────────────────────────────────────────────────────────────

@@ -65,6 +65,10 @@ PERMISSION_DEFINITIONS = [
     {"key": "budget_view",              "label": "預算查看",      "group": "財務"},
     {"key": "budget_manage",            "label": "預算管理",      "group": "財務"},
     {"key": "budget_admin",             "label": "預算設定",      "group": "財務"},
+    # ── 系統設定 — 員工操作手冊匯出 ─────────────────────────────────────────
+    {"key": "employee_manual_export_view",     "label": "員工操作手冊：查看",   "group": "系統設定"},
+    {"key": "employee_manual_export_generate", "label": "員工操作手冊：產生",   "group": "系統設定"},
+    {"key": "employee_manual_export_admin",    "label": "員工操作手冊：管理員", "group": "系統設定"},
 ]
 
 

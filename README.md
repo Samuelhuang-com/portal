@@ -2,9 +2,26 @@
 
 > 跨據點統一管理平台 — FastAPI + React + TypeScript
 
-**最後更新：2026-05-03（v1.55.2）**
+**最後更新：2026-05-05（v1.57.12）**
 
 ## 最近變更
+- v1.57.12：**`hotel/periodic-maintenance` 每月保養表 TAB 加獨立年/月篩選** — 頂部新增年份+月份 Select（與 Dashboard 完全獨立）；切換後自動從 `/batches` 找對應批次再載入項目；空批次顯示動態年月提示；同步 Ragic 時 form TAB 也一併重刷
+- v1.57.11：**`hotel/periodic-maintenance` 新增「每月保養表」TAB** — Dashboard 後第二個 TAB；類別分組（水電/空調/機修/裝修/弱電 rowSpan）、欄位：序號/頻率/項目+區域/預估時間/排定日期+人員/執行人員/狀態/備註；異常淺紅底；月份跟隨 Dashboard；`docs/DEV_PATTERNS.md` 新增模組命名對照表 + TAB 順序規範 + 開發三必要條件
+- v1.57.10：**月曆格標準化 + hotel/periodic-maintenance & mall/periodic-maintenance Dashboard 月曆格** — 抽取 `MonthlyCalendarGrid` 可重用元件（✓/⚠/%/— 四狀態、今日/週末高亮、圖例）；`hotel/periodic-maintenance` 後端新增 `GET /calendar`（5 類別 × 日期）+ Dashboard 月曆格 Card；`mall/periodic-maintenance` Dashboard 複用現有 daily-calendar endpoint + 月曆格 Card；新增 `docs/DEV_PATTERNS.md` 月曆格開發 SOP
+- v1.57.9：**`mall/periodic-maintenance` 新增 TAB「每日巡檢表」** — `mall_daily_inspection_template.py`（41 列 5 樓層）+ `mall_daily_inspection_builder.py` + 後端 `GET /daily-form` & `/daily-calendar`；前端 `MallDailyInspectionFormTab.tsx`（掛載自動載入、單日篩選、rowSpan 合併、異常/未巡檢底色、底部早晚班時間 + 實際/標準總巡檢時間）；TAB 插在 Dashboard 與每月維護之間
+- v1.57.8：**每日巡檢表 TAB 自動載入 + 時間(分)改為計算值；Dashboard 月曆格移除水平捲軸** — 元件掛載自動查詢當月；`actual_minutes` 由 batch start→end 加總；底部總時標籤依資料有無切換「實際/標準」；月曆格改用 `table-layout: fixed + width: 100%` 自動分配欄寬
+- v1.57.7：**`hotel/daily-inspection` Dashboard 改為純月份 + 每日月曆格；每日巡檢表加日期篩選** — Dashboard 移除單日/全月 Segmented，固定月份彙整；新增 1~31 日月曆格（各 Sheet × 各日，含完成率/異常數）；每日巡檢表 TAB 增加 DatePicker（可選日），查無資料顯示黃色 Alert；TAB 順序：Dashboard → 每日巡檢表 → RF → 4F~10F → 4F → 2F → 1F；後端新增 `GET /daily-calendar` endpoint；`GET /daily-form` 新增 `inspection_date` 選填參數；`daily_inspection_builder` 同步擴充
+- v1.57.6：**`hotel/daily-inspection` 新增 TAB「每日巡檢表」** — 新增 `daily_inspection_template.py`（78 列 Excel 標準模板）+ `daily_inspection_builder.py`（`build_daily_inspection_table` 跨 Sheet 比對）+ `GET /daily-form` endpoint；前端新增 `DailyInspectionFormTab.tsx`（YYYY+M 篩選、rowSpan 合併、異常紅底、未巡檢黃底）+ `fetchHotelDailyForm` API 函式
+- v1.57.5：**`mall/periodic-maintenance` 新增每月／每季／每年三個統計 TAB** — 後端新增 `_calc_period_stats_core()` / `_calc_sub_breakdown()` / `_calc_year_matrix()` 共用輔助函式 + `GET /period-stats/year-matrix` 及 `GET /period-stats`（period_type=month|quarter|year）；前端新增 `fetchMallPMPeriodStats` / `fetchMallPMYearMatrix` API 函式 + `YearMatrixTable` / `PeriodKpiCards` / `IncompleteTable` / `QuarterSelectorCards` 等 helper 元件；Tab 順序：Dashboard → 每月維護 → 每季維護 → 每年維護 → 批次清單
+- v1.57.4：**`mall/full-building-maintenance` 新增每月／每季／每年三個統計 TAB** — 後端新增 `_calc_period_stats_core()` / `_calc_sub_breakdown()` / `_calc_year_matrix()` 共用輔助函式 + `GET /period-stats/year-matrix` 及 `GET /period-stats`（period_type=month|quarter|year）；前端新增 `fetchFullBldgPMPeriodStats` / `fetchFullBldgPMYearMatrix` API 函式 + `YearMatrixTable` / `PeriodKpiCards` / `IncompleteTable` / `QuarterSelectorCards` 等 helper 元件；Tab 順序：Dashboard → 每月維護 → 每季維護 → 每年維護 → 批次清單
+- v1.57.3：**每月維護年度矩陣新增「合計」欄** — `YearMatrixTable` 右側固定欄；數字加總、完成率從加總重算（非月平均）、備註顯示 `—`；合計欄粗體 + 藍灰底色分隔
+- v1.57.2：**每季維護 TAB 季度選擇改為視覺卡片（Q1/Q2/Q3/Q4）** — `QuarterSelectorCards` 元件（4欄卡片，含月份標示 + 加總項目/完成/完成率）取代下拉選單；`deriveQuarterSummaries()` 從 PMYearMatrix 加總 3 個月數值；`quarterlyMatrixData` 獨立 state；點擊卡片高亮並載入下方詳細統計
+- v1.57.1：**每月維護 TAB 新增年度矩陣總表** — 後端新增 `_calc_year_matrix()`（單次 DB 查詢算完全年）+ `GET /period-stats/year-matrix`；Schema 新增 `PMYearMatrixMonth / PMYearMatrix`；前端新增 `fetchPMYearMatrix` + `YearMatrixTable` 元件（12月橫軸×7指標縱軸，含完成率色彩、未完成備註 Tooltip）；MonthlyStatsTab 整合矩陣置頂 + 單月鑽取分區
+- v1.57.0：**`hotel/periodic-maintenance` 新增每月／每季／每年三個統計 TAB** — 後端共用 `_calc_period_stats_core()` + `_calc_sub_breakdown()` + `GET /period-stats`（period_type=month|quarter|year）；Schema 新增 `PMPeriodStats / PMSubPeriodBreakdown / PMIncompleteItem`；前端新增 `fetchPMPeriodStats` API 函式 + 三個 TAB（`MonthlyStatsTab` / `QuarterlyStatsTab` / `YearlyStatsTab`）+ 共用元件 `PeriodKpiCards / SubBreakdownTable / IncompleteTable`；統計公式：上期累計未完成 / 本期結案率 / 本期完成率；未完成說明僅列含備註項目
+- v1.56.2：**移除客房保養管理在跨模組 Dashboard 的計算與呈現** — `hotel_overview`（五來源）、`work_category_analysis`（三合一）、`HotelMgmtDashboard`（移除 room_detail source card）、`ExecDashboard` / `WorkCategoryAnalysis`（移除房務保養下拉選項）；客房保養管理獨立頁面模組完整保留
+- v1.56.1：**修正選單「無圖示」設定不生效** — 補齊 `applyMenuConfig` 所有 4 個代碼路徑（`buildItem` / base L1/L2 / `movedHere` / `customL1`）：統一改用 `icon: null` 明確隱藏、`movedHere` 補上 resolveIcon 呼叫、`customL1` 移除 hardcoded `<FileTextOutlined />`
+- v1.56.0：**員工操作手冊知識包匯出** — 新功能 `/settings/employee-manual-export`；8 個模組 × 7 種文件（操作手冊 / 主管導覽 / FAQ / 教育訓練講稿 / 語音腳本 / 新人教學 / 異常處理）；純 Python 產生，不消耗 AI token；ZIP 打包下載；NotebookLM 提示詞一鍵複製；新增 `docs/system_inventory/`（功能模組清單 + 路由對照表）
+- v1.55.3：**決策駕駛艙術語統一** — 「大直工務部」→「飯店工務」；「樂群工務報修」→「商場工務」（7 個 TAB 元件）
 - v1.55.2：**知識庫 Graph View** — Portal 內建圖譜視圖（`@xyflow/react`）；`GET /api/v1/wiki/graph`（標籤重疊邊 + `[[連結]]`邊）；`POST /auto-link`（自動補充相關文章連結）；Header 清單/圖譜 Segmented 切換；SOP 左環 / Dev 右環佈局；MiniMap + 圖例；點節點跳轉文章
 - v1.55.1：**知識庫 Obsidian 雙向同步** — `POST /api/v1/wiki/export-obsidian`（DB→.md）、`POST /api/v1/wiki/import-obsidian`（.md→DB）；前端 Header「同步 Obsidian」Dropdown；同步結果 Modal（新增/更新/跳過/錯誤）；修正 `_wiki_dir()` parent 計數錯誤
 - v1.55.0：**知識庫（LLM Wiki）** — 新功能 `/wiki`；員工 SOP 知識庫 + 開發者技術 Wiki 雙分類；Markdown 渲染；AI 問答助手（Claude API，ANTHROPIC_API_KEY）；10 篇 SOP 範例 + 5 篇開發者 Wiki 自動植入；後端 `/api/v1/wiki/` CRUD + `/ask` endpoint；`anthropic>=0.25.0` 加入 requirements.txt

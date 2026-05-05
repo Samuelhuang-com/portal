@@ -2,11 +2,10 @@
 ★工項類別分析 API Router  (v2 — 主管決策 Dashboard)
 Prefix: /api/v1/work-category-analysis
 
-資料來源（四合一）：
-  luqun      → LuqunRepairCase               (work_hours = 花費工時 HR；fallback: 工務處理天數×24)
-  dazhi      → DazhiRepairCase               (work_hours = 花費工時 HR；fallback: 工務處理天數/維修天數×24)
-  hotel_room → RoomMaintenanceDetailRecord   (work_hours 單位：分鐘，÷60 轉小時；類別=每日巡檢)
-  ihg_room   → IHGRoomMaintenanceMaster      (raw_json["工時計算"] 分鐘，÷60 轉小時；類別=例行維護)
+資料來源（三合一）：
+  luqun    → LuqunRepairCase          (work_hours = 花費工時 HR；fallback: 工務處理天數×24)
+  dazhi    → DazhiRepairCase          (work_hours = 花費工時 HR；fallback: 工務處理天數/維修天數×24)
+  ihg_room → IHGRoomMaintenanceMaster (raw_json["工時計算"] 分鐘，÷60 轉小時；類別=例行維護)
 
 端點：
   GET /years          — 有資料的年份清單
@@ -16,13 +15,12 @@ Prefix: /api/v1/work-category-analysis
 五大工項類別：
   現場報修 | 上級交辦 | 緊急事件 | 例行維護 | 每日巡檢
 
-  hotel_room 全部歸入「每日巡檢」
   luqun/dazhi 依 title+repair_type 關鍵字分類，預設「現場報修」
 
 篩選參數（/stats）：
   year     : int           年度（必選）
   month    : int = 0       月份（0=全年）
-  sources  : str = "all"   all / luqun / dazhi / hotel_room（逗號分隔多選）
+  sources  : str = "all"   all / luqun / dazhi / ihg_room（逗號分隔多選）
   category : str = "all"   all / 現場報修 / 上級交辦 / 緊急事件 / 例行維護 / 每日巡檢
   person   : str = "all"   all / <人員姓名>
 """
@@ -42,7 +40,6 @@ from app.core.database import get_db
 from app.dependencies import get_current_user
 from app.models.luqun_repair import LuqunRepairCase
 from app.models.dazhi_repair import DazhiRepairCase
-from app.models.room_maintenance_detail import RoomMaintenanceDetailRecord
 from app.models.ihg_room_maintenance import IHGRoomMaintenanceMaster
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
@@ -54,10 +51,9 @@ router = APIRouter(dependencies=[Depends(get_current_user)])
 CATEGORIES = ["現場報修", "上級交辦", "緊急事件", "例行維護", "每日巡檢"]
 
 SOURCE_LABELS = {
-    "luqun":      "樂群工務",
-    "dazhi":      "大直工務",
-    "hotel_room": "房務保養",
-    "ihg_room":   "IHG客房保養",
+    "luqun":    "樂群工務",
+    "dazhi":    "大直工務",
+    "ihg_room": "IHG客房保養",
 }
 
 # 關鍵字 → 工項類別（先匹配者優先；hotel_room 強制「每日巡檢」）
@@ -164,26 +160,6 @@ def _load_all(db: Session, sources: set[str]) -> list[dict]:
                 "case_id":    c.ragic_id,
             })
 
-    # ── 房務保養 ──────────────────────────────────────────────────────────────
-    if "hotel_room" in sources:
-        for r in db.query(RoomMaintenanceDetailRecord).all():
-            hours = _parse_minutes_to_hours(r.work_hours)
-            if hours <= 0:
-                continue
-            yd = _parse_hotel_date(r.maintain_date)
-            if not yd:
-                continue
-            rows.append({
-                "year":       yd[0],
-                "month":      yd[1],
-                "day":        yd[2],
-                "work_hours": hours,
-                "category":   "每日巡檢",
-                "person":     (r.staff_name or "").strip() or "未指定",
-                "source":     "hotel_room",
-                "case_id":    r.ragic_id,
-            })
-
     # ── IHG 客房保養 ──────────────────────────────────────────────────────────
     # 工時：raw_json["工時計算"] 分鐘 ÷ 60 → HR（與 /matrix 端點同一來源）
     # 類別：固定「例行維護」（定期客房保養性質）
@@ -221,7 +197,7 @@ def _load_all(db: Session, sources: set[str]) -> list[dict]:
 
 def _parse_sources(sources_str: str) -> set[str]:
     if sources_str.strip().lower() == "all":
-        return {"luqun", "dazhi", "hotel_room", "ihg_room"}
+        return {"luqun", "dazhi", "ihg_room"}
     return {s.strip() for s in sources_str.split(",") if s.strip()}
 
 
@@ -280,7 +256,7 @@ def _build_kpi(rows: list[dict], prev_rows: list[dict]) -> dict:
             "hours":  round(source_hours.get(s, 0), 1),
             "pct":    round(source_hours.get(s, 0) / total_hours * 100, 1) if total_hours else 0,
         }
-        for s in ["luqun", "dazhi", "hotel_room", "ihg_room"]
+        for s in ["luqun", "dazhi", "ihg_room"]
         if source_hours.get(s, 0) > 0
     ]
 
@@ -568,10 +544,6 @@ def _get_last_sync_at(db: Session, src: set[str]) -> str | None:
         v = db.query(func.max(DazhiRepairCase.synced_at)).scalar()
         if v:
             candidates.append(v)
-    if "hotel_room" in src:
-        v = db.query(func.max(RoomMaintenanceDetailRecord.synced_at)).scalar()
-        if v:
-            candidates.append(v)
     if "ihg_room" in src:
         v = db.query(func.max(IHGRoomMaintenanceMaster.synced_at)).scalar()
         if v:
@@ -613,7 +585,7 @@ def get_persons(
 def get_stats(
     year:     int = Query(..., description="年度"),
     month:    int = Query(0,     description="月份（0=全年）"),
-    sources:  str = Query("all", description="all / luqun / dazhi / hotel_room / ihg_room"),
+    sources:  str = Query("all", description="all / luqun / dazhi / ihg_room"),
     category: str = Query("all", description="all / 現場報修 / ..."),
     person:   str = Query("all", description="all / <人員姓名>"),
     db: Session = Depends(get_db),

@@ -12,6 +12,8 @@ export interface MenuConfigItem {
   is_visible: boolean
   // 權限控制：null = 公開顯示；有值 = 需具備對應 permission_key
   permission_key: string | null
+  // 自訂圖示：null = 使用 base 預設；'none' = 不顯示；其他 = iconMap key
+  icon_key: string | null
 }
 
 export interface MenuConfigHistoryItem {

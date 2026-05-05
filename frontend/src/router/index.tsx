@@ -44,6 +44,7 @@ import RolesPage           from '@/pages/Settings/Roles'
 import RagicConnectionsPage from '@/pages/Settings/RagicConnections'
 import RagicAppDirectoryPage from '@/pages/Settings/RagicAppDirectory'
 import MenuConfigPage        from '@/pages/Settings/MenuConfig'
+import EmployeeManualExportPage from '@/pages/Settings/EmployeeManualExport'
 import ApprovalListPage   from '@/pages/Approvals/List'
 import ApprovalNewPage    from '@/pages/Approvals/New'
 import ApprovalDetailPage from '@/pages/Approvals/Detail'
@@ -365,6 +366,9 @@ export default function AppRouter() {
             <PermissionGuard permissionKey="settings_menu_manage">
               <MenuConfigPage />
             </PermissionGuard>
+          } />
+          <Route path="employee-manual-export" element={
+            <EmployeeManualExportPage />
           } />
         </Route>
 

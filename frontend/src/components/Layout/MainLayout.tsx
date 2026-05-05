@@ -29,11 +29,13 @@ import {
   FundOutlined,
   RadarChartOutlined,
   ReadOutlined,
+  BookOutlined,
 } from '@ant-design/icons'
 import { useNavigate, useLocation, Outlet } from 'react-router-dom'
 import { useAuthStore } from '@/stores/authStore'
 import { SITE_TITLE, NAV_GROUP, NAV_PAGE } from '@/constants/navLabels'
 import { fetchMenuConfig, MenuConfigItem } from '@/api/menuConfig'
+import { resolveIcon } from '@/constants/iconMap'
 
 // ── 內部型別：帶 permissionKey 的 menu item ───────────────────────────────────
 interface MenuItem {
@@ -227,7 +229,8 @@ export const menuItems: MenuItem[] = [
       { key: '/settings/roles',               icon: <SettingOutlined />,  label: NAV_PAGE.rolesManage,       permissionKey: 'settings_roles_manage' },
       { key: '/settings/ragic-app-directory', icon: <DatabaseOutlined />, label: NAV_PAGE.ragicAppDirectory, permissionKey: 'settings_ragic_manage' },
       { key: '/settings/ragic-connections',   icon: <ApiOutlined />,      label: NAV_PAGE.ragicConnections,  permissionKey: 'settings_ragic_manage' },
-      { key: '/settings/menu-config',         icon: <MenuOutlined />,     label: '選單管理',                  permissionKey: 'settings_menu_manage' },
+      { key: '/settings/menu-config',              icon: <MenuOutlined />,  label: '選單管理',               permissionKey: 'settings_menu_manage' },
+      { key: '/settings/employee-manual-export',   icon: <BookOutlined />,  label: NAV_PAGE.employeeManualExport, permissionKey: 'system_admin_only' },
     ],
   },
 ]
@@ -282,16 +285,19 @@ export function applyMenuConfig(base: any[], configs: MenuConfigItem[]): any[] {
 
   // 從 DB config 建出一個 menu item（可能含三層）
   // 優先序：custom_label > base 結構的原始 label > menu_key
+  // icon 優先序：icon_key(DB) > base 結構原始 icon > FileTextOutlined fallback
+  // 若 icon_key='none'，resolveIcon 回傳 undefined，最終 icon 設為 null（明確隱藏）
   const buildItem = (cfg: MenuConfigItem): any => {
     const grandchildren = (childrenByParent.get(cfg.menu_key) ?? [])
       .filter((g) => g.is_visible !== false)
       .sort((a, b) => a.sort_order - b.sort_order)
       .map((g) => buildItem(g))
-    const base = baseItemInfo.get(cfg.menu_key)
+    const baseInfo = baseItemInfo.get(cfg.menu_key)
+    const icon = resolveIcon(cfg.icon_key, baseInfo?.icon ?? <FileTextOutlined />)
     return {
       key: cfg.menu_key,
-      label: cfg.custom_label || base?.label || cfg.menu_key,
-      icon: base?.icon ?? <FileTextOutlined />,
+      label: cfg.custom_label || baseInfo?.label || cfg.menu_key,
+      icon: icon !== undefined ? icon : null,
       ...(grandchildren.length > 0 ? { children: grandchildren } : {}),
     }
   }
@@ -315,9 +321,13 @@ export function applyMenuConfig(base: any[], configs: MenuConfigItem[]): any[] {
       const cfg = cfgMap.get(parent.key)
       return cfg === undefined || cfg.is_visible !== false
     })
-    .map((parent) => ({
+    .map((parent) => {
+      const pCfg = cfgMap.get(parent.key)
+      const pIcon = resolveIcon(pCfg?.icon_key, parent.icon)
+      return {
       ...parent,
-      label: cfgMap.get(parent.key)?.custom_label || parent.label,
+      icon: pIcon !== undefined ? pIcon : null,
+      label: pCfg?.custom_label || parent.label,
       children: parent.children
         ? (() => {
             // base L2：排除已被移走的，保留其餘並套用 label/排序
@@ -355,15 +365,19 @@ export function applyMenuConfig(base: any[], configs: MenuConfigItem[]): any[] {
                     const bo = cfgMap.get(b.key)?.sort_order ?? 9999
                     return ao - bo
                   })
+                  const cIcon2 = resolveIcon(cfgMap.get(child.key)?.icon_key, child.icon)
                   return {
                     ...child,
+                    icon: cIcon2 !== undefined ? cIcon2 : null,
                     label: cfgMap.get(child.key)?.custom_label || child.label,
                     children: mergedGc,
                   }
                 }
 
+                const cIcon = resolveIcon(cfgMap.get(child.key)?.icon_key, child.icon)
                 return {
                   ...child,
+                  icon: cIcon !== undefined ? cIcon : null,
                   label: cfgMap.get(child.key)?.custom_label || child.label,
                   ...(dbGrandchildren.length > 0 ? { children: dbGrandchildren } : {}),
                 }
@@ -381,8 +395,10 @@ export function applyMenuConfig(base: any[], configs: MenuConfigItem[]): any[] {
                   .filter((g) => !baseL1Keys.has(g.menu_key) && !baseL2Keys.has(g.menu_key) && g.is_visible !== false)
                   .sort((a, b) => a.sort_order - b.sort_order)
                   .map((g) => buildItem(g))
+                const mIcon = resolveIcon(cfg?.icon_key, origItem.icon)
                 return [{
                   ...origItem,
+                  icon: mIcon !== undefined ? mIcon : null,
                   label: cfg?.custom_label || origItem.label,
                   ...(grandchildren.length > 0 ? { children: grandchildren } : {}),
                 }]
@@ -412,7 +428,8 @@ export function applyMenuConfig(base: any[], configs: MenuConfigItem[]): any[] {
               })
           })()
         : undefined,
-    }))
+      }
+    })
     .sort((a: any, b: any) => {
       const ao = cfgMap.get(a.key)?.sort_order ?? 9999
       const bo = cfgMap.get(b.key)?.sort_order ?? 9999
@@ -429,10 +446,11 @@ export function applyMenuConfig(base: any[], configs: MenuConfigItem[]): any[] {
       .filter((c) => c.is_visible !== false)
       .sort((a, b) => a.sort_order - b.sort_order)
       .map((c) => buildItem(c))
+    const l1Icon = resolveIcon(cfg.icon_key, <FileTextOutlined />)
     cloned.push({
       key: cfg.menu_key,
       label: cfg.custom_label || cfg.menu_key,
-      icon: <FileTextOutlined />,
+      icon: l1Icon !== undefined ? l1Icon : null,
       ...(children.length > 0 ? { children } : {}),
     })
   })

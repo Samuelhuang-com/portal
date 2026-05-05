@@ -1,6 +1,7 @@
 import apiClient from '@/api/client'
 import type {
   PMBatchListItem, PMBatchDetail, PMStats, PMTaskHistory,
+  PMPeriodStats, PMYearMatrix,
 } from '@/types/periodicMaintenance'
 
 const BASE = '/mall/periodic-maintenance'
@@ -53,5 +54,24 @@ export async function fetchMallPMTaskHistory(
   const res = await apiClient.get<PMTaskHistory>(`${BASE}/items/task-history`, {
     params: { task_name: taskName, months },
   })
+  return res.data
+}
+
+/** 週期統計（月/季/年） */
+export async function fetchMallPMPeriodStats(params: {
+  period_type: 'month' | 'quarter' | 'year'
+  year?: number
+  month?: number
+  quarter?: number
+}): Promise<PMPeriodStats> {
+  const res = await apiClient.get<PMPeriodStats>(`${BASE}/period-stats`, { params })
+  return res.data
+}
+
+/** 全年 12 個月矩陣統計 */
+export async function fetchMallPMYearMatrix(year?: number): Promise<PMYearMatrix> {
+  const params: Record<string, number> = {}
+  if (year) params.year = year
+  const res = await apiClient.get<PMYearMatrix>(`${BASE}/period-stats/year-matrix`, { params })
   return res.data
 }

@@ -96,6 +96,66 @@ export interface PMItemUpdate {
   [key: string]: never
 }
 
+// ── 週期統計（月 / 季 / 年）─────────────────────────────────────────────────
+
+export interface PMIncompleteItem {
+  task_name:            string
+  category:             string
+  scheduled_date_full:  string   // "YYYY/MM/DD"
+  result_note:          string
+  frequency:            string
+}
+
+export interface PMSubPeriodBreakdown {
+  label:     string        // "1月" / "Q1" 等
+  total:     number
+  completed: number
+  rate:      number | null  // null = N/A（分母為 0）
+}
+
+export interface PMPeriodStats {
+  period_type:   string    // "month" | "quarter" | "year"
+  period_label:  string    // "2026年4月" / "2026 Q2" / "2026年"
+  period_start:  string    // "2026-04-01"
+  period_end:    string    // "2026-04-30"
+  prev_period_end: string  // "2026-03-31"
+
+  // 上期累計
+  prev_carry_over:         number
+  prev_resolved_in_period: number
+  carry_over_rate:         number | null  // null = N/A
+
+  // 本期
+  period_total:     number
+  period_completed: number
+  period_rate:      number | null  // null = N/A
+
+  // 子期間分布（季→月、年→Q1-Q4、月→空陣列）
+  sub_period_breakdown: PMSubPeriodBreakdown[]
+
+  // 未完成事項說明（僅含 result_note 非空的項目）
+  incomplete_items: PMIncompleteItem[]
+}
+
+// ── 年度矩陣統計（12個月橫軸）────────────────────────────────────────────────
+
+export interface PMYearMatrixMonth {
+  month:                   number    // 1-12
+  label:                   string    // "一月" ... "十二月"
+  prev_carry_over:         number    // 上月累計未完成項目數
+  prev_resolved_in_period: number    // 上月未完成於本月結案數
+  carry_over_rate:         number | null  // 累計項目完成率（%）
+  period_total:            number    // 本月週期保養項目數
+  period_completed:        number    // 本月週期保養完成數
+  period_rate:             number | null  // 本月週期保養完成率（%）
+  incomplete_notes:        string    // 未完成備註（\n 分隔；空=無）
+}
+
+export interface PMYearMatrix {
+  year:   number
+  months: PMYearMatrixMonth[]
+}
+
 // ── 保養項目歷史（跨批次 task-history）────────────────────────────────────────
 
 export interface PMItemHistorySummary {

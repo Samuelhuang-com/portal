@@ -301,9 +301,11 @@
 | 角色管理 | `routers/auth.py` (部分) | `pages/Settings/Roles.tsx` | `/settings/roles` |
 | Ragic 連線管理 | `routers/ragic.py` `/api/v1/ragic` | `pages/Settings/RagicConnections.tsx` | `/settings/ragic-connections` |
 | Ragic App 目錄 | `routers/ragic.py` | `pages/Settings/RagicAppDirectory.tsx` | `/settings/ragic-app-directory` |
+| 選單管理 | `routers/menu_config.py` `/api/v1/settings/menu-config` | `pages/Settings/MenuConfig/index.tsx` | `/settings/menu-config` |
+| 員工操作手冊匯出 | `routers/employee_manual_export.py` `/api/v1/employee-manual-export` | `pages/Settings/EmployeeManualExport/index.tsx` | `/settings/employee-manual-export` |
 | 模型 | `models/user.py`, `role.py`, `user_role.py`, `ragic_connection.py`, `ragic_app_directory.py` | — | — |
-| Schema | `schemas/user.py`, `schemas/auth.py`, `schemas/ragic.py` | — | — |
-| 前端 API | `api/users.ts`, `api/ragic.ts`, `api/tenants.ts` | — | — |
+| Schema | `schemas/user.py`, `schemas/auth.py`, `schemas/ragic.py`, `schemas/employee_manual_export.py` | — | — |
+| 前端 API | `api/users.ts`, `api/ragic.ts`, `api/tenants.ts`, `api/employeeManualExport.ts` | — | — |
 
 ---
 

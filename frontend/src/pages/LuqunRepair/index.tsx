@@ -1,8 +1,8 @@
 /**
- * 樂群工務報修 — 主模組頁面
+ * 商場工務報修 — 主模組頁面
  *
  * 包含 6 個 Tab：
- *   Dashboard | 4.1 報修 | 4.2 結案時間 | 4.3 報修類型 | 4.4 本月客房報修表 | 春大直-報修清單總表
+ *   Dashboard | 3.1 報修 | 3.2 結案時間 | 3.3 報修類型 | 3.4 本月客房報修表 | 春大直-報修清單總表
  *
  * 查詢條件（年/月）置於頁面頂部，各 Tab 共享。
  */
@@ -933,7 +933,7 @@ function DashboardTab({
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// Tab: 4.1 報修統計
+// Tab: 3.1 報修統計
 // ═════════════════════════════════════════════════════════════════════════════
 function RepairStatsTab({ year, focusMonth }: { year: number; focusMonth: number | null }) {
   const [data, setData]     = useState<RepairStatsData | null>(null)
@@ -1063,7 +1063,7 @@ function RepairStatsTab({ year, focusMonth }: { year: number; focusMonth: number
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// Tab: 4.2 結案時間
+// Tab: 3.2 結案時間
 // ═════════════════════════════════════════════════════════════════════════════
 function ClosingTimeTab({ year, month }: { year: number; month: number | null }) {
   const [data, setData]         = useState<ClosingTimeData | null>(null)
@@ -1235,7 +1235,7 @@ function ClosingTimeTab({ year, month }: { year: number; month: number | null })
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// Tab: 4.3 報修類型
+// Tab: 3.3 報修類型
 // ═════════════════════════════════════════════════════════════════════════════
 function RepairTypeTab({ year, focusMonth }: { year: number; focusMonth: number | null }) {
   const [data, setData]     = useState<TypeStatsData | null>(null)
@@ -1386,7 +1386,7 @@ function RepairTypeTab({ year, focusMonth }: { year: number; focusMonth: number 
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// Tab: 4.4 本月客房報修表
+// Tab: 3.4 本月客房報修表
 // ═════════════════════════════════════════════════════════════════════════════
 function RoomRepairTab({ year, month }: { year: number; month: number }) {
   const [data, setData]             = useState<RoomRepairTableData | null>(null)
@@ -2015,22 +2015,22 @@ export default function LuqunRepairPage() {
     },
     {
       key: 'repair-stats',
-      label: '4.1 報修',
+      label: '3.1 報修',
       children: <RepairStatsTab year={queryYear} focusMonth={queryMonth} />,
     },
     {
       key: 'closing-time',
-      label: '4.2 結案時間',
+      label: '3.2 結案時間',
       children: <ClosingTimeTab year={queryYear} month={queryMonth} />,
     },
     {
       key: 'repair-type',
-      label: '4.3 報修類型',
+      label: '3.3 報修類型',
       children: <RepairTypeTab year={queryYear} focusMonth={queryMonth} />,
     },
     {
       key: 'room-repair',
-      label: '4.4 本月客房報修表',
+      label: '3.4 本月客房報修表',
       children: <RoomRepairTab year={queryYear} month={queryMonth ?? currentMonth} />,
     },
     {
@@ -2068,7 +2068,7 @@ export default function LuqunRepairPage() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <ToolOutlined style={{ fontSize: 24, color: '#1B3A5C' }} />
           <div>
-            <Title level={4} style={{ margin: 0, color: '#1B3A5C' }}>樂群工務報修</Title>
+            <Title level={4} style={{ margin: 0, color: '#1B3A5C' }}>商場工務報修</Title>
             <Text type="secondary" style={{ fontSize: 12 }}>春大直 - 報修清單總表</Text>
           </div>
         </div>
@@ -2094,7 +2094,7 @@ export default function LuqunRepairPage() {
 
       {/* ── Ping Modal ─────────────────────────────────────────────────────── */}
       <Modal
-        title={<><ApiOutlined style={{ color: '#4BA8E8', marginRight: 8 }} />樂群工務報修 — 連線測試結果</>}
+        title={<><ApiOutlined style={{ color: '#4BA8E8', marginRight: 8 }} />商場工務報修 — 連線測試結果</>}
         open={pingModalOpen}
         onCancel={() => setPingModalOpen(false)}
         footer={<Button onClick={() => setPingModalOpen(false)}>關閉</Button>}
@@ -2152,7 +2152,7 @@ export default function LuqunRepairPage() {
 
       {/* ── Sync Modal ─────────────────────────────────────────────────────── */}
       <Modal
-        title={<><SyncOutlined style={{ color: '#764ba2', marginRight: 8 }} />樂群工務報修 — Ragic 同步摘要</>}
+        title={<><SyncOutlined style={{ color: '#764ba2', marginRight: 8 }} />商場工務報修 — Ragic 同步摘要</>}
         open={syncModalOpen}
         onCancel={() => setSyncModalOpen(false)}
         footer={<Button onClick={() => setSyncModalOpen(false)}>關閉</Button>}

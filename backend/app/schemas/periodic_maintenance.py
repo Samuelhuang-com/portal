@@ -7,6 +7,8 @@ from typing import List, Optional
 from pydantic import BaseModel
 
 
+
+
 # ── 批次主表 ──────────────────────────────────────────────────────────────────
 
 class PMBatchOut(BaseModel):
@@ -109,3 +111,68 @@ class PMStats(BaseModel):
     upcoming_items:      List[PMItemOut]        = []
     category_stats:      List[CategoryStat]     = []
     status_distribution: List[StatusDistItem]   = []
+
+
+# ── 週期統計（月 / 季 / 年）─────────────────────────────────────────────────
+
+class PMIncompleteItem(BaseModel):
+    """未完成事項（僅顯示有 result_note 的項目）"""
+    task_name:            str
+    category:             str
+    scheduled_date_full:  str    # "YYYY/MM/DD"
+    result_note:          str
+    frequency:            str
+
+
+class PMSubPeriodBreakdown(BaseModel):
+    """子期間分布：季統計→每月；年統計→每季"""
+    label:     str            # "1月" / "Q1" 等
+    total:     int
+    completed: int
+    rate:      Optional[float] = None    # None = N/A（分母為 0）
+
+
+class PMPeriodStats(BaseModel):
+    """月 / 季 / 年統計回傳結構"""
+    period_type:   str    # "month" | "quarter" | "year"
+    period_label:  str    # "2026年4月" / "2026 Q2" / "2026年"
+    period_start:  str    # "2026-04-01"
+    period_end:    str    # "2026-04-30"
+    prev_period_end: str  # "2026-03-31"
+
+    # ── 上期累計 ───────────────────────────────────────────────────────────
+    prev_carry_over:         int            = 0     # 上期累計未完成數
+    prev_resolved_in_period: int            = 0     # 上期未完成於本期結案數
+    carry_over_rate:         Optional[float] = None  # 累計完成率（%），分母=0→None
+
+    # ── 本期 ───────────────────────────────────────────────────────────────
+    period_total:     int            = 0     # 本期項目數
+    period_completed: int            = 0     # 本期完成數
+    period_rate:      Optional[float] = None  # 本期完成率（%），分母=0→None
+
+    # ── 子期間分布 ─────────────────────────────────────────────────────────
+    sub_period_breakdown: List[PMSubPeriodBreakdown] = []
+
+    # ── 未完成事項說明（result_note 非空才列入）────────────────────────────
+    incomplete_items: List[PMIncompleteItem] = []
+
+
+# ── 年度矩陣統計（12個月橫軸）────────────────────────────────────────────────
+
+class PMYearMatrixMonth(BaseModel):
+    """年度矩陣中單一月份的所有指標"""
+    month:                   int            # 1-12
+    label:                   str            # "一月" ... "十二月"
+    prev_carry_over:         int   = 0      # 上月累計未完成項目數
+    prev_resolved_in_period: int   = 0      # 上月未完成於本月結案數
+    carry_over_rate:         Optional[float] = None  # 累計項目完成率（%）
+    period_total:            int   = 0      # 本月週期保養項目數
+    period_completed:        int   = 0      # 本月週期保養完成數
+    period_rate:             Optional[float] = None  # 本月週期保養完成率（%）
+    incomplete_notes:        str   = ""     # 未完成備註（換行分隔；空白=無）
+
+
+class PMYearMatrix(BaseModel):
+    """全年 12 個月矩陣統計"""
+    year:   int
+    months: List[PMYearMatrixMonth]

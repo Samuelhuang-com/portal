@@ -18,7 +18,8 @@ import {
   MenuOutlined, EditOutlined, CheckOutlined, CloseOutlined,
   HistoryOutlined, SaveOutlined, ReloadOutlined, InfoCircleOutlined,
   CaretRightOutlined, EyeOutlined, EyeInvisibleOutlined, PlusOutlined,
-  ArrowsAltOutlined, DeleteOutlined, HomeOutlined,
+  ArrowsAltOutlined, DeleteOutlined, HomeOutlined, AppstoreOutlined,
+  FileTextOutlined,
 } from '@ant-design/icons'
 import {
   DndContext,
@@ -46,6 +47,7 @@ import {
 } from '@/api/menuConfig'
 import { menuItems, computeReparentedL2 } from '@/components/Layout/MainLayout'
 import { HOME_PAGE_STORAGE_KEY } from '@/router'
+import { ICON_MAP, ICON_GROUPS, resolveIcon } from '@/constants/iconMap'
 
 const { Text, Title } = Typography
 
@@ -75,6 +77,8 @@ interface WorkItem {
   is_visible: boolean
   // 權限控制：'' = 公開（null）；有值 = 需具備此 permission_key
   permissionKey: string
+  // 自訂圖示：'' = 使用 base 預設；'none' = 不顯示；其他 = iconMap key
+  iconKey: string
   children: WorkItem[]
 }
 
@@ -171,6 +175,7 @@ function buildWorkItems(
             sort_order: gcCfg?.sort_order ?? gi * 10,
             is_visible: gcCfg?.is_visible ?? true,
             permissionKey: gcCfg?.permission_key ?? '',
+            iconKey: gcCfg?.icon_key ?? '',
             children: [] as WorkItem[],
           }
         })
@@ -184,6 +189,7 @@ function buildWorkItems(
           sort_order: cCfg?.sort_order ?? ci * 10,
           is_visible: cCfg?.is_visible ?? true,
           permissionKey: cCfg?.permission_key ?? '',
+          iconKey: cCfg?.icon_key ?? '',
           children: gcItems,
         }
       })
@@ -201,6 +207,7 @@ function buildWorkItems(
       sort_order: pCfg?.sort_order ?? pi * 10,
       is_visible: pCfg?.is_visible ?? true,
       permissionKey: pCfg?.permission_key ?? '',
+      iconKey: pCfg?.icon_key ?? '',
       children,
     }
   })
@@ -236,6 +243,7 @@ function buildWorkItems(
         sort_order: cfg.sort_order,
         is_visible: cfg.is_visible,
         permissionKey: cfg.permission_key ?? '',
+        iconKey: cfg.icon_key ?? '',
         children: [],
       }
       if (!parentItem) {
@@ -262,6 +270,7 @@ function buildWorkItems(
       sort_order: cfg?.sort_order ?? 9999,
       is_visible: cfg?.is_visible ?? true,
       permissionKey: cfg?.permission_key ?? '',
+      iconKey: cfg?.icon_key ?? '',
       children: [],
     }
     newParent.children.push(newItem)
@@ -291,6 +300,7 @@ function buildWorkItems(
         sort_order: childCfg?.sort_order ?? ci * 10,
         is_visible: childCfg?.is_visible ?? true,
         permissionKey: childCfg?.permission_key ?? '',
+        iconKey: childCfg?.icon_key ?? '',
         children: [] as WorkItem[],
       }
     })
@@ -304,6 +314,7 @@ function buildWorkItems(
       sort_order: cfg?.sort_order ?? 9999,
       is_visible: cfg?.is_visible ?? true,
       permissionKey: cfg?.permission_key ?? '',
+      iconKey: cfg?.icon_key ?? '',
       children: gcItems,
     }
 
@@ -331,6 +342,7 @@ function flattenWorkItems(items: WorkItem[]): MenuConfigItem[] {
       sort_order: order,
       is_visible: item.is_visible,
       permission_key: item.permissionKey.trim() || null,
+      icon_key: item.iconKey || null,
     })
     item.children.forEach((child, ci) => visit(child, item.menu_key, ci * 10))
   }
@@ -377,6 +389,7 @@ interface SortableRowProps {
   onDeleteItem: (key: string) => void
   onPermissionKeyChange: (key: string, permKey: string) => void
   onSetHomePage: (route: string) => void
+  onIconKeyChange: (key: string, iconKey: string) => void
 }
 
 function SortableRow({
@@ -392,6 +405,7 @@ function SortableRow({
   onDeleteItem,
   onPermissionKeyChange,
   onSetHomePage,
+  onIconKeyChange,
 }: SortableRowProps) {
   const {
     attributes,
@@ -405,6 +419,7 @@ function SortableRow({
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(item.customLabel)
   const inputRef = useRef<InputRef>(null)
+  const [iconPickerOpen, setIconPickerOpen] = useState(false)
 
   const paddingLeft = level === 1 ? 8 : level === 2 ? 24 : 48
 
@@ -669,6 +684,82 @@ function SortableRow({
             </Dropdown>
           )}
 
+          {/* 換圖示 */}
+          {(() => {
+            const currentIcon = resolveIcon(item.iconKey || null, <FileTextOutlined />)
+            const pickerContent = (
+              <div style={{ width: 320, maxHeight: 380, overflowY: 'auto' }}>
+                {/* 特殊選項 */}
+                <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+                  <Tooltip title="恢復預設圖示">
+                    <Button
+                      size="small"
+                      type={!item.iconKey ? 'primary' : 'default'}
+                      onClick={() => { onIconKeyChange(item.menu_key, ''); setIconPickerOpen(false) }}
+                    >預設</Button>
+                  </Tooltip>
+                  <Tooltip title="不顯示任何圖示">
+                    <Button
+                      size="small"
+                      type={item.iconKey === 'none' ? 'primary' : 'default'}
+                      danger={item.iconKey === 'none'}
+                      onClick={() => { onIconKeyChange(item.menu_key, 'none'); setIconPickerOpen(false) }}
+                    >無圖示</Button>
+                  </Tooltip>
+                </div>
+                {/* 分組圖示格 */}
+                {ICON_GROUPS.map((group) => (
+                  <div key={group.label} style={{ marginBottom: 8 }}>
+                    <div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 4, fontWeight: 600 }}>{group.label}</div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                      {group.keys.map((k) => (
+                        <Tooltip key={k} title={k.replace('Outlined', '')}>
+                          <Button
+                            size="small"
+                            type={item.iconKey === k ? 'primary' : 'text'}
+                            icon={ICON_MAP[k]}
+                            style={{ width: 32, height: 32, padding: 0 }}
+                            onClick={() => { onIconKeyChange(item.menu_key, k); setIconPickerOpen(false) }}
+                          />
+                        </Tooltip>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )
+            return (
+              <Dropdown
+                open={iconPickerOpen}
+                onOpenChange={setIconPickerOpen}
+                dropdownRender={() => (
+                  <div style={{
+                    background: '#fff', borderRadius: 8, padding: 12,
+                    boxShadow: '0 6px 16px rgba(0,0,0,0.12)', border: '1px solid #f0f0f0',
+                  }}>
+                    {pickerContent}
+                  </div>
+                )}
+                trigger={['click']}
+                placement="bottomRight"
+              >
+                <Tooltip title="更換圖示">
+                  <Button
+                    size="small"
+                    type="text"
+                    icon={
+                      item.iconKey === 'none'
+                        ? <AppstoreOutlined style={{ color: '#d9d9d9' }} />
+                        : item.iconKey
+                          ? <span style={{ fontSize: 14 }}>{currentIcon}</span>
+                          : <AppstoreOutlined style={{ color: '#bbb' }} />
+                    }
+                  />
+                </Tooltip>
+              </Dropdown>
+            )
+          })()}
+
           {/* 設為首頁（只限以 / 開頭的真實路由） */}
           {item.menu_key.startsWith('/') && (
             <Tooltip title={item.menu_key === homePageRoute ? '目前首頁' : '設為首頁'}>
@@ -862,6 +953,26 @@ export default function MenuConfigPage() {
     setDirty(true)
   }, [])
 
+  // ── 圖示 key 修改（支援三層）─────────────────────────────────────────────
+  const handleIconKeyChange = useCallback((key: string, iconKey: string) => {
+    setItems((prev) => prev.map((parent) => {
+      if (parent.menu_key === key) return { ...parent, iconKey }
+      return {
+        ...parent,
+        children: parent.children.map((child) => {
+          if (child.menu_key === key) return { ...child, iconKey }
+          return {
+            ...child,
+            children: child.children.map((g) =>
+              g.menu_key === key ? { ...g, iconKey } : g
+            ),
+          }
+        }),
+      }
+    }))
+    setDirty(true)
+  }, [])
+
   // ── 設定首頁 ──────────────────────────────────────────────────────────────
   const handleSetHomePage = useCallback((route: string) => {
     localStorage.setItem(HOME_PAGE_STORAGE_KEY, route)
@@ -951,6 +1062,7 @@ export default function MenuConfigPage() {
             sort_order: maxOrder,
             is_visible: true,
             permissionKey: '',
+            iconKey: '',
             children: [],
           },
         ]
@@ -973,6 +1085,7 @@ export default function MenuConfigPage() {
                 sort_order: maxOrder,
                 is_visible: true,
                 permissionKey: '',
+                iconKey: '',
                 children: [],
               },
             ],
@@ -1138,6 +1251,7 @@ export default function MenuConfigPage() {
         <Space size={4}><EditOutlined style={{ color: '#666' }} /><span>改名（雙擊也可）</span></Space>
         <Space size={4}><EyeOutlined style={{ color: '#666' }} /><span>顯示／隱藏</span></Space>
         <Space size={4}><ArrowsAltOutlined style={{ color: '#666' }} /><span>跨層移動</span></Space>
+        <Space size={4}><AppstoreOutlined style={{ color: '#bbb' }} /><span>換圖示</span></Space>
         <Space size={4}><HomeOutlined style={{ color: '#52c41a' }} /><span>設為首頁</span></Space>
         <Space size={4}><DeleteOutlined style={{ color: '#ff4d4f' }} /><span>刪除（自訂項目）</span></Space>
         <Space size={4}>
@@ -1198,6 +1312,7 @@ export default function MenuConfigPage() {
                   onDeleteItem={handleDeleteItem}
                   onPermissionKeyChange={handlePermissionKeyChange}
                   onSetHomePage={handleSetHomePage}
+                  onIconKeyChange={handleIconKeyChange}
                 />
 
                 {/* L2 子層 */}
@@ -1223,6 +1338,7 @@ export default function MenuConfigPage() {
                             onDeleteItem={handleDeleteItem}
                             onPermissionKeyChange={handlePermissionKeyChange}
                             onSetHomePage={handleSetHomePage}
+                            onIconKeyChange={handleIconKeyChange}
                           />
 
                           {/* L3 孫層 */}
@@ -1246,6 +1362,7 @@ export default function MenuConfigPage() {
                                   onDeleteItem={handleDeleteItem}
                                   onPermissionKeyChange={handlePermissionKeyChange}
                                   onSetHomePage={handleSetHomePage}
+                                  onIconKeyChange={handleIconKeyChange}
                                 />
                               ))}
                             </SortableContext>

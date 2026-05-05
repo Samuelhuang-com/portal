@@ -2,6 +2,187 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)
 
+## [1.57.12] - 2026-05-05
+
+### Changed
+- **`hotel/periodic-maintenance` 每月保養表 TAB 加獨立年/月篩選** — 移除舊的「月份跟隨 Dashboard」設計；TAB 頂部新增獨立年份 + 月份 Select 及「重新整理」按鈕；`loadFormItems` 改為先呼叫 `fetchPMBatches(year)` 找對應批次，再呼叫 `fetchPMBatchDetail`；空批次訊息改為顯示動態年月；同步 Ragic 時若在 form TAB 也一併重刷
+
+---
+
+## [1.57.11] - 2026-05-05
+
+### Added
+- **`hotel/periodic-maintenance` 新增 TAB「每月保養表」** — 在 Dashboard 後插入第二個 TAB；資料來源：現有 `fetchPMBatchDetail(batch_id, {currentMonthOnly: true})`；欄位：序號/類別（rowSpan 分組）/頻率/項目+區域/預估(分)/排定日期/排定人員/執行人員/狀態/備註；異常項目底色淺紅；月份跟隨 Dashboard 選擇器；空批次時顯示提示 Alert
+- **`docs/DEV_PATTERNS.md` 新增「模組開發三必要條件」** — 每次開發新增模組/TAB 必須提供：中英文名稱+路徑、對應 Excel 表、TAB 順序（Dashboard→保養/巡檢表→統計→批次清單）；新增模組命名對照表（6 個現有模組）；TAB 順序規範章節
+
+---
+
+## [1.57.10] - 2026-05-05
+
+### Added
+- **`MonthlyCalendarGrid` 可重用 React 元件** — 抽取 `frontend/src/components/MonthlyCalendarGrid.tsx`；標準化月曆格介面（`CalendarRow / CalendarCellData`）；預設渲染：✓ 綠（100%）/ ⚠ 紅（異常或待處理）/ 百分比 藍（部分完成）/ — 灰（無資料）；今日深藍、週末紫色；圖例底部自動顯示；`hotel/daily-inspection` Dashboard 改用此元件
+- **`hotel/periodic-maintenance` Dashboard 新增月曆格** — 後端新增 `GET /periodic-maintenance/calendar?year=&month=`（依類別 × 日期：水電/空調/機修/裝修/弱電 固定 5 類 + 其他）；前端 `fetchPMCalendar` API 函式 + `PMCalendarResponse` 型別；Dashboard `loadDashboard` 平行載入月曆資料；新增「飯店週期保養每日狀況」月曆格 Card（保養類別 × 日期，格內顯示完成率/逾期/進行中）
+- **`mall/periodic-maintenance` Dashboard 新增月曆格** — 複用現有 `GET /mall-facility-inspection/daily-calendar` endpoint；Dashboard `loadDashboard` 平行載入；新增「商場工務每日巡檢狀況」月曆格 Card
+- **`docs/DEV_PATTERNS.md` 開發規範** — 標準化「月曆格功能」開發 SOP：後端 endpoint 規格模板、Schema 範例、前端 API 型別定義、MonthlyCalendarGrid 整合步驟，含 checklist 與常見錯誤
+
+---
+
+## [1.57.9] - 2026-05-05
+
+### Added
+- **`mall/periodic-maintenance` 新增 TAB「每日巡檢表」** — 新增 `mall_daily_inspection_template.py`（41 列 5 樓層模板）+ `mall_daily_inspection_builder.py`（`build_mall_daily_inspection_table` 跨 Sheet 比對）+ 後端 `GET /daily-form` 及 `GET /daily-calendar` endpoint；前端新增 `MallDailyInspectionFormTab.tsx`（掛載自動載入當月、YYYY+M+DatePicker 篩選、rowSpan 合併、異常紅底、未巡檢黃底、底部顯示 早/晚班時間與 實際/標準 總巡檢時間）；TAB 插入 Dashboard 與每月維護之間；`mallFacilityInspection.ts` 新增完整型別定義與 fetch 函式
+
+---
+
+## [1.57.8] - 2026-05-05
+
+### Fixed
+- **每日巡檢表 TAB 自動載入當月資料** — 元件掛載時自動查詢（不再需要手動按「查詢」），`queried` 狀態移至 `finally` 保證必設
+- **`時間(分)` 欄位改為計算值** — 後端 `daily_inspection_builder` 新增 `actual_minutes` 欄位（各 Sheet 所有 batch 的 start_time → end_time 加總），有實際巡檢資料時顯示計算時間；無資料時顯示模板標準時間；滑鼠移入顯示 tooltip 說明
+- **底部總時標籤隨資料切換** — 有實際資料時顯示「實際總巡檢時間」，無資料時顯示「標準總巡檢時間」；去除錯誤的 Set 去重邏輯，改依 source_tab 去重加總實際時間
+- **Dashboard 每日月曆格移除水平捲軸** — `table-layout: fixed` + `width: 100%` + 首欄 `12%` 寬；31 個日期欄自動分配剩餘寬度；僅在畫面真的不夠時才出現水平捲軸
+
+---
+
+## [1.57.7] - 2026-05-05
+
+### Changed
+- **`hotel/daily-inspection` Dashboard 改為純月份模式** — 移除「單日 / 全月」Segmented 切換，固定顯示當月彙整，並新增 1~31 日每日巡檢狀況月曆格（各 Sheet × 各日：完成率 / 異常數 / 待處理數）
+  - 後端新增 `GET /daily-calendar?year=&month=` endpoint：回傳 `max_day` + `sheets[].daily{day_str: {has_record, completion_rate, abnormal_count, pending_count}}`
+  - 後端 `GET /daily-form` endpoint：新增 `inspection_date` 選填參數（YYYY/MM/DD），填入時只取該日 batch；回傳 `has_data_today`（bool）
+  - 後端 `daily_inspection_builder.py`：`build_daily_inspection_table()` 新增 `inspection_date` 參數
+  - 前端 `index.tsx`：`SummaryTabContent` 改用 `Promise.all([fetchHotelDailyMonthlyDashboard, fetchHotelDailyCalendar])` 平行載入；新增 `MonthlyCalendar` 元件（純 HTML table，今日深藍、週末紫色、格內顯示 ✓/⚠/百分比/—）
+  - 前端 `DailyInspectionFormTab.tsx`：新增 `DatePicker`（可選填，限制在已選年月內）；查詢單日無資料時顯示黃色 Alert；單日有資料時顯示綠色 Banner
+  - 前端 `api/hotelDailyInspection.ts`：新增 `DailyCalendarDay / DailyCalendarSheet / DailyCalendarResponse` 型別 + `fetchHotelDailyCalendar()` 函式
+  - TAB 順序調整：Dashboard → 每日巡檢表 → RF 巡檢 → 4F~10F 巡檢 → 4F 巡檢 → 2F 巡檢 → 1F 巡檢
+
+---
+
+## [1.57.6] - 2026-05-05
+
+### Added
+- **`hotel/daily-inspection` 新增 TAB：「每日巡檢表」** — 將 RF / 4F~10F / 4F / 2F / 1F 五個巡檢 TAB 資料彙整為標準表格（來源：`hoteldaily-inspection.xlsx`）
+  - 後端新增 `app/services/daily_inspection_template.py`：78 列標準模板常數，涵蓋 RF/4~10F/4F/2F/1F 共 13 個設備項目，含 floor/item/check_content/result_options/minutes/source_tab/rowSpan 計算
+  - 後端新增 `app/services/daily_inspection_builder.py`：`build_daily_inspection_table(year, month, db)` 從各 Sheet 比對資料，支援精確 + 模糊 item_name 比對、多 batch 合併（inspector 逗號分隔、異常說明帶日期前綴）
+  - 後端 `hotel_daily_inspection.py`：新增 `GET /daily-form?year=&month=` endpoint，回傳帶比對結果的完整模板列清單
+  - 前端新增 `HotelDailyInspection/DailyInspectionFormTab.tsx`：YYYY + M 篩選、rowSpan 合併欄（樓層/項目/時間）、異常列紅底、未巡檢列黃底、底部顯示早晚班巡檢時間
+  - 前端 `HotelDailyInspection/index.tsx`：新增 TAB（key: `daily-form`，label: `每日巡檢表`），`VALID_TABS` 加入 `daily-form`
+  - 前端 `api/hotelDailyInspection.ts`：新增 `DailyFormRow` / `DailyFormResponse` 型別 + `fetchHotelDailyForm()` API 函式
+  - 三項設定確認已完備：menu-config（沿用 `/hotel/daily-inspection` 路由）、roles（`hotel_daily_inspection_view` 已涵蓋）、ragic-app-directory（items 215-219 已記錄）
+
+---
+
+## [1.57.5] - 2026-05-05
+
+### Added
+- **`mall/periodic-maintenance` 新增每月／每季／每年三個統計 TAB** — 與 `hotel/periodic-maintenance` 及 `mall/full-building-maintenance` 版型完全相同
+  - 後端 `mall_periodic_maintenance.py`：新增 import（`calendar.monthrange`、`List`、`PMPeriodStats / PMSubPeriodBreakdown / PMIncompleteItem / PMYearMatrix / PMYearMatrixMonth`）
+  - 後端新增 6 個輔助函式 + 2 個端點（`year-matrix` 在前）：`GET /period-stats/year-matrix`、`GET /period-stats`（period_type=month|quarter|year），使用 `MallPeriodicMaintenanceBatch/MallPeriodicMaintenanceItem`
+  - 前端 `mallPeriodicMaintenance.ts`：新增 `fetchMallPMPeriodStats()` / `fetchMallPMYearMatrix()`
+  - 前端 `MallPeriodicMaintenance/index.tsx`：新增 helper 元件（`fmtRate`、`PeriodKpiCards`、`SubBreakdownTable`、`IncompleteTable`、`QuarterSelectorCards`、`YearMatrixTable`）+ 三個 TAB；Tab 最終順序：Dashboard → 每月維護 → 每季維護 → 每年維護 → 批次清單
+
+---
+
+## [1.57.4] - 2026-05-05
+
+### Added
+- **`mall/full-building-maintenance` 新增每月／每季／每年三個統計 TAB** — 與 `hotel/periodic-maintenance` 版型完全相同
+  - 後端 `full_building_maintenance.py`：新增 import（`calendar.monthrange`、`List`）+ 新增 schema import（`PMPeriodStats / PMSubPeriodBreakdown / PMIncompleteItem / PMYearMatrix / PMYearMatrixMonth`）
+  - 後端新增 6 個輔助函式：`_MONTH_LABELS_ZH`、`_reconstruct_full_date()`、`_parse_end_date()`、`_get_period_bounds()`、`_calc_period_stats_core()`（使用 `FullBldgPMBatch/FullBldgPMItem`）、`_calc_sub_breakdown()`、`_calc_year_matrix()`
+  - 後端新增 2 個端點（`year-matrix` 定義在 `period-stats` 之前以避免路由衝突）：`GET /period-stats/year-matrix`、`GET /period-stats`（period_type=month|quarter|year）
+  - 前端 `fullBuildingMaintenance.ts`：新增 `fetchFullBldgPMPeriodStats()` / `fetchFullBldgPMYearMatrix()`
+  - 前端 `FullBuildingMaintenance/index.tsx`：新增 `fmtRate`、`PeriodKpiCards`、`SubBreakdownTable`、`IncompleteTable`、`QuarterSelectorCards`、`YearMatrixTable` helper 元件；三個 TAB（每月維護 / 每季維護 / 每年維護）整合進 Tabs；Tab 最終順序：Dashboard → 每月維護 → 每季維護 → 每年維護 → 批次清單
+
+---
+
+## [1.57.3] - 2026-05-04
+
+### Added
+- **每月維護年度矩陣總表新增「合計」欄**
+  - `frontend/src/pages/PeriodicMaintenance/index.tsx`：`YearMatrixTable` 在 12 個月欄右側固定一欄「合計」（`fixed: 'right'`，藍灰底色 `#f6f8fc` + 左側藍線分隔）
+  - 數字指標（`prev_carry_over / prev_resolved_in_period / period_total / period_completed`）：12 個月加總
+  - 完成率指標（`carry_over_rate / period_rate`）：從加總數重新計算（`resolved/carry_over`、`completed/total`），不做月平均；分母為 0 顯示 N/A
+  - 備註欄（`incomplete_notes`）：顯示 `—`
+  - 合計欄數字以粗體（`fontWeight: 600`）顯示；複用共用 `renderCell` 函式避免重複邏輯
+
+---
+
+## [1.57.2] - 2026-05-04
+
+### Changed
+- **每季維護 TAB 季度選擇改為視覺卡片（Q1/Q2/Q3/Q4）**
+  - `frontend/src/pages/PeriodicMaintenance/index.tsx`：移除季度下拉選單，改以 4 欄 `QuarterSelectorCards` 呈現；每張卡片顯示 Q 標籤、3個月份、加總項目數 / 完成數 / 完成率；點擊卡片高亮（藍框 `2px solid #4BA8E8`）並觸發下方詳細統計載入
+  - 新增 `QuarterSummary` interface + `deriveQuarterSummaries(matrix)` 函式：從 PMYearMatrix 加總對應 3 個月的 `period_total / period_completed`，動態計算完成率
+  - 新增獨立 `quarterlyMatrixData / quarterlyMatrixLoading` state 與 `loadQuarterlyMatrix` callback，與每月矩陣資料相互獨立
+  - Tab 最終順序：Dashboard → 每月維護 → 每季維護 → 每年維護 → 批次清單
+
+---
+
+## [1.57.1] - 2026-05-04
+
+### Added
+- **每月維護 TAB 新增年度矩陣總表（12個月橫軸 × 7指標縱軸）**
+  - `backend/app/schemas/periodic_maintenance.py`：新增 `PMYearMatrixMonth`（單月指標）、`PMYearMatrix`（全年矩陣）schema
+  - `backend/app/routers/periodic_maintenance.py`：新增 `_calc_year_matrix()`（一次 DB 查詢算完全年 12 個月，效率優於逐月呼叫）；新增端點 `GET /period-stats/year-matrix`（定義在 `/period-stats` 之前確保路由匹配優先）
+  - `frontend/src/types/periodicMaintenance.ts`：新增 `PMYearMatrixMonth`、`PMYearMatrix` TypeScript interface
+  - `frontend/src/api/periodicMaintenance.ts`：新增 `fetchPMYearMatrix(year?)` API 函式
+  - `frontend/src/pages/PeriodicMaintenance/index.tsx`：新增 `MATRIX_METRICS` 指標定義陣列；新增 `YearMatrixTable` 元件（Ant Design Table 轉置呈現，完成率依閾值著色 ≥80%綠/≥50%橙/其他紅，未完成備註 Tooltip 展開）；MonthlyStatsTab 整合矩陣置頂（含載入狀態）+ Divider 分隔「單月鑽取」區塊；新增 `matrixData / matrixLoading` state 與 `loadYearMatrix` callback；`monthlyYear` 改變自動觸發矩陣重算
+
+---
+
+## [1.57.0] - 2026-05-04
+
+### Added
+- **`hotel/periodic-maintenance` 新增每月／每季／每年三個統計 TAB**
+  - `backend/app/schemas/periodic_maintenance.py`：新增 `PMIncompleteItem`、`PMSubPeriodBreakdown`、`PMPeriodStats` schema
+  - `backend/app/routers/periodic_maintenance.py`：新增共用計算輔助函式 `_reconstruct_full_date()`、`_parse_end_date()`、`_get_period_bounds()`、`_calc_period_stats_core()`、`_calc_sub_breakdown()`；新增端點 `GET /period-stats`（period_type=month|quarter|year，接受 year/month/quarter 參數）
+  - `frontend/src/types/periodicMaintenance.ts`：新增 `PMIncompleteItem`、`PMSubPeriodBreakdown`、`PMPeriodStats` TypeScript interface
+  - `frontend/src/api/periodicMaintenance.ts`：新增 `fetchPMPeriodStats()` API 函式
+  - `frontend/src/pages/PeriodicMaintenance/index.tsx`：新增共用元件 `PeriodKpiCards`（六指標卡片）、`SubBreakdownTable`（子期間分布表）、`IncompleteTable`（未完成事項說明）；新增三個 Tab `MonthlyStatsTab`（每月）/ `QuarterlyStatsTab`（每季）/ `YearlyStatsTab`（每年）
+- **統計公式**：上期累計未完成（表定日期 ≤ 上期末且截至上期末未完成）、累計完成率（本期結案 ÷ 上期未完成）、本期完成率（本期完成數 ÷ 本期項目數）；季 / 年完成率用總數計算，不做月均值；分母為 0 顯示 N/A
+- **未完成事項說明**：僅列 `result_note` 非空的項目（備註為空不計算）
+
+---
+
+## [1.56.2] - 2026-05-04
+
+### Removed
+- **移除 `hotel/room-maintenance-detail` 在各 Dashboard / 分析模組的計算與呈現**
+  - `backend/app/routers/hotel_overview.py`：移除 `RoomMaintenanceDetailRecord` import、`HOTEL_CATEGORIES` 中「客房保養管理」、daily/monthly/person 三支 API 的客房保養查詢區塊；來源由六項改為五項
+  - `backend/app/routers/work_category_analysis.py`：移除 `RoomMaintenanceDetailRecord` import、`SOURCE_LABELS["hotel_room"]`、`_load_all()` 中房務保養查詢區塊、`_parse_sources("all")` 中的 `hotel_room`、`_build_kpi()` 中 source_breakdown 的 `hotel_room`、`_get_last_sync_at()` 中房務保養 synced_at 查詢；資料來源由四合一改為三合一
+  - `frontend/src/pages/HotelMgmtDashboard/index.tsx`：移除 `fetchMaintenanceStats` import、`MaintenanceStatsResponse` 型別、`roomDetailStats` state、`adaptRoomDetail()` adapter、sources 陣列中 room_detail 項目；`SOURCE_COLORS` / `HOTEL_SOURCE_ICONS` / `HOTEL_SOURCE_ROUTES` 移除 room_detail key；PIE_COLORS 由 6 色調整為 5 色
+  - `frontend/src/pages/ExecDashboard/index.tsx`：`SRC_OPTIONS` 移除 `{ value: 'hotel_room', label: '房務保養' }`
+  - `frontend/src/pages/WorkCategoryAnalysis/index.tsx`：`SOURCE_OPTIONS` 移除 `{ value: 'hotel_room', label: '房務保養' }`
+- **注意**：`hotel/room-maintenance-detail` 獨立頁面模組（Model / Router / Sync Service / 前端頁面）完整保留，僅移除其在跨模組彙整的顯示
+
+---
+
+## [1.56.1] - 2026-05-04
+
+### Fixed
+- **選單圖示「無圖示」設定不生效**（`MainLayout.tsx` `applyMenuConfig`）
+  - `buildItem`：改為明確設 `icon: null`（原為省略 icon 屬性），確保 Ant Design Menu 真正隱藏圖示
+  - Base L1 / L2（含 children）/ L2 leaf：統一改用 `icon: xxx !== undefined ? xxx : null` 覆寫 base icon
+  - `movedHere` path：補上 `resolveIcon` 呼叫，原本完全未套用 DB icon_key 設定
+  - `customL1` path：原本 icon 硬編碼為 `<FileTextOutlined />`，現改為讀取 `cfg.icon_key` 並套用 `resolveIcon`
+
+---
+
+## [1.56.0] - 2026-05-04
+
+### Added
+- **員工操作手冊知識包匯出**（`/settings/employee-manual-export`）
+  - 後端 `services/employee_manual_export_service.py`：8 個模組的操作知識內容、7 種文件產生器（員工操作手冊 / 主管快速導覽 / FAQ / 教育訓練講稿 / 語音教學腳本 / 新人入門教學 / 異常狀況處理），全部純 Python 產生，不消耗 AI token
+  - 後端 `routers/employee_manual_export.py`：4 個端點（模組清單 / 產生 / 狀態查詢 / ZIP 下載）
+  - 後端 `schemas/employee_manual_export.py`：Request/Response 型別定義
+  - 前端 `pages/Settings/EmployeeManualExport/index.tsx`：三步驟操作介面（選模組 → 選文件種類 → 下載 ZIP）+ NotebookLM 使用提示詞一鍵複製
+  - 前端 `api/employeeManualExport.ts`、`types/employeeManualExport.ts`
+  - 新增 3 個 permission key：`employee_manual_export_view`、`employee_manual_export_generate`、`employee_manual_export_admin`
+  - 新增文件目錄 `docs/system_inventory/`：`feature_inventory.md`（功能模組清單）、`route_feature_map.md`（路由對照表）
+  - 輸出路徑：`backend/exports/employee_manuals/{module_key}/`，可打包成 ZIP 下載上傳 NotebookLM
+
+---
+
 ## [1.55.3] - 2026-05-04
 
 ### Changed
@@ -655,6 +836,19 @@
 
 ### Changed
 - **mall/periodic-maintenance & mall/full-building-maintenance Dashboard** — TAB 名稱由「主管儀表板」改為「Dashboard」；新增第 5 個 KPI 卡片「保養時間」（`planned_minutes` 轉換為小時，藍色 `ClockCircleOutlined`）；原進度條旁的「預估工時」移除（資訊已整合至 KPI 卡）；KPI 卡欄寬由 `lg={6}` 調整為 `lg={4}` 以容納 5 欄
+
+---
+
+## [1.39.42] - 2026-05-03
+
+### Added
+- **選單圖示自訂功能** — `settings/menu-config` 每個選單項目右側新增「換圖示」按鈕（`AppstoreOutlined`），點擊展開 Dropdown 圖示選擇器：
+  - **預設**：恢復使用 base 結構的原始圖示
+  - **無圖示**：側邊欄不顯示圖示（適合收合時隱藏的子項目）
+  - **45 種圖示**：依「統計/儀表、建築/設施、維護/系統、行事/文件、人員/安全、商業/財務、其他」七大分類排列
+  - 儲存後 sidebar 立即套用；`icon_key` 以字串形式儲存於 DB（`null`=預設、`'none'`=隱藏、字串=圖示名稱）
+- **後端 DB 欄位**：`menu_configs` 資料表新增 `icon_key TEXT`（`main.py` lifespan 自動 ALTER TABLE），`MenuConfigItem` schema 同步更新
+- **新增 `src/constants/iconMap.tsx`**：`ICON_MAP`、`ICON_GROUPS`、`resolveIcon()` — sidebar 與 MenuConfig 共用，避免重複定義
 
 ---
 

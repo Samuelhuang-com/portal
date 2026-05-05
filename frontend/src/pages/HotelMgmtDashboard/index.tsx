@@ -2,12 +2,11 @@
  * ★飯店管理 Dashboard — 跨模組總覽
  *
  * 整合來源：
- *   1. 飯店客房保養管理  /room-maintenance-detail/maintenance-stats
- *   2. 飯店週期保養表    /periodic-maintenance/stats
- *   3. IHG客房保養       /ihg-room-maintenance/stats
- *   4. 飯店每日巡檢      /hotel-daily-inspection/dashboard/summary
- *   5. 保全巡檢          /security/dashboard/summary + trend
- *   6. 工務部            /dazhi-repair/dashboard
+ *   1. 飯店週期保養表    /periodic-maintenance/stats
+ *   2. IHG客房保養       /ihg-room-maintenance/stats
+ *   3. 飯店每日巡檢      /hotel-daily-inspection/dashboard/summary
+ *   4. 保全巡檢          /security/dashboard/summary + trend
+ *   5. 工務部            /dazhi-repair/dashboard
  *
  * 不新增後端 API，所有 normalize 在前端 adapter layer 完成。
  */
@@ -33,7 +32,6 @@ import {
 import dayjs from 'dayjs'
 
 // ── 既有 API ──────────────────────────────────────────────────────────────────
-import { fetchMaintenanceStats }         from '@/api/roomMaintenanceDetail'
 import { fetchPMStats }                  from '@/api/periodicMaintenance'
 import { fetchIHGStats }                 from '@/api/ihgRoomMaintenance'
 import {
@@ -65,7 +63,6 @@ import {
   type HotelPersonHoursData,
   type HotelPptxPayload,
 } from '@/api/hotelOverview'
-import type { MaintenanceStatsResponse } from '@/types/roomMaintenanceDetail'
 import type { PMStats }                  from '@/types/periodicMaintenance'
 import type { IHGStats }                 from '@/types/ihgRoomMaintenance'
 import type { DashboardData }            from '@/types/dazhiRepair'
@@ -83,7 +80,6 @@ const PURPLE      = '#722ED1'
 const CYAN        = '#13C2C2'
 
 const SOURCE_COLORS: Record<string, string> = {
-  room_detail:       BRAND_BLUE,
   periodic:          ACCENT_BLUE,
   ihg:               PURPLE,
   daily_inspection:  GREEN,
@@ -91,7 +87,7 @@ const SOURCE_COLORS: Record<string, string> = {
   dazhi:             CYAN,
 }
 
-const PIE_COLORS = [BRAND_BLUE, ACCENT_BLUE, PURPLE, GREEN, ORANGE, CYAN]
+const PIE_COLORS = [ACCENT_BLUE, PURPLE, GREEN, ORANGE, CYAN]
 
 // ── Tab B — 五項工作類別（B. 每日累計）───────────────────────────────────────
 const HOTEL_5CATS = ['現場報修', '上級交辦', '緊急事件', '例行維護', '每日巡檢'] as const
@@ -107,7 +103,6 @@ const HOTEL_5CAT_TAG_COLORS: Record<string, string> = {
 
 // ── 來源 Icon / 路由設定（供 SourceCards 使用）────────────────────────────────
 const HOTEL_SOURCE_ICONS: Record<string, React.ReactNode> = {
-  room_detail:      <HomeOutlined />,
   periodic:         <BuildOutlined />,
   ihg:              <BuildOutlined />,
   daily_inspection: <SafetyOutlined />,
@@ -116,7 +111,6 @@ const HOTEL_SOURCE_ICONS: Record<string, React.ReactNode> = {
 }
 
 const HOTEL_SOURCE_ROUTES: Record<string, string> = {
-  room_detail:      '/hotel/room-maintenance-detail',
   periodic:         '/hotel/periodic-maintenance',
   ihg:              '/hotel/ihg-room-maintenance',
   daily_inspection: '/hotel/hotel-daily-inspection/dashboard',
@@ -146,27 +140,6 @@ interface NormalizedSource {
 }
 
 // ── Adapter 函式 ──────────────────────────────────────────────────────────────
-
-function adaptRoomDetail(stats: MaintenanceStatsResponse): NormalizedSource {
-  const kpi = stats.kpi
-  const cnt = stats.comparison.current_month.record_count
-  // 當月異常項目數：取 monthly_trend 最後一筆（即基準月）的 abnormal_item_count
-  const curTrend = stats.monthly_trend?.slice(-1)[0]
-  const abnormal = curTrend?.abnormal_item_count ?? 0
-  return {
-    source_key:      'room_detail',
-    source_name:     '客房保養管理',
-    source_color:    SOURCE_COLORS.room_detail,
-    case_count:      cnt,
-    completed_count: Math.round(cnt * kpi.current_month_completion_rate / 100),
-    work_hours:      stats.comparison.current_month.work_hours_total / 60, // 分鐘→小時
-    completion_rate: kpi.current_month_completion_rate,
-    abnormal_count:  abnormal,
-    overdue_count:   0,
-    status_label:    `完成率 ${kpi.current_month_completion_rate.toFixed(1)}%`,
-    is_ok:           kpi.current_month_completion_rate >= 80,
-  }
-}
 
 function adaptPeriodic(stats: PMStats): NormalizedSource {
   const kpi = stats.current_kpi
@@ -282,7 +255,6 @@ export default function HotelMgmtDashboardPage() {
   const [loading, setLoading] = useState(false)
   const [errors,  setErrors]  = useState<string[]>([])
 
-  const [roomDetailStats,   setRoomDetailStats]   = useState<MaintenanceStatsResponse | null>(null)
   const [pmStats,           setPmStats]           = useState<PMStats | null>(null)
   const [ihgStats,          setIhgStats]          = useState<IHGStats | null>(null)
   const [hotelDiMonthly,    setHotelDiMonthly]    = useState<HotelDIMonthlyDashboard | null>(null)
@@ -311,8 +283,6 @@ export default function HotelMgmtDashboardPage() {
     const errs: string[] = []
 
     await Promise.allSettled([
-      // 客房保養管理：傳入 year/month，確保統計基準與篩選月份一致
-      fetchMaintenanceStats(year, month, 12).then(setRoomDetailStats).catch(() => { errs.push('客房保養管理') }),
       // 週期保養：傳入 year/month
       fetchPMStats(String(year), month > 0 ? month : undefined).then(setPmStats).catch(() => { errs.push('週期保養表') }),
       // IHG客房保養：傳入 year 和 month，回傳當月房間數與工時
@@ -374,7 +344,6 @@ export default function HotelMgmtDashboardPage() {
 
   // ── Normalize 各來源（KPI Card 用月份彙總口徑）────────────────────────
   const sources: NormalizedSource[] = [
-    roomDetailStats ? adaptRoomDetail(roomDetailStats) : null,
     pmStats         ? adaptPeriodic(pmStats)           : null,
     ihgStats        ? adaptIHG(ihgStats)               : null,
     hotelDiMonthly  ? adaptHotelDI(hotelDiMonthly)     : null,  // 月份彙總
@@ -418,12 +387,7 @@ export default function HotelMgmtDashboardPage() {
   // 2. 工務 12個月趨勢
   const dazhiTrend = dazhiData?.trend_12m ?? []
 
-  // 3. 客房保養月完成率趨勢
-  const roomTrend = (roomDetailStats?.monthly_trend ?? [])
-    .map(t => ({ label: t.month_label, rate: t.completion_rate, abnormal: t.abnormal_item_count }))
-    .slice(-6) // 最近 6 個月
-
-  // 4. 保全巡檢近 30 日異常趨勢
+  // 3. 保全巡檢近 30 日異常趨勢
   const secTrendData = (secTrend?.trend ?? [])
     .filter((t: SecurityTrendPoint) => t.has_data)
     .map((t: SecurityTrendPoint) => ({ date: t.date.slice(5), abnormal: t.abnormal_count }))

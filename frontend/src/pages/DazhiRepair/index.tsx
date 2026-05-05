@@ -2,7 +2,7 @@
  * 大直工務部 — 主模組頁面
  *
  * 包含 7 個 Tab：
- *   Dashboard | 4.1 報修 | 4.2 結案時間 | 4.3 報修類型 | 4.4 本月客房報修表 | 金額統計 | 大直工務部
+ *   Dashboard | 3.1 報修 | 3.2 結案時間 | 3.3 報修類型 | 3.4 本月客房報修表 | 金額統計 | 大直工務部
  *
  * 查詢條件（年/月）置於頁面頂部，各 Tab 共享。
  */
@@ -765,7 +765,7 @@ function DashboardTab({
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// Tab: 4.1 報修統計
+// Tab: 3.1 報修統計
 // ═════════════════════════════════════════════════════════════════════════════
 function RepairStatsTab({ year, focusMonth }: { year: number; focusMonth: number | null }) {
   const [data, setData]     = useState<RepairStatsData | null>(null)
@@ -890,7 +890,7 @@ function RepairStatsTab({ year, focusMonth }: { year: number; focusMonth: number
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// Tab: 4.2 結案時間統計
+// Tab: 3.2 結案時間統計
 // ═════════════════════════════════════════════════════════════════════════════
 function ClosingTimeTab({ year, month }: { year: number; month: number | null }) {
   const [data, setData]       = useState<ClosingTimeData | null>(null)
@@ -1058,7 +1058,7 @@ function ClosingTimeTab({ year, month }: { year: number; month: number | null })
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// Tab: 4.3 報修類型統計
+// Tab: 3.3 報修類型統計
 // ═════════════════════════════════════════════════════════════════════════════
 function RepairTypeTab({ year, month }: { year: number; month: number | null }) {
   const [data, setData]       = useState<TypeStatsData | null>(null)
@@ -1223,7 +1223,7 @@ function RepairTypeTab({ year, month }: { year: number; month: number | null }) 
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// Tab: 4.4 本月客房報修表
+// Tab: 3.4 本月客房報修表
 // ═════════════════════════════════════════════════════════════════════════════
 function RoomRepairTab({ year, month }: { year: number; month: number | null }) {
   const [data, setData]           = useState<RoomRepairTableData | null>(null)
@@ -1911,7 +1911,7 @@ export default function DazhiRepairPage() {
     },
     {
       key: 'repair-stats',
-      label: '4.1 報修',
+      label: '3.1 報修',
       children: (
         <RepairStatsTab
           year={appliedYear}
@@ -1921,7 +1921,7 @@ export default function DazhiRepairPage() {
     },
     {
       key: 'closing-time',
-      label: '4.2 結案時間',
+      label: '3.2 結案時間',
       children: (
         <ClosingTimeTab
           year={appliedYear}
@@ -1931,7 +1931,7 @@ export default function DazhiRepairPage() {
     },
     {
       key: 'repair-type',
-      label: '4.3 報修類型',
+      label: '3.3 報修類型',
       children: (
         <RepairTypeTab
           year={appliedYear}
@@ -1941,7 +1941,7 @@ export default function DazhiRepairPage() {
     },
     {
       key: 'room-repair',
-      label: '4.4 本月客房報修表',
+      label: '3.4 本月客房報修表',
       children: (
         <RoomRepairTab
           year={appliedYear}

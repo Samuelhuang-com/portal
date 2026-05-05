@@ -9,6 +9,7 @@ Prefix: /api/v1/hotel-daily-inspection
   GET  /{sheet_key}/stats       — 指定區域統計（Dashboard 用）
   GET  /{sheet_key}/batches     — 指定區域場次清單（月份篩選）
   GET  /dashboard/summary       — 跨 Sheet 統計（Dashboard 總覽用）
+  GET  /daily-form              — 每日巡檢表彙整（year + month 篩選）
 """
 from datetime import date, timedelta
 from typing import List, Optional
@@ -509,4 +510,137 @@ def get_dashboard_monthly_summary(
         "total_minutes":   total_minutes_all,
         "completion_rate": overall_rate,
         "sheets":          results,
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GET /daily-form  — 每日巡檢表彙整（year + month 篩選）
+# ══════════════════════════════════════════════════════════════════════════════
+
+@router.get(
+    "/daily-form",
+    summary="取得每日巡檢表彙整（依標準模板與各 Sheet 比對）",
+    tags=["飯店每日巡檢"],
+)
+def get_daily_form(
+    year:            int           = Query(...,  ge=2020, le=2030, description="年份"),
+    month:           int           = Query(...,  ge=1,    le=12,   description="月份（1–12）"),
+    inspection_date: Optional[str] = Query(None, description="指定日期 YYYY/MM/DD；不填則取整月彙整"),
+    db: Session = Depends(get_db),
+):
+    """
+    依標準模板（hoteldaily-inspection.xlsx）與各 Sheet 實際巡檢資料比對。
+
+    inspection_date 不填 → 整月所有 batch 彙整。
+    inspection_date 填入 → 只取該日 batch；無資料時所有列 matched=False。
+    回傳額外欄位 has_data_today（bool）供前端顯示「無YYYY/MM/DD資料」提示。
+    """
+    from app.services.daily_inspection_builder import build_daily_inspection_table
+    rows = build_daily_inspection_table(
+        year=year, month=month, db=db,
+        inspection_date=inspection_date,
+    )
+    has_data_today = any(r["matched"] for r in rows) if inspection_date else None
+    return {
+        "year":           year,
+        "month":          month,
+        "inspection_date": inspection_date,
+        "has_data_today": has_data_today,
+        "rows":           rows,
+    }
+
+
+# =============================================================================
+# GET /daily-calendar
+# =============================================================================
+
+@router.get(
+    "/daily-calendar",
+    summary="取得指定月份每日巡檢狀況（各 Sheet × 各日，Dashboard 月曆格用）",
+    tags=["飯店每日巡檢"],
+)
+def get_daily_calendar(
+    year:  int = Query(..., ge=2020, le=2030, description="年份"),
+    month: int = Query(..., ge=1,    le=12,   description="月份（1–12）"),
+    db: Session = Depends(get_db),
+):
+    """
+    回傳當月每日 × 每個 Sheet 的巡檢狀態，供 Dashboard 月曆格使用。
+    回傳：
+      max_day  — 當月天數
+      sheets[] — 各 Sheet，含 daily{day_str: {has_record, completion_rate, abnormal_count}}
+    """
+    import calendar
+    max_day = calendar.monthrange(year, month)[1]
+    year_month_prefix = f"{year}/{month:02d}/"
+
+    sheets_out = []
+    for cfg in SHEET_CONFIGS:
+        key = cfg.key
+
+        month_batches = (
+            db.query(HotelDIBatch)
+            .filter(
+                HotelDIBatch.sheet_key == key,
+                HotelDIBatch.inspection_date.like(f"{year_month_prefix}%"),
+            )
+            .all()
+        )
+
+        by_date = {}
+        for b in month_batches:
+            try:
+                day = int(b.inspection_date.split("/")[2])
+            except (IndexError, ValueError):
+                continue
+            by_date.setdefault(day, []).append(b)
+
+        daily = {}
+        for day in range(1, max_day + 1):
+            day_batches = by_date.get(day, [])
+            if not day_batches:
+                daily[str(day)] = {"has_record": False, "completion_rate": 0.0,
+                                   "abnormal_count": 0, "pending_count": 0}
+                continue
+
+            total_items    = 0
+            checked_items  = 0
+            abnormal_count = 0
+            pending_count  = 0
+
+            for b in day_batches:
+                items = (
+                    db.query(HotelDIItem)
+                    .filter(
+                        HotelDIItem.batch_ragic_id == b.ragic_id,
+                        HotelDIItem.is_note == False,
+                    )
+                    .all()
+                )
+                kpi = _calc_kpi(items)
+                total_items    += kpi["total"]
+                checked_items  += kpi["checked"]
+                abnormal_count += kpi["abnormal"]
+                pending_count  += kpi["pending"]
+
+            rate = round(checked_items / total_items * 100, 1) if total_items > 0 else 0.0
+            daily[str(day)] = {
+                "has_record":      True,
+                "completion_rate": rate,
+                "abnormal_count":  abnormal_count,
+                "pending_count":   pending_count,
+            }
+
+        sheets_out.append({
+            "key":   key,
+            "floor": cfg.floor,
+            "title": cfg.title,
+            "daily": daily,
+        })
+
+    return {
+        "year":    year,
+        "month":   month,
+        "max_day": max_day,
+        "sheets":  sheets_out,
     }

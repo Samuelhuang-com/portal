@@ -2,20 +2,23 @@
  * 全棟例行維護主頁
  *
  * Tab 1「Dashboard」：KPI 五卡（含保養時間）+ 類別 Bar 圖 + 狀態 Donut 圖 + 逾期/即將到期預警
- * Tab 2「批次清單」：保養批次列表，含進度條、狀態標籤、操作入口
+ * Tab 2「每月維護」：月統計（上月累計 / 本月完成 / 未完成說明）
+ * Tab 3「每季維護」：季統計（上季累計 / 本季完成 / 月份分布）
+ * Tab 4「每年維護」：年統計（上年累計 / 本年完成 / Q1-Q4 分布）
+ * Tab 5「批次清單」：保養批次列表，含進度條、狀態標籤、操作入口
  */
 import { useEffect, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Row, Col, Card, Statistic, Table, Tag, Button, Space,
   Typography, Breadcrumb, Tabs, Progress, Alert, Select,
-  message, Tooltip, Badge,
+  message, Tooltip, Badge, Divider,
 } from 'antd'
 import {
   HomeOutlined, SyncOutlined, ReloadOutlined, ToolOutlined,
   WarningOutlined, CheckCircleOutlined, ClockCircleOutlined,
   ExclamationCircleOutlined, RightOutlined, BarChartOutlined,
-  ShopOutlined,
+  ShopOutlined, CalendarOutlined, LineChartOutlined,
 } from '@ant-design/icons'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RcTooltip,
@@ -24,8 +27,15 @@ import {
 import type { ColumnsType } from 'antd/es/table'
 import dayjs from 'dayjs'
 
-import { fetchFullBldgPMStats, fetchFullBldgPMBatches, syncFullBldgPMFromRagic } from '@/api/fullBuildingMaintenance'
-import type { PMStats, PMBatchListItem, PMItem } from '@/types/periodicMaintenance'
+import {
+  fetchFullBldgPMStats, fetchFullBldgPMBatches, syncFullBldgPMFromRagic,
+  fetchFullBldgPMPeriodStats, fetchFullBldgPMYearMatrix,
+} from '@/api/fullBuildingMaintenance'
+import type {
+  PMStats, PMBatchListItem, PMItem,
+  PMPeriodStats, PMIncompleteItem, PMSubPeriodBreakdown,
+  PMYearMatrix, PMYearMatrixMonth,
+} from '@/types/periodicMaintenance'
 import { NAV_GROUP, NAV_PAGE } from '@/constants/navLabels'
 
 const { Title, Text } = Typography
@@ -56,19 +66,472 @@ function deriveBatchStatus(kpi: PMBatchListItem['kpi']): string {
   return 'draft'
 }
 
+// ── 共用：統計數值格式化 ──────────────────────────────────────────────────────
+function fmtRate(rate: number | null): string {
+  return rate === null ? 'N/A' : `${rate}%`
+}
+
+// ── 共用：統計卡片區（上期累計 + 本期）────────────────────────────────────────
+interface PeriodKpiCardsProps {
+  data: PMPeriodStats
+  prevLabel: string
+  currLabel: string
+}
+function PeriodKpiCards({ data, prevLabel, currLabel }: PeriodKpiCardsProps) {
+  return (
+    <>
+      {/* 上期累計區塊 */}
+      <Row gutter={[12, 12]} style={{ marginBottom: 8 }}>
+        <Col span={24}>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            ▸ {prevLabel}累計
+          </Typography.Text>
+        </Col>
+        {[
+          {
+            title: `${prevLabel}累計未完成`,
+            value: data.prev_carry_over,
+            suffix: '筆',
+            color: '#C0392B',
+          },
+          {
+            title: `${prevLabel}未完成於${currLabel}結案`,
+            value: data.prev_resolved_in_period,
+            suffix: '筆',
+            color: '#4BA8E8',
+          },
+          {
+            title: '累計完成率',
+            value: fmtRate(data.carry_over_rate),
+            suffix: '',
+            color: data.carry_over_rate === null ? '#999' : '#1B3A5C',
+          },
+        ].map((c) => (
+          <Col flex={1} style={{ minWidth: 160 }} key={c.title}>
+            <Card size="small" hoverable>
+              <Statistic
+                title={c.title}
+                value={c.value}
+                suffix={c.suffix}
+                valueStyle={{ color: c.color, fontSize: 24 }}
+              />
+            </Card>
+          </Col>
+        ))}
+      </Row>
+
+      {/* 本期統計區塊 */}
+      <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
+        <Col span={24}>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            ▸ {currLabel}統計
+          </Typography.Text>
+        </Col>
+        {[
+          {
+            title: `${currLabel}項目數`,
+            value: data.period_total,
+            suffix: '筆',
+            color: '#1B3A5C',
+          },
+          {
+            title: `${currLabel}完成數`,
+            value: data.period_completed,
+            suffix: '筆',
+            color: '#52C41A',
+          },
+          {
+            title: `${currLabel}完成率`,
+            value: fmtRate(data.period_rate),
+            suffix: '',
+            color: data.period_rate === null ? '#999' : '#52C41A',
+          },
+        ].map((c) => (
+          <Col flex={1} style={{ minWidth: 160 }} key={c.title}>
+            <Card size="small" hoverable>
+              <Statistic
+                title={c.title}
+                value={c.value}
+                suffix={c.suffix}
+                valueStyle={{ color: c.color, fontSize: 24 }}
+              />
+            </Card>
+          </Col>
+        ))}
+      </Row>
+
+      {/* 本期完成率進度條 */}
+      {data.period_total > 0 && (
+        <Card size="small" style={{ marginBottom: 16 }}>
+          <Row align="middle" gutter={16}>
+            <Col flex="80px">
+              <Typography.Text strong>{currLabel}完成率</Typography.Text>
+            </Col>
+            <Col flex="auto">
+              <Progress
+                percent={data.period_rate ?? 0}
+                strokeColor={{ from: '#4BA8E8', to: '#52C41A' }}
+                format={() => `${fmtRate(data.period_rate)}（${data.period_completed}/${data.period_total}）`}
+              />
+            </Col>
+          </Row>
+        </Card>
+      )}
+    </>
+  )
+}
+
+// ── 共用：子期間分布表格 ──────────────────────────────────────────────────────
+interface SubBreakdownTableProps {
+  rows: PMSubPeriodBreakdown[]
+  title: string
+}
+function SubBreakdownTable({ rows, title }: SubBreakdownTableProps) {
+  if (rows.length === 0) return null
+  const cols: ColumnsType<PMSubPeriodBreakdown> = [
+    { title: '期間', dataIndex: 'label', width: 80 },
+    { title: '項目數', dataIndex: 'total', width: 90, align: 'right' },
+    { title: '完成數', dataIndex: 'completed', width: 90, align: 'right' },
+    {
+      title: '完成率',
+      width: 200,
+      render: (_, r) => (
+        r.total === 0
+          ? <Typography.Text type="secondary">N/A</Typography.Text>
+          : <Progress
+              percent={r.rate ?? 0}
+              size="small"
+              strokeColor={{ from: '#4BA8E8', to: '#52C41A' }}
+              format={() => `${fmtRate(r.rate)}`}
+            />
+      ),
+    },
+  ]
+  return (
+    <Card title={title} size="small" style={{ marginBottom: 16 }}>
+      <Table<PMSubPeriodBreakdown>
+        dataSource={rows}
+        rowKey="label"
+        columns={cols}
+        pagination={false}
+        size="small"
+      />
+    </Card>
+  )
+}
+
+// ── 共用：未完成事項說明表格 ──────────────────────────────────────────────────
+interface IncompleteTableProps {
+  items: PMIncompleteItem[]
+}
+function IncompleteTable({ items }: IncompleteTableProps) {
+  const cols: ColumnsType<PMIncompleteItem> = [
+    { title: '項目名稱', dataIndex: 'task_name', ellipsis: true },
+    { title: '類別',     dataIndex: 'category',  width: 80 },
+    { title: '頻率',     dataIndex: 'frequency', width: 70 },
+    { title: '排定日期', dataIndex: 'scheduled_date_full', width: 100 },
+    { title: '備註',     dataIndex: 'result_note', ellipsis: true },
+  ]
+  return (
+    <Card
+      title={<><WarningOutlined style={{ color: '#C0392B' }} /> 未完成事項說明</>}
+      size="small"
+    >
+      {items.length === 0 ? (
+        <Alert message="無未完成且有備註的項目" type="success" showIcon />
+      ) : (
+        <Table<PMIncompleteItem>
+          dataSource={items}
+          rowKey={(r) => `${r.task_name}-${r.scheduled_date_full}`}
+          columns={cols}
+          pagination={{ pageSize: 10, showTotal: (t) => `共 ${t} 筆` }}
+          size="small"
+        />
+      )}
+    </Card>
+  )
+}
+
+// ── 季度選擇卡片（Q1-Q4）──────────────────────────────────────────────────────
+interface QuarterSummary {
+  q:         number
+  months:    string
+  total:     number
+  completed: number
+  rate:      number | null
+}
+
+function deriveQuarterSummaries(matrix: PMYearMatrix): QuarterSummary[] {
+  return [1, 2, 3, 4].map((q) => {
+    const slice = matrix.months.slice((q - 1) * 3, q * 3)
+    const total     = slice.reduce((s, m) => s + m.period_total,     0)
+    const completed = slice.reduce((s, m) => s + m.period_completed, 0)
+    return {
+      q,
+      months:    slice.map((m) => `${m.month}月`).join(' '),
+      total,
+      completed,
+      rate: total > 0 ? Math.round((completed / total) * 1000) / 10 : null,
+    }
+  })
+}
+
+function QuarterSelectorCards({
+  matrix,
+  selectedQ,
+  onSelect,
+}: {
+  matrix:    PMYearMatrix
+  selectedQ: number
+  onSelect:  (q: number) => void
+}) {
+  const summaries = deriveQuarterSummaries(matrix)
+  return (
+    <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
+      {summaries.map(({ q, months, total, completed, rate }) => {
+        const selected  = selectedQ === q
+        const rateColor = rate === null ? '#999' : rate >= 80 ? '#52C41A' : rate >= 50 ? '#FAAD14' : '#FF4D4F'
+        return (
+          <Col span={6} key={q}>
+            <Card
+              size="small"
+              hoverable
+              onClick={() => onSelect(q)}
+              style={{
+                cursor:     'pointer',
+                border:     selected ? '2px solid #4BA8E8' : '1px solid #d9d9d9',
+                background: selected ? '#f0f8ff' : undefined,
+                textAlign:  'center',
+              }}
+            >
+              <Typography.Title level={4} style={{ margin: '0 0 2px', color: '#1B3A5C' }}>
+                Q{q}
+              </Typography.Title>
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                {months}
+              </Typography.Text>
+              <Divider style={{ margin: '8px 0' }} />
+              <Row gutter={4} justify="center">
+                <Col span={8}>
+                  <div style={{ fontSize: 11, color: '#999' }}>項目</div>
+                  <div style={{ fontSize: 18, fontWeight: 600, color: '#1B3A5C' }}>{total || '—'}</div>
+                </Col>
+                <Col span={8}>
+                  <div style={{ fontSize: 11, color: '#999' }}>完成</div>
+                  <div style={{ fontSize: 18, fontWeight: 600, color: '#52C41A' }}>{completed || '—'}</div>
+                </Col>
+                <Col span={8}>
+                  <div style={{ fontSize: 11, color: '#999' }}>完成率</div>
+                  <div style={{ fontSize: 16, fontWeight: 600, color: rateColor }}>
+                    {fmtRate(rate)}
+                  </div>
+                </Col>
+              </Row>
+            </Card>
+          </Col>
+        )
+      })}
+    </Row>
+  )
+}
+
+// ── 年度矩陣總表（12個月橫軸、指標縱軸）─────────────────────────────────────
+const MATRIX_METRICS: {
+  key: keyof PMYearMatrixMonth | '_sep1' | '_sep2'
+  label: string
+  isRate?: boolean
+  isText?: boolean
+}[] = [
+  { key: 'prev_carry_over',         label: '上月累計未完成項目數' },
+  { key: 'prev_resolved_in_period', label: '上月累計未完成項目，於本月結案數' },
+  { key: 'carry_over_rate',         label: '累計項目完成率', isRate: true },
+  { key: '_sep1',                   label: '' },
+  { key: 'period_total',            label: '本月週期保養項目數' },
+  { key: 'period_completed',        label: '本月週期保養完成數' },
+  { key: 'period_rate',             label: '本月週期保養完成率', isRate: true },
+  { key: '_sep2',                   label: '' },
+  { key: 'incomplete_notes',        label: '未完成事項說明（原因/待協助事項）', isText: true },
+]
+
+function YearMatrixTable({ data }: { data: PMYearMatrix }) {
+  const nowYear  = dayjs().year()
+  const nowMonth = dayjs().month() + 1
+  const isFuture = (month: number) =>
+    data.year > nowYear || (data.year === nowYear && month > nowMonth)
+
+  const pastMonths = data.months.filter((m) => !isFuture(m.month))
+  const totalPrevCarryOver   = pastMonths.reduce((s, m) => s + m.prev_carry_over,         0)
+  const totalPrevResolved    = pastMonths.reduce((s, m) => s + m.prev_resolved_in_period, 0)
+  const totalPeriodTotal     = pastMonths.reduce((s, m) => s + m.period_total,            0)
+  const totalPeriodCompleted = pastMonths.reduce((s, m) => s + m.period_completed,        0)
+  const summaryValues: Record<string, unknown> = {
+    prev_carry_over:         totalPrevCarryOver,
+    prev_resolved_in_period: totalPrevResolved,
+    carry_over_rate:         totalPrevCarryOver > 0
+                               ? Math.round(totalPrevResolved / totalPrevCarryOver * 1000) / 10
+                               : null,
+    period_total:            totalPeriodTotal,
+    period_completed:        totalPeriodCompleted,
+    period_rate:             totalPeriodTotal > 0
+                               ? Math.round(totalPeriodCompleted / totalPeriodTotal * 1000) / 10
+                               : null,
+    incomplete_notes:        '',
+  }
+
+  const futureCell = () => (
+    <Typography.Text type="secondary" style={{ fontSize: 12 }}>—</Typography.Text>
+  )
+
+  const renderCell = (v: unknown, row: Record<string, unknown>, isTotal = false) => {
+    if (row['_isSep']) return null
+    const metric = MATRIX_METRICS.find((x) => x.key === row['_key'])
+    if (!metric) return null
+    if (metric.isText) {
+      if (isTotal) return futureCell()
+      const text = (v as string) || ''
+      if (!text) return futureCell()
+      return (
+        <Tooltip title={<span style={{ whiteSpace: 'pre-wrap' }}>{text}</span>} placement="topLeft">
+          <Typography.Text
+            ellipsis
+            style={{ fontSize: 11, display: 'block', maxWidth: 70, cursor: 'pointer' }}
+          >
+            {text}
+          </Typography.Text>
+        </Tooltip>
+      )
+    }
+    if (metric.isRate) {
+      const rate = v as number | null
+      return (
+        <Typography.Text
+          style={{ fontSize: 12, color: rate === null ? '#999' : rate >= 80 ? '#52C41A' : rate >= 50 ? '#FAAD14' : '#FF4D4F' }}
+        >
+          {fmtRate(rate)}
+        </Typography.Text>
+      )
+    }
+    const num = v as number
+    return (
+      <Typography.Text style={{ fontSize: 12, color: num === 0 ? '#ccc' : undefined, fontWeight: isTotal ? 600 : undefined }}>
+        {num === 0 ? '—' : num}
+      </Typography.Text>
+    )
+  }
+
+  const cols: ColumnsType<Record<string, unknown>> = [
+    {
+      title:     '',
+      dataIndex: 'label',
+      width:     230,
+      fixed:     'left',
+      onCell:    (row) => ({ style: { background: row['_isSep'] ? '#fafafa' : undefined } }),
+      render:    (v: string) => (
+        <Typography.Text style={{ fontSize: 12, fontWeight: v ? 500 : undefined }}>{v}</Typography.Text>
+      ),
+    },
+    ...data.months.map((m) => ({
+      title:     m.label,
+      dataIndex: `m${m.month}`,
+      width:     75,
+      align:     'center' as const,
+      onCell:    (row: Record<string, unknown>) => ({
+        style: {
+          background:    row['_isSep'] ? '#fafafa' : isFuture(m.month) ? '#fafafa' : undefined,
+          verticalAlign: 'top',
+          color:         isFuture(m.month) ? '#ccc' : undefined,
+        },
+      }),
+      render: (v: unknown, row: Record<string, unknown>) => {
+        if (row['_isSep']) return null
+        if (isFuture(m.month)) return futureCell()
+        return renderCell(v, row)
+      },
+    })),
+    {
+      title:     <Typography.Text strong style={{ color: '#1B3A5C' }}>合計</Typography.Text>,
+      dataIndex: '_total',
+      width:     80,
+      align:     'center' as const,
+      fixed:     'right' as const,
+      onCell:    (row: Record<string, unknown>) => ({
+        style: {
+          background:    row['_isSep'] ? '#fafafa' : '#f6f8fc',
+          verticalAlign: 'top',
+          borderLeft:    '2px solid #d9e4f0',
+        },
+      }),
+      render: (v: unknown, row: Record<string, unknown>) => renderCell(v, row, true),
+    },
+  ]
+
+  const tableData: Record<string, unknown>[] = MATRIX_METRICS.map((metric) => {
+    const isSep = metric.key === '_sep1' || metric.key === '_sep2'
+    const row: Record<string, unknown> = {
+      key:    metric.key,
+      _key:   metric.key,
+      label:  metric.label,
+      _isSep: isSep,
+      _total: isSep ? null : summaryValues[metric.key as string] ?? null,
+    }
+    data.months.forEach((m) => {
+      row[`m${m.month}`] = isSep ? null : m[metric.key as keyof PMYearMatrixMonth]
+    })
+    return row
+  })
+
+  return (
+    <Card
+      title={<><BarChartOutlined /> {data.year} 年度全棟例行維護統計總表</>}
+      size="small"
+      style={{ marginBottom: 16 }}
+    >
+      <Table
+        dataSource={tableData}
+        columns={cols}
+        pagination={false}
+        size="small"
+        scroll={{ x: 'max-content' }}
+        bordered
+      />
+    </Card>
+  )
+}
+
 // ── 主元件 ────────────────────────────────────────────────────────────────────
 export default function FullBuildingMaintenancePage() {
   const navigate = useNavigate()
   const [activeTab, setActiveTab] = useState('dashboard')
   const [stats, setStats]     = useState<PMStats | null>(null)
   const [batches, setBatches] = useState<PMBatchListItem[]>([])
-  // Dashboard 篩選：年月（預設當月）
   const [dashYear,  setDashYear]  = useState(dayjs().format('YYYY'))
   const [dashMonth, setDashMonth] = useState(dayjs().month() + 1)
-  // 批次清單篩選：年
   const [year, setYear]       = useState(dayjs().format('YYYY'))
   const [loading, setLoading] = useState(false)
   const [syncing, setSyncing] = useState(false)
+
+  // ── 月統計 state ────────────────────────────────────────────────────────
+  const [monthlyData,    setMonthlyData]    = useState<PMPeriodStats | null>(null)
+  const [monthlyYear,    setMonthlyYear]    = useState(dayjs().year())
+  const [monthlyMonth,   setMonthlyMonth]   = useState(dayjs().month() + 1)
+  const [monthlyLoading, setMonthlyLoading] = useState(false)
+
+  // ── 年度矩陣 state（共用 monthlyYear）───────────────────────────────────
+  const [matrixData,    setMatrixData]    = useState<PMYearMatrix | null>(null)
+  const [matrixLoading, setMatrixLoading] = useState(false)
+
+  // ── 季統計 state ────────────────────────────────────────────────────────
+  const [quarterlyData,          setQuarterlyData]          = useState<PMPeriodStats | null>(null)
+  const [quarterlyMatrixData,    setQuarterlyMatrixData]    = useState<PMYearMatrix | null>(null)
+  const [quarterlyYear,          setQuarterlyYear]          = useState(dayjs().year())
+  const [quarterlyQuarter,       setQuarterlyQuarter]       = useState(Math.ceil((dayjs().month() + 1) / 3))
+  const [quarterlyLoading,       setQuarterlyLoading]       = useState(false)
+  const [quarterlyMatrixLoading, setQuarterlyMatrixLoading] = useState(false)
+
+  // ── 年統計 state ────────────────────────────────────────────────────────
+  const [yearlyData,    setYearlyData]    = useState<PMPeriodStats | null>(null)
+  const [yearlyYear,    setYearlyYear]    = useState(dayjs().year())
+  const [yearlyLoading, setYearlyLoading] = useState(false)
 
   const loadDashboard = useCallback(async () => {
     setLoading(true)
@@ -94,8 +557,78 @@ export default function FullBuildingMaintenancePage() {
     }
   }, [year])
 
+  const loadMonthlyStats = useCallback(async () => {
+    setMonthlyLoading(true)
+    try {
+      const data = await fetchFullBldgPMPeriodStats({ period_type: 'month', year: monthlyYear, month: monthlyMonth })
+      setMonthlyData(data)
+    } catch {
+      message.error('載入月統計失敗')
+    } finally {
+      setMonthlyLoading(false)
+    }
+  }, [monthlyYear, monthlyMonth])
+
+  const loadYearMatrix = useCallback(async () => {
+    setMatrixLoading(true)
+    try {
+      const data = await fetchFullBldgPMYearMatrix(monthlyYear)
+      setMatrixData(data)
+    } catch {
+      message.error('載入年度矩陣失敗')
+    } finally {
+      setMatrixLoading(false)
+    }
+  }, [monthlyYear])
+
+  const loadQuarterlyMatrix = useCallback(async () => {
+    setQuarterlyMatrixLoading(true)
+    try {
+      const data = await fetchFullBldgPMYearMatrix(quarterlyYear)
+      setQuarterlyMatrixData(data)
+    } catch {
+      message.error('載入季度概覽失敗')
+    } finally {
+      setQuarterlyMatrixLoading(false)
+    }
+  }, [quarterlyYear])
+
+  const loadQuarterlyStats = useCallback(async () => {
+    setQuarterlyLoading(true)
+    try {
+      const data = await fetchFullBldgPMPeriodStats({ period_type: 'quarter', year: quarterlyYear, quarter: quarterlyQuarter })
+      setQuarterlyData(data)
+    } catch {
+      message.error('載入季統計失敗')
+    } finally {
+      setQuarterlyLoading(false)
+    }
+  }, [quarterlyYear, quarterlyQuarter])
+
+  const loadYearlyStats = useCallback(async () => {
+    setYearlyLoading(true)
+    try {
+      const data = await fetchFullBldgPMPeriodStats({ period_type: 'year', year: yearlyYear })
+      setYearlyData(data)
+    } catch {
+      message.error('載入年統計失敗')
+    } finally {
+      setYearlyLoading(false)
+    }
+  }, [yearlyYear])
+
   useEffect(() => { loadDashboard() }, [loadDashboard])
-  useEffect(() => { if (activeTab === 'list') loadBatches() }, [activeTab, loadBatches])
+
+  useEffect(() => {
+    if (activeTab === 'list')      loadBatches()
+    if (activeTab === 'monthly')   { loadYearMatrix(); loadMonthlyStats() }
+    if (activeTab === 'quarterly') { loadQuarterlyMatrix(); loadQuarterlyStats() }
+    if (activeTab === 'yearly')    loadYearlyStats()
+  }, [activeTab, loadBatches, loadMonthlyStats, loadQuarterlyStats, loadYearlyStats, loadYearMatrix, loadQuarterlyMatrix])
+
+  useEffect(() => { if (activeTab === 'monthly')   loadYearMatrix() }, [loadYearMatrix])
+  useEffect(() => { if (activeTab === 'quarterly') loadQuarterlyMatrix() }, [loadQuarterlyMatrix])
+  useEffect(() => { if (activeTab === 'quarterly') loadQuarterlyStats() }, [loadQuarterlyStats])
 
   const handleSync = async () => {
     setSyncing(true)
@@ -103,7 +636,10 @@ export default function FullBuildingMaintenancePage() {
       await syncFullBldgPMFromRagic()
       message.success('同步完成')
       await loadDashboard()
-      if (activeTab === 'list') await loadBatches()
+      if (activeTab === 'list')      await loadBatches()
+      if (activeTab === 'monthly')   { await loadYearMatrix(); await loadMonthlyStats() }
+      if (activeTab === 'quarterly') { await loadQuarterlyMatrix(); await loadQuarterlyStats() }
+      if (activeTab === 'yearly')    await loadYearlyStats()
     } catch {
       message.error('同步失敗')
     } finally {
@@ -113,6 +649,10 @@ export default function FullBuildingMaintenancePage() {
 
   const yearOptions = [2024, 2025, 2026, 2027].map(y => ({
     value: String(y),
+    label: `${y} 年`,
+  }))
+  const yearNumOptions = [2024, 2025, 2026, 2027].map(y => ({
+    value: y,
     label: `${y} 年`,
   }))
   const monthOptions = Array.from({ length: 12 }, (_, i) => ({
@@ -132,7 +672,6 @@ export default function FullBuildingMaintenancePage() {
 
   const DashboardTab = (
     <div>
-      {/* 年月篩選列 */}
       <Row gutter={8} align="middle" style={{ marginBottom: 16 }}>
         <Col>
           <Text type="secondary" style={{ marginRight: 4 }}>查詢月份：</Text>
@@ -160,7 +699,6 @@ export default function FullBuildingMaintenancePage() {
         </Col>
       </Row>
 
-      {/* KPI 卡片 */}
       <Row gutter={[16, 16]} style={{ marginBottom: 20 }}>
         {[
           {
@@ -228,7 +766,6 @@ export default function FullBuildingMaintenancePage() {
         </Col>
       </Row>
 
-      {/* 完成率進度條 */}
       {kpi && kpi.current_month_total > 0 && (
         <Card size="small" style={{ marginBottom: 16 }}>
           <Row align="middle" gutter={16}>
@@ -244,7 +781,6 @@ export default function FullBuildingMaintenancePage() {
         </Card>
       )}
 
-      {/* 圖表區 */}
       <Row gutter={[16, 16]} style={{ marginBottom: 20 }}>
         <Col xs={24} lg={14}>
           <Card
@@ -299,7 +835,6 @@ export default function FullBuildingMaintenancePage() {
         </Col>
       </Row>
 
-      {/* 預警區 */}
       <Row gutter={[16, 16]}>
         <Col xs={24} lg={12}>
           <Card
@@ -377,7 +912,6 @@ export default function FullBuildingMaintenancePage() {
         </Col>
       </Row>
 
-      {/* 本月批次快速入口 */}
       {stats?.current_batch && (
         <Card size="small" style={{ marginTop: 16 }}>
           <Row align="middle" justify="space-between">
@@ -402,6 +936,168 @@ export default function FullBuildingMaintenancePage() {
             </Col>
           </Row>
         </Card>
+      )}
+    </div>
+  )
+
+  // ── 每月維護統計 Tab ──────────────────────────────────────────────────────
+  const MonthlyStatsTab = (
+    <div>
+      <Row gutter={8} align="middle" style={{ marginBottom: 12 }}>
+        <Col>
+          <Typography.Text type="secondary" style={{ marginRight: 4 }}>年度：</Typography.Text>
+        </Col>
+        <Col>
+          <Select
+            value={monthlyYear}
+            onChange={(v) => { setMonthlyYear(v) }}
+            options={yearNumOptions}
+            style={{ width: 100 }}
+          />
+        </Col>
+        <Col>
+          <Button
+            icon={<ReloadOutlined />}
+            onClick={() => { loadYearMatrix(); loadMonthlyStats() }}
+            loading={matrixLoading || monthlyLoading}
+          >
+            重新整理
+          </Button>
+        </Col>
+      </Row>
+
+      {matrixLoading ? (
+        <Card size="small" style={{ marginBottom: 16, textAlign: 'center', padding: 24 }}>
+          <Typography.Text type="secondary">載入年度矩陣中…</Typography.Text>
+        </Card>
+      ) : matrixData ? (
+        <YearMatrixTable data={matrixData} />
+      ) : (
+        <Alert message="尚未載入年度矩陣，請點擊重新整理" type="info" showIcon style={{ marginBottom: 16 }} />
+      )}
+
+      <Divider orientation="left" style={{ fontSize: 13, color: '#666' }}>
+        單月鑽取
+      </Divider>
+      <Row gutter={8} align="middle" style={{ marginBottom: 12 }}>
+        <Col>
+          <Typography.Text type="secondary" style={{ marginRight: 4 }}>查詢月份：</Typography.Text>
+        </Col>
+        <Col>
+          <Select
+            value={monthlyMonth}
+            onChange={(v) => setMonthlyMonth(v)}
+            options={monthOptions}
+            style={{ width: 85 }}
+          />
+        </Col>
+        <Col>
+          <Button icon={<ReloadOutlined />} onClick={loadMonthlyStats} loading={monthlyLoading}>
+            查詢
+          </Button>
+        </Col>
+      </Row>
+
+      {monthlyData ? (
+        <>
+          <PeriodKpiCards data={monthlyData} prevLabel="上月" currLabel="本月" />
+          <IncompleteTable items={monthlyData.incomplete_items} />
+        </>
+      ) : (
+        <Alert message="請選擇月份後點擊查詢" type="info" showIcon />
+      )}
+    </div>
+  )
+
+  // ── 每季維護統計 Tab ──────────────────────────────────────────────────────
+  const QuarterlyStatsTab = (
+    <div>
+      <Row gutter={8} align="middle" style={{ marginBottom: 12 }}>
+        <Col>
+          <Typography.Text type="secondary" style={{ marginRight: 4 }}>年度：</Typography.Text>
+        </Col>
+        <Col>
+          <Select
+            value={quarterlyYear}
+            onChange={(v) => setQuarterlyYear(v)}
+            options={yearNumOptions}
+            style={{ width: 100 }}
+          />
+        </Col>
+        <Col>
+          <Button
+            icon={<ReloadOutlined />}
+            onClick={() => { loadQuarterlyMatrix(); loadQuarterlyStats() }}
+            loading={quarterlyMatrixLoading || quarterlyLoading}
+          >
+            重新整理
+          </Button>
+        </Col>
+      </Row>
+
+      {quarterlyMatrixLoading ? (
+        <Card size="small" style={{ marginBottom: 16, textAlign: 'center', padding: 24 }}>
+          <Typography.Text type="secondary">載入季度概覽中…</Typography.Text>
+        </Card>
+      ) : quarterlyMatrixData ? (
+        <QuarterSelectorCards
+          matrix={quarterlyMatrixData}
+          selectedQ={quarterlyQuarter}
+          onSelect={(q) => { setQuarterlyQuarter(q) }}
+        />
+      ) : (
+        <Alert message="尚未載入季度概覽，請點擊重新整理" type="info" showIcon style={{ marginBottom: 16 }} />
+      )}
+
+      <Divider orientation="left" style={{ fontSize: 13, color: '#666' }}>
+        Q{quarterlyQuarter}（{[1,4,7,10][quarterlyQuarter-1]}～{[3,6,9,12][quarterlyQuarter-1]}月）詳細統計
+      </Divider>
+
+      {quarterlyLoading ? (
+        <Card size="small" style={{ textAlign: 'center', padding: 24 }}>
+          <Typography.Text type="secondary">載入中…</Typography.Text>
+        </Card>
+      ) : quarterlyData ? (
+        <>
+          <PeriodKpiCards data={quarterlyData} prevLabel="上季" currLabel="本季" />
+          <IncompleteTable items={quarterlyData.incomplete_items} />
+        </>
+      ) : (
+        <Alert message="請選擇季度後點擊重新整理" type="info" showIcon />
+      )}
+    </div>
+  )
+
+  // ── 每年維護統計 Tab ──────────────────────────────────────────────────────
+  const YearlyStatsTab = (
+    <div>
+      <Row gutter={8} align="middle" style={{ marginBottom: 16 }}>
+        <Col>
+          <Typography.Text type="secondary" style={{ marginRight: 4 }}>查詢年度：</Typography.Text>
+        </Col>
+        <Col>
+          <Select
+            value={yearlyYear}
+            onChange={(v) => setYearlyYear(v)}
+            options={yearNumOptions}
+            style={{ width: 100 }}
+          />
+        </Col>
+        <Col>
+          <Button icon={<ReloadOutlined />} onClick={loadYearlyStats} loading={yearlyLoading}>
+            重新整理
+          </Button>
+        </Col>
+      </Row>
+
+      {yearlyData ? (
+        <>
+          <PeriodKpiCards data={yearlyData} prevLabel="上年" currLabel="本年" />
+          <SubBreakdownTable rows={yearlyData.sub_period_breakdown} title="本年季度分布（Q1～Q4）" />
+          <IncompleteTable items={yearlyData.incomplete_items} />
+        </>
+      ) : (
+        <Alert message="尚未載入資料，請選擇年度後點擊重新整理" type="info" showIcon />
       )}
     </div>
   )
@@ -551,7 +1247,22 @@ export default function FullBuildingMaintenancePage() {
         onChange={setActiveTab}
         items={[
           { key: 'dashboard', label: 'Dashboard', children: DashboardTab },
-          { key: 'list',      label: '批次清單',   children: ListTab },
+          {
+            key: 'monthly',
+            label: <span><CalendarOutlined /> 每月維護</span>,
+            children: MonthlyStatsTab,
+          },
+          {
+            key: 'quarterly',
+            label: <span><LineChartOutlined /> 每季維護</span>,
+            children: QuarterlyStatsTab,
+          },
+          {
+            key: 'yearly',
+            label: <span><BarChartOutlined /> 每年維護</span>,
+            children: YearlyStatsTab,
+          },
+          { key: 'list', label: '批次清單', children: ListTab },
         ]}
       />
     </div>

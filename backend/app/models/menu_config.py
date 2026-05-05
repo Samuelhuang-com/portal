@@ -31,6 +31,8 @@ class MenuConfig(Base):
     # 權限控制：NULL = 公開顯示；有值 = 需具備對應 permission_key 才顯示
     # 例：settings_menu_manage、mall_dashboard_view
     permission_key: Mapped[str | None] = mapped_column(String(100), nullable=True, default=None)
+    # 自訂圖示：NULL = 使用 base 預設圖示；'none' = 不顯示圖示；其他值 = iconMap key
+    icon_key: Mapped[str | None] = mapped_column(String(60), nullable=True, default=None)
 
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
     updated_by: Mapped[str | None] = mapped_column(String(100), nullable=True, default=None)

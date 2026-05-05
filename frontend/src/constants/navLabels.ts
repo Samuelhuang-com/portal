@@ -46,6 +46,7 @@
  *   2026-04-30  新增 hotelMgmtDashboard（★飯店管理 Dashboard）整合 6 來源總覽，route /hotel/overview
  *   2026-05-03  新增 decisionCockpit（決策駕駛艙）高階主管決策入口，整合三大模組精華，route /decision-cockpit
  *   2026-05-03  新增 wiki（知識庫）LLM Wiki 知識庫，含員工 SOP + 開發者 Wiki + AI 問答，route /wiki
+ *   2026-05-04  新增 employeeManualExport（員工操作手冊匯出）系統設定群組，route /settings/employee-manual-export
  */
 
 // ── 系統標題 ──────────────────────────────────────────────────────────────────
@@ -167,11 +168,12 @@ export const NAV_PAGE = {
   wikiMain:              '知識庫',
 
   // 系統設定
-  usersManage:           '使用者管理',
-  rolesManage:           '角色管理',
-  ragicConnections:      'Ragic 連線',
-  ragicAppDirectory:     'Ragic 對應表',
-  menuConfig:            '選單管理',
+  usersManage:              '使用者管理',
+  rolesManage:              '角色管理',
+  ragicConnections:         'Ragic 連線',
+  ragicAppDirectory:        'Ragic 對應表',
+  menuConfig:               '選單管理',
+  employeeManualExport:     '員工操作手冊匯出',
 } as const
 
 // ── 型別輔助 ────────────────────────────────────────────────────────────────────────────
