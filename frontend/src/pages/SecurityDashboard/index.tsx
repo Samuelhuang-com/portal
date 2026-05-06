@@ -35,9 +35,14 @@ import {
   fetchSecurityDashboardIssues,
   fetchSecurityDashboardTrend,
   fetchSecurityDashboardMonthlySummary,
+  fetchSecurityDashboardCalendar,
+  fetchSecurityDashboardDailyForm,
   syncPatrolFromRagic,
   type SecurityMonthlySummary,
+  type SecurityDailyFormRow,
 } from '@/api/securityPatrol'
+import MonthlyCalendarGrid from '@/components/MonthlyCalendarGrid'
+import type { CalendarRow } from '@/components/MonthlyCalendarGrid'
 import type {
   SecurityDashboardSummary,
   SecurityIssueItem,
@@ -48,10 +53,157 @@ import { NAV_GROUP } from '@/constants/navLabels'
 import { SECURITY_KPI_DESC } from '@/constants/kpiDesc/securityDashboard'
 import { SecurityPatrolContent } from '@/pages/SecurityPatrol'
 
+// ── 每日巡檢表 Tab 元件 ───────────────────────────────────────────────────────
+
+function SecurityDailyFormTab() {
+  const today = dayjs()
+  const [yearMonth, setYearMonth] = useState<string>(today.format('YYYY/MM'))
+  const [loading,   setLoading]   = useState(false)
+  const [syncing,   setSyncing]   = useState(false)
+  const [rows,      setRows]      = useState<SecurityDailyFormRow[]>([])
+
+  const load = useCallback(async (ym: string) => {
+    setLoading(true)
+    try {
+      const [yr, mo] = ym.split('/').map(Number)
+      const data = await fetchSecurityDashboardDailyForm(yr, mo)  // 不傳 inspection_date → 整月合併
+      setRows(data.rows)
+    } catch {
+      message.error('載入每日巡檢表失敗')
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { load(yearMonth) }, [load, yearMonth])
+
+  const handleSync = async () => {
+    setSyncing(true)
+    try {
+      await syncPatrolFromRagic()
+      message.success('同步完成')
+      await load(yearMonth)
+    } catch {
+      message.error('同步失敗')
+    } finally {
+      setSyncing(false)
+    }
+  }
+
+  const columns = [
+    {
+      title: '樓層',
+      dataIndex: 'floor',
+      width: 75,
+      onCell: (r: SecurityDailyFormRow) => ({
+        rowSpan: r.floor_first_row ? r.floor_row_count : 0,
+        style: { fontWeight: 600, verticalAlign: 'middle', background: '#f0f4f8', textAlign: 'center' as const },
+      }),
+    },
+    {
+      title: '項目',
+      dataIndex: 'item',
+      width: 160,
+      onCell: (r: SecurityDailyFormRow) => ({
+        rowSpan: r.item_first_row ? r.item_row_count : 0,
+        style: { verticalAlign: 'middle', fontWeight: 500 },
+      }),
+    },
+    {
+      title: '檢查內容',
+      dataIndex: 'check_content',
+      width: 240,
+    },
+    {
+      title: '運轉狀況',
+      dataIndex: 'result_options',
+      width: 200,
+      render: (_: string, r: SecurityDailyFormRow) => {
+        if (!r.matched) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>
+        const color = r.result_status === 'normal' ? '#52C41A'
+          : r.result_status === 'abnormal' ? '#FF4D4F'
+          : r.result_status === 'pending'  ? '#FAAD14' : undefined
+        return r.result_text
+          ? <Tag color={color}>{r.result_text}</Tag>
+          : <Text type="secondary" style={{ fontSize: 11 }}>—</Text>
+      },
+    },
+    {
+      title: '實際巡檢人員',
+      dataIndex: 'inspector',
+      width: 110,
+      render: (v: string) => v || <Text type="secondary" style={{ fontSize: 11 }}>—</Text>,
+    },
+    {
+      title: '異常說明',
+      dataIndex: 'abnormal_note',
+      render: (v: string) => v
+        ? <Text type="danger" style={{ fontSize: 11, whiteSpace: 'pre-wrap' }}>{v}</Text>
+        : <Text type="secondary" style={{ fontSize: 11 }}>—</Text>,
+    },
+  ]
+
+  const hasData = rows.some((r) => r.matched)
+  const monthLabel = dayjs(yearMonth, 'YYYY/MM').format('YYYY年M月')
+
+  return (
+    <div>
+      <Row gutter={8} style={{ marginBottom: 16 }} align="middle">
+        <Col>
+          <Space>
+            <Text strong>查詢月份：</Text>
+            <DatePicker
+              picker="month"
+              value={dayjs(yearMonth, 'YYYY/MM')}
+              format="YYYY/MM"
+              allowClear={false}
+              onChange={(d) => { if (d) setYearMonth(d.format('YYYY/MM')) }}
+            />
+          </Space>
+        </Col>
+        <Col>
+          <Button icon={<ReloadOutlined />} onClick={() => load(yearMonth)} loading={loading}>
+            重新整理
+          </Button>
+        </Col>
+        <Col>
+          <Button icon={<SyncOutlined spin={syncing} />} loading={syncing} onClick={handleSync}>
+            同步 Ragic
+          </Button>
+        </Col>
+      </Row>
+
+      {!loading && !hasData && (
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message={`${monthLabel} 尚無巡檢資料`}
+          description="請確認已執行同步，或切換至有資料的月份。"
+        />
+      )}
+
+      <Table<SecurityDailyFormRow>
+        dataSource={rows}
+        rowKey={(r) => `${r.floor}-${r.item}-${r.check_content}`}
+        columns={columns}
+        loading={loading}
+        size="small"
+        pagination={false}
+        bordered
+        rowClassName={(r) => r.abnormal ? 'row-abnormal' : ''}
+        style={{ fontSize: 12 }}
+        locale={{ emptyText: '尚無巡檢資料' }}
+      />
+    </div>
+  )
+}
+
 // ── 外層 TAB 定義 ─────────────────────────────────────────────────────────────
 const OUTER_TABS = [
-  { key: 'dashboard', label: '保全巡檢Dashboard', icon: <DashboardOutlined /> },
-  { key: 'b1f-b4f',  label: 'B1F~B4F夜間巡檢',  icon: <SafetyOutlined /> },
+  { key: 'dashboard',  label: '保全巡檢Dashboard', icon: <DashboardOutlined /> },
+  { key: 'daily-form', label: '每日巡檢表',         icon: <CalendarOutlined /> },
+  { key: 'b1f-b4f',   label: 'B1F~B4F夜間巡檢',  icon: <SafetyOutlined /> },
   { key: '1f-3f',    label: '1F~3F夜間巡檢',     icon: <SafetyOutlined /> },
   { key: '5f-10f',   label: '5F~10F夜間巡檢',    icon: <SafetyOutlined /> },
   { key: '4f',       label: '4F夜間巡檢',         icon: <SafetyOutlined /> },
@@ -91,33 +243,40 @@ export default function SecurityDashboardPage() {
   const [trend,        setTrend]        = useState<SecurityTrendPoint[]>([])
   const [loading,      setLoading]      = useState(false)
   const [syncing,      setSyncing]      = useState(false)
+  const [calRows,      setCalRows]      = useState<CalendarRow[]>([])
+  const [calMaxDay,    setCalMaxDay]    = useState(31)
 
   // 並行載入資料（依篩選模式）
   const loadAll = useCallback(async () => {
     setLoading(true)
     try {
       if (viewMode === 'day') {
-        const [sumData, issueData, trendData] = await Promise.all([
+        const [dy, dm] = targetDate.split('/').map(Number)
+        const [sumData, issueData, trendData, calData] = await Promise.all([
           fetchSecurityDashboardSummary(targetDate),
           fetchSecurityDashboardIssues({ start_date: targetDate, end_date: targetDate }),
           fetchSecurityDashboardTrend(7),
+          fetchSecurityDashboardCalendar(dy, dm).catch(() => null),
         ])
         setSummary(sumData)
         setMonthlyData(null)
         setIssues(issueData.items)
         setTrend(trendData.trend)
+        if (calData) { setCalMaxDay(calData.max_day); setCalRows(calData.rows) }
       } else {
         const [y, m] = yearMonth.split('/').map(Number)
         const firstDay = `${yearMonth}/01`
         const lastDay  = dayjs(yearMonth, 'YYYY/MM').endOf('month').format('YYYY/MM/DD')
-        const [monthData, issueData] = await Promise.all([
+        const [monthData, issueData, calData] = await Promise.all([
           fetchSecurityDashboardMonthlySummary(y, m),
           fetchSecurityDashboardIssues({ start_date: firstDay, end_date: lastDay }),
+          fetchSecurityDashboardCalendar(y, m).catch(() => null),
         ])
         setMonthlyData(monthData)
         setSummary(null)
         setIssues(issueData.items)
         setTrend([])
+        if (calData) { setCalMaxDay(calData.max_day); setCalRows(calData.rows) }
       }
     } catch {
       message.error('載入 Dashboard 失敗')
@@ -532,6 +691,44 @@ export default function SecurityDashboardPage() {
           </div>
         )}
       </Card>}
+
+      {/* 月曆格：各巡檢表 × 當月出勤狀況 */}
+      {(() => {
+        const calYear  = viewMode === 'month'
+          ? parseInt(yearMonth.split('/')[0])
+          : parseInt(targetDate.split('/')[0])
+        const calMonth = viewMode === 'month'
+          ? parseInt(yearMonth.split('/')[1])
+          : parseInt(targetDate.split('/')[1])
+        return (
+          <Card
+            size="small"
+            style={{ marginTop: 16 }}
+            title={
+              <Space>
+                <CalendarOutlined />
+                <Text strong>保全巡檢月曆格</Text>
+                <Text type="secondary" style={{ fontSize: 11, fontWeight: 400 }}>
+                  （{calYear}/{String(calMonth).padStart(2, '0')} 各表逐日出勤）
+                </Text>
+              </Space>
+            }
+            loading={loading}
+          >
+            {calRows.length > 0 ? (
+              <MonthlyCalendarGrid
+                year={calYear}
+                month={calMonth}
+                maxDay={calMaxDay}
+                rows={calRows}
+                rowHeaderLabel="巡檢表"
+              />
+            ) : (
+              <Text type="secondary">尚無月曆資料</Text>
+            )}
+          </Card>
+        )
+      })()}
     </div>
   )
 
@@ -570,7 +767,9 @@ export default function SecurityDashboardPage() {
           ),
           children: tab.key === 'dashboard'
             ? DashboardContent
-            : <SecurityPatrolContent key={tab.key} sheetKey={tab.key} returnPath="/security/dashboard" />,
+            : tab.key === 'daily-form'
+              ? <SecurityDailyFormTab />
+              : <SecurityPatrolContent key={tab.key} sheetKey={tab.key} returnPath="/security/dashboard" />,
         }))}
       />
     </div>

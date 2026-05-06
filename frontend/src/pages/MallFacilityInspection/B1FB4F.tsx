@@ -1,5 +1,5 @@
 /**
- * 春大直商場工務每日巡檢 - B1F ~ B4F
+ * 商場工務每日巡檢 - B1F ~ B4F
  */
 import InspectionFloorPage from './InspectionFloorPage'
 

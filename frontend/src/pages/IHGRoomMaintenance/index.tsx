@@ -158,11 +158,11 @@ function MatrixCellComp({
         {hasChecks ? (
           // 顯示計數摘要
           <>
-            <span style={{ fontSize: 9, color: cfg.text, lineHeight: 1.4, fontWeight: 500, whiteSpace: 'nowrap' }}>
+            <span style={{ fontSize: 11, color: cfg.text, lineHeight: 1.4, fontWeight: 500, whiteSpace: 'nowrap' }}>
               正常 {cell.normal_count} / 完成 {cell.done_count}
             </span>
             <span style={{
-              fontSize: 9,
+              fontSize: 11,
               color: (cell.maint_count ?? 0) > 0 ? '#d46b08'
                    : (cell.unchecked_count ?? 0) > 0 ? '#faad14' : '#8c8c8c',
               fontWeight: ((cell.maint_count ?? 0) > 0 || (cell.unchecked_count ?? 0) > 0) ? 700 : 400,
@@ -172,7 +172,7 @@ function MatrixCellComp({
               維護 {cell.maint_count ?? 0} / 未 {cell.unchecked_count ?? 0}
             </span>
             {cell.date && (
-              <span style={{ fontSize: 9, color: '#999', lineHeight: 1.4 }}>
+              <span style={{ fontSize: 11, color: '#999', lineHeight: 1.4 }}>
                 {cell.date.replace(/^\d{4}\//, '')}
                 {cell.work_minutes ? ` (${cell.work_minutes}m)` : ''}
               </span>
@@ -181,9 +181,9 @@ function MatrixCellComp({
         ) : (
           // 無計數資料時，退回 icon + 日期
           <>
-            <span style={{ fontSize: 13, color: cfg.text }}>{cfg.icon}</span>
+            <span style={{ fontSize: 15, color: cfg.text }}>{cfg.icon}</span>
             {cell.date && (
-              <span style={{ fontSize: 9, color: '#999' }}>
+              <span style={{ fontSize: 11, color: '#999' }}>
                 {cell.date.replace(/^\d{4}\//, '')}
                 {cell.work_minutes ? ` (${cell.work_minutes}m)` : ''}
               </span>
@@ -428,20 +428,20 @@ function QuarterCellComp({
         onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.boxShadow = '0 2px 8px rgba(0,0,0,0.18)' }}
         onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.boxShadow = defaultShadow }}
       >
-        <span style={{ fontSize: 9, color: cfg.text, fontWeight: 600, lineHeight: 1.4, whiteSpace: 'nowrap' }}>
+        <span style={{ fontSize: 11, color: cfg.text, fontWeight: 600, lineHeight: 1.4, whiteSpace: 'nowrap' }}>
           正常 {qdata.normal_total} / 完成 {qdata.done_total}
         </span>
         <span style={{
-          fontSize: 9, lineHeight: 1.4, whiteSpace: 'nowrap',
+          fontSize: 11, lineHeight: 1.4, whiteSpace: 'nowrap',
           color: qdata.maint_total > 0 ? '#d46b08' : qdata.unchecked_total > 0 ? '#faad14' : '#8c8c8c',
           fontWeight: (qdata.maint_total > 0 || qdata.unchecked_total > 0) ? 700 : 400,
         }}>
           維護 {qdata.maint_total} / 未 {qdata.unchecked_total}
         </span>
         {hrs && (
-          <span style={{ fontSize: 9, color: '#4BA8E8', lineHeight: 1.4 }}>{hrs} hr</span>
+          <span style={{ fontSize: 11, color: '#4BA8E8', lineHeight: 1.4 }}>{hrs} hr</span>
         )}
-        <span style={{ fontSize: 9, color: '#bbb', lineHeight: 1.4 }}>
+        <span style={{ fontSize: 11, color: '#bbb', lineHeight: 1.4 }}>
           {qdata.active_cells.map(a => MONTH_LABELS[a.month]).join(' ')}
         </span>
       </div>
@@ -636,8 +636,8 @@ export default function IHGRoomMaintenancePage() {
       width: 76,
       render: (rn: string, row: QuarterRoomData) => (
         <div style={{ textAlign: 'center' }}>
-          <div style={{ fontWeight: 600, fontSize: 13 }}>{rn}</div>
-          <div style={{ fontSize: 10, color: '#999' }}>{row.floor}</div>
+          <div style={{ fontWeight: 600, fontSize: 15 }}>{rn}</div>
+          <div style={{ fontSize: 12, color: '#999' }}>{row.floor}</div>
         </div>
       ),
     },
@@ -646,11 +646,11 @@ export default function IHGRoomMaintenancePage() {
       const qHrs = qMonths.reduce((sum, m) => sum + (matrix?.month_hours?.[m] ?? 0), 0)
       return {
         title: (
-          <div style={{ textAlign: 'center', fontSize: 11 }}>
+          <div style={{ textAlign: 'center', fontSize: 13 }}>
             <div style={{ fontWeight: 600 }}>{qname}</div>
-            <div style={{ color: '#999', fontSize: 9 }}>{qMonths.map(m => MONTH_LABELS[m]).join(' ')}</div>
+            <div style={{ color: '#999', fontSize: 11 }}>{qMonths.map(m => MONTH_LABELS[m]).join(' ')}</div>
             {qHrs > 0 && (
-              <div style={{ fontSize: 9, color: '#4BA8E8', marginTop: 1 }}>
+              <div style={{ fontSize: 11, color: '#4BA8E8', marginTop: 1 }}>
                 {(qHrs / 60).toFixed(2)} hr
               </div>
             )}
@@ -685,8 +685,8 @@ export default function IHGRoomMaintenancePage() {
       width: 76,
       render: (rn: string, row: MatrixRoom) => (
         <div style={{ textAlign: 'center' }}>
-          <div style={{ fontWeight: 600, fontSize: 13 }}>{rn}</div>
-          <div style={{ fontSize: 10, color: '#999' }}>{row.floor}</div>
+          <div style={{ fontWeight: 600, fontSize: 15 }}>{rn}</div>
+          <div style={{ fontSize: 12, color: '#999' }}>{row.floor}</div>
         </div>
       ),
     },
@@ -695,11 +695,11 @@ export default function IHGRoomMaintenancePage() {
       title: (() => {
         const hrs = matrix?.month_hours?.[month]
         return (
-          <div style={{ textAlign: 'center', fontSize: 11 }}>
-            <div style={{ color: '#999', fontSize: 9 }}>{QUARTER_MAP[month]}</div>
+          <div style={{ textAlign: 'center', fontSize: 13 }}>
+            <div style={{ color: '#999', fontSize: 11 }}>{QUARTER_MAP[month]}</div>
             <div>{MONTH_LABELS[month]}</div>
             {hrs !== undefined && (
-              <div style={{ fontSize: 9, color: '#4BA8E8', marginTop: 1 }}>
+              <div style={{ fontSize: 11, color: '#4BA8E8', marginTop: 1 }}>
                 {hrs.toFixed(2)}hr
               </div>
             )}
@@ -964,25 +964,25 @@ export default function IHGRoomMaintenancePage() {
               columns={quarterColumns}
               dataSource={quarterRooms}
               rowKey="room_no"
-              size="small"
+              size="middle"
               pagination={false}
               scroll={{ x: 'max-content', y: 'calc(100vh - 340px)' }}
               sticky
               loading={loading}
-              style={{ fontSize: 12 }}
+              style={{ fontSize: 14 }}
             />
           ) : (
             <Table
               columns={columns}
               dataSource={matrix?.rooms ?? []}
               rowKey="room_no"
-              size="small"
+              size="middle"
               pagination={false}
               scroll={{ x: 'max-content', y: 'calc(100vh - 340px)' }}
               sticky
               loading={loading}
               rowClassName={(_, index) => index % 2 === 0 ? '' : 'ant-table-row-striped'}
-              style={{ fontSize: 12 }}
+              style={{ fontSize: 14 }}
             />
           )}
         </Card>

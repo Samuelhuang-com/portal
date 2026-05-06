@@ -2,6 +2,55 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)
 
+## [1.57.22] - 2026-05-05
+
+### Fixed
+- **`dazhi-repair/dashboard` 報修類型分布口徑修正** — Dashboard KPI Card「報修類型分布」改用與工務部 Tab 相同的 `filter_cases`（`_stat_year/_stat_month`）口徑取代原本的 `this_month_cases`（`occ_year/occ_month` + 上月未結）；輸出依 `REPAIR_TYPE_ORDER` 排序，與 Tab 3.3 報修類型一致
+
+---
+
+## [1.57.24] - 2026-05-05
+
+### Fixed
+- **`security/dashboard` 每日巡檢表 TAB 篩選器修正** — 由全日期 DatePicker（YYYY/MM/DD）改為月份 DatePicker（picker="month"，YYYY/MM）；`yearMonth` state 取代 `inspectionDate`；API 呼叫不傳 `inspection_date`（整月合併）；空資料 Alert 訊息改為「YYYY年M月 尚無巡檢資料」
+
+---
+
+## [1.57.23] - 2026-05-05
+
+### Added
+- **`security/dashboard` 新增「每日巡檢表」TAB** — 後端新增 `security_patrol_daily_template.py`（83 列 5 樓層：1~10F/4F/1F~3F/1F/B1F~B4F，7 source_tab，來源 #2.4保全-每日巡檢表.xlsx）+ `security_patrol_daily_builder.py`（查詢 SecurityPatrolBatch/Item，精確+模糊比對 item_name，多 batch 合併）+ `GET /dashboard/daily-form`；前端 `SecurityDailyFormTab`（DatePicker 單日篩選、floor/item rowSpan 合併、異常紅底、有資料/空資料 Alert、獨立同步按鈕）；OUTER_TABS 插在 Dashboard 後第二位，CalendarOutlined 圖示
+
+---
+
+## [1.57.21] - 2026-05-05
+
+### Added
+- **`full-building-inspection` 新增「每日巡檢表」TAB** — 後端新增 `full_building_inspection_template.py`（82 列 4 樓層：RF/B1F/B2F/B4F，來源 #2.3整棟-每日巡檢表.xlsx）+ `GET /daily-form`（模板結構，matched=False，待本地同步接通後填充）；前端 `FullBuildingDailyFormTab`（DatePicker 單日篩選、floor/item rowSpan 合併、異常紅底、底部標準時間摘要 80 分鐘）；TAB 插在 Dashboard 後、RF 巡檢前
+
+---
+
+## [1.57.20] - 2026-05-05
+
+### Added
+- **`full-building-inspection/dashboard` Dashboard 月曆格** — 後端新增 `GET /dashboard/calendar`（4 樓層 RF/B4F/B2F/B1F × 逐日空結構，待本地同步接通後填充真實巡檢狀態）；前端 `SummaryTabContent` 新增 `calRows/calMaxDay` state，`loadSummary` 改為 `Promise.all` 平行載入 calendar（`.catch(() => null)` 不阻斷主流程）；Alert 下方加 `MonthlyCalendarGrid` Card，rowHeaderLabel="樓層"
+
+---
+
+## [1.57.19] - 2026-05-05
+
+### Added
+- **`security/dashboard` Dashboard 月曆格** — 後端新增 `GET /security/dashboard/calendar`（2 次 DB 查詢，7 個巡檢表 × 逐日完成率/異常/待處理）；前端 `SecurityDashboard/index.tsx` 新增 `calRows/calMaxDay` state，`loadAll` 兩個分支（單日/全月）皆以 `Promise.all` 平行載入 calendar（`.catch(() => null)` 不阻斷主流程）；DashboardContent 末尾加 `MonthlyCalendarGrid` Card，rowHeaderLabel="巡檢表"
+
+---
+
+## [1.57.19] - 2026-05-05
+
+### Changed
+- **`hotel/ihg-room-maintenance` 矩陣表字體放大 2 級** — 表格 `size` 由 `small` 改 `middle`；整體 fontSize 12→14；表頭 11→13、副文字 9→11；房號數字 13→15；樓層文字 10→12；格子內計數 9→11
+
+---
+
 ## [1.57.18] - 2026-05-05
 
 ### Added

@@ -62,7 +62,7 @@ export const NAV_GROUP = {
   mallPmGroup:              '商場例行維護',   // ← L2 群組：商場例行維護 + 全棟例行維護
   luqun_repair:             '樂群工務報修',
   dazhi_repair:             '大直工務部',
-  mall_facility_inspection:  '春大直商場工務巡檢',
+  mall_facility_inspection:  '商場工務巡檢',
   full_building_inspection:  '整棟巡檢',
   security:                  '保全巡檢',
   warehouse:  '倉庫管理',
@@ -124,8 +124,8 @@ export const NAV_PAGE = {
   // 高階主管 Dashboard（新功能，獨立路由）
   execDashboard:           '高階主管 Dashboard',
 
-  // 春大直商場工務巡檢
-  mallFacilityDashboard:   '春大直工務巡檢',
+  // 商場工務巡檢
+  mallFacilityDashboard:   '商場工務巡檢',
   mallFacility4F:          '工務巡檢 - 4F',
   mallFacility3F:          '工務巡檢 - 3F',
   mallFacility1F3F:        '工務巡檢 - 1F ~ 3F',

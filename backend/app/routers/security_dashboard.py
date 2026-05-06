@@ -235,6 +235,122 @@ def get_trend(
     return DashboardTrend(trend=trend_points, days=days)
 
 
+# ── /calendar — 月曆格（巡檢表 × 日）─────────────────────────────────────────
+
+@router.get("/calendar", summary="保全巡檢月曆格（巡檢表 × 日）")
+def get_calendar(
+    year:  int = Query(..., description="年份，如 2026"),
+    month: int = Query(..., ge=1, le=12, description="月份，如 5"),
+    db:    Session = Depends(get_db),
+):
+    """
+    回傳指定年月的巡檢表 × 日期月曆格資料。
+    cell key = str(d)（非零填充，配合 MonthlyCalendarGrid）。
+    2 次 DB 查詢（all_batches + all_items），純 Python 分組計算。
+    """
+    import calendar as cal_mod
+    from collections import defaultdict
+
+    max_day      = cal_mod.monthrange(year, month)[1]
+    month_prefix = f"{year}/{month:02d}/"
+
+    SHEET_SHORT_NAMES: dict[str, str] = {
+        "b1f-b4f":  "B1F~B4F",
+        "1f-3f":    "1F~3F",
+        "5f-10f":   "5F~10F",
+        "4f":       "4F",
+        "1f-hotel": "1F飯店",
+        "1f-close": "1F閉店",
+        "1f-open":  "1F開店",
+    }
+
+    # ── 1. 一次撈全月批次 ───────────────────────────────────────────────────────
+    all_batches = db.query(SecurityPatrolBatch).filter(
+        SecurityPatrolBatch.inspection_date.like(f"{month_prefix}%"),
+    ).all()
+
+    # ── 2. 依 (sheet_key, day) 分組 ────────────────────────────────────────────
+    sk_day_batches: dict = defaultdict(lambda: defaultdict(list))
+    for b in all_batches:
+        parts = b.inspection_date.split("/")
+        try:
+            day = int(parts[2])
+        except (IndexError, ValueError):
+            continue
+        sk_day_batches[b.sheet_key][day].append(b)
+
+    # ── 3. 一次撈所有相關巡檢項目（排除文字備註欄位）──────────────────────────
+    items_by_batch: dict = defaultdict(list)
+    batch_ids = [b.ragic_id for b in all_batches]
+    if batch_ids:
+        for it in db.query(SecurityPatrolItem).filter(
+            SecurityPatrolItem.batch_ragic_id.in_(batch_ids),
+            SecurityPatrolItem.is_note == False,  # noqa: E712
+        ).all():
+            items_by_batch[it.batch_ragic_id].append(it)
+
+    # ── 4. 組裝輸出 ────────────────────────────────────────────────────────────
+    rows_out = []
+    for sk in ALL_SHEET_KEYS:
+        label = SHEET_SHORT_NAMES.get(sk, sk)
+        daily: dict = {}
+        for d in range(1, max_day + 1):
+            day_batches = sk_day_batches[sk].get(d, [])
+            if not day_batches:
+                daily[str(d)] = {
+                    "has_record": False, "completion_rate": 0,
+                    "abnormal_count": 0, "pending_count": 0,
+                }
+            else:
+                total = normal = abnormal = pending = 0
+                for b in day_batches:
+                    for it in items_by_batch.get(b.ragic_id, []):
+                        total += 1
+                        if   it.result_status == "normal":   normal   += 1
+                        elif it.result_status == "abnormal": abnormal += 1
+                        elif it.result_status == "pending":  pending  += 1
+                checked = normal + abnormal + pending
+                daily[str(d)] = {
+                    "has_record":      True,
+                    "completion_rate": round(checked / total * 100, 1) if total > 0 else 0.0,
+                    "abnormal_count":  abnormal,
+                    "pending_count":   pending,
+                }
+        rows_out.append({"key": sk, "label": label, "daily": daily})
+
+    return {"year": year, "month": month, "max_day": max_day, "rows": rows_out}
+
+
+# ── /daily-form — 每日巡檢表（模板 × DB 比對）────────────────────────────────
+
+@router.get("/daily-form", summary="保全巡檢每日巡檢表（樓層 × 項目 × 檢查內容）")
+def get_daily_form(
+    year:            int           = Query(...,  description="年份，如 2026"),
+    month:           int           = Query(...,  ge=1, le=12, description="月份，如 5"),
+    inspection_date: Optional[str] = Query(None, description="巡檢日期 YYYY/MM/DD（不填則顯示整月合併）"),
+    db:              Session       = Depends(get_db),
+):
+    """
+    回傳保全巡檢每日巡檢表列（依 Excel #2.4保全-每日巡檢表.xlsx），
+    並與本地 DB 實際巡檢資料比對回傳結果。
+    """
+    from app.services.security_patrol_daily_builder import build_security_patrol_daily_table
+
+    rows = build_security_patrol_daily_table(
+        year=year,
+        month=month,
+        db=db,
+        inspection_date=inspection_date,
+    )
+
+    return {
+        "year":            year,
+        "month":           month,
+        "inspection_date": inspection_date or "",
+        "rows":            rows,
+    }
+
+
 # ── /monthly-summary — 月份彙總（供 hotel/overview Dashboard 使用）─────────────
 
 def _parse_minutes_sec(start: str, end: str) -> int:

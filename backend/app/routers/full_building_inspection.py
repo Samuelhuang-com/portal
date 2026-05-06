@@ -138,3 +138,94 @@ def get_dashboard_monthly_summary(
         "year_month": year_month,
         "sheets":     results,
     }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GET /dashboard/calendar  — 月曆格（樓層 × 日）
+# ══════════════════════════════════════════════════════════════════════════════
+
+@router.get(
+    "/dashboard/calendar",
+    summary="整棟巡檢月曆格（樓層 × 日）",
+    tags=["整棟巡檢"],
+)
+def get_dashboard_calendar(
+    year:  int = Query(..., description="年份，如 2026"),
+    month: int = Query(..., ge=1, le=12, description="月份，如 5"),
+):
+    """
+    回傳指定年月的樓層 × 日期月曆格資料。
+    cell key = str(d)（非零填充，配合 MonthlyCalendarGrid 的 String(d) 讀法）。
+
+    本模組尚未實作本地 DB 同步，目前各格回傳 has_record=False 的空結構，
+    待本地同步接通後可在此填充真實每日巡檢狀態。
+    """
+    import calendar as cal_mod
+
+    max_day = cal_mod.monthrange(year, month)[1]
+
+    rows = []
+    for cfg in SHEET_CONFIGS:
+        daily = {
+            str(d): {
+                "has_record":      False,
+                "completion_rate": 0,
+                "abnormal_count":  0,
+                "pending_count":   0,
+            }
+            for d in range(1, max_day + 1)
+        }
+        rows.append({"key": cfg.key, "label": cfg.floor, "daily": daily})
+
+    return {"year": year, "month": month, "max_day": max_day, "rows": rows}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GET /daily-form  — 每日巡檢表（模板結構，待本地同步接通後填充真實資料）
+# ══════════════════════════════════════════════════════════════════════════════
+
+@router.get(
+    "/daily-form",
+    summary="整棟巡檢每日巡檢表（樓層 × 項目 × 檢查內容）",
+    tags=["整棟巡檢"],
+)
+def get_daily_form(
+    year:            int           = Query(...,  description="年份，如 2026"),
+    month:           int           = Query(...,  ge=1, le=12, description="月份，如 5"),
+    inspection_date: Optional[str] = Query(None, description="巡檢日期 YYYY/MM/DD（不填則顯示整月模板）"),
+):
+    """
+    回傳整棟巡檢每日巡檢表列（依 Excel #2.3整棟-每日巡檢表.xlsx）。
+
+    本模組尚未實作本地 DB 同步，目前各列 matched=False、inspector/result_text 為空，
+    模板結構（floor/item/check_content/result_options/rowSpan）已備妥，
+    待本地同步接通後可在此填充真實巡檢資料。
+    """
+    from app.services.full_building_inspection_template import (
+        FULL_BUILDING_DAILY_INSPECTION_TEMPLATE,
+        STANDARD_MINUTES_MORNING,
+        STANDARD_MINUTES_TOTAL,
+    )
+
+    rows = []
+    for tmpl in FULL_BUILDING_DAILY_INSPECTION_TEMPLATE:
+        rows.append({
+            **tmpl,
+            "inspector":     "",
+            "result_text":   "",
+            "result_status": "unchecked",
+            "abnormal_note": "",
+            "matched":       False,
+            "abnormal":      False,
+            "actual_minutes": 0,
+        })
+
+    return {
+        "year":                    year,
+        "month":                   month,
+        "inspection_date":         inspection_date or "",
+        "rows":                    rows,
+        "standard_minutes_morning": STANDARD_MINUTES_MORNING,
+        "standard_minutes_total":   STANDARD_MINUTES_TOTAL,
+        "actual_minutes":           0,
+    }

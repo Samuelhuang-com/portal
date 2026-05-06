@@ -1107,11 +1107,11 @@ export default function DashboardPage() {
           </Card>
         </Col>
 
-        {/* ── 春大直商場工務巡檢 ───────────────────────────────────── */}
+        {/* ── 商場工務巡檢 ───────────────────────────────────── */}
         <Col xs={24} lg={8}>
           <Card
             size="small" bordered={false}
-            title={<GroupCardTitle icon={<ToolOutlined />} label="春大直商場工務巡檢" color="#1B3A5C" />}
+            title={<GroupCardTitle icon={<ToolOutlined />} label="商場工務巡檢" color="#1B3A5C" />}
             style={{ height: '100%' }}
           >
             <div style={{ padding: '8px 0', color: '#8c8c8c', fontSize: 12, marginBottom: 8 }}>

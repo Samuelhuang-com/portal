@@ -731,10 +731,16 @@ def compute_dashboard(
             "completed": sum(1 for c in mc if is_completed(c.status)),
         })
 
-    # ── 類型分布 ──────────────────────────────────────────────────────────────
-    type_dist: dict[str, int] = {}
-    for c in this_month_cases:
-        type_dist[c.repair_type] = type_dist.get(c.repair_type, 0) + 1
+    # ── 類型分布（口徑與工務部 Tab 一致：filter_cases _stat_year/_stat_month）──
+    _type_tab_cases = filter_cases(all_cases, year, month if month else None)
+    _type_dist_raw: dict[str, int] = {}
+    for c in _type_tab_cases:
+        t = c.repair_type or "其他"
+        _type_dist_raw[t] = _type_dist_raw.get(t, 0) + 1
+    # 依 REPAIR_TYPE_ORDER 排序，未在清單內的排後面
+    type_dist: dict[str, int] = {
+        t: _type_dist_raw[t] for t in REPAIR_TYPE_ORDER if t in _type_dist_raw
+    } | {t: v for t, v in _type_dist_raw.items() if t not in REPAIR_TYPE_ORDER}
 
     # ── 樓層分布 ──────────────────────────────────────────────────────────────
     floor_dist: dict[str, int] = {}

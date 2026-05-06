@@ -696,7 +696,7 @@ export default function HotelMgmtDashboardPage() {
     const addH   = (a: number[] | undefined, b: number[] | undefined): number[] =>
       zeroes().map((_, i) => (a?.[i] ?? 0) + (b?.[i] ?? 0))
 
-    const dazhi    = find('大直工務部')
+    const dazhi    = find('飯店工務部')
     const room     = find('客房保養管理')
     const periodic = find('飯店週期保養')
     const ihg      = find('IHG客房保養')
@@ -865,7 +865,7 @@ export default function HotelMgmtDashboardPage() {
     const addH   = (a: number[] | undefined, b: number[] | undefined): number[] =>
       zeroes().map((_, i) => (a?.[i] ?? 0) + (b?.[i] ?? 0))
 
-    const dazhi    = find('大直工務部')
+    const dazhi    = find('飯店工務部')
     const room     = find('客房保養管理')
     const periodic = find('飯店週期保養')
     const ihg      = find('IHG客房保養')

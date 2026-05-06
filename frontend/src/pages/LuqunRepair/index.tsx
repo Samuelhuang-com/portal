@@ -6,7 +6,7 @@
  *
  * 查詢條件（年/月）置於頁面頂部，各 Tab 共享。
  */
-import { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import {
   Row, Col, Card, Statistic, Table, Tag, Button, Space,
   Typography, Breadcrumb, Select, Spin, Alert, Tabs, Modal,
@@ -951,11 +951,56 @@ function RepairStatsTab({ year, focusMonth }: { year: number; focusMonth: number
   if (loading) return <Spin />
   if (!data)   return <Empty />
 
-  // 欄位定義：key（值）、detailKey（明細陣列）、label、isPct
-  const rows: { key: string; detailKey?: string; label: string; isPct?: boolean }[] = [
-    { key: 'prev_uncompleted',           detailKey: 'prev_uncompleted_detail',     label: '① 上月累計未完成項目數' },
-    { key: 'closed_from_prev',           detailKey: 'closed_from_prev_detail',     label: '② 上月未完成，本月結案數' },
-    { key: 'prev_remaining',             detailKey: 'prev_remaining_detail',       label: '③ 上月累計完成數（① - ②）' },
+  // 欄位定義：key（值）、detailKey（明細陣列）、label（顯示用 ReactNode）、titleText（Modal 標題用純文字）、isPct
+  const rows: { key: string; detailKey?: string; label: React.ReactNode; titleText?: string; isPct?: boolean }[] = [
+    {
+      key: 'prev_uncompleted', detailKey: 'prev_uncompleted_detail',
+      titleText: '① 截至上月底累計未結案數',
+      label: (
+        <span style={{ fontSize: 16 }}>① 截至上月底累計未結案數&nbsp;
+          <Tooltip title={
+            <span>
+              截至<b>上個月底</b>為止，所有歷史報修單中尚未結案的總數量。<br />
+              計算方式：報修日期 ≤ 上月底，且結案時間為空或尚未結案。
+            </span>
+          }>
+            <QuestionCircleOutlined style={{ color: '#aaa', fontSize: 14 }} />
+          </Tooltip>
+        </span>
+      ),
+    },
+    {
+      key: 'closed_from_prev', detailKey: 'closed_from_prev_detail',
+      titleText: '② 其中本月已結案數',
+      label: (
+        <span style={{ fontSize: 16 }}>② 其中本月已結案數&nbsp;
+          <Tooltip title={
+            <span>
+              ①那些「截至上月底尚未結案」的舊案件中，<b>本月內</b>完成結案的數量。<br />
+              計算方式：屬於①的案件 且 結案時間落在本月。
+            </span>
+          }>
+            <QuestionCircleOutlined style={{ color: '#aaa', fontSize: 14 }} />
+          </Tooltip>
+        </span>
+      ),
+    },
+    {
+      key: 'prev_remaining', detailKey: 'prev_remaining_detail',
+      titleText: '③ 本月底仍未結案數（① - ②）',
+      label: (
+        <span style={{ fontSize: 16 }}>③ 本月底仍未結案數（① - ②）&nbsp;
+          <Tooltip title={
+            <span>
+              ①的舊案件扣掉本月已結案的②，代表<b>截至本月底仍未結案的歷史舊案數量</b>。<br />
+              計算方式：① - ②。此數字若持續偏高，表示歷史舊案累積未消化。
+            </span>
+          }>
+            <QuestionCircleOutlined style={{ color: '#aaa', fontSize: 14 }} />
+          </Tooltip>
+        </span>
+      ),
+    },
     { key: 'cum_completion_rate',                                                   label: '④ 累計項目完成率（%）', isPct: true },
     { key: 'this_month_total',           detailKey: 'this_month_total_detail',     label: '⑤ 本月報修項目數' },
     { key: 'this_month_completed',       detailKey: 'this_month_completed_detail', label: '⑥ 本月報修項目完成數' },
@@ -973,7 +1018,7 @@ function RepairStatsTab({ year, focusMonth }: { year: number; focusMonth: number
   return (
     <div>
       <div style={{ overflowX: 'auto' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 16 }}>
           <thead>
             <tr style={{ background: '#1B3A5C', color: '#fff' }}>
               <th style={{ padding: '8px 12px', textAlign: 'left', minWidth: 220, position: 'sticky', left: 0, background: '#1B3A5C', zIndex: 1 }}>
@@ -1026,7 +1071,7 @@ function RepairStatsTab({ year, focusMonth }: { year: number; focusMonth: number
                     : fmt(val as number)
                   return (
                     <td key={m}
-                      onClick={() => canClick && setModal({ title: `${m}月 ${row.label}`, cases: detail })}
+                      onClick={() => canClick && setModal({ title: `${m}月 ${row.titleText ?? row.label}`, cases: detail })}
                       style={{
                         padding: '8px 8px', textAlign: 'center',
                         borderBottom: '1px solid #eee',
@@ -1141,14 +1186,14 @@ function ClosingTimeTab({ year, month }: { year: number; month: number | null })
       {/* 月份詳細表 — 所有非零數字可點擊 */}
       <Card size="small" title="各月份結案時間明細（點擊數字查看案件）" style={{ marginBottom: 16 }}>
         <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 15 }}>
             <thead>
               <tr style={{ background: '#1B3A5C', color: '#fff' }}>
                 <th style={{ padding: '6px 8px', textAlign: 'center' }}>月份</th>
                 <th colSpan={3} style={{ padding: '6px 8px', textAlign: 'center', borderRight: '1px solid #4BA8E8' }}>小型報修</th>
                 <th colSpan={3} style={{ padding: '6px 8px', textAlign: 'center' }}>中大型報修</th>
               </tr>
-              <tr style={{ background: '#2a4f7c', color: '#cce4ff', fontSize: 11 }}>
+              <tr style={{ background: '#2a4f7c', color: '#cce4ff', fontSize: 14 }}>
                 <th style={{ padding: '4px 8px' }} />
                 {['結案件數', '天數合計', '平均天數', '結案件數', '天數合計', '平均天數'].map((h, i) => (
                   <th key={i} style={{ padding: '4px 8px', textAlign: 'center', borderRight: i === 2 ? '1px solid #4BA8E8' : undefined }}>{h}</th>
@@ -1166,7 +1211,7 @@ function ClosingTimeTab({ year, month }: { year: number; month: number | null })
                       <td style={{ padding: '6px 8px', textAlign: 'center', fontWeight: 600, color: '#aaa' }}>{m} 月</td>
                       {Array.from({ length: 6 }).map((_, i) => (
                         <td key={i} style={{
-                          padding: '6px 8px', textAlign: 'center', color: '#ccc', fontSize: 12,
+                          padding: '6px 8px', textAlign: 'center', color: '#ccc', fontSize: 15,
                           borderRight: i === 2 ? '1px solid #e8e8e8' : undefined,
                         }}>—</td>
                       ))}
@@ -1219,7 +1264,7 @@ function ClosingTimeTab({ year, month }: { year: number; month: number | null })
       </Card>
 
       <Card size="small" title="未完成事項說明（原因 / 待協助事項）">
-        <div style={{ color: '#999', fontSize: 12 }}>本區塊供人工填寫說明。</div>
+        <div style={{ color: '#999', fontSize: 15 }}>本區塊供人工填寫說明。</div>
       </Card>
 
       {/* 統一明細 Modal */}
@@ -1283,7 +1328,7 @@ function RepairTypeTab({ year, focusMonth }: { year: number; focusMonth: number 
       </Row>
 
       <div style={{ overflowX: 'auto' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 15 }}>
           <thead>
             <tr style={{ background: '#1B3A5C', color: '#fff' }}>
               <th style={{ padding: '8px 10px', textAlign: 'left', minWidth: 80, position: 'sticky', left: 0, background: '#1B3A5C', zIndex: 1 }}>類別</th>
@@ -1316,7 +1361,7 @@ function RepairTypeTab({ year, focusMonth }: { year: number; focusMonth: number 
                   }}>
                     {row.type}
                   </td>
-                  <td style={{ padding: '7px 10px', fontSize: 11, color: '#666' }}>{row.example}</td>
+                  <td style={{ padding: '7px 10px', fontSize: 14, color: '#666' }}>{row.example}</td>
                   {MONTHS.map(m => {
                     const cnt     = row.monthly[m] || 0
                     const detail  = row.monthly_detail?.[m] ?? []
@@ -1417,19 +1462,19 @@ function RoomRepairTab({ year, month }: { year: number; month: number }) {
       <Row gutter={12} style={{ marginBottom: 12 }}>
         <Col span={6}>
           <Card size="small" style={{ textAlign: 'center', borderTop: '3px solid #1B3A5C' }}>
-            <div style={{ fontSize: 11, color: '#999' }}>客房報修總件數</div>
+            <div style={{ fontSize: 14, color: '#999' }}>客房報修總件數</div>
             <div style={{ fontSize: 22, fontWeight: 700, color: '#1B3A5C' }}>{data.total_room_cases}</div>
           </Card>
         </Col>
         <Col span={6}>
           <Card size="small" style={{ textAlign: 'center', borderTop: '3px solid #52C41A' }}>
-            <div style={{ fontSize: 11, color: '#999' }}>涉及房號數</div>
+            <div style={{ fontSize: 14, color: '#999' }}>涉及房號數</div>
             <div style={{ fontSize: 22, fontWeight: 700, color: '#52C41A' }}>{data.rows.length}</div>
           </Card>
         </Col>
         <Col span={6}>
           <Card size="small" style={{ textAlign: 'center', borderTop: '3px solid #4BA8E8' }}>
-            <div style={{ fontSize: 11, color: '#999' }}>涉及樓層數</div>
+            <div style={{ fontSize: 14, color: '#999' }}>涉及樓層數</div>
             <div style={{ fontSize: 22, fontWeight: 700, color: '#4BA8E8' }}>{data.floors_with_data.length}</div>
           </Card>
         </Col>
@@ -1466,7 +1511,7 @@ function RoomRepairTab({ year, month }: { year: number; month: number }) {
         ? <Empty description="本月無客房報修資料" />
         : (
           <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 15 }}>
               <thead>
                 <tr style={{ background: '#1B3A5C', color: '#fff' }}>
                   <th style={{ padding: '8px 10px', textAlign: 'center', minWidth: 70, position: 'sticky', left: 0, background: '#1B3A5C', zIndex: 1 }}>房號</th>
@@ -1498,7 +1543,7 @@ function RoomRepairTab({ year, month }: { year: number; month: number }) {
                                 color={e.status && STATUS_COLOR[e.status] ? undefined : 'default'}
                                 onClick={() => setDrawerCase(e as unknown as RepairCase)}
                                 style={{
-                                  fontSize: 11, marginBottom: 2, display: 'block',
+                                  fontSize: 14, marginBottom: 2, display: 'block',
                                   cursor: 'pointer', maxWidth: '100%',
                                   overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                                 }}

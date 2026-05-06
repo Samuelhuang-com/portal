@@ -2,9 +2,15 @@
 
 > 跨據點統一管理平台 — FastAPI + React + TypeScript
 
-**最後更新：2026-05-05（v1.57.16）**
+**最後更新：2026-05-05（v1.57.23）**
 
 ## 最近變更
+- v1.57.24：**`security/dashboard` 每日巡檢表篩選器修正** — 全日期 DatePicker → 月份 DatePicker（picker="month"）；整月合併顯示；Alert 改顯示年月
+- v1.57.23：**`security/dashboard` 新增「每日巡檢表」TAB** — `security_patrol_daily_template.py`（83 列 7 source_tab）+ `security_patrol_daily_builder.py`（DB 比對 builder）+ `GET /daily-form`；前端 `SecurityDailyFormTab`（DatePicker/rowSpan/異常紅底/空資料 Alert/獨立同步）；OUTER_TABS 第二位
+- v1.57.22：**`dazhi-repair/dashboard` 報修類型分布口徑修正** — Dashboard KPI Card「報修類型分布」改用與工務部 Tab 相同的 `filter_cases`（_stat_year/_stat_month）口徑；依 `REPAIR_TYPE_ORDER` 排序，與 Tab 3.3 一致
+- v1.57.21：**`full-building-inspection` 新增「每日巡檢表」TAB** — `full_building_inspection_template.py`（82 列 RF/B1F/B2F/B4F）+ `GET /daily-form`（模板骨架，待同步接通後填充）；前端 `FullBuildingDailyFormTab`（DatePicker 篩選、floor/item rowSpan、異常紅底、標準時間 80 分鐘）
+- v1.57.20：**`full-building-inspection/dashboard` Dashboard 月曆格** — 後端 `GET /dashboard/calendar`（RF/B4F/B2F/B1F × 逐日空結構，待本地同步接通後填充）；前端 `SummaryTabContent` Promise.all 平行載入 + MonthlyCalendarGrid Card，rowHeaderLabel="樓層"
+- v1.57.19：**`security/dashboard` Dashboard 月曆格** — 後端 `GET /security/dashboard/calendar`（7 巡檢表 × 逐日完成率，2 次 DB 查詢）；前端 `loadAll` Promise.all 平行載入 + MonthlyCalendarGrid Card，rowHeaderLabel="巡檢表"
 - v1.57.16：**`mall/full-building-maintenance` Dashboard 新增月曆格** — 後端 `GET /calendar`（6 類別 × 日，依 scheduled_date 推算）；Promise.all 平行載入；Dashboard 底部「全棟例行維護排程狀況」月曆格 Card
 - v1.57.15：**`mall/full-building-maintenance` 新增「每月保養表」TAB** — 第二 TAB（Dashboard 後）；獨立年/月篩選（formYear/formMonth）；類別 rowSpan 分組；`handleSync` 時若在此 TAB 一併重刷
 - v1.57.14：**`mall-facility-inspection` 新增「每日巡檢表」TAB** — 後端新增 `GET /daily-form`（整合 `mall_daily_inspection_builder`）；前端插入第二 TAB（key=`daily-form`），複用 `MallDailyInspectionFormTab`（獨立年/月/日期篩選、rowSpan 分組、異常列底色 #fff1f0）

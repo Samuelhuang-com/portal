@@ -9,7 +9,7 @@ GET /api/v1/hotel/person-hours  人員工時佔比（五項來源，Top-15）
   ② IHG客房保養  — ihg_rm_master（maint_date，每筆固定 0.5 hr）
   ③ 飯店每日巡檢 — hotel_di_inspection_batch（inspection_date, start/end_time）
   ④ 保全巡檢     — security_patrol_batch（inspection_date, start/end_time）
-  ⑤ 大直工務部   — dazhi_repair_case（occurred_at, work_hours=float）
+  ⑤ 飯店工務部   — dazhi_repair_case（occurred_at, work_hours=float）
 
 回傳格式與 mall_overview.py 完全一致，供前端直接套用相同表格元件。
 """
@@ -44,7 +44,7 @@ HOTEL_CATEGORIES = [
     "IHG客房保養",
     "飯店每日巡檢",
     "保全巡檢",
-    "大直工務部",
+    "飯店工務部",
 ]
 
 # IHG 無工時欄位，每筆記錄固定估算 30 分鐘 = 0.5 hr
@@ -169,7 +169,7 @@ def get_hotel_daily_hours(
         except (ValueError, IndexError):
             pass
 
-    # ── ⑥ 大直工務部：對齊「4.2 結案時間」選案邏輯 ─────────────────────────────
+    # ── ⑥ 飯店工務部：對齊「4.2 結案時間」選案邏輯 ─────────────────────────────
     # 選案條件：有 completed_at 且落在目標年月（同 _closed_in 口徑，只統計已結案）
     # 工時來源：① work_hours > 0 → 直接使用
     #           ② work_hours = 0 且有 close_days → 以 close_days（結案天數）代入
@@ -187,7 +187,7 @@ def get_hotel_daily_hours(
             continue
         d = c.completed_at.day
         if 1 <= d <= days_in_month:
-            bucket["大直工務部"][d] += hrs
+            bucket["飯店工務部"][d] += hrs
 
     # ── 組裝結果（與 mall_overview 格式完全一致）───────────────────────────────
     result_rows: list[dict] = []
@@ -311,7 +311,7 @@ def get_hotel_monthly_hours(
         except (ValueError, IndexError):
             pass
 
-    # ── ⑥ 大直工務部：對齊「4.2 結案時間」選案邏輯 ─────────────────────────────
+    # ── ⑥ 飯店工務部：對齊「4.2 結案時間」選案邏輯 ─────────────────────────────
     # 選案條件：有 completed_at 且年份符合（只統計已結案案件）
     # 工時來源：① work_hours > 0 → 直接使用
     #           ② work_hours = 0 且有 close_days → 以 close_days 代入
@@ -328,7 +328,7 @@ def get_hotel_monthly_hours(
             continue
         m = c.completed_at.month
         if 1 <= m <= 12:
-            bucket["大直工務部"][m] += hrs
+            bucket["飯店工務部"][m] += hrs
 
     # ── 組裝結果 ─────────────────────────────────────────────────────────────
     result_rows: list[dict] = []
@@ -373,7 +373,7 @@ def get_hotel_person_hours(
       ② IHG客房保養  — IHGRoomMaintenanceMaster.assignee_name
       ③ 飯店每日巡檢 — HotelDIBatch.inspector_name
       ④ 保全巡檢     — SecurityPatrolBatch.inspector_name
-      ⑤ 大直工務部   — DazhiRepairCase.acceptor
+      ⑤ 飯店工務部   — DazhiRepairCase.acceptor
 
     回傳格式：
     ```json
@@ -448,11 +448,11 @@ def get_hotel_person_hours(
             if mins > 0:
                 ph[person]["保全巡檢"] += mins / 60
 
-    # ── ⑥ 大直工務部：acceptor ─────────────────────────────────────────────────
+    # ── ⑥ 飯店工務部：acceptor ─────────────────────────────────────────────────
     for c in db.query(DazhiRepairCase).filter(DazhiRepairCase.year == year).all():
         person = (c.acceptor or "").strip()
         if person and person != "未指定" and (c.work_hours or 0) > 0:
-            ph[person]["大直工務部"] += c.work_hours
+            ph[person]["飯店工務部"] += c.work_hours
 
     # ── 找出 Top-15 人員（依全類別合計工時降冪）─────────────────────────────────
     person_totals_map: dict[str, float] = {
@@ -973,7 +973,7 @@ def _build_hotel_pptx(year: int, month: int,
         for ri in range(n_rows5):
             t5.rows[ri].height = Pt(24)
         _pptx_txt(s5,
-                  "工時來源：\n客房保養管理 / 飯店週期保養\nIHG客房保養 / 飯店每日巡檢\n保全巡檢 / 大直工務部",
+                  "工時來源：\n飯店週期保養 / IHG客房保養\n飯店每日巡檢 / 保全巡檢\n飯店工務部",
                   8.9, 1.0, 4.0, 2.0, size=9, color=C_GRAY, italic=True, wrap=True)
     else:
         _pptx_txt(s5, f"（{year} 年暫無人員工時記錄）",

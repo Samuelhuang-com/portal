@@ -2,13 +2,14 @@
  * 整棟巡檢 — 統一整合頁面（掛於商場管理群組）
  *
  * 將原本分散的 Dashboard + RF / B4F / B2F / B1F 巡檢紀錄整合為 Tabs
- *   Tab 1 統計總覽  — 今日各樓層 KPI + Sheet 完成率彙整
- *   Tab 2 RF 巡檢  — 月份篩選 + 場次清單
- *   Tab 3 B4F 巡檢 — 同上
- *   Tab 4 B2F 巡檢 — 同上
- *   Tab 5 B1F 巡檢 — 同上
+ *   Tab 1 Dashboard    — 今日各樓層 KPI + Sheet 完成率彙整 + 月曆格
+ *   Tab 2 每日巡檢表   — 模板結構（待本地同步接通後顯示真實資料）
+ *   Tab 3 RF 巡檢      — 月份篩選 + 場次清單
+ *   Tab 4 B4F 巡檢     — 同上
+ *   Tab 5 B2F 巡檢     — 同上
+ *   Tab 6 B1F 巡檢     — 同上
  *
- * URL query param：?tab=summary|rf|b4f|b2f|b1f
+ * URL query param：?tab=summary|daily-form|rf|b4f|b2f|b1f
  * 資料來源：尚未建立本地同步，各欄位顯示空狀態，保留結構供日後擴充。
  */
 import { useEffect, useState, useCallback } from 'react'
@@ -22,6 +23,7 @@ import {
   HomeOutlined, SyncOutlined, ReloadOutlined,
   WarningOutlined, CheckCircleOutlined, ExclamationCircleOutlined,
   DashboardOutlined, SafetyOutlined, ClockCircleOutlined, LinkOutlined,
+  CalendarOutlined,
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { NAV_GROUP, NAV_PAGE } from '@/constants/navLabels'
@@ -30,8 +32,13 @@ import {
 } from '@/constants/fullBuildingInspection'
 import {
   fetchFullBuildingMonthlyDashboard,
+  fetchFullBuildingInspectionCalendar,
+  fetchFullBuildingDailyForm,
   type FullBuildingMonthlySheetSummary,
+  type FullBuildingDailyFormRow,
 } from '@/api/fullBuildingInspection'
+import MonthlyCalendarGrid from '@/components/MonthlyCalendarGrid'
+import type { CalendarRow } from '@/components/MonthlyCalendarGrid'
 
 const { Title, Text } = Typography
 
@@ -47,6 +54,151 @@ interface BatchRow {
   checked:         number
   abnormal:        number
   pending:         number
+}
+
+// ── 每日巡檢表 Tab ────────────────────────────────────────────────────────────
+
+function FullBuildingDailyFormTab() {
+  const today = dayjs()
+  const [inspectionDate, setInspectionDate] = useState<string>(today.format('YYYY/MM/DD'))
+  const [loading,  setLoading]  = useState(false)
+  const [rows,     setRows]     = useState<FullBuildingDailyFormRow[]>([])
+  const [stdTotal, setStdTotal] = useState(0)
+
+  const load = useCallback(async (date: string) => {
+    setLoading(true)
+    try {
+      const [yr, mo] = date.split('/').map(Number)
+      const data = await fetchFullBuildingDailyForm(yr, mo, date)
+      setRows(data.rows)
+      setStdTotal(data.standard_minutes_total)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { load(inspectionDate) }, [load, inspectionDate])
+
+  // ── Table 欄位 ────────────────────────────────────────────────────────────
+
+  const columns = [
+    {
+      title:     '樓層',
+      dataIndex: 'floor',
+      width: 60,
+      onCell: (record: FullBuildingDailyFormRow) => ({
+        rowSpan: record.floor_first_row ? record.floor_row_count : 0,
+        style:   { fontWeight: 600, verticalAlign: 'middle', background: '#f0f4f8', textAlign: 'center' as const },
+      }),
+    },
+    {
+      title:     '項目',
+      dataIndex: 'item',
+      width: 160,
+      onCell: (record: FullBuildingDailyFormRow) => ({
+        rowSpan: record.item_first_row ? record.item_row_count : 0,
+        style:   { verticalAlign: 'middle', fontWeight: 500 },
+      }),
+    },
+    {
+      title:     '檢查內容',
+      dataIndex: 'check_content',
+      width: 240,
+    },
+    {
+      title:     '運轉狀況（結果）',
+      dataIndex: 'result_options',
+      width: 200,
+      render: (_: string, row: FullBuildingDailyFormRow) => {
+        if (!row.matched) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>
+        return (
+          <Space size={4} wrap>
+            {row.result_text
+              ? <Tag color={row.result_status === 'normal' ? '#52C41A' : row.result_status === 'abnormal' ? '#FF4D4F' : '#FAAD14'}>{row.result_text}</Tag>
+              : <Text type="secondary" style={{ fontSize: 11 }}>—</Text>
+            }
+          </Space>
+        )
+      },
+    },
+    {
+      title:     '實際巡檢人員',
+      dataIndex: 'inspector',
+      width: 110,
+      render: (v: string) => v || <Text type="secondary" style={{ fontSize: 11 }}>—</Text>,
+    },
+    {
+      title:     '異常說明',
+      dataIndex: 'abnormal_note',
+      render: (v: string) => v
+        ? <Text type="danger" style={{ fontSize: 11, whiteSpace: 'pre-wrap' }}>{v}</Text>
+        : <Text type="secondary" style={{ fontSize: 11 }}>—</Text>,
+    },
+    {
+      title:  '時間(分)',
+      dataIndex: 'minutes',
+      width: 75,
+      align: 'center' as const,
+      render: (v: number) => v > 0 ? <Text style={{ fontSize: 11 }}>{v}</Text> : null,
+      onCell: (record: FullBuildingDailyFormRow) => ({
+        rowSpan: record.item_first_row ? record.item_row_count : 0,
+        style:   { verticalAlign: 'middle', textAlign: 'center' as const },
+      }),
+    },
+  ]
+
+  return (
+    <div>
+      {/* 操作列 */}
+      <Row gutter={8} style={{ marginBottom: 16 }} align="middle">
+        <Col>
+          <DatePicker
+            value={dayjs(inspectionDate, 'YYYY/MM/DD')}
+            format="YYYY/MM/DD"
+            allowClear={false}
+            onChange={(d) => { if (d) setInspectionDate(d.format('YYYY/MM/DD')) }}
+          />
+        </Col>
+        <Col>
+          <Button icon={<ReloadOutlined />} onClick={() => load(inspectionDate)} loading={loading}>
+            重新整理
+          </Button>
+        </Col>
+      </Row>
+
+      <Alert
+        type="info"
+        showIcon
+        style={{ marginBottom: 12 }}
+        message="整棟巡檢本地同步功能開發中"
+        description="目前每日巡檢表尚未接通本地 DB，模板欄位已備妥。請至 Ragic 系統填寫各樓層巡檢表單，接通後資料將自動顯示於此。"
+      />
+
+      <Table<FullBuildingDailyFormRow>
+        dataSource={rows}
+        rowKey={(r) => `${r.floor}-${r.item}-${r.check_content}`}
+        columns={columns}
+        loading={loading}
+        size="small"
+        pagination={false}
+        bordered
+        rowClassName={(r) => r.abnormal ? 'row-abnormal' : ''}
+        style={{ fontSize: 12 }}
+        locale={{ emptyText: '尚無巡檢資料' }}
+      />
+
+      {/* 底部時間摘要 */}
+      <Row gutter={24} style={{ marginTop: 12, padding: '8px 0' }}>
+        <Col>
+          <Space>
+            <ClockCircleOutlined style={{ color: '#4BA8E8' }} />
+            <Text type="secondary">標準巡檢時間（整體）：</Text>
+            <Text strong>{stdTotal} 分鐘</Text>
+          </Space>
+        </Col>
+      </Row>
+    </div>
+  )
 }
 
 // ── 共用樓層巡檢紀錄 Tab ──────────────────────────────────────────────────────
@@ -189,6 +341,8 @@ function SummaryTabContent() {
   const [loading,    setLoading]    = useState(false)
   const [sheets,     setSheets]     = useState<FullBuildingMonthlySheetSummary[]>([])
   const [error,      setError]      = useState<string | null>(null)
+  const [calRows,    setCalRows]    = useState<CalendarRow[]>([])
+  const [calMaxDay,  setCalMaxDay]  = useState(31)
 
   const isCurrentMonth = queryMonth === dayjs().format('YYYY-MM')
   const monthLabel     = dayjs(queryMonth, 'YYYY-MM').format('YYYY年M月')
@@ -206,8 +360,13 @@ function SummaryTabContent() {
     setLoading(true)
     setError(null)
     try {
-      const data = await fetchFullBuildingMonthlyDashboard(queryMonth)
+      const [yr, mo] = queryMonth.split('-').map(Number)
+      const [data, calData] = await Promise.all([
+        fetchFullBuildingMonthlyDashboard(queryMonth),
+        fetchFullBuildingInspectionCalendar(yr, mo).catch(() => null),
+      ])
       setSheets(data.sheets)
+      if (calData) { setCalMaxDay(calData.max_day); setCalRows(calData.rows) }
     } catch {
       setError('取得統計資料失敗，請稍後再試')
       setSheets([])
@@ -379,13 +538,41 @@ function SummaryTabContent() {
           showIcon
         />
       )}
+
+      {/* 月曆格：各樓層 × 當月逐日巡檢狀況 */}
+      <Card
+        size="small"
+        style={{ marginTop: 16 }}
+        title={
+          <Space>
+            <CalendarOutlined />
+            <Text strong>整棟巡檢月曆格</Text>
+            <Text type="secondary" style={{ fontSize: 11, fontWeight: 400 }}>
+              （{monthLabel} 各樓層逐日出勤）
+            </Text>
+          </Space>
+        }
+        loading={loading}
+      >
+        {calRows.length > 0 ? (
+          <MonthlyCalendarGrid
+            year={parseInt(queryMonth.split('-')[0])}
+            month={parseInt(queryMonth.split('-')[1])}
+            maxDay={calMaxDay}
+            rows={calRows}
+            rowHeaderLabel="樓層"
+          />
+        ) : (
+          <Text type="secondary">尚無月曆資料</Text>
+        )}
+      </Card>
     </div>
   )
 }
 
 // ── 主元件 ────────────────────────────────────────────────────────────────────
 
-const VALID_TABS = ['summary', 'rf', 'b4f', 'b2f', 'b1f']
+const VALID_TABS = ['summary', 'daily-form', 'rf', 'b4f', 'b2f', 'b1f']
 
 export default function FullBuildingInspectionDashboard() {
   const [searchParams] = useSearchParams()
@@ -432,6 +619,11 @@ export default function FullBuildingInspectionDashboard() {
             key:      'summary',
             label:    'Dashboard',
             children: openedTabs.has('summary') ? <SummaryTabContent /> : null,
+          },
+          {
+            key:      'daily-form',
+            label:    '每日巡檢表',
+            children: openedTabs.has('daily-form') ? <FullBuildingDailyFormTab /> : null,
           },
           {
             key:      'rf',

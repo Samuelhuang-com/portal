@@ -62,3 +62,62 @@ export async function fetchFullBuildingMonthlyDashboard(
   )
   return res.data
 }
+
+// ── 每日巡檢表 ────────────────────────────────────────────────────────────────
+
+export interface FullBuildingDailyFormRow {
+  floor:           string
+  item:            string
+  check_content:   string
+  result_options:  string
+  minutes:         number
+  source_tab:      string
+  item_first_row:  boolean
+  floor_first_row: boolean
+  floor_row_count: number
+  item_row_count:  number
+  inspector:       string
+  result_text:     string
+  result_status:   'normal' | 'abnormal' | 'pending' | 'unchecked'
+  abnormal_note:   string
+  matched:         boolean
+  abnormal:        boolean
+  actual_minutes:  number
+}
+
+export interface FullBuildingDailyFormResponse {
+  year:                     number
+  month:                    number
+  inspection_date:          string
+  rows:                     FullBuildingDailyFormRow[]
+  standard_minutes_morning: number
+  standard_minutes_total:   number
+  actual_minutes:           number
+}
+
+/**
+ * 取得整棟巡檢每日巡檢表
+ * @param year            年份
+ * @param month           月份
+ * @param inspectionDate  巡檢日期 YYYY/MM/DD（不填則顯示整月模板）
+ */
+export async function fetchFullBuildingDailyForm(
+  year: number,
+  month: number,
+  inspectionDate?: string,
+): Promise<FullBuildingDailyFormResponse> {
+  const params: Record<string, unknown> = { year, month }
+  if (inspectionDate) params.inspection_date = inspectionDate
+  const res = await apiClient.get<FullBuildingDailyFormResponse>(`${BASE}/daily-form`, { params })
+  return res.data
+}
+
+// ── 月曆格（樓層 × 日）────────────────────────────────────────────────────────
+
+export async function fetchFullBuildingInspectionCalendar(
+  year: number,
+  month: number,
+): Promise<{ year: number; month: number; max_day: number; rows: import('@/components/MonthlyCalendarGrid').CalendarRow[] }> {
+  const res = await apiClient.get(`${BASE}/dashboard/calendar`, { params: { year, month } })
+  return res.data
+}

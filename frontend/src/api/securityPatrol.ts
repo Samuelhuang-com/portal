@@ -164,3 +164,54 @@ export async function fetchSecurityDashboardMonthlySummary(
   )
   return data
 }
+
+// ── 每日巡檢表 ────────────────────────────────────────────────────────────────
+
+export interface SecurityDailyFormRow {
+  floor:           string
+  item:            string
+  check_content:   string
+  result_options:  string
+  source_tab:      string
+  item_first_row:  boolean
+  floor_first_row: boolean
+  floor_row_count: number
+  item_row_count:  number
+  inspector:       string
+  result_text:     string
+  result_status:   'normal' | 'abnormal' | 'pending' | 'unchecked'
+  abnormal_note:   string
+  matched:         boolean
+  abnormal:        boolean
+}
+
+export interface SecurityDailyFormResponse {
+  year:            number
+  month:           number
+  inspection_date: string
+  rows:            SecurityDailyFormRow[]
+}
+
+export async function fetchSecurityDashboardDailyForm(
+  year: number,
+  month: number,
+  inspectionDate?: string,
+): Promise<SecurityDailyFormResponse> {
+  const params: Record<string, unknown> = { year, month }
+  if (inspectionDate) params.inspection_date = inspectionDate
+  const { data } = await apiClient.get<SecurityDailyFormResponse>(
+    `${BASE}/dashboard/daily-form`,
+    { params },
+  )
+  return data
+}
+
+// ── 月曆格（巡檢表 × 日）────────────────────────────────────────────────────
+
+export async function fetchSecurityDashboardCalendar(
+  year: number,
+  month: number,
+): Promise<{ year: number; month: number; max_day: number; rows: import('@/components/MonthlyCalendarGrid').CalendarRow[] }> {
+  const { data } = await apiClient.get(`${BASE}/dashboard/calendar`, { params: { year, month } })
+  return data
+}

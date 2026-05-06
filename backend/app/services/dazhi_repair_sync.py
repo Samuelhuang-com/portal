@@ -48,6 +48,12 @@ async def sync_from_ragic() -> dict:
             try:
                 existing = db.get(DazhiRepairCase, case.ragic_id)
                 if existing:
+                    # 2025 年以前的案件已手動結案，跳過 status/completed_at/year/month 覆蓋
+                    _skip_completion = (
+                        existing.occurred_at is not None
+                        and existing.occurred_at.year < 2026
+                        and existing.is_completed
+                    )
                     existing.case_no          = case.case_no
                     existing.title            = case.title
                     existing.reporter_name    = case.reporter_name
@@ -67,11 +73,12 @@ async def sync_from_ragic() -> dict:
                     existing.accept_status    = case.accept_status
                     existing.closer           = case.closer
                     existing.finance_note     = case.finance_note
-                    existing.is_completed     = case.is_completed_flag
-                    existing.completed_at     = case.completed_at
-                    existing.close_days       = case.close_days
-                    existing.year             = case.year
-                    existing.month            = case.month
+                    if not _skip_completion:
+                        existing.is_completed = case.is_completed_flag
+                        existing.completed_at = case.completed_at
+                        existing.close_days   = case.close_days
+                        existing.year         = case.year
+                        existing.month        = case.month
                     existing.is_room_case     = case.is_room_case
                     existing.room_no          = case.room_no
                     existing.room_category    = case.room_category
