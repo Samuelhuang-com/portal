@@ -14,6 +14,7 @@ GET /api/v1/hotel/person-hours  人員工時佔比（五項來源，Top-15）
 回傳格式與 mall_overview.py 完全一致，供前端直接套用相同表格元件。
 """
 import calendar
+import json
 import re
 from collections import defaultdict
 from datetime import date, datetime
@@ -28,6 +29,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.models.dazhi_repair import DazhiRepairCase
+from app.services.dazhi_repair_service import is_completed as _repair_is_completed
 from app.models.hotel_daily_inspection import HotelDIBatch
 from app.models.ihg_room_maintenance import IHGRoomMaintenanceMaster
 from app.models.periodic_maintenance import (
@@ -49,6 +51,10 @@ HOTEL_CATEGORIES = [
 
 # IHG 無工時欄位，每筆記錄固定估算 30 分鐘 = 0.5 hr
 IHG_HOURS_PER_RECORD = 0.5
+
+# 飯店週期保養案件數口徑：複製 hotel/periodic-maintenance TAB=每月維護
+# '本月週期保養項目數' 所使用的 frequency_type='monthly' 關鍵字集合
+PM_MONTHLY_FREQ = {"月", "每月", "月維護", "Monthly", "monthly"}
 
 
 def _parse_minutes(start: str, end: str) -> int:
@@ -100,6 +106,7 @@ def get_hotel_daily_hours(
     weekdays = [zh[date(year, month, d).weekday()] for d in days]
 
     bucket: dict[str, dict[int, float]] = {c: defaultdict(float) for c in HOTEL_CATEGORIES}
+    cases_bucket: dict[str, dict[int, int]] = {c: defaultdict(int) for c in HOTEL_CATEGORIES}
 
     date_prefix = f"{year}/{month:02d}/"
     period_prefix = f"{year}/{month:02d}"
@@ -125,10 +132,24 @@ def get_hotel_daily_hours(
                     day = int(sched.split("/")[1])
                     if 1 <= day <= days_in_month:
                         bucket["飯店週期保養"][day] += (item.estimated_minutes or 0) / 60
+                        # 案件數：複製 hotel/periodic-maintenance TAB=每月維護
+                        # '本月週期保養項目數' 邏輯（frequency=monthly + exec_months + full_date 在本月）
+                        freq = (item.frequency or "").strip()
+                        if freq in PM_MONTHLY_FREQ:
+                            exec_months = json.loads(item.exec_months_json or "[]")
+                            if not exec_months or month in exec_months:
+                                try:
+                                    parts = sched.strip().split("/")
+                                    full_date = date(year, int(parts[0]), int(parts[1]))
+                                    if full_date.year == year and full_date.month == month:
+                                        cases_bucket["飯店週期保養"][full_date.day] += 1
+                                except (ValueError, IndexError):
+                                    pass
                 except (ValueError, IndexError):
                     pass
 
     # ── ③ IHG客房保養：maint_date "YYYY/MM/DD"，每筆固定 0.5 hr ─────────────
+    ihg_month_rooms: set = set()  # 追蹤本月不重複房號，使 cases_total 與 monthly 端點一致
     for r in (
         db.query(IHGRoomMaintenanceMaster)
         .filter(IHGRoomMaintenanceMaster.maint_date.like(f"{date_prefix}%"))
@@ -138,6 +159,8 @@ def get_hotel_daily_hours(
             day = int(r.maint_date.split("/")[2])
             if 1 <= day <= days_in_month:
                 bucket["IHG客房保養"][day] += IHG_HOURS_PER_RECORD
+                cases_bucket["IHG客房保養"][day] += 1
+                ihg_month_rooms.add(r.room_no or "")
         except (ValueError, IndexError):
             pass
 
@@ -152,6 +175,7 @@ def get_hotel_daily_hours(
             if 1 <= day <= days_in_month:
                 mins = _parse_minutes(b.start_time or "", b.end_time or "")
                 bucket["飯店每日巡檢"][day] += mins / 60
+                cases_bucket["飯店每日巡檢"][day] += 1
         except (ValueError, IndexError):
             pass
 
@@ -166,50 +190,68 @@ def get_hotel_daily_hours(
             if 1 <= day <= days_in_month:
                 mins = _parse_minutes(b.start_time or "", b.end_time or "")
                 bucket["保全巡檢"][day] += mins / 60
+                cases_bucket["保全巡檢"][day] += 1
         except (ValueError, IndexError):
             pass
 
-    # ── ⑥ 飯店工務部：對齊「4.2 結案時間」選案邏輯 ─────────────────────────────
-    # 選案條件：有 completed_at 且落在目標年月（同 _closed_in 口徑，只統計已結案）
-    # 工時來源：① work_hours > 0 → 直接使用
-    #           ② work_hours = 0 且有 close_days → 以 close_days（結案天數）代入
-    #              原因：Ragic「維修天數」欄位常為空，close_days 由完工日–報修日計算而得
-    # 桶日期：completed_at.day（結案時間 → 對應 tab 4.2 的時間軸）
-    for c in (
-        db.query(DazhiRepairCase)
-        .filter(DazhiRepairCase.completed_at.isnot(None))
-        .all()
-    ):
-        if c.completed_at.year != year or c.completed_at.month != month:
-            continue
-        hrs = (c.work_hours or 0) if (c.work_hours or 0) > 0 else (c.close_days or 0)
-        if hrs <= 0:
-            continue
-        d = c.completed_at.day
-        if 1 <= d <= days_in_month:
-            bucket["飯店工務部"][d] += hrs
+    # ── ⑥ 飯店工務部 ────────────────────────────────────────────────────────────
+    # 案件數（_stat_year/_stat_month 口徑）：
+    #   is_completed(status) AND completed_at is not None → completed_at
+    #   otherwise → occurred_at
+    # 工時（原有口徑）：只統計已結案（completed_at 不為空），以 completed_at 為時間軸
+    for c in db.query(DazhiRepairCase).all():
+        # -- 案件數：_stat_year/_stat_month 口徑 --
+        if _repair_is_completed(c.status or '') and c.completed_at is not None:
+            stat_dt = c.completed_at
+        else:
+            stat_dt = c.occurred_at
+        if stat_dt is not None and stat_dt.year == year and stat_dt.month == month:
+            d = stat_dt.day
+            if 1 <= d <= days_in_month:
+                cases_bucket["飯店工務部"][d] += 1
+        # -- 工時：completed_at 口徑 --
+        if c.completed_at is not None and c.completed_at.year == year and c.completed_at.month == month:
+            hrs = (c.work_hours or 0) if (c.work_hours or 0) > 0 else (c.close_days or 0)
+            if hrs > 0:
+                d = c.completed_at.day
+                if 1 <= d <= days_in_month:
+                    bucket["飯店工務部"][d] += hrs
 
     # ── 組裝結果（與 mall_overview 格式完全一致）───────────────────────────────
     result_rows: list[dict] = []
     grand_total = 0.0
     grand_day = [0.0] * len(days)
+    grand_day_c = [0] * len(days)
 
     for cat in HOTEL_CATEGORIES:
         day_h = [round(bucket[cat][d], 1) for d in days]
+        day_c = [cases_bucket[cat][d] for d in days]
         total = round(sum(day_h), 1)
+        # IHG 案件總數用不重複房號數（與 monthly 端點口徑一致），其他用累加
+        cases_total = len(ihg_month_rooms) if cat == "IHG客房保養" else sum(day_c)
         grand_total += total
         for i, h in enumerate(day_h):
             grand_day[i] += h
-        result_rows.append({"category": cat, "hours": day_h, "total": total, "pct": 0.0})
+        for i, cv in enumerate(day_c):
+            grand_day_c[i] += cv
+        result_rows.append({
+            "category": cat,
+            "hours": day_h, "total": total, "pct": 0.0,
+            "cases": day_c, "cases_total": cases_total,
+        })
 
     for row in result_rows:
         row["pct"] = round(row["total"] / grand_total * 100, 1) if grand_total else 0.0
 
+    # TOTAL cases_total：各列 cases_total 加總（IHG 已使用不重複房號數）
+    total_cases_total = sum(row["cases_total"] for row in result_rows)
     result_rows.append({
         "category": "TOTAL",
-        "hours":    [round(h, 1) for h in grand_day],
-        "total":    round(grand_total, 1),
-        "pct":      100.0,
+        "hours":       [round(h, 1) for h in grand_day],
+        "total":       round(grand_total, 1),
+        "pct":         100.0,
+        "cases":       grand_day_c,
+        "cases_total": total_cases_total,
     })
 
     return {
@@ -247,6 +289,8 @@ def get_hotel_monthly_hours(
     ```
     """
     bucket: dict[str, dict[int, float]] = {c: defaultdict(float) for c in HOTEL_CATEGORIES}
+    cases_bucket: dict[str, dict[int, int]] = {c: defaultdict(int) for c in HOTEL_CATEGORIES}
+    ihg_rooms_by_month: dict[int, set] = defaultdict(set)
     year_prefix = f"{year}/"
 
     # ── ① 飯店週期保養 ─────────────────────────────────────────────────────────
@@ -267,6 +311,21 @@ def get_hotel_monthly_hours(
             .all()
         ):
             bucket["飯店週期保養"][m] += (item.estimated_minutes or 0) / 60
+            # 案件數：複製 hotel/periodic-maintenance TAB=每月維護
+            # '本月週期保養項目數' 邏輯（frequency=monthly + exec_months + full_date 在本月）
+            freq = (item.frequency or "").strip()
+            if freq in PM_MONTHLY_FREQ:
+                exec_months = json.loads(item.exec_months_json or "[]")
+                if not exec_months or m in exec_months:
+                    sched = (item.scheduled_date or "").strip()
+                    if "/" in sched:
+                        try:
+                            parts = sched.split("/")
+                            full_date = date(year, int(parts[0]), int(parts[1]))
+                            if full_date.year == year and full_date.month == m:
+                                cases_bucket["飯店週期保養"][m] += 1
+                        except (ValueError, IndexError):
+                            pass
 
     # ── ③ IHG客房保養 ──────────────────────────────────────────────────────────
     for r in (
@@ -278,8 +337,12 @@ def get_hotel_monthly_hours(
             m = int(r.maint_date.split("/")[1])
             if 1 <= m <= 12:
                 bucket["IHG客房保養"][m] += IHG_HOURS_PER_RECORD
+                ihg_rooms_by_month[m].add(r.room_no or "")
         except (ValueError, IndexError):
             pass
+    # IHG 案件數 = 每月不重複房號數
+    for m, rooms in ihg_rooms_by_month.items():
+        cases_bucket["IHG客房保養"][m] = len(rooms)
 
     # ── ④ 飯店每日巡檢 ─────────────────────────────────────────────────────────
     for b in (
@@ -293,6 +356,7 @@ def get_hotel_monthly_hours(
                 bucket["飯店每日巡檢"][m] += (
                     _parse_minutes(b.start_time or "", b.end_time or "") / 60
                 )
+                cases_bucket["飯店每日巡檢"][m] += 1
         except (ValueError, IndexError):
             pass
 
@@ -308,49 +372,65 @@ def get_hotel_monthly_hours(
                 bucket["保全巡檢"][m] += (
                     _parse_minutes(b.start_time or "", b.end_time or "") / 60
                 )
+                cases_bucket["保全巡檢"][m] += 1
         except (ValueError, IndexError):
             pass
 
-    # ── ⑥ 飯店工務部：對齊「4.2 結案時間」選案邏輯 ─────────────────────────────
-    # 選案條件：有 completed_at 且年份符合（只統計已結案案件）
-    # 工時來源：① work_hours > 0 → 直接使用
-    #           ② work_hours = 0 且有 close_days → 以 close_days 代入
-    # 桶月份：completed_at.month（結案時間月份）
-    for c in (
-        db.query(DazhiRepairCase)
-        .filter(DazhiRepairCase.completed_at.isnot(None))
-        .all()
-    ):
-        if c.completed_at.year != year:
-            continue
-        hrs = (c.work_hours or 0) if (c.work_hours or 0) > 0 else (c.close_days or 0)
-        if hrs <= 0:
-            continue
-        m = c.completed_at.month
-        if 1 <= m <= 12:
-            bucket["飯店工務部"][m] += hrs
+    # ── ⑥ 飯店工務部 ────────────────────────────────────────────────────────────
+    # 案件數（_stat_year/_stat_month 口徑）：
+    #   is_completed(status) AND completed_at is not None → completed_at.month
+    #   otherwise → occurred_at.month
+    # 工時（原有口徑）：只統計已結案（completed_at 不為空），以 completed_at 為時間軸
+    for c in db.query(DazhiRepairCase).all():
+        # -- 案件數：_stat_year/_stat_month 口徑 --
+        if _repair_is_completed(c.status or '') and c.completed_at is not None:
+            stat_y, stat_m = c.completed_at.year, c.completed_at.month
+        elif c.occurred_at is not None:
+            stat_y, stat_m = c.occurred_at.year, c.occurred_at.month
+        else:
+            stat_y, stat_m = None, None
+        if stat_y == year and stat_m is not None and 1 <= stat_m <= 12:
+            cases_bucket["飯店工務部"][stat_m] += 1
+        # -- 工時：completed_at 口徑 --
+        if c.completed_at is not None and c.completed_at.year == year:
+            hrs = (c.work_hours or 0) if (c.work_hours or 0) > 0 else (c.close_days or 0)
+            if hrs > 0:
+                m = c.completed_at.month
+                if 1 <= m <= 12:
+                    bucket["飯店工務部"][m] += hrs
 
     # ── 組裝結果 ─────────────────────────────────────────────────────────────
     result_rows: list[dict] = []
     grand_total = 0.0
     grand_m = [0.0] * 12
+    grand_m_c = [0] * 12
 
     for cat in HOTEL_CATEGORIES:
         mh = [round(bucket[cat][m], 1) for m in range(1, 13)]
+        mc = [cases_bucket[cat][m] for m in range(1, 13)]
         total = round(sum(mh), 1)
+        cases_total = sum(mc)
         grand_total += total
         for i, h in enumerate(mh):
             grand_m[i] += h
-        result_rows.append({"category": cat, "hours": mh, "total": total, "pct": 0.0})
+        for i, cv in enumerate(mc):
+            grand_m_c[i] += cv
+        result_rows.append({
+            "category": cat,
+            "hours": mh, "total": total, "pct": 0.0,
+            "cases": mc, "cases_total": cases_total,
+        })
 
     for row in result_rows:
         row["pct"] = round(row["total"] / grand_total * 100, 1) if grand_total else 0.0
 
     result_rows.append({
         "category": "TOTAL",
-        "hours":    [round(h, 1) for h in grand_m],
-        "total":    round(grand_total, 1),
-        "pct":      100.0,
+        "hours":       [round(h, 1) for h in grand_m],
+        "total":       round(grand_total, 1),
+        "pct":         100.0,
+        "cases":       grand_m_c,
+        "cases_total": sum(grand_m_c),
     })
 
     return {"year": year, "months": list(range(1, 13)), "rows": result_rows}

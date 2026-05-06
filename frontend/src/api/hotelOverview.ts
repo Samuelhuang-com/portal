@@ -13,6 +13,8 @@ export interface HotelDailyRow {
   hours: number[];
   total: number;
   pct: number;
+  cases: number[];
+  cases_total: number;
 }
 
 export interface HotelDailyHoursData {
@@ -42,6 +44,8 @@ export interface HotelMonthlyRow {
   hours: number[];
   total: number;
   pct: number;
+  cases: number[];
+  cases_total: number;
 }
 
 export interface HotelMonthlyHoursData {
@@ -123,7 +127,7 @@ export interface HotelPptxPayload {
 }
 
 /**
- * POST hotel/overview PPTX — 前端帶入 KPI payload，觸發瀏覽器下載。
+ * POST hotel/overview PPTX — 前端帶入已計算好的 KPI payload，觸發瀏覽器下載。
  */
 export async function exportHotelOverviewPptx(
   year: number,
@@ -157,10 +161,10 @@ export async function exportHotelOverviewPptx(
 // ────────────────────────────────────────────────────────────────────────────
 
 export const HOTEL_CATEGORY_COLORS: Record<string, string> = {
-  飯店週期保養: '#4BA8E8',
-  IHG客房保養: '#52C41A',
-  飯店每日巡檢: '#FA8C16',
-  保全巡檢:    '#722ED1',
-  飯店工務部:  '#13C2C2',
+  '飯店週期保養': '#4BA8E8',
+  'IHG客房保養': '#52C41A',
+  '飯店每日巡檢': '#FA8C16',
+  '保全巡檢':    '#722ED1',
+  '飯店工務部':  '#13C2C2',
   TOTAL:       '#FF4D4F',
 };

@@ -22,6 +22,7 @@ import {
   BarChartOutlined, LineChartOutlined, PieChartOutlined,
   DashboardOutlined, WarningOutlined, RightOutlined,
   ReloadOutlined, QuestionCircleOutlined, FilePptOutlined,
+  CalendarOutlined,
 } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import {
@@ -240,6 +241,38 @@ const fmtCount = (n: number) => n < 0 ? '—' : n.toLocaleString()
 // 主頁面
 // ════════════════════════════════════════════════════════════════════════════
 export default function HotelMgmtDashboardPage() {
+  // ── 各類別計算公式說明（Tooltip 內容，用 createElement 避免 JSX 在物件值的 parser 問題）─
+  const ce = React.createElement
+  const HOTEL_5CAT_TOOLTIPS: Record<Hotel5Cat, React.ReactNode> = {
+    現場報修: ce('div', { style: { fontSize: 12, lineHeight: 1.9 } },
+      ce('b', null, '飯店工務部 / Hotel Engineering'), '（hotel/dazhi-repair）', ce('br'),
+      '以 ', ce('code', null, '_stat_year/_stat_month'), ' 口徑歸屬月份：', ce('br'),
+      '・已結案且 ', ce('code', null, 'completed_at'), ' 有值 → 以 completed_at 歸屬', ce('br'),
+      '・其餘 → 以 ', ce('code', null, 'occurred_at'), '（事件發生日）歸屬', ce('br'),
+      ce('span', { style: { color: '#ccc', fontSize: 11 } },
+        '已結案狀態：結案／已辦驗／已驗收／已結案／完修／已完成／完成'),
+    ),
+    上級交辦: ce('div', { style: { fontSize: 12 } }, '建置中，目前顯示 0'),
+    緊急事件: ce('div', { style: { fontSize: 12 } }, '建置中，目前顯示 0'),
+    例行維護: ce('div', { style: { fontSize: 12, lineHeight: 1.9 } },
+      '① ', ce('b', null, '飯店例行維護 / Hotel Periodic Maintenance'), '（hotel/periodic-maintenance）', ce('br'),
+      '　同「每月維護」TAB「本月週期保養項目數」口徑：', ce('br'),
+      '　', ce('code', null, 'frequency'), ' 為月維護（月／每月／月維護／Monthly／monthly）', ce('br'),
+      '　＋ ', ce('code', null, 'exec_months'), ' 包含目標月份', ce('br'),
+      '　＋ ', ce('code', null, 'scheduled_date'), ' 重組後落在目標月份', ce('br'),
+      '② ', ce('b', null, 'IHG客房保養 / IHG Room Maintenance'), '（hotel/ihg-room-maintenance）', ce('br'),
+      '　目標月份內 ', ce('code', null, 'maint_date'), ' 有資料的不重複房號數（distinct room_no）', ce('br'),
+      ce('b', null, '總和 = ①＋②'),
+    ),
+    每日巡檢: ce('div', { style: { fontSize: 12, lineHeight: 1.9 } },
+      '① ', ce('b', null, '飯店每日巡檢 / Hotel Daily Inspection'), '（hotel/daily-inspection）', ce('br'),
+      '　以 ', ce('code', null, 'inspection_date'), ' 歸屬，每筆批次 = 一次巡邏', ce('br'),
+      '② ', ce('b', null, '保全巡檢 / Security Patrol'), '（security/patrol）', ce('br'),
+      '　以 ', ce('code', null, 'inspection_date'), ' 歸屬，每筆批次 = 一次巡邏', ce('br'),
+      ce('b', null, '總和 = ①＋②'),
+    ),
+  }
+
   const navigate  = useNavigate()
   const thisYear  = dayjs().year()
   const thisMonth = dayjs().month() + 1
@@ -271,8 +304,11 @@ export default function HotelMgmtDashboardPage() {
   const [personData,      setPersonData]       = useState<HotelPersonHoursData | null>(null)
   const [tabBLoading,     setTabBLoading]      = useState(false)
   const [tabCLoading,     setTabCLoading]      = useState(false)
-  const [tabDLoading,     setTabDLoading]      = useState(false)
-  const [exportLoading,   setExportLoading]    = useState(false)
+  const [tabDLoading,      setTabDLoading]       = useState(false)
+  const [yearlyData,       setYearlyData]        = useState<HotelMonthlyHoursData | null>(null)
+  const [yearlyYear,       setYearlyYear]        = useState<number>(thisYear)
+  const [tabYearlyLoading, setTabYearlyLoading]  = useState(false)
+  const [exportLoading,    setExportLoading]     = useState(false)
 
   // 記錄哪些 tab 已載入過（避免重複請求）
   const loadedTabs = useRef<Set<string>>(new Set())
@@ -331,6 +367,9 @@ export default function HotelMgmtDashboardPage() {
     } else if (key === 'monthly') {
       setTabCLoading(true)
       fetchHotelMonthlyHours(year).then(setMonthlyData).finally(() => setTabCLoading(false))
+    } else if (key === 'yearly') {
+      setTabYearlyLoading(true)
+      fetchHotelMonthlyHours(yearlyYear).then(setYearlyData).finally(() => setTabYearlyLoading(false))
     } else if (key === 'person' || key === 'ranking') {
       // 用獨立的 key 追蹤資料是否已載入（避免與外層 tab-visit key 衝突）
       const personDataKey = `personData:${year}`
@@ -398,8 +437,8 @@ export default function HotelMgmtDashboardPage() {
     if (!sources.length) return null
 
     const PLACEHOLDER_CARDS = [
-      { key: 'mgmt_order', label: '商場主管交辦', color: ORANGE, icon: <ExclamationCircleOutlined /> },
-      { key: 'emergency',  label: '商場緊急事件', color: RED,    icon: <WarningOutlined />           },
+      { key: 'mgmt_order', label: '飯店主管交辦', color: ORANGE, icon: <ExclamationCircleOutlined /> },
+      { key: 'emergency',  label: '飯店緊急事件', color: RED,    icon: <WarningOutlined />           },
     ]
 
     return (
@@ -638,7 +677,7 @@ export default function HotelMgmtDashboardPage() {
 
   // ── Tab B — 欄位建構（五項工作類別 × 每日）──────────────────────────────
   function buildDailyCols(days: number[], weekdays: string[]) {
-    type Row5 = { category: string; hours: number[]; total: number; pct: number; key: string }
+    type Row5 = { category: string; cases: number[]; total: number; pct: number; key: string }
     return [
       {
         title: '工項類別', dataIndex: 'category', key: 'category',
@@ -646,29 +685,29 @@ export default function HotelMgmtDashboardPage() {
         render: (v: string) =>
           v === 'TOTAL'
             ? <Text strong style={{ color: BRAND_BLUE }}>TOTAL</Text>
-            : <Tag color={HOTEL_5CAT_TAG_COLORS[v] ?? 'default'} style={{ fontSize: 11 }}>{v}</Tag>,
+            : <Tag color={HOTEL_5CAT_TAG_COLORS[v] ?? 'default'} style={{ fontSize: 13 }}>{v}</Tag>,
       },
       ...days.map((d, i) => ({
         title: (
           <div style={{ textAlign: 'center' as const, lineHeight: 1.2 }}>
-            <div style={{ fontSize: 10 }}>{d}</div>
-            <div style={{ fontSize: 9, color: '#888' }}>{weekdays[i]}</div>
+            <div style={{ fontSize: 12 }}>{d}</div>
+            <div style={{ fontSize: 11, color: '#888' }}>{weekdays[i]}</div>
           </div>
         ),
         key: `d${d}`, width: 38, align: 'center' as const,
         render: (_: unknown, row: Row5) => {
-          const v = row.hours[i] ?? 0
-          return <Text style={{ fontSize: 11, color: v > 0 ? BRAND_BLUE : '#ccc' }}>
-            {v > 0 ? v.toFixed(1) : '-'}
+          const v = row.cases[i] ?? 0
+          return <Text style={{ fontSize: 13, color: v > 0 ? BRAND_BLUE : '#ccc' }}>
+            {v > 0 ? v : '—'}
           </Text>
         },
       })),
       {
-        title: 'TOTAL', dataIndex: 'total', key: 'total', width: 62,
+        title: '案件數', dataIndex: 'total', key: 'total', width: 62,
         align: 'center' as const,
         render: (v: number, row: Row5) => (
           <Text strong style={{ color: row.category === 'TOTAL' ? BRAND_BLUE : '#333' }}>
-            {v.toFixed(1)}
+            {v}
           </Text>
         ),
       },
@@ -703,34 +742,32 @@ export default function HotelMgmtDashboardPage() {
     const diHotel  = find('飯店每日巡檢')
     const security = find('保全巡檢')
 
-    const catHours: Record<Hotel5Cat, number[]> = {
-      現場報修: dazhi?.hours                                     ?? zeroes(),
+    const catCases: Record<Hotel5Cat, number[]> = {
+      現場報修: dazhi?.cases                                     ?? zeroes(),
       上級交辦: zeroes(),
       緊急事件: zeroes(),
-      例行維護: addH(addH(room?.hours, periodic?.hours), ihg?.hours),
-      每日巡檢: addH(diHotel?.hours, security?.hours),
+      例行維護: addH(addH(room?.cases, periodic?.cases), ihg?.cases),
+      每日巡檢: addH(diHotel?.cases, security?.cases),
     }
 
     const grandTotal = (HOTEL_5CATS as readonly Hotel5Cat[]).reduce(
-      (s, cat) => s + catHours[cat].reduce((a, b) => a + b, 0), 0
+      (s, cat) => s + catCases[cat].reduce((a, b) => a + b, 0), 0
     )
 
-    type Row5 = { key: string; category: string; hours: number[]; total: number; pct: number }
+    type Row5 = { key: string; category: string; cases: number[]; total: number; pct: number }
     const tableRows: Row5[] = (HOTEL_5CATS as readonly Hotel5Cat[]).map(cat => {
-      const hours = catHours[cat].map(h => Math.round(h * 10) / 10)
-      const total = Math.round(hours.reduce((a, b) => a + b, 0) * 10) / 10
+      const cases = catCases[cat]
+      const total = cases.reduce((a, b) => a + b, 0)
       const pct   = grandTotal > 0 ? Math.round(total / grandTotal * 1000) / 10 : 0
-      return { key: cat, category: cat, hours, total, pct }
+      return { key: cat, category: cat, cases, total, pct }
     })
 
     // TOTAL 合計列
-    const totalHours = dailyData.days.map((_, i) =>
-      Math.round(
-        (HOTEL_5CATS as readonly Hotel5Cat[]).reduce((s, cat) => s + (catHours[cat][i] ?? 0), 0) * 10
-      ) / 10
+    const totalCases = dailyData.days.map((_, i) =>
+      (HOTEL_5CATS as readonly Hotel5Cat[]).reduce((s, cat) => s + (catCases[cat][i] ?? 0), 0)
     )
-    const totalTotal = Math.round(grandTotal * 10) / 10
-    tableRows.push({ key: 'TOTAL', category: 'TOTAL', hours: totalHours, total: totalTotal, pct: 100 })
+    const totalTotal = totalCases.reduce((a, b) => a + b, 0)
+    tableRows.push({ key: 'TOTAL', category: 'TOTAL', cases: totalCases, total: totalTotal, pct: 100 })
 
     return (
       <>
@@ -738,7 +775,7 @@ export default function HotelMgmtDashboardPage() {
         <Card size="small" style={{ marginBottom: 12, background: '#f9fbff' }}>
           <Row gutter={[16, 8]} align="middle">
             <Col>
-              <Text type="secondary" style={{ fontSize: 12 }}>每日累計工時 (HR)</Text>
+              <Text type="secondary" style={{ fontSize: 12 }}>每日累計案件數</Text>
             </Col>
             <Col>
               <Select
@@ -772,21 +809,18 @@ export default function HotelMgmtDashboardPage() {
         {/* 類別圖例 */}
         <Space wrap style={{ marginBottom: 12 }}>
           {(HOTEL_5CATS as readonly Hotel5Cat[]).map(cat => (
-            <Tag key={cat} color={HOTEL_5CAT_TAG_COLORS[cat]}>{cat}</Tag>
+            <Space key={cat} size={2}>
+              <Tag color={HOTEL_5CAT_TAG_COLORS[cat]}>{cat}</Tag>
+              <Tooltip title={HOTEL_5CAT_TOOLTIPS[cat]} overlayStyle={{ maxWidth: 440 }}>
+                <Text style={{ fontSize: 11, cursor: 'help', color: '#bbb' }}>ⓘ</Text>
+              </Tooltip>
+            </Space>
           ))}
-          <Text type="secondary" style={{ fontSize: 11 }}>
-            （上級交辦、緊急事件模組建置中，目前顯示 0）
-          </Text>
-          <Tooltip title="現場報修：以「4.2 結案時間」口徑計算，按 completed_at 日期歸戶。工時優先取「維修天數」；為 0 時以「結案天數（close_days）」代入。">
-            <Text type="secondary" style={{ fontSize: 11, cursor: 'help', color: '#aaa' }}>
-              ⓘ 現場報修數值說明
-            </Text>
-          </Tooltip>
         </Space>
 
         {/* 表格 */}
         <Card
-          title={<Text strong>每日累計工時 (HR)</Text>}
+          title={<Text strong>每日累計案件數</Text>}
           extra={<Text type="secondary">{dailyData.year} 年 {dailyData.month} 月</Text>}
           bodyStyle={{ padding: '6px 0' }}
         >
@@ -797,7 +831,7 @@ export default function HotelMgmtDashboardPage() {
             size="small"
             scroll={{ x: 'max-content' }}
             rowClassName={(r) => r.category === 'TOTAL' ? 'ant-table-row-total' : ''}
-            style={{ fontSize: 12 }}
+            style={{ fontSize: 14 }}
           />
         </Card>
       </>
@@ -809,7 +843,7 @@ export default function HotelMgmtDashboardPage() {
   // ════════════════════════════════════════════════════════════════════════
 
   function buildMonthlyCols() {
-    type Row5M = { category: string; hours: number[]; total: number; pct: number; key: string }
+    type Row5M = { category: string; cases: number[]; total: number; pct: number; key: string }
     const zhMonths = ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月']
     return [
       {
@@ -818,7 +852,7 @@ export default function HotelMgmtDashboardPage() {
         render: (v: string) =>
           v === 'TOTAL'
             ? <Text strong style={{ color: BRAND_BLUE }}>TOTAL</Text>
-            : <Tag color={HOTEL_5CAT_TAG_COLORS[v] ?? 'default'} style={{ fontSize: 11 }}>{v}</Tag>,
+            : <Tag color={HOTEL_5CAT_TAG_COLORS[v] ?? 'default'} style={{ fontSize: 13 }}>{v}</Tag>,
       },
       ...zhMonths.map((label, i) => ({
         title: label,
@@ -826,18 +860,18 @@ export default function HotelMgmtDashboardPage() {
         width: 62,
         align: 'center' as const,
         render: (_: unknown, row: Row5M) => {
-          const v = row.hours[i] ?? 0
-          return <Text style={{ fontSize: 11, color: v > 0 ? BRAND_BLUE : '#ccc' }}>
-            {v > 0 ? v.toFixed(1) : '-'}
+          const v = row.cases[i] ?? 0
+          return <Text style={{ fontSize: 13, color: v > 0 ? BRAND_BLUE : '#ccc' }}>
+            {v > 0 ? v : '—'}
           </Text>
         },
       })),
       {
-        title: 'TOTAL', dataIndex: 'total', key: 'total', width: 62,
+        title: '案件數', dataIndex: 'total', key: 'total', width: 62,
         align: 'center' as const,
         render: (v: number, row: Row5M) => (
           <Text strong style={{ color: row.category === 'TOTAL' ? BRAND_BLUE : '#333' }}>
-            {v.toFixed(1)}
+            {v}
           </Text>
         ),
       },
@@ -872,34 +906,32 @@ export default function HotelMgmtDashboardPage() {
     const diHotel  = find('飯店每日巡檢')
     const security = find('保全巡檢')
 
-    const catHours: Record<Hotel5Cat, number[]> = {
-      現場報修: dazhi?.hours                                      ?? zeroes(),
+    const catCases: Record<Hotel5Cat, number[]> = {
+      現場報修: dazhi?.cases                                      ?? zeroes(),
       上級交辦: zeroes(),
       緊急事件: zeroes(),
-      例行維護: addH(addH(room?.hours, periodic?.hours), ihg?.hours),
-      每日巡檢: addH(diHotel?.hours, security?.hours),
+      例行維護: addH(addH(room?.cases, periodic?.cases), ihg?.cases),
+      每日巡檢: addH(diHotel?.cases, security?.cases),
     }
 
     const grandTotal = (HOTEL_5CATS as readonly Hotel5Cat[]).reduce(
-      (s, cat) => s + catHours[cat].reduce((a, b) => a + b, 0), 0
+      (s, cat) => s + catCases[cat].reduce((a, b) => a + b, 0), 0
     )
 
-    type Row5M = { key: string; category: string; hours: number[]; total: number; pct: number }
+    type Row5M = { key: string; category: string; cases: number[]; total: number; pct: number }
     const tableRows: Row5M[] = (HOTEL_5CATS as readonly Hotel5Cat[]).map(cat => {
-      const hours = catHours[cat].map(h => Math.round(h * 10) / 10)
-      const total = Math.round(hours.reduce((a, b) => a + b, 0) * 10) / 10
+      const cases = catCases[cat]
+      const total = cases.reduce((a, b) => a + b, 0)
       const pct   = grandTotal > 0 ? Math.round(total / grandTotal * 1000) / 10 : 0
-      return { key: cat, category: cat, hours, total, pct }
+      return { key: cat, category: cat, cases, total, pct }
     })
 
     // TOTAL 合計列
-    const totalHours = Array.from({ length: 12 }, (_, i) =>
-      Math.round(
-        (HOTEL_5CATS as readonly Hotel5Cat[]).reduce((s, cat) => s + (catHours[cat][i] ?? 0), 0) * 10
-      ) / 10
+    const totalCases = Array.from({ length: 12 }, (_, i) =>
+      (HOTEL_5CATS as readonly Hotel5Cat[]).reduce((s, cat) => s + (catCases[cat][i] ?? 0), 0)
     )
-    const totalTotal = Math.round(grandTotal * 10) / 10
-    tableRows.push({ key: 'TOTAL', category: 'TOTAL', hours: totalHours, total: totalTotal, pct: 100 })
+    const totalTotal = totalCases.reduce((a, b) => a + b, 0)
+    tableRows.push({ key: 'TOTAL', category: 'TOTAL', cases: totalCases, total: totalTotal, pct: 100 })
 
     return (
       <>
@@ -907,7 +939,7 @@ export default function HotelMgmtDashboardPage() {
         <Card size="small" style={{ marginBottom: 12, background: '#f9fbff' }}>
           <Row gutter={[16, 8]} align="middle">
             <Col>
-              <Text type="secondary" style={{ fontSize: 12 }}>年度工時彙總</Text>
+              <Text type="secondary" style={{ fontSize: 12 }}>年度案件數彙總</Text>
             </Col>
             <Col>
               <Select
@@ -934,21 +966,18 @@ export default function HotelMgmtDashboardPage() {
         {/* 類別圖例 */}
         <Space wrap style={{ marginBottom: 12 }}>
           {(HOTEL_5CATS as readonly Hotel5Cat[]).map(cat => (
-            <Tag key={cat} color={HOTEL_5CAT_TAG_COLORS[cat]}>{cat}</Tag>
+            <Space key={cat} size={2}>
+              <Tag color={HOTEL_5CAT_TAG_COLORS[cat]}>{cat}</Tag>
+              <Tooltip title={HOTEL_5CAT_TOOLTIPS[cat]} overlayStyle={{ maxWidth: 440 }}>
+                <Text style={{ fontSize: 11, cursor: 'help', color: '#bbb' }}>ⓘ</Text>
+              </Tooltip>
+            </Space>
           ))}
-          <Text type="secondary" style={{ fontSize: 11 }}>
-            （上級交辦、緊急事件模組建置中，目前顯示 0）
-          </Text>
-          <Tooltip title="現場報修：以「4.2 結案時間」口徑計算，按 completed_at 月份歸戶。工時優先取「維修天數」；為 0 時以「結案天數（close_days）」代入。">
-            <Text type="secondary" style={{ fontSize: 11, cursor: 'help', color: '#aaa' }}>
-              ⓘ 現場報修數值說明
-            </Text>
-          </Tooltip>
         </Space>
 
         {/* 表格 */}
         <Card
-          title={<Text strong>每月累計工時 (HR)</Text>}
+          title={<Text strong>每月累計案件數</Text>}
           extra={<Text type="secondary">{year} 年</Text>}
           bodyStyle={{ padding: '6px 0' }}
         >
@@ -959,7 +988,7 @@ export default function HotelMgmtDashboardPage() {
             size="small"
             scroll={{ x: 'max-content' }}
             rowClassName={(r) => r.category === 'TOTAL' ? 'ant-table-row-total' : ''}
-            style={{ fontSize: 12 }}
+            style={{ fontSize: 14 }}
           />
         </Card>
       </>
@@ -967,7 +996,147 @@ export default function HotelMgmtDashboardPage() {
   }
 
   // ════════════════════════════════════════════════════════════════════════
-  // D. 人員工時% — 欄位建構 + 渲染
+  // D. 每年累計 — 五項工作類別 × 12 個月（Running Total）
+  // ════════════════════════════════════════════════════════════════════════
+
+  function TabDYearly() {
+    if (!yearlyData) return <Alert message="切換至此 Tab 後自動載入" type="info" showIcon />
+
+    // 將後端來源合併為五項工作類別（同 TabCMonthly）
+    const find = (name: string) => yearlyData.rows.find(r => r.category === name)
+    const n = 12
+    const zeroes = (): number[] => Array(n).fill(0)
+    const addH   = (a: number[] | undefined, b: number[] | undefined): number[] =>
+      zeroes().map((_, i) => (a?.[i] ?? 0) + (b?.[i] ?? 0))
+
+    const dazhi    = find('飯店工務部')
+    const room     = find('客房保養管理')
+    const periodic = find('飯店週期保養')
+    const ihg      = find('IHG客房保養')
+    const diHotel  = find('飯店每日巡檢')
+    const security = find('保全巡檢')
+
+    const catMonthly: Record<Hotel5Cat, number[]> = {
+      現場報修: dazhi?.cases                                      ?? zeroes(),
+      上級交辦: zeroes(),
+      緊急事件: zeroes(),
+      例行維護: addH(addH(room?.cases, periodic?.cases), ihg?.cases),
+      每日巡檢: addH(diHotel?.cases, security?.cases),
+    }
+
+    // 轉為累計（Running Total）：每月值 = 1 月到該月的加總（案件數，整數）
+    const toCumulative = (arr: number[]): number[] => {
+      let sum = 0
+      return arr.map(v => { sum += v; return sum })
+    }
+
+    const catCases: Record<Hotel5Cat, number[]> = {
+      現場報修: toCumulative(catMonthly.現場報修),
+      上級交辦: toCumulative(catMonthly.上級交辦),
+      緊急事件: toCumulative(catMonthly.緊急事件),
+      例行維護: toCumulative(catMonthly.例行維護),
+      每日巡檢: toCumulative(catMonthly.每日巡檢),
+    }
+
+    // 全年合計 = 12 月的累計值（= 全年各類別加總）
+    const grandTotal = (HOTEL_5CATS as readonly Hotel5Cat[]).reduce(
+      (s, cat) => s + (catCases[cat][11] ?? 0), 0
+    )
+
+    type Row5Y = { key: string; category: string; cases: number[]; total: number; pct: number }
+    const tableRows: Row5Y[] = (HOTEL_5CATS as readonly Hotel5Cat[]).map(cat => {
+      const cases = catCases[cat]
+      const total = cases[11] ?? 0   // 12 月累計 = 全年合計
+      const pct   = grandTotal > 0 ? Math.round(total / grandTotal * 1000) / 10 : 0
+      return { key: cat, category: cat, cases, total, pct }
+    })
+
+    // TOTAL 列：每月所有類別累計之和
+    const totalCases = Array.from({ length: 12 }, (_, i) =>
+      (HOTEL_5CATS as readonly Hotel5Cat[]).reduce((s, cat) => s + (catCases[cat][i] ?? 0), 0)
+    )
+    tableRows.push({
+      key: 'TOTAL', category: 'TOTAL',
+      cases: totalCases,
+      total: grandTotal,
+      pct:   100,
+    })
+
+    return (
+      <>
+        {/* 篩選列 */}
+        <Card size="small" style={{ marginBottom: 12, background: '#f9fbff' }}>
+          <Row gutter={[16, 8]} align="middle">
+            <Col>
+              <Text type="secondary" style={{ fontSize: 12 }}>年度累計案件數</Text>
+            </Col>
+            <Col>
+              <Select
+                value={yearlyYear}
+                options={yearOptions}
+                style={{ width: 100 }}
+                onChange={(v) => {
+                  setYearlyYear(v)
+                  setTabYearlyLoading(true)
+                  fetchHotelMonthlyHours(v).then(setYearlyData).finally(() => setTabYearlyLoading(false))
+                }}
+              />
+            </Col>
+            <Col>
+              <Button
+                icon={<ReloadOutlined />}
+                size="small"
+                onClick={() => {
+                  setTabYearlyLoading(true)
+                  fetchHotelMonthlyHours(yearlyYear).then(setYearlyData).finally(() => setTabYearlyLoading(false))
+                }}
+              >重新整理</Button>
+            </Col>
+            <Col>
+              <Text type="secondary" style={{ fontSize: 12 }}>{yearlyYear} 年（累計）</Text>
+            </Col>
+          </Row>
+        </Card>
+
+        {/* 類別圖例 */}
+        <Space wrap style={{ marginBottom: 12 }}>
+          {(HOTEL_5CATS as readonly Hotel5Cat[]).map(cat => (
+            <Space key={cat} size={2}>
+              <Tag color={HOTEL_5CAT_TAG_COLORS[cat]}>{cat}</Tag>
+              <Tooltip title={HOTEL_5CAT_TOOLTIPS[cat]} overlayStyle={{ maxWidth: 440 }}>
+                <Text style={{ fontSize: 11, cursor: 'help', color: '#bbb' }}>ⓘ</Text>
+              </Tooltip>
+            </Space>
+          ))}
+          <Tooltip title="各月數值為 1 月至該月的累計案件數總和（Running Total）。例：3 月欄位 = 1+2+3 月案件數合計。">
+            <Text type="secondary" style={{ fontSize: 11, cursor: 'help', color: '#aaa' }}>
+              ⓘ 累計說明
+            </Text>
+          </Tooltip>
+        </Space>
+
+        {/* 表格 */}
+        <Card
+          title={<Text strong>年度累計案件數</Text>}
+          extra={<Text type="secondary">{yearlyYear} 年（累計至各月）</Text>}
+          bodyStyle={{ padding: '6px 0' }}
+        >
+          <Table<Row5Y>
+            dataSource={tableRows}
+            columns={buildMonthlyCols() as object[]}
+            pagination={false}
+            size="small"
+            scroll={{ x: 'max-content' }}
+            rowClassName={(r) => r.category === 'TOTAL' ? 'ant-table-row-total' : ''}
+            style={{ fontSize: 14 }}
+          />
+        </Card>
+      </>
+    )
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
+  // 人員工時% — 欄位建構 + 渲染
   // ════════════════════════════════════════════════════════════════════════
 
   function buildPersonCols(persons: string[]) {
@@ -979,7 +1148,7 @@ export default function HotelMgmtDashboardPage() {
         ),
       },
       ...persons.map((name, i) => ({
-        title: <span style={{ fontSize: 11 }}>{name}</span>,
+        title: <span style={{ fontSize: 13 }}>{name}</span>,
         dataIndex: `p${i}`,
         key: `p${i}`,
         width: 70,
@@ -992,10 +1161,10 @@ export default function HotelMgmtDashboardPage() {
                 strokeColor={ACCENT_BLUE}
                 style={{ minWidth: 50 }}
               />
-              <div style={{ fontSize: 10, textAlign: 'center', color: '#666', marginTop: 2 }}>{v}%</div>
+              <div style={{ fontSize: 12, textAlign: 'center', color: '#666', marginTop: 2 }}>{v}%</div>
             </Tooltip>
           )
-          : <span style={{ color: '#ddd', fontSize: 10 }}>-</span>,
+          : <span style={{ color: '#ddd', fontSize: 12 }}>-</span>,
       })),
     ]
   }
@@ -1021,7 +1190,7 @@ export default function HotelMgmtDashboardPage() {
           pagination={false}
           size="small"
           scroll={{ x: 'max-content' }}
-          style={{ fontSize: 12 }}
+          style={{ fontSize: 14 }}
         />
       </>
     )
@@ -1046,7 +1215,7 @@ export default function HotelMgmtDashboardPage() {
     const detailCols = [
       { title: '排名', dataIndex: 'rank', key: 'rank', width: 52, align: 'center' as const,
         render: (_: unknown, __: unknown, idx: number) => (
-          <span style={{ fontSize: 14 }}>{medals[idx] ?? `${idx + 1}`}</span>
+          <span style={{ fontSize: 16 }}>{medals[idx] ?? `${idx + 1}`}</span>
         ),
       },
       { title: '人員', dataIndex: 'name', key: 'name', width: 90,
@@ -1056,7 +1225,7 @@ export default function HotelMgmtDashboardPage() {
         render: (v: number) => <span style={{ fontWeight: 700, color: BRAND_BLUE }}>{v.toFixed(1)}</span>,
       },
       ...personData.rows.map(row => ({
-        title: <span style={{ fontSize: 11, color: HOTEL_CATEGORY_COLORS[row.category] ?? '#333' }}>
+        title: <span style={{ fontSize: 13, color: HOTEL_CATEGORY_COLORS[row.category] ?? '#333' }}>
           {row.category}
         </span>,
         dataIndex: `cat_${row.category}`,
@@ -1064,8 +1233,8 @@ export default function HotelMgmtDashboardPage() {
         width: 80,
         align: 'right' as const,
         render: (v: number) => v > 0
-          ? <span style={{ fontSize: 11 }}>{v.toFixed(1)}</span>
-          : <span style={{ color: '#ddd', fontSize: 10 }}>-</span>,
+          ? <span style={{ fontSize: 13 }}>{v.toFixed(1)}</span>
+          : <span style={{ color: '#ddd', fontSize: 12 }}>-</span>,
       })),
     ]
 
@@ -1139,7 +1308,7 @@ export default function HotelMgmtDashboardPage() {
             pagination={false}
             size="small"
             scroll={{ x: 'max-content' }}
-            style={{ fontSize: 12 }}
+            style={{ fontSize: 14 }}
           />
         </Card>
       </>
@@ -1368,8 +1537,17 @@ export default function HotelMgmtDashboardPage() {
       ),
     },
     {
+      key: 'yearly',
+      label: <><CalendarOutlined /> D. 每年累計</>,
+      children: (
+        <Spin spinning={tabYearlyLoading}>
+          <TabDYearly />
+        </Spin>
+      ),
+    },
+    {
       key: 'person',
-      label: <><PieChartOutlined /> D. 人員工時%</>,
+      label: <><PieChartOutlined /> 人員工時%</>,
       children: (
         <Spin spinning={tabDLoading}>
           <div style={{ marginBottom: 8, fontSize: 12, color: '#888' }}>

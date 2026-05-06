@@ -2,6 +2,39 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)
 
+## [1.57.38] - 2026-05-06
+
+### Changed
+- **`hotel/overview` B/C/D/人員工時%/人員排名 TAB 表格字體放大 2 級** — 所有 Table 及欄位 render 內字體統一 +2（9→11、10→12、11→13、12→14、14→16）；Table `style={{ fontSize }}` 同步調整
+
+## [1.57.37] - 2026-05-06
+
+### Added
+- **`hotel/overview` B/C/D TAB 類別圖例加入計算公式說明 Tooltip** — 每個工作類別（現場報修／上級交辦／緊急事件／例行維護／每日巡檢）旁加 ⓘ，hover 顯示來源模組（中英文）、資料口徑、欄位說明；D. 每年累計另保留「ⓘ 累計說明」；`HOTEL_5CAT_TOOLTIPS` 常數以 `React.createElement` 定義避免模組層 JSX 解析問題
+
+## [1.57.36] - 2026-05-06
+
+### Fixed
+- **`hotel/overview` 飯店週期保養案件數口徑修正** — B/C TAB 的「飯店週期保養」案件數改用與 `hotel/periodic-maintenance` TAB=每月維護「本月週期保養項目數」相同邏輯：frequency 在月維護關鍵字集合（月/每月/月維護/Monthly/monthly）+ exec_months 過濾 + `scheduled_date` 重組完整日期後確認在目標月份；後端加 `import json`、`PM_MONTHLY_FREQ` 常數；日/月兩支 API 同步修正；2026/04 飯店週期保養案件數應回傳 0
+- **`hotel/overview` B TAB IHG 案件數 cases_total 口徑修正** — `get_hotel_daily_hours` 新增 `ihg_month_rooms` set 追蹤本月不重複房號；`cases_total` 改用 `len(ihg_month_rooms)` 取代 `sum(day_c)`；TOTAL row 的 `cases_total` 改為各列 `cases_total` 加總（含修正後的 IHG 值）；確保 B TAB 合計與 C/D TAB 口徑一致（2026/04 = 69）
+
+## [1.57.35] - 2026-05-06
+
+### Fixed
+- **`hotel/overview` 現場報修案件數口徑修正** — 從「有 completed_at → completed_at」改為正確的 `_stat_year/_stat_month` 口徑：`is_completed(status) AND completed_at is not None → completed_at`；否則 `occurred_at`（與工務部 Tab 一致）；import `is_completed as _repair_is_completed` from `dazhi_repair_service`；日/月兩支 API 同步修正
+
+## [1.57.34] - 2026-05-06
+
+### Changed
+- **`hotel/overview` B/C/D TAB 改顯示案件數** — 後端 `hotel_overview.py` 新增 `cases_bucket` 平行統計（`/daily-hours`、`/monthly-hours` 各 row 加 `cases: list[int]`、`cases_total: int`）；口徑：現場報修用 TAB 3.1（有 completed_at → completed_at，否則 occurred_at）、每日巡檢＝批次數、保全巡檢＝批次數、IHG 每月＝不重複房號數、週期保養＝工項數；前端 `hotelOverview.ts` 介面加 `cases/cases_total`；`buildDailyCols`/`buildMonthlyCols` 改用 `row.cases` 顯示整數（0→'—'，無小數）；B/C/D TAB 表格標題改為「案件數」
+
+## [1.57.33] - 2026-05-06
+
+### Changed
+- **`hotel/overview` 飯店管理 Dashboard 調整** — Placeholder 卡片「商場主管交辦/商場緊急事件」改為「飯店主管交辦/飯店緊急事件」（顯示文字修正，不影響路由）；新增「D. 每年累計」TAB（選年份 → 顯示 12 個月 Running Total 累計工時，沿用 `fetchHotelMonthlyHours`，前端計算 toCumulative，零新增 API）；原「D. 人員工時%」移除 D. 前綴改為「人員工時%」；TAB 順序：B. 每日累計 → C. 每月累計 → D. 每年累計 → 人員工時% → 人員排名
+
+---
+
 ## [1.57.32] - 2026-05-06
 
 ### Changed

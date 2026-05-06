@@ -2,9 +2,15 @@
 
 > 跨據點統一管理平台 — FastAPI + React + TypeScript
 
-**最後更新：2026-05-06（v1.57.32）**
+**最後更新：2026-05-06（v1.57.36）**
 
 ## 最近變更
+- v1.57.38：**`hotel/overview` 五個 TAB 表格字體放大 2 級**（9→11、10→12、11→13、12→14、14→16）
+- v1.57.37：**`hotel/overview` B/C/D TAB 類別 ⓘ Tooltip 說明** — 每個工作類別加計算公式說明（模組中英文、口徑、欄位）
+- v1.57.36：**`hotel/overview` 飯店週期保養＋IHG 案件數口徑修正** — PM 改用 monthly frequency 邏輯（2026/04=0）；B TAB IHG cases_total 改用不重複房號數（與 C/D TAB 一致，2026/04=69）
+- v1.57.35：**`hotel/overview` 現場報修案件數口徑修正** — 改為 `_stat_year/_stat_month` 口徑（`is_completed` + `completed_at`，與工務部 Tab 一致）
+- v1.57.34：**`hotel/overview` B/C/D TAB 改顯示案件數** — 後端 cases_bucket 平行統計（TAB 3.1 口徑 / 批次數 / 不重複房號）；前端表格改顯示整數案件數（0→'—'），標題「案件數」
+- v1.57.33：**`hotel/overview` 飯店管理 Dashboard 調整** — 文字修正（商場→飯店）；新增 D. 每年累計 TAB（Running Total，零新增 API）；人員工時% 移除 D. 前綴
 - v1.57.32：**`mall/full-building-maintenance` 同步商場例行維護 SPEC 規格** — 頻率分類統計（monthly/quarterly/yearly）；矩陣欄位 Tooltip；矩陣數字點擊明細 Modal；保養項目 CatalogModal；字體 18px；後端新增 catalog + matrix-items 端點
 - v1.57.31：**`mall/periodic-maintenance` `MatrixDetailModal` 標籤修正** — `period_total`→「本期應完成總數」、`period_completed`→「本期已完成」
 - v1.57.30：**`mall/periodic-maintenance` 同步飯店例行維護規格** — 頻率分類統計（monthly/quarterly/yearly）；矩陣欄位 Tooltip；矩陣數字點擊明細 Modal；保養項目 CatalogModal；字體 18px；後端新增 catalog + matrix-items 端點
