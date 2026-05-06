@@ -2,6 +2,13 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)
 
+## [1.57.32] - 2026-05-06
+
+### Changed
+- **`mall/full-building-maintenance` 同步商場例行維護 SPEC 規格** — 後端 `_calc_year_matrix()` / `_calc_period_stats_core()` 加 `frequency_type` 頻率過濾（monthly/quarterly/yearly）；新增 `/period-stats/year-matrix/items` 矩陣明細端點與 `/items/catalog` 保養項目目錄端點；前端矩陣欄位標籤更新（「截至上月底累計未結案數」/「其中本月已結案數」加?Tooltip）；三個統計 TAB 矩陣移至頂部；矩陣數字可點擊開 `MatrixDetailModal`（含 Ragic 連結）；各 TAB 增「保養項目」按鈕開 `CatalogModal`；字體全面放大至 18px；欄寬擴大（label 310、月份 90、合計 100）
+
+---
+
 ## [1.57.31] - 2026-05-06
 
 ### Fixed

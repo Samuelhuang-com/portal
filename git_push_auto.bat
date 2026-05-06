@@ -75,14 +75,19 @@ if errorlevel 1 (
     exit /b 1
 )
 
-REM ==========================================
-REM 測試模式：不執行 git push
-REM ==========================================
+REM 推上 GitHub
 echo.
 echo ==========================================
-echo 測試模式：已完成 commit，但不執行 git push
-echo 之後確認沒問題，再手動執行：git push
+echo git push
 echo ==========================================
+git push
+
+if errorlevel 1 (
+    echo.
+    echo Push 失敗，請檢查 GitHub 權限、網路或分支設定。
+    pause
+    exit /b 1
+)
 
 echo.
 echo ==========================================
