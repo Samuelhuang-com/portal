@@ -35,6 +35,21 @@ from app.core.config import settings
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
 
+# ── 頻率分類 mapping ─────────────────────────────────────────────────────────
+_FREQ_KEYWORDS: dict[str, set[str]] = {
+    "monthly":   {"月", "每月", "月維護", "Monthly", "monthly"},
+    "quarterly": {"季", "每季", "季維護", "Quarterly", "quarterly"},
+    "yearly":    {"年", "每年", "年維護", "Annual", "annual", "Yearly", "yearly"},
+}
+
+def _freq_match(frequency: str, frequency_type: Optional[str]) -> bool:
+    """回傳 True 表示該 item 的頻率符合篩選條件（None = 不篩選）"""
+    if not frequency_type:
+        return True
+    keywords = _FREQ_KEYWORDS.get(frequency_type, set())
+    return (frequency or "").strip() in keywords
+
+
 # ── 狀態色彩對照 ──────────────────────────────────────────────────────────────
 STATUS_COLORS = {
     "completed":         "#52C41A",
@@ -271,6 +286,7 @@ def _calc_period_stats_core(
     period_start: date,
     period_end: date,
     prev_period_end: date,
+    frequency_type: Optional[str] = None,
 ) -> dict:
     """共用統計核心（使用 MallPeriodicMaintenanceBatch / MallPeriodicMaintenanceItem）。"""
     rows = (
@@ -286,6 +302,8 @@ def _calc_period_stats_core(
     period_items_list:    list[dict] = []
 
     for item, batch in rows:
+        if not _freq_match(item.frequency, frequency_type):
+            continue
         if not item.scheduled_date:
             continue
         try:
@@ -408,7 +426,7 @@ def _calc_sub_breakdown(
     return breakdown
 
 
-def _calc_year_matrix(db: Session, year: int) -> PMYearMatrix:
+def _calc_year_matrix(db: Session, year: int, frequency_type: Optional[str] = None) -> PMYearMatrix:
     """全年 12 個月矩陣統計（單次 JOIN 查詢）。"""
     rows = (
         db.query(MallPeriodicMaintenanceItem, MallPeriodicMaintenanceBatch)
@@ -421,6 +439,8 @@ def _calc_year_matrix(db: Session, year: int) -> PMYearMatrix:
 
     processed: list[dict] = []
     for item, batch in rows:
+        if not _freq_match(item.frequency, frequency_type):
+            continue
         if not item.scheduled_date:
             continue
         try:
@@ -818,11 +838,12 @@ def get_item_task_history(
 # ══════════════════════════════════════════════════════════════════════════════
 @router.get("/period-stats/year-matrix", summary="全年 12 個月矩陣統計", response_model=PMYearMatrix)
 def get_period_stats_year_matrix(
-    year: Optional[int] = Query(None, description="年份，如 2026；預設今年"),
-    db:   Session = Depends(get_db),
+    year:           Optional[int] = Query(None, description="年份，如 2026；預設今年"),
+    frequency_type: Optional[str] = Query(None, description="monthly | quarterly | yearly"),
+    db:             Session = Depends(get_db),
 ):
     target_year = year or date.today().year
-    return _calc_year_matrix(db, target_year)
+    return _calc_year_matrix(db, target_year, frequency_type)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -830,11 +851,12 @@ def get_period_stats_year_matrix(
 # ══════════════════════════════════════════════════════════════════════════════
 @router.get("/period-stats", summary="週期統計（月/季/年）", response_model=PMPeriodStats)
 def get_period_stats(
-    period_type: str           = Query("month", description="month | quarter | year"),
-    year:        Optional[int] = Query(None, description="年份，如 2026；預設今年"),
-    month:       Optional[int] = Query(None, ge=1, le=12, description="月份（period_type=month 時使用）"),
-    quarter:     Optional[int] = Query(None, ge=1, le=4,  description="季度 1-4（period_type=quarter 時使用）"),
-    db:          Session = Depends(get_db),
+    period_type:    str           = Query("month", description="month | quarter | year"),
+    year:           Optional[int] = Query(None, description="年份，如 2026；預設今年"),
+    month:          Optional[int] = Query(None, ge=1, le=12, description="月份（period_type=month 時使用）"),
+    quarter:        Optional[int] = Query(None, ge=1, le=4,  description="季度 1-4（period_type=quarter 時使用）"),
+    frequency_type: Optional[str] = Query(None, description="monthly | quarterly | yearly"),
+    db:             Session = Depends(get_db),
 ):
     today = date.today()
     target_year = year or today.year
@@ -853,7 +875,7 @@ def get_period_stats(
     else:
         period_label = f"{target_year}年"
 
-    core = _calc_period_stats_core(db, p_start, p_end, prev_end)
+    core = _calc_period_stats_core(db, p_start, p_end, prev_end, frequency_type)
     period_items_list = core.pop("period_items_list")
     breakdown = _calc_sub_breakdown(period_type, p_start, period_items_list)
 
@@ -872,6 +894,128 @@ def get_period_stats(
         sub_period_breakdown     = breakdown,
         incomplete_items         = core["incomplete_items"],
     )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GET /period-stats/year-matrix/items  — 矩陣格點擊查詢明細
+# ══════════════════════════════════════════════════════════════════════════════
+@router.get("/period-stats/year-matrix/items", summary="矩陣格點擊查詢明細")
+def get_year_matrix_items(
+    year:           int           = Query(...),
+    month:          int           = Query(..., description="0 = 全年合計"),
+    metric:         str           = Query(..., description="prev_carry_over | prev_resolved | period_total | period_completed"),
+    frequency_type: Optional[str] = Query(None),
+    db:             Session       = Depends(get_db),
+):
+    """矩陣格點擊查詢明細（對應 MallPeriodicMaintenanceItem）"""
+    rows = (
+        db.query(MallPeriodicMaintenanceItem, MallPeriodicMaintenanceBatch)
+        .join(MallPeriodicMaintenanceBatch,
+              MallPeriodicMaintenanceItem.batch_ragic_id == MallPeriodicMaintenanceBatch.ragic_id)
+        .filter(MallPeriodicMaintenanceBatch.period_month.like(f"{year}/%"))
+        .all()
+    )
+
+    settings_obj = __import__('app.core.config', fromlist=['settings']).settings
+    base_url = getattr(settings_obj, 'ragic_base_url', '')
+
+    results = []
+    for item, batch in rows:
+        if not _freq_match(item.frequency, frequency_type):
+            continue
+        if month != 0 and not batch.period_month.endswith(f"/{str(month).zfill(2)}"):
+            continue
+
+        is_completed = bool(item.end_time and item.end_time.strip())
+
+        if metric == 'period_total':
+            pass
+        elif metric == 'period_completed':
+            if not is_completed:
+                continue
+        elif metric in ('prev_carry_over', 'prev_resolved'):
+            pass
+
+        results.append({
+            "ragic_id":            item.ragic_id,
+            "batch_ragic_id":      item.batch_ragic_id,
+            "period_month":        batch.period_month,
+            "category":            item.category,
+            "task_name":           item.task_name,
+            "frequency":           item.frequency,
+            "scheduled_date_full": f"{batch.period_month[:4]}/{item.scheduled_date}" if item.scheduled_date else "",
+            "end_time":            item.end_time or "",
+            "status":              "已完成" if is_completed else ("進行中" if item.start_time else "待排程"),
+            "executor_name":       item.executor_name or "",
+            "result_note":         item.result_note or "",
+            "abnormal_flag":       bool(item.abnormal_flag),
+            "abnormal_note":       item.abnormal_note or "",
+            "ragic_link":          f"{base_url}/..." if base_url else "",
+        })
+
+    return {"total": len(results), "items": results}
+
+
+# ── 保養項目目錄（依頻率分類）──────────────────────────────────────────────────
+@router.get("/items/catalog", summary="保養項目目錄（依頻率分類）")
+def get_items_catalog(
+    frequency_type: Optional[str] = Query(None, description="monthly | quarterly | yearly"),
+    db:             Session       = Depends(get_db),
+):
+    """
+    取得保養項目目錄（不分批次），依 frequency_type 篩選。
+    結果為去重後的保養項目列表，以最新 seq_no 的資料為準。
+    """
+    from sqlalchemy import func as sqlfunc
+
+    subq = (
+        db.query(
+            MallPeriodicMaintenanceItem.task_name,
+            MallPeriodicMaintenanceItem.category,
+            MallPeriodicMaintenanceItem.frequency,
+            sqlfunc.max(MallPeriodicMaintenanceItem.seq_no).label("max_seq"),
+        )
+        .group_by(
+            MallPeriodicMaintenanceItem.task_name,
+            MallPeriodicMaintenanceItem.category,
+            MallPeriodicMaintenanceItem.frequency,
+        )
+        .subquery()
+    )
+
+    rows = (
+        db.query(MallPeriodicMaintenanceItem)
+        .join(
+            subq,
+            (MallPeriodicMaintenanceItem.task_name   == subq.c.task_name)
+            & (MallPeriodicMaintenanceItem.category  == subq.c.category)
+            & (MallPeriodicMaintenanceItem.frequency == subq.c.frequency)
+            & (MallPeriodicMaintenanceItem.seq_no    == subq.c.max_seq),
+        )
+        .order_by(MallPeriodicMaintenanceItem.category, MallPeriodicMaintenanceItem.seq_no)
+        .all()
+    )
+
+    result = []
+    seen: set[tuple] = set()
+    for r in rows:
+        if not _freq_match(r.frequency, frequency_type):
+            continue
+        key = (r.task_name, r.category, r.frequency)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append({
+            "seq_no":            r.seq_no,
+            "category":          r.category,
+            "frequency":         r.frequency,
+            "task_name":         r.task_name,
+            "location":          r.location,
+            "estimated_minutes": r.estimated_minutes,
+            "exec_months_raw":   r.exec_months_raw,
+        })
+
+    return {"total": len(result), "items": result}
 
 
 # ══════════════════════════════════════════════════════════════════════════════

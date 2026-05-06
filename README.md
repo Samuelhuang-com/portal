@@ -2,9 +2,15 @@
 
 > 跨據點統一管理平台 — FastAPI + React + TypeScript
 
-**最後更新：2026-05-05（v1.57.23）**
+**最後更新：2026-05-06（v1.57.30）**
 
 ## 最近變更
+- v1.57.30：**`mall/periodic-maintenance` 同步飯店例行維護規格** — 頻率分類統計（monthly/quarterly/yearly）；矩陣欄位 Tooltip；矩陣數字點擊明細 Modal；保養項目 CatalogModal；字體 18px；後端新增 catalog + matrix-items 端點
+- v1.57.29：**`hotel/periodic-maintenance` 年度矩陣表字體全面放大 3 級** — 12→18px、11→17px；欄寬同步擴大（label 310、月份 90、合計 100）
+- v1.57.28：**`hotel/periodic-maintenance` 矩陣字體統一 + 標籤去 ①②** — 全列 label 改為 12px（移除 highlight 15px 分支）；「截至上月底累計未結案數」/「其中本月已結案數」去掉 ①② 前綴；商場 SPEC 同步
+- v1.57.27：**`hotel/periodic-maintenance` 三 TAB 矩陣統一移頂部** — 每季/每年 TAB 的年度矩陣表格移至年度選擇器正下方（與每月 TAB 對齊）；鑽取區塊加 Divider 區隔；三 TAB 字體一致；商場 SPEC 第 7 節同步更新
+- v1.57.26：**`hotel/periodic-maintenance` UX 優化** — 模組更名為「飯店例行維護」；矩陣欄位改為①截至上月底累計未結案數/②其中本月已結案數（附?說明 Tooltip，字體放大）；三個統計 TAB 各增「保養項目」按鈕（紫色漸層），點擊開 Modal 列出對應頻率所有保養項目清單；後端新增 `GET /items/catalog?frequency_type=` 目錄端點
+- v1.57.25：**`hotel/periodic-maintenance` 三個統計 TAB 依頻率分類** — 後端 `_calc_year_matrix()` / `_calc_period_stats_core()` 加 `frequency_type` 過濾；新增 `/period-stats/year-matrix/items` 明細端點；前端三 TAB 傳對應頻率；矩陣數字可點擊開 Modal 查看明細（含 Ragic 連結）；每季／每年 TAB 各自加入矩陣總表
 - v1.57.24：**`security/dashboard` 每日巡檢表篩選器修正** — 全日期 DatePicker → 月份 DatePicker（picker="month"）；整月合併顯示；Alert 改顯示年月
 - v1.57.23：**`security/dashboard` 新增「每日巡檢表」TAB** — `security_patrol_daily_template.py`（83 列 7 source_tab）+ `security_patrol_daily_builder.py`（DB 比對 builder）+ `GET /daily-form`；前端 `SecurityDailyFormTab`（DatePicker/rowSpan/異常紅底/空資料 Alert/獨立同步）；OUTER_TABS 第二位
 - v1.57.22：**`dazhi-repair/dashboard` 報修類型分布口徑修正** — Dashboard KPI Card「報修類型分布」改用與工務部 Tab 相同的 `filter_cases`（_stat_year/_stat_month）口徑；依 `REPAIR_TYPE_ORDER` 排序，與 Tab 3.3 一致

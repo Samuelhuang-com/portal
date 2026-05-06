@@ -1326,7 +1326,6 @@ def generate_module_manuals(
     module = MODULE_REGISTRY[module_key]
     types_to_gen = doc_types if doc_types else ALL_DOC_TYPES
 
-    # 確認並建立輸出目錄
     out_dir = EXPORT_ROOT / module_key
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1384,7 +1383,6 @@ def get_export_status(module_key: str) -> dict:
     if not md_files:
         return {"module_key": module_key, "has_export": False, "files": [], "generated_at": None}
 
-    # 取最新修改時間作為產生時間
     latest_mtime = max(f.stat().st_mtime for f in md_files)
     generated_at = datetime.fromtimestamp(latest_mtime)
 

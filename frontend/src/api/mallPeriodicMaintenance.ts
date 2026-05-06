@@ -63,15 +63,82 @@ export async function fetchMallPMPeriodStats(params: {
   year?: number
   month?: number
   quarter?: number
+  frequency_type?: 'monthly' | 'quarterly' | 'yearly'
 }): Promise<PMPeriodStats> {
   const res = await apiClient.get<PMPeriodStats>(`${BASE}/period-stats`, { params })
   return res.data
 }
 
 /** 全年 12 個月矩陣統計 */
-export async function fetchMallPMYearMatrix(year?: number): Promise<PMYearMatrix> {
-  const params: Record<string, number> = {}
+export async function fetchMallPMYearMatrix(
+  year?: number,
+  frequency_type?: 'monthly' | 'quarterly' | 'yearly',
+): Promise<PMYearMatrix> {
+  const params: Record<string, number | string> = {}
   if (year) params.year = year
+  if (frequency_type) params.frequency_type = frequency_type
   const res = await apiClient.get<PMYearMatrix>(`${BASE}/period-stats/year-matrix`, { params })
+  return res.data
+}
+
+// Matrix cell detail (click to query)
+export type PMMatrixMetric = 'prev_carry_over' | 'prev_resolved' | 'period_total' | 'period_completed'
+
+export interface MallPMMatrixItem {
+  ragic_id:            string
+  batch_ragic_id:      string
+  period_month:        string
+  category:            string
+  task_name:           string
+  frequency:           string
+  scheduled_date_full: string
+  end_time:            string
+  status:              string
+  executor_name:       string
+  result_note:         string
+  abnormal_flag:       boolean
+  abnormal_note:       string
+  ragic_link:          string
+}
+
+export interface MallPMMatrixItemsResponse {
+  total: number
+  items: MallPMMatrixItem[]
+}
+
+export async function fetchMallPMMatrixItems(params: {
+  year: number
+  month: number
+  metric: PMMatrixMetric
+  frequency_type?: string
+}): Promise<MallPMMatrixItemsResponse> {
+  const res = await apiClient.get<MallPMMatrixItemsResponse>(
+    `${BASE}/period-stats/year-matrix/items`, { params }
+  )
+  return res.data
+}
+
+// Maintenance item catalog (by frequency type)
+export interface MallPMCatalogItem {
+  seq_no:            number
+  category:          string
+  frequency:         string
+  task_name:         string
+  location:          string
+  estimated_minutes: number
+  exec_months_raw:   string
+}
+
+export interface MallPMCatalogResponse {
+  total: number
+  items: MallPMCatalogItem[]
+}
+
+export async function fetchMallPMCatalog(
+  frequency_type?: 'monthly' | 'quarterly' | 'yearly',
+): Promise<MallPMCatalogResponse> {
+  const params: Record<string, string> = {}
+  if (frequency_type) params.frequency_type = frequency_type
+  const res = await apiClient.get<MallPMCatalogResponse>(`${BASE}/items/catalog`, { params })
   return res.data
 }

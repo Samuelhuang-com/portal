@@ -402,26 +402,22 @@ def auto_link_articles(db: Session, dry_run: bool = False) -> Dict[str, Any]:
     for article in articles:
         tags_a = set(tags_map.get(article.id, []))
 
-        # 找相關文章：同分類且標籤重疊，或同分類（弱關聯）
         related: List[WikiArticle] = []
         for other in articles:
             if other.id == article.id:
                 continue
             tags_b = set(tags_map.get(other.id, []))
-            if tags_a & tags_b:          # 有共同標籤
+            if tags_a & tags_b:
                 related.append(other)
             elif other.category == article.category and len(related) < 3:
-                related.append(other)    # 同分類補充（最多 3 個）
-        related = related[:5]            # 最多 5 個
+                related.append(other)
+        related = related[:5]
 
         if not related:
             skipped += 1
             continue
 
-        # 移除現有「相關文章」區塊
         clean_body = _RELATED_PATTERN.sub("", article.body or "").rstrip()
-
-        # 組合新區塊
         links = "\n".join(f"- [[{r.title}]]" for r in related)
         new_body = clean_body + _RELATED_HEADER + links
 
@@ -433,7 +429,6 @@ def auto_link_articles(db: Session, dry_run: bool = False) -> Dict[str, Any]:
 
         if not dry_run:
             article.body = new_body
-            # 保留原 updated_at（不影響同步邏輯）
             updated += 1
 
     if not dry_run:
@@ -452,16 +447,10 @@ def auto_link_articles(db: Session, dry_run: bool = False) -> Dict[str, Any]:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _wiki_dir() -> Path:
-    """
-    回傳 docs/wiki/ 的絕對路徑。
-    此檔案位於 portal/backend/app/services/wiki_service.py，
-    所以 portal/ 根目錄是 __file__ 往上 4 層。
-    """
     return Path(__file__).resolve().parent.parent.parent.parent / "docs" / "wiki"
 
 
 def _safe_filename(slug: str) -> str:
-    """把 slug 轉成安全的檔名（保留中文、英文、數字、連字號）"""
     name = re.sub(r'[<>:"/\\|?*]', "-", slug)
     return (name[:80] if name else "article") + ".md"
 
@@ -499,15 +488,10 @@ def _write_article_to_md(article: WikiArticle, base_dir: Path) -> Path:
 
 
 def _read_md_file(filepath: Path) -> Optional[Dict[str, Any]]:
-    """
-    讀取一個 .md 檔案，解析 YAML frontmatter + body。
-    若格式不對，回傳 None。
-    """
     try:
         import yaml
         text = filepath.read_text(encoding="utf-8")
         if not text.startswith("---"):
-            # 沒有 frontmatter，視為純文字（用檔名當 title）
             return {
                 "title":    filepath.stem,
                 "body":     text.strip(),
@@ -526,11 +510,6 @@ def _read_md_file(filepath: Path) -> Optional[Dict[str, Any]]:
 
 
 def export_to_obsidian(db: Session) -> Dict[str, Any]:
-    """
-    將 DB 中所有已發佈文章匯出為 .md 檔到 docs/wiki/。
-    已存在的檔案：若 DB 的 updated_at 較新則覆寫，否則跳過。
-    回傳：{ exported, skipped, errors, wiki_dir }
-    """
     base_dir = _wiki_dir()
     base_dir.mkdir(parents=True, exist_ok=True)
 
@@ -546,7 +525,6 @@ def export_to_obsidian(db: Session) -> Dict[str, Any]:
             filename = _safe_filename(article.slug)
             filepath = category_dir / filename
 
-            # 若檔案已存在，比較時間戳
             if filepath.exists():
                 existing = _read_md_file(filepath)
                 if existing:
@@ -619,7 +597,6 @@ def import_from_obsidian(db: Session) -> Dict[str, Any]:
             file_updated_str = str(meta.get("updated_at", ""))
             article_id = str(meta.get("id", "")).strip()
 
-            # ── 找現有 article ────────────────────────────────────────────
             existing: Optional[WikiArticle] = None
             if article_id:
                 existing = db.query(WikiArticle).filter(WikiArticle.id == article_id).first()
@@ -627,7 +604,6 @@ def import_from_obsidian(db: Session) -> Dict[str, Any]:
                 existing = db.query(WikiArticle).filter(WikiArticle.slug == slug).first()
 
             if existing:
-                # 比對時間：.md 的 updated_at 比 DB 新才更新
                 db_updated_str = existing.updated_at.isoformat() if existing.updated_at else ""
                 if file_updated_str and db_updated_str and file_updated_str <= db_updated_str:
                     skipped += 1
@@ -642,7 +618,6 @@ def import_from_obsidian(db: Session) -> Dict[str, Any]:
                 db.commit()
                 updated += 1
             else:
-                # 新增
                 new_id = article_id if article_id else str(uuid.uuid4())
                 new_slug = _unique_slug(db, slug)
                 article = WikiArticle(
@@ -661,7 +636,6 @@ def import_from_obsidian(db: Session) -> Dict[str, Any]:
                 db.commit()
                 db.refresh(article)
 
-                # 若原本沒有 id，把新 id 寫回 .md 檔
                 if not article_id:
                     _write_article_to_md(article, base_dir)
 

@@ -12,7 +12,7 @@ import { useNavigate } from 'react-router-dom'
 import {
   Row, Col, Card, Statistic, Table, Tag, Button, Space,
   Typography, Breadcrumb, Tabs, Progress, Alert, Select,
-  message, Tooltip, Badge, Divider,
+  message, Tooltip, Badge, Divider, Modal, Spin,
 } from 'antd'
 import {
   HomeOutlined, SyncOutlined, ReloadOutlined, ToolOutlined,
@@ -27,7 +27,9 @@ import {
 import type { ColumnsType } from 'antd/es/table'
 import dayjs from 'dayjs'
 
-import { fetchPMStats, fetchPMBatches, syncPMFromRagic, fetchPMPeriodStats, fetchPMYearMatrix, fetchPMCalendar, fetchPMBatchDetail } from '@/api/periodicMaintenance'
+import { fetchPMStats, fetchPMBatches, syncPMFromRagic, fetchPMPeriodStats, fetchPMYearMatrix, fetchPMCalendar, fetchPMBatchDetail, fetchPMMatrixItems, fetchPMCatalog } from '@/api/periodicMaintenance'
+import type { PMCatalogItem } from '@/api/periodicMaintenance'
+import type { PMMatrixMetric, PMMatrixItem } from '@/api/periodicMaintenance'
 import type { PMStats, PMBatchListItem, PMItem, PMItemStatus, PMPeriodStats, PMIncompleteItem, PMSubPeriodBreakdown, PMYearMatrix, PMYearMatrixMonth } from '@/types/periodicMaintenance'
 import { NAV_GROUP, NAV_PAGE } from '@/constants/navLabels'
 import MonthlyCalendarGrid from '@/components/MonthlyCalendarGrid'
@@ -338,9 +340,12 @@ const MATRIX_METRICS: {
   label: string
   isRate?: boolean
   isText?: boolean
+  tooltip?: string
 }[] = [
-  { key: 'prev_carry_over',         label: '上月累計未完成項目數' },
-  { key: 'prev_resolved_in_period', label: '上月累計未完成項目，於本月結案數' },
+  { key: 'prev_carry_over',         label: '截至上月底累計未結案數',
+    tooltip: '前期結轉未完成數：截至上月底，所有尚未結案的週期保養項目累計總數（含更早期遞延未完成項目）。' },
+  { key: 'prev_resolved_in_period', label: '其中本月已結案數',
+    tooltip: '本月已結案數：上列「截至上月底累計未結案數」中，在本月內完成並結案的項目數。\n完成率（累計項目完成率）＝ 已結案數 ÷ 累計未結案數 × 100%。' },
   { key: 'carry_over_rate',         label: '累計項目完成率', isRate: true },
   { key: '_sep1',                   label: '' },
   { key: 'period_total',            label: '本月週期保養項目數' },
@@ -350,7 +355,7 @@ const MATRIX_METRICS: {
   { key: 'incomplete_notes',        label: '未完成事項說明（原因/待協助事項）', isText: true },
 ]
 
-function YearMatrixTable({ data }: { data: PMYearMatrix }) {
+function YearMatrixTable({ data, frequencyType, onCellClick }: { data: PMYearMatrix; frequencyType?: string; onCellClick?: (year: number, month: number, metric: PMMatrixMetric, monthLabel: string) => void }) {
   // ── 判斷尚未發生的月份（年份相同則 month > 本月；未來年份整年都是未來）──────
   const nowYear  = dayjs().year()
   const nowMonth = dayjs().month() + 1   // 1-based
@@ -379,10 +384,18 @@ function YearMatrixTable({ data }: { data: PMYearMatrix }) {
 
   // ── 通用 cell renderer（月欄 + 合計欄共用）────────────────────────────────
   const futureCell = () => (
-    <Typography.Text type="secondary" style={{ fontSize: 12 }}>—</Typography.Text>
+    <Typography.Text type="secondary" style={{ fontSize: 18 }}>—</Typography.Text>
   )
 
-  const renderCell = (v: unknown, row: Record<string, unknown>, isTotal = false) => {
+  // 可點擊 metric key 對照表
+  const CLICKABLE_METRIC_MAP: Record<string, PMMatrixMetric> = {
+    prev_carry_over:         'prev_carry_over',
+    prev_resolved_in_period: 'prev_resolved',
+    period_total:            'period_total',
+    period_completed:        'period_completed',
+  }
+
+  const renderCell = (v: unknown, row: Record<string, unknown>, isTotal = false, monthNum = 0, monthLabel = '') => {
     if (row['_isSep']) return null
     const metric = MATRIX_METRICS.find((x) => x.key === row['_key'])
     if (!metric) return null
@@ -394,7 +407,7 @@ function YearMatrixTable({ data }: { data: PMYearMatrix }) {
         <Tooltip title={<span style={{ whiteSpace: 'pre-wrap' }}>{text}</span>} placement="topLeft">
           <Typography.Text
             ellipsis
-            style={{ fontSize: 11, display: 'block', maxWidth: 70, cursor: 'pointer' }}
+            style={{ fontSize: 17, display: 'block', maxWidth: 90, cursor: 'pointer' }}
           >
             {text}
           </Typography.Text>
@@ -405,15 +418,27 @@ function YearMatrixTable({ data }: { data: PMYearMatrix }) {
       const rate = v as number | null
       return (
         <Typography.Text
-          style={{ fontSize: 12, color: rate === null ? '#999' : rate >= 80 ? '#52C41A' : rate >= 50 ? '#FAAD14' : '#FF4D4F' }}
+          style={{ fontSize: 18, color: rate === null ? '#999' : rate >= 80 ? '#52C41A' : rate >= 50 ? '#FAAD14' : '#FF4D4F' }}
         >
           {fmtRate(rate)}
         </Typography.Text>
       )
     }
     const num = v as number
+    const matricMetric = CLICKABLE_METRIC_MAP[row['_key'] as string]
+    const isClickable = !isTotal && num > 0 && !!matricMetric && !!onCellClick
+    if (isClickable) {
+      return (
+        <Typography.Text
+          style={{ fontSize: 18, fontWeight: isTotal ? 600 : undefined, color: '#1677ff', textDecoration: 'underline', cursor: 'pointer' }}
+          onClick={() => onCellClick!(data.year, monthNum, matricMetric, monthLabel)}
+        >
+          {num}
+        </Typography.Text>
+      )
+    }
     return (
-      <Typography.Text style={{ fontSize: 12, color: num === 0 ? '#ccc' : undefined, fontWeight: isTotal ? 600 : undefined }}>
+      <Typography.Text style={{ fontSize: 18, color: num === 0 ? '#ccc' : undefined, fontWeight: isTotal ? 600 : undefined }}>
         {num === 0 ? '—' : num}
       </Typography.Text>
     )
@@ -424,17 +449,35 @@ function YearMatrixTable({ data }: { data: PMYearMatrix }) {
     {
       title:     '',
       dataIndex: 'label',
-      width:     230,
+      width:     310,
       fixed:     'left',
       onCell:    (row) => ({ style: { background: row['_isSep'] ? '#fafafa' : undefined } }),
-      render:    (v: string) => (
-        <Typography.Text style={{ fontSize: 12, fontWeight: v ? 500 : undefined }}>{v}</Typography.Text>
-      ),
+      render:    (v: string, row) => {
+        const metric = MATRIX_METRICS.find((x) => x.key === row['_key'])
+        const tip = metric?.tooltip
+        return (
+          <Space size={4}>
+            <Typography.Text style={{ fontSize: 18, fontWeight: v ? 500 : undefined }}>
+              {v}
+            </Typography.Text>
+            {tip && (
+              <Tooltip title={<span style={{ whiteSpace: 'pre-wrap', fontSize: 13 }}>{tip}</span>} placement="right">
+                <span style={{
+                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                  width: 18, height: 18, borderRadius: '50%',
+                  background: '#1677ff', color: '#fff',
+                  fontSize: 12, fontWeight: 700, cursor: 'help', lineHeight: '18px',
+                }}>?</span>
+              </Tooltip>
+            )}
+          </Space>
+        )
+      },
     },
     ...data.months.map((m) => ({
-      title:     m.label,
+      title:     <span style={{ fontSize: 18 }}>{m.label}</span>,
       dataIndex: `m${m.month}`,
-      width:     75,
+      width:     90,
       align:     'center' as const,
       onCell:    (row: Record<string, unknown>) => ({
         style: {
@@ -446,14 +489,14 @@ function YearMatrixTable({ data }: { data: PMYearMatrix }) {
       render: (v: unknown, row: Record<string, unknown>) => {
         if (row['_isSep']) return null
         if (isFuture(m.month)) return futureCell()
-        return renderCell(v, row)
+        return renderCell(v, row, false, m.month, m.label)
       },
     })),
     // 合計欄（僅加總已發生月份）
     {
-      title:     <Typography.Text strong style={{ color: '#1B3A5C' }}>合計</Typography.Text>,
+      title:     <Typography.Text strong style={{ color: '#1B3A5C', fontSize: 18 }}>合計</Typography.Text>,
       dataIndex: '_total',
-      width:     80,
+      width:     100,
       align:     'center' as const,
       fixed:     'right' as const,
       onCell:    (row: Record<string, unknown>) => ({
@@ -537,6 +580,8 @@ export default function PeriodicMaintenancePage() {
   // ── 季統計 state ────────────────────────────────────────────────────────
   const [quarterlyData,        setQuarterlyData]        = useState<PMPeriodStats | null>(null)
   const [quarterlyMatrixData,  setQuarterlyMatrixData]  = useState<PMYearMatrix | null>(null)
+  const [yearlyMatrixData,     setYearlyMatrixData]     = useState<PMYearMatrix | null>(null)
+  const [yearlyMatrixLoading,  setYearlyMatrixLoading]  = useState(false)
   const [quarterlyYear,        setQuarterlyYear]        = useState(dayjs().year())
   const [quarterlyQuarter,     setQuarterlyQuarter]     = useState(Math.ceil((dayjs().month() + 1) / 3))
   const [quarterlyLoading,     setQuarterlyLoading]     = useState(false)
@@ -546,6 +591,34 @@ export default function PeriodicMaintenancePage() {
   const [yearlyData,    setYearlyData]    = useState<PMPeriodStats | null>(null)
   const [yearlyYear,    setYearlyYear]    = useState(dayjs().year())
   const [yearlyLoading, setYearlyLoading] = useState(false)
+
+  // ── 保養項目目錄 Modal ─────────────────────────────────────────────────────
+  const [catalogOpen,        setCatalogOpen]       = useState(false)
+  const [catalogFreqType,    setCatalogFreqType]   = useState<'monthly' | 'quarterly' | 'yearly'>('monthly')
+  const [catalogItems,       setCatalogItems]      = useState<PMCatalogItem[]>([])
+  const [catalogLoading,     setCatalogLoading]    = useState(false)
+
+  const openCatalogModal = useCallback(async (freqType: 'monthly' | 'quarterly' | 'yearly') => {
+    setCatalogFreqType(freqType)
+    setCatalogOpen(true)
+    setCatalogLoading(true)
+    try {
+      const res = await fetchPMCatalog(freqType)
+      setCatalogItems(res.items)
+    } catch {
+      setCatalogItems([])
+    } finally {
+      setCatalogLoading(false)
+    }
+  }, [])
+
+  // ── 矩陣格明細 Modal ───────────────────────────────────────────────────────
+  const [modalOpen,       setModalOpen]       = useState(false)
+  const [modalYear,       setModalYear]       = useState(0)
+  const [modalMonth,      setModalMonth]      = useState(0)
+  const [modalMetric,     setModalMetric]     = useState<PMMatrixMetric>('period_total')
+  const [modalFreqType,   setModalFreqType]   = useState<string>('')
+  const [modalMonthLabel, setModalMonthLabel] = useState('')
 
   const loadDashboard = useCallback(async () => {
     setLoading(true)
@@ -581,7 +654,7 @@ export default function PeriodicMaintenancePage() {
   const loadMonthlyStats = useCallback(async () => {
     setMonthlyLoading(true)
     try {
-      const data = await fetchPMPeriodStats({ period_type: 'month', year: monthlyYear, month: monthlyMonth })
+      const data = await fetchPMPeriodStats({ period_type: 'month', year: monthlyYear, month: monthlyMonth, frequency_type: 'monthly' })
       setMonthlyData(data)
     } catch {
       message.error('載入月統計失敗')
@@ -593,7 +666,7 @@ export default function PeriodicMaintenancePage() {
   const loadYearMatrix = useCallback(async () => {
     setMatrixLoading(true)
     try {
-      const data = await fetchPMYearMatrix(monthlyYear)
+      const data = await fetchPMYearMatrix(monthlyYear, 'monthly')
       setMatrixData(data)
     } catch {
       message.error('載入年度矩陣失敗')
@@ -605,7 +678,7 @@ export default function PeriodicMaintenancePage() {
   const loadQuarterlyMatrix = useCallback(async () => {
     setQuarterlyMatrixLoading(true)
     try {
-      const data = await fetchPMYearMatrix(quarterlyYear)
+      const data = await fetchPMYearMatrix(quarterlyYear, 'quarterly')
       setQuarterlyMatrixData(data)
     } catch {
       message.error('載入季度概覽失敗')
@@ -617,7 +690,7 @@ export default function PeriodicMaintenancePage() {
   const loadQuarterlyStats = useCallback(async () => {
     setQuarterlyLoading(true)
     try {
-      const data = await fetchPMPeriodStats({ period_type: 'quarter', year: quarterlyYear, quarter: quarterlyQuarter })
+      const data = await fetchPMPeriodStats({ period_type: 'quarter', year: quarterlyYear, quarter: quarterlyQuarter, frequency_type: 'quarterly' })
       setQuarterlyData(data)
     } catch {
       message.error('載入季統計失敗')
@@ -629,7 +702,7 @@ export default function PeriodicMaintenancePage() {
   const loadYearlyStats = useCallback(async () => {
     setYearlyLoading(true)
     try {
-      const data = await fetchPMPeriodStats({ period_type: 'year', year: yearlyYear })
+      const data = await fetchPMPeriodStats({ period_type: 'year', year: yearlyYear, frequency_type: 'yearly' })
       setYearlyData(data)
     } catch {
       message.error('載入年統計失敗')
@@ -637,6 +710,27 @@ export default function PeriodicMaintenancePage() {
       setYearlyLoading(false)
     }
   }, [yearlyYear])
+
+  const loadYearlyMatrix = useCallback(async () => {
+    setYearlyMatrixLoading(true)
+    try {
+      const data = await fetchPMYearMatrix(yearlyYear, 'yearly')
+      setYearlyMatrixData(data)
+    } catch {
+      message.error('載入年度矩陣失敗')
+    } finally {
+      setYearlyMatrixLoading(false)
+    }
+  }, [yearlyYear])
+
+  const openDetailModal = (freqType: string, year: number, month: number, metric: PMMatrixMetric, monthLabel: string) => {
+    setModalFreqType(freqType)
+    setModalYear(year)
+    setModalMonth(month)
+    setModalMetric(metric)
+    setModalMonthLabel(monthLabel)
+    setModalOpen(true)
+  }
 
   // dashYear / dashMonth 改變時自動重新載入（依賴注入於 loadDashboard 的 useCallback）
   useEffect(() => {
@@ -647,8 +741,8 @@ export default function PeriodicMaintenancePage() {
     if (activeTab === 'list')      loadBatches()
     if (activeTab === 'monthly')   { loadYearMatrix(); loadMonthlyStats() }
     if (activeTab === 'quarterly') { loadQuarterlyMatrix(); loadQuarterlyStats() }
-    if (activeTab === 'yearly')    loadYearlyStats()
-  }, [activeTab, loadBatches, loadMonthlyStats, loadQuarterlyStats, loadYearlyStats, loadYearMatrix, loadQuarterlyMatrix])
+    if (activeTab === 'yearly')    { loadYearlyMatrix(); loadYearlyStats() }
+  }, [activeTab, loadBatches, loadMonthlyStats, loadQuarterlyStats, loadYearlyStats, loadYearMatrix, loadQuarterlyMatrix, loadYearlyMatrix])
 
   // year 改變時自動重算矩陣
   useEffect(() => {
@@ -694,7 +788,7 @@ export default function PeriodicMaintenancePage() {
       if (activeTab === 'list')      await loadBatches()
       if (activeTab === 'monthly')   { await loadYearMatrix(); await loadMonthlyStats() }
       if (activeTab === 'quarterly') { await loadQuarterlyMatrix(); await loadQuarterlyStats() }
-      if (activeTab === 'yearly')    await loadYearlyStats()
+      if (activeTab === 'yearly')    { await loadYearlyMatrix(); await loadYearlyStats() }
     } catch {
       message.error('同步失敗')
     } finally {
@@ -1018,7 +1112,7 @@ export default function PeriodicMaintenancePage() {
         title={
           <Space>
             <CalendarOutlined />
-            <Text strong>飯店週期保養每日狀況</Text>
+            <Text strong>飯店例行維護每日狀況</Text>
             <Text type="secondary" style={{ fontSize: 12 }}>
               （{dashYear}/{String(dashMonth).padStart(2, '0')}）
             </Text>
@@ -1341,6 +1435,16 @@ export default function PeriodicMaintenancePage() {
             重新整理
           </Button>
         </Col>
+        <Col>
+          <Button
+            icon={<ToolOutlined />}
+            type="primary"
+            style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)', border: 'none' }}
+            onClick={() => openCatalogModal('monthly')}
+          >
+            保養項目
+          </Button>
+        </Col>
       </Row>
 
       {matrixLoading ? (
@@ -1348,7 +1452,7 @@ export default function PeriodicMaintenancePage() {
           <Typography.Text type="secondary">載入年度矩陣中…</Typography.Text>
         </Card>
       ) : matrixData ? (
-        <YearMatrixTable data={matrixData} />
+        <YearMatrixTable data={matrixData} frequencyType='monthly' onCellClick={(y, m, metric, lbl) => openDetailModal('monthly', y, m, metric, lbl)} />
       ) : (
         <Alert message="尚未載入年度矩陣，請點擊重新整理" type="info" showIcon style={{ marginBottom: 16 }} />
       )}
@@ -1390,7 +1494,7 @@ export default function PeriodicMaintenancePage() {
   // ── 每季維護統計 Tab ──────────────────────────────────────────────────────
   const QuarterlyStatsTab = (
     <div>
-      {/* ─── 年份選擇器 ───────────────────────────────────────────────────── */}
+      {/* ─── 年度矩陣總表 ─────────────────────────────────────────────────── */}
       <Row gutter={8} align="middle" style={{ marginBottom: 12 }}>
         <Col>
           <Typography.Text type="secondary" style={{ marginRight: 4 }}>年度：</Typography.Text>
@@ -1412,9 +1516,34 @@ export default function PeriodicMaintenancePage() {
             重新整理
           </Button>
         </Col>
+        <Col>
+          <Button
+            icon={<ToolOutlined />}
+            type="primary"
+            style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)', border: 'none' }}
+            onClick={() => openCatalogModal('quarterly')}
+          >
+            保養項目
+          </Button>
+        </Col>
       </Row>
 
+      {quarterlyMatrixLoading ? (
+        <Card size="small" style={{ marginBottom: 16, textAlign: 'center', padding: 24 }}>
+          <Typography.Text type="secondary">載入年度矩陣中…</Typography.Text>
+        </Card>
+      ) : quarterlyMatrixData ? (
+        <YearMatrixTable
+          data={quarterlyMatrixData}
+          frequencyType='quarterly'
+          onCellClick={(y, m, metric, lbl) => openDetailModal('quarterly', y, m, metric, lbl)}
+        />
+      ) : (
+        <Alert message="尚未載入年度矩陣，請點擊重新整理" type="info" showIcon style={{ marginBottom: 16 }} />
+      )}
+
       {/* ─── Q1-Q4 選擇卡片 ───────────────────────────────────────────────── */}
+      <Divider orientation="left" style={{ fontSize: 13, color: '#666' }}>季度鑽取</Divider>
       {quarterlyMatrixLoading ? (
         <Card size="small" style={{ marginBottom: 16, textAlign: 'center', padding: 24 }}>
           <Typography.Text type="secondary">載入季度概覽中…</Typography.Text>
@@ -1454,9 +1583,10 @@ export default function PeriodicMaintenancePage() {
   // ── 每年維護統計 Tab ──────────────────────────────────────────────────────
   const YearlyStatsTab = (
     <div>
-      <Row gutter={8} align="middle" style={{ marginBottom: 16 }}>
+      {/* ─── 年度矩陣總表 ─────────────────────────────────────────────────── */}
+      <Row gutter={8} align="middle" style={{ marginBottom: 12 }}>
         <Col>
-          <Typography.Text type="secondary" style={{ marginRight: 4 }}>查詢年度：</Typography.Text>
+          <Typography.Text type="secondary" style={{ marginRight: 4 }}>年度：</Typography.Text>
         </Col>
         <Col>
           <Select
@@ -1467,13 +1597,47 @@ export default function PeriodicMaintenancePage() {
           />
         </Col>
         <Col>
-          <Button icon={<ReloadOutlined />} onClick={loadYearlyStats} loading={yearlyLoading}>
+          <Button
+            icon={<ReloadOutlined />}
+            onClick={() => { loadYearlyMatrix(); loadYearlyStats() }}
+            loading={yearlyMatrixLoading || yearlyLoading}
+          >
             重新整理
+          </Button>
+        </Col>
+        <Col>
+          <Button
+            icon={<ToolOutlined />}
+            type="primary"
+            style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)', border: 'none' }}
+            onClick={() => openCatalogModal('yearly')}
+          >
+            保養項目
           </Button>
         </Col>
       </Row>
 
-      {yearlyData ? (
+      {yearlyMatrixLoading ? (
+        <Card size="small" style={{ marginBottom: 16, textAlign: 'center', padding: 24 }}>
+          <Typography.Text type="secondary">載入年度矩陣中…</Typography.Text>
+        </Card>
+      ) : yearlyMatrixData ? (
+        <YearMatrixTable
+          data={yearlyMatrixData}
+          frequencyType='yearly'
+          onCellClick={(y, m, metric, lbl) => openDetailModal('yearly', y, m, metric, lbl)}
+        />
+      ) : (
+        <Alert message="尚未載入年度矩陣，請點擊重新整理" type="info" showIcon style={{ marginBottom: 16 }} />
+      )}
+
+      {/* ─── 年度鑽取（KPI + 季度分布） ────────────────────────────────────── */}
+      <Divider orientation="left" style={{ fontSize: 13, color: '#666' }}>年度鑽取</Divider>
+      {yearlyLoading ? (
+        <Card size="small" style={{ textAlign: 'center', padding: 24 }}>
+          <Typography.Text type="secondary">載入中…</Typography.Text>
+        </Card>
+      ) : yearlyData ? (
         <>
           <PeriodKpiCards data={yearlyData} prevLabel="上年" currLabel="本年" />
           <SubBreakdownTable rows={yearlyData.sub_period_breakdown} title="本年季度分布（Q1～Q4）" />
@@ -1487,6 +1651,7 @@ export default function PeriodicMaintenancePage() {
 
   // ── 頁面渲染 ──────────────────────────────────────────────────────────────
   return (
+    <>
     <div style={{ padding: '0 4px' }}>
       {/* Breadcrumb */}
       <Breadcrumb
@@ -1546,5 +1711,208 @@ export default function PeriodicMaintenancePage() {
         ]}
       />
     </div>
+
+    {/* ── 矩陣格明細 Modal ───────────────────────────────────────────── */}
+    <MatrixDetailModal
+      open={modalOpen}
+      year={modalYear}
+      month={modalMonth}
+      metric={modalMetric}
+      frequencyType={modalFreqType}
+      monthLabel={modalMonthLabel}
+      onClose={() => setModalOpen(false)}
+    />
+
+    {/* ── 保養項目目錄 Modal ──────────────────────────────────────────── */}
+    <CatalogModal
+      open={catalogOpen}
+      frequencyType={catalogFreqType}
+      items={catalogItems}
+      loading={catalogLoading}
+      onClose={() => setCatalogOpen(false)}
+    />
+    </>
+  )
+}
+
+// ── 矩陣格明細 Modal 元件 ──────────────────────────────────────────────────────
+const METRIC_LABELS: Record<string, string> = {
+  prev_carry_over:   '截至上月底累計未結案數',
+  prev_resolved:     '其中本月已結案數',
+  period_total:      '本期應完成總數',
+  period_completed:  '本期已完成',
+}
+
+const STATUS_COLOR: Record<string, string> = {
+  '已完成': '#52c41a', '完成': '#52c41a',
+  '進行中': '#1677ff',
+  '未完成': '#ff4d4f', '逾期': '#ff4d4f',
+  '非本月': '#d9d9d9', '待排程': '#faad14',
+}
+
+function MatrixDetailModal({
+  open, year, month, metric, frequencyType, monthLabel, onClose,
+}: {
+  open: boolean
+  year: number
+  month: number
+  metric: PMMatrixMetric
+  frequencyType: string
+  monthLabel: string
+  onClose: () => void
+}) {
+  const [loading, setLoading] = useState(false)
+  const [items,   setItems]   = useState<PMMatrixItem[]>([])
+  const [total,   setTotal]   = useState(0)
+
+  useEffect(() => {
+    if (!open) return
+    setLoading(true)
+    fetchPMMatrixItems({ year, month, metric, frequency_type: frequencyType })
+      .then((res) => { setItems(res.items); setTotal(res.total) })
+      .catch(() => message.error('載入明細失敗'))
+      .finally(() => setLoading(false))
+  }, [open, year, month, metric, frequencyType])
+
+  const columns: ColumnsType<PMMatrixItem> = [
+    { title: '類別',     dataIndex: 'category',           width: 80,  ellipsis: true },
+    { title: '保養項目', dataIndex: 'task_name',           width: 160, ellipsis: true },
+    { title: '頻率',     dataIndex: 'frequency',           width: 60  },
+    { title: '預定日期', dataIndex: 'scheduled_date_full', width: 90  },
+    { title: '結束時間', dataIndex: 'end_time',            width: 90  },
+    {
+      title: '狀態', dataIndex: 'status', width: 80,
+      render: (s: string) => (
+        <Tag color={STATUS_COLOR[s] ?? '#d9d9d9'} style={{ fontSize: 11 }}>{s || '—'}</Tag>
+      ),
+    },
+    { title: '執行人', dataIndex: 'executor_name', width: 80, ellipsis: true },
+    {
+      title: '連結', dataIndex: 'ragic_link', width: 60,
+      render: (url: string) => url ? <a href={url} target="_blank" rel="noreferrer">Ragic</a> : null,
+    },
+  ]
+
+  const monthStr = month === 0 ? '全年' : monthLabel
+  const metricLabel = METRIC_LABELS[metric] ?? metric
+
+  return (
+    <Modal
+      open={open}
+      onCancel={onClose}
+      footer={null}
+      width={900}
+      title={
+        <span>
+          {year}年 {monthStr}・{metricLabel}
+          <Typography.Text type="secondary" style={{ fontSize: 12, marginLeft: 8 }}>共 {total} 筆</Typography.Text>
+        </span>
+      }
+    >
+      {loading ? (
+        <div style={{ textAlign: 'center', padding: 32 }}><Spin /></div>
+      ) : (
+        <Table
+          dataSource={items}
+          columns={columns}
+          rowKey="ragic_id"
+          size="small"
+          scroll={{ x: 700 }}
+          pagination={{ pageSize: 20, showSizeChanger: false }}
+        />
+      )}
+    </Modal>
+  )
+}
+
+// ── 保養項目目錄 Modal 元件 ────────────────────────────────────────────────────
+const FREQ_TYPE_LABELS: Record<string, string> = {
+  monthly:   '每月',
+  quarterly: '每季',
+  yearly:    '每年',
+}
+
+function CatalogModal({
+  open, frequencyType, items, loading, onClose,
+}: {
+  open: boolean
+  frequencyType: 'monthly' | 'quarterly' | 'yearly'
+  items: PMCatalogItem[]
+  loading: boolean
+  onClose: () => void
+}) {
+  const columns: ColumnsType<PMCatalogItem> = [
+    {
+      title: '項次', dataIndex: 'seq_no', width: 60, align: 'center',
+      render: (v: number) => <Typography.Text style={{ fontSize: 12 }}>{v}</Typography.Text>,
+    },
+    {
+      title: '類別', dataIndex: 'category', width: 90,
+      render: (v: string) => <Tag color="blue" style={{ fontSize: 11 }}>{v}</Tag>,
+    },
+    {
+      title: '頻率', dataIndex: 'frequency', width: 80, align: 'center',
+      render: (v: string) => <Tag color="purple" style={{ fontSize: 11 }}>{v}</Tag>,
+    },
+    {
+      title: '保養項目',
+      dataIndex: 'task_name',
+      render: (v: string) => (
+        <Typography.Text style={{ fontSize: 12 }}>{v}</Typography.Text>
+      ),
+    },
+    {
+      title: '區域/位置', dataIndex: 'location', width: 120,
+      render: (v: string) => <Typography.Text style={{ fontSize: 12 }}>{v || '—'}</Typography.Text>,
+    },
+    {
+      title: '執行月份', dataIndex: 'exec_months_raw', width: 130,
+      render: (v: string) => (
+        <Typography.Text style={{ fontSize: 11, color: '#666' }}>{v || '—'}</Typography.Text>
+      ),
+    },
+    {
+      title: '預估工時', dataIndex: 'estimated_minutes', width: 90, align: 'center',
+      render: (v: number) => (
+        <Typography.Text style={{ fontSize: 12 }}>
+          {v > 0 ? `${v} 分` : '—'}
+        </Typography.Text>
+      ),
+    },
+  ]
+
+  const freqLabel = FREQ_TYPE_LABELS[frequencyType] || frequencyType
+
+  return (
+    <Modal
+      open={open}
+      onCancel={onClose}
+      footer={null}
+      width={900}
+      title={
+        <Space>
+          <ToolOutlined style={{ color: '#764ba2' }} />
+          <span style={{ fontWeight: 600 }}>{freqLabel}保養項目清單</span>
+          {!loading && (
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              共 {items.length} 項
+            </Typography.Text>
+          )}
+        </Space>
+      }
+    >
+      {loading ? (
+        <div style={{ textAlign: 'center', padding: 48 }}><Spin tip="載入保養項目中…" /></div>
+      ) : (
+        <Table
+          dataSource={items}
+          columns={columns}
+          rowKey={(r) => `${r.category}-${r.seq_no}-${r.task_name}`}
+          size="small"
+          scroll={{ x: 800 }}
+          pagination={{ pageSize: 15, showTotal: (t) => `共 ${t} 項`, showSizeChanger: false }}
+        />
+      )}
+    </Modal>
   )
 }

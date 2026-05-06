@@ -492,7 +492,7 @@ async def list_records(
     }
 
 
-# ── GET /{ragic_id} ────────────────────────────────────────────────────────────
+# ── GET /{ragic_id} ──────────────────────────────────────────────
 
 @router.get("/{ragic_id}", summary="IHG 客房保養單筆明細（含子表格）")
 async def get_record(ragic_id: str, db: Session = Depends(get_db)):

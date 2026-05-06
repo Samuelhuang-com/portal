@@ -2,6 +2,55 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)
 
+## [1.57.30] - 2026-05-06
+
+### Changed
+- **`mall/periodic-maintenance` 同步飯店例行維護 v1.57.25–v1.57.29 規格** — 後端 `_calc_year_matrix()` / `_calc_period_stats_core()` 加 `frequency_type` 頻率過濾（monthly/quarterly/yearly）；新增 `/period-stats/year-matrix/items` 矩陣明細端點與 `/items/catalog` 保養項目目錄端點；前端矩陣欄位標籤更新（「截至上月底累計未結案數」/「其中本月已結案數」加?Tooltip）；三個統計 TAB 矩陣移至頂部；矩陣數字可點擊開 `MatrixDetailModal`（含 Ragic 連結）；各 TAB 增「保養項目」按鈕開 `CatalogModal`；字體全面放大至 18px；欄寬擴大（label 310、月份 90、合計 100）
+
+---
+
+## [1.57.29] - 2026-05-06
+
+### Changed
+- **`hotel/periodic-maintenance` 年度矩陣總表字體全面放大 3 級** — `YearMatrixTable` 內所有字體：一般 cell/label/rate/number 12px→18px、備註文字 11px→17px；`?` badge 11→12px（圓圈 16→18px）；label 欄寬 260→310、月份欄寬 75→90、合計欄寬 80→100；月份表頭與合計標題加 `fontSize: 18`；商場 SPEC 第 6 節同步
+
+---
+
+## [1.57.28] - 2026-05-06
+
+### Changed
+- **`hotel/periodic-maintenance` 矩陣表字體統一 + 移除 ①② 前綴** — `MATRIX_METRICS` 的 `prev_carry_over` 改為「截至上月底累計未結案數」、`prev_resolved_in_period` 改為「其中本月已結案數」（去除 ①②）；label 欄 render 移除 `isHighlight` 分支，全列統一 `fontSize: 12`；`METRIC_LABELS` 同步更新；商場 SPEC 第 5、6、8 節同步修正
+
+---
+
+## [1.57.27] - 2026-05-06
+
+### Changed
+- **`hotel/periodic-maintenance` 三個 TAB 矩陣統一移至頂部** — 每季/每年 TAB 的 `YearMatrixTable` 從底部「全年矩陣總覽」區塊移至年度選擇器正下方（與每月 TAB 對齊）；每季底部 Divider「全年矩陣總覽（每季維護）」移除，改為頂部直接呈現；每年底部同樣調整；每年 TAB 重新整理按鈕改為同時觸發 `loadYearlyMatrix()` + `loadYearlyStats()`；鑽取區塊加 Divider「季度鑽取」/「年度鑽取」區隔；三個 TAB 字體一致（共用同一 `YearMatrixTable` 元件）；商場 SPEC 第 7 節同步更新
+
+---
+
+## [1.57.26] - 2026-05-06
+
+### Changed
+- **`hotel/periodic-maintenance` 模組更名** — 導覽列標籤由「1. 飯店週期保養表」改為「飯店例行維護」（`navLabels.ts`）；頁面內卡片標題「飯店週期保養每日狀況」改為「飯店例行維護每日狀況」
+- **年度矩陣欄位標籤更新** — `prev_carry_over` 改為「①截至上月底累計未結案數」、`prev_resolved_in_period` 改為「②其中本月已結案數」；兩欄各新增藍色圓形「?」Tooltip 說明計算方式；Label 欄字體從 12px 放大為 15px（highlight 行）；Label 欄寬從 230 擴為 260
+- **各 TAB 新增「保養項目」按鈕** — 每月／每季／每年三個 TAB 的年度選擇器旁各增加「保養項目」按鈕（紫色漸層 `#667eea→#764ba2`，ToolOutlined 圖示）；點擊後開啟 `CatalogModal` 顯示對應頻率的保養項目清單（類別/頻率/保養項目/區域位置/執行月份/預估工時）
+
+### Added
+- **後端新增 `GET /api/v1/periodic-maintenance/items/catalog`** — 依 `frequency_type`（monthly/quarterly/yearly）篩選，回傳去重後的保養項目清單（seq_no/category/frequency/task_name/location/estimated_minutes/exec_months_raw）
+- **前端新增 `CatalogModal` 元件** — 顯示對應頻率的保養項目清單，支援分頁（每頁 15 項），Spin 載入動畫
+- **API 函數新增 `fetchPMCatalog`** — `periodicMaintenance.ts` 新增 `PMCatalogItem`、`PMCatalogResponse` 型別及 `fetchPMCatalog(frequency_type?)` 函數
+
+---
+
+## [1.57.25] - 2026-05-06
+
+### Changed
+- **`hotel/periodic-maintenance` 每月／每季／每年 TAB 依頻率分類計算** — 後端 `_calc_year_matrix()` / `_calc_period_stats_core()` 加入 `frequency_type` 參數（monthly/quarterly/yearly），對 `PeriodicMaintenanceItem.frequency` 欄位進行關鍵字比對過濾（月/每月/月維護/Monthly；季/每季/季維護/Quarterly；年/每年/年維護/Annual/Yearly）；`GET /period-stats/year-matrix` 及 `GET /period-stats` 端點新增 `frequency_type` query param；新增 `GET /period-stats/year-matrix/items` 端點（params: year/month/metric/frequency_type），供矩陣數字點擊查詢對應明細；前端三個 TAB 傳入對應 `frequency_type`；`YearMatrixTable` 新增 `frequencyType` / `onCellClick` props，可點擊數字欄位（藍色底線）觸發 `MatrixDetailModal`（顯示：類別/保養項目/頻率/批次月份/排定日期/完成時間/狀態/執行人員/未完成原因/Ragic 連結）；每季維護 TAB 加入年度矩陣總表（frequency=季）；每年維護 TAB 加入年度矩陣總表（frequency=年）
+
+---
+
 ## [1.57.22] - 2026-05-05
 
 ### Fixed

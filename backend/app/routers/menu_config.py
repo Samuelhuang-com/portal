@@ -102,12 +102,9 @@ def save_menu_config(
             diff.append({"key": key, **changes})
 
     # ── 2. 覆寫設定 ───────────────────────────────────────────────────────────
-    # 用 Core-level DELETE + INSERT 繞過 ORM identity map，
-    # 避免 flush 時因相同 primary key 殘留舊物件導致 UNIQUE constraint 衝突
     db.execute(MenuConfig.__table__.delete())
     actor = current_user.full_name or current_user.email
     now = twnow()
-    # 去重：同一 menu_key 只保留第一筆（防止前端重複送出相同 key）
     seen_keys: set[str] = set()
     unique_items = []
     for it in payload.items:
@@ -144,7 +141,6 @@ def save_menu_config(
     db.add(history)
     db.flush()
 
-    # 超過 5 筆則刪除最舊
     all_history = (
         db.query(MenuConfigHistory)
         .order_by(MenuConfigHistory.changed_at.desc())

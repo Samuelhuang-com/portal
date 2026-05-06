@@ -95,7 +95,7 @@ export const NAV_PAGE = {
   hotelMeterReadings:     '每日數值登錄表',
   roomMaintenance:        '客房保養',
   roomMaintenanceDetail:  '※1.1飯店客房保養管理',       // ← 原「客房保養明細」
-  periodicMaintenance:    '1. 飯店週期保養表',
+  periodicMaintenance:    '飯店例行維護',
   ihgRoomMaintenance:     '2. IHG客房保養',             // ← 新增：年度矩陣保養
   repairs:                '報修管理',
 
