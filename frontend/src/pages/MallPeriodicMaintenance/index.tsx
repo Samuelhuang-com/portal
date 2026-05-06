@@ -1039,8 +1039,8 @@ export default function MallPeriodicMaintenancePage() {
 const METRIC_LABELS: Record<string, string> = {
   prev_carry_over:  '截至上月底累計未結案數',
   prev_resolved:    '其中本月已結案數',
-  period_total:     '本月週期保養項目數',
-  period_completed: '本月週期保養完成數',
+  period_total:     '本期應完成總數',
+  period_completed: '本期已完成',
 }
 
 function MatrixDetailModal({

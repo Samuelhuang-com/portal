@@ -2,6 +2,13 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)
 
+## [1.57.31] - 2026-05-06
+
+### Fixed
+- **`mall/periodic-maintenance` `METRIC_LABELS` 標籤通用化** — `MatrixDetailModal` 標題中 `period_total` 改為「本期應完成總數」、`period_completed` 改為「本期已完成」（去除月份特定的「本月」字眼，與 SPEC 第 8 節一致）
+
+---
+
 ## [1.57.30] - 2026-05-06
 
 ### Changed

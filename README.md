@@ -2,9 +2,10 @@
 
 > 跨據點統一管理平台 — FastAPI + React + TypeScript
 
-**最後更新：2026-05-06（v1.57.30）**
+**最後更新：2026-05-06（v1.57.31）**
 
 ## 最近變更
+- v1.57.31：**`mall/periodic-maintenance` `MatrixDetailModal` 標籤修正** — `period_total`→「本期應完成總數」、`period_completed`→「本期已完成」
 - v1.57.30：**`mall/periodic-maintenance` 同步飯店例行維護規格** — 頻率分類統計（monthly/quarterly/yearly）；矩陣欄位 Tooltip；矩陣數字點擊明細 Modal；保養項目 CatalogModal；字體 18px；後端新增 catalog + matrix-items 端點
 - v1.57.29：**`hotel/periodic-maintenance` 年度矩陣表字體全面放大 3 級** — 12→18px、11→17px；欄寬同步擴大（label 310、月份 90、合計 100）
 - v1.57.28：**`hotel/periodic-maintenance` 矩陣字體統一 + 標籤去 ①②** — 全列 label 改為 12px（移除 highlight 15px 分支）；「截至上月底累計未結案數」/「其中本月已結案數」去掉 ①② 前綴；商場 SPEC 同步
