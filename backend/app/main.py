@@ -889,4 +889,25 @@ app.include_router(
     tags=["角色管理"],
 )
 
-# ── 新增：知識庫（LLM Wik
+# ── 新增：知識庫（LLM Wiki）────────────────────────────────────────────────────
+app.include_router(
+    wiki.router,
+    prefix=f"{API_PREFIX}/wiki",
+    tags=["知識庫"],
+)
+
+# ── 正式環境：serve 前端靜態檔案 + SPA fallback（所有路由之後）─────────────────
+import os as _os
+from fastapi.staticfiles import StaticFiles as _StaticFiles
+from fastapi.responses import FileResponse as _FileResponse
+
+_frontend_dist = _os.path.join(_os.path.dirname(__file__), "..", "..", "frontend", "dist")
+if _os.path.isdir(_frontend_dist):
+    # API 與靜態資源已由上方路由處理；這裡補上 SPA catch-all
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def spa_fallback(full_path: str):
+        index = _os.path.join(_frontend_dist, "index.html")
+        return _FileResponse(index)
+
+    app.mount("/assets", _StaticFiles(directory=_os.path.join(_frontend_dist, "assets")), name="assets")
+    print(f"[Portal] Frontend static files (SPA mode) served from: {_frontend_dist}")

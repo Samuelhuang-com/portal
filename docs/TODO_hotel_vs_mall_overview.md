@@ -1,4 +1,5 @@
 # Portal Dashboard 修改 Todo List
+
 ## hotel/overview vs mall/overview 差異修正清單
 
 > 產出日期：2026-05-06
@@ -10,22 +11,24 @@
 ## 評分說明
 
 **嚴重性（1–5）**
-| 分數 | 說明 |
-|:---:|------|
-| 5 | 數據錯誤、功能完全壞掉、主管看到會誤判 |
-| 4 | 重要功能不完整、統計有偏差 |
-| 3 | 一致性問題、操作體驗差 |
-| 2 | 命名不統一、UI細節差異 |
-| 1 | 程式碼整理、可讀性問題 |
+
+| 分數 | 說明                                   |
+| :--: | -------------------------------------- |
+|  5  | 數據錯誤、功能完全壞掉、主管看到會誤判 |
+|  4  | 重要功能不完整、統計有偏差             |
+|  3  | 一致性問題、操作體驗差                 |
+|  2  | 命名不統一、UI細節差異                 |
+|  1  | 程式碼整理、可讀性問題                 |
 
 **容易度（1–5）**
-| 分數 | 說明 |
-|:---:|------|
-| 5 | 極易（1–5行修改，不影響邏輯） |
-| 4 | 容易（10行內，邏輯清楚） |
-| 3 | 中等（需改前端或後端，邏輯需理解） |
-| 2 | 較難（需同時改前後端，或重構邏輯） |
-| 1 | 困難（架構調整、需大量測試） |
+
+| 分數 | 說明                               |
+| :--: | ---------------------------------- |
+|  5  | 極易（1–5行修改，不影響邏輯）     |
+|  4  | 容易（10行內，邏輯清楚）           |
+|  3  | 中等（需改前端或後端，邏輯需理解） |
+|  2  | 較難（需同時改前後端，或重構邏輯） |
+|  1  | 困難（架構調整、需大量測試）       |
 
 ---
 
@@ -39,18 +42,19 @@
 
 #### T01 ｜ 飯店 PPTX 後端 endpoint 缺失
 
-| 欄位 | 內容 |
-|------|------|
-| **優先級** | P0 |
-| **嚴重性** | ⭐⭐⭐⭐⭐ 5 |
-| **容易度** | ⭐⭐⭐ 3（builder 已存在，需掛接 endpoint） |
-| **模組** | hotel/overview |
-| **影響 TAB** | Dashboard（頁頂匯出按鈕） |
-| **問題** | 前端有「匯出 PowerPoint」按鈕，API client 有 `exportHotelOverviewPptx()`，但後端 `hotel_overview.py` 只有 3 個 GET endpoint，沒有 `@router.post("/overview/export/pptx")`，點擊必定回傳 404 |
-| **檔案位置** | `backend/app/routers/hotel_overview.py` |
-| **預估工時** | 1–2 小時 |
+| 欄位               | 內容                                                                                                                                                                                              |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **優先級**   | P0                                                                                                                                                                                                |
+| **嚴重性**   | ⭐⭐⭐⭐⭐ 5                                                                                                                                                                                      |
+| **容易度**   | ⭐⭐⭐ 3（builder 已存在，需掛接 endpoint）                                                                                                                                                       |
+| **模組**     | hotel/overview                                                                                                                                                                                    |
+| **影響 TAB** | Dashboard（頁頂匯出按鈕）                                                                                                                                                                         |
+| **問題**     | 前端有「匯出 PowerPoint」按鈕，API client 有 `exportHotelOverviewPptx()`，但後端 `hotel_overview.py` 只有 3 個 GET endpoint，沒有 `@router.post("/overview/export/pptx")`，點擊必定回傳 404 |
+| **檔案位置** | `backend/app/routers/hotel_overview.py`                                                                                                                                                         |
+| **預估工時** | 1–2 小時                                                                                                                                                                                         |
 
 **Claude 提示詞：**
+
 ```
 請在 backend/app/routers/hotel_overview.py 補上 PPTX 匯出的 POST endpoint。
 
@@ -80,18 +84,19 @@
 
 #### T02 ｜ 飯店 PPTX 報告佔位卡出現「商場」字眼
 
-| 欄位 | 內容 |
-|------|------|
-| **優先級** | P0 |
-| **嚴重性** | ⭐⭐⭐⭐⭐ 5 |
-| **容易度** | ⭐⭐⭐⭐⭐ 5（2行修改） |
-| **模組** | hotel/overview |
-| **影響 TAB** | PPTX Slide 2 |
-| **問題** | `hotel_overview.py` 第 760 行的 PPTX builder 將佔位卡名稱硬編碼為「商場主管交辦」「商場緊急事件」，這份報告是飯店管理報告，名稱應該是「飯店主管交辦」「飯店緊急事件」 |
-| **檔案位置** | `backend/app/routers/hotel_overview.py` 第 760–761 行 |
-| **預估工時** | 5 分鐘 |
+| 欄位               | 內容                                                                                                                                                                    |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **優先級**   | P0                                                                                                                                                                      |
+| **嚴重性**   | ⭐⭐⭐⭐⭐ 5                                                                                                                                                            |
+| **容易度**   | ⭐⭐⭐⭐⭐ 5（2行修改）                                                                                                                                                 |
+| **模組**     | hotel/overview                                                                                                                                                          |
+| **影響 TAB** | PPTX Slide 2                                                                                                                                                            |
+| **問題**     | `hotel_overview.py` 第 760 行的 PPTX builder 將佔位卡名稱硬編碼為「商場主管交辦」「商場緊急事件」，這份報告是飯店管理報告，名稱應該是「飯店主管交辦」「飯店緊急事件」 |
+| **檔案位置** | `backend/app/routers/hotel_overview.py` 第 760–761 行                                                                                                                |
+| **預估工時** | 5 分鐘                                                                                                                                                                  |
 
 **Claude 提示詞：**
+
 ```
 請修改 backend/app/routers/hotel_overview.py 第 760 行附近的佔位卡名稱。
 
@@ -110,18 +115,19 @@
 
 #### T03 ｜ 飯店 API 文件說「六項來源」實際只有五項
 
-| 欄位 | 內容 |
-|------|------|
-| **優先級** | P0 |
-| **嚴重性** | ⭐⭐⭐⭐ 4 |
-| **容易度** | ⭐⭐⭐⭐⭐ 5（3行文字修改） |
-| **模組** | hotel/overview |
-| **影響 TAB** | API 文件（Swagger） |
-| **問題** | `hotel_overview.py` 的三個 endpoint summary 都寫「六項來源」，但 `HOTEL_CATEGORIES` 只有 5 個元素（飯店週期保養、IHG客房保養、飯店每日巡檢、保全巡檢、飯店工務部）。檔案開頭 docstring 也說「五項來源」，summary 說「六項」，兩邊矛盾 |
-| **檔案位置** | `backend/app/routers/hotel_overview.py` 第 80、270、443 行 |
-| **預估工時** | 5 分鐘 |
+| 欄位               | 內容                                                                                                                                                                                                                                      |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **優先級**   | P0                                                                                                                                                                                                                                        |
+| **嚴重性**   | ⭐⭐⭐⭐ 4                                                                                                                                                                                                                                |
+| **容易度**   | ⭐⭐⭐⭐⭐ 5（3行文字修改）                                                                                                                                                                                                               |
+| **模組**     | hotel/overview                                                                                                                                                                                                                            |
+| **影響 TAB** | API 文件（Swagger）                                                                                                                                                                                                                       |
+| **問題**     | `hotel_overview.py` 的三個 endpoint summary 都寫「六項來源」，但 `HOTEL_CATEGORIES` 只有 5 個元素（飯店週期保養、IHG客房保養、飯店每日巡檢、保全巡檢、飯店工務部）。檔案開頭 docstring 也說「五項來源」，summary 說「六項」，兩邊矛盾 |
+| **檔案位置** | `backend/app/routers/hotel_overview.py` 第 80、270、443 行                                                                                                                                                                              |
+| **預估工時** | 5 分鐘                                                                                                                                                                                                                                    |
 
 **Claude 提示詞：**
+
 ```
 請修改 backend/app/routers/hotel_overview.py 中三個 endpoint 的 summary 說明文字。
 
@@ -144,18 +150,19 @@
 
 #### T04 ｜ 商場人員排名僅統計報修人員，PM/巡檢隱形
 
-| 欄位 | 內容 |
-|------|------|
-| **優先級** | P0 |
-| **嚴重性** | ⭐⭐⭐⭐⭐ 5 |
-| **容易度** | ⭐⭐ 2（需改前端渲染邏輯，並確認 API 資料格式） |
-| **模組** | mall/overview |
-| **影響 TAB** | 人員排名 Tab（E） |
-| **問題** | `MallMgmtDashboard` 的人員排名 Tab 使用 `luqunData?.top_hours`（商場工務報修 Dashboard API），只能看到報修人員的排名。但 `/mall/person-hours` API 已彙整全部5來源（現場報修、例行維護、每日巡檢）的人員工時，PM執行人員與巡檢人員完全不在排名中，排名嚴重失真 |
-| **檔案位置** | `frontend/src/pages/MallMgmtDashboard/index.tsx` 第 488–503 行 |
-| **預估工時** | 3–4 小時 |
+| 欄位               | 內容                                                                                                                                                                                                                                                                |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **優先級**   | P0                                                                                                                                                                                                                                                                  |
+| **嚴重性**   | ⭐⭐⭐⭐⭐ 5                                                                                                                                                                                                                                                        |
+| **容易度**   | ⭐⭐ 2（需改前端渲染邏輯，並確認 API 資料格式）                                                                                                                                                                                                                     |
+| **模組**     | mall/overview                                                                                                                                                                                                                                                       |
+| **影響 TAB** | 人員排名 Tab（E）                                                                                                                                                                                                                                                   |
+| **問題**     | `MallMgmtDashboard` 的人員排名 Tab 使用 `luqunData?.top_hours`（商場工務報修 Dashboard API），只能看到報修人員的排名。但 `/mall/person-hours` API 已彙整全部5來源（現場報修、例行維護、每日巡檢）的人員工時，PM執行人員與巡檢人員完全不在排名中，排名嚴重失真 |
+| **檔案位置** | `frontend/src/pages/MallMgmtDashboard/index.tsx` 第 488–503 行                                                                                                                                                                                                   |
+| **預估工時** | 3–4 小時                                                                                                                                                                                                                                                           |
 
 **Claude 提示詞：**
+
 ```
 請修改 frontend/src/pages/MallMgmtDashboard/index.tsx 的人員排名 Tab（Tab E），將資料來源從 luqunData.top_hours 改為 /mall/person-hours API。
 
@@ -181,18 +188,19 @@
 
 #### T05 ｜ 商場 TypeScript 型別缺少 person_totals 欄位
 
-| 欄位 | 內容 |
-|------|------|
-| **優先級** | P0 |
-| **嚴重性** | ⭐⭐⭐⭐ 4 |
-| **容易度** | ⭐⭐⭐⭐⭐ 5（1行新增） |
-| **模組** | mall/overview |
-| **影響 TAB** | 人員工時% / 人員排名 |
-| **問題** | `api/mallOverview.ts` 的 `MallPersonHoursData` interface 缺少 `person_totals: number[]` 欄位，但後端 `/mall/person-hours` 確實有回傳此欄位（`"person_totals": [round(person_totals[p], 1) for p in persons]`）。飯店的 `HotelPersonHoursData` 有此欄位 |
-| **檔案位置** | `frontend/src/api/mallOverview.ts` MallPersonHoursData interface |
-| **預估工時** | 5 分鐘 |
+| 欄位               | 內容                                                                                                                                                                                                                                                               |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **優先級**   | P0                                                                                                                                                                                                                                                                 |
+| **嚴重性**   | ⭐⭐⭐⭐ 4                                                                                                                                                                                                                                                         |
+| **容易度**   | ⭐⭐⭐⭐⭐ 5（1行新增）                                                                                                                                                                                                                                            |
+| **模組**     | mall/overview                                                                                                                                                                                                                                                      |
+| **影響 TAB** | 人員工時% / 人員排名                                                                                                                                                                                                                                               |
+| **問題**     | `api/mallOverview.ts` 的 `MallPersonHoursData` interface 缺少 `person_totals: number[]` 欄位，但後端 `/mall/person-hours` 確實有回傳此欄位（`"person_totals": [round(person_totals[p], 1) for p in persons]`）。飯店的 `HotelPersonHoursData` 有此欄位 |
+| **檔案位置** | `frontend/src/api/mallOverview.ts` MallPersonHoursData interface                                                                                                                                                                                                 |
+| **預估工時** | 5 分鐘                                                                                                                                                                                                                                                             |
 
 **Claude 提示詞：**
+
 ```
 請修改 frontend/src/api/mallOverview.ts，在 MallPersonHoursData interface 補上缺少的 person_totals 欄位。
 
@@ -222,18 +230,19 @@
 
 #### T06 ｜ 商場 PPTX 後端 endpoint 缺失且前端按鈕未渲染
 
-| 欄位 | 內容 |
-|------|------|
-| **優先級** | P1 |
-| **嚴重性** | ⭐⭐⭐⭐ 4 |
-| **容易度** | ⭐⭐ 2（前後端都要補） |
-| **模組** | mall/overview |
-| **影響 TAB** | Dashboard |
-| **問題** | 前端有 `handleExportPptx` 函式、API client 有 `exportMallOverviewPptx()`、後端有 `_build_mall_pptx()` builder，但：① 後端沒有 `@router.post` endpoint ② 前端 UI 沒有渲染匯出按鈕（`handleExportPptx` 從未被呼叫）。整個功能是死碼 |
-| **檔案位置** | `backend/app/routers/mall_overview.py`；`frontend/src/pages/MallMgmtDashboard/index.tsx` |
-| **預估工時** | 2–3 小時 |
+| 欄位               | 內容                                                                                                                                                                                                                                          |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **優先級**   | P1                                                                                                                                                                                                                                            |
+| **嚴重性**   | ⭐⭐⭐⭐ 4                                                                                                                                                                                                                                    |
+| **容易度**   | ⭐⭐ 2（前後端都要補）                                                                                                                                                                                                                        |
+| **模組**     | mall/overview                                                                                                                                                                                                                                 |
+| **影響 TAB** | Dashboard                                                                                                                                                                                                                                     |
+| **問題**     | 前端有 `handleExportPptx` 函式、API client 有 `exportMallOverviewPptx()`、後端有 `_build_mall_pptx()` builder，但：① 後端沒有 `@router.post` endpoint ② 前端 UI 沒有渲染匯出按鈕（`handleExportPptx` 從未被呼叫）。整個功能是死碼 |
+| **檔案位置** | `backend/app/routers/mall_overview.py`；`frontend/src/pages/MallMgmtDashboard/index.tsx`                                                                                                                                                  |
+| **預估工時** | 2–3 小時                                                                                                                                                                                                                                     |
 
 **Claude 提示詞：**
+
 ```
 商場管理 Dashboard 的 PPTX 匯出功能已有前端函式（handleExportPptx）和後端 builder（_build_mall_pptx），但缺少兩個關鍵：
 ① 後端沒有 @router.post endpoint
@@ -263,18 +272,19 @@
 
 #### T07 ｜ Tab key 命名不統一（overview/person vs dashboard/person_pct）
 
-| 欄位 | 內容 |
-|------|------|
-| **優先級** | P1 |
-| **嚴重性** | ⭐⭐ 2 |
-| **容易度** | ⭐⭐⭐⭐ 4（字串替換，需注意 handleTabChange） |
-| **模組** | hotel/overview |
-| **影響 TAB** | 全部 Tab |
-| **問題** | Hotel Tab key：`overview`（Dashboard）、`person`（人員工時%）。Mall Tab key：`dashboard`、`person_pct`。命名不統一，增加維護負擔 |
-| **檔案位置** | `frontend/src/pages/HotelMgmtDashboard/index.tsx` |
-| **預估工時** | 30 分鐘 |
+| 欄位               | 內容                                                                                                                                     |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| **優先級**   | P1                                                                                                                                       |
+| **嚴重性**   | ⭐⭐ 2                                                                                                                                   |
+| **容易度**   | ⭐⭐⭐⭐ 4（字串替換，需注意 handleTabChange）                                                                                           |
+| **模組**     | hotel/overview                                                                                                                           |
+| **影響 TAB** | 全部 Tab                                                                                                                                 |
+| **問題**     | Hotel Tab key：`overview`（Dashboard）、`person`（人員工時%）。Mall Tab key：`dashboard`、`person_pct`。命名不統一，增加維護負擔 |
+| **檔案位置** | `frontend/src/pages/HotelMgmtDashboard/index.tsx`                                                                                      |
+| **預估工時** | 30 分鐘                                                                                                                                  |
 
 **Claude 提示詞：**
+
 ```
 請修改 frontend/src/pages/HotelMgmtDashboard/index.tsx 的 Tab key 命名，與 mall/overview 統一。
 
@@ -296,18 +306,19 @@
 
 #### T08 ｜ 每日/每月累計表缺少 cases_pct 欄位
 
-| 欄位 | 內容 |
-|------|------|
-| **優先級** | P1 |
-| **嚴重性** | ⭐⭐⭐ 3 |
-| **容易度** | ⭐⭐ 2（需同時改後端 API 回傳 + 前端表格欄位） |
-| **模組** | hotel/overview |
-| **影響 TAB** | B. 每日累計、C. 每月累計 |
-| **問題** | 商場的 B/C Tab 每列有 `cases_pct` 欄位（案件佔比%），飯店後端未回傳、前端表格也無此欄。兩邊應一致 |
-| **檔案位置** | `backend/app/routers/hotel_overview.py`；`frontend/src/pages/HotelMgmtDashboard/index.tsx` |
-| **預估工時** | 2 小時 |
+| 欄位               | 內容                                                                                                |
+| ------------------ | --------------------------------------------------------------------------------------------------- |
+| **優先級**   | P1                                                                                                  |
+| **嚴重性**   | ⭐⭐⭐ 3                                                                                            |
+| **容易度**   | ⭐⭐ 2（需同時改後端 API 回傳 + 前端表格欄位）                                                      |
+| **模組**     | hotel/overview                                                                                      |
+| **影響 TAB** | B. 每日累計、C. 每月累計                                                                            |
+| **問題**     | 商場的 B/C Tab 每列有 `cases_pct` 欄位（案件佔比%），飯店後端未回傳、前端表格也無此欄。兩邊應一致 |
+| **檔案位置** | `backend/app/routers/hotel_overview.py`；`frontend/src/pages/HotelMgmtDashboard/index.tsx`      |
+| **預估工時** | 2 小時                                                                                              |
 
 **Claude 提示詞：**
+
 ```
 請為飯店管理 Dashboard 的 B. 每日累計 和 C. 每月累計 補上 cases_pct（案件佔比%）欄位，與商場 mall/overview 對齊。
 
@@ -335,18 +346,19 @@
 
 #### T09 ｜ 飯店篩選在頁頂，商場各 Tab 可獨立篩選
 
-| 欄位 | 內容 |
-|------|------|
-| **優先級** | P1 |
-| **嚴重性** | ⭐⭐ 2 |
-| **容易度** | ⭐⭐ 2（需在各 Tab 內加篩選元件，邏輯改動較大） |
-| **模組** | hotel/overview |
-| **影響 TAB** | B. 每日累計、C. 每月累計、D. 每年累計、人員工時%、人員排名 |
-| **問題** | Hotel 所有 Tab 共用頁頂的 year/month 篩選，切換月份會影響所有 Tab。Mall 的 B/C/D/人員 Tab 各自有獨立篩選，更彈性。主管可能希望「月報」和「年報」同時顯示不同期間 |
-| **檔案位置** | `frontend/src/pages/HotelMgmtDashboard/index.tsx` |
-| **預估工時** | 4–6 小時 |
+| 欄位               | 內容                                                                                                                                                             |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **優先級**   | P1                                                                                                                                                               |
+| **嚴重性**   | ⭐⭐ 2                                                                                                                                                           |
+| **容易度**   | ⭐⭐ 2（需在各 Tab 內加篩選元件，邏輯改動較大）                                                                                                                  |
+| **模組**     | hotel/overview                                                                                                                                                   |
+| **影響 TAB** | B. 每日累計、C. 每月累計、D. 每年累計、人員工時%、人員排名                                                                                                       |
+| **問題**     | Hotel 所有 Tab 共用頁頂的 year/month 篩選，切換月份會影響所有 Tab。Mall 的 B/C/D/人員 Tab 各自有獨立篩選，更彈性。主管可能希望「月報」和「年報」同時顯示不同期間 |
+| **檔案位置** | `frontend/src/pages/HotelMgmtDashboard/index.tsx`                                                                                                              |
+| **預估工時** | 4–6 小時                                                                                                                                                        |
 
 **Claude 提示詞：**
+
 ```
 請為飯店管理 Dashboard（frontend/src/pages/HotelMgmtDashboard/index.tsx）的各工時統計 Tab 加上獨立篩選，參考商場 MallMgmtDashboard 的設計。
 
@@ -384,18 +396,19 @@
 
 #### T10 ｜ 商場人員排名 Tab 缺少橫向 BarChart
 
-| 欄位 | 內容 |
-|------|------|
-| **優先級** | P1 |
-| **嚴重性** | ⭐⭐ 2 |
-| **容易度** | ⭐⭐⭐ 3 |
-| **模組** | mall/overview |
-| **影響 TAB** | 人員排名 Tab（E） |
-| **問題** | 飯店人員排名 Tab 有橫向 BarChart（展示各人員各來源工時分解），商場只有表格，視覺化較差（此項建議先完成 T04 再做） |
-| **檔案位置** | `frontend/src/pages/MallMgmtDashboard/index.tsx` |
-| **預估工時** | 2–3 小時（需先完成 T04） |
+| 欄位               | 內容                                                                                                              |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------- |
+| **優先級**   | P1                                                                                                                |
+| **嚴重性**   | ⭐⭐ 2                                                                                                            |
+| **容易度**   | ⭐⭐⭐ 3                                                                                                          |
+| **模組**     | mall/overview                                                                                                     |
+| **影響 TAB** | 人員排名 Tab（E）                                                                                                 |
+| **問題**     | 飯店人員排名 Tab 有橫向 BarChart（展示各人員各來源工時分解），商場只有表格，視覺化較差（此項建議先完成 T04 再做） |
+| **檔案位置** | `frontend/src/pages/MallMgmtDashboard/index.tsx`                                                                |
+| **預估工時** | 2–3 小時（需先完成 T04）                                                                                         |
 
 **Claude 提示詞：**
+
 ```
 請在商場管理 Dashboard（frontend/src/pages/MallMgmtDashboard/index.tsx）的人員排名 Tab（TabRanking）補上橫向 BarChart，參考飯店 HotelMgmtDashboard TabRanking 的圖表設計。
 
@@ -423,18 +436,19 @@
 
 #### T11 ｜ _parse_minutes 重複複製，應抽共用
 
-| 欄位 | 內容 |
-|------|------|
-| **優先級** | P1 |
-| **嚴重性** | ⭐ 1 |
-| **容易度** | ⭐⭐⭐ 3（需確認 import 路徑不影響現有邏輯） |
-| **模組** | 兩邊後端 |
-| **影響 TAB** | 無（維護性問題） |
-| **問題** | `_parse_minutes()` 函式在 `hotel_overview.py` 與 `mall_overview.py` 各複製一份，連註解都一樣（「複製自 mall_overview.py 同名函式，避免跨 router import」）。若有 bug 需兩邊同步修改 |
-| **檔案位置** | `backend/app/routers/hotel_overview.py`；`backend/app/routers/mall_overview.py` |
-| **預估工時** | 1 小時 |
+| 欄位               | 內容                                                                                                                                                                                      |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **優先級**   | P1                                                                                                                                                                                        |
+| **嚴重性**   | ⭐ 1                                                                                                                                                                                      |
+| **容易度**   | ⭐⭐⭐ 3（需確認 import 路徑不影響現有邏輯）                                                                                                                                              |
+| **模組**     | 兩邊後端                                                                                                                                                                                  |
+| **影響 TAB** | 無（維護性問題）                                                                                                                                                                          |
+| **問題**     | `_parse_minutes()` 函式在 `hotel_overview.py` 與 `mall_overview.py` 各複製一份，連註解都一樣（「複製自 mall_overview.py 同名函式，避免跨 router import」）。若有 bug 需兩邊同步修改 |
+| **檔案位置** | `backend/app/routers/hotel_overview.py`；`backend/app/routers/mall_overview.py`                                                                                                       |
+| **預估工時** | 1 小時                                                                                                                                                                                    |
 
 **Claude 提示詞：**
+
 ```
 請將 hotel_overview.py 和 mall_overview.py 中重複的 _parse_minutes() 函式抽到共用的 service 模組。
 
@@ -456,18 +470,19 @@
 
 #### T12 ｜ PPTX 工具函式重複，應抽共用
 
-| 欄位 | 內容 |
-|------|------|
-| **優先級** | P1 |
-| **嚴重性** | ⭐ 1 |
-| **容易度** | ⭐⭐ 2（需重構，但邏輯清楚） |
-| **模組** | 兩邊後端 |
-| **影響 TAB** | 無（維護性問題） |
-| **問題** | Hotel 有 `_pptx_txt / _pptx_rect / _pptx_header / _pptx_cell / _pptx_header_row`，Mall 有 `_mall_pptx_txt / _mall_pptx_rect / _mall_pptx_header / _mall_pptx_cell / _mall_pptx_header_row`，邏輯完全相同，只差函式名稱前綴 |
-| **檔案位置** | `backend/app/routers/hotel_overview.py`；`backend/app/routers/mall_overview.py` |
-| **預估工時** | 1.5 小時 |
+| 欄位               | 內容                                                                                                                                                                                                                           |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **優先級**   | P1                                                                                                                                                                                                                             |
+| **嚴重性**   | ⭐ 1                                                                                                                                                                                                                           |
+| **容易度**   | ⭐⭐ 2（需重構，但邏輯清楚）                                                                                                                                                                                                   |
+| **模組**     | 兩邊後端                                                                                                                                                                                                                       |
+| **影響 TAB** | 無（維護性問題）                                                                                                                                                                                                               |
+| **問題**     | Hotel 有 `_pptx_txt / _pptx_rect / _pptx_header / _pptx_cell / _pptx_header_row`，Mall 有 `_mall_pptx_txt / _mall_pptx_rect / _mall_pptx_header / _mall_pptx_cell / _mall_pptx_header_row`，邏輯完全相同，只差函式名稱前綴 |
+| **檔案位置** | `backend/app/routers/hotel_overview.py`；`backend/app/routers/mall_overview.py`                                                                                                                                            |
+| **預估工時** | 1.5 小時                                                                                                                                                                                                                       |
 
 **Claude 提示詞：**
+
 ```
 請將 hotel_overview.py 和 mall_overview.py 中重複的 PPTX 工具函式抽到共用模組。
 
@@ -496,18 +511,19 @@
 
 #### T13 ｜ 飯店每年累計設計與商場不同
 
-| 欄位 | 內容 |
-|------|------|
-| **優先級** | P1 |
-| **嚴重性** | ⭐⭐ 2 |
-| **容易度** | ⭐⭐ 2（需確認主管需求後才能動） |
-| **模組** | hotel/overview |
-| **影響 TAB** | D. 每年累計 |
-| **問題** | Hotel 的每年累計 Tab 顯示單一年份的月累計滾計（1月累計、2月累計…12月累計）；Mall 的每年累計 Tab 顯示過去3年並排比較（baseyear-2、-1、0年）。兩種設計意圖不同，需主管確認偏好 |
-| **檔案位置** | `frontend/src/pages/HotelMgmtDashboard/index.tsx` TabDYearly 函式 |
-| **預估工時** | 需業主確認後才能估計 |
+| 欄位               | 內容                                                                                                                                                                          |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **優先級**   | P1                                                                                                                                                                            |
+| **嚴重性**   | ⭐⭐ 2                                                                                                                                                                        |
+| **容易度**   | ⭐⭐ 2（需確認主管需求後才能動）                                                                                                                                              |
+| **模組**     | hotel/overview                                                                                                                                                                |
+| **影響 TAB** | D. 每年累計                                                                                                                                                                   |
+| **問題**     | Hotel 的每年累計 Tab 顯示單一年份的月累計滾計（1月累計、2月累計…12月累計）；Mall 的每年累計 Tab 顯示過去3年並排比較（baseyear-2、-1、0年）。兩種設計意圖不同，需主管確認偏好 |
+| **檔案位置** | `frontend/src/pages/HotelMgmtDashboard/index.tsx` TabDYearly 函式                                                                                                           |
+| **預估工時** | 需業主確認後才能估計                                                                                                                                                          |
 
 **Claude 提示詞（待業主確認後使用）：**
+
 ```
 【等待業主確認設計需求後執行】
 
@@ -528,18 +544,19 @@
 
 #### T14 ｜ 飯店月份格式無容錯邏輯
 
-| 欄位 | 內容 |
-|------|------|
-| **優先級** | P1 |
-| **嚴重性** | ⭐⭐⭐ 3 |
-| **容易度** | ⭐⭐⭐⭐ 4（模式清楚，照 mall 做法複製） |
-| **模組** | hotel/overview |
-| **影響 TAB** | B. 每日累計、C. 每月累計 |
-| **問題** | `hotel_overview.py` 查詢月份批次時使用 `period_month == period_prefix`（exact match，YYYY/MM 零填充），若資料庫有 YYYY/M 格式（如 `2026/4`）則遺漏。商場有容錯邏輯 |
-| **檔案位置** | `backend/app/routers/hotel_overview.py` |
-| **預估工時** | 1 小時 |
+| 欄位               | 內容                                                                                                                                                                     |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **優先級**   | P1                                                                                                                                                                       |
+| **嚴重性**   | ⭐⭐⭐ 3                                                                                                                                                                 |
+| **容易度**   | ⭐⭐⭐⭐ 4（模式清楚，照 mall 做法複製）                                                                                                                                 |
+| **模組**     | hotel/overview                                                                                                                                                           |
+| **影響 TAB** | B. 每日累計、C. 每月累計                                                                                                                                                 |
+| **問題**     | `hotel_overview.py` 查詢月份批次時使用 `period_month == period_prefix`（exact match，YYYY/MM 零填充），若資料庫有 YYYY/M 格式（如 `2026/4`）則遺漏。商場有容錯邏輯 |
+| **檔案位置** | `backend/app/routers/hotel_overview.py`                                                                                                                                |
+| **預估工時** | 1 小時                                                                                                                                                                   |
 
 **Claude 提示詞：**
+
 ```
 請為飯店管理 Dashboard 後端（backend/app/routers/hotel_overview.py）的週期保養批次查詢補上月份格式容錯邏輯，與商場 mall_overview.py 對齊。
 
@@ -568,18 +585,19 @@
 
 #### T15 ｜ 飯店工務部來源名稱不一致
 
-| 欄位 | 內容 |
-|------|------|
-| **優先級** | P2 |
-| **嚴重性** | ⭐⭐ 2 |
-| **容易度** | ⭐⭐⭐⭐⭐ 5（1行修改） |
-| **模組** | hotel/overview |
-| **影響 TAB** | Dashboard（來源卡） |
-| **問題** | `adaptDazhi` 函式回傳 `source_name: '工務部'`，但後端 `HOTEL_CATEGORIES` 第5項是 `'飯店工務部'`，前後端命名不一致 |
-| **檔案位置** | `frontend/src/pages/HotelMgmtDashboard/index.tsx` adaptDazhi 函式 |
-| **預估工時** | 5 分鐘 |
+| 欄位               | 內容                                                                                                                      |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------- |
+| **優先級**   | P2                                                                                                                        |
+| **嚴重性**   | ⭐⭐ 2                                                                                                                    |
+| **容易度**   | ⭐⭐⭐⭐⭐ 5（1行修改）                                                                                                   |
+| **模組**     | hotel/overview                                                                                                            |
+| **影響 TAB** | Dashboard（來源卡）                                                                                                       |
+| **問題**     | `adaptDazhi` 函式回傳 `source_name: '工務部'`，但後端 `HOTEL_CATEGORIES` 第5項是 `'飯店工務部'`，前後端命名不一致 |
+| **檔案位置** | `frontend/src/pages/HotelMgmtDashboard/index.tsx` adaptDazhi 函式                                                       |
+| **預估工時** | 5 分鐘                                                                                                                    |
 
 **Claude 提示詞：**
+
 ```
 請修改 frontend/src/pages/HotelMgmtDashboard/index.tsx 中 adaptDazhi 函式的 source_name 欄位。
 
@@ -597,18 +615,19 @@
 
 #### T16 ｜ SourceCard 未抽成共用 React Component
 
-| 欄位 | 內容 |
-|------|------|
-| **優先級** | P2 |
-| **嚴重性** | ⭐ 1 |
-| **容易度** | ⭐ 1（重構量大，需測試兩個模組） |
-| **模組** | 兩邊前端 |
-| **影響 TAB** | Dashboard |
-| **問題** | Hotel 和 Mall 的來源狀態卡（SourceCard：顏色條、工項數、完成率進度條、異常/工時顯示）各自在元件內實作，程式碼重複，維護成本高 |
-| **檔案位置** | `frontend/src/pages/HotelMgmtDashboard/index.tsx`；`frontend/src/pages/MallMgmtDashboard/index.tsx` |
-| **預估工時** | 4–6 小時 |
+| 欄位               | 內容                                                                                                                          |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
+| **優先級**   | P2                                                                                                                            |
+| **嚴重性**   | ⭐ 1                                                                                                                          |
+| **容易度**   | ⭐ 1（重構量大，需測試兩個模組）                                                                                              |
+| **模組**     | 兩邊前端                                                                                                                      |
+| **影響 TAB** | Dashboard                                                                                                                     |
+| **問題**     | Hotel 和 Mall 的來源狀態卡（SourceCard：顏色條、工項數、完成率進度條、異常/工時顯示）各自在元件內實作，程式碼重複，維護成本高 |
+| **檔案位置** | `frontend/src/pages/HotelMgmtDashboard/index.tsx`；`frontend/src/pages/MallMgmtDashboard/index.tsx`                       |
+| **預估工時** | 4–6 小時                                                                                                                     |
 
 **Claude 提示詞：**
+
 ```
 請將飯店管理與商場管理 Dashboard 共用的「來源狀態卡」UI 抽成共用 React Component。
 
@@ -643,18 +662,19 @@
 
 #### T17 ｜ 確認 Hotel 來源卡路由路徑是否正確
 
-| 欄位 | 內容 |
-|------|------|
-| **優先級** | P2 |
-| **嚴重性** | ⭐⭐⭐ 3 |
-| **容易度** | ⭐⭐⭐⭐⭐ 5（確認後改路徑字串） |
-| **模組** | hotel/overview |
-| **影響 TAB** | Dashboard（來源卡點擊跳轉） |
-| **問題** | `HOTEL_SOURCE_ROUTES.security` 設為 `'/hotel/security/dashboard'`，但 router 設定的路徑是 `/security/dashboard`（無 `/hotel` 前綴）。`HOTEL_SOURCE_ROUTES.daily_inspection` 設為 `'/hotel/hotel-daily-inspection/dashboard'`，但 router 設定的是 `/hotel/daily-inspection`（有多餘的 `hotel-` 前綴）。點擊來源卡的跳轉功能可能失效 |
-| **檔案位置** | `frontend/src/pages/HotelMgmtDashboard/index.tsx` HOTEL_SOURCE_ROUTES |
-| **預估工時** | 15 分鐘（確認 + 修改） |
+| 欄位               | 內容                                                                                                                                                                                                                                                                                                                                               |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **優先級**   | P2                                                                                                                                                                                                                                                                                                                                                 |
+| **嚴重性**   | ⭐⭐⭐ 3                                                                                                                                                                                                                                                                                                                                           |
+| **容易度**   | ⭐⭐⭐⭐⭐ 5（確認後改路徑字串）                                                                                                                                                                                                                                                                                                                   |
+| **模組**     | hotel/overview                                                                                                                                                                                                                                                                                                                                     |
+| **影響 TAB** | Dashboard（來源卡點擊跳轉）                                                                                                                                                                                                                                                                                                                        |
+| **問題**     | `HOTEL_SOURCE_ROUTES.security` 設為 `'/hotel/security/dashboard'`，但 router 設定的路徑是 `/security/dashboard`（無 `/hotel` 前綴）。`HOTEL_SOURCE_ROUTES.daily_inspection` 設為 `'/hotel/hotel-daily-inspection/dashboard'`，但 router 設定的是 `/hotel/daily-inspection`（有多餘的 `hotel-` 前綴）。點擊來源卡的跳轉功能可能失效 |
+| **檔案位置** | `frontend/src/pages/HotelMgmtDashboard/index.tsx` HOTEL_SOURCE_ROUTES                                                                                                                                                                                                                                                                            |
+| **預估工時** | 15 分鐘（確認 + 修改）                                                                                                                                                                                                                                                                                                                             |
 
 **Claude 提示詞：**
+
 ```
 請確認並修正 frontend/src/pages/HotelMgmtDashboard/index.tsx 中 HOTEL_SOURCE_ROUTES 的路由路徑。
 
@@ -679,17 +699,18 @@
 
 #### T18 ｜ 兩邊均無 Excel/CSV 匯出功能
 
-| 欄位 | 內容 |
-|------|------|
-| **優先級** | P2 |
-| **嚴重性** | ⭐ 1 |
-| **容易度** | ⭐⭐⭐ 3 |
-| **模組** | 兩邊前端 |
-| **影響 TAB** | B. 每日累計、C. 每月累計 |
-| **問題** | B/C Tab 的大型交叉表格目前無匯出功能，主管若要分析需手動複製 |
-| **預估工時** | 2–3 小時 |
+| 欄位               | 內容                                                         |
+| ------------------ | ------------------------------------------------------------ |
+| **優先級**   | P2                                                           |
+| **嚴重性**   | ⭐ 1                                                         |
+| **容易度**   | ⭐⭐⭐ 3                                                     |
+| **模組**     | 兩邊前端                                                     |
+| **影響 TAB** | B. 每日累計、C. 每月累計                                     |
+| **問題**     | B/C Tab 的大型交叉表格目前無匯出功能，主管若要分析需手動複製 |
+| **預估工時** | 2–3 小時                                                    |
 
 **Claude 提示詞：**
+
 ```
 請為飯店管理與商場管理 Dashboard 的 B. 每日累計 和 C. 每月累計 Tab 加上 CSV 匯出功能。
 
@@ -713,28 +734,27 @@
 
 依「嚴重性高 + 容易度高」優先，建議執行順序：
 
-| 順序 | 編號 | 預估時間 | 原因 |
-|:----:|------|:-------:|------|
-| 1 | T02 | 5 分鐘 | 2行修改，P0問題 |
-| 2 | T03 | 5 分鐘 | 3行修改，P0問題 |
-| 3 | T05 | 5 分鐘 | 1行修改，P0問題 |
-| 4 | T15 | 5 分鐘 | 1行修改，P2 |
-| 5 | T17 | 15 分鐘 | 確認路由，P2 |
-| 6 | T07 | 30 分鐘 | Tab key統一，P1 |
-| 7 | T11 | 1 小時 | 抽共用函式，P1 |
-| 8 | T14 | 1 小時 | 月份容錯，P1 |
-| 9 | T01 | 1–2 小時 | 飯店PPTX endpoint，P0 |
-| 10 | T06 | 2–3 小時 | 商場PPTX完整補齊，P1 |
-| 11 | T08 | 2 小時 | cases_pct補齊，P1 |
-| 12 | T04 | 3–4 小時 | 商場人員排名資料來源，P0 |
-| 13 | T12 | 1.5 小時 | PPTX工具函式共用，P1（T01/T06完成後） |
-| 14 | T10 | 2–3 小時 | 商場人員排名圖表（T04完成後）|
-| 15 | T09 | 4–6 小時 | 飯店Tab獨立篩選，P1 |
-| 16 | T13 | 討論後定 | 飯店每年累計設計，待業主確認 |
-| 17 | T18 | 2–3 小時 | CSV匯出，P2 |
-| 18 | T16 | 4–6 小時 | SourceCard共用化，P2 |
+| 順序 | 編號 | 預估時間 | 原因                                  |
+| :--: | ---- | :-------: | ------------------------------------- |
+|  1  | T02  |  5 分鐘  | 2行修改，P0問題                       |
+|  2  | T03  |  5 分鐘  | 3行修改，P0問題                       |
+|  3  | T05  |  5 分鐘  | 1行修改，P0問題                       |
+|  4  | T15  |  5 分鐘  | 1行修改，P2                           |
+|  5  | T17  |  15 分鐘  | 確認路由，P2                          |
+|  6  | T07  |  30 分鐘  | Tab key統一，P1                       |
+|  7  | T11  |  1 小時  | 抽共用函式，P1                        |
+|  8  | T14  |  1 小時  | 月份容錯，P1                          |
+|  9  | T01  | 1–2 小時 | 飯店PPTX endpoint，P0                 |
+|  10  | T06  | 2–3 小時 | 商場PPTX完整補齊，P1                  |
+|  11  | T08  |  2 小時  | cases_pct補齊，P1                     |
+|  12  | T04  | 3–4 小時 | 商場人員排名資料來源，P0              |
+|  13  | T12  | 1.5 小時 | PPTX工具函式共用，P1（T01/T06完成後） |
+|  14  | T10  | 2–3 小時 | 商場人員排名圖表（T04完成後）         |
+|  15  | T09  | 4–6 小時 | 飯店Tab獨立篩選，P1                   |
+|  16  | T13  | 討論後定 | 飯店每年累計設計，待業主確認          |
+|  17  | T18  | 2–3 小時 | CSV匯出，P2                           |
+|  18  | T16  | 4–6 小時 | SourceCard共用化，P2                  |
 
 ---
 
-*此文件由 Claude（Cowork mode）依程式碼比對自動產出，提示詞可直接複製使用*
 *2026-05-06*
