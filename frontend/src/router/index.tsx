@@ -71,6 +71,7 @@ import WorkCategoryAnalysisPage        from '@/pages/WorkCategoryAnalysis'
 import ExecDashboardPage               from '@/pages/ExecDashboard'
 import DataPreparingPage              from '@/pages/DataPreparing'
 import DecisionCockpitPage            from '@/pages/DecisionCockpit'
+import ExecWorkDashboardPage           from '@/pages/ExecWorkDashboard'
 
 // ── 知識庫（LLM Wiki）──────────────────────────────────────────────────────────
 import WikiPage                        from '@/pages/Wiki'
@@ -291,6 +292,13 @@ export default function AppRouter() {
 
         {/* ── ◆ 董事長簡報 Dashboard（新功能，獨立路由）─────────────────── */}
         <Route path="exec-dashboard" element={<ExecDashboardPage />} />
+
+        {/* ── 集團工務決策駕駛艙（工務決策視角，獨立路由）─────────────────── */}
+        <Route path="exec-work-dashboard" element={
+          <PermissionGuard permissionKey="exec_work_dashboard_view">
+            <ExecWorkDashboardPage />
+          </PermissionGuard>
+        } />
 
         {/* ── 春大直商場工務巡檢 ────────────────────────────────────── */}
         <Route path="mall-facility-inspection">

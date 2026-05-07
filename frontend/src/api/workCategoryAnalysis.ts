@@ -67,7 +67,7 @@ export interface ChartPoint {
 export interface CategoryBreakdownItem { name: string; value: number; pct: number }
 
 export interface PersonRankingItem {
-  rank: number; person: string; hours: number; pct: number
+  rank: number; person: string; hours: number; cases: number; avg_hr: number; pct: number
   sources: string[]; source_labels: string[]; top_category: string
 }
 
@@ -79,6 +79,13 @@ export interface CategoryPersonMatrixItem {
 export interface SourceBreakdownItem {
   source: string; label: string; hours: number; pct: number
   cases: number; persons: number; top_category: string
+}
+
+export interface CategorySourceMatrixItem {
+  category: string
+  dazhi_hours: number; luqun_hours: number; total_hours: number
+  dazhi_cases: number; luqun_cases: number; total_cases: number
+  pct: number
 }
 
 export interface ConcentrationData {
@@ -101,8 +108,9 @@ export interface CategoryStats {
   category_breakdown:     CategoryBreakdownItem[]
   person_ranking:         PersonRankingItem[]
   category_person_matrix: CategoryPersonMatrixItem[]
-  source_breakdown:       SourceBreakdownItem[]
-  concentration:          ConcentrationData
+  source_breakdown:          SourceBreakdownItem[]
+  concentration:             ConcentrationData
+  category_source_matrix:    CategorySourceMatrixItem[]
   daily_hours:            DailyHours
   monthly_hours:          MonthlyHours
   person_hours:           PersonHours

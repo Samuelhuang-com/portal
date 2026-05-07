@@ -225,7 +225,7 @@ export default function MallMgmtDashboardPage() {
 
   // ── 篩選狀態 ──────────────────────────────────────────────────────────────
   const [year,       setYear]       = useState<number>(thisYear)
-  const [month,      setMonth]      = useState<number>(0)
+  const [month,      setMonth]      = useState<number>(thisMonth)
   const [targetDate, setTargetDate] = useState<string>(dayjs().format('YYYY/MM/DD'))
   const [activeTab,  setActiveTab]  = useState('dashboard')
 
@@ -612,7 +612,7 @@ export default function MallMgmtDashboardPage() {
       {/* 彙總 KPI */}
       <Divider orientation="left" plain style={{ fontSize: 15, color: '#888', margin: '4px 0 12px' }}>主管摘要</Divider>
       <Row gutter={[12, 12]} style={{ marginBottom: 20 }}>
-        <Col xs={12} sm={8} md={4}>
+        <Col flex="1">
           <Card bodyStyle={{ padding: '14px 16px' }} style={{ borderLeft: '3px solid #1B3A5C' }}>
             <Statistic
               title={<Tooltip title="商場例行維護 + 全棟例行維護 + 商場工務巡檢 + 商場工務報修之工項/案件總和"><span style={{ fontSize: 13, color: '#888', cursor: 'help' }}>本期總工項 <QuestionCircleOutlined style={{ color: '#bbb' }} /></span></Tooltip>}
@@ -622,7 +622,7 @@ export default function MallMgmtDashboardPage() {
             />
           </Card>
         </Col>
-        <Col xs={12} sm={8} md={4}>
+        <Col flex="1">
           <Card bodyStyle={{ padding: '14px 16px' }} style={{ borderLeft: '3px solid #52C41A' }}>
             <Statistic title={<Text style={{ fontSize: 13, color: '#888' }}>已完成工項</Text>} value={totalCompleted} suffix="筆"
               valueStyle={{ fontSize: 24, fontWeight: 700, color: '#52C41A' }}
@@ -631,16 +631,7 @@ export default function MallMgmtDashboardPage() {
             <Text type="secondary" style={{ fontSize: 13 }}>完成率 {overallRate}%</Text>
           </Card>
         </Col>
-        <Col xs={12} sm={8} md={4}>
-          <Card bodyStyle={{ padding: '14px 16px' }} style={{ borderLeft: '3px solid #4BA8E8' }}>
-            <div style={{ fontSize: 13, color: '#888', marginBottom: 6 }}>整體完成率</div>
-            <Progress type="circle" percent={overallRate} width={60}
-              strokeColor={{ from: overallRate < 50 ? '#FF4D4F' : '#FAAD14', to: '#52C41A' }}
-              format={(p) => <span style={{ fontSize: 16, fontWeight: 700 }}>{p}%</span>}
-            />
-          </Card>
-        </Col>
-        <Col xs={12} sm={8} md={4}>
+        <Col flex="1">
           <Card bodyStyle={{ padding: '14px 16px' }} style={{ borderLeft: '3px solid #FA8C16' }}>
             <Statistic
               title={<Tooltip title="PM 計劃工時（預估）+ 巡檢工時 + 商場報修工時"><span style={{ fontSize: 13, color: '#888', cursor: 'help' }}>本期工時合計 <QuestionCircleOutlined style={{ color: '#bbb' }} /></span></Tooltip>}
@@ -650,7 +641,7 @@ export default function MallMgmtDashboardPage() {
             />
           </Card>
         </Col>
-        <Col xs={12} sm={8} md={4}>
+        <Col flex="1">
           <Card bodyStyle={{ padding: '14px 16px' }} style={{ borderLeft: `3px solid ${totalAbnormal > 0 ? '#FF4D4F' : '#52C41A'}` }}>
             <Statistic title={<Text style={{ fontSize: 13, color: '#888' }}>異常/未結案件</Text>} value={totalAbnormal} suffix="件"
               valueStyle={{ fontSize: 24, fontWeight: 700, color: totalAbnormal > 0 ? '#FF4D4F' : '#52C41A' }}
@@ -659,7 +650,7 @@ export default function MallMgmtDashboardPage() {
             {totalAbnormal === 0 && <Tag color="success" style={{ marginTop: 4, fontSize: 13 }}>全部正常</Tag>}
           </Card>
         </Col>
-        <Col xs={12} sm={8} md={4}>
+        <Col flex="1">
           <Card bodyStyle={{ padding: '14px 16px' }} style={{ borderLeft: `3px solid ${totalOverdue > 0 ? '#C0392B' : '#52C41A'}` }}>
             <Statistic title={<Text style={{ fontSize: 13, color: '#888' }}>逾期未保養</Text>} value={totalOverdue} suffix="項"
               valueStyle={{ fontSize: 24, fontWeight: 700, color: totalOverdue > 0 ? '#C0392B' : '#52C41A' }}

@@ -2,6 +2,190 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)
 
+## [1.57.97] - 2026-05-07
+
+### Added
+- **集團工務決策駕駛艙 Phase 6：異常提醒區（ROW 0.40）** — 新增 `AlertPanel` 元件，預設展開；規則：未完成件數 > 0（🔴）、完成率 < 60%（🔴）或 < 80%（🟠）、工項類別占比 > 60%（🟡）、人員工時 > 80h（🟠）、單日工時 > 月均 × 2（🔵）；無異常時顯示「✅ 本月無異常警示」
+
+## [1.57.96] - 2026-05-07
+
+### Added
+- **集團工務決策駕駛艙 Phase 5：工項類別 × 單位矩陣（ROW 0.39）** — 後端新增 `_build_category_source_matrix()` 函式（來源：dazhi/luqun），回傳每類別的飯店件數、商場件數、合計件數、件占比、飯店工時、商場工時、總工時；前端新增 `CategorySourceMatrixItem` 型別及 `CategorySourceMatrix` 元件，含合計列（exec-total-row）；`CategoryStats.category_source_matrix` 欄位加入 API 型別定義
+
+## [1.57.95] - 2026-05-07
+
+### Added
+- **集團工務決策駕駛艙 Phase 4：飯店 vs 商場比較表（ROW 0.38）** — 新增 `UnitComparisonTable` 元件，列：飯店（大直工務）/ 商場（商場工務）/ 合計；欄：案件數、工時（h）、完成件數、未完成件數、完成率、主要工項類別；資料來源：`dazhiData.kpi`、`luqunData.kpi`、`execStats.source_breakdown`，無新增 API 呼叫
+
+## [1.57.94] - 2026-05-07
+
+### Added
+- **集團工務決策駕駛艙 Phase 3：集團 KPI Card（ROW 0）** — 8 個 `Statistic` 卡片（lg=3）：集團總案件數、已完成件數、未完成件數、集團總工時、完成率、平均工時/件、飯店案件占比、商場案件占比；所有數值由 `dazhiData.kpi`＋`luqunData.kpi`＋`execStats.kpi` 即時計算，無新增 API 呼叫
+
+## [1.57.93] - 2026-05-07
+
+### Added
+- **集團工務決策駕駛艙（ExecWorkDashboard）Phase 1+2 完成** — 新建 `frontend/src/pages/ExecWorkDashboard/index.tsx`（993 行），以 Dashboard 為基底精簡：移除保全/商場巡檢/預算/GraphView 非工務區塊，`loadAll` 從 13 個 API 精簡為 7 個，完整保留工務報修摘要、每日/月累計、工時分析、人員負荷等所有工務表格；Phase 2 新增路由 `/exec-work-dashboard`、navLabels key `execWorkDashboard`、MainLayout sidebar 項目（`RadarChartOutlined`）、`permissionKey: exec_work_dashboard_view`；原始 Dashboard 完全不受影響
+
+## [1.57.92] - 2026-05-07
+
+### Changed
+- **Dashboard「人員負荷與效率分析」改為獨立 Collapse 面板（ROW 0.37）** — 從 ExecRankingTable 拆出為獨立 `ExecBurdenTable` 元件，置於所有工時表最下方；「人員工時佔比表」與「人員排名詳細表」兩個面板從 Collapse 移除（隱藏）；`ALL_ANALYSIS_KEYS` 同步更新為 `['exec-daily', 'exec-monthly', 'exec-burden']`
+
+## [1.57.91] - 2026-05-07
+
+### Added
+- **Dashboard 人員排名詳細表新增「人員負荷與效率分析」子表** — 後端 `_build_person_ranking` 新增 `cases`（去重件數）與 `avg_hr`（平均工時/件）欄位；前端在既有排名表下方加第二張表，欄位：人員／工時／件數／均工時/件／主要類別／判斷；判斷閾值：均工時 ≥3.0 → 需關注（紅）、2.5–3.0 → 工時偏高（橙）、<2.5 → 正常（綠）
+
+## [1.57.90] - 2026-05-07
+
+### Changed
+- **Dashboard 工項類別比較表新增「合計」與「占比」欄** — 合計欄即時計算飯店＋商場件數；占比欄顯示各類別佔總件數百分比（≥50% 紅、≥20% 橙、其餘灰）；小計列同步補齊兩欄（合計總數 / 100%）
+
+## [1.57.89] - 2026-05-07
+
+### Changed
+- **Dashboard 工項類別比較表新增小計列** — 使用 `Table.Summary` 在表格最底部加入「小計」固定列，飯店／商場各欄自動加總；底色 `#f0f4f8`、粗體，字級與內容列一致（15px）
+- **Dashboard 隱藏 ROW 6 模組關聯圖譜（GraphView）** — 實體移除 JSX 區塊及 import，60 秒輪詢 API 不再發出，效能零影響
+
+## [1.57.88] - 2026-05-07
+
+### Changed
+- **Dashboard 所有表格字體放大 2 級** — 飯店/商場每日累計表、明細分析 4 張工時表（每日/每月/人員/排名）內所有 `fontSize` 統一 +2：9→11、10→12、11→13、12→14、13→15；Collapse 標籤（16px）及主要 UI chrome 不受影響
+
+## [1.57.87] - 2026-05-07
+
+### Changed
+- **Dashboard 明細分析面板標題年月文字字級統一為 16px** — 「每日累計工時表」與「每月累計工時表」Collapse 面板 label 中的年月副文字（`Typography.Text type="secondary"`）由 11px 改為 16px，與「飯店每日累計案件數」等面板字級一致
+
+## [1.57.86] - 2026-05-07
+
+### Changed
+- **Dashboard 全展開/全收合按鈕移至左側；移除「明細分析（可收合）」Divider 標籤**
+
+## [1.57.85] - 2026-05-07
+
+### Added
+- **Dashboard 折疊區塊新增「全展開／全收合」按鈕** — ROW 0.35 上方加入右對齊切換按鈕；兩組 Collapse（每日累計 × 2 面板、明細分析 × 4 面板）改為受控模式（`activeKey` + `onChange`）；全部展開時顯示「⊖ 全收合」、全部收合時顯示「⊕ 全展開」；各面板仍可獨立點擊收合，互不影響
+
+## [1.57.84] - 2026-05-07
+
+### Changed
+- **Dashboard ROW 0.4～ROW 5 暫時隱藏** — 主管指標（ExecMetricsCard）、今日重點摘要（TodaySummaryCard）、KPI 完成率卡（商場/保全/客房）、群組摘要卡、同步紀錄、完成率趨勢、結案率追蹤等全部 mark 不呈現；ROW 6 模組關聯圖譜保留；程式碼以注釋標記保留，可隨時恢復
+
+## [1.57.83] - 2026-05-07
+
+### Added
+- **Dashboard 新增商場近12個月報修趨勢 + 報修類型分布雙欄 Row（ROW 0.33）** — 飯店雙欄（ROW 0.32）下方；左欄（lg=14）：近12個月報修趨勢折線圖（`luqunData.trend_12m`）；右欄（lg=10）：報修類型分布圓餅圖（`luqunData.type_dist`）；零新增 API 呼叫；mall/overview 不動
+
+## [1.57.82] - 2026-05-07
+
+### Added
+- **Dashboard 新增近12個月報修趨勢 + 報修類型分布雙欄 Row（ROW 0.32）** — 三卡列下方、每日累計折疊表上方；左欄（lg=14）：近12個月報修趨勢折線圖（報修件數/完成件數，來自 `dazhiData.trend_12m`）；右欄（lg=10）：報修類型分布圓餅圖（來自 `dazhiData.type_dist`）；零新增 API 呼叫，使用已載入的 `dazhiData`；補充 recharts `PieChart/Pie/Cell` import 及 `TypeDistItem` type import；dazhi-repair/dashboard 不動
+
+## [1.57.81] - 2026-05-07
+
+### Changed
+- **Dashboard 明細分析四張表內容字級 +1 級** — `execRenderHr` 11→12；`execRenderCat` Tag 10→11；每日表日期標頭 9→10 / 8→9；每月表月份標頭 10→11、未來格 11→12；人員表人員標頭 10→11、佔比值 11→12；排名表類別 Tag 10→11、來源 Tag 9→10
+
+## [1.57.80] - 2026-05-07
+
+### Changed
+- **Dashboard 每日累計 / 明細分析標題字級統一放大至 16px** — 飯店每日累計案件數、商場每日累計案件數 Collapse 標題加 `fontSize: 16`；明細分析 Divider 從 12→16；exec 四個面板標題從 13→16；三區塊統一對齊
+
+## [1.57.79] - 2026-05-07
+
+### Added
+- **Dashboard 新增「明細分析（可收合）」區塊** — 移植 exec-dashboard 的四張工時分析表至集團管理總覽，放置於商場每日累計折疊表下方（ROW 0.36）；包含：📅 每日累計工時表、📆 每月累計工時表、🧑‍💼 人員工時佔比表、🏆 人員排名詳細表；以 `Collapse`（`defaultActiveKey=[]` 預設全收合）包覆；`loadAll` 擴充為 13 項平行呼叫，新增 `fetchStats({ year, month, sources/category/person=all })`；新增 `execStats: CategoryStats` state；exec-dashboard 本身完全不動
+
+## [1.57.78] - 2026-05-07
+
+### Added
+- **Dashboard 工務報修區塊加入 Section Header** — ROW 0.3（三卡列）上方新增「工務報修」區塊標題卡（Card + `borderTop: 3px solid #1B3A5C`），含 `ToolOutlined` 圖示、「工務報修」標題、年月副標；樣式與「主管指標」Section Header 一致
+
+## [1.57.77] - 2026-05-07
+
+### Changed
+- **Dashboard 每日累計表工項類別與數字加入超連結** — `HotelDailyTable` / `MallDailyTable`：工項類別標籤（現場報修／例行維護／每日巡檢）改為可點擊連結；各日期格及「案件數」欄的非零數字亦改為連結；飯店對應路由：`/dazhi-repair`、`/hotel/periodic-maintenance`、`/hotel/daily-inspection`；商場對應路由：`/luqun-repair`、`/mall/periodic-maintenance`、`/mall-facility-inspection`；上級交辦／緊急事件（固定 0）不加連結；新增 `HOTEL_CAT_ROUTES` / `MALL_CAT_ROUTES` 常數，兩個 table component 各自呼叫 `useNavigate()`
+
+## [1.57.76] - 2026-05-07
+
+### Added
+- **Dashboard 新增飯店／商場每日累計案件數折疊表格** — `Dashboard/index.tsx`：新增 `HotelDailyTable` / `MallDailyTable` 元件，顯示各工項類別每日案件數（飯店六來源合併為五類：現場報修=飯店工務部、例行維護=客房保養管理+飯店週期保養+IHG客房保養、每日巡檢=飯店每日巡檢+保全巡檢、上級交辦/緊急事件=0；商場直接顯示）；以 Ant Design `Collapse`（`defaultActiveKey=[]` 預設全收合）包覆，放置於工務報修三卡列與主管指標之間；`loadAll` 擴充為 12 項平行呼叫，加入 `fetchHotelDailyHours`、`fetchMallDailyHours`；表格與上方年月篩選器連動
+
+## [1.57.75] - 2026-05-07
+
+### Fixed
+- **Dashboard 工項比較表「飯店」欄數值修正** — `categoryComparison` useMemo 改套用與 `HotelMgmtDashboard TAB C` 相同的多來源合併邏輯：`現場報修`=`飯店工務部.cases[mi]`；`例行維護`=`客房保養管理+飯店週期保養+IHG客房保養`；`每日巡檢`=`飯店每日巡檢+保全巡檢`；`上級交辦`/`緊急事件`=0；商場維持直接 find（API 已回傳五類名稱）
+
+## [1.57.74] - 2026-05-07
+
+### Changed
+- **Dashboard 工項類別比較表改用每月累計 API（與 hotel/overview、mall/overview TAB C 口徑一致）** — `Dashboard/index.tsx`：將 `fetchHotelDailyHours`/`fetchMallDailyHours` 改為 `fetchHotelMonthlyHours`/`fetchMallMonthlyHours`（傳入 `selectedYear`）；`categoryComparison` useMemo 改取 `cases[selectedMonth - 1]`，確保比較表數字與 hotel/overview、mall/overview TAB C「每月累計」完全相同
+
+## [1.57.73] - 2026-05-07
+
+### Changed
+- **Dashboard 飯店工務部／商場工務報修卡新增「當月金額」區塊** — `Dashboard/index.tsx`：`RepairSummaryCard` 摘要文字下方加入費用小表（委外+維修 / 扣款費用 / 扣款專櫃 / 當月小計），資料來自 `kpi.month_outsource_fee`、`month_maintenance_fee`、`month_deduction_fee`、`month_deduction_counter`、`month_total_fee`；值為 0 時顯示「-」
+
+## [1.57.72] - 2026-05-07
+
+### Changed
+- **Dashboard「主管指標」移至工務報修三卡列下方** — `Dashboard/index.tsx`：ROW 0（ExecMetricsCard）移至 ROW 0.3（飯店工務部＋商場工務報修＋比較表）之後，改編號為 ROW 0.4
+
+## [1.57.71] - 2026-05-07
+
+### Fixed
+- **集團管理總覽 Dashboard 年月篩選 + 3 卡佈局恢復** — `Dashboard/index.tsx`：修復 revert 過程中意外遺失的 v1.57.65-67 功能；`curYear`/`curMonth` 常數改回 `selectedYear`/`selectedMonth` state；新增 `hotelDailyData`/`mallDailyData` state；`loadAll` 擴充為 10 項平行呼叫（加入 `fetchHotelDailyHours` / `fetchMallDailyHours`）；加回 `categoryComparison` useMemo；ROW 0.3 恢復年月 Select 篩選器 + 飯店工務部（colLg=8）+ 商場工務報修（colLg=8）+ 工項類別比較表（colLg=8）三欄佈局
+
+## [1.57.70] - 2026-05-07
+
+### Reverted
+- **還原 Dashboard 與 mall/overview 費用嵌入變更（v1.57.68、v1.57.69）** — `Dashboard/index.tsx` 移除 `showCosts`/`costLabel` props 及費用 footer block；`MallMgmtDashboard/index.tsx` 恢復獨立「商場報修費用摘要」Divider + Row 三卡版面，`SourceStatusCard` 的 `footer` prop 保留（optional，不影響現有使用）
+
+## [1.57.69] - 2026-05-07
+
+### Changed
+- **集團管理總覽 Dashboard「商場工務報修」卡嵌入費用摘要** — `Dashboard/index.tsx`：`RepairSummaryCard` 新增 `showCosts`/`costLabel` props；商場工務報修卡傳入 `showCosts` 後，卡片底部顯示費用摘要 3 欄（委外+維修費用 / 扣款費用 / 扣款專櫃），資料來自 `luqunData?.kpi.annual_*` 欄位，隨頂層 YYYY/MM 篩選自動連動；新增 `QuestionCircleOutlined` icon import
+
+## [1.57.68] - 2026-05-07
+
+### Changed
+- **商場管理 Dashboard 費用摘要嵌入「商場工務報修」卡** — `MallMgmtDashboard/index.tsx`：移除獨立「商場報修費用摘要」Divider + Row；費用資料（委外+維修費用 / 扣款費用 / 扣款專櫃）改以 compact 3欄 footer 形式嵌入 `luqun_repair` SourceStatusCard 底部，隨頂層年月篩選（`year`/`month`）自動連動；`SourceStatusCard` 新增 `footer?: React.ReactNode` prop，供其他卡片擴充使用
+
+## [1.57.67] - 2026-05-07
+
+### Changed
+- **集團管理總覽 Dashboard 工務報修二卡 + 工項比較表合為同一列** — `Dashboard/index.tsx`：原兩個 `<Row>` 合併為一個 `<Row align="stretch">`；`RepairSummaryCard` 新增 `colLg` prop 覆寫 Col span（預設 12，此處傳 8）；工項類別比較表 Col 改為 `lg={8}`；三卡在大螢幕等寬並排
+
+## [1.57.66] - 2026-05-07
+
+### Changed
+- **集團管理總覽 Dashboard 工務報修卡左右對調，「大直」→「飯店」** — `Dashboard/index.tsx`：兩張 `RepairSummaryCard` 順序對調（飯店工務部在左、商場工務報修在右）；模組內所有「大直」顯示文字（label、註解）改為「飯店」；API 呼叫端變數名稱不變（`dazhiData`、`fetchDazhiDashboard`）
+
+## [1.57.65] - 2026-05-07
+
+### Added
+- **集團管理總覽 Dashboard 年月篩選 + 工項類別比較表** — `Dashboard/index.tsx`；不新增後端 API，沿用既有 `/api/v1/hotel/daily-hours` 與 `/api/v1/mall/daily-hours`
+  - 頁面頂部新增 YYYY / MM 兩個 Select（預設當年當月），同步控制報修數據與比較表
+  - Block 1「報修數據」：商場工務報修（路易莎）數字改接 `luqun-repair/dashboard?year&month`，大直工務部數字改接 `dazhi-repair/dashboard?year&month`，確保與各自 overview 一致
+  - Block 2（新增）「飯店/商場工項類別比較表」：5 行（現場報修 / 上級交辦 / 緊急事件 / 例行維護 / 每日巡檢），左欄飯店件數、右欄商場件數，資料來源 `daily-hours` API 的 `cases_total` 欄位；飯店側：現場報修=飯店工務部、例行維護=週期保養+IHG客房保養、每日巡檢=飯店每日巡檢+保全巡檢；商場側對應五類直接映射
+
+## [1.57.64] - 2026-05-07
+
+### Changed
+- **飯店 Dashboard 主管摘要 KPI Card 改為全寬均分** — `HotelMgmtDashboard/index.tsx` `KpiAggregate()` 函式內 5 張 Card 的 `Col` 由 `xs={12} sm={8} md={4}` 改為 `flex="1"`，讓 Ant Design Row 自動均分全寬
+
+## [1.57.63] - 2026-05-07
+
+### Changed
+- **商場 Dashboard 頂層月份篩選預設值改為當月** — `MallMgmtDashboard/index.tsx` `month` state 初始值由 `0`（全年）改為 `thisMonth`；頁面載入即自動帶入當月篩選，API 呼叫隨之傳入當月月份參數
+
+## [1.57.62] - 2026-05-07
+
+### Changed
+- **商場 Dashboard KPI 卡移除「整體完成率」** — `MallMgmtDashboard/index.tsx` 刪除 Progress circle「整體完成率」Card（原為 6 張 `md={4}`）；剩餘 5 張 KPI Card（本期總工項 / 已完成工項 / 本期工時合計 / 異常未結案件 / 逾期未保養）均改為 `<Col flex="1">`，讓 Ant Design Row 自動均分全寬；`overallRate` 計算值保留，仍顯示於「已完成工項」卡的副標文字（完成率 X%）
+
 ## [1.57.61] - 2026-05-07
 
 ### Fixed
@@ -2946,97 +3130,4 @@
 
 ### Added
 - 客房保養明細：`GET /api/v1/room-maintenance-detail/room-history/{room_no}?months=12` 端點
-  - 回傳近 N 個月月曆摘要（每月 serviced/record_count/work_hours_sum/latest_date/latest_staff/checks）
-  - 回傳全部保養記錄（時序降冪）
-  - Stats：total_records、last_serviced、consecutive_missed（連續未保養月數）、serviced_months
-- 客房保養明細：前端 `RoomHistoryDrawer`（640px 右側抽屜）
-  - 連續未保養 ≥2 月→紅色 Alert，=1 月→橘色 Warning
-  - 3 格 KPI（保養記錄總數 / 近 12 月保養次數 / 連續未保養月數）
-  - 近 12 個月保養月曆格子（綠=已保養、紅=未保養、灰=當月）
-  - 完整保養記錄時間軸（紅點=有異常、綠點=全 OK，展開顯示異常項目 Tag）
-- 客房保養明細：總表（Tab 1）與明細清單（Tab 2）房號欄位皆可點擊，開啟房間歷史追蹤 Drawer
-- 前端型別新增 `MonthlyMaintenanceSummary`、`RoomHistoryStats`、`RoomHistoryResponse`
-- 前端 API 新增 `fetchRoomHistory(room_no, months)`
-
----
-
-## [1.5.0] - 2026-04-10
-
-### Added
-- 客房保養明細：新增 `Room` SQLAlchemy 主檔模型（`rooms` 表）及自動 seed（170 間，5F–10F）
-- 客房保養明細：`GET /summary` 端點改支援日期區間（`date_from` / `date_to`）並整合全房間清單
-- 客房保養明細：`/summary` 新增工時數合計（`work_hours_total`）、未保養房間數（`unserviced_count`）統計
-- 客房保養明細：`GET /` 端點新增 `date_from` / `date_to` 篩選參數
-- 客房保養明細：前端頁面全面重設計 — Tab 1「保養總表」（主管執行視圖）+ Tab 2「明細清單」
-- 客房保養明細：Tab 1 日期區間篩選 → KPI 四卡（保養記錄總數/異常項次總數/全項目正常房間數/工時數）
-- 客房保養明細：「異常項次總數」KPI 卡可點擊，自動篩選表格僅顯示有異常的房間
-- 客房保養明細：「未保養房號」按鈕，切換顯示日期區間內未保養房間（灰底）
-- 客房保養明細：總表依樓層 filter + 房號排序，未保養灰底、有異常淡紅底
-
----
-
-## [1.4.0] - 2026-04-10
-
-### Added
-- 客房保養明細：新增 `RoomMaintenanceDetailRecord` SQLAlchemy 模型（`room_maintenance_detail_records` 表）
-- 客房保養明細：Ragic → SQLite 同步服務（`room_maintenance_detail_sync.py`）— 指向 ap12.ragic.com/soutlet001/report2/2
-- 客房保養明細：`GET /api/v1/room-maintenance-detail/` 列表端點（支援房號/人員/日期篩選+分頁）
-- 客房保養明細：`GET /api/v1/room-maintenance-detail/summary` 總表端點（依日期×房號聚合，含 X/V 統計）
-- 客房保養明細：`POST /api/v1/room-maintenance-detail/sync` 手動同步端點
-- 客房保養明細：前端頁面 `pages/RoomMaintenanceDetail/index.tsx`（列表 + 總表 Button/Modal）
-- 客房保養明細：Sidebar「飯店管理」新增「客房保養明細」選單項目
-- 客房保養明細：路由 `/hotel/room-maintenance-detail`
-- config：新增 `RAGIC_ROOM_DETAIL_SERVER_URL`、`RAGIC_ROOM_DETAIL_ACCOUNT`、`RAGIC_ROOM_DETAIL_PATH`
-- AutoSync：新增客房保養明細同步至每 30 分鐘自動排程
-
----
-
-## [1.3.0] - 2026-04-09
-
-### Added
-- Dashboard：新增 `GET /api/v1/dashboard/kpi` 聚合端點（客房保養 + 庫存 + 同步狀態）
-- Dashboard：KPI 卡片列（完成率 / 未完成項目 / 庫存品項數 / 同步健康度）
-- Dashboard：客房保養工作狀態 Donut 圓餅圖（recharts）
-- Dashboard：庫存類別分析 Bar 圖（前 8 大類）
-- Dashboard：重點關注房間表（incomplete > 0，依未完成數排序）
-- Dashboard：近期同步紀錄表（最近 5 筆，含狀態 Badge、相對時間）
-- Dashboard：整合重新整理按鈕 + 資料更新時間顯示
-
----
-
-## [1.2.0] - 2026-04-09
-
-### Added
-- 倉庫庫存：新增 `InventoryRecord` SQLAlchemy 模型（`inventory_records` 表）
-- 倉庫庫存：Ragic → SQLite 同步服務（`inventory_sync.py`）— 中文 key 解析
-- 倉庫庫存：`GET /api/v1/inventory/` 列表、`/stats` KPI、`/sync` 手動同步端點
-- 倉庫庫存：前端頁面 `pages/Inventory/index.tsx`（KPI 卡 + 篩選 + 唯讀表格）
-- 倉庫庫存：Sidebar 新增「倉庫管理」群組及「倉庫庫存」選單項目
-- 倉庫庫存：路由 `/warehouse/inventory`
-- AutoSync：同時涵蓋客房保養與倉庫庫存兩個模組
-- config：新增 `RAGIC_INVENTORY_PATH = ragicinventory/20008`
-
----
-
-## [1.1.0] - 2026-04-09
-
-### Added
-- 客房保養：Ragic → SQLite 同步架構（`room_maintenance_sync.py`）
-- 客房保養：`POST /sync` 手動同步端點
-- 客房保養：APScheduler 每 30 分鐘自動同步
-- 客房保養：管理圖表儀表板（recharts）— 完成率、狀態分佈、未完成柱狀圖、檢查頻率
-- 客房保養：未檢查項目附表（反向顯示缺漏項目，橙紅底色）
-- 系統設定：使用者管理、角色管理、Ragic 連線管理路由補齊
-
-### Fixed
-- JWT `create_access_token` 傳入 dict 導致 `sub` 字串化 → 401 的 bug
-- Ragic 欄位 key 格式（`"1000006房號"` → 實際為純中文 `"房號"`）解析錯誤
-
-## [1.0.0] - 2026-04-08
-
-### Added
-- FastAPI 後端：auth、users、tenants、ragic、dashboard、room_maintenance routers
-- React 前端：Login、Dashboard、客房保養列表頁
-- SQLAlchemy 同步模式（修正自 aiosqlite）
-- JWT 認證（`decode_token` / `verify_token` 別名相容）
-- Ragic API Adapter（修正 double base64 encoding bug）
+  - 回傳近 N 個月月曆摘要（每月 serviced/record_

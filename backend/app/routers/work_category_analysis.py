@@ -335,32 +335,38 @@ def _build_category_breakdown(rows: list[dict]) -> list[dict]:
 
 
 def _build_person_ranking(rows: list[dict], top_n: int = 20) -> list[dict]:
-    """C. 人員工時排名。"""
+    """C. 人員工時排名（含件數、平均工時/件）。"""
     total = sum(r["work_hours"] for r in rows)
-    person_hours: dict[str, float] = defaultdict(float)
-    person_source: dict[str, set[str]] = defaultdict(set)
+    person_hours: dict[str, float]      = defaultdict(float)
+    person_cases: dict[str, set]        = defaultdict(set)
+    person_source: dict[str, set[str]]  = defaultdict(set)
     person_cat: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
     for r in rows:
         p = r["person"]
         if p == "未指定":
             continue
         person_hours[p] += r["work_hours"]
+        person_cases[p].add(r["case_id"])
         person_source[p].add(r["source"])
         person_cat[p][r["category"]] += r["work_hours"]
 
     sorted_persons = sorted(person_hours, key=lambda p: -person_hours[p])[:top_n]
     result = []
     for i, p in enumerate(sorted_persons, 1):
-        ph = person_hours[p]
+        ph    = person_hours[p]
+        cases = len(person_cases[p])
+        avg_hr = round(ph / cases, 1) if cases else 0.0
         top_cat = max(person_cat[p], key=lambda c: person_cat[p][c]) if person_cat[p] else "-"
         result.append({
-            "rank":         i,
-            "person":       p,
-            "hours":        round(ph, 1),
-            "pct":          round(ph / total * 100, 1) if total else 0,
-            "sources":      list(person_source[p]),
+            "rank":          i,
+            "person":        p,
+            "hours":         round(ph, 1),
+            "cases":         cases,
+            "avg_hr":        avg_hr,
+            "pct":           round(ph / total * 100, 1) if total else 0,
+            "sources":       list(person_source[p]),
             "source_labels": [SOURCE_LABELS.get(s, s) for s in person_source[p]],
-            "top_category": top_cat,
+            "top_category":  top_cat,
         })
     return result
 
@@ -415,6 +421,50 @@ def _build_source_breakdown(rows: list[dict]) -> list[dict]:
             "cases":        len(data[s]["cases"]),
             "persons":      len(data[s]["persons"]),
             "top_category": top_cat,
+        })
+    return result
+
+
+def _build_category_source_matrix(rows: list[dict]) -> list[dict]:
+    """G. 工項類別 × 來源（飯店/商場）交叉矩陣。"""
+    data: dict[str, dict] = {
+        c: {
+            "dazhi_hours": 0.0, "luqun_hours": 0.0,
+            "dazhi_cases": set(), "luqun_cases": set(),
+        }
+        for c in CATEGORIES
+    }
+    for r in rows:
+        cat = r["category"]
+        src = r["source"]
+        if src == "dazhi":
+            data[cat]["dazhi_hours"] += r["work_hours"]
+            data[cat]["dazhi_cases"].add(r["case_id"])
+        elif src == "luqun":
+            data[cat]["luqun_hours"] += r["work_hours"]
+            data[cat]["luqun_cases"].add(r["case_id"])
+
+    total_h = sum(
+        data[c]["dazhi_hours"] + data[c]["luqun_hours"] for c in CATEGORIES
+    )
+    result = []
+    for c in CATEGORIES:
+        d = data[c]
+        dh = round(d["dazhi_hours"], 1)
+        lh = round(d["luqun_hours"], 1)
+        dc = len(d["dazhi_cases"])
+        lc = len(d["luqun_cases"])
+        tot_h = round(dh + lh, 1)
+        tot_c = dc + lc
+        result.append({
+            "category":    c,
+            "dazhi_hours": dh,
+            "luqun_hours": lh,
+            "total_hours": tot_h,
+            "dazhi_cases": dc,
+            "luqun_cases": lc,
+            "total_cases": tot_c,
+            "pct":         round(tot_h / total_h * 100, 1) if total_h else 0.0,
         })
     return result
 
@@ -616,8 +666,9 @@ def get_stats(
         "category_breakdown":     _build_category_breakdown(year_rows),
         "person_ranking":         _build_person_ranking(year_rows, top_n=20),
         "category_person_matrix": _build_category_person_matrix(year_rows, top_n=12),
-        "source_breakdown":       _build_source_breakdown(year_rows),
-        "concentration":          _build_concentration(year_rows),
+        "source_breakdown":          _build_source_breakdown(year_rows),
+        "concentration":             _build_concentration(year_rows),
+        "category_source_matrix":    _build_category_source_matrix(year_rows),
 
         # ── 第三層：表格（支援 category/person filter）─────────────────────
         "daily_hours":  _build_daily(filtered, year, month),

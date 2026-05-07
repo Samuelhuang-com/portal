@@ -47,6 +47,7 @@
  *   2026-05-03  新增 decisionCockpit（決策駕駛艙）高階主管決策入口，整合三大模組精華，route /decision-cockpit
  *   2026-05-03  新增 wiki（知識庫）LLM Wiki 知識庫，含員工 SOP + 開發者 Wiki + AI 問答，route /wiki
  *   2026-05-04  新增 employeeManualExport（員工操作手冊匯出）系統設定群組，route /settings/employee-manual-export
+ *   2026-05-07  新增 execWorkDashboard（集團工務決策駕駛艙）以工務決策視角為主，route /exec-work-dashboard
  */
 
 // ── 系統標題 ──────────────────────────────────────────────────────────────────
@@ -123,6 +124,9 @@ export const NAV_PAGE = {
 
   // 高階主管 Dashboard（新功能，獨立路由）
   execDashboard:           '高階主管 Dashboard',
+
+  // 集團工務決策駕駛艙（工務決策視角，獨立路由）
+  execWorkDashboard:       '集團工務決策駕駛艙',
 
   // 商場工務巡檢
   mallFacilityDashboard:   '商場工務巡檢',

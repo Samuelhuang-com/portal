@@ -76,6 +76,13 @@ export const menuItems: MenuItem[] = [
     label: NAV_PAGE.execDashboard,
     permissionKey: 'exec_dashboard_view',
   },
+  // ── 集團工務決策駕駛艙（高階主管 Dashboard 之後，獨立一階）────────────────
+  {
+    key: '/exec-work-dashboard',
+    icon: <RadarChartOutlined />,
+    label: NAV_PAGE.execWorkDashboard,
+    permissionKey: 'exec_work_dashboard_view',
+  },
   // ── ★工項類別分析（高階主管 Dashboard 之後，獨立一階）──────────────────────
   {
     key: '/work-category-analysis',

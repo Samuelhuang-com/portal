@@ -1,21 +1,16 @@
 /**
- * 集團管理 Portal 首頁 — 總覽 Dashboard
+ * 集團工務決策駕駛艙 — ExecWorkDashboard
  *
- * 版面規範（PROTECTED.md）：
- *  - KPI 卡片：4 欄 Row、Card size="small"、無 border
- *  - 品牌色：primary #1B3A5C、accent #4BA8E8
- *  - Breadcrumb：每頁頂部，不可移除
- *  - 工作狀態色：已完成=#52c41a, 進行中=#1677ff, 非本月=#8c8c8c, 待排程=#faad14
+ * 以「集團管理總覽 Dashboard」為基礎，聚焦工務決策視角。
+ * 不影響原始 Dashboard，雙頁面可同時並存比較。
  *
  * 資料來源（Promise.allSettled 平行呼叫，互不依賴）：
- *  - GET /api/v1/dashboard/kpi              → 飯店客房保養 + 庫存 + 同步狀態
- *  - GET /api/v1/mall/dashboard/summary     → 商場巡檢（B1F/B2F/RF）+ 本月週期保養
- *  - GET /api/v1/security/dashboard/summary → 保全巡檢（7 Sheets）今日摘要
- *  - GET /api/v1/dashboard/graph            → 關聯圖譜（GraphView，ROW 4）
- *  - GET /api/v1/luqun-repair/dashboard     → 商場工務報修 KPI（year/month 篩選）
- *  - GET /api/v1/dazhi-repair/dashboard     → 飯店工務部 KPI（year/month 篩選）
- *  - GET /api/v1/hotel/daily-hours          → 飯店工項類別案件數（year/month 篩選）
- *  - GET /api/v1/mall/daily-hours           → 商場工項類別案件數（year/month 篩選）
+ *  - GET /api/v1/luqun-repair/dashboard       → 商場工務報修 KPI（year/month 篩選）
+ *  - GET /api/v1/dazhi-repair/dashboard       → 飯店工務部 KPI（year/month 篩選）
+ *  - GET /api/v1/hotel/monthly-hours          → 飯店工項類別月累計（year 篩選）
+ *  - GET /api/v1/mall/monthly-hours           → 商場工項類別月累計（year 篩選）
+ *  - GET /api/v1/hotel/daily-hours            → 飯店工項類別日累計（year/month 篩選）
+ *  - GET /api/v1/mall/daily-hours             → 商場工項類別日累計（year/month 篩選）
  *  - GET /api/v1/work-category-analysis/stats → 明細分析工時表（year/month，sources=all）
  */
 import { useEffect, useState, useCallback, useMemo } from 'react'
@@ -42,25 +37,19 @@ import {
   PieChart, Pie, Cell,
 } from 'recharts'
 
-import { dashboardApi, type DashboardKPI, type SyncRecord, type DashboardTrend, type ClosureStats } from '@/api/dashboard'
-import { fetchDashboardSummary } from '@/api/mallDashboard'
-import { fetchSecurityDashboardSummary } from '@/api/securityPatrol'
-import type { DashboardSummary as MallSummary } from '@/types/mallDashboard'
-import type { SecurityDashboardSummary } from '@/types/securityPatrol'
 import { fetchDashboard as fetchLuqunDashboard } from '@/api/luqunRepair'
 import { fetchDashboard as fetchDazhiDashboard } from '@/api/dazhiRepair'
 import type { DashboardData as RepairDashboardData, TypeDistItem } from '@/types/luqunRepair'
-import { getBudgetDashboard, type DashboardData as BudgetDashboardData } from '@/api/budget'
 import {
   fetchStats,
   type CategoryStats, type HoursRow, type PersonHoursRow, type PersonRankingItem,
+  type CategorySourceMatrixItem,
   CATEGORY_TAG_COLORS,
 } from '@/api/workCategoryAnalysis'
 import { fetchHotelDailyHours, type HotelDailyHoursData,
          fetchHotelMonthlyHours, type HotelMonthlyHoursData } from '@/api/hotelOverview'
 import { fetchMallDailyHours, type MallDailyHoursData,
          fetchMallMonthlyHours, type MallMonthlyHoursData } from '@/api/mallOverview'
-import ExecMetricsCard from '@/components/ExecMetrics'
 
 dayjs.extend(relativeTime)
 dayjs.locale('zh-tw')
@@ -88,46 +77,6 @@ function rateColor(rate: number): string {
 const fmtMoney = (n: number) =>
   new Intl.NumberFormat('zh-TW', { maximumFractionDigits: 0 }).format(n)
 
-// ── 群組卡一句話結論 helper ────────────────────────────────────────────────────
-function hotelConclusion(rm: DashboardKPI['room_maintenance'] | undefined, rate: number): string {
-  if (!rm) return ''
-  if (rate >= 80) return '本月客房保養進度良好，各項目狀態正常。'
-  if (rate >= 50) return `完成率 ${rate.toFixed(1)}%，仍有 ${rm.pending} 項待排程、${rm.in_progress} 項進行中，建議持續追蹤。`
-  return `客房保養完成率偏低（${rate.toFixed(1)}%），待排程與進行中項目較多，建議優先處理。`
-}
-
-function mallConclusion(mallData: MallSummary | null, rate: number): string {
-  if (!mallData) return ''
-  const overdue = mallData.pm.overdue_items
-  if (rate >= 80 && overdue === 0) return '各樓層巡檢進度良好，本月週期保養無逾期。'
-  if (overdue > 0 && rate < 80) return `樓層巡檢完成率 ${rate.toFixed(1)}%，本月週期保養有 ${overdue} 項逾期，請優先處理。`
-  if (overdue > 0) return `本月週期保養有 ${overdue} 項逾期，建議優先處理。`
-  return `樓層巡檢完成率 ${rate.toFixed(1)}%，進度尚可，請持續追蹤。`
-}
-
-function secConclusion(secData: SecurityDashboardSummary | null, rate: number): string {
-  if (!secData) return ''
-  const ab = secData.abnormal_items_all
-  if (rate >= 80 && ab === 0) return '今日巡檢完成率良好，無異常項目。'
-  if (ab > 0 && rate < 50) return `今日巡檢完成率偏低（${rate.toFixed(1)}%），且有 ${ab} 項異常，需優先追蹤。`
-  if (ab > 0) return `今日有 ${ab} 項巡檢異常，建議確認處理進度。`
-  return `今日巡檢完成率 ${rate.toFixed(1)}%，請確認未查項目。`
-}
-
-function budgetConclusion(bd: BudgetDashboardData | null): string {
-  if (!bd) return '預算資料載入中…'
-  const s = bd.summary
-  const dq = bd.data_quality
-  const totalDq = dq.dq_issue_count + dq.missing_amount_count + dq.unresolved_plan_count
-  if (s.overrun_count > 0)
-    return `本年度執行率 ${s.exec_rate.toFixed(1)}%，已有 ${s.overrun_count} 項超支，請優先追蹤。`
-  if (s.near_overrun_count > 0)
-    return `本年度執行率 ${s.exec_rate.toFixed(1)}%，有 ${s.near_overrun_count} 項即將超支，請注意預算控管。`
-  if (totalDq > 0)
-    return `預算執行率 ${s.exec_rate.toFixed(1)}%，資料品質仍有 ${totalDq} 項異常，建議優先修正。`
-  return `本年度預算執行率 ${s.exec_rate.toFixed(1)}%，目前無超支風險，整體狀況正常。`
-}
-
 function repairSummaryText(data: RepairDashboardData | null): string {
   if (!data?.kpi) return ''
   const kpi = data.kpi
@@ -141,35 +90,7 @@ function repairSummaryText(data: RepairDashboardData | null): string {
   return `目前有 ${kpi.uncompleted} 件未結案，請確認進度。`
 }
 
-// ── 同步狀態 Badge ────────────────────────────────────────────────────────────
-function SyncBadge({ status }: { status: string }) {
-  const map: Record<string, { status: 'success' | 'error' | 'processing' | 'warning' | 'default'; label: string }> = {
-    success: { status: 'success',    label: '成功' },
-    error:   { status: 'error',      label: '失敗' },
-    running: { status: 'processing', label: '執行中' },
-    partial: { status: 'warning',    label: '部分成功' },
-  }
-  const s = map[status] ?? { status: 'default', label: status }
-  return <Badge status={s.status} text={s.label} />
-}
 
-// ── 快速入口連結 ──────────────────────────────────────────────────────────────
-function QuickLink({ label, onClick }: { label: string; onClick: () => void }) {
-  return (
-    <span
-      onClick={onClick}
-      style={{
-        display: 'inline-flex', alignItems: 'center', gap: 2,
-        fontSize: 12, color: C.accent, cursor: 'pointer',
-        padding: '2px 8px', borderRadius: 4,
-        background: '#e6f4ff', marginRight: 4, marginBottom: 4,
-        userSelect: 'none',
-      }}
-    >
-      {label} <RightOutlined style={{ fontSize: 10 }} />
-    </span>
-  )
-}
 
 // ── 飯店每日累計表（Dashboard 用，邏輯與 HotelMgmtDashboard TAB B 相同）──────────
 // ── exec 明細分析表：共用 helper + 4 個 table components ─────────────────────
@@ -538,264 +459,11 @@ function MallDailyTable({ data }: { data: MallDailyHoursData }) {
 }
 
 // ── 預算管理摘要卡 ────────────────────────────────────────────────────────────
-function BudgetSummaryCard({
-  data, onNavigate,
-}: {
-  data: BudgetDashboardData | null
-  onNavigate: (path: string) => void
-}) {
-  const s = data?.summary
-  const dq = data?.data_quality
 
-  const execColor = !s ? C.gray
-    : s.exec_rate >= 100 ? C.danger
-    : s.exec_rate >= 85  ? C.warning
-    : C.success
 
-  const totalDq = dq ? dq.dq_issue_count + dq.missing_amount_count + dq.unresolved_plan_count : 0
 
-  return (
-    <Card
-      size="small"
-      bordered={false}
-      style={{ borderTop: `3px solid ${C.primary}`, marginBottom: 0 }}
-    >
-      {/* ── 標題列 ── */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <BankOutlined style={{ color: C.primary, fontSize: 16 }} />
-          <Text strong style={{ color: C.primary, fontSize: 15 }}>預算管理</Text>
-          {data?.year && (
-            <Tag color="default" style={{ fontSize: 11 }}>{data.year.budget_year} 年度</Tag>
-          )}
-        </div>
-        <span
-          onClick={() => onNavigate('/budget/dashboard')}
-          style={{ fontSize: 11, color: C.accent, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 2 }}
-        >
-          查看詳情 <RightOutlined style={{ fontSize: 9 }} />
-        </span>
-      </div>
 
-      {!s ? (
-        <div style={{ color: C.gray, fontSize: 12, padding: '8px 0' }}>
-          <ExclamationCircleOutlined style={{ marginRight: 4 }} />預算資料載入中…
-        </div>
-      ) : (
-        <>
-          {/* ── 一句話結論 ── */}
-          <div style={{
-            background: s.overrun_count > 0 ? '#fff1f0' : s.near_overrun_count > 0 ? '#fffbe6' : '#f6ffed',
-            borderRadius: 6, padding: '6px 10px', marginBottom: 12,
-            borderLeft: `3px solid ${s.overrun_count > 0 ? C.danger : s.near_overrun_count > 0 ? C.warning : C.success}`,
-          }}>
-            <Text style={{ fontSize: 12, color: s.overrun_count > 0 ? C.danger : s.near_overrun_count > 0 ? '#ad6800' : '#389e0d' }}>
-              {budgetConclusion(data)}
-            </Text>
-          </div>
 
-          {/* ── KPI 數字列 ── */}
-          <Row gutter={[16, 8]}>
-            {/* 年度總預算 */}
-            <Col xs={12} sm={6} lg={4}>
-              <div style={{ textAlign: 'center' }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: C.primary }}>
-                  {fmtMoney(s.total_budget)}
-                </div>
-                <div style={{ fontSize: 11, color: C.gray, marginTop: 2 }}>年度總預算</div>
-              </div>
-            </Col>
-            {/* 年度總實績 */}
-            <Col xs={12} sm={6} lg={4}>
-              <div style={{ textAlign: 'center' }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: C.primary }}>
-                  {fmtMoney(s.total_actual)}
-                </div>
-                <div style={{ fontSize: 11, color: C.gray, marginTop: 2 }}>年度總實績</div>
-              </div>
-            </Col>
-            {/* 預算餘額 */}
-            <Col xs={12} sm={6} lg={4}>
-              <div style={{ textAlign: 'center' }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: s.variance >= 0 ? C.success : C.danger }}>
-                  {s.variance >= 0
-                    ? <><ArrowDownOutlined style={{ fontSize: 10 }} /> {fmtMoney(s.variance)}</>
-                    : <><ArrowUpOutlined  style={{ fontSize: 10 }} /> {fmtMoney(Math.abs(s.variance))}</>
-                  }
-                </div>
-                <div style={{ fontSize: 11, color: C.gray, marginTop: 2 }}>預算餘額</div>
-              </div>
-            </Col>
-            {/* 執行率 */}
-            <Col xs={12} sm={6} lg={4}>
-              <div style={{ textAlign: 'center' }}>
-                <div style={{ fontSize: 20, fontWeight: 700, color: execColor, lineHeight: 1.2 }}>
-                  {s.exec_rate.toFixed(1)}%
-                </div>
-                <div style={{ fontSize: 11, color: C.gray, marginTop: 2 }}>執行率</div>
-              </div>
-            </Col>
-            {/* 風險警示 */}
-            <Col xs={24} sm={12} lg={8}>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center', height: '100%' }}>
-                {s.overrun_count > 0 && (
-                  <Tag
-                    color="error"
-                    icon={<RiseOutlined />}
-                    style={{ fontSize: 11, cursor: 'pointer' }}
-                    onClick={() => onNavigate('/budget/dashboard')}
-                  >
-                    超支 {s.overrun_count} 項
-                  </Tag>
-                )}
-                {s.near_overrun_count > 0 && (
-                  <Tag
-                    color="warning"
-                    icon={<WarningOutlined />}
-                    style={{ fontSize: 11, cursor: 'pointer' }}
-                    onClick={() => onNavigate('/budget/dashboard')}
-                  >
-                    即將超支 {s.near_overrun_count} 項
-                  </Tag>
-                )}
-                {totalDq > 0 && (
-                  <Tag
-                    color="default"
-                    style={{ fontSize: 11, cursor: 'pointer' }}
-                    onClick={() => onNavigate('/budget/dashboard')}
-                  >
-                    資料異常 {totalDq} 筆
-                  </Tag>
-                )}
-                {s.overrun_count === 0 && s.near_overrun_count === 0 && totalDq === 0 && (
-                  <Tag color="success" style={{ fontSize: 11 }}>✓ 無超支風險</Tag>
-                )}
-              </div>
-            </Col>
-          </Row>
-
-          {/* ── 執行率進度條 ── */}
-          <Progress
-            percent={Math.min(s.exec_rate, 100)}
-            showInfo={false}
-            strokeColor={execColor}
-            size="small"
-            style={{ marginTop: 10, marginBottom: 8 }}
-          />
-
-          {/* ── 快速入口 ── */}
-          <div style={{ marginTop: 4 }}>
-            <QuickLink label="預算 Dashboard"   onClick={() => onNavigate('/budget/dashboard')} />
-            <QuickLink label="預算比較報表"      onClick={() => onNavigate('/budget/reports/budget-vs-actual')} />
-            <QuickLink label="費用交易明細"      onClick={() => onNavigate('/budget/transactions')} />
-          </div>
-        </>
-      )}
-    </Card>
-  )
-}
-
-// ── 今日重點摘要卡（P1-C）────────────────────────────────────────────────────
-function TodaySummaryCard({
-  totalAlerts, mallAbnormal, secAbnormal, hotelPending, repairPending, budgetAlert,
-  mallRate, secRate, hotelRate,
-  luqunData, dazhiData,
-  budgetData,
-}: {
-  totalAlerts: number
-  mallAbnormal: number
-  secAbnormal: number
-  hotelPending: number
-  repairPending: number
-  budgetAlert: number
-  mallRate: number
-  secRate: number
-  hotelRate: number
-  luqunData: RepairDashboardData | null
-  dazhiData: RepairDashboardData | null
-  budgetData: BudgetDashboardData | null
-}) {
-  // 找出完成率最低的群組
-  const rateGroups = [
-    { name: '商場巡檢', rate: mallRate },
-    { name: '保全巡檢', rate: secRate },
-    { name: '客房保養', rate: hotelRate },
-  ]
-  const lowestGroup = rateGroups.reduce((a, b) => a.rate < b.rate ? a : b)
-
-  // 工務最久未結案
-  const luqunMaxDays = (luqunData?.top_uncompleted?.[0] as any)?.pending_days ?? null
-  const dazhiMaxDays = (dazhiData?.top_uncompleted?.[0] as any)?.pending_days ?? null
-  const maxRepairDays = luqunMaxDays != null && dazhiMaxDays != null
-    ? Math.max(luqunMaxDays, dazhiMaxDays)
-    : (luqunMaxDays ?? dazhiMaxDays)
-
-  // 組成重點列表
-  type Item = { level: 'error' | 'warning' | 'success'; text: string }
-  const items: Item[] = []
-
-  if (totalAlerts > 0) {
-    items.push({ level: 'error', text: `全域待關注共 ${totalAlerts} 項（商場 ${mallAbnormal}、保全 ${secAbnormal}、客房 ${hotelPending}、工務 ${repairPending}、預算 ${budgetAlert}）` })
-  } else {
-    items.push({ level: 'success', text: '今日全域無待關注項目，所有模組狀況正常。' })
-  }
-
-  if (lowestGroup.rate < 80) {
-    items.push({ level: lowestGroup.rate < 50 ? 'error' : 'warning', text: `「${lowestGroup.name}」完成率最低（${lowestGroup.rate.toFixed(1)}%），建議優先追蹤。` })
-  }
-
-  if (maxRepairDays != null && maxRepairDays >= 7) {
-    items.push({ level: maxRepairDays >= 14 ? 'error' : 'warning', text: `工務最久未結案已達 ${maxRepairDays} 天，請安排跟進。` })
-  }
-
-  if (budgetData && budgetData.summary.overrun_count > 0) {
-    items.push({ level: 'error', text: `預算已有 ${budgetData.summary.overrun_count} 項超支，請優先確認超支科目。` })
-  } else if (budgetData && budgetData.summary.near_overrun_count > 0) {
-    items.push({ level: 'warning', text: `預算有 ${budgetData.summary.near_overrun_count} 項即將超支，建議主管關注。` })
-  }
-
-  if (secAbnormal > 0) {
-    items.push({ level: 'warning', text: `今日保全巡檢異常 ${secAbnormal} 項，請確認異常處理進度。` })
-  }
-
-  const colorMap = { error: C.danger, warning: C.warning, success: C.success }
-  const bgMap    = { error: '#fff1f0', warning: '#fffbe6', success: '#f6ffed' }
-
-  return (
-    <Card
-      size="small"
-      bordered={false}
-      title={
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <AlertOutlined style={{ color: totalAlerts > 0 ? C.danger : C.success }} />
-          <Text strong style={{ color: C.primary, fontSize: 14 }}>今日重點摘要</Text>
-        </div>
-      }
-      style={{ marginBottom: 0 }}
-    >
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {items.slice(0, 5).map((item, i) => (
-          <div
-            key={i}
-            style={{
-              background: bgMap[item.level],
-              borderLeft: `3px solid ${colorMap[item.level]}`,
-              borderRadius: 4,
-              padding: '5px 10px',
-            }}
-          >
-            <Text style={{ fontSize: 12, color: colorMap[item.level] }}>
-              {item.level === 'error' ? '⚠ ' : item.level === 'warning' ? '△ ' : '✓ '}
-              {item.text}
-            </Text>
-          </div>
-        ))}
-      </div>
-    </Card>
-  )
-}
-
-// ── 工務報修主管摘要卡（商場 / 飯店 共用）────────────────────────────────────
 function RepairSummaryCard({
   label, data, color, accentColor, onNavigate, monthLabel, colLg,
 }: {
@@ -1034,22 +702,340 @@ function GroupCardTitle({
   )
 }
 
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 飯店 vs 商場比較表
+// ══════════════════════════════════════════════════════════════════════════════
+interface UnitCompRow {
+  key: string; unit: string; cases: number; hours: number
+  completed: number; uncompleted: number; rate: number; topCat: string; isTotal?: boolean
+}
+
+function UnitComparisonTable({
+  dazhiKpi, luqunKpi, sourceBreakdown, totalCases, totalHours,
+  completedCases, uncompletedCases, completionRate,
+}: {
+  dazhiKpi: any; luqunKpi: any; sourceBreakdown: any[]
+  totalCases: number; totalHours: number; completedCases: number
+  uncompletedCases: number; completionRate: number
+}) {
+  const dSrc = sourceBreakdown.find((s: any) => s.source === 'dazhi') ?? { hours: 0, top_category: '-' }
+  const lSrc = sourceBreakdown.find((s: any) => s.source === 'luqun') ?? { hours: 0, top_category: '-' }
+
+  const rows: UnitCompRow[] = [
+    {
+      key: 'hotel', unit: '飯店（大直工務）',
+      cases:       dazhiKpi?.total      ?? 0,
+      hours:       dSrc.hours,
+      completed:   dazhiKpi?.completed  ?? 0,
+      uncompleted: dazhiKpi?.uncompleted ?? 0,
+      rate:        (dazhiKpi?.total ?? 0) > 0
+                     ? Math.round((dazhiKpi.completed / dazhiKpi.total) * 100) : 0,
+      topCat:      dSrc.top_category ?? '-',
+    },
+    {
+      key: 'mall', unit: '商場（商場工務）',
+      cases:       luqunKpi?.total      ?? 0,
+      hours:       lSrc.hours,
+      completed:   luqunKpi?.completed  ?? 0,
+      uncompleted: luqunKpi?.uncompleted ?? 0,
+      rate:        (luqunKpi?.total ?? 0) > 0
+                     ? Math.round((luqunKpi.completed / luqunKpi.total) * 100) : 0,
+      topCat:      lSrc.top_category ?? '-',
+    },
+    {
+      key: 'total', unit: '合計',
+      cases: totalCases, hours: totalHours,
+      completed: completedCases, uncompleted: uncompletedCases,
+      rate: completionRate, topCat: '-', isTotal: true,
+    },
+  ]
+
+  const cols = [
+    {
+      title: '單位', dataIndex: 'unit', key: 'unit', width: 180,
+      render: (v: string, r: UnitCompRow) => (
+        <span style={{ fontWeight: r.isTotal ? 700 : 400, color: r.isTotal ? '#1B3A5C' : 'inherit' }}>
+          {v}
+        </span>
+      ),
+    },
+    { title: '案件數', dataIndex: 'cases', key: 'cases', align: 'right' as const, width: 90 },
+    {
+      title: '工時（h）', dataIndex: 'hours', key: 'hours', align: 'right' as const, width: 100,
+      render: (v: number) => v.toFixed(1),
+    },
+    {
+      title: '完成件數', dataIndex: 'completed', key: 'completed', align: 'right' as const, width: 90,
+      render: (v: number) => <span style={{ color: '#52c41a', fontWeight: 600 }}>{v}</span>,
+    },
+    {
+      title: '未完成', dataIndex: 'uncompleted', key: 'uncompleted', align: 'right' as const, width: 80,
+      render: (v: number) => (
+        <span style={{ color: v > 0 ? '#ff4d4f' : '#aaa', fontWeight: v > 0 ? 600 : 400 }}>{v}</span>
+      ),
+    },
+    {
+      title: '完成率', dataIndex: 'rate', key: 'rate', align: 'right' as const, width: 90,
+      render: (v: number) => (
+        <span style={{ color: v >= 80 ? '#52c41a' : v >= 60 ? '#faad14' : '#ff4d4f', fontWeight: 700 }}>
+          {v}%
+        </span>
+      ),
+    },
+    {
+      title: '主要工項', dataIndex: 'topCat', key: 'topCat', width: 120,
+      render: (v: string) => (v && v !== '-')
+        ? <Tag color="blue" style={{ fontSize: 12 }}>{v}</Tag>
+        : <span style={{ color: '#bbb' }}>—</span>,
+    },
+  ]
+
+  return (
+    <Table
+      dataSource={rows}
+      columns={cols}
+      pagination={false}
+      size="small"
+      rowClassName={(r: UnitCompRow) => r.isTotal ? 'exec-total-row' : ''}
+      style={{ fontSize: 13 }}
+    />
+  )
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 工項類別 × 單位矩陣
+// ══════════════════════════════════════════════════════════════════════════════
+function CategorySourceMatrix({ data }: { data: CategorySourceMatrixItem[] }) {
+  const CATEGORY_COLOR: Record<string, string> = {
+    '現場報修': '#1890ff', '上級交辦': '#722ed1', '緊急事件': '#ff4d4f',
+    '例行維護': '#52c41a', '每日巡檢': '#faad14',
+  }
+
+  // summary row
+  const total = data.reduce(
+    (acc, r) => ({
+      dazhi_cases: acc.dazhi_cases + r.dazhi_cases,
+      luqun_cases: acc.luqun_cases + r.luqun_cases,
+      total_cases: acc.total_cases + r.total_cases,
+      dazhi_hours: +(acc.dazhi_hours + r.dazhi_hours).toFixed(1),
+      luqun_hours: +(acc.luqun_hours + r.luqun_hours).toFixed(1),
+      total_hours: +(acc.total_hours + r.total_hours).toFixed(1),
+    }),
+    { dazhi_cases: 0, luqun_cases: 0, total_cases: 0,
+      dazhi_hours: 0, luqun_hours: 0, total_hours: 0 }
+  )
+
+  type MatrixRow = CategorySourceMatrixItem & { isTotal?: boolean }
+  const tableData: MatrixRow[] = [
+    ...data,
+    { category: '合計', ...total, pct: 100, isTotal: true },
+  ]
+
+  const cols = [
+    {
+      title: '工項類別', dataIndex: 'category', key: 'category', width: 110,
+      render: (v: string, r: MatrixRow) => r.isTotal
+        ? <span style={{ fontWeight: 700, color: '#1B3A5C' }}>{v}</span>
+        : <Tag color={CATEGORY_COLOR[v] ?? 'default'} style={{ fontSize: 12, margin: 0 }}>{v}</Tag>,
+    },
+    {
+      title: '飯店件數', dataIndex: 'dazhi_cases', key: 'dazhi_cases',
+      align: 'right' as const, width: 90,
+      render: (v: number, r: MatrixRow) => (
+        <span style={{ fontWeight: r.isTotal ? 700 : 400 }}>{v}</span>
+      ),
+    },
+    {
+      title: '商場件數', dataIndex: 'luqun_cases', key: 'luqun_cases',
+      align: 'right' as const, width: 90,
+      render: (v: number, r: MatrixRow) => (
+        <span style={{ fontWeight: r.isTotal ? 700 : 400 }}>{v}</span>
+      ),
+    },
+    {
+      title: '合計件數', dataIndex: 'total_cases', key: 'total_cases',
+      align: 'right' as const, width: 90,
+      render: (v: number, r: MatrixRow) => (
+        <span style={{ fontWeight: 700, color: r.isTotal ? '#1B3A5C' : '#333' }}>{v}</span>
+      ),
+    },
+    {
+      title: '件占比', dataIndex: 'pct', key: 'pct',
+      align: 'right' as const, width: 80,
+      render: (v: number, r: MatrixRow) => r.isTotal
+        ? <span style={{ color: '#aaa' }}>100%</span>
+        : <span style={{ color: '#1890ff', fontWeight: 600 }}>{v}%</span>,
+    },
+    {
+      title: '飯店工時', dataIndex: 'dazhi_hours', key: 'dazhi_hours',
+      align: 'right' as const, width: 90,
+      render: (v: number, r: MatrixRow) => (
+        <span style={{ fontWeight: r.isTotal ? 700 : 400 }}>{v.toFixed(1)}</span>
+      ),
+    },
+    {
+      title: '商場工時', dataIndex: 'luqun_hours', key: 'luqun_hours',
+      align: 'right' as const, width: 90,
+      render: (v: number, r: MatrixRow) => (
+        <span style={{ fontWeight: r.isTotal ? 700 : 400 }}>{v.toFixed(1)}</span>
+      ),
+    },
+    {
+      title: '總工時', dataIndex: 'total_hours', key: 'total_hours',
+      align: 'right' as const, width: 90,
+      render: (v: number, r: MatrixRow) => (
+        <span style={{ fontWeight: 700, color: r.isTotal ? '#1B3A5C' : '#333' }}>{v.toFixed(1)}</span>
+      ),
+    },
+  ]
+
+  return (
+    <Table
+      dataSource={tableData}
+      columns={cols}
+      rowKey="category"
+      pagination={false}
+      size="small"
+      rowClassName={(r: MatrixRow) => r.isTotal ? 'exec-total-row' : ''}
+      style={{ fontSize: 13 }}
+    />
+  )
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 異常提醒區
+// ══════════════════════════════════════════════════════════════════════════════
+interface AlertItem {
+  level: 'error' | 'warning' | 'info'
+  icon:  string
+  title: string
+  desc:  string
+}
+
+function AlertPanel({
+  execStats, totalCases, completedCases, uncompletedCases, completionRate,
+}: {
+  execStats: CategoryStats | null
+  totalCases: number; completedCases: number; uncompletedCases: number; completionRate: number
+}) {
+  const alerts: AlertItem[] = []
+
+  if (!execStats) return null
+
+  // ① 未完成件數 > 0
+  if (uncompletedCases > 0) {
+    alerts.push({
+      level: 'error', icon: '🔴',
+      title: `未完成件數警示：${uncompletedCases} 件尚未結案`,
+      desc:  `本月共 ${totalCases} 件，完成 ${completedCases} 件，剩餘 ${uncompletedCases} 件需追蹤。`,
+    })
+  }
+
+  // ② 完成率偏低（< 60%）
+  if (completionRate < 60 && totalCases > 0) {
+    alerts.push({
+      level: 'error', icon: '🔴',
+      title: `完成率偏低：${completionRate}%（閾值 60%）`,
+      desc:  '建議檢視未完成案件原因，確認是否需要調配人力。',
+    })
+  } else if (completionRate < 80 && totalCases > 0) {
+    alerts.push({
+      level: 'warning', icon: '🟠',
+      title: `完成率注意：${completionRate}%（建議 > 80%）`,
+      desc:  '完成率低於建議水準，請持續追蹤結案進度。',
+    })
+  }
+
+  // ③ 工項類別集中（占比 > 60%）
+  const catBreakdown = execStats.category_breakdown ?? []
+  const dominantCat = catBreakdown.find((c: any) => c.pct > 60)
+  if (dominantCat) {
+    alerts.push({
+      level: 'warning', icon: '🟡',
+      title: `工項類別集中：${dominantCat.name} 占 ${dominantCat.pct}%`,
+      desc:  `單一類別超過 60%，工務資源高度集中，建議評估類別分配是否合理。`,
+    })
+  }
+
+  // ④ 人員超載（工時 > 80h）
+  const ranking = execStats.person_ranking ?? []
+  const overloaded = ranking.filter((p: any) => p.hours > 80)
+  if (overloaded.length > 0) {
+    const names = overloaded.map((p: any) => `${p.person}（${p.hours}h）`).join('、')
+    alerts.push({
+      level: 'warning', icon: '🟠',
+      title: `人員超載警示：${overloaded.length} 人工時超過 80h`,
+      desc:  `超載人員：${names}。建議重新分配任務以降低疲勞風險。`,
+    })
+  }
+
+  // ⑤ 單日暴增（某日工時 > 月均 × 2）
+  const dh = execStats.daily_hours
+  if (dh?.days?.length && dh.rows?.length) {
+    // 計算每日合計工時
+    const dailyTotals = dh.days.map((_: number, i: number) =>
+      dh.rows.reduce((sum: number, row: any) => sum + (row.hours[i] ?? 0), 0)
+    )
+    const activeDays = dailyTotals.filter((h: number) => h > 0)
+    const avgDaily = activeDays.length > 0
+      ? activeDays.reduce((a: number, b: number) => a + b, 0) / activeDays.length
+      : 0
+    const spikeThreshold = avgDaily * 2
+    const spikeDays = dh.days
+      .map((d: number, i: number) => ({ day: d, hours: dailyTotals[i] }))
+      .filter((d: any) => d.hours > spikeThreshold && spikeThreshold > 0)
+    if (spikeDays.length > 0) {
+      const dayList = spikeDays.map((d: any) => `${d.day} 日（${d.hours.toFixed(1)}h）`).join('、')
+      alerts.push({
+        level: 'info', icon: '🔵',
+        title: `單日工時暴增：${spikeDays.length} 天超過月均 2 倍（月均 ${avgDaily.toFixed(1)}h）`,
+        desc:  `暴增日期：${dayList}。`,
+      })
+    }
+  }
+
+  if (alerts.length === 0) {
+    return (
+      <div style={{ padding: '12px 16px', color: '#52c41a', fontWeight: 600, fontSize: 14 }}>
+        ✅ 本月無異常警示，工務運作正常。
+      </div>
+    )
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '4px 0' }}>
+      {alerts.map((a, i) => (
+        <div
+          key={i}
+          style={{
+            padding: '10px 16px',
+            borderRadius: 6,
+            background: a.level === 'error' ? '#fff1f0' : a.level === 'warning' ? '#fff7e6' : '#e6f4ff',
+            border: `1px solid ${a.level === 'error' ? '#ffccc7' : a.level === 'warning' ? '#ffd591' : '#91caff'}`,
+          }}
+        >
+          <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 2 }}>
+            {a.icon} {a.title}
+          </div>
+          <div style={{ fontSize: 13, color: '#666' }}>{a.desc}</div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 // 主元件
 // ══════════════════════════════════════════════════════════════════════════════
-export default function DashboardPage() {
+export default function ExecWorkDashboardPage() {
   const navigate = useNavigate()
-  const today    = dayjs().format('YYYY/MM/DD')
 
-  const [hotelKpi,    setHotelKpi]    = useState<DashboardKPI | null>(null)
-  const [mallData,    setMallData]    = useState<MallSummary | null>(null)
-  const [secData,     setSecData]     = useState<SecurityDashboardSummary | null>(null)
-  const [trendData,   setTrendData]   = useState<DashboardTrend | null>(null)
-  const [closureData, setClosureData] = useState<ClosureStats | null>(null)
   const [luqunData,   setLuqunData]   = useState<RepairDashboardData | null>(null)
   const [dazhiData,   setDazhiData]   = useState<RepairDashboardData | null>(null)
-  const [budgetData,  setBudgetData]  = useState<BudgetDashboardData | null>(null)
-  const [trendDays,   setTrendDays]   = useState<7 | 30>(7)
   const [loading,     setLoading]     = useState(true)
   const [refreshed,   setRefreshed]   = useState<Date>(new Date())
 
@@ -1063,9 +1049,9 @@ export default function DashboardPage() {
   const [mallDailyData,    setMallDailyData]    = useState<MallDailyHoursData | null>(null)
   // 受控 Collapse activeKey（全收合/全展開用）
   const ALL_DAILY_KEYS    = ['hotel-daily', 'mall-daily']
-  const ALL_ANALYSIS_KEYS = ['exec-daily', 'exec-monthly', 'exec-burden']
+  const ALL_ANALYSIS_KEYS = ['exec-daily', 'exec-monthly', 'exec-burden', 'unit-comparison', 'category-matrix', 'alerts']
   const [dailyKeys,    setDailyKeys]    = useState<string[]>([])
-  const [analysisKeys, setAnalysisKeys] = useState<string[]>([])
+  const [analysisKeys, setAnalysisKeys] = useState<string[]>(['alerts'])
   const allExpanded = dailyKeys.length + analysisKeys.length ===
     ALL_DAILY_KEYS.length + ALL_ANALYSIS_KEYS.length
   const toggleAll = () => {
@@ -1076,40 +1062,28 @@ export default function DashboardPage() {
   const loadAll = useCallback(async () => {
     setLoading(true)
     try {
-      const [hotel, mall, sec, trend, closure, luqun, dazhi, budget, hotelMon, mallMon, hotelDay, mallDay, execSt] =
+      const [luqun, dazhi, hotelMon, mallMon, hotelDay, mallDay, execSt] =
         await Promise.allSettled([
-          dashboardApi.kpi().then(r => r.data),
-          fetchDashboardSummary(today),
-          fetchSecurityDashboardSummary(today),
-          dashboardApi.trend(trendDays).then(r => r.data),
-          dashboardApi.closureStats().then(r => r.data),
           fetchLuqunDashboard(selectedYear, selectedMonth),
           fetchDazhiDashboard(selectedYear, selectedMonth),
-          getBudgetDashboard().then(r => r.data),
           fetchHotelMonthlyHours(selectedYear),
           fetchMallMonthlyHours(selectedYear),
           fetchHotelDailyHours(selectedYear, selectedMonth),
           fetchMallDailyHours(selectedYear, selectedMonth),
           fetchStats({ year: selectedYear, month: selectedMonth, sources: 'all', category: 'all', person: 'all' }),
         ])
-      if (hotel.status      === 'fulfilled') setHotelKpi(hotel.value)
-      if (mall.status       === 'fulfilled') setMallData(mall.value)
-      if (sec.status        === 'fulfilled') setSecData(sec.value)
-      if (trend.status      === 'fulfilled') setTrendData(trend.value)
-      if (closure.status    === 'fulfilled') setClosureData(closure.value)
-      if (luqun.status      === 'fulfilled') setLuqunData(luqun.value)
-      if (dazhi.status      === 'fulfilled') setDazhiData(dazhi.value as unknown as RepairDashboardData)
-      if (budget.status     === 'fulfilled') setBudgetData(budget.value)
-      if (hotelMon.status   === 'fulfilled') setHotelMonthlyData(hotelMon.value)
-      if (mallMon.status    === 'fulfilled') setMallMonthlyData(mallMon.value)
-      if (hotelDay.status   === 'fulfilled') setHotelDailyData(hotelDay.value)
-      if (mallDay.status    === 'fulfilled') setMallDailyData(mallDay.value)
-      if (execSt.status    === 'fulfilled') setExecStats(execSt.value)
+      if (luqun.status    === 'fulfilled') setLuqunData(luqun.value)
+      if (dazhi.status    === 'fulfilled') setDazhiData(dazhi.value as unknown as RepairDashboardData)
+      if (hotelMon.status === 'fulfilled') setHotelMonthlyData(hotelMon.value)
+      if (mallMon.status  === 'fulfilled') setMallMonthlyData(mallMon.value)
+      if (hotelDay.status === 'fulfilled') setHotelDailyData(hotelDay.value)
+      if (mallDay.status  === 'fulfilled') setMallDailyData(mallDay.value)
+      if (execSt.status   === 'fulfilled') setExecStats(execSt.value)
       setRefreshed(new Date())
     } finally {
       setLoading(false)
     }
-  }, [today, trendDays, selectedYear, selectedMonth])
+  }, [selectedYear, selectedMonth])
 
   useEffect(() => { loadAll() }, [loadAll])
 
@@ -1145,64 +1119,22 @@ export default function DashboardPage() {
   if (loading) {
     return (
       <div style={{ textAlign: 'center', paddingTop: 80 }}>
-        <Spin size="large" tip="載入集團總覽…" />
+        <Spin size="large" tip="載入工務決策駕駛艙…" />
       </div>
     )
   }
 
-  // ── 衍生值計算 ────────────────────────────────────────────────────────────
-  const rm  = hotelKpi?.room_maintenance
-  const sys = hotelKpi?.system
-
-  const mallRate  = mallData?.inspection.completion_rate  ?? 0
-  const secRate   = secData?.completion_rate_all          ?? 0
-  const hotelRate = rm?.completion_rate                   ?? 0
-
-  // 全域待關注：商場異常 + 商場PM逾期 + 保全異常 + 客房未完成 + 工務未結案 + 預算超支/即將超支
-  const mallAbnormal  = (mallData?.inspection.abnormal_items ?? 0) + (mallData?.pm.overdue_items ?? 0)
-  const secAbnormal   = secData?.abnormal_items_all ?? 0
-  const hotelPending  = rm?.total_incomplete ?? 0
-  const repairPending = (luqunData?.kpi?.uncompleted ?? 0) + (dazhiData?.kpi?.uncompleted ?? 0)
-  const budgetAlert   = (budgetData?.summary.overrun_count ?? 0) + (budgetData?.summary.near_overrun_count ?? 0)
-  const totalAlerts   = mallAbnormal + secAbnormal + hotelPending + repairPending + budgetAlert
-  const alertColor    = totalAlerts > 0 ? C.danger : C.success
-
-  // 同步狀態
-  const syncOk    = sys?.last_sync_status === 'success'
-  const syncColor = syncOk ? C.success : (sys?.last_sync_status ? C.danger : C.gray)
-
-  // 近期同步欄位（保留原有設計）
-  const syncColumns = [
-    {
-      title: '狀態', dataIndex: 'status', key: 'status', width: 80,
-      render: (s: string) => <SyncBadge status={s} />,
-    },
-    {
-      title: '方式', dataIndex: 'triggered_by', key: 'triggered_by', width: 65,
-      render: (t: string) => {
-        const m: Record<string, string> = { scheduler: '排程', manual: '手動', api: 'API' }
-        return <Text type="secondary" style={{ fontSize: 12 }}>{m[t] ?? t}</Text>
-      },
-    },
-    {
-      title: '筆數', dataIndex: 'records_fetched', key: 'records_fetched', width: 55,
-      render: (n: number | null) => (n != null ? n : '—'),
-    },
-    {
-      title: '時間', dataIndex: 'started_at', key: 'started_at',
-      render: (t: string | null) =>
-        t ? (
-          <Tooltip title={dayjs(t).format('YYYY-MM-DD HH:mm:ss')}>
-            <Text type="secondary" style={{ fontSize: 12 }}>{dayjs(t).fromNow()}</Text>
-          </Tooltip>
-        ) : '—',
-    },
-    {
-      title: '說明', dataIndex: 'error_msg', key: 'error_msg', ellipsis: true,
-      render: (msg: string | null) =>
-        msg ? <Text type="danger" style={{ fontSize: 11 }}>{msg}</Text> : null,
-    },
-  ]
+  // ── 集團工務 KPI 衍生值（Phase 3）─────────────────────────────────────────
+  const dKpi = dazhiData?.kpi
+  const lKpi = luqunData?.kpi
+  const totalCases      = (dKpi?.total      ?? 0) + (lKpi?.total      ?? 0)
+  const completedCases  = (dKpi?.completed  ?? 0) + (lKpi?.completed  ?? 0)
+  const uncompletedCases= (dKpi?.uncompleted?? 0) + (lKpi?.uncompleted?? 0)
+  const totalHours      = execStats?.kpi?.total_hours ?? 0
+  const completionRate  = totalCases > 0 ? Math.round(completedCases  / totalCases * 100) : 0
+  const avgHrPerCase    = totalCases > 0 ? Math.round(totalHours      / totalCases * 10) / 10 : 0
+  const hotelCasePct    = totalCases > 0 ? Math.round((dKpi?.total ?? 0) / totalCases * 100) : 0
+  const mallCasePct     = totalCases > 0 ? Math.round((lKpi?.total ?? 0) / totalCases * 100) : 0
 
   return (
     <div>
@@ -1211,7 +1143,7 @@ export default function DashboardPage() {
         style={{ marginBottom: 12 }}
         items={[
           { title: <><HomeOutlined /> 首頁</> },
-          { title: 'Dashboard' },
+          { title: '集團工務決策駕駛艙' },
         ]}
       />
 
@@ -1221,18 +1153,12 @@ export default function DashboardPage() {
         justifyContent: 'space-between', marginBottom: 16,
       }}>
         <div>
-          <Title level={4} style={{ margin: 0, color: C.primary }}>集團管理總覽</Title>
+          <Title level={4} style={{ margin: 0, color: C.primary }}>集團工務決策駕駛艙</Title>
           <Text type="secondary" style={{ fontSize: 12 }}>
-            {dayjs(today, 'YYYY/MM/DD').format('YYYY 年 MM 月 DD 日')} 即時概況
+            {dayjs().format('YYYY 年 MM 月 DD 日')} 工務決策視角
           </Text>
         </div>
         <Space direction="vertical" align="end" size={2}>
-          {sys?.last_sync_at && (
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              <SyncOutlined style={{ marginRight: 4 }} />
-              資料同步：{dayjs(sys.last_sync_at).format('MM/DD HH:mm')}
-            </Text>
-          )}
           <Space>
             <Text type="secondary" style={{ fontSize: 12 }}>
               <ClockCircleOutlined style={{ marginRight: 4 }} />
@@ -1244,6 +1170,102 @@ export default function DashboardPage() {
           </Space>
         </Space>
       </div>
+
+      {/* ══════════════════════════════════════════════════════════════
+          ROW KPI — 集團工務 KPI Card（8 指標）
+      ══════════════════════════════════════════════════════════════ */}
+      <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
+        {/* 本月總案件數 */}
+        <Col xs={12} sm={8} md={6} lg={3}>
+          <Card size="small" bordered={false} style={{ borderTop: `3px solid ${C.primary}`, textAlign: 'center' }}>
+            <Statistic
+              title={<Text style={{ fontSize: 12, color: C.gray }}>本月總案件</Text>}
+              value={totalCases}
+              suffix="件"
+              valueStyle={{ fontSize: 22, fontWeight: 700, color: C.primary }}
+            />
+          </Card>
+        </Col>
+        {/* 本月總工時 */}
+        <Col xs={12} sm={8} md={6} lg={3}>
+          <Card size="small" bordered={false} style={{ borderTop: `3px solid ${C.accent}`, textAlign: 'center' }}>
+            <Statistic
+              title={<Text style={{ fontSize: 12, color: C.gray }}>本月總工時</Text>}
+              value={totalHours}
+              precision={1}
+              suffix="HR"
+              valueStyle={{ fontSize: 22, fontWeight: 700, color: C.accent }}
+            />
+          </Card>
+        </Col>
+        {/* 完成件數 */}
+        <Col xs={12} sm={8} md={6} lg={3}>
+          <Card size="small" bordered={false} style={{ borderTop: `3px solid ${C.success}`, textAlign: 'center' }}>
+            <Statistic
+              title={<Text style={{ fontSize: 12, color: C.gray }}>完成件數</Text>}
+              value={completedCases}
+              suffix="件"
+              valueStyle={{ fontSize: 22, fontWeight: 700, color: C.success }}
+            />
+          </Card>
+        </Col>
+        {/* 未完成件數 */}
+        <Col xs={12} sm={8} md={6} lg={3}>
+          <Card size="small" bordered={false} style={{ borderTop: `3px solid ${uncompletedCases > 0 ? C.danger : C.success}`, textAlign: 'center' }}>
+            <Statistic
+              title={<Text style={{ fontSize: 12, color: C.gray }}>未完成件數</Text>}
+              value={uncompletedCases}
+              suffix="件"
+              valueStyle={{ fontSize: 22, fontWeight: 700, color: uncompletedCases > 0 ? C.danger : C.success }}
+            />
+          </Card>
+        </Col>
+        {/* 完成率 */}
+        <Col xs={12} sm={8} md={6} lg={3}>
+          <Card size="small" bordered={false} style={{ borderTop: `3px solid ${rateColor(completionRate)}`, textAlign: 'center' }}>
+            <Statistic
+              title={<Text style={{ fontSize: 12, color: C.gray }}>完成率</Text>}
+              value={completionRate}
+              suffix="%"
+              valueStyle={{ fontSize: 22, fontWeight: 700, color: rateColor(completionRate) }}
+            />
+          </Card>
+        </Col>
+        {/* 平均每件工時 */}
+        <Col xs={12} sm={8} md={6} lg={3}>
+          <Card size="small" bordered={false} style={{ borderTop: `3px solid ${C.warning}`, textAlign: 'center' }}>
+            <Statistic
+              title={<Text style={{ fontSize: 12, color: C.gray }}>均工時/件</Text>}
+              value={avgHrPerCase}
+              precision={1}
+              suffix="HR"
+              valueStyle={{ fontSize: 22, fontWeight: 700, color: C.warning }}
+            />
+          </Card>
+        </Col>
+        {/* 飯店案件占比 */}
+        <Col xs={12} sm={8} md={6} lg={3}>
+          <Card size="small" bordered={false} style={{ borderTop: '3px solid #0d6b4e', textAlign: 'center' }}>
+            <Statistic
+              title={<Text style={{ fontSize: 12, color: C.gray }}>飯店案件占比</Text>}
+              value={hotelCasePct}
+              suffix="%"
+              valueStyle={{ fontSize: 22, fontWeight: 700, color: '#0d6b4e' }}
+            />
+          </Card>
+        </Col>
+        {/* 商場案件占比 */}
+        <Col xs={12} sm={8} md={6} lg={3}>
+          <Card size="small" bordered={false} style={{ borderTop: `3px solid ${C.primary}`, textAlign: 'center' }}>
+            <Statistic
+              title={<Text style={{ fontSize: 12, color: C.gray }}>商場案件占比</Text>}
+              value={mallCasePct}
+              suffix="%"
+              valueStyle={{ fontSize: 22, fontWeight: 700, color: C.primary }}
+            />
+          </Card>
+        </Col>
+      </Row>
 
       {/* ══════════════════════════════════════════════════════════════
           ROW 0.3 — 工務報修主管摘要（飯店 + 商場 + 工項比較表）
@@ -1627,6 +1649,128 @@ export default function DashboardPage() {
                 key: 'exec-burden',
                 label: <Space><span>🧮</span><Typography.Text strong style={{ fontSize: 16 }}>人員負荷與效率分析</Typography.Text></Space>,
                 children: <ExecBurdenTable stats={execStats} />,
+              },
+            ]}
+          />
+        </Col>
+      </Row>
+
+
+      {/* ══════════════════════════════════════════════════════════════
+          ROW 0.38 — 飯店 vs 商場比較表
+      ══════════════════════════════════════════════════════════════ */}
+      <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+        <Col xs={24}>
+          <Collapse
+            activeKey={analysisKeys.includes('unit-comparison') ? ['unit-comparison'] : []}
+            onChange={keys => {
+              const rest = analysisKeys.filter(k => k !== 'unit-comparison')
+              setAnalysisKeys((keys as string[]).includes('unit-comparison')
+                ? [...rest, 'unit-comparison']
+                : rest)
+            }}
+            style={{ background: '#fff' }}
+            items={[
+              {
+                key: 'unit-comparison',
+                label: (
+                  <Space>
+                    <span>🏢</span>
+                    <Typography.Text strong style={{ fontSize: 16 }}>
+                      飯店 vs 商場比較表 — {selectedYear} 年 {selectedMonth} 月
+                    </Typography.Text>
+                  </Space>
+                ),
+                children: execStats
+                  ? (
+                    <UnitComparisonTable
+                      dazhiKpi={dazhiData?.kpi}
+                      luqunKpi={luqunData?.kpi}
+                      sourceBreakdown={execStats.source_breakdown ?? []}
+                      totalCases={totalCases}
+                      totalHours={totalHours}
+                      completedCases={completedCases}
+                      uncompletedCases={uncompletedCases}
+                      completionRate={completionRate}
+                    />
+                  )
+                  : <div style={{ color: '#aaa', padding: '12px 0', textAlign: 'center' }}>資料載入中…</div>,
+              },
+            ]}
+          />
+        </Col>
+      </Row>
+
+
+      {/* ══════════════════════════════════════════════════════════════
+          ROW 0.39 — 工項類別 × 單位矩陣
+      ══════════════════════════════════════════════════════════════ */}
+      <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+        <Col xs={24}>
+          <Collapse
+            activeKey={analysisKeys.includes('category-matrix') ? ['category-matrix'] : []}
+            onChange={keys => {
+              const rest = analysisKeys.filter(k => k !== 'category-matrix')
+              setAnalysisKeys((keys as string[]).includes('category-matrix')
+                ? [...rest, 'category-matrix']
+                : rest)
+            }}
+            style={{ background: '#fff' }}
+            items={[
+              {
+                key: 'category-matrix',
+                label: (
+                  <Space>
+                    <span>📊</span>
+                    <Typography.Text strong style={{ fontSize: 16 }}>
+                      工項類別 × 單位矩陣 — {selectedYear} 年 {selectedMonth} 月
+                    </Typography.Text>
+                  </Space>
+                ),
+                children: execStats?.category_source_matrix?.length
+                  ? <CategorySourceMatrix data={execStats.category_source_matrix} />
+                  : <div style={{ color: '#aaa', padding: '12px 0', textAlign: 'center' }}>資料載入中…</div>,
+              },
+            ]}
+          />
+        </Col>
+      </Row>
+
+
+      {/* ══════════════════════════════════════════════════════════════
+          ROW 0.40 — 異常提醒區
+      ══════════════════════════════════════════════════════════════ */}
+      <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+        <Col xs={24}>
+          <Collapse
+            activeKey={analysisKeys.includes('alerts') ? ['alerts'] : []}
+            onChange={keys => {
+              const rest = analysisKeys.filter(k => k !== 'alerts')
+              setAnalysisKeys((keys as string[]).includes('alerts')
+                ? [...rest, 'alerts']
+                : rest)
+            }}
+            style={{ background: '#fff' }}
+            items={[
+              {
+                key: 'alerts',
+                label: (
+                  <Space>
+                    <span>⚠️</span>
+                    <Typography.Text strong style={{ fontSize: 16 }}>
+                      異常提醒 — {selectedYear} 年 {selectedMonth} 月
+                    </Typography.Text>
+                  </Space>
+                ),
+                children: (
+                  <AlertPanel
+                    execStats={execStats}
+                    totalCases={totalCases}
+                    completedCases={completedCases}
+                    uncompletedCases={uncompletedCases}
+                    completionRate={completionRate}
+                  />
+                ),
               },
             ]}
           />

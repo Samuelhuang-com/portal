@@ -492,7 +492,7 @@ export default function HotelMgmtDashboardPage() {
   function KpiAggregate() {
     return (
       <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
-        <Col xs={12} sm={8} md={4}>
+        <Col flex="1">
           <Card bodyStyle={{ padding: '14px 16px' }} style={{ borderLeft: `3px solid ${BRAND_BLUE}` }}>
             <Statistic
               title={<span style={{ fontSize: 11, color: '#888' }}>本期總工項</span>}
@@ -503,7 +503,7 @@ export default function HotelMgmtDashboardPage() {
             />
           </Card>
         </Col>
-        <Col xs={12} sm={8} md={4}>
+        <Col flex="1">
           <Card bodyStyle={{ padding: '14px 16px' }} style={{ borderLeft: `3px solid ${GREEN}` }}>
             <Statistic
               title={<span style={{ fontSize: 11, color: '#888' }}>已完成工項</span>}
@@ -514,7 +514,7 @@ export default function HotelMgmtDashboardPage() {
             />
           </Card>
         </Col>
-        <Col xs={12} sm={8} md={4}>
+        <Col flex="1">
           <Card bodyStyle={{ padding: '14px 16px' }} style={{ borderLeft: `3px solid ${ORANGE}` }}>
             <Statistic
               title={
@@ -532,7 +532,7 @@ export default function HotelMgmtDashboardPage() {
             />
           </Card>
         </Col>
-        <Col xs={12} sm={8} md={4}>
+        <Col flex="1">
           <Card bodyStyle={{ padding: '14px 16px' }} style={{ borderLeft: `3px solid ${totalAbnormal > 0 ? RED : GREEN}` }}>
             <Statistic
               title={<span style={{ fontSize: 11, color: '#888' }}>異常/未完成</span>}
@@ -544,7 +544,7 @@ export default function HotelMgmtDashboardPage() {
             {totalAbnormal === 0 && <Tag color="success" style={{ marginTop: 4, fontSize: 11 }}>全部正常</Tag>}
           </Card>
         </Col>
-        <Col xs={12} sm={8} md={4}>
+        <Col flex="1">
           <Card bodyStyle={{ padding: '14px 16px' }} style={{ borderLeft: `3px solid ${totalOverdue > 0 ? '#C0392B' : GREEN}` }}>
             <Statistic
               title={<span style={{ fontSize: 11, color: '#888' }}>逾期未完成</span>}

@@ -2,9 +2,38 @@
 
 > 跨據點統一管理平台 — FastAPI + React + TypeScript
 
-**最後更新：2026-05-07（v1.57.61）**
+**最後更新：2026-05-07（v1.57.97）**
 
 ## 最近變更
+- v1.57.97：**集團工務決策駕駛艙 Phase 6** — 異常提醒區（ROW 0.40）：未完成/完成率/類別集中/人員超載/單日暴增共 5 條告警規則，AlertPanel 預設展開
+- v1.57.96：**集團工務決策駕駛艙 Phase 5** — 工項類別 × 單位矩陣（ROW 0.39）：後端新增 `_build_category_source_matrix()`，含飯店/商場件數、合計、占比、工時分欄
+- v1.57.95：**集團工務決策駕駛艙 Phase 4** — 飯店 vs 商場比較表（ROW 0.38）：案件數/工時/完成/未完成/完成率/主要工項類別，零新 API 呼叫
+- v1.57.94：**集團工務決策駕駛艙 Phase 3** — 集團 KPI Card（8 統計卡）：總案件/完成/未完成/總工時/完成率/均工時/飯店占比/商場占比
+- v1.57.93：**集團工務決策駕駛艙 Phase 1+2** — ExecWorkDashboard 頁面建立（7 個 API 呼叫），路由 `/exec-work-dashboard`、sidebar 導覽、Permission Guard
+- v1.57.86：按鈕移至左側、移除「明細分析」Divider 標籤
+- v1.57.85：**Dashboard 折疊區塊全展開/全收合按鈕** — ROW 0.35 上方右對齊切換，6 個面板受控同步
+- v1.57.84：**Dashboard ROW 0.4～ROW 5 暫時隱藏** — 主管指標/今日摘要/KPI/完成率/趨勢/結案率全部 mark off，模組關聯圖譜保留
+- v1.57.83：**Dashboard 商場報修趨勢 + 類型分布雙欄圖（ROW 0.33）** — 零新 API，沿用 luqunData
+- v1.57.82：**Dashboard 報修趨勢 + 類型分布雙欄圖（ROW 0.32）** — 零新 API，沿用 dazhiData 已載入資料
+- v1.57.81：**Dashboard 明細分析表格內容字級 +1 級** — execRenderHr/Cat、日期/月份/人員/排名表全部 +1
+- v1.57.80：**Dashboard 折疊標題字級統一 16px** — 飯店/商場每日累計 + 明細分析四面板全部對齊
+- v1.57.79：**Dashboard 明細分析區塊** — 移植 exec-dashboard 四張工時表（每日/每月/人員佔比/排名），Collapse 預設收合，loadAll 擴為 13 項
+- v1.57.78：**Dashboard 工務報修 Section Header** — 三卡列上方新增區塊標題列（同主管指標樣式）
+- v1.57.77：**Dashboard 每日累計表超連結** — 工項類別名稱＋非零日期數字＋案件數欄均可點擊導覽至對應模組
+- v1.57.76：**Dashboard 每日累計案件數折疊表格** — 飯店/商場每日累計表（Collapse 預設收合）加在工務報修三卡與主管指標之間；HotelDailyTable 六來源合併五類；loadAll 擴為 12 項
+- v1.57.75：**Dashboard 工項比較表「飯店」欄數值修正** — 套用與 hotel/overview TAB C 相同多來源合併邏輯
+- v1.57.74：**Dashboard 工項比較表改用 monthly-hours API** — 與 hotel/overview、mall/overview TAB C 口徑一致；改取 `cases[selectedMonth-1]`
+- v1.57.73：**Dashboard 工務報修卡加入「當月金額」** — 飯店工務部、商場工務報修卡各自顯示委外+維修 / 扣款費用 / 扣款專櫃 / 當月小計
+- v1.57.72：**Dashboard「主管指標」下移** — ExecMetricsCard 移至工務報修三卡列（飯店＋商場＋比較表）下方
+- v1.57.71：**Dashboard 年月篩選 + 3 卡佈局恢復** — 修復 revert 過程意外遺失的功能；selectedYear/Month state、10 項 loadAll、categoryComparison useMemo、ROW 0.3 三欄佈局全部還原
+- v1.57.70：**還原 v1.57.68/69 費用嵌入** — Dashboard 及 mall/overview 恢復先前版本 — 委外+維修費用 / 扣款費用 / 扣款專櫃，與年月篩選連動
+- v1.57.68：**商場管理費用摘要嵌入「商場工務報修」卡** — SourceStatusCard 加 footer slot；費用數字與年月篩選連動
+- v1.57.67：**Dashboard 工務報修二卡 + 工項比較表合為同一列** — 三卡 `lg={8}` 並排於同一 Row
+- v1.57.66：**Dashboard 工務報修卡對調 + 大直改稱飯店** — 飯店工務部移至左欄、商場工務報修移至右欄；模組內所有「大直」顯示文字改為「飯店」
+- v1.57.65：**集團管理總覽 Dashboard 年月篩選 + 工項類別比較表** — 頂部新增 YYYY/MM Select（預設當年當月）；報修數據接 year/month 參數；新增飯店/商場 5 類工項件數比較表（沿用既有 daily-hours API）
+- v1.57.64：**飯店 Dashboard 主管摘要 KPI Card 改為全寬均分** — 5 張 Col 由 `md={4}` 改為 `flex="1"`
+- v1.57.63：**商場 Dashboard 頂層月份篩選預設改為當月** — `month` state 初始值 `0`→`thisMonth`
+- v1.57.62：**商場 Dashboard 移除「整體完成率」KPI Card** — 剩餘 5 張 KPI Card 改用 `Col flex="1"` 均分全寬
 - v1.57.61：**商場 Dashboard Tab B/C/D 表格數字修正** — `mall_overview.py` `daily-hours`/`monthly-hours` 補算 `cases`/`cases_total`/`cases_pct`（現場報修件數 + PM item 件數 + 巡檢 batch 件數），修正前端 `row.cases?.[i]` 全為 undefined → 0 → 顯示 `—` 的問題
 - v1.57.60：**飯店 + 商場 Dashboard B/C Tab 新增「匯出 CSV」** — 純前端 BOM CSV 下載；每日累計含日期欄，每月累計含 1–12 月欄；資料未載入時 disabled
 - v1.57.59：**`hotel/overview` 來源卡路由修正** — `daily_inspection` `'/hotel/hotel-daily-inspection/dashboard'` → `'/hotel/daily-inspection'`；`security` `'/hotel/security/dashboard'` → `'/security/dashboard'`
@@ -248,64 +277,4 @@ npm run dev
 
 ---
 
-## 初始帳號
-
-| 帳號 | 密碼 | 角色 |
-|------|------|------|
-| `admin` 或 `admin@portal.local` | `Admin@2026` | 系統管理員 |
-| `samuel.huang` 或 `samuel.huang@portal.local` | `Samuel@2026` | 系統管理員 |
-
-> 帳號不區分大小寫，資料庫統一存小寫
-
----
-
-## 環境變數
-
-後端 `.env` 重要設定：
-
-```bash
-DATABASE_URL=sqlite+aiosqlite:///./portal.db    # 開發用 SQLite
-JWT_SECRET_KEY=your-long-secret-key             # 務必更換
-ENCRYPTION_KEY=                                 # Fernet key（留空自動生成）
-```
-
----
-
-## Docker 部署
-
-```bash
-# 全套啟動（PostgreSQL + 後端 + 前端）
-docker-compose up -d
-
-# 初始化資料庫
-docker-compose exec backend python init_db.py
-```
-
----
-
-## 技術規格
-
-| 層 | 技術 |
-|----|------|
-| 前端 | React 18 · TypeScript · Ant Design 5 · Zustand |
-| 後端 | FastAPI · SQLAlchemy 2.0 · Pydantic v2 |
-| 資料庫 | SQLite（開發）/ PostgreSQL（正式）|
-| 認證 | JWT · bcrypt |
-| 同步 | httpx · APScheduler |
-| 報表 | pandas · openpyxl |
-
----
-
-## Phase 1 功能清單
-
-- [x] 多據點管理（HQ / 飯店A/B / 商場A/B）
-- [x] JWT 身份驗證（登入 / 登出 / me）
-- [x] RBAC 角色權限（system_admin / tenant_admin / module_manager / viewer）
-- [x] 人員管理 CRUD（新增 / 編輯 / 停用 / 刪除）
-- [x] Ragic API Adapter（分頁拉取 / 加密金鑰）
-- [x] 同步排程（APScheduler）
-- [x] 資料快照（DataSnapshot）
-- [x] 稽核日誌（AuditLog）
-- [x] Dashboard 概覽
-- [ ] 跨據點報表（Phase 2）
-- [ ] AI 分析模組（Phase 2）
+##

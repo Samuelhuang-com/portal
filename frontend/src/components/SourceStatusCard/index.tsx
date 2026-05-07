@@ -37,6 +37,7 @@ export interface SourceStatusCardProps {
   titleFontSize?:  number            // 標題字型大小（預設 14）
   statFontSize?:   number            // Statistic 數值字型大小（預設 20）
   infoFontSize?:   number            // 資訊列字型大小（預設 15）
+  footer?:         React.ReactNode  // 卡片底部追加內容（如費用摘要）
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -62,6 +63,7 @@ export function SourceStatusCard({
   titleFontSize  = 14,
   statFontSize   = 20,
   infoFontSize   = 15,
+  footer,
 }: SourceStatusCardProps) {
   const color       = source_color
   const showStats   = !is_placeholder && !loading && !error
@@ -179,6 +181,7 @@ export function SourceStatusCard({
           </Row>
         </>
       )}
+      {footer && <>{footer}</>}
     </Card>
   )
 }
