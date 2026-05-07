@@ -903,11 +903,12 @@ from fastapi.responses import FileResponse as _FileResponse
 
 _frontend_dist = _os.path.join(_os.path.dirname(__file__), "..", "..", "frontend", "dist")
 if _os.path.isdir(_frontend_dist):
-    # API 與靜態資源已由上方路由處理；這裡補上 SPA catch-all
+    # ① assets 靜態檔案必須在 catch-all 之前 mount，否則 JS/CSS 會被攔截
+    app.mount("/assets", _StaticFiles(directory=_os.path.join(_frontend_dist, "assets")), name="assets")
+
+    # ② SPA catch-all：所有其他路徑都回傳 index.html，讓 React Router 處理
     @app.get("/{full_path:path}", include_in_schema=False)
     async def spa_fallback(full_path: str):
-        index = _os.path.join(_frontend_dist, "index.html")
-        return _FileResponse(index)
+        return _FileResponse(_os.path.join(_frontend_dist, "index.html"))
 
-    app.mount("/assets", _StaticFiles(directory=_os.path.join(_frontend_dist, "assets")), name="assets")
     print(f"[Portal] Frontend static files (SPA mode) served from: {_frontend_dist}")
