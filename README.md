@@ -2,9 +2,32 @@
 
 > 跨據點統一管理平台 — FastAPI + React + TypeScript
 
-**最後更新：2026-05-06（v1.57.36）**
+**最後更新：2026-05-07（v1.57.61）**
 
 ## 最近變更
+- v1.57.61：**商場 Dashboard Tab B/C/D 表格數字修正** — `mall_overview.py` `daily-hours`/`monthly-hours` 補算 `cases`/`cases_total`/`cases_pct`（現場報修件數 + PM item 件數 + 巡檢 batch 件數），修正前端 `row.cases?.[i]` 全為 undefined → 0 → 顯示 `—` 的問題
+- v1.57.60：**飯店 + 商場 Dashboard B/C Tab 新增「匯出 CSV」** — 純前端 BOM CSV 下載；每日累計含日期欄，每月累計含 1–12 月欄；資料未載入時 disabled
+- v1.57.59：**`hotel/overview` 來源卡路由修正** — `daily_inspection` `'/hotel/hotel-daily-inspection/dashboard'` → `'/hotel/daily-inspection'`；`security` `'/hotel/security/dashboard'` → `'/security/dashboard'`
+- v1.57.58：**抽取共用 `SourceStatusCard` 元件** — 新增 `src/components/SourceStatusCard/index.tsx`；Hotel `SourceCards()`、Mall local `SourceCard` 均改用共用元件，視覺不變
+- v1.57.57：**`hotel/overview` `adaptDazhi` source_name 修正** — `'工務部'` → `'飯店工務部'`，與後端 `HOTEL_CATEGORIES` 對齊
+- v1.57.56：**`hotel/overview` 週期保養批次月份查詢改 LIKE 容錯** — `get_hotel_daily_hours` 週期保養批次由 exact match 改為 `period_month LIKE '{year}/%'` + Python 月份過濾，與 mall 對齊
+- v1.57.55：**`mall/overview` 每年累計 Tab 改為 Running Total** — 移除三年比較表，改為單年累計格式（比照 hotel/overview Tab D）；篩選 Card + 五類別 ⓘ Tooltip + 累計說明 Tooltip + 12月欄位表格
+- v1.57.54：**抽取共用 `time_utils.parse_minutes`** — 新增 `backend/app/services/time_utils.py`；`hotel_overview.py` / `mall_overview.py` 各刪除本地 `_parse_minutes` 定義，改 `from app.services.time_utils import parse_minutes as _parse_minutes`；所有呼叫端不變；`docs/TECH_SPEC.md` 補服務層工具表格
+- v1.57.53：**`mall/overview` 人員排名 Tab 補上來源分解堆疊 BarChart** — `MallMgmtDashboard/index.tsx` 新增 `breakdownData` useMemo（personRanking 反轉 × 3 來源工時）；新增 Card「人員工時分解（HR）」含 220px 高度 recharts 堆疊 BarChart（現場報修#FA8C16／例行維護#1B3A5C／每日巡檢#722ED1）；放置於排名 BarChart 與明細表之間
+- v1.57.52：**`hotel/overview` 各工時 Tab 改為獨立篩選** — B/C/D/人員 Tab 各自持有獨立 year/month state（`tabBYear`/`tabBMonth`/`tabCYear`/`personYear`）；新增 `monthOptions12`（無全年選項）供 B Tab 月份選單；`handleTabChange` 改為 null-check 觸發、移除 `loadedTabs` ref；人員/排名 Tab 各加 personFilterCard/rankingFilterCard；Dashboard Tab 的 year/month 不受影響
+- v1.57.51：**`hotel/overview` 每日/每月/每年累計表補 `cases_pct` 欄位** — 後端 `get_hotel_daily_hours`/`get_hotel_monthly_hours` 各列加算 `cases_pct`（佔全部案件數%）；TypeScript `HotelDailyRow`/`HotelMonthlyRow` 補 `cases_pct: number`；前端 `Row5`/`Row5M`/`Row5Y` 型別及欄位 `dataIndex` 由 `'pct'` 統一改為 `'cases_pct'`
+- v1.57.50：**`hotel/overview` Tab key 命名統一** — `'overview'`→`'dashboard'`、`'person'`→`'person_pct'`（共 3 處）
+- v1.57.49：**`mall/overview` PPTX endpoint 復元 + 前端按鈕確認** — `mall_overview.py` git 版完整復元；POST endpoint + 匯出按鈕確認有效
+- v1.57.48：**`mall/overview` 人員排名改用五項來源** — Tab E 從僅報修改為 `/mall/person-hours` 五項來源；`mallOverview.ts` 補 `person_totals` 型別
+- v1.57.47：**`hotel/overview` API summary 「六項」→「五項」** — 三個 GET endpoint summary 字串統一修正
+- v1.57.46：**`hotel/overview` PPTX 佔位卡名稱修正** — `商場主管交辦`/`商場緊急事件` → `飯店主管交辦`/`飯店緊急事件`
+- v1.57.45：**`hotel/overview` 新增 PPTX 匯出 POST endpoint** — `POST /api/v1/hotel/overview/export/pptx`；接收 `year`/`month` Query 參數及 `HotelPptxPayload` body，呼叫 `_build_hotel_pptx` 產生五張投影片並以 `StreamingResponse` 回傳，Content-Disposition 檔名 URL-encoded（`飯店管理報告_{year}年{month:02d}月.pptx`）
+- v1.57.44：**`mall/overview` Tab B 每日巡檢改為 Dashboard 同口徑** — 每天 = 實際登錄 + 缺漏場次（5 張表），對應 Dashboard 150 數字；容錯兩種日期格式
+- v1.57.43：**`mall/overview` 現場報修口徑修正 + ⓘ Tooltip** — B/C/D TAB 改用 `_stat_dt` 口徑（與 luqun-repair/dashboard 一致，51→56）；Tab B/C/D 加工項 ⓘ Tooltip 說明計算公式
+- v1.57.42：**全模組「樂群」→「商場」文字統一替換** — 30 支前後端檔案中文顯示字串全面替換；英文識別字 luqun 系列保持不變
+- v1.57.41：**`mall/overview` B/C/D TAB 改為案件數** — 後端加 cases_bucket 平行統計（報修筆數/PM 件數/巡檢批次數）；前端 cases/cases_total/cases_pct 欄位；另補齊 PPTX return 截斷語法錯誤
+- v1.57.40：**`mall/overview` Tab A 篩選列重構** — 年月 Select 移至 Tab A「工務篩選：年▼ 月▼」；巡檢日期標籤改名；年月變更自動重載；Header 只留匯出按鈕
+- v1.57.39：**`mall/overview` 文字修正 + 每年累計 TAB + 全棟例行維護 App Directory 補充** — 大直→商場；新增 D.每年累計（3 年交叉表，零新增 API）；TAB 字體 +2；Settings 補充 itemNo 220
 - v1.57.38：**`hotel/overview` 五個 TAB 表格字體放大 2 級**（9→11、10→12、11→13、12→14、14→16）
 - v1.57.37：**`hotel/overview` B/C/D TAB 類別 ⓘ Tooltip 說明** — 每個工作類別加計算公式說明（模組中英文、口徑、欄位）
 - v1.57.36：**`hotel/overview` 飯店週期保養＋IHG 案件數口徑修正** — PM 改用 monthly frequency 邏輯（2026/04=0）；B TAB IHG cases_total 改用不重複房號數（與 C/D TAB 一致，2026/04=69）

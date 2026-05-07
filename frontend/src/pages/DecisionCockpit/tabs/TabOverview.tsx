@@ -8,7 +8,7 @@
  *
  * Phase 2 資料來源（全部 reuse 既有 API）：
  *   - /api/v1/dashboard/kpi        → 客房保養 KPI（有 completion_rate）
- *   - /api/v1/luqun-repair/dashboard → 樂群工務（total / completed / uncompleted）
+ *   - /api/v1/luqun-repair/dashboard → 商場工務（total / completed / uncompleted）
  *   - /api/v1/dazhi-repair/dashboard → 大直工務（total / completed / uncompleted）
  *
  * 飯店完整健康 / 商場健康 → Phase 3（需 6 來源 + 5 工項 API）先顯示灰燈

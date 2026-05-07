@@ -1,5 +1,5 @@
 """
-樂群工務報修 API Router
+商場工務報修 API Router
 Prefix: /api/v1/luqun-repair
 
 端點：
@@ -50,7 +50,7 @@ router = APIRouter(dependencies=[Depends(get_current_user)])
 # ── 共用 DB 讀取 helper ────────────────────────────────────────────────────────
 
 def load_cases_from_db(db: Session) -> list[LuqunRepairCase]:
-    """從本地 SQLite 載入所有樂群報修案件（ORM 物件與 RepairCase 介面相容）。"""
+    """從本地 SQLite 載入所有商場報修案件（ORM 物件與 RepairCase 介面相容）。"""
     return db.query(LuqunRepairCase).all()
 
 
@@ -428,7 +428,7 @@ async def sync_diagnostic():
 @router.post("/sync", summary="觸發背景同步：Ragic → SQLite（非阻塞）", dependencies=[Depends(require_roles("system_admin", "module_manager"))])
 async def sync_from_ragic(background_tasks: BackgroundTasks):
     """
-    將樂群工務報修資料從 Ragic 同步到本地 SQLite（背景執行）。
+    將商場工務報修資料從 Ragic 同步到本地 SQLite（背景執行）。
     立即回傳，不等待同步完成。
     """
     from app.services.luqun_repair_sync import sync_from_ragic as do_sync

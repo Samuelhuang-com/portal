@@ -51,7 +51,7 @@ router = APIRouter(dependencies=[Depends(get_current_user)])
 CATEGORIES = ["現場報修", "上級交辦", "緊急事件", "例行維護", "每日巡檢"]
 
 SOURCE_LABELS = {
-    "luqun":    "樂群工務",
+    "luqun":    "商場工務",
     "dazhi":    "大直工務",
     "ihg_room": "IHG客房保養",
 }
@@ -117,7 +117,7 @@ def _load_all(db: Session, sources: set[str]) -> list[dict]:
     """
     rows: list[dict] = []
 
-    # ── 樂群 ──────────────────────────────────────────────────────────────────
+    # ── 商場 ──────────────────────────────────────────────────────────────────
     # 人員：responsible_unit（= Ragic「處理工務」）
     # 工時：work_hours（= 花費工時 HR；若無則 工務處理天數×24）
     if "luqun" in sources:

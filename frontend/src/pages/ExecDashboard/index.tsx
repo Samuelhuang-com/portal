@@ -59,7 +59,7 @@ const PIE_COLORS  = ['#4BA8E8', '#52C41A', '#FF4D4F', '#FA8C16', '#722ED1']
 const MONTHS      = Array.from({ length: 12 }, (_, i) => i + 1)
 const SRC_OPTIONS = [
   { value: 'all',   label: '全部來源' },
-  { value: 'luqun', label: '樂群工務' },
+  { value: 'luqun', label: '商場工務' },
   { value: 'dazhi', label: '大直工務' },
 ]
 
@@ -602,7 +602,7 @@ export default function ExecDashboardPage() {
           {NAV_PAGE.execDashboard}
         </Title>
         <Text type="secondary" style={{ fontSize: 12 }}>
-          樂群工務 · 大直工務 · 房務保養 — 整合工時決策分析
+          商場工務 · 大直工務 · 房務保養 — 整合工時決策分析
         </Text>
         {stats?.meta?.last_sync_at && (
           <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 2 }}>

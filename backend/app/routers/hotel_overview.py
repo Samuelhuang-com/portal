@@ -30,6 +30,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.models.dazhi_repair import DazhiRepairCase
 from app.services.dazhi_repair_service import is_completed as _repair_is_completed
+from app.services.time_utils import parse_minutes as _parse_minutes
 from app.models.hotel_daily_inspection import HotelDIBatch
 from app.models.ihg_room_maintenance import IHGRoomMaintenanceMaster
 from app.models.periodic_maintenance import (
@@ -57,27 +58,12 @@ IHG_HOURS_PER_RECORD = 0.5
 PM_MONTHLY_FREQ = {"月", "每月", "月維護", "Monthly", "monthly"}
 
 
-def _parse_minutes(start: str, end: str) -> int:
-    """
-    解析 HH:MM 格式開始/結束時間，回傳分鐘數差值；格式無效回傳 0。
-    複製自 mall_overview.py 同名函式，避免跨 router import。
-    """
-    def to_min(t: str) -> Optional[int]:
-        m = re.match(r"^(\d{1,2}):(\d{2})$", (t or "").strip())
-        return int(m.group(1)) * 60 + int(m.group(2)) if m else None
-
-    s, e = to_min(start), to_min(end)
-    if s is None or e is None:
-        return 0
-    diff = e - s
-    return diff + 24 * 60 if diff < 0 else diff
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # B. 每日累計
 # ─────────────────────────────────────────────────────────────────────────────
 
-@router.get("/daily-hours", summary="飯店管理 — 每日工時彙總（六項來源）")
+@router.get("/daily-hours", summary="飯店管理 — 每日工時彙總（五項來源）")
 def get_hotel_daily_hours(
     year:  int = Query(..., ge=2020, le=2030, description="年份"),
     month: int = Query(..., ge=1,    le=12,   description="月份（1–12）"),
@@ -109,17 +95,19 @@ def get_hotel_daily_hours(
     cases_bucket: dict[str, dict[int, int]] = {c: defaultdict(int) for c in HOTEL_CATEGORIES}
 
     date_prefix = f"{year}/{month:02d}/"
-    period_prefix = f"{year}/{month:02d}"
-
     # ── ① 飯店週期保養：pm_batch.period_month + pm_batch_item.scheduled_date ──
-    pm_batch_ids = [
-        row[0]
-        for row in (
-            db.query(PeriodicMaintenanceBatch.ragic_id)
-            .filter(PeriodicMaintenanceBatch.period_month == period_prefix)
-            .all()
-        )
-    ]
+    # 改用 LIKE 查全年再 Python 過濾月份，容錯非補零格式（與 mall_overview 對齊）
+    pm_batch_ids = []
+    for _b in (
+        db.query(PeriodicMaintenanceBatch)
+        .filter(PeriodicMaintenanceBatch.period_month.like(f"{year}/%"))
+        .all()
+    ):
+        try:
+            if int(_b.period_month.split("/")[1]) == month:
+                pm_batch_ids.append(_b.ragic_id)
+        except (ValueError, IndexError, AttributeError):
+            pass
     if pm_batch_ids:
         for item in (
             db.query(PeriodicMaintenanceItem)
@@ -243,6 +231,11 @@ def get_hotel_daily_hours(
     for row in result_rows:
         row["pct"] = round(row["total"] / grand_total * 100, 1) if grand_total else 0.0
 
+    # cases_pct：各列案件數佔全部案件數的百分比
+    grand_cases_tot = sum(row["cases_total"] for row in result_rows)
+    for row in result_rows:
+        row["cases_pct"] = round(row["cases_total"] / grand_cases_tot * 100, 1) if grand_cases_tot else 0.0
+
     # TOTAL cases_total：各列 cases_total 加總（IHG 已使用不重複房號數）
     total_cases_total = sum(row["cases_total"] for row in result_rows)
     result_rows.append({
@@ -252,6 +245,7 @@ def get_hotel_daily_hours(
         "pct":         100.0,
         "cases":       grand_day_c,
         "cases_total": total_cases_total,
+        "cases_pct":   100.0,
     })
 
     return {
@@ -267,7 +261,7 @@ def get_hotel_daily_hours(
 # C. 每月累計
 # ─────────────────────────────────────────────────────────────────────────────
 
-@router.get("/monthly-hours", summary="飯店管理 — 每月工時彙總（六項來源）")
+@router.get("/monthly-hours", summary="飯店管理 — 每月工時彙總（五項來源）")
 def get_hotel_monthly_hours(
     year: int = Query(..., ge=2020, le=2030, description="年份"),
     db: Session = Depends(get_db),
@@ -424,6 +418,11 @@ def get_hotel_monthly_hours(
     for row in result_rows:
         row["pct"] = round(row["total"] / grand_total * 100, 1) if grand_total else 0.0
 
+    # cases_pct：各列案件數佔全部案件數的百分比
+    grand_cases_tot = sum(row["cases_total"] for row in result_rows)
+    for row in result_rows:
+        row["cases_pct"] = round(row["cases_total"] / grand_cases_tot * 100, 1) if grand_cases_tot else 0.0
+
     result_rows.append({
         "category": "TOTAL",
         "hours":       [round(h, 1) for h in grand_m],
@@ -431,6 +430,7 @@ def get_hotel_monthly_hours(
         "pct":         100.0,
         "cases":       grand_m_c,
         "cases_total": sum(grand_m_c),
+        "cases_pct":   100.0,
     })
 
     return {"year": year, "months": list(range(1, 13)), "rows": result_rows}
@@ -440,7 +440,7 @@ def get_hotel_monthly_hours(
 # D. 人員工時%
 # ─────────────────────────────────────────────────────────────────────────────
 
-@router.get("/person-hours", summary="飯店管理 — 人員工時佔比（六項來源，Top-15）")
+@router.get("/person-hours", summary="飯店管理 — 人員工時佔比（五項來源，Top-15）")
 def get_hotel_person_hours(
     year: int = Query(..., ge=2020, le=2030, description="年份"),
     db: Session = Depends(get_db),
@@ -757,7 +757,7 @@ def _build_slide2_kpi(slide, kpi: "HotelPptxPayload", period_str: str,
 
     # 6 real cards + 2 placeholder
     cards = list(kpi.source_cards)
-    for pname in ["商場主管交辦", "商場緊急事件"]:
+    for pname in ["飯店主管交辦", "飯店緊急事件"]:
         if len(cards) < 8:
             cards.append(SourceCardIn(
                 source_name=pname, source_key="__ph__",

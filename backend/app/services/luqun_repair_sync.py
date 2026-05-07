@@ -1,5 +1,5 @@
 """
-樂群工務報修同步服務：Ragic → SQLite
+商場工務報修同步服務：Ragic → SQLite
 
 設計：
   1. 呼叫 luqun_repair_service.fetch_all_cases() 取得清洗後的 RepairCase list
@@ -25,7 +25,7 @@ def _now() -> datetime:
 
 async def sync_from_ragic() -> dict:
     """
-    從 Ragic 拉取樂群工務報修所有案件，Upsert 到本地 SQLite。
+    從 Ragic 拉取商場工務報修所有案件，Upsert 到本地 SQLite。
     回傳 { fetched, upserted, errors }
     """
     from app.services.luqun_repair_service import fetch_all_cases

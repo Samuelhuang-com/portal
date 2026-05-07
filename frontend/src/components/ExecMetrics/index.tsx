@@ -243,7 +243,7 @@ export default function ExecMetricsCard({
           <FundOutlined style={{ color: T.primary, fontSize: 16 }} />
           <Text strong style={{ color: T.primary, fontSize: 15 }}>主管指標</Text>
           <Text type="secondary" style={{ fontSize: 12 }}>
-            {thisYear} 年 {thisMonth} 月 · 樂群 / 大直 / 房務
+            {thisYear} 年 {thisMonth} 月 · 商場 / 大直 / 房務
           </Text>
         </div>
         <span

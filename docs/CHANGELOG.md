@@ -2,6 +2,129 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)
 
+## [1.57.61] - 2026-05-07
+
+### Fixed
+- **商場 Dashboard Tab B/C/D 表格數字全空白修正** — 根本原因：`mall_overview.py` 的 `/mall/daily-hours` 與 `/mall/monthly-hours` endpoint 只回傳 `hours/total/pct`，未計算案件件數，導致前端 `row.cases?.[i]` 取得 `undefined` → 0 → 全部顯示 `—`；修正方式：兩個 endpoint 各新增 `case_bucket: dict[str, dict[int, int]]` 進行案件計件（現場報修 = LuqunRepairCase 筆數、例行維護 = PM item 筆數、每日巡檢 = inspection batch 筆數、上級交辦/緊急事件模組未建置故仍為 0），組裝 result_rows 時追加 `cases`（逐日/月陣列）、`cases_total`（合計）、`cases_pct`（佔比）三欄；TOTAL 列同步追加；`daily-hours` 1021 行，`monthly-hours` 相同檔案
+
+## [1.57.60] - 2026-05-07
+
+### Added
+- **Dashboard B/C Tab 新增「匯出 CSV」按鈕（飯店 + 商場）** — 純前端實作，不新增後端 API；兩個 Dashboard 各加 `exportCSV` helper（BOM `﻿` + `text/csv;charset=utf-8` Blob，URL.createObjectURL 觸發下載）；`HotelMgmtDashboard` TabBDaily 篩選列加匯出按鈕（檔名：`飯店管理_每日累計_{year}年{month}月.csv`，欄位：工項類別 / N日(週X) / 案件數 / %）、TabCMonthly 篩選列加匯出按鈕（`飯店管理_每月累計_{year}年.csv`，欄位：工項類別 / 1–12月 / 案件數 / %）；`MallMgmtDashboard` Tab B / Tab C 同樣新增匯出按鈕（`商場管理_每日累計_{year}年{month}月.csv` / `商場管理_每月累計_{year}年.csv`）；資料未載入時按鈕 disabled；`DownloadOutlined` icon 已加入兩個檔案的 import
+
+## [1.57.59] - 2026-05-07
+
+### Fixed
+- **`hotel/overview` 來源卡路由路徑修正** — `HotelMgmtDashboard/index.tsx` `HOTEL_SOURCE_ROUTES` 修正兩條錯誤路徑：`daily_inspection` 由 `'/hotel/hotel-daily-inspection/dashboard'` 改為 `'/hotel/daily-inspection'`；`security` 由 `'/hotel/security/dashboard'` 改為 `'/security/dashboard'`（對照 `router/index.tsx` 實際路由確認）
+
+## [1.57.58] - 2026-05-07
+
+### Refactor
+- **抽取共用 `SourceStatusCard` React Component** — 新增 `frontend/src/components/SourceStatusCard/index.tsx`，exports `SourceStatusCardProps` 介面與 `SourceStatusCard` 元件；支援 props：`source_key/name/color`、`case_count/completed_count/work_hours/actual_hours/completion_rate/abnormal_count/overdue_count/status_label`（`-1` = 不適用）、`is_placeholder/loading/error/onClick/icon/cardSize/titleFontSize/statFontSize/infoFontSize`；`source_key === 'dazhi'` 自動將「異常」改為「未完成」；`actual_hours` 有值 → PM 雙行模式（預估工時 + 保養時間），無值 → 單行工時；`HotelMgmtDashboard` `SourceCards()` 替換為 `<SourceStatusCard {...s} icon=... onClick=... />`，佔位卡改用 `is_placeholder`；`MallMgmtDashboard` 刪除 local `SourceCard` function，ROW1/ROW2 改用 `<SourceStatusCard>` 傳入 `cardSize="small" titleFontSize={16} statFontSize={22} infoFontSize={17}`（保持原有視覺大小）
+
+## [1.57.57] - 2026-05-07
+
+### Fixed
+- **`hotel/overview` `adaptDazhi` source_name 與後端對齊** — `HotelMgmtDashboard/index.tsx` `adaptDazhi` 函式中 `source_name: '工務部'` 改為 `'飯店工務部'`，與後端 `HOTEL_CATEGORIES` 第 5 項一致
+
+## [1.57.56] - 2026-05-07
+
+### Fixed
+- **`hotel/overview` 週期保養批次查詢補月份格式容錯** — `hotel_overview.py` `get_hotel_daily_hours` 中週期保養批次查詢由 `period_month == f"{year}/{month:02d}"` 改為 LIKE `f"{year}/%"` 再以 Python `int(period_month.split("/")[1]) == month` 過濾，容錯非補零格式（如 `2026/5`），與 `mall_overview.py` 對齊；`get_hotel_monthly_hours` 與 `get_hotel_person_hours` 已是 LIKE 無需異動；未修改前端
+
+## [1.57.55] - 2026-05-07
+
+### Changed
+- **`mall/overview` 每年累計 Tab 改為 Running Total 格式（比照 hotel/overview）** — `MallMgmtDashboard/index.tsx` 重寫 Tab E：移除多年比較（`yearlyDataMap`/`yearlyBaseYear`/`loadYearlyHours` 3年版），改為單年 Running Total；新增 state `yearlyData`（`MallMonthlyHoursData | null`）與 `yearlyYear`；新增 `MallRow5Y` 型別；`buildMallYearlyCols()` 改為生成「工項類別 + 1月–12月 + 案件數 + %」欄（未來月份顯示 —）；`TabYearly` 改為 function component，`loadYearlyHours` 改為單年版，`handleTabChange` 改為 `!yearlyData` null-check；篩選 Card（年度累計案件數 label + 年份選單 + 重新整理 + YYYY年（累計）label）、五類別圖例 + ⓘ Tooltip + ⓘ 累計說明 tooltip，表格 Card 標題「年度累計案件數」extra「YYYY年（累計至各月）」
+
+## [1.57.54] - 2026-05-07
+
+### Refactor
+- **抽取共用 `parse_minutes` 至 `app/services/time_utils.py`** — 新增 `backend/app/services/time_utils.py`，將 `hotel_overview.py`（原 line 60）與 `mall_overview.py`（原 line 43）中邏輯完全相同的 `_parse_minutes` 函式統一為 `parse_minutes`，補齊完整 docstring（含跨日修正說明與範例）；兩個 router 各刪除本地定義，改以 `from app.services.time_utils import parse_minutes as _parse_minutes` 引入，別名保持 `_parse_minutes` 使所有呼叫端零修改；`docs/TECH_SPEC.md` 新增「服務層共用工具」表格
+
+## [1.57.53] - 2026-05-07
+
+### Added
+- **`mall/overview` 人員排名 Tab 補上來源分解堆疊 BarChart** — `MallMgmtDashboard/index.tsx` 新增 `MALL_3CATS`（現場報修/例行維護/每日巡檢）與 `MALL_CAT_HEX` 色彩映射；新增 `breakdownData` useMemo 將 `personRanking` 反轉並展開每人各來源工時（`total_hours * pct / 100`）；在 TabRanking 既有排名 BarChart 與明細表之間插入 Card「人員工時分解（HR）」，內含 220px 高度 `ResponsiveContainer` + `BarChart layout="vertical"` 堆疊圖（`stackId="src"`），最後一條 Bar 加 radius `[0,4,4,0]`；含 `Legend`、`RcTooltip`（顯示 HR）；未修改後端
+
+## [1.57.52] - 2026-05-07
+
+### Changed
+- **`hotel/overview` 各工時 Tab 改為獨立篩選** — `HotelMgmtDashboard/index.tsx` 新增四個獨立 state：`tabBYear`/`tabBMonth`（Tab B 每日）、`tabCYear`（Tab C 每月）、`personYear`（人員工時%/人員排名共用）；新增 `monthOptions12`（1–12 月，無全年，供 Tab B）；`handleTabChange` 從 `loadedTabs` ref 改為 null-check 觸發（`!dailyData`/`!monthlyData`/`!yearlyData`/`!personData`），移除 `loadedTabs` ref；Tab B/C 篩選 Card 的 `onChange` 直接觸發 fetch；Tab D/人員排名 各加篩選 Card（`personFilterCard`/`rankingFilterCard`），null check return 也附上 filterCard；Dashboard Tab 的 year/month state 保持原有邏輯，不受影響
+
+## [1.57.51] - 2026-05-07
+
+### Added
+- **`hotel/overview` 每日/每月/每年累計表補 `cases_pct` 欄位** — 後端 `hotel_overview.py` `get_hotel_daily_hours` 與 `get_hotel_monthly_hours` 各非 TOTAL 列計算 `cases_pct`（`cases_total / grand_cases_tot * 100`，1 位小數）；TOTAL 列固定 `cases_pct: 100.0`；TypeScript `hotelOverview.ts` `HotelDailyRow` 與 `HotelMonthlyRow` 補 `cases_pct: number`；前端 `HotelMgmtDashboard/index.tsx` Tab B/C/D 的本地 `Row5`/`Row5M`/`Row5Y` 型別由 `pct` 改為 `cases_pct`，`dataIndex: 'pct'` 改為 `dataIndex: 'cases_pct'`，`buildDailyCols`/`buildMonthlyCols` column key 同步更新
+
+## [1.57.50] - 2026-05-06
+
+### Changed
+- **`hotel/overview` Tab key 命名與商場統一** — `HotelMgmtDashboard/index.tsx` 中 `key: 'overview'` → `'dashboard'`、`key: 'person'` → `'person_pct'`；`handleTabChange` 條件判斷同步更新（`=== 'person'` → `=== 'person_pct'`）；label・children・loadedTabs 邏輯均不變
+
+## [1.57.49] - 2026-05-06
+
+### Fixed
+- **`mall/overview` PPTX 後端 endpoint + 前端按鈕** — `mall_overview.py` 從 git HEAD 完整復元（997→997 行，修復截斷的 `_build_mall_pptx` 函式）；`POST /overview/export/pptx`（`export_mall_overview_pptx`）已隨 git 版本恢復；前端匯出按鈕（FilePptOutlined，loading={exportLoading}，linear-gradient 樣式）在 Header Card 已正確渲染（T04 復元時一併確認）
+
+## [1.57.48] - 2026-05-06
+
+### Fixed
+- **`mall/overview` 人員排名 Tab 改用五項來源** — `MallMgmtDashboard/index.tsx` Tab E 人員排名資料來源由 `luqunData.top_hours`（僅報修 1 項）改為 `/mall/person-hours`（現場報修+上級交辦+緊急事件+例行維護+每日巡檢 5 項）；`personRanking` useMemo 重寫（`persons`/`person_totals`/`cats` 欄位）；`handleTabChange` 補上 `ranking` key 觸發 `loadPersonHours()`；Alert 說明文字更新；BarChart `dataKey` 改為 `total_hours`；排名明細表「案件數」欄改為「來源分解」Tooltip；Table.Summary 同步更新
+- **`frontend/src/api/mallOverview.ts` 補上 `person_totals` 欄位** — `MallPersonHoursData` interface 新增 `person_totals: number[]`（後端已回傳，前端型別缺少）
+
+## [1.57.47] - 2026-05-06
+
+### Fixed
+- **`hotel/overview` API summary 「六項來源」→「五項來源」** — `hotel_overview.py` 三個 GET endpoint 的 summary 字串（line 80 / 270 / 443）由「六項來源」統一修正為「五項來源」，與 `HOTEL_CATEGORIES`（5 項）一致；同步修正 module docstring（line 3–5）
+
+## [1.57.46] - 2026-05-06
+
+### Fixed
+- **`hotel/overview` PPTX Slide 2 佔位卡名稱錯誤** — `_build_slide2_kpi` 內 placeholder card 名稱由 `["商場主管交辦", "商場緊急事件"]` 修正為 `["飯店主管交辦", "飯店緊急事件"]`（`hotel_overview.py` line 797）
+
+## [1.57.45] - 2026-05-06
+
+### Added
+- **`hotel/overview` PPTX 匯出 POST endpoint** — `backend/app/routers/hotel_overview.py` 新增 `POST /overview/export/pptx`（絕對路徑：`/api/v1/hotel/overview/export/pptx`）；接收 `year`/`month` Query 參數與 `HotelPptxPayload` Request body；內部呼叫 `get_hotel_daily_hours` / `get_hotel_monthly_hours` / `get_hotel_person_hours` 取得資料後傳入 `_build_hotel_pptx`；以 `StreamingResponse`（Content-Type: `application/vnd.openxmlformats-officedocument.presentationml.presentation`）回傳，Content-Disposition 檔名為 `飯店管理報告_{year}年{month:02d}月.pptx`（RFC 5987 URL-encoded）
+
+## [1.57.44] - 2026-05-06
+
+### Changed
+- **`mall/overview` Tab B 每日巡檢口徑改為 Dashboard 同口徑** — 後端 `daily-hours` 的⑤每日巡檢改採與 `/monthly-dashboard` 相同邏輯：每天 = 實際登錄場次數 + 缺漏場次數（5 張表各應每天巡一次）；過去月份所有天均計入、當月截至今日；同時容錯 `YYYY/MM/DD` 與 `YYYY/M/DD` 日期格式；ⓘ Tooltip 說明同步更新
+
+## [1.57.43] - 2026-05-06
+
+### Changed
+- **`mall/overview` B/C/D TAB 現場報修口徑改為 `_stat_dt`** — 後端 `daily-hours` 與 `monthly-hours` 的①現場報修改採與 `luqun-repair/dashboard` 相同的統計口徑：已結案以 `completed_at` 歸屬日期、未結案以 `occurred_at` 歸屬、排除「取消」案件；月曆數字從 51→56 與 dashboard 一致
+- **`mall/overview` B/C/D TAB 加工項 ⓘ Tooltip** — 仿 `hotel/overview` 做法，在 Tab B/C/D 類別 Tag 旁新增 ⓘ Tooltip，說明各工項計算口徑（現場報修 = `_stat_dt` 規則、例行維護 = PM 項目數、每日巡檢 = 批次數）
+
+## [1.57.42] - 2026-05-06
+
+### Changed
+- **全模組顯示文字「樂群」統一改為「商場」** — 以 `sed` 批次替換前後端共 30 支檔案中所有中文顯示字串、注釋、標籤內的「樂群」為「商場」（英文程式識別字 `luqun`/`luqunRepair`/`luqun_repair`/`/luqun-repair/` 路由均保持不變）；涵蓋 `navLabels.ts`、`workCategoryAnalysis.ts`、`role_permissions.py`、`work_category_analysis.py`、`main.py` API tags、`RagicAppDirectory.tsx`（55 處）等
+
+## [1.57.41] - 2026-05-06
+
+### Changed
+- **`mall/overview` B/C/D TAB 由工時改為案件數** — 後端 `/daily-hours` 和 `/monthly-hours` 各自新增 `cases_bucket` 平行統計：現場報修＝LuqunRepairCase 筆數（`occurred_at` 歸屬）、例行維護＝MallPeriodicMaintenanceItem + FullBldgPMItem 件數、每日巡檢＝MallFIBatch + RFInspectionBatch 批次數；每 row 加 `cases[]`、`cases_total`、`cases_pct` 欄位；前端 `MallDailyRow`/`MallMonthlyRow` 型別同步補充，`buildMallDailyCols`/`buildMallMonthlyCols` 欄位 render 改為 `renderMallCase(row.cases[i])`，TOTAL 欄改 `cases_total`，% 欄改 `cases_pct`；D.每年累計用 `cases_total` 取代 `total`；所有 Tab Card 標題與提示文字由「工時 (HR)」改為「案件數」
+
+### Fixed
+- **`mall/overview` PPTX 匯出函式結尾補齊** — 修復上一版 `for ri i` 截斷語法錯誤，補上 `for ri in range(n_rows5)` 行高設定及 `StreamingResponse` return 語句
+
+## [1.57.40] - 2026-05-06
+
+### Changed
+- **`mall/overview` Tab A 篩選列重構** — 年月 Select 從 Header Card 移至 Tab A 篩選列，格式改為「工務篩選：[年▼] [月▼] | 巡檢日期：[DatePicker] [今日]」；年/月變更即時自動重載 PM / 全棟 PM / 巡檢 / 報修資料；Header Card 右側僅保留匯出 PPTX 按鈕；「工務巡檢日期」標籤改為「巡檢日期」
+
+## [1.57.39] - 2026-05-06
+
+### Changed
+- **`mall/overview` 顯示文字「大直」統一改為「商場」** — Tooltip、Alert、Card 標題、元件注釋中全部 8 處「大直工務報修」/「大直報修」改為「商場工務報修」/「商場報修」
+- **`mall/overview` 新增 Tab D「每年累計」** — 複數年份各呼叫一次既有 `fetchMallMonthlyHours` API，取各類別全年 `total`，組成年份 × 5 工項交叉表；預設顯示最近 3 年（BaseYear−2 ～ BaseYear）；零新增後端 API；狀態：`yearlyDataMap`/`loadingYearly`/`yearlyBaseYear`；`handleTabChange` 懶載入
+- **`mall/overview` TAB 標籤調整** — 新增「D. 每年累計」（插入 C/人員工時% 之間）；原「D. 人員工時%」移除 D. 前綴改為「人員工時%」；全部 TAB label 字體 +2（14→16px）
+- **`Settings/RagicAppDirectory` 補充全棟例行維護** — 新增 itemNo 220（全棟週期保養日誌，`periodic-maintenance/21`）至靜態資料表及 LOCAL_TABLE_MAP（`full_bldg_pm_batch/full_bldg_pm_batch_item`）；portal_defaults 對應 `/mall/overview`
+
 ## [1.57.38] - 2026-05-06
 
 ### Changed

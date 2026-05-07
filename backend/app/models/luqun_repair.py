@@ -1,5 +1,5 @@
 """
-樂群工務報修案件 ORM Model
+商場工務報修案件 ORM Model
 對應 Ragic: ap12.ragic.com/soutlet001/luqun-public-works-repair-reporting-system/6
 
 與 DazhiRepairCase 相比多了：
@@ -44,8 +44,8 @@ class LuqunRepairCase(Base):
     close_days:        Mapped[float | None]    = mapped_column(Float, nullable=True)
     year:              Mapped[int | None]      = mapped_column(Integer, nullable=True)
     month:             Mapped[int | None]      = mapped_column(Integer, nullable=True)
-    occ_year:          Mapped[int | None]      = mapped_column(Integer, nullable=True)   # 樂群專用
-    occ_month:         Mapped[int | None]      = mapped_column(Integer, nullable=True)   # 樂群專用
+    occ_year:          Mapped[int | None]      = mapped_column(Integer, nullable=True)   # 商場專用
+    occ_month:         Mapped[int | None]      = mapped_column(Integer, nullable=True)   # 商場專用
     is_room_case:      Mapped[bool]  = mapped_column(Boolean,     default=False)
     room_no:           Mapped[str]   = mapped_column(String(20),  default="")
     room_category:     Mapped[str]   = mapped_column(String(50),  default="")

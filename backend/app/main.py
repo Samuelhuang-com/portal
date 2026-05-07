@@ -509,7 +509,7 @@ async def _auto_sync():
     await _run_and_log("商場週期保養", sync_mall_pm())
     await _run_and_log("全棟例行維護", sync_full_bldg_pm())
     await _run_and_log("大直工務報修", sync_dazhi())
-    await _run_and_log("樂群工務報修", sync_luqun())
+    await _run_and_log("商場工務報修", sync_luqun())
     await _run_and_log("保全巡檢", sync_security())
     await _run_and_log("商場工務巡檢", sync_mfi())
     await _run_and_log("飯店每日巡檢", sync_hdi())
@@ -596,7 +596,7 @@ async def lifespan(app: FastAPI):
     _migrate_security_patrol_is_note()
     print("[Portal] Security patrol is_note migration checked.")
 
-    # 樂群扣款專櫃欄位補丁（2026-04-24）
+    # 商場扣款專櫃欄位補丁（2026-04-24）
     _migrate_luqun_counter_name()
     print("[Portal] Luqun deduction_counter_name migration checked.")
 
@@ -826,11 +826,11 @@ app.include_router(
     tags=["上傳"],
 )
 
-# ── 新增：樂群工務報修 ────────────────────────────────────────────────────────
+# ── 新增：商場工務報修 ────────────────────────────────────────────────────────
 app.include_router(
     luqun_repair.router,
     prefix=f"{API_PREFIX}/luqun-repair",
-    tags=["樂群工務報修"],
+    tags=["商場工務報修"],
 )
 
 # ── 新增：大直工務部 ──────────────────────────────────────────────────────────
@@ -840,7 +840,7 @@ app.include_router(
     tags=["大直工務部"],
 )
 
-# ── 新增：★工項類別分析（整合樂群+大直）────────────────────────────────────
+# ── 新增：★工項類別分析（整合商場+大直）────────────────────────────────────
 app.include_router(
     work_category_analysis.router,
     prefix=f"{API_PREFIX}/work-category-analysis",
@@ -889,46 +889,4 @@ app.include_router(
     tags=["角色管理"],
 )
 
-# ── 新增：知識庫（LLM Wiki）────────────────────────────────────────────────
-app.include_router(
-    wiki.router,
-    prefix=f"{API_PREFIX}/wiki",
-    tags=["知識庫 Wiki"],
-)
-
-# ── 新增：員工操作手冊匯出 ────────────────────────────────────────────────
-app.include_router(
-    employee_manual_export.router,
-    prefix=f"{API_PREFIX}/employee-manual-export",
-    tags=["員工操作手冊匯出"],
-)
-
-# ── 前端靜態檔案（SPA 模式，放在所有路由之後）────────────────────────────
-import os as _os
-import mimetypes as _mimetypes
-from fastapi.staticfiles import StaticFiles as _StaticFiles
-from fastapi.responses import FileResponse as _FileResponse
-
-_frontend_dist = _os.path.join(_os.path.dirname(__file__), "..", "..", "frontend", "dist")
-if _os.path.isdir(_frontend_dist):
-    # /assets 靜態資源用 StaticFiles（有 ETag/快取標頭）
-    _assets_dir = _os.path.join(_frontend_dist, "assets")
-    if _os.path.isdir(_assets_dir):
-        app.mount("/assets", _StaticFiles(directory=_assets_dir), name="assets")
-
-    # SPA 萬用路由：所有未匹配路徑回傳 index.html，讓 React Router 處理
-    # 注意：此路由必須在所有 include_router 之後宣告，否則會遮蔽 API 路由
-    @app.get("/{full_path:path}", include_in_schema=False)
-    async def _serve_spa(full_path: str):
-        # 根目錄下的真實靜態檔（favicon.ico、robots.txt 等）
-        candidate = _os.path.join(_frontend_dist, full_path)
-        if full_path and _os.path.isfile(candidate):
-            media_type, _ = _mimetypes.guess_type(candidate)
-            return _FileResponse(candidate, media_type=media_type or "application/octet-stream")
-        # SPA fallback：交由前端 React Router 路由
-        return _FileResponse(
-            _os.path.join(_frontend_dist, "index.html"),
-            media_type="text/html",
-        )
-
-    print(f"[Portal] Frontend static files (SPA mode) served from: {_frontend_dist}")
+# ── 新增：知識庫（LLM Wik

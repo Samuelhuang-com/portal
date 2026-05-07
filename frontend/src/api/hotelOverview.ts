@@ -15,6 +15,7 @@ export interface HotelDailyRow {
   pct: number;
   cases: number[];
   cases_total: number;
+  cases_pct: number;
 }
 
 export interface HotelDailyHoursData {
@@ -46,6 +47,7 @@ export interface HotelMonthlyRow {
   pct: number;
   cases: number[];
   cases_total: number;
+  cases_pct: number;
 }
 
 export interface HotelMonthlyHoursData {

@@ -274,7 +274,7 @@ export default function AppRouter() {
           <Route path="mappings"                 element={<BudgetMappingsPage />} />
         </Route>
 
-        {/* ── 樂群工務報修 ──────────────────────────────────────────────── */}
+        {/* ── 商場工務報修 ──────────────────────────────────────────────── */}
         <Route path="luqun-repair">
           <Route path="dashboard" element={<LuqunRepairPage />} />
           <Route index            element={<LuqunRepairPage />} />
@@ -286,7 +286,7 @@ export default function AppRouter() {
           <Route index            element={<DazhiRepairPage />} />
         </Route>
 
-        {/* ── ★工項類別分析（樂群+大直共用）────────────────────────────── */}
+        {/* ── ★工項類別分析（商場+大直共用）────────────────────────────── */}
         <Route path="work-category-analysis" element={<WorkCategoryAnalysisPage />} />
 
         {/* ── ◆ 董事長簡報 Dashboard（新功能，獨立路由）─────────────────── */}

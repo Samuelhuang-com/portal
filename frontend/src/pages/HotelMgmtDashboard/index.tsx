@@ -21,7 +21,7 @@ import {
   ClockCircleOutlined, CheckCircleOutlined, ExclamationCircleOutlined,
   BarChartOutlined, LineChartOutlined, PieChartOutlined,
   DashboardOutlined, WarningOutlined, RightOutlined,
-  ReloadOutlined, QuestionCircleOutlined, FilePptOutlined,
+  ReloadOutlined, QuestionCircleOutlined, FilePptOutlined, DownloadOutlined,
   CalendarOutlined,
 } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
@@ -53,6 +53,7 @@ import type {
   SecurityTrendPoint,
 } from '@/types/securityPatrol'
 import { fetchDashboard }                from '@/api/dazhiRepair'
+import { SourceStatusCard }              from '@/components/SourceStatusCard'
 import {
   fetchHotelDailyHours,
   fetchHotelMonthlyHours,
@@ -114,8 +115,8 @@ const HOTEL_SOURCE_ICONS: Record<string, React.ReactNode> = {
 const HOTEL_SOURCE_ROUTES: Record<string, string> = {
   periodic:         '/hotel/periodic-maintenance',
   ihg:              '/hotel/ihg-room-maintenance',
-  daily_inspection: '/hotel/hotel-daily-inspection/dashboard',
-  security:         '/hotel/security/dashboard',
+  daily_inspection: '/hotel/daily-inspection',
+  security:         '/security/dashboard',
   dazhi:            '/hotel/dazhi-repair/dashboard',
 }
 
@@ -217,7 +218,7 @@ function adaptDazhi(data: DashboardData): NormalizedSource {
   const rate = kpi.total > 0 ? Math.round(kpi.completed / kpi.total * 1000) / 10 : 0
   return {
     source_key:      'dazhi',
-    source_name:     '工務部',
+    source_name:     '飯店工務部',
     source_color:    SOURCE_COLORS.dazhi,
     case_count:      kpi.total,
     completed_count: kpi.completed,
@@ -235,6 +236,18 @@ const fmtHours = (h: number) =>
   h < 0 ? '—' : h < 100 ? `${h.toFixed(1)} HR` : `${Math.round(h)} HR`
 
 const fmtCount = (n: number) => n < 0 ? '—' : n.toLocaleString()
+
+// ── CSV 匯出工具（BOM 確保 Excel 開啟中文不亂碼）────────────────────────────
+function exportCSV(filename: string, headers: string[], rows: (string | number)[][]) {
+  const lines = [headers, ...rows].map(r =>
+    r.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(',')
+  )
+  const blob = new Blob(['﻿' + lines.join('\n')], { type: 'text/csv;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url; a.download = filename; a.click()
+  URL.revokeObjectURL(url)
+}
 
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -310,8 +323,12 @@ export default function HotelMgmtDashboardPage() {
   const [tabYearlyLoading, setTabYearlyLoading]  = useState(false)
   const [exportLoading,    setExportLoading]     = useState(false)
 
-  // 記錄哪些 tab 已載入過（避免重複請求）
-  const loadedTabs = useRef<Set<string>>(new Set())
+  // ── Tab 獨立篩選狀態（各 Tab 不影響 Dashboard 的 year/month）────────────
+  const [tabBYear,   setTabBYear]   = useState<number>(thisYear)
+  const [tabBMonth,  setTabBMonth]  = useState<number>(thisMonth)
+  const [tabCYear,   setTabCYear]   = useState<number>(thisYear)
+  const [personYear, setPersonYear] = useState<number>(thisYear)
+
 
   // ── 載入函式 ─────────────────────────────────────────────────────────────
   const load = useCallback(async () => {
@@ -357,29 +374,22 @@ export default function HotelMgmtDashboardPage() {
 
   useEffect(() => { load() }, [load])
 
-  // 切換 tab 時懶載入對應資料
+  // 切換 tab 時懶載入對應資料（各 Tab 使用獨立 year/month state，首次切換時觸發）
   const handleTabChange = useCallback((key: string) => {
-    if (loadedTabs.current.has(`${key}:${year}:${month}`)) return
-    loadedTabs.current.add(`${key}:${year}:${month}`)
-    if (key === 'daily') {
+    if (key === 'daily' && !dailyData) {
       setTabBLoading(true)
-      fetchHotelDailyHours(year, month).then(setDailyData).finally(() => setTabBLoading(false))
-    } else if (key === 'monthly') {
+      fetchHotelDailyHours(tabBYear, tabBMonth).then(setDailyData).finally(() => setTabBLoading(false))
+    } else if (key === 'monthly' && !monthlyData) {
       setTabCLoading(true)
-      fetchHotelMonthlyHours(year).then(setMonthlyData).finally(() => setTabCLoading(false))
-    } else if (key === 'yearly') {
+      fetchHotelMonthlyHours(tabCYear).then(setMonthlyData).finally(() => setTabCLoading(false))
+    } else if (key === 'yearly' && !yearlyData) {
       setTabYearlyLoading(true)
       fetchHotelMonthlyHours(yearlyYear).then(setYearlyData).finally(() => setTabYearlyLoading(false))
-    } else if (key === 'person' || key === 'ranking') {
-      // 用獨立的 key 追蹤資料是否已載入（避免與外層 tab-visit key 衝突）
-      const personDataKey = `personData:${year}`
-      if (!loadedTabs.current.has(personDataKey)) {
-        loadedTabs.current.add(personDataKey)
-        setTabDLoading(true)
-        fetchHotelPersonHours(year).then(setPersonData).finally(() => setTabDLoading(false))
-      }
+    } else if ((key === 'person_pct' || key === 'ranking') && !personData) {
+      setTabDLoading(true)
+      fetchHotelPersonHours(personYear).then(setPersonData).finally(() => setTabDLoading(false))
     }
-  }, [year, month])
+  }, [tabBYear, tabBMonth, tabCYear, yearlyYear, personYear, dailyData, monthlyData, yearlyData, personData])
 
   // ── Normalize 各來源（KPI Card 用月份彙總口徑）────────────────────────
   const sources: NormalizedSource[] = [
@@ -404,6 +414,7 @@ export default function HotelMgmtDashboardPage() {
     { value: 0,  label: '全年' },
     ...Array.from({ length: 12 }, (_, i) => ({ value: i + 1, label: `${i + 1} 月` })),
   ]
+  const monthOptions12 = Array.from({ length: 12 }, (_, i) => ({ value: i + 1, label: `${i + 1} 月` }))
   const ytdLabel = month > 0 ? `累計至 ${month} 月` : '全年'
 
   // ── 圖表資料 ──────────────────────────────────────────────────────────
@@ -444,102 +455,33 @@ export default function HotelMgmtDashboardPage() {
     return (
       <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
         {/* ── 六個有資料的來源卡 ── */}
-        {sources.map(s => {
-          const color = s.source_color
-          const icon  = HOTEL_SOURCE_ICONS[s.source_key]
-          const route = HOTEL_SOURCE_ROUTES[s.source_key] ?? '#'
-          return (
-            <Col key={s.source_key} xs={12} sm={12} md={6}>
-              <Card
-                title={<Space><span style={{ color }}>{icon}</span><Text strong style={{ color, fontSize: 14 }}>{s.source_name}</Text></Space>}
-                extra={<Button type="link" size="small" icon={<RightOutlined />} style={{ color }} onClick={() => navigate(route)}>詳情</Button>}
-                style={{ borderTop: `3px solid ${color}`, height: '100%' }}
-              >
-                <Row gutter={[8, 8]}>
-                  <Col span={12}>
-                    <Statistic
-                      title={<Text style={{ fontSize: 14, color: '#888' }}>工項/案件數</Text>}
-                      value={s.case_count < 0 ? 0 : s.case_count}
-                      suffix="筆"
-                      valueStyle={{ fontSize: 20, color }}
-                    />
-                  </Col>
-                  <Col span={12}>
-                    <Statistic
-                      title={<Text style={{ fontSize: 14, color: '#888' }}>已完成</Text>}
-                      value={s.completed_count}
-                      suffix="筆"
-                      valueStyle={{ fontSize: 20, color: GREEN }}
-                    />
-                  </Col>
-                </Row>
-                {s.completion_rate >= 0 && (
-                  <div style={{ marginTop: 10 }}>
-                    <Progress
-                      percent={Math.round(s.completion_rate)}
-                      size="small"
-                      strokeColor={{ from: s.completion_rate < 50 ? RED : ORANGE, to: GREEN }}
-                      format={(p) => `完成率 ${p}%`}
-                    />
-                  </div>
-                )}
-                <Row gutter={[8, 0]} style={{ marginTop: 8 }}>
-                  {s.abnormal_count > 0 && (
-                    <Col span={12}>
-                      <Text type="secondary" style={{ fontSize: 15 }}>{s.source_key === 'dazhi' ? '未完成：' : '異常：'}</Text>
-                      <Text style={{ fontSize: 15, color: RED, fontWeight: 600 }}>{s.abnormal_count}</Text>
-                    </Col>
-                  )}
-                  {s.overdue_count > 0 && (
-                    <Col span={12}>
-                      <Text type="secondary" style={{ fontSize: 15 }}>逾期：</Text>
-                      <Text style={{ fontSize: 15, color: '#C0392B', fontWeight: 600 }}>{s.overdue_count}</Text>
-                    </Col>
-                  )}
-                  {/* 工時顯示：PM 來源（有 actual_hours）→ 預估工時 + 保養時間 雙行；其他 → 單行工時 */}
-                  {s.actual_hours !== undefined ? (
-                    <>
-                      <Col span={12}>
-                        <Tooltip title="計劃工時（planned_minutes / 60），來自週期保養排程">
-                          <Text type="secondary" style={{ fontSize: 14, cursor: 'help' }}>預估工時：</Text>
-                        </Tooltip>
-                        <Text style={{ fontSize: 15, color: ACCENT_BLUE, fontWeight: 600 }}>
-                          {s.work_hours > 0 ? `${s.work_hours.toFixed(1)} HR` : '0'}
-                        </Text>
-                      </Col>
-                      <Col span={12}>
-                        <Tooltip title="實際完成工時（actual_minutes / 60）；後端計算完成後自動顯示">
-                          <Text type="secondary" style={{ fontSize: 14, cursor: 'help' }}>保養時間：</Text>
-                        </Tooltip>
-                        <Text style={{ fontSize: 15, color: GREEN, fontWeight: 600 }}>
-                          {s.actual_hours > 0 ? `${s.actual_hours.toFixed(1)} HR` : '—'}
-                        </Text>
-                      </Col>
-                    </>
-                  ) : (
-                    s.work_hours > 0 && (
-                      <Col span={12}>
-                        <Text type="secondary" style={{ fontSize: 15 }}>工時：</Text>
-                        <Text style={{ fontSize: 15, color, fontWeight: 600 }}>{fmtHours(s.work_hours)}</Text>
-                      </Col>
-                    )
-                  )}
-                </Row>
-              </Card>
-            </Col>
-          )
-        })}
+        {sources.map(s => (
+          <Col key={s.source_key} xs={12} sm={12} md={6}>
+            <SourceStatusCard
+              {...s}
+              icon={HOTEL_SOURCE_ICONS[s.source_key]}
+              onClick={() => navigate(HOTEL_SOURCE_ROUTES[s.source_key] ?? '#')}
+            />
+          </Col>
+        ))}
 
         {/* ── 兩張佔位卡（數據準備中）── */}
         {PLACEHOLDER_CARDS.map(p => (
           <Col key={p.key} xs={12} sm={12} md={6}>
-            <Card
-              title={<Space><span style={{ color: p.color }}>{p.icon}</span><Text strong style={{ color: p.color, fontSize: 14 }}>{p.label}</Text></Space>}
-              extra={<Button type="link" size="small" icon={<RightOutlined />} style={{ color: p.color }} disabled>詳情</Button>}
-              style={{ borderTop: `3px solid ${p.color}`, height: '100%' }}
-            >
-              <div style={{ textAlign: 'center', color: '#bbb', padding: '20px 0', fontSize: 14 }}>數據準備中</div>
-            </Card>
+            <SourceStatusCard
+              source_key={p.key}
+              source_name={p.label}
+              source_color={p.color}
+              case_count={-1}
+              completed_count={0}
+              work_hours={-1}
+              completion_rate={-1}
+              abnormal_count={0}
+              overdue_count={0}
+              status_label=""
+              is_placeholder
+              icon={p.icon}
+            />
           </Col>
         ))}
       </Row>
@@ -677,7 +619,7 @@ export default function HotelMgmtDashboardPage() {
 
   // ── Tab B — 欄位建構（五項工作類別 × 每日）──────────────────────────────
   function buildDailyCols(days: number[], weekdays: string[]) {
-    type Row5 = { category: string; cases: number[]; total: number; pct: number; key: string }
+    type Row5 = { category: string; cases: number[]; total: number; cases_pct: number; key: string }
     return [
       {
         title: '工項類別', dataIndex: 'category', key: 'category',
@@ -712,7 +654,7 @@ export default function HotelMgmtDashboardPage() {
         ),
       },
       {
-        title: '%', dataIndex: 'pct', key: 'pct', width: 54, align: 'center' as const,
+        title: '%', dataIndex: 'cases_pct', key: 'cases_pct', width: 54, align: 'center' as const,
         render: (v: number, row: Row5) => (
           <Text style={{
             color: row.category === 'TOTAL' ? '#888' : ORANGE,
@@ -754,12 +696,12 @@ export default function HotelMgmtDashboardPage() {
       (s, cat) => s + catCases[cat].reduce((a, b) => a + b, 0), 0
     )
 
-    type Row5 = { key: string; category: string; cases: number[]; total: number; pct: number }
+    type Row5 = { key: string; category: string; cases: number[]; total: number; cases_pct: number }
     const tableRows: Row5[] = (HOTEL_5CATS as readonly Hotel5Cat[]).map(cat => {
       const cases = catCases[cat]
       const total = cases.reduce((a, b) => a + b, 0)
-      const pct   = grandTotal > 0 ? Math.round(total / grandTotal * 1000) / 10 : 0
-      return { key: cat, category: cat, cases, total, pct }
+      const cases_pct = grandTotal > 0 ? Math.round(total / grandTotal * 1000) / 10 : 0
+      return { key: cat, category: cat, cases, total, cases_pct }
     })
 
     // TOTAL 合計列
@@ -767,7 +709,7 @@ export default function HotelMgmtDashboardPage() {
       (HOTEL_5CATS as readonly Hotel5Cat[]).reduce((s, cat) => s + (catCases[cat][i] ?? 0), 0)
     )
     const totalTotal = totalCases.reduce((a, b) => a + b, 0)
-    tableRows.push({ key: 'TOTAL', category: 'TOTAL', cases: totalCases, total: totalTotal, pct: 100 })
+    tableRows.push({ key: 'TOTAL', category: 'TOTAL', cases: totalCases, total: totalTotal, cases_pct: 100 })
 
     return (
       <>
@@ -779,14 +721,22 @@ export default function HotelMgmtDashboardPage() {
             </Col>
             <Col>
               <Select
-                value={year} options={yearOptions} style={{ width: 100 }}
-                onChange={(v) => setYear(v)}
+                value={tabBYear} options={yearOptions} style={{ width: 100 }}
+                onChange={(v) => {
+                  setTabBYear(v)
+                  setTabBLoading(true)
+                  fetchHotelDailyHours(v, tabBMonth).then(setDailyData).finally(() => setTabBLoading(false))
+                }}
               />
             </Col>
             <Col>
               <Select
-                value={month} options={monthOptions} style={{ width: 90 }}
-                onChange={(v) => setMonth(v)}
+                value={tabBMonth} options={monthOptions12} style={{ width: 90 }}
+                onChange={(v) => {
+                  setTabBMonth(v)
+                  setTabBLoading(true)
+                  fetchHotelDailyHours(tabBYear, v).then(setDailyData).finally(() => setTabBLoading(false))
+                }}
               />
             </Col>
             <Col>
@@ -794,14 +744,32 @@ export default function HotelMgmtDashboardPage() {
                 icon={<ReloadOutlined />}
                 size="small"
                 onClick={() => {
-                  loadedTabs.current.delete(`daily:${year}:${month}`)
                   setTabBLoading(true)
-                  fetchHotelDailyHours(year, month).then(setDailyData).finally(() => setTabBLoading(false))
+                  fetchHotelDailyHours(tabBYear, tabBMonth).then(setDailyData).finally(() => setTabBLoading(false))
                 }}
               >重新整理</Button>
             </Col>
+            <Col flex="auto" />
             <Col>
-              <Text type="secondary" style={{ fontSize: 12 }}>{year} 年 {month} 月</Text>
+              <Button
+                icon={<DownloadOutlined />}
+                size="small"
+                disabled={!dailyData}
+                onClick={() => {
+                  if (!dailyData) return
+                  const headers = ['工項類別', ...dailyData.days.map((d, i) => `${d}日(${dailyData.weekdays[i]})`), '案件數', '%']
+                  const rows = dailyData.rows.map(r => [
+                    r.category,
+                    ...dailyData.days.map((_, i) => r.cases?.[i] ?? 0),
+                    r.cases_total,
+                    `${(r.cases_pct ?? 0).toFixed(1)}%`,
+                  ])
+                  exportCSV(`飯店管理_每日累計_${tabBYear}年${tabBMonth}月.csv`, headers, rows)
+                }}
+              >匯出 CSV</Button>
+            </Col>
+            <Col>
+              <Text type="secondary" style={{ fontSize: 12 }}>{tabBYear} 年 {tabBMonth} 月</Text>
             </Col>
           </Row>
         </Card>
@@ -843,7 +811,7 @@ export default function HotelMgmtDashboardPage() {
   // ════════════════════════════════════════════════════════════════════════
 
   function buildMonthlyCols() {
-    type Row5M = { category: string; cases: number[]; total: number; pct: number; key: string }
+    type Row5M = { category: string; cases: number[]; total: number; cases_pct: number; key: string }
     const zhMonths = ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月']
     return [
       {
@@ -876,7 +844,7 @@ export default function HotelMgmtDashboardPage() {
         ),
       },
       {
-        title: '%', dataIndex: 'pct', key: 'pct', width: 54, align: 'center' as const,
+        title: '%', dataIndex: 'cases_pct', key: 'cases_pct', width: 54, align: 'center' as const,
         render: (v: number, row: Row5M) => (
           <Text style={{
             color: row.category === 'TOTAL' ? '#888' : ORANGE,
@@ -918,12 +886,12 @@ export default function HotelMgmtDashboardPage() {
       (s, cat) => s + catCases[cat].reduce((a, b) => a + b, 0), 0
     )
 
-    type Row5M = { key: string; category: string; cases: number[]; total: number; pct: number }
+    type Row5M = { key: string; category: string; cases: number[]; total: number; cases_pct: number }
     const tableRows: Row5M[] = (HOTEL_5CATS as readonly Hotel5Cat[]).map(cat => {
       const cases = catCases[cat]
       const total = cases.reduce((a, b) => a + b, 0)
-      const pct   = grandTotal > 0 ? Math.round(total / grandTotal * 1000) / 10 : 0
-      return { key: cat, category: cat, cases, total, pct }
+      const cases_pct = grandTotal > 0 ? Math.round(total / grandTotal * 1000) / 10 : 0
+      return { key: cat, category: cat, cases, total, cases_pct }
     })
 
     // TOTAL 合計列
@@ -931,7 +899,7 @@ export default function HotelMgmtDashboardPage() {
       (HOTEL_5CATS as readonly Hotel5Cat[]).reduce((s, cat) => s + (catCases[cat][i] ?? 0), 0)
     )
     const totalTotal = totalCases.reduce((a, b) => a + b, 0)
-    tableRows.push({ key: 'TOTAL', category: 'TOTAL', cases: totalCases, total: totalTotal, pct: 100 })
+    tableRows.push({ key: 'TOTAL', category: 'TOTAL', cases: totalCases, total: totalTotal, cases_pct: 100 })
 
     return (
       <>
@@ -943,8 +911,12 @@ export default function HotelMgmtDashboardPage() {
             </Col>
             <Col>
               <Select
-                value={year} options={yearOptions} style={{ width: 100 }}
-                onChange={(v) => setYear(v)}
+                value={tabCYear} options={yearOptions} style={{ width: 100 }}
+                onChange={(v) => {
+                  setTabCYear(v)
+                  setTabCLoading(true)
+                  fetchHotelMonthlyHours(v).then(setMonthlyData).finally(() => setTabCLoading(false))
+                }}
               />
             </Col>
             <Col>
@@ -953,12 +925,31 @@ export default function HotelMgmtDashboardPage() {
                 size="small"
                 onClick={() => {
                   setTabCLoading(true)
-                  fetchHotelMonthlyHours(year).then(setMonthlyData).finally(() => setTabCLoading(false))
+                  fetchHotelMonthlyHours(tabCYear).then(setMonthlyData).finally(() => setTabCLoading(false))
                 }}
               >重新整理</Button>
             </Col>
+            <Col flex="auto" />
             <Col>
-              <Text type="secondary" style={{ fontSize: 12 }}>{year} 年</Text>
+              <Button
+                icon={<DownloadOutlined />}
+                size="small"
+                disabled={!monthlyData}
+                onClick={() => {
+                  if (!monthlyData) return
+                  const headers = ['工項類別', ...Array.from({length:12}, (_,i)=>`${i+1}月`), '案件數', '%']
+                  const rows = monthlyData.rows.map(r => [
+                    r.category,
+                    ...Array.from({length:12}, (_,i) => r.cases?.[i] ?? 0),
+                    r.cases_total,
+                    `${(r.cases_pct ?? 0).toFixed(1)}%`,
+                  ])
+                  exportCSV(`飯店管理_每月累計_${tabCYear}年.csv`, headers, rows)
+                }}
+              >匯出 CSV</Button>
+            </Col>
+            <Col>
+              <Text type="secondary" style={{ fontSize: 12 }}>{tabCYear} 年</Text>
             </Col>
           </Row>
         </Card>
@@ -978,7 +969,7 @@ export default function HotelMgmtDashboardPage() {
         {/* 表格 */}
         <Card
           title={<Text strong>每月累計案件數</Text>}
-          extra={<Text type="secondary">{year} 年</Text>}
+          extra={<Text type="secondary">{tabCYear} 年</Text>}
           bodyStyle={{ padding: '6px 0' }}
         >
           <Table<Row5M>
@@ -1043,12 +1034,12 @@ export default function HotelMgmtDashboardPage() {
       (s, cat) => s + (catCases[cat][11] ?? 0), 0
     )
 
-    type Row5Y = { key: string; category: string; cases: number[]; total: number; pct: number }
+    type Row5Y = { key: string; category: string; cases: number[]; total: number; cases_pct: number }
     const tableRows: Row5Y[] = (HOTEL_5CATS as readonly Hotel5Cat[]).map(cat => {
       const cases = catCases[cat]
       const total = cases[11] ?? 0   // 12 月累計 = 全年合計
-      const pct   = grandTotal > 0 ? Math.round(total / grandTotal * 1000) / 10 : 0
-      return { key: cat, category: cat, cases, total, pct }
+      const cases_pct = grandTotal > 0 ? Math.round(total / grandTotal * 1000) / 10 : 0
+      return { key: cat, category: cat, cases, total, cases_pct }
     })
 
     // TOTAL 列：每月所有類別累計之和
@@ -1059,7 +1050,7 @@ export default function HotelMgmtDashboardPage() {
       key: 'TOTAL', category: 'TOTAL',
       cases: totalCases,
       total: grandTotal,
-      pct:   100,
+      cases_pct: 100,
     })
 
     return (
@@ -1170,8 +1161,31 @@ export default function HotelMgmtDashboardPage() {
   }
 
   function TabDPerson() {
-    if (!personData) return <Alert message="切換至此 Tab 後自動載入" type="info" showIcon />
-    if (!personData.persons.length) return <Alert message="本年度暫無人員工時資料" type="info" showIcon />
+    const personFilterCard = (
+      <Card size="small" style={{ marginBottom: 12, background: '#f9fbff' }}>
+        <Row gutter={[16, 8]} align="middle">
+          <Col><Text type="secondary" style={{ fontSize: 12 }}>人員工時%</Text></Col>
+          <Col>
+            <Select value={personYear} options={yearOptions} style={{ width: 100 }}
+              onChange={(v) => {
+                setPersonYear(v)
+                setTabDLoading(true)
+                fetchHotelPersonHours(v).then(setPersonData).finally(() => setTabDLoading(false))
+              }} />
+          </Col>
+          <Col>
+            <Button icon={<ReloadOutlined />} size="small"
+              onClick={() => {
+                setTabDLoading(true)
+                fetchHotelPersonHours(personYear).then(setPersonData).finally(() => setTabDLoading(false))
+              }}>重新整理</Button>
+          </Col>
+          <Col><Text type="secondary" style={{ fontSize: 12 }}>{personYear} 年 · Top 15 人員</Text></Col>
+        </Row>
+      </Card>
+    )
+    if (!personData) return <>{personFilterCard}<Alert message="切換至此 Tab 後自動載入" type="info" showIcon /></>
+    if (!personData.persons.length) return <>{personFilterCard}<Alert message="本年度暫無人員工時資料" type="info" showIcon /></>
     const tableData = personData.rows.map((row) => {
       const base: Record<string, number | string> = {
         key: row.category, category: row.category,
@@ -1181,6 +1195,7 @@ export default function HotelMgmtDashboardPage() {
     })
     return (
       <>
+        {personFilterCard}
         <div style={{ marginBottom: 8, fontSize: 12, color: '#888' }}>
           共 {personData.persons.length} 位人員（依全年合計工時排序，取前15名）
         </div>
@@ -1201,8 +1216,31 @@ export default function HotelMgmtDashboardPage() {
   // ════════════════════════════════════════════════════════════════════════
 
   function TabRanking() {
-    if (!personData) return <Alert message="切換至此 Tab 後自動載入" type="info" showIcon />
-    if (!personData.persons.length) return <Alert message="本年度暫無人員工時資料" type="info" showIcon />
+    const rankingFilterCard = (
+      <Card size="small" style={{ marginBottom: 12, background: '#f9fbff' }}>
+        <Row gutter={[16, 8]} align="middle">
+          <Col><Text type="secondary" style={{ fontSize: 12 }}>人員排名</Text></Col>
+          <Col>
+            <Select value={personYear} options={yearOptions} style={{ width: 100 }}
+              onChange={(v) => {
+                setPersonYear(v)
+                setTabDLoading(true)
+                fetchHotelPersonHours(v).then(setPersonData).finally(() => setTabDLoading(false))
+              }} />
+          </Col>
+          <Col>
+            <Button icon={<ReloadOutlined />} size="small"
+              onClick={() => {
+                setTabDLoading(true)
+                fetchHotelPersonHours(personYear).then(setPersonData).finally(() => setTabDLoading(false))
+              }}>重新整理</Button>
+          </Col>
+          <Col><Text type="secondary" style={{ fontSize: 12 }}>{personYear} 年 · Top 15 人員</Text></Col>
+        </Row>
+      </Card>
+    )
+    if (!personData) return <>{rankingFilterCard}<Alert message="切換至此 Tab 後自動載入" type="info" showIcon /></>
+    if (!personData.persons.length) return <>{rankingFilterCard}<Alert message="本年度暫無人員工時資料" type="info" showIcon /></>
 
     const medals = ['🥇', '🥈', '🥉']
     const barData = personData.persons.map((name, i) => ({
@@ -1265,9 +1303,10 @@ export default function HotelMgmtDashboardPage() {
 
     return (
       <>
+        {rankingFilterCard}
         {/* 橫向工時 Bar Chart */}
         <Card
-          title={<><BarChartOutlined /> {year}年 飯店部門人員工時排名（Top {personData.persons.length}）</>}
+          title={<><BarChartOutlined /> {personYear}年 飯店部門人員工時排名（Top {personData.persons.length}）</>}
           size="small"
           bodyStyle={{ padding: '12px 16px' }}
           style={{ marginBottom: 12 }}
@@ -1318,7 +1357,7 @@ export default function HotelMgmtDashboardPage() {
   // ── Tab 設定 ──────────────────────────────────────────────────────────
   const tabItems = [
     {
-      key: 'overview',
+      key: 'dashboard',
       label: <><DashboardOutlined /> Dashboard</>,
       children: (
         <>
@@ -1546,7 +1585,7 @@ export default function HotelMgmtDashboardPage() {
       ),
     },
     {
-      key: 'person',
+      key: 'person_pct',
       label: <><PieChartOutlined /> 人員工時%</>,
       children: (
         <Spin spinning={tabDLoading}>

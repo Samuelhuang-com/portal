@@ -95,7 +95,7 @@ export function calcModuleHealth(input: ModuleHealthInput): number | null {
 }
 
 /**
- * 計算工務健康分數（大直 × 0.60 + 樂群 × 0.40）
+ * 計算工務健康分數（大直 × 0.60 + 商場 × 0.40）
  * 任一來源為 null 時，僅用另一來源，並在 UI 標示「部分計算」
  */
 export function calcRepairHealth(

@@ -1,5 +1,5 @@
 /**
- * 樂群工務報修 API 封裝
+ * 商場工務報修 API 封裝
  * 所有對 /api/v1/luqun-repair/* 的請求統一在此處理
  */
 import apiClient from '@/api/client'

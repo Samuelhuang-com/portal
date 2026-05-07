@@ -252,7 +252,7 @@ export default function TabRepair({ year, month, monthStr, refreshKey }: TabRepa
         </Row>
       </Card>
 
-      {/* ── 左右雙欄：大直 | 樂群 ──────────────────────────────────────── */}
+      {/* ── 左右雙欄：大直 | 商場 ──────────────────────────────────────── */}
       <Row gutter={[16, 16]}>
         <Col xs={24} lg={12}>
           <RepairSideCard title="飯店工務" color="#1B3A5C" data={dazhi} loading={loading} />

@@ -3,18 +3,17 @@
  *
  * Tab 結構（對應 work-category-analysis 風格）：
  *   A. Dashboard    — 5 來源 KPI 卡片 + 各來源狀態卡 + 圖表
- *   B. 每日累計     — 大直工務報修：選月日別統計（occupied_at 聚合）
- *   C. 每月累計     — 商場 PM / 全棟 PM / 大直報修：月 × 來源完成率矩陣
- *   D. 人員工時%    — 大直報修 top_hours 人員工時佔比（Dashboard API 已包含）
- *   E. 人員排名     — 大直報修工時前排名人員列表
+ *   B. 每日累計     — 商場工務報修：選月日別統計（occupied_at 聚合）
+ *   C. 每月累計     — 商場 PM / 全棟 PM / 商場報修：月 × 來源完成率矩陣
+ *   D. 人員工時%    — /mall/person-hours 五項來源人員工時佔比（Top-15）
+ *   E. 人員排名     — /mall/person-hours 五項來源人員工時排名（Top-15）
  *
- * 資料限制說明：
- *   - 商場 PM / 全棟 PM / 商場工務巡檢 / 整棟巡檢 目前 Dashboard API 未提供人員維度
- *   - 人員工時相關 Tab 以大直工務報修資料為主，其餘來源提示至個別模組查看
+ * 資料說明：
+ *   - Tab D/E 均使用 /mall/person-hours API（現場報修+上級交辦+緊急事件+例行維護+每日巡檢）
  *   - 不新增任何 Backend API，全部沿用既有 endpoint
  */
 
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import {
   Row, Col, Card, Statistic, Typography, Breadcrumb,
   Select, Space, Tooltip, DatePicker, Button,
@@ -22,7 +21,7 @@ import {
   Spin,
 } from 'antd'
 import {
-  HomeOutlined, ReloadOutlined, ShopOutlined,
+  HomeOutlined, ReloadOutlined, ShopOutlined, DownloadOutlined,
   ClockCircleOutlined, WarningOutlined, CheckCircleOutlined,
   ExclamationCircleOutlined, BarChartOutlined, ToolOutlined,
   RightOutlined, DashboardOutlined, QuestionCircleOutlined,
@@ -49,6 +48,7 @@ import {
 import {
   fetchDashboard as fetchLuqunDash,
 } from '@/api/luqunRepair'
+import { SourceStatusCard }              from '@/components/SourceStatusCard'
 import {
   fetchMallDailyHours, fetchMallMonthlyHours, fetchMallPersonHours,
   exportMallOverviewPptx,
@@ -109,7 +109,7 @@ const SOURCE_CONFIG_ROW1 = [
 
 // 第二列：報修 / 交辦 / 緊急事件
 const SOURCE_CONFIG_ROW2 = [
-  { key: 'luqun_repair',    label: '樂群工務報修', color: '#FA8C16', icon: <WarningOutlined />,          route: '/luqun-repair/dashboard', showPmHours: false },
+  { key: 'luqun_repair',    label: '商場工務報修', color: '#FA8C16', icon: <WarningOutlined />,          route: '/luqun-repair/dashboard', showPmHours: false },
   { key: 'mall_supervisor', label: '商場主管交辦', color: '#C0392B', icon: <ExclamationCircleOutlined />, route: '/dashboard',              showPmHours: false },
   { key: 'mall_emergency',  label: '商場緊急事件', color: '#D4380D', icon: <WarningOutlined />,           route: '/dashboard',              showPmHours: false },
 ] as const
@@ -189,56 +189,18 @@ function normalizeLuqun(data: DashboardData | null) {
 }
 
 // ── 來源卡片子元件 ─────────────────────────────────────────────────────────────
-function SourceCard({
-  config, summary, loading, error,
-}: {
-  config:   typeof SOURCE_CONFIG[number] & { showPmHours?: boolean }
-  summary:  NormalizedSummary | null
-  loading:  boolean
-  error:    string | null
-}) {
-  const navigate = useNavigate()
-  const color = config.color
-  return (
-    <Card
-      size="small"
-      title={<Space><span style={{ color }}>{config.icon}</span><Text strong style={{ color, fontSize: 16 }}>{config.label}</Text></Space>}
-      extra={<Button type="link" size="small" icon={<RightOutlined />} style={{ color }} onClick={() => navigate(config.route)}>詳情</Button>}
-      style={{ borderTop: `3px solid ${color}`, height: '100%' }}
-      loading={loading}
-    >
-      {error && <Alert message={error} type="error" showIcon style={{ marginBottom: 8 }} />}
-      {(!summary || summary.is_placeholder) && !loading && !error && (
-        <div style={{ textAlign: 'center', color: '#bbb', padding: '20px 0', fontSize: 16 }}>數據準備中</div>
-      )}
-      {summary && !summary.is_placeholder && (
-        <>
-          <Row gutter={[8, 8]}>
-            <Col span={12}>
-              <Statistic title={<Text style={{ fontSize: 16, color: '#888' }}>工項/案件數</Text>} value={summary.case_count} suffix="筆" valueStyle={{ fontSize: 22, color }} />
-            </Col>
-            <Col span={12}>
-              <Statistic title={<Text style={{ fontSize: 16, color: '#888' }}>已完成</Text>} value={summary.completed_count} suffix="筆" valueStyle={{ fontSize: 22, color: '#52C41A' }} />
-            </Col>
-          </Row>
-          <div style={{ marginTop: 10 }}>
-            <Progress percent={summary.completion_rate} size="small"
-              strokeColor={{ from: summary.completion_rate < 50 ? '#FF4D4F' : '#FAAD14', to: '#52C41A' }}
-              format={(p) => `完成率 ${p}%`} />
-          </div>
-          <Row gutter={[8, 0]} style={{ marginTop: 8 }}>
-            {summary.abnormal_count > 0 && <Col span={12}><Text type="secondary" style={{ fontSize: 17 }}>異常：</Text><Text style={{ fontSize: 17, color: '#FF4D4F', fontWeight: 600 }}>{summary.abnormal_count}</Text></Col>}
-            {summary.overdue_count  > 0 && <Col span={12}><Text type="secondary" style={{ fontSize: 17 }}>逾期：</Text><Text style={{ fontSize: 17, color: '#C0392B', fontWeight: 600 }}>{summary.overdue_count}</Text></Col>}
-            {config.showPmHours && <>
-              <Col span={12}><Text type="secondary" style={{ fontSize: 14 }}>預估工時：</Text><Text style={{ fontSize: 16, color: '#4BA8E8', fontWeight: 600 }}>{summary.work_hours > 0 ? `${summary.work_hours} HR` : '0'}</Text></Col>
-              <Col span={12}><Text type="secondary" style={{ fontSize: 14 }}>保養時間：</Text><Text style={{ fontSize: 16, color: '#52C41A', fontWeight: 600 }}>{summary.actual_hours > 0 ? `${summary.actual_hours} HR` : '0'}</Text></Col>
-            </>}
-            {!config.showPmHours && summary.work_hours > 0 && <Col span={12}><Text type="secondary" style={{ fontSize: 17 }}>工時：</Text><Text style={{ fontSize: 17, color, fontWeight: 600 }}>{summary.work_hours} HR</Text></Col>}
-          </Row>
-        </>
-      )}
-    </Card>
+// SourceCard → 已移至 @/components/SourceStatusCard
+
+// ── CSV 匯出工具（BOM 確保 Excel 開啟中文不亂碼）────────────────────────────
+function exportCSV(filename: string, headers: string[], rows: (string | number)[][]) {
+  const lines = [headers, ...rows].map(r =>
+    r.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(',')
   )
+  const blob = new Blob(['﻿' + lines.join('\n')], { type: 'text/csv;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url; a.download = filename; a.click()
+  URL.revokeObjectURL(url)
 }
 
 // ── 每日累計 / 每月累計：Tag 渲染函式 ────────────────────────────────────────────
@@ -247,6 +209,10 @@ function renderMallCategory(val: string) {
 }
 function renderMallHour(v: number) {
   return <Text style={{ fontSize: 13, color: v > 0 ? '#1B3A5C' : '#ccc' }}>{v > 0 ? v.toFixed(1) : '-'}</Text>
+}
+function renderMallCase(v: number) {
+  if (v === 0) return <Text style={{ fontSize: 13, color: '#ccc' }}>—</Text>
+  return <Text style={{ fontSize: 13, color: '#1B3A5C', fontWeight: 600 }}>{v}</Text>
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -296,6 +262,11 @@ export default function MallMgmtDashboardPage() {
   const [dailyMonth,     setDailyMonth]     = useState<number>(thisMonth)
   const [dailyYear,      setDailyYear]      = useState<number>(thisYear)
 
+  // ── Tab E：每年累計（多年 × 5 工項總工時交叉表）──────────────────────────────────
+  const [yearlyData,     setYearlyData]     = useState<MallMonthlyHoursData | null>(null)
+  const [loadingYearly,  setLoadingYearly]  = useState(false)
+  const [yearlyYear,     setYearlyYear]     = useState<number>(thisYear)
+
   // ── 匯出狀態 ──────────────────────────────────────────────────────────────
   const [exportLoading, setExportLoading] = useState(false)
 
@@ -340,7 +311,7 @@ export default function MallMgmtDashboardPage() {
   const loadLuqun = useCallback(async (y?: number, m?: number) => {
     setLoadingLuqun(true); setErrorLuqun(null)
     try     { setLuqunData(await fetchLuqunDash(y ?? year, m ?? month)) }
-    catch   { setErrorLuqun('樂群工務報修載入失敗') }
+    catch   { setErrorLuqun('商場工務報修載入失敗') }
     finally { setLoadingLuqun(false) }
   }, [year, month])
 
@@ -385,12 +356,25 @@ export default function MallMgmtDashboardPage() {
     finally { setLoadingDaily(false) }
   }, [dailyYear, dailyMonth])
 
+  // ── 載入 Tab E（每年累計）：單年份 Running Total ────────────────────────────
+  const loadYearlyHours = useCallback(async (yr?: number) => {
+    const y = yr ?? yearlyYear
+    setLoadingYearly(true)
+    try {
+      const data = await fetchMallMonthlyHours(y)
+      setYearlyData(data)
+    } catch { setYearlyData(null) }
+    finally { setLoadingYearly(false) }
+  }, [yearlyYear])
+
   // Tab 切換時懶載入
   const handleTabChange = (key: string) => {
     setActiveTab(key)
-    if (key === 'monthly'    && !monthlyHoursData) loadMonthlyHours()
-    if (key === 'person_pct' && !personHoursData)  loadPersonHours()
-    if (key === 'daily'   && !dailyHoursData) loadDailyHours()
+    if (key === 'monthly'    && !monthlyHoursData)              loadMonthlyHours()
+    if (key === 'person_pct' && !personHoursData)               loadPersonHours()
+    if (key === 'ranking'    && !personHoursData)               loadPersonHours()
+    if (key === 'daily'      && !dailyHoursData)                loadDailyHours()
+    if (key === 'yearly'     && !yearlyData)                loadYearlyHours()
   }
 
   // ── Normalize ──────────────────────────────────────────────────────────────
@@ -460,23 +444,41 @@ export default function MallMgmtDashboardPage() {
 
   // ── Tab C：buildMallMonthlyCols 在 JSX 裡宣告（依 monthlyHoursData 動態生成）─────
 
-    // ── Tab D/E：人員資料（大直工務 top_hours）────────────────────────────────
+    // ── Tab D/E：人員資料（/mall/person-hours，五項來源）────────────────────────
   const personRanking = useMemo(() => {
-    const all = [...(luqunData?.top_hours ?? [])]
-    // 以 acceptor（結案人）聚合工時
-    const map: Record<string, { name: string; work_hours: number; cases: number }> = {}
-    all.forEach(c => {
-      const name = c.acceptor || c.closer || '未知'
-      if (!map[name]) map[name] = { name, work_hours: 0, cases: 0 }
-      map[name].work_hours = Math.round((map[name].work_hours + (c.work_hours ?? 0)) * 10) / 10
-      map[name].cases++
-    })
-    return Object.values(map)
-      .sort((a, b) => b.work_hours - a.work_hours)
-      .map((r, i) => ({ ...r, rank: i + 1, key: i }))
-  }, [luqunData])
+    const persons = personHoursData?.persons ?? []
+    const totals  = personHoursData?.person_totals ?? []
+    const rows    = personHoursData?.rows ?? []
+    const grand   = totals.reduce((s, h) => s + h, 0)
+    return persons.map((name, i) => ({
+      key:         i,
+      rank:        i + 1,
+      name,
+      total_hours: totals[i] ?? 0,
+      pct:         grand > 0 ? Math.round(((totals[i] ?? 0) / grand) * 1000) / 10 : 0,
+      cats:        rows.map(r => ({ category: r.category, pct: r.pct_by_person[i] ?? 0 })),
+    }))
+  }, [personHoursData])
 
-  const totalPersonHours = personRanking.reduce((s, r) => s + r.work_hours, 0)
+  const totalPersonHours = personHoursData?.person_totals?.reduce((s, h) => s + h, 0) ?? 0
+
+  // 人員來源分解資料（供 TabRanking 堆疊 BarChart 使用，顯示順序為降冪 → reverse 後正確）
+  const MALL_3CATS = ['現場報修', '例行維護', '每日巡檢'] as const
+  const MALL_CAT_HEX: Record<string, string> = {
+    '現場報修': '#FA8C16',
+    '例行維護': '#1B3A5C',
+    '每日巡檢': '#722ED1',
+  }
+  const breakdownData = useMemo(() =>
+    [...personRanking].reverse().map(p => {
+      const obj: Record<string, number | string> = { name: p.name }
+      MALL_3CATS.forEach(cat => {
+        const c = p.cats.find(c => c.category === cat)
+        obj[cat] = c ? Math.round(p.total_hours * c.pct / 100 * 10) / 10 : 0
+      })
+      return obj
+    })
+  , [personRanking]) // eslint-disable-line
 
   // ── 費用摘要：直接從已載入的 luqunData 取 kpi ────────────────────────────────
   const kpi      = luqunData?.kpi ?? null
@@ -487,6 +489,81 @@ export default function MallMgmtDashboardPage() {
   const monthOptions = [{ value: 0, label: '全年' }, ...Array.from({ length: 12 }, (_, i) => ({ value: i + 1, label: `${i + 1} 月` }))]
   const dailyMonthOptions = Array.from({ length: 12 }, (_, i) => ({ value: i + 1, label: `${i + 1} 月` }))
 
+  // ── 各工項計算口徑說明（Tooltip，仿 hotel/overview）──────────────────────
+  const ce = React.createElement
+  const MALL_5CAT_TOOLTIPS: Record<string, React.ReactNode> = {
+    現場報修: ce('div', { style: { fontSize: 12, lineHeight: 1.9 } },
+      ce('b', null, '商場工務報修'), '（luqun-repair/dashboard）', ce('br'),
+      '以 ', ce('code', null, '_stat_dt'), ' 口徑歸屬日期：', ce('br'),
+      '・已結案且 ', ce('code', null, 'completed_at'), ' 有值 → 以 completed_at 歸屬', ce('br'),
+      '・其餘 → 以 ', ce('code', null, 'occurred_at'), '（事件發生日）歸屬', ce('br'),
+      '・排除狀態為「取消」的案件', ce('br'),
+      ce('span', { style: { color: '#ccc', fontSize: 11 } },
+        '已結案狀態：結案／已辦驗／已驗收／已結案／完修／已完成／完成'),
+    ),
+    上級交辦: ce('div', { style: { fontSize: 12 } }, '建置中，目前顯示 0'),
+    緊急事件: ce('div', { style: { fontSize: 12 } }, '建置中，目前顯示 0'),
+    例行維護: ce('div', { style: { fontSize: 12, lineHeight: 1.9 } },
+      '① ', ce('b', null, '商場例行維護'), '（mall/periodic-maintenance）', ce('br'),
+      '　以 ', ce('code', null, 'scheduled_date'), ' 落在目標月份的保養項目數', ce('br'),
+      '② ', ce('b', null, '全棟例行維護'), '（mall/full-building-maintenance）', ce('br'),
+      '　以 ', ce('code', null, 'scheduled_date'), ' 落在目標月份的保養項目數', ce('br'),
+      ce('b', null, '總和 = ①＋②'),
+    ),
+    每日巡檢: ce('div', { style: { fontSize: 12, lineHeight: 1.9 } },
+      '① ', ce('b', null, '商場工務巡檢'), '（mall-facility-inspection）', ce('br'),
+      '　與 Dashboard 相同計算方式：每天 = 實際登錄場次 + 缺漏場次', ce('br'),
+      '　共 5 張巡檢表（4F / 3F / 1F~3F / 1F / B1F~B4F），每表每天應巡一次', ce('br'),
+      '　過去月份所有天均計入；當月僅計至今日', ce('br'),
+      '② ', ce('b', null, '整棟巡檢'), '（full-building-inspection）', ce('br'),
+      '　以實際 ', ce('code', null, 'inspection_date'), ' 批次數計算', ce('br'),
+      ce('b', null, '總和 = ①＋②'),
+    ),
+  }
+
+  // ── PPTX 匯出 ────────────────────────────────────────────────────────────
+  const handleExportPptx = async () => {
+    setExportLoading(true)
+    try {
+      const source_cards = SOURCE_CONFIG.map(cfg => {
+        const s = summaryMap[cfg.key] ?? { case_count: 0, completed_count: 0, completion_rate: 0, abnormal_count: 0, overdue_count: 0, work_hours: 0, actual_hours: 0 }
+        return {
+          source_name:     cfg.label,
+          source_key:      cfg.key,
+          case_count:      s.case_count,
+          completed_count: s.completed_count,
+          completion_rate: s.completion_rate,
+          abnormal_count:  s.abnormal_count,
+          overdue_count:   s.overdue_count,
+          work_hours:      s.work_hours,
+          actual_hours:    s.actual_hours ?? 0,
+        }
+      })
+      const payload: MallPptxPayload = {
+        kpi_summary: {
+          total_cases:      totalCases,
+          completed_cases:  totalCompleted,
+          total_work_hours: totalWorkHours,
+          abnormal_count:   totalAbnormal,
+          overdue_count:    totalOverdue,
+        },
+        source_cards,
+        repair_costs: {
+          outsource_fee:   kpi?.annual_outsource_fee   ?? 0,
+          maintenance_fee: kpi?.annual_maintenance_fee ?? 0,
+          deduction_fee:   kpi?.annual_deduction_fee   ?? 0,
+          month_total_fee: (kpi?.annual_outsource_fee ?? 0) + (kpi?.annual_maintenance_fee ?? 0),
+          period_label:    ytdLabel,
+        },
+      }
+      await exportMallOverviewPptx(year, month > 0 ? month : new Date().getMonth() + 1, payload)
+    } catch (e) {
+      console.error('PPTX 匯出失敗', e)
+    } finally {
+      setExportLoading(false)
+    }
+  }
+
   // ════════════════════════════════════════════════════════════════════════════
   // TAB A：Dashboard 總覽
   // ════════════════════════════════════════════════════════════════════════════
@@ -495,7 +572,27 @@ export default function MallMgmtDashboardPage() {
       {/* 篩選列 */}
       <Card size="small" style={{ marginBottom: 16, background: '#f9fbff' }}>
         <Row gutter={[16, 8]} align="middle">
-          <Col><Text type="secondary" style={{ fontSize: 14 }}>工務巡檢日期：</Text></Col>
+          <Col><Text type="secondary" style={{ fontSize: 14 }}>工務篩選：</Text></Col>
+          <Col>
+            <Select value={year} options={yearOptions} style={{ width: 100 }}
+              onChange={(v) => {
+                setYear(v)
+                loadMallPm(v, month); loadFullBldgPm(v, month)
+                loadMallFacilityByMonth(v, month); loadLuqun(v, month)
+              }}
+            />
+          </Col>
+          <Col>
+            <Select value={month} options={monthOptions} style={{ width: 90 }}
+              onChange={(v) => {
+                setMonth(v)
+                loadMallPm(year, v); loadFullBldgPm(year, v)
+                loadMallFacilityByMonth(year, v); loadLuqun(year, v)
+              }}
+            />
+          </Col>
+          <Col><Divider type="vertical" /></Col>
+          <Col><Text type="secondary" style={{ fontSize: 14 }}>巡檢日期：</Text></Col>
           <Col>
             <DatePicker
               value={dayjs(targetDate, 'YYYY/MM/DD')} format="YYYY/MM/DD" allowClear={false}
@@ -518,7 +615,7 @@ export default function MallMgmtDashboardPage() {
         <Col xs={12} sm={8} md={4}>
           <Card bodyStyle={{ padding: '14px 16px' }} style={{ borderLeft: '3px solid #1B3A5C' }}>
             <Statistic
-              title={<Tooltip title="商場例行維護 + 全棟例行維護 + 商場工務巡檢 + 大直工務報修之工項/案件總和"><span style={{ fontSize: 13, color: '#888', cursor: 'help' }}>本期總工項 <QuestionCircleOutlined style={{ color: '#bbb' }} /></span></Tooltip>}
+              title={<Tooltip title="商場例行維護 + 全棟例行維護 + 商場工務巡檢 + 商場工務報修之工項/案件總和"><span style={{ fontSize: 13, color: '#888', cursor: 'help' }}>本期總工項 <QuestionCircleOutlined style={{ color: '#bbb' }} /></span></Tooltip>}
               value={totalCases} suffix="筆"
               valueStyle={{ fontSize: 24, color: '#1B3A5C', fontWeight: 700 }}
               prefix={<BarChartOutlined style={{ fontSize: 16, marginRight: 4 }} />}
@@ -546,7 +643,7 @@ export default function MallMgmtDashboardPage() {
         <Col xs={12} sm={8} md={4}>
           <Card bodyStyle={{ padding: '14px 16px' }} style={{ borderLeft: '3px solid #FA8C16' }}>
             <Statistic
-              title={<Tooltip title="PM 計劃工時（預估）+ 巡檢工時 + 大直報修工時"><span style={{ fontSize: 13, color: '#888', cursor: 'help' }}>本期工時合計 <QuestionCircleOutlined style={{ color: '#bbb' }} /></span></Tooltip>}
+              title={<Tooltip title="PM 計劃工時（預估）+ 巡檢工時 + 商場報修工時"><span style={{ fontSize: 13, color: '#888', cursor: 'help' }}>本期工時合計 <QuestionCircleOutlined style={{ color: '#bbb' }} /></span></Tooltip>}
               value={totalWorkHours} suffix="HR"
               valueStyle={{ fontSize: 24, fontWeight: 700, color: '#FA8C16' }}
               prefix={<ClockCircleOutlined style={{ fontSize: 16, marginRight: 4 }} />}
@@ -575,30 +672,70 @@ export default function MallMgmtDashboardPage() {
       {/* 各來源卡片 — 第一列：維護 / 巡檢 */}
       <Divider orientation="left" plain style={{ fontSize: 15, color: '#888', margin: '4px 0 12px' }}>各來源本期狀態</Divider>
       <Row gutter={[12, 12]} style={{ marginBottom: 12 }}>
-        {SOURCE_CONFIG_ROW1.map((cfg) => (
-          <Col key={cfg.key} xs={24} sm={12} md={6}>
-            <SourceCard config={cfg}
-              summary={summaryMap[cfg.key]}
-              loading={loadingMap[cfg.key]}
-              error={errorMap[cfg.key]}
-            />
-          </Col>
-        ))}
+        {SOURCE_CONFIG_ROW1.map((cfg) => {
+          const s = summaryMap[cfg.key]
+          return (
+            <Col key={cfg.key} xs={24} sm={12} md={6}>
+              <SourceStatusCard
+                source_key={cfg.key}
+                source_name={cfg.label}
+                source_color={cfg.color}
+                case_count={s?.case_count ?? 0}
+                completed_count={s?.completed_count ?? 0}
+                work_hours={s?.work_hours ?? 0}
+                actual_hours={cfg.showPmHours ? (s?.actual_hours ?? 0) : undefined}
+                completion_rate={s?.completion_rate ?? 0}
+                abnormal_count={s?.abnormal_count ?? 0}
+                overdue_count={s?.overdue_count ?? 0}
+                status_label={`完成率 ${(s?.completion_rate ?? 0).toFixed(1)}%`}
+                is_placeholder={s?.is_placeholder ?? true}
+                loading={loadingMap[cfg.key]}
+                error={errorMap[cfg.key]}
+                onClick={() => navigate(cfg.route)}
+                icon={cfg.icon}
+                cardSize="small"
+                titleFontSize={16}
+                statFontSize={22}
+                infoFontSize={17}
+              />
+            </Col>
+          )
+        })}
       </Row>
       {/* 各來源卡片 — 第二列：報修 / 交辦 / 緊急事件 */}
       <Row gutter={[12, 12]} style={{ marginBottom: 20 }}>
-        {SOURCE_CONFIG_ROW2.map((cfg) => (
-          <Col key={cfg.key} xs={24} sm={12} md={8}>
-            <SourceCard config={cfg}
-              summary={summaryMap[cfg.key]}
-              loading={loadingMap[cfg.key]}
-              error={errorMap[cfg.key]}
-            />
-          </Col>
-        ))}
+        {SOURCE_CONFIG_ROW2.map((cfg) => {
+          const s = summaryMap[cfg.key]
+          return (
+            <Col key={cfg.key} xs={24} sm={12} md={8}>
+              <SourceStatusCard
+                source_key={cfg.key}
+                source_name={cfg.label}
+                source_color={cfg.color}
+                case_count={s?.case_count ?? 0}
+                completed_count={s?.completed_count ?? 0}
+                work_hours={s?.work_hours ?? 0}
+                actual_hours={cfg.showPmHours ? (s?.actual_hours ?? 0) : undefined}
+                completion_rate={s?.completion_rate ?? 0}
+                abnormal_count={s?.abnormal_count ?? 0}
+                overdue_count={s?.overdue_count ?? 0}
+                status_label={`完成率 ${(s?.completion_rate ?? 0).toFixed(1)}%`}
+                is_placeholder={s?.is_placeholder ?? true}
+                loading={loadingMap[cfg.key]}
+                error={errorMap[cfg.key]}
+                onClick={() => navigate(cfg.route)}
+                icon={cfg.icon}
+                cardSize="small"
+                titleFontSize={16}
+                statFontSize={22}
+                infoFontSize={17}
+              />
+            </Col>
+          )
+        })}
       </Row>
 
-      {/* 商場報修費用摘要（樂群工務 luqun-repair dashboard kpi）*/}
+      {/* 商場報修費用摘要（商場工務 luqun-repair dashboard kpi）*/}
       <Divider orientation="left" plain style={{ fontSize: 15, color: '#888', margin: '4px 0 12px' }}>
         商場報修費用摘要
         <Text type="secondary" style={{ fontSize: 13, marginLeft: 8 }}>（{year} 年 {ytdLabel}）</Text>
@@ -762,7 +899,7 @@ export default function MallMgmtDashboardPage() {
 
       <Alert type="info" showIcon message="資料說明"
         description={<ul style={{ margin: 0, paddingLeft: 20, fontSize: 14 }}>
-          <li>工時口徑：PM 為計劃工時（預估）；商場工務巡檢為巡檢工時記錄；大直工務報修為案件實際工時。</li>
+          <li>工時口徑：PM 為計劃工時（預估）；商場工務巡檢為巡檢工時記錄；商場工務報修為案件實際工時。</li>
           <li>各來源資料為獨立統計，不重複計算。</li>
           <li>整棟巡檢後端 API 建置中，暫不顯示資料。</li>
         </ul>}
@@ -789,24 +926,25 @@ export default function MallMgmtDashboardPage() {
         ),
         key: `d${d}`, width: 38, align: 'center' as const,
         render: (_: unknown, row: MallDailyRow & { key: number }) =>
-          renderMallHour(row.hours[i] ?? 0),
+          renderMallCase(row.cases?.[i] ?? 0),
       })),
       {
-        title: 'TOTAL', dataIndex: 'total', key: 'total', width: 62, align: 'center' as const,
+        title: '合計', dataIndex: 'cases_total', key: 'cases_total', width: 62, align: 'center' as const,
         render: (v: number, row: MallDailyRow & { key: number }) => (
-          <Text strong style={{ color: row.category === 'TOTAL' ? '#1B3A5C' : '#333' }}>
-            {v.toFixed(1)}
+          <Text strong style={{ color: row.category === 'TOTAL' ? '#1B3A5C' : '#333', fontSize: 13 }}>
+            {v ?? 0}
           </Text>
         ),
       },
       {
-        title: '%', dataIndex: 'pct', key: 'pct', width: 54, align: 'center' as const,
+        title: '%', dataIndex: 'cases_pct', key: 'cases_pct', width: 54, align: 'center' as const,
         render: (v: number, row: MallDailyRow & { key: number }) => (
           <Text style={{
             color: row.category === 'TOTAL' ? '#888' : '#FA8C16',
             fontWeight: row.category !== 'TOTAL' ? 600 : 400,
+            fontSize: 13,
           }}>
-            {v.toFixed(1)}%
+            {(v ?? 0).toFixed(1)}%
           </Text>
         ),
       },
@@ -818,7 +956,7 @@ export default function MallMgmtDashboardPage() {
       {/* 控制列 */}
       <Card size="small" style={{ marginBottom: 12, background: '#f9fbff' }}>
         <Row gutter={[12, 8]} align="middle">
-          <Col><Text strong style={{ fontSize: 15 }}>每日累計工時 (HR)</Text></Col>
+          <Col><Text strong style={{ fontSize: 15 }}>每日累計案件數</Text></Col>
           <Col>
             <Select value={dailyYear} options={yearOptions} style={{ width: 100 }}
               onChange={(v) => { setDailyYear(v); loadDailyHours(v, dailyMonth) }} />
@@ -834,29 +972,57 @@ export default function MallMgmtDashboardPage() {
           </Col>
           <Col flex="auto" />
           <Col>
+            <Button
+              icon={<DownloadOutlined />}
+              size="small"
+              disabled={!dailyHoursData}
+              onClick={() => {
+                if (!dailyHoursData) return
+                const headers = ['工項類別', ...dailyHoursData.days.map(d => `${d}日`), '案件數', '%']
+                const rows = dailyHoursData.rows.map(r => [
+                  r.category,
+                  ...dailyHoursData.days.map((_, i) => r.cases?.[i] ?? 0),
+                  r.cases_total,
+                  `${(r.cases_pct ?? 0).toFixed(1)}%`,
+                ])
+                exportCSV(`商場管理_每日累計_${dailyYear}年${dailyMonth}月.csv`, headers, rows)
+              }}
+            >匯出 CSV</Button>
+          </Col>
+          <Col>
             <Text type="secondary" style={{ fontSize: 14 }}>{dailyYear} 年 {dailyMonth} 月</Text>
           </Col>
         </Row>
       </Card>
 
       {/* 工項說明 Badge 列 */}
-      <Row gutter={[8, 8]} style={{ marginBottom: 12 }}>
-        {['現場報修', '上級交辦', '緊急事件', '例行維護', '每日巡檢'].map(cat => (
-          <Col key={cat}>{renderMallCategory(cat)}</Col>
+      <Space wrap style={{ marginBottom: 12 }}>
+        {(['現場報修', '上級交辦', '緊急事件', '例行維護', '每日巡檢'] as const).map(cat => (
+          <Space key={cat} size={2}>
+            {renderMallCategory(cat)}
+            <Tooltip title={MALL_5CAT_TOOLTIPS[cat]} overlayStyle={{ maxWidth: 440 }}>
+              <Text style={{ fontSize: 11, cursor: 'help', color: '#bbb' }}>ⓘ</Text>
+            </Tooltip>
+          </Space>
         ))}
-        <Col>
-          <Text type="secondary" style={{ fontSize: 13 }}>
-            （上級交辦、緊急事件模組建置中，目前顯示 0）
-          </Text>
-        </Col>
-      </Row>
+        <Text type="secondary" style={{ fontSize: 13 }}>
+          （上級交辦、緊急事件模組建置中，目前顯示 0）
+        </Text>
+      </Space>
 
       <Spin spinning={loadingDaily}>
         {(!dailyHoursData || !dailyHoursData.days.length) && !loadingDaily ? (
-          <Alert message="請選擇月份以查看每日累計工時" type="info" showIcon style={{ marginTop: 8 }} />
+          <Alert message="請選擇月份以查看每日累計案件數" type="info" showIcon style={{ marginTop: 8 }} />
         ) : (
           <Card
-            title={<Text strong>每日累計工時 (HR)</Text>}
+            title={
+              <Space size={8} align="center">
+                <Text strong>每日累計案件數</Text>
+                <Tooltip title="現場報修件數：已結案以完工日計算，未結案以報修日計算。與 Dashboard 工作量（含前期尚未結案）計算方式不同，數字會有出入。">
+                  <Text style={{ fontSize: 12, color: '#999', cursor: 'help' }}>ⓘ 計算說明</Text>
+                </Tooltip>
+              </Space>
+            }
             extra={<Text type="secondary">{dailyYear} 年 {dailyMonth} 月</Text>}
             bodyStyle={{ padding: '6px 0' }}
           >
@@ -896,25 +1062,26 @@ export default function MallMgmtDashboardPage() {
           render: (_: unknown, row: MallMonthlyRow) =>
             isFuture
               ? <Text style={{ color: '#ccc', fontSize: 13 }}>—</Text>
-              : renderMallHour(row.hours[i] ?? 0),
+              : renderMallCase(row.cases?.[i] ?? 0),
         }
       }),
       {
-        title: 'TOTAL', dataIndex: 'total', key: 'total', width: 64, align: 'center' as const,
+        title: '合計', dataIndex: 'cases_total', key: 'cases_total', width: 64, align: 'center' as const,
         render: (v: number, row: MallMonthlyRow) => (
-          <Text strong style={{ color: row.category === 'TOTAL' ? '#1B3A5C' : '#333' }}>
-            {v.toFixed(1)}
+          <Text strong style={{ color: row.category === 'TOTAL' ? '#1B3A5C' : '#333', fontSize: 13 }}>
+            {v ?? 0}
           </Text>
         ),
       },
       {
-        title: '%', dataIndex: 'pct', key: 'pct', width: 56, align: 'center' as const,
+        title: '%', dataIndex: 'cases_pct', key: 'cases_pct', width: 56, align: 'center' as const,
         render: (v: number, row: MallMonthlyRow) => (
           <Text style={{
             color:      row.category === 'TOTAL' ? '#888' : '#FA8C16',
             fontWeight: row.category !== 'TOTAL' ? 600 : 400,
+            fontSize:   13,
           }}>
-            {v.toFixed(1)}%
+            {(v ?? 0).toFixed(1)}%
           </Text>
         ),
       },
@@ -925,7 +1092,7 @@ export default function MallMgmtDashboardPage() {
     <>
       <Card size="small" style={{ marginBottom: 12, background: '#f9fbff' }}>
         <Row gutter={[12, 8]} align="middle">
-          <Col><Text strong style={{ fontSize: 15 }}>年度工時彙總</Text></Col>
+          <Col><Text strong style={{ fontSize: 15 }}>每月累計案件數</Text></Col>
           <Col>
             <Select
               value={monthlyYear}
@@ -939,25 +1106,56 @@ export default function MallMgmtDashboardPage() {
               重新整理
             </Button>
           </Col>
+          <Col flex="auto" />
+          <Col>
+            <Button
+              icon={<DownloadOutlined />}
+              size="small"
+              disabled={!monthlyHoursData}
+              onClick={() => {
+                if (!monthlyHoursData) return
+                const headers = ['工項類別', ...Array.from({length:12}, (_,i)=>`${i+1}月`), '案件數', '%']
+                const rows = monthlyHoursData.rows.map(r => [
+                  r.category,
+                  ...Array.from({length:12}, (_,i) => r.cases?.[i] ?? 0),
+                  r.cases_total,
+                  `${(r.cases_pct ?? 0).toFixed(1)}%`,
+                ])
+                exportCSV(`商場管理_每月累計_${monthlyYear}年.csv`, headers, rows)
+              }}
+            >匯出 CSV</Button>
+          </Col>
           <Col>
             <Text type="secondary" style={{ fontSize: 14 }}>{monthlyYear} 年</Text>
           </Col>
         </Row>
       </Card>
 
-      <Row style={{ marginBottom: 12 }} gutter={[8, 4]}>
-        {['現場報修','上級交辦','緊急事件','例行維護','每日巡檢'].map(cat => (
-          <Col key={cat}>{renderMallCategory(cat)}</Col>
+      <Space wrap style={{ marginBottom: 12 }}>
+        {(['現場報修','上級交辦','緊急事件','例行維護','每日巡檢'] as const).map(cat => (
+          <Space key={cat} size={2}>
+            {renderMallCategory(cat)}
+            <Tooltip title={MALL_5CAT_TOOLTIPS[cat]} overlayStyle={{ maxWidth: 440 }}>
+              <Text style={{ fontSize: 11, cursor: 'help', color: '#bbb' }}>ⓘ</Text>
+            </Tooltip>
+          </Space>
         ))}
-        <Col><Text type="secondary" style={{ fontSize: 13 }}>（上級交辦、緊急事件模組建置中，目前顯示 0）</Text></Col>
-      </Row>
+        <Text type="secondary" style={{ fontSize: 13 }}>（上級交辦、緊急事件模組建置中，目前顯示 0）</Text>
+      </Space>
 
       <Spin spinning={loadingMonthly}>
         {!monthlyHoursData && !loadingMonthly ? (
-          <Alert message="請選擇年份以查看每月累計工時" type="info" showIcon />
+          <Alert message="請選擇年份以查看每月累計案件數" type="info" showIcon />
         ) : (
           <Card
-            title={<Text strong>每月累計工時 (HR)</Text>}
+            title={
+              <Space size={8} align="center">
+                <Text strong>每月累計案件數</Text>
+                <Tooltip title="現場報修件數：已結案以完工月計算，未結案以報修月計算。與 Dashboard 工作量（含前期尚未結案）計算方式不同，數字會有出入。">
+                  <Text style={{ fontSize: 12, color: '#999', cursor: 'help' }}>ⓘ 計算說明</Text>
+                </Tooltip>
+              </Space>
+            }
             extra={<Text type="secondary">{monthlyYear} 年</Text>}
             bodyStyle={{ padding: '6px 0' }}
           >
@@ -976,7 +1174,168 @@ export default function MallMgmtDashboardPage() {
     </>
   )
 
-    // ════════════════════════════════════════════════════════════════════════════
+  // ════════════════════════════════════════════════════════════════════════════
+  // TAB E：每年累計（單年 Running Total — 比照 hotel/overview TabDYearly）
+  // ════════════════════════════════════════════════════════════════════════════
+
+  type MallRow5Y = { key: string; category: string; cases: number[]; total: number; cases_pct: number }
+
+  function buildMallYearlyCols(): ColumnsType<MallRow5Y> {
+    return [
+      {
+        title: '工項類別', dataIndex: 'category', fixed: 'left' as const, width: 100,
+        render: renderMallCategory,
+      },
+      ...Array.from({ length: 12 }, (_, i) => {
+        const m = i + 1
+        const isFuture = yearlyYear > thisYear || (yearlyYear === thisYear && m > thisMonth)
+        return {
+          title: `${m}月`,
+          key:   `m${m}`,
+          width: 60,
+          align: 'center' as const,
+          render: (_: unknown, row: MallRow5Y) =>
+            isFuture
+              ? <Text style={{ color: '#ccc', fontSize: 13 }}>—</Text>
+              : <Text style={{ fontSize: 13, color: row.category === 'TOTAL' ? '#1B3A5C' : '#333', fontWeight: row.category === 'TOTAL' ? 700 : 400 }}>
+                  {row.cases?.[i] ?? 0}
+                </Text>,
+        }
+      }),
+      {
+        title: '案件數', dataIndex: 'total', key: 'total', width: 68, align: 'center' as const,
+        render: (v: number, row: MallRow5Y) => (
+          <Text strong style={{ color: row.category === 'TOTAL' ? '#1B3A5C' : '#333', fontSize: 13 }}>{v ?? 0}</Text>
+        ),
+      },
+      {
+        title: '%', dataIndex: 'cases_pct', key: 'cases_pct', width: 56, align: 'center' as const,
+        render: (v: number, row: MallRow5Y) => (
+          <Text style={{
+            color:      row.category === 'TOTAL' ? '#888' : '#FA8C16',
+            fontWeight: row.category !== 'TOTAL' ? 600 : 400,
+            fontSize:   13,
+          }}>
+            {(v ?? 0).toFixed(1)}%
+          </Text>
+        ),
+      },
+    ]
+  }
+
+  function TabYearly() {
+    if (!yearlyData) return (
+      <Spin spinning={loadingYearly}>
+        <Alert message="切換至此 Tab 後自動載入" type="info" showIcon />
+      </Spin>
+    )
+
+    // 轉為累計（Running Total）：每月值 = 1 月到該月的加總
+    const toCumulative = (arr: number[]): number[] => {
+      let sum = 0
+      return arr.map(v => { sum += v; return sum })
+    }
+
+    const MALL_5CATS_ORDER = ['現場報修', '上級交辦', '緊急事件', '例行維護', '每日巡檢'] as const
+
+    const catCases: Record<string, number[]> = {}
+    MALL_5CATS_ORDER.forEach(cat => {
+      const found = yearlyData!.rows.find(r => r.category === cat)
+      catCases[cat] = toCumulative(found?.cases ?? Array(12).fill(0))
+    })
+
+    // 全年合計 = 12 月累計值（各類別總和）
+    const grandTotal = MALL_5CATS_ORDER.reduce((s, cat) => s + (catCases[cat][11] ?? 0), 0)
+
+    const tableRows: MallRow5Y[] = MALL_5CATS_ORDER.map(cat => {
+      const cases = catCases[cat]
+      const total = cases[11] ?? 0
+      const cases_pct = grandTotal > 0 ? Math.round(total / grandTotal * 1000) / 10 : 0
+      return { key: cat, category: cat, cases, total, cases_pct }
+    })
+
+    // TOTAL 列：每月所有類別累計之和
+    const totalCases = Array.from({ length: 12 }, (_, i) =>
+      MALL_5CATS_ORDER.reduce((s, cat) => s + (catCases[cat][i] ?? 0), 0)
+    )
+    tableRows.push({ key: 'TOTAL', category: 'TOTAL', cases: totalCases, total: grandTotal, cases_pct: 100 })
+
+    return (
+      <>
+        {/* 篩選列 */}
+        <Card size="small" style={{ marginBottom: 12, background: '#f9fbff' }}>
+          <Row gutter={[16, 8]} align="middle">
+            <Col>
+              <Text type="secondary" style={{ fontSize: 12 }}>年度累計案件數</Text>
+            </Col>
+            <Col>
+              <Select
+                value={yearlyYear}
+                options={yearOptions}
+                style={{ width: 100 }}
+                onChange={(v) => {
+                  setYearlyYear(v)
+                  setLoadingYearly(true)
+                  fetchMallMonthlyHours(v).then(setYearlyData).finally(() => setLoadingYearly(false))
+                }}
+              />
+            </Col>
+            <Col>
+              <Button
+                icon={<ReloadOutlined />}
+                size="small"
+                loading={loadingYearly}
+                onClick={() => {
+                  setLoadingYearly(true)
+                  fetchMallMonthlyHours(yearlyYear).then(setYearlyData).finally(() => setLoadingYearly(false))
+                }}
+              >重新整理</Button>
+            </Col>
+            <Col>
+              <Text type="secondary" style={{ fontSize: 12 }}>{yearlyYear} 年（累計）</Text>
+            </Col>
+          </Row>
+        </Card>
+
+        {/* 類別圖例 */}
+        <Space wrap style={{ marginBottom: 12 }}>
+          {(['現場報修','上級交辦','緊急事件','例行維護','每日巡檢'] as const).map(cat => (
+            <Space key={cat} size={2}>
+              {renderMallCategory(cat)}
+              <Tooltip title={MALL_5CAT_TOOLTIPS[cat]} overlayStyle={{ maxWidth: 440 }}>
+                <Text style={{ fontSize: 11, cursor: 'help', color: '#bbb' }}>ⓘ</Text>
+              </Tooltip>
+            </Space>
+          ))}
+          <Tooltip title="各月數值為 1 月至該月的累計案件數總和（Running Total）。例：3 月欄位 = 1+2+3 月案件數合計。">
+            <Text type="secondary" style={{ fontSize: 11, cursor: 'help', color: '#aaa' }}>
+              ⓘ 累計說明
+            </Text>
+          </Tooltip>
+        </Space>
+
+        {/* 表格 */}
+        <Card
+          title={<Text strong>年度累計案件數</Text>}
+          extra={<Text type="secondary">{yearlyYear} 年（累計至各月）</Text>}
+          bodyStyle={{ padding: '6px 0' }}
+        >
+          <Table<MallRow5Y>
+            dataSource={tableRows}
+            columns={buildMallYearlyCols()}
+            pagination={false}
+            size="small"
+            scroll={{ x: 'max-content' }}
+            rowClassName={(r) => r.category === 'TOTAL' ? 'mall-yearly-total-row' : ''}
+            style={{ fontSize: 14 }}
+          />
+        </Card>
+        <style>{`.mall-yearly-total-row td { background: #f5f5f5 !important; font-weight: 600; }`}</style>
+      </>
+    )
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
   // TAB D：人員工時%（5 工項 × 人員交叉表，格式比照 WCA Tab D）
   // ════════════════════════════════════════════════════════════════════════════
 
@@ -1096,8 +1455,8 @@ export default function MallMgmtDashboardPage() {
     },
     { title: '人員', dataIndex: 'name', width: 110, render: (v: string) => <Text strong>{v}</Text> },
     {
-      title: '工時 (HR)', dataIndex: 'work_hours', width: 120, align: 'right',
-      sorter: (a, b) => a.work_hours - b.work_hours, defaultSortOrder: 'descend',
+      title: '全年工時 (HR)', dataIndex: 'total_hours', width: 140, align: 'right',
+      sorter: (a, b) => a.total_hours - b.total_hours, defaultSortOrder: 'descend',
       render: (v: number) => (
         <Text strong style={{ fontSize: 18, color: '#1B3A5C' }}>
           {v.toFixed(1)}<Text style={{ fontSize: 13, color: '#888', marginLeft: 2 }}>HR</Text>
@@ -1106,48 +1465,77 @@ export default function MallMgmtDashboardPage() {
     },
     {
       title: '占比%', width: 190, align: 'center',
-      render: (_: unknown, r: typeof personRanking[0]) => {
-        const pct = totalPersonHours > 0 ? Math.round((r.work_hours / totalPersonHours) * 1000) / 10 : 0
-        return (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Progress percent={pct} size="small" showInfo={false} strokeColor={pctColor(pct)} style={{ flex: 1 }} />
-            <Text style={{ fontSize: 14, color: pctColor(pct), fontWeight: 600, minWidth: 42 }}>{pct.toFixed(1)}%</Text>
-          </div>
-        )
-      },
+      render: (_: unknown, r: typeof personRanking[0]) => (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Progress percent={r.pct} size="small" showInfo={false} strokeColor={pctColor(r.pct)} style={{ flex: 1 }} />
+          <Text style={{ fontSize: 14, color: pctColor(r.pct), fontWeight: 600, minWidth: 42 }}>{r.pct.toFixed(1)}%</Text>
+        </div>
+      ),
     },
     {
-      title: '案件數', dataIndex: 'cases', width: 70, align: 'center',
-      sorter: (a, b) => a.cases - b.cases,
-      render: (v: number) => <Badge count={v} color="#4BA8E8" />,
+      title: '來源分解', width: 220, align: 'center',
+      render: (_: unknown, r: typeof personRanking[0]) => (
+        <Tooltip title={
+          <div style={{ fontSize: 12 }}>
+            {r.cats.filter(c => c.pct > 0).map(c => (
+              <div key={c.category}>{c.category}：{c.pct.toFixed(1)}%</div>
+            ))}
+          </div>
+        }>
+          <Text style={{ color: '#4BA8E8', cursor: 'pointer', fontSize: 12 }}>
+            {r.cats.filter(c => c.pct > 0).map(c => c.category).join(' · ')}
+          </Text>
+        </Tooltip>
+      ),
     },
   ]
 
   const TabRanking = (
     <>
       <Alert type="info" showIcon
-        description="人員工時排名以大直工務報修 Dashboard top_hours 資料彙整（以 acceptor/closer 欄位為人員識別）。其他來源（PM 執行人員、巡檢人員）請至各模組批次明細查看。"
+        description="人員工時排名彙整現場報修、例行維護、每日巡檢（及上級交辦、緊急事件）五項來源（Top-15，依全年合計工時降冪）。「來源分解」欄顯示各工項占該工項總工時的百分比（hover 查看）。"
         style={{ marginBottom: 12 }} />
 
-      {personRanking.length === 0 ? (
-        <Alert message="大直工務報修無人員排名資料（本期無記錄或尚未載入）" type="warning" showIcon />
+      {!personHoursData && !loadingPerson ? (
+        <Alert message="尚未載入人員工時資料，請切換至此 Tab 後稍候" type="warning" showIcon />
+      ) : personRanking.length === 0 ? (
+        <Alert message="本年度無人員工時排名資料" type="warning" showIcon />
       ) : (
         <>
-          <Card size="small" title={<><TrophyOutlined /> 人員工時排名（大直工務報修）</>} style={{ marginBottom: 12 }}>
+          <Card size="small" title={<><TrophyOutlined /> 人員工時排名（五項來源合計）</>} style={{ marginBottom: 12 }}>
             <ResponsiveContainer width="100%" height={Math.max(180, personRanking.length * 28)}>
               <BarChart data={[...personRanking].reverse()} layout="vertical" margin={{ left: 10, right: 50 }}>
                 <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                 <XAxis type="number" tick={{ fontSize: 13 }} unit="H" />
                 <YAxis type="category" dataKey="name" width={80} tick={{ fontSize: 13 }} />
-                <RcTooltip formatter={(v: number, _name, props) => {
-                  const pct = totalPersonHours > 0 ? ((props.payload.work_hours / totalPersonHours) * 100).toFixed(1) : 0
-                  return [`${v.toFixed(1)} HR (${pct}%)`]
-                }} />
-                <Bar dataKey="work_hours" name="工時(HR)" radius={[0, 4, 4, 0]}>
+                <RcTooltip formatter={(v: number, _name, props) => [
+                  `${(v as number).toFixed(1)} HR（全年 ${props.payload.pct?.toFixed(1) ?? 0}%）`,
+                  '合計工時',
+                ]} />
+                <Bar dataKey="total_hours" name="工時(HR)" radius={[0, 4, 4, 0]}>
                   {[...personRanking].reverse().map((_, i) => (
                     <Cell key={i} fill={['#FA8C16','#4BA8E8','#52C41A','#722ED1','#FF4D4F','#13C2C2','#1B3A5C','#EB2F96'][i % 8]} />
                   ))}
                 </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </Card>
+
+          {/* 來源分解堆疊橫向 Bar Chart */}
+          <Card size="small" title={<><BarChartOutlined /> 人員工時分解（HR）</>} style={{ marginBottom: 12 }}>
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={breakdownData} layout="vertical" margin={{ left: 10, right: 50 }}>
+                <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                <XAxis type="number" tick={{ fontSize: 12 }} unit="H" />
+                <YAxis type="category" dataKey="name" width={80} tick={{ fontSize: 12 }} />
+                <RcTooltip formatter={(v: number, name) => [`${Number(v).toFixed(1)} HR`, name as string]} />
+                <Legend iconSize={10} wrapperStyle={{ fontSize: 12 }} />
+                {MALL_3CATS.map((cat, ci) => (
+                  <Bar
+                    key={cat} dataKey={cat} stackId="src" fill={MALL_CAT_HEX[cat]} name={cat}
+                    radius={ci === MALL_3CATS.length - 1 ? [0, 4, 4, 0] : [0, 0, 0, 0]}
+                  />
+                ))}
               </BarChart>
             </ResponsiveContainer>
           </Card>
@@ -1166,9 +1554,7 @@ export default function MallMgmtDashboardPage() {
                       <Text strong style={{ color: '#1B3A5C' }}>{totalPersonHours.toFixed(1)} HR</Text>
                     </Table.Summary.Cell>
                     <Table.Summary.Cell index={3} align="center"><Text strong>100%</Text></Table.Summary.Cell>
-                    <Table.Summary.Cell index={4} align="center">
-                      <Text strong>{personRanking.reduce((s, r) => s + r.cases, 0)}</Text>
-                    </Table.Summary.Cell>
+                    <Table.Summary.Cell index={4} />
                   </Table.Summary.Row>
                 </Table.Summary>
               )}
@@ -1182,12 +1568,14 @@ export default function MallMgmtDashboardPage() {
   // ════════════════════════════════════════════════════════════════════════════
   // Tab Items 定義
   // ════════════════════════════════════════════════════════════════════════════
+  const tabLabelStyle = { fontSize: 16 } as const
   const tabItems = [
-    { key: 'dashboard', label: <><LineChartOutlined /> A. Dashboard</>,  children: TabDashboard },
-    { key: 'daily',     label: <><TableOutlined />     B. 每日累計</>,   children: TabDaily },
-    { key: 'monthly',   label: <><TableOutlined />     C. 每月累計</>,   children: TabMonthly },
-    { key: 'person_pct',label: <><TeamOutlined />      D. 人員工時%</>,  children: TabPersonPct },
-    { key: 'ranking',   label: <><TrophyOutlined />    人員排名</>,      children: TabRanking },
+    { key: 'dashboard',  label: <span style={tabLabelStyle}><LineChartOutlined /> A. Dashboard</span>, children: TabDashboard },
+    { key: 'daily',      label: <span style={tabLabelStyle}><TableOutlined />     B. 每日累計</span>,  children: TabDaily },
+    { key: 'monthly',    label: <span style={tabLabelStyle}><TableOutlined />     C. 每月累計</span>,  children: TabMonthly },
+    { key: 'yearly',     label: <span style={tabLabelStyle}><CalendarOutlined />  D. 每年累計</span>,  children: <TabYearly /> },
+    { key: 'person_pct', label: <span style={tabLabelStyle}><TeamOutlined />      人員工時%</span>,    children: TabPersonPct },
+    { key: 'ranking',    label: <span style={tabLabelStyle}><TrophyOutlined />    人員排名</span>,     children: TabRanking },
   ]
 
   // ════════════════════════════════════════════════════════════════════════════

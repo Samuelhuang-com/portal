@@ -1,5 +1,5 @@
 """
-樂群工務報修 — 共用 Service Layer
+商場工務報修 — 共用 Service Layer
 
 功能：
   1. Ragic 資料抓取（春大直-報修清單總表）
@@ -779,7 +779,7 @@ async def fetch_all_cases() -> list[RepairCase]:
 
 
 def invalidate_cache() -> None:
-    """清除樂群報修 cache（sync 後呼叫）"""
+    """清除商場報修 cache（sync 後呼叫）"""
     invalidate(_CACHE_KEY)
 
 

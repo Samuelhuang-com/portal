@@ -27,6 +27,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.models.full_building_maintenance import FullBldgPMBatch, FullBldgPMItem
 from app.models.luqun_repair import LuqunRepairCase
+from app.services.time_utils import parse_minutes as _parse_minutes
 from app.models.mall_facility_inspection import MallFIBatch
 from app.models.mall_periodic_maintenance import (
     MallPeriodicMaintenanceBatch,
@@ -39,21 +40,6 @@ router = APIRouter(prefix="/mall", tags=["商場管理 Dashboard"])
 # 固定五項工項（順序即表格列順序）
 MALL_CATEGORIES = ["現場報修", "上級交辦", "緊急事件", "例行維護", "每日巡檢"]
 
-
-def _parse_minutes(start: str, end: str) -> int:
-    """
-    解析 HH:MM 格式開始/結束時間，回傳分鐘數差值；格式無效回傳 0。
-    複製自 mall_facility_inspection.py 的同名函式，避免跨 router import。
-    """
-    def to_min(t: str) -> Optional[int]:
-        m = re.match(r"^(\d{1,2}):(\d{2})$", (t or "").strip())
-        return int(m.group(1)) * 60 + int(m.group(2)) if m else None
-
-    s, e = to_min(start), to_min(end)
-    if s is None or e is None:
-        return 0
-    diff = e - s
-    return diff + 24 * 60 if diff < 0 else diff
 
 
 @router.get("/daily-hours", summary="商場管理 — 每日工時彙總（五項工項）")
@@ -85,6 +71,7 @@ def get_mall_daily_hours(
     weekdays = [zh[date(year, month, d).weekday()] for d in days]
 
     bucket: dict[str, dict[int, float]] = {c: defaultdict(float) for c in MALL_CATEGORIES}
+    case_bucket: dict[str, dict[int, int]] = {c: defaultdict(int) for c in MALL_CATEGORIES}
 
     # ── ① 現場報修：luqun_repair_cases（occ_year / occ_month 歸屬）────────────
     luqun_cases = (
@@ -96,8 +83,10 @@ def get_mall_daily_hours(
         .all()
     )
     for c in luqun_cases:
-        if c.occurred_at and (c.work_hours or 0) > 0:
-            bucket["現場報修"][c.occurred_at.day] += c.work_hours
+        if c.occurred_at:
+            if (c.work_hours or 0) > 0:
+                bucket["現場報修"][c.occurred_at.day] += c.work_hours
+            case_bucket["現場報修"][c.occurred_at.day] += 1
 
     # ── ④ 例行維護：mall_pm_batch_item ───────────────────────────────────────
     # period_month 可能儲存為 "2026/04" 或 "2026/4"，用 LIKE + Python 過濾
@@ -133,6 +122,7 @@ def get_mall_daily_hours(
             .all()
         ):
             mins = _parse_minutes(item.start_time or "", item.end_time or "")
+            case_bucket["例行維護"][_pm_day(item.scheduled_date)] += 1
             if mins > 0:
                 bucket["例行維護"][_pm_day(item.scheduled_date)] += mins / 60
 
@@ -153,6 +143,7 @@ def get_mall_daily_hours(
             .all()
         ):
             mins = _parse_minutes(item.start_time or "", item.end_time or "")
+            case_bucket["例行維護"][_pm_day(item.scheduled_date)] += 1
             if mins > 0:
                 bucket["例行維護"][_pm_day(item.scheduled_date)] += mins / 60
 
@@ -169,6 +160,7 @@ def get_mall_daily_hours(
             day = int(b.inspection_date.split("/")[2])
             if 1 <= day <= days_in_month:
                 mins = _parse_minutes(b.start_time or "", b.end_time or "")
+                case_bucket["每日巡檢"][day] += 1
                 bucket["每日巡檢"][day] += mins / 60
         except (ValueError, IndexError):
             pass
@@ -183,6 +175,7 @@ def get_mall_daily_hours(
             day = int(b.inspection_date.split("/")[2])
             if 1 <= day <= days_in_month:
                 mins = _parse_minutes(b.start_time or "", b.end_time or "")
+                case_bucket["每日巡檢"][day] += 1
                 bucket["每日巡檢"][day] += mins / 60
         except (ValueError, IndexError):
             pass
@@ -191,6 +184,8 @@ def get_mall_daily_hours(
     result_rows: list[dict] = []
     grand_total = 0.0
     grand_day = [0.0] * len(days)
+    grand_cases_total = 0
+    grand_cases_day = [0] * len(days)
 
     for cat in MALL_CATEGORIES:
         day_h = [round(bucket[cat][d], 1) for d in days]
@@ -198,18 +193,28 @@ def get_mall_daily_hours(
         grand_total += total
         for i, h in enumerate(day_h):
             grand_day[i] += h
-        result_rows.append({"category": cat, "hours": day_h, "total": total, "pct": 0.0})
+        day_c = [case_bucket[cat][d] for d in days]
+        cases_total = sum(day_c)
+        grand_cases_total += cases_total
+        for i, c in enumerate(day_c):
+            grand_cases_day[i] += c
+        result_rows.append({"category": cat, "hours": day_h, "total": total, "pct": 0.0,
+                            "cases": day_c, "cases_total": cases_total, "cases_pct": 0.0})
 
     # 計算各列 %
     for row in result_rows:
         row["pct"] = round(row["total"] / grand_total * 100, 1) if grand_total else 0.0
+        row["cases_pct"] = round(row["cases_total"] / grand_cases_total * 100, 1) if grand_cases_total else 0.0
 
     # TOTAL 合計列
     result_rows.append({
-        "category": "TOTAL",
-        "hours":    [round(h, 1) for h in grand_day],
-        "total":    round(grand_total, 1),
-        "pct":      100.0,
+        "category":    "TOTAL",
+        "hours":       [round(h, 1) for h in grand_day],
+        "total":       round(grand_total, 1),
+        "pct":         100.0,
+        "cases":       grand_cases_day,
+        "cases_total": grand_cases_total,
+        "cases_pct":   100.0,
     })
 
     return {
@@ -243,12 +248,15 @@ def get_mall_monthly_hours(
     ```
     """
     bucket: dict[str, dict[int, float]] = {c: defaultdict(float) for c in MALL_CATEGORIES}
+    case_bucket: dict[str, dict[int, int]] = {c: defaultdict(int) for c in MALL_CATEGORIES}
     year_prefix = f"{year}/"
 
     # ── ① 現場報修 ──────────────────────────────────────────────────────────
     for c in db.query(LuqunRepairCase).filter(LuqunRepairCase.occ_year == year).all():
-        if c.occ_month and 1 <= c.occ_month <= 12 and (c.work_hours or 0) > 0:
-            bucket["現場報修"][c.occ_month] += c.work_hours
+        if c.occ_month and 1 <= c.occ_month <= 12:
+            case_bucket["現場報修"][c.occ_month] += 1
+            if (c.work_hours or 0) > 0:
+                bucket["現場報修"][c.occ_month] += c.work_hours
 
     # ── ④ 例行維護：mall_pm ──────────────────────────────────────────────────
     for batch in (
@@ -266,6 +274,7 @@ def get_mall_monthly_hours(
             MallPeriodicMaintenanceItem.batch_ragic_id == batch.ragic_id
         ).all():
             mins = _parse_minutes(item.start_time or "", item.end_time or "")
+            case_bucket["例行維護"][m] += 1
             bucket["例行維護"][m] += mins / 60
 
     # ── ④ 例行維護：full_bldg_pm ─────────────────────────────────────────────
@@ -284,6 +293,7 @@ def get_mall_monthly_hours(
             FullBldgPMItem.batch_ragic_id == batch.ragic_id
         ).all():
             mins = _parse_minutes(item.start_time or "", item.end_time or "")
+            case_bucket["例行維護"][m] += 1
             bucket["例行維護"][m] += mins / 60
 
     # ── ⑤ 每日巡檢：mall_facility ────────────────────────────────────────────
@@ -293,6 +303,7 @@ def get_mall_monthly_hours(
         except (ValueError, IndexError, AttributeError):
             continue
         if 1 <= m <= 12:
+            case_bucket["每日巡檢"][m] += 1
             bucket["每日巡檢"][m] += _parse_minutes(b.start_time or "", b.end_time or "") / 60
 
     # ── ⑤ 每日巡檢：rf_inspection ────────────────────────────────────────────
@@ -302,12 +313,15 @@ def get_mall_monthly_hours(
         except (ValueError, IndexError, AttributeError):
             continue
         if 1 <= m <= 12:
+            case_bucket["每日巡檢"][m] += 1
             bucket["每日巡檢"][m] += _parse_minutes(b.start_time or "", b.end_time or "") / 60
 
     # ── 組裝結果 ─────────────────────────────────────────────────────────────
     result_rows: list[dict] = []
     grand_total = 0.0
     grand_m = [0.0] * 12
+    grand_cases_total = 0
+    grand_cases_m = [0] * 12
 
     for cat in MALL_CATEGORIES:
         mh = [round(bucket[cat][m], 1) for m in range(1, 13)]
@@ -315,16 +329,26 @@ def get_mall_monthly_hours(
         grand_total += total
         for i, h in enumerate(mh):
             grand_m[i] += h
-        result_rows.append({"category": cat, "hours": mh, "total": total, "pct": 0.0})
+        mc = [case_bucket[cat][m] for m in range(1, 13)]
+        cases_total = sum(mc)
+        grand_cases_total += cases_total
+        for i, c in enumerate(mc):
+            grand_cases_m[i] += c
+        result_rows.append({"category": cat, "hours": mh, "total": total, "pct": 0.0,
+                            "cases": mc, "cases_total": cases_total, "cases_pct": 0.0})
 
     for row in result_rows:
         row["pct"] = round(row["total"] / grand_total * 100, 1) if grand_total else 0.0
+        row["cases_pct"] = round(row["cases_total"] / grand_cases_total * 100, 1) if grand_cases_total else 0.0
 
     result_rows.append({
-        "category": "TOTAL",
-        "hours":    [round(h, 1) for h in grand_m],
-        "total":    round(grand_total, 1),
-        "pct":      100.0,
+        "category":    "TOTAL",
+        "hours":       [round(h, 1) for h in grand_m],
+        "total":       round(grand_total, 1),
+        "pct":         100.0,
+        "cases":       grand_cases_m,
+        "cases_total": grand_cases_total,
+        "cases_pct":   100.0,
     })
 
     return {"year": year, "months": list(range(1, 13)), "rows": result_rows}

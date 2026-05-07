@@ -25,7 +25,7 @@
  *   2026-04-15  新增 calendar（行事曆群組）—— 超級行事曆 Command Calendar
  *   2026-04-15  新增 mall_facility_inspection（春大直商場工務巡檢）+ 5 個樓層巡檢頁
  *   2026-04-15  新增 full_building_inspection（整棟巡檢）+ 4 個樓層巡檢頁（RF/B4F/B2F/B1F）
- *   2026-04-15  新增 luqun_repair（樂群工務報修）完整模組 + Dashboard
+ *   2026-04-15  新增 luqun_repair（商場工務報修）完整模組 + Dashboard
  *   2026-04-15  新增 dazhi_repair（大直工務部）完整模組 + Dashboard
  *   2026-04-19  新增 budget（預算管理）Phase 1：Dashboard / Plans / Transactions / Masters / Reports
  *   2026-04-23  新增 workCategoryAnalysis（★工項類別分析）掛於 luqun_repair + dazhi_repair 下
@@ -60,7 +60,7 @@ export const NAV_GROUP = {
   hotel:      '飯店管理',
   mall:                     '商場管理',
   mallPmGroup:              '商場例行維護',   // ← L2 群組：商場例行維護 + 全棟例行維護
-  luqun_repair:             '樂群工務報修',
+  luqun_repair:             '商場工務報修',
   dazhi_repair:             '大直工務部',
   mall_facility_inspection:  '商場工務巡檢',
   full_building_inspection:  '整棟巡檢',
@@ -109,8 +109,8 @@ export const NAV_PAGE = {
   b2fInspection:           '工務巡檢 - B2F',
   b1fInspection:           '工務巡檢 - B1F', //整棟工務每日巡檢
 
-  // 樂群工務報修
-  luqunRepairDashboard:    '樂群工務報修 Dashboard',
+  // 商場工務報修
+  luqunRepairDashboard:    '商場工務報修 Dashboard',
 
   // 大直工務部
   dazhiRepairDashboard:    '大直工務部 Dashboard',

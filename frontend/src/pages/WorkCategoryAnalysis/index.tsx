@@ -6,7 +6,7 @@
  *   第二層 Charts     — 決策分析圖表
  *   第三層 Tables     — 每日/每月/人員明細表
  *
- * 資料整合：樂群工務 + 大直工務 + 房務保養
+ * 資料整合：商場工務 + 大直工務 + 房務保養
  */
 import { useState, useEffect, useCallback } from 'react'
 import {
@@ -42,7 +42,7 @@ const MONTHS     = Array.from({ length: 12 }, (_, i) => i + 1)
 const PIE_COLORS = ['#4BA8E8', '#52C41A', '#FF4D4F', '#FA8C16', '#722ED1']
 const SOURCE_OPTIONS = [
   { value: 'all',   label: '全部來源' },
-  { value: 'luqun', label: '樂群工務' },
+  { value: 'luqun', label: '商場工務' },
   { value: 'dazhi', label: '大直工務' },
 ]
 
@@ -695,7 +695,7 @@ export default function WorkCategoryAnalysisPage() {
           <Col>
             <Title level={4} style={{ margin: 0 }}>★ {NAV_PAGE.workCategoryAnalysis}</Title>
             <Text type="secondary" style={{ fontSize: 12 }}>
-              樂群工務 + 大直工務 + 房務保養 · 主管決策 Dashboard
+              商場工務 + 大直工務 + 房務保養 · 主管決策 Dashboard
             </Text>
           </Col>
           <Col>

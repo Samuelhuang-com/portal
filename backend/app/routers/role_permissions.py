@@ -50,7 +50,7 @@ PERMISSION_DEFINITIONS = [
     {"key": "mall_facility_inspection_view",       "label": "商場工務巡檢",      "group": "商場管理"},
     {"key": "mall_full_building_inspection_view",  "label": "整棟巡檢",          "group": "商場管理"},
     # ── 工務報修 ────────────────────────────────────────────────────────────
-    {"key": "luqun_repair_view",        "label": "樂群工務報修",  "group": "工務報修"},
+    {"key": "luqun_repair_view",        "label": "商場工務報修",  "group": "工務報修"},
     {"key": "dazhi_repair_view",        "label": "大直工務部",    "group": "工務報修"},
     # ── 保全管理 ────────────────────────────────────────────────────────────
     {"key": "security_view",            "label": "保全模組",      "group": "保全管理"},
@@ -153,21 +153,3 @@ def save_role_permissions(
 
     # 驗證傳入的 key 都在已知清單中
     valid_keys = {d["key"] for d in PERMISSION_DEFINITIONS}
-    invalid = [k for k in payload.permissions if k not in valid_keys]
-    if invalid:
-        raise HTTPException(
-            status_code=400,
-            detail=f"不存在的 permission_key：{', '.join(invalid)}",
-        )
-
-    # 刪除舊記錄，插入新記錄
-    db.query(RolePermission).filter(RolePermission.role_id == role_id).delete()
-    for key in set(payload.permissions):  # 去重
-        db.add(RolePermission(role_id=role_id, permission_key=key))
-    db.commit()
-
-    return RolePermissionsOut(
-        role_id=role_id,
-        role_name=role.name,
-        permissions=list(set(payload.permissions)),
-    )

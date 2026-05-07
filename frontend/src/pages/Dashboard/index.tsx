@@ -415,7 +415,7 @@ function TodaySummaryCard({
   )
 }
 
-// ── 工務報修主管摘要卡（樂群 / 大直 共用）────────────────────────────────────
+// ── 工務報修主管摘要卡（商場 / 大直 共用）────────────────────────────────────
 function RepairSummaryCard({
   label, data, color, accentColor, onNavigate,
 }: {
@@ -787,11 +787,11 @@ export default function DashboardPage() {
       </Row>
 
       {/* ══════════════════════════════════════════════════════════════
-          ROW 0.3 — 工務報修主管摘要（樂群 + 大直）
+          ROW 0.3 — 工務報修主管摘要（商場 + 大直）
       ══════════════════════════════════════════════════════════════ */}
       <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
         <RepairSummaryCard
-          label="樂群工務報修"
+          label="商場工務報修"
           data={luqunData}
           color="#1B3A5C"
           accentColor="#4BA8E8"

@@ -98,7 +98,7 @@ export default function TabDataQuality({ year, month, monthStr, refreshKey }: Ta
   // ── 推算各模組品質指標 ────────────────────────────────────────────────────
   const rows: QualityRow[] = []
 
-  // 1. 樂群工務
+  // 1. 商場工務
   if (luqun) {
     const k = luqun.kpi
     const withStatus = k.completed + k.uncompleted   // 有明確狀態的

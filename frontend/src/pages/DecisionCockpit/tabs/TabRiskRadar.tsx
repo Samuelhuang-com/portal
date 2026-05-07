@@ -248,18 +248,18 @@ export default function TabRiskRadar({ year, month, monthStr, refreshKey }: TabR
       newRows.push({ key: 'facility', group: '商場管理', module: '商場工務巡檢', compRate: null, overdueRate: null, abnRate: null, health: null, light: 'gray' })
     }
 
-    // 10. 現場報修（樂群）
+    // 10. 現場報修（商場）
     if (rLuqun.status === 'fulfilled') {
       const k = rLuqun.value.kpi
       const rate = k.total > 0 ? Math.round((k.completed / k.total) * 100) : null
       const h = calcModuleHealth({ total: k.total, completed: k.completed, overdue: k.uncompleted, anomaly: 0 })
       newRows.push({
-        key: 'luqun', group: '商場管理', module: '現場報修（樂群）',
+        key: 'luqun', group: '商場管理', module: '現場報修（商場）',
         compRate: rate, overdueRate: k.total > 0 ? Math.round((k.uncompleted / k.total) * 100) : 0,
         abnRate: 0, health: h, light: getTrafficLight(h),
       })
     } else {
-      newRows.push({ key: 'luqun', group: '商場管理', module: '現場報修（樂群）', compRate: null, overdueRate: null, abnRate: null, health: null, light: 'gray' })
+      newRows.push({ key: 'luqun', group: '商場管理', module: '現場報修（商場）', compRate: null, overdueRate: null, abnRate: null, health: null, light: 'gray' })
     }
 
     setRows(newRows)

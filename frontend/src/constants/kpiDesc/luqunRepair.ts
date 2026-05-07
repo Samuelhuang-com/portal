@@ -1,5 +1,5 @@
 /**
- * 樂群工務報修 Dashboard — KPI 卡說明
+ * 商場工務報修 Dashboard — KPI 卡說明
  *
  * 維護方式：直接修改對應 key 的說明文字即可，不需改動元件程式碼。
  * 對應頁面：src/pages/LuqunRepair/index.tsx → DashboardTab

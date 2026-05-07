@@ -114,7 +114,7 @@ class Settings(BaseSettings):
     RAGIC_FIELD_SUBTOTAL: str = "1000011"       # 小計
     RAGIC_FIELD_INCOMPLETE: str = "1000012"     # 未完成小計
 
-    # ── Ragic — 樂群工務報修（ap12 / soutlet001）────────────────────────────
+    # ── Ragic — 商場工務報修（ap12 / soutlet001）────────────────────────────
     RAGIC_LUQUN_REPAIR_SERVER_URL: str = "ap12.ragic.com"
     RAGIC_LUQUN_REPAIR_ACCOUNT: str = "soutlet001"
     RAGIC_LUQUN_REPAIR_PATH: str = "luqun-public-works-repair-reporting-system/6"

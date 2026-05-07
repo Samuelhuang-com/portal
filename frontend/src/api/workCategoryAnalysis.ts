@@ -15,7 +15,7 @@ export const SOURCES = ['luqun', 'dazhi', 'hotel_room'] as const
 export type Source = typeof SOURCES[number]
 
 export const SOURCE_LABELS: Record<Source | string, string> = {
-  luqun:      '樂群工務',
+  luqun:      '商場工務',
   dazhi:      '大直工務',
   hotel_room: '房務保養',
 }

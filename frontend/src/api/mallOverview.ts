@@ -14,10 +14,13 @@ const BASE = '/mall'
 // ── 型別定義 ──────────────────────────────────────────────────────────────────
 
 export interface MallDailyRow {
-  category: string      // '現場報修' | '上級交辦' | '緊急事件' | '例行維護' | '每日巡檢' | 'TOTAL'
-  hours:    number[]    // 每日 HR，長度 = 當月天數
-  total:    number      // 整月合計 HR
-  pct:      number      // 佔全部工項 % (0–100)
+  category:    string    // '現場報修' | '上級交辦' | '緊急事件' | '例行維護' | '每日巡檢' | 'TOTAL'
+  hours:       number[]  // 每日 HR，長度 = 當月天數
+  total:       number    // 整月合計 HR
+  pct:         number    // 佔全部工項工時 % (0–100)
+  cases:       number[]  // 每日案件數，與 hours 同長度
+  cases_total: number    // 整月合計案件數
+  cases_pct:   number    // 佔全部工項案件數 % (0–100)
 }
 
 export interface MallDailyHoursData {
@@ -29,10 +32,13 @@ export interface MallDailyHoursData {
 }
 
 export interface MallMonthlyRow {
-  category: string      // '現場報修' | '上級交辦' | '緊急事件' | '例行維護' | '每日巡檢' | 'TOTAL'
-  hours:    number[]    // 每月 HR，長度固定 12（1月–12月）
-  total:    number      // 全年合計 HR
-  pct:      number      // 佔全部工項 % (0–100)
+  category:    string    // '現場報修' | '上級交辦' | '緊急事件' | '例行維護' | '每日巡檢' | 'TOTAL'
+  hours:       number[]  // 每月 HR，長度固定 12（1月–12月）
+  total:       number    // 全年合計 HR
+  pct:         number    // 佔全部工項工時 % (0–100)
+  cases:       number[]  // 每月案件數，長度固定 12
+  cases_total: number    // 全年合計案件數
+  cases_pct:   number    // 佔全部工項案件數 % (0–100)
 }
 
 export interface MallMonthlyHoursData {
@@ -47,9 +53,10 @@ export interface MallPersonRow {
 }
 
 export interface MallPersonHoursData {
-  year:    number
-  persons: string[]       // Top-15 人員名稱（依全類別合計工時降冪）
-  rows:    MallPersonRow[]
+  year:          number
+  persons:       string[]       // Top-15 人員名稱（依全類別合計工時降冪）
+  person_totals: number[]       // 各人員全年合計工時（與 persons[] 同長度）
+  rows:          MallPersonRow[]
 }
 
 // ── 工項顏色常數（供表格 Tag 使用）──────────────────────────────────────────────

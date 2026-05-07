@@ -1,0 +1,127 @@
+【Sheet 1：TAB 結構比對】
+模組類型	TAB名稱	TAB順序	hotel/overview是否存在	mall/overview是否存在	是否一致	差異說明	建議處理	優先級
+Dashboard總覽	Dashboard	1	是（key=overview）	是（key=dashboard）	否	Tab key不同；Hotel在Tab內含DatePicker，Mall無	統一key命名為dashboard；評估是否統一篩選位置	P1
+工時分析	B. 每日累計	2	是（key=daily）	是（key=daily）	部分	Mall多cases_pct欄位，Hotel無	Hotel後端補cases_pct，前端補欄位	P1
+工時分析	C. 每月累計	3	是（key=monthly）	是（key=monthly）	部分	Mall多cases_pct欄位，Hotel無	同上	P1
+工時分析	D. 每年累計	4	是（key=yearly）	是（key=yearly）	否	Hotel單年滾計；Mall三年並排比較	確認主管需求後統一設計	P1
+人員分析	人員工時%	5	是（key=person）	是（key=person_pct）	否	Tab key不同，功能設計一致	統一key命名為person_pct	P1
+人員分析	人員排名	6	是（key=ranking）	是（key=ranking）	否	Hotel用person-hours API(5來源)；Mall用luqun top_hours(僅報修1來源)	Mall改用/mall/person-hours API，資料來源一致	P0
+
+【Sheet 2：篩選功能比對】
+TAB名稱	篩選項目	hotel/overview	mall/overview	是否一致	差異說明	影響	建議處理	優先級
+全頁	年份篩選	有（2024~2027）	有（2024~2027）	是		無	維持	P2
+全頁	月份篩選（含全年）	有（0=全年）	有（0=全年）	是		無	維持	P2
+Dashboard	巡檢日期DatePicker	有（Hotel巡檢用）	無	否	Hotel需此欄取hotel daily inspection資料	Mall不需要	維持現狀並記錄差異	P2
+Dashboard	重設/清除按鈕	無	無	是	均無	操作不便	P2可補充	P2
+Dashboard	篩選器位置	頁頂Card（所有Tab共用）	Tab A內Card	否	Mall更彈性，各Tab可獨立篩選	操作體驗不一致	評估統一為Tab內篩選	P1
+B.每日累計	月份獨立篩選	無（沿用頁頂）	有（Tab內可選年月）	否	Mall可獨立選月，Hotel不行	操作不如Mall彈性	Hotel補上Tab內月份選擇	P1
+C.每月累計	年份獨立篩選	無（沿用頁頂）	有（Tab內可選年）	否	同上	同上	Hotel補上Tab內年份選擇	P1
+D.每年累計	年份選擇	有（單年）	有（基準年，展3年）	否	設計意圖不同	主管橫向比較設計不同	確認主管需求後統一	P1
+人員工時%	年份獨立篩選	無（沿用頁頂）	有（Tab內可選年）	否		同上	Hotel補上Tab內年份選擇	P1
+人員排名	年份篩選	無（沿用頁頂）	有（Tab內可選年）	否		同上	Hotel補上Tab內年份選擇	P1
+B/C	Loading狀態	有（Spin）	有（Spin）	是		無	維持	P2
+B/C	Error狀態	有（Alert）	有（Alert）	是		無	維持	P2
+
+【Sheet 3：表格欄位比對】
+TAB名稱	表格名稱	欄位名稱	hotel/overview	mall/overview	是否一致	差異說明	建議處理	優先級
+B.每日累計	每日工時交叉表	工項類別	有	有	是		維持	P2
+B.每日累計	每日工時交叉表	每日HR（動態）	有	有	是		維持	P2
+B.每日累計	每日工時交叉表	合計HR	有	有	是		維持	P2
+B.每日累計	每日工時交叉表	工時%	有	有	是		維持	P2
+B.每日累計	每日工時交叉表	每日案件數	有	有	是		維持	P2
+B.每日累計	每日工時交叉表	案件合計	有	有	是		維持	P2
+B.每日累計	每日工時交叉表	案件%（cases_pct）	無	有	否	Mall後端回傳，Hotel無此欄	Hotel補充cases_pct	P1
+B.每日累計	每日工時交叉表	TOTAL列	有	有	是		維持	P2
+B.每日累計	每日工時交叉表	橫向捲動	有	有	是		維持	P2
+C.每月累計	每月工時交叉表	工項類別	有	有	是		維持	P2
+C.每月累計	每月工時交叉表	1月~12月HR	有	有	是		維持	P2
+C.每月累計	每月工時交叉表	合計HR	有	有	是		維持	P2
+C.每月累計	每月工時交叉表	工時%	有	有	是		維持	P2
+C.每月累計	每月工時交叉表	每月案件數	有	有	是		維持	P2
+C.每月累計	每月工時交叉表	案件合計	有	有	是		維持	P2
+C.每月累計	每月工時交叉表	案件%（cases_pct）	無	有	否	同B Tab差異	同上	P1
+D.每年累計	累計表	類別	有	有	是		維持	P2
+D.每年累計	累計表	時間維度	月份滾計（單年）	年份並排（3年）	否	設計意圖完全不同	確認主管需求後統一	P1
+人員工時%	工時佔比表	工項類別	有（5類）	有（5類）	是		維持	P2
+人員工時%	工時佔比表	人員名稱（動態15人）	有	有	是		維持	P2
+人員工時%	工時佔比表	百分比	有	有	是		維持	P2
+人員排名	排名表	排名	有	有	是		維持	P2
+人員排名	排名表	人員	有	有	是		維持	P2
+人員排名	排名表	工時HR	有	有	是		維持	P2
+人員排名	排名表	占比%	有	有	是		維持	P2
+人員排名	排名表	案件數	有	有	是		維持	P2
+人員排名	排名表	橫向Bar圖	有	無	否	Hotel有圖表，Mall無	Mall補充	P1
+人員排名	排名表	資料來源	person-hours（5來源）	luqun top_hours（僅報修）	否	Mall排名失真	Mall改用person-hours API	P0
+
+【Sheet 4：KPI Card 比對】
+KPI名稱	hotel/overview對應模組	mall/overview對應模組	hotel計算邏輯	mall計算邏輯	是否一致	差異說明	影響	建議處理	優先級
+本期總工項	5來源adapter聚合	7來源summary聚合	各adapter.case_count加總	各summary.case_count加總	是（結構一致）		無	維持	P2
+已完成工項	5來源	7來源	各adapter.completed_count加總	各summary.completed_count加總	是（結構一致）		無	維持	P2
+本期工時合計	5來源	7來源	各adapter.work_hours加總	各summary.work_hours加總	是（結構一致）		無	維持	P2
+異常/未完成	5來源	7來源	各adapter.abnormal_count加總	各summary.abnormal_count加總	是（結構一致）		無	維持	P2
+逾期未完成	5來源	7來源	各adapter.overdue_count加總	各summary.overdue_count加總	是（結構一致）		無	維持	P2
+PPTX佔位卡名稱1	飯店主管交辦（前端）	商場主管交辦	後端PPTX用「商場主管交辦」(錯誤)	商場主管交辦	否	Hotel後端寫錯「商場」	主管看到商場字眼誤判	改為「飯店主管交辦」	P0
+PPTX佔位卡名稱2	飯店緊急事件（前端）	商場緊急事件	後端PPTX用「商場緊急事件」(錯誤)	商場緊急事件	否	Hotel後端寫錯「商場」	主管看到商場字眼誤判	改為「飯店緊急事件」	P0
+費用摘要第3格	本月費用合計	扣款專櫃（家數）	月份費用小計	扣款專櫃家數	否	業務邏輯不同	確認是否需統一	與業主確認	P1
+
+【Sheet 5：UI / 版型 / 字體比對】
+區塊	比對項目	hotel/overview	mall/overview	是否一致	差異說明	建議處理	優先級
+頁面	品牌主色	#1B3A5C	#1B3A5C	是		維持	P2
+頁面	輔色	#4BA8E8	#4BA8E8	是		維持	P2
+頁面	背景色	#f0f4f8	#f0f4f8	是		維持	P2
+PPTX按鈕	樣式	漸層紫（#667eea,#764ba2）	無按鈕渲染	否	Mall函式存在但未渲染	Mall補渲染按鈕	P1
+PPTX按鈕	位置	頁頂標題Card右側	—	否	設計差異	統一位置	P1
+來源卡	佈局	單排（flex wrap）	雙排（4+3）	否	排列方式不同	評估是否統一	P2
+來源卡	完成率進度條	綠/橘/紅三段	綠/橘/紅三段	是		維持	P2
+費用摘要	第3格內容	本月費用合計	扣款專櫃（家數）	否	設計意圖不同	與業主確認	P1
+圖表	類型	Bar+Pie+Line	Bar+Pie+Line	是		維持	P2
+圖表	趨勢線	DazhiRepair 12月趨勢	LuqunRepair 12月趨勢	是（概念相同）		維持	P2
+元件	共用Component	各自實作SourceCard	各自實作SourceCard	否	未抽共用元件	抽成共用Component	P2
+Loading	顯示方式	Spin	Spin	是		維持	P2
+Error	顯示方式	Alert	Alert	是		維持	P2
+Tab	懶載入機制	useRef loadedTabs	handleTabChange state check	是（機制相同）		維持	P2
+
+【Sheet 6：計算邏輯比對】
+模組	TAB	KPI或欄位	資料來源	日期依據	篩選條件	計算公式	是否有差異	差異說明	風險等級	建議處理
+hotel	B/C	飯店週期保養工時	PeriodicMaintenanceItem.estimated_minutes	period_month=YYYY/MM	batch在當月	estimated_minutes / 60	是	用預估工時，非實際	中	文件化口徑差異
+mall	B/C	例行維護工時	MallPeriodicMaintenanceItem.start_time/end_time	period_month LIKE YYYY/%，月份過濾	batch在當月	(end_time - start_time) / 60	是	用實際工時，非預估	中	文件化口徑差異
+hotel	B/C	飯店工務部工時	DazhiRepairCase.work_hours	completed_at	completed_at不空且在當月	work_hours（fallback: close_days）	否		低	維持
+mall	B/C	現場報修工時	LuqunRepairCase.work_hours	completed_at / occurred_at	is_excluded_flag=False	work_hours	是	Mall有排除條件，Hotel無	中	Hotel確認是否需類似排除
+hotel	B/C	IHG客房保養工時	IHGRoomMaintenanceMaster	maint_date在當月	—	每筆固定0.5 HR	N/A	Mall無此來源	低	維持
+hotel	B/C	飯店每日巡檢/保全巡檢工時	HotelDIBatch / SecurityPatrolBatch	inspection_date在當月	—	(end_time - start_time) / 60	否		低	維持
+mall	B/C	每日巡檢工時	MallFIBatch + RFInspectionBatch	inspection_date在當月	—	(end_time - start_time) / 60	否		低	維持
+mall	B/C	每日巡檢案件數	MallFIBatch	inspection_date在當月	—	實際batch數 + 缺漏場次（MALL_FI_SHEET_COUNT=5）	是	Mall有缺漏補計，Hotel無	中	Hotel確認是否需缺漏計算
+hotel	B/C	IHG案件數	IHGRoomMaintenanceMaster	maint_date在當月	—	不重複房號數（distinct room_no）	N/A		低	維持
+hotel	B/C	月份格式	所有日期欄位	YYYY/MM（零填充）	無容錯	exact match / LIKE	是	無容錯；Mall有容錯YYYY/M	中	補容錯邏輯
+hotel	D	人員工時	/hotel/person-hours (5來源)	全年	year	各來源分攤	是	Hotel5來源；Mall人員排名僅1來源	高	Mall人員排名改用/mall/person-hours
+mall	排名	人員工時排名	luqunData.top_hours（報修）	全年	occ_year	報修acceptor	是	僅統計報修人員	高	改用/mall/person-hours API
+hotel/mall	Dashboard	完成率	各來源adapter	選月	選年月	completed/total*100	否		低	維持
+
+【Sheet 7：Ragic Portal 三項設定檢查】
+檢查項目	hotel/overview	mall/overview	是否完整	是否一致	問題說明	建議處理	優先級
+settings/menu-config	需確認是否已設定路由入口	需確認是否已設定路由入口	待確認	待確認	須至/settings/menu-config確認兩個模組是否已掛載於側欄選單、群組、排序是否正確	登入後確認menu-config設定	P0確認
+settings/roles權限設定	無PermissionGuard（所有登入者可存取）	無PermissionGuard（所有登入者可存取）	是（目前設計無限制）	是	兩者均無細粒度permission key；若需限制特定角色須補上PermissionGuard	視業務需求決定是否補充permission key	P2
+settings/ragic-app-directory	未有獨立Overview登錄	未有獨立Overview登錄	是（Overview為本地DB彙整）	是	Overview為本地DB彙整，不直接對應單一Ragic表單，各子模組已各自登錄	維持現狀；各子模組已登錄即可	P2
+
+【Sheet 8：問題追蹤清單】
+編號	優先級	模組	TAB	問題類型	問題描述	影響範圍	檔案位置	建議處理	是否需修改程式	備註
+1	P0	hotel/overview	Dashboard（頁頂按鈕）	功能錯誤	PPTX匯出按鈕存在但後端無@router.post endpoint，點擊必定404	主管點擊匯出報錯	backend/app/routers/hotel_overview.py	補上@router.post("/overview/export/pptx")端點	是	_build_hotel_pptx函式已存在，只差掛接endpoint
+2	P0	hotel/overview	PPTX Slide2	命名錯誤	後端PPTX builder第760行佔位卡名稱「商場主管交辦」「商場緊急事件」出現在飯店報告	主管看到商場字眼誤判	backend/app/routers/hotel_overview.py 第760-761行	改為「飯店主管交辦」「飯店緊急事件」	是	2行修改
+3	P0	hotel/overview	API文件	說明錯誤	/hotel/daily-hours等3個endpoint的summary說「六項來源」但HOTEL_CATEGORIES只有5項	誤導API使用者	backend/app/routers/hotel_overview.py 第80/270/443行	summary改為「五項來源」	是	3行修改
+4	P0	mall/overview	人員排名	統計錯誤	人員排名僅用luqunData.top_hours（報修單一來源），PM執行人員、巡檢人員完全不計入	排名嚴重失真，PM/巡檢人員隱形	frontend/src/pages/MallMgmtDashboard/index.tsx	改用/mall/person-hours API資料，與hotel做法一致	是	需同時修改前端渲染邏輯
+5	P0	前端型別	—	型別缺失	MallPersonHoursData TypeScript介面缺少person_totals欄位，後端有回傳	後續開發者易出錯	frontend/src/api/mallOverview.ts MallPersonHoursData	補上person_totals: number[]	是	1行修改
+6	P1	mall/overview	Dashboard	功能缺失	前端handleExportPptx函式已寫好但UI未渲染匯出按鈕（死碼），後端也無endpoint	PPTX匯出功能無法使用	frontend/src/pages/MallMgmtDashboard/index.tsx; backend/app/routers/mall_overview.py	補上後端endpoint並渲染按鈕	是	_build_mall_pptx已存在
+7	P1	hotel/overview	Tab key	不一致	Tab key命名：hotel用overview/person，mall用dashboard/person_pct	程式碼維護混亂	frontend/src/pages/HotelMgmtDashboard/index.tsx	統一為dashboard/person_pct	是	需同時更新handleTabChange
+8	P1	hotel/overview	B/C	欄位缺失	後端回傳無cases_pct欄位，表格也無此欄，Mall有	主管無法比較兩邊案件比例	backend/app/routers/hotel_overview.py; frontend HotelMgmtDashboard	後端補cases_pct，前端補欄位	是
+9	P1	hotel/overview	篩選	UX不一致	Hotel篩選在頁頂；Mall各Tab有獨立篩選，操作體驗不一致	操作不直觀	frontend/src/pages/HotelMgmtDashboard/index.tsx	評估是否統一為Tab內篩選	是	改動較大
+10	P1	mall/overview	—	功能缺失	人員排名Tab無橫向Bar Chart，Hotel有	主管比較困難	frontend/src/pages/MallMgmtDashboard/index.tsx	Mall人員排名補充橫向柱狀圖	是
+11	P1	兩邊後端	—	維護性差	_parse_minutes在hotel_overview.py和mall_overview.py各複製一份	若有bug需兩邊修	backend/app/routers/hotel_overview.py; mall_overview.py	抽到app/services/time_utils.py共用	是
+12	P1	兩邊後端	—	維護性差	PPTX工具函式各自命名（_pptx_txt vs _mall_pptx_txt），邏輯完全相同	程式碼膨脹	backend/app/routers/hotel_overview.py; mall_overview.py	抽到app/services/pptx_utils.py共用	是
+13	P1	hotel/overview	D	設計不一致	每年累計為單年滾計，Mall為3年並排	主管橫向比較困難	frontend/src/pages/HotelMgmtDashboard/index.tsx	確認主管需求後統一設計	可能
+14	P1	hotel/overview	—	月份容錯	月份格式不做容錯（僅YYYY/MM），Mall容錯YYYY/M	若資料有舊格式，Hotel可能遺漏統計	backend/app/routers/hotel_overview.py	補上相同的容錯邏輯	是
+15	P2	hotel/overview	Dashboard	命名不一致	adaptDazhi回傳source_name: 工務部，但HOTEL_CATEGORIES是飯店工務部	輕微命名不一致	frontend/src/pages/HotelMgmtDashboard/index.tsx	改為飯店工務部	是
+16	P2	兩邊前端	—	程式碼重複	SourceCard元件各自實作，未抽共用React component	程式碼重複維護成本高	兩個頁面元件	抽成components/SourceCard/index.tsx	是
+17	P2	兩邊前端	—	程式碼重複	KPI聚合計算各自實作	同上	兩個頁面元件	抽成共用hook useAggregatedKpi()	是
+18	P2	—	路由	待確認	HOTEL_SOURCE_ROUTES.security路徑/hotel/security/dashboard，router設定是/security/dashboard	點擊來源卡可能跳轉失敗	frontend/src/pages/HotelMgmtDashboard/index.tsx	實測後確認修正	待確認
+19	P2	—	路由	待確認	HOTEL_SOURCE_ROUTES.daily_inspection路徑/hotel/hotel-daily-inspection/dashboard，可能有問題	同上	frontend/src/pages/HotelMgmtDashboard/index.tsx	實測後確認修正	待確認
+20	P2	兩邊	—	功能缺失	均無Excel/CSV匯出功能	主管需要時須手動複製	兩個頁面元件	評估補充	是

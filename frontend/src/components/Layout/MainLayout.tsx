@@ -146,7 +146,7 @@ export const menuItems: MenuItem[] = [
       { key: '/mall-facility-inspection/dashboard', icon: <ToolOutlined />,    label: NAV_PAGE.mallFacilityDashboard, permissionKey: 'mall_facility_inspection_view'      },
     ],
   },
-  // ── 樂群工務報修（商場管理之後）──────────────────────────────────────────
+  // ── 商場工務報修（商場管理之後）──────────────────────────────────────────
   // ⚠️  /exec-dashboard 與 /work-category-analysis 已移至頂層一階（Dashboard 正後方）
   {
     key: 'luqun-repair',
@@ -157,7 +157,7 @@ export const menuItems: MenuItem[] = [
       { key: '/luqun-repair/dashboard', icon: <DashboardOutlined />, label: NAV_PAGE.luqunRepairDashboard, permissionKey: 'luqun_repair_view' },
     ],
   },
-  // ── 大直工務部（樂群工務報修之後）──────────────────────────────────────────
+  // ── 大直工務部（商場工務報修之後）──────────────────────────────────────────
   // ⚠️  /exec-dashboard 與 /work-category-analysis 已移至頂層一階（Dashboard 正後方）
   {
     key: 'dazhi-repair',
