@@ -126,7 +126,7 @@ export const NAV_PAGE = {
   execDashboard:           '高階主管 Dashboard',
 
   // 集團工務決策駕駛艙（工務決策視角，獨立路由）
-  execWorkDashboard:       '集團工務決策駕駛艙',
+  execWorkDashboard:       '集團決策 Dashboard',
 
   // 商場工務巡檢
   mallFacilityDashboard:   '商場工務巡檢',

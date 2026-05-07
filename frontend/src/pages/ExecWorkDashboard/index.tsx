@@ -1143,7 +1143,7 @@ export default function ExecWorkDashboardPage() {
         style={{ marginBottom: 12 }}
         items={[
           { title: <><HomeOutlined /> 首頁</> },
-          { title: '集團工務決策駕駛艙' },
+          { title: '集團決策 Dashboard' },
         ]}
       />
 
@@ -1153,7 +1153,7 @@ export default function ExecWorkDashboardPage() {
         justifyContent: 'space-between', marginBottom: 16,
       }}>
         <div>
-          <Title level={4} style={{ margin: 0, color: C.primary }}>集團工務決策駕駛艙</Title>
+          <Title level={4} style={{ margin: 0, color: C.primary }}>集團決策 Dashboard</Title>
           <Text type="secondary" style={{ fontSize: 12 }}>
             {dayjs().format('YYYY 年 MM 月 DD 日')} 工務決策視角
           </Text>
