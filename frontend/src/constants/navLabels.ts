@@ -48,6 +48,7 @@
  *   2026-05-03  新增 wiki（知識庫）LLM Wiki 知識庫，含員工 SOP + 開發者 Wiki + AI 問答，route /wiki
  *   2026-05-04  新增 employeeManualExport（員工操作手冊匯出）系統設定群組，route /settings/employee-manual-export
  *   2026-05-07  新增 execWorkDashboard（集團工務決策駕駛艙）以工務決策視角為主，route /exec-work-dashboard
+ *   2026-05-10  新增 knowledgeGraph（專案知識圖譜）graphify 整合，route /settings/knowledge-graph
  */
 
 // ── 系統標題 ──────────────────────────────────────────────────────────────────
@@ -178,6 +179,7 @@ export const NAV_PAGE = {
   ragicAppDirectory:        'Ragic 對應表',
   menuConfig:               '選單管理',
   employeeManualExport:     '員工操作手冊匯出',
+  knowledgeGraph:           '專案知識圖譜',
 } as const
 
 // ── 型別輔助 ────────────────────────────────────────────────────────────────────────────

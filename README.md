@@ -2,9 +2,10 @@
 
 > 跨據點統一管理平台 — FastAPI + React + TypeScript
 
-**最後更新：2026-05-07（v1.57.97）**
+**最後更新：2026-05-10（v1.58.0）**
 
 ## 最近變更
+- v1.58.0：**專案知識圖譜** — 系統設定新增 graphify 整合頁（`/settings/knowledge-graph`）；BackgroundTask 分析整個 portal，互動式 HTML iframe 呈現，stateful 輪詢進度，系統設定 → 專案知識圖譜（system_admin only）
 - v1.57.97：**集團工務決策駕駛艙 Phase 6** — 異常提醒區（ROW 0.40）：未完成/完成率/類別集中/人員超載/單日暴增共 5 條告警規則，AlertPanel 預設展開
 - v1.57.96：**集團工務決策駕駛艙 Phase 5** — 工項類別 × 單位矩陣（ROW 0.39）：後端新增 `_build_category_source_matrix()`，含飯店/商場件數、合計、占比、工時分欄
 - v1.57.95：**集團工務決策駕駛艙 Phase 4** — 飯店 vs 商場比較表（ROW 0.38）：案件數/工時/完成/未完成/完成率/主要工項類別，零新 API 呼叫

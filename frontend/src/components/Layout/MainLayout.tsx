@@ -6,6 +6,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { Layout, Menu, Typography, Avatar, Dropdown, Space, theme } from 'antd'
 import {
+  ApartmentOutlined,
   DashboardOutlined,
   CalendarOutlined,
   HomeOutlined,
@@ -237,7 +238,8 @@ export const menuItems: MenuItem[] = [
       { key: '/settings/ragic-app-directory', icon: <DatabaseOutlined />, label: NAV_PAGE.ragicAppDirectory, permissionKey: 'settings_ragic_manage' },
       { key: '/settings/ragic-connections',   icon: <ApiOutlined />,      label: NAV_PAGE.ragicConnections,  permissionKey: 'settings_ragic_manage' },
       { key: '/settings/menu-config',              icon: <MenuOutlined />,  label: '選單管理',               permissionKey: 'settings_menu_manage' },
-      { key: '/settings/employee-manual-export',   icon: <BookOutlined />,  label: NAV_PAGE.employeeManualExport, permissionKey: 'system_admin_only' },
+      { key: '/settings/employee-manual-export',   icon: <BookOutlined />,     label: NAV_PAGE.employeeManualExport, permissionKey: 'system_admin_only' },
+      { key: '/settings/knowledge-graph',           icon: <ApartmentOutlined />, label: NAV_PAGE.knowledgeGraph,       permissionKey: 'system_admin_only' },
     ],
   },
 ]

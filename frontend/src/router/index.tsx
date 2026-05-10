@@ -45,6 +45,7 @@ import RagicConnectionsPage from '@/pages/Settings/RagicConnections'
 import RagicAppDirectoryPage from '@/pages/Settings/RagicAppDirectory'
 import MenuConfigPage        from '@/pages/Settings/MenuConfig'
 import EmployeeManualExportPage from '@/pages/Settings/EmployeeManualExport'
+import KnowledgeGraphPage        from '@/pages/Settings/KnowledgeGraph'
 import ApprovalListPage   from '@/pages/Approvals/List'
 import ApprovalNewPage    from '@/pages/Approvals/New'
 import ApprovalDetailPage from '@/pages/Approvals/Detail'
@@ -377,6 +378,11 @@ export default function AppRouter() {
           } />
           <Route path="employee-manual-export" element={
             <EmployeeManualExportPage />
+          } />
+          <Route path="knowledge-graph" element={
+            <PermissionGuard permissionKey="system_admin_only">
+              <KnowledgeGraphPage />
+            </PermissionGuard>
           } />
         </Route>
 

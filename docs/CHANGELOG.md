@@ -2,6 +2,11 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)
 
+## [1.58.0] - 2026-05-10
+
+### Added
+- **專案知識圖譜（graphify 整合）** — 系統設定新增「專案知識圖譜」頁面（`/settings/knowledge-graph`）；後端整合 graphify CLI（`pip install graphifyy`），以 BackgroundTask 非同步分析整個 portal 專案（Python AST + TypeScript + SQL + Markdown），輸出互動式 HTML 圖譜存於 `backend/static/knowledge_graph/`；FastAPI StaticFiles 掛載 `/kg-files/`；前端以 iframe 嵌入呈現，含狀態輪詢（每 3 秒）+ 進度條 + 錯誤提示；新增後端 `routers/knowledge_graph.py`（GET /status、POST /generate、GET /result）、`services/graphify_runner.py`、前端 `api/knowledgeGraph.ts`、`pages/Settings/KnowledgeGraph/index.tsx`；menu icon：ApartmentOutlined；permissionKey：`system_admin_only`
+
 ## [1.57.97] - 2026-05-07
 
 ### Added

@@ -25,6 +25,7 @@ from app.routers import (
     hotel_meter_readings,
     hotel_overview,
     ihg_room_maintenance,
+    knowledge_graph,
     mall_dashboard,
     mall_facility_inspection,
     full_building_inspection,
@@ -896,10 +897,27 @@ app.include_router(
     tags=["知識庫"],
 )
 
-# ── 正式環境：serve 前端靜態檔案 + SPA fallback（所有路由之後）─────────────────
+# ── 新增：專案知識圖譜（graphify 整合）──────────────────────────────────────
+app.include_router(
+    knowledge_graph.router,
+    prefix=f"{API_PREFIX}/knowledge-graph",
+    tags=["專案知識圖譜"],
+)
+
+# ── 知識圖譜靜態輸出目錄（無需驗證，供 iframe 直接存取）────────────────────────
 import os as _os
 from fastapi.staticfiles import StaticFiles as _StaticFiles
 from fastapi.responses import FileResponse as _FileResponse
+
+_kg_static_dir = _os.path.join(_os.path.dirname(__file__), "..", "static", "knowledge_graph")
+_os.makedirs(_kg_static_dir, exist_ok=True)
+app.mount(
+    "/kg-files",
+    _StaticFiles(directory=_kg_static_dir, html=True),
+    name="knowledge_graph_static",
+)
+
+# ── 正式環境：serve 前端靜態檔案 + SPA fallback（所有路由之後）─────────────────
 
 _frontend_dist = _os.path.join(_os.path.dirname(__file__), "..", "..", "frontend", "dist")
 if _os.path.isdir(_frontend_dist):

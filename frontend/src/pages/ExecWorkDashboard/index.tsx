@@ -725,7 +725,7 @@ function UnitComparisonTable({
 
   const rows: UnitCompRow[] = [
     {
-      key: 'hotel', unit: '飯店（大直工務）',
+      key: 'hotel', unit: '飯店（飯店工務）',
       cases:       dazhiKpi?.total      ?? 0,
       hours:       dSrc.hours,
       completed:   dazhiKpi?.completed  ?? 0,

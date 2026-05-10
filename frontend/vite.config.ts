@@ -17,12 +17,20 @@ export default defineConfig({
         target: 'http://127.0.0.1:8000',   // 明確 IPv4，避免 Windows 11 解析成 ::1
         changeOrigin: true,
       },
+      '/kg-files': {
+        target: 'http://127.0.0.1:8000',   // 知識圖譜靜態輸出目錄
+        changeOrigin: true,
+      },
     },
   },
   preview: {
     port: 4173,
     proxy: {
       '/api': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true,
+      },
+      '/kg-files': {
         target: 'http://127.0.0.1:8000',
         changeOrigin: true,
       },
