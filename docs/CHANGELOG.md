@@ -1322,6 +1322,13 @@
 
 ---
 
+## [1.39.40] - 2026-05-10
+
+### Fixed
+- **角色管理 > 儲存權限失敗** — `role_permissions.py` 的 `save_role_permissions` endpoint 實作不完整（`valid_keys` 之後無後續邏輯），FastAPI 回傳 `None` 導致序列化失敗。補完：驗證 key 合法性 → 刪除舊紀錄 → 批次插入新紀錄 → 回傳結果
+
+---
+
 ## [1.39.39] - 2026-04-28
 
 ### Security

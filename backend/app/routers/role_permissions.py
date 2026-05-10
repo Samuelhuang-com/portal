@@ -153,3 +153,21 @@ def save_role_permissions(
 
     # 驗證傳入的 key 都在已知清單中
     valid_keys = {d["key"] for d in PERMISSION_DEFINITIONS}
+    invalid = [k for k in payload.permissions if k not in valid_keys]
+    if invalid:
+        raise HTTPException(
+            status_code=422,
+            detail=f"無效的 permission_key：{', '.join(invalid)}",
+        )
+
+    # 完全取代：刪除舊的再批次插入新的
+    db.query(RolePermission).filter(RolePermission.role_id == role_id).delete()
+    for key in set(payload.permissions):          # set() 去重
+        db.add(RolePermission(role_id=role_id, permission_key=key))
+    db.commit()
+
+    return RolePermissionsOut(
+        role_id=role_id,
+        role_name=role.name,
+        permissions=sorted(set(payload.permissions)),
+    )
