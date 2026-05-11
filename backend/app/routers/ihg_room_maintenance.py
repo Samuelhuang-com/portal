@@ -224,24 +224,27 @@ async def get_stats(
     # 有執行的房間數 = distinct room_no（不受月份去重影響）
     total = len({r.room_no for r in dedup.values()})
 
-    # 以 raw_json check 欄位計算各狀態（與 /matrix 邏輯完全一致）
+    # 工時加總：對全部原始記錄加總（與 /matrix 行為一致，不去重）
+    total_work_minutes = 0.0
+    for r in all_recs:
+        try:
+            raw_data = json.loads(r.raw_json or "{}")
+            v = raw_data.get("工時計算")
+            if v not in (None, "", "None"):
+                total_work_minutes += float(v)
+        except Exception:
+            pass
+
+    # 以 raw_json check 欄位計算各狀態（與 /matrix 邏輯完全一致，使用去重後記錄）
     completed_count = 0
     abnormal_count  = 0
     pending_count   = 0
-    total_work_minutes = 0.0
 
     for r in dedup.values():
         normal_c = done_c = maint_c = unchecked_c = 0
         try:
             raw_data = json.loads(r.raw_json or "{}")
             for k, v in raw_data.items():
-                # 工時計算欄位（單位：分鐘）
-                if k == "工時計算" and v not in (None, "", "None"):
-                    try:
-                        total_work_minutes += float(v)
-                    except (ValueError, TypeError):
-                        pass
-                    continue
                 if not _is_check_field(k, v):
                     continue
                 val = v if isinstance(v, str) else ""

@@ -7,7 +7,7 @@
 """
 from datetime import datetime
 
-from sqlalchemy import Boolean, Column, DateTime, Integer, String, func
+from sqlalchemy import Boolean, Column, DateTime, Integer, String, func, Index
 
 from app.core.database import Base
 
@@ -27,6 +27,10 @@ class RFInspectionBatch(Base):
 
     synced_at = Column(DateTime, nullable=False, server_default=func.now(),
                        onupdate=func.now(), comment="最近同步時間")
+
+    __table_args__ = (
+        Index("ix_rf_batch_date", "inspection_date"),
+    )
 
     def __repr__(self):
         return f"<RFInspectionBatch {self.ragic_id} {self.inspection_date}>"
@@ -53,6 +57,11 @@ class RFInspectionItem(Base):
 
     synced_at = Column(DateTime, nullable=False, server_default=func.now(),
                        onupdate=func.now(), comment="最近同步時間")
+
+    __table_args__ = (
+        Index("ix_rf_item_batch",    "batch_ragic_id"),
+        Index("ix_rf_item_abnormal", "abnormal_flag"),
+    )
 
     def __repr__(self):
         return f"<RFInspectionItem {self.ragic_id} {self.item_name}={self.result_status}>"

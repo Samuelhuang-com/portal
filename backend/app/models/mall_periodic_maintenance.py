@@ -7,7 +7,7 @@
 """
 import json
 from datetime import datetime
-from sqlalchemy import Column, String, Integer, Text, DateTime, Boolean, func
+from sqlalchemy import Column, String, Integer, Text, DateTime, Boolean, func, Index
 from app.core.database import Base
 
 
@@ -29,6 +29,10 @@ class MallPeriodicMaintenanceBatch(Base):
     # ── Portal 同步時間 ────────────────────────────────────────────────────────
     synced_at = Column(DateTime, nullable=False, server_default=func.now(),
                        onupdate=func.now(), comment="最後同步時間")
+
+    __table_args__ = (
+        Index("ix_mall_pm_batch_month", "period_month"),
+    )
 
     def __repr__(self):
         return f"<MallPMBatch ragic_id={self.ragic_id} journal_no={self.journal_no} period_month={self.period_month}>"
@@ -75,6 +79,12 @@ class MallPeriodicMaintenanceItem(Base):
     # ── 同步時間 ───────────────────────────────────────────────────────────────
     synced_at = Column(DateTime, nullable=False, server_default=func.now(),
                        onupdate=func.now(), comment="最後同步時間")
+
+    __table_args__ = (
+        Index("ix_mall_pm_item_batch",     "batch_ragic_id"),
+        Index("ix_mall_pm_item_completed", "is_completed"),
+        Index("ix_mall_pm_item_abnormal",  "abnormal_flag"),
+    )
 
     # ── Helper ────────────────────────────────────────────────────────────────
     def get_exec_months(self) -> list[int]:

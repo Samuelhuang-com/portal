@@ -2,6 +2,11 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)
 
+## [1.58.4] - 2026-05-11
+
+### Fixed
+- **IHG 客房保養 `/stats` 工時計算修正** — 移除工時加總前的 `(room_no, maint_month)` 去重步驟，改對全部原始記錄加總 `工時計算`（分鐘），使 `hotel/overview` 顯示的 IHG 工時與 `hotel/ihg-room-maintenance` 矩陣表口徑一致（22.4 HR → 23.13 HR）；狀態計數（completed/abnormal/pending）仍使用去重後記錄，行為不變
+
 ## [1.58.3] - 2026-05-11
 
 ### Added

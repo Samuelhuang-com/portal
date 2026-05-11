@@ -16,7 +16,7 @@ DB 架構：
   pending   — 待處理 / 待修
   unchecked — 空白 / 未填
 """
-from sqlalchemy import Column, String, Integer, DateTime, Boolean, func
+from sqlalchemy import Column, String, Integer, DateTime, Boolean, func, Index
 from app.core.database import Base
 
 
@@ -37,6 +37,10 @@ class B4FInspectionBatch(Base):
     # ── 同步時間 ───────────────────────────────────────────────────────────────
     synced_at = Column(DateTime, nullable=False, server_default=func.now(),
                        onupdate=func.now(), comment="最後同步時間")
+
+    __table_args__ = (
+        Index("ix_b4f_batch_date", "inspection_date"),
+    )
 
     def __repr__(self):
         return (
@@ -68,6 +72,11 @@ class B4FInspectionItem(Base):
     # ── 同步時間 ───────────────────────────────────────────────────────────────
     synced_at = Column(DateTime, nullable=False, server_default=func.now(),
                        onupdate=func.now(), comment="最後同步時間")
+
+    __table_args__ = (
+        Index("ix_b4f_item_batch",    "batch_ragic_id"),
+        Index("ix_b4f_item_abnormal", "abnormal_flag"),
+    )
 
     def __repr__(self):
         return (

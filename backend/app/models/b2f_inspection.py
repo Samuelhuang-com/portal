@@ -5,7 +5,7 @@
   b2f_inspection_batch  — 每次巡檢場次（對應一筆 Ragic Row）
   b2f_inspection_item   — 巡檢設備項目（每個欄位 pivot 成一列）
 """
-from sqlalchemy import Boolean, Column, DateTime, Integer, String, func
+from sqlalchemy import Boolean, Column, DateTime, Integer, String, func, Index
 
 from app.core.database import Base
 
@@ -24,6 +24,10 @@ class B2FInspectionBatch(Base):
 
     synced_at = Column(DateTime, nullable=False, server_default=func.now(),
                        onupdate=func.now(), comment="最近同步時間")
+
+    __table_args__ = (
+        Index("ix_b2f_batch_date", "inspection_date"),
+    )
 
     def __repr__(self):
         return f"<B2FInspectionBatch {self.ragic_id} {self.inspection_date}>"
@@ -47,6 +51,11 @@ class B2FInspectionItem(Base):
 
     synced_at = Column(DateTime, nullable=False, server_default=func.now(),
                        onupdate=func.now(), comment="最近同步時間")
+
+    __table_args__ = (
+        Index("ix_b2f_item_batch",    "batch_ragic_id"),
+        Index("ix_b2f_item_abnormal", "abnormal_flag"),
+    )
 
     def __repr__(self):
         return f"<B2FInspectionItem {self.ragic_id} {self.item_name}={self.result_status}>"
