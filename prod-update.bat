@@ -23,7 +23,13 @@ echo.
 
 REM ── Step 1: Git Pull ─────────────────────────────────────────────────────────
 echo [1/5] 從 GitHub 拉最新版本...
+git stash
 git pull origin main
+if errorlevel 1 (
+    echo [ERROR] git pull failed, please check error message above.
+    pause
+    exit /b 1
+)
 echo.
 echo  完成: 程式碼已更新
 echo  下一步: 安裝後端套件 [2/5]
