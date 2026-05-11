@@ -2,6 +2,34 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)
 
+## [1.58.8] - 2026-05-11
+
+### Performance
+- **`GET /trend` date-range 批次查詢** — 移除 `_mall_completion_for_day` / `_security_completion_for_day` 兩個每日 per-query 函數；改為一次撈 `inspection_date >= start_str` 的所有 batch（1 次），再用 `IN` 撈全部 items（1 次）；商場 3 樓層各 2 次、保全 2 次，共 8 次 query 替代原本最多 120 次（30 天 × 4 模組）
+
+## [1.58.7] - 2026-05-11
+
+### Performance
+- **`GET /kpi` 5 分鐘 TTL cache** — 在 `dashboard.py` 加入 in-process `_kpi_cache`（`threading.Lock` + `time.monotonic`），快取命中時跳過全部 DB query；TTL = 300 秒，無需外部依賴（純 stdlib）
+
+## [1.58.6] - 2026-05-11
+
+### Fixed
+- **大直報修 Dashboard 趨勢圖完成數口徑修正** — `compute_dashboard()` 的 `trend_12m` 將 `completed` 計算從 `is_completed(c.status)`（當前狀態）改為 `_completed_in(c, y, m)`（`completed_at` 落在該月），與 4.1 報修統計 Tab 口徑對齊；消除「跨月結案」被計回報修月造成完成率虛高的問題（例：1月趨勢 completed 268 → 240，完成率 94.0% → 84.2%）
+
+## [1.58.6] - 2026-05-11
+
+### Performance
+- **`hotel/overview` N+1 修復** — `get_hotel_monthly_hours` / `get_hotel_person_hours` 中飯店週期保養的 batch→items 迴圈改用 `PeriodicMaintenanceItem.batch_ragic_id.in_(batch_ids)`，由原本 N+1 次 query 降為 2 次（1 batch + 1 items）
+- **`mall/overview` N+1 修復** — `get_mall_monthly_hours` / `get_mall_person_hours` 中 MallPM + FullBldgPM 兩組 batch→items 迴圈各改用 `IN` query，共節省 4 組 N+1 → 2 次
+
+## [1.58.5] - 2026-05-11
+
+### Performance
+- **SQLite 移出 OneDrive** — `DATABASE_URL` 改為絕對路徑 `sqlite:///C:/portal_data/portal.db`，消除 OneDrive 檔案鎖定造成的每次 DB 操作延遲
+- **補齊所有 Item/Batch 表 Index** — B1F/B2F/RF/B4F 巡檢、飯店週期保養、商場週期保養六組 model 加入 `inspection_date`、`batch_ragic_id`、`abnormal_flag`、`is_completed` 索引；新增 `create_indexes.py` 一次性遷移腳本（20 個 index）
+- **`GET /api/v1/dashboard/kpi` 改用 SQL aggregation** — `get_kpi()` 移除 `db.query(RoomMaintenanceRecord).all()` 全表掃描，改用 `func.count()`/`func.sum(case(...))`/`func.coalesce()` 直接在資料庫端彙總；庫存統計改用 `GROUP BY category` 單次查詢；重點房間改為 `.filter(incomplete > 0).order_by(...).limit(10)`
+
 ## [1.58.4] - 2026-05-11
 
 ### Fixed
@@ -3087,84 +3115,4 @@
 
 ### Added
 - 人員工時表統計：新增月份選擇器（YYYY/MM），可切換任意月份重新計算所有統計數字
-  - 預設顯示最新月，選單由新到舊排列，最新月加「（最新）」標示
-  - KPI 6 卡、排名圖、異常分析均依選定月份即時更新
-  - 「較上月」卡片動態顯示上期月份名稱與上期工時
-  - 「回到最新月」快捷按鈕（選非最新月時才顯示）
-  - 趨勢圖保留完整12月，選定月柱子以深藍色（#1B3A5C）高亮，其他月淡藍
-
----
-
-## [1.10.0] - 2026-04-11
-
-### Fixed
-- 人員工時表：修正 `useMemo` 在 early return 後呼叫違反 React Hooks 規則，導致 Tab 空白畫面
-- 人員工時表：恢復原版 pivot 表格 `StaffHoursTab`（不可修改）
-
-### Added
-- 新增 Tab 4「人員工時表統計」（獨立元件 `StaffHoursDashboard`）
-  - 主管 KPI 總覽：本月總工時 / 較上月% / 本月人均 / 最高人員 / 最低人員 / 異常波動人數
-  - 趨勢圖：近12月柱狀圖 + 橘虛線（月均） / 本月人員橫向排名圖
-  - 異常分析區：偏高+20%=紅 / 偏低-20%=橘 / 連續3月偏高=黃 / 趨近0=灰
-  - 強化明細表：即時搜尋人員 / 三段排序（合計/本月/波動） / 匯出 CSV
-  - 個人分析 Drawer：折線圖（個人 vs 全員均） + 月份格子 + 4 KPI
-- 兩個工時 Tab 共用同一份 API 資料，切換任一個均自動首次載入
-
----
-
-## [1.9.0] - 2026-04-10
-
-### Added
-- 人員工時表：新增「主管總覽」KPI 區（6 張卡）
-  - 本月總工時、較上月環比 %、本月人均工時、本月最高/最低工時人員、異常波動人數
-- 人員工時表：新增「趨勢分析圖」雙欄
-  - A. 近 12 個月柱狀圖 + 橘色虛線（12 月平均）
-  - B. 本月人員橫向排名長條圖（由低到高）
-- 人員工時表：新增「異常分析區」
-  - 工時異常偏高（+20%）→ 紅色、偏低（−20%）→ 橘色、連續3月偏高 → 黃色、趨近0 → 灰色
-  - 全員無異常時顯示綠色 Alert
-- 人員工時表：明細表加強功能
-  - 搜尋人員欄位（即時篩選）
-  - 排序切換（依合計 / 本月 / 波動幅度）
-  - 匯出 CSV 按鈕（UTF-8 BOM，可直接用 Excel 開啟）
-  - 人員欄位可點擊，開啟「個人工時分析 Drawer」
-- 人員工時表：新增「個人工時分析 Drawer」（600px）
-  - 4 張 KPI 卡（12月合計、月平均、最高月份、最低月份）
-  - 近 12 月折線圖（個人工時 vs 全員月均，含圖例）
-  - 月份格子圖（工時 vs 月均比率著色）
-- 前端新增 recharts import（BarChart/LineChart/ResponsiveContainer/ReferenceLine）
-- 前端新增 Segmented 元件（排序切換）
-
----
-
-## [1.8.0] - 2026-04-10
-
-### Added
-- 客房保養明細：新增 `GET /api/v1/room-maintenance-detail/staff-hours?months=12` 端點
-  - 依人員 × 月份 pivot 聚合，分鐘自動換算為小時（四捨五入兩位）
-  - 回傳每人月份工時、每月全員合計、全期總計
-- 客房保養明細：新增 Tab 3「人員工時表」pivot table
-  - 欄：人員（固定左側）+ 近 12 個月 + 合計（固定右側）
-  - 底部藍底「月合計」彙總列
-  - 全期總計 Tag 顯示於右上角
-  - 切換至 Tab 時自動載入（首次），可手動「重新載入」
-- 前端型別新增 `StaffHoursRow`、`StaffHoursResponse`
-- 前端 API 新增 `fetchStaffHours(months, date_from?, date_to?)`
-
----
-
-## [1.7.0] - 2026-04-10
-
-### Added
-- 客房保養明細：`RoomHistoryDrawer` 月曆格子可點擊，展開顯示該月保養明細
-  - 點擊月份格 → 在「保養記錄」上方插入該月明細卡片（保養日期 / 人員 / 工時 + 12 項 X/V 標籤）
-  - 再次點擊同一月份或按「關閉」可收合
-  - 月曆圖例右側新增提示文字「點擊月份可查看保養明細」
-
----
-
-## [1.6.0] - 2026-04-10
-
-### Added
-- 客房保養明細：`GET /api/v1/room-maintenance-detail/room-history/{room_no}?months=12` 端點
-  - 回傳近 N 個月月曆摘要（每月 serviced/record_
+  - 預設顯示最新月，選單由新到舊排列，最新月加

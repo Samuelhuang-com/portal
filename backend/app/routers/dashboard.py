@@ -10,13 +10,16 @@ Prefix: /api/v1/dashboard
   GET /trend          — 近 N 日三模組完成率折線資料（新增）
   GET /closure-stats  — 異常結案漏斗統計（新增）
 """
+import time
 from collections import defaultdict
 from datetime import date, datetime, timezone, timedelta
-from app.core.time import twnow
+from threading import Lock
 from typing import Optional
 
+from app.core.time import twnow
+
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import func
+from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -44,6 +47,26 @@ STATUS_COMPLETED      = "已完成檢視及保養"
 STATUS_NOT_SCHEDULED  = "非本月排程"
 STATUS_IN_PROGRESS    = "進行中"
 STATUS_PENDING        = "待排程"
+
+# ── KPI TTL Cache（模組級，in-process，5 分鐘有效）─────────────────────────────
+_KPI_TTL_SECS  = 300          # 5 分鐘
+_kpi_cache: dict = {}         # {"data": {...}, "expires_at": float}
+_kpi_cache_lock = Lock()
+
+
+def _kpi_cache_get() -> dict | None:
+    """回傳快取資料（仍在 TTL 內），否則回傳 None。"""
+    with _kpi_cache_lock:
+        if _kpi_cache.get("expires_at", 0.0) > time.monotonic():
+            return _kpi_cache["data"]
+    return None
+
+
+def _kpi_cache_set(data: dict) -> None:
+    """寫入快取，TTL = _KPI_TTL_SECS 秒。"""
+    with _kpi_cache_lock:
+        _kpi_cache["data"] = data
+        _kpi_cache["expires_at"] = time.monotonic() + _KPI_TTL_SECS
 
 
 @router.get("/summary")
@@ -83,43 +106,73 @@ def get_kpi(
     """
     高階主管 KPI 總覽
     回傳：客房保養統計、庫存摘要、系統同步狀態
+    快取：5 分鐘 in-process TTL（_KPI_TTL_SECS）
     """
+    # ── 快取命中：直接回傳，跳過所有 DB query ─────────────────────────────────
+    _cached = _kpi_cache_get()
+    if _cached is not None:
+        return _cached
 
-    # ── 客房保養 ─────────────────────────────────────────────────────────────
-    all_rooms = db.query(RoomMaintenanceRecord).all()
-    total_rooms = len(all_rooms)
+    # ── 客房保養：SQL aggregation，不載入全表 ─────────────────────────────────
+    room_stats = db.query(
+        func.count().label("total"),
+        func.sum(case(
+            (RoomMaintenanceRecord.work_item.contains(STATUS_COMPLETED), 1), else_=0
+        )).label("completed"),
+        func.sum(case(
+            (RoomMaintenanceRecord.work_item.contains(STATUS_IN_PROGRESS), 1), else_=0
+        )).label("in_progress"),
+        func.sum(case(
+            (RoomMaintenanceRecord.work_item.contains(STATUS_NOT_SCHEDULED), 1), else_=0
+        )).label("not_scheduled"),
+        func.sum(case(
+            (RoomMaintenanceRecord.work_item.contains(STATUS_PENDING), 1), else_=0
+        )).label("pending"),
+        func.sum(func.coalesce(RoomMaintenanceRecord.incomplete, 0)).label("total_incomplete"),
+    ).one()
 
-    completed     = sum(1 for r in all_rooms if STATUS_COMPLETED     in (r.work_item or ""))
-    in_progress   = sum(1 for r in all_rooms if STATUS_IN_PROGRESS   in (r.work_item or ""))
-    not_scheduled = sum(1 for r in all_rooms if STATUS_NOT_SCHEDULED in (r.work_item or ""))
-    pending       = sum(1 for r in all_rooms if STATUS_PENDING       in (r.work_item or ""))
-    total_incomplete = sum(r.incomplete or 0 for r in all_rooms)
+    total_rooms      = room_stats.total          or 0
+    completed        = int(room_stats.completed       or 0)
+    in_progress      = int(room_stats.in_progress     or 0)
+    not_scheduled    = int(room_stats.not_scheduled   or 0)
+    pending          = int(room_stats.pending         or 0)
+    total_incomplete = int(room_stats.total_incomplete or 0)
     completion_rate  = round(completed / total_rooms * 100, 1) if total_rooms > 0 else 0.0
 
-    # 需重點關注的房間（incomplete > 0，依未完成數降冪，取前 10）
-    focus_rooms = sorted(
-        [r for r in all_rooms if (r.incomplete or 0) > 0],
-        key=lambda r: r.incomplete,
-        reverse=True,
-    )[:10]
-
-    # ── 庫存 ─────────────────────────────────────────────────────────────────
-    all_inventory = db.query(InventoryRecord).all()
-    total_skus = len(all_inventory)
-    total_quantity = sum(r.quantity or 0 for r in all_inventory)
-
-    # 依類別統計數量
-    category_map: dict[str, dict] = {}
-    for r in all_inventory:
-        cat = r.category or "未分類"
-        if cat not in category_map:
-            category_map[cat] = {"name": cat, "skus": 0, "quantity": 0}
-        category_map[cat]["skus"] += 1
-        category_map[cat]["quantity"] += r.quantity or 0
-
-    category_distribution = sorted(
-        category_map.values(), key=lambda x: x["quantity"], reverse=True
+    # 需重點關注的房間（incomplete > 0，依未完成數降冪，取前 10，只撈必要欄位）
+    focus_rooms = (
+        db.query(RoomMaintenanceRecord)
+        .filter(RoomMaintenanceRecord.incomplete > 0)
+        .order_by(RoomMaintenanceRecord.incomplete.desc())
+        .limit(10)
+        .all()
     )
+
+    # ── 庫存：SQL aggregation + GROUP BY category ─────────────────────────────
+    inv_totals = db.query(
+        func.count().label("total_skus"),
+        func.sum(func.coalesce(InventoryRecord.quantity, 0)).label("total_quantity"),
+    ).one()
+
+    total_skus     = inv_totals.total_skus    or 0
+    total_quantity = int(inv_totals.total_quantity or 0)
+
+    # 依類別統計（資料庫直接 GROUP BY，不在 Python 端做）
+    cat_rows = (
+        db.query(
+            func.coalesce(InventoryRecord.category, "未分類").label("name"),
+            func.count().label("skus"),
+            func.sum(func.coalesce(InventoryRecord.quantity, 0)).label("quantity"),
+        )
+        .group_by(InventoryRecord.category)
+        .order_by(func.sum(func.coalesce(InventoryRecord.quantity, 0)).desc())
+        .all()
+    )
+
+    category_distribution = [
+        {"name": row.name, "skus": row.skus, "quantity": int(row.quantity or 0)}
+        for row in cat_rows
+    ]
 
     # ── 系統同步狀態 ──────────────────────────────────────────────────────────
     recent_syncs = (
@@ -134,7 +187,7 @@ def get_kpi(
     success_count = sum(1 for s in recent_syncs if s.status == "success")
     sync_success_rate = round(success_count / total_syncs * 100, 1) if total_syncs > 0 else 0.0
 
-    return {
+    _result = {
         "room_maintenance": {
             "total": total_rooms,
             "completed": completed,
@@ -182,6 +235,9 @@ def get_kpi(
             ],
         },
     }
+    # ── 寫入快取（TTL 5 分鐘），後續相同請求直接命中 ──────────────────────────
+    _kpi_cache_set(_result)
+    return _result
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -416,48 +472,6 @@ _MALL_FLOOR_CONFIGS = [
 ]
 
 
-def _mall_completion_for_day(db: Session, d_str: str) -> tuple[float, int, bool]:
-    """回傳商場當日（完成率, 異常數, 有資料）"""
-    total = checked = abnormal = 0
-    for _, BatchModel, ItemModel in _MALL_FLOOR_CONFIGS:
-        batches = db.query(BatchModel).filter(
-            BatchModel.inspection_date == d_str
-        ).all()
-        for b in batches:
-            items = db.query(ItemModel).filter(
-                ItemModel.batch_ragic_id == b.ragic_id
-            ).all()
-            for it in items:
-                total += 1
-                if it.result_status in ("normal", "abnormal", "pending"):
-                    checked += 1
-                if it.result_status in ("abnormal", "pending"):
-                    abnormal += 1
-    rate = round(checked / total * 100, 1) if total > 0 else 0.0
-    return rate, abnormal, total > 0
-
-
-def _security_completion_for_day(db: Session, d_str: str) -> tuple[float, int, bool]:
-    """回傳保全當日（完成率, 異常數, 有資料）"""
-    total = checked = abnormal = 0
-    batches = db.query(SecurityPatrolBatch).filter(
-        SecurityPatrolBatch.inspection_date == d_str
-    ).all()
-    for b in batches:
-        items = db.query(SecurityPatrolItem).filter(
-            SecurityPatrolItem.batch_ragic_id == b.ragic_id,
-            SecurityPatrolItem.is_note == False,  # noqa: E712
-        ).all()
-        for it in items:
-            total += 1
-            if it.result_status in ("normal", "abnormal", "pending"):
-                checked += 1
-            if it.result_status in ("abnormal", "pending"):
-                abnormal += 1
-    rate = round(checked / total * 100, 1) if total > 0 else 0.0
-    return rate, abnormal, total > 0
-
-
 @router.get("/trend")
 def get_trend(
     days: int = Query(7, ge=3, le=30, description="趨勢天數，3~30"),
@@ -467,49 +481,108 @@ def get_trend(
     """
     近 N 日三模組完成率折線資料。
     回傳：商場巡檢 / 保全巡檢 / 客房保養（依 inspect_datetime 統計）
+
+    查詢策略：一次撈 date-range 內所有 batch + items，Python 端依日期分組，
+    避免原本每天各發一次 query（最多 30 天 × 4 模組 = 120 次）。
     """
     today = date.today()
+    start_str = (today - timedelta(days=days - 1)).strftime("%Y/%m/%d")
 
-    # 客房：依 inspect_datetime 日期前綴預分組（避免 N+1）
+    # ── 商場巡檢：3 樓層各 2 次 query，彙整為 {date: {total, checked, abnormal}} ─
+    _DayStats = dict  # {"total": int, "checked": int, "abnormal": int}
+    mall_by_date: dict[str, _DayStats] = defaultdict(
+        lambda: {"total": 0, "checked": 0, "abnormal": 0}
+    )
+    for _, BatchModel, ItemModel in _MALL_FLOOR_CONFIGS:
+        _batches = (
+            db.query(BatchModel)
+            .filter(BatchModel.inspection_date >= start_str)
+            .all()
+        )
+        _batch_date: dict[str, str] = {b.ragic_id: b.inspection_date for b in _batches}
+        if _batch_date:
+            for it in (
+                db.query(ItemModel)
+                .filter(ItemModel.batch_ragic_id.in_(_batch_date.keys()))
+                .all()
+            ):
+                ds = _batch_date.get(it.batch_ragic_id)
+                if ds is None:
+                    continue
+                mall_by_date[ds]["total"] += 1
+                if it.result_status in ("normal", "abnormal", "pending"):
+                    mall_by_date[ds]["checked"] += 1
+                if it.result_status in ("abnormal", "pending"):
+                    mall_by_date[ds]["abnormal"] += 1
+
+    # ── 保全巡檢：2 次 query，彙整為 {date: {total, checked, abnormal}} ────────
+    sec_by_date: dict[str, _DayStats] = defaultdict(
+        lambda: {"total": 0, "checked": 0, "abnormal": 0}
+    )
+    _sec_batches = (
+        db.query(SecurityPatrolBatch)
+        .filter(SecurityPatrolBatch.inspection_date >= start_str)
+        .all()
+    )
+    _sec_batch_date: dict[str, str] = {b.ragic_id: b.inspection_date for b in _sec_batches}
+    if _sec_batch_date:
+        for it in (
+            db.query(SecurityPatrolItem)
+            .filter(
+                SecurityPatrolItem.batch_ragic_id.in_(_sec_batch_date.keys()),
+                SecurityPatrolItem.is_note == False,  # noqa: E712
+            )
+            .all()
+        ):
+            ds = _sec_batch_date.get(it.batch_ragic_id)
+            if ds is None:
+                continue
+            sec_by_date[ds]["total"] += 1
+            if it.result_status in ("normal", "abnormal", "pending"):
+                sec_by_date[ds]["checked"] += 1
+            if it.result_status in ("abnormal", "pending"):
+                sec_by_date[ds]["abnormal"] += 1
+
+    # ── 客房保養：依 inspect_datetime 日期前綴預分組 ──────────────────────────
     all_rooms = db.query(RoomMaintenanceRecord).all()
     hotel_by_date: dict[str, list] = defaultdict(list)
     for r in all_rooms:
         if r.inspect_datetime:
-            d_key = r.inspect_datetime[:10]  # "YYYY/MM/DD" or "YYYY-MM-DD"
-            hotel_by_date[d_key].append(r)
+            hotel_by_date[r.inspect_datetime[:10]].append(r)
 
+    # ── 組裝趨勢（純 Python，無額外 DB query）────────────────────────────────
     trend = []
     for i in range(days - 1, -1, -1):
-        d     = today - timedelta(days=i)
-        d_str = d.strftime("%Y/%m/%d")
+        d_str = (today - timedelta(days=i)).strftime("%Y/%m/%d")
 
-        # 商場
-        mall_rate, mall_abn, mall_has = _mall_completion_for_day(db, d_str)
-        # 保全
-        sec_rate, sec_abn, sec_has = _security_completion_for_day(db, d_str)
-        # 客房
+        ms = mall_by_date[d_str]
+        mall_has  = ms["total"] > 0
+        mall_rate = round(ms["checked"] / ms["total"] * 100, 1) if mall_has else 0.0
+
+        ss = sec_by_date[d_str]
+        sec_has  = ss["total"] > 0
+        sec_rate = round(ss["checked"] / ss["total"] * 100, 1) if sec_has else 0.0
+
         hotel_rooms_today = hotel_by_date.get(d_str, [])
         hotel_total     = len(hotel_rooms_today)
         hotel_completed = sum(
-            1 for r in hotel_rooms_today
-            if STATUS_COMPLETED in (r.work_item or "")
+            1 for r in hotel_rooms_today if STATUS_COMPLETED in (r.work_item or "")
         )
         hotel_rate = round(hotel_completed / hotel_total * 100, 1) if hotel_total > 0 else 0.0
-        hotel_abn  = sum(1 for r in hotel_rooms_today if (r.incomplete or 0) > 0)
 
         trend.append({
-            "date":               d_str,
-            "mall_completion":    mall_rate,
-            "mall_abnormal":      mall_abn,
-            "mall_has_data":      mall_has,
+            "date":                d_str,
+            "mall_completion":     mall_rate,
+            "mall_abnormal":       ms["abnormal"],
+            "mall_has_data":       mall_has,
             "security_completion": sec_rate,
-            "security_abnormal":   sec_abn,
+            "security_abnormal":   ss["abnormal"],
             "security_has_data":   sec_has,
-            "hotel_completion":   hotel_rate,
-            "hotel_completed":    hotel_completed,
-            "hotel_total":        hotel_total,
-            "hotel_abnormal":     hotel_abn,
-            "hotel_has_data":     hotel_total > 0,
+            "hotel_completion":    hotel_rate,
+            "hotel_completed":     hotel_completed,
+            "hotel_total":         hotel_total,
+            "hotel_abnormal":      sum(1 for r in hotel_rooms_today if (r.incomplete or 0) > 0),
+            "hotel_has_data":      hotel_total > 0,
         })
 
     return {"trend": trend, "days": days}

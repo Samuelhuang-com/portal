@@ -288,22 +288,31 @@ def get_hotel_monthly_hours(
     year_prefix = f"{year}/"
 
     # ── ① 飯店週期保養 ─────────────────────────────────────────────────────────
-    for batch in (
+    # 先撈 batch（1 次），再用 IN 一次撈全部 items（1 次），避免 N+1
+    _pm_batches = (
         db.query(PeriodicMaintenanceBatch)
         .filter(PeriodicMaintenanceBatch.period_month.like(f"{year_prefix}%"))
         .all()
-    ):
+    )
+    _pm_batch_month: dict[str, int] = {}
+    for _b in _pm_batches:
         try:
-            m = int(batch.period_month.split("/")[1])
+            _m = int(_b.period_month.split("/")[1])
+            if 1 <= _m <= 12:
+                _pm_batch_month[_b.ragic_id] = _m
         except (ValueError, IndexError, AttributeError):
-            continue
-        if not (1 <= m <= 12):
-            continue
-        for item in (
+            pass
+
+    if _pm_batch_month:
+        _pm_items = (
             db.query(PeriodicMaintenanceItem)
-            .filter(PeriodicMaintenanceItem.batch_ragic_id == batch.ragic_id)
+            .filter(PeriodicMaintenanceItem.batch_ragic_id.in_(_pm_batch_month.keys()))
             .all()
-        ):
+        )
+        for item in _pm_items:
+            m = _pm_batch_month.get(item.batch_ragic_id)
+            if m is None:
+                continue
             bucket["飯店週期保養"][m] += (item.estimated_minutes or 0) / 60
             # 案件數：複製 hotel/periodic-maintenance TAB=每月維護
             # '本月週期保養項目數' 邏輯（frequency=monthly + exec_months + full_date 在本月）
@@ -474,14 +483,17 @@ def get_hotel_person_hours(
     ph: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
 
     # ── ① 飯店週期保養：executor_name（可多人空格分隔）────────────────────────────
-    for batch in (
+    # 先撈 batch（1 次），再用 IN 一次撈全部 items（1 次），避免 N+1
+    _pm_batch_ids = [
+        b.ragic_id for b in
         db.query(PeriodicMaintenanceBatch)
         .filter(PeriodicMaintenanceBatch.period_month.like(f"{year_prefix}%"))
         .all()
-    ):
+    ]
+    if _pm_batch_ids:
         for item in (
             db.query(PeriodicMaintenanceItem)
-            .filter(PeriodicMaintenanceItem.batch_ragic_id == batch.ragic_id)
+            .filter(PeriodicMaintenanceItem.batch_ragic_id.in_(_pm_batch_ids))
             .all()
         ):
             names = [
@@ -1082,6 +1094,7 @@ def export_hotel_overview_pptx(
     body 由前端帶入已計算好的 KPI 資料（主管摘要 / 各來源狀態 / 費用摘要），
     Slide 3-5 工時資料由後端自行查 DB。
     """
+    daily   = get_hotel_daily_hours(year, month, db)
     daily   = get_hotel_daily_hours(year, month, db)
     monthly = get_hotel_monthly_hours(year, db)
     persons = get_hotel_person_hours(year, db)

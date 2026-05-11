@@ -259,39 +259,55 @@ def get_mall_monthly_hours(
                 bucket["現場報修"][c.occ_month] += c.work_hours
 
     # ── ④ 例行維護：mall_pm ──────────────────────────────────────────────────
-    for batch in (
+    # 先撈 batch（1 次），再用 IN 一次撈全部 items（1 次），避免 N+1
+    _mall_pm_batches = (
         db.query(MallPeriodicMaintenanceBatch)
         .filter(MallPeriodicMaintenanceBatch.period_month.like(f"{year_prefix}%"))
         .all()
-    ):
+    )
+    _mall_pm_batch_month: dict[str, int] = {}
+    for _b in _mall_pm_batches:
         try:
-            m = int(batch.period_month.split("/")[1])
+            _m = int(_b.period_month.split("/")[1])
+            if 1 <= _m <= 12:
+                _mall_pm_batch_month[_b.ragic_id] = _m
         except (ValueError, IndexError, AttributeError):
-            continue
-        if not (1 <= m <= 12):
-            continue
+            pass
+
+    if _mall_pm_batch_month:
         for item in db.query(MallPeriodicMaintenanceItem).filter(
-            MallPeriodicMaintenanceItem.batch_ragic_id == batch.ragic_id
+            MallPeriodicMaintenanceItem.batch_ragic_id.in_(_mall_pm_batch_month.keys())
         ).all():
+            m = _mall_pm_batch_month.get(item.batch_ragic_id)
+            if m is None:
+                continue
             mins = _parse_minutes(item.start_time or "", item.end_time or "")
             case_bucket["例行維護"][m] += 1
             bucket["例行維護"][m] += mins / 60
 
     # ── ④ 例行維護：full_bldg_pm ─────────────────────────────────────────────
-    for batch in (
+    # 先撈 batch（1 次），再用 IN 一次撈全部 items（1 次），避免 N+1
+    _fbldg_pm_batches = (
         db.query(FullBldgPMBatch)
         .filter(FullBldgPMBatch.period_month.like(f"{year_prefix}%"))
         .all()
-    ):
+    )
+    _fbldg_pm_batch_month: dict[str, int] = {}
+    for _b in _fbldg_pm_batches:
         try:
-            m = int(batch.period_month.split("/")[1])
+            _m = int(_b.period_month.split("/")[1])
+            if 1 <= _m <= 12:
+                _fbldg_pm_batch_month[_b.ragic_id] = _m
         except (ValueError, IndexError, AttributeError):
-            continue
-        if not (1 <= m <= 12):
-            continue
+            pass
+
+    if _fbldg_pm_batch_month:
         for item in db.query(FullBldgPMItem).filter(
-            FullBldgPMItem.batch_ragic_id == batch.ragic_id
+            FullBldgPMItem.batch_ragic_id.in_(_fbldg_pm_batch_month.keys())
         ).all():
+            m = _fbldg_pm_batch_month.get(item.batch_ragic_id)
+            if m is None:
+                continue
             mins = _parse_minutes(item.start_time or "", item.end_time or "")
             case_bucket["例行維護"][m] += 1
             bucket["例行維護"][m] += mins / 60
@@ -393,13 +409,16 @@ def get_mall_person_hours(
             ph[person]["現場報修"] += c.work_hours
 
     # ── ④ 例行維護：executor_name（可多人空格分隔）──────────────────────────────
-    for batch in (
+    # 先撈 batch（1 次），再用 IN 一次撈全部 items（1 次），避免 N+1
+    _mall_pm_ids = [
+        b.ragic_id for b in
         db.query(MallPeriodicMaintenanceBatch)
         .filter(MallPeriodicMaintenanceBatch.period_month.like(f"{year_prefix}%"))
         .all()
-    ):
+    ]
+    if _mall_pm_ids:
         for item in db.query(MallPeriodicMaintenanceItem).filter(
-            MallPeriodicMaintenanceItem.batch_ragic_id == batch.ragic_id
+            MallPeriodicMaintenanceItem.batch_ragic_id.in_(_mall_pm_ids)
         ).all():
             names = [n.strip() for n in (item.executor_name or "").split() if n.strip() and n.strip() != "未指定"]
             mins = _parse_minutes(item.start_time or "", item.end_time or "")
@@ -408,13 +427,15 @@ def get_mall_person_hours(
                 for n in names:
                     ph[n]["例行維護"] += share
 
-    for batch in (
+    _fbldg_pm_ids = [
+        b.ragic_id for b in
         db.query(FullBldgPMBatch)
         .filter(FullBldgPMBatch.period_month.like(f"{year_prefix}%"))
         .all()
-    ):
+    ]
+    if _fbldg_pm_ids:
         for item in db.query(FullBldgPMItem).filter(
-            FullBldgPMItem.batch_ragic_id == batch.ragic_id
+            FullBldgPMItem.batch_ragic_id.in_(_fbldg_pm_ids)
         ).all():
             names = [n.strip() for n in (item.executor_name or "").split() if n.strip() and n.strip() != "未指定"]
             mins = _parse_minutes(item.start_time or "", item.end_time or "")

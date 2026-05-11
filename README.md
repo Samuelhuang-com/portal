@@ -2,9 +2,14 @@
 
 > 跨據點統一管理平台 — FastAPI + React + TypeScript
 
-**最後更新：2026-05-11（v1.58.4）**
+**最後更新：2026-05-11（v1.58.8）**
 
 ## 最近變更
+- v1.58.6：**大直報修 Dashboard 趨勢圖口徑修正** — `trend_12m` completed 改用 `_completed_in`（`completed_at` 落在該月），與 4.1 報修統計一致；消除跨月結案造成完成率虛高（1月 94.0% → 84.2%）
+- v1.58.8：**`GET /trend` date-range 批次查詢** — 商場/保全巡檢改為整個日期區間一次撈，120 次 query → 8 次
+- v1.58.7：**`GET /kpi` 5 分鐘 TTL cache** — in-process `_kpi_cache`（stdlib only），命中時零 DB query
+- v1.58.6：**hotel/mall N+1 修復** — `hotel/overview` 飯店週期保養、`mall/overview` MallPM + FullBldgPM 共 4 組 batch→items 迴圈改用 `IN` query，由 N+1 降為各 2 次
+- v1.58.5：**效能優化三項** — ① SQLite 移出 OneDrive（消除檔案鎖定延遲）；② 補齊 B1F/B2F/RF/B4F/PM/MallPM 共 20 個 DB Index；③ `GET /kpi` 改用 SQL aggregation（移除全表掃描）
 - v1.58.4：**IHG 工時計算修正** — `/stats` 工時加總改對全部原始記錄（不去重），與矩陣表口徑一致（22.4 → 23.13 HR）
 - v1.58.3：**IHG 客房保養表明細 三項強化** — ① 樓層快選按鈕（全部/5F-10F，取代下拉選單）；② 全房號顯示（59 間正規房，無資料顯示「未執行」，完成率分母含未執行）；③ 點擊格子開啟保養明細右側 Drawer
 - v1.58.2：**IHG 客房保養閃退修復** — 修正前端 JSX 末端截斷（6 行缺失）；`matrixTabContent` 抽出解決 TSC TS17008；`destroyInactiveTabPane` 隔離 TAB；`SECTION_VALUE_CFG` fallback
@@ -229,57 +234,4 @@
 - v1.13.0：保養統計 Tab（Phase 1+2+3）— 完成率趨勢雙軸圖、異常項目排行、樓層分析、月份對比、高風險房間三分類；同步產出設計規格書
 - v1.12.0：導覽文字 SSOT（navLabels.ts）；人員工時表統計月份選擇器
 - v1.9：人員工時表 — 主管總覽 KPI + 趨勢/排名雙圖 + 異常分析 + 搜尋/排序/匯出/個人 Drawer
-- v1.8：客房保養明細 — 新增 Tab「人員工時表」（近 12 月 pivot，分鐘→小時，月合計列）
-- v1.7：客房保養明細 — 歷史 Drawer 月曆格可點擊，展開該月保養人員/工時/12 項 X‑V 明細
-- v1.6：客房保養明細 — 房間保養歷史追蹤 Drawer（月曆摘要 × 連續未保養月數 × 記錄時間軸），房號可點擊
-- v1.5：客房保養明細強化 — Room 主檔（5F–10F 共 170 間）、日期區間聚合、工時合計、未保養灰底、KPI 可點擊篩選
-- v1.4：新增客房保養明細模組（ap12.ragic.com/soutlet001/report2/2）— 明細列表 + 總表（12 項 X/V 聚合）
-- v1.3：Dashboard 正式上線 — KPI 卡片、工作狀態圓餅圖、庫存類別長條圖、重點房間 & 同步紀錄表
-- v1.2：新增倉庫庫存模組（Ragic `ragicinventory/20008` → SQLite 同步）、KPI 卡 + 篩選表格頁面
-- v1.1：客房保養同步架構（Ragic → SQLite）、圖表儀表板、未檢查項目附表
-- 詳見 [CHANGELOG](docs/CHANGELOG.md)
-
-## 架構
-
-```
-portal/
-├── backend/    # FastAPI + SQLAlchemy + Casbin
-└── frontend/   # React 18 + TypeScript + Ant Design 5
-```
-
-## 快速啟動（開發模式）
-
-### 1. 後端
-
-```bash
-cd backend
-
-# 安裝依賴
-pip install -r requirements.txt
-
-# 初始化資料庫 + 種子資料
-python init_db.py
-
-# 啟動開發伺服器
-uvicorn app.main:app --reload --port 8000
-```
-
-API 文件：http://localhost:8000/docs
-
-### 2. 前端
-
-```bash
-cd frontend
-
-# 安裝依賴
-npm install
-
-# 啟動開發伺服器
-npm run dev
-```
-
-入口：http://localhost:5173
-
----
-
-##
+- v1.8：客房保養明細 — 新增 Tab「人員�

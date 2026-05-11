@@ -719,6 +719,8 @@ def compute_dashboard(
 
     # ── 近 12 個月趨勢 ────────────────────────────────────────────────────────
     # 趨勢以「報修月份」(occ_year/occ_month) 為準，反映各月實際新增報修件數
+    # completed 口徑與 4.1 報修統計一致：_completed_in（completed_at 落在該月）
+    # 避免「跨月結案」被計入報修月，造成完成率虛高
     trend_12m = []
     for m_offset in range(11, -1, -1):
         y, m = _month_offset(year, month if month else datetime.now().month, -m_offset)
@@ -728,7 +730,7 @@ def compute_dashboard(
             "year":      y,
             "month":     m,
             "total":     len(mc),
-            "completed": sum(1 for c in mc if is_completed(c.status)),
+            "completed": sum(1 for c in mc if _completed_in(c, y, m)),
         })
 
     # ── 類型分布（口徑與工務部 Tab 一致：filter_cases _stat_year/_stat_month）──
