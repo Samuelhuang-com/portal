@@ -78,7 +78,37 @@ export interface IHGRecord {
   details: IHGDetail[]
 }
 
-// ── 清單 API 回傳 ─────────────────────────────────────────────────────────────
+// ── 區段矩陣 API ──────────────────────────────────────────────────────────────
+export type SectionValue = 'V' | '\u25b2' | 'X'
+
+export interface SectionRoom {
+  room_no: string
+  floor: string
+  maint_date: string
+  ragic_id: string
+  sections: Record<string, SectionValue>
+  has_data: boolean
+}
+
+export interface CategoryStat {
+  v_count: number
+  triangle_count: number
+  x_count: number
+  reported: number
+  rate: number   // V 數 / total_rooms * 100
+}
+
+export interface SectionMatrixResponse {
+  year: string
+  month: string
+
+  categories: string[]
+  rooms: SectionRoom[]
+  category_stats: Record<string, CategoryStat>
+  total_rooms: number
+}
+
+// ── 清單 API 回傳 ─────────────────────────────────────────────────
 export interface IHGListItem {
   ragic_id: string
   room_no: string

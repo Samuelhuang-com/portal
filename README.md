@@ -2,9 +2,12 @@
 
 > 跨據點統一管理平台 — FastAPI + React + TypeScript
 
-**最後更新：2026-05-10（v1.58.0）**
+**最後更新：2026-05-11（v1.58.3）**
 
 ## 最近變更
+- v1.58.3：**IHG 客房保養表明細 三項強化** — ① 樓層快選按鈕（全部/5F-10F，取代下拉選單）；② 全房號顯示（59 間正規房，無資料顯示「未執行」，完成率分母含未執行）；③ 點擊格子開啟保養明細右側 Drawer
+- v1.58.2：**IHG 客房保養閃退修復** — 修正前端 JSX 末端截斷（6 行缺失）；`matrixTabContent` 抽出解決 TSC TS17008；`destroyInactiveTabPane` 隔離 TAB；`SECTION_VALUE_CFG` fallback
+- v1.58.1：**IHG 客房保養表明細 TAB** — 新增 `ihg_rm_section` 表（每月×每房×類別 V/▲/X）；Ragic 同步時自動拆出 12 個區段欄位；新 API `GET /section-matrix`；前端新增「客房保養表明細」TAB，彩色矩陣 + 完成率統計列
 - v1.58.0：**專案知識圖譜** — 系統設定新增 graphify 整合頁（`/settings/knowledge-graph`）；BackgroundTask 分析整個 portal，互動式 HTML iframe 呈現，stateful 輪詢進度，系統設定 → 專案知識圖譜（system_admin only）
 - v1.57.97：**集團工務決策駕駛艙 Phase 6** — 異常提醒區（ROW 0.40）：未完成/完成率/類別集中/人員超載/單日暴增共 5 條告警規則，AlertPanel 預設展開
 - v1.57.96：**集團工務決策駕駛艙 Phase 5** — 工項類別 × 單位矩陣（ROW 0.39）：後端新增 `_build_category_source_matrix()`，含飯店/商場件數、合計、占比、工時分欄

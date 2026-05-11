@@ -2,17 +2,19 @@
 IHG 客房保養 SQLAlchemy ORM Models
 
 資料表：
-  ihg_rm_master  — 保養主表（對應 Ragic Sheet periodic-maintenance/4 每筆記錄）
-  ihg_rm_detail  — 保養明細（每筆主表內的子表格列）
+  ihg_rm_master   — 保養主表（對應 Ragic Sheet periodic-maintenance/4 每筆記錄）
+  ihg_rm_detail   — 保養明細（每筆主表內的子表格列）
+  ihg_rm_section  — 保養區段摘要（V/▲/X，每月×每房×每類別一列，供統計分析）
 
 設計原則：
   - raw_json 保留完整 Ragic 原始 JSON，欄位 mapping 可隨時補正
   - 同步後由 Portal 讀本地 DB，不重複打 Ragic
   - floor 由 room_no 前 1~2 位自動推導（如 501 → 5F, 1001 → 10F）
+  - section 資料於 Ragic 同步時由 raw_json 自動拆出，供月報矩陣查詢
 """
 import json
 from datetime import datetime
-from sqlalchemy import Column, String, Integer, Text, DateTime, Boolean, func
+from sqlalchemy import Column, String, Integer, Text, DateTime, Boolean, Index, func
 from app.core.database import Base
 
 
@@ -98,4 +100,46 @@ class IHGRoomMaintenanceDetail(Base):
         return (
             f"<IHGRMDetail ragic_id={self.ragic_id} "
             f"seq_no={self.seq_no} task={self.task_name[:30]}>"
+        )
+
+
+class IHGRoomMaintenanceSection(Base):
+    """
+    IHG 客房保養區段摘要（每月 x 每房 x 每類別 一列）
+
+    區段欄位來自 raw_json 的 section header 欄位（值為 V/三角/X），
+    於 Ragic 同步時自動拆出寫入此表，供月報矩陣使用。
+
+    值域意義：
+      V  — 已完成
+      X  — 待料中（等待維護）
+    """
+    __tablename__ = "ihg_rm_section"
+
+    id              = Column(Integer,    primary_key=True, autoincrement=True)
+    master_ragic_id = Column(String(50), nullable=False, default="",
+                             comment="關聯 ihg_rm_master.ragic_id")
+    room_no         = Column(String(20), nullable=False, default="",
+                             comment="房號（冗餘，方便查詢）")
+    maint_year      = Column(String(4),  nullable=False, default="", comment="年度")
+    maint_month     = Column(String(2),  nullable=False, default="", comment="月份（零填）")
+    category        = Column(String(50), nullable=False, default="",
+                             comment="類別名稱，如 客房房門、浴厠")
+    value           = Column(String(10), nullable=False, default="",
+                             comment="值域：V / X")
+    synced_at       = Column(DateTime, nullable=False, server_default=func.now(),
+                             onupdate=func.now(), comment="最後同步時間")
+
+    __table_args__ = (
+        Index("ix_ihg_rm_section_ym_room",
+              "maint_year", "maint_month", "room_no"),
+        Index("ix_ihg_rm_section_master",
+              "master_ragic_id"),
+    )
+
+    def __repr__(self):
+        return (
+            f"<IHGRMSection master={self.master_ragic_id} "
+            f"{self.room_no} {self.maint_year}/{self.maint_month} "
+            f"{self.category}={self.value}>"
         )

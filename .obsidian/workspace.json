@@ -11,10 +11,13 @@
             "id": "25933a3e745314df",
             "type": "leaf",
             "state": {
-              "type": "graph",
-              "state": {},
-              "icon": "lucide-git-fork",
-              "title": "Graph view"
+              "type": "bases",
+              "state": {
+                "file": "Untitled 1.base",
+                "viewName": "Table"
+              },
+              "icon": "lucide-table",
+              "title": "Untitled 1"
             }
           }
         ]
@@ -182,6 +185,8 @@
   },
   "active": "25933a3e745314df",
   "lastOpenFiles": [
+    "Untitled.base",
+    "Untitled 1.base",
     "backend/portal.db-shm",
     "backend/portal.db-wal",
     "frontend/src/pages/Wiki/WikiGraph.tsx",

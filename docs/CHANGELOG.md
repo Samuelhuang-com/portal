@@ -2,6 +2,26 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)
 
+## [1.58.3] - 2026-05-11
+
+### Added
+- **IHG 客房保養表明細：樓層快選按鈕** — 將樓層篩選從下拉選單改為直覺式按鈕組（全部/5F/6F/7F/8F/9F/10F），置於「清除篩選」旁；選中樓層以 primary 樣式高亮，底下房號矩陣同步篩選
+- **IHG 客房保養表明細：全房號顯示** — 引入 `CANONICAL_ROOMS`（59 間）清單，即使當月無保養記錄也會出現；無資料房號顯示「未執行」灰色底色（`has_data: boolean` 欄位）；完成率分母改為含未執行房間的全部房間數；標題顯示「共 N 間，M 間未執行」
+- **IHG 客房保養表明細：點擊格子開啟保養明細** — 點擊任意房號 × 類別格子（有資料或空格皆可），觸發右側 Drawer 顯示該房號當月保養明細（`onCellClick` prop 串接至主元件 `handleCellClick`）；Tooltip 提示「點擊查看明細」
+
+### Fixed
+- **後端 section-matrix API** — 重建 `ihg_room_maintenance.py`，修復截斷導致 `/records` 與 `/{ragic_id}` 端點遺失；樓層篩選移至正規房間清單迴圈而非 DB 查詢
+
+## [1.58.2] - 2026-05-11
+
+### Fixed
+- **IHG 客房保養 閃退修復** — 修正前端 `IHGRoomMaintenance/index.tsx` 在 Python 多次修補後末端 JSX 結構截斷（缺少 `/>`, `)}`, `</Drawer>`, `</div>`, `)`, `}` 六行）；將年度矩陣 Tabs children 抽出為 `const matrixTabContent`，解決 TypeScript parser 無法解析深層巢狀 JSX in object literal 的問題（TSC 錯誤 TS17008）；新增 `destroyInactiveTabPane` 隔離兩個 TAB；`SECTION_VALUE_CFG[val]` 加上 `?? V` fallback 防非預期值當機
+
+## [1.58.1] - 2026-05-11
+
+### Added
+- **IHG 客房保養表明細 TAB** — 新增 `ihg_rm_section` 資料表（`id`, `master_ragic_id`, `room_no`, `maint_year`, `maint_month`, `category`, `value`, `synced_at`），每月x每房x每類別一列，值域 V/X；Ragic 主表同步時自動拆出 12 個區段欄位（客房房門/消防/設備/傢俱/燈電源/窗/面盆台面/浴厠/浴間/天地壁/空調/陽台）；新增 `GET /api/v1/ihg-room-maintenance/section-matrix?year=&month=` API；前端 IHGRoomMaintenance 頁面新增「客房保養表明細」TAB，房號x類別彩色矩陣，底部含保養完成 TOTAL 與完成率統計列
+
 ## [1.58.0] - 2026-05-10
 
 ### Added

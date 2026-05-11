@@ -3,12 +3,13 @@ IHG 客房保養 API Router
 Prefix: /api/v1/ihg-room-maintenance
 
 端點說明：
-  GET  /matrix     — 年度矩陣表（房號 × 月份）
-  GET  /stats      — KPI 統計卡
-  GET  /records    — 原始記錄清單（含篩選）
-  GET  /debug-raw  — Ragic 原始欄位結構（除錯用）
-  GET  /{ragic_id} — 單筆明細（含子表格）
-  POST /sync       — 觸發同步
+  GET  /matrix          — 年度矩陣表（房號 × 月份）
+  GET  /section-matrix  — 月份區段矩陣（房號 × 類別，V/▲/X）
+  GET  /stats           — KPI 統計卡
+  GET  /records         — 原始記錄清單（含篩選）
+  GET  /debug-raw       — Ragic 原始欄位結構（除錯用）
+  GET  /{ragic_id}      — 單筆明細（含子表格）
+  POST /sync            — 觸發同步
 
 矩陣表邏輯：
   - 以房號為行、月份（1-12）為欄
@@ -33,7 +34,11 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.time import twnow
 from app.dependencies import get_current_user, require_roles
-from app.models.ihg_room_maintenance import IHGRoomMaintenanceMaster, IHGRoomMaintenanceDetail
+from app.models.ihg_room_maintenance import (
+    IHGRoomMaintenanceMaster,
+    IHGRoomMaintenanceDetail,
+    IHGRoomMaintenanceSection,
+)
 from app.services.ihg_room_maintenance_sync import sync_from_ragic, _derive_floor
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
@@ -427,6 +432,124 @@ async def get_matrix(
     }
 
 
+# ── 區段類別標準清單（顯示順序）────────────────────────────────────────────────
+CANONICAL_CATEGORIES: list[str] = [
+    "客房房門", "客房消防", "客房設備", "客房傢俱",
+    "客房燈/電源", "客房窗", "面盆/台面", "浴厠", "浴間", "天地壁",
+    "客房空調", "陽台",
+]
+
+
+# ── GET /section-matrix ───────────────────────────────────────────────────────
+
+@router.get("/section-matrix", summary="客房保養區段矩陣（月份 × 類別）")
+async def section_matrix(
+    year:  str          = Query(..., description="年度，如 2026"),
+    month: str          = Query(..., description="月份，如 04 或 4"),
+    floor: Optional[str] = Query(None, description="樓層篩選，如 5F"),
+    db: Session = Depends(get_db),
+):
+    """
+    回傳指定月份各房間的保養區段狀態矩陣。
+
+    欄格值域：
+      V  — 已完成
+      ▲  — 當時維護完成（現場處理）
+      X  — 待料中（等待維護）
+      空白 — 該房間無此類別記錄
+
+    回傳 categories 依 CANONICAL_CATEGORIES 順序排列，
+    僅包含該月份至少有一筆資料的類別。
+    """
+    month_zf = month.zfill(2)
+
+    # ── 取該月所有 master（只篩年月 + canonical，floor 在組合清單時套用）───
+    master_rows = db.query(
+        IHGRoomMaintenanceMaster.ragic_id,
+        IHGRoomMaintenanceMaster.room_no,
+        IHGRoomMaintenanceMaster.floor,
+        IHGRoomMaintenanceMaster.maint_date,
+    ).filter(
+        IHGRoomMaintenanceMaster.maint_year  == year,
+        IHGRoomMaintenanceMaster.maint_month == month_zf,
+        IHGRoomMaintenanceMaster.room_no.in_(CANONICAL_ROOM_SET),
+    ).all()
+
+    masters_by_id   = {r.ragic_id: r for r in master_rows}
+    masters_by_room = {r.room_no: r for r in master_rows}
+    master_ids      = list(masters_by_id.keys())
+
+    # ── 取所有 section 資料 ──────────────────────────────────────────────────
+    sections: list[IHGRoomMaintenanceSection] = (
+        db.query(IHGRoomMaintenanceSection)
+        .filter(IHGRoomMaintenanceSection.master_ragic_id.in_(master_ids))
+        .all()
+    ) if master_ids else []
+
+    section_map: dict[str, dict[str, str]] = {}
+    for s in sections:
+        section_map.setdefault(s.master_ragic_id, {})[s.category] = s.value
+
+    # ── 組合全部 canonical 房間（含無資料者；套用 floor 篩選）──────────────
+    rooms_out = []
+    for rno in CANONICAL_ROOMS:
+        rno_floor = _derive_floor(rno)
+        if floor and rno_floor != floor:
+            continue
+        if rno in masters_by_room:
+            mrow = masters_by_room[rno]
+            room_sections = section_map.get(mrow.ragic_id, {})
+            rooms_out.append({
+                "room_no":    rno,
+                "floor":      mrow.floor,
+                "maint_date": mrow.maint_date,
+                "ragic_id":   mrow.ragic_id,
+                "sections":   room_sections,
+                "has_data":   True,
+            })
+        else:
+            rooms_out.append({
+                "room_no":    rno,
+                "floor":      rno_floor,
+                "maint_date": "",
+                "ragic_id":   "",
+                "sections":   {},
+                "has_data":   False,
+            })
+
+    total_rooms = len(rooms_out)
+
+    # ── 各類別統計（分母含未執行房間）────────────────────────────────────────
+    TRI = "▲"
+    category_stats: dict[str, dict] = {}
+    for cat in CANONICAL_CATEGORIES:
+        v_count   = sum(1 for r in rooms_out if r["sections"].get(cat) == "V")
+        tri_count = sum(1 for r in rooms_out if r["sections"].get(cat) == TRI)
+        x_count   = sum(1 for r in rooms_out if r["sections"].get(cat) == "X")
+        reported  = v_count + tri_count + x_count
+        rate = round(v_count / total_rooms * 100, 1) if total_rooms > 0 else 0.0
+        category_stats[cat] = {
+            "v_count":        v_count,
+            "triangle_count": tri_count,
+            "x_count":        x_count,
+            "reported":       reported,
+            "rate":           rate,
+        }
+
+    active_cats = [c for c in CANONICAL_CATEGORIES if category_stats[c]["reported"] > 0]
+    if not active_cats:
+        active_cats = list(CANONICAL_CATEGORIES)
+
+    return {
+        "year":           year,
+        "month":          month_zf,
+        "categories":     active_cats,
+        "rooms":          rooms_out,
+        "category_stats": {c: category_stats[c] for c in active_cats},
+        "total_rooms":    total_rooms,
+    }
+
+
 # ── GET /records ──────────────────────────────────────────────────────────────
 
 @router.get("/records", summary="IHG 客房保養記錄清單（帶篩選）")
@@ -472,27 +595,27 @@ async def list_records(
         "per_page": per_page,
         "data": [
             {
-                "ragic_id":       r.ragic_id,
-                "room_no":        r.room_no,
-                "floor":          r.floor,
-                "maint_year":     r.maint_year,
-                "maint_month":    r.maint_month,
-                "maint_date":     r.maint_date,
-                "status":         _cell_status(r),
-                "is_completed":   r.is_completed,
-                "assignee_name":  r.assignee_name,
-                "checker_name":   r.checker_name,
+                "ragic_id":        r.ragic_id,
+                "room_no":         r.room_no,
+                "floor":           r.floor,
+                "maint_year":      r.maint_year,
+                "maint_month":     r.maint_month,
+                "maint_date":      r.maint_date,
+                "status":          _cell_status(r),
+                "is_completed":    r.is_completed,
+                "assignee_name":   r.assignee_name,
+                "checker_name":    r.checker_name,
                 "completion_date": r.completion_date,
-                "maint_type":     r.maint_type,
-                "notes":          r.notes,
-                "synced_at":      r.synced_at.isoformat() if r.synced_at else None,
+                "maint_type":      r.maint_type,
+                "notes":           r.notes,
+                "synced_at":       r.synced_at.isoformat() if r.synced_at else None,
             }
             for r in recs
         ],
     }
 
 
-# ── GET /{ragic_id} ──────────────────────────────────────────────
+# ── GET /{ragic_id} ───────────────────────────────────────────────────────────
 
 @router.get("/{ragic_id}", summary="IHG 客房保養單筆明細（含子表格）")
 async def get_record(ragic_id: str, db: Session = Depends(get_db)):
@@ -508,30 +631,29 @@ async def get_record(ragic_id: str, db: Session = Depends(get_db)):
         .all()
     )
 
-    # 嘗試解析 raw_json 回傳完整欄位（方便前端 debug 欄位 mapping）
     try:
         raw_fields = json.loads(master.raw_json or "{}")
     except Exception:
         raw_fields = {}
 
     return {
-        "ragic_id":       master.ragic_id,
-        "room_no":        master.room_no,
-        "floor":          master.floor,
-        "maint_year":     master.maint_year,
-        "maint_month":    master.maint_month,
-        "maint_date":     master.maint_date,
-        "status":         _cell_status(master),
-        "is_completed":   master.is_completed,
-        "assignee_name":  master.assignee_name,
-        "checker_name":   master.checker_name,
-        "completion_date": master.completion_date,
-        "maint_type":     master.maint_type,
-        "notes":          master.notes,
+        "ragic_id":         master.ragic_id,
+        "room_no":          master.room_no,
+        "floor":            master.floor,
+        "maint_year":       master.maint_year,
+        "maint_month":      master.maint_month,
+        "maint_date":       master.maint_date,
+        "status":           _cell_status(master),
+        "is_completed":     master.is_completed,
+        "assignee_name":    master.assignee_name,
+        "checker_name":     master.checker_name,
+        "completion_date":  master.completion_date,
+        "maint_type":       master.maint_type,
+        "notes":            master.notes,
         "ragic_created_at": master.ragic_created_at,
         "ragic_updated_at": master.ragic_updated_at,
-        "synced_at":      master.synced_at.isoformat() if master.synced_at else None,
-        "raw_fields":     raw_fields,
+        "synced_at":        master.synced_at.isoformat() if master.synced_at else None,
+        "raw_fields":       raw_fields,
         "details": [
             {
                 "ragic_id":  d.ragic_id,

@@ -44,7 +44,11 @@ from typing import Any
 from app.core.config import settings
 from app.core.database import SessionLocal
 from app.core.time import twnow
-from app.models.ihg_room_maintenance import IHGRoomMaintenanceMaster, IHGRoomMaintenanceDetail
+from app.models.ihg_room_maintenance import (
+    IHGRoomMaintenanceMaster,
+    IHGRoomMaintenanceDetail,
+    IHGRoomMaintenanceSection,
+)
 from app.services.ragic_adapter import RagicAdapter
 
 logger = logging.getLogger(__name__)
@@ -67,6 +71,26 @@ FIELD_CANDIDATES = {
     "notes":         ["備註", "說明", "補充說明"],
     "status_raw":    ["完成狀態", "狀態", "保養狀態", "執行狀態"],
 }
+
+# ── 區段欄位 mapping（Ragic raw key → Portal 顯示名稱）────────────────────────
+# 區段欄位值為 V / ▲ / X，與明細 check 欄位（正常/當時維護完成/等待維護）不同
+SECTION_FIELD_MAP: dict[str, str] = {
+    "房門":        "客房房門",
+    "消防":        "客房消防",
+    "設備":        "客房設備",
+    "傢俱":        "客房傢俱",
+    "客房燈/電源": "客房燈/電源",
+    "客房窗":      "客房窗",
+    "面盆/台面":   "面盆/台面",
+    "浴厠":        "浴厠",
+    "浴間":        "浴間",
+    "天地壁":      "天地壁",
+    "客房空調":    "客房空調",
+    "陽台":        "陽台",
+}
+
+# 有效的區段值（其他值忽略）
+_SECTION_VALUES: frozenset[str] = frozenset({"V", "X", "▲"})
 
 # 子表格欄位候選
 DETAIL_FIELD_CANDIDATES = {
@@ -282,6 +306,19 @@ def _master_to_model(ragic_id: str, raw: dict) -> IHGRoomMaintenanceMaster:
     return rec
 
 
+def _extract_sections(raw: dict) -> list[tuple[str, str]]:
+    """
+    從 Ragic raw dict 提取區段欄位（V/▲/X）。
+    回傳 [(display_name, value), ...]，只含有效值的欄位。
+    """
+    result: list[tuple[str, str]] = []
+    for raw_key, display_name in SECTION_FIELD_MAP.items():
+        val = raw.get(raw_key)
+        if isinstance(val, str) and val in _SECTION_VALUES:
+            result.append((display_name, val))
+    return result
+
+
 def _detail_to_model(
     ragic_id: str,
     row_raw: dict,
@@ -353,6 +390,25 @@ async def sync_master_from_ragic() -> dict:
                 else:
                     db.add(new_rec)
                 upserted += 1
+
+                # ── 同步區段摘要（ihg_rm_section）────────────────────────
+                sections = _extract_sections(raw)
+                # 先刪除此 master 的舊 section 列
+                db.query(IHGRoomMaintenanceSection).filter(
+                    IHGRoomMaintenanceSection.master_ragic_id == str(ragic_id)
+                ).delete(synchronize_session=False)
+                # 逐一插入新 section 列
+                for category, value in sections:
+                    db.add(IHGRoomMaintenanceSection(
+                        master_ragic_id=str(ragic_id),
+                        room_no=new_rec.room_no,
+                        maint_year=new_rec.maint_year,
+                        maint_month=new_rec.maint_month,
+                        category=category,
+                        value=value,
+                        synced_at=now,
+                    ))
+
             except Exception as exc:
                 errors.append(f"master ragic_id={ragic_id}: {exc}")
                 logger.warning(f"[IHGSync][Master] 記錄 {ragic_id} 失敗：{exc}")
@@ -442,17 +498,17 @@ async def sync_details_from_ragic() -> dict:
                     total_upserted += 1
                 except Exception as exc:
                     errors.append(f"detail {detail_id}: {exc}")
-                    logger.warning(f"[IHGSync][Detail] 明細 {detail_id} 失敗：{exc}")
+                    logger.warning(f"[IHGSync][Detail] {detail_id} failed: {exc}")
 
         db.commit()
         logger.info(
-            f"[IHGSync][Detail] 完成：masters={len(master_ids)}, "
+            f"[IHGSync][Detail] done: masters={len(master_ids)}, "
             f"details_fetched={total_fetched}, upserted={total_upserted}, errors={len(errors)}"
         )
     except Exception as exc:
         db.rollback()
         errors.append(f"DB commit error: {exc}")
-        logger.error(f"[IHGSync][Detail] DB 寫入失敗：{exc}")
+        logger.error(f"[IHGSync][Detail] DB error: {exc}")
     finally:
         db.close()
 
@@ -460,7 +516,7 @@ async def sync_details_from_ragic() -> dict:
 
 
 async def sync_from_ragic() -> dict:
-    """完整同步：先同步主表，再同步子表格"""
+    """Complete sync: master first, then details"""
     master_result = await sync_master_from_ragic()
     detail_result = await sync_details_from_ragic()
     return {

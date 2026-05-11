@@ -13,13 +13,13 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
   Breadcrumb, Button, Card, Col, Descriptions, Divider,
-  Drawer, Row, Select, Segmented, Spin, Statistic, Table, Tag, Tooltip,
+  Drawer, Row, Select, Segmented, Spin, Statistic, Table, Tag, Tabs, Tooltip,
   Typography, message,
 } from 'antd'
 import {
   CheckCircleOutlined, ClockCircleOutlined,
   HomeOutlined, QuestionCircleOutlined, ReloadOutlined,
-  SyncOutlined, ToolOutlined, WarningOutlined,
+  SyncOutlined, TableOutlined, ToolOutlined, WarningOutlined,
 } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import dayjs from 'dayjs'
@@ -28,14 +28,19 @@ import {
   fetchIHGMatrix,
   fetchIHGStats,
   fetchIHGRecord,
+  fetchIHGSectionMatrix,
   syncIHGFromRagic,
 } from '@/api/ihgRoomMaintenance'
 import type {
   CellStatus,
+  CategoryStat,
   IHGRecord,
   IHGStats,
   MatrixCell,
   MatrixRoom,
+  SectionMatrixResponse,
+  SectionRoom,
+  SectionValue,
 } from '@/types/ihgRoomMaintenance'
 import { NAV_GROUP, NAV_PAGE } from '@/constants/navLabels'
 
@@ -449,6 +454,290 @@ function QuarterCellComp({
   )
 }
 
+// ── 區段值色碼設定 ────────────────────────────────────────────────────────────
+const SECTION_VALUE_CFG: Record<SectionValue, { bg: string; text: string; label: string }> = {
+  V:  { bg: '#f6ffed', text: '#389e0d', label: '已完成'       },
+  '▲': { bg: '#fff7e6', text: '#d46b08', label: '當時維護完成' },
+  X:  { bg: '#fff1f0', text: '#cf1322', label: '待料中'       },
+}
+
+// ── 客房保養表明細 TAB ────────────────────────────────────────────────────────
+function SectionMatrixTab({
+  defaultYear,
+  onCellClick,
+}: {
+  defaultYear: string
+  onCellClick: (ragicId: string, roomNo: string, monthNum: number) => void
+}) {
+  const [year,  setYear]  = useState<string>(defaultYear)
+  const [month, setMonth] = useState<string>(String(dayjs().month() + 1).padStart(2, '0'))
+  const [floor, setFloor] = useState<string>('')
+  const [data,  setData]  = useState<SectionMatrixResponse | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  // 所有樓層選項（固定）
+  const ALL_FLOORS = ['5F','6F','7F','8F','9F','10F']
+
+  const monthOptions = Array.from({ length: 12 }, (_, i) => ({
+    value: String(i + 1).padStart(2, '0'),
+    label: `${i + 1} 月`,
+  }))
+
+  const loadData = useCallback(async () => {
+    setLoading(true)
+    try {
+      const res = await fetchIHGSectionMatrix({
+        year,
+        month,
+        floor: floor || undefined,
+      })
+      setData(res)
+    } catch {
+      message.error('載入區段矩陣資料失敗')
+    } finally {
+      setLoading(false)
+    }
+  }, [year, month, floor])
+
+  useEffect(() => { loadData() }, [loadData])
+
+  const categories = data?.categories ?? []
+
+  // ── 欄位定義 ──────────────────────────────────────────────────────────────
+  const columns: ColumnsType<SectionRoom> = [
+    {
+      title: '房號',
+      dataIndex: 'room_no',
+      key: 'room_no',
+      fixed: 'left',
+      width: 72,
+      render: (rn: string, row: SectionRoom) => (
+        <div style={{ textAlign: 'center' }}>
+          <div style={{ fontWeight: 700, fontSize: 14 }}>{rn}</div>
+          <div style={{ fontSize: 11, color: '#999' }}>{row.floor}</div>
+        </div>
+      ),
+    },
+    ...categories.map((cat) => ({
+      title: (
+        <div style={{ textAlign: 'center', fontSize: 12, lineHeight: 1.4 }}>
+          <div style={{ fontWeight: 600 }}>{cat}</div>
+        </div>
+      ),
+      key: cat,
+      width: 88,
+      render: (_: unknown, row: SectionRoom) => {
+        // 無保養記錄的房間 → 未執行灰格
+        if (!row.has_data) {
+          return (
+            <div
+              style={{
+                height: 36, background: '#f9f9f9', borderRadius: 4,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                border: '1px dashed #e0e0e0', color: '#bfbfbf', fontSize: 12,
+              }}
+            >
+              未執行
+            </div>
+          )
+        }
+        const val = row.sections[cat] as SectionValue | undefined
+        if (!val) {
+          return (
+            <div
+              style={{
+                height: 36, background: '#f5f5f5', borderRadius: 4,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 14, color: '#d9d9d9', border: '1px dashed #e8e8e8',
+                cursor: 'pointer',
+              }}
+              onClick={() => row.ragic_id && onCellClick(row.ragic_id, row.room_no, Number(month))}
+            >
+              —
+            </div>
+          )
+        }
+        const cfg = SECTION_VALUE_CFG[val] ?? SECTION_VALUE_CFG['V']
+        return (
+          <Tooltip title={`${cat}：${cfg.label}（點擊查看明細）`}>
+            <div
+              style={{
+                height: 36, background: cfg.bg, borderRadius: 4,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                border: `1px solid ${cfg.text}44`,
+                fontWeight: 700, fontSize: 15, color: cfg.text,
+                cursor: 'pointer',
+                transition: 'box-shadow 0.15s',
+              }}
+              onClick={() => row.ragic_id && onCellClick(row.ragic_id, row.room_no, Number(month))}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.boxShadow = '0 2px 8px rgba(0,0,0,0.18)' }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.boxShadow = 'none' }}
+            >
+              {val}
+            </div>
+          </Tooltip>
+        )
+      },
+    })),
+  ]
+
+  // ── 統計摘要列 ────────────────────────────────────────────────────────────
+  const renderSummary = () => {
+    if (!data) return null
+    const stats = data.category_stats
+    return (
+      <Table.Summary fixed="bottom">
+        {/* 保養完成 TOTAL 列 */}
+        <Table.Summary.Row style={{ background: '#f0f4f8', fontWeight: 600 }}>
+          <Table.Summary.Cell index={0} colSpan={1}>
+            <div style={{ fontSize: 11, color: '#1B3A5C', fontWeight: 700, textAlign: 'center' }}>
+              完成<br />TOTAL
+            </div>
+          </Table.Summary.Cell>
+          {categories.map((cat, i) => {
+            const s: CategoryStat | undefined = stats[cat]
+            return (
+              <Table.Summary.Cell key={cat} index={i + 1}>
+                <div style={{
+                  textAlign: 'center', fontWeight: 700,
+                  color: (s?.x_count ?? 0) > 0 ? '#cf1322'
+                       : (s?.triangle_count ?? 0) > 0 ? '#d46b08' : '#389e0d',
+                  fontSize: 14,
+                }}>
+                  {s?.v_count ?? 0}
+                </div>
+              </Table.Summary.Cell>
+            )
+          })}
+        </Table.Summary.Row>
+        {/* 完成率列 */}
+        <Table.Summary.Row style={{ background: '#e6f4ff' }}>
+          <Table.Summary.Cell index={0} colSpan={1}>
+            <div style={{ fontSize: 11, color: '#1677ff', fontWeight: 700, textAlign: 'center' }}>
+              完成率
+            </div>
+          </Table.Summary.Cell>
+          {categories.map((cat, i) => {
+            const s: CategoryStat | undefined = stats[cat]
+            const rate = s?.rate ?? 0
+            return (
+              <Table.Summary.Cell key={cat} index={i + 1}>
+                <div style={{
+                  textAlign: 'center', fontWeight: 600,
+                  color: rate >= 100 ? '#389e0d' : rate >= 80 ? '#d46b08' : '#cf1322',
+                  fontSize: 12,
+                }}>
+                  {rate.toFixed(1)}%
+                </div>
+              </Table.Summary.Cell>
+            )
+          })}
+        </Table.Summary.Row>
+      </Table.Summary>
+    )
+  }
+
+  return (
+    <div>
+      {/* 篩選列 */}
+      <Card size="small" style={{ marginBottom: 16 }}>
+        <Row gutter={[12, 8]} align="middle">
+          <Col>
+            <Text type="secondary" style={{ fontSize: 12 }}>年度</Text>
+            <Select value={year} onChange={setYear}
+              options={YEAR_OPTIONS} style={{ width: 110, marginLeft: 8 }} size="small" />
+          </Col>
+          <Col>
+            <Text type="secondary" style={{ fontSize: 12 }}>月份</Text>
+            <Select value={month} onChange={setMonth}
+              options={monthOptions} style={{ width: 90, marginLeft: 8 }} size="small" />
+          </Col>
+          {/* 樓層快選按鈕 */}
+          <Col>
+            <Text type="secondary" style={{ fontSize: 12, marginRight: 8 }}>樓層</Text>
+            {['', ...ALL_FLOORS].map((f) => (
+              <Button
+                key={f || 'all'}
+                size="small"
+                type={floor === f ? 'primary' : 'default'}
+                onClick={() => setFloor(f)}
+                style={{ marginRight: 4, minWidth: 42 }}
+              >
+                {f || '全部'}
+              </Button>
+            ))}
+          </Col>
+          <Col>
+            <Button size="small" icon={<ReloadOutlined />}
+              onClick={() => { setFloor(''); }}>清除篩選</Button>
+          </Col>
+          {/* 圖例 */}
+          <Col flex={1}>
+            <div style={{ display: 'flex', gap: 16, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+              {(Object.entries(SECTION_VALUE_CFG) as [SectionValue, typeof SECTION_VALUE_CFG[SectionValue]][]).map(([k, v]) => (
+                <span key={k} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12 }}>
+                  <span style={{
+                    width: 22, height: 22, background: v.bg, border: `1px solid ${v.text}66`,
+                    borderRadius: 3, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                    fontWeight: 700, color: v.text, fontSize: 12,
+                  }}>{k}</span>
+                  <span style={{ color: '#595959' }}>{v.label}</span>
+                </span>
+              ))}
+              <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12 }}>
+                <span style={{
+                  width: 22, height: 22, background: '#f9f9f9', border: '1px dashed #e0e0e0',
+                  borderRadius: 3, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                  color: '#bfbfbf', fontSize: 11,
+                }}>未執行</span>
+                <span style={{ color: '#8c8c8c' }}>未執行</span>
+              </span>
+            </div>
+          </Col>
+        </Row>
+      </Card>
+
+      {/* 矩陣表 */}
+      <Spin spinning={loading}>
+        <Card
+          size="small"
+          title={
+            <span style={{ fontSize: 13 }}>
+              本月客房保養完成統計（{year} 年 {parseInt(month)} 月）
+              {data && (
+                <Text type="secondary" style={{ marginLeft: 12, fontSize: 11 }}>
+                  共 {data.total_rooms} 間{data.rooms.filter(r => r.has_data).length !== data.total_rooms ? `，${data.rooms.filter(r => !r.has_data).length} 間未執行` : ''}
+                </Text>
+              )}
+            </span>
+          }
+        >
+          {data && data.rooms.length === 0 ? (
+            <div style={{ padding: 40, textAlign: 'center', color: '#999' }}>
+              此月份尚無區段資料，請先同步 Ragic
+            </div>
+          ) : (
+            <Table<SectionRoom>
+              columns={columns}
+              dataSource={data?.rooms ?? []}
+              rowKey="room_no"
+              size="small"
+              pagination={false}
+              scroll={{ x: 'max-content', y: 'calc(100vh - 360px)' }}
+              sticky
+              loading={loading}
+              summary={renderSummary}
+              rowClassName={(row, idx) =>
+                !row.has_data ? 'ihg-row-no-data' : idx % 2 === 0 ? '' : 'ant-table-row-striped'
+              }
+            />
+          )}
+        </Card>
+      </Spin>
+    </div>
+  )
+}
+
 // ── 主元件 ────────────────────────────────────────────────────────────────────
 export default function IHGRoomMaintenancePage() {
   const [searchParams, setSearchParams] = useSearchParams()
@@ -784,33 +1073,9 @@ export default function IHGRoomMaintenancePage() {
     },
   ]
 
-  return (
-    <div style={{ padding: '0 4px' }}>
-      {/* ── Breadcrumb ─────────────────────────────────────────────── */}
-      <Breadcrumb
-        style={{ marginBottom: 16 }}
-        items={[
-          { title: <HomeOutlined /> },
-          { title: NAV_GROUP.hotel },
-          { title: NAV_PAGE.ihgRoomMaintenance },
-        ]}
-      />
-
-      {/* ── 標題列 ─────────────────────────────────────────────────── */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
-        <Title level={4} style={{ margin: 0 }}>
-          {NAV_PAGE.ihgRoomMaintenance}
-        </Title>
-        <Button
-          type="primary"
-          icon={syncing ? <SyncOutlined spin /> : <SyncOutlined />}
-          loading={syncing}
-          onClick={handleSync}
-        >
-          同步 Ragic
-        </Button>
-      </div>
-
+  // ── 年度矩陣 TAB 內容（抽出避免 TypeScript JSX parser 巢狀解析問題）──────────
+  const matrixTabContent = (
+              <div>
       {/* ── KPI 統計卡 ─────────────────────────────────────────────── */}
       <Row gutter={[12, 12]} style={{ marginBottom: 20 }}>
         {kpiCards.map((k) => (
@@ -987,6 +1252,59 @@ export default function IHGRoomMaintenancePage() {
           )}
         </Card>
       </Spin>
+      </div>
+  )
+
+  return (
+    <div style={{ padding: '0 4px' }}>
+      {/* ── Breadcrumb ─────────────────────────────────────────────── */}
+      <Breadcrumb
+        style={{ marginBottom: 16 }}
+        items={[
+          { title: <HomeOutlined /> },
+          { title: NAV_GROUP.hotel },
+          { title: NAV_PAGE.ihgRoomMaintenance },
+        ]}
+      />
+
+      {/* ── 標題列 ─────────────────────────────────────────────────── */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+        <Title level={4} style={{ margin: 0 }}>
+          {NAV_PAGE.ihgRoomMaintenance}
+        </Title>
+        <Button
+          type="primary"
+          icon={syncing ? <SyncOutlined spin /> : <SyncOutlined />}
+          loading={syncing}
+          onClick={handleSync}
+        >
+          同步 Ragic
+        </Button>
+      </div>
+
+      {/* ── TABs ───────────────────────────────────────────────────── */}
+      <Tabs
+        defaultActiveKey="matrix"
+        size="middle"
+        destroyInactiveTabPane
+        items={[
+          {
+            key: 'matrix',
+            label: <span><ToolOutlined /> 年度矩陣</span>,
+            children: matrixTabContent,
+      },
+      {
+        key: 'section-matrix',
+        label: <span><TableOutlined /> 客房保養表明細</span>,
+        children: (
+          <SectionMatrixTab
+            defaultYear={year}
+            onCellClick={(ragicId, roomNo, monthNum) => handleCellClick(ragicId, roomNo, monthNum)}
+          />
+        ),
+      },
+      ]}
+    />
 
       {/* ── 保養明細 Drawer（右側滑入）────────────────────────────── */}
       <Drawer
@@ -1291,6 +1609,7 @@ export default function IHGRoomMaintenancePage() {
             pagination={{ pageSize: 20, showSizeChanger: false, showTotal: (t) => `共 ${t} 筆` }}
             scroll={{ x: 560 }}
             columns={kpiCols}
+
           />
         )}
       </Drawer>

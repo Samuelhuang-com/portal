@@ -8,6 +8,7 @@ import type {
   MatrixResponse,
   IHGRecord,
   IHGListResponse,
+  SectionMatrixResponse,
 } from '@/types/ihgRoomMaintenance'
 
 const BASE = '/ihg-room-maintenance'
@@ -56,6 +57,16 @@ export async function fetchIHGRecords(params?: {
 // ── 單筆明細 ─────────────────────────────────────────────────────────────────
 export async function fetchIHGRecord(ragicId: string): Promise<IHGRecord> {
   const res = await apiClient.get<IHGRecord>(`${BASE}/${ragicId}`)
+  return res.data
+}
+
+// ── 區段矩陣（月份 × 類別，V/▲/X）────────────────────────────────────────────
+export async function fetchIHGSectionMatrix(params: {
+  year: string
+  month: string
+  floor?: string
+}): Promise<SectionMatrixResponse> {
+  const res = await apiClient.get<SectionMatrixResponse>(`${BASE}/section-matrix`, { params })
   return res.data
 }
 
