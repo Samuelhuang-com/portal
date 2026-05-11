@@ -32,6 +32,10 @@ uploads/
 .DS_Store
 Thumbs.db
 
+# OneDrive 暫存檔
+.tmp.driveupload/
+*.tmp
+
 # Claude AI — 對話、設定、暫存（不進正式區）
 CLAUDE.md
 _Runme.md
