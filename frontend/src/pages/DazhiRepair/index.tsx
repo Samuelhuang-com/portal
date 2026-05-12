@@ -597,12 +597,12 @@ function DashboardTab({
         {/* 報修類型分布 */}
         <Col xs={24} lg={10}>
           <Card title="報修類型分布" size="small">
-            <ResponsiveContainer width="100%" height={200}>
+            <ResponsiveContainer width="100%" height={260}>
               <PieChart>
                 <Pie data={type_dist} dataKey="count" nameKey="type" cx="50%" cy="50%"
-                  outerRadius={75} label={({ type, percent }) =>
-                    percent > 0.04 ? `${type} ${(percent * 100).toFixed(0)}%` : ''
-                  } labelLine={false}>
+                  outerRadius={80} label={({ type, percent }) =>
+                    percent > 0.04 ? `${type} ${(percent * 100).toFixed(1)}%` : ''
+                  } labelLine={true}>
                   {type_dist.map((_, idx) => (
                     <Cell key={idx} fill={PIE_COLORS[idx % PIE_COLORS.length]} />
                   ))}

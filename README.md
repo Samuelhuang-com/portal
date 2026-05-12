@@ -2,9 +2,10 @@
 
 > 跨據點統一管理平台 — FastAPI + React + TypeScript
 
-**最後更新：2026-05-11（v1.58.8）**
+**最後更新：2026-05-12（v1.58.9）**
 
 ## 最近變更
+- v1.58.9：**3.3 報修類型統計口徑修正** — `compute_type_stats()` 改用 `occ_year/occ_month`（報修日期）分組，與 4.1 報修統計同口徑，確保 3.3 年度加總 = 3.1 年度總數
 - v1.58.6：**大直報修 Dashboard 趨勢圖口徑修正** — `trend_12m` completed 改用 `_completed_in`（`completed_at` 落在該月），與 4.1 報修統計一致；消除跨月結案造成完成率虛高（1月 94.0% → 84.2%）
 - v1.58.8：**`GET /trend` date-range 批次查詢** — 商場/保全巡檢改為整個日期區間一次撈，120 次 query → 8 次
 - v1.58.7：**`GET /kpi` 5 分鐘 TTL cache** — in-process `_kpi_cache`（stdlib only），命中時零 DB query

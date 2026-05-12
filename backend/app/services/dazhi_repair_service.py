@@ -75,10 +75,12 @@ REPAIR_TYPE_MAPPING: dict[str, str] = {
     "建築": "建築", "結構": "建築", "外牆": "建築", "玻璃": "建築",
     "門窗": "建築", "電梯": "建築", "手扶梯": "建築", "招牌": "建築",
     # 衛廁
-    "衛廁": "衛廁", "廁所": "衛廁", "馬桶": "衛廁", "洗手": "衛廁",
+    "衛廁": "衛廁", "衛厠": "衛廁",   # 衛厠 為常見錯字（廁 vs 厠）
+    "廁所": "衛廁", "馬桶": "衛廁", "洗手": "衛廁",
     "洗手槽": "衛廁", "烘手機": "衛廁", "哺乳": "衛廁",
     "蓮蓬頭": "衛廁", "浴缸": "衛廁", "花灑": "衛廁", "淋浴": "衛廁",
     "水龍頭": "衛廁", "洗臉": "衛廁", "面盆": "衛廁",
+    "浴廁": "衛廁", "浴室玻璃": "衛廁",   # 浴廁拉門 / 浴室玻璃門 → 衛廁（非建築）
     # 消防
     "消防": "消防", "瓦斯": "消防", "偵煙": "消防", "灑水": "消防",
     "鐵捲門": "消防", "安全門": "消防", "緊急": "消防",
@@ -733,8 +735,11 @@ def compute_dashboard(
             "completed": sum(1 for c in mc if _completed_in(c, y, m)),
         })
 
-    # ── 類型分布（口徑與工務部 Tab 一致：filter_cases _stat_year/_stat_month）──
-    _type_tab_cases = filter_cases(all_cases, year, month if month else None)
+    # ── 類型分布（口徑與 3.3 報修類型統計 Tab 一致：occ_year/occ_month 報修日期）──
+    if month:
+        _type_tab_cases = [c for c in all_cases if c.occ_year == year and c.occ_month == month]
+    else:
+        _type_tab_cases = [c for c in all_cases if c.occ_year == year]
     _type_dist_raw: dict[str, int] = {}
     for c in _type_tab_cases:
         t = c.repair_type or "其他"
@@ -1093,14 +1098,16 @@ def compute_type_stats(
     month: Optional[int] = None,
 ) -> dict:
     all_cases = [c for c in all_cases if not c.is_excluded_flag]
-    year_cases = filter_cases(all_cases, year)
+    # 口徑與 4.1 報修統計一致：依「報修日期」(occ_year/occ_month) 分組
+    # 這樣 3.3 年度加總 = 3.1 年度「本月報修」加總
+    year_cases = [c for c in all_cases if c.occ_year == year]
     focus_month = month
 
     type_monthly: dict[str, dict[int, int]] = {t: {} for t in REPAIR_TYPE_ORDER}
     type_monthly_cases: dict[str, dict[int, list]] = {t: {} for t in REPAIR_TYPE_ORDER}
 
     for case in year_cases:
-        m = _stat_month(case)
+        m = case.occ_month   # 報修月份（與 3.1 同口徑）
         if m is None:
             continue
         rt = case.repair_type
@@ -1110,33 +1117,55 @@ def compute_type_stats(
         type_monthly[rt][m] = type_monthly[rt].get(m, 0) + 1
         type_monthly_cases[rt].setdefault(m, []).append(case)
 
-    rows = []
-    year_total = 0
-    for rt in REPAIR_TYPE_ORDER:
-        monthly = type_monthly.get(rt, {})
-        row_total = sum(monthly.values())
-        year_total += row_total
+    def _build_row(rt: str) -> dict:
+        monthly    = type_monthly.get(rt, {})
+        row_total  = sum(monthly.values())
         prev_m_val = monthly.get(_month_offset(year, focus_month or datetime.now().month, -1)[1], 0) if focus_month else 0
         this_m_val = monthly.get(focus_month, 0) if focus_month else 0
         monthly_detail = {
             m: [c.to_dict() for c in cs]
             for m, cs in type_monthly_cases.get(rt, {}).items()
         }
-        rows.append({
-            "type": rt,
-            "example": REPAIR_TYPE_EXAMPLES.get(rt, ""),
-            "monthly": {m: monthly.get(m, 0) for m in range(1, 13)},
+        return {
+            "type":          rt,
+            "example":       REPAIR_TYPE_EXAMPLES.get(rt, ""),
+            "monthly":       {m: monthly.get(m, 0) for m in range(1, 13)},
             "monthly_detail": monthly_detail,
-            "row_total": row_total,
-            "prev_month": prev_m_val,
-            "this_month": this_m_val,
-            "cum_pct": round(row_total / len(year_cases) * 100, 1) if year_cases else 0.0,
-        })
+            "row_total":     row_total,
+            "prev_month":    prev_m_val,
+            "this_month":    this_m_val,
+            "cum_pct":       round(row_total / len(year_cases) * 100, 1) if year_cases else 0.0,
+        }
+
+    rows = []
+    year_total = 0
+
+    # ① 依固定順序輸出標準類型
+    for rt in REPAIR_TYPE_ORDER:
+        row = _build_row(rt)
+        rows.append(row)
+        year_total += row["row_total"]
+
+    # ② 輸出不在 REPAIR_TYPE_ORDER 的其他類型（依件數降序）
+    #    保留原始 Ragic 類型名稱（如 "天花板"、"衣櫃拉門" 等）
+    extra_types = sorted(
+        [rt for rt in type_monthly if rt not in REPAIR_TYPE_ORDER],
+        key=lambda rt: -sum(type_monthly[rt].values()),
+    )
+    for rt in extra_types:
+        row = _build_row(rt)
+        if row["row_total"] == 0:
+            continue
+        rows.append(row)
+        year_total += row["row_total"]
 
     return {
-        "year": year, "focus_month": focus_month,
-        "rows": rows, "year_total": year_total,
-        "type_order": REPAIR_TYPE_ORDER,
+        "year":         year,
+        "focus_month":  focus_month,
+        "rows":         rows,
+        "year_total":   year_total,
+        "type_order":   REPAIR_TYPE_ORDER,
+        "extra_types":  extra_types,   # 前端可視需要顯示分隔線
     }
 
 

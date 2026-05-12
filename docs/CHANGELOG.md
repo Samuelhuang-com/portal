@@ -2,6 +2,12 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)
 
+## [1.58.9] - 2026-05-12
+
+### Fixed
+- **3.3 報修類型統計 — 口徑改為「報修日期」與 3.1 對齊** — `compute_type_stats()` 原本以 `_stat_year/_stat_month`（完工日期）分組，導致跨年結案案件計入不同年份，造成 3.3 年度加總與 3.1「本月報修」加總不一致；修正後改用 `occ_year/occ_month`（報修日期），與 4.1 報修統計 Tab 同口徑，確保兩者年度總數相同
+- **Dashboard 報修類型分布 — 口徑同步改為「報修日期」** — `compute_dashboard()` 的 `type_dist` 原本用 `filter_cases`（完工日期）篩案件，與 3.3 口徑不一致；修正後改用 `occ_year/occ_month`，月份檢視與全年檢視均以報修日期為準，圖表數字與 3.3 Tab 一致
+
 ## [1.58.8] - 2026-05-11
 
 ### Performance
@@ -11,6 +17,13 @@
 
 ### Performance
 - **`GET /kpi` 5 分鐘 TTL cache** — 在 `dashboard.py` 加入 in-process `_kpi_cache`（`threading.Lock` + `time.monotonic`），快取命中時跳過全部 DB query；TTL = 300 秒，無需外部依賴（純 stdlib）
+
+## [1.58.7] - 2026-05-12
+
+### Fixed
+- **3.3 報修類型統計 — 遺漏非標準類型修正** — `compute_type_stats()` 原本 `rows` 迴圈只輸出 `REPAIR_TYPE_ORDER` 內的標準類型，導致 48 種客房特有類型（如「天花板」「衣櫃拉門」「止水條」等）完全不計入顯示與加總，造成 `year_total` 偏低；修正後新增 ② 迴圈將不在 `REPAIR_TYPE_ORDER` 的類型依件數降序追加，`year_total` 現在涵蓋所有案件
+- **報修類型 mapping 修正 2 項** — ① 新增 `"衛厠": "衛廁"`（常見錯字廁/厠不同 Unicode）；② 新增 `"浴廁": "衛廁"` 與 `"浴室玻璃": "衛廁"`，避免「浴室玻璃門」因 "玻璃" 關鍵字被錯誤歸入「建築」
+- **API response 新增 `extra_types` 欄位** — `/stats/type` 回傳額外輸出 `extra_types` 列表（前端可視需要在標準類型後加分隔線）
 
 ## [1.58.6] - 2026-05-11
 

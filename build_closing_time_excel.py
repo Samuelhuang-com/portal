@@ -1,5 +1,5 @@
 """
-3.2 結案時間明細比對 Excel 產生器
+3.2 結案時間明細比對 + 3.3 報修類型統計 Excel 產生器
 執行方式：python build_closing_time_excel.py
 輸出：3.2結案時間_明細比對_202601-202605.xlsx（與本腳本同目錄）
 """
@@ -20,6 +20,59 @@ OUTPUT = HERE / "3.2結案時間_明細比對_202601-202605.xlsx"
 
 COMPLETED_STATUSES = {"結案","已辦驗","已驗收","已結案","完修","已完成","完成"}
 EXCLUDED_STATUSES  = {"取消"}
+
+# ── 報修類型標準化 mapping（與 dazhi_repair_service.py 一致）──────────────────
+REPAIR_TYPE_MAPPING = {
+    "建築":"建築","結構":"建築","外牆":"建築","玻璃":"建築","門窗":"建築",
+    "電梯":"建築","手扶梯":"建築","招牌":"建築",
+    "衛廁":"衛廁","廁所":"衛廁","馬桶":"衛廁","洗手":"衛廁","洗手槽":"衛廁",
+    "烘手機":"衛廁","哺乳":"衛廁","蓮蓬頭":"衛廁","浴缸":"衛廁","花灑":"衛廁",
+    "淋浴":"衛廁","水龍頭":"衛廁","洗臉":"衛廁","面盆":"衛廁",
+    "消防":"消防","瓦斯":"消防","偵煙":"消防","灑水":"消防","鐵捲門":"消防",
+    "安全門":"消防","緊急":"消防",
+    "空調":"空調","冷氣":"空調","冷卻":"空調","送風":"空調","補風":"空調",
+    "導流":"空調","分離式":"空調",
+    "機電":"機電","機房":"機電","發電機":"機電","配電":"機電",
+    "給排水":"給排水","漏水":"給排水","水塔":"給排水","污水":"給排水",
+    "排水":"給排水","給水":"給排水",
+    "排煙":"排煙","靜電機":"排煙","水洗機":"排煙","截油槽":"排煙","排煙管":"排煙",
+    "監控":"監控","cctv":"監控","攝影":"監控","監視":"監控",
+    "弱電":"弱電","交換機":"弱電","電話":"弱電","網路":"弱電",
+    "照明":"照明","燈":"照明","燈具":"照明","路燈":"照明",
+    "停車":"停車","車牌":"停車","繳費機":"停車","柵欄":"停車",
+    "人流":"其他","入金機":"其他",
+    "專櫃":"專櫃","租戶":"專櫃","承租":"專櫃",
+    "公區":"公區","公共":"公區","lobby":"公區","大廳":"公區",
+    "廣場":"公區","梯廳":"公區","接待":"公區","露台":"公區",
+    "後勤":"後勤空間","辦公室":"後勤空間","儲藏":"後勤空間","員工餐":"後勤空間",
+}
+
+REPAIR_TYPE_ORDER = [
+    "建築","衛廁","消防","空調","機電","給排水",
+    "排煙","監控","弱電","照明","停車","其他",
+    "專櫃","凍&藏類設備","內裝","廚房&吧台設備",
+    "會議設備","瓦斯類設備","公區","後勤空間",
+]
+
+def normalize_repair_type(raw_type: str, title: str = "") -> str:
+    """Portal dazhi_repair_service.normalize_repair_type() 的 Python 複製。"""
+    combined_src = raw_type.lower()
+    for kw, std in REPAIR_TYPE_MAPPING.items():
+        if kw.lower() in combined_src:
+            return std
+    combined_fb = (title + " " + raw_type).lower()
+    for kw, std in REPAIR_TYPE_MAPPING.items():
+        if kw.lower() in combined_fb:
+            return std
+    return raw_type.strip() if raw_type.strip() else "其他"
+
+# 類型顏色對應（統計 Sheet 用）
+TYPE_COLORS = {
+    "建築":"4472C4","衛廁":"ED7D31","消防":"FF0000","空調":"70AD47",
+    "機電":"FFC000","給排水":"00B0F0","排煙":"7030A0","監控":"00B050",
+    "弱電":"FF7C80","照明":"FFFF00","停車":"A9D18E","其他":"BFBFBF",
+    "專櫃":"D6BCF5","公區":"9DC3E6","後勤空間":"F4B183",
+}
 
 PORTAL_VALUES = {
     1: {"count": 240, "total_days": 366.0, "avg": 1.52},
@@ -66,6 +119,8 @@ col_close_time = find_col(df_raw, ["結案時間","結案日期"])
 col_status     = find_col(df_raw, ["處理狀態","狀態"], exact_first=True)
 col_repair_fee = find_col(df_raw, ["維修費用","修繕費用"])
 col_outsource  = find_col(df_raw, ["委外費用","委外金額"])
+col_type       = find_col(df_raw, ["類型","報修類型","類別"], exact_first=True)
+col_title      = find_col(df_raw, ["(備註/詳細說明)","備註","標題","報修名稱"])
 
 print(f"cols → order:{col_order_no} occ:{col_occurred} comp:{col_completed} "
       f"close:{col_close_time} status:{col_status} "
@@ -105,6 +160,10 @@ for _, r in df_raw.iterrows():
     if total_fee != 0:
         continue  # 只留小型（無費用）
     close_days = round((completed_at - occurred_at).total_seconds() / 86400, 2)
+    raw_type = str(r[col_type]).strip()  if col_type  else ""
+    raw_title= str(r[col_title]).strip() if col_title else ""
+    repair_type = normalize_repair_type(raw_type, raw_title)
+
     rows.append({
         "order_no":      str(r[col_order_no]).strip() if col_order_no else "",
         "occurred_at":   occurred_at,
@@ -114,6 +173,7 @@ for _, r in df_raw.iterrows():
         "outsource_fee": outsource_fee,
         "total_fee":     total_fee,
         "close_days":    close_days,
+        "repair_type":   repair_type,
         "year":          completed_at.year,
         "month":         completed_at.month,
     })
@@ -170,8 +230,8 @@ for m in range(1, 6):
     n   = len(mdf)
 
     hdrs   = ["序號","報修單編號","報修日期","完工時間","處理狀態",
-              "維修費用","委外費用","合計費用","結案天數","備註"]
-    widths = [6, 20, 13, 13, 10, 11, 11, 11, 11, 16]
+              "維修費用","委外費用","合計費用","結案天數","類型（標準化）","備註"]
+    widths = [6, 20, 13, 13, 10, 11, 11, 11, 11, 14, 16]
 
     ws.row_dimensions[1].height = 20
     for ci, (h, w) in enumerate(zip(hdrs, widths), 1):
@@ -214,14 +274,15 @@ for m in range(1, 6):
         ic.value = row["close_days"]; ic.font = mfont(); ic.fill = mfill(bg)
         ic.alignment = malign("right"); ic.number_format = "0.00"
 
-        sc(10, "", "left")
+        sc(10, row["repair_type"], "center")
+        sc(11, "", "left")
 
     if n > 0:
         sub_r = n + 2
         sum_r = n + 3
         ds, de = 2, n + 1
 
-        for c in range(1, 11):
+        for c in range(1, 12):
             ws.cell(row=sub_r, column=c).fill = mfill(C_SUBTOTAL)
             ws.cell(row=sum_r, column=c).fill = mfill(C_SUBTOTAL)
 
@@ -310,6 +371,110 @@ for i, m in enumerate(range(1, 6), 1):
         fill_c=C_GREEN_FILL if avg_ok else C_RED_FILL)
 
 ws_s.freeze_panes = "A3"
+
+# ── 3.3 類型統計 Sheet ─────────────────────────────────────────────────────────
+# 口徑：completed_at 落在各月（小型，非取消），以 repair_type 為維度計數
+ws_t = wb.create_sheet(title="3.3類型統計")
+
+# 建立類型 × 月份交叉表
+from collections import defaultdict
+type_month_cnt = defaultdict(lambda: defaultdict(int))  # type_month_cnt[type][month]
+all_types_seen = set()
+
+for m in range(1, 6):
+    mdf = month_dfs[m]
+    for _, row in mdf.iterrows():
+        rt = row["repair_type"]
+        type_month_cnt[rt][m] += 1
+        all_types_seen.add(rt)
+
+# 依 REPAIR_TYPE_ORDER 排序，其餘追加
+ordered_types = [t for t in REPAIR_TYPE_ORDER if t in all_types_seen]
+ordered_types += sorted([t for t in all_types_seen if t not in REPAIR_TYPE_ORDER])
+
+months = [1, 2, 3, 4, 5]
+month_labels = ["1月", "2月", "3月", "4月", "5月"]
+
+# 標題列
+ws_t.merge_cells(f"A1:{get_column_letter(2 + len(months))}1")
+t2 = ws_t.cell(row=1, column=1)
+t2.value     = "3.3 報修類型統計（2026年1–5月，小型報修，完工時間口徑）"
+t2.font      = Font(name="Arial", size=12, bold=True, color=C_HEADER_FG)
+t2.fill      = mfill(C_HEADER_BG)
+t2.alignment = malign("center")
+ws_t.row_dimensions[1].height = 26
+
+# 欄標題
+hdr_row = ["類型（標準化）"] + month_labels + ["合計"]
+ws_t.row_dimensions[2].height = 20
+col_widths_t = [16] + [10]*len(months) + [10]
+for ci, (h, w) in enumerate(zip(hdr_row, col_widths_t), 1):
+    set_hdr(ws_t.cell(row=2, column=ci), h)
+    ws_t.column_dimensions[get_column_letter(ci)].width = w
+
+# 資料列
+total_row_by_month = defaultdict(int)
+for ri, rt in enumerate(ordered_types, 1):
+    dr  = ri + 2
+    bg  = C_ALT_ROW if ri % 2 == 0 else C_WHITE
+    # 類型名稱 + 色塊
+    tc = ws_t.cell(row=dr, column=1)
+    tc.value     = rt
+    tc.font      = Font(name="Arial", size=10, bold=True,
+                        color=TYPE_COLORS.get(rt, "000000"))
+    tc.fill      = mfill(bg)
+    tc.alignment = malign("left")
+
+    for ci, m in enumerate(months, 2):
+        cnt = type_month_cnt[rt][m]
+        total_row_by_month[m] += cnt
+        cell = ws_t.cell(row=dr, column=ci)
+        cell.value     = cnt if cnt else "-"
+        cell.font      = mfont()
+        cell.fill      = mfill(bg)
+        cell.alignment = malign("center")
+
+    # 合計欄（Excel SUM formula）
+    data_start = get_column_letter(2)
+    data_end   = get_column_letter(1 + len(months))
+    sc_sum = ws_t.cell(row=dr, column=2 + len(months))
+    sc_sum.value          = f"=SUM({data_start}{dr}:{data_end}{dr})"
+    sc_sum.font           = mfont(bold=True)
+    sc_sum.fill           = mfill(bg)
+    sc_sum.alignment      = malign("center")
+    sc_sum.number_format  = "#,##0"
+
+# 合計列
+tot_r = len(ordered_types) + 3
+for c in range(1, 2 + len(months) + 1):
+    ws_t.cell(row=tot_r, column=c).fill = mfill(C_SUBTOTAL)
+
+ws_t.cell(row=tot_r, column=1).value = "合計"
+ws_t.cell(row=tot_r, column=1).font  = mfont(bold=True)
+
+data_r_start = 3
+data_r_end   = len(ordered_types) + 2
+for ci in range(2, 2 + len(months) + 1):
+    col_letter = get_column_letter(ci)
+    c2 = ws_t.cell(row=tot_r, column=ci)
+    c2.value          = f"=SUM({col_letter}{data_r_start}:{col_letter}{data_r_end})"
+    c2.font           = mfont(bold=True)
+    c2.alignment      = malign("center")
+    c2.number_format  = "#,##0"
+
+ws_t.freeze_panes = "B3"
+
+# Console 輸出預覽
+print("\n3.3 類型統計預覽（小型，completed_at 口徑）:")
+print(f"{'類型':<12}", end="")
+for ml in month_labels: print(f"{ml:>6}", end="")
+print(f"{'合計':>6}")
+for rt in ordered_types:
+    cnts = [type_month_cnt[rt][m] for m in months]
+    if sum(cnts) == 0: continue
+    print(f"{rt:<12}", end="")
+    for c in cnts: print(f"{c:>6}", end="")
+    print(f"{sum(cnts):>6}")
 
 # ── 儲存 ──────────────────────────────────────────────────────────────────────
 wb.save(OUTPUT)
