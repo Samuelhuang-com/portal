@@ -1395,7 +1395,7 @@ function RepairTypeTab({ year, focusMonth }: { year: number; focusMonth: number 
                         onClick={() => canClick && setModal({ title: `${m}月 ${row.type}（${cnt} 件）`, cases: detail })}
                         style={{
                           padding: '7px 6px', textAlign: 'center',
-                          background: m === focusMonth ? '#E6F7FF' : rowBg(ri),
+                          background: m === focusMonth ? '#E6F7FF' : (ri % 2 === 0 ? '#fff' : '#f8f9fb'),
                           fontWeight: m === focusMonth && cnt > 0 ? 700 : 400,
                           color: cnt > 0 ? '#1B3A5C' : '#ccc',
                           cursor: canClick ? 'pointer' : 'default',
