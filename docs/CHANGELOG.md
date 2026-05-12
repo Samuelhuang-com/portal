@@ -2,6 +2,24 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)
 
+## [1.59.2] - 2026-05-12
+
+### Fixed
+- **大直報修「維修工時」Ragic 欄位讀取修正** — `work_hours` 原本優先讀「維修天數(天)」×24，但大直 Ragic sheet 實際欄位名稱為「維修工時」（直接以小時為單位），導致 DB 全部寫入 0.0，Dashboard「本月工時統計」永遠顯示 0.00 hr；修正後讀取順序：① 維修工時（直接小時）→ ② 維修天數(天)×24 → ③ 維修天數×24 → ④ 花費工時；需重跑 Sync 使 DB 更新
+
+## [1.59.1] - 2026-05-12
+
+### Fixed
+- **Dashboard「本月工時統計」漏算跨月完工案件** — `total_work_hours` / `top_hours` / `kpi_hours_detail` 原本使用 `this_month_cases`（上月累積未結 + 本月新增），跨月完工案件（上月報修、本月驗收）不在該集合內導致工時漏算；修正後改用 `hours_month_cases = filter_cases(...)`（驗收月口徑），與費用統計口徑一致，確保所有本月完工案件的工時都被計入
+
+## [1.59.0] - 2026-05-12
+
+### Fixed
+- **Dashboard 全年模式 KPI 口徑修正** — `compute_dashboard(month=0)` 的 `this_month_cases` 改用 `occ_year`（報修日期），與 3.1/3.3 全年總數口徑一致；原本 `filter_cases`（完工日期）導致跨年結案案件（如 2024 報修/2025 完工）在 2025 Dashboard 被計入但在 3.1 2024 ④ 中
+- **4.4 客房報修表口徑修正** — `compute_room_repair_table()` 改用 `occ_year/occ_month`（報修日期），原本 `filter_cases`（完工日期）導致月份 Tab 看不到跨月完工的客房案件
+- **3.3 類型統計「上月」跨年修正** — `compute_type_stats()` 的 `prev_m_val` 當 `focus_month=1` 時，上月為上一年 12 月；原本只取月份數字（12）查 `type_monthly`（僅含當年資料），固定回傳 0；修正後另外計算前一年對應月份的類型分布
+- **金額統計口徑確認** — `compute_fee_stats()` 確認以「驗收月」（`completed_at` 月份）統計，符合業主需求，新增說明注釋
+
 ## [1.58.9] - 2026-05-12
 
 ### Fixed

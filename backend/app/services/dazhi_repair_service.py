@@ -417,12 +417,18 @@ class RepairCase:
         self.floor            = _str(_get_field(raw, RK_FLOOR))
         self.occurred_at      = _parse_datetime(_get_field(raw, RK_OCCURRED_AT))
         self.responsible_unit = _str(_get_field(raw, RK_RESPONSIBLE))
-        # 工時：① 維修天數(天)（Ragic 實際欄位名含括號）→ ② 維修天數（備用，不含括號）→ ③ 花費工時
-        _work_hrs = safe_work_days_to_hours(
-            raw.get("維修天數(天)") or raw.get("維修天數", "")
-        )
+        # 工時讀取優先順序：
+        #   ① 維修工時（大直 Ragic 實際欄位，直接以小時為單位）
+        #   ② 維修天數(天) × 24（含括號，天→小時）
+        #   ③ 維修天數 × 24（不含括號備用）
+        #   ④ 花費工時 / 工時（其他 sheet 備用）
+        _work_hrs = _float(raw.get("維修工時", ""))
         if _work_hrs <= 0:
-            _work_hrs = _float(_get_field(raw, RK_WORK_HOURS))  # 花費工時（備用）
+            _work_hrs = safe_work_days_to_hours(
+                raw.get("維修天數(天)") or raw.get("維修天數", "")
+            )
+        if _work_hrs <= 0:
+            _work_hrs = _float(_get_field(raw, RK_WORK_HOURS))
         self.work_hours = _work_hrs
         self.status           = _str(_get_field(raw, RK_STATUS))
         self.outsource_fee    = _float(_get_field(raw, RK_OUTSOURCE_FEE))
@@ -694,7 +700,8 @@ def compute_dashboard(
         _this_month_new   = [c for c in all_cases if c.occ_year == year and c.occ_month == month]
         this_month_cases  = _prev_uncompleted + _this_month_new
     else:
-        this_month_cases = filter_cases(all_cases, year, None)
+        # 全年模式：口徑與 3.1/3.3 一致，依「報修日期」(occ_year) 為準
+        this_month_cases = [c for c in all_cases if c.occ_year == year]
 
     # ── KPI ──────────────────────────────────────────────────────────────────
     total       = len(this_month_cases)
@@ -717,7 +724,10 @@ def compute_dashboard(
     )
 
     total_fee        = sum(c.total_fee    for c in this_month_cases)
-    total_work_hours = round(sum(c.work_hours for c in this_month_cases), 2)
+    # 工時口徑：與費用相同，依「驗收月」(completed_at) 統計；
+    # 不可用 this_month_cases（含上月未結舊案，其工時為 0 且跨月完工案件不在其中）
+    hours_month_cases = filter_cases(all_cases, year, month if month else None)
+    total_work_hours = round(sum(c.work_hours for c in hours_month_cases), 2)
 
     # ── 近 12 個月趨勢 ────────────────────────────────────────────────────────
     # 趨勢以「報修月份」(occ_year/occ_month) 為準，反映各月實際新增報修件數
@@ -772,8 +782,8 @@ def compute_dashboard(
     fee_list = sorted(this_month_cases, key=lambda x: x.total_fee, reverse=True)
     top_fee = [c.to_dict() for c in fee_list[:10] if c.total_fee > 0]
 
-    # ── 高工時 Top10 ──────────────────────────────────────────────────────────
-    hours_list = sorted(this_month_cases, key=lambda x: x.work_hours, reverse=True)
+    # ── 高工時 Top10（口徑與 total_work_hours 一致：驗收月）──────────────────────
+    hours_list = sorted(hours_month_cases, key=lambda x: x.work_hours, reverse=True)
     top_hours = [c.to_dict() for c in hours_list[:10] if c.work_hours > 0]
 
     # ── 當月費用（口徑與「金額統計」Tab 一致：c.year/c.month，結案以結案月份為準）
@@ -826,7 +836,8 @@ def compute_dashboard(
                          if not is_completed(c.status) and c.status.strip() != "待辦驗"]
     close_days_cases  = [c for c in completed_cases if c.close_days is not None]
     # pending_verify_cases / pending_verify_count 已在上方 KPI 區段計算
-    work_hours_cases  = sorted([c for c in this_month_cases if c.work_hours > 0], key=lambda x: x.work_hours, reverse=True)
+    # 工時明細：口徑與 total_work_hours 一致（驗收月），含跨月完工案件
+    work_hours_cases  = sorted([c for c in hours_month_cases if c.work_hours > 0], key=lambda x: x.work_hours, reverse=True)
 
     return {
         "kpi": {
@@ -1018,6 +1029,8 @@ def compute_fee_stats(all_cases: list, year: int) -> dict:
     monthly_totals: dict[int, dict[str, float]] = {}
     monthly_detail: dict[str, list[dict]] = {}
 
+    # 費用口徑：依「驗收月」（completed_at 月份）統計，未完成案件費用為 0 不影響結果
+    # filter_cases → _stat_month → 已完成案件用 completed_at.month，符合業主「驗收月」需求
     for m in range(1, 13):
         mc = filter_cases(all_cases, year, m)
         monthly_totals[m] = {
@@ -1103,6 +1116,20 @@ def compute_type_stats(
     year_cases = [c for c in all_cases if c.occ_year == year]
     focus_month = month
 
+    # ── 上月資料（跨年修正）──────────────────────────────────────────────────
+    # focus_month=1 時上月為上一年 12 月，需另外計算；同年則直接從 type_monthly 取
+    _prev_y: Optional[int] = None
+    _prev_m: Optional[int] = None
+    _type_prev_extra: Optional[dict[str, int]] = None   # 跨年時才用
+    if focus_month:
+        _prev_y, _prev_m = _month_offset(year, focus_month, -1)
+        if _prev_y != year:
+            # 上月屬於前一年，type_monthly 無資料，需另外計算
+            _prev_cases = [c for c in all_cases if c.occ_year == _prev_y and c.occ_month == _prev_m]
+            _type_prev_extra = {}
+            for _c in _prev_cases:
+                _type_prev_extra[_c.repair_type] = _type_prev_extra.get(_c.repair_type, 0) + 1
+
     type_monthly: dict[str, dict[int, int]] = {t: {} for t in REPAIR_TYPE_ORDER}
     type_monthly_cases: dict[str, dict[int, list]] = {t: {} for t in REPAIR_TYPE_ORDER}
 
@@ -1120,8 +1147,16 @@ def compute_type_stats(
     def _build_row(rt: str) -> dict:
         monthly    = type_monthly.get(rt, {})
         row_total  = sum(monthly.values())
-        prev_m_val = monthly.get(_month_offset(year, focus_month or datetime.now().month, -1)[1], 0) if focus_month else 0
-        this_m_val = monthly.get(focus_month, 0) if focus_month else 0
+        if focus_month:
+            if _type_prev_extra is not None:
+                # 上月跨年（如 1月→上年12月），從獨立計算的 dict 取值
+                prev_m_val = _type_prev_extra.get(rt, 0)
+            else:
+                prev_m_val = monthly.get(_prev_m, 0)
+            this_m_val = monthly.get(focus_month, 0)
+        else:
+            prev_m_val = 0
+            this_m_val = 0
         monthly_detail = {
             m: [c.to_dict() for c in cs]
             for m, cs in type_monthly_cases.get(rt, {}).items()
@@ -1179,7 +1214,8 @@ def compute_room_repair_table(
     month: int,
 ) -> dict:
     all_cases = [c for c in all_cases if not c.is_excluded_flag]
-    room_cases = [c for c in filter_cases(all_cases, year, month) if c.is_room_case]
+    # 口徑與 3.1/3.3 一致：依「報修日期」(occ_year/occ_month) 篩選
+    room_cases = [c for c in all_cases if c.occ_year == year and c.occ_month == month and c.is_room_case]
 
     matrix: dict[str, dict[str, list]] = {}
     unknown_room: list = []

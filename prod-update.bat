@@ -1,5 +1,13 @@
 @echo off
 chcp 65001 >nul
+
+REM ── 防止雙擊閃退：若不是從 cmd /k 啟動，就重新用 cmd /k 開一個不會自關的視窗 ──
+if not "%PROD_LAUNCHED%"=="1" (
+    set PROD_LAUNCHED=1
+    cmd /k ""%~f0""
+    exit /b
+)
+
 cd /d D:\portal
 
 echo.
