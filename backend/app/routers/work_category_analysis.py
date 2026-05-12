@@ -338,7 +338,7 @@ def _build_person_ranking(rows: list[dict], top_n: int = 20) -> list[dict]:
     """C. 人員工時排名（含件數、平均工時/件）。"""
     total = sum(r["work_hours"] for r in rows)
     person_hours: dict[str, float]      = defaultdict(float)
-    person_cases: dict[str, set]        = defaultdict(set)
+    person_cases: dict[str, int]         = defaultdict(int)   # 直接累加，不去重
     person_source: dict[str, set[str]]  = defaultdict(set)
     person_cat: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
     for r in rows:
@@ -346,7 +346,7 @@ def _build_person_ranking(rows: list[dict], top_n: int = 20) -> list[dict]:
         if p == "未指定":
             continue
         person_hours[p] += r["work_hours"]
-        person_cases[p].add(r["case_id"])
+        person_cases[p] += 1
         person_source[p].add(r["source"])
         person_cat[p][r["category"]] += r["work_hours"]
 
@@ -354,7 +354,7 @@ def _build_person_ranking(rows: list[dict], top_n: int = 20) -> list[dict]:
     result = []
     for i, p in enumerate(sorted_persons, 1):
         ph    = person_hours[p]
-        cases = len(person_cases[p])
+        cases = person_cases[p]
         avg_hr = round(ph / cases, 1) if cases else 0.0
         top_cat = max(person_cat[p], key=lambda c: person_cat[p][c]) if person_cat[p] else "-"
         result.append({

@@ -2,6 +2,51 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)
 
+## [1.59.13] - 2026-05-12
+
+### Changed
+- **人員負荷與效率分析「件數」口徑調整**（`work_category_analysis.py`）：`_build_person_ranking` 改為直接累加記錄筆數（`+= 1`），不再對 `case_id` 去重，用於均工時/件分母
+- **人員負荷與效率分析欄位 Tooltip 說明**（`ExecWorkDashboard/index.tsx`）：新增 `ColTip` 元件，為工時HR、件數、均工時/件、主要類別、判斷五欄加上 ⓘ Tooltip 計算公式說明
+
+## [1.59.12] - 2026-05-12
+
+### Fixed
+- **飯店／商場工項類別比較「例行維護」飯店件數口徑修正**（`ExecWorkDashboard/index.tsx`）：  
+  `categoryComparison` 飯店欄由 `hotelMonthlyData.cases[mi]` 改為 `hotelDailyData.cases` 月加總，  
+  與 HotelMgmtDashboard Tab B 每日累計口徑完全一致。  
+  根本原因：`monthly-hours` IHG 案件數用不重複房號數，`daily-hours` 用原始記錄累加，兩者可能相差 1。
+
+## [1.59.11] - 2026-05-12
+
+### Added
+- **RepairSummaryCard 加入「待辦驗數」欄位**（`ExecWorkDashboard/index.tsx`）：在飯店工務部 / 商場工務報修小卡的 KPI 數字列，於「已結案」與「未結案」之間新增「待辦驗數」（來源：`kpi.pending_verify`，橙色警示）；原 6 欄 span=4 → 新 7 欄（報修總數4、已結案3、待辦驗3、未結案3、結案率3、均結案天4、工時4）
+
+## [1.59.10] - 2026-05-12
+
+### Fixed
+- **P0：`avgHrPerCase` 計算口徑修正**（`ExecWorkDashboard/index.tsx`）：改用 `execStats.kpi.total_cases`（exec-work-category 口徑，有工時記錄的案件）取代原先混用 luqun+dazhi 全案件數，避免分母過大導致平均偏低
+- **P0：`hotel_overview.py` 日/月累計工時 stat-month 口徑修正**：已結案改用 `completed_at` 歸屬月份，未結案仍用 `occurred_at`，與大直/商場口徑一致
+
+### Added
+- **P2：異常提醒類別集中度改為件數百分比**（`ExecWorkDashboard/index.tsx`）：AlertPanel 工項類別集中度欄位改顯示案件數百分比（`pct` from `category_breakdown`）；Tooltip 補充說明「本月工時 XX 小時」
+- **P3：集團 KPI 增加 4 張卡片**（`ExecWorkDashboard/index.tsx`）：新增「飯店待辦驗數」「商場待辦驗數」（來自 repair stats `pending_verify`）及「飯店上期未結」「商場上期未結」（來自 `months[month].prev_uncompleted`），共 2 列×4 欄
+
+### Changed
+- **每月累計工時表改為全年 12 月**（`ExecWorkDashboard/index.tsx`）：新增 `execStatsYear`（`month: 0` 年度查詢），ExecMonthlyTable 改用年度資料顯示完整 12 個月；`execStats` 保留月份篩選供 KPI 使用
+
+## [1.59.8] - 2026-05-12
+
+### Changed
+- **dazhi-repair / luqun-repair TAB「3.1 報修」欄位改名**（`DazhiRepair/index.tsx`、`LuqunRepair/index.tsx`）：
+  - ①：「截至上月底累計未結案數」→「上月累計未完成項目數」
+  - ②：「其中本月已結案數」→「上月累計未完成項目，於本月結案」
+  - ③：「本月底仍未結案數」→「上月累計未完成項目，於本月仍未完成」
+  - ④：「累計項目完成率（%）」→「累計項目完成率」
+  - ⑥：「本月報修項目完成數」→「本月報修項目完成數（已辦簽作基準）」
+  - ⑦：「本月未完成數」→「本月報修項目未完成」
+  - ⑧：「本月報修項目完成率（%）」→「本月報修項目完成率」
+- **①～④ 列底色**改為淺粉色（`#FFF0F0`），與 ⑤～⑧ 白/灰交替視覺區隔
+
 ## [1.59.7] - 2026-05-12
 
 ### Fixed

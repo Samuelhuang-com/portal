@@ -2,10 +2,12 @@
 
 > 跨據點統一管理平台 — FastAPI + React + TypeScript
 
-**最後更新：2026-05-12（v1.59.6）**
+**最後更新：2026-05-12（v1.59.11）**
 
 ## 最近變更
-- v1.59.7：**說明文字稽核修正** — luqunRepair KPI 卡 6 處錯誤說明修正；MallMgmtDashboard PM 工時說明 3 處更新、本期總工項補整棟巡檢、Alert 整棟巡檢狀態更新
+- v1.59.11：**RepairSummaryCard 新增待辦驗數欄** — 飯店/商場小卡「已結案」與「未結案」之間插入「待辦驗數」（橙色），7 欄 span 重新分配
+- v1.59.10：**集團決策 Dashboard P0/P2/P3 修正** — P0：avgHrPerCase 改用 exec 口徑；hotel_overview stat-month 口徑對齊；P2：Alert 類別集中度改件數百分比；P3：新增 4 張 KPI 卡（飯店/商場待辦驗數、上期未結）；每月累計工時表改全年 12 月
+- v1.59.8：**說明文字稽核修正** — luqunRepair KPI 卡 6 處錯誤說明修正；MallMgmtDashboard PM 工時說明 3 處更新、本期總工項補整棟巡檢、Alert 整棟巡檢狀態更新
 - v1.59.6：**mall/overview 後端口徑修正** — daily/monthly 現場報修改用 _stat_dt（已結案→完工日，其餘→報修日）；每日巡檢補回「實際+缺漏」補算（5 張表，≤ 今日的天數才計缺漏）
 - v1.59.5：**飯店工務報修模組重命名** — Sidebar、頁面標題、Breadcrumb、Tab 標籤統一從「工務部」改為「飯店工務報修」
 - v1.59.4：**KPI 說明文字全面修正（6 項）** — 已完成件數（status 判定非 completed_at）、待辦驗件數（三類互斥非子集）、本月工時統計（驗收月口徑＋維修工時欄位）、本期工時合計、現場報修 ⓘ（舊 _stat 說明已更新為 occ 口徑）；全部改為口語化說明

@@ -951,13 +951,15 @@ function RepairStatsTab({ year, focusMonth }: { year: number; focusMonth: number
   if (loading) return <Spin />
   if (!data)   return <Empty />
 
-  // 欄位定義：key（值）、detailKey（明細陣列）、label（顯示用 ReactNode）、titleText（Modal 標題用純文字）、isPct
-  const rows: { key: string; detailKey?: string; label: React.ReactNode; titleText?: string; isPct?: boolean }[] = [
+  // 欄位定義：key（值）、detailKey（明細陣列）、label（顯示用 ReactNode）、titleText（Modal 標題用純文字）、isPct、decimals、compute
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const rows: { key: string; detailKey?: string; label: React.ReactNode; titleText?: string; isPct?: boolean; decimals?: number; labelColor?: string; formula?: string; compute?: (stat: any) => number | null }[] = [
     {
       key: 'prev_uncompleted', detailKey: 'prev_uncompleted_detail',
-      titleText: '① 截至上月底累計未結案數',
+      formula: '= 歷史報修 − 歷史結案',
+      titleText: '① 上月累計未完成項目數',
       label: (
-        <span style={{ fontSize: 16 }}>① 截至上月底累計未結案數&nbsp;
+        <span style={{ fontSize: 16 }}>① 上月累計未完成項目數&nbsp;
           <Tooltip title={
             <span>
               截至<b>上個月底</b>為止，所有歷史報修單中尚未結案的總數量。<br />
@@ -971,9 +973,10 @@ function RepairStatsTab({ year, focusMonth }: { year: number; focusMonth: number
     },
     {
       key: 'closed_from_prev', detailKey: 'closed_from_prev_detail',
-      titleText: '② 其中本月已結案數',
+      formula: '= ① 中，本月已結案',
+      titleText: '② 上月累計未完成項目，於本月結案',
       label: (
-        <span style={{ fontSize: 16 }}>② 其中本月已結案數&nbsp;
+        <span style={{ fontSize: 16 }}>② 上月累計未完成項目，於本月結案&nbsp;
           <Tooltip title={
             <span>
               ①那些「截至上月底尚未結案」的舊案件中，<b>本月內</b>完成結案的數量。<br />
@@ -987,9 +990,11 @@ function RepairStatsTab({ year, focusMonth }: { year: number; focusMonth: number
     },
     {
       key: 'prev_remaining', detailKey: 'prev_remaining_detail',
-      titleText: '③ 本月底仍未結案數（① - ②）',
+      labelColor: '#FF4D4F',
+      formula: '= ① − ②',
+      titleText: '③ 上月累計未完成項目，於本月仍未完成',
       label: (
-        <span style={{ fontSize: 16 }}>③ 本月底仍未結案數（① - ②）&nbsp;
+        <span style={{ fontSize: 16 }}>③ 上月累計未完成項目，於本月仍未完成&nbsp;
           <Tooltip title={
             <span>
               ①的舊案件扣掉本月已結案的②，代表<b>截至本月底仍未結案的歷史舊案數量</b>。<br />
@@ -1001,12 +1006,28 @@ function RepairStatsTab({ year, focusMonth }: { year: number; focusMonth: number
         </span>
       ),
     },
-    { key: 'cum_completion_rate',                                                   label: '④ 累計項目完成率（%）', isPct: true },
-    { key: 'this_month_total',           detailKey: 'this_month_total_detail',     label: '⑤ 本月報修項目數' },
-    { key: 'this_month_completed',       detailKey: 'this_month_completed_detail', label: '⑥ 本月報修項目完成數' },
-    { key: 'this_month_uncompleted', detailKey: 'this_month_uncompleted_detail',   label: '⑦ 本月未完成數' },
-    { key: 'this_month_completion_rate',                                            label: '⑧ 本月報修項目完成率（%）', isPct: true },
+    { key: 'cum_completion_rate', label: '④ 累計項目完成率', isPct: true, decimals: 1, formula: '= ② ÷ ①',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      compute: (stat: any) => {
+        const den = stat?.prev_uncompleted
+        if (!den) return null
+        return ((stat?.closed_from_prev ?? 0) / den) * 100
+      },
+    },
+    { key: 'this_month_total',           detailKey: 'this_month_total_detail',     label: '⑤ 本月報修項目數',                          formula: '= 本月新建報修單' },
+    { key: 'this_month_completed',       detailKey: 'this_month_completed_detail', label: '⑥ 本月報修項目完成數（已辦簽作基準）',        formula: '= ⑤ 中，本月已完成' },
+    { key: 'this_month_uncompleted', detailKey: 'this_month_uncompleted_detail',   label: '⑦ 本月報修項目未完成', labelColor: '#FF4D4F', formula: '= ⑤ − ⑥' },
+    { key: 'this_month_completion_rate',                                            label: '⑧ 本月報修項目完成率', isPct: true,           formula: '= ⑥ ÷ ⑤' },
+    { key: '_ix',                                                                   label: '⑨ 累計項目完成件數',                         formula: '= ② + ⑥',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      compute: (stat: any) => (stat?.closed_from_prev ?? 0) + (stat?.this_month_completed ?? 0),
+    },
   ]
+
+  const rowBg = (ri: number) =>
+    ri < 4 ? (ri % 2 === 0 ? '#FFF5F5' : '#FFFBFB')
+    : ri < 8 ? (ri % 2 === 0 ? '#fff' : '#f8f9fb')
+    : '#EFF8FF'
 
   // 未來月份判定：選擇的年份超過今年，或同年但月份超過當前月份
   const _now = new Date()
@@ -1038,13 +1059,16 @@ function RepairStatsTab({ year, focusMonth }: { year: number; focusMonth: number
           </thead>
           <tbody>
             {rows.map((row, ri) => (
-              <tr key={row.key} style={{ background: ri % 2 === 0 ? '#fff' : '#f8f9fb' }}>
+              <tr key={row.key} style={{ background: rowBg(ri) }}>
                 <td style={{
-                  padding: '8px 12px', fontWeight: 500, color: '#1B3A5C',
-                  borderBottom: '1px solid #eee', position: 'sticky', left: 0,
-                  background: ri % 2 === 0 ? '#fff' : '#f8f9fb', zIndex: 1,
+                  padding: '8px 12px', fontWeight: 500, color: row.labelColor ?? '#1B3A5C',
+                  borderBottom: ri === 3 || ri === 7 ? '3px solid #bbb' : '1px solid #eee', position: 'sticky', left: 0,
+                  background: rowBg(ri), zIndex: 1,
                 }}>
                   {row.label}
+                  {row.formula && (
+                    <div style={{ fontSize: 13, color: '#888', fontWeight: 400, marginTop: 2 }}>{row.formula}</div>
+                  )}
                 </td>
                 {MONTHS.map(m => {
                   // 未來月份：全部顯示「—」，不可點擊
@@ -1052,8 +1076,8 @@ function RepairStatsTab({ year, focusMonth }: { year: number; focusMonth: number
                     return (
                       <td key={m} style={{
                         padding: '8px 8px', textAlign: 'center',
-                        borderBottom: '1px solid #eee',
-                        background: m === focusMonth ? '#E6F7FF' : ri % 2 === 0 ? '#fff' : '#f8f9fb',
+                        borderBottom: ri === 3 || ri === 7 ? '3px solid #bbb' : '1px solid #eee',
+                        background: m === focusMonth ? '#E6F7FF' : rowBg(ri),
                         color: '#ccc', fontSize: 12,
                       }}>
                         —
@@ -1062,20 +1086,20 @@ function RepairStatsTab({ year, focusMonth }: { year: number; focusMonth: number
                   }
                   const stat = data.months[m]
                   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                  const val = stat ? (stat as any)[row.key] : null
+                  const val = stat ? (row.compute ? row.compute(stat) : (stat as any)[row.key]) : null
                   // eslint-disable-next-line @typescript-eslint/no-explicit-any
                   const detail: RepairCase[] = (row.detailKey && stat) ? (stat as any)[row.detailKey] ?? [] : []
-                  const canClick = !row.isPct && detail.length > 0
+                  const canClick = !row.isPct && !row.compute && detail.length > 0
                   const display = val == null ? '-'
-                    : row.isPct ? `${fmtDec(val as number)}%`
+                    : row.isPct ? `${fmtDec(val as number, row.decimals)}%`
                     : fmt(val as number)
                   return (
                     <td key={m}
                       onClick={() => canClick && setModal({ title: `${m}月 ${row.titleText ?? row.label}`, cases: detail })}
                       style={{
                         padding: '8px 8px', textAlign: 'center',
-                        borderBottom: '1px solid #eee',
-                        background: m === focusMonth ? '#E6F7FF' : ri % 2 === 0 ? '#fff' : '#f8f9fb',
+                        borderBottom: ri === 3 || ri === 7 ? '3px solid #bbb' : '1px solid #eee',
+                        background: m === focusMonth ? '#E6F7FF' : rowBg(ri),
                         fontWeight: m === focusMonth ? 600 : 400,
                         cursor: canClick ? 'pointer' : 'default',
                         color: row.isPct && val != null
@@ -1371,7 +1395,7 @@ function RepairTypeTab({ year, focusMonth }: { year: number; focusMonth: number 
                         onClick={() => canClick && setModal({ title: `${m}月 ${row.type}（${cnt} 件）`, cases: detail })}
                         style={{
                           padding: '7px 6px', textAlign: 'center',
-                          background: m === focusMonth ? '#E6F7FF' : ri % 2 === 0 ? '#fff' : '#f8f9fb',
+                          background: m === focusMonth ? '#E6F7FF' : rowBg(ri),
                           fontWeight: m === focusMonth && cnt > 0 ? 700 : 400,
                           color: cnt > 0 ? '#1B3A5C' : '#ccc',
                           cursor: canClick ? 'pointer' : 'default',

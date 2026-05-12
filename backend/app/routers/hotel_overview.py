@@ -183,14 +183,15 @@ def get_hotel_daily_hours(
             pass
 
     # ── ⑥ 飯店工務部 ────────────────────────────────────────────────────────────
-    # 案件數（occ 口徑）：依「報修日期」(occurred_at) 統計，與 dazhi-repair/dashboard 3.1/3.3 一致
+    # 案件數（stat-month 口徑）：已完成→completed_at 月，未完成→occurred_at 月
+    #   與 dazhi-repair/dashboard、work_category_analysis 保持一致（P0 fix）
     # 工時：只統計已結案（completed_at 不為空），以 completed_at 為時間軸
     # ① 取消 案件全部排除
     for c in db.query(DazhiRepairCase).all():
         if (c.status or '').strip() == '取消':  # ① 排除取消案件
             continue
-        # -- 案件數：occ 口徑（報修日期） --
-        stat_dt = c.occurred_at  # ② 統一改為報修日期口徑
+        # -- 案件數：stat-month 口徑（已完成→completed_at，否則→occurred_at）--
+        stat_dt = c.completed_at if c.is_completed_flag else c.occurred_at
         if stat_dt is not None and stat_dt.year == year and stat_dt.month == month:
             d = stat_dt.day
             if 1 <= d <= days_in_month:
@@ -378,15 +379,17 @@ def get_hotel_monthly_hours(
             pass
 
     # ── ⑥ 飯店工務部 ────────────────────────────────────────────────────────────
-    # 案件數（occ 口徑）：依「報修日期」(occurred_at) 統計，與 dazhi-repair/dashboard 3.1/3.3 一致
+    # 案件數（stat-month 口徑）：已完成→completed_at 月，未完成→occurred_at 月
+    #   與 dazhi-repair/dashboard、work_category_analysis 保持一致（P0 fix）
     # 工時：只統計已結案（completed_at 不為空），以 completed_at 為時間軸
     # ① 取消 案件全部排除
     for c in db.query(DazhiRepairCase).all():
         if (c.status or '').strip() == '取消':  # ① 排除取消案件
             continue
-        # -- 案件數：occ 口徑（報修日期） --
-        if c.occurred_at is not None and c.occurred_at.year == year:  # ② 統一改為報修日期口徑
-            stat_m = c.occurred_at.month
+        # -- 案件數：stat-month 口徑（已完成→completed_at，否則→occurred_at）--
+        stat_dt_c = c.completed_at if c.is_completed_flag else c.occurred_at
+        if stat_dt_c is not None and stat_dt_c.year == year:
+            stat_m = stat_dt_c.month
             if 1 <= stat_m <= 12:
                 cases_bucket["飯店工務部"][stat_m] += 1
         # -- 工時：completed_at 口徑 --

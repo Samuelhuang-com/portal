@@ -25,7 +25,7 @@ import {
   RightOutlined, SafetyOutlined, ShopOutlined,
   AlertOutlined, BuildOutlined, ToolOutlined,
   DollarOutlined, RiseOutlined, WarningOutlined, BankOutlined,
-  ArrowUpOutlined, ArrowDownOutlined,
+  ArrowUpOutlined, ArrowDownOutlined, InfoCircleOutlined,
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import relativeTime from 'dayjs/plugin/relativeTime'
@@ -37,9 +37,11 @@ import {
   PieChart, Pie, Cell,
 } from 'recharts'
 
-import { fetchDashboard as fetchLuqunDashboard } from '@/api/luqunRepair'
-import { fetchDashboard as fetchDazhiDashboard } from '@/api/dazhiRepair'
+import { fetchDashboard as fetchLuqunDashboard, fetchRepairStats as fetchLuqunRepairStats } from '@/api/luqunRepair'
+import { fetchDashboard as fetchDazhiDashboard, fetchRepairStats as fetchDazhiRepairStats } from '@/api/dazhiRepair'
 import type { DashboardData as RepairDashboardData, TypeDistItem } from '@/types/luqunRepair'
+import type { RepairStatsData as DazhiRepairStatsData } from '@/types/dazhiRepair'
+import type { RepairStatsData as LuqunRepairStatsData } from '@/types/luqunRepair'
 import {
   fetchStats,
   type CategoryStats, type HoursRow, type PersonHoursRow, type PersonRankingItem,
@@ -252,6 +254,16 @@ function ExecRankingTable({ stats }: { stats: CategoryStats | null }) {
   )
 }
 
+function ColTip({ label, tip }: { label: string; tip: string }) {
+  return (
+    <Tooltip title={tip}>
+      <span style={{ cursor: 'help', whiteSpace: 'nowrap' }}>
+        {label} <InfoCircleOutlined style={{ fontSize: 11, color: '#aaa' }} />
+      </span>
+    </Tooltip>
+  )
+}
+
 function ExecBurdenTable({ stats }: { stats: CategoryStats | null }) {
   const ranking = stats?.person_ranking ?? []
   return (
@@ -261,23 +273,38 @@ function ExecBurdenTable({ stats }: { stats: CategoryStats | null }) {
         columns={[
           { title: '人員', dataIndex: 'person', width: 88,
             render: (v: string) => <Typography.Text style={{ fontSize: 14 }}>{v}</Typography.Text> },
-          { title: '工時(HR)', dataIndex: 'hours', width: 80, align: 'right' as const,
+          {
+            title: <ColTip label="工時(HR)" tip="SUM(work_hours)：依人員加總，涵蓋飯店工務（大直）、商場工務（陸群）、IHG客房保養三個來源" />,
+            dataIndex: 'hours', width: 90, align: 'right' as const,
             sorter: (a: ExecRankRow, b: ExecRankRow) => a.hours - b.hours,
-            render: (v: number) => <Typography.Text strong style={{ fontSize: 14 }}>{v.toFixed(1)}</Typography.Text> },
-          { title: '件數', dataIndex: 'cases', width: 62, align: 'right' as const,
+            render: (v: number) => <Typography.Text strong style={{ fontSize: 14 }}>{v.toFixed(1)}</Typography.Text>,
+          },
+          {
+            title: <ColTip label="件數" tip="COUNT(work_hours > 0 的記錄數)：該人員負責的工時記錄筆數（含重複案件），用於計算均工時/件的分母" />,
+            dataIndex: 'cases', width: 62, align: 'right' as const,
             sorter: (a: ExecRankRow, b: ExecRankRow) => (a.cases ?? 0) - (b.cases ?? 0),
-            render: (v: number) => <Typography.Text style={{ fontSize: 14 }}>{v ?? 0}</Typography.Text> },
-          { title: '均工時/件', dataIndex: 'avg_hr', width: 90, align: 'right' as const,
+            render: (v: number) => <Typography.Text style={{ fontSize: 14 }}>{v ?? 0}</Typography.Text>,
+          },
+          {
+            title: <ColTip label="均工時/件" tip="工時(HR) ÷ 件數，四捨五入至小數 1 位。反映每筆工作記錄平均耗時" />,
+            dataIndex: 'avg_hr', width: 90, align: 'right' as const,
             sorter: (a: ExecRankRow, b: ExecRankRow) => (a.avg_hr ?? 0) - (b.avg_hr ?? 0),
-            render: (v: number) => <Typography.Text style={{ fontSize: 14 }}>{(v ?? 0).toFixed(1)}</Typography.Text> },
-          { title: '主要類別', dataIndex: 'top_category', width: 90,
-            render: (v: string) => <Tag color={CATEGORY_TAG_COLORS[v] ?? 'default'} style={{ fontSize: 13 }}>{v}</Tag> },
-          { title: '判斷', key: 'burden', width: 88, align: 'center' as const,
+            render: (v: number) => <Typography.Text style={{ fontSize: 14 }}>{(v ?? 0).toFixed(1)}</Typography.Text>,
+          },
+          {
+            title: <ColTip label="主要類別" tip="該人員在現場報修／上級交辦／緊急事件／例行維護／每日巡檢五類中，工時最高的類別" />,
+            dataIndex: 'top_category', width: 90,
+            render: (v: string) => <Tag color={CATEGORY_TAG_COLORS[v] ?? 'default'} style={{ fontSize: 13 }}>{v}</Tag>,
+          },
+          {
+            title: <ColTip label="判斷" tip="依均工時/件判斷：≥ 3.0 HR → 需關注（紅）；2.5–3.0 HR → 工時偏高（橙）；< 2.5 HR → 正常（綠）" />,
+            key: 'burden', width: 96, align: 'center' as const,
             sorter: (a: ExecRankRow, b: ExecRankRow) => (a.avg_hr ?? 0) - (b.avg_hr ?? 0),
             render: (_: unknown, r: ExecRankRow) => {
               const { text, color } = burdenLabel(r.avg_hr ?? 0)
               return <Tag color={color} style={{ fontSize: 13, fontWeight: 600 }}>{text}</Tag>
-            } },
+            },
+          },
         ]}
         pagination={{ pageSize: 15, showSizeChanger: false }}
         size="small"
@@ -528,8 +555,8 @@ function RepairSummaryCard({
                   <div style={{ fontSize: 11, color: C.gray, marginTop: 2 }}>報修總數</div>
                 </div>
               </Col>
-              {/* 結案數 */}
-              <Col span={4}>
+              {/* 已結案 */}
+              <Col span={3}>
                 <div style={{ textAlign: 'center' }}>
                   <div style={{ fontSize: 22, fontWeight: 700, color: C.success, lineHeight: 1.2 }}>
                     {kpi.completed}
@@ -537,8 +564,20 @@ function RepairSummaryCard({
                   <div style={{ fontSize: 11, color: C.gray, marginTop: 2 }}>已結案</div>
                 </div>
               </Col>
+              {/* 待辦驗數 */}
+              <Col span={3}>
+                <div style={{ textAlign: 'center' }}>
+                  <div style={{
+                    fontSize: 22, fontWeight: 700, lineHeight: 1.2,
+                    color: (kpi.pending_verify ?? 0) > 0 ? C.warning : C.gray,
+                  }}>
+                    {kpi.pending_verify ?? 0}
+                  </div>
+                  <div style={{ fontSize: 11, color: C.gray, marginTop: 2 }}>待辦驗數</div>
+                </div>
+              </Col>
               {/* 未結案 */}
-              <Col span={4}>
+              <Col span={3}>
                 <div style={{ textAlign: 'center' }}>
                   <div style={{
                     fontSize: 22, fontWeight: 700, lineHeight: 1.2,
@@ -550,7 +589,7 @@ function RepairSummaryCard({
                 </div>
               </Col>
               {/* 結案率 */}
-              <Col span={4}>
+              <Col span={3}>
                 <div style={{ textAlign: 'center' }}>
                   <div style={{
                     fontSize: 22, fontWeight: 700, lineHeight: 1.2,
@@ -581,7 +620,7 @@ function RepairSummaryCard({
               <Col span={4}>
                 <div style={{ textAlign: 'center' }}>
                   <div style={{ fontSize: 22, fontWeight: 700, color: accentColor, lineHeight: 1.2 }}>
-                    {kpi.total_work_hours > 0 ? kpi.total_work_hours.toFixed(0) : '—'}
+                    {kpi.total_work_hours > 0 ? kpi.total_work_hours.toFixed(2) : '—'}
                   </div>
                   <div style={{ fontSize: 11, color: C.gray, marginTop: 2 }}>工時(h)</div>
                 </div>
@@ -1043,6 +1082,9 @@ export default function ExecWorkDashboardPage() {
   const [selectedYear,   setSelectedYear]   = useState<number>(dayjs().year())
   const [selectedMonth,  setSelectedMonth]  = useState<number>(dayjs().month() + 1)
   const [execStats,        setExecStats]        = useState<CategoryStats | null>(null)
+  const [execStatsYear,    setExecStatsYear]    = useState<CategoryStats | null>(null)  // 全年（month=0），供每月累計表用
+  const [dazhiRepairStats, setDazhiRepairStats] = useState<DazhiRepairStatsData | null>(null)
+  const [luqunRepairStats, setLuqunRepairStats] = useState<LuqunRepairStatsData | null>(null)
   const [hotelMonthlyData, setHotelMonthlyData] = useState<HotelMonthlyHoursData | null>(null)
   const [mallMonthlyData,  setMallMonthlyData]  = useState<MallMonthlyHoursData | null>(null)
   const [hotelDailyData,   setHotelDailyData]   = useState<HotelDailyHoursData | null>(null)
@@ -1062,7 +1104,7 @@ export default function ExecWorkDashboardPage() {
   const loadAll = useCallback(async () => {
     setLoading(true)
     try {
-      const [luqun, dazhi, hotelMon, mallMon, hotelDay, mallDay, execSt] =
+      const [luqun, dazhi, hotelMon, mallMon, hotelDay, mallDay, execSt, execStYr, dazhiSt, luqunSt] =
         await Promise.allSettled([
           fetchLuqunDashboard(selectedYear, selectedMonth),
           fetchDazhiDashboard(selectedYear, selectedMonth),
@@ -1071,14 +1113,20 @@ export default function ExecWorkDashboardPage() {
           fetchHotelDailyHours(selectedYear, selectedMonth),
           fetchMallDailyHours(selectedYear, selectedMonth),
           fetchStats({ year: selectedYear, month: selectedMonth, sources: 'all', category: 'all', person: 'all' }),
+          fetchStats({ year: selectedYear, month: 0,             sources: 'all', category: 'all', person: 'all' }),
+          fetchDazhiRepairStats(selectedYear),
+          fetchLuqunRepairStats(selectedYear),
         ])
-      if (luqun.status    === 'fulfilled') setLuqunData(luqun.value)
-      if (dazhi.status    === 'fulfilled') setDazhiData(dazhi.value as unknown as RepairDashboardData)
-      if (hotelMon.status === 'fulfilled') setHotelMonthlyData(hotelMon.value)
-      if (mallMon.status  === 'fulfilled') setMallMonthlyData(mallMon.value)
-      if (hotelDay.status === 'fulfilled') setHotelDailyData(hotelDay.value)
-      if (mallDay.status  === 'fulfilled') setMallDailyData(mallDay.value)
-      if (execSt.status   === 'fulfilled') setExecStats(execSt.value)
+      if (luqun.status     === 'fulfilled') setLuqunData(luqun.value)
+      if (dazhi.status     === 'fulfilled') setDazhiData(dazhi.value as unknown as RepairDashboardData)
+      if (hotelMon.status  === 'fulfilled') setHotelMonthlyData(hotelMon.value)
+      if (mallMon.status   === 'fulfilled') setMallMonthlyData(mallMon.value)
+      if (hotelDay.status  === 'fulfilled') setHotelDailyData(hotelDay.value)
+      if (mallDay.status   === 'fulfilled') setMallDailyData(mallDay.value)
+      if (execSt.status    === 'fulfilled') setExecStats(execSt.value)
+      if (execStYr.status  === 'fulfilled') setExecStatsYear(execStYr.value)
+      if (dazhiSt.status   === 'fulfilled') setDazhiRepairStats(dazhiSt.value)
+      if (luqunSt.status   === 'fulfilled') setLuqunRepairStats(luqunSt.value)
       setRefreshed(new Date())
     } finally {
       setLoading(false)
@@ -1092,18 +1140,22 @@ export default function ExecWorkDashboardPage() {
     const CATS = ['現場報修', '上級交辦', '緊急事件', '例行維護', '每日巡檢']
     const mi = selectedMonth - 1
 
-    // 飯店：多來源合併（與 HotelMgmtDashboard TAB C 相同邏輯）
-    const hFind = (name: string) => hotelMonthlyData?.rows.find(r => r.category === name)
-    const hc = (name: string) => hFind(name)?.cases[mi] ?? 0
+    // 飯店：使用 daily-hours 月加總，與 HotelMgmtDashboard Tab B 口徑完全一致
+    // （monthly-hours 的 IHG 用不重複房號數，daily 用原始記錄加總，兩者可能不同）
+    const dFind = (name: string) => hotelDailyData?.rows.find(r => r.category === name)
+    const hd = (name: string) => {
+      const row = dFind(name)
+      return row ? row.cases.reduce((a: number, b: number) => a + b, 0) : 0
+    }
     const hotelCatCases: Record<string, number> = {
-      現場報修: hc('飯店工務部'),
+      現場報修: hd('飯店工務部'),
       上級交辦: 0,
       緊急事件: 0,
-      例行維護: hc('客房保養管理') + hc('飯店週期保養') + hc('IHG客房保養'),
-      每日巡檢: hc('飯店每日巡檢') + hc('保全巡檢'),
+      例行維護: hd('客房保養管理') + hd('飯店週期保養') + hd('IHG客房保養'),
+      每日巡檢: hd('飯店每日巡檢') + hd('保全巡檢'),
     }
 
-    // 商場：API 直接回傳五類名稱，直接 find
+    // 商場：monthly-hours cases[mi]（商場無 IHG 口徑差異問題）
     const mFind = (name: string) => mallMonthlyData?.rows.find(r => r.category === name)
     const mc = (name: string) => mFind(name)?.cases[mi] ?? 0
 
@@ -1113,7 +1165,7 @@ export default function ExecWorkDashboardPage() {
       hotelCases: hotelCatCases[cat] ?? 0,
       mallCases:  mc(cat),
     }))
-  }, [hotelMonthlyData, mallMonthlyData, selectedMonth])
+  }, [hotelDailyData, mallMonthlyData, selectedMonth])
 
   // ── 骨架畫面 ────────────────────────────────────────────────────────────────
   if (loading) {
@@ -1132,9 +1184,18 @@ export default function ExecWorkDashboardPage() {
   const uncompletedCases= (dKpi?.uncompleted?? 0) + (lKpi?.uncompleted?? 0)
   const totalHours      = execStats?.kpi?.total_hours ?? 0
   const completionRate  = totalCases > 0 ? Math.round(completedCases  / totalCases * 100) : 0
-  const avgHrPerCase    = totalCases > 0 ? Math.round(totalHours      / totalCases * 10) / 10 : 0
+  // P0 fix: 分子(execStats工時) 與 分母(execStats件數) 必須同一資料集，
+  // 不可混用 repair dashboard 件數（含 work_hours=0 的案件）作分母
+  const execTotalCases  = execStats?.kpi?.total_cases ?? 0
+  const avgHrPerCase    = execTotalCases > 0 ? Math.round(totalHours / execTotalCases * 10) / 10 : 0
   const hotelCasePct    = totalCases > 0 ? Math.round((dKpi?.total ?? 0) / totalCases * 100) : 0
   const mallCasePct     = totalCases > 0 ? Math.round((lKpi?.total ?? 0) / totalCases * 100) : 0
+  // 待辦驗數（直接來自 repair dashboard KPI）
+  const dazhiPendingVerify = dKpi?.pending_verify ?? 0
+  const luqunPendingVerify = lKpi?.pending_verify ?? 0
+  // 上期未結（來自 /stats/repair，取選定月的 prev_uncompleted）
+  const dazhiPrevUncomp = dazhiRepairStats?.months[selectedMonth]?.prev_uncompleted ?? 0
+  const luqunPrevUncomp = luqunRepairStats?.months[selectedMonth]?.prev_uncompleted ?? 0
 
   return (
     <div>
@@ -1189,13 +1250,17 @@ export default function ExecWorkDashboardPage() {
         {/* 本月總工時 */}
         <Col xs={12} sm={8} md={6} lg={3}>
           <Card size="small" bordered={false} style={{ borderTop: `3px solid ${C.accent}`, textAlign: 'center' }}>
-            <Statistic
-              title={<Text style={{ fontSize: 12, color: C.gray }}>本月總工時</Text>}
-              value={totalHours}
-              precision={1}
-              suffix="HR"
-              valueStyle={{ fontSize: 22, fontWeight: 700, color: C.accent }}
-            />
+            <Tooltip title="來源：工項分析模組（work-category-analysis）
+僅含有工時記錄的案件（work_hours > 0）
+數值可能低於各模組工時加總">
+              <Statistic
+                title={<Text style={{ fontSize: 12, color: C.gray }}>本月總工時 ℹ</Text>}
+                value={totalHours}
+                precision={1}
+                suffix="HR"
+                valueStyle={{ fontSize: 22, fontWeight: 700, color: C.accent }}
+              />
+            </Tooltip>
           </Card>
         </Col>
         {/* 完成件數 */}
@@ -1263,6 +1328,62 @@ export default function ExecWorkDashboardPage() {
               suffix="%"
               valueStyle={{ fontSize: 22, fontWeight: 700, color: C.primary }}
             />
+          </Card>
+        </Col>
+      </Row>
+
+      {/* ── 集團 KPI Row 2：待辦驗數 + 上期未結 ─────────────────────────── */}
+      <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
+        {/* 飯店待辦驗數 */}
+        <Col xs={12} sm={8} md={6} lg={6}>
+          <Card size="small" bordered={false} style={{ borderTop: `3px solid ${C.warning}`, textAlign: 'center' }}>
+            <Tooltip title="待客戶驗收確認的飯店工務案件數">
+              <Statistic
+                title={<Text style={{ fontSize: 12, color: C.gray }}>飯店待辦驗數</Text>}
+                value={dazhiPendingVerify}
+                suffix="件"
+                valueStyle={{ fontSize: 22, fontWeight: 700, color: dazhiPendingVerify > 0 ? C.warning : C.success }}
+              />
+            </Tooltip>
+          </Card>
+        </Col>
+        {/* 商場待辦驗數 */}
+        <Col xs={12} sm={8} md={6} lg={6}>
+          <Card size="small" bordered={false} style={{ borderTop: `3px solid ${C.warning}`, textAlign: 'center' }}>
+            <Tooltip title="待客戶驗收確認的商場工務案件數">
+              <Statistic
+                title={<Text style={{ fontSize: 12, color: C.gray }}>商場待辦驗數</Text>}
+                value={luqunPendingVerify}
+                suffix="件"
+                valueStyle={{ fontSize: 22, fontWeight: 700, color: luqunPendingVerify > 0 ? C.warning : C.success }}
+              />
+            </Tooltip>
+          </Card>
+        </Col>
+        {/* 飯店上期未結 */}
+        <Col xs={12} sm={8} md={6} lg={6}>
+          <Card size="small" bordered={false} style={{ borderTop: `3px solid ${C.danger}`, textAlign: 'center' }}>
+            <Tooltip title={`${selectedYear} 年 ${selectedMonth} 月的上期遺留未結案件（來源：/stats/repair prev_uncompleted）`}>
+              <Statistic
+                title={<Text style={{ fontSize: 12, color: C.gray }}>飯店上期未結</Text>}
+                value={dazhiPrevUncomp}
+                suffix="件"
+                valueStyle={{ fontSize: 22, fontWeight: 700, color: dazhiPrevUncomp > 0 ? C.danger : C.success }}
+              />
+            </Tooltip>
+          </Card>
+        </Col>
+        {/* 商場上期未結 */}
+        <Col xs={12} sm={8} md={6} lg={6}>
+          <Card size="small" bordered={false} style={{ borderTop: `3px solid ${C.danger}`, textAlign: 'center' }}>
+            <Tooltip title={`${selectedYear} 年 ${selectedMonth} 月的上期遺留未結案件（來源：/stats/repair prev_uncompleted）`}>
+              <Statistic
+                title={<Text style={{ fontSize: 12, color: C.gray }}>商場上期未結</Text>}
+                value={luqunPrevUncomp}
+                suffix="件"
+                valueStyle={{ fontSize: 22, fontWeight: 700, color: luqunPrevUncomp > 0 ? C.danger : C.success }}
+              />
+            </Tooltip>
           </Card>
         </Col>
       </Row>
@@ -1463,18 +1584,18 @@ export default function ExecWorkDashboardPage() {
         <Col xs={24} lg={10}>
           <Card title="報修類型分布（飯店工務部）" size="small" bodyStyle={{ padding: '12px 8px 8px' }}>
             {dazhiData?.type_dist?.length ? (
-              <ResponsiveContainer width="100%" height={200}>
-                <PieChart>
+              <ResponsiveContainer width="100%" height={240}>
+                <PieChart margin={{ top: 24, right: 48, bottom: 24, left: 48 }}>
                   <Pie
                     data={dazhiData.type_dist as TypeDistItem[]}
                     dataKey="count"
                     nameKey="type"
                     cx="50%" cy="50%"
-                    outerRadius={75}
+                    outerRadius={65}
                     label={({ type, percent }: { type: string; percent: number }) =>
                       percent > 0.04 ? `${type} ${(percent * 100).toFixed(0)}%` : ''
                     }
-                    labelLine={false}
+                    labelLine={true}
                   >
                     {(dazhiData.type_dist as TypeDistItem[]).map((_: TypeDistItem, idx: number) => (
                       <Cell key={idx} fill={['#1B3A5C','#4BA8E8','#52C41A','#FAAD14','#FF4D4F','#722ED1','#13C2C2','#FA8C16'][idx % 8]} />
@@ -1523,18 +1644,18 @@ export default function ExecWorkDashboardPage() {
         <Col xs={24} lg={10}>
           <Card title="報修類型分布（商場工務報修）" size="small" bodyStyle={{ padding: '12px 8px 8px' }}>
             {luqunData?.type_dist?.length ? (
-              <ResponsiveContainer width="100%" height={200}>
-                <PieChart>
+              <ResponsiveContainer width="100%" height={240}>
+                <PieChart margin={{ top: 24, right: 48, bottom: 24, left: 48 }}>
                   <Pie
                     data={luqunData.type_dist as TypeDistItem[]}
                     dataKey="count"
                     nameKey="type"
                     cx="50%" cy="50%"
-                    outerRadius={75}
+                    outerRadius={65}
                     label={({ type, percent }: { type: string; percent: number }) =>
                       percent > 0.04 ? `${type} ${(percent * 100).toFixed(0)}%` : ''
                     }
-                    labelLine={false}
+                    labelLine={true}
                   >
                     {(luqunData.type_dist as TypeDistItem[]).map((_: TypeDistItem, idx: number) => (
                       <Cell key={idx} fill={['#1B3A5C','#4BA8E8','#52C41A','#FAAD14','#FF4D4F','#722ED1','#13C2C2','#FA8C16'][idx % 8]} />
@@ -1623,7 +1744,7 @@ export default function ExecWorkDashboardPage() {
               {
                 key: 'exec-monthly',
                 label: <Space><span>📆</span><Typography.Text strong style={{ fontSize: 16 }}>每月累計工時表 — {selectedYear} 年</Typography.Text></Space>,
-                children: <ExecMonthlyTable stats={execStats} />,
+                children: <ExecMonthlyTable stats={execStatsYear} />,
               },
             ]}
           />
