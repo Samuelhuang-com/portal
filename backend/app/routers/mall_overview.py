@@ -3,7 +3,7 @@
 GET /api/v1/mall/daily-hours   每日工時彙總（五項工項）
 
 來源（均查本地 DB，不打 Ragic）：
-  ① 現場報修 — luqun_repair_cases（occ_year / occ_month + work_hours）
+  ① 現場報修 — luqun_repair_cases（_stat_dt 口徑：已結案→completed_at，其餘→occurred_at，排除取消）
   ② 上級交辦 — 固定 0（模組未開發）
   ③ 緊急事件 — 固定 0（模組未開發）
   ④ 例行維護 — mall_pm_batch_item + full_bldg_pm_batch_item（start_time / end_time 實際保養時間）
@@ -73,20 +73,17 @@ def get_mall_daily_hours(
     bucket: dict[str, dict[int, float]] = {c: defaultdict(float) for c in MALL_CATEGORIES}
     case_bucket: dict[str, dict[int, int]] = {c: defaultdict(int) for c in MALL_CATEGORIES}
 
-    # ── ① 現場報修：luqun_repair_cases（occ_year / occ_month 歸屬）────────────
-    luqun_cases = (
-        db.query(LuqunRepairCase)
-        .filter(
-            LuqunRepairCase.occ_year  == year,
-            LuqunRepairCase.occ_month == month,
-        )
-        .all()
-    )
-    for c in luqun_cases:
-        if c.occurred_at:
+    # ── ① 現場報修：_stat_dt 口徑（已結案→completed_at，其餘→occurred_at，排除取消）─
+    for c in db.query(LuqunRepairCase).all():
+        if c.is_excluded_flag:
+            continue
+        stat_dt = c.completed_at if (c.is_completed_flag and c.completed_at) else c.occurred_at
+        if not stat_dt:
+            continue
+        if stat_dt.year == year and stat_dt.month == month:
+            case_bucket["現場報修"][stat_dt.day] += 1
             if (c.work_hours or 0) > 0:
-                bucket["現場報修"][c.occurred_at.day] += c.work_hours
-            case_bucket["現場報修"][c.occurred_at.day] += 1
+                bucket["現場報修"][stat_dt.day] += c.work_hours
 
     # ── ④ 例行維護：mall_pm_batch_item ───────────────────────────────────────
     # period_month 可能儲存為 "2026/04" 或 "2026/4"，用 LIKE + Python 過濾
@@ -147,10 +144,14 @@ def get_mall_daily_hours(
             if mins > 0:
                 bucket["例行維護"][_pm_day(item.scheduled_date)] += mins / 60
 
-    # ── ⑤ 每日巡檢：mall_facility_inspection_batch ────────────────────────────
-    # inspection_date 格式 "2026/04/15"
+    # ── ⑤ 每日巡檢：mall_facility_inspection_batch（實際+缺漏補算）─────────────
+    # 5 張固定巡檢表（4F/3F/1F-3F/1F/B1F-B4F），每天每表應巡一次
+    MALL_FI_SHEET_COUNT = 5
+    _today = date.today()
+    counting_end_day = _today.day if (year == _today.year and month == _today.month) else days_in_month
     date_prefix = f"{year}/{month:02d}/"
 
+    fi_sheets_by_day: dict[int, set] = defaultdict(set)
     for b in (
         db.query(MallFIBatch)
         .filter(MallFIBatch.inspection_date.like(f"{date_prefix}%"))
@@ -159,13 +160,21 @@ def get_mall_daily_hours(
         try:
             day = int(b.inspection_date.split("/")[2])
             if 1 <= day <= days_in_month:
+                fi_sheets_by_day[day].add(b.sheet_key)
                 mins = _parse_minutes(b.start_time or "", b.end_time or "")
-                case_bucket["每日巡檢"][day] += 1
                 bucket["每日巡檢"][day] += mins / 60
         except (ValueError, IndexError):
             pass
 
-    # ── ⑤ 每日巡檢：rf_inspection_batch ──────────────────────────────────────
+    # 實際場次 + 缺漏場次（≤ counting_end_day 才補缺漏）
+    for d in days:
+        actual = len(fi_sheets_by_day.get(d, set()))
+        if d <= counting_end_day:
+            case_bucket["每日巡檢"][d] += actual + max(0, MALL_FI_SHEET_COUNT - actual)
+        else:
+            case_bucket["每日巡檢"][d] += actual
+
+    # ── ⑤ 每日巡檢：rf_inspection_batch（整棟巡檢，實際批次數）─────────────────
     for b in (
         db.query(RFInspectionBatch)
         .filter(RFInspectionBatch.inspection_date.like(f"{date_prefix}%"))
@@ -251,12 +260,17 @@ def get_mall_monthly_hours(
     case_bucket: dict[str, dict[int, int]] = {c: defaultdict(int) for c in MALL_CATEGORIES}
     year_prefix = f"{year}/"
 
-    # ── ① 現場報修 ──────────────────────────────────────────────────────────
-    for c in db.query(LuqunRepairCase).filter(LuqunRepairCase.occ_year == year).all():
-        if c.occ_month and 1 <= c.occ_month <= 12:
-            case_bucket["現場報修"][c.occ_month] += 1
+    # ── ① 現場報修：_stat_dt 口徑（已結案→completed_at，其餘→occurred_at，排除取消）─
+    for c in db.query(LuqunRepairCase).all():
+        if c.is_excluded_flag:
+            continue
+        stat_dt = c.completed_at if (c.is_completed_flag and c.completed_at) else c.occurred_at
+        if not stat_dt:
+            continue
+        if stat_dt.year == year and 1 <= stat_dt.month <= 12:
+            case_bucket["現場報修"][stat_dt.month] += 1
             if (c.work_hours or 0) > 0:
-                bucket["現場報修"][c.occ_month] += c.work_hours
+                bucket["現場報修"][stat_dt.month] += c.work_hours
 
     # ── ④ 例行維護：mall_pm ──────────────────────────────────────────────────
     # 先撈 batch（1 次），再用 IN 一次撈全部 items（1 次），避免 N+1

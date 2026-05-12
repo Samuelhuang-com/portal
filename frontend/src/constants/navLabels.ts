@@ -63,7 +63,7 @@ export const NAV_GROUP = {
   mall:                     '商場管理',
   mallPmGroup:              '商場例行維護',   // ← L2 群組：商場例行維護 + 全棟例行維護
   luqun_repair:             '商場工務報修',
-  dazhi_repair:             '大直工務部',
+  dazhi_repair:             '飯店工務報修',
   mall_facility_inspection:  '商場工務巡檢',
   full_building_inspection:  '整棟巡檢',
   security:                  '保全巡檢',
@@ -114,8 +114,8 @@ export const NAV_PAGE = {
   // 商場工務報修
   luqunRepairDashboard:    '商場工務報修 Dashboard',
 
-  // 大直工務部
-  dazhiRepairDashboard:    '大直工務部 Dashboard',
+  // 飯店工務報修
+  dazhiRepairDashboard:    '飯店工務報修 Dashboard',
 
   // ★工項類別分析
   workCategoryAnalysis:    '★工項類別分析',

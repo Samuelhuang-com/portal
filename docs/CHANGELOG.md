@@ -2,6 +2,47 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)
 
+## [1.59.7] - 2026-05-12
+
+### Fixed
+- **說明文字稽核修正**：
+  - `luqunRepair.ts`：本月相關案件（「尚未完工」→「尚未結案，以處理狀況判斷」）、已完成件數（改為以 status 判斷說明）、待辦驗件數（移除「屬未完成子集」錯誤說明，改為三類互斥）、未完成件數（完全改寫，舊說明「沒有完工時間」有誤）、平均結案天數（說明含「上月舊案本月結案」範圍）、本月工時統計（移除舊邏輯殘留「維修天數 × 24，上限 365 天」）
+  - `MallMgmtDashboard/index.tsx`：本期總工項補上「整棟巡檢」；本期工時合計 / 各來源工時占比 / Alert 資料說明三處 PM 說明由「計劃工時（預估）」更正為「實際保養工時（start/end_time）」；Alert 整棟巡檢說明從「建置中」更新為「已納入每日巡檢統計」
+
+## [1.59.6] - 2026-05-12
+
+### Fixed
+- **mall/overview 後端計算口徑修正**（`mall_overview.py`）：
+  - `GET /daily-hours` 現場報修：改用 `_stat_dt` 口徑（已結案且有 completed_at → 以完工日歸屬，其餘 → occurred_at），排除取消案件；原用 occ_year/occ_month 舊邏輯（因前次截斷遺失）補回
+  - `GET /daily-hours` 每日巡檢：補回「實際+缺漏」補算邏輯 — 對 ≤ counting_end_day 的每天，case_count = 實際登錄場次 + 缺漏場次（5 張表 − 已登錄張數），使 Tab B 與 Dashboard KPI 口徑一致
+  - `GET /monthly-hours` 現場報修：同上改用 `_stat_dt` 口徑，使 Tab C 與 Tab B 一致
+
+## [1.59.5] - 2026-05-12
+
+### Changed
+- **飯店工務報修模組重命名**：前端所有顯示文字「工務部」→「飯店工務報修」，涵蓋 Sidebar 群組標籤、Dashboard 頁面標題、Breadcrumb、Tab 標籤、費用說明文字（`navLabels.ts` + `DazhiRepair/index.tsx`）
+
+## [1.59.4] - 2026-05-12
+
+### Fixed
+- **KPI 說明文字全面修正（6 項）**
+  - `dazhiRepair.ts` — 全部 7 個 KPI 卡說明改為口語化，並修正以下錯誤：
+    - **已完成件數**：說明改為「以處理狀況欄位判定是否完成」，移除舊有「完工時間落在所選月份」的誤述
+    - **待辦驗件數**：說明改為「獨立統計，不算在已完成也不算在未完成」，移除「屬未完成子集」的錯誤描述
+    - **未完成件數**：說明改為「既非已完成、也非待辦驗的案件，三類互斥」，更精確描述計算邏輯
+    - **本月工時統計**：口徑改為「驗收月完工案件」；欄位來源更正為「Ragic 維修工時（小時）」；sub 副標由「維修天數×24 ÷24」改為「≈ N 個工作天（÷8hr）」
+  - `HotelMgmtDashboard/index.tsx` — 修正兩處說明：
+    - **本期工時合計 ?**：括號內「現場報修（work_hours / close_days）」改為「飯店工務報修（維修工時，小時）」
+    - **現場報修 ⓘ（Tab B/C/D）**：移除舊 `_stat` 混合口徑說明，改為「案件數依報修日期歸屬；工時依完工日期，直接讀取維修工時欄位；取消案件不計入」
+
+## [1.59.3] - 2026-05-12
+
+### Fixed
+- **飯店管理 Dashboard (hotel/overview) — 飯店工務部三項口徑修正**
+  - ① **排除取消案件**：`daily-hours`、`monthly-hours`、`person-hours` 三端點的 DazhiRepairCase 迴圈均新增 `status == '取消'` 排除，與 dazhi-repair 的 `is_excluded_flag` 邏輯一致
+  - ② **案件數口徑改為報修日期（occ）**：`daily-hours` 與 `monthly-hours` 的案件計數原本用 `_stat` 混合口徑（已完工→completed_at，否則→occurred_at），改為統一以 `occurred_at`（報修日期）為準，與 dazhi-repair Dashboard 3.1/3.3 口徑一致；工時統計仍維持 `completed_at`（驗收月）口徑不變
+  - ③ **待辦驗分類**：此差異屬前端 KPI 卡呈現層面，hotel_overview 後端端點不涉及狀態三分法，暫不修改
+
 ## [1.59.2] - 2026-05-12
 
 ### Fixed

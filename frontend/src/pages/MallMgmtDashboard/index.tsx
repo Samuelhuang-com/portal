@@ -615,7 +615,7 @@ export default function MallMgmtDashboardPage() {
         <Col flex="1">
           <Card bodyStyle={{ padding: '14px 16px' }} style={{ borderLeft: '3px solid #1B3A5C' }}>
             <Statistic
-              title={<Tooltip title="商場例行維護 + 全棟例行維護 + 商場工務巡檢 + 商場工務報修之工項/案件總和"><span style={{ fontSize: 13, color: '#888', cursor: 'help' }}>本期總工項 <QuestionCircleOutlined style={{ color: '#bbb' }} /></span></Tooltip>}
+              title={<Tooltip title="商場例行維護 + 全棟例行維護 + 商場工務巡檢 + 整棟巡檢 + 商場工務報修之工項/案件總和"><span style={{ fontSize: 13, color: '#888', cursor: 'help' }}>本期總工項 <QuestionCircleOutlined style={{ color: '#bbb' }} /></span></Tooltip>}
               value={totalCases} suffix="筆"
               valueStyle={{ fontSize: 24, color: '#1B3A5C', fontWeight: 700 }}
               prefix={<BarChartOutlined style={{ fontSize: 16, marginRight: 4 }} />}
@@ -634,7 +634,7 @@ export default function MallMgmtDashboardPage() {
         <Col flex="1">
           <Card bodyStyle={{ padding: '14px 16px' }} style={{ borderLeft: '3px solid #FA8C16' }}>
             <Statistic
-              title={<Tooltip title="PM 計劃工時（預估）+ 巡檢工時 + 商場報修工時"><span style={{ fontSize: 13, color: '#888', cursor: 'help' }}>本期工時合計 <QuestionCircleOutlined style={{ color: '#bbb' }} /></span></Tooltip>}
+              title={<Tooltip title="PM 實際保養工時（start/end_time）+ 巡檢工時 + 商場報修工時"><span style={{ fontSize: 13, color: '#888', cursor: 'help' }}>本期工時合計 <QuestionCircleOutlined style={{ color: '#bbb' }} /></span></Tooltip>}
               value={totalWorkHours} suffix="HR"
               valueStyle={{ fontSize: 24, fontWeight: 700, color: '#FA8C16' }}
               prefix={<ClockCircleOutlined style={{ fontSize: 16, marginRight: 4 }} />}
@@ -872,7 +872,7 @@ export default function MallMgmtDashboardPage() {
         </Col>
         <Col xs={24} lg={8}>
           <Card title={<><BarChartOutlined /> 各來源工時占比</>} size="small"
-            extra={<Tooltip title="PM 工時為計劃分鐘換算；報修為實際工時；巡檢為記錄工時"><QuestionCircleOutlined style={{ color: '#bbb', cursor: 'help' }} /></Tooltip>}>
+            extra={<Tooltip title="PM 工時為實際保養時間（start/end_time）；報修為 Ragic 花費工時欄位；巡檢為記錄工時"><QuestionCircleOutlined style={{ color: '#bbb', cursor: 'help' }} /></Tooltip>}>
             {pieData.length === 0 ? <div style={{ textAlign: 'center', color: '#bbb', padding: '40px 0' }}>暫無工時資料</div> : (
               <ResponsiveContainer width="100%" height={220}>
                 <PieChart>
@@ -890,9 +890,9 @@ export default function MallMgmtDashboardPage() {
 
       <Alert type="info" showIcon message="資料說明"
         description={<ul style={{ margin: 0, paddingLeft: 20, fontSize: 14 }}>
-          <li>工時口徑：PM 為計劃工時（預估）；商場工務巡檢為巡檢工時記錄；商場工務報修為案件實際工時。</li>
+          <li>工時口徑：PM 為實際保養工時（start/end_time）；商場工務巡檢為巡檢工時記錄；商場工務報修為 Ragic 花費工時欄位。</li>
           <li>各來源資料為獨立統計，不重複計算。</li>
-          <li>整棟巡檢後端 API 建置中，暫不顯示資料。</li>
+          <li>整棟巡檢已納入每日巡檢統計；若無記錄則不計入。</li>
         </ul>}
       />
     </>

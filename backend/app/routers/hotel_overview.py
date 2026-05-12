@@ -183,16 +183,14 @@ def get_hotel_daily_hours(
             pass
 
     # ── ⑥ 飯店工務部 ────────────────────────────────────────────────────────────
-    # 案件數（_stat_year/_stat_month 口徑）：
-    #   is_completed(status) AND completed_at is not None → completed_at
-    #   otherwise → occurred_at
-    # 工時（原有口徑）：只統計已結案（completed_at 不為空），以 completed_at 為時間軸
+    # 案件數（occ 口徑）：依「報修日期」(occurred_at) 統計，與 dazhi-repair/dashboard 3.1/3.3 一致
+    # 工時：只統計已結案（completed_at 不為空），以 completed_at 為時間軸
+    # ① 取消 案件全部排除
     for c in db.query(DazhiRepairCase).all():
-        # -- 案件數：_stat_year/_stat_month 口徑 --
-        if _repair_is_completed(c.status or '') and c.completed_at is not None:
-            stat_dt = c.completed_at
-        else:
-            stat_dt = c.occurred_at
+        if (c.status or '').strip() == '取消':  # ① 排除取消案件
+            continue
+        # -- 案件數：occ 口徑（報修日期） --
+        stat_dt = c.occurred_at  # ② 統一改為報修日期口徑
         if stat_dt is not None and stat_dt.year == year and stat_dt.month == month:
             d = stat_dt.day
             if 1 <= d <= days_in_month:
@@ -380,20 +378,17 @@ def get_hotel_monthly_hours(
             pass
 
     # ── ⑥ 飯店工務部 ────────────────────────────────────────────────────────────
-    # 案件數（_stat_year/_stat_month 口徑）：
-    #   is_completed(status) AND completed_at is not None → completed_at.month
-    #   otherwise → occurred_at.month
-    # 工時（原有口徑）：只統計已結案（completed_at 不為空），以 completed_at 為時間軸
+    # 案件數（occ 口徑）：依「報修日期」(occurred_at) 統計，與 dazhi-repair/dashboard 3.1/3.3 一致
+    # 工時：只統計已結案（completed_at 不為空），以 completed_at 為時間軸
+    # ① 取消 案件全部排除
     for c in db.query(DazhiRepairCase).all():
-        # -- 案件數：_stat_year/_stat_month 口徑 --
-        if _repair_is_completed(c.status or '') and c.completed_at is not None:
-            stat_y, stat_m = c.completed_at.year, c.completed_at.month
-        elif c.occurred_at is not None:
-            stat_y, stat_m = c.occurred_at.year, c.occurred_at.month
-        else:
-            stat_y, stat_m = None, None
-        if stat_y == year and stat_m is not None and 1 <= stat_m <= 12:
-            cases_bucket["飯店工務部"][stat_m] += 1
+        if (c.status or '').strip() == '取消':  # ① 排除取消案件
+            continue
+        # -- 案件數：occ 口徑（報修日期） --
+        if c.occurred_at is not None and c.occurred_at.year == year:  # ② 統一改為報修日期口徑
+            stat_m = c.occurred_at.month
+            if 1 <= stat_m <= 12:
+                cases_bucket["飯店工務部"][stat_m] += 1
         # -- 工時：completed_at 口徑 --
         if c.completed_at is not None and c.completed_at.year == year:
             hrs = (c.work_hours or 0) if (c.work_hours or 0) > 0 else (c.close_days or 0)
@@ -541,7 +536,10 @@ def get_hotel_person_hours(
                 ph[person]["保全巡檢"] += mins / 60
 
     # ── ⑥ 飯店工務部：acceptor ─────────────────────────────────────────────────
+    # ① 取消 案件排除
     for c in db.query(DazhiRepairCase).filter(DazhiRepairCase.year == year).all():
+        if (c.status or '').strip() == '取消':  # ① 排除取消案件
+            continue
         person = (c.acceptor or "").strip()
         if person and person != "未指定" and (c.work_hours or 0) > 0:
             ph[person]["飯店工務部"] += c.work_hours

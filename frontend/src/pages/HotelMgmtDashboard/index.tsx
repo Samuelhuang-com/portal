@@ -259,11 +259,10 @@ export default function HotelMgmtDashboardPage() {
   const HOTEL_5CAT_TOOLTIPS: Record<Hotel5Cat, React.ReactNode> = {
     現場報修: ce('div', { style: { fontSize: 12, lineHeight: 1.9 } },
       ce('b', null, '飯店工務部 / Hotel Engineering'), '（hotel/dazhi-repair）', ce('br'),
-      '以 ', ce('code', null, '_stat_year/_stat_month'), ' 口徑歸屬月份：', ce('br'),
-      '・已結案且 ', ce('code', null, 'completed_at'), ' 有值 → 以 completed_at 歸屬', ce('br'),
-      '・其餘 → 以 ', ce('code', null, 'occurred_at'), '（事件發生日）歸屬', ce('br'),
-      ce('span', { style: { color: '#ccc', fontSize: 11 } },
-        '已結案狀態：結案／已辦驗／已驗收／已結案／完修／已完成／完成'),
+      '案件數依「報修日期」歸屬月份，不論是否已結案。', ce('br'),
+      '工時則依「完工（驗收）日期」歸屬，直接讀取 Ragic「維修工時」欄位（小時）。', ce('br'),
+      ce('span', { style: { color: '#aaa', fontSize: 11 } },
+        '取消狀態案件不計入'),
     ),
     上級交辦: ce('div', { style: { fontSize: 12 } }, '建置中，目前顯示 0'),
     緊急事件: ce('div', { style: { fontSize: 12 } }, '建置中，目前顯示 0'),
@@ -518,7 +517,7 @@ export default function HotelMgmtDashboardPage() {
           <Card bodyStyle={{ padding: '14px 16px' }} style={{ borderLeft: `3px solid ${ORANGE}` }}>
             <Statistic
               title={
-                <Tooltip title="客房保養（實際）+ 週期保養（預估計劃）+ IHG 保養（暫無）+ 每日巡檢（實際）+ 保全巡檢（實際）+ 現場報修（work_hours / close_days）合計">
+                <Tooltip title="五大來源工時加總：週期保養（計劃工時）＋ IHG 客房保養（計劃工時）＋ 每日巡檢（實際）＋ 保全巡檢（實際）＋ 飯店工務報修（維修工時，小時）">
                   <span style={{ fontSize: 11, color: '#888', cursor: 'help' }}>
                     本期工時合計 <QuestionCircleOutlined style={{ color: '#bbb' }} />
                   </span>

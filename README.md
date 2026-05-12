@@ -2,9 +2,14 @@
 
 > 跨據點統一管理平台 — FastAPI + React + TypeScript
 
-**最後更新：2026-05-12（v1.59.2）**
+**最後更新：2026-05-12（v1.59.6）**
 
 ## 最近變更
+- v1.59.7：**說明文字稽核修正** — luqunRepair KPI 卡 6 處錯誤說明修正；MallMgmtDashboard PM 工時說明 3 處更新、本期總工項補整棟巡檢、Alert 整棟巡檢狀態更新
+- v1.59.6：**mall/overview 後端口徑修正** — daily/monthly 現場報修改用 _stat_dt（已結案→完工日，其餘→報修日）；每日巡檢補回「實際+缺漏」補算（5 張表，≤ 今日的天數才計缺漏）
+- v1.59.5：**飯店工務報修模組重命名** — Sidebar、頁面標題、Breadcrumb、Tab 標籤統一從「工務部」改為「飯店工務報修」
+- v1.59.4：**KPI 說明文字全面修正（6 項）** — 已完成件數（status 判定非 completed_at）、待辦驗件數（三類互斥非子集）、本月工時統計（驗收月口徑＋維修工時欄位）、本期工時合計、現場報修 ⓘ（舊 _stat 說明已更新為 occ 口徑）；全部改為口語化說明
+- v1.59.3：**飯店管理 Dashboard hotel/overview 三項口徑修正** — ① 排除取消案件（daily/monthly/person-hours 三端點）；② 案件數改為報修日期口徑（occ，與 dazhi-repair 3.1/3.3 一致）；③ 待辦驗分類屬前端 KPI 層，後端暫不修改
 - v1.59.2：**大直「維修工時」Ragic 欄位讀取修正** — work_hours 優先讀「維修工時」（小時），Sync 後 Dashboard 工時卡片才會有值
 - v1.59.1：**Dashboard「本月工時統計」漏算修正** — `total_work_hours`/`top_hours`/工時明細改用驗收月口徑（`filter_cases`），跨月完工案件工時不再遺漏
 - v1.59.0：**統計口徑全面修正（3項）** — ① Dashboard 全年 KPI 改用報修日期；② 4.4 客房報修表改用報修日期；③ 3.3「上月」跨年取前一年資料（1月→上年12月不再顯示 0）
