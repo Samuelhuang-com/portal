@@ -16,6 +16,7 @@ class RagicConnection(Base):
     api_key_enc: Mapped[str] = mapped_column(Text, nullable=False)
     sheet_path: Mapped[str] = mapped_column(String(200), nullable=False)
     field_mappings: Mapped[dict] = mapped_column(JSON, default=dict)
+    module_key: Mapped[str | None] = mapped_column(String(50), nullable=True)
     sync_interval: Mapped[int] = mapped_column(Integer, default=60)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     last_synced_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

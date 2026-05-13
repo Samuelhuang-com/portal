@@ -23,6 +23,7 @@ from app.core.config import settings
 from app.core.database import SessionLocal
 from app.models.b4f_inspection import B4FInspectionBatch, B4FInspectionItem
 from app.services.ragic_adapter import RagicAdapter
+from app.services.sync_dispatcher import register
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +132,7 @@ def _normalize_result_status(raw: str) -> tuple[str, bool]:
 
 # ── 同步主程式 ────────────────────────────────────────────────────────────────
 
+@register("b4f_inspection")
 async def sync_from_ragic() -> dict:
     """
     從 Ragic Sheet 2 同步：

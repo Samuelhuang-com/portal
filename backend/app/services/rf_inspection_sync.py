@@ -23,6 +23,7 @@ from app.core.config import settings
 from app.core.database import SessionLocal
 from app.models.rf_inspection import RFInspectionBatch, RFInspectionItem
 from app.services.ragic_adapter import RagicAdapter
+from app.services.sync_dispatcher import register
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +120,7 @@ def _extract_check_items(row: dict) -> list[str]:
 
 # ── 同步主程式 ────────────────────────────────────────────────────────────────
 
+@register("rf_inspection")
 async def sync_from_ragic() -> dict:
     """
     從 Ragic Sheet 1 同步：

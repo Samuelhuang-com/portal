@@ -22,6 +22,7 @@ from app.core.config import settings
 from app.core.database import SessionLocal
 from app.models.b1f_inspection import B1FInspectionBatch, B1FInspectionItem
 from app.services.ragic_adapter import RagicAdapter
+from app.services.sync_dispatcher import register
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +109,7 @@ def _extract_check_items(row: dict) -> list[str]:
     return items
 
 
+@register("b1f_inspection")
 async def sync_from_ragic() -> dict:
     """
     從 Ragic Sheet 4 同步：

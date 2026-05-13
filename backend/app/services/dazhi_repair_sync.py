@@ -15,6 +15,7 @@ from app.core.time import twnow
 
 from app.core.database import SessionLocal
 from app.models.dazhi_repair import DazhiRepairCase
+from app.services.sync_dispatcher import register
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,7 @@ def _now() -> datetime:
     return twnow()
 
 
+@register("dazhi_repair")
 async def sync_from_ragic() -> dict:
     """
     從 Ragic 拉取大直工務部所有報修案件，Upsert 到本地 SQLite。

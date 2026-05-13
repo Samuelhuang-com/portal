@@ -18,6 +18,7 @@ from app.core.database import SessionLocal
 from app.core.time import twnow
 from app.models.hotel_daily_inspection import HotelDIBatch, HotelDIItem
 from app.services.ragic_adapter import RagicAdapter
+from app.services.sync_dispatcher import register
 
 logger = logging.getLogger(__name__)
 
@@ -294,6 +295,7 @@ async def sync_sheet(sheet_key: str) -> dict:
 
 # ── 全部 Sheet 同步 ───────────────────────────────────────────────────────────
 
+@register("hotel_daily_inspection")
 async def sync_all() -> dict:
     """同步所有 5 張飯店每日巡檢 Sheet。"""
     results = {}

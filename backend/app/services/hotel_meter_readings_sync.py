@@ -23,6 +23,7 @@ from app.core.database import SessionLocal
 from app.core.time import twnow
 from app.models.hotel_meter_readings import HotelMRBatch, HotelMRReading
 from app.services.ragic_adapter import RagicAdapter
+from app.services.sync_dispatcher import register
 
 logger = logging.getLogger(__name__)
 
@@ -238,6 +239,7 @@ def sync_sheet(sheet_key: str) -> dict:
     }
 
 
+@register("hotel_meter_readings")
 def sync_all() -> dict:
     """同步全部 4 張 Sheet"""
     results = {}

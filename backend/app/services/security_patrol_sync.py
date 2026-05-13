@@ -19,6 +19,7 @@ from app.core.config import settings
 from app.core.database import SessionLocal
 from app.models.security_patrol import SecurityPatrolBatch, SecurityPatrolItem
 from app.services.ragic_adapter import RagicAdapter
+from app.services.sync_dispatcher import register
 
 logger = logging.getLogger(__name__)
 
@@ -309,6 +310,7 @@ async def sync_sheet(sheet_key: str) -> dict:
 
 # ── 全部 Sheet 同步 ───────────────────────────────────────────────────────────
 
+@register("security_patrol")
 async def sync_all() -> dict:
     """同步所有 7 張保全巡檢 Sheet。"""
     results = {}

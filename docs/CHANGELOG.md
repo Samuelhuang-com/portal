@@ -2,6 +2,16 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)
 
+## [1.59.14] - 2026-05-13
+
+### Added
+- **Sync 架構重整 Phase 1**（`app/models/ragic_connection.py`、`create_indexes.py`）：  
+  `ragic_connections` 表新增 `module_key` 欄位（nullable TEXT），用於將連線對映到業務 sync 服務；  
+  `create_indexes.py` 補 COLUMN_MIGRATIONS 機制，自動 ALTER TABLE 補欄位，可重複執行。
+- **Sync 架構重整 Phase 2**（`app/services/sync_dispatcher.py`）：  
+  建立 `SYNC_REGISTRY` dispatcher，提供 `@register("module_key")` decorator 與 `dispatch(module_key)` 函數；  
+  自動支援 async/sync 兩種函數形式；17 個 sync 服務入口函數全數掛上 `@register`。
+
 ## [1.59.13] - 2026-05-12
 
 ### Changed

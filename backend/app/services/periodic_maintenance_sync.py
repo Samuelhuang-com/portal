@@ -26,6 +26,7 @@ from app.core.config import settings
 from app.core.database import SessionLocal
 from app.models.periodic_maintenance import PeriodicMaintenanceBatch, PeriodicMaintenanceItem
 from app.services.ragic_adapter import RagicAdapter
+from app.services.sync_dispatcher import register
 
 logger = logging.getLogger(__name__)
 
@@ -464,6 +465,7 @@ def _fix_period_month_format(db) -> int:
     return fixed
 
 
+@register("periodic_maintenance")
 async def sync_from_ragic() -> dict:
     """完整同步：先同步主表，再同步附表；並修正 period_month 格式。"""
     batch_result = await sync_batches_from_ragic()

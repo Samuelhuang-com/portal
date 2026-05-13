@@ -50,6 +50,7 @@ from app.models.ihg_room_maintenance import (
     IHGRoomMaintenanceSection,
 )
 from app.services.ragic_adapter import RagicAdapter
+from app.services.sync_dispatcher import register
 
 logger = logging.getLogger(__name__)
 
@@ -515,6 +516,7 @@ async def sync_details_from_ragic() -> dict:
     return {"fetched": total_fetched, "upserted": total_upserted, "errors": errors}
 
 
+@register("ihg_room_maintenance")
 async def sync_from_ragic() -> dict:
     """Complete sync: master first, then details"""
     master_result = await sync_master_from_ragic()

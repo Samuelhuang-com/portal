@@ -14,6 +14,7 @@ from app.core.config import settings
 from app.core.database import SessionLocal
 from app.models.room_maintenance import RoomMaintenanceRecord
 from app.services.ragic_adapter import RagicAdapter
+from app.services.sync_dispatcher import register
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +98,7 @@ def _ragic_to_model(ragic_id: str, raw: dict[str, Any]) -> RoomMaintenanceRecord
     return rec
 
 
+@register("room_maintenance")
 async def sync_from_ragic() -> dict:
     """
     從 Ragic 拉取所有客房保養資料，Upsert 到本地 SQLite。

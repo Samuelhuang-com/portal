@@ -15,6 +15,7 @@ from app.core.time import twnow
 
 from app.core.database import SessionLocal
 from app.models.luqun_repair import LuqunRepairCase
+from app.services.sync_dispatcher import register
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,7 @@ def _now() -> datetime:
     return twnow()
 
 
+@register("luqun_repair")
 async def sync_from_ragic() -> dict:
     """
     從 Ragic 拉取商場工務報修所有案件，Upsert 到本地 SQLite。

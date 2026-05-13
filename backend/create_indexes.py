@@ -49,9 +49,29 @@ INDEXES = [
     ("ix_mall_pm_item_abnormal",  "mall_pm_batch_item",   "abnormal_flag"),
 ]
 
+# ── Column Migrations（可重複執行，欄位已存在時靜默跳過）────────────────────────
+COLUMN_MIGRATIONS = [
+    # (table, column, type, default)
+    ("ragic_connections", "module_key", "TEXT", None),
+]
+
 # ── 執行 ──────────────────────────────────────────────────────────────────────
 conn = sqlite3.connect(db_path)
 cur  = conn.cursor()
+
+print("[Migration] 檢查欄位 migration...")
+for table, column, col_type, default in COLUMN_MIGRATIONS:
+    cur.execute(f"PRAGMA table_info({table})")
+    existing_cols = [row[1] for row in cur.fetchall()]
+    if column not in existing_cols:
+        default_clause = f" DEFAULT {default}" if default is not None else ""
+        cur.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}{default_clause}")
+        print(f"  [ADD]  {table}.{column} ({col_type})")
+    else:
+        print(f"  [OK]   {table}.{column} 已存在，跳過")
+conn.commit()
+print()
+
 ok = skip = err = 0
 
 for idx_name, table, column in INDEXES:

@@ -19,6 +19,7 @@ from app.core.config import settings
 from app.core.database import SessionLocal
 from app.models.mall_facility_inspection import MallFIBatch, MallFIItem
 from app.services.ragic_adapter import RagicAdapter
+from app.services.sync_dispatcher import register
 
 logger = logging.getLogger(__name__)
 
@@ -295,6 +296,7 @@ async def sync_sheet(sheet_key: str) -> dict:
 
 # ── 全部 Sheet 同步 ───────────────────────────────────────────────────────────
 
+@register("mall_facility_inspection")
 async def sync_all() -> dict:
     """同步所有 5 張商場工務巡檢 Sheet。"""
     results = {}
