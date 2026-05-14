@@ -192,9 +192,10 @@ async def sync_batches_from_ragic() -> dict:
     upserted = 0
     errors: list[str] = []
 
+    BATCH_SIZE = 50  # 每批 commit，避免長事務持鎖
     db = SessionLocal()
     try:
-        for ragic_id, raw in raw_data.items():
+        for i, (ragic_id, raw) in enumerate(raw_data.items()):
             try:
                 new_rec = _ragic_batch_to_model(str(ragic_id), raw)
                 existing = db.get(PeriodicMaintenanceBatch, str(ragic_id))
@@ -211,7 +212,16 @@ async def sync_batches_from_ragic() -> dict:
                 errors.append(f"batch ragic_id={ragic_id}: {exc}")
                 logger.warning(f"[PMSync][Batch] 記錄 {ragic_id} 失敗：{exc}")
 
-        db.commit()
+            # 每 BATCH_SIZE 筆提交一次，縮短鎖定時間
+            if (i + 1) % BATCH_SIZE == 0:
+                try:
+                    db.commit()
+                except Exception as exc:
+                    db.rollback()
+                    errors.append(f"batch commit at {i}: {exc}")
+                    logger.error(f"[PMSync][Batch] 中間 commit 失敗：{exc}")
+
+        db.commit()  # 最後剩餘筆數
         logger.info(f"[PMSync][Batch] 完成：fetched={fetched}, upserted={upserted}, errors={len(errors)}")
     except Exception as exc:
         db.rollback()
@@ -393,6 +403,7 @@ async def sync_items_from_ragic() -> dict:
             logger.info(f"[PMSync][Items] 批次 {batch_id_str} → 解析 {len(sub_rows)} 列")
             total_fetched += len(sub_rows)
 
+            _item_write_count = 0
             for row_key, row_raw in sub_rows.items():
                 item_id = f"{batch_id_str}_{row_key}"
                 try:
@@ -423,9 +434,19 @@ async def sync_items_from_ragic() -> dict:
                         db.add(new_rec)
 
                     total_upserted += 1
+                    _item_write_count += 1
                 except Exception as exc:
                     errors.append(f"item {item_id}: {exc}")
                     logger.warning(f"[PMSync][Items] 項目 {item_id} 失敗：{exc}")
+
+                # 每 50 筆提交，避免長事務持鎖
+                if _item_write_count % 50 == 0 and _item_write_count > 0:
+                    try:
+                        db.commit()
+                    except Exception as exc:
+                        db.rollback()
+                        errors.append(f"items batch commit: {exc}")
+                        logger.error(f"[PMSync][Items] 中間 commit 失敗：{exc}")
 
         db.commit()
         logger.info(

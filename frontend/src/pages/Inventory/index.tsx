@@ -13,7 +13,7 @@ import {
   Statistic, Typography, message, Breadcrumb, Tag, Tooltip,
 } from 'antd'
 import {
-  ReloadOutlined, HomeOutlined, SyncOutlined,
+  ReloadOutlined, HomeOutlined,
   SearchOutlined, DatabaseOutlined, ShopOutlined,
   WarningOutlined, InboxOutlined,
 } from '@ant-design/icons'
@@ -22,7 +22,6 @@ import type { ColumnsType, TablePaginationConfig } from 'antd/es/table'
 import {
   fetchInventoryRecords,
   fetchInventoryStats,
-  syncInventoryFromRagic,
 } from '@/api/inventory'
 import type { InventoryRecord, InventoryStats, InventoryFilters } from '@/types/inventory'
 
@@ -98,7 +97,6 @@ export default function InventoryPage() {
   const [records,  setRecords]  = useState<InventoryRecord[]>([])
   const [stats,    setStats]    = useState<InventoryStats | null>(null)
   const [loading,  setLoading]  = useState(false)
-  const [syncing,  setSyncing]  = useState(false)
   const [total,    setTotal]    = useState(0)
   const [filters,  setFilters]  = useState<InventoryFilters>({
     page: 1,
@@ -140,23 +138,6 @@ export default function InventoryPage() {
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── 手動同步 ────────────────────────────────────────────────────────────────
-  const handleSync = async () => {
-    setSyncing(true)
-    try {
-      const res = await syncInventoryFromRagic()
-      if (res.errors?.length) {
-        message.warning(`同步完成，但有 ${res.errors.length} 筆錯誤`)
-      } else {
-        message.success(`同步完成：共 ${res.fetched} 筆，更新 ${res.upserted} 筆`)
-      }
-      await loadRecords(filters)
-      await loadStats()
-    } catch {
-      message.error('同步失敗')
-    } finally {
-      setSyncing(false)
-    }
-  }
 
   // ── 套用搜尋 ────────────────────────────────────────────────────────────────
   const handleSearch = () => {
@@ -208,17 +189,6 @@ export default function InventoryPage() {
       <Row justify="space-between" align="middle" style={{ marginBottom: 16 }}>
         <Col>
           <Title level={4} style={{ margin: 0 }}>倉庫庫存</Title>
-        </Col>
-        <Col>
-          <Tooltip title="從 Ragic 重新同步庫存資料">
-            <Button
-              icon={<SyncOutlined spin={syncing} />}
-              onClick={handleSync}
-              loading={syncing}
-            >
-              同步資料
-            </Button>
-          </Tooltip>
         </Col>
       </Row>
 

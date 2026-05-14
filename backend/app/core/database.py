@@ -2,7 +2,7 @@
 SQLAlchemy 同步 engine + session factory
 （所有原有 router 使用 db.query() 同步 API，故維持同步模式）
 """
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker, DeclarativeBase, Session
 
 from app.core.config import settings
@@ -17,15 +17,29 @@ engine = create_engine(
     connect_args=(
         {
             "check_same_thread": False,
-            # OneDrive/網路磁碟鎖定時等待最多 30 秒（預設 5 秒太短）
-            "timeout": 30,
+            # OneDrive/網路磁碟鎖定時等待最多 60 秒
+            # （purchase sync 批次間有 3s 休眠，需要足夠的等待時間）
+            "timeout": 60,
         }
         if "sqlite" in _db_url
         else {}
     ),
-    # SQLite 連線池：固定單一連線，避免多執行緒競爭
     pool_pre_ping=True,
 )
+
+# 啟用 WAL（Write-Ahead Logging）模式：
+#   - 讀寫互不阻塞（讀不擋寫、寫不擋讀）
+#   - 大幅降低 "database is locked" 機率
+#   - synchronous=NORMAL：WAL 下安全且速度更快
+if "sqlite" in _db_url:
+    @event.listens_for(engine, "connect")
+    def _set_sqlite_wal(dbapi_connection, _connection_record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        # 多個 scheduler job 同時寫入時，等待最多 30 秒再回報 locked
+        cursor.execute("PRAGMA busy_timeout=30000")
+        cursor.close()
 
 SessionLocal = sessionmaker(
     bind=engine,

@@ -2,9 +2,22 @@
 
 > 跨據點統一管理平台 — FastAPI + React + TypeScript
 
-**最後更新：2026-05-12（v1.59.11）**
+**最後更新：2026-05-14（v1.61.2）**
 
 ## 最近變更
+- v1.61.0：**全年度 / 自訂區間日期篩選** — Header 加入 `Segmented` 三段切換（單月 | 全年度 | 自訂區間）；後端 purchase / claim / combined 三個 router 所有 5~3 個端點加入 `year_month_from` + `year_month_to` 參數，API client 同步更新；全年度模式自動展開為 `YYYY-01 ~ YYYY-12`，Excel 匯出檔名與 sheet 名稱隨模式更新（如 `2026年度`）
+- v1.60.1：**請款單整合模組 Phase 2（前端）** — 重構 PurchaseReport 頁面為 6-TAB 整合（請購清單/請購明細/請款清單/請款明細/總表/部門統計）；請款 Drawer（付款/銀行/品項/Ragic連結）；KPI 卡片隨 TAB 群組切換；部門統計雙色（請購藍+請款橙）+ admin 折疊同步管理
+- v1.60.0：**請款單整合模組 Phase 1（後端）** — 新增 `claim_request.py` ORM + `claim_request_sync.py`（15/45分鐘雙排程）+ `claim_report.py`（12端點）+ `combined_report.py`（請購+請款合併總表）；main.py 完成 router 註冊與 APScheduler 配置
+- v1.59.23：**修正全文檢索無法輸入** — `Input.Search` controlled value 拆為 `searchInput`（顯示）+ `searchKeyword`（API 觸發），打字流暢，Enter/搜尋鍵才送查詢
+- v1.59.22：**修正匯出 Excel 失敗** — `Content-Disposition` 中文檔名改 RFC 5987 `filename*=UTF-8''...`，修復 Starlette Latin-1 編碼 UnicodeEncodeError
+- v1.59.21：**全文檢索 + 欄位不省略 + 小計不折行** — Header 加 Input.Search（說明/單號/申請人/廠商）；月報明細申請單號/選用廠商加寬移除 ellipsis；小計數字加 whiteSpace nowrap
+- v1.59.20：**會科篩選 + 三表小計** — Header 新增「全部會科」Select；後端新增 `/config/account-categories` 端點 + 5 個端點加 account_category 參數；請購單清單 / 月報明細 / 部門統計三張 Table 各加 `Table.Summary` 小計列
+- v1.59.19：**月報明細 TAB 功能補完** — 後端 `_format_item_row` `department` key 修正為 `department_display`、補齊 vendor/amount_total/is_confirmed；前端月報明細列點擊開 Detail Drawer（handleOrderIdClick 重構）
+- v1.59.18：**清單同步直接解析品項**（purchase_request_sync.py）— 新增 `_find_subtable_from_list_raw()`，LIST_FIELD_CANDIDATES 擴充廠商/稅額/備註；清單同步時若偵測到 `_subtable_*` 品項資料即直接寫入並 `detail_synced=True`，省略 Detail API 呼叫
+- v1.59.17：**購報表 5 項後端 Bug 修正**（BackgroundTasks injection、sync/status 欄位名稱×4、config/departments 格式）+ 前端 per_page 修正 + RagicConnections 加入核准請購單 + RagicAppDirectory 加入 12 筆 Sheet
+- v1.59.16：**核准請購單月報表 Phase 3（前端）** — purchaseReport.ts API封裝、PurchaseReport 頁面（KPI×6 + 月報明細Tab + 部門統計Tab + 同步狀態Tab(admin)）、router + sidebar 接線
+- v1.59.15：**核准請購單月報表 Phase 1（後端）** — Models（主單+品項子表）、雙層同步服務（清單+Detail API，N+1+增量）、API Router（7端點，品項級別月報）
+- v1.59.12：**修正進系統選單閃爍** — `fetchMenuConfig()` 結果快取至 `localStorage`（`portal_menu_config_cache`）；進系統時初始化立即套用快取，無需等 API 回應；登出時清除快取防止帳號切換污染
 - v1.59.11：**RepairSummaryCard 新增待辦驗數欄** — 飯店/商場小卡「已結案」與「未結案」之間插入「待辦驗數」（橙色），7 欄 span 重新分配
 - v1.59.10：**集團決策 Dashboard P0/P2/P3 修正** — P0：avgHrPerCase 改用 exec 口徑；hotel_overview stat-month 口徑對齊；P2：Alert 類別集中度改件數百分比；P3：新增 4 張 KPI 卡（飯店/商場待辦驗數、上期未結）；每月累計工時表改全年 12 月
 - v1.59.8：**說明文字稽核修正** — luqunRepair KPI 卡 6 處錯誤說明修正；MallMgmtDashboard PM 工時說明 3 處更新、本期總工項補整棟巡檢、Alert 整棟巡檢狀態更新

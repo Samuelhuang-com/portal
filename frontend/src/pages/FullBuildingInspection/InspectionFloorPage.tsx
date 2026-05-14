@@ -14,7 +14,7 @@ import {
   message, Badge, DatePicker,
 } from 'antd'
 import {
-  HomeOutlined, SyncOutlined, ReloadOutlined,
+  HomeOutlined, ReloadOutlined,
   WarningOutlined, CheckCircleOutlined, ClockCircleOutlined,
   ExclamationCircleOutlined, SafetyOutlined, BarChartOutlined,
 } from '@ant-design/icons'
@@ -50,7 +50,6 @@ export default function InspectionFloorPage({ sheetKey }: InspectionFloorPagePro
   const [activeTab, setActiveTab]   = useState('dashboard')
   const [yearMonth, setYearMonth]   = useState<string>(dayjs().format('YYYY/MM'))
   const [loading,   setLoading]     = useState(false)
-  const [syncing,   setSyncing]     = useState(false)
   const [batches,   setBatches]     = useState<BatchRow[]>([])
 
   // 防呆：找不到設定
@@ -97,19 +96,6 @@ export default function InspectionFloorPage({ sheetKey }: InspectionFloorPagePro
   useEffect(() => {
     if (activeTab === 'list') loadBatches()
   }, [activeTab, loadBatches])
-
-  const handleSync = async () => {
-    setSyncing(true)
-    try {
-      // TODO: 接 API → syncFullBuildingFromRagic(sheetKey)
-      await new Promise((r) => setTimeout(r, 800))
-      message.info('同步功能開發中，請直接至 Ragic 填寫巡檢表單')
-    } catch {
-      message.error('同步失敗')
-    } finally {
-      setSyncing(false)
-    }
-  }
 
   // ── Tab 1：主管儀表板 ──────────────────────────────────────────────────────
 
@@ -335,15 +321,6 @@ export default function InspectionFloorPage({ sheetKey }: InspectionFloorPagePro
           <Title level={4} style={{ margin: 0, color: '#1B3A5C' }}>
             <SafetyOutlined /> {pageLabel}
           </Title>
-        </Col>
-        <Col>
-          <Button
-            icon={<SyncOutlined spin={syncing} />}
-            loading={syncing}
-            onClick={handleSync}
-          >
-            同步 Ragic
-          </Button>
         </Col>
       </Row>
 

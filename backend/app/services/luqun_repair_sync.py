@@ -49,9 +49,18 @@ async def sync_from_ragic() -> dict:
 
     db = SessionLocal()
     try:
+        # 預載所有現有記錄（避免 N+1 SELECT）
+        all_ragic_ids = [case.ragic_id for case in cases]
+        existing_map: dict = {
+            row.ragic_id: row
+            for row in db.query(LuqunRepairCase).filter(
+                LuqunRepairCase.ragic_id.in_(all_ragic_ids)
+            ).all()
+        }
+
         for case in cases:
             try:
-                existing = db.get(LuqunRepairCase, case.ragic_id)
+                existing = existing_map.get(case.ragic_id)
                 if existing:
                     existing.case_no           = case.case_no
                     existing.title             = case.title

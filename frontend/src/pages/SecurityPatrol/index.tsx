@@ -16,13 +16,13 @@ import {
   Typography, Progress, message, Badge, DatePicker,
 } from 'antd'
 import {
-  SyncOutlined, ReloadOutlined, RightOutlined,
+  ReloadOutlined, RightOutlined,
   SafetyOutlined,
 } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import dayjs from 'dayjs'
 
-import { fetchPatrolBatches, syncPatrolFromRagic } from '@/api/securityPatrol'
+import { fetchPatrolBatches } from '@/api/securityPatrol'
 import type { PatrolBatchListItem } from '@/types/securityPatrol'
 import { SECURITY_SHEETS } from '@/constants/securitySheets'
 
@@ -54,7 +54,6 @@ export function SecurityPatrolContent({
   const [batches,   setBatches]   = useState<PatrolBatchListItem[]>([])
   const [yearMonth, setYearMonth] = useState<string>(dayjs().format('YYYY/MM'))
   const [loading,   setLoading]   = useState(false)
-  const [syncing,   setSyncing]   = useState(false)
 
   const loadBatches = useCallback(async () => {
     if (!sheetKey) return
@@ -72,19 +71,6 @@ export function SecurityPatrolContent({
   // sheetKey 切換時重置資料
   useEffect(() => { setBatches([]) }, [sheetKey])
   useEffect(() => { loadBatches() }, [loadBatches])
-
-  const handleSync = async () => {
-    setSyncing(true)
-    try {
-      await syncPatrolFromRagic(sheetKey)
-      message.success('同步完成')
-      await loadBatches()
-    } catch {
-      message.error('同步失敗')
-    } finally {
-      setSyncing(false)
-    }
-  }
 
   // 導向明細頁（攜帶 returnPath state）
   const goDetail = (batchId: string) =>
@@ -191,11 +177,6 @@ export function SecurityPatrolContent({
             <SafetyOutlined style={{ color: '#1B3A5C' }} />
             <Title level={5} style={{ margin: 0, color: '#1B3A5C' }}>{sheetName}</Title>
           </Space>
-        </Col>
-        <Col>
-          <Button size="small" icon={<SyncOutlined spin={syncing} />} loading={syncing} onClick={handleSync}>
-            同步 Ragic
-          </Button>
         </Col>
       </Row>
 

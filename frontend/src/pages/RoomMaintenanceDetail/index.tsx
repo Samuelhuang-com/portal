@@ -20,7 +20,7 @@ import {
   Timeline, Alert, Divider, Segmented, Select,
 } from 'antd'
 import {
-  ReloadOutlined, HomeOutlined, SyncOutlined,
+  ReloadOutlined, HomeOutlined,
   SearchOutlined, ToolOutlined,
   CheckCircleOutlined, CloseCircleOutlined,
   WarningOutlined, StopOutlined,
@@ -44,7 +44,6 @@ import {
   fetchRoomHistory,
   fetchStaffHours,
   fetchMaintenanceStats,
-  syncRoomDetailFromRagic,
 } from '@/api/roomMaintenanceDetail'
 import type {
   RoomMaintenanceDetailRecord,
@@ -1767,7 +1766,6 @@ export default function RoomMaintenanceDetailPage() {
   const [maintStatsLoading, setMaintStatsLoading] = useState(false)
 
   // ── 共用 ──────────────────────────────────────────────────────────
-  const [syncing,    setSyncing]    = useState(false)
   const [activeTab,  setActiveTab]  = useState('summary')
 
   // ── 載入總表 ──────────────────────────────────────────────────────
@@ -1878,18 +1876,6 @@ export default function RoomMaintenanceDetailPage() {
   const handleUnservicedClick = () => setTableFilter(p => p === 'unserviced' ? 'all' : 'unserviced')
 
   // ── 同步 ──────────────────────────────────────────────────────────
-  const handleSync = async () => {
-    setSyncing(true)
-    try {
-      const res = await syncRoomDetailFromRagic()
-      if (res.errors?.length) message.warning(`同步完成，有 ${res.errors.length} 筆錯誤`)
-      else message.success(`同步完成：共 ${res.fetched} 筆，更新 ${res.upserted} 筆`)
-      const base = dayjs(`${filterYear}-${String(filterMonth).padStart(2, '0')}-01`)
-      await loadSummary(base.format('YYYY/MM/DD'), base.endOf('month').format('YYYY/MM/DD'))
-      await loadRecords(listFilters)
-    } catch { message.error('同步失敗') }
-    finally { setSyncing(false) }
-  }
 
   // ── 明細搜尋 ──────────────────────────────────────────────────────
   const handleListSearch = () => {
@@ -1951,9 +1937,6 @@ export default function RoomMaintenanceDetailPage() {
               </Button>
             </Tooltip>
             <Tooltip title="從 Ragic 重新同步保養明細資料">
-              <Button icon={<SyncOutlined spin={syncing} />} loading={syncing} onClick={handleSync}>
-                同步資料
-              </Button>
             </Tooltip>
           </Space>
         </Col>

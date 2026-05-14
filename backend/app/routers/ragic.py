@@ -262,8 +262,8 @@ def trigger_all_modules_sync(
 ):
     """手動觸發一次所有硬編碼模組的完整同步（背景執行，立即回傳）。"""
     # 延遲 import 避免 circular import（main ↔ ragic）
-    from app.main import _auto_sync  # noqa: PLC0415
-    background_tasks.add_task(_auto_sync)
+    from app.main import _manual_sync  # noqa: PLC0415
+    background_tasks.add_task(_manual_sync)
     return {"success": True, "message": "所有模組同步已在背景啟動，完成後可重新整理查看紀錄"}
 
 

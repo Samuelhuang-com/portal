@@ -11,13 +11,14 @@
             "id": "25933a3e745314df",
             "type": "leaf",
             "state": {
-              "type": "bases",
+              "type": "markdown",
               "state": {
-                "file": "Untitled 1.base",
-                "viewName": "Table"
+                "file": "README.md",
+                "mode": "source",
+                "source": false
               },
-              "icon": "lucide-table",
-              "title": "Untitled 1"
+              "icon": "lucide-file",
+              "title": "README"
             }
           }
         ]
@@ -185,6 +186,12 @@
   },
   "active": "25933a3e745314df",
   "lastOpenFiles": [
+    "CLAUDE.md",
+    "AGENTS.md",
+    "frontend/node_modules/ajv/README.md",
+    "_Runme.md",
+    "Ragic Portal/Welcome.md",
+    "Ragic Portal/create a link.md",
     "Untitled.base",
     "Untitled 1.base",
     "backend/portal.db-shm",
@@ -201,9 +208,6 @@
     "docs/樂群工務報修功能設計規格書_v1.0.md",
     "TECH_SPEC.md",
     "README.md",
-    "CLAUDE.md",
-    "AGENTS.md",
-    "_Runme.md",
     "docs/wiki/sop/領班sop與流程細化作業.md",
     "docs/wiki/sop/電梯月保養記錄-sop.md",
     "docs/wiki/sop/緊急停電應變-sop.md",
@@ -213,8 +217,6 @@
     "docs/wiki/sop/新進員工-portal-系統使用導覽.md",
     "docs/wiki/sop/客房報修快速處理流程.md",
     "docs/wiki/sop/保養工單新增與完成確認-sop.md",
-    "docs/wiki/dev/sqlite-wal-模式與-onedrive-環境注意事項.md",
-    "docs/wiki/dev/jwt-認證架構與角色權限設計.md",
     "docs/wiki/sop",
     "docs/wiki/dev",
     "docs/wiki"

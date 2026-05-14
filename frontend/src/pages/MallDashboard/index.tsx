@@ -20,8 +20,7 @@ import {
   HomeOutlined, ReloadOutlined, WarningOutlined,
   CheckCircleOutlined, ClockCircleOutlined, ExclamationCircleOutlined,
   BarChartOutlined, SafetyOutlined, CalendarOutlined,
-  DashboardOutlined, RightOutlined, AlertOutlined, QuestionCircleOutlined,
-  SyncOutlined, ToolOutlined,
+  DashboardOutlined, RightOutlined, AlertOutlined, QuestionCircleOutlined, ToolOutlined,
 } from '@ant-design/icons'
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
@@ -37,11 +36,11 @@ import {
   fetchDashboardIssues,
   fetchDashboardTrend,
 } from '@/api/mallDashboard'
-import { fetchMallPMBatches, syncMallPMFromRagic } from '@/api/mallPeriodicMaintenance'
-import { fetchB4FBatches, syncB4FFromRagic } from '@/api/b4fInspection'
-import { fetchRFBatches,  syncRFFromRagic  } from '@/api/rfInspection'
-import { fetchB2FBatches, syncB2FFromRagic } from '@/api/b2fInspection'
-import { fetchB1FBatches, syncB1FFromRagic } from '@/api/b1fInspection'
+import { fetchMallPMBatches } from '@/api/mallPeriodicMaintenance'
+import { fetchB4FBatches } from '@/api/b4fInspection'
+import { fetchRFBatches  } from '@/api/rfInspection'
+import { fetchB2FBatches } from '@/api/b2fInspection'
+import { fetchB1FBatches } from '@/api/b1fInspection'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 import type {
@@ -243,14 +242,14 @@ interface GenericKPI {
 interface GenericBatchItem { batch: GenericBatch; kpi: GenericKPI }
 
 function InspectionListTab({
-  batches, loading, syncing, yearMonth,
-  onYearMonthChange, onReload, onSync, detailPath,
+  batches, loading, yearMonth,
+  onYearMonthChange, onReload, detailPath,
 }: {
   floor?: string
-  batches: GenericBatchItem[]; loading: boolean; syncing: boolean
+  batches: GenericBatchItem[]; loading: boolean;
   yearMonth: string
   onYearMonthChange: (ym: string) => void
-  onReload: () => void; onSync: () => void
+  onReload: () => void;
   detailPath: (id: string) => string
 }) {
   const navigate = useNavigate()
@@ -337,11 +336,6 @@ function InspectionListTab({
           <Button icon={<ReloadOutlined />} onClick={onReload} loading={loading}>重新整理</Button>
         </Col>
         <Col flex="auto" />
-        <Col>
-          <Button icon={<SyncOutlined spin={syncing} />} loading={syncing} onClick={onSync}>
-            同步 Ragic
-          </Button>
-        </Col>
       </Row>
       <Table<GenericBatchItem>
         dataSource={batches}
@@ -359,11 +353,11 @@ function InspectionListTab({
 // ── Sub：週期保養批次清單 ──────────────────────────────────────────────────────
 
 function PMListTab({
-  batches, loading, syncing, year, onYearChange, onReload, onSync,
+  batches, loading, year, onYearChange, onReload,
 }: {
-  batches: PMBatchListItem[]; loading: boolean; syncing: boolean
+  batches: PMBatchListItem[]; loading: boolean;
   year: string; onYearChange: (y: string) => void
-  onReload: () => void; onSync: () => void
+  onReload: () => void;
 }) {
   const navigate = useNavigate()
   const yearOptions = [2024, 2025, 2026, 2027].map(y => ({ value: String(y), label: `${y} 年` }))
@@ -438,11 +432,6 @@ function PMListTab({
           <Button icon={<ReloadOutlined />} onClick={onReload} loading={loading}>重新整理</Button>
         </Col>
         <Col flex="auto" />
-        <Col>
-          <Button icon={<SyncOutlined spin={syncing} />} loading={syncing} onClick={onSync}>
-            同步 Ragic
-          </Button>
-        </Col>
       </Row>
       <Table<PMBatchListItem>
         dataSource={batches}
@@ -476,31 +465,26 @@ export default function MallDashboardPage() {
   // ── 週期保養 state ─────────────────────────────────────────────────────────
   const [pmBatches, setPmBatches] = useState<PMBatchListItem[]>([])
   const [pmLoading, setPmLoading] = useState(false)
-  const [pmSyncing, setPmSyncing] = useState(false)
   const [pmYear, setPmYear]       = useState(dayjs().format('YYYY'))
 
   // ── B4F state ──────────────────────────────────────────────────────────────
   const [b4fBatches, setB4fBatches] = useState<InspectionBatchListItem[]>([])
   const [b4fLoading, setB4fLoading] = useState(false)
-  const [b4fSyncing, setB4fSyncing] = useState(false)
   const [b4fYM, setB4fYM]           = useState(dayjs().format('YYYY/MM'))
 
   // ── RF state ───────────────────────────────────────────────────────────────
   const [rfBatches, setRfBatches] = useState<RFInspectionBatchListItem[]>([])
   const [rfLoading, setRfLoading] = useState(false)
-  const [rfSyncing, setRfSyncing] = useState(false)
   const [rfYM, setRfYM]           = useState(dayjs().format('YYYY/MM'))
 
   // ── B2F state ──────────────────────────────────────────────────────────────
   const [b2fBatches, setB2fBatches] = useState<B2FInspectionBatchListItem[]>([])
   const [b2fLoading, setB2fLoading] = useState(false)
-  const [b2fSyncing, setB2fSyncing] = useState(false)
   const [b2fYM, setB2fYM]           = useState(dayjs().format('YYYY/MM'))
 
   // ── B1F state ──────────────────────────────────────────────────────────────
   const [b1fBatches, setB1fBatches] = useState<B1FInspectionBatchListItem[]>([])
   const [b1fLoading, setB1fLoading] = useState(false)
-  const [b1fSyncing, setB1fSyncing] = useState(false)
   const [b1fYM, setB1fYM]           = useState(dayjs().format('YYYY/MM'))
 
   // ── 目前分頁（支援 ?tab=xxx 從明細頁返回時自動切換）─────────────────────────
@@ -596,33 +580,6 @@ export default function MallDashboardPage() {
     if (t === 'b2f') loadB2F()
     if (t === 'b1f') loadB1F()
   }, [])  // eslint-disable-line
-
-  // ── Sync handlers ──────────────────────────────────────────────────────────
-  const syncPM = async () => {
-    setPmSyncing(true)
-    try { await syncMallPMFromRagic(); message.success('週期保養同步完成'); loadPM() }
-    catch { message.error('同步失敗') } finally { setPmSyncing(false) }
-  }
-  const syncB4F = async () => {
-    setB4fSyncing(true)
-    try { await syncB4FFromRagic(); message.success('B4F 同步完成'); loadB4F() }
-    catch { message.error('同步失敗') } finally { setB4fSyncing(false) }
-  }
-  const syncRF = async () => {
-    setRfSyncing(true)
-    try { await syncRFFromRagic(); message.success('RF 同步完成'); loadRF() }
-    catch { message.error('同步失敗') } finally { setRfSyncing(false) }
-  }
-  const syncB2F = async () => {
-    setB2fSyncing(true)
-    try { await syncB2FFromRagic(); message.success('B2F 同步完成'); loadB2F() }
-    catch { message.error('同步失敗') } finally { setB2fSyncing(false) }
-  }
-  const syncB1F = async () => {
-    setB1fSyncing(true)
-    try { await syncB1FFromRagic(); message.success('B1F 同步完成'); loadB1F() }
-    catch { message.error('同步失敗') } finally { setB1fSyncing(false) }
-  }
 
   // ── 統計總覽衍生 ───────────────────────────────────────────────────────────
   const ins    = summary?.inspection
@@ -973,9 +930,9 @@ export default function MallDashboardPage() {
             label: <><CalendarOutlined /> 週期保養</>,
             children: (
               <PMListTab
-                batches={pmBatches} loading={pmLoading} syncing={pmSyncing} year={pmYear}
+                batches={pmBatches} loading={pmLoading} year={pmYear}
                 onYearChange={(y) => { setPmYear(y); loadPM(y) }}
-                onReload={() => loadPM()} onSync={syncPM}
+                onReload={() => loadPM()}
               />
             ),
           },
@@ -986,9 +943,9 @@ export default function MallDashboardPage() {
               <InspectionListTab
                 floor="b4f"
                 batches={b4fBatches as unknown as GenericBatchItem[]}
-                loading={b4fLoading} syncing={b4fSyncing} yearMonth={b4fYM}
+                loading={b4fLoading} yearMonth={b4fYM}
                 onYearMonthChange={(ym) => { setB4fYM(ym); loadB4F(ym) }}
-                onReload={() => loadB4F()} onSync={syncB4F}
+                onReload={() => loadB4F()}
                 detailPath={(id) => `/mall/b4f-inspection/${id}`}
               />
             ),
@@ -1000,9 +957,9 @@ export default function MallDashboardPage() {
               <InspectionListTab
                 floor="rf"
                 batches={rfBatches as unknown as GenericBatchItem[]}
-                loading={rfLoading} syncing={rfSyncing} yearMonth={rfYM}
+                loading={rfLoading} yearMonth={rfYM}
                 onYearMonthChange={(ym) => { setRfYM(ym); loadRF(ym) }}
-                onReload={() => loadRF()} onSync={syncRF}
+                onReload={() => loadRF()}
                 detailPath={(id) => `/mall/rf-inspection/${id}`}
               />
             ),
@@ -1014,9 +971,9 @@ export default function MallDashboardPage() {
               <InspectionListTab
                 floor="b2f"
                 batches={b2fBatches as unknown as GenericBatchItem[]}
-                loading={b2fLoading} syncing={b2fSyncing} yearMonth={b2fYM}
+                loading={b2fLoading} yearMonth={b2fYM}
                 onYearMonthChange={(ym) => { setB2fYM(ym); loadB2F(ym) }}
-                onReload={() => loadB2F()} onSync={syncB2F}
+                onReload={() => loadB2F()}
                 detailPath={(id) => `/mall/b2f-inspection/${id}`}
               />
             ),
@@ -1028,9 +985,9 @@ export default function MallDashboardPage() {
               <InspectionListTab
                 floor="b1f"
                 batches={b1fBatches as unknown as GenericBatchItem[]}
-                loading={b1fLoading} syncing={b1fSyncing} yearMonth={b1fYM}
+                loading={b1fLoading} yearMonth={b1fYM}
                 onYearMonthChange={(ym) => { setB1fYM(ym); loadB1F(ym) }}
-                onReload={() => loadB1F()} onSync={syncB1F}
+                onReload={() => loadB1F()}
                 detailPath={(id) => `/mall/b1f-inspection/${id}`}
               />
             ),

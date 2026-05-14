@@ -91,6 +91,16 @@ export const menuItems: MenuItem[] = [
     label: NAV_PAGE.workCategoryAnalysis,
     permissionKey: 'work_category_analysis_view',
   },
+  // ── 核准請購單月報表（budget 之前，財務/採購管理）────────────────────────────
+  {
+    key: 'purchase-report',
+    icon: <FileTextOutlined />,
+    label: NAV_GROUP.purchaseReport,
+    permissionKey: 'system_admin_only',
+    children: [
+      { key: '/purchase-report/monthly', icon: <AuditOutlined />, label: NAV_PAGE.purchaseReportMonthly, permissionKey: 'system_admin_only' },
+    ],
+  },
   // ── 預算管理（dashboard 之後）──────────────────────────────────────────────
   {
     key: 'budget',
@@ -520,6 +530,10 @@ export function filterMenuByPermissions(
   return items.map(filterItem).filter(Boolean)
 }
 
+// localStorage 快取 key — 儲存上次成功拉取的 MenuConfigItem[]
+// 讓進系統時可立即套用，不必等 API 回應，消除選單閃爍
+const MENU_CONFIG_CACHE_KEY = 'portal_menu_config_cache'
+
 export default function MainLayout() {
   const [collapsed, setCollapsed] = useState(false)
   const navigate = useNavigate()
@@ -543,8 +557,9 @@ export default function MainLayout() {
     [isSystemAdmin]
   )
 
-  // 初始值也要過濾，避免頁面重整時短暫閃現 settings 選單：
-  // 直接從 localStorage token 解出 roles，不依賴非同步的 user state。
+  // 初始值優先使用 localStorage 快取的 config，使進系統時立即顯示正確選單（無閃爍）。
+  // 快取不存在時才 fallback 到靜態 menuItems（首次登入或清除 localStorage 後）。
+  // 直接從 token 解出 roles/permissions，不依賴非同步的 user state。
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [dynamicMenuItems, setDynamicMenuItems] = useState<any[]>(() => {
     try {
@@ -552,9 +567,21 @@ export default function MainLayout() {
       if (!token) return menuItems.filter((item) => item.key !== 'settings')
       const payload = JSON.parse(atob(token.split('.')[1]))
       const ok = Array.isArray(payload.roles) && payload.roles.includes('system_admin')
-      // 初始化階段 permissions 尚未從 /me 取得，先以角色判斷
-      const initPerms: string[] = ok ? ['*'] : []
+      const initPerms: string[] = ok ? ['*'] : (payload.permissions ?? [])
       const filtered = ok ? menuItems : menuItems.filter((item) => item.key !== 'settings')
+
+      // ① 嘗試從 localStorage 快取還原上次的 menu config
+      const cached = localStorage.getItem(MENU_CONFIG_CACHE_KEY)
+      if (cached) {
+        const configs = JSON.parse(cached) as MenuConfigItem[]
+        const dbPermMap = new Map<string, string | null>(
+          configs.map((c) => [c.menu_key, c.permission_key])
+        )
+        const applied = configs.length > 0 ? applyMenuConfig(filtered, configs) : filtered
+        return filterMenuByPermissions(applied, initPerms, dbPermMap)
+      }
+
+      // ② 無快取（首次登入）：靜態 menuItems + 角色過濾
       return filterMenuByPermissions(filtered, initPerms, new Map())
     } catch {
       return menuItems.filter((item) => item.key !== 'settings')
@@ -565,6 +592,8 @@ export default function MainLayout() {
   const loadMenuConfig = useCallback(async () => {
     try {
       const configs = await fetchMenuConfig()
+      // 成功後寫入快取，供下次進系統立即使用
+      try { localStorage.setItem(MENU_CONFIG_CACHE_KEY, JSON.stringify(configs)) } catch { /* quota 滿時靜默略過 */ }
       // 建立 DB permission_key 覆蓋 Map（menu_key → permission_key）
       const dbPermMap = new Map<string, string | null>(
         configs.map((c) => [c.menu_key, c.permission_key])
@@ -610,7 +639,12 @@ export default function MainLayout() {
         icon: <LogoutOutlined />,
         label: '登出',
         danger: true,
-        onClick: () => { logout(); navigate('/login') },
+        onClick: () => {
+          // 登出時清除 menu config 快取，防止帳號切換時顯示前一位使用者的選單設定
+          localStorage.removeItem(MENU_CONFIG_CACHE_KEY)
+          logout()
+          navigate('/login')
+        },
       },
     ],
   }

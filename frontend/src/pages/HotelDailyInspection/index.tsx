@@ -20,7 +20,7 @@ import {
   message, Progress,
 } from 'antd'
 import {
-  HomeOutlined, SyncOutlined, ReloadOutlined,
+  HomeOutlined, ReloadOutlined,
   WarningOutlined, CheckCircleOutlined, ExclamationCircleOutlined,
   DashboardOutlined, ToolOutlined, ClockCircleOutlined,
   CalendarOutlined as CalendarOutlinedIcon,
@@ -35,8 +35,6 @@ import {
   fetchHotelDailyMonthlyDashboard,
   fetchHotelDailyCalendar,
   fetchHotelDailyBatches,
-  syncHotelDailyAllFromRagic,
-  syncHotelDailyFromRagic,
   type HotelDISheetSummary,
   type DailyCalendarSheet,
 } from '@/api/hotelDailyInspection'
@@ -65,7 +63,6 @@ interface BatchRow {
 function FloorListTab({ sheetKey }: { sheetKey: string }) {
   const [yearMonth, setYearMonth] = useState<string>(dayjs().format('YYYY/MM'))
   const [loading,   setLoading]   = useState(false)
-  const [syncing,   setSyncing]   = useState(false)
   const [batches,   setBatches]   = useState<BatchRow[]>([])
 
   const load = useCallback(async () => {
@@ -81,19 +78,6 @@ function FloorListTab({ sheetKey }: { sheetKey: string }) {
   }, [sheetKey, yearMonth])
 
   useEffect(() => { load() }, [load])
-
-  const handleSync = async () => {
-    setSyncing(true)
-    try {
-      await syncHotelDailyFromRagic(sheetKey)
-      message.success('同步已啟動，稍後請重新整理查看最新資料')
-      setTimeout(() => load(), 3000)
-    } catch {
-      message.error('同步失敗，請稍後再試')
-    } finally {
-      setSyncing(false)
-    }
-  }
 
   const columns = [
     {
@@ -158,11 +142,6 @@ function FloorListTab({ sheetKey }: { sheetKey: string }) {
         <Col>
           <Button icon={<ReloadOutlined />} onClick={load} loading={loading}>重新整理</Button>
         </Col>
-        <Col>
-          <Button icon={<SyncOutlined spin={syncing} />} loading={syncing} onClick={handleSync}>
-            同步 Ragic
-          </Button>
-        </Col>
       </Row>
       <Table<BatchRow>
         dataSource={batches}
@@ -182,7 +161,6 @@ function FloorListTab({ sheetKey }: { sheetKey: string }) {
 function SummaryTabContent() {
   const [yearMonth, setYearMonth] = useState<string>(dayjs().format('YYYY/MM'))
   const [loading,   setLoading]   = useState(false)
-  const [syncing,   setSyncing]   = useState(false)
 
   const buildEmptyStats = (): SheetStats[] =>
     HOTEL_DAILY_INSPECTION_SHEET_LIST.map((s) => ({
@@ -232,19 +210,6 @@ function SummaryTabContent() {
   }, [yearMonth])
 
   useEffect(() => { loadSummary() }, [loadSummary])
-
-  const handleSync = async () => {
-    setSyncing(true)
-    try {
-      await syncHotelDailyAllFromRagic()
-      message.success('全部 Sheet 同步已啟動，稍後請重新整理查看最新資料')
-      setTimeout(() => loadSummary(), 3000)
-    } catch {
-      message.error('同步失敗，請稍後再試')
-    } finally {
-      setSyncing(false)
-    }
-  }
 
   const [y, m]       = yearMonth.split('/').map(Number)
   const totalBatches = sheets.reduce((s, r) => s + r.total_batches, 0)
@@ -312,9 +277,6 @@ function SummaryTabContent() {
             />
             <Button icon={<ReloadOutlined />} onClick={loadSummary} loading={loading}>
               重新整理
-            </Button>
-            <Button icon={<SyncOutlined spin={syncing} />} loading={syncing} onClick={handleSync}>
-              同步全部 Sheet
             </Button>
           </Space>
         </Col>

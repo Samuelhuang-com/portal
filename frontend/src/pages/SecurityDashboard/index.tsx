@@ -18,7 +18,7 @@ import {
   message, Progress, Tooltip, Divider, Segmented,
 } from 'antd'
 import {
-  HomeOutlined, SyncOutlined, ReloadOutlined,
+  HomeOutlined, ReloadOutlined,
   WarningOutlined, CheckCircleOutlined, ExclamationCircleOutlined,
   DashboardOutlined, RightOutlined, CalendarOutlined, QuestionCircleOutlined,
   SafetyOutlined, ClockCircleOutlined,
@@ -37,7 +37,6 @@ import {
   fetchSecurityDashboardMonthlySummary,
   fetchSecurityDashboardCalendar,
   fetchSecurityDashboardDailyForm,
-  syncPatrolFromRagic,
   type SecurityMonthlySummary,
   type SecurityDailyFormRow,
 } from '@/api/securityPatrol'
@@ -59,7 +58,6 @@ function SecurityDailyFormTab() {
   const today = dayjs()
   const [yearMonth, setYearMonth] = useState<string>(today.format('YYYY/MM'))
   const [loading,   setLoading]   = useState(false)
-  const [syncing,   setSyncing]   = useState(false)
   const [rows,      setRows]      = useState<SecurityDailyFormRow[]>([])
 
   const load = useCallback(async (ym: string) => {
@@ -76,19 +74,6 @@ function SecurityDailyFormTab() {
   }, [])
 
   useEffect(() => { load(yearMonth) }, [load, yearMonth])
-
-  const handleSync = async () => {
-    setSyncing(true)
-    try {
-      await syncPatrolFromRagic()
-      message.success('同步完成')
-      await load(yearMonth)
-    } catch {
-      message.error('同步失敗')
-    } finally {
-      setSyncing(false)
-    }
-  }
 
   const columns = [
     {
@@ -166,11 +151,6 @@ function SecurityDailyFormTab() {
             重新整理
           </Button>
         </Col>
-        <Col>
-          <Button icon={<SyncOutlined spin={syncing} />} loading={syncing} onClick={handleSync}>
-            同步 Ragic
-          </Button>
-        </Col>
       </Row>
 
       {!loading && !hasData && (
@@ -242,7 +222,6 @@ export default function SecurityDashboardPage() {
   const [issues,       setIssues]       = useState<SecurityIssueItem[]>([])
   const [trend,        setTrend]        = useState<SecurityTrendPoint[]>([])
   const [loading,      setLoading]      = useState(false)
-  const [syncing,      setSyncing]      = useState(false)
   const [calRows,      setCalRows]      = useState<CalendarRow[]>([])
   const [calMaxDay,    setCalMaxDay]    = useState(31)
 
@@ -286,19 +265,6 @@ export default function SecurityDashboardPage() {
   }, [viewMode, targetDate, yearMonth])
 
   useEffect(() => { loadAll() }, [loadAll])
-
-  const handleSync = async () => {
-    setSyncing(true)
-    try {
-      await syncPatrolFromRagic()
-      message.success('全部 Sheet 同步完成')
-      await loadAll()
-    } catch {
-      message.error('同步失敗')
-    } finally {
-      setSyncing(false)
-    }
-  }
 
   // ── Derived display values（單日 or 全月 皆適用）────────────────────────
   const modeLabel = viewMode === 'month' ? '本月' : '今日'
@@ -505,16 +471,6 @@ export default function SecurityDashboardPage() {
             )}
             <Button size="small" icon={<ReloadOutlined />} onClick={loadAll} loading={loading}>
               重新整理
-            </Button>
-          </Space>
-        </Col>
-        <Col>
-          <Space size={8}>
-            <Text type="secondary" style={{ fontSize: 11 }}>
-              {viewMode === 'day' && summary?.generated_at ? `更新：${summary.generated_at}` : ''}
-            </Text>
-            <Button size="small" icon={<SyncOutlined spin={syncing} />} loading={syncing} onClick={handleSync}>
-              同步全部 Sheet
             </Button>
           </Space>
         </Col>

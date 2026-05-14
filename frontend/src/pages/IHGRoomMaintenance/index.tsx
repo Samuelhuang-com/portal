@@ -18,8 +18,7 @@ import {
 } from 'antd'
 import {
   CheckCircleOutlined, ClockCircleOutlined,
-  HomeOutlined, QuestionCircleOutlined, ReloadOutlined,
-  SyncOutlined, TableOutlined, ToolOutlined, WarningOutlined,
+  HomeOutlined, QuestionCircleOutlined, ReloadOutlined, TableOutlined, ToolOutlined, WarningOutlined,
 } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import dayjs from 'dayjs'
@@ -29,7 +28,6 @@ import {
   fetchIHGStats,
   fetchIHGRecord,
   fetchIHGSectionMatrix,
-  syncIHGFromRagic,
 } from '@/api/ihgRoomMaintenance'
 import type {
   CellStatus,
@@ -751,7 +749,6 @@ export default function IHGRoomMaintenancePage() {
   const [stats, setStats]       = useState<IHGStats | null>(null)
   const [matrix, setMatrix]     = useState<{ rooms: MatrixRoom[]; floors: string[]; month_hours: Partial<Record<number, number>> } | null>(null)
   const [loading, setLoading]   = useState(false)
-  const [syncing, setSyncing]   = useState(false)
 
   // 月份 Drawer 狀態
   const [drawerOpen, setDrawerOpen]     = useState(false)
@@ -796,18 +793,6 @@ export default function IHGRoomMaintenancePage() {
   }, [loadData])
 
   // ── 同步 ──────────────────────────────────────────────────────────────────
-  const handleSync = async () => {
-    setSyncing(true)
-    try {
-      const r = await syncIHGFromRagic()
-      message.success(r.message || '同步已啟動，請稍後刷新')
-      setTimeout(loadData, 4000)
-    } catch {
-      message.error('同步失敗')
-    } finally {
-      setSyncing(false)
-    }
-  }
 
   // ── 點擊 KPI 卡片 → 展開對應狀態的房號明細 ─────────────────────────────
   const handleKpiClick = async (filter: string, title: string, color: string) => {
@@ -1272,14 +1257,6 @@ export default function IHGRoomMaintenancePage() {
         <Title level={4} style={{ margin: 0 }}>
           {NAV_PAGE.ihgRoomMaintenance}
         </Title>
-        <Button
-          type="primary"
-          icon={syncing ? <SyncOutlined spin /> : <SyncOutlined />}
-          loading={syncing}
-          onClick={handleSync}
-        >
-          同步 Ragic
-        </Button>
       </div>
 
       {/* ── TABs ───────────────────────────────────────────────────── */}

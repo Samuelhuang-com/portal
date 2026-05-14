@@ -18,7 +18,7 @@ import {
 import {
   PlusOutlined, ReloadOutlined, EditOutlined, DeleteOutlined,
   CheckCircleOutlined, ClockCircleOutlined, HomeOutlined, ToolOutlined,
-  BarChartOutlined, SyncOutlined, WarningOutlined, SearchOutlined,
+  BarChartOutlined, WarningOutlined, SearchOutlined,
 } from '@ant-design/icons'
 import {
   PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid,
@@ -30,7 +30,7 @@ import dayjs from 'dayjs'
 
 import {
   fetchRecords, fetchStats, fetchOptions,
-  createRecord, updateRecord, deleteRecord, syncFromRagic,
+  createRecord, updateRecord, deleteRecord,
 } from '@/api/roomMaintenance'
 import type {
   RoomMaintenanceRecord, RoomMaintenanceStats,
@@ -301,7 +301,6 @@ export default function RoomMaintenancePage() {
     inspect: [], workItems: [],
   })
   const [loading, setLoading]   = useState(false)
-  const [syncing, setSyncing]   = useState(false)
   const [total, setTotal]       = useState(0)
   const [filters, setFilters]   = useState<RoomMaintenanceFilters>({ page: 1, per_page: 20 })
 
@@ -343,19 +342,6 @@ export default function RoomMaintenancePage() {
   useEffect(() => { loadStats(); loadOptions() }, [loadStats, loadOptions])
 
   // ── Sync handler ───────────────────────────────────────────────────────────
-  const handleSync = async () => {
-    setSyncing(true)
-    try {
-      const res = await syncFromRagic()
-      message.success(`同步完成：從 Ragic 取得 ${res.fetched} 筆，更新 ${res.upserted} 筆`)
-      loadRecords()
-      loadStats()
-    } catch {
-      message.error('同步失敗，請確認 Ragic API 設定')
-    } finally {
-      setSyncing(false)
-    }
-  }
 
   // ── Table change ───────────────────────────────────────────────────────────
   const handleTableChange = (pagination: TablePaginationConfig) => {
@@ -579,9 +565,6 @@ export default function RoomMaintenancePage() {
           <Col xs={24} sm={7} style={{ textAlign: 'right' }}>
             <Space>
               <Tooltip title="從 Ragic 同步最新資料">
-                <Button icon={<SyncOutlined spin={syncing} />} onClick={handleSync} loading={syncing}>
-                  重新整理
-                </Button>
               </Tooltip>
               <Button
                 icon={<BarChartOutlined />}

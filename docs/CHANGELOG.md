@@ -2,6 +2,211 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)
 
+## [1.61.7] - 2026-05-14
+
+### Changed
+- **`RagicConnections.tsx`**：移除「自動同步間隔」設定卡片與「涵蓋模組」卡片；頁面改為只顯示 24 小時同步紀錄表 + 緊急「立即同步」按鍵
+- **`sync_tool.py`**：加入右側 Treeview 同步結果統計表（模組/狀態/開始時間/耗時/撈取/寫入/錯誤/觸發）；加入自動同步間隔選擇列（關閉/15分/30分/1小時/2小時/4小時/8小時）+ 倒數計時顯示
+
+## [1.61.6] - 2026-05-14
+
+### Fixed
+- **`purchase_request_sync.py`**：`_parse_item_row` 改用迴圈 `idx+1` 作為 `seq`，不再讀取 Ragic「項次」欄位。根本原因：`_find_subtable_from_list_raw` 合併多個 `_subtable_*` 子表格後，各子表格的「項次」各自從 1 開始，合併結果必然重複 → UNIQUE constraint；用 `idx` 取代後消除此錯誤
+- **`claim_request_sync.py`**：同上修法，`_parse_item_row` 的 `seq` 改為直接使用 `seq_override`（呼叫端傳入的迴圈位置），移除 Ragic 欄位讀取邏輯
+
+## [1.61.5] - 2026-05-14
+
+### Added
+- **`main.py`**：新增 `_setup_file_logging()`，每次後端啟動自動在 `portal/logs/` 建立以台灣時間命名的 log 檔（格式：`YYYYMMDD_HHMMSS.log`）；使用 root logger FileHandler，`DEBUG` 級以上全部寫入
+- **`main.py`**：新增 `_manual_sync()`，「立即同步」觸發時額外建立獨立 log 檔（格式：`YYYYMMDD_HHMMSS_manual.log`）；同步完成後自動移除 handler，不干擾常駐啟動 log 檔；兩種 log 均設定 `sqlalchemy.engine` level=INFO，完整記錄每筆 INSERT / UPDATE / DELETE SQL
+- **`ragic.py`**：`trigger_all_modules_sync` 改呼叫 `_manual_sync` 取代 `_auto_sync`
+
+## [1.61.4] - 2026-05-14
+
+### Performance
+- **`luqun_repair_sync.py`**：修復 N+1 SELECT 問題，改以單一 `IN` 查詢預載所有現有記錄到 `existing_map`，再於迴圈內用 `dict.get()` 取代每筆 `db.get()`；173 筆 = 173 SELECT → 1 SELECT
+- **`dazhi_repair_sync.py`**：同上修法
+
+## [1.61.3] - 2026-05-14
+
+### Fixed
+- **`purchase_request_sync.py`**：補齊與 claim 相同的 UNIQUE constraint 修法
+  - `_sync_list_for_dept` 每筆加 `begin_nested()` SAVEPOINT + `synchronize_session=False` + `flush()` after DELETE
+  - `_sync_detail_batch` 同上
+- **`main.py`**：新增請購單兩段式獨立排程，對齊請款單模式
+  - `_purchase_list_sync`（每 15 分鐘）→ 清單 API + subtable 品項；模組日誌名稱：**核准請購單清單**
+  - `_purchase_full_sync`（每 45 分鐘）→ 清單 + Detail API；模組日誌名稱：**核准請購單**
+  - `_auto_sync` 移除請購單呼叫（已由獨立排程接管）；同時移除 `sync_claim` 死碼 import
+- **`purchase_request_sync.py`**：新增 `sync_list_only()` 入口（供 `_purchase_list_sync` 呼叫）
+
+## [1.61.2] - 2026-05-14
+
+### Fixed
+- **`claim_request_sync.py`**：修復 `UNIQUE constraint failed: approved_claim_request_items.claim_id, seq` 錯誤
+  - 根本原因：`DELETE items → INSERT items` 流程中，`DELETE` 未在 `INSERT` 前 flush 到 DB，導致 UNIQUE constraint；一旦第一筆拋錯，整個 session transaction rollback，同批次後續記錄全部失敗（`"Session's transaction has been rolled back"`）
+  - 修法：`_sync_list_for_dept` 與 `sync_from_ragic` Step 2 的每筆記錄改以 `db.begin_nested()`（SAVEPOINT）包覆；`delete()` 加 `synchronize_session=False`；刪除後立刻 `db.flush()` 再 INSERT，確保順序正確
+  - 效果：任何單筆解析失敗只 rollback 該筆 savepoint，不影響同批其他記錄
+
+## [1.61.1] - 2026-05-14
+
+### Removed
+- **前端 23 個模組頁面**移除「同步 Ragic」按鈕（含 handler 函式與 `syncing` state）：
+  `B1F/B2F/B4F/RFInspection`、`DazhiRepair`、`LuqunRepair`、`FullBuildingInspection`（index + InspectionFloorPage）、`FullBuildingMaintenance`、`HotelDailyInspection`、`HotelMeterReadings`、`IHGRoomMaintenance`、`Inventory`、`MallFacilityInspection`（index + InspectionFloorPage）、`MallPeriodicMaintenance`、`PeriodicMaintenance`、`RoomMaintenance`、`RoomMaintenanceDetail`、`SecurityPatrol`、`SecurityDashboard`、`MallDashboard`
+  - 同步功能統一由 Settings → Ragic 同步排程設定 管理
+  - `MallDashboard` 同時清除 5 個子 `syncing` state、5 個 sync handler、subcomponent 的 `syncing`/`onSync` prop
+
+## [1.61.0] - 2026-05-14
+
+### Added（全年度 / 區間日期篩選）
+- **後端 `purchase_report.py`**：新增 `_build_date_filter()` + `_date_label()` helper，取代 `_build_month_filter()`；5 個端點（`/orders`, `/monthly`, `/summary`, `/departments`, `/export`）加入 `year_month_from` + `year_month_to` 可選參數；`/summary` 回應新增 `label` 欄位；Excel 匯出 sheet 名稱與檔名改用 `label`（如 `2026年度` / `2026-01~2026-12`）
+- **後端 `claim_report.py`**：同上，`_build_date_filter()` + `_date_label()` 替換；5 個端點同步加入 `year_month_from` + `year_month_to`；`/summary` 回應加 `label`
+- **後端 `combined_report.py`**：`_purchase_date_filter()` + `_claim_date_filter()` + `_date_label()` 新增；3 個端點（`/orders`, `/summary`, `/departments`）加入 `year_month_from` + `year_month_to`；`/summary` 回應加 `label`
+- **前端 API `purchaseReport.ts` / `claimReport.ts` / `combinedReport.ts`**：所有相關函式加入 `year_month_from?` + `year_month_to?`；`year_month` 由 required 改為 optional；`ClaimReportSummary` / `CombinedSummary` interface 加 `label?`
+- **前端 `PurchaseReport/index.tsx`**：
+  - Header 加入 `Segmented` 三段切換（單月 | 全年度 | 自訂區間）
+  - 單月：原 `DatePicker picker="month"`
+  - 全年度：`DatePicker picker="year"`，自動展開為 `YYYY-01 ~ YYYY-12`
+  - 自訂區間：`DatePicker.RangePicker picker="month"`
+  - 新增 `dateMode`, `yearPickerValue`, `rangeValues`, `yearMonthFrom`, `yearMonthTo` state
+  - 10 個 load 函式 + export handler 全部改為傳 `year_month_from` / `year_month_to` 參數（依模式切換）
+
+## [1.61.2] - 2026-05-14
+
+### Fixed
+- **TAB 標題計數永遠為 0**：請款單清單／月報明細兩個 TAB 的標題計數顯示 0，原因是資料惰性載入（只有切到對應 TAB 才呼叫 API），初始 TAB 為請購時 `claimOrdersTotal`/`claimItemsTotal` 從未被填值。改為直接讀取**永遠預載入的 Summary 資料**：`claimSummary?.order_count`（請款單張數）/ `claimSummary?.item_count`（品項筆數）；有值時顯示 summary 計數，否則 fallback 到原本的 total state；請購兩個 TAB 同步改為使用 `purchaseSummary?.order_count` / `purchaseSummary?.item_count`
+
+## [1.61.1] - 2026-05-14
+
+### Fixed
+- **`claim_request_sync.py`**：`request_no` 欄位候選清單加入各部門前綴標籤（`管請編號`、`財請編號`、`工請編號`、`專請編號`、`樂行購編號`、`執董請編號`、`客請編號`、`營請編號`）作為 fallback，確保管理部等部門 Ragic sheet 中主欄位使用部門標籤命名時（如「管請編號」值 = `樂管請20251030001`）能正確寫入 `request_no`，不再空白
+
+## [1.60.2] - 2026-05-14
+
+### Fixed
+- **請款單同步失敗（兩個 Bug）**：
+  1. `RagicAdapter(server=...)` → 應為 `server_url=`（constructor 參數名稱錯誤，拋 `TypeError: unexpected keyword argument 'server'`）
+  2. `_sync_list_for_dept` 是同步 `def`，卻呼叫不存在的 `adapter.get()` 方法（RagicAdapter 所有方法皆為 async）→ 改為 `async def`，移除外部 adapter 傳入，內部以 `RagicAdapter(sheet_path=..., server_url=..., account=...)` 建立並呼叫 `await adapter.fetch_all()`
+  - `sync_list_only` 改為 `await _sync_list_for_dept(dept, db)`
+  - `sync_from_ragic` Detail 補全改用 `RagicAdapter(sheet_path=detail_path, ...)` + `await adapter.fetch_one(record_id)` + 正確 unwrap `{record_id: {fields}}` 回應
+  - `_parse_list_record` 補加 `detail_synced: False` 預設值
+
+## [1.60.1] - 2026-05-14
+
+### Added（Phase 2 前端）
+- **`pages/PurchaseReport/index.tsx`**：重構為 6-TAB 整合頁面（請購單清單 / 請購月報明細 / 請款單清單 / 請款月報明細 / 總表 / 部門統計）
+  - 請款 TAB 專用篩選：付款種類 Select + 會科 Select + 全文搜尋（事由/單號/申請人/受款人）+ 匯出 Excel
+  - 總表 TAB：請購(藍 border-left) + 請款(橙 border-left) 合併清單，點列開對應 Drawer
+  - 部門統計 TAB：雙色欄位（請購藍 `#1B3A5C` / 請款橙 `#d46b08`）含 `Table.Summary`；admin 折疊 Collapse 含請購+請款雙側同步管理
+  - 請款 Detail Drawer：顯示付款種類 / 受款人 / 銀行帳號 / 應付金額 / 品項（品名/數量/金額/發票/收據/備註）+ Ragic 開啟連結
+  - KPI 卡片隨 TAB 群組切換（請購 6 張 / 請款 6 張 / 合併 6 張）
+  - 行樣式條紋：請購 `purchase-row-first`（灰底）、請款 `claim-row-first`（米底）
+
+## [1.60.0] - 2026-05-14
+
+### Added（Phase 1 後端）
+- **`models/claim_request.py`**：`ApprovedClaimRequest`（主單）+ `ApprovedClaimRequestItem`（品項）ORM Model；含部門請款編號 / 付款種類 / 受款者 / 銀行欄位 / 應付款；`CLAIM_DEPT_SHEETS` 設定 9 部門請款單 Ragic URL
+- **`services/claim_request_sync.py`**：請款單同步服務；`sync_list_only()`（每 15 分鐘）+ `sync_from_ragic()`（每 45 分鐘完整同步含 Detail API）；欄位候選清單覆蓋 9 部門命名差異（財請/工請/管請/專請/樂行購等）
+- **`routers/claim_report.py`**：12 個端點（清單 / 月報明細 / KPI / 部門統計 / Excel 匯出 / 可用月份 / Config × 3 / 同步觸發 / 同步狀態）；Excel 匯出使用 RFC 5987 中文檔名
+- **`routers/combined_report.py`**：總表合併端點（方案 B）；`GET /orders`（請購+請款合併分頁）/ `GET /summary`（雙 KPI）/ `GET /departments`（部門雙色統計含 purchase_* + claim_* 欄位）
+- **`main.py`** 新增：`claim_report` / `combined_report` router 註冊；`claim_list_sync`（每 15 分鐘）/ `claim_full_sync`（每 45 分鐘）APScheduler Job；Model import 加入 `claim_request`
+
+## [1.59.23] - 2026-05-14
+
+### Fixed
+- **全文檢索輸入框無法打字**：`Input.Search` 使用 controlled `value={searchKeyword}`，但 `onChange` 只在清空時才更新 state，導致每次鍵入後畫面鎖死。拆分為 `searchInput`（顯示值，每鍵更新）和 `searchKeyword`（API 查詢觸發，僅 Enter / 搜尋按鈕 / 清空時更新）
+
+## [1.59.22] - 2026-05-14
+
+### Fixed
+- **匯出 Excel 失敗**：`Content-Disposition` 標頭含中文檔名（「核准請購單月報表」），Starlette 以 Latin-1 編碼時拋 `UnicodeEncodeError` → HTTP 500。改用 RFC 5987 格式：`filename="purchase_report_YYYY-MM.xlsx"; filename*=UTF-8''<url-encoded>`，確保 ASCII fallback + 中文瀏覽器顯示名稱
+
+## [1.59.21] - 2026-05-14
+
+### Added
+- **全文檢索**：Header 新增 `Input.Search`（260px），按 Enter 或點搜尋按鈕觸發；清空時立即重查；同時套用於「請購單清單」和「月報明細」兩個 TAB
+  - 請購單清單：後端 `get_approved_orders` 新增 `keyword` 參數（搜尋 description / purchase_no / applicant / vendor1 / vendor2）
+  - 月報明細：後端 `get_monthly_report` 已有 `q` 參數；前端 `getPurchaseMonthlyItems` 補 `q` 欄位
+
+### Fixed
+- **月報明細欄位不省略**：
+  - 申請單號 `width: 130 + ellipsis` → `width: 175`（完整顯示編號不截斷）
+  - 選用廠商 `width: 100 + ellipsis` → `width: 150`（廠商名稱不截斷）
+  - 品項金額 / 全案小計(未稅) / 營業稅：數字加 `whiteSpace: 'nowrap'`，不會折行
+  - 月報明細 Table `scroll.x: 1200 → 1500`（配合欄位加寬）
+- **小計列數字折行**：請購單清單和月報明細的 `Table.Summary` 數字 span 加 `whiteSpace: 'nowrap'`，「360,060（稅 27,191）」不再換行
+
+## [1.59.20] - 2026-05-14
+
+### Added
+- **會科篩選器**：Header 新增「全部會科」Select（支援搜尋），與部門篩選器聯動；所有 load 函式（loadOrders / loadItems / loadDeptStats / loadSummary）及匯出 Excel 均傳入 `account_category` 篩選
+- **後端 `/config/account-categories`**：新增端點，回傳資料庫中實際有資料的會科清單（去重、排序）
+- **後端 5 個端點加 `account_category` 篩選**：monthly / summary / departments / export / orders，共用 `_apply_account_filter()` helper
+- **三張 Table 各加小計列（`Table.Summary`）**：
+  - 請購單清單：本頁小計（N 張）＋ 全案小計合計（含稅備註）
+  - 月報明細：本頁小計（品項數 / 訂單數）＋ 品項金額合計（紫）＋ 全案小計合計（藍）＋ 稅額合計；全案小計依 `order_id` 去重，避免同一訂單多品項重複計算
+  - 部門統計：合計（N 部門）＋ 訂單數 ＋ 未稅合計 ＋ 稅額合計；三者統一使用 `#eef3fa` 底色
+
+## [1.59.19] - 2026-05-14
+
+### Fixed
+- **月報明細 TAB 部門欄顯示空白**：後端 `_format_item_row` 回傳 key `"department"` 改為 `"department_display"`（與前端 `PurchaseReportItem` type 一致）
+
+### Added
+- **月報明細 TAB 點擊列開 Detail Drawer**：點任一品項列即可開啟請購單詳情 Drawer（同請購單清單 TAB 功能）
+  - `handleOrderClick` 重構為 `handleOrderIdClick(orderId: number)`，從兩個 TAB 統一呼叫
+  - 月報明細 `Table` 加入 `onRow` → `cursor: pointer`
+- **後端 `_format_item_row` 補齊欄位**：加入 `vendor1/2/3`、`amount_total`、`is_confirmed` — 與前端 `PurchaseReportItem` type 完整對應
+- **Detail Drawer 廠商未同步提示**：廠商三欄皆空且 `detail_synced=false` 時顯示提示文字
+
+## [1.59.18] - 2026-05-14
+
+### Changed
+- **清單同步直接解析品項**（`purchase_request_sync.py`）：
+  - 新增 `_find_subtable_from_list_raw()`：從清單 API raw JSON 的 `_subtable_*` 欄位提取品項，無需額外 Detail API 呼叫
+  - `LIST_FIELD_CANDIDATES` 新增 `vendor1/2/3`、`amount_tax`、`amount_total`、`remark` — 這些欄位清單 API 已直接提供
+  - `_parse_list_record` 同步提取廠商/稅額/備註欄位（有值才寫入，不覆蓋後續 Detail sync 補正）
+  - `_sync_list_for_dept`：清單同步後若偵測到 `_subtable_*` 品項資料，立即寫入 `approved_purchase_request_items` 並設 `detail_synced=True`，省略後續 Detail API 呼叫
+
+## [1.59.17] - 2026-05-13
+
+### Fixed
+- **購報表後端 5 項 Bug 修正**：
+  - `POST /sync`：`BackgroundTasks = BackgroundTasks()` → `background_tasks: BackgroundTasks`（FastAPI injection bug，任務原本永不執行）
+  - `GET /sync/status`：回傳欄位名稱對齊前端 Type：`pending_detail` → `pending_detail_count`、`departments` → `dept_stats`；log 欄位補 `id/module/trigger/message/created_at`；dept_stats 補 `detail_synced/pending` 欄位
+  - `GET /approved/departments`：`department` → `department_display`
+  - `GET /approved/summary` dept_summary：`department` → `department_display`，補 `total_tax` 欄位
+  - `GET /config/departments`：回傳 `string[]` 而非 `[{label,value}]`
+
+- **前端 API 參數修正**：`getPurchaseMonthlyItems` `page_size` → `per_page`（符合後端 Query 參數名稱）
+
+### Added
+- **RagicConnections** 新增模組「核准請購單（9 部門）」；「立即同步」按鈕同時觸發 `POST /purchase-report/sync`（增量）
+- **RagicAppDirectory** 加入 12 筆核准請購單 Sheet 靜態資料（itemNo 220–231，9 部門清單+內頁）與對應 `LOCAL_TABLE_MAP`
+
+## [1.59.16] - 2026-05-13
+
+### Added
+- **核准請購單月報表 Phase 3（前端）**：
+  - `frontend/src/api/purchaseReport.ts`：7 個 API 函數 + 完整 TypeScript 型別（PurchaseReportItem / Summary / DeptStat / SyncStatus）
+  - `frontend/src/pages/PurchaseReport/index.tsx`：
+    - Header：年月選擇器 + 部門篩選器 + 匯出 Excel 按鈕
+    - KPI Cards×6：訂單數、未稅合計、營業稅合計、品項筆數、涉及部門、平均單筆金額
+    - TAB-1 月報明細：品項級分頁表（同訂單跨列合計欄顯示、交錯底色區隔）
+    - TAB-2 部門統計：訂單數/金額/稅額/占比進度條 + 合計列
+    - TAB-3 同步狀態（system_admin 限定）：增量/全量同步按鈕、各部門同步進度表、近期 log
+  - `frontend/src/router/index.tsx`：新增 `/purchase-report/monthly` 路由（PermissionGuard system_admin_only）
+  - `frontend/src/constants/navLabels.ts`：新增 `purchaseReport` 群組 + `purchaseReportMonthly` 頁面常數
+  - `frontend/src/components/Layout/MainLayout.tsx`：sidebar 新增「請購單報表」群組（budget 之前）
+
+## [1.59.15] - 2026-05-13
+
+### Added
+- **核准請購單月報表 Phase 1（後端）**：
+  - `app/models/purchase_request.py`：`approved_purchase_requests`（主單）＋ `approved_purchase_request_items`（品項子表）兩張 ORM 表；含 `DEPT_DISPLAY_MAP`（停管部：客服→停管部）與 `DEPT_SHEETS`（9 部門清單＋Detail 路徑設定）
+  - `app/services/purchase_request_sync.py`：Master+Detail 雙層同步服務；Step1 清單 API × 9 部門；Step2 Detail API N+1 + 100ms 延遲 + 批次 50 筆 + `detail_synced` 增量旗標
+  - `app/routers/purchase_report.py`：`/api/v1/purchase-report/` 路由群；monthly（品項級別）、summary（KPI×9）、departments、export（Excel）、sync、sync/status、config/departments 共 7 個端點；開發期間 permission=`system_admin_only`
+  - `app/main.py`：model import、router 掛載、`_auto_sync` 加入 `核准請購單` 排程同步
+
 ## [1.59.14] - 2026-05-13
 
 ### Added
@@ -836,6 +1041,18 @@
   - `frontend/src/pages/ExecDashboard/index.tsx`：`SRC_OPTIONS` 移除 `{ value: 'hotel_room', label: '房務保養' }`
   - `frontend/src/pages/WorkCategoryAnalysis/index.tsx`：`SOURCE_OPTIONS` 移除 `{ value: 'hotel_room', label: '房務保養' }`
 - **注意**：`hotel/room-maintenance-detail` 獨立頁面模組（Model / Router / Sync Service / 前端頁面）完整保留，僅移除其在跨模組彙整的顯示
+
+---
+
+## [1.56.2] - 2026-05-13
+
+### Fixed
+- **進系統時選單閃爍問題**（`MainLayout.tsx`）
+  - 新增 `MENU_CONFIG_CACHE_KEY = 'portal_menu_config_cache'`：`fetchMenuConfig()` 成功後將 `MenuConfigItem[]` 寫入 localStorage
+  - `useState` 初始化改為優先讀取快取並立即套用 `applyMenuConfig`，消除「全量靜態選單 → DB 設定」的閃爍
+  - 無快取時（首次登入）fallback 至原靜態 menuItems + 角色過濾
+  - 登出時 `localStorage.removeItem(MENU_CONFIG_CACHE_KEY)`，防止帳號切換時顯示前一使用者的選單設定
+  - token payload 的 `permissions` 欄位也納入初始化 initPerms，讓快取還原時權限過濾更精確
 
 ---
 

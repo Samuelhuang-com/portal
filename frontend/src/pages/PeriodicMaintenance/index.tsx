@@ -15,7 +15,7 @@ import {
   message, Tooltip, Badge, Divider, Modal, Spin,
 } from 'antd'
 import {
-  HomeOutlined, SyncOutlined, ReloadOutlined, ToolOutlined,
+  HomeOutlined, ReloadOutlined, ToolOutlined,
   WarningOutlined, CheckCircleOutlined, ClockCircleOutlined,
   ExclamationCircleOutlined, RightOutlined, BarChartOutlined,
   CalendarOutlined, LineChartOutlined,
@@ -27,7 +27,7 @@ import {
 import type { ColumnsType } from 'antd/es/table'
 import dayjs from 'dayjs'
 
-import { fetchPMStats, fetchPMBatches, syncPMFromRagic, fetchPMPeriodStats, fetchPMYearMatrix, fetchPMCalendar, fetchPMBatchDetail, fetchPMMatrixItems, fetchPMCatalog } from '@/api/periodicMaintenance'
+import { fetchPMStats, fetchPMBatches, fetchPMPeriodStats, fetchPMYearMatrix, fetchPMCalendar, fetchPMBatchDetail, fetchPMMatrixItems, fetchPMCatalog } from '@/api/periodicMaintenance'
 import type { PMCatalogItem } from '@/api/periodicMaintenance'
 import type { PMMatrixMetric, PMMatrixItem } from '@/api/periodicMaintenance'
 import type { PMStats, PMBatchListItem, PMItem, PMItemStatus, PMPeriodStats, PMIncompleteItem, PMSubPeriodBreakdown, PMYearMatrix, PMYearMatrixMonth } from '@/types/periodicMaintenance'
@@ -557,7 +557,6 @@ export default function PeriodicMaintenancePage() {
   // 批次清單篩選：年
   const [year, setYear] = useState(dayjs().format('YYYY'))
   const [loading, setLoading] = useState(false)
-  const [syncing, setSyncing] = useState(false)
   // 月曆格 state
   const [calRows,   setCalRows]   = useState<CalendarRow[]>([])
   const [calMaxDay, setCalMaxDay] = useState(31)
@@ -777,24 +776,6 @@ export default function PeriodicMaintenancePage() {
   useEffect(() => {
     loadFormItems()
   }, [loadFormItems])
-
-  const handleSync = async () => {
-    setSyncing(true)
-    try {
-      await syncPMFromRagic()
-      message.success('同步完成')
-      await loadDashboard()
-      if (activeTab === 'form')      await loadFormItems()
-      if (activeTab === 'list')      await loadBatches()
-      if (activeTab === 'monthly')   { await loadYearMatrix(); await loadMonthlyStats() }
-      if (activeTab === 'quarterly') { await loadQuarterlyMatrix(); await loadQuarterlyStats() }
-      if (activeTab === 'yearly')    { await loadYearlyMatrix(); await loadYearlyStats() }
-    } catch {
-      message.error('同步失敗')
-    } finally {
-      setSyncing(false)
-    }
-  }
 
   // ── 年份 / 月份 / 季度 選項 ──────────────────────────────────────────────────
   const yearOptions = [2024, 2025, 2026, 2027].map(y => ({
@@ -1669,15 +1650,6 @@ export default function PeriodicMaintenancePage() {
           <Title level={4} style={{ margin: 0, color: '#1B3A5C' }}>
             <ToolOutlined /> {NAV_PAGE.periodicMaintenance}
           </Title>
-        </Col>
-        <Col>
-          <Button
-            icon={<SyncOutlined spin={syncing} />}
-            loading={syncing}
-            onClick={handleSync}
-          >
-            同步 Ragic
-          </Button>
         </Col>
       </Row>
 

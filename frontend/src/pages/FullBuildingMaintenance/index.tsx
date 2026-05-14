@@ -16,7 +16,7 @@ import {
   message, Tooltip, Badge, Divider, Modal, Spin,
 } from 'antd'
 import {
-  HomeOutlined, SyncOutlined, ReloadOutlined, ToolOutlined,
+  HomeOutlined, ReloadOutlined, ToolOutlined,
   WarningOutlined, CheckCircleOutlined, ClockCircleOutlined,
   ExclamationCircleOutlined, RightOutlined, BarChartOutlined,
   ShopOutlined, CalendarOutlined, LineChartOutlined,
@@ -29,8 +29,7 @@ import type { ColumnsType } from 'antd/es/table'
 import dayjs from 'dayjs'
 
 import {
-  fetchFullBldgPMStats, fetchFullBldgPMBatches, fetchFullBldgPMBatchDetail,
-  syncFullBldgPMFromRagic, fetchFullBldgPMPeriodStats, fetchFullBldgPMYearMatrix,
+  fetchFullBldgPMStats, fetchFullBldgPMBatches, fetchFullBldgPMBatchDetail, fetchFullBldgPMPeriodStats, fetchFullBldgPMYearMatrix,
   fetchFullBldgPMCalendar, fetchFullBldgPMMatrixItems, fetchFullBldgPMCatalog,
 } from '@/api/fullBuildingMaintenance'
 import type {
@@ -523,7 +522,6 @@ export default function FullBuildingMaintenancePage() {
   const [dashMonth, setDashMonth] = useState(dayjs().month() + 1)
   const [year, setYear]       = useState(dayjs().format('YYYY'))
   const [loading, setLoading] = useState(false)
-  const [syncing, setSyncing] = useState(false)
 
   // ── 月統計 state ────────────────────────────────────────────────────────
   const [monthlyData,    setMonthlyData]    = useState<PMPeriodStats | null>(null)
@@ -732,24 +730,6 @@ export default function FullBuildingMaintenancePage() {
   useEffect(() => { if (activeTab === 'quarterly') loadQuarterlyMatrix() }, [loadQuarterlyMatrix])
   useEffect(() => { if (activeTab === 'quarterly') loadQuarterlyStats() },  [loadQuarterlyStats])
   useEffect(() => { if (activeTab === 'yearly')    loadYearlyMatrix() },    [loadYearlyMatrix])
-
-  const handleSync = async () => {
-    setSyncing(true)
-    try {
-      await syncFullBldgPMFromRagic()
-      message.success('同步完成')
-      await loadDashboard()
-      if (activeTab === 'form')      await loadFormItems()
-      if (activeTab === 'list')      await loadBatches()
-      if (activeTab === 'monthly')   { await loadYearMatrix(); await loadMonthlyStats() }
-      if (activeTab === 'quarterly') { await loadQuarterlyMatrix(); await loadQuarterlyStats() }
-      if (activeTab === 'yearly')    { await loadYearlyMatrix(); await loadYearlyStats() }
-    } catch {
-      message.error('同步失敗')
-    } finally {
-      setSyncing(false)
-    }
-  }
 
   const yearOptions = [2024, 2025, 2026, 2027].map(y => ({
     value: String(y),
@@ -1592,15 +1572,6 @@ export default function FullBuildingMaintenancePage() {
             <Title level={4} style={{ margin: 0, color: '#1B3A5C' }}>
               <ShopOutlined /> {NAV_PAGE.fullBuildingMaintenance}
             </Title>
-          </Col>
-          <Col>
-            <Button
-              icon={<SyncOutlined spin={syncing} />}
-              loading={syncing}
-              onClick={handleSync}
-            >
-              同步 Ragic
-            </Button>
           </Col>
         </Row>
 

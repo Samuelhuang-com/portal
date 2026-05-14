@@ -12,7 +12,7 @@ import {
   message, Badge, DatePicker,
 } from 'antd'
 import {
-  HomeOutlined, SyncOutlined, ReloadOutlined,
+  HomeOutlined, ReloadOutlined,
   WarningOutlined, CheckCircleOutlined, ClockCircleOutlined,
   ExclamationCircleOutlined, RightOutlined, BarChartOutlined,
   SafetyOutlined, CalendarOutlined,
@@ -24,7 +24,7 @@ import {
 import type { ColumnsType } from 'antd/es/table'
 import dayjs from 'dayjs'
 
-import { fetchB4FStats, fetchB4FBatches, syncB4FFromRagic } from '@/api/b4fInspection'
+import { fetchB4FStats, fetchB4FBatches } from '@/api/b4fInspection'
 import type {
   InspectionStats, InspectionBatchListItem, InspectionItem,
 } from '@/types/b4fInspection'
@@ -57,7 +57,6 @@ export default function B4FInspectionPage() {
   const [batches, setBatches] = useState<InspectionBatchListItem[]>([])
   const [yearMonth, setYearMonth] = useState<string>(dayjs().format('YYYY/MM'))
   const [loading, setLoading] = useState(false)
-  const [syncing, setSyncing] = useState(false)
 
   const loadDashboard = useCallback(async () => {
     setLoading(true)
@@ -85,20 +84,6 @@ export default function B4FInspectionPage() {
 
   useEffect(() => { loadDashboard() }, [loadDashboard])
   useEffect(() => { if (activeTab === 'list') loadBatches() }, [activeTab, loadBatches])
-
-  const handleSync = async () => {
-    setSyncing(true)
-    try {
-      await syncB4FFromRagic()
-      message.success('同步完成')
-      await loadDashboard()
-      if (activeTab === 'list') await loadBatches()
-    } catch {
-      message.error('同步失敗')
-    } finally {
-      setSyncing(false)
-    }
-  }
 
   // ── Dashboard ──────────────────────────────────────────────────────────────
   const kpi        = stats?.latest_kpi
@@ -459,15 +444,6 @@ export default function B4FInspectionPage() {
           <Title level={4} style={{ margin: 0, color: '#1B3A5C' }}>
             <SafetyOutlined /> {NAV_PAGE.b4fInspection}
           </Title>
-        </Col>
-        <Col>
-          <Button
-            icon={<SyncOutlined spin={syncing} />}
-            loading={syncing}
-            onClick={handleSync}
-          >
-            同步 Ragic
-          </Button>
         </Col>
       </Row>
 

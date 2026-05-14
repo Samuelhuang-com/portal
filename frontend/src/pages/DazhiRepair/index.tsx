@@ -17,8 +17,7 @@ import {
   HomeOutlined, ReloadOutlined, ToolOutlined,
   CheckCircleOutlined, ClockCircleOutlined, ExclamationCircleOutlined,
   DashboardOutlined, FileTextOutlined, DownloadOutlined,
-  WarningOutlined, DollarOutlined, SearchOutlined, BuildOutlined,
-  SyncOutlined, ApiOutlined, QuestionCircleOutlined, PictureOutlined, AuditOutlined,
+  WarningOutlined, DollarOutlined, SearchOutlined, BuildOutlined, ApiOutlined, QuestionCircleOutlined, PictureOutlined, AuditOutlined,
 } from '@ant-design/icons'
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
@@ -1904,7 +1903,6 @@ export default function DazhiRepairPage() {
   const [appliedMonth, setAppliedMonth] = useState<number | null>(now.getMonth() + 1)
 
   // 同步 Ragic 診斷
-  const [syncing,     setSyncing]    = useState(false)
   const [syncResult,  setSyncResult] = useState<SyncResult | null>(null)
   const [syncModalOpen, setSyncModal] = useState(false)
 
@@ -1947,23 +1945,6 @@ export default function DazhiRepairPage() {
       message.error(`Ping 失敗：${(e as Error).message}`)
     } finally {
       setPinging(false)
-    }
-  }
-
-  const handleSync = async () => {
-    setSyncing(true)
-    try {
-      const result = await fetchSync()
-      setSyncResult(result)
-      setSyncModal(true)
-      // 同步後更新年份清單
-      fetchYears()
-        .then(r => { if (r.years.length > 0) setYears(r.years) })
-        .catch(() => {})
-    } catch (e: unknown) {
-      message.error(`同步失敗：${(e as Error).message || '請確認後端服務是否正常'}`)
-    } finally {
-      setSyncing(false)
     }
   }
 
@@ -2060,17 +2041,6 @@ export default function DazhiRepairPage() {
             style={{ borderColor: '#4BA8E8', color: '#4BA8E8' }}
           >
             連線測試
-          </Button>
-          <Button
-            icon={<SyncOutlined spin={syncing} />}
-            loading={syncing}
-            onClick={handleSync}
-            style={{
-              background: 'linear-gradient(135deg, #667eea, #764ba2)',
-              border: 'none', color: '#fff',
-            }}
-          >
-            同步 Ragic
           </Button>
         </Space>
       </div>

@@ -17,8 +17,7 @@ import {
   HomeOutlined, ReloadOutlined, ToolOutlined,
   CheckCircleOutlined, ClockCircleOutlined, ExclamationCircleOutlined,
   DashboardOutlined, FileTextOutlined, DownloadOutlined,
-  WarningOutlined, DollarOutlined, SearchOutlined,
-  SyncOutlined, ApiOutlined, QuestionCircleOutlined, AuditOutlined,
+  WarningOutlined, DollarOutlined, SearchOutlined, ApiOutlined, QuestionCircleOutlined, AuditOutlined,
 } from '@ant-design/icons'
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
@@ -1843,7 +1842,6 @@ function FeeStatsTab({ year }: { year: number }) {
   )
 }
 
-
 // ═════════════════════════════════════════════════════════════════════════════
 // Tab: 春大直 - 報修清單總表（明細）
 // ═════════════════════════════════════════════════════════════════════════════
@@ -2019,27 +2017,12 @@ export default function LuqunRepairPage() {
   const [activeTab, setActiveTab] = useState('dashboard')
 
   // ── 同步 / 連線測試 ────────────────────────────────────────────────────────
-  const [syncing,       setSyncing]       = useState(false)
   const [syncResult,    setSyncResult]    = useState<SyncResult | null>(null)
   const [syncModalOpen, setSyncModalOpen] = useState(false)
 
   const [pinging,       setPinging]       = useState(false)
   const [pingResult,    setPingResult]    = useState<PingResult | null>(null)
   const [pingModalOpen, setPingModalOpen] = useState(false)
-
-  const handleSync = useCallback(async () => {
-    setSyncing(true)
-    try {
-      const r = await fetchSync()
-      setSyncResult(r)
-      setSyncModalOpen(true)
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e)
-      message.error(`同步失敗：${msg}`)
-    } finally {
-      setSyncing(false)
-    }
-  }, [])
 
   const handlePing = useCallback(async () => {
     setPinging(true)
@@ -2149,14 +2132,6 @@ export default function LuqunRepairPage() {
             style={{ borderColor: '#4BA8E8', color: '#4BA8E8' }}
           >
             連線測試
-          </Button>
-          <Button
-            icon={<SyncOutlined spin={syncing} />}
-            loading={syncing}
-            onClick={handleSync}
-            style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)', border: 'none', color: '#fff' }}
-          >
-            同步 Ragic
           </Button>
         </Space>
       </div>

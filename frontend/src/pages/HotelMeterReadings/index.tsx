@@ -18,7 +18,7 @@ import {
   message, Badge, Input, Tooltip,
 } from 'antd'
 import {
-  HomeOutlined, SyncOutlined, ReloadOutlined,
+  HomeOutlined, ReloadOutlined,
   WarningOutlined, CheckCircleOutlined,
   DashboardOutlined, ReadOutlined, LinkOutlined,
   ExclamationCircleOutlined,
@@ -33,8 +33,6 @@ import {
 import {
   fetchHotelMeterDashboardSummary,
   fetchHotelMeterBatches,
-  syncHotelMeterAllFromRagic,
-  syncHotelMeterFromRagic,
   type HotelMRSheetSummary,
   type HotelMRBatchRow,
 } from '@/api/hotelMeterReadings'
@@ -53,7 +51,6 @@ function DashboardTab() {
   const initMonth = searchParams.get('month') ?? dayjs().format('YYYY-MM')
   const [queryMonth, setQueryMonth] = useState<string>(initMonth)
   const [loading,    setLoading]    = useState(false)
-  const [syncing,    setSyncing]    = useState(false)
   const [sheets,     setSheets]     = useState<HotelMRSheetSummary[]>([])
   const [error,      setError]      = useState<string | null>(null)
 
@@ -85,18 +82,6 @@ function DashboardTab() {
 
   useEffect(() => { load() }, [load])
 
-  const handleSyncAll = async () => {
-    setSyncing(true)
-    try {
-      await syncHotelMeterAllFromRagic()
-      message.success('全部 4 張 Sheet 同步已在背景啟動，約 1 分鐘後可重新載入查看')
-    } catch {
-      message.error('同步失敗，請稍後再試')
-    } finally {
-      setSyncing(false)
-    }
-  }
-
   // 統計數字
   const totalLogged  = sheets.filter((s) => s.has_today).length
   const totalMissing = sheets.reduce((acc, s) => acc + s.missing_count, 0)
@@ -122,16 +107,6 @@ function DashboardTab() {
         <Col>
           <Button icon={<ReloadOutlined />} onClick={load} loading={loading}>
             重新載入
-          </Button>
-        </Col>
-        <Col>
-          <Button
-            type="primary"
-            icon={<SyncOutlined />}
-            onClick={handleSyncAll}
-            loading={syncing}
-          >
-            同步全部
           </Button>
         </Col>
         <Col flex="auto" />
@@ -306,7 +281,6 @@ function MeterListTab({ sheet }: { sheet: HotelMeterReadingsSheet }) {
   const [yearMonth, setYearMonth] = useState<string>(dayjs().format('YYYY/MM'))
   const [search,    setSearch]    = useState<string>('')
   const [loading,   setLoading]   = useState(false)
-  const [syncing,   setSyncing]   = useState(false)
   const [rows,      setRows]      = useState<HotelMRBatchRow[]>([])
   const [error,     setError]     = useState<string | null>(null)
   const [lastSync,  setLastSync]  = useState<string>('')
@@ -330,18 +304,6 @@ function MeterListTab({ sheet }: { sheet: HotelMeterReadingsSheet }) {
   }, [sheet.key, yearMonth, search])
 
   useEffect(() => { load() }, [load])
-
-  const handleSync = async () => {
-    setSyncing(true)
-    try {
-      await syncHotelMeterFromRagic(sheet.key)
-      message.success(`${sheet.title} 同步已在背景啟動，約 1 分鐘後可重新載入`)
-    } catch {
-      message.error('同步失敗，請稍後再試')
-    } finally {
-      setSyncing(false)
-    }
-  }
 
   const columns = [
     {
@@ -426,15 +388,6 @@ function MeterListTab({ sheet }: { sheet: HotelMeterReadingsSheet }) {
         <Col>
           <Button icon={<ReloadOutlined />} onClick={load} loading={loading}>
             重新載入
-          </Button>
-        </Col>
-        <Col>
-          <Button
-            icon={<SyncOutlined />}
-            onClick={handleSync}
-            loading={syncing}
-          >
-            從 Ragic 同步
           </Button>
         </Col>
         <Col flex="auto" />

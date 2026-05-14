@@ -74,6 +74,9 @@ import DataPreparingPage              from '@/pages/DataPreparing'
 import DecisionCockpitPage            from '@/pages/DecisionCockpit'
 import ExecWorkDashboardPage           from '@/pages/ExecWorkDashboard'
 
+// ── 核准請購單月報表 ────────────────────────────────────────────────────────────
+import PurchaseReportPage              from '@/pages/PurchaseReport'
+
 // ── 知識庫（LLM Wiki）──────────────────────────────────────────────────────────
 import WikiPage                        from '@/pages/Wiki'
 
@@ -261,6 +264,19 @@ export default function AppRouter() {
           <Route path="b2f-inspection/:batchId"       element={<B2FInspectionDetailPage />} />
           <Route path="b1f-inspection"                element={<B1FInspectionPage />} />
           <Route path="b1f-inspection/:batchId"       element={<B1FInspectionDetailPage />} />
+        </Route>
+
+        {/* ── 核准請購單月報表 ──────────────────────────────────────────── */}
+        <Route path="purchase-report">
+          <Route
+            path="monthly"
+            element={
+              <PermissionGuard permissionKey="system_admin_only">
+                <PurchaseReportPage />
+              </PermissionGuard>
+            }
+          />
+          <Route index element={<Navigate to="monthly" replace />} />
         </Route>
 
         {/* ── 預算管理 ──────────────────────────────────────────────────── */}

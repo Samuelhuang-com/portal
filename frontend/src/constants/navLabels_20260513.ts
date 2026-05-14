@@ -49,7 +49,6 @@
  *   2026-05-04  新增 employeeManualExport（員工操作手冊匯出）系統設定群組，route /settings/employee-manual-export
  *   2026-05-07  新增 execWorkDashboard（集團工務決策駕駛艙）以工務決策視角為主，route /exec-work-dashboard
  *   2026-05-10  新增 knowledgeGraph（專案知識圖譜）graphify 整合，route /settings/knowledge-graph
- *   2026-05-13  新增 purchaseReport（請購單報表）核准請購單月報表，route /purchase-report/monthly
  */
 
 // ── 系統標題 ──────────────────────────────────────────────────────────────────
@@ -72,10 +71,9 @@ export const NAV_GROUP = {
   reports:    '報表',
   approvals:  '簽核管理',
   memos:      '公告牆',
-  wiki:             '知識庫',
-  audit:            '稽核日誌',
-  settings:         '系統設定',
-  purchaseReport:   '請購單報表',   // ← 核准請購單月報表（財務/採購管理）
+  wiki:       '知識庫',
+  audit:      '稽核日誌',
+  settings:   '系統設定',
 } as const
 
 // ── 二級選單（頁面） ──────────────────────────────────────────────────────────
@@ -182,9 +180,6 @@ export const NAV_PAGE = {
   menuConfig:               '選單管理',
   employeeManualExport:     '員工操作手冊匯出',
   knowledgeGraph:           '專案知識圖譜',
-
-  // 請購單報表
-  purchaseReportMonthly:    '核准請購單月報表',  // ← 品項級月報表，route /purchase-report/monthly
 } as const
 
 // ── 型別輔助 ────────────────────────────────────────────────────────────────────────────

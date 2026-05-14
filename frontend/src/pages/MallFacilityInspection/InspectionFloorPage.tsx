@@ -15,7 +15,7 @@ import {
   message, Badge, DatePicker,
 } from 'antd'
 import {
-  HomeOutlined, SyncOutlined, ReloadOutlined,
+  HomeOutlined, ReloadOutlined,
   WarningOutlined, CheckCircleOutlined, ClockCircleOutlined,
   ExclamationCircleOutlined, SafetyOutlined, BarChartOutlined,
 } from '@ant-design/icons'
@@ -25,7 +25,6 @@ import { MALL_FACILITY_INSPECTION_SHEETS } from '@/constants/mallFacilityInspect
 import {
   fetchMallFacilityStats,
   fetchMallFacilityBatches,
-  syncMallFacilityFromRagic,
   type MallFIStats,
 } from '@/api/mallFacilityInspection'
 
@@ -58,7 +57,6 @@ export default function InspectionFloorPage({ sheetKey }: InspectionFloorPagePro
   const [activeTab, setActiveTab]   = useState('dashboard')
   const [yearMonth, setYearMonth]   = useState<string>(dayjs().format('YYYY/MM'))
   const [loading,   setLoading]     = useState(false)
-  const [syncing,   setSyncing]     = useState(false)
   const [batches,   setBatches]     = useState<BatchRow[]>([])
   const [stats,     setStats]       = useState<MallFIStats | null>(null)
 
@@ -116,19 +114,6 @@ export default function InspectionFloorPage({ sheetKey }: InspectionFloorPagePro
   useEffect(() => {
     if (activeTab === 'list') loadBatches()
   }, [activeTab, loadBatches])
-
-  const handleSync = async () => {
-    setSyncing(true)
-    try {
-      await syncMallFacilityFromRagic(sheetKey)
-      message.success('同步已啟動，稍後請重新整理查看最新資料')
-      setTimeout(() => { loadDashboard(); loadBatches() }, 3000)
-    } catch {
-      message.error('同步失敗，請稍後再試')
-    } finally {
-      setSyncing(false)
-    }
-  }
 
   // ── Tab 1：主管儀表板 ──────────────────────────────────────────────────────
 
@@ -382,15 +367,6 @@ export default function InspectionFloorPage({ sheetKey }: InspectionFloorPagePro
           <Title level={4} style={{ margin: 0, color: '#1B3A5C' }}>
             <SafetyOutlined /> {pageLabel}
           </Title>
-        </Col>
-        <Col>
-          <Button
-            icon={<SyncOutlined spin={syncing} />}
-            loading={syncing}
-            onClick={handleSync}
-          >
-            同步 Ragic
-          </Button>
         </Col>
       </Row>
 

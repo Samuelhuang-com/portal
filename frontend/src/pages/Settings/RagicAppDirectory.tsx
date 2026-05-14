@@ -269,6 +269,23 @@ const RAGIC_APPS_STATIC: Omit<RagicApp, 'portalName' | 'portalUrl' | 'localTable
   { itemNo: 217, module: '飯店工務每日巡檢', name: '飯店工務每日巡檢 - 4F',                url: 'https://ap12.ragic.com/soutlet001/main-project-inspection/19',                   type: '表單/作業', note: '' },
   { itemNo: 218, module: '飯店工務每日巡檢', name: '飯店工務每日巡檢 - 4F - 10F',          url: 'https://ap12.ragic.com/soutlet001/main-project-inspection/18',                   type: '表單/作業', note: '' },
   { itemNo: 219, module: '飯店工務每日巡檢', name: '飯店工務每日巡檢 - RF',                url: 'https://ap12.ragic.com/soutlet001/main-project-inspection/17',                   type: '表單/作業', note: '' },
+  // ── 核准請購單（9 部門，Master+Detail 雙層同步）─────────────────────────────
+  { itemNo: 220, module: '核准請購單',       name: '執董室請購單（清單）',                url: 'https://ap12.ragic.com/soutlet001/lequn-executive-office/10',                   type: '報表/清單', note: 'Portal同步' },
+  { itemNo: 221, module: '核准請購單',       name: '執董室請購單（內頁）',                url: 'https://ap12.ragic.com/soutlet001/lequn-executive-office/2',                    type: '表單/作業', note: 'Portal同步' },
+  { itemNo: 222, module: '核准請購單',       name: '行銷部請購單（清單）',                url: 'https://ap12.ragic.com/soutlet001/lequn-marketing-department/12',               type: '報表/清單', note: 'Portal同步' },
+  { itemNo: 223, module: '核准請購單',       name: '行銷部請購單（內頁）',                url: 'https://ap12.ragic.com/soutlet001/lequn-marketing-department/9',                type: '表單/作業', note: 'Portal同步' },
+  { itemNo: 224, module: '核准請購單',       name: '管理部請購單（清單）',                url: 'https://ap12.ragic.com/soutlet001/community-management-department/22',           type: '報表/清單', note: 'Portal同步' },
+  { itemNo: 225, module: '核准請購單',       name: '管理部請購單（內頁）',                url: 'https://ap12.ragic.com/soutlet001/community-management-department/31',           type: '表單/作業', note: 'Portal同步' },
+  { itemNo: 226, module: '核准請購單',       name: '工務部請購單（清單）',                url: 'https://ap12.ragic.com/soutlet001/lequn-public-works-department/1',              type: '報表/清單', note: 'Portal同步' },
+  { itemNo: 227, module: '核准請購單',       name: '工務部請購單（內頁）',                url: 'https://ap12.ragic.com/soutlet001/lequn-public-works-department/60',             type: '表單/作業', note: 'Portal同步' },
+  { itemNo: 228, module: '核准請購單',       name: '專案請購單（清單）',                  url: 'https://ap12.ragic.com/soutlet001/happy-group-project/2',                       type: '報表/清單', note: 'Portal同步' },
+  { itemNo: 229, module: '核准請購單',       name: '專案請購單（內頁）',                  url: 'https://ap12.ragic.com/soutlet001/happy-group-project/39',                      type: '表單/作業', note: 'Portal同步' },
+  { itemNo: 230, module: '核准請購單',       name: '停管部請購單（清單）',                url: 'https://ap12.ragic.com/soutlet001/lequn-traffic-management/6',                   type: '報表/清單', note: 'Portal同步 / Ragic部門值=客服' },
+  { itemNo: 231, module: '核准請購單',       name: '停管部請購單（內頁）',                url: 'https://ap12.ragic.com/soutlet001/lequn-traffic-management/6',                   type: '表單/作業', note: 'Portal同步 / 內頁與清單同sheet' },
+  { itemNo: 232, module: '核准請購單',       name: '財務部請購單（清單）',                url: 'https://ap12.ragic.com/soutlet001/lequn-finance-department/9',                   type: '報表/清單', note: 'Portal同步' },
+  { itemNo: 233, module: '核准請購單',       name: '財務部請購單（內頁）',                url: 'https://ap12.ragic.com/soutlet001/lequn-finance-department/2',                   type: '表單/作業', note: 'Portal同步' },
+  { itemNo: 234, module: '核准請購單',       name: '資訊部請購單（清單）',                url: 'https://ap12.ragic.com/soutlet001/joy-group-it-department/11',                   type: '報表/清單', note: 'Portal同步' },
+  { itemNo: 235, module: '核准請購單',       name: '資訊部請購單（內頁）',                url: 'https://ap12.ragic.com/soutlet001/lequn-finance-department/5',                   type: '表單/作業', note: 'Portal同步 / Ragic重導向至lequn-finance-department/5' },
 ]
 
 // ── 本地 DB 表對應（Ragic sheet 路徑 → 本地 SQLite table name(s)）────────────
@@ -316,6 +333,24 @@ const LOCAL_TABLE_MAP: Record<number, string> = {
   206: 'pm_batch',                                     // periodic-maintenance/6  (主表單)
   207: 'pm_batch_item',                                // periodic-maintenance/8  (同仁執行明細)
   208: 'pm_batch_item',                                // periodic-maintenance/11 (子表：項目)
+
+  // 核准請購單 — 9 部門清單 + 內頁 → approved_purchase_requests + approved_purchase_request_items
+  220: 'approved_purchase_requests\napproved_purchase_request_items',  // 執董室（清單）
+  221: 'approved_purchase_requests\napproved_purchase_request_items',  // 執董室（內頁）
+  222: 'approved_purchase_requests\napproved_purchase_request_items',  // 行銷部（清單）
+  223: 'approved_purchase_requests\napproved_purchase_request_items',  // 行銷部（內頁）
+  224: 'approved_purchase_requests\napproved_purchase_request_items',  // 管理部（清單）
+  225: 'approved_purchase_requests\napproved_purchase_request_items',  // 管理部（內頁）
+  226: 'approved_purchase_requests\napproved_purchase_request_items',  // 工務部（清單）
+  227: 'approved_purchase_requests\napproved_purchase_request_items',  // 工務部（內頁）
+  228: 'approved_purchase_requests\napproved_purchase_request_items',  // 專案（清單）
+  229: 'approved_purchase_requests\napproved_purchase_request_items',  // 專案（內頁）
+  230: 'approved_purchase_requests\napproved_purchase_request_items',  // 停管部（清單，Ragic部門值=客服）
+  231: 'approved_purchase_requests\napproved_purchase_request_items',  // 停管部（內頁）
+  232: 'approved_purchase_requests\napproved_purchase_request_items',  // 財務部（清單）
+  233: 'approved_purchase_requests\napproved_purchase_request_items',  // 財務部（內頁）
+  234: 'approved_purchase_requests\napproved_purchase_request_items',  // 資訊部（清單）
+  235: 'approved_purchase_requests\napproved_purchase_request_items',  // 資訊部（內頁，Ragic重導向至lequn-finance-department/5）
 }
 
 // 類型 → Tag 顏色對應

@@ -2,10 +2,48 @@
 集團 Portal — FastAPI Application Entry Point
 """
 
+import logging
+import pathlib
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from datetime import datetime
+
+# ── 檔案 Log（每次啟動建立一個新檔，檔名為啟動時間）────────────────────────────
+def _setup_file_logging() -> None:
+    """
+    在 portal/logs/ 目錄下建立以啟動時間命名的 log 檔案。
+    格式：YYYYMMDD_HHMMSS.log（台灣時間）
+    """
+    from app.core.time import twnow
+
+    log_dir = pathlib.Path(__file__).parent.parent.parent / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    log_filename = twnow().strftime("%Y%m%d_%H%M%S") + ".log"
+    log_path = log_dir / log_filename
+
+    file_handler = logging.FileHandler(log_path, encoding="utf-8")
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(
+        logging.Formatter(
+            "%(asctime)s  %(levelname)-8s  %(name)s — %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
+    )
+
+    root_logger = logging.getLogger()
+    if root_logger.level == logging.NOTSET:
+        root_logger.setLevel(logging.DEBUG)
+    root_logger.addHandler(file_handler)
+
+    # 確保 SQLAlchemy SQL 語句（INSERT/UPDATE/DELETE/SELECT）寫入 log 檔
+    logging.getLogger("sqlalchemy.engine").setLevel(logging.INFO)
+
+    print(f"[Portal] Log 檔案：{log_path}")
+
+
+_setup_file_logging()
 
 from app.core.config import settings
 from app.core.database import Base, engine
@@ -13,6 +51,9 @@ from app.core.scheduler import make_cron_trigger, scheduler as _scheduler, regis
 from app.core.time import twnow
 from app.routers import (
     approvals,
+    claim_report,
+    combined_report,
+    purchase_report,
     auth,
     budget,
     b4f_inspection,
@@ -498,7 +539,6 @@ async def _auto_sync():
     from app.services.hotel_daily_inspection_sync import sync_all as sync_hdi
     from app.services.hotel_meter_readings_sync import sync_all as sync_hmr
     from app.services.ihg_room_maintenance_sync import sync_from_ragic as sync_ihg_rm
-
     await _run_and_log("客房保養", sync_rm())
     await _run_and_log("倉庫庫存", sync_inv())
     await _run_and_log("客房保養明細", sync_rmd())
@@ -516,6 +556,79 @@ async def _auto_sync():
     await _run_and_log("飯店每日巡檢", sync_hdi())
     await _run_and_log("每日數值登錄", sync_hmr())
     await _run_and_log("IHG客房保養", sync_ihg_rm())
+    # 請購單 / 請款單：立即同步時執行清單同步（Detail API 由獨立排程補全）
+    from app.services.purchase_request_sync import sync_list_only as sync_purchase_list
+    from app.services.claim_request_sync import sync_list_only as sync_claim_list
+    await _run_and_log("核准請購單清單", sync_purchase_list())
+    await _run_and_log("核准請款單清單", sync_claim_list())
+
+
+async def _manual_sync():
+    """
+    「立即同步」專用入口：為本次手動同步建立獨立 log 檔，
+    格式 YYYYMMDD_HHMMSS_manual.log，存至 portal/logs/。
+    同步完成後自動移除 FileHandler，不影響常駐 log 檔。
+    """
+    from app.core.time import twnow
+
+    log_dir = pathlib.Path(__file__).parent.parent.parent / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    log_filename = twnow().strftime("%Y%m%d_%H%M%S") + "_manual.log"
+    log_path = log_dir / log_filename
+
+    handler = logging.FileHandler(log_path, encoding="utf-8")
+    handler.setLevel(logging.DEBUG)
+    handler.setFormatter(
+        logging.Formatter(
+            "%(asctime)s  %(levelname)-8s  %(name)s — %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
+    )
+
+    root_logger = logging.getLogger()
+    root_logger.addHandler(handler)
+
+    # 確保 SQLAlchemy SQL 語句（INSERT/UPDATE/DELETE）寫入此次手動同步 log
+    sa_logger = logging.getLogger("sqlalchemy.engine")
+    prev_sa_level = sa_logger.level
+    sa_logger.setLevel(logging.INFO)
+
+    print(f"[Portal] 立即同步 log 檔：{log_path}")
+
+    try:
+        await _auto_sync()
+    finally:
+        root_logger.removeHandler(handler)
+        handler.close()
+        # 還原 SQLAlchemy logger level（避免影響後續排程 log）
+        sa_logger.setLevel(prev_sa_level)
+
+
+# ── 請購單專屬排程 ──────────────────────────────────────────────────────────────
+async def _purchase_list_sync():
+    """請購單清單同步（每 15 分鐘：僅清單 API + subtable 品項）"""
+    from app.services.purchase_request_sync import sync_list_only
+    await _run_and_log("核准請購單清單", sync_list_only())
+
+
+async def _purchase_full_sync():
+    """請購單完整同步（每 45 分鐘：清單 + Detail API 品項補全）"""
+    from app.services.purchase_request_sync import sync_from_ragic as sync_purchase
+    await _run_and_log("核准請購單", sync_purchase())
+
+
+# ── 請款單專屬排程 ──────────────────────────────────────────────────────────────
+async def _claim_list_sync():
+    """請款單清單同步（每 15 分鐘：僅清單 API + subtable 品項）"""
+    from app.services.claim_request_sync import sync_list_only
+    await _run_and_log("核准請款單清單", sync_list_only())
+
+
+async def _claim_full_sync():
+    """請款單完整同步（每 45 分鐘：清單 + Detail API 品項補全）"""
+    from app.services.claim_request_sync import sync_from_ragic as sync_claim
+    await _run_and_log("核准請款單", sync_claim())
 
 
 @asynccontextmanager
@@ -552,6 +665,8 @@ async def lifespan(app: FastAPI):
     import app.models.menu_config  # noqa: F401
     import app.models.role_permission  # noqa: F401
     import app.models.wiki  # noqa: F401
+    import app.models.purchase_request  # noqa: F401
+    import app.models.claim_request     # noqa: F401
 
     # B4F 扁平化遷移：刪除舊 batch 表 + 檢查 item 表欄位（必須在 create_all 之前）
     _migrate_b4f_flatten()
@@ -626,6 +741,42 @@ async def lifespan(app: FastAPI):
         trigger=make_cron_trigger(30),   # CronTrigger：整點對齊，預設 :00 / :30
         id="module_auto_sync",
         replace_existing=True,
+    )
+
+    # 請購單清單同步：每 15 分鐘（:00/:15/:30/:45）
+    _scheduler.add_job(
+        _purchase_list_sync,
+        trigger=make_cron_trigger(15),
+        id="purchase_list_sync",
+        replace_existing=True,
+        misfire_grace_time=300,
+    )
+
+    # 請購單完整同步（含 Detail API 品項補全）：每 45 分鐘（:00/:45）
+    _scheduler.add_job(
+        _purchase_full_sync,
+        trigger=make_cron_trigger(45),
+        id="purchase_full_sync",
+        replace_existing=True,
+        misfire_grace_time=300,
+    )
+
+    # 請款單清單同步：每 15 分鐘（:00/:15/:30/:45）
+    _scheduler.add_job(
+        _claim_list_sync,
+        trigger=make_cron_trigger(15),
+        id="claim_list_sync",
+        replace_existing=True,
+        misfire_grace_time=300,
+    )
+
+    # 請款單完整同步（含 Detail API 品項補全）：每 45 分鐘（:00/:45）
+    _scheduler.add_job(
+        _claim_full_sync,
+        trigger=make_cron_trigger(45),
+        id="claim_full_sync",
+        replace_existing=True,
+        misfire_grace_time=300,
     )
 
     # 依各 RagicConnection 的 sync_interval 建立個別排程任務
@@ -846,6 +997,27 @@ app.include_router(
     work_category_analysis.router,
     prefix=f"{API_PREFIX}/work-category-analysis",
     tags=["工項類別分析"],
+)
+
+# ── 新增：核准請購單月報表 ───────────────────────────────────────────────────────
+app.include_router(
+    purchase_report.router,
+    prefix=f"{API_PREFIX}/purchase-report",
+    tags=["核准請購單月報表"],
+)
+
+# ── 新增：核准請款單月報表 ───────────────────────────────────────────────────────
+app.include_router(
+    claim_report.router,
+    prefix=f"{API_PREFIX}/claim-report",
+    tags=["核准請款單月報表"],
+)
+
+# ── 新增：請購 + 請款 整合總表 ─────────────────────────────────────────────────
+app.include_router(
+    combined_report.router,
+    prefix=f"{API_PREFIX}/combined-report",
+    tags=["請購請款整合總表"],
 )
 
 # ── 新增：預算管理 ─────────────────────────────────────────────────────────────

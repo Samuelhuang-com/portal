@@ -20,7 +20,7 @@ import {
   message, Progress, Tooltip,
 } from 'antd'
 import {
-  HomeOutlined, SyncOutlined, ReloadOutlined,
+  HomeOutlined, ReloadOutlined,
   WarningOutlined, CheckCircleOutlined, ExclamationCircleOutlined,
   DashboardOutlined, SafetyOutlined, ClockCircleOutlined, LinkOutlined,
   CalendarOutlined,
@@ -206,7 +206,6 @@ function FullBuildingDailyFormTab() {
 function FloorInspectionListTab({ sheetKey }: { sheetKey: string }) {
   const [yearMonth, setYearMonth] = useState<string>(dayjs().format('YYYY/MM'))
   const [loading,   setLoading]   = useState(false)
-  const [syncing,   setSyncing]   = useState(false)
   const [batches,   setBatches]   = useState<BatchRow[]>([])
 
   const load = useCallback(async () => {
@@ -218,19 +217,6 @@ function FloorInspectionListTab({ sheetKey }: { sheetKey: string }) {
   }, [sheetKey, yearMonth])
 
   useEffect(() => { load() }, [load])
-
-  const handleSync = async () => {
-    setSyncing(true)
-    try {
-      // TODO: 接 API → syncFullBuildingFromRagic(sheetKey)
-      await new Promise((r) => setTimeout(r, 800))
-      message.info('同步功能開發中，請直接至 Ragic 填寫巡檢表單')
-    } catch {
-      message.error('同步失敗')
-    } finally {
-      setSyncing(false)
-    }
-  }
 
   const columns = [
     {
@@ -306,15 +292,6 @@ function FloorInspectionListTab({ sheetKey }: { sheetKey: string }) {
         <Col>
           <Button icon={<ReloadOutlined />} onClick={load} loading={loading}>
             重新整理
-          </Button>
-        </Col>
-        <Col>
-          <Button
-            icon={<SyncOutlined spin={syncing} />}
-            loading={syncing}
-            onClick={handleSync}
-          >
-            同步 Ragic
           </Button>
         </Col>
       </Row>
@@ -399,12 +376,6 @@ function SummaryTabContent() {
             />
             <Button icon={<ReloadOutlined />} onClick={loadSummary} loading={loading}>
               重新整理
-            </Button>
-            <Button
-              icon={<SyncOutlined />}
-              onClick={() => message.info('整棟巡檢同步功能開發中，請直接至 Ragic 填寫巡檢表單')}
-            >
-              同步 Ragic
             </Button>
           </Space>
         </Col>

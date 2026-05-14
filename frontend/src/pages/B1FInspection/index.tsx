@@ -11,7 +11,7 @@ import {
   message, Badge, DatePicker,
 } from 'antd'
 import {
-  HomeOutlined, SyncOutlined, ReloadOutlined,
+  HomeOutlined, ReloadOutlined,
   WarningOutlined, CheckCircleOutlined, ClockCircleOutlined,
   ExclamationCircleOutlined, RightOutlined, BarChartOutlined,
   SafetyOutlined, CalendarOutlined,
@@ -23,7 +23,7 @@ import {
 import type { ColumnsType } from 'antd/es/table'
 import dayjs from 'dayjs'
 
-import { fetchB1FStats, fetchB1FBatches, syncB1FFromRagic } from '@/api/b1fInspection'
+import { fetchB1FStats, fetchB1FBatches } from '@/api/b1fInspection'
 import type {
   B1FInspectionStats, B1FInspectionBatchListItem, B1FInspectionItem,
 } from '@/types/b1fInspection'
@@ -54,7 +54,6 @@ export default function B1FInspectionPage() {
   const [batches, setBatches]       = useState<B1FInspectionBatchListItem[]>([])
   const [yearMonth, setYearMonth]   = useState<string>(dayjs().format('YYYY/MM'))
   const [loading, setLoading]       = useState(false)
-  const [syncing, setSyncing]       = useState(false)
 
   const loadDashboard = useCallback(async () => {
     setLoading(true)
@@ -72,17 +71,6 @@ export default function B1FInspectionPage() {
 
   useEffect(() => { loadDashboard() }, [loadDashboard])
   useEffect(() => { if (activeTab === 'list') loadBatches() }, [activeTab, loadBatches])
-
-  const handleSync = async () => {
-    setSyncing(true)
-    try {
-      await syncB1FFromRagic()
-      message.success('同步完成')
-      await loadDashboard()
-      if (activeTab === 'list') await loadBatches()
-    } catch { message.error('同步失敗') }
-    finally { setSyncing(false) }
-  }
 
   const kpi      = stats?.latest_kpi
   const trendData = (stats?.abnormal_trend ?? []).map(t => ({
@@ -295,11 +283,6 @@ export default function B1FInspectionPage() {
           <Title level={4} style={{ margin: 0, color: '#1B3A5C' }}>
             <SafetyOutlined /> {NAV_PAGE.b1fInspection}
           </Title>
-        </Col>
-        <Col>
-          <Button icon={<SyncOutlined spin={syncing} />} loading={syncing} onClick={handleSync}>
-            同步 Ragic
-          </Button>
         </Col>
       </Row>
       <Tabs activeKey={activeTab} onChange={setActiveTab} items={[
