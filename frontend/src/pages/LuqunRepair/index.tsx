@@ -1018,7 +1018,7 @@ function RepairStatsTab({ year, focusMonth }: { year: number; focusMonth: number
     { key: 'this_month_completed',       detailKey: 'this_month_completed_detail', label: '⑥ 本月報修項目完成數（已辦簽作基準）',        formula: '= ⑤ 中，本月已完成' },
     { key: 'this_month_uncompleted', detailKey: 'this_month_uncompleted_detail',   label: '⑦ 本月報修項目未完成', labelColor: '#FF4D4F', formula: '= ⑤ − ⑥' },
     { key: 'this_month_completion_rate',                                            label: '⑧ 本月報修項目完成率', isPct: true,           formula: '= ⑥ ÷ ⑤' },
-    { key: '_ix',                                                                   label: '⑨ 累計項目完成件數',                         formula: '= ② + ⑥',
+    { key: '_ix',                                                                   label: '⑨ 項目完成件數',                             formula: '= ② + ⑥',
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       compute: (stat: any) => (stat?.closed_from_prev ?? 0) + (stat?.this_month_completed ?? 0),
     },
@@ -1210,78 +1210,104 @@ function ClosingTimeTab({ year, month }: { year: number; month: number | null })
       {/* 月份詳細表 — 所有非零數字可點擊 */}
       <Card size="small" title="各月份結案時間明細（點擊數字查看案件）" style={{ marginBottom: 16 }}>
         <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 15 }}>
+          <table style={{ borderCollapse: 'collapse', fontSize: 14, minWidth: '100%' }}>
             <thead>
               <tr style={{ background: '#1B3A5C', color: '#fff' }}>
-                <th style={{ padding: '6px 8px', textAlign: 'center' }}>月份</th>
-                <th colSpan={3} style={{ padding: '6px 8px', textAlign: 'center', borderRight: '1px solid #4BA8E8' }}>小型報修</th>
-                <th colSpan={3} style={{ padding: '6px 8px', textAlign: 'center' }}>中大型報修</th>
-              </tr>
-              <tr style={{ background: '#2a4f7c', color: '#cce4ff', fontSize: 14 }}>
-                <th style={{ padding: '4px 8px' }} />
-                {['結案件數', '天數合計', '平均天數', '結案件數', '天數合計', '平均天數'].map((h, i) => (
-                  <th key={i} style={{ padding: '4px 8px', textAlign: 'center', borderRight: i === 2 ? '1px solid #4BA8E8' : undefined }}>{h}</th>
+                <th style={{ padding: '6px 10px', textAlign: 'left', whiteSpace: 'nowrap', minWidth: 110 }}>類別 / 月份</th>
+                {MONTHS.map(m => (
+                  <th key={m} style={{
+                    padding: '6px 8px', textAlign: 'center', minWidth: 52,
+                    fontWeight: m === month ? 800 : 400,
+                    background: m === month ? '#2563c0' : undefined,
+                  }}>{m} 月</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {MONTHS.map((m, ri) => {
-                const rowBg = m === month ? '#E6F7FF' : ri % 2 === 0 ? '#fff' : '#f8f9fb'
-
-                // 未來月份：整列顯示 —
-                if (isFutureMonth42(m)) {
-                  return (
-                    <tr key={m} style={{ background: rowBg }}>
-                      <td style={{ padding: '6px 8px', textAlign: 'center', fontWeight: 600, color: '#aaa' }}>{m} 月</td>
-                      {Array.from({ length: 6 }).map((_, i) => (
-                        <td key={i} style={{
-                          padding: '6px 8px', textAlign: 'center', color: '#ccc', fontSize: 15,
-                          borderRight: i === 2 ? '1px solid #e8e8e8' : undefined,
+              {/* 小型報修 — 3 rows */}
+              {([
+                {
+                  label: '小型 結案件數', groupFirst: true,
+                  getValue: (m: number) => {
+                    const s = data.monthly[m]?.small
+                    return { display: s?.closed_count ? String(s.closed_count) : '-', cases: s?.cases, modalTitle: `${m}月 小型結案` }
+                  },
+                },
+                {
+                  label: '小型 天數合計', groupFirst: false,
+                  getValue: (m: number) => {
+                    const s = data.monthly[m]?.small
+                    return { display: s?.closed_count ? fmtDec(s.total_days, 1) : '-', cases: s?.cases, modalTitle: `${m}月 小型結案` }
+                  },
+                },
+                {
+                  label: '小型 平均天數', groupFirst: false,
+                  getValue: (m: number) => {
+                    const s = data.monthly[m]?.small
+                    return { display: s?.avg_days != null ? fmtDec(s.avg_days, 2) : '-', cases: s?.cases, modalTitle: `${m}月 小型結案` }
+                  },
+                },
+                {
+                  label: '中大型 結案件數', groupFirst: true,
+                  getValue: (m: number) => {
+                    const l = data.monthly[m]?.large
+                    return { display: l?.closed_count ? String(l.closed_count) : '-', cases: l?.cases, modalTitle: `${m}月 中大型結案` }
+                  },
+                },
+                {
+                  label: '中大型 天數合計', groupFirst: false,
+                  getValue: (m: number) => {
+                    const l = data.monthly[m]?.large
+                    return { display: l?.closed_count ? fmtDec(l.total_days, 1) : '-', cases: l?.cases, modalTitle: `${m}月 中大型結案` }
+                  },
+                },
+                {
+                  label: '中大型 平均天數', groupFirst: false,
+                  getValue: (m: number) => {
+                    const l = data.monthly[m]?.large
+                    return { display: l?.avg_days != null ? fmtDec(l.avg_days, 2) : '-', cases: l?.cases, modalTitle: `${m}月 中大型結案` }
+                  },
+                },
+              ] as { label: string; groupFirst: boolean; getValue: (m: number) => { display: string; cases: RepairCase[] | undefined; modalTitle: string } }[]).map((row, ri) => (
+                <tr key={row.label} style={{
+                  background: ri < 3
+                    ? (ri % 2 === 0 ? '#f0f7ff' : '#e0efff')
+                    : (ri % 2 === 0 ? '#f9f0ff' : '#f0e5ff'),
+                  borderTop: row.groupFirst ? '2px solid #1B3A5C' : undefined,
+                }}>
+                  <td style={{
+                    padding: '6px 10px', whiteSpace: 'nowrap', fontWeight: 600,
+                    color: ri < 3 ? '#1B3A5C' : '#5b2fa0',
+                    borderRight: '2px solid #1B3A5C',
+                  }}>{row.label}</td>
+                  {MONTHS.map(m => {
+                    if (isFutureMonth42(m)) {
+                      return (
+                        <td key={m} style={{
+                          padding: '6px 8px', textAlign: 'center', color: '#ccc',
+                          background: m === month ? '#e6f0ff' : undefined,
                         }}>—</td>
-                      ))}
-                    </tr>
-                  )
-                }
-
-                const md    = data.monthly[m]
-                const s     = md?.small
-                const l     = md?.large
-                const clickStyle = (cases: RepairCase[] | undefined) =>
-                  cases && cases.length > 0
-                    ? { cursor: 'pointer', color: '#1B3A5C', fontWeight: 700, textDecoration: 'underline dotted' }
-                    : {}
-                return (
-                  <tr key={m} style={{ background: rowBg, fontWeight: m === month ? 600 : 400 }}>
-                    <td style={{ padding: '6px 8px', textAlign: 'center', fontWeight: 600 }}>{m} 月</td>
-                    {/* 小型 */}
-                    <td style={{ padding: '6px 8px', textAlign: 'center', ...clickStyle(s?.cases) }}
-                      onClick={() => s?.cases?.length && openModal(`${m}月 小型結案`, s.cases)}>
-                      {s?.closed_count ? s.closed_count : '-'}
-                    </td>
-                    <td style={{ padding: '6px 8px', textAlign: 'center', ...clickStyle(s?.cases) }}
-                      onClick={() => s?.cases?.length && openModal(`${m}月 小型結案`, s.cases)}>
-                      {s?.closed_count ? fmtDec(s.total_days, 1) : '-'}
-                    </td>
-                    <td style={{ padding: '6px 8px', textAlign: 'center', borderRight: '1px solid #e8e8e8', ...clickStyle(s?.cases) }}
-                      onClick={() => s?.cases?.length && openModal(`${m}月 小型結案`, s.cases)}>
-                      {s?.avg_days != null ? fmtDec(s.avg_days, 2) : '-'}
-                    </td>
-                    {/* 中大型 */}
-                    <td style={{ padding: '6px 8px', textAlign: 'center', ...clickStyle(l?.cases) }}
-                      onClick={() => l?.cases?.length && openModal(`${m}月 中大型結案`, l.cases)}>
-                      {l?.closed_count ? l.closed_count : '-'}
-                    </td>
-                    <td style={{ padding: '6px 8px', textAlign: 'center', ...clickStyle(l?.cases) }}
-                      onClick={() => l?.cases?.length && openModal(`${m}月 中大型結案`, l.cases)}>
-                      {l?.closed_count ? fmtDec(l.total_days, 1) : '-'}
-                    </td>
-                    <td style={{ padding: '6px 8px', textAlign: 'center', ...clickStyle(l?.cases) }}
-                      onClick={() => l?.cases?.length && openModal(`${m}月 中大型結案`, l.cases)}>
-                      {l?.avg_days != null ? fmtDec(l.avg_days, 2) : '-'}
-                    </td>
-                  </tr>
-                )
-              })}
+                      )
+                    }
+                    const { display, cases, modalTitle } = row.getValue(m)
+                    const clickable = cases && cases.length > 0
+                    return (
+                      <td key={m}
+                        style={{
+                          padding: '6px 8px', textAlign: 'center',
+                          background: m === month ? '#e6f0ff' : undefined,
+                          fontWeight: m === month ? 700 : 400,
+                          cursor: clickable ? 'pointer' : undefined,
+                          color: clickable && display !== '-' ? '#1B3A5C' : '#aaa',
+                          textDecoration: clickable && display !== '-' ? 'underline dotted' : undefined,
+                        }}
+                        onClick={() => clickable && openModal(modalTitle, cases!)}>
+                        {display}
+                      </td>
+                    )
+                  })}
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>

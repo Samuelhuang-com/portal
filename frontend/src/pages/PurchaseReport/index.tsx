@@ -47,6 +47,9 @@ import {
   CreditCardOutlined,
   ApartmentOutlined,
   BankOutlined,
+  WarningOutlined,
+  ExceptionOutlined,
+  LinkOutlined,
 } from '@ant-design/icons'
 import dayjs, { Dayjs } from 'dayjs'
 import {
@@ -60,11 +63,15 @@ import {
   getPurchaseAccountCategories,
   getApprovedOrders,
   getApprovedOrderDetail,
+  getPurchaseAuditAnomalies,
+  getPurchaseAuditSummary,
   type PurchaseReportItem,
   type PurchaseReportSummary,
   type PurchaseSyncStatus,
   type PurchaseOrder,
   type PurchaseOrderDetail,
+  type AuditAnomaly,
+  type AuditSummary,
 } from '@/api/purchaseReport'
 import {
   getClaimOrders,
@@ -78,6 +85,8 @@ import {
   exportClaimReport,
   triggerClaimSync,
   getClaimSyncStatus,
+  getClaimAuditAnomalies,
+  getClaimAuditSummary,
   type ClaimOrder,
   type ClaimOrderDetail,
   type ClaimReportItem,
@@ -206,6 +215,16 @@ export default function PurchaseReportPage() {
   const [combinedOrdersLoading, setCombinedOrdersLoading] = useState(false)
   const [combinedDeptStats, setCombinedDeptStats]   = useState<CombinedDeptStat[]>([])
   const [combinedDeptLoading, setCombinedDeptLoading] = useState(false)
+
+  // ── 資料異常稽核 ──────────────────────────────────────────────────────────────
+  const [auditSummaryP, setAuditSummaryP]       = useState<AuditSummary | null>(null)
+  const [auditSummaryC, setAuditSummaryC]       = useState<AuditSummary | null>(null)
+  const [auditSummaryLoading, setAuditSummaryLoading] = useState(false)
+  const [auditAnomalies, setAuditAnomalies]     = useState<AuditAnomaly[]>([])
+  const [auditTotal, setAuditTotal]             = useState(0)
+  const [auditLoading, setAuditLoading]         = useState(false)
+  const [auditSourceFilter, setAuditSourceFilter] = useState<'all' | 'purchase' | 'claim'>('all')
+  const [auditRuleFilter, setAuditRuleFilter]   = useState<string | undefined>(undefined)
 
   // ── 請購 Detail Drawer ────────────────────────────────────────────────────────
   const [selectedOrder, setSelectedOrder]     = useState<PurchaseOrderDetail | null>(null)
@@ -363,11 +382,55 @@ export default function PurchaseReportPage() {
       .finally(() => setCombinedDeptLoading(false))
   }, [yearMonth, yearMonthFrom, yearMonthTo])
 
+  // ── Load 函數：資料異常稽核 ───────────────────────────────────────────────────
+  const loadAuditSummaries = useCallback(() => {
+    setAuditSummaryLoading(true)
+    const params = {
+      year_month: yearMonthFrom ? undefined : yearMonth,
+      year_month_from: yearMonthFrom,
+      year_month_to: yearMonthTo,
+      department: deptFilter,
+    }
+    Promise.all([getPurchaseAuditSummary(params), getClaimAuditSummary(params)])
+      .then(([pr, cr]) => { setAuditSummaryP(pr.data); setAuditSummaryC(cr.data) })
+      .finally(() => setAuditSummaryLoading(false))
+  }, [yearMonth, yearMonthFrom, yearMonthTo, deptFilter])
+
+  const loadAuditAnomalies = useCallback(() => {
+    setAuditLoading(true)
+    const params = {
+      year_month: yearMonthFrom ? undefined : yearMonth,
+      year_month_from: yearMonthFrom,
+      year_month_to: yearMonthTo,
+      department: deptFilter,
+      rule_code: auditRuleFilter,
+      page: 1, per_page: 200,
+    }
+    const fetchP = auditSourceFilter !== 'claim'
+      ? getPurchaseAuditAnomalies(params)
+      : Promise.resolve({ data: { total: 0, page: 1, per_page: 200, items: [] as AuditAnomaly[] } })
+    const fetchC = auditSourceFilter !== 'purchase'
+      ? getClaimAuditAnomalies(params)
+      : Promise.resolve({ data: { total: 0, page: 1, per_page: 200, items: [] as AuditAnomaly[] } })
+    const sevOrd: Record<string, number> = { high: 0, medium: 1, low: 2 }
+    Promise.all([fetchP, fetchC]).then(([pr, cr]) => {
+      const all = [...(pr.data?.items ?? []), ...(cr.data?.items ?? [])]
+      all.sort((a, b) => {
+        const sv = (sevOrd[a.severity] ?? 9) - (sevOrd[b.severity] ?? 9)
+        if (sv !== 0) return sv
+        return (b.approved_date || '').localeCompare(a.approved_date || '')
+      })
+      setAuditAnomalies(all)
+      setAuditTotal(all.length)
+    }).finally(() => setAuditLoading(false))
+  }, [yearMonth, yearMonthFrom, yearMonthTo, deptFilter, auditSourceFilter, auditRuleFilter])
+
   // ── 篩選條件變更 → 重新載入對應 TAB 資料 ─────────────────────────────────────
   useEffect(() => {
     loadPurchaseSummary()
     loadClaimSummary()
     loadCombinedSummary()
+    loadAuditSummaries()
 
     if (activeTab === 'purchase-orders' || activeTab === 'purchase-detail') {
       loadOrders(1)
@@ -379,6 +442,8 @@ export default function PurchaseReportPage() {
       loadCombinedOrders(1)
     } else if (activeTab === 'dept') {
       loadCombinedDeptStats()
+    } else if (activeTab === 'audit') {
+      loadAuditAnomalies()
     }
   }, [yearMonth, yearMonthFrom, yearMonthTo, deptFilter, accountFilter, searchKeyword, paymentTypeFilter, claimAccountFilter, claimSearchKeyword, sourceTypeFilter, combinedSearchKeyword]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -394,7 +459,13 @@ export default function PurchaseReportPage() {
       loadClaimDeptStats()
       if (isAdmin) { loadPurchaseSyncStatus(); loadClaimSyncStatus() }
     }
+    else if (activeTab === 'audit') { loadAuditAnomalies() }
   }, [activeTab]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── 稽核篩選（規則 / 來源）變更 → 重新載入異常列表 ───────────────────────────
+  useEffect(() => {
+    if (activeTab === 'audit') loadAuditAnomalies()
+  }, [auditRuleFilter, auditSourceFilter]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── 日期模式切換 & 個別 Picker 處理器 ────────────────────────────────────────
   const handleMonthChange = (v: Dayjs | null) => {
@@ -1303,6 +1374,170 @@ export default function PurchaseReportPage() {
                       }]}
                     />
                   )}
+                </div>
+              ),
+            },
+            // ── TAB-7：資料異常 ────────────────────────────────────────────────
+            {
+              key: 'audit',
+              label: (() => {
+                const total = (auditSummaryP?.total_anomalies ?? 0) + (auditSummaryC?.total_anomalies ?? 0)
+                return (
+                  <Space size={4}>
+                    <WarningOutlined style={{ color: total > 0 ? '#ff4d4f' : undefined }} />
+                    資料異常
+                    {total > 0 && <Badge count={total} size="small" style={{ backgroundColor: '#ff4d4f' }} />}
+                  </Space>
+                )
+              })(),
+              children: (
+                <div style={{ padding: '0 16px 16px' }}>
+                  {/* KPI 卡：各規則計數 */}
+                  <Spin spinning={auditSummaryLoading}>
+                    <Row gutter={[12, 12]} style={{ marginBottom: 16, marginTop: 12 }}>
+                      {(() => {
+                        // 合併 purchase + claim 的 by_rule 計數
+                        const merged: Record<string, { name: string; sev: string; count: number }> = {}
+                        const add = (rules: AuditSummary['by_rule'] | undefined) =>
+                          rules?.forEach(r => {
+                            if (!merged[r.rule_code]) merged[r.rule_code] = { name: r.rule_name, sev: r.severity, count: 0 }
+                            merged[r.rule_code].count += r.count
+                          })
+                        add(auditSummaryP?.by_rule)
+                        add(auditSummaryC?.by_rule)
+                        const sevColor = (s: string) => s === 'high' ? '#ff4d4f' : s === 'medium' ? '#fa8c16' : '#faad14'
+                        return Object.entries(merged).map(([code, info]) => (
+                          <Col xs={12} sm={8} md={6} lg={3} key={code}>
+                            <Card
+                              size="small"
+                              style={{
+                                cursor: 'pointer',
+                                borderColor: auditRuleFilter === code ? sevColor(info.sev) : undefined,
+                                background: auditRuleFilter === code ? `${sevColor(info.sev)}10` : undefined,
+                              }}
+                              bodyStyle={{ padding: '8px 12px' }}
+                              onClick={() => {
+                                setAuditRuleFilter(auditRuleFilter === code ? undefined : code)
+                              }}
+                            >
+                              <div style={{ fontSize: 11, color: '#888', marginBottom: 2 }}>
+                                <Tag color={sevColor(info.sev)} style={{ fontSize: 10, padding: '0 4px', marginRight: 4 }}>{code}</Tag>
+                                {info.name}
+                              </div>
+                              <div style={{ fontSize: 22, fontWeight: 700, color: info.count > 0 ? sevColor(info.sev) : '#aaa' }}>
+                                {info.count}
+                              </div>
+                            </Card>
+                          </Col>
+                        ))
+                      })()}
+                      {/* 總計卡 */}
+                      <Col xs={12} sm={8} md={6} lg={3}>
+                        <Card size="small" bodyStyle={{ padding: '8px 12px' }}
+                          style={{ background: '#fafafa', cursor: 'pointer' }}
+                          onClick={() => setAuditRuleFilter(undefined)}>
+                          <div style={{ fontSize: 11, color: '#888', marginBottom: 2 }}>
+                            <ExceptionOutlined style={{ marginRight: 4 }} />全部異常
+                          </div>
+                          <div style={{ fontSize: 22, fontWeight: 700, color: auditTotal > 0 ? '#ff4d4f' : '#aaa' }}>
+                            {(auditSummaryP?.total_anomalies ?? 0) + (auditSummaryC?.total_anomalies ?? 0)}
+                          </div>
+                        </Card>
+                      </Col>
+                    </Row>
+                  </Spin>
+
+                  {/* 篩選列 */}
+                  <Space style={{ marginBottom: 12 }} wrap>
+                    <Segmented
+                      value={auditSourceFilter}
+                      onChange={(v) => setAuditSourceFilter(v as 'all' | 'purchase' | 'claim')}
+                      options={[
+                        { label: '全部', value: 'all' },
+                        { label: '請購', value: 'purchase' },
+                        { label: '請款', value: 'claim' },
+                      ]}
+                      size="small"
+                    />
+                    {auditRuleFilter && (
+                      <Tag closable color="red" onClose={() => setAuditRuleFilter(undefined)}>
+                        規則：{auditRuleFilter}
+                      </Tag>
+                    )}
+                    <Button size="small" icon={<SyncOutlined />} onClick={loadAuditAnomalies} loading={auditLoading}>
+                      重新稽核
+                    </Button>
+                  </Space>
+
+                  {/* 異常列表 Table */}
+                  <Table<AuditAnomaly>
+                    dataSource={auditAnomalies}
+                    rowKey={(r) => `${r.source}-${r.order_id}-${r.rule_code}`}
+                    loading={auditLoading}
+                    size="small"
+                    scroll={{ x: 900 }}
+                    pagination={{
+                      pageSize: 20,
+                      showTotal: (t) => `共 ${t} 筆異常`,
+                      showSizeChanger: false,
+                    }}
+                    columns={[
+                      {
+                        title: '嚴重程度', dataIndex: 'severity', key: 'severity', width: 90, fixed: 'left' as const,
+                        render: (v: string) => {
+                          const cfg = v === 'high'
+                            ? { color: '#ff4d4f', text: '🔴 高' }
+                            : v === 'medium'
+                            ? { color: '#fa8c16', text: '🟠 中' }
+                            : { color: '#faad14', text: '🟡 低' }
+                          return <span style={{ color: cfg.color, fontWeight: 600, fontSize: 12 }}>{cfg.text}</span>
+                        },
+                      },
+                      {
+                        title: '規則', dataIndex: 'rule_code', key: 'rule', width: 130,
+                        render: (code: string, r: AuditAnomaly) => (
+                          <Space size={4}>
+                            <Tag style={{ fontSize: 11 }}>{code}</Tag>
+                            <span style={{ fontSize: 12 }}>{r.rule_name}</span>
+                          </Space>
+                        ),
+                      },
+                      {
+                        title: '來源', dataIndex: 'source', key: 'source', width: 68,
+                        render: (v: string) => v === 'purchase'
+                          ? <Tag color="blue">請購</Tag>
+                          : <Tag color="orange">請款</Tag>,
+                      },
+                      {
+                        title: '單號', dataIndex: 'doc_no', key: 'doc_no', width: 180, ellipsis: true,
+                        render: (v: string) => <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{v || '-'}</span>,
+                      },
+                      {
+                        title: '部門', dataIndex: 'department', key: 'dept', width: 80,
+                        render: (v: string, r: AuditAnomaly) => (
+                          <Tag color={r.source === 'purchase' ? 'blue' : 'orange'}>{v || '-'}</Tag>
+                        ),
+                      },
+                      {
+                        title: '說明', dataIndex: 'detail', key: 'detail', ellipsis: true,
+                        render: (v: string) => <span style={{ fontSize: 12, color: '#555' }}>{v}</span>,
+                      },
+                      {
+                        title: '核准日期', dataIndex: 'approved_date', key: 'approved_date', width: 100,
+                        render: (v: string | null) => v ?? '-',
+                      },
+                      {
+                        title: '', key: 'link', width: 48, fixed: 'right' as const,
+                        render: (_: unknown, r: AuditAnomaly) => r.ragic_url ? (
+                          <Tooltip title="在 Ragic 中開啟">
+                            <Button type="link" size="small" icon={<LinkOutlined />}
+                              href={r.ragic_url} target="_blank" rel="noopener noreferrer"
+                              style={{ padding: 0 }} />
+                          </Tooltip>
+                        ) : null,
+                      },
+                    ]}
+                  />
                 </div>
               ),
             },

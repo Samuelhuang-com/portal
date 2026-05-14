@@ -2,9 +2,10 @@
 
 > 跨據點統一管理平台 — FastAPI + React + TypeScript
 
-**最後更新：2026-05-14（v1.61.8）**
+**最後更新：2026-05-14（v1.61.17）**
 
 ## 最近變更
+- v1.61.17：**資料異常稽核模組** — 新增 `audit_service.py` 8 條稽核規則（單號空白/部門空白/金額異常/品項加總不符±1/會科空白/付款種類空白/Detail未同步/同單號重複）；purchase + claim 各加 `/audit/anomalies` + `/audit/summary` 端點；PurchaseReport 新增「資料異常」第 8 TAB（KPI 卡可點篩選、來源切換、異常 Table + Ragic 連結）；TAB label 即時顯示異常筆數 Badge
 - v1.61.8：**修正 `Illegal header value b'Basic '`** — `ragic_adapter.py` 加入空 API Key 早期驗證，取代 httpcore 的晦澀錯誤訊息；`.strip()` 防護前後空白
 - v1.61.0：**全年度 / 自訂區間日期篩選** — Header 加入 `Segmented` 三段切換（單月 | 全年度 | 自訂區間）；後端 purchase / claim / combined 三個 router 所有 5~3 個端點加入 `year_month_from` + `year_month_to` 參數，API client 同步更新；全年度模式自動展開為 `YYYY-01 ~ YYYY-12`，Excel 匯出檔名與 sheet 名稱隨模式更新（如 `2026年度`）
 - v1.60.1：**請款單整合模組 Phase 2（前端）** — 重構 PurchaseReport 頁面為 6-TAB 整合（請購清單/請購明細/請款清單/請款明細/總表/部門統計）；請款 Drawer（付款/銀行/品項/Ragic連結）；KPI 卡片隨 TAB 群組切換；部門統計雙色（請購藍+請款橙）+ admin 折疊同步管理

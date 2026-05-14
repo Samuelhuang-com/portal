@@ -758,3 +758,60 @@ def get_sync_status(
             for r in dept_stats
         ],
     }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GET /audit/anomalies — 請款資料異常列表（分頁）
+# GET /audit/summary   — 請款資料異常 KPI 摘要
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/audit/anomalies")
+def get_claim_audit_anomalies(
+    year_month:      Optional[str] = Query(None, description="YYYY-MM（單月）"),
+    year_month_from: Optional[str] = Query(None, description="YYYY-MM（區間起）"),
+    year_month_to:   Optional[str] = Query(None, description="YYYY-MM（區間迄）"),
+    department:      Optional[str] = Query(None),
+    company:         str           = Query("樂群"),
+    rule_code:       Optional[str] = Query(None, description="規則代碼篩選，如 R01"),
+    page:            int           = Query(1,  ge=1),
+    per_page:        int           = Query(20, ge=1, le=200),
+    db:              Session       = Depends(get_db),
+    _:               object        = Depends(require_permission(_PERM)),
+):
+    """請款資料異常明細（分頁），來源固定為 claim。"""
+    from app.services.audit_service import get_anomalies
+    return get_anomalies(
+        db,
+        source="claim",
+        year_month=year_month,
+        year_month_from=year_month_from,
+        year_month_to=year_month_to,
+        department=department,
+        company=company,
+        rule_code=rule_code,
+        page=page,
+        per_page=per_page,
+    )
+
+
+@router.get("/audit/summary")
+def get_claim_audit_summary(
+    year_month:      Optional[str] = Query(None),
+    year_month_from: Optional[str] = Query(None),
+    year_month_to:   Optional[str] = Query(None),
+    department:      Optional[str] = Query(None),
+    company:         str           = Query("樂群"),
+    db:              Session       = Depends(get_db),
+    _:               object        = Depends(require_permission(_PERM)),
+):
+    """請款資料異常各規則計數 KPI。"""
+    from app.services.audit_service import get_audit_summary
+    return get_audit_summary(
+        db,
+        source="claim",
+        year_month=year_month,
+        year_month_from=year_month_from,
+        year_month_to=year_month_to,
+        department=department,
+        company=company,
+    )

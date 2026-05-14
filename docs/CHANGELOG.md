@@ -2,6 +2,26 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)
 
+## [1.61.17] - 2026-05-14
+
+### Added
+- **`backend/app/services/audit_service.py`**（新檔）：資料異常稽核服務，支援 8 條規則：R01 單號空白、R02 部門空白、R03 金額異常（≤0/NULL）、R04 品項加總不符（±1 元容差，purchase only）、R05 會科空白、R06 付款種類空白（claim only）、R07 Detail 未同步、R08 同單號重複；嚴重程度分 high/medium/low；公開 `get_anomalies()` 與 `get_audit_summary()`
+- **`backend/app/routers/purchase_report.py`**：新增 `GET /purchase-report/audit/anomalies` 與 `GET /purchase-report/audit/summary` 兩個端點
+- **`backend/app/routers/claim_report.py`**：新增 `GET /claim-report/audit/anomalies` 與 `GET /claim-report/audit/summary` 兩個端點
+- **`frontend/src/api/purchaseReport.ts`**：新增 `AuditAnomaly`、`AuditSummary`、`AuditRuleStat` 型別，以及 `getPurchaseAuditAnomalies`、`getPurchaseAuditSummary` API 函式
+- **`frontend/src/api/claimReport.ts`**：新增 `getClaimAuditAnomalies`、`getClaimAuditSummary` API 函式（型別從 purchaseReport re-export）
+- **`frontend/src/pages/PurchaseReport/index.tsx`**：新增「資料異常」TAB（第 8 TAB）；含 KPI 卡（8 規則可點擊篩選）、來源切換（全部/請購/請款）、Segmented 篩選、異常 Table（嚴重程度、規則、來源、單號、部門、說明、核准日期、Ragic 連結）；TAB label 顯示即時異常筆數 Badge
+
+### Changed
+- **`frontend/src/pages/PurchaseReport/index.tsx`**：`請購單月報明細`、`請款單清單` 欄位「科目」改為「會科」；`請款單月報明細` 新增「會科」欄位
+
+## [1.61.16] - 2026-05-14
+
+### Fixed
+- **`hotel_meter_readings_sync.py`**：修復三個重疊 bug：① `sync_sheet` / `sync_all` 由 `def` 改為 `async def`；② `RagicAdapter` 建構時補上 `sheet_path=sheet_path`（原本 URL 為空）；③ `adapter.fetch_all(sheet_path)` 改為 `await adapter.fetch_all()`（無位置參數），並將 `for row in rows` 改為 `for raw_id_str, row in raw_data.items()`；return dict 改為統一 `fetched/upserted/errors` 格式；修復後 4 個 sheet 皆可正常同步
+- **`ragic_data_service.py`**：`_fetch_detail` 的 WARNING log 改為 `type(exc).__name__: exc or repr(exc)`，解決 `str(exc)` 為空字串時訊息顯示為空白的問題
+- **`database.py`**：SQLite `busy_timeout` 從 30000ms 提高至 60000ms（與 `connect_args timeout=60` 對齊），新增 `wal_autocheckpoint=2000`（預設 1000）；降低長批次同步（purchase ~67s）中途被 WAL checkpoint 阻塞導致 `database is locked` 的機率
+
 ## [1.61.13] - 2026-05-14
 
 ### Added

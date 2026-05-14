@@ -855,7 +855,7 @@ function RepairStatsTab({ year, focusMonth }: { year: number; focusMonth: number
     { key: 'this_month_completed',       detailKey: 'this_month_completed_detail', label: '⑥ 本月報修項目完成數（已辦簽作基準）',        formula: '= ⑤ 中，本月已完成' },
     { key: 'this_month_uncompleted', detailKey: 'this_month_uncompleted_detail',   label: '⑦ 本月報修項目未完成', labelColor: '#FF4D4F', formula: '= ⑤ − ⑥' },
     { key: 'this_month_completion_rate',                                            label: '⑧ 本月報修項目完成率', isPct: true,           formula: '= ⑥ ÷ ⑤' },
-    { key: '_ix',                                                                   label: '⑨ 累計項目完成件數',                         formula: '= ② + ⑥',
+    { key: '_ix',                                                                   label: '⑨ 項目完成件數',                             formula: '= ② + ⑥',
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       compute: (stat: any) => (stat?.closed_from_prev ?? 0) + (stat?.this_month_completed ?? 0),
     },

@@ -238,3 +238,61 @@ export const getApprovedOrders = (params: {
 /** 單筆請購單完整資料（含品項） */
 export const getApprovedOrderDetail = (orderId: number) =>
   apiClient.get<PurchaseOrderDetail>(`${BASE}/approved/orders/${orderId}`)
+
+// ── 資料異常稽核 ───────────────────────────────────────────────────────────────
+
+/** 單筆異常記錄 */
+export interface AuditAnomaly {
+  source: 'purchase' | 'claim'
+  order_id: number
+  doc_no: string
+  department: string
+  approved_date: string | null
+  rule_code: string          // R01–R08
+  rule_name: string
+  severity: 'high' | 'medium' | 'low'
+  detail: string
+  ragic_url: string
+}
+
+/** 各規則計數 */
+export interface AuditRuleStat {
+  rule_code: string
+  rule_name: string
+  severity: 'high' | 'medium' | 'low'
+  applies_to: string[]
+  count: number
+}
+
+/** 稽核 KPI 摘要 */
+export interface AuditSummary {
+  total_anomalies: number
+  total_orders: number
+  by_rule: AuditRuleStat[]
+}
+
+/** 請購資料異常列表（分頁） */
+export const getPurchaseAuditAnomalies = (params: {
+  year_month?: string
+  year_month_from?: string
+  year_month_to?: string
+  department?: string
+  company?: string
+  rule_code?: string
+  page?: number
+  per_page?: number
+}) =>
+  apiClient.get<PaginatedResponse<AuditAnomaly>>(
+    `${BASE}/audit/anomalies`,
+    { params },
+  )
+
+/** 請購資料異常 KPI 摘要 */
+export const getPurchaseAuditSummary = (params: {
+  year_month?: string
+  year_month_from?: string
+  year_month_to?: string
+  department?: string
+  company?: string
+}) =>
+  apiClient.get<AuditSummary>(`${BASE}/audit/summary`, { params })

@@ -247,3 +247,39 @@ export const triggerClaimSync = (fullResync = false) =>
 /** 同步狀態 */
 export const getClaimSyncStatus = () =>
   apiClient.get<ClaimSyncStatus>(`${BASE}/sync/status`)
+
+// ── 資料異常稽核 ───────────────────────────────────────────────────────────────
+
+import type {
+  AuditAnomaly,
+  AuditSummary,
+  PaginatedResponse,
+} from '@/api/purchaseReport'
+
+export type { AuditAnomaly, AuditSummary }
+
+/** 請款資料異常列表（分頁） */
+export const getClaimAuditAnomalies = (params: {
+  year_month?: string
+  year_month_from?: string
+  year_month_to?: string
+  department?: string
+  company?: string
+  rule_code?: string
+  page?: number
+  per_page?: number
+}) =>
+  apiClient.get<PaginatedResponse<AuditAnomaly>>(
+    `${BASE}/audit/anomalies`,
+    { params },
+  )
+
+/** 請款資料異常 KPI 摘要 */
+export const getClaimAuditSummary = (params: {
+  year_month?: string
+  year_month_from?: string
+  year_month_to?: string
+  department?: string
+  company?: string
+}) =>
+  apiClient.get<AuditSummary>(`${BASE}/audit/summary`, { params })

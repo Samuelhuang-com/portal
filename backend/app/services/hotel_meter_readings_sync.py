@@ -145,11 +145,11 @@ def _extract_meter_fields(row: dict) -> list[tuple[int, str, str]]:
 
 # ── 主同步邏輯 ─────────────────────────────────────────────────────────────────
 
-def sync_sheet(sheet_key: str) -> dict:
+async def sync_sheet(sheet_key: str) -> dict:
     """
     從 Ragic 同步指定 Sheet 的資料到本地 DB。
 
-    返回：{"synced": N, "skipped": M, "sheet_key": sheet_key, "sheet_name": ...}
+    返回：{"fetched": N, "upserted": N, "errors": [], "sheet_key": ..., "sheet_name": ...}
     """
     cfg = SHEET_CONFIGS.get(sheet_key)
     if not cfg:
@@ -158,7 +158,9 @@ def sync_sheet(sheet_key: str) -> dict:
     sheet_name = cfg["name"]
     sheet_path = cfg["path"]
 
+    # ★ sheet_path 必須傳入 constructor，fetch_all() 不接受路徑參數
     adapter = RagicAdapter(
+        sheet_path=sheet_path,
         server_url=HMR_SERVER_URL,
         account=HMR_ACCOUNT,
         api_key=settings.RAGIC_API_KEY,
@@ -167,23 +169,25 @@ def sync_sheet(sheet_key: str) -> dict:
     logger.info("[HMR Sync] 開始同步 sheet=%s path=%s", sheet_key, sheet_path)
 
     try:
-        rows: list[dict[str, Any]] = adapter.fetch_all(sheet_path)
+        # ★ fetch_all 是 async，回傳 dict[ragic_id_str, record_dict]
+        raw_data: dict[str, Any] = await adapter.fetch_all()
     except Exception as exc:
         logger.error("[HMR Sync] Ragic 取資料失敗 sheet=%s: %s", sheet_key, exc)
         raise
 
     db = SessionLocal()
-    synced = 0
-    skipped = 0
+    upserted = 0
+    skipped  = 0
+    errors: list[str] = []
 
     try:
-        for row in rows:
-            raw_id = row.get("_ragicId") or row.get("ragicId") or ""
-            if not raw_id:
+        # ★ 以 .items() 迭代，key 即 ragic_id
+        for raw_id_str, row in raw_data.items():
+            if not raw_id_str:
                 skipped += 1
                 continue
 
-            batch_ragic_id = f"{sheet_key}_{raw_id}"
+            batch_ragic_id = f"{sheet_key}_{raw_id_str}"
 
             # ── 萃取場次欄位 ───────────────────────────────────────────────
             raw_date      = _pick_field(row, DATE_CANDIDATES)
@@ -219,33 +223,46 @@ def sync_sheet(sheet_key: str) -> dict:
                 reading.reading_value  = reading_value
                 reading.synced_at      = twnow()
 
-            synced += 1
+            upserted += 1
 
         db.commit()
 
     except Exception as exc:
         db.rollback()
         logger.error("[HMR Sync] DB 寫入失敗 sheet=%s: %s", sheet_key, exc)
-        raise
+        errors.append(str(exc))
     finally:
         db.close()
 
-    logger.info("[HMR Sync] 完成 sheet=%s synced=%d skipped=%d", sheet_key, synced, skipped)
+    logger.info("[HMR Sync] 完成 sheet=%s fetched=%d upserted=%d skipped=%d errors=%d",
+                sheet_key, len(raw_data), upserted, skipped, len(errors))
     return {
-        "synced":     synced,
-        "skipped":    skipped,
+        "fetched":    len(raw_data),
+        "upserted":   upserted,
+        "errors":     errors,
         "sheet_key":  sheet_key,
         "sheet_name": sheet_name,
     }
 
 
 @register("hotel_meter_readings")
-def sync_all() -> dict:
-    """同步全部 4 張 Sheet"""
-    results = {}
+async def sync_all() -> dict:
+    """同步全部 4 張 Sheet，彙總 fetched / upserted / errors 供 sync_tool 顯示"""
+    total_fetched  = 0
+    total_upserted = 0
+    all_errors: list[str] = []
+
     for sheet_key in SHEET_CONFIGS:
         try:
-            results[sheet_key] = sync_sheet(sheet_key)
+            r = await sync_sheet(sheet_key)
+            total_fetched  += r.get("fetched",  0)
+            total_upserted += r.get("upserted", 0)
+            all_errors.extend(r.get("errors", []))
         except Exception as exc:
-            results[sheet_key] = {"error": str(exc), "sheet_key": sheet_key}
-    return results
+            all_errors.append(f"{sheet_key}: {exc}")
+
+    return {
+        "fetched":  total_fetched,
+        "upserted": total_upserted,
+        "errors":   all_errors,
+    }

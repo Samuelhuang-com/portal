@@ -266,7 +266,11 @@ async def _fetch_detail(
                         logger.debug(f"[RagicData] detail {record_id} {img_key!r}={repr(v)[:120]}")
                 return data
         except Exception as exc:
-            logger.warning(f"[RagicData] detail {record_id} failed: {exc}")
+            # repr(exc) 確保顯示 class name + args，避免 str(exc) 為空白的情況
+            logger.warning(
+                "[RagicData] detail %s failed: %s: %s",
+                record_id, type(exc).__name__, exc or repr(exc),
+            )
         return {}
 
 
