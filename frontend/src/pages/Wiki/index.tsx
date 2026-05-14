@@ -45,6 +45,7 @@ import {
   ImportOutlined,
   UnorderedListOutlined,
   ApartmentOutlined,
+  SyncOutlined,
 } from '@ant-design/icons'
 import WikiGraph from './WikiGraph'
 import dayjs from 'dayjs'
@@ -175,6 +176,7 @@ export default function WikiPage() {
   const [saving, setSaving] = useState(false)
 
   // ── Obsidian 同步 ────────────────────────────────────────────────────────────
+  const [syncing, setSyncing] = useState(false)
   const [syncResultOpen, setSyncResultOpen] = useState(false)
   const [syncResult, setSyncResult] = useState<ObsidianSyncResult | null>(null)
   const [syncType, setSyncType] = useState<'export' | 'import'>('export')

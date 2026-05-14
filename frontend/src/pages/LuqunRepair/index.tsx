@@ -18,6 +18,7 @@ import {
   CheckCircleOutlined, ClockCircleOutlined, ExclamationCircleOutlined,
   DashboardOutlined, FileTextOutlined, DownloadOutlined,
   WarningOutlined, DollarOutlined, SearchOutlined, ApiOutlined, QuestionCircleOutlined, AuditOutlined,
+  SyncOutlined,
 } from '@ant-design/icons'
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
