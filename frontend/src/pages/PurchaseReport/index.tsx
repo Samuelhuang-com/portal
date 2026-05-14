@@ -564,7 +564,7 @@ export default function PurchaseReportPage() {
     { title: '部門', dataIndex: 'department_display', key: 'dept', width: 80, fixed: 'left' as const,
       render: (v: string) => <Tag color="blue">{v}</Tag> },
     { title: '申請單號', dataIndex: 'purchase_no', key: 'purchase_no', width: 175 },
-    { title: '科目', dataIndex: 'account_category', key: 'account_category', width: 130, ellipsis: true },
+    { title: '會科', dataIndex: 'account_category', key: 'account_category', width: 130, ellipsis: true },
     { title: '申請人', dataIndex: 'applicant', key: 'applicant', width: 80 },
     { title: '品名', dataIndex: 'product_name', key: 'product_name', minWidth: 140, ellipsis: true,
       render: (v: string) => v || <Text type="secondary">（未同步品項）</Text> },
@@ -595,6 +595,8 @@ export default function PurchaseReportPage() {
       render: (v: string) => <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{v || '-'}</span> },
     { title: '部門', dataIndex: 'department_display', key: 'dept', width: 80,
       render: (v: string) => <Tag color="orange">{v}</Tag> },
+    { title: '會科', dataIndex: 'account_subject', key: 'account_subject', width: 120, ellipsis: true,
+      render: (v: string | null) => v || <span style={{ color: '#aaa' }}>—</span> },
     { title: '付款種類', dataIndex: 'payment_type', key: 'payment_type', width: 90, render: paymentTag },
     { title: '申請人', dataIndex: 'applicant', key: 'applicant', width: 80 },
     { title: '事由', dataIndex: 'purpose_description', key: 'purpose_description', ellipsis: true,
@@ -619,7 +621,12 @@ export default function PurchaseReportPage() {
       render: (v: string | null) => v ?? '-', fixed: 'left' as const },
     { title: '部門', dataIndex: 'department_display', key: 'dept', width: 80, fixed: 'left' as const,
       render: (v: string) => <Tag color="orange">{v}</Tag> },
-    { title: '申請單號', dataIndex: 'request_no', key: 'request_no', width: 170 },
+    { title: '申請單號', dataIndex: 'request_no', key: 'request_no', width: 180, ellipsis: true,
+      render: (v: string | null) => (
+        <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{v || '-'}</span>
+      ) },
+    { title: '會科', dataIndex: 'account_subject', key: 'account_subject', width: 120, ellipsis: true,
+      render: (v: string | null) => v || <span style={{ color: '#aaa' }}>—</span> },
     { title: '付款種類', dataIndex: 'payment_type', key: 'payment_type', width: 90, render: paymentTag },
     { title: '事由', dataIndex: 'purpose_description', key: 'purpose_description', minWidth: 120, ellipsis: true },
     { title: '品名', dataIndex: 'item_name', key: 'item_name', minWidth: 120, ellipsis: true,
@@ -1343,7 +1350,12 @@ export default function PurchaseReportPage() {
                 <Descriptions.Item label="簽核狀態">{statusTag(selectedOrder.order.status)}</Descriptions.Item>
                 <Descriptions.Item label="最後更新">{selectedOrder.order.last_updated_at || '-'}</Descriptions.Item>
                 {selectedOrder.order.remark && (
-                  <Descriptions.Item label="備註" span={2}>{selectedOrder.order.remark}</Descriptions.Item>
+                  <Descriptions.Item label="備註" span={2}>
+                    <div
+                      dangerouslySetInnerHTML={{ __html: selectedOrder.order.remark }}
+                      style={{ lineHeight: 1.6 }}
+                    />
+                  </Descriptions.Item>
                 )}
               </Descriptions>
 

@@ -2,6 +2,16 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)
 
+## [1.61.13] - 2026-05-14
+
+### Added
+- **`sync_tool.py`**：Log 面板左上角新增「⚠ 只顯示錯誤 Log」篩選按鈕；`_GuiLogHandler` 將每條 log 條目（msg / color / levelno）存入 `_log_buffer`；點擊按鈕後清空 ScrolledText 並只重繪 `WARNING` / `ERROR` / `CRITICAL` 條目；啟用中顯示「✕ 取消篩選（顯示全部 Log）」；「清除 Log」同時清空 buffer 並重置按鈕狀態
+
+## [1.61.12] - 2026-05-14
+
+### Added
+- **`sync_tool.py`**：同步結果表右上角新增「⚠ 只顯示錯誤」篩選按鈕；同步完成後自動標示錯誤/部分筆數（如「⚠ 只顯示錯誤（3）」）；點擊後以 `detach()`/`reattach()` 切換顯示模式，不重建表格；全部成功時按鈕改為「✓ 無錯誤」並 disabled；篩選模式開啟中顯示「✕ 取消篩選（顯示全部）」；新同步完成後若篩選中自動重新套用
+
 ## [1.61.11] - 2026-05-14
 
 ### Fixed

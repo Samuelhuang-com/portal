@@ -232,9 +232,11 @@ class _GuiLogHandler(logging.Handler):
         logging.CRITICAL: C_ERROR,
     }
 
-    def __init__(self, text_widget: scrolledtext.ScrolledText):
+    def __init__(self, text_widget: scrolledtext.ScrolledText,
+                 buffer: list | None = None):
         super().__init__()
-        self._w = text_widget
+        self._w      = text_widget
+        self._buffer = buffer          # list of (msg, color, levelno) — 供篩選重繪用
         self.setFormatter(logging.Formatter(
             "%(asctime)s  %(levelname)-8s  %(name)s — %(message)s",
             datefmt="%H:%M:%S",
@@ -243,6 +245,8 @@ class _GuiLogHandler(logging.Handler):
     def emit(self, record: logging.LogRecord):
         msg   = self.format(record) + "\n"
         color = self._COLORS.get(record.levelno, C_INFO)
+        if self._buffer is not None:
+            self._buffer.append((msg, color, record.levelno))
         self._w.after(0, self._append, msg, color)
 
     def _append(self, msg: str, color: str):
@@ -272,6 +276,10 @@ class SyncApp(tk.Tk):
         self._next_sync_at: datetime | None = None
         self._startup_fh: logging.FileHandler | None = None
         self._gui_handler: _GuiLogHandler | None     = None
+        self._filter_active    = False      # True = 只顯示錯誤列
+        self._last_results: list[dict] = [] # 最近一次同步結果（供篩選用）
+        self._log_buffer: list[tuple[str, str, int]] = []  # (msg, color, levelno)
+        self._log_filter_active = False     # True = Log 面板只顯示 WARNING+
 
         self._build_ui()
         self._setup_logging()
@@ -383,6 +391,28 @@ class SyncApp(tk.Tk):
         log_frame = tk.Frame(paned, bg=C_BG)
         paned.add(log_frame, stretch="always", minsize=400)
 
+        # Log 標題列（含錯誤篩選按鈕）
+        log_hdr = tk.Frame(log_frame, bg=C_PANEL, pady=4)
+        log_hdr.pack(fill=tk.X)
+
+        tk.Label(
+            log_hdr, text="Log 輸出",
+            bg=C_PANEL, fg=C_DIM,
+            font=("Microsoft JhengHei UI", 9, "bold"),
+        ).pack(side=tk.LEFT, padx=4)
+
+        self._btn_log_filter = tk.Button(
+            log_hdr,
+            text="⚠  只顯示錯誤 Log",
+            bg="#3c2020", fg=C_ERROR,
+            activebackground="#5a2020", activeforeground=C_ERROR,
+            font=("Microsoft JhengHei UI", 9),
+            relief=tk.FLAT, padx=8, pady=2,
+            cursor="hand2",
+            command=self._toggle_log_filter,
+        )
+        self._btn_log_filter.pack(side=tk.RIGHT, padx=4)
+
         self._log_text = scrolledtext.ScrolledText(
             log_frame,
             bg=C_BG, fg=C_TEXT,
@@ -403,11 +433,26 @@ class SyncApp(tk.Tk):
         tbl_frame = tk.Frame(paned, bg=C_PANEL)
         paned.add(tbl_frame, stretch="never", minsize=560)
 
+        tbl_hdr = tk.Frame(tbl_frame, bg=C_PANEL)
+        tbl_hdr.pack(fill=tk.X, padx=6, pady=(6, 2))
+
         tk.Label(
-            tbl_frame, text="同步結果",
+            tbl_hdr, text="同步結果",
             bg=C_PANEL, fg=C_DIM,
             font=("Microsoft JhengHei UI", 9, "bold"),
-        ).pack(anchor=tk.W, padx=10, pady=(8, 2))
+        ).pack(side=tk.LEFT, padx=4)
+
+        self._btn_filter = tk.Button(
+            tbl_hdr,
+            text="⚠  只顯示錯誤",
+            bg="#3c2020", fg=C_ERROR,
+            activebackground="#5a2020", activeforeground=C_ERROR,
+            font=("Microsoft JhengHei UI", 9),
+            relief=tk.FLAT, padx=8, pady=2,
+            cursor="hand2",
+            command=self._toggle_filter,
+        )
+        self._btn_filter.pack(side=tk.RIGHT, padx=4)
 
         # Treeview 表格
         cols = ("模組", "狀態", "開始時間", "耗時(秒)", "撈取", "寫入", "錯誤", "觸發")
@@ -491,7 +536,7 @@ class SyncApp(tk.Tk):
             "%(asctime)s  %(levelname)-8s  %(name)s — %(message)s",
             datefmt="%Y-%m-%d %H:%M:%S",
         )
-        self._gui_handler = _GuiLogHandler(self._log_text)
+        self._gui_handler = _GuiLogHandler(self._log_text, buffer=self._log_buffer)
         self._gui_handler.setLevel(logging.DEBUG)
 
         ts       = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -658,7 +703,7 @@ class SyncApp(tk.Tk):
         err     = sum(1 for r in results if r["status"] == "error")
         logger.info(f"━━━  同步完成 ── 成功：{ok}  部分：{partial}  失敗：{err}  ━━━")
 
-        self.after(0, self._on_sync_done, ok, partial, err, log_path)
+        self.after(0, self._on_sync_done, ok, partial, err, log_path, results)
 
         # 若自動同步開啟，排定下一次
         if self._auto_interval > 0:
@@ -743,11 +788,35 @@ class SyncApp(tk.Tk):
             )
 
     def _on_sync_done(self, ok: int, partial: int, err: int,
-                      log_path: pathlib.Path):
+                      log_path: pathlib.Path, results: list[dict]):
         self._running = False
         self._btn_sync.config(state=tk.NORMAL, text="▶  立即同步所有模組")
         self._progress.stop()
         self._lbl_module.config(text="")
+
+        # 儲存本次結果供篩選使用
+        self._last_results = results
+
+        # 若篩選模式開啟，自動重新套用（同步後立刻更新）
+        if self._filter_active:
+            self._apply_filter(active=True)
+
+        # 更新篩選按鈕提示（顯示錯誤/部分數量）
+        bad = err + partial
+        if bad > 0:
+            self._btn_filter.config(
+                text=f"⚠  只顯示錯誤（{bad}）",
+                state=tk.NORMAL,
+            )
+        else:
+            self._btn_filter.config(
+                text="✓  無錯誤",
+                bg="#1a2e1a", fg=C_SUCCESS,
+                state=tk.DISABLED,
+            )
+            # 若原本篩選中，自動關閉
+            if self._filter_active:
+                self._filter_active = False
 
         ts = datetime.now().strftime("%H:%M:%S")
         if err == 0 and partial == 0:
@@ -765,8 +834,106 @@ class SyncApp(tk.Tk):
             )
         self._lbl_logpath.config(text=f"Log：{log_path.name}")
 
+    # ── 錯誤篩選 ─────────────────────────────────────────────────────────────
+    def _toggle_filter(self):
+        """切換「只顯示錯誤」/「全部顯示」。"""
+        self._filter_active = not self._filter_active
+        self._apply_filter(active=self._filter_active)
+
+    def _apply_filter(self, active: bool):
+        """
+        active=True  → detach 所有非 error/partial 的列（只留錯誤）
+        active=False → reattach 所有列，按原始模組順序排列
+        """
+        if active:
+            # 先確保全部都在（以免重複 detach）
+            self._apply_filter(active=False)
+            # 取得這次有錯誤的模組名稱集合
+            error_names = {
+                r["name"] for r in self._last_results
+                if r["status"] in ("error", "partial")
+            }
+            for name, iid in self._tree_ids.items():
+                if name not in error_names:
+                    self._tree.detach(iid)
+            # 更新按鈕外觀（啟用中）
+            self._btn_filter.config(
+                bg=C_ERROR, fg="white",
+                text=f"✕  取消篩選（顯示全部）",
+            )
+        else:
+            # 按 MODULES 原始順序 reattach 所有列
+            for idx, (name, _, _) in enumerate(MODULES):
+                iid = self._tree_ids.get(name)
+                if iid:
+                    # reattach 若已在樹中不會出錯（tkinter 會忽略）
+                    try:
+                        self._tree.reattach(iid, "", idx)
+                    except tk.TclError:
+                        pass
+            # 更新按鈕外觀（未啟用）
+            bad = sum(
+                1 for r in self._last_results
+                if r["status"] in ("error", "partial")
+            )
+            if bad > 0:
+                self._btn_filter.config(
+                    bg="#3c2020", fg=C_ERROR,
+                    text=f"⚠  只顯示錯誤（{bad}）",
+                    state=tk.NORMAL,
+                )
+            else:
+                self._btn_filter.config(
+                    text="⚠  只顯示錯誤",
+                    bg="#3c2020", fg=C_ERROR,
+                    state=tk.NORMAL,
+                )
+
+    # ── Log 錯誤篩選 ─────────────────────────────────────────────────────────
+    def _toggle_log_filter(self):
+        """切換 Log 面板「只顯示錯誤」/「顯示全部」。"""
+        self._log_filter_active = not self._log_filter_active
+        self._apply_log_filter(active=self._log_filter_active)
+
+    def _apply_log_filter(self, active: bool):
+        """
+        active=True  → ScrolledText 只重繪 WARNING / ERROR / CRITICAL 條目
+        active=False → ScrolledText 重繪所有 buffer 條目
+        """
+        self._log_filter_active = active
+        self._log_text.config(state=tk.NORMAL)
+        self._log_text.delete("1.0", tk.END)
+
+        entries = self._log_buffer
+        if active:
+            entries = [(m, c, lv) for (m, c, lv) in entries
+                       if lv >= logging.WARNING]
+            self._btn_log_filter.config(
+                bg=C_ERROR, fg="white",
+                text="✕  取消篩選（顯示全部 Log）",
+            )
+        else:
+            self._btn_log_filter.config(
+                bg="#3c2020", fg=C_ERROR,
+                text="⚠  只顯示錯誤 Log",
+            )
+
+        for msg, color, _ in entries:
+            tag = f"c{color[1:]}"
+            self._log_text.tag_config(tag, foreground=color)
+            self._log_text.insert(tk.END, msg, tag)
+
+        self._log_text.see(tk.END)
+        self._log_text.config(state=tk.DISABLED)
+
     # ── 清除 Log ─────────────────────────────────────────────────────────────
     def _on_clear(self):
+        self._log_buffer.clear()
+        self._log_filter_active = False
+        self._btn_log_filter.config(
+            bg="#3c2020", fg=C_ERROR,
+            text="⚠  只顯示錯誤 Log",
+        )
         self._log_text.config(state=tk.NORMAL)
         self._log_text.delete("1.0", tk.END)
         self._log_text.config(state=tk.DISABLED)
