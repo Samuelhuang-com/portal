@@ -171,10 +171,7 @@ def _ragic_url(order: ApprovedPurchaseRequest) -> str:
             break
     if not detail_path:
         return ""
-    return (
-        f"https://{order.ragic_sheet_path.split('/')[0] if '/' in order.ragic_sheet_path else 'ap12.ragic.com'}"
-        f"/soutlet001/{detail_path}/{order.ragic_record_id}"
-    )
+    return f"https://ap12.ragic.com/soutlet001/{detail_path}/{order.ragic_record_id}"
 
 
 def _format_item_row(order: ApprovedPurchaseRequest, item: ApprovedPurchaseRequestItem) -> dict:
@@ -773,6 +770,7 @@ def _order_to_dict(o: ApprovedPurchaseRequest) -> dict:
         "detail_synced":      o.detail_synced,
         "ragic_sheet_path":   o.ragic_sheet_path,
         "ragic_record_id":    o.ragic_record_id,
+        "ragic_url":          _ragic_url(o),
     }
 
 

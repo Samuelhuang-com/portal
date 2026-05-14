@@ -191,6 +191,7 @@ export interface PurchaseOrder {
   detail_synced: boolean
   ragic_sheet_path: string
   ragic_record_id: string
+  ragic_url: string
 }
 
 /** 請購單品項（Detail Drawer 使用） */

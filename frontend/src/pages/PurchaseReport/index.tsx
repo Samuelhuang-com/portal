@@ -1374,6 +1374,17 @@ export default function PurchaseReportPage() {
                     : '品項尚未同步，請執行「增量同步」以載入品項明細'}
                 />
               )}
+
+              {selectedOrder.order.ragic_url && (
+                <div style={{ marginTop: 16, textAlign: 'right' }}>
+                  <Button
+                    type="link" size="small"
+                    href={selectedOrder.order.ragic_url} target="_blank" rel="noopener noreferrer"
+                  >
+                    在 Ragic 中開啟 ↗
+                  </Button>
+                </div>
+              )}
             </>
           )}
         </Spin>
