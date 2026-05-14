@@ -2,6 +2,12 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)
 
+## [1.61.10] - 2026-05-14
+
+### Fixed
+- **`sync_tool.py`** `_inject_site_packages()`：新增 `venv312`（及 `venv311`/`venv310`）到 venv 掃描清單；加入 `glob("venv3*")` 捕捉任意版本號命名的 venv；fallback 改為先嘗試 Python312 再 Python311，且確認 `sqlalchemy` 目錄存在才使用；step 2（執行中的 Python site-packages）也加入 sqlalchemy 存在檢查，避免套用 Python 3.14 等未裝套件的全新 Python
+- **`run_sync_tool.bat`**：優先順序改為 `D:\portal\backend\venv312` > 本地 venv312 > Python312 > Python311 > py launcher；舊版固定指向 Python311 會在正式機套件已全移入 venv312 後全部失效
+
 ## [1.61.9] - 2026-05-14
 
 ### Changed

@@ -31,13 +31,25 @@ echo.
 
 REM ── Step 1: Git Pull ─────────────────────────────────────────────────────────
 echo [1/5] 從 GitHub 拉最新版本...
+
+REM  stash 只暫存 tracked 檔案的修改（不加 --include-untracked，
+REM  避免嘗試 stash venv312/ 等大型目錄而卡住）。
 git stash
+
+REM  刪除已知會與 remote 衝突的 untracked 檔案（remote 版本才是正確的）。
+if exist run_sync_tool.bat (
+    del /f run_sync_tool.bat
+    echo [INFO] 已移除 untracked run_sync_tool.bat，將由 remote 版本取代
+)
+
 git pull origin main
 if errorlevel 1 (
     echo [ERROR] git pull failed, please check error message above.
     pause
     exit /b 1
 )
+REM  pull 成功後捨棄 stash（remote 已是最新版）。
+git stash drop >nul 2>&1
 echo.
 echo  完成: 程式碼已更新
 echo  下一步: 安裝後端套件 [2/5]

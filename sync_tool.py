@@ -45,15 +45,18 @@ def _inject_site_packages() -> str | None:
     """
     注入 site-packages 到 sys.path。
     優先順序：
-      1. venv（backend/venv, backend/.venv, portal/venv）
+      1. venv（backend/venv312, backend/venv, backend/.venv 等，以及 portal/ 同名目錄）
       2. 與執行中 Python 同版本的 site-packages（系統 Python 無 venv 時）
-      3. Python311 固定路徑（正式機備援）
+      3. 正式機固定備援路徑（Python311 → Python312）
     """
-    # ── 1. 掃描 venv ─────────────────────────────────────────────────────────
+    # ── 1. 掃描 venv（含版本號命名如 venv312）───────────────────────────────
     search_roots = [_BACKEND, _BACKEND.parent]
+    # 明確名稱優先（最常用的在前）；也 glob venv3* 捕捉 venv310/venv311/venv312/venv313
+    explicit_names = ("venv312", "venv311", "venv310", "venv", ".venv", "env")
     for root in search_roots:
-        for venv_name in ("venv", ".venv", "env"):
-            site_pkgs = root / venv_name / "Lib" / "site-packages"  # Windows
+        # 先試明確名稱
+        for venv_name in explicit_names:
+            site_pkgs = root / venv_name / "Lib" / "site-packages"
             if not site_pkgs.exists():
                 lib_dir = root / venv_name / "lib"
                 if lib_dir.exists():
@@ -63,24 +66,39 @@ def _inject_site_packages() -> str | None:
                 if str(site_pkgs) not in sys.path:
                     sys.path.insert(0, str(site_pkgs))
                 return str(site_pkgs)
+        # glob 捕捉其他版本號格式（如 venv313、venv38 等）
+        for venv_dir in sorted(root.glob("venv3*"), reverse=True):
+            if not venv_dir.is_dir():
+                continue
+            site_pkgs = venv_dir / "Lib" / "site-packages"
+            if site_pkgs.exists():
+                if str(site_pkgs) not in sys.path:
+                    sys.path.insert(0, str(site_pkgs))
+                return str(site_pkgs)
 
-    # ── 2. 從目前執行的 python.exe 反推 site-packages ─────────────────────────
+    # ── 2. 從目前執行的 python.exe 反推 site-packages ────────────────────────
     py_exe = pathlib.Path(sys.executable)
     # Windows：python.exe → ../Lib/site-packages
     candidate = py_exe.parent.parent / "Lib" / "site-packages"
     if candidate.exists():
-        if str(candidate) not in sys.path:
-            sys.path.insert(0, str(candidate))
-        return str(candidate)
+        # 確認此 site-packages 有 sqlalchemy（避免用到沒有套件的全新 Python）
+        if (candidate / "sqlalchemy").exists():
+            if str(candidate) not in sys.path:
+                sys.path.insert(0, str(candidate))
+            return str(candidate)
 
-    # ── 3. 正式機固定備援路徑（Python311）────────────────────────────────────
-    fallback = pathlib.Path(
-        r"C:\Users\admin\AppData\Local\Programs\Python\Python311\Lib\site-packages"
-    )
-    if fallback.exists():
-        if str(fallback) not in sys.path:
-            sys.path.insert(0, str(fallback))
-        return str(fallback)
+    # ── 3. 正式機固定備援路徑（依序嘗試常見安裝位置）──────────────────────
+    fallbacks = [
+        pathlib.Path(r"C:\Users\admin\AppData\Local\Programs\Python\Python312\Lib\site-packages"),
+        pathlib.Path(r"C:\Users\admin\AppData\Local\Programs\Python\Python311\Lib\site-packages"),
+        pathlib.Path(r"C:\Python312\Lib\site-packages"),
+        pathlib.Path(r"C:\Python311\Lib\site-packages"),
+    ]
+    for fallback in fallbacks:
+        if fallback.exists() and (fallback / "sqlalchemy").exists():
+            if str(fallback) not in sys.path:
+                sys.path.insert(0, str(fallback))
+            return str(fallback)
 
     return None
 

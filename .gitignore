@@ -3,6 +3,8 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+venv312/
+backend/venv312/
 .env
 .env.*
 !.env.example
@@ -39,6 +41,7 @@ Thumbs.db
 # Claude AI — 對話、設定、暫存（不進正式區）
 CLAUDE.md
 _Runme.md
+_Context/
 docs/CLAUDE_SOP.md
 backend/fix_login.py
 backend/reset_password.py
