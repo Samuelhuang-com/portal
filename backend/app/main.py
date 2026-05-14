@@ -733,57 +733,63 @@ async def lifespan(app: FastAPI):
     from app.services.wiki_seed import seed_wiki_articles
     seed_wiki_articles()
 
-    # 排程對齊整點自動同步（預設 30 分鐘 → :00/:30）；啟動時不再立即同步，
-    # 以確保伺服器能立即接受請求並從本地 DB 回傳資料。
-    # 若需立即同步，請在前端點擊「同步資料」按鈕。
-    _scheduler.add_job(
-        _auto_sync,
-        trigger=make_cron_trigger(30),   # CronTrigger：整點對齊，預設 :00 / :30
-        id="module_auto_sync",
-        replace_existing=True,
-    )
+    # ── 排程同步（可透過 .env SCHEDULER_ENABLED=False 完全關閉）────────────────
+    # DEV 模式請設 SCHEDULER_ENABLED=False，改用 sync_tool.py 手動同步。
+    # PROD 模式（NSSM 服務）維持 True，排程對齊整點自動執行。
+    if settings.SCHEDULER_ENABLED:
+        # 排程對齊整點自動同步（預設 30 分鐘 → :00/:30）；啟動時不再立即同步，
+        # 以確保伺服器能立即接受請求並從本地 DB 回傳資料。
+        # 若需立即同步，請在前端點擊「同步資料」按鈕。
+        _scheduler.add_job(
+            _auto_sync,
+            trigger=make_cron_trigger(30),   # CronTrigger：整點對齊，預設 :00 / :30
+            id="module_auto_sync",
+            replace_existing=True,
+        )
 
-    # 請購單清單同步：每 15 分鐘（:00/:15/:30/:45）
-    _scheduler.add_job(
-        _purchase_list_sync,
-        trigger=make_cron_trigger(15),
-        id="purchase_list_sync",
-        replace_existing=True,
-        misfire_grace_time=300,
-    )
+        # 請購單清單同步：每 15 分鐘（:00/:15/:30/:45）
+        _scheduler.add_job(
+            _purchase_list_sync,
+            trigger=make_cron_trigger(15),
+            id="purchase_list_sync",
+            replace_existing=True,
+            misfire_grace_time=300,
+        )
 
-    # 請購單完整同步（含 Detail API 品項補全）：每 45 分鐘（:00/:45）
-    _scheduler.add_job(
-        _purchase_full_sync,
-        trigger=make_cron_trigger(45),
-        id="purchase_full_sync",
-        replace_existing=True,
-        misfire_grace_time=300,
-    )
+        # 請購單完整同步（含 Detail API 品項補全）：每 45 分鐘（:00/:45）
+        _scheduler.add_job(
+            _purchase_full_sync,
+            trigger=make_cron_trigger(45),
+            id="purchase_full_sync",
+            replace_existing=True,
+            misfire_grace_time=300,
+        )
 
-    # 請款單清單同步：每 15 分鐘（:00/:15/:30/:45）
-    _scheduler.add_job(
-        _claim_list_sync,
-        trigger=make_cron_trigger(15),
-        id="claim_list_sync",
-        replace_existing=True,
-        misfire_grace_time=300,
-    )
+        # 請款單清單同步：每 15 分鐘（:00/:15/:30/:45）
+        _scheduler.add_job(
+            _claim_list_sync,
+            trigger=make_cron_trigger(15),
+            id="claim_list_sync",
+            replace_existing=True,
+            misfire_grace_time=300,
+        )
 
-    # 請款單完整同步（含 Detail API 品項補全）：每 45 分鐘（:00/:45）
-    _scheduler.add_job(
-        _claim_full_sync,
-        trigger=make_cron_trigger(45),
-        id="claim_full_sync",
-        replace_existing=True,
-        misfire_grace_time=300,
-    )
+        # 請款單完整同步（含 Detail API 品項補全）：每 45 分鐘（:00/:45）
+        _scheduler.add_job(
+            _claim_full_sync,
+            trigger=make_cron_trigger(45),
+            id="claim_full_sync",
+            replace_existing=True,
+            misfire_grace_time=300,
+        )
 
-    # 依各 RagicConnection 的 sync_interval 建立個別排程任務
-    _init_ragic_connection_jobs()
+        # 依各 RagicConnection 的 sync_interval 建立個別排程任務
+        _init_ragic_connection_jobs()
 
-    _scheduler.start()
-    print("[Portal] AutoSync scheduler started (cron-aligned, default every 30 minutes).")
+        _scheduler.start()
+        print("[Portal] AutoSync scheduler started (cron-aligned, default every 30 minutes).")
+    else:
+        print("[Portal] AutoSync scheduler DISABLED (SCHEDULER_ENABLED=False). Use sync_tool.py to sync manually.")
 
     yield
     # ── Shutdown ──────────────────────────────────────────────────────────────

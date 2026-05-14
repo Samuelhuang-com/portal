@@ -2,9 +2,10 @@
 
 > 跨據點統一管理平台 — FastAPI + React + TypeScript
 
-**最後更新：2026-05-14（v1.61.2）**
+**最後更新：2026-05-14（v1.61.8）**
 
 ## 最近變更
+- v1.61.8：**修正 `Illegal header value b'Basic '`** — `ragic_adapter.py` 加入空 API Key 早期驗證，取代 httpcore 的晦澀錯誤訊息；`.strip()` 防護前後空白
 - v1.61.0：**全年度 / 自訂區間日期篩選** — Header 加入 `Segmented` 三段切換（單月 | 全年度 | 自訂區間）；後端 purchase / claim / combined 三個 router 所有 5~3 個端點加入 `year_month_from` + `year_month_to` 參數，API client 同步更新；全年度模式自動展開為 `YYYY-01 ~ YYYY-12`，Excel 匯出檔名與 sheet 名稱隨模式更新（如 `2026年度`）
 - v1.60.1：**請款單整合模組 Phase 2（前端）** — 重構 PurchaseReport 頁面為 6-TAB 整合（請購清單/請購明細/請款清單/請款明細/總表/部門統計）；請款 Drawer（付款/銀行/品項/Ragic連結）；KPI 卡片隨 TAB 群組切換；部門統計雙色（請購藍+請款橙）+ admin 折疊同步管理
 - v1.60.0：**請款單整合模組 Phase 1（後端）** — 新增 `claim_request.py` ORM + `claim_request_sync.py`（15/45分鐘雙排程）+ `claim_report.py`（12端點）+ `combined_report.py`（請購+請款合併總表）；main.py 完成 router 註冊與 APScheduler 配置

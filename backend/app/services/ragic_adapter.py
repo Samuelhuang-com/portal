@@ -27,11 +27,20 @@ class RagicAdapter:
         server_url: str | None = None,
         account: str | None = None,
     ):
-        self.api_key   = api_key    or settings.RAGIC_API_KEY
+        import logging as _logging
+        self.api_key   = (api_key or settings.RAGIC_API_KEY or "").strip()
         self.server_url = server_url or settings.RAGIC_SERVER_URL   # e.g. "ap16.ragic.com"
         self.account   = account    or settings.ragic_account
         self.sheet_path = sheet_path or ""
         self.verify_ssl = settings.RAGIC_VERIFY_SSL
+
+        if not self.api_key:
+            _logging.getLogger(__name__).error(
+                "RagicAdapter: RAGIC_API_KEY 未設定或為空。"
+                "請確認 backend/.env 中有正確的 RAGIC_API_KEY 值。"
+                "（sheet_path=%s, server=%s, account=%s）",
+                self.sheet_path, self.server_url, self.account,
+            )
 
     # ── Internals ─────────────────────────────────────────────────────────────
 
@@ -43,6 +52,11 @@ class RagicAdapter:
     def auth_header(self) -> dict:
         # API Key 直接放在 Basic 後面，不再做 base64 編碼
         # （與原始 ragic_client.py 保持一致）
+        if not self.api_key:
+            raise ValueError(
+                "RAGIC_API_KEY 未設定。"
+                "請在 backend/.env 中加入：RAGIC_API_KEY=<你的 Ragic API Key>"
+            )
         return {
             "Authorization": f"Basic {self.api_key}",
             "Accept": "application/json",

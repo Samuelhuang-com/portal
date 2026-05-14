@@ -2,6 +2,17 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)
 
+## [1.61.9] - 2026-05-14
+
+### Changed
+- **`main.py`**：APScheduler 所有排程任務（`_auto_sync` / purchase / claim / RagicConnection jobs）改由 `settings.SCHEDULER_ENABLED` 控制，`False` 時完全不啟動任何同步排程
+- **`.env`（dev）**：`SCHEDULER_ENABLED=false` — `start-dev.bat` 啟動後端時不再觸發任何背景同步；同步改由 `sync_tool.py` 手動執行
+
+## [1.61.8] - 2026-05-14
+
+### Fixed
+- **`ragic_adapter.py`**：`__init__` 對 `api_key` 加入 `.strip()`，防止 `.env` 值含前後空白；`api_key` 為空時立即 ERROR log，明確指示需設定 `RAGIC_API_KEY`；`auth_header` property 空 key 時改拋清楚的 `ValueError`，取代 httpcore 的晦澀錯誤 `Illegal header value b'Basic '`（root cause：httpcore 1.x 嚴格驗證 header value 不得以空白結尾，`"Basic "` 觸發此規則）
+
 ## [1.61.7] - 2026-05-14
 
 ### Changed
