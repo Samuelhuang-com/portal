@@ -12,8 +12,67 @@ Portal 同步管理工具
 
 執行方式：
   cd portal
-  python sync_tool.py
+  python sync_tool.py          # 或直接雙擊 run_sync_tool.bat
 """
+
+# ── Python 環境自動修正（必須在所有其他 import 之前）────────────────────────
+# 若以系統 Python（如 C:\Python314）執行且 sqlalchemy 不可用，
+# 自動找到安裝有套件的 Python（venv312 優先）並重新啟動本腳本。
+import os as _os
+import sys as _sys
+import pathlib as _pathlib
+
+def _check_and_relaunch():
+    """若 sqlalchemy 不可用，找到正確 Python 後用 os.execv 重新啟動。"""
+    try:
+        import importlib.util as _ilu
+        if _ilu.find_spec("sqlalchemy") is not None:
+            return  # 已可用，不需處理
+    except Exception:
+        pass
+
+    _script = _pathlib.Path(__file__).resolve()
+    _portal  = _script.parent
+    _backend = _portal / "backend"
+
+    # 候選 Python 清單（依優先序）
+    _candidates = [
+        _backend / "venv312" / "Scripts" / "python.exe",  # 正式區 venv312
+        _portal  / "backend" / "venv312" / "Scripts" / "python.exe",
+        _backend / "venv311" / "Scripts" / "python.exe",
+        _backend / "venv"    / "Scripts" / "python.exe",
+        _backend / ".venv"   / "Scripts" / "python.exe",
+        _pathlib.Path(r"C:\Users\admin\AppData\Local\Programs\Python\Python312\python.exe"),
+        _pathlib.Path(r"C:\Users\admin\AppData\Local\Programs\Python\Python311\python.exe"),
+        _pathlib.Path(r"C:\Python312\python.exe"),
+        _pathlib.Path(r"C:\Python311\python.exe"),
+    ]
+
+    # glob 也掃 venv3* 目錄（捕捉任意版本號命名）
+    for _vd in sorted(_backend.glob("venv3*"), reverse=True):
+        _p = _vd / "Scripts" / "python.exe"
+        if _p not in _candidates:
+            _candidates.insert(2, _p)
+
+    for _py in _candidates:
+        if not _pathlib.Path(_py).exists():
+            continue
+        # 確認該 Python 有 sqlalchemy
+        import subprocess as _sp
+        _r = _sp.run(
+            [str(_py), "-c", "import sqlalchemy"],
+            capture_output=True,
+        )
+        if _r.returncode == 0:
+            print(f"[SyncTool] 自動切換 Python：{_py}")
+            _os.execv(str(_py), [str(_py)] + _sys.argv)
+            # execv 成功後不會執行到這行
+
+    print("[SyncTool] ⚠ 找不到含 sqlalchemy 的 Python！請確認 venv312 已建立並安裝套件。")
+    print(f"[SyncTool]   目前 Python：{_sys.executable}")
+
+_check_and_relaunch()
+# ─────────────────────────────────────────────────────────────────────────────
 
 import asyncio
 import importlib

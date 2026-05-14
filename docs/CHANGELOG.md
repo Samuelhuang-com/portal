@@ -2,6 +2,11 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)
 
+## [1.61.11] - 2026-05-14
+
+### Fixed
+- **`sync_tool.py`**：檔案最頂端（所有其他 import 之前）加入 `_check_and_relaunch()`：若目前 Python 無法 import sqlalchemy，自動掃描 `backend/venv312` → `venv311` → `venv` → `Python312` → `Python311` 候選清單，找到有 sqlalchemy 的 Python 後以 `os.execv` 原地重啟；解決以任意 Python（如 Python 3.14）直接執行 .py 仍能正確運作的問題
+
 ## [1.61.10] - 2026-05-14
 
 ### Fixed
