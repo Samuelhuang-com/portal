@@ -13,11 +13,11 @@
  *  - GET /api/v1/mall/daily-hours             → 商場工項類別日累計（year/month 篩選）
  *  - GET /api/v1/work-category-analysis/stats → 明細分析工時表（year/month，sources=all）
  */
-import { useEffect, useState, useCallback, useMemo } from 'react'
+import React, { useEffect, useState, useCallback, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
-  Row, Col, Card, Statistic, Typography, Tag, Table, Collapse,
-  Spin, Tooltip, Progress, Space, Button, Breadcrumb, Divider, Badge, Select,
+  Row, Col, Card, Statistic, Typography, Tag, Table, Collapse, Tabs, Segmented, DatePicker,
+  Spin, Tooltip, Progress, Space, Button, Breadcrumb, Divider, Badge, Select, Drawer, Descriptions, Image,
 } from 'antd'
 import {
   HomeOutlined, ReloadOutlined, CheckCircleOutlined,
@@ -52,7 +52,13 @@ import { fetchHotelDailyHours, type HotelDailyHoursData,
          fetchHotelMonthlyHours, type HotelMonthlyHoursData } from '@/api/hotelOverview'
 import { fetchMallDailyHours, type MallDailyHoursData,
          fetchMallMonthlyHours, type MallMonthlyHoursData } from '@/api/mallOverview'
+import {
+  fetchWorkJournalDaily, fetchWorkJournalRange, fetchJournalImages,
+  type WorkJournalDaily, type WorkJournalRange, type JournalRow, type CaseImageItem,
+  CATEGORY_COLOR,
+} from '@/api/workJournal'
 
+import type { Dayjs } from 'dayjs'
 dayjs.extend(relativeTime)
 dayjs.locale('zh-tw')
 
@@ -1070,6 +1076,462 @@ function AlertPanel({
 // ══════════════════════════════════════════════════════════════════════════════
 // 主元件
 // ══════════════════════════════════════════════════════════════════════════════
+
+// ── 工作日誌 TAB 元件（自給式：自行管理模式/日期/資料）────────────────────────
+type JournalCategory = '現場報修' | '上級交辦' | '緊急事件' | '例行維護' | '每日巡檢'
+const CAT_COLS: JournalCategory[] = ['現場報修', '上級交辦', '緊急事件', '例行維護', '每日巡檢']
+
+type JournalMode = 'single' | 'range' | 'month'
+
+// 單一日期的人員分組 Collapse（單日 or 區間內每天複用）
+function DayPersonCollapse({ persons }: { persons: WorkJournalDaily['persons'] }) {
+  const [selectedRow, setSelectedRow] = useState<JournalRow | null>(null)
+  const [drawerImages, setDrawerImages] = useState<CaseImageItem[]>([])
+  const [imgLoading,   setImgLoading]   = useState(false)
+
+  const journalColumns = [
+    {
+      title: '項次', dataIndex: 'seq', key: 'seq', width: 48, align: 'center' as const,
+      render: (v: number) => <Text style={{ fontSize: 12, color: '#888' }}>{v}</Text>,
+    },
+    ...CAT_COLS.map(cat => ({
+      title: <span style={{ fontSize: 11, color: CATEGORY_COLOR[cat as JournalCategory], whiteSpace: 'nowrap' as const }}>{cat}</span>,
+      key: cat, width: 56, align: 'center' as const,
+      render: (_: unknown, row: JournalRow) =>
+        row.category === cat
+          ? <span style={{ color: CATEGORY_COLOR[cat as JournalCategory], fontSize: 16, fontWeight: 700 }}>✓</span>
+          : null,
+    })),
+    {
+      title: '工作事項', dataIndex: 'task', key: 'task', width: 200,
+      render: (v: string) => <Text style={{ fontSize: 12 }}>{v}</Text>,
+    },
+    {
+      title: '預估耗時(min)', dataIndex: 'est_min', key: 'est_min', width: 88, align: 'center' as const,
+      render: (v: number | null) => v != null
+        ? <Text style={{ fontSize: 12 }}>{v}</Text>
+        : <Text style={{ color: '#ccc', fontSize: 12 }}>—</Text>,
+    },
+    {
+      title: '起', dataIndex: 'start_time', key: 'start', width: 52, align: 'center' as const,
+      render: (v: string) => v ? <Text style={{ fontSize: 12 }}>{v}</Text> : <Text style={{ color: '#ccc', fontSize: 12 }}>—</Text>,
+    },
+    {
+      title: '迄', dataIndex: 'end_time', key: 'end', width: 52, align: 'center' as const,
+      render: (v: string) => v ? <Text style={{ fontSize: 12 }}>{v}</Text> : <Text style={{ color: '#ccc', fontSize: 12 }}>—</Text>,
+    },
+    {
+      title: '工時(HR)', dataIndex: 'work_hours', key: 'wh', width: 72, align: 'center' as const,
+      render: (v: number | null) => v != null
+        ? <Text strong style={{ fontSize: 12, color: '#1B3A5C' }}>{v.toFixed(2)}</Text>
+        : <Text style={{ color: '#ccc', fontSize: 12 }}>—</Text>,
+    },
+    {
+      title: '備註', dataIndex: 'remark', key: 'remark', width: 160,
+      render: (v: string) => v ? <Text style={{ fontSize: 12, color: '#666' }}>{v}</Text> : null,
+    },
+    {
+      title: '回報事項', dataIndex: 'report', key: 'report', width: 160,
+      render: (v: string) => v ? <Text style={{ fontSize: 12, color: '#d46b08' }}>{v}</Text> : null,
+    },
+  ]
+
+  if (!persons.length) return (
+    <div style={{ textAlign: 'center', color: '#aaa', padding: '12px 0' }}>此日無工作記錄</div>
+  )
+
+  const STATUS_COLOR: Record<string, string> = {
+    '已完成': '#52c41a', '已修復': '#52c41a', '已結案': '#52c41a', '已調整': '#52c41a', '已固定': '#52c41a',
+    '待辦驗': '#faad14', '未完成': '#faad14', '進行中': '#1677ff',
+  }
+
+  const items = persons.map((p, idx) => {
+    const totalWH = p.rows.reduce((acc, r) => acc + (r.work_hours ?? 0), 0)
+    const sources = [...new Set(p.rows.map(r => r.source_label))].join('、')
+    return {
+      key: `person-${idx}`,
+      label: (
+        <Space>
+          <Text strong style={{ fontSize: 14, color: p.person === '未指定' ? '#aaa' : '#1B3A5C' }}>
+            {p.person}
+          </Text>
+          <Tag color="blue" style={{ fontSize: 11 }}>{p.rows.length} 項</Tag>
+          {totalWH > 0 && <Tag color="geekblue" style={{ fontSize: 11 }}>{totalWH.toFixed(2)} HR</Tag>}
+          {sources && <Text type="secondary" style={{ fontSize: 11 }}>{sources}</Text>}
+        </Space>
+      ),
+      children: (
+        <Table
+          size="small"
+          dataSource={p.rows.map((r, i) => ({ ...r, key: i }))}
+          columns={journalColumns}
+          pagination={false}
+          scroll={{ x: 'max-content' }}
+          style={{ marginTop: 4 }}
+          onRow={row => ({
+            onClick: () => {
+              const r = row as JournalRow
+              setSelectedRow(r)
+              setDrawerImages([])
+              if (r.ragic_id && (r.source === 'dazhi' || r.source === 'luqun')) {
+                setImgLoading(true)
+                fetchJournalImages(r.source, r.ragic_id)
+                  .then(imgs => setDrawerImages(imgs))
+                  .catch(() => setDrawerImages([]))
+                  .finally(() => setImgLoading(false))
+              }
+            },
+            style: { cursor: 'pointer' },
+          })}
+        />
+      ),
+    }
+  })
+
+  return (
+    <>
+      <Collapse
+        defaultActiveKey={persons.map((_, i) => `person-${i}`)}
+        items={items}
+        style={{ background: '#fff' }}
+      />
+      <Drawer
+        open={!!selectedRow}
+        onClose={() => { setSelectedRow(null); setDrawerImages([]) }}
+        title={
+          selectedRow && (
+            <Space>
+              <Tag color={CATEGORY_COLOR[selectedRow.category as keyof typeof CATEGORY_COLOR]}>
+                {selectedRow.category}
+              </Tag>
+              <span style={{ fontSize: 14, color: '#1B3A5C' }}>{selectedRow.source_label}</span>
+            </Space>
+          )
+        }
+        width={480}
+        styles={{ body: { padding: '16px 20px' } }}
+      >
+        {selectedRow && (
+          <>
+            <Typography.Title level={5} style={{ margin: '0 0 12px', color: '#1B3A5C' }}>
+              {selectedRow.task}
+            </Typography.Title>
+            <Descriptions
+              bordered
+              size="small"
+              column={1}
+              labelStyle={{ width: 100, background: '#f5f7fa', fontWeight: 500 }}
+              contentStyle={{ background: '#fff' }}
+            >
+              <Descriptions.Item label="人員">{selectedRow.person}</Descriptions.Item>
+              <Descriptions.Item label="來源">{selectedRow.source_label}</Descriptions.Item>
+              {selectedRow.work_hours != null && (
+                <Descriptions.Item label="工時(HR)">
+                  <Text strong style={{ color: '#1B3A5C' }}>{selectedRow.work_hours.toFixed(2)}</Text>
+                </Descriptions.Item>
+              )}
+              {selectedRow.start_time && (
+                <Descriptions.Item label="起">
+                  {selectedRow.start_time}
+                </Descriptions.Item>
+              )}
+              {selectedRow.end_time && (
+                <Descriptions.Item label="迄">
+                  {selectedRow.end_time}
+                </Descriptions.Item>
+              )}
+              {selectedRow.remark && (
+                <Descriptions.Item label="備註">
+                  <Text style={{ color: '#666' }}>{selectedRow.remark}</Text>
+                </Descriptions.Item>
+              )}
+              {selectedRow.report && (
+                <Descriptions.Item label="回報事項">
+                  <Text style={{ color: '#d46b08' }}>{selectedRow.report}</Text>
+                </Descriptions.Item>
+              )}
+            </Descriptions>
+
+            {Object.keys(selectedRow.detail ?? {}).length > 0 && (
+              <>
+                <Divider style={{ margin: '16px 0 12px' }} />
+                <Descriptions
+                  bordered
+                  size="small"
+                  column={1}
+                  labelStyle={{ width: 96, background: '#f5f7fa', fontWeight: 500, fontSize: 13 }}
+                  contentStyle={{ background: '#fff', fontSize: 13 }}
+                >
+                  {Object.entries(selectedRow.detail).map(([k, v]) => {
+                    const isEmpty = !v
+                    // 費用欄：加 $ 符號
+                    const isFee   = k.includes('費用')
+                    // 狀況欄：彩色 Tag
+                    const isStatus = k === '處理狀況' || k === '完成狀況' || k === '狀態'
+                    // 類型欄：Tag
+                    const isType  = k === '報修類型'
+                    // 總費用：粗體
+                    const isTotalFee = k === '總費用'
+                    // 標題：粗體大字
+                    const isTitle = k === '標題'
+
+                    let content: React.ReactNode
+                    if (isEmpty) {
+                      content = <Text type="secondary">-</Text>
+                    } else if (isStatus) {
+                      content = <Tag color={STATUS_COLOR[v] ?? 'default'} style={{ margin: 0 }}>{v}</Tag>
+                    } else if (isType) {
+                      content = <Tag style={{ margin: 0 }}>{v}</Tag>
+                    } else if (isTotalFee) {
+                      content = <Text strong style={{ fontSize: 14 }}>${v}</Text>
+                    } else if (isFee) {
+                      content = <Text>${v}</Text>
+                    } else if (isTitle) {
+                      content = <Text strong style={{ fontSize: 14 }}>{v}</Text>
+                    } else {
+                      content = <Text>{v}</Text>
+                    }
+                    return (
+                      <Descriptions.Item key={k} label={k}>{content}</Descriptions.Item>
+                    )
+                  })}
+                </Descriptions>
+              </>
+            )}
+
+            {/* 維修圖片（dazhi / luqun） */}
+            {(imgLoading || drawerImages.length > 0) && (
+              <>
+                <Divider style={{ margin: '16px 0 8px' }} />
+                <div style={{ fontWeight: 500, marginBottom: 8, color: '#555', fontSize: 13 }}>
+                  維修圖片
+                </div>
+                {imgLoading
+                  ? <div style={{ textAlign: 'center', padding: 16 }}><Spin size="small" /></div>
+                  : (
+                    <Image.PreviewGroup>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                        {drawerImages.map((img, i) => (
+                          <Image
+                            key={i}
+                            src={img.url}
+                            alt={img.filename || `圖片 ${i + 1}`}
+                            width={120}
+                            height={90}
+                            style={{ objectFit: 'cover', borderRadius: 4, border: '1px solid #e8e8e8', cursor: 'pointer' }}
+                            fallback="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+                          />
+                        ))}
+                      </div>
+                    </Image.PreviewGroup>
+                  )
+                }
+              </>
+            )}
+
+            {selectedRow.ragic_id && (
+              <div style={{ marginTop: 16, textAlign: 'right' }}>
+                <Text type="secondary" style={{ fontSize: 11 }}>
+                  Ragic ID: {selectedRow.ragic_id}
+                </Text>
+              </div>
+            )}
+          </>
+        )}
+      </Drawer>
+    </>
+  )
+}
+
+function WorkJournalTab() {
+  const [mode,      setMode]      = useState<JournalMode>('single')
+  const [year,      setYear]      = useState<number>(dayjs().year())
+  const [month,     setMonth]     = useState<number>(dayjs().month() + 1)
+  const [day,       setDay]       = useState<number>(dayjs().date())
+  const [rangeDates, setRangeDates] = useState<[Dayjs, Dayjs] | null>(null)
+  const [monthDate,  setMonthDate]  = useState<Dayjs | null>(dayjs())
+  const [singleData, setSingleData] = useState<WorkJournalDaily | null>(null)
+  const [rangeData,  setRangeData]  = useState<WorkJournalRange | null>(null)
+  const [loading,    setLoading]    = useState(false)
+
+  const daysInMonth = dayjs(`${year}-${String(month).padStart(2,'0')}-01`).daysInMonth()
+  const dayOptions  = Array.from({ length: daysInMonth }, (_, i) => ({ label: `${i + 1} 日`, value: i + 1 }))
+
+  const handleLoad = useCallback(async () => {
+    setLoading(true)
+    try {
+      if (mode === 'single') {
+        const d = await fetchWorkJournalDaily(year, month, day)
+        setSingleData(d)
+        setRangeData(null)
+      } else if (mode === 'range' && rangeDates) {
+        const from = rangeDates[0].format('YYYY-MM-DD')
+        const to   = rangeDates[1].format('YYYY-MM-DD')
+        const d = await fetchWorkJournalRange(from, to)
+        setRangeData(d)
+        setSingleData(null)
+      } else if (mode === 'month' && monthDate) {
+        const from = monthDate.startOf('month').format('YYYY-MM-DD')
+        const to   = monthDate.endOf('month').format('YYYY-MM-DD')
+        const d = await fetchWorkJournalRange(from, to)
+        setRangeData(d)
+        setSingleData(null)
+      }
+    } catch {
+      setSingleData(null)
+      setRangeData(null)
+    } finally {
+      setLoading(false)
+    }
+  }, [mode, year, month, day, rangeDates, monthDate])
+
+  // 日期 pickers
+  const renderPickers = () => {
+    if (mode === 'single') return (
+      <Space wrap>
+        <Text type="secondary" style={{ fontSize: 13 }}>查詢日期：</Text>
+        <Select value={year} onChange={v => setYear(v)} style={{ width: 90 }}
+          options={Array.from({ length: 3 }, (_, i) => { const y = dayjs().year() - i; return { label: `${y} 年`, value: y } })} />
+        <Select value={month} onChange={v => { setMonth(v); if (day > dayjs(`${year}-${String(v).padStart(2,'0')}-01`).daysInMonth()) setDay(1) }}
+          style={{ width: 80 }}
+          options={Array.from({ length: 12 }, (_, i) => ({ label: `${i + 1} 月`, value: i + 1 }))} />
+        <Select value={day} onChange={v => setDay(v)} style={{ width: 80 }} options={dayOptions} />
+      </Space>
+    )
+    if (mode === 'range') return (
+      <Space wrap>
+        <Text type="secondary" style={{ fontSize: 13 }}>查詢區間（最多 31 天）：</Text>
+        <DatePicker.RangePicker
+          value={rangeDates}
+          onChange={v => setRangeDates(v as [Dayjs, Dayjs] | null)}
+          format="YYYY/MM/DD"
+          style={{ width: 260 }}
+          disabledDate={cur => cur && cur > dayjs().endOf('day')}
+        />
+      </Space>
+    )
+    // month
+    return (
+      <Space wrap>
+        <Text type="secondary" style={{ fontSize: 13 }}>查詢月份：</Text>
+        <DatePicker
+          picker="month"
+          value={monthDate}
+          onChange={v => setMonthDate(v)}
+          format="YYYY 年 MM 月"
+          style={{ width: 150 }}
+          disabledDate={cur => cur && cur > dayjs().endOf('month')}
+        />
+      </Space>
+    )
+  }
+
+  // 結果摘要文字
+  const renderSummary = () => {
+    if (singleData) return (
+      <Text type="secondary" style={{ fontSize: 12 }}>
+        {singleData.date} ｜ 共 <Text strong>{singleData.total_rows}</Text> 筆
+      </Text>
+    )
+    if (rangeData) return (
+      <Text type="secondary" style={{ fontSize: 12 }}>
+        {rangeData.date_from} ～ {rangeData.date_to} ｜ 共 <Text strong>{rangeData.total_rows}</Text> 筆（{rangeData.days.length} 天）
+      </Text>
+    )
+    return null
+  }
+
+  // 結果區域
+  const renderResult = () => {
+    if (loading) return (
+      <div style={{ textAlign: 'center', paddingTop: 60 }}>
+        <Spin tip="載入工作日誌…" />
+      </div>
+    )
+
+    // 單日
+    if (singleData) {
+      if (singleData.total_rows === 0) return (
+        <div style={{ textAlign: 'center', paddingTop: 40, color: '#aaa', fontSize: 14 }}>
+          {singleData.date} 無工作記錄
+        </div>
+      )
+      return <DayPersonCollapse persons={singleData.persons} />
+    }
+
+    // 區間 / 整月
+    if (rangeData) {
+      if (rangeData.total_rows === 0) return (
+        <div style={{ textAlign: 'center', paddingTop: 40, color: '#aaa', fontSize: 14 }}>
+          查詢區間內無工作記錄
+        </div>
+      )
+      const dateItems = rangeData.days.map((daily, di) => {
+        const totalWH = daily.persons.reduce(
+          (acc, p) => acc + p.rows.reduce((a, r) => a + (r.work_hours ?? 0), 0), 0
+        )
+        return {
+          key: `day-${di}`,
+          label: (
+            <Space>
+              <Text strong style={{ fontSize: 14, color: '#1B3A5C' }}>{daily.date}</Text>
+              <Tag color="blue">{daily.total_rows} 筆</Tag>
+              {totalWH > 0 && <Tag color="geekblue">{totalWH.toFixed(2)} HR</Tag>}
+              <Text type="secondary" style={{ fontSize: 12 }}>{daily.persons.length} 位人員</Text>
+            </Space>
+          ),
+          children: <DayPersonCollapse persons={daily.persons} />,
+        }
+      })
+      return (
+        <Collapse
+          defaultActiveKey={rangeData.days.map((_, i) => `day-${i}`)}
+          items={dateItems}
+          style={{ background: '#f0f4f8' }}
+        />
+      )
+    }
+
+    return (
+      <div style={{ textAlign: 'center', paddingTop: 40, color: '#aaa', fontSize: 14 }}>
+        請選擇日期後按下「查詢」
+      </div>
+    )
+  }
+
+  return (
+    <div style={{ paddingBottom: 24 }}>
+      {/* 模式切換 */}
+      <div style={{ marginBottom: 12 }}>
+        <Segmented
+          value={mode}
+          onChange={v => { setMode(v as JournalMode); setSingleData(null); setRangeData(null) }}
+          options={[
+            { label: '單日', value: 'single' },
+            { label: '區間', value: 'range' },
+            { label: '整月', value: 'month' },
+          ]}
+        />
+      </div>
+
+      {/* 日期選擇器 + 查詢按鈕 */}
+      <Card size="small" style={{ marginBottom: 12, background: '#fafafa' }}>
+        <Space wrap>
+          {renderPickers()}
+          <Button type="primary" icon={<ReloadOutlined />} onClick={handleLoad} loading={loading}>
+            查詢
+          </Button>
+          {renderSummary()}
+        </Space>
+      </Card>
+
+      {/* 結果 */}
+      {renderResult()}
+    </div>
+  )
+}
+
+
 export default function ExecWorkDashboardPage() {
   const navigate = useNavigate()
 
@@ -1090,6 +1552,9 @@ export default function ExecWorkDashboardPage() {
   const [hotelDailyData,   setHotelDailyData]   = useState<HotelDailyHoursData | null>(null)
   const [mallDailyData,    setMallDailyData]    = useState<MallDailyHoursData | null>(null)
   // 受控 Collapse activeKey（全收合/全展開用）
+  // 頁籤狀態
+  const [activeTab, setActiveTab] = useState<string>('overview')
+
   const ALL_DAILY_KEYS    = ['hotel-daily', 'mall-daily']
   const ALL_ANALYSIS_KEYS = ['exec-daily', 'exec-monthly', 'exec-burden', 'unit-comparison', 'category-matrix', 'alerts']
   const [dailyKeys,    setDailyKeys]    = useState<string[]>([])
@@ -1232,6 +1697,16 @@ export default function ExecWorkDashboardPage() {
         </Space>
       </div>
 
+      <Tabs
+        activeKey={activeTab}
+        onChange={setActiveTab}
+        style={{ marginTop: 4 }}
+        items={[
+          {
+            key: 'overview',
+            label: '集團工務概覽',
+            children: (
+              <>
       {/* ══════════════════════════════════════════════════════════════
           ROW KPI — 集團工務 KPI Card（8 指標）
       ══════════════════════════════════════════════════════════════ */}
@@ -1902,6 +2377,16 @@ export default function ExecWorkDashboardPage() {
       {((): null => null)() /* HIDDEN */}
 
       {/* ── HIDDEN_ROW6_GRAPHVIEW: ROW 6 暫時隱藏 ── */}
+              </>
+            ),
+          },
+          {
+            key: 'journal',
+            label: '工作日誌',
+            children: <WorkJournalTab />,
+          },
+        ]}
+      />
     </div>
   )
 }

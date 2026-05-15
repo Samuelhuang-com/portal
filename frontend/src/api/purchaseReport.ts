@@ -192,6 +192,7 @@ export interface PurchaseOrder {
   ragic_sheet_path: string
   ragic_record_id: string
   ragic_url: string
+  selected_vendors: string   // 品項層擬定廠商彙整（去重，" / " 分隔）
 }
 
 /** 請購單品項（Detail Drawer 使用） */

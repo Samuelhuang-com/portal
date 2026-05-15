@@ -69,6 +69,16 @@ PERMISSION_DEFINITIONS = [
     {"key": "employee_manual_export_view",     "label": "員工操作手冊：查看",   "group": "系統設定"},
     {"key": "employee_manual_export_generate", "label": "員工操作手冊：產生",   "group": "系統設定"},
     {"key": "employee_manual_export_admin",    "label": "員工操作手冊：管理員", "group": "系統設定"},
+    # ── 採購管理（樂群）────────────────────────────────────────────────────
+    {"key": "purchase_report_view",   "label": "請購單報表：查看",   "group": "採購管理"},
+    {"key": "purchase_report_manage", "label": "請購單報表：管理",   "group": "採購管理"},
+    # ── 採購管理（日曜）────────────────────────────────────────────────────
+    {"key": "nichiyo_purchase.view",   "label": "日曜請購月報表：查看",   "group": "採購管理"},
+    {"key": "nichiyo_purchase.export", "label": "日曜請購月報表：匯出",   "group": "採購管理"},
+    {"key": "nichiyo_purchase.admin",  "label": "日曜請購月報表：管理員", "group": "採購管理"},
+    {"key": "nichiyo_claim.view",      "label": "日曜請款月報表：查看",   "group": "採購管理"},
+    {"key": "nichiyo_claim.export",    "label": "日曜請款月報表：匯出",   "group": "採購管理"},
+    {"key": "nichiyo_claim.admin",     "label": "日曜請款月報表：管理員", "group": "採購管理"},
 ]
 
 
@@ -162,7 +172,7 @@ def save_role_permissions(
 
     # 完全取代：刪除舊的再批次插入新的
     db.query(RolePermission).filter(RolePermission.role_id == role_id).delete()
-    for key in set(payload.permissions):          # set() 去重
+    for key in set(payload.permissions):
         db.add(RolePermission(role_id=role_id, permission_key=key))
     db.commit()
 

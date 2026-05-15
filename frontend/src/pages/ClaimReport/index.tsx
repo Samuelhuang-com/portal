@@ -1,14 +1,14 @@
 /**
- * 核准請購單月報表（Phase 2）
+ * 核准請款單月報表（Phase 2）
  *
  * TAB 順序：
- *   TAB-1  請購單清單（訂單級）
- *   TAB-2  請購單月報明細（品項級）
+ *   TAB-1  請款單清單（訂單級）
+ *   TAB-2  請款單月報明細（品項級）
  *   TAB-3  總表（請購 + 請款合併）
  *   TAB-4  部門統計（雙色） + 同步狀態（admin 折疊）
  *   TAB-5  資料異常稽核
  *
- * 注意：claim 相關 state / 函式保留（combined / audit TAB 仍需要）
+ * 注意：purchase 相關 state / 函式保留（combined / audit TAB 仍需要）
  */
 import { useEffect, useState, useCallback, useRef } from 'react'
 import {
@@ -113,7 +113,7 @@ const fmt = (n: number | null | undefined) =>
 const defaultYearMonth = () => dayjs().subtract(1, 'month').format('YYYY-MM')
 
 const PAGE_SIZE = 50
-const STORAGE_KEY = 'purchase_report_year_month'
+const STORAGE_KEY = 'claim_report_year_month'
 
 // ── 簽核狀態 Tag ────────────────────────────────────────────────────────────────
 const statusTag = (v: string) => {
@@ -129,7 +129,7 @@ const paymentTag = (v: string | null) => {
   return <Tag color={color}>{v}</Tag>
 }
 
-export default function PurchaseReportPage() {
+export default function ClaimReportPage() {
   const hasPermission = useAuthStore((s) => s.hasPermission)
   const isAdmin = hasPermission('system_admin_only')
 
@@ -161,11 +161,12 @@ export default function PurchaseReportPage() {
   const [paymentTypeOptions, setPaymentTypeOptions]   = useState<string[]>([])
   const [claimAccountOptions, setClaimAccountOptions] = useState<string[]>([])
 
+
   // ── 下拉選項 ──────────────────────────────────────────────────────────────────
   const [deptOptions, setDeptOptions] = useState<string[]>([])
 
   // ── Tab ───────────────────────────────────────────────────────────────────────
-  const [activeTab, setActiveTab] = useState<string>('purchase-orders')
+  const [activeTab, setActiveTab] = useState<string>('claim-orders')
 
   // ── 請購資料 ──────────────────────────────────────────────────────────────────
   const [purchaseSummary, setPurchaseSummary]   = useState<PurchaseReportSummary | null>(null)
@@ -200,7 +201,7 @@ export default function PurchaseReportPage() {
   const [claimSyncing, setClaimSyncing]           = useState(false)
   const [exportClaimLoading, setExportClaimLoading] = useState(false)
 
-  // ── 總表 / 部門統計資料 ────────────────────────────────────────────────────────
+  // ── 部門統計資料 ──────────────────────────────────────────────────────────────
   const [combinedSummary, setCombinedSummary]       = useState<CombinedSummary | null>(null)
   const [combinedSummaryLoading, setCombinedSummaryLoading] = useState(false)
   const [combinedDeptStats, setCombinedDeptStats]   = useState<CombinedDeptStat[]>([])
@@ -593,9 +594,6 @@ export default function PurchaseReportPage() {
     { title: '說明', dataIndex: 'description', key: 'description', ellipsis: true,
       render: (v: string | null) => v || <span style={{ color: '#aaa' }}>—</span>,
       sorter: (a: PurchaseOrder, b: PurchaseOrder) => (a.description ?? '').localeCompare(b.description ?? '') },
-    { title: '擬定廠商', dataIndex: 'selected_vendors', key: 'selected_vendors', width: 160, ellipsis: true,
-      render: (v: string) => v || <span style={{ color: '#aaa' }}>—</span>,
-      sorter: (a: PurchaseOrder, b: PurchaseOrder) => (a.selected_vendors ?? '').localeCompare(b.selected_vendors ?? '') },
     { title: '全案小計', dataIndex: 'amount', key: 'amount', width: 110, align: 'right' as const,
       render: (v: number | null) => <span style={{ fontWeight: 600, color: '#1B3A5C' }}>{fmt(v)}</span>,
       sorter: (a: PurchaseOrder, b: PurchaseOrder) => (a.amount ?? 0) - (b.amount ?? 0) },
@@ -987,35 +985,33 @@ export default function PurchaseReportPage() {
           onChange={setActiveTab}
           tabBarStyle={{ paddingLeft: 16, marginBottom: 0 }}
           items={[
-            // ── TAB-1：請購單清單 ──────────────────────────────────────────────
+            // ── TAB-1：請款單清單 ──────────────────────────────────────────────
             {
-              key: 'purchase-orders',
-              label: `請購單清單（${purchaseSummary?.order_count ?? ordersTotal} 張）`,
+              key: 'claim-orders',
+              label: `請款單清單（${claimSummary?.order_count ?? claimOrdersTotal} 張）`,
               children: (
                 <div style={{ padding: '0 16px 16px' }}>
-                  <Table<PurchaseOrder>
-                    dataSource={orders} rowKey="id" columns={purchaseOrderColumns}
-                    loading={ordersLoading} size="small" scroll={{ x: 1000 }}
-                    onRow={(r) => ({ onClick: () => openPurchaseDrawer(r.id), style: { cursor: 'pointer' } })}
+                  <Table<ClaimOrder>
+                    dataSource={claimOrders} rowKey="id" columns={claimOrderColumns}
+                    loading={claimOrdersLoading} size="small" scroll={{ x: 1050 }}
+                    onRow={(r) => ({ onClick: () => openClaimDrawer(r.id), style: { cursor: 'pointer' } })}
                     pagination={{
-                      total: ordersTotal, current: ordersPage, pageSize: 20,
-                      showSizeChanger: false, showTotal: (t) => `共 ${t} 張請購單`,
-                      onChange: (p) => loadOrders(p),
+                      total: claimOrdersTotal, current: claimOrdersPage, pageSize: 20,
+                      showSizeChanger: false, showTotal: (t) => `共 ${t} 張請款單`,
+                      onChange: (p) => loadClaimOrders(p),
                     }}
                     summary={(pageData) => {
-                      const pageAmt = pageData.reduce((s, r) => s + (r.amount ?? 0), 0)
-                      const pageTax = pageData.reduce((s, r) => s + (r.amount_tax ?? 0), 0)
+                      const pagePayable = pageData.reduce((s, r) => s + (r.payable_amount ?? 0), 0)
+                      const pageTax = pageData.reduce((s, r) => s + (r.tax ?? 0), 0)
                       return (
                         <Table.Summary fixed>
-                          <Table.Summary.Row style={{ background: '#eef3fa', fontWeight: 600 }}>
-                            <Table.Summary.Cell index={0} colSpan={5}>本頁小計（{pageData.length} 張）</Table.Summary.Cell>
-                            <Table.Summary.Cell index={5} align="right">
-                              <span style={{ whiteSpace: 'nowrap' }}>
-                                <span style={{ color: '#1B3A5C' }}>{fmt(pageAmt)}</span>
-                                {pageTax > 0 && <span style={{ color: '#888', fontSize: 11, marginLeft: 4 }}>（稅 {fmt(pageTax)}）</span>}
-                              </span>
+                          <Table.Summary.Row style={{ background: '#fff7e6', fontWeight: 600 }}>
+                            <Table.Summary.Cell index={0} colSpan={6}>本頁小計（{pageData.length} 張）</Table.Summary.Cell>
+                            <Table.Summary.Cell index={6} align="right">
+                              <span style={{ color: '#d46b08', whiteSpace: 'nowrap' }}>{fmt(pagePayable)}</span>
+                              {pageTax > 0 && <span style={{ color: '#888', fontSize: 11, marginLeft: 4 }}>（稅 {fmt(pageTax)}）</span>}
                             </Table.Summary.Cell>
-                            <Table.Summary.Cell index={6} /><Table.Summary.Cell index={7} /><Table.Summary.Cell index={8} />
+                            <Table.Summary.Cell index={7} /><Table.Summary.Cell index={8} /><Table.Summary.Cell index={9} />
                           </Table.Summary.Row>
                         </Table.Summary>
                       )
@@ -1025,55 +1021,53 @@ export default function PurchaseReportPage() {
               ),
             },
 
-            // ── TAB-2：請購單月報明細 ──────────────────────────────────────────
+            // ── TAB-2：請款單月報明細 ──────────────────────────────────────────
             {
-              key: 'purchase-detail',
-              label: `請購單月報明細（${purchaseSummary?.item_count ?? itemsTotal} 筆品項）`,
+              key: 'claim-detail',
+              label: `請款單月報明細（${claimSummary?.item_count ?? claimItemsTotal} 筆品項）`,
               children: (
                 <div style={{ padding: '0 16px 16px' }}>
-                  <Table<PurchaseReportItem>
-                    dataSource={items} rowKey={(r, i) => `${r.order_id}-${r.seq ?? i}`}
-                    columns={purchaseDetailColumns} loading={itemsLoading} size="small" scroll={{ x: 1500 }}
-                    onRow={(r) => ({ onClick: () => openPurchaseDrawer(r.order_id), style: { cursor: 'pointer' } })}
+                  <Table<ClaimReportItem>
+                    dataSource={claimItems} rowKey={(r, i) => `${r.claim_id}-${r.seq ?? i}`}
+                    columns={claimDetailColumns} loading={claimItemsLoading} size="small" scroll={{ x: 1400 }}
+                    onRow={(r) => ({ onClick: () => openClaimDrawer(r.claim_id), style: { cursor: 'pointer' } })}
                     pagination={{
-                      total: itemsTotal, current: itemsPage, pageSize: PAGE_SIZE,
+                      total: claimItemsTotal, current: claimItemsPage, pageSize: PAGE_SIZE,
                       showSizeChanger: false, showTotal: (t) => `共 ${t} 筆品項`,
-                      onChange: (p) => loadItems(p),
+                      onChange: (p) => loadClaimItems(p),
                     }}
                     rowClassName={(r, i) => {
-                      const prev = items[i - 1]?.order_id
-                      return (i === 0 || prev !== r.order_id) ? 'purchase-row-first' : 'purchase-row-cont'
+                      const prev = claimItems[i - 1]?.claim_id
+                      return (i === 0 || prev !== r.claim_id) ? 'claim-row-first' : 'claim-row-cont'
                     }}
                     summary={(pageData) => {
-                      const itemAmt = pageData.reduce((s, r) => s + (r.selected_amount ?? 0), 0)
-                      const seen = new Set<number>(); let orderAmt = 0; let taxAmt = 0
+                      const itemAmt = pageData.reduce((s, r) => s + (r.proposed_vendor_amount ?? 0), 0)
+                      const seen = new Set<number>(); let payable = 0
                       for (const r of pageData) {
-                        if (!seen.has(r.order_id)) {
-                          seen.add(r.order_id); orderAmt += r.amount ?? 0; taxAmt += r.amount_tax ?? 0
-                        }
+                        if (!seen.has(r.claim_id)) { seen.add(r.claim_id); payable += r.payable_amount ?? 0 }
                       }
                       return (
                         <Table.Summary fixed>
-                          <Table.Summary.Row style={{ background: '#eef3fa', fontWeight: 600 }}>
-                            <Table.Summary.Cell index={0} colSpan={9}>本頁小計（{pageData.length} 筆 / {seen.size} 張訂單）</Table.Summary.Cell>
-                            <Table.Summary.Cell index={9} align="right"><span style={{ color: '#722ed1', whiteSpace: 'nowrap' }}>{fmt(itemAmt)}</span></Table.Summary.Cell>
-                            <Table.Summary.Cell index={10} align="right"><span style={{ color: '#1B3A5C', whiteSpace: 'nowrap' }}>{fmt(orderAmt)}</span></Table.Summary.Cell>
-                            <Table.Summary.Cell index={11} align="right"><span style={{ whiteSpace: 'nowrap' }}>{fmt(taxAmt)}</span></Table.Summary.Cell>
+                          <Table.Summary.Row style={{ background: '#fff7e6', fontWeight: 600 }}>
+                            <Table.Summary.Cell index={0} colSpan={8}>本頁小計（{pageData.length} 筆 / {seen.size} 張請款單）</Table.Summary.Cell>
+                            <Table.Summary.Cell index={8} align="right"><span style={{ color: '#722ed1', whiteSpace: 'nowrap' }}>{fmt(itemAmt)}</span></Table.Summary.Cell>
+                            <Table.Summary.Cell index={9} align="right"><span style={{ color: '#d46b08', whiteSpace: 'nowrap' }}>{fmt(payable)}</span></Table.Summary.Cell>
+                            <Table.Summary.Cell index={10} />
                           </Table.Summary.Row>
                         </Table.Summary>
                       )
                     }}
                   />
                   <style>{`
-                    .purchase-row-first td { background: #fafafa !important; border-top: 1px solid #e8e8e8 !important; }
-                    .purchase-row-cont  td { background: #ffffff !important; }
-                    .purchase-row-first:hover td, .purchase-row-cont:hover td { background: #f0f7ff !important; }
+                    .claim-row-first td { background: #fffbf0 !important; border-top: 1px solid #ffe7ba !important; }
+                    .claim-row-cont  td { background: #ffffff !important; }
+                    .claim-row-first:hover td, .claim-row-cont:hover td { background: #fff7e0 !important; }
                   `}</style>
                 </div>
               ),
             },
 
-            // ── TAB-5：部門統計 ────────────────────────────────────────────────
+            // ── TAB-3：部門統計 ────────────────────────────────────────────────
             {
               key: 'dept',
               label: '部門統計',
@@ -1233,7 +1227,7 @@ export default function PurchaseReportPage() {
                 </div>
               ),
             },
-            // ── TAB-7：資料異常 ────────────────────────────────────────────────
+            // ── TAB-5：資料異常 ────────────────────────────────────────────────
             {
               key: 'audit',
               label: (() => {

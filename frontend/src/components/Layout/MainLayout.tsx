@@ -4,7 +4,7 @@
  * ✅  執行期自訂 label 與排序由 /api/v1/settings/menu-config 動態載入
  */
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { Layout, Menu, Typography, Avatar, Dropdown, Space, theme } from 'antd'
+import { Layout, Menu, Typography, Avatar, Dropdown, Space, theme, Skeleton } from 'antd'
 import {
   ApartmentOutlined,
   DashboardOutlined,
@@ -96,9 +96,39 @@ export const menuItems: MenuItem[] = [
     key: 'purchase-report',
     icon: <FileTextOutlined />,
     label: NAV_GROUP.purchaseReport,
-    permissionKey: 'system_admin_only',
+    permissionKey: 'purchase_report_view',
     children: [
-      { key: '/purchase-report/monthly', icon: <AuditOutlined />, label: NAV_PAGE.purchaseReportMonthly, permissionKey: 'system_admin_only' },
+      { key: '/purchase-report/monthly', icon: <AuditOutlined />, label: NAV_PAGE.purchaseReportMonthly, permissionKey: 'purchase_report_view' },
+    ],
+  },
+  // ── 核准請款單月報表（請購單報表之後，財務/採購管理）─────────────────────────
+  {
+    key: 'claim-report',
+    icon: <FileTextOutlined />,
+    label: NAV_GROUP.claimReport,
+    permissionKey: 'purchase_report_view',
+    children: [
+      { key: '/claim-report/monthly', icon: <AuditOutlined />, label: NAV_PAGE.claimReportMonthly, permissionKey: 'purchase_report_view' },
+    ],
+  },
+  // ── 日曜核准請購單月報表（財務/採購管理）────────────────────────────────────
+  {
+    key: 'nichiyo-purchase-report',
+    icon: <FileTextOutlined />,
+    label: NAV_GROUP.nichiyoPurchaseReport,
+    permissionKey: 'nichiyo_purchase.view',
+    children: [
+      { key: '/nichiyo-purchase-report/monthly', icon: <AuditOutlined />, label: NAV_PAGE.nichiyoPurchaseReportMonthly, permissionKey: 'nichiyo_purchase.view' },
+    ],
+  },
+  // ── 日曜核准請款單月報表（財務/採購管理）────────────────────────────────────
+  {
+    key: 'nichiyo-claim-report',
+    icon: <FileTextOutlined />,
+    label: NAV_GROUP.nichiyoClaimReport,
+    permissionKey: 'nichiyo_claim.view',
+    children: [
+      { key: '/nichiyo-claim-report/monthly', icon: <AuditOutlined />, label: NAV_PAGE.nichiyoClaimReportMonthly, permissionKey: 'nichiyo_claim.view' },
     ],
   },
   // ── 預算管理（dashboard 之後）──────────────────────────────────────────────
@@ -557,20 +587,26 @@ export default function MainLayout() {
     [isSystemAdmin]
   )
 
-  // 初始值優先使用 localStorage 快取的 config，使進系統時立即顯示正確選單（無閃爍）。
-  // 快取不存在時才 fallback 到靜態 menuItems（首次登入或清除 localStorage 後）。
+  // menuLoading：true = 無快取，正在等待 API 回應（顯示 Skeleton）
+  //              false = 已有快取或 API 已完成（顯示正確選單）
   // 直接從 token 解出 roles/permissions，不依賴非同步的 user state。
+  const [menuLoading, setMenuLoading] = useState<boolean>(() => {
+    return !localStorage.getItem(MENU_CONFIG_CACHE_KEY)
+  })
+
+  // 初始值優先使用 localStorage 快取的 config，使進系統時立即顯示正確選單（無閃爍）。
+  // 無快取時（首次登入）回傳空陣列，由 menuLoading Skeleton 佔位，不顯示靜態 menuItems。
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [dynamicMenuItems, setDynamicMenuItems] = useState<any[]>(() => {
     try {
       const token = localStorage.getItem('access_token')
-      if (!token) return menuItems.filter((item) => item.key !== 'settings')
+      if (!token) return []
       const payload = JSON.parse(atob(token.split('.')[1]))
       const ok = Array.isArray(payload.roles) && payload.roles.includes('system_admin')
       const initPerms: string[] = ok ? ['*'] : (payload.permissions ?? [])
       const filtered = ok ? menuItems : menuItems.filter((item) => item.key !== 'settings')
 
-      // ① 嘗試從 localStorage 快取還原上次的 menu config
+      // 有快取：立即套用，選單正確出現，無閃爍
       const cached = localStorage.getItem(MENU_CONFIG_CACHE_KEY)
       if (cached) {
         const configs = JSON.parse(cached) as MenuConfigItem[]
@@ -581,14 +617,14 @@ export default function MainLayout() {
         return filterMenuByPermissions(applied, initPerms, dbPermMap)
       }
 
-      // ② 無快取（首次登入）：靜態 menuItems + 角色過濾
-      return filterMenuByPermissions(filtered, initPerms, new Map())
+      // 無快取：回傳空陣列，等 API 完成後由 loadMenuConfig 填入
+      return []
     } catch {
-      return menuItems.filter((item) => item.key !== 'settings')
+      return []
     }
   })
 
-  // 啟動時拉取 menu config，靜默套用（失敗不影響正常使用）
+  // 啟動時拉取 menu config，套用後更新選單並寫入快取
   const loadMenuConfig = useCallback(async () => {
     try {
       const configs = await fetchMenuConfig()
@@ -601,8 +637,15 @@ export default function MainLayout() {
       const applied = configs.length > 0 ? applyMenuConfig(baseItems, configs) : baseItems
       setDynamicMenuItems(filterMenuByPermissions(applied, userPermissions, dbPermMap))
     } catch {
-      // 拉取失敗：回退至 baseItems（已依角色過濾），並套用靜態 permissionKey 過濾
-      setDynamicMenuItems(filterMenuByPermissions(baseItems, userPermissions, new Map()))
+      // 拉取失敗：嘗試從快取救援；完全無快取才 fallback 靜態 menuItems
+      const cached = localStorage.getItem(MENU_CONFIG_CACHE_KEY)
+      if (!cached) {
+        setDynamicMenuItems(filterMenuByPermissions(baseItems, userPermissions, new Map()))
+      }
+      // 有快取時保持現有 dynamicMenuItems 不動（快取已在 useState 初始化時套用）
+    } finally {
+      // API 完成（無論成功或失敗）都結束 loading 狀態，顯示選單
+      setMenuLoading(false)
     }
   }, [baseItems, userPermissions])
 
@@ -689,18 +732,37 @@ export default function MainLayout() {
           )}
         </div>
 
-        <Menu
-          mode="inline"
-          selectedKeys={[location.pathname]}
-          defaultOpenKeys={openKeys}
-          items={dynamicMenuItems}
-          style={{ border: 'none', marginTop: 8 }}
-          onClick={({ key }) => {
-            // 自訂選單（尚無對應模組）→ 導向「數據準備中」佔位頁
-            if (key.startsWith('custom_')) navigate('/data-preparing')
-            else navigate(key)
-          }}
-        />
+        {menuLoading ? (
+          // 無快取（首次登入）：等待 API 期間顯示 Skeleton，不顯示靜態選單
+          <div style={{ padding: '16px 20px' }}>
+            {Array.from({ length: 10 }).map((_, i) => (
+              <Skeleton.Input
+                key={i}
+                active
+                size="small"
+                style={{
+                  width: i % 3 === 0 ? '60%' : '80%',
+                  marginBottom: 14,
+                  display: 'block',
+                  borderRadius: 4,
+                }}
+              />
+            ))}
+          </div>
+        ) : (
+          <Menu
+            mode="inline"
+            selectedKeys={[location.pathname]}
+            defaultOpenKeys={openKeys}
+            items={dynamicMenuItems}
+            style={{ border: 'none', marginTop: 8 }}
+            onClick={({ key }) => {
+              // 自訂選單（尚無對應模組）→ 導向「數據準備中」佔位頁
+              if (key.startsWith('custom_')) navigate('/data-preparing')
+              else navigate(key)
+            }}
+          />
+        )}
       </Sider>
 
       {/* ── Main ──────────────────────────────────────────────────────── */}

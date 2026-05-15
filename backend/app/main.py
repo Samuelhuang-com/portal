@@ -92,6 +92,9 @@ from app.routers import (
     mall_overview,
     wiki,
     employee_manual_export,
+    work_journal,
+    nichiyo_purchase_report,
+    nichiyo_claim_report,
 )
 
 
@@ -302,6 +305,100 @@ def _seed_menu_config_mall_pm_group():
 
         conn.commit()
         print("[Portal] menu_config mall-pm-group seed checked.")
+
+
+def _seed_menu_config_nichiyo_purchase():
+    """
+    選單設定補丁（2026-05-14）：
+    確保 nichiyo-purchase-report 群組及其子頁面在 menu_configs 中有 DB 記錄。
+    permission_key = 'nichiyo_purchase.view'（無此權限不顯示）
+    操作冪等：重複執行不會造成重複或錯誤。
+    """
+    from sqlalchemy import text
+
+    CHILDREN = [
+        ("/nichiyo-purchase-report/monthly", 10),
+    ]
+
+    with engine.connect() as conn:
+        # ── 1. 確保父群組有 DB 記錄 ─────────────────────────────────────────
+        row = conn.execute(
+            text("SELECT menu_key FROM menu_configs WHERE menu_key = 'nichiyo-purchase-report'")
+        ).fetchone()
+        if row is None:
+            conn.execute(
+                text(
+                    "INSERT INTO menu_configs "
+                    "(menu_key, parent_key, custom_label, sort_order, is_visible, permission_key, updated_at, updated_by) "
+                    "VALUES ('nichiyo-purchase-report', NULL, NULL, 80, 1, 'nichiyo_purchase.view', datetime('now'), 'system-seed')"
+                )
+            )
+
+        # ── 2. 補齊子頁面的 DB 記錄 ─────────────────────────────────────────
+        for menu_key, sort_order in CHILDREN:
+            existing = conn.execute(
+                text("SELECT menu_key FROM menu_configs WHERE menu_key = :k"),
+                {"k": menu_key},
+            ).fetchone()
+            if existing is None:
+                conn.execute(
+                    text(
+                        "INSERT INTO menu_configs "
+                        "(menu_key, parent_key, custom_label, sort_order, is_visible, permission_key, updated_at, updated_by) "
+                        "VALUES (:k, 'nichiyo-purchase-report', NULL, :o, 1, 'nichiyo_purchase.view', datetime('now'), 'system-seed')"
+                    ),
+                    {"k": menu_key, "o": sort_order},
+                )
+
+        conn.commit()
+        print("[Portal] menu_config nichiyo-purchase-report seed checked.")
+
+
+def _seed_menu_config_nichiyo_claim():
+    """
+    選單設定補丁（2026-05-14）：
+    確保 nichiyo-claim-report 群組及其子頁面在 menu_configs 中有 DB 記錄。
+    permission_key = 'nichiyo_claim.view'（無此權限不顯示）
+    操作冪等：重複執行不會造成重複或錯誤。
+    """
+    from sqlalchemy import text
+
+    CHILDREN = [
+        ("/nichiyo-claim-report/monthly", 10),
+    ]
+
+    with engine.connect() as conn:
+        # ── 1. 確保父群組有 DB 記錄 ─────────────────────────────────────────
+        row = conn.execute(
+            text("SELECT menu_key FROM menu_configs WHERE menu_key = 'nichiyo-claim-report'")
+        ).fetchone()
+        if row is None:
+            conn.execute(
+                text(
+                    "INSERT INTO menu_configs "
+                    "(menu_key, parent_key, custom_label, sort_order, is_visible, permission_key, updated_at, updated_by) "
+                    "VALUES ('nichiyo-claim-report', NULL, NULL, 85, 1, 'nichiyo_claim.view', datetime('now'), 'system-seed')"
+                )
+            )
+
+        # ── 2. 補齊子頁面的 DB 記錄 ─────────────────────────────────────────
+        for menu_key, sort_order in CHILDREN:
+            existing = conn.execute(
+                text("SELECT menu_key FROM menu_configs WHERE menu_key = :k"),
+                {"k": menu_key},
+            ).fetchone()
+            if existing is None:
+                conn.execute(
+                    text(
+                        "INSERT INTO menu_configs "
+                        "(menu_key, parent_key, custom_label, sort_order, is_visible, permission_key, updated_at, updated_by) "
+                        "VALUES (:k, 'nichiyo-claim-report', NULL, :o, 1, 'nichiyo_claim.view', datetime('now'), 'system-seed')"
+                    ),
+                    {"k": menu_key, "o": sort_order},
+                )
+
+        conn.commit()
+        print("[Portal] menu_config nichiyo-claim-report seed checked.")
 
 
 def _migrate_luqun_counter_name():
@@ -559,8 +656,12 @@ async def _auto_sync():
     # 請購單 / 請款單：立即同步時執行清單同步（Detail API 由獨立排程補全）
     from app.services.purchase_request_sync import sync_list_only as sync_purchase_list
     from app.services.claim_request_sync import sync_list_only as sync_claim_list
+    from app.services.nichiyo_purchase_request_sync import sync_list_only as sync_nichiyo_purchase_list
+    from app.services.nichiyo_claim_request_sync import sync_list_only as sync_nichiyo_claim_list
     await _run_and_log("核准請購單清單", sync_purchase_list())
     await _run_and_log("核准請款單清單", sync_claim_list())
+    await _run_and_log("日曜核准請購單清單", sync_nichiyo_purchase_list())
+    await _run_and_log("日曜核准請款單清單", sync_nichiyo_claim_list())
 
 
 async def _manual_sync():
@@ -631,6 +732,32 @@ async def _claim_full_sync():
     await _run_and_log("核准請款單", sync_claim())
 
 
+# ── 日曜請購單專屬排程 ──────────────────────────────────────────────────────────
+async def _nichiyo_purchase_list_sync():
+    """日曜請購單清單同步（每 15 分鐘：僅清單 API）"""
+    from app.services.nichiyo_purchase_request_sync import sync_list_only
+    await _run_and_log("日曜核准請購單清單", sync_list_only())
+
+
+async def _nichiyo_purchase_full_sync():
+    """日曜請購單完整同步（每 45 分鐘：清單 + Detail API 品項補全）"""
+    from app.services.nichiyo_purchase_request_sync import sync_all as sync_nichiyo
+    await _run_and_log("日曜核准請購單", sync_nichiyo())
+
+
+# ── 日曜請款單專屬排程 ──────────────────────────────────────────────────────────
+async def _nichiyo_claim_list_sync():
+    """日曜請款單清單同步（每 15 分鐘：僅清單 API）"""
+    from app.services.nichiyo_claim_request_sync import sync_list_only
+    await _run_and_log("日曜核准請款單清單", sync_list_only())
+
+
+async def _nichiyo_claim_full_sync():
+    """日曜請款單完整同步（每 45 分鐘：清單 + Detail API 品項補全）"""
+    from app.services.nichiyo_claim_request_sync import sync_all as sync_nichiyo_claim
+    await _run_and_log("日曜核准請款單", sync_nichiyo_claim())
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan: startup / shutdown hooks."""
@@ -667,6 +794,8 @@ async def lifespan(app: FastAPI):
     import app.models.wiki  # noqa: F401
     import app.models.purchase_request  # noqa: F401
     import app.models.claim_request     # noqa: F401
+    import app.models.nichiyo_purchase_request  # noqa: F401
+    import app.models.nichiyo_claim_request     # noqa: F401
 
     # B4F 扁平化遷移：刪除舊 batch 表 + 檢查 item 表欄位（必須在 create_all 之前）
     _migrate_b4f_flatten()
@@ -722,6 +851,12 @@ async def lifespan(app: FastAPI):
 
     # 選單設定補丁（2026-04-28）：隱藏舊 custom_1777348120465，補齊 mall-pm-group 子項 DB 記錄
     _seed_menu_config_mall_pm_group()
+
+    # 選單設定補丁（2026-05-14）：確保 nichiyo-purchase-report 選單有 DB 記錄
+    _seed_menu_config_nichiyo_purchase()
+
+    # 選單設定補丁（2026-05-14）：確保 nichiyo-claim-report 選單有 DB 記錄
+    _seed_menu_config_nichiyo_claim()
 
     # 客房主檔 seed（若 rooms 表為空，自動填入樓層 × 房號資料）
     from app.services.room_seed import seed_rooms
@@ -779,6 +914,42 @@ async def lifespan(app: FastAPI):
             _claim_full_sync,
             trigger=make_cron_trigger(45),
             id="claim_full_sync",
+            replace_existing=True,
+            misfire_grace_time=300,
+        )
+
+        # 日曜請購單清單同步：每 15 分鐘（:00/:15/:30/:45）
+        _scheduler.add_job(
+            _nichiyo_purchase_list_sync,
+            trigger=make_cron_trigger(15),
+            id="nichiyo_purchase_list_sync",
+            replace_existing=True,
+            misfire_grace_time=300,
+        )
+
+        # 日曜請購單完整同步（含 Detail API 品項補全）：每 45 分鐘（:00/:45）
+        _scheduler.add_job(
+            _nichiyo_purchase_full_sync,
+            trigger=make_cron_trigger(45),
+            id="nichiyo_purchase_full_sync",
+            replace_existing=True,
+            misfire_grace_time=300,
+        )
+
+        # 日曜請款單清單同步：每 15 分鐘（:00/:15/:30/:45）
+        _scheduler.add_job(
+            _nichiyo_claim_list_sync,
+            trigger=make_cron_trigger(15),
+            id="nichiyo_claim_list_sync",
+            replace_existing=True,
+            misfire_grace_time=300,
+        )
+
+        # 日曜請款單完整同步（含 Detail API 品項補全）：每 45 分鐘（:00/:45）
+        _scheduler.add_job(
+            _nichiyo_claim_full_sync,
+            trigger=make_cron_trigger(45),
+            id="nichiyo_claim_full_sync",
             replace_existing=True,
             misfire_grace_time=300,
         )
@@ -1019,92 +1190,37 @@ app.include_router(
     tags=["核准請款單月報表"],
 )
 
-# ── 新增：請購 + 請款 整合總表 ─────────────────────────────────────────────────
+# ── 新增：請購請款整合總表 ────────────────────────────────────────────────────────
 app.include_router(
     combined_report.router,
     prefix=f"{API_PREFIX}/combined-report",
     tags=["請購請款整合總表"],
 )
 
-# ── 新增：預算管理 ─────────────────────────────────────────────────────────────
+# ── 新增：工作日誌（10 模組聚合）─────────────────────────────────────────────
 app.include_router(
-    budget.router,
-    prefix=f"{API_PREFIX}/budget",
-    tags=["預算管理"],
+    work_journal.router,
+    prefix=f"{API_PREFIX}/work-journal",
+    tags=["工作日誌"],
 )
 
-# ── 新增：飯店每日巡檢 ───────────────────────────────────────────────────────
+# ── 新增：日曜核准請購單月報表 ──────────────────────────────────────────────────
 app.include_router(
-    hotel_daily_inspection.router,
-    prefix=f"{API_PREFIX}/hotel-daily-inspection",
-    tags=["飯店每日巡檢"],
+    nichiyo_purchase_report.router,
+    prefix=f"{API_PREFIX}/nichiyo-purchase-report",
+    tags=["日曜請購月報表"],
 )
 
-# ── 新增：每日數值登錄表（電錶/水錶）────────────────────────────────────────
+# ── 新增：日曜核准請款單月報表 ──────────────────────────────────────────────────
 app.include_router(
-    hotel_meter_readings.router,
-    prefix=f"{API_PREFIX}/hotel-meter-readings",
-    tags=["每日數值登錄表"],
+    nichiyo_claim_report.router,
+    prefix=f"{API_PREFIX}/nichiyo-claim-report",
+    tags=["日曜請款月報表"],
 )
 
-# ── 新增：選單設定（改名 + 排序 + 歷史）──────────────────────────────────────
+# ── 選單設定 ──────────────────────────────────────────────────────────────────
 app.include_router(
     menu_config.router,
     prefix=f"{API_PREFIX}/settings/menu-config",
     tags=["選單設定"],
 )
-
-# ── 新增：角色權限管理（role_permissions CRUD）────────────────────────────────
-app.include_router(
-    role_permissions.router,
-    prefix=f"{API_PREFIX}/role-permissions",
-    tags=["角色權限"],
-)
-
-# ── 新增：角色 CRUD（取得/新增/刪除自訂角色）─────────────────────────────────
-app.include_router(
-    roles.router,
-    prefix=f"{API_PREFIX}/roles",
-    tags=["角色管理"],
-)
-
-# ── 新增：知識庫（LLM Wiki）────────────────────────────────────────────────────
-app.include_router(
-    wiki.router,
-    prefix=f"{API_PREFIX}/wiki",
-    tags=["知識庫"],
-)
-
-# ── 新增：專案知識圖譜（graphify 整合）──────────────────────────────────────
-app.include_router(
-    knowledge_graph.router,
-    prefix=f"{API_PREFIX}/knowledge-graph",
-    tags=["專案知識圖譜"],
-)
-
-# ── 知識圖譜靜態輸出目錄（無需驗證，供 iframe 直接存取）────────────────────────
-import os as _os
-from fastapi.staticfiles import StaticFiles as _StaticFiles
-from fastapi.responses import FileResponse as _FileResponse
-
-_kg_static_dir = _os.path.join(_os.path.dirname(__file__), "..", "static", "knowledge_graph")
-_os.makedirs(_kg_static_dir, exist_ok=True)
-app.mount(
-    "/kg-files",
-    _StaticFiles(directory=_kg_static_dir, html=True),
-    name="knowledge_graph_static",
-)
-
-# ── 正式環境：serve 前端靜態檔案 + SPA fallback（所有路由之後）─────────────────
-
-_frontend_dist = _os.path.join(_os.path.dirname(__file__), "..", "..", "frontend", "dist")
-if _os.path.isdir(_frontend_dist):
-    # ① assets 靜態檔案必須在 catch-all 之前 mount，否則 JS/CSS 會被攔截
-    app.mount("/assets", _StaticFiles(directory=_os.path.join(_frontend_dist, "assets")), name="assets")
-
-    # ② SPA catch-all：所有其他路徑都回傳 index.html，讓 React Router 處理
-    @app.get("/{full_path:path}", include_in_schema=False)
-    async def spa_fallback(full_path: str):
-        return _FileResponse(_os.path.join(_frontend_dist, "index.html"))
-
-    print(f"[Portal] Frontend static files (SPA mode) served from: {_frontend_dist}")

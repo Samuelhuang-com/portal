@@ -163,15 +163,11 @@ def _apply_search(q, keyword: Optional[str]):
 
 
 def _ragic_url(order: ApprovedPurchaseRequest) -> str:
-    """建構 Ragic 內頁連結。"""
-    detail_path = ""
+    """建構 Ragic 內頁連結。使用 list_path（記錄所在 Sheet），非 detail_path（API 用）。"""
     for d in DEPT_SHEETS:
         if d["list_path"] == order.ragic_sheet_path:
-            detail_path = d["detail_path"]
-            break
-    if not detail_path:
-        return ""
-    return f"https://ap12.ragic.com/soutlet001/{detail_path}/{order.ragic_record_id}"
+            return f"https://ap12.ragic.com/soutlet001/{d['list_path']}/{order.ragic_record_id}"
+    return ""
 
 
 def _format_item_row(order: ApprovedPurchaseRequest, item: ApprovedPurchaseRequestItem) -> dict:
@@ -828,11 +824,43 @@ def get_approved_orders(
         .limit(per_page)
         .all()
     )
+
+    # 一次性撈出所有品項的擬定廠商（避免 N+1），GROUP_CONCAT 去重後以 " / " 分隔
+    order_ids = [o.id for o in orders]
+    vendor_map: dict[int, str] = {}
+    if order_ids:
+        vrows = (
+            db.query(
+                ApprovedPurchaseRequestItem.order_id,
+                func.group_concat(ApprovedPurchaseRequestItem.selected_vendor, " / ").label("vendors"),
+            )
+            .filter(
+                ApprovedPurchaseRequestItem.order_id.in_(order_ids),
+                ApprovedPurchaseRequestItem.selected_vendor.isnot(None),
+                ApprovedPurchaseRequestItem.selected_vendor != "",
+            )
+            .group_by(ApprovedPurchaseRequestItem.order_id)
+            .all()
+        )
+        for vr in vrows:
+            # 去除重複廠商名稱（SQLite group_concat 不支援 DISTINCT；手動 dedupe）
+            names = [n.strip() for n in vr.vendors.split(" / ") if n.strip()]
+            seen: list[str] = []
+            for n in names:
+                if n not in seen:
+                    seen.append(n)
+            vendor_map[vr.order_id] = " / ".join(seen)
+
+    def _order_dict_with_vendors(o: ApprovedPurchaseRequest) -> dict:
+        d = _order_to_dict(o)
+        d["selected_vendors"] = vendor_map.get(o.id, "")
+        return d
+
     return {
         "total":    total,
         "page":     page,
         "per_page": per_page,
-        "items":    [_order_to_dict(o) for o in orders],
+        "items":    [_order_dict_with_vendors(o) for o in orders],
     }
 
 

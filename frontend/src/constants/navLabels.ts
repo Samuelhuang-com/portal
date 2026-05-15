@@ -75,7 +75,10 @@ export const NAV_GROUP = {
   wiki:             '知識庫',
   audit:            '稽核日誌',
   settings:         '系統設定',
-  purchaseReport:   '請購單報表',   // ← 核准請購單月報表（財務/採購管理）
+  purchaseReport:         '請購單報表',        // ← 核准請購單月報表（財務/採購管理）
+  claimReport:            '請款單報表',        // ← 核准請款單月報表（財務/採購管理）
+  nichiyoPurchaseReport:  '日曜請購月報表',    // ← 日曜核准請購單月報表
+  nichiyoClaimReport:     '日曜請款月報表',    // ← 日曜核准請款單月報表
 } as const
 
 // ── 二級選單（頁面） ──────────────────────────────────────────────────────────
@@ -185,8 +188,14 @@ export const NAV_PAGE = {
 
   // 請購單報表
   purchaseReportMonthly:    '核准請購單月報表',  // ← 品項級月報表，route /purchase-report/monthly
-} as const
 
-// ── 型別輔助 ────────────────────────────────────────────────────────────────────────────
-export type NavGroupKey = keyof typeof NAV_GROUP
-export type NavPageKey  = keyof typeof NAV_PAGE
+
+  // 請款單報表
+  claimReportMonthly:       '核准請款單月報表',  // ← 品項級月報表，route /claim-report/monthly
+
+  // 日曜請購月報表
+  nichiyoPurchaseReportMonthly: '日曜核准請購單月報表',  // ← route /nichiyo-purchase-report/monthly
+
+  // 日曜請款月報表
+  nichiyoClaimReportMonthly: '日曜核准請款單月報表',  // ← route /nichiyo-claim-report/monthly
+} as const

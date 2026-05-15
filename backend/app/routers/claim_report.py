@@ -109,9 +109,10 @@ def _apply_search(q, keyword: Optional[str]):
 
 
 def _ragic_url(order: ApprovedClaimRequest) -> str:
+    """建構 Ragic 內頁連結。使用 list_path（記錄所在 Sheet），非 detail_path（API 用）。"""
     for d in CLAIM_DEPT_SHEETS:
         if d["list_path"] == order.ragic_sheet_path:
-            return f"https://ap12.ragic.com/soutlet001/{d['detail_path']}/{order.ragic_record_id}"
+            return f"https://ap12.ragic.com/soutlet001/{d['list_path']}/{order.ragic_record_id}"
     return ""
 
 
@@ -703,6 +704,148 @@ async def trigger_sync(
 # ─────────────────────────────────────────────────────────────────────────────
 # GET /sync/status — 同步狀態查詢
 # ─────────────────────────────────────────────────────────────────────────────
+
+# ─────────────────────────────────────────────────────────────────────────────
+# POST /admin/reparse-approved-dates — 重新解析 approved_date（一次性修正）
+# 從 raw_data_json 重新套用最新的核准日期邏輯，不需重抓 Ragic
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.post("/admin/reparse-approved-dates")
+def reparse_approved_dates(
+    db: Session = Depends(get_db),
+    _:  object  = Depends(require_permission(_PERM)),
+):
+    """
+    重新從 raw_data_json 解析 approved_date，修正被誤設為同步日期的記錄。
+    不需重抓 Ragic API，直接更新 DB。
+    """
+    import json, re
+    from app.services.claim_request_sync import _to_date, _pick, LIST_FIELD_CANDIDATES
+
+    def _reparse_approved_date(data: dict, status: str, last_updated_at) -> object:
+        """套用新版三層候選邏輯重算 approved_date。"""
+        if status != "F":
+            return None
+        # 第一層：日期N 工作流簽核欄位
+        date_vals = []
+        for k, v in data.items():
+            if re.match(r"^日期\d*$", k) and v:
+                d = _to_date(v)
+                if d:
+                    date_vals.append(d)
+        if date_vals:
+            return max(date_vals)
+        # 第二層：明確命名的核准/付款日期欄位
+        for cand in ["核准日期", "簽核完成日期", "最終核准日期", "完成日期", "付款日期", "預計付款日"]:
+            val = data.get(cand)
+            if val:
+                d = _to_date(val)
+                if d:
+                    return d
+        # 第三層：申請日期（比 last_updated_at 穩定）
+        apply_raw = _pick(data, ["申請日期", "填單日期"])
+        if apply_raw:
+            return _to_date(apply_raw)
+        return None
+
+    total = 0
+    updated = 0
+    errors = []
+
+    records = (
+        db.query(ApprovedClaimRequest)
+        .filter(ApprovedClaimRequest.raw_data_json.isnot(None))
+        .all()
+    )
+
+    for rec in records:
+        total += 1
+        try:
+            raw = json.loads(rec.raw_data_json)
+            new_date = _reparse_approved_date(raw, rec.status or "N", rec.last_updated_at)
+            if new_date != rec.approved_date:
+                rec.approved_date = new_date
+                updated += 1
+        except Exception as exc:
+            errors.append(f"id={rec.id}: {exc}")
+
+    try:
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"commit 失敗: {exc}")
+
+    return {
+        "total":   total,
+        "updated": updated,
+        "errors":  errors[:20],
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# POST /admin/reparse-request-no — 重新解析 request_no（修正單號=null 的記錄）
+# 從 raw_data_json 重新套用最新 LIST_FIELD_CANDIDATES["request_no"] 候選清單，
+# 不需重抓 Ragic API，直接更新 DB。
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.post("/admin/reparse-request-no")
+def reparse_request_no(
+    db: Session = Depends(get_db),
+    _:  object  = Depends(require_permission(_PERM)),
+):
+    """
+    重新從 raw_data_json 解析 request_no，修正因欄位名稱未收錄導致單號為空的記錄。
+    使用候選清單 + regex fallback（樂X請YYYYMMXXX），不需重抓 Ragic API。
+    回傳 still_null 清單：修正後仍為 null 的記錄 ragic_id + 部門 + raw keys（供診斷）。
+    """
+    import json
+    from app.services.claim_request_sync import _pick_request_no, LIST_FIELD_CANDIDATES
+
+    total      = 0
+    updated    = 0
+    still_null = []
+    errors     = []
+
+    records = (
+        db.query(ApprovedClaimRequest)
+        .filter(ApprovedClaimRequest.raw_data_json.isnot(None))
+        .all()
+    )
+
+    for rec in records:
+        total += 1
+        try:
+            raw = json.loads(rec.raw_data_json)
+            new_no = _pick_request_no(raw, LIST_FIELD_CANDIDATES["request_no"]) or None
+            if new_no != rec.request_no:
+                rec.request_no = new_no
+                updated += 1
+            if not new_no:
+                # 仍為 null：回傳 raw_data 的所有 key 供診斷
+                no_keys = [k for k in raw if "號" in k or "編號" in k or "單號" in k]
+                still_null.append({
+                    "id":               rec.id,
+                    "ragic_id":         rec.ragic_record_id,
+                    "department":       rec.department_display,
+                    "no_related_keys":  no_keys,
+                    "all_keys_sample":  list(raw.keys())[:30],
+                })
+        except Exception as exc:
+            errors.append(f"id={rec.id}: {exc}")
+
+    try:
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"commit 失敗: {exc}")
+
+    return {
+        "total":      total,
+        "updated":    updated,
+        "still_null": still_null,   # ← 修正後仍為 null 的記錄，帶欄位清單
+        "errors":     errors[:20],
+    }
+
 
 @router.get("/sync/status")
 def get_sync_status(

@@ -292,8 +292,11 @@ def get_combined_departments(
     c_rows = cq.group_by(ApprovedClaimRequest.department_display).all()
     c_dict = {r.department_display: r for r in c_rows}
 
-    # 合併所有部門
-    all_depts = sorted(set(list(p_dict.keys()) + list(c_dict.keys())))
+    # 合併所有部門（key=lambda 防止 None 與 str 比較造成 TypeError）
+    all_depts = sorted(
+        set(list(p_dict.keys()) + list(c_dict.keys())),
+        key=lambda x: x or "",
+    )
 
     return [
         {

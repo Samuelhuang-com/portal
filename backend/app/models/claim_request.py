@@ -30,90 +30,81 @@ CLAIM_DEPT_DISPLAY_MAP: dict[str, str] = {
     "營業":   "營業部",
     "行銷":   "行銷部",
     "財務":   "財務部",
-    "客服":   "停管部",   # ← 停管部 Ragic 值 = 「客服」
+    "客服":   "客服部",
     "管理":   "管理部",
     "資訊":   "資訊部",
-    "工務":   "工務部",
-    "專案":   "專案",
+    "設計":   "設計部",
 }
 
 # ── 部門請款編號標籤（前端顯示用，依部門決定中文標籤）──────────────────────
 DEPT_REQUEST_NO_LABEL: dict[str, str] = {
     "執董室": "執董請",
     "營業部": "營請",
-    "行銷部": "樂行購",
+    "行銷部": "行請",
     "財務部": "財請",
-    "停管部": "客請",
+    "客服部": "客請",
     "管理部": "管請",
-    "資訊部": "營請",   # ⚠️ 資訊部顯示「營請」，命名異常，先同步後確認
-    "工務部": "工請",
-    "專案":   "專請",
+    "資訊部": "資請",
+    "設計部": "設請",
 }
 
-# ── 9 個部門的請款單 Ragic 設定 ─────────────────────────────────────────────
+# ── 8 個部門的請款單 Ragic 設定 ─────────────────────────────────────────────
 CLAIM_DEPT_SHEETS: list[dict] = [
     {
         "display_name": "執董室",
         "ragic_dept":   "執董室",
-        "list_path":    "lequn-executive-office/9",
-        "detail_path":  "lequn-executive-office/9",
+        "list_path":    "free-executive-office/9",
+        "detail_path":  "free-executive-office/9",
         "flow_type":    "零用金型",
     },
     {
         "display_name": "營業部",
         "ragic_dept":   "營業",
-        "list_path":    "new-tab/8",
-        "detail_path":  "new-tab/8",
+        "list_path":    "free-business-division/21",
+        "detail_path":  "free-business-division/21",
         "flow_type":    "比價型",
     },
     {
         "display_name": "行銷部",
         "ragic_dept":   "行銷",
-        "list_path":    "lequn-marketing-department/12",
-        "detail_path":  "lequn-marketing-department/12",
+        "list_path":    "marketing/40",
+        "detail_path":  "marketing/40",
         "flow_type":    "比價型",
-    },
-    {
-        "display_name": "財務部",
-        "ragic_dept":   "財務",
-        "list_path":    "lequn-finance-department/6",
-        "detail_path":  "lequn-finance-department/6",
-        "flow_type":    "匯款型",
-    },
-    {
-        "display_name": "停管部",
-        "ragic_dept":   "客服",
-        "list_path":    "lequn-traffic-management/5",
-        "detail_path":  "lequn-traffic-management/5",
-        "flow_type":    "零用金型",
     },
     {
         "display_name": "管理部",
         "ragic_dept":   "管理",
-        "list_path":    "community-management-department/24",
-        "detail_path":  "community-management-department/24",
+        "list_path":    "freed-management-division/19",
+        "detail_path":  "freed-management-division/19",
         "flow_type":    "零用金型",
     },
     {
         "display_name": "資訊部",
         "ragic_dept":   "資訊",
-        "list_path":    "joy-group-it-department/14",
-        "detail_path":  "joy-group-it-department/14",
+        "list_path":    "department-of-free-information/23",
+        "detail_path":  "department-of-free-information/23",
         "flow_type":    "匯款型",
     },
     {
-        "display_name": "工務部",
-        "ragic_dept":   "工務",
-        "list_path":    "lequn-public-works-department/2",
-        "detail_path":  "lequn-public-works-department/2",
+        "display_name": "客服部",
+        "ragic_dept":   "客服",
+        "list_path":    "free-management-department/10",
+        "detail_path":  "free-management-department/10",
+        "flow_type":    "零用金型",
+    },
+    {
+        "display_name": "財務部",
+        "ragic_dept":   "財務",
+        "list_path":    "free-finance-department/15",
+        "detail_path":  "free-finance-department/15",
         "flow_type":    "匯款型",
     },
     {
-        "display_name": "專案",
-        "ragic_dept":   "專案",
-        "list_path":    "happy-group-project/1",
-        "detail_path":  "happy-group-project/1",
-        "flow_type":    "工程專案型",
+        "display_name": "設計部",
+        "ragic_dept":   "設計",
+        "list_path":    "free-design-department/2",
+        "detail_path":  "free-design-department/2",
+        "flow_type":    "比價型",
     },
 ]
 

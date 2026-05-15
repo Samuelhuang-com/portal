@@ -840,7 +840,8 @@ export default function MenuConfigPage() {
       const configs = await fetchMenuConfig()
       setItems(buildWorkItems(DEFAULT_MENU_STRUCTURE, configs))
       setDirty(false)
-    } catch {
+    } catch (err) {
+      console.error('[MenuConfig] 載入失敗：', err)
       message.error('載入選單設定失敗')
     } finally {
       setLoading(false)

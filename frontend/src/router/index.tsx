@@ -77,6 +77,15 @@ import ExecWorkDashboardPage           from '@/pages/ExecWorkDashboard'
 // ── 核准請購單月報表 ────────────────────────────────────────────────────────────
 import PurchaseReportPage              from '@/pages/PurchaseReport'
 
+// ── 核准請款單月報表 ────────────────────────────────────────────────────────────
+import ClaimReportPage                 from '@/pages/ClaimReport'
+
+// ── 日曜核准請購單月報表 ─────────────────────────────────────────────────────────
+import NichiyoPurchaseReportPage       from '@/pages/NichiyoPurchaseReport'
+
+// ── 日曜核准請款單月報表 ─────────────────────────────────────────────────────────
+import NichiyoClaimReportPage          from '@/pages/NichiyoClaimReport'
+
 // ── 知識庫（LLM Wiki）──────────────────────────────────────────────────────────
 import WikiPage                        from '@/pages/Wiki'
 
@@ -273,6 +282,45 @@ export default function AppRouter() {
             element={
               <PermissionGuard permissionKey="system_admin_only">
                 <PurchaseReportPage />
+              </PermissionGuard>
+            }
+          />
+          <Route index element={<Navigate to="monthly" replace />} />
+        </Route>
+
+        {/* ── 核准請款單月報表 ──────────────────────────────────────────── */}
+        <Route path="claim-report">
+          <Route
+            path="monthly"
+            element={
+              <PermissionGuard permissionKey="system_admin_only">
+                <ClaimReportPage />
+              </PermissionGuard>
+            }
+          />
+          <Route index element={<Navigate to="monthly" replace />} />
+        </Route>
+
+        {/* ── 日曜核准請購單月報表 ──────────────────────────────────────── */}
+        <Route path="nichiyo-purchase-report">
+          <Route
+            path="monthly"
+            element={
+              <PermissionGuard permissionKey="nichiyo_purchase.view">
+                <NichiyoPurchaseReportPage />
+              </PermissionGuard>
+            }
+          />
+          <Route index element={<Navigate to="monthly" replace />} />
+        </Route>
+
+        {/* ── 日曜核准請款單月報表 ──────────────────────────────────────── */}
+        <Route path="nichiyo-claim-report">
+          <Route
+            path="monthly"
+            element={
+              <PermissionGuard permissionKey="nichiyo_claim.view">
+                <NichiyoClaimReportPage />
               </PermissionGuard>
             }
           />

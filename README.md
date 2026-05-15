@@ -2,9 +2,32 @@
 
 > 跨據點統一管理平台 — FastAPI + React + TypeScript
 
-**最後更新：2026-05-14（v1.61.17）**
+**最後更新：2026-05-14（v1.61.39）**
 
 ## 最近變更
+- v1.61.39：**日曜核准請款單月報表模組** — 完整 18 步 SPEC Checklist：ORM（NichiyoClaimRequest+Item）、Sync Service（B05/B06/B07 防護）、FastAPI Router（13 端點）、main.py 整合（排程+seed）、前端 API+4-TAB 頁面（型態A blue Tag 部門統計）、路由/Sidebar/Roles/MenuConfig、audit_service R01-R08（含 R06 受款者空白）
+- v1.61.38：**日曜請購 部門統計欄位對齊 purchase-report** — `deptColumns` 改名（請購單數/請購未稅合計/請購稅額/請購占比）；部門 Tag geekblue→blue
+- v1.61.37：**後端修正 Drawer 完全失效根因（3 bugs）** — `get_order_detail` 回傳結構錯誤（flat→`{order,items}`）; `_order_to_dict` 補入 `last_updated_at`/`ragic_sheet_path`/移除舊 detail dict; `get_approved_orders` 補入品項廠商聚合（`selected_vendors`）
+- v1.61.36：**日曜請購清單 + Drawer 對齊 purchase-report；SPEC 誤差修正** — orderColumns 標準化（編號 fixed-left/擬定廠商/全案小計/EyeOutlined fixed-right）；Drawer 480→680px、column={2}、品項移除 Collapse 改直接 Table；RAGIC_REPORT_MODULE_SPEC.md 修正 Drawer 規格（480→680、detail dict→結構化欄位）+ 新增主單清單欄位標準順序表
+- v1.61.35：**日曜請購 部門統計 admin 折疊升級** — 同步狀態 Collapse 改為 AntD5 items API；增量同步（primary）/ 全量同步（danger + Modal.confirm）/ 刷新；pending Badge 在標題；Alert 提示未完成數；dept_stats 加同步率 Progress；補入 recent_logs Table；功能對齊 purchase-report
+- v1.61.34：**請款 + 日曜請購 Sheet 更新（8部門）** — `claim_request.py` / `nichiyo_purchase_request.py` 改用 `soutlet001 free-*` 路徑；9→8 部門（移除停管/工務/專案，新增客服部+設計部）；`purchase-report/monthly`（樂群 `lequn-*`）不受影響
+- v1.61.33：**日曜核准請購單月報表模組** — 新增 `nichiyo_purchase_request.py` ORM（主單+品項子表）、`nichiyo_purchase_request_sync.py` 雙層同步服務（9 部門 / 15min清單 + 45min Detail）、`nichiyo_purchase_report.py` API Router（14端點含稽核）；前端 `nichiyoPurchaseReport.ts` API封裝 + `NichiyoPurchaseReport/index.tsx` 4-TAB頁面（請購清單/月報明細/部門統計/資料異常）；`audit_service.py` 擴充7條日曜稽核規則（R01-R05/R07/R08）；新增3組 permission key（nichiyo_purchase.view/export/admin）；APScheduler 雙排程 + menu auto-seed
+- v1.61.32：**Ragic Report Module SPEC 建立** — `docs/RAGIC_REPORT_MODULE_SPEC.md`：完整開發規格 + 13 條 Bug Graveyard + 18 步驟 Checklist + Claude Code 標準提示詞（新模組 / 健康檢查 / 多分公司複製）
+- v1.61.31：**`request_no` regex fallback** — 候選清單找不到時，掃全部欄位值，符合 `^樂.+請\d{8,}` 格式即自動採用；`reparse-request-no` 端點回傳 `still_null` 陣列列出殘餘問題記錄的欄位清單供診斷
+- v1.61.30：**請款單 `request_no` 候選清單全面補強** — 新增各部門「樂X請編號」前綴變體 + 缺漏短標籤（`資請編號`、`停請編號`），共新增 11 個候選欄位；新增 `scripts/scan_claim_fields.py` 本機診斷腳本可直接掃描各部門實際欄位
+- v1.61.29：**移除 ClaimReport 總表 TAB + 修正頁面標題** — TAB 由 5 縮減為 4（請款清單/請款明細/部門統計/資料異常）；標題從「請購 + 請款整合總表」改為「核准請款單月報表」
+- v1.61.28：**修正執董室請款單號為 null** — 候選清單補入 `"職請編號"`；新增 `POST /admin/reparse-request-no` 就地修復現有記錄
+- v1.61.27：**移除 PurchaseReport 總表 TAB** — 功能與個別清單重複；TAB 由 6 個縮減為 5 個（請購清單/請購明細/請款清單/請款明細/部門統計/資料異常）
+- v1.61.26：**修正總表/部門統計 404 + R04 誤報** — `combined_report.router` 未註冊到 `main.py`（所有 combined-report 端點 404）；R04 加 `item_sum IS NOT NULL` 條件，`selected_amount` 全為 NULL 時不誤報「品項加總不符」
+- v1.61.25：**修正部門統計無資料 + R03 誤報** — `sorted()` None/str 比較導致 API 500（部門統計空白）；claim R03 加品項金額豁免（`detail_synced=True` 且品項有金額時跳過）
+- v1.61.24：**全表頭排序功能** — PurchaseReport + ClaimReport 共 12 個 Table 所有欄位加入 client-side `sorter`（字串用 `localeCompare`、數字用減法）；請購/請款清單「最後更新」→「核准日期」欄位重命名
+- v1.61.23：**請購單清單加「擬定廠商」欄位** — 後端子查詢彙整品項層 `selected_vendor`（去重 / " / " 分隔）；前端 `purchaseOrderColumns` 新增欄位（說明欄之後，全案小計之前）
+- v1.61.22：**修正「在Ragic開啟」連結路徑錯誤** — `_ragic_url()` 誤用 `detail_path`（API 用 sheet），改為 `list_path`（記錄所在 sheet）；影響請購單清單、資料異常 TAB 及請款單清單所有 Ragic 連結
+- v1.61.21：**修正請款單 `approved_date` 被設為同步日期** — 根因：Ragic 請款表單無工作流「日期N」欄位，舊邏輯 fallback 到 `last_updated_dt` 導致月份篩選全部失效；新邏輯改為三層候選（日期N → 核准日期/付款日期 → 申請日期）；新增 `POST /admin/reparse-approved-dates` 端點可就地修正現有記錄不須重抓 Ragic
+- v1.61.21（舊）：**核准請款單月報表獨立模組** — 新增 `ClaimReport/index.tsx` 頁面（5 TAB：請款清單/請款明細/總表/部門統計/資料異常）；Sidebar 加「請款單報表」選單；PurchaseReport 移除請款 TAB，精簡為 5 TAB（請購清單/請購明細/總表/部門統計/資料異常）
+- v1.61.20：**Drawer 明細強制開發標準** — `WORK_JOURNAL_SPEC.md` Section 9 完整規格（detail dict、STATUS_COLOR、Image.PreviewGroup Lightbox、新模組 Checklist）；`CLAUDE.md` Section 5 強制規範，未來凡有明細資料的列表模組自動適用
+- v1.61.19：**工作日誌三模式篩選** — Segmented 切換「單日 / 區間 / 整月」；後端新增 `/range` endpoint；區間結果以日期→人員雙層 Collapse 呈現
+- v1.61.18：**工作日誌 TAB**（exec-work-dashboard）— 整合 10 個工務模組每日記錄；後端新增 `work_journal.py` router（`GET /api/v1/work-journal/daily`）；前端新增 `WorkJournalTab` 元件（日期選擇 + 人員分組 Collapse + 工作明細 Table）；原工務概覽與工作日誌以 Ant Design Tabs 切換
 - v1.61.17：**資料異常稽核模組** — 新增 `audit_service.py` 8 條稽核規則（單號空白/部門空白/金額異常/品項加總不符±1/會科空白/付款種類空白/Detail未同步/同單號重複）；purchase + claim 各加 `/audit/anomalies` + `/audit/summary` 端點；PurchaseReport 新增「資料異常」第 8 TAB（KPI 卡可點篩選、來源切換、異常 Table + Ragic 連結）；TAB label 即時顯示異常筆數 Badge
 - v1.61.8：**修正 `Illegal header value b'Basic '`** — `ragic_adapter.py` 加入空 API Key 早期驗證，取代 httpcore 的晦澀錯誤訊息；`.strip()` 防護前後空白
 - v1.61.0：**全年度 / 自訂區間日期篩選** — Header 加入 `Segmented` 三段切換（單月 | 全年度 | 自訂區間）；後端 purchase / claim / combined 三個 router 所有 5~3 個端點加入 `year_month_from` + `year_month_to` 參數，API client 同步更新；全年度模式自動展開為 `YYYY-01 ~ YYYY-12`，Excel 匯出檔名與 sheet 名稱隨模式更新（如 `2026年度`）
@@ -19,6 +42,7 @@
 - v1.59.17：**購報表 5 項後端 Bug 修正**（BackgroundTasks injection、sync/status 欄位名稱×4、config/departments 格式）+ 前端 per_page 修正 + RagicConnections 加入核准請購單 + RagicAppDirectory 加入 12 筆 Sheet
 - v1.59.16：**核准請購單月報表 Phase 3（前端）** — purchaseReport.ts API封裝、PurchaseReport 頁面（KPI×6 + 月報明細Tab + 部門統計Tab + 同步狀態Tab(admin)）、router + sidebar 接線
 - v1.59.15：**核准請購單月報表 Phase 1（後端）** — Models（主單+品項子表）、雙層同步服務（清單+Detail API，N+1+增量）、API Router（7端點，品項級別月報）
+- v1.59.13：**選單載入策略改版** — 無快取時改顯示 Skeleton（不再閃現靜態全量 menu）；API 失敗有快取→保留快取；API 失敗無快取→才 fallback 靜態；新增 `menuLoading` state
 - v1.59.12：**修正進系統選單閃爍** — `fetchMenuConfig()` 結果快取至 `localStorage`（`portal_menu_config_cache`）；進系統時初始化立即套用快取，無需等 API 回應；登出時清除快取防止帳號切換污染
 - v1.59.11：**RepairSummaryCard 新增待辦驗數欄** — 飯店/商場小卡「已結案」與「未結案」之間插入「待辦驗數」（橙色），7 欄 span 重新分配
 - v1.59.10：**集團決策 Dashboard P0/P2/P3 修正** — P0：avgHrPerCase 改用 exec 口徑；hotel_overview stat-month 口徑對齊；P2：Alert 類別集中度改件數百分比；P3：新增 4 張 KPI 卡（飯店/商場待辦驗數、上期未結）；每月累計工時表改全年 12 月

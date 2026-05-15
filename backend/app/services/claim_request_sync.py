@@ -2,21 +2,19 @@
 核准請款單同步服務：Ragic → SQLite
 
 架構：Master + Detail 雙層同步
-  Step 1（每 15 分鐘）：清單 API × 9 部門 → approved_claim_requests（主單）
+  Step 1（每 15 分鐘）：清單 API × 8 部門 → approved_claim_requests（主單）
   Step 2（每 45 分鐘）：subtable 解析 or 內頁 API → approved_claim_request_items（品項）
                         + detail_synced=True
 
 【欄位映射策略】
   - 以中文欄位標籤為候選清單，容錯各部門命名差異
   - 付款種類（payment_type）決定匯款欄位是否必填
-  - 部門請款編號（department_request_no）各部門有不同標籤（財請/工請等）
-  - 資訊部「營請」編號命名異常——先同步，後確認
+  - 部門請款編號（department_request_no）各部門有不同標籤
 
 【流程模板差異】
-  零用金型：執董室、停管部、管理部（領款簽名欄）
-  比價型：  營業部、行銷部（三家廠商比價欄）
-  匯款型：  財務部、資訊部、工務部（銀行帳號必填）
-  工程專案型：專案（驗收佐證/資本貸出）
+  零用金型：執董室、客服部、管理部（領款簽名欄）
+  比價型：  營業部、行銷部、設計部（三家廠商比價欄）
+  匯款型：  財務部、資訊部（銀行帳號必填）
 """
 import json
 import logging
@@ -48,16 +46,35 @@ BATCH_SLEEP_SEC       = 3.0
 # ── 欄位候選清單（按優先序取第一個有值的）────────────────────────────────────
 LIST_FIELD_CANDIDATES: dict[str, list[str]] = {
     # 請款單號（系統唯一編號）
-    # fallback：各部門 Ragic sheet 的主欄位可能用部門前綴標籤命名（如「管請編號」）
+    # 命名規律：各部門前綴 + "請編號"
+    #   執董室 → 職請編號 / 執董請編號
+    #   行銷部 → 行請編號 / 樂行購編號
+    #   管理部 → 管請編號
+    #   財務部 → 財請編號
+    #   客服部 → 客請編號
+    #   營業部 → 營請編號
+    #   資訊部 → 資請編號
+    #   設計部 → 設請編號
     "request_no":         [
         "編號", "請款單號", "單號",
-        "管請編號", "財請編號", "工請編號", "專請編號",
-        "樂行購編號", "執董請編號", "客請編號", "營請編號",
+        # 各部門短標籤
+        "管請編號", "財請編號", "客請編號", "營請編號",
+        "資請編號", "設請編號", "行請編號",
+        # 執董室（Ragic 實際欄位標籤為「職請編號」）
+        "職請編號", "執董請編號",
+        # 行銷部（帶「樂」前綴舊值保留相容）
+        "樂行購編號",
     ],
     # 部門請款編號（各部門不同標籤）
     "department_request_no": [
-        "部門請款編號", "財請編號", "工請編號", "管請編號", "專請編號",
-        "樂行購編號", "執董請編號", "客請編號", "營請編號",
+        "部門請款編號",
+        # 各部門短標籤
+        "管請編號", "財請編號", "客請編號", "營請編號",
+        "資請編號", "設請編號", "行請編號",
+        # 執董室
+        "職請編號", "執董請編號",
+        # 行銷部
+        "樂行購編號",
     ],
     "department_raw":     ["部門", "申請部門", "請款部門"],
     "account_subject":    ["會科", "費用科目", "科目"],
@@ -109,14 +126,43 @@ ITEM_FIELD_CANDIDATES: dict[str, list[str]] = {
 }
 
 
+# ── 請款單號 regex pattern ────────────────────────────────────────────────────
+# 格式：樂 + 任意中文/英文 + 請 + 8位日期 + 3位流水號
+# 例：樂執請20260325002、樂資請20260414001、樂行購20260301001
+_REQUEST_NO_RE = re.compile(r"^樂.+請\d{8,}")
+
+
 # ── 工具函式 ──────────────────────────────────────────────────────────────────
 
 def _pick(data: dict, candidates: list[str], default="") -> Any:
+    """從 data 中按候選清單優先序取第一個有值的欄位。
+    若候選清單全部找不到，使用 regex fallback 掃描全部欄位，
+    找出值符合「樂X請YYYYMMXXX」格式的欄位（適用 request_no）。
+    """
     for key in candidates:
         val = data.get(key)
         if val is not None and str(val).strip():
             return val
     return default
+
+
+def _pick_request_no(data: dict, candidates: list[str]) -> str:
+    """專用於 request_no 的取值函式：候選清單 → regex fallback。
+    fallback 會掃描 data 所有欄位，取第一個值符合「樂X請YYYYMMXXX」格式的值。
+    """
+    # Step 1：候選清單
+    for key in candidates:
+        val = data.get(key)
+        if val is not None and str(val).strip():
+            return str(val).strip()
+
+    # Step 2：regex fallback — 掃全部欄位找單號格式
+    for key, val in data.items():
+        if isinstance(val, str) and _REQUEST_NO_RE.match(val.strip()):
+            logger.debug("request_no regex fallback: key=%r val=%r", key, val)
+            return val.strip()
+
+    return ""
 
 
 def _to_int(val: Any) -> int | None:
@@ -258,10 +304,14 @@ def _parse_list_record(
     status_raw = str(_pick(data, LIST_FIELD_CANDIDATES["status"], "N")).strip().upper()
     status     = status_raw if status_raw in ("F", "N", "REJ") else "N"
 
-    # 核准日期：取所有「日期N」欄位最大值
+    # 核准日期（三層候選，不 fallback 到 last_updated_dt 以避免被同步時間污染）
+    # 1. Ragic 工作流「日期N」欄位（數位簽核每步驟的時間戳記）
+    # 2. 明確命名的核准/付款日期欄位
+    # 3. 最終備援：申請日期（比最後更新更接近實際審核時間）
     approved_dt = None
     if status == "F":
         date_vals = []
+        # 第一層：日期 / 日期1 / 日期2 … 工作流簽核時間戳
         for k, v in data.items():
             if re.match(r"^日期\d*$", k) and v:
                 d = _to_date(v)
@@ -269,8 +319,20 @@ def _parse_list_record(
                     date_vals.append(d)
         if date_vals:
             approved_dt = max(date_vals)
-        elif last_updated_dt:
-            approved_dt = last_updated_dt.date()
+        else:
+            # 第二層：明確命名的核准/付款日期候選
+            for cand in ["核准日期", "簽核完成日期", "最終核准日期", "完成日期", "付款日期", "預計付款日"]:
+                val = data.get(cand)
+                if val:
+                    d = _to_date(val)
+                    if d:
+                        approved_dt = d
+                        break
+        if approved_dt is None:
+            # 第三層：申請日期（永遠存在，比 last_updated_dt 更穩定）
+            apply_raw = _pick(data, ["申請日期", "填單日期"])
+            if apply_raw:
+                approved_dt = _to_date(apply_raw)
 
     dept_display = _dept_display(raw_dept or dept_config.get("ragic_dept", ""))
     if not dept_display:
@@ -282,7 +344,7 @@ def _parse_list_record(
         "department_display":     dept_display,
         "ragic_sheet_path":       sheet_path,
         "ragic_record_id":        str(record_id),
-        "request_no":             str(_pick(data, LIST_FIELD_CANDIDATES["request_no"], "")).strip(),
+        "request_no":             _pick_request_no(data, LIST_FIELD_CANDIDATES["request_no"]) or None,
         "department_request_no":  str(_pick(data, LIST_FIELD_CANDIDATES["department_request_no"], "")).strip() or None,
         "purchase_no":            str(_pick(data, LIST_FIELD_CANDIDATES["purchase_no"], "")).strip() or None,
         "payment_no":             str(_pick(data, LIST_FIELD_CANDIDATES["payment_no"], "")).strip() or None,
@@ -439,7 +501,6 @@ async def sync_from_ragic(full_resync: bool = False) -> dict:
         # Step 1: 清單同步（每部門各自建立 adapter）
         for dept in CLAIM_DEPT_SHEETS:
             result = await _sync_list_for_dept(dept, db, full_resync=full_resync)
-            total["fetched"]  += result["fetched"]
             total["upserted"] += result["upserted"]
             total["errors"]   += result["errors"]
 
@@ -479,8 +540,7 @@ async def sync_from_ragic(full_resync: bool = False) -> dict:
                                     if k.lstrip("-").isdigit() and isinstance(v, dict)]
                     record_data = numeric_vals[0] if numeric_vals else detail_raw
 
-                with db.begin_nested():  # SAVEPOINT：單筆失敗不污染外層 transaction
-                    # 補充主單欄位（有值才覆蓋）
+                with db.begin_nested():  # SAVEPOINT：單筆失敗不汙染外層 transaction
                     for field, candidates in DETAIL_FIELD_CANDIDATES.items():
                         val = _pick(record_data, candidates)
                         if val:
@@ -493,13 +553,12 @@ async def sync_from_ragic(full_resync: bool = False) -> dict:
                             if val is not None:
                                 setattr(order, field, val)
 
-                    # 提取品項子表格
                     item_rows = _find_subtable_from_detail(record_data)
                     if item_rows:
                         db.query(ApprovedClaimRequestItem).filter_by(
                             claim_id=order.id
                         ).delete(synchronize_session=False)
-                        db.flush()  # DELETE 先 flush，再 INSERT，避免 UNIQUE constraint
+                        db.flush()
                         for idx, row in enumerate(item_rows, start=1):
                             item_fields = _parse_item_row(row, order.id, idx)
                             db.add(ApprovedClaimRequestItem(**item_fields))
