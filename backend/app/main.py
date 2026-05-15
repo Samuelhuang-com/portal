@@ -240,6 +240,38 @@ def _cleanup_security_patrol_photo_items():
             print(f"[Migration] 保全巡檢拍照項目已清除 {result.rowcount} 筆")
 
 
+def _seed_builtin_roles():
+    """
+    確保四個系統內建角色存在於 roles 表（idempotent）。
+    採 INSERT OR IGNORE 方式，不覆蓋已有記錄。
+    """
+    from sqlalchemy import text
+    import uuid
+
+    BUILTIN = [
+        ("system_admin",    "system", "系統管理員，擁有全部權限"),
+        ("tenant_admin",    "tenant", "租戶管理員"),
+        ("module_manager",  "tenant", "模組管理員"),
+        ("viewer",          "tenant", "一般查看"),
+    ]
+    with engine.connect() as conn:
+        for name, scope, desc in BUILTIN:
+            existing = conn.execute(
+                text("SELECT id FROM roles WHERE name = :name"), {"name": name}
+            ).fetchone()
+            if not existing:
+                conn.execute(
+                    text(
+                        "INSERT INTO roles (id, name, scope, description, created_at) "
+                        "VALUES (:id, :name, :scope, :desc, datetime('now'))"
+                    ),
+                    {"id": str(uuid.uuid4()), "name": name, "scope": scope, "desc": desc},
+                )
+                print(f"[Portal] Built-in role '{name}' created.")
+        conn.commit()
+    print("[Portal] Built-in roles seed checked.")
+
+
 def _seed_menu_config_mall_pm_group():
     """
     選單設定補丁（2026-04-28）：
@@ -805,6 +837,9 @@ async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
     print("[Portal] Database tables ensured.")
 
+    # 內建角色 seed（system_admin / tenant_admin / module_manager / viewer）
+    _seed_builtin_roles()
+
     # SQLite WAL 模式：讓讀取與寫入可同時進行（OneDrive 環境必要）
     from sqlalchemy import text as _sql_text
     try:
@@ -1223,6 +1258,20 @@ app.include_router(
     menu_config.router,
     prefix=f"{API_PREFIX}/settings/menu-config",
     tags=["選單設定"],
+)
+
+# ── 角色管理 ──────────────────────────────────────────────────────────────────
+app.include_router(
+    roles.router,
+    prefix=f"{API_PREFIX}/roles",
+    tags=["角色管理"],
+)
+
+# ── 角色權限設定 ───────────────────────────────────────────────────────────────
+app.include_router(
+    role_permissions.router,
+    prefix=f"{API_PREFIX}/role-permissions",
+    tags=["角色權限"],
 )
 
 # ── 正式環境：serve 前端靜態檔案 + SPA fallback（所有路由之後）─────────────────

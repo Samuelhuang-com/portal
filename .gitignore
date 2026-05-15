@@ -38,6 +38,10 @@ Thumbs.db
 .tmp.driveupload/
 *.tmp
 
+# 文件 / 試算表（不進正式區）
+*.md
+*.xlsx
+
 # Claude AI — 對話、設定、暫存（不進正式區）
 CLAUDE.md
 _Runme.md
