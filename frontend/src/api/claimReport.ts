@@ -253,7 +253,6 @@ export const getClaimSyncStatus = () =>
 import type {
   AuditAnomaly,
   AuditSummary,
-  PaginatedResponse,
 } from '@/api/purchaseReport'
 
 export type { AuditAnomaly, AuditSummary }

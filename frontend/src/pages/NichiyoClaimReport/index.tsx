@@ -751,11 +751,11 @@ export default function NichiyoClaimReportPage() {
                       <Table.Summary.Row style={{ background: '#f0f4f8', fontWeight: 600 }}>
                         <Table.Summary.Cell index={0}>合計</Table.Summary.Cell>
                         <Table.Summary.Cell index={1} align="right">{pCnt}</Table.Summary.Cell>
-                        <Table.Summary.Cell index={2} align="right" style={{ color: '#1B3A5C' }}>{fmt(pAmt)}</Table.Summary.Cell>
-                        <Table.Summary.Cell index={3} align="right" style={{ color: '#1B3A5C' }}>{fmt(pTax)}</Table.Summary.Cell>
-                        <Table.Summary.Cell index={4} align="right" style={{ color: '#d46b08' }}>{cCnt}</Table.Summary.Cell>
-                        <Table.Summary.Cell index={5} align="right" style={{ color: '#d46b08' }}>{fmt(cPayable)}</Table.Summary.Cell>
-                        <Table.Summary.Cell index={6} align="right" style={{ color: '#d46b08' }}>{fmt(cTax)}</Table.Summary.Cell>
+                        <Table.Summary.Cell index={2} align="right"><span style={{ color: '#1B3A5C' }}>{fmt(pAmt)}</span></Table.Summary.Cell>
+                        <Table.Summary.Cell index={3} align="right"><span style={{ color: '#1B3A5C' }}>{fmt(pTax)}</span></Table.Summary.Cell>
+                        <Table.Summary.Cell index={4} align="right"><span style={{ color: '#d46b08' }}>{cCnt}</span></Table.Summary.Cell>
+                        <Table.Summary.Cell index={5} align="right"><span style={{ color: '#d46b08' }}>{fmt(cPayable)}</span></Table.Summary.Cell>
+                        <Table.Summary.Cell index={6} align="right"><span style={{ color: '#d46b08' }}>{fmt(cTax)}</span></Table.Summary.Cell>
                         <Table.Summary.Cell index={7} />
                       </Table.Summary.Row>
                     )
