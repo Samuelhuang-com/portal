@@ -268,8 +268,8 @@ def _check_claim(db: Session, base_q) -> list[dict]:
     for o in r03_candidates:
         if o.detail_synced:
             item_total = (
-                db.query(func.sum(ApprovedClaimRequestItem.selected_amount))
-                .filter(ApprovedClaimRequestItem.order_id == o.id)
+                db.query(func.sum(ApprovedClaimRequestItem.proposed_vendor_amount))
+                .filter(ApprovedClaimRequestItem.claim_id == o.id)
                 .scalar()
             )
             if item_total and item_total > 0:
