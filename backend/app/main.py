@@ -1224,3 +1224,20 @@ app.include_router(
     prefix=f"{API_PREFIX}/settings/menu-config",
     tags=["選單設定"],
 )
+
+# ── 正式環境：serve 前端靜態檔案 + SPA fallback（所有路由之後）─────────────────
+import os as _os
+from fastapi.staticfiles import StaticFiles as _StaticFiles
+from fastapi.responses import FileResponse as _FileResponse
+
+_frontend_dist = _os.path.join(_os.path.dirname(__file__), "..", "..", "frontend", "dist")
+if _os.path.isdir(_frontend_dist):
+    # ① assets 靜態檔案必須在 catch-all 之前 mount，否則 JS/CSS 會被攔截
+    app.mount("/assets", _StaticFiles(directory=_os.path.join(_frontend_dist, "assets")), name="assets")
+
+    # ② SPA catch-all：所有其他路徑都回傳 index.html，讓 React Router 處理
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def spa_fallback(full_path: str):
+        return _FileResponse(_os.path.join(_frontend_dist, "index.html"))
+
+    print(f"[Portal] Frontend static files (SPA mode) served from: {_frontend_dist}")
