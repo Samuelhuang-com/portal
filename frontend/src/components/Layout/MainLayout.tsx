@@ -3,7 +3,7 @@
  * ⚠️  選單文字請勿在此直接修改，統一至 @/constants/navLabels.ts 修改
  * ✅  執行期自訂 label 與排序由 /api/v1/settings/menu-config 動態載入
  */
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Layout, Menu, Typography, Avatar, Dropdown, Space, theme, Skeleton } from 'antd'
 import {
   ApartmentOutlined,
@@ -37,6 +37,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { SITE_TITLE, NAV_GROUP, NAV_PAGE } from '@/constants/navLabels'
 import { fetchMenuConfig, MenuConfigItem } from '@/api/menuConfig'
 import { resolveIcon } from '@/constants/iconMap'
+import { authApi } from '@/api/auth'
 
 // ── 內部型別：帶 permissionKey 的 menu item ───────────────────────────────────
 interface MenuItem {
@@ -321,14 +322,16 @@ export function applyMenuConfig(base: any[], configs: MenuConfigItem[]): any[] {
     }
   })
 
-  // 建立 base 項目的 label / icon 對照表，讓 buildItem 可查回原始標籤
+  // 建立 base 項目的 label / icon / permissionKey 對照表，讓 buildItem 可查回原始標籤與權限
   // 解決：base 模組被移到三階時，label 顯示 key（如 /mall/dashboard）的問題
+  // 同時保留 permissionKey，避免 reparented 項目因 buildItem 不帶 permissionKey
+  // 而被 filterMenuByPermissions 誤判為公開（hasPermission(undefined) → true）
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const baseItemInfo = new Map<string, { label: any; icon?: any }>()
+  const baseItemInfo = new Map<string, { label: any; icon?: any; permissionKey?: string | null }>()
   base.forEach((p: any) => {
-    baseItemInfo.set(p.key, { label: p.label, icon: p.icon })
+    baseItemInfo.set(p.key, { label: p.label, icon: p.icon, permissionKey: p.permissionKey })
     ;(p.children ?? []).forEach((c: any) => {
-      baseItemInfo.set(c.key, { label: c.label, icon: c.icon })
+      baseItemInfo.set(c.key, { label: c.label, icon: c.icon, permissionKey: c.permissionKey })
     })
   })
 
@@ -348,6 +351,8 @@ export function applyMenuConfig(base: any[], configs: MenuConfigItem[]): any[] {
       label: cfg.custom_label || baseInfo?.label || cfg.menu_key,
       icon: icon !== undefined ? icon : null,
       ...(grandchildren.length > 0 ? { children: grandchildren } : {}),
+      // 保留 base 原始 permissionKey，讓 filterMenuByPermissions 可在 DB permission_key=null 時 fallback
+      ...(baseInfo?.permissionKey !== undefined ? { permissionKey: baseInfo.permissionKey } : {}),
     }
   }
 
@@ -568,9 +573,39 @@ export default function MainLayout() {
   const [collapsed, setCollapsed] = useState(false)
   const navigate = useNavigate()
   const location = useLocation()
-  const logout = useAuthStore((s) => s.logout)
-  const user = useAuthStore((s) => s.user)
+  const logout  = useAuthStore((s) => s.logout)
+  const setUser = useAuthStore((s) => s.setUser)
+  const user    = useAuthStore((s) => s.user)
   const { token: designToken } = theme.useToken()
+
+  // 頁面重新整理後 permissions 為 undefined（JWT 不含 permissions），
+  // 呼叫 /me 補回權限，讓非 system_admin 使用者的選單與守衛正常運作。
+  // /me 成功後設 permissionsReadyRef.current = true，讓 loadMenuConfig 可以關掉 Skeleton。
+  useEffect(() => {
+    if (user?.id && user.permissions === undefined) {
+      authApi.me().then((res) => {
+        const me = res.data as any
+        permissionsReadyRef.current = true   // 標記 permissions 已就緒
+        setUser({
+          id:          me.id          || user.id,
+          email:       me.email       || user.email,
+          name:        me.full_name   || user.name || '',
+          full_name:   me.full_name   || '',
+          tenant_id:   me.tenant_id   || '',
+          tenant_name: me.tenant_name || '',
+          roles:       Array.isArray(me.roles)       ? me.roles       : user.roles,
+          permissions: Array.isArray(me.permissions) ? me.permissions : [],
+          is_active:   me.is_active ?? true,
+        })
+      }).catch(() => {
+        // token 已過期時 PrivateRoute 會處理登出
+        // 呼叫失敗也要解鎖 Skeleton，否則 loading 永遠不結束
+        permissionsReadyRef.current = true
+        setMenuLoading(false)
+      })
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // ── 系統設定選單僅限 system_admin 可見 ────────────────────────────────────
   const isSystemAdmin = !!(user?.roles?.includes('system_admin'))
@@ -587,47 +622,78 @@ export default function MainLayout() {
     [isSystemAdmin]
   )
 
-  // menuLoading：true = 無快取，正在等待 API 回應（顯示 Skeleton）
-  //              false = 已有快取或 API 已完成（顯示正確選單）
-  // 直接從 token 解出 roles/permissions，不依賴非同步的 user state。
+  // menuLoading：true  = 正在等待 API 回應（顯示 Skeleton）
+  //              false = 已取得正確選單（顯示正確選單）
+  // - system_admin：有快取時可立即顯示，無快取才顯示 Skeleton
+  // - 非 admin、剛登入（permissions 已在 store）：loadMenuConfig 跑完即可關掉
+  // - 非 admin、重新整理（permissions = undefined）：必須等 /me 回來再關
   const [menuLoading, setMenuLoading] = useState<boolean>(() => {
-    return !localStorage.getItem(MENU_CONFIG_CACHE_KEY)
+    try {
+      const token = localStorage.getItem('access_token')
+      if (!token) return true
+      const payload = JSON.parse(atob(token.split('.')[1]))
+      const isAdmin = Array.isArray(payload.roles) && payload.roles.includes('system_admin')
+      if (isAdmin) return !localStorage.getItem(MENU_CONFIG_CACHE_KEY)
+      // 非 admin：一律顯示 Skeleton（等 loadMenuConfig 完成後關掉）
+      // 但若 permissions 已在 store（剛登入），permissionsReadyRef 已為 true，
+      // 因此 loadMenuConfig 完成後就可以直接關掉。
+      return true
+    } catch {
+      return true
+    }
   })
 
   // 初始值優先使用 localStorage 快取的 config，使進系統時立即顯示正確選單（無閃爍）。
-  // 無快取時（首次登入）回傳空陣列，由 menuLoading Skeleton 佔位，不顯示靜態 menuItems。
+  // 非 system_admin 使用者：JWT 不含 permissions，無法在 /me 回來前正確 filter，
+  // 因此無快取時一律回傳空陣列，由 menuLoading Skeleton 佔位，等 loadMenuConfig 完成後填入。
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [dynamicMenuItems, setDynamicMenuItems] = useState<any[]>(() => {
     try {
       const token = localStorage.getItem('access_token')
       if (!token) return []
       const payload = JSON.parse(atob(token.split('.')[1]))
-      const ok = Array.isArray(payload.roles) && payload.roles.includes('system_admin')
-      const initPerms: string[] = ok ? ['*'] : (payload.permissions ?? [])
-      const filtered = ok ? menuItems : menuItems.filter((item) => item.key !== 'settings')
+      const isAdmin = Array.isArray(payload.roles) && payload.roles.includes('system_admin')
 
-      // 有快取：立即套用，選單正確出現，無閃爍
       const cached = localStorage.getItem(MENU_CONFIG_CACHE_KEY)
-      if (cached) {
-        const configs = JSON.parse(cached) as MenuConfigItem[]
-        const dbPermMap = new Map<string, string | null>(
-          configs.map((c) => [c.menu_key, c.permission_key])
-        )
-        const applied = configs.length > 0 ? applyMenuConfig(filtered, configs) : filtered
-        return filterMenuByPermissions(applied, initPerms, dbPermMap)
+
+      if (isAdmin) {
+        // system_admin：有 ['*'] 權限，快取可立即套用
+        const filtered = menuItems  // admin 顯示全部（含 settings）
+        if (cached) {
+          const configs = JSON.parse(cached) as MenuConfigItem[]
+          const dbPermMap = new Map<string, string | null>(
+            configs.map((c) => [c.menu_key, c.permission_key])
+          )
+          const applied = configs.length > 0 ? applyMenuConfig(filtered, configs) : filtered
+          return filterMenuByPermissions(applied, ['*'], dbPermMap)
+        }
+        return []
       }
 
-      // 無快取：回傳空陣列，等 API 完成後由 loadMenuConfig 填入
+      // 非 admin：JWT 無 permissions，必須等 /me + loadMenuConfig 完成後才能正確 filter
+      // 不論有無快取，都先回傳空陣列，讓 Skeleton 佔位，避免閃爍一堆不該看到的項目
       return []
     } catch {
       return []
     }
   })
 
+  // 世代計數器：確保只有最新的 loadMenuConfig 呼叫能更新 state（防止 race condition）
+  const menuGenRef = useRef(0)
+
+  // 非 admin 使用者：必須等 /me 回來後才知道真正的 permissions，才能關掉 Skeleton。
+  // 已就緒條件：
+  //   1. system_admin（永遠有 ['*'] 權限，無需等 /me）
+  //   2. 剛登入（login response 已帶回 permissions，user.permissions !== undefined）
+  //   3. /me 成功後由 setUser useEffect 設為 true
+  const permissionsReadyRef = useRef(isSystemAdmin || user?.permissions !== undefined)
+
   // 啟動時拉取 menu config，套用後更新選單並寫入快取
   const loadMenuConfig = useCallback(async () => {
+    const myGen = ++menuGenRef.current
     try {
       const configs = await fetchMenuConfig()
+      if (myGen !== menuGenRef.current) return   // 已有更新的呼叫，丟棄此次結果
       // 成功後寫入快取，供下次進系統立即使用
       try { localStorage.setItem(MENU_CONFIG_CACHE_KEY, JSON.stringify(configs)) } catch { /* quota 滿時靜默略過 */ }
       // 建立 DB permission_key 覆蓋 Map（menu_key → permission_key）
@@ -637,6 +703,7 @@ export default function MainLayout() {
       const applied = configs.length > 0 ? applyMenuConfig(baseItems, configs) : baseItems
       setDynamicMenuItems(filterMenuByPermissions(applied, userPermissions, dbPermMap))
     } catch {
+      if (myGen !== menuGenRef.current) return   // 同上，丟棄過期結果
       // 拉取失敗：嘗試從快取救援；完全無快取才 fallback 靜態 menuItems
       const cached = localStorage.getItem(MENU_CONFIG_CACHE_KEY)
       if (!cached) {
@@ -644,8 +711,11 @@ export default function MainLayout() {
       }
       // 有快取時保持現有 dynamicMenuItems 不動（快取已在 useState 初始化時套用）
     } finally {
-      // API 完成（無論成功或失敗）都結束 loading 狀態，顯示選單
-      setMenuLoading(false)
+      // 非 admin 使用者必須等 permissionsReadyRef 為 true（/me 已回應）才關 Skeleton；
+      // 否則第一次帶著空 userPermissions 跑完就關掉，選單會是空的，閃爍問題復現。
+      if (myGen === menuGenRef.current && permissionsReadyRef.current) {
+        setMenuLoading(false)
+      }
     }
   }, [baseItems, userPermissions])
 
@@ -683,8 +753,9 @@ export default function MainLayout() {
         label: '登出',
         danger: true,
         onClick: () => {
-          // 登出時清除 menu config 快取，防止帳號切換時顯示前一位使用者的選單設定
+          // 登出時清除 menu config 快取與首頁設定，防止帳號切換時殘留前一位使用者的設定
           localStorage.removeItem(MENU_CONFIG_CACHE_KEY)
+          localStorage.removeItem('portal_home_page_route')
           logout()
           navigate('/login')
         },
@@ -798,7 +869,26 @@ export default function MainLayout() {
 
         {/* Page content */}
         <Content style={{ padding: 24, minHeight: 'calc(100vh - 56px)' }}>
-          <Outlet />
+          {/* 權限尚未載入（undefined）→ 等待中，不顯示錯誤 */}
+          {/* 權限已載入但為空（[]）且非 system_admin → 無任何模組授權，顯示提示 */}
+          {!isSystemAdmin && user?.permissions !== undefined && userPermissions.length === 0 ? (
+            <div style={{
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              minHeight: '60vh',
+              gap: 16,
+              color: '#64748b',
+            }}>
+              <div style={{ fontSize: 56 }}>🔐</div>
+              <div style={{ fontSize: 22, fontWeight: 700, color: '#1B3A5C' }}>尚未設定任何功能權限</div>
+              <div style={{ fontSize: 15, color: '#64748b' }}>您的帳號目前沒有任何模組的存取權限</div>
+              <div style={{ fontSize: 14, color: '#94a3b8' }}>請洽系統管理員調整角色權限設定</div>
+            </div>
+          ) : (
+            <Outlet />
+          )}
         </Content>
       </Layout>
     </Layout>

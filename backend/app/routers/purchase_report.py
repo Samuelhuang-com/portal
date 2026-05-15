@@ -35,8 +35,7 @@ from app.models.purchase_request import (
 
 router = APIRouter()
 
-# 開發期間使用 system_admin_only；上線後改為 purchase_report_view
-_PERM = "system_admin_only"
+_PERM = "purchase_report_view"
 
 
 # ─────────────────────────────────────────────────────────────────────────────

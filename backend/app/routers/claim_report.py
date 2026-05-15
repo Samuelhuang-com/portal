@@ -37,7 +37,7 @@ from app.models.claim_request import (
 
 router = APIRouter()
 
-_PERM = "system_admin_only"
+_PERM = "claim_report_view"
 
 
 # ── 工具函式 ──────────────────────────────────────────────────────────────────

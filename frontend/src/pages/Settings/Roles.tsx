@@ -272,18 +272,35 @@ interface PermissionSettingsTabProps {
 }
 
 function PermissionSettingsTab({ roles }: PermissionSettingsTabProps) {
-  const [selectedRole, setSelectedRole] = useState<RoleData | null>(null);
+  // 直接以 roles[0] 初始化，避免 Tabs lazy-mount 造成的閃爍空白
+  const [selectedRole, setSelectedRole] = useState<RoleData | null>(() => roles[0] ?? null);
   const [permDefs, setPermDefs] = useState<PermissionKeyDef[]>([]);
+  const [permDefsLoading, setPermDefsLoading] = useState(true);
   const [checkedKeys, setCheckedKeys] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
 
   // 取得所有 permission key 定義
   useEffect(() => {
-    fetchPermissionKeys().then(setPermDefs).catch(() => {});
+    setPermDefsLoading(true);
+    fetchPermissionKeys()
+      .then((data) => {
+        if (Array.isArray(data)) {
+          setPermDefs(data);
+        } else {
+          console.error('[PermissionSettingsTab] fetchPermissionKeys 回傳非陣列：', data);
+          setPermDefs([]);
+          message.error('載入權限定義時格式異常，請重新整理');
+        }
+      })
+      .catch((err) => {
+        console.error('[PermissionSettingsTab] fetchPermissionKeys 失敗：', err);
+        message.error('無法載入權限定義清單');
+      })
+      .finally(() => setPermDefsLoading(false));
   }, []);
 
-  // 角色清單載入後預設選第一個
+  // 角色清單載入後若尚未選擇則預設選第一個（首次 roles 從空陣列更新進來時）
   useEffect(() => {
     if (roles.length > 0 && !selectedRole) {
       setSelectedRole(roles[0]);
@@ -325,8 +342,9 @@ function PermissionSettingsTab({ roles }: PermissionSettingsTabProps) {
     }
   };
 
-  // 依 group 分組
-  const groups = Array.from(new Set(permDefs.map((d) => d.group)));
+  // 依 group 分組（防禦性：確保 permDefs 是陣列）
+  const safePermDefs = Array.isArray(permDefs) ? permDefs : [];
+  const groups = Array.from(new Set(safePermDefs.map((d) => d.group)));
   const isSystemAdmin = selectedRole?.name === 'system_admin';
 
   return (
@@ -418,7 +436,7 @@ function PermissionSettingsTab({ roles }: PermissionSettingsTabProps) {
             showIcon
           />
         ) : (
-          <Spin spinning={loading}>
+          <Spin spinning={loading || permDefsLoading}>
             <Card
               bordered={false}
               style={{ boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}
@@ -444,7 +462,7 @@ function PermissionSettingsTab({ roles }: PermissionSettingsTabProps) {
               }
             >
               {groups.map((group) => {
-                const groupDefs = permDefs.filter((d) => d.group === group);
+                const groupDefs = safePermDefs.filter((d) => d.group === group);
                 const groupKeys = groupDefs.map((d) => d.key);
                 const allChecked = groupKeys.every((k) => checkedKeys.has(k));
                 const someChecked = groupKeys.some((k) => checkedKeys.has(k));

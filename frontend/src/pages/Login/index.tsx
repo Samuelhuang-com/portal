@@ -50,7 +50,8 @@ export default function LoginPage() {
         permissions: data.user?.permissions || [],
         is_active:   data.user?.is_active   ?? true,
       })
-      navigate(localStorage.getItem('portal_home_page_route') || '/dashboard')
+      // 導向 / 讓 HomeRedirect 依使用者權限決定目標頁面，避免非 admin 帳號被強制送到 /dashboard
+      navigate('/')
     } catch (err: any) {
       message.error({ content: err.message || '登入失敗，請稍後再試', duration: 4 })
     } finally {

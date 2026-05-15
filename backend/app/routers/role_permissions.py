@@ -72,6 +72,8 @@ PERMISSION_DEFINITIONS = [
     # ── 採購管理（樂群）────────────────────────────────────────────────────
     {"key": "purchase_report_view",   "label": "請購單報表：查看",   "group": "採購管理"},
     {"key": "purchase_report_manage", "label": "請購單報表：管理",   "group": "採購管理"},
+    {"key": "claim_report_view",      "label": "請款單報表：查看",   "group": "採購管理"},
+    {"key": "claim_report_manage",    "label": "請款單報表：管理",   "group": "採購管理"},
     # ── 採購管理（日曜）────────────────────────────────────────────────────
     {"key": "nichiyo_purchase.view",   "label": "日曜請購月報表：查看",   "group": "採購管理"},
     {"key": "nichiyo_purchase.export", "label": "日曜請購月報表：匯出",   "group": "採購管理"},

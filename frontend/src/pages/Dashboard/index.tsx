@@ -1154,16 +1154,16 @@ export default function DashboardPage() {
   const rm  = hotelKpi?.room_maintenance
   const sys = hotelKpi?.system
 
-  const mallRate  = mallData?.inspection.completion_rate  ?? 0
+  const mallRate  = mallData?.inspection?.completion_rate  ?? 0
   const secRate   = secData?.completion_rate_all          ?? 0
   const hotelRate = rm?.completion_rate                   ?? 0
 
   // 全域待關注：商場異常 + 商場PM逾期 + 保全異常 + 客房未完成 + 工務未結案 + 預算超支/即將超支
-  const mallAbnormal  = (mallData?.inspection.abnormal_items ?? 0) + (mallData?.pm.overdue_items ?? 0)
+  const mallAbnormal  = (mallData?.inspection?.abnormal_items ?? 0) + (mallData?.pm?.overdue_items ?? 0)
   const secAbnormal   = secData?.abnormal_items_all ?? 0
   const hotelPending  = rm?.total_incomplete ?? 0
   const repairPending = (luqunData?.kpi?.uncompleted ?? 0) + (dazhiData?.kpi?.uncompleted ?? 0)
-  const budgetAlert   = (budgetData?.summary.overrun_count ?? 0) + (budgetData?.summary.near_overrun_count ?? 0)
+  const budgetAlert   = (budgetData?.summary?.overrun_count ?? 0) + (budgetData?.summary?.near_overrun_count ?? 0)
   const totalAlerts   = mallAbnormal + secAbnormal + hotelPending + repairPending + budgetAlert
   const alertColor    = totalAlerts > 0 ? C.danger : C.success
 

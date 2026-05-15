@@ -16,7 +16,7 @@ function isJwtExpired(token: string | null): boolean {
   }
 }
 
-import MainLayout          from '@/components/Layout/MainLayout'
+import MainLayout from '@/components/Layout/MainLayout'
 import LoginPage           from '@/pages/Login'
 import DashboardPage       from '@/pages/Dashboard'
 import RoomMaintenancePage       from '@/pages/RoomMaintenance'
@@ -112,11 +112,62 @@ import BudgetAccountCodesPage          from '@/pages/Budget/Masters/AccountCodes
 import BudgetItemsPage                 from '@/pages/Budget/Masters/BudgetItems'
 import BudgetMappingsPage              from '@/pages/Budget/Mappings'
 
-// ── 首頁重定向（讀取 menu-config 設定，fallback 到 /dashboard）─────────────────
+// ── 首頁重定向（讀取 menu-config 設定，fallback 到第一個有權限的 menu 項目）──────
 export const HOME_PAGE_STORAGE_KEY = 'portal_home_page_route'
+
+/**
+ * 依 permission_key 優先序對應第一個可進入的路由。
+ * 純資料，不含任何 JSX，可安全在 module 層級使用。
+ */
+const PERM_DEFAULT_ROUTES: { key: string; route: string }[] = [
+  { key: 'decision_cockpit_view',             route: '/decision-cockpit' },
+  { key: 'hotel_view',                        route: '/hotel/overview' },
+  { key: 'mall_view',                         route: '/mall/overview' },
+  { key: 'purchase_report_view',              route: '/purchase-report/monthly' },
+  { key: 'claim_report_view',                 route: '/claim-report/monthly' },
+  { key: 'nichiyo_purchase.view',             route: '/nichiyo-purchase-report/monthly' },
+  { key: 'nichiyo_claim.view',                route: '/nichiyo-claim-report/monthly' },
+  { key: 'budget_view',                       route: '/budget/dashboard' },
+  { key: 'calendar_view',                     route: '/calendar' },
+  { key: 'luqun_repair_view',                 route: '/luqun-repair/dashboard' },
+  { key: 'dazhi_repair_view',                 route: '/dazhi-repair/dashboard' },
+  { key: 'security_view',                     route: '/security/patrol' },
+  { key: 'approvals_view',                    route: '/approvals/list' },
+  { key: 'memos_view',                        route: '/memos/list' },
+  { key: 'exec_dashboard_view',               route: '/exec-dashboard' },
+  { key: 'work_category_analysis_view',       route: '/work-category-analysis' },
+]
+
 function HomeRedirect() {
-  const route = localStorage.getItem(HOME_PAGE_STORAGE_KEY) || '/dashboard'
-  return <Navigate to={route} replace />
+  const user = useAuthStore((s) => s.user)
+  const isSystemAdmin = !!(user?.roles?.includes('system_admin'))
+
+  // permissions 尚未從 /me 載入時等待（避免用空權限計算首頁）
+  if (!isSystemAdmin && user?.permissions === undefined) {
+    return null   // 等待 /me 回應，MainLayout 的 Skeleton 佔位
+  }
+
+  const stored = localStorage.getItem(HOME_PAGE_STORAGE_KEY)
+
+  // system_admin：stored 或 /dashboard
+  if (isSystemAdmin) {
+    return <Navigate to={stored ?? '/dashboard'} replace />
+  }
+
+  // 非 admin：先算出此使用者可以進入的路由清單
+  const perms = user?.permissions ?? []
+  const hasWildcard = perms.includes('*')
+  const validRoutes = PERM_DEFAULT_ROUTES
+    .filter(({ key }) => hasWildcard || perms.includes(key))
+    .map(({ route }) => route)
+
+  // stored route 只有在使用者有權限時才採用（避免跨帳號殘留的首頁設定把人導到沒權限的頁面）
+  if (stored && validRoutes.some((r) => stored === r || stored.startsWith(r + '/'))) {
+    return <Navigate to={stored} replace />
+  }
+
+  // 依優先序選第一個有權限的 route；若真的什麼都沒有，進 /dashboard（no-permission screen 會顯示）
+  return <Navigate to={validRoutes[0] ?? '/dashboard'} replace />
 }
 
 // ── Route Guards ──────────────────────────────────────────────────────────────
@@ -150,7 +201,16 @@ function PermissionGuard({
   permissionKey: string
   children: React.ReactNode
 }) {
+  const user          = useAuthStore((s) => s.user)
   const hasPermission = useAuthStore((s) => s.hasPermission)
+
+  // permissions 尚未從 /me 載入（undefined）時先等待，避免誤顯示 403
+  // system_admin 永遠不需等（roles 已在 JWT 裡）
+  const isSystemAdmin = !!(user?.roles?.includes('system_admin'))
+  if (!isSystemAdmin && user?.permissions === undefined) {
+    return null  // MainLayout 的 Skeleton 佔位，等 /me 回應後再判斷
+  }
+
   if (!hasPermission(permissionKey)) {
     return (
       <div
@@ -280,7 +340,7 @@ export default function AppRouter() {
           <Route
             path="monthly"
             element={
-              <PermissionGuard permissionKey="system_admin_only">
+              <PermissionGuard permissionKey="purchase_report_view">
                 <PurchaseReportPage />
               </PermissionGuard>
             }
@@ -293,7 +353,7 @@ export default function AppRouter() {
           <Route
             path="monthly"
             element={
-              <PermissionGuard permissionKey="system_admin_only">
+              <PermissionGuard permissionKey="claim_report_view">
                 <ClaimReportPage />
               </PermissionGuard>
             }
