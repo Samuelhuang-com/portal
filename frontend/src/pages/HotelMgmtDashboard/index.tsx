@@ -173,8 +173,8 @@ function adaptIHG(stats: IHGStats): NormalizedSource {
     completion_rate: stats.completion_rate,
     abnormal_count:  stats.abnormal,
     overdue_count:   0,
-    status_label:    `完成率 ${stats.completion_rate.toFixed(1)}%`,
-    is_ok:           stats.completion_rate >= 70,
+    status_label:    `完成率 ${(stats.completion_rate ?? 0).toFixed(1)}%`,
+    is_ok:           (stats.completion_rate ?? 0) >= 70,
   }
 }
 
@@ -191,8 +191,8 @@ function adaptHotelDI(summary: HotelDIMonthlyDashboard): NormalizedSource {
     completion_rate: rate,
     abnormal_count:  summary.abnormal_items,
     overdue_count:   0,
-    status_label:    `完成率 ${rate.toFixed(1)}%`,
-    is_ok:           rate >= 80,
+    status_label:    `完成率 ${(rate ?? 0).toFixed(1)}%`,
+    is_ok:           (rate ?? 0) >= 80,
   }
 }
 
@@ -208,8 +208,8 @@ function adaptSecurity(summary: SecurityMonthlyDashboard): NormalizedSource {
     completion_rate: summary.completion_rate,
     abnormal_count:  summary.abnormal_items,
     overdue_count:   0,
-    status_label:    `完成率 ${summary.completion_rate.toFixed(1)}%`,
-    is_ok:           summary.completion_rate >= 80,
+    status_label:    `完成率 ${(summary.completion_rate ?? 0).toFixed(1)}%`,
+    is_ok:           (summary.completion_rate ?? 0) >= 80,
   }
 }
 

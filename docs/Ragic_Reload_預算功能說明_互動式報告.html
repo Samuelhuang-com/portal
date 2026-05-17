@@ -1,0 +1,856 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Ragic 請購單 Reload 預算功能說明</title>
+    <style>
+      :root {
+        --bg: #f7f8fb;
+        --panel: #ffffff;
+        --text: #1f2937;
+        --muted: #667085;
+        --line: #e5e7eb;
+        --brand: #2563eb;
+        --brand-soft: #eff6ff;
+        --ok: #047857;
+        --ok-soft: #ecfdf5;
+        --warn: #b45309;
+        --warn-soft: #fffbeb;
+        --danger: #b91c1c;
+        --danger-soft: #fef2f2;
+        --shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+        --radius: 18px;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html {
+        scroll-behavior: smooth;
+      }
+      body {
+        margin: 0;
+        font-family:
+          "Microsoft JhengHei", "Noto Sans TC", "Segoe UI", Arial, sans-serif;
+        color: var(--text);
+        background:
+          radial-gradient(circle at 20% 0%, #e0ecff 0, transparent 30%),
+          radial-gradient(circle at 90% 10%, #dcfce7 0, transparent 26%),
+          var(--bg);
+        line-height: 1.75;
+      }
+      .layout {
+        display: grid;
+        grid-template-columns: 280px minmax(0, 1fr);
+        gap: 24px;
+        max-width: 1320px;
+        margin: 0 auto;
+        padding: 24px;
+      }
+      aside {
+        position: sticky;
+        top: 20px;
+        height: calc(100vh - 40px);
+        background: rgba(255, 255, 255, 0.86);
+        backdrop-filter: blur(14px);
+        border: 1px solid rgba(229, 231, 235, 0.9);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow);
+        padding: 18px;
+        overflow: auto;
+      }
+      main {
+        min-width: 0;
+      }
+      .hero {
+        background: linear-gradient(135deg, #1e40af, #2563eb 55%, #0f766e);
+        color: white;
+        border-radius: 26px;
+        padding: 34px;
+        box-shadow: var(--shadow);
+        position: relative;
+        overflow: hidden;
+      }
+      .hero:after {
+        content: "";
+        position: absolute;
+        right: -80px;
+        top: -90px;
+        width: 260px;
+        height: 260px;
+        background: rgba(255, 255, 255, 0.14);
+        border-radius: 50%;
+      }
+      h1 {
+        font-size: 34px;
+        line-height: 1.2;
+        margin: 0 0 12px;
+      }
+      h2 {
+        font-size: 25px;
+        margin: 0 0 14px;
+      }
+      h3 {
+        font-size: 19px;
+        margin: 0 0 10px;
+      }
+      p {
+        margin: 8px 0;
+      }
+      .subtitle {
+        font-size: 17px;
+        color: rgba(255, 255, 255, 0.9);
+        max-width: 850px;
+      }
+      .badge-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 18px;
+      }
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 7px 12px;
+        border-radius: 999px;
+        font-weight: 700;
+        font-size: 13px;
+        background: rgba(255, 255, 255, 0.18);
+        border: 1px solid rgba(255, 255, 255, 0.28);
+      }
+      .section {
+        margin-top: 22px;
+        background: rgba(255, 255, 255, 0.92);
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow);
+        padding: 24px;
+      }
+      .nav-title {
+        font-weight: 900;
+        color: #111827;
+        font-size: 16px;
+        margin-bottom: 12px;
+      }
+      .nav a {
+        display: block;
+        text-decoration: none;
+        color: #344054;
+        padding: 9px 10px;
+        border-radius: 12px;
+        font-size: 14px;
+        margin: 2px 0;
+      }
+      .nav a:hover,
+      .nav a.active {
+        background: var(--brand-soft);
+        color: var(--brand);
+        font-weight: 800;
+      }
+      .toolbox {
+        display: grid;
+        gap: 10px;
+        margin-bottom: 18px;
+      }
+      input[type="search"] {
+        width: 100%;
+        padding: 12px 14px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        font-size: 15px;
+        outline: none;
+        background: white;
+      }
+      input[type="search"]:focus {
+        border-color: var(--brand);
+        box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+      }
+      .btn {
+        border: none;
+        border-radius: 13px;
+        padding: 10px 12px;
+        background: var(--brand);
+        color: white;
+        font-weight: 800;
+        cursor: pointer;
+        font-size: 14px;
+      }
+      .btn.secondary {
+        background: #f3f4f6;
+        color: #111827;
+        border: 1px solid var(--line);
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 14px;
+      }
+      .card {
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        padding: 16px;
+        background: white;
+      }
+      .card.ok {
+        background: var(--ok-soft);
+        border-color: #bbf7d0;
+      }
+      .card.warn {
+        background: var(--warn-soft);
+        border-color: #fde68a;
+      }
+      .card.danger {
+        background: var(--danger-soft);
+        border-color: #fecaca;
+      }
+      .kicker {
+        font-size: 13px;
+        color: var(--muted);
+        font-weight: 800;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        margin-bottom: 6px;
+      }
+      .flow {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 12px;
+        counter-reset: step;
+      }
+      .step {
+        position: relative;
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        padding: 16px 14px 14px;
+        background: white;
+        min-height: 124px;
+      }
+      .step:before {
+        counter-increment: step;
+        content: counter(step);
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 30px;
+        height: 30px;
+        border-radius: 999px;
+        background: var(--brand);
+        color: white;
+        font-weight: 900;
+        margin-bottom: 8px;
+      }
+      .tabs {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 14px;
+      }
+      .tab {
+        border: 1px solid var(--line);
+        background: white;
+        color: #344054;
+        padding: 9px 12px;
+        border-radius: 999px;
+        cursor: pointer;
+        font-weight: 800;
+      }
+      .tab.active {
+        background: var(--brand);
+        color: white;
+        border-color: var(--brand);
+      }
+      .tab-panel {
+        display: none;
+      }
+      .tab-panel.active {
+        display: block;
+      }
+      details {
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        padding: 0;
+        background: white;
+        margin: 10px 0;
+        overflow: hidden;
+      }
+      summary {
+        cursor: pointer;
+        padding: 14px 16px;
+        font-weight: 900;
+        list-style: none;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      summary::-webkit-details-marker {
+        display: none;
+      }
+      summary:after {
+        content: "＋";
+        color: var(--brand);
+        font-weight: 900;
+      }
+      details[open] summary:after {
+        content: "－";
+      }
+      .detail-body {
+        border-top: 1px solid var(--line);
+        padding: 14px 16px 16px;
+        color: #344054;
+      }
+      code,
+      .code {
+        font-family: Consolas, "Courier New", monospace;
+        background: #f3f4f6;
+        border: 1px solid #e5e7eb;
+        padding: 2px 6px;
+        border-radius: 8px;
+      }
+      pre {
+        white-space: pre-wrap;
+        word-break: break-word;
+        background: #0f172a;
+        color: #e5e7eb;
+        padding: 16px;
+        border-radius: 16px;
+        overflow: auto;
+        line-height: 1.65;
+        font-size: 14px;
+      }
+      table {
+        width: 100%;
+        border-collapse: separate;
+        border-spacing: 0;
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        background: white;
+      }
+      th,
+      td {
+        padding: 12px 14px;
+        border-bottom: 1px solid var(--line);
+        text-align: left;
+        vertical-align: top;
+      }
+      th {
+        background: #f9fafb;
+        font-weight: 900;
+      }
+      tr:last-child td {
+        border-bottom: none;
+      }
+      .checklist label {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        padding: 11px 12px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        margin: 8px 0;
+        background: white;
+      }
+      .checklist input {
+        margin-top: 6px;
+        transform: scale(1.15);
+      }
+      .notice {
+        padding: 14px 16px;
+        border-radius: 16px;
+        border: 1px solid;
+        margin: 12px 0;
+      }
+      .notice.ok {
+        background: var(--ok-soft);
+        border-color: #bbf7d0;
+        color: #065f46;
+      }
+      .notice.warn {
+        background: var(--warn-soft);
+        border-color: #fde68a;
+        color: #92400e;
+      }
+      .notice.danger {
+        background: var(--danger-soft);
+        border-color: #fecaca;
+        color: #991b1b;
+      }
+      .highlight {
+        outline: 3px solid rgba(37, 99, 235, 0.24);
+        background: #eff6ff !important;
+      }
+      .footer {
+        color: var(--muted);
+        text-align: center;
+        padding: 26px 0 10px;
+        font-size: 13px;
+      }
+      .print-only {
+        display: none;
+      }
+      @media (max-width: 980px) {
+        .layout {
+          grid-template-columns: 1fr;
+          padding: 14px;
+        }
+        aside {
+          position: relative;
+          height: auto;
+          top: 0;
+        }
+        .grid,
+        .flow {
+          grid-template-columns: 1fr;
+        }
+        .hero {
+          padding: 24px;
+        }
+        h1 {
+          font-size: 28px;
+        }
+      }
+      @media print {
+        body {
+          background: white;
+        }
+        aside,
+        .toolbox,
+        .btn,
+        .tabs {
+          display: none !important;
+        }
+        .layout {
+          display: block;
+          max-width: none;
+          padding: 0;
+        }
+        .section,
+        .hero {
+          box-shadow: none;
+          border: 1px solid #ddd;
+          break-inside: avoid;
+        }
+        .hero {
+          color: #111;
+          background: white;
+        }
+        .subtitle {
+          color: #333;
+        }
+        details {
+          break-inside: avoid;
+        }
+        details .detail-body {
+          display: block;
+        }
+        .print-only {
+          display: block;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="layout">
+      <aside>
+        <div class="nav-title">📌 報告導覽</div>
+        <div class="toolbox">
+          <input
+            id="searchBox"
+            type="search"
+            placeholder="搜尋：部門、會科、月份、錯誤訊息..."
+          />
+          <button class="btn secondary" onclick="expandAll()">展開全部</button>
+          <button class="btn secondary" onclick="collapseAll()">
+            收合全部
+          </button>
+          <button class="btn" onclick="window.print()">列印 / 另存 PDF</button>
+        </div>
+        <nav class="nav" id="nav">
+          <a href="#purpose">一、功能目的</a>
+          <a href="#logic">二、執行邏輯</a>
+          <a href="#conditions">三、必要條件</a>
+          <a href="#maintenance">四、預算管理維護</a>
+          <a href="#errors">五、常見錯誤</a>
+          <a href="#workflow">六、使用流程</a>
+          <a href="#checklist">七、上線檢查</a>
+          <a href="#summary">八、簡短版</a>
+        </nav>
+      </aside>
+
+      <main>
+        <section class="hero">
+          <h1>Ragic 請購單「Reload 預算」功能說明</h1>
+          <p class="subtitle">
+            用於報告、教育訓練與跨部門討論：說明請購單如何依「部門 + 會科 +
+            預算取用月份」自動從預算管理表單抓取預算金額，並回填至請購單「預算」欄位。
+          </p>
+          <div class="badge-row">
+            <span class="badge">🔄 Reload 預算</span>
+            <span class="badge">📊 預算管理連動</span>
+            <span class="badge">✅ 部門 + 會科比對</span>
+            <span class="badge">🗓️ 支援指定月份</span>
+          </div>
+        </section>
+
+        <section class="section" id="purpose">
+          <div class="kicker">Purpose</div>
+          <h2>一、功能目的</h2>
+          <div class="grid">
+            <div class="card ok">
+              <h3>🎯 自動帶入預算</h3>
+              <p>
+                使用者填寫請購單後，系統依條件到「預算管理」表單抓取對應月份預算。
+              </p>
+            </div>
+            <div class="card">
+              <h3>🔍 降低人工查表</h3>
+              <p>避免使用者手動查 Excel 或手動輸入預算，降低錯誤與溝通成本。</p>
+            </div>
+            <div class="card warn">
+              <h3>🧭 支援前月預算</h3>
+              <p>
+                若 4
+                月或更早月份預算尚未使用，可由「預算取用月份」指定來源月份。
+              </p>
+            </div>
+          </div>
+          <div class="notice ok">
+            核心比對條件：<span class="code">請購單.部門</span> +
+            <span class="code">請購單.會科</span> +
+            <span class="code">預算取用月份</span>
+          </div>
+        </section>
+
+        <section class="section" id="logic">
+          <div class="kicker">Logic</div>
+          <h2>二、功能執行邏輯</h2>
+          <div class="flow">
+            <div class="step">
+              <h3>讀取請購單</h3>
+              <p>取得編號、部門、會科與預算取用月份。</p>
+            </div>
+            <div class="step">
+              <h3>查詢預算管理</h3>
+              <p>依部門與會計科目比對預算管理資料。</p>
+            </div>
+            <div class="step">
+              <h3>取得月份金額</h3>
+              <p>依選擇月份抓 1 月至 12 月對應欄位。</p>
+            </div>
+            <div class="step">
+              <h3>回填預算欄位</h3>
+              <p>將金額寫回請購單「預算」欄位並顯示結果。</p>
+            </div>
+          </div>
+          <pre>
+請購單：部門 + 會科 + 預算取用月份
+        ↓
+預算管理：部門 + 會計科目 + 對應月份欄位
+        ↓
+回填：請購單「預算」欄位</pre
+          >
+        </section>
+
+        <section class="section" id="conditions">
+          <div class="kicker">Required Conditions</div>
+          <h2>三、請購單填寫必要條件</h2>
+
+          <details open>
+            <summary>1. 部門必須選擇正確</summary>
+            <div class="detail-body">
+              <p>請購單上的「部門」必須與「預算管理」中的部門名稱一致。</p>
+              <table>
+                <tr>
+                  <th>正確範例</th>
+                  <th>可能失敗範例</th>
+                </tr>
+                <tr>
+                  <td>管理</td>
+                  <td>管理部、管理課、管理部門</td>
+                </tr>
+              </table>
+            </div>
+          </details>
+
+          <details open>
+            <summary>2. 會科必須與預算管理完全一致</summary>
+            <div class="detail-body">
+              <p>請購單「會科 / 科目」必須與預算管理「會計科目」完全一致。</p>
+              <table>
+                <tr>
+                  <th>正確</th>
+                  <th>錯誤或可能比對不到</th>
+                </tr>
+                <tr>
+                  <td>清潔費用品</td>
+                  <td>清潔用品費、清潔費、清潔用品</td>
+                </tr>
+              </table>
+            </div>
+          </details>
+
+          <details>
+            <summary>3. 預算取用月份要先確認</summary>
+            <div class="detail-body">
+              <p>
+                若目前是 5 月，但 4 月預算尚未使用完，可選擇
+                <span class="code">4月</span> 後再按 Reload 預算。
+              </p>
+              <p>
+                建議選項：本月、上月、1月、2月、3月、4月、5月、6月、7月、8月、9月、10月、11月、12月。
+              </p>
+            </div>
+          </details>
+
+          <details>
+            <summary>4. 新增請購單時需先儲存</summary>
+            <div class="detail-body">
+              <p>
+                Ragic JS Workflow
+                按鈕通常需要針對已存在的資料執行。新增資料尚未儲存時，可能沒有正式
+                record id，按鈕可能不會出現或無法正常執行。
+              </p>
+              <pre>
+新增請購單 → 填寫部門 / 會科 / 月份 → 儲存 → 按 Reload 預算</pre
+              >
+            </div>
+          </details>
+        </section>
+
+        <section class="section" id="maintenance">
+          <div class="kicker">Budget Master Data</div>
+          <h2>四、預算管理資料維護注意事項</h2>
+          <div class="tabs">
+            <button class="tab active" data-tab="tab1">資料一致性</button>
+            <button class="tab" data-tab="tab2">月份金額</button>
+            <button class="tab" data-tab="tab3">異動後處理</button>
+          </div>
+
+          <div class="tab-panel active" id="tab1">
+            <div class="card">
+              <h3>部門與會計科目要統一</h3>
+              <p>
+                建議部門與會計科目都使用固定選單或主檔，不建議自由輸入，以免出現多種名稱造成比對失敗。
+              </p>
+            </div>
+          </div>
+
+          <div class="tab-panel" id="tab2">
+            <div class="card warn">
+              <h3>每月預算欄位應完整維護</h3>
+              <p>
+                1 月至 12 月預算欄位都應維護。若無預算，請填
+                <span class="code">0</span>，不要留空白。
+              </p>
+            </div>
+          </div>
+
+          <div class="tab-panel" id="tab3">
+            <div class="card">
+              <h3>預算資料異動後需重新 Reload</h3>
+              <p>
+                若預算管理資料有調整，既有請購單上的預算欄位不會自動同步，使用者需再次按下
+                Reload 預算。
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <section class="section" id="errors">
+          <div class="kicker">Troubleshooting</div>
+          <h2>五、常見錯誤與原因</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>系統訊息</th>
+                <th>可能原因</th>
+                <th>處理方式</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>找不到符合的預算管理資料</td>
+                <td>部門或會科名稱不一致</td>
+                <td>檢查請購單與預算管理的部門、會科文字</td>
+              </tr>
+              <tr>
+                <td>該月份預算金額為空</td>
+                <td>預算管理該月份沒有填金額</td>
+                <td>補上金額，若無預算請填 0</td>
+              </tr>
+              <tr>
+                <td>請先填寫部門與科目</td>
+                <td>請購單欄位未填完整</td>
+                <td>補填部門與會科</td>
+              </tr>
+              <tr>
+                <td>找不到目前請購單資料</td>
+                <td>資料尚未儲存或 record id 異常</td>
+                <td>先儲存請購單後再執行</td>
+              </tr>
+              <tr>
+                <td>預算取用月份格式錯誤</td>
+                <td>月份欄位值不符合規則</td>
+                <td>請選擇本月、上月或 1月～12月</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section class="section" id="workflow">
+          <div class="kicker">Operation Flow</div>
+          <h2>六、建議使用流程</h2>
+          <div class="grid">
+            <div class="card ok">
+              <h3>一般情境：本月預算</h3>
+              <p>
+                確認部門、會科正確，預算取用月份選「本月」，儲存後按 Reload
+                預算。
+              </p>
+            </div>
+            <div class="card warn">
+              <h3>特殊情境：前月預算</h3>
+              <p>
+                若 4 月預算尚未使用，可選擇 4 月後按 Reload 預算，系統會抓 4
+                月金額。
+              </p>
+            </div>
+            <div class="card">
+              <h3>資料異動：重新載入</h3>
+              <p>預算管理資料修正後，請購單需重新按 Reload 預算才會更新。</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="section" id="checklist">
+          <div class="kicker">Go-Live Checklist</div>
+          <h2>七、上線前檢查清單</h2>
+          <div class="checklist">
+            <label
+              ><input type="checkbox" />
+              請購單「部門」欄位已使用固定選單或統一來源。</label
+            >
+            <label
+              ><input type="checkbox" />
+              請購單「會科」與預算管理「會計科目」命名一致。</label
+            >
+            <label
+              ><input type="checkbox" />
+              請購單已新增「預算取用月份」欄位。</label
+            >
+            <label
+              ><input type="checkbox" /> 預算管理 1 月至 12
+              月欄位已維護，無預算填 0。</label
+            >
+            <label><input type="checkbox" /> 使用者有請購單編輯權限。</label>
+            <label
+              ><input type="checkbox" /> Workflow
+              可讀取預算管理表單資料。</label
+            >
+            <label
+              ><input type="checkbox" />
+              已測試本月、上月、指定月份三種情境。</label
+            >
+            <label
+              ><input type="checkbox" /> 已確認
+              settings/menu-config、settings/roles、settings/ragic-app-directory
+              對應設定。</label
+            >
+          </div>
+        </section>
+
+        <section class="section" id="summary">
+          <div class="kicker">Executive Summary</div>
+          <h2>八、簡短版說明</h2>
+          <div class="notice ok">
+            Reload 預算功能會依請購單的「部門 + 會科 +
+            預算取用月份」到「預算管理」表單查詢對應月份的預算金額，並自動回填至請購單的「預算」欄位。
+          </div>
+          <pre id="copyText">
+使用前請確認：
+1. 請購單部門選擇正確
+2. 請購單會科與預算管理的會計科目完全一致
+3. 預算管理已建立對應部門與會科
+4. 對應月份已有預算金額，若無預算請填 0
+5. 新增請購單需先儲存後再執行 Reload 預算
+6. 若要使用前月或指定月份預算，請先選擇「預算取用月份」</pre
+          >
+          <button class="btn" onclick="copySummary()">複製簡短版說明</button>
+        </section>
+
+        <div class="footer">
+          Ragic Reload
+          預算功能說明｜適用於請購單、預算管理、跨部門教育訓練與系統導入討論
+        </div>
+      </main>
+    </div>
+
+    <script>
+      const tabs = document.querySelectorAll(".tab");
+      tabs.forEach((btn) => {
+        btn.addEventListener("click", () => {
+          tabs.forEach((b) => b.classList.remove("active"));
+          document
+            .querySelectorAll(".tab-panel")
+            .forEach((p) => p.classList.remove("active"));
+          btn.classList.add("active");
+          document.getElementById(btn.dataset.tab).classList.add("active");
+        });
+      });
+
+      function expandAll() {
+        document.querySelectorAll("details").forEach((d) => (d.open = true));
+      }
+      function collapseAll() {
+        document.querySelectorAll("details").forEach((d) => (d.open = false));
+      }
+      function copySummary() {
+        const text = document.getElementById("copyText").innerText;
+        navigator.clipboard
+          .writeText(text)
+          .then(() => {
+            alert("已複製簡短版說明");
+          })
+          .catch(() => {
+            alert("複製失敗，請手動選取文字");
+          });
+      }
+
+      const searchBox = document.getElementById("searchBox");
+      searchBox.addEventListener("input", () => {
+        const q = searchBox.value.trim();
+        document
+          .querySelectorAll(".highlight")
+          .forEach((el) => el.classList.remove("highlight"));
+        if (!q) return;
+
+        const blocks = document.querySelectorAll(
+          ".section, details, .card, tr",
+        );
+        blocks.forEach((el) => {
+          if (el.innerText && el.innerText.includes(q)) {
+            el.classList.add("highlight");
+            const parentDetails = el.closest("details");
+            if (parentDetails) parentDetails.open = true;
+          }
+        });
+      });
+
+      const navLinks = document.querySelectorAll(".nav a");
+      const sections = [...document.querySelectorAll("main .section")];
+      window.addEventListener("scroll", () => {
+        let current = "";
+        sections.forEach((sec) => {
+          if (window.scrollY >= sec.offsetTop - 140) current = sec.id;
+        });
+        navLinks.forEach((a) => {
+          a.classList.toggle(
+            "active",
+            a.getAttribute("href") === "#" + current,
+          );
+        });
+      });
+    </script>
+  </body>
+</html>

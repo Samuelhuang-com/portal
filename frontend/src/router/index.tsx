@@ -131,7 +131,7 @@ const PERM_DEFAULT_ROUTES: { key: string; route: string }[] = [
   { key: 'calendar_view',                     route: '/calendar' },
   { key: 'luqun_repair_view',                 route: '/luqun-repair/dashboard' },
   { key: 'dazhi_repair_view',                 route: '/dazhi-repair/dashboard' },
-  { key: 'security_view',                     route: '/security/patrol' },
+  { key: 'security_view',                     route: '/security/dashboard' },
   { key: 'approvals_view',                    route: '/approvals/list' },
   { key: 'memos_view',                        route: '/memos/list' },
   { key: 'exec_dashboard_view',               route: '/exec-dashboard' },
