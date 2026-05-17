@@ -46,6 +46,7 @@ import RagicAppDirectoryPage from '@/pages/Settings/RagicAppDirectory'
 import MenuConfigPage        from '@/pages/Settings/MenuConfig'
 import EmployeeManualExportPage from '@/pages/Settings/EmployeeManualExport'
 import KnowledgeGraphPage        from '@/pages/Settings/KnowledgeGraph'
+import StaticPagesPage           from '@/pages/Settings/StaticPages'
 import ApprovalListPage   from '@/pages/Approvals/List'
 import ApprovalNewPage    from '@/pages/Approvals/New'
 import ApprovalDetailPage from '@/pages/Approvals/Detail'
@@ -498,6 +499,11 @@ export default function AppRouter() {
           <Route path="menu-config" element={
             <PermissionGuard permissionKey="settings_menu_manage">
               <MenuConfigPage />
+            </PermissionGuard>
+          } />
+          <Route path="static-pages" element={
+            <PermissionGuard permissionKey="settings_menu_manage">
+              <StaticPagesPage />
             </PermissionGuard>
           } />
           <Route path="employee-manual-export" element={

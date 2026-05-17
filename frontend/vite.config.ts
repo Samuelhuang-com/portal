@@ -21,6 +21,10 @@ export default defineConfig({
         target: 'http://127.0.0.1:8000',   // 知識圖譜靜態輸出目錄
         changeOrigin: true,
       },
+      '/docs-static': {
+        target: 'http://127.0.0.1:8000',   // portal/docs/ 靜態說明文件
+        changeOrigin: true,
+      },
     },
   },
   preview: {
@@ -31,6 +35,10 @@ export default defineConfig({
         changeOrigin: true,
       },
       '/kg-files': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true,
+      },
+      '/docs-static': {
         target: 'http://127.0.0.1:8000',
         changeOrigin: true,
       },

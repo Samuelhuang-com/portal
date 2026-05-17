@@ -88,7 +88,10 @@ export default function EmployeeManualExportPage() {
   // 載入模組清單
   useEffect(() => {
     fetchModuleList()
-      .then(setModules)
+      .then((data) => {
+        // 防禦：若 API 404 被 SPA fallback 攔截，res.data.data 可能為 undefined
+        setModules(Array.isArray(data) ? data : [])
+      })
       .catch(() => message.error('載入模組清單失敗，請重新整理'))
       .finally(() => setLoadingModules(false))
   }, [])

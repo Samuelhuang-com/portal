@@ -95,6 +95,7 @@ from app.routers import (
     work_journal,
     nichiyo_purchase_report,
     nichiyo_claim_report,
+    static_pages,
 )
 
 
@@ -999,7 +1000,13 @@ async def lifespan(app: FastAPI):
 
     yield
     # ── Shutdown ──────────────────────────────────────────────────────────────
-    _scheduler.shutdown(wait=False)
+    # APScheduler asyncio shutdown 在 uvicorn --reload 時 event loop 已消失，
+    # 用 try/except 靜默處理，避免 AttributeError 汙染 log。
+    try:
+        if _scheduler.running:
+            _scheduler.shutdown(wait=False)
+    except Exception:
+        pass
     print("[Portal] Shutting down.")
 
 
@@ -1253,11 +1260,25 @@ app.include_router(
     tags=["日曜請款月報表"],
 )
 
+# ── 員工操作手冊匯出 ──────────────────────────────────────────────────────────
+app.include_router(
+    employee_manual_export.router,
+    prefix=f"{API_PREFIX}/employee-manual-export",
+    tags=["員工操作手冊"],
+)
+
 # ── 選單設定 ──────────────────────────────────────────────────────────────────
 app.include_router(
     menu_config.router,
     prefix=f"{API_PREFIX}/settings/menu-config",
     tags=["選單設定"],
+)
+
+# ── 靜態頁面清單 ──────────────────────────────────────────────────────────────
+app.include_router(
+    static_pages.router,
+    prefix=f"{API_PREFIX}/settings",
+    tags=["靜態頁面"],
 )
 
 # ── 角色管理 ──────────────────────────────────────────────────────────────────
@@ -1278,6 +1299,12 @@ app.include_router(
 import os as _os
 from fastapi.staticfiles import StaticFiles as _StaticFiles
 from fastapi.responses import FileResponse as _FileResponse
+
+# ── docs 靜態目錄（HTML 說明文件）— 必須在 SPA catch-all 之前 mount ──────────
+_docs_dir = _os.path.join(_os.path.dirname(__file__), "..", "..", "docs")
+if _os.path.isdir(_docs_dir):
+    app.mount("/docs-static", _StaticFiles(directory=_docs_dir), name="docs-static")
+    print(f"[Portal] Docs static files served from: {_docs_dir}")
 
 _frontend_dist = _os.path.join(_os.path.dirname(__file__), "..", "..", "frontend", "dist")
 if _os.path.isdir(_frontend_dist):

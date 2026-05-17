@@ -67,7 +67,7 @@ import {
 } from '@/api/hotelOverview'
 import type { PMStats }                  from '@/types/periodicMaintenance'
 import type { IHGStats }                 from '@/types/ihgRoomMaintenance'
-import type { DashboardData }            from '@/types/dazhiRepair'
+import type { DashboardData, DashboardKpi } from '@/types/dazhiRepair'
 import { NAV_GROUP, NAV_PAGE }           from '@/constants/navLabels'
 
 const { Title, Text } = Typography
@@ -214,17 +214,19 @@ function adaptSecurity(summary: SecurityMonthlyDashboard): NormalizedSource {
 }
 
 function adaptDazhi(data: DashboardData): NormalizedSource {
-  const kpi  = data.kpi
-  const rate = kpi.total > 0 ? Math.round(kpi.completed / kpi.total * 1000) / 10 : 0
+  const kpi  = data.kpi ?? {} as DashboardKpi
+  const total     = kpi.total             ?? 0
+  const completed = kpi.completed         ?? 0
+  const rate = total > 0 ? Math.round(completed / total * 1000) / 10 : 0
   return {
     source_key:      'dazhi',
     source_name:     '飯店工務部',
     source_color:    SOURCE_COLORS.dazhi,
-    case_count:      kpi.total,
-    completed_count: kpi.completed,
-    work_hours:      kpi.total_work_hours,
+    case_count:      total,
+    completed_count: completed,
+    work_hours:      kpi.total_work_hours ?? 0,
     completion_rate: rate,
-    abnormal_count:  kpi.uncompleted,  // 未完成（非已完成、非待辦驗）
+    abnormal_count:  kpi.uncompleted      ?? 0,  // 未完成（非已完成、非待辦驗）
     overdue_count:   0,
     status_label:    `結案率 ${rate.toFixed(1)}%`,
     is_ok:           rate >= 50,

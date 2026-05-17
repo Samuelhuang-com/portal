@@ -50,6 +50,7 @@
  *   2026-05-07  新增 execWorkDashboard（集團工務決策駕駛艙）以工務決策視角為主，route /exec-work-dashboard
  *   2026-05-10  新增 knowledgeGraph（專案知識圖譜）graphify 整合，route /settings/knowledge-graph
  *   2026-05-13  新增 purchaseReport（請購單報表）核准請購單月報表，route /purchase-report/monthly
+ *   2026-05-17  新增 staticPages（靜態頁面）docs/ 目錄 iframe 瀏覽器，route /settings/static-pages
  */
 
 // ── 系統標題 ──────────────────────────────────────────────────────────────────
@@ -185,6 +186,7 @@ export const NAV_PAGE = {
   menuConfig:               '選單管理',
   employeeManualExport:     '員工操作手冊匯出',
   knowledgeGraph:           '專案知識圖譜',
+  staticPages:              '靜態頁面',
 
   // 請購單報表
   purchaseReportMonthly:    '核准請購單月報表',  // ← 品項級月報表，route /purchase-report/monthly

@@ -278,9 +278,10 @@ export const menuItems: MenuItem[] = [
       { key: '/settings/roles',               icon: <SettingOutlined />,  label: NAV_PAGE.rolesManage,       permissionKey: 'settings_roles_manage' },
       { key: '/settings/ragic-app-directory', icon: <DatabaseOutlined />, label: NAV_PAGE.ragicAppDirectory, permissionKey: 'settings_ragic_manage' },
       { key: '/settings/ragic-connections',   icon: <ApiOutlined />,      label: NAV_PAGE.ragicConnections,  permissionKey: 'settings_ragic_manage' },
-      { key: '/settings/menu-config',              icon: <MenuOutlined />,  label: '選單管理',               permissionKey: 'settings_menu_manage' },
-      { key: '/settings/employee-manual-export',   icon: <BookOutlined />,     label: NAV_PAGE.employeeManualExport, permissionKey: 'system_admin_only' },
-      { key: '/settings/knowledge-graph',           icon: <ApartmentOutlined />, label: NAV_PAGE.knowledgeGraph,       permissionKey: 'system_admin_only' },
+      { key: '/settings/menu-config',              icon: <MenuOutlined />,      label: NAV_PAGE.menuConfig,           permissionKey: 'settings_menu_manage' },
+      { key: '/settings/static-pages',             icon: <FileTextOutlined />,  label: NAV_PAGE.staticPages,          permissionKey: 'settings_menu_manage' },
+      { key: '/settings/employee-manual-export',   icon: <BookOutlined />,      label: NAV_PAGE.employeeManualExport, permissionKey: 'system_admin_only' },
+      { key: '/settings/knowledge-graph',          icon: <ApartmentOutlined />, label: NAV_PAGE.knowledgeGraph,       permissionKey: 'system_admin_only' },
     ],
   },
 ]
