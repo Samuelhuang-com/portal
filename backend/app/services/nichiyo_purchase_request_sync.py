@@ -29,6 +29,7 @@ from app.models.nichiyo_purchase_request import (
     NICHIYO_DEPT_SHEETS,
 )
 from app.services.ragic_adapter import RagicAdapter
+from app.services.ragic_sheet_config_service import get_sheet_configs
 
 logger = logging.getLogger(__name__)
 
@@ -348,7 +349,7 @@ async def _sync_list_for_dept(dept_config: dict, db) -> dict:
 
 async def _sync_detail_for_order(order: NichiyoPurchaseRequest, db) -> bool:
     dept_cfg = next(
-        (d for d in NICHIYO_DEPT_SHEETS if d["list_path"] == order.ragic_sheet_path),
+        (d for d in get_sheet_configs("nichiyo_purchase") if d["list_path"] == order.ragic_sheet_path),
         None,
     )
     if not dept_cfg:
@@ -424,7 +425,7 @@ async def sync_list_only() -> dict:
     total_fetched = total_upserted = 0
     all_errors: list[str] = []
     try:
-        for dept in NICHIYO_DEPT_SHEETS:
+        for dept in get_sheet_configs("nichiyo_purchase"):
             result = await _sync_list_for_dept(dept, db)
             total_fetched  += result["fetched"]
             total_upserted += result["upserted"]

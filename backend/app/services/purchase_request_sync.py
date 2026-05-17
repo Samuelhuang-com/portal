@@ -37,6 +37,7 @@ from app.models.purchase_request import (
     DEPT_SHEETS,
 )
 from app.services.ragic_adapter import RagicAdapter
+from app.services.ragic_sheet_config_service import get_sheet_configs
 
 logger = logging.getLogger(__name__)
 
@@ -455,7 +456,7 @@ async def _sync_detail_batch(orders: list[ApprovedPurchaseRequest], db) -> dict:
 
     # 找出對應的 dept_config（用 list_path 比對）
     sheet_to_detail: dict[str, str] = {
-        d["list_path"]: d["detail_path"] for d in DEPT_SHEETS
+        d["list_path"]: d["detail_path"] for d in get_sheet_configs("purchase")
     }
 
     for order in orders:
@@ -541,7 +542,7 @@ async def sync_list_only() -> dict:
     只更新主單欄位，若 subtable 存在也一併寫入品項。
     """
     list_result = {"fetched": 0, "upserted": 0, "errors": []}
-    for dept in DEPT_SHEETS:
+    for dept in get_sheet_configs("purchase"):
         db = SessionLocal()
         try:
             result = await _sync_list_for_dept(dept, db)
@@ -579,8 +580,9 @@ async def sync_from_ragic(full_resync: bool = False) -> dict:
         # ════════════════════════════════════════════════════
         # Step 1：清單 API（9 個部門）— 每部門獨立 session
         # ════════════════════════════════════════════════════
-        logger.info("[PurchaseSync] Step 1 開始：清單同步（9 部門）")
-        for dept in DEPT_SHEETS:
+        _dept_sheets = get_sheet_configs("purchase")
+        logger.info(f"[PurchaseSync] Step 1 開始：清單同步（{len(_dept_sheets)} 部門）")
+        for dept in _dept_sheets:
             db = SessionLocal()
             try:
                 result = await _sync_list_for_dept(dept, db)

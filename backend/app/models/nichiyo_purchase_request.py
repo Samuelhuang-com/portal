@@ -28,7 +28,6 @@ NICHIYO_DEPT_DISPLAY_MAP: dict[str, str] = {
     "執董室": "執董室",
     "營業":   "營業部",
     "行銷":   "行銷部",
-    "財務":   "財務部",
     "客服":   "客服部",
     "管理":   "管理部",
     "資訊":   "資訊部",
@@ -75,12 +74,6 @@ NICHIYO_DEPT_SHEETS: list[dict] = [
         "ragic_dept":   "客服",
         "list_path":    "free-management-department/10",
         "detail_path":  "free-management-department/10",
-    },
-    {
-        "display_name": "財務部",
-        "ragic_dept":   "財務",
-        "list_path":    "free-finance-department/15",
-        "detail_path":  "free-finance-department/15",
     },
     {
         "display_name": "設計部",

@@ -95,6 +95,7 @@ from app.routers import (
     work_journal,
     nichiyo_purchase_report,
     nichiyo_claim_report,
+    ragic_sheet_config,
     static_pages,
 )
 
@@ -829,6 +830,7 @@ async def lifespan(app: FastAPI):
     import app.models.claim_request     # noqa: F401
     import app.models.nichiyo_purchase_request  # noqa: F401
     import app.models.nichiyo_claim_request     # noqa: F401
+    import app.models.ragic_sheet_config        # noqa: F401
 
     # B4F 扁平化遷移：刪除舊 batch 表 + 檢查 item 表欄位（必須在 create_all 之前）
     _migrate_b4f_flatten()
@@ -840,6 +842,10 @@ async def lifespan(app: FastAPI):
 
     # 內建角色 seed（system_admin / tenant_admin / module_manager / viewer）
     _seed_builtin_roles()
+
+    # Ragic Sheet 設定 seed（各模組各部門的 list_path / detail_path）
+    from app.services.ragic_sheet_config_service import seed_ragic_sheet_config
+    seed_ragic_sheet_config()
 
     # SQLite WAL 模式：讓讀取與寫入可同時進行（OneDrive 環境必要）
     from sqlalchemy import text as _sql_text
@@ -1258,6 +1264,13 @@ app.include_router(
     nichiyo_claim_report.router,
     prefix=f"{API_PREFIX}/nichiyo-claim-report",
     tags=["日曜請款月報表"],
+)
+
+# ── Ragic Sheet 設定管理 ─────────────────────────────────────────────────────
+app.include_router(
+    ragic_sheet_config.router,
+    prefix=f"{API_PREFIX}/settings/ragic-sheet-config",
+    tags=["Ragic Sheet 設定"],
 )
 
 # ── 員工操作手冊匯出 ──────────────────────────────────────────────────────────

@@ -31,6 +31,7 @@ from app.models.claim_request import (
     CLAIM_DEPT_SHEETS,
 )
 from app.services.ragic_adapter import RagicAdapter
+from app.services.ragic_sheet_config_service import get_sheet_configs
 
 logger = logging.getLogger(__name__)
 
@@ -469,7 +470,7 @@ async def sync_list_only() -> dict:
     db = SessionLocal()
     total = {"fetched": 0, "upserted": 0, "errors": []}
     try:
-        for dept in CLAIM_DEPT_SHEETS:
+        for dept in get_sheet_configs("claim"):
             result = await _sync_list_for_dept(dept, db)
             total["fetched"]  += result["fetched"]
             total["upserted"] += result["upserted"]
@@ -492,14 +493,15 @@ async def sync_from_ragic(full_resync: bool = False) -> dict:
     total = {"fetched": 0, "upserted": 0, "errors": []}
 
     # 建立 sheet_path → detail_path 對照表
+    _dept_sheets = get_sheet_configs("claim")
     sheet_to_detail: dict[str, str] = {
         d["list_path"]: d.get("detail_path", d["list_path"])
-        for d in CLAIM_DEPT_SHEETS
+        for d in _dept_sheets
     }
 
     try:
         # Step 1: 清單同步（每部門各自建立 adapter）
-        for dept in CLAIM_DEPT_SHEETS:
+        for dept in _dept_sheets:
             result = await _sync_list_for_dept(dept, db, full_resync=full_resync)
             total["upserted"] += result["upserted"]
             total["errors"]   += result["errors"]

@@ -35,7 +35,7 @@ NICHIYO_CLAIM_DEPT_DISPLAY_MAP: dict[str, str] = {
     "設計":   "設計部",
 }
 
-# ── 8 個部門的 Ragic 請款單 Sheet 設定 ───────────────────────────────────────
+# ── 8 個部門的 Ragic 請款單 Sheet 設定（硬編碼備援，正式使用 ragic_sheet_config 資料表）
 # list_path   = 清單 API 路徑（同步主單用）
 # detail_path = 內頁 API 路徑（同步品項用）
 # 來源 URL 格式：https://ap12.ragic.com/soutlet001/{list_path}
@@ -43,38 +43,38 @@ NICHIYO_CLAIM_DEPT_SHEETS: list[dict] = [
     {
         "display_name": "執董室",
         "ragic_dept":   "執董室",
-        "list_path":    "free-executive-office/9",
-        "detail_path":  "free-executive-office/9",
+        "list_path":    "free-executive-office/8",
+        "detail_path":  "free-executive-office/8",
     },
     {
         "display_name": "營業部",
         "ragic_dept":   "營業",
-        "list_path":    "free-business-division/21",
-        "detail_path":  "free-business-division/21",
+        "list_path":    "free-business-division/12",
+        "detail_path":  "free-business-division/12",
     },
     {
         "display_name": "行銷部",
         "ragic_dept":   "行銷",
-        "list_path":    "marketing/40",
-        "detail_path":  "marketing/40",
+        "list_path":    "marketing/32",
+        "detail_path":  "marketing/32",
     },
     {
         "display_name": "管理部",
         "ragic_dept":   "管理",
-        "list_path":    "freed-management-division/19",
-        "detail_path":  "freed-management-division/19",
+        "list_path":    "freed-management-division/8",
+        "detail_path":  "freed-management-division/8",
     },
     {
         "display_name": "資訊部",
         "ragic_dept":   "資訊",
-        "list_path":    "department-of-free-information/23",
-        "detail_path":  "department-of-free-information/23",
+        "list_path":    "department-of-free-information/22",
+        "detail_path":  "department-of-free-information/22",
     },
     {
         "display_name": "客服部",
         "ragic_dept":   "客服",
-        "list_path":    "free-management-department/10",
-        "detail_path":  "free-management-department/10",
+        "list_path":    "free-management-department/8",
+        "detail_path":  "free-management-department/8",
     },
     {
         "display_name": "財務部",
@@ -85,8 +85,8 @@ NICHIYO_CLAIM_DEPT_SHEETS: list[dict] = [
     {
         "display_name": "設計部",
         "ragic_dept":   "設計",
-        "list_path":    "free-design-department/2",
-        "detail_path":  "free-design-department/2",
+        "list_path":    "free-design-department/1",
+        "detail_path":  "free-design-department/1",
     },
 ]
 
