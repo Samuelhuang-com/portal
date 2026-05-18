@@ -89,14 +89,26 @@ if not exist package.json (
 )
 
 npm install
-if errorlevel 1 echo [WARN] npm install returned non-zero, continuing...
+if errorlevel 1 (
+    echo.
+    echo [ERROR] npm install 失敗！請檢查上方錯誤訊息。
+    echo         常見原因：Node.js 版本不符、網路問題、package.json 損毀。
+    pause
+    exit /b 1
+)
 
 npm run build
-if errorlevel 1 echo [WARN] npm run build returned non-zero - check output above
+if errorlevel 1 (
+    echo.
+    echo [ERROR] npm run build 失敗！請檢查上方 TypeScript 編譯錯誤。
+    echo         常見原因：前端程式碼有語法錯誤或型別錯誤。
+    pause
+    exit /b 1
+)
 
 :step5
 echo.
-echo  完成: 前端編譯完畢
+echo  完成: 前端編譯成功
 echo  下一步: 重新啟動正式服務 [5/5]
 echo.
 pause
