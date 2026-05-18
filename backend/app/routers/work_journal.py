@@ -849,7 +849,7 @@ def export_work_journal_excel(
     buf.seek(0)
 
     label         = f"{date_from}_{date_to}" + (f"_{person}" if person else "")
-    filename_safe = f"work_journal_{label}.xlsx"
+    filename_safe = f"work_journal_{date_from}_{date_to}.xlsx"   # ASCII only — no Chinese chars
     filename_cn   = f"工作日誌_{label}.xlsx"
 
     return StreamingResponse(
