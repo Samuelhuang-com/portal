@@ -117,7 +117,8 @@ DETAIL_FIELD_CANDIDATES: dict[str, list[str]] = {
 
 ITEM_FIELD_CANDIDATES: dict[str, list[str]] = {
     "seq":                    ["項次", "序號"],
-    "item_name":              ["產品名稱", "品名", "品項名稱", "名稱", "項目"],
+    "item_name":              ["產品名稱", "品名", "品項名稱", "名稱", "項目",
+                               "說明", "費用說明", "費用名稱", "服務項目", "費用項目", "明細"],
     "quantity":               ["數量"],
     "unit":                   ["單位"],
     "item_note":              ["品項備註", "備註"],
@@ -193,6 +194,16 @@ def _to_bool(val: Any) -> bool | None:
     return s in ("✓", "v", "y", "yes", "1", "true", "是")
 
 
+# Ragic 富文本標記清理：[font=...] [size=...] [br] [/size] 等
+_RAGIC_RTF_RE = re.compile(r"\[[^\]]*\]")
+
+def _strip_ragic_rtf(text: str) -> str:
+    """清除 Ragic 富文本格式標記，保留純文字內容。"""
+    if not text:
+        return text
+    return _RAGIC_RTF_RE.sub("", text).strip()
+
+
 def _dept_display(raw: str) -> str:
     return CLAIM_DEPT_DISPLAY_MAP.get(str(raw).strip(), str(raw).strip())
 
@@ -257,7 +268,7 @@ def _parse_item_row(row_data: dict, claim_id: int, seq_override: int | None = No
     return {
         "claim_id":               claim_id,
         "seq":                    seq,
-        "item_name":              str(_pick(row_data, ITEM_FIELD_CANDIDATES["item_name"], "")).strip() or None,
+        "item_name":              _strip_ragic_rtf(str(_pick(row_data, ITEM_FIELD_CANDIDATES["item_name"], "")).strip()) or None,
         "quantity":               str(_pick(row_data, ITEM_FIELD_CANDIDATES["quantity"], "")).strip() or None,
         "unit":                   str(_pick(row_data, ITEM_FIELD_CANDIDATES["unit"], "")).strip() or None,
         "item_note":              str(_pick(row_data, ITEM_FIELD_CANDIDATES["item_note"], "")).strip() or None,
@@ -355,7 +366,7 @@ def _parse_list_record(
         "approved_date":          approved_dt,
         "applicant":              str(_pick(data, LIST_FIELD_CANDIDATES["applicant"], "")).strip() or None,
         "payment_type":           str(_pick(data, LIST_FIELD_CANDIDATES["payment_type"], "")).strip() or None,
-        "purpose_description":    str(_pick(data, LIST_FIELD_CANDIDATES["purpose_description"], "")).strip()[:500] or None,
+        "purpose_description":    _strip_ragic_rtf(str(_pick(data, LIST_FIELD_CANDIDATES["purpose_description"], "")).strip())[:500] or None,
         "subtotal":               _to_int(_pick(data, LIST_FIELD_CANDIDATES["subtotal"])),
         "tax":                    _to_int(_pick(data, LIST_FIELD_CANDIDATES["tax"])),
         "total":                  _to_int(_pick(data, LIST_FIELD_CANDIDATES["total"])),
@@ -484,10 +495,33 @@ async def sync_list_only() -> dict:
 async def sync_from_ragic(full_resync: bool = False) -> dict:
     """
     完整同步（每 45 分鐘執行）：
+    0. （full_resync）清除 ragic_sheet_path 不在當前設定的孤兒記錄
     1. 清單同步（主單 + 嘗試 subtable 品項）
     2. 對尚未取得品項的記錄嘗試內頁 API
     """
     import asyncio
+
+    if full_resync:
+        valid_paths = {d["list_path"] for d in get_sheet_configs("claim")}
+        _db = SessionLocal()
+        try:
+            orphan_ids = [
+                row.id
+                for row in _db.query(ApprovedClaimRequest.id)
+                .filter(~ApprovedClaimRequest.ragic_sheet_path.in_(valid_paths))
+                .all()
+            ]
+            if orphan_ids:
+                _db.query(ApprovedClaimRequestItem).filter(
+                    ApprovedClaimRequestItem.claim_id.in_(orphan_ids)
+                ).delete(synchronize_session=False)
+                _db.query(ApprovedClaimRequest).filter(
+                    ApprovedClaimRequest.id.in_(orphan_ids)
+                ).delete(synchronize_session=False)
+                logger.info("[ClaimSync] 清除孤兒記錄 %d 筆（路徑已失效）", len(orphan_ids))
+                _db.commit()
+        finally:
+            _db.close()
 
     db = SessionLocal()
     total = {"fetched": 0, "upserted": 0, "errors": []}
@@ -551,7 +585,8 @@ async def sync_from_ragic(full_resync: bool = False) -> dict:
                             elif field in ("subtotal", "tax", "total", "payable_amount"):
                                 val = _to_int(val)
                             else:
-                                val = str(val).strip()[:200] if val else None
+                                cleaned = _strip_ragic_rtf(str(val).strip())
+                                val = cleaned[:200] if cleaned else None
                             if val is not None:
                                 setattr(order, field, val)
 

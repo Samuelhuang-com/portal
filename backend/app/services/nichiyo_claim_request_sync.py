@@ -135,6 +135,16 @@ def _to_date(val: Any) -> date | None:
         return None
 
 
+# Ragic 富文本標記清理：[font=...] [size=...] [br] [/size] 等
+_RAGIC_RTF_RE = re.compile(r"\[[^\]]*\]")
+
+def _strip_ragic_rtf(text: str) -> str:
+    """清除 Ragic 富文本格式標記，保留純文字內容。"""
+    if not text:
+        return text
+    return _RAGIC_RTF_RE.sub("", text).strip()
+
+
 def _dept_display(raw: str) -> str:
     return NICHIYO_CLAIM_DEPT_DISPLAY_MAP.get(str(raw).strip(), str(raw).strip())
 
@@ -174,8 +184,23 @@ def _find_subtable(raw: dict) -> list[dict]:
     return rows
 
 
+def _is_empty_item_row(row: dict) -> bool:
+    """判斷 subtable row 是否為全空白列（所有 content 欄位都是 None / 空字串）。"""
+    content_keys = (
+        list(ITEM_FIELD_CANDIDATES.get("product_name", []))
+        + list(ITEM_FIELD_CANDIDATES.get("qty", []))
+        + list(ITEM_FIELD_CANDIDATES.get("unit_price", []))
+        + list(ITEM_FIELD_CANDIDATES.get("amount", []))
+    )
+    return all(
+        not str(row.get(k, "") or "").strip()
+        for k in content_keys
+        if k in row
+    )
+
+
 def _find_subtable_from_list_raw(raw: dict) -> list[dict]:
-    """從清單 API raw JSON 的 _subtable_* 欄位解析品項"""
+    """從清單 API raw JSON 的 _subtable_* 欄位解析品項，過濾全空白列。"""
     import ast
     rows = []
     for k, v in raw.items():
@@ -190,7 +215,9 @@ def _find_subtable_from_list_raw(raw: dict) -> list[dict]:
             continue
         for row_key, row_data in v.items():
             if isinstance(row_data, dict) and not str(row_key).startswith("_"):
-                rows.append(row_data)
+                # ★ 過濾全空白列，避免寫入無意義的空品項
+                if not _is_empty_item_row(row_data):
+                    rows.append(row_data)
     if not rows:
         return rows
 
@@ -241,7 +268,7 @@ def _parse_list_record(record_id: str, data: dict, sheet_path: str, dept_config:
         "claim_no":            _pick_claim_no(data, LIST_FIELD_CANDIDATES["claim_no"]),
         "account_category":    str(_pick(data, LIST_FIELD_CANDIDATES["account_category"], "")).strip() or None,
         "applicant":           str(_pick(data, LIST_FIELD_CANDIDATES["applicant"], "")).strip() or None,
-        "purpose_description": str(_pick(data, LIST_FIELD_CANDIDATES["purpose_description"], "")).strip()[:500] or None,
+        "purpose_description": _strip_ragic_rtf(str(_pick(data, LIST_FIELD_CANDIDATES["purpose_description"], "")).strip())[:500] or None,
         "payment_type":        str(_pick(data, LIST_FIELD_CANDIDATES["payment_type"], "")).strip() or None,
         "subtotal":            _to_int(_pick(data, LIST_FIELD_CANDIDATES["subtotal"])),
         "tax":                 _to_int(_pick(data, LIST_FIELD_CANDIDATES["tax"])),
@@ -272,8 +299,11 @@ async def _sync_list_for_dept(dept_config: dict, db) -> dict:
         return {"fetched": 0, "upserted": 0, "errors": [str(exc)]}
 
     now = twnow()
+    # ★ 每 20 筆 commit 一次：縮短 SQLite 寫鎖持有時間，
+    #    避免 APScheduler 與 sync_tool 同時執行時造成 database is locked
+    COMMIT_EVERY = 20
 
-    for record_id, data in records.items():
+    for idx, (record_id, data) in enumerate(records.items()):
         fetched += 1
         try:
             with db.begin_nested():
@@ -302,12 +332,29 @@ async def _sync_list_for_dept(dept_config: dict, db) -> dict:
                 if not fields.get("detail_synced", False):
                     item_rows = _find_subtable_from_list_raw(data)
                     if item_rows:
-                        db.flush()
-                        db.query(NichiyoClaimRequestItem).filter_by(order_id=order_obj.id).delete(synchronize_session=False)
-                        for row in item_rows:
+                        db.flush()   # 確保 order_obj.id 已取得
+                        db.query(NichiyoClaimRequestItem).filter_by(
+                            order_id=order_obj.id
+                        ).delete(synchronize_session=False)
+                        db.flush()   # ★ 強制 DELETE 先送出，避免 INSERT 排序在前
+
+                        # ★ seq 去重：若 Ragic 回傳多列皆無「項次」，全都是 0 → UNIQUE 違反
+                        seen_seqs: set[int] = set()
+                        for loop_idx, row in enumerate(item_rows):
+                            try:
+                                seq = int(str(_pick(row, ["項次", "序號"], "0") or "0"))
+                            except (ValueError, TypeError):
+                                seq = loop_idx
+                            # 若 seq 與同批次已用的重複，改用 loop_idx 保證唯一
+                            if seq in seen_seqs:
+                                seq = loop_idx
+                                while seq in seen_seqs:
+                                    seq += 1
+                            seen_seqs.add(seq)
+
                             item = NichiyoClaimRequestItem(
                                 order_id     = order_obj.id,
-                                seq          = int(str(_pick(row, ["項次", "序號"], "0") or "0")),
+                                seq          = seq,
                                 product_name = str(_pick(row, ITEM_FIELD_CANDIDATES["product_name"], "")).strip() or None,
                                 qty          = str(_pick(row, ITEM_FIELD_CANDIDATES["qty"], "")).strip() or None,
                                 unit         = str(_pick(row, ITEM_FIELD_CANDIDATES["unit"], "")).strip() or None,
@@ -324,7 +371,11 @@ async def _sync_list_for_dept(dept_config: dict, db) -> dict:
             logger.error("[NichiyoClaimSync][List] id=%s 失敗：%s", record_id, exc, exc_info=True)
             errors.append(str(exc))
 
-    db.commit()
+        # ★ 每 COMMIT_EVERY 筆提交一次，釋放寫鎖供其他 writer 競爭
+        if (idx + 1) % COMMIT_EVERY == 0:
+            db.commit()
+
+    db.commit()   # 最後一批
     return {"fetched": fetched, "upserted": upserted, "errors": errors}
 
 
@@ -369,7 +420,10 @@ async def _sync_detail_for_order(order: NichiyoClaimRequest, db) -> bool:
         elif field in ("purpose_description", "payee"):
             existing = getattr(order, field)
             if not existing:
-                setattr(order, field, str(val).strip()[:500] if field == "purpose_description" else str(val).strip())
+                if field == "purpose_description":
+                    setattr(order, field, _strip_ragic_rtf(str(val).strip())[:500])
+                else:
+                    setattr(order, field, str(val).strip())
 
     # 品項子表格
     item_rows = _find_subtable(data)
@@ -449,10 +503,39 @@ async def sync_detail_batch() -> dict:
 
 
 async def sync_all() -> dict:
-    """全量同步（清單 + Detail 全部重抓）"""
+    """全量同步（清單 + Detail 全部重抓）
+
+    步驟：
+      1. 取得目前有效的 ragic_sheet_path 清單
+      2. 刪除 ragic_sheet_path 不在有效清單中的舊記錄（路徑變更後的殘留孤兒）
+      3. 重設所有 detail_synced 旗標
+      4. 清單同步 + Detail 同步
+    """
+    valid_paths = {d["list_path"] for d in get_sheet_configs("nichiyo_claim")}
+
     db = SessionLocal()
     try:
-        # 重設所有 detail_synced 旗標
+        # 1. 清除已失效 sheet_path 的孤兒記錄（含其品項）
+        orphan_ids = [
+            row.id
+            for row in db.query(NichiyoClaimRequest.id)
+            .filter(
+                NichiyoClaimRequest.company == "日曜",
+                ~NichiyoClaimRequest.ragic_sheet_path.in_(valid_paths),
+            )
+            .all()
+        ]
+        if orphan_ids:
+            db.query(NichiyoClaimRequestItem).filter(
+                NichiyoClaimRequestItem.order_id.in_(orphan_ids)
+            ).delete(synchronize_session=False)
+            db.query(NichiyoClaimRequest).filter(
+                NichiyoClaimRequest.id.in_(orphan_ids)
+            ).delete(synchronize_session=False)
+            logger.info("[NichiyoClaimSync] 清除孤兒記錄 %d 筆（路徑已失效）", len(orphan_ids))
+            db.commit()
+
+        # 2. 重設所有 detail_synced 旗標
         db.query(NichiyoClaimRequest).filter(
             NichiyoClaimRequest.company == "日曜"
         ).update({"detail_synced": False})

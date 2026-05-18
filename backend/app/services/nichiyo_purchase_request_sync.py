@@ -185,8 +185,23 @@ def _find_subtable(raw: dict) -> list[dict]:
     return rows
 
 
+def _is_empty_item_row(row: dict) -> bool:
+    """判斷 subtable row 是否為全空白列（所有 content 欄位都是 None / 空字串）。"""
+    content_keys = (
+        list(ITEM_FIELD_CANDIDATES.get("product_name", []))
+        + list(ITEM_FIELD_CANDIDATES.get("qty", []))
+        + list(ITEM_FIELD_CANDIDATES.get("selected_amount", []))
+        + list(ITEM_FIELD_CANDIDATES.get("vendor1_price", []))
+    )
+    return all(
+        not str(row.get(k, "") or "").strip()
+        for k in content_keys
+        if k in row
+    )
+
+
 def _find_subtable_from_list_raw(raw: dict) -> list[dict]:
-    """從清單 API raw JSON 的 _subtable_* 欄位解析品項"""
+    """從清單 API raw JSON 的 _subtable_* 欄位解析品項，過濾全空白列。"""
     import ast
     rows = []
     for k, v in raw.items():
@@ -201,7 +216,9 @@ def _find_subtable_from_list_raw(raw: dict) -> list[dict]:
             continue
         for row_key, row_data in v.items():
             if isinstance(row_data, dict) and not str(row_key).startswith("_"):
-                rows.append(row_data)
+                # ★ 過濾全空白列，避免寫入無意義的空品項
+                if not _is_empty_item_row(row_data):
+                    rows.append(row_data)
     if not rows:
         return rows
 
@@ -284,8 +301,11 @@ async def _sync_list_for_dept(dept_config: dict, db) -> dict:
         return {"fetched": 0, "upserted": 0, "errors": [str(exc)]}
 
     now = twnow()
+    # ★ 每 20 筆 commit 一次：縮短 SQLite 寫鎖持有時間，
+    #    避免 APScheduler 與 sync_tool 同時執行時造成 database is locked
+    COMMIT_EVERY = 20
 
-    for record_id, data in records.items():
+    for idx, (record_id, data) in enumerate(records.items()):
         fetched += 1
         try:
             with db.begin_nested():
@@ -314,12 +334,28 @@ async def _sync_list_for_dept(dept_config: dict, db) -> dict:
                 if not fields.get("detail_synced", False):
                     item_rows = _find_subtable_from_list_raw(data)
                     if item_rows:
-                        db.flush()
-                        db.query(NichiyoPurchaseRequestItem).filter_by(order_id=order_obj.id).delete(synchronize_session=False)
-                        for row in item_rows:
+                        db.flush()   # 確保 order_obj.id 已取得
+                        db.query(NichiyoPurchaseRequestItem).filter_by(
+                            order_id=order_obj.id
+                        ).delete(synchronize_session=False)
+                        db.flush()   # ★ 強制 DELETE 先送出，避免 INSERT 排序在前
+
+                        # ★ seq 去重：若 Ragic 回傳多列皆無「項次」，全都是 0 → UNIQUE 違反
+                        seen_seqs: set[int] = set()
+                        for loop_idx, row in enumerate(item_rows):
+                            try:
+                                seq = int(str(_pick(row, ["項次", "序號"], "0") or "0"))
+                            except (ValueError, TypeError):
+                                seq = loop_idx
+                            if seq in seen_seqs:
+                                seq = loop_idx
+                                while seq in seen_seqs:
+                                    seq += 1
+                            seen_seqs.add(seq)
+
                             item = NichiyoPurchaseRequestItem(
                                 order_id    = order_obj.id,
-                                seq         = int(str(_pick(row, ["項次", "序號"], "0") or "0")),
+                                seq         = seq,
                                 product_name= str(_pick(row, ITEM_FIELD_CANDIDATES["product_name"], "")).strip() or None,
                                 qty         = str(_pick(row, ITEM_FIELD_CANDIDATES["qty"], "")).strip() or None,
                                 unit        = str(_pick(row, ITEM_FIELD_CANDIDATES["unit"], "")).strip() or None,
@@ -341,7 +377,11 @@ async def _sync_list_for_dept(dept_config: dict, db) -> dict:
             logger.error("[NichiyoSync][List] id=%s 失敗：%s", record_id, exc, exc_info=True)
             errors.append(str(exc))
 
-    db.commit()
+        # ★ 每 COMMIT_EVERY 筆提交一次，釋放寫鎖供其他 writer 競爭
+        if (idx + 1) % COMMIT_EVERY == 0:
+            db.commit()
+
+    db.commit()   # 最後一批
     return {"fetched": fetched, "upserted": upserted, "errors": errors}
 
 
@@ -470,7 +510,38 @@ async def sync_detail_batch() -> dict:
 
 
 async def sync_all() -> dict:
-    """清單 + Detail 完整同步（手動觸發用）"""
+    """清單 + Detail 完整同步（手動觸發用）
+
+    步驟：
+      1. 取得目前有效的 ragic_sheet_path 清單
+      2. 刪除 ragic_sheet_path 不在有效清單中的舊記錄（路徑變更後的殘留孤兒）
+      3. 清單同步 + Detail 同步
+    """
+    valid_paths = {d["list_path"] for d in get_sheet_configs("nichiyo_purchase")}
+
+    db = SessionLocal()
+    try:
+        orphan_ids = [
+            row.id
+            for row in db.query(NichiyoPurchaseRequest.id)
+            .filter(
+                NichiyoPurchaseRequest.company == "日曜",
+                ~NichiyoPurchaseRequest.ragic_sheet_path.in_(valid_paths),
+            )
+            .all()
+        ]
+        if orphan_ids:
+            db.query(NichiyoPurchaseRequestItem).filter(
+                NichiyoPurchaseRequestItem.order_id.in_(orphan_ids)
+            ).delete(synchronize_session=False)
+            db.query(NichiyoPurchaseRequest).filter(
+                NichiyoPurchaseRequest.id.in_(orphan_ids)
+            ).delete(synchronize_session=False)
+            logger.info("[NichiyoPurchaseSync] 清除孤兒記錄 %d 筆（路徑已失效）", len(orphan_ids))
+            db.commit()
+    finally:
+        db.close()
+
     list_result   = await sync_list_only()
     detail_result = await sync_detail_batch()
     return {
