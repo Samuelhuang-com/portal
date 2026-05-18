@@ -16,12 +16,15 @@ Prefix: /api/v1/work-journal
 }
 """
 
+import io
 import re
 from datetime import date as _date, timedelta, datetime
 from collections import defaultdict
 from typing import Optional
+from urllib.parse import quote
 
 from fastapi import APIRouter, Query, Depends
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -81,8 +84,10 @@ def _classify(title: str, repair_type: str) -> str:
     return "現場報修"
 
 
-def _parse_wh(val: str) -> Optional[float]:
-    """'2.50 小時' / '30 分鐘' → float hours，解析不到 → None"""
+def _parse_wm(val: str) -> Optional[int]:
+    """'2.50 小時' / '30 分鐘' / '8'（無單位→分鐘）→ int 分鐘，解析不到 → None
+    注意：巡檢模組 work_hours 欄位儲存的是純數字分鐘，無單位標記，因此無單位時直接視為分鐘。
+    """
     if not val:
         return None
     s = str(val).strip()
@@ -91,8 +96,12 @@ def _parse_wh(val: str) -> Optional[float]:
         return None
     num = float(m.group())
     if "分" in s:
-        return round(num / 60, 2)
-    return round(num, 2) if num > 0 else None
+        return round(num) if num > 0 else None
+    if "時" in s:                          # 含「小時」字樣 → ×60
+        mins = round(num * 60)
+        return mins if mins > 0 else None
+    # 無單位 → 視為分鐘（保全/巡檢 DB 欄位直接儲存分鐘數）
+    return round(num) if num > 0 else None
 
 
 def _clean_time(t: str) -> str:
@@ -127,7 +136,7 @@ def _make_row(
     est_min: Optional[int] = None,
     start_time: str = "",
     end_time: str = "",
-    work_hours: Optional[float] = None,
+    work_min: Optional[int] = None,
     remark: str = "",
     report: str = "",
     ragic_id: str = "",
@@ -142,7 +151,7 @@ def _make_row(
         "est_min":      est_min,
         "start_time":   _clean_time(start_time),
         "end_time":     _clean_time(end_time),
-        "work_hours":   work_hours,
+        "work_min":     work_min,
         "remark":       (remark or "").strip(),
         "report":       (report or "").strip(),
         "ragic_id":     ragic_id,
@@ -165,14 +174,14 @@ def _fetch_dazhi(db: Session, year: int, month: int, day: int) -> list[dict]:
             continue
         person = (c.responsible_unit or "").strip() or "未指定"
         task = " ".join(filter(None, [c.repair_type, c.floor, c.title]))
-        wh   = c.work_hours if c.work_hours and c.work_hours > 0 else None
+        wm   = round(c.work_hours * 60) if c.work_hours and c.work_hours > 0 else None
         occ  = c.occurred_at.strftime("%Y/%m/%d %H:%M") if c.occurred_at else ""
         rows.append(_make_row(
             source="dazhi",
             category=_classify(c.title or "", c.repair_type or ""),
             task=task or "(無說明)",
             person=person,
-            work_hours=wh,
+            work_min=wm,
             remark=c.finance_note or "",
             ragic_id=c.ragic_id,
             detail={
@@ -214,14 +223,14 @@ def _fetch_luqun(db: Session, year: int, month: int, day: int) -> list[dict]:
             continue
         person = (c.responsible_unit or "").strip() or "未指定"
         task = " ".join(filter(None, [c.repair_type, c.floor, c.title]))
-        wh   = c.work_hours if c.work_hours and c.work_hours > 0 else None
+        wm   = round(c.work_hours * 60) if c.work_hours and c.work_hours > 0 else None
         occ  = c.occurred_at.strftime("%Y/%m/%d %H:%M") if c.occurred_at else ""
         rows.append(_make_row(
             source="luqun",
             category=_classify(c.title or "", c.repair_type or ""),
             task=task or "(無說明)",
             person=person,
-            work_hours=wh,
+            work_min=wm,
             remark=c.mgmt_response or c.finance_note or "",
             ragic_id=c.ragic_id,
             detail={
@@ -264,7 +273,8 @@ def _fetch_hotel_pm(db: Session, year: int, month: int, day: int) -> list[dict]:
     )
     if not batches:
         return rows
-    batch_ids = {b.ragic_id for b in batches}
+    batch_map = {b.ragic_id: b for b in batches}
+    batch_ids = set(batch_map.keys())
 
     items = (
         db.query(PeriodicMaintenanceItem)
@@ -275,12 +285,13 @@ def _fetch_hotel_pm(db: Session, year: int, month: int, day: int) -> list[dict]:
         .all()
     )
     for item in items:
+        batch = batch_map.get(item.batch_ragic_id)
         task = " ".join(filter(None, [item.task_name, item.location]))
-        wh = None
+        wm = None
         if item.ragic_work_minutes and item.ragic_work_minutes > 0:
-            wh = round(item.ragic_work_minutes / 60, 2)
+            wm = int(item.ragic_work_minutes)
         elif item.estimated_minutes and item.estimated_minutes > 0:
-            wh = round(item.estimated_minutes / 60, 2)
+            wm = int(item.estimated_minutes)
         est = item.estimated_minutes if item.estimated_minutes else None
         for person in _persons(item.executor_name):
             rows.append(_make_row(
@@ -291,12 +302,12 @@ def _fetch_hotel_pm(db: Session, year: int, month: int, day: int) -> list[dict]:
                 est_min=est,
                 start_time=item.start_time or "",
                 end_time=item.end_time or "",
-                work_hours=wh,
+                work_min=wm,
                 remark=item.result_note or "",
                 ragic_id=item.ragic_id,
                 detail={
-                    "日誌編號":  batch.journal_no or "",
-                    "保養月份":  batch.period_month or "",
+                    "日誌編號":  (batch.journal_no if batch else "") or "",
+                    "保養月份":  (batch.period_month if batch else "") or "",
                     "類別":      item.category or "",
                     "頻率":      item.frequency or "",
                     "區域":      item.location or "",
@@ -322,21 +333,21 @@ def _fetch_ihg(db: Session, year: int, month: int, day: int) -> list[dict]:
     ):
         person = (rec.assignee_name or "").strip() or "未指定"
         task   = f"IHG客房保養 {rec.room_no}".strip()
-        # 工時：raw_json 工時計算（分鐘）→ HR；無則固定 0.5
+        # 工時：raw_json 工時計算（分鐘）；無則固定 30 分鐘
         try:
             raw = rec.get_raw() if hasattr(rec, "get_raw") else {}
             mins_val = raw.get("工時計算", "")
-            wh_raw = float(re.search(r"[\d.]+", str(mins_val)).group()) / 60 if mins_val and re.search(r"[\d.]+", str(mins_val)) else None
+            wm_raw = float(re.search(r"[\d.]+", str(mins_val)).group()) if mins_val and re.search(r"[\d.]+", str(mins_val)) else None
         except Exception:
-            wh_raw = None
-        wh = round(wh_raw, 2) if wh_raw and wh_raw > 0 else 0.5
+            wm_raw = None
+        wm = round(wm_raw) if wm_raw and wm_raw > 0 else 30
         rows.append(_make_row(
             source="ihg",
             category="例行維護",
             task=task,
             person=person,
             est_min=30,
-            work_hours=wh,
+            work_min=wm,
             remark=rec.notes or "",
             ragic_id=rec.ragic_id,
             detail={
@@ -365,7 +376,7 @@ def _fetch_hotel_di(db: Session, year: int, month: int, day: int) -> list[dict]:
     ):
         person = (b.inspector_name or "").strip() or "未指定"
         task   = f"{b.sheet_name} 巡檢" if b.sheet_name else "飯店每日巡檢"
-        wh     = _parse_wh(b.work_hours)
+        wm     = _parse_wm(b.work_hours)
         rows.append(_make_row(
             source="hotel_di",
             category="每日巡檢",
@@ -373,7 +384,7 @@ def _fetch_hotel_di(db: Session, year: int, month: int, day: int) -> list[dict]:
             person=person,
             start_time=b.start_time or "",
             end_time=b.end_time or "",
-            work_hours=wh,
+            work_min=wm,
             ragic_id=b.ragic_id,
             detail={
                 "巡檢表名稱": b.sheet_name or "",
@@ -381,7 +392,7 @@ def _fetch_hotel_di(db: Session, year: int, month: int, day: int) -> list[dict]:
                 "巡檢日期":   b.inspection_date or "",
                 "開始時間":   b.start_time or "",
                 "結束時間":   b.end_time or "",
-                "工時":       f"{wh:.2f} HR" if wh else "",
+                "工時":       f"{wm} min" if wm else "",
             },
         ))
     return rows
@@ -398,7 +409,7 @@ def _fetch_security(db: Session, year: int, month: int, day: int) -> list[dict]:
     ):
         person = (b.inspector_name or "").strip() or "未指定"
         task   = f"{b.sheet_name} 保全巡邏" if b.sheet_name else "保全巡邏"
-        wh     = _parse_wh(b.work_hours)
+        wm     = _parse_wm(b.work_hours)
         rows.append(_make_row(
             source="security",
             category="每日巡檢",
@@ -406,7 +417,7 @@ def _fetch_security(db: Session, year: int, month: int, day: int) -> list[dict]:
             person=person,
             start_time=b.start_time or "",
             end_time=b.end_time or "",
-            work_hours=wh,
+            work_min=wm,
             ragic_id=b.ragic_id,
             detail={
                 "巡邏表名稱": b.sheet_name or "",
@@ -414,7 +425,7 @@ def _fetch_security(db: Session, year: int, month: int, day: int) -> list[dict]:
                 "巡檢日期":   b.inspection_date or "",
                 "開始時間":   b.start_time or "",
                 "結束時間":   b.end_time or "",
-                "工時":       f"{wh:.2f} HR" if wh else "",
+                "工時":       f"{wm} min" if wm else "",
             },
         ))
     return rows
@@ -433,7 +444,8 @@ def _fetch_mall_pm(db: Session, year: int, month: int, day: int) -> list[dict]:
     )
     if not batches:
         return rows
-    batch_ids = {b.ragic_id for b in batches}
+    batch_map = {b.ragic_id: b for b in batches}
+    batch_ids = set(batch_map.keys())
 
     items = (
         db.query(MallPeriodicMaintenanceItem)
@@ -444,9 +456,10 @@ def _fetch_mall_pm(db: Session, year: int, month: int, day: int) -> list[dict]:
         .all()
     )
     for item in items:
+        batch = batch_map.get(item.batch_ragic_id)
         task = " ".join(filter(None, [item.task_name, item.location]))
         est  = item.estimated_minutes if item.estimated_minutes else None
-        wh   = round(item.estimated_minutes / 60, 2) if item.estimated_minutes and item.estimated_minutes > 0 else None
+        wm   = int(item.estimated_minutes) if item.estimated_minutes and item.estimated_minutes > 0 else None
         for person in _persons(item.executor_name):
             rows.append(_make_row(
                 source="mall_pm",
@@ -456,12 +469,12 @@ def _fetch_mall_pm(db: Session, year: int, month: int, day: int) -> list[dict]:
                 est_min=est,
                 start_time=item.start_time or "",
                 end_time=item.end_time or "",
-                work_hours=wh,
+                work_min=wm,
                 remark=item.result_note or "",
                 ragic_id=item.ragic_id,
                 detail={
-                    "日誌編號":  batch.journal_no or "",
-                    "保養月份":  batch.period_month or "",
+                    "日誌編號":  (batch.journal_no if batch else "") or "",
+                    "保養月份":  (batch.period_month if batch else "") or "",
                     "類別":      item.category or "",
                     "頻率":      item.frequency or "",
                     "區域":      item.location or "",
@@ -489,7 +502,8 @@ def _fetch_full_bldg_pm(db: Session, year: int, month: int, day: int) -> list[di
     )
     if not batches:
         return rows
-    batch_ids = {b.ragic_id for b in batches}
+    batch_map = {b.ragic_id: b for b in batches}
+    batch_ids = set(batch_map.keys())
 
     items = (
         db.query(FullBldgPMItem)
@@ -500,9 +514,10 @@ def _fetch_full_bldg_pm(db: Session, year: int, month: int, day: int) -> list[di
         .all()
     )
     for item in items:
+        batch = batch_map.get(item.batch_ragic_id)
         task = " ".join(filter(None, [item.task_name, item.location]))
         est  = item.estimated_minutes if item.estimated_minutes else None
-        wh   = round(item.estimated_minutes / 60, 2) if item.estimated_minutes and item.estimated_minutes > 0 else None
+        wm   = int(item.estimated_minutes) if item.estimated_minutes and item.estimated_minutes > 0 else None
         for person in _persons(item.executor_name):
             rows.append(_make_row(
                 source="full_bldg_pm",
@@ -512,12 +527,12 @@ def _fetch_full_bldg_pm(db: Session, year: int, month: int, day: int) -> list[di
                 est_min=est,
                 start_time=item.start_time or "",
                 end_time=item.end_time or "",
-                work_hours=wh,
+                work_min=wm,
                 remark=item.result_note or "",
                 ragic_id=item.ragic_id,
                 detail={
-                    "日誌編號":  batch.journal_no or "",
-                    "保養月份":  batch.period_month or "",
+                    "日誌編號":  (batch.journal_no if batch else "") or "",
+                    "保養月份":  (batch.period_month if batch else "") or "",
                     "類別":      item.category or "",
                     "頻率":      item.frequency or "",
                     "區域":      item.location or "",
@@ -543,7 +558,7 @@ def _fetch_mall_fi(db: Session, year: int, month: int, day: int) -> list[dict]:
     ):
         person = (b.inspector_name or "").strip() or "未指定"
         task   = f"{b.sheet_name} 設施巡檢" if b.sheet_name else "商場設施巡檢"
-        wh     = _parse_wh(b.work_hours)
+        wm     = _parse_wm(b.work_hours)
         rows.append(_make_row(
             source="mall_fi",
             category="每日巡檢",
@@ -551,7 +566,7 @@ def _fetch_mall_fi(db: Session, year: int, month: int, day: int) -> list[dict]:
             person=person,
             start_time=b.start_time or "",
             end_time=b.end_time or "",
-            work_hours=wh,
+            work_min=wm,
             ragic_id=b.ragic_id,
             detail={
                 "巡檢表名稱": b.sheet_name or "",
@@ -559,7 +574,7 @@ def _fetch_mall_fi(db: Session, year: int, month: int, day: int) -> list[dict]:
                 "巡檢日期":   b.inspection_date or "",
                 "開始時間":   b.start_time or "",
                 "結束時間":   b.end_time or "",
-                "工時":       f"{wh:.2f} HR" if wh else "",
+                "工時":       f"{wm} min" if wm else "",
             },
         ))
     return rows
@@ -582,7 +597,7 @@ def _fetch_full_bi(db: Session, year: int, month: int, day: int) -> list[dict]:
             .all()
         ):
             person = (b.inspector_name or "").strip() or "未指定"
-            wh     = _parse_wh(b.work_hours)
+            wm     = _parse_wm(b.work_hours)
             rows.append(_make_row(
                 source="full_bi",
                 category="每日巡檢",
@@ -590,7 +605,7 @@ def _fetch_full_bi(db: Session, year: int, month: int, day: int) -> list[dict]:
                 person=person,
                 start_time=b.start_time or "",
                 end_time=b.end_time or "",
-                work_hours=wh,
+                work_min=wm,
                 ragic_id=b.ragic_id,
                 detail={
                     "巡檢表名稱": label,
@@ -598,7 +613,7 @@ def _fetch_full_bi(db: Session, year: int, month: int, day: int) -> list[dict]:
                     "巡檢日期":   b.inspection_date or "",
                     "開始時間":   b.start_time or "",
                     "結束時間":   b.end_time or "",
-                    "工時":       f"{wh:.2f} HR" if wh else "",
+                    "工時":       f"{wm} min" if wm else "",
                 },
             ))
     return rows
@@ -626,7 +641,7 @@ def _build_daily(db: Session, year: int, month: int, day: int) -> dict:
 
     named = sorted(
         [p for p in person_map if p != "未指定"],
-        key=lambda p: sum(r["work_hours"] or 0 for r in person_map[p]),
+        key=lambda p: sum(r["work_min"] or 0 for r in person_map[p]),
         reverse=True,
     )
     persons_order = named + (["未指定"] if "未指定" in person_map else [])
@@ -698,3 +713,152 @@ def get_work_journal_range(
         "days":      days,
         "total_rows": sum(d["total_rows"] for d in days),
     }
+
+
+@router.get("/export-excel", summary="工作日誌匯出 Excel（每人一 Sheet）")
+def export_work_journal_excel(
+    date_from: str = Query(..., description="起始日期 YYYY-MM-DD"),
+    date_to:   str = Query(..., description="結束日期 YYYY-MM-DD"),
+    person:    Optional[str] = Query(None, description="指定人員；不傳則匯出全員"),
+    db: Session = Depends(get_db),
+):
+    """匯出指定日期區間工作日誌為 Excel；全員模式每人一 Sheet，最多 93 天。"""
+    try:
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    except ImportError:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=500, detail="openpyxl 未安裝")
+
+    try:
+        start = _date.fromisoformat(date_from)
+        end   = _date.fromisoformat(date_to)
+    except ValueError:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="日期格式錯誤，需 YYYY-MM-DD")
+
+    if end < start:
+        start, end = end, start
+    if (end - start).days > 92:
+        end = start + timedelta(days=92)
+
+    # ── 收集資料 ───────────────────────────────────────────────────────────────
+    days_data = []
+    cur = start
+    while cur <= end:
+        daily = _build_daily(db, cur.year, cur.month, cur.day)
+        if daily["total_rows"] > 0:
+            days_data.append(daily)
+        cur += timedelta(days=1)
+
+    # ── 人員清單 ───────────────────────────────────────────────────────────────
+    if person:
+        persons_order = [person]
+    else:
+        seen: set = set()
+        persons_order = []
+        for daily in days_data:
+            for pd in daily["persons"]:
+                if pd["person"] not in seen:
+                    persons_order.append(pd["person"])
+                    seen.add(pd["person"])
+
+    # ── 樣式 ───────────────────────────────────────────────────────────────────
+    HEADERS    = ["日期", "模組", "類別", "工作事項", "預估耗時(min)", "起", "迄", "工時(min)", "備註", "回報事項"]
+    COL_WIDTHS = [12,     12,    10,    35,          14,              8,   8,   10,       25,   25]
+    header_fill = PatternFill(start_color="1B3A5C", end_color="1B3A5C", fill_type="solid")
+    header_font = Font(color="FFFFFF", bold=True, size=10)
+    thin = Border(
+        left=Side(style="thin"), right=Side(style="thin"),
+        top=Side(style="thin"), bottom=Side(style="thin"),
+    )
+    cat_colors = {
+        "現場報修": "4BA8E8", "上級交辦": "52C41A",
+        "緊急事件": "FF4D4F", "例行維護": "FA8C16", "每日巡檢": "722ED1",
+    }
+    total_fill = PatternFill(start_color="EBF3FB", end_color="EBF3FB", fill_type="solid")
+
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)
+
+    for pname in persons_order:
+        ws = wb.create_sheet(title=(pname or "未指定")[:31])
+
+        # 標題行
+        for ci, h in enumerate(HEADERS, 1):
+            cell = ws.cell(row=1, column=ci, value=h)
+            cell.fill      = header_fill
+            cell.font      = header_font
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            cell.border    = thin
+        ws.row_dimensions[1].height = 20
+
+        row_idx   = 2
+        total_min = 0
+
+        for daily in days_data:
+            for pd in daily["persons"]:
+                if pd["person"] != pname:
+                    continue
+                for r in pd["rows"]:
+                    cat = r.get("category", "")
+                    wm  = r.get("work_min")
+                    if isinstance(wm, int):
+                        total_min += wm
+                    row_data = [
+                        daily["date"],
+                        r.get("source_label", ""),
+                        cat,
+                        r.get("task", ""),
+                        r.get("est_min") or "",
+                        r.get("start_time") or "",
+                        r.get("end_time") or "",
+                        wm if wm is not None else "",
+                        r.get("remark", ""),
+                        r.get("report", ""),
+                    ]
+                    for ci, val in enumerate(row_data, 1):
+                        cell = ws.cell(row=row_idx, column=ci, value=val)
+                        cell.border    = thin
+                        cell.alignment = Alignment(vertical="center")
+                    if cat in cat_colors:
+                        ws.cell(row=row_idx, column=3).font = Font(color=cat_colors[cat], bold=True)
+                    if r.get("report"):
+                        ws.cell(row=row_idx, column=10).font = Font(color="D46B08")
+                    row_idx += 1
+
+        # 合計行
+        if row_idx > 2:
+            ws.cell(row=row_idx, column=1, value="合計").font = Font(bold=True)
+            tc = ws.cell(row=row_idx, column=8, value=total_min)
+            tc.font   = Font(bold=True, color="1B3A5C")
+            tc.border = thin
+            for ci in range(1, len(HEADERS) + 1):
+                ws.cell(row=row_idx, column=ci).fill = total_fill
+
+        # 欄寬
+        for ci, w in enumerate(COL_WIDTHS, 1):
+            ws.column_dimensions[ws.cell(row=1, column=ci).column_letter].width = w
+
+    if not wb.sheetnames:
+        ws = wb.create_sheet("無記錄")
+        ws.cell(row=1, column=1, value="查詢區間內無工作記錄")
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    label         = f"{date_from}_{date_to}" + (f"_{person}" if person else "")
+    filename_safe = f"work_journal_{label}.xlsx"
+    filename_cn   = f"工作日誌_{label}.xlsx"
+
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": (
+                f"attachment; filename=\"{filename_safe}\"; "
+                f"filename*=UTF-8\'\'{quote(filename_cn)}"
+            ),
+        },
+    )

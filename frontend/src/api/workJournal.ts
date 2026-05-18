@@ -54,7 +54,7 @@ export interface JournalRow {
   est_min:      number | null   // 預估耗時（分鐘），null = 無資料
   start_time:   string          // 'HH:MM' 或 ''
   end_time:     string          // 'HH:MM' 或 ''
-  work_hours:   number | null   // 實際/預估工時(HR)，null = 無資料
+  work_min:     number | null   // 工時（分鐘），null = 無資料
   remark:       string          // 備註
   report:       string          // 回報事項
   ragic_id:     string          // 原始記錄 Ragic ID
@@ -100,6 +100,17 @@ export async function fetchWorkJournalRange(
     params: { date_from, date_to },
   })
   return res.data
+}
+
+/** 回傳匯出 Excel 的 API URL（由前端用 downloadFile() 觸發下載） */
+export function getJournalExcelUrl(
+  date_from: string,
+  date_to: string,
+  person?: string,
+): string {
+  const params = new URLSearchParams({ date_from, date_to })
+  if (person) params.set('person', person)
+  return `/api/v1/work-journal/export-excel?${params.toString()}`
 }
 
 export interface CaseImageItem { url: string; filename: string }

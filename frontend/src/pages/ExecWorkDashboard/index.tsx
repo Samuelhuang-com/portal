@@ -26,6 +26,7 @@ import {
   AlertOutlined, BuildOutlined, ToolOutlined,
   DollarOutlined, RiseOutlined, WarningOutlined, BankOutlined,
   ArrowUpOutlined, ArrowDownOutlined, InfoCircleOutlined,
+  FileExcelOutlined, UserOutlined,
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import relativeTime from 'dayjs/plugin/relativeTime'
@@ -54,9 +55,11 @@ import { fetchMallDailyHours, type MallDailyHoursData,
          fetchMallMonthlyHours, type MallMonthlyHoursData } from '@/api/mallOverview'
 import {
   fetchWorkJournalDaily, fetchWorkJournalRange, fetchJournalImages,
+  getJournalExcelUrl,
   type WorkJournalDaily, type WorkJournalRange, type JournalRow, type CaseImageItem,
   CATEGORY_COLOR,
 } from '@/api/workJournal'
+import { downloadFile } from '@/api/downloadFile'
 
 import type { Dayjs } from 'dayjs'
 dayjs.extend(relativeTime)
@@ -1081,7 +1084,7 @@ function AlertPanel({
 type JournalCategory = '現場報修' | '上級交辦' | '緊急事件' | '例行維護' | '每日巡檢'
 const CAT_COLS: JournalCategory[] = ['現場報修', '上級交辦', '緊急事件', '例行維護', '每日巡檢']
 
-type JournalMode = 'single' | 'range' | 'month'
+type JournalMode = 'single' | 'range' | 'month' | 'person'
 
 // 單一日期的人員分組 Collapse（單日 or 區間內每天複用）
 function DayPersonCollapse({ persons }: { persons: WorkJournalDaily['persons'] }) {
@@ -1121,9 +1124,9 @@ function DayPersonCollapse({ persons }: { persons: WorkJournalDaily['persons'] }
       render: (v: string) => v ? <Text style={{ fontSize: 12 }}>{v}</Text> : <Text style={{ color: '#ccc', fontSize: 12 }}>—</Text>,
     },
     {
-      title: '工時(HR)', dataIndex: 'work_hours', key: 'wh', width: 72, align: 'center' as const,
+      title: '工時(min)', dataIndex: 'work_min', key: 'wh', width: 72, align: 'center' as const,
       render: (v: number | null) => v != null
-        ? <Text strong style={{ fontSize: 12, color: '#1B3A5C' }}>{v.toFixed(2)}</Text>
+        ? <Text strong style={{ fontSize: 12, color: '#1B3A5C' }}>{v}</Text>
         : <Text style={{ color: '#ccc', fontSize: 12 }}>—</Text>,
     },
     {
@@ -1146,7 +1149,7 @@ function DayPersonCollapse({ persons }: { persons: WorkJournalDaily['persons'] }
   }
 
   const items = persons.map((p, idx) => {
-    const totalWH = p.rows.reduce((acc, r) => acc + (r.work_hours ?? 0), 0)
+    const totalWH = p.rows.reduce((acc, r) => acc + (r.work_min ?? 0), 0)
     const sources = [...new Set(p.rows.map(r => r.source_label))].join('、')
     return {
       key: `person-${idx}`,
@@ -1156,7 +1159,7 @@ function DayPersonCollapse({ persons }: { persons: WorkJournalDaily['persons'] }
             {p.person}
           </Text>
           <Tag color="blue" style={{ fontSize: 11 }}>{p.rows.length} 項</Tag>
-          {totalWH > 0 && <Tag color="geekblue" style={{ fontSize: 11 }}>{totalWH.toFixed(2)} HR</Tag>}
+          {totalWH > 0 && <Tag color="geekblue" style={{ fontSize: 11 }}>{totalWH} min</Tag>}
           {sources && <Text type="secondary" style={{ fontSize: 11 }}>{sources}</Text>}
         </Space>
       ),
@@ -1225,9 +1228,9 @@ function DayPersonCollapse({ persons }: { persons: WorkJournalDaily['persons'] }
             >
               <Descriptions.Item label="人員">{selectedRow.person}</Descriptions.Item>
               <Descriptions.Item label="來源">{selectedRow.source_label}</Descriptions.Item>
-              {selectedRow.work_hours != null && (
-                <Descriptions.Item label="工時(HR)">
-                  <Text strong style={{ color: '#1B3A5C' }}>{selectedRow.work_hours.toFixed(2)}</Text>
+              {selectedRow.work_min != null && (
+                <Descriptions.Item label="工時(min)">
+                  <Text strong style={{ color: '#1B3A5C' }}>{selectedRow.work_min}</Text>
                 </Descriptions.Item>
               )}
               {selectedRow.start_time && (
@@ -1350,9 +1353,14 @@ function WorkJournalTab() {
   const [day,       setDay]       = useState<number>(dayjs().date())
   const [rangeDates, setRangeDates] = useState<[Dayjs, Dayjs] | null>(null)
   const [monthDate,  setMonthDate]  = useState<Dayjs | null>(dayjs())
-  const [singleData, setSingleData] = useState<WorkJournalDaily | null>(null)
-  const [rangeData,  setRangeData]  = useState<WorkJournalRange | null>(null)
-  const [loading,    setLoading]    = useState(false)
+  const [singleData,    setSingleData]    = useState<WorkJournalDaily | null>(null)
+  const [rangeData,     setRangeData]     = useState<WorkJournalRange | null>(null)
+  const [loading,       setLoading]       = useState(false)
+  const [personFilter,     setPersonFilter]     = useState<string>('')
+  const [personList,       setPersonList]       = useState<string[]>([])
+  const [personSubMode,    setPersonSubMode]    = useState<'range'|'month'>('month')
+  const [personRangeDates, setPersonRangeDates] = useState<[Dayjs, Dayjs] | null>(null)
+  const [personMonthDate,  setPersonMonthDate]  = useState<Dayjs | null>(dayjs())
 
   const daysInMonth = dayjs(`${year}-${String(month).padStart(2,'0')}-01`).daysInMonth()
   const dayOptions  = Array.from({ length: daysInMonth }, (_, i) => ({ label: `${i + 1} 日`, value: i + 1 }))
@@ -1376,6 +1384,25 @@ function WorkJournalTab() {
         const d = await fetchWorkJournalRange(from, to)
         setRangeData(d)
         setSingleData(null)
+      } else if (mode === 'person') {
+        let from = '', to = ''
+        if (personSubMode === 'range' && personRangeDates) {
+          from = personRangeDates[0].format('YYYY-MM-DD')
+          to   = personRangeDates[1].format('YYYY-MM-DD')
+        } else if (personSubMode === 'month' && personMonthDate) {
+          from = personMonthDate.startOf('month').format('YYYY-MM-DD')
+          to   = personMonthDate.endOf('month').format('YYYY-MM-DD')
+        }
+        if (!from) return
+        const d = await fetchWorkJournalRange(from, to)
+        setRangeData(d); setSingleData(null)
+        const names: string[] = []
+        const seen = new Set<string>()
+        d.days.forEach(dy => dy.persons.forEach(p => {
+          if (!seen.has(p.person)) { names.push(p.person); seen.add(p.person) }
+        }))
+        setPersonList(names)
+        if (names.length > 0 && !names.includes(personFilter)) setPersonFilter(names[0])
       }
     } catch {
       setSingleData(null)
@@ -1383,7 +1410,7 @@ function WorkJournalTab() {
     } finally {
       setLoading(false)
     }
-  }, [mode, year, month, day, rangeDates, monthDate])
+  }, [mode, year, month, day, rangeDates, monthDate, personSubMode, personRangeDates, personMonthDate, personFilter])
 
   // 日期 pickers
   const renderPickers = () => {
@@ -1410,8 +1437,7 @@ function WorkJournalTab() {
         />
       </Space>
     )
-    // month
-    return (
+    if (mode === 'month') return (
       <Space wrap>
         <Text type="secondary" style={{ fontSize: 13 }}>查詢月份：</Text>
         <DatePicker
@@ -1424,6 +1450,45 @@ function WorkJournalTab() {
         />
       </Space>
     )
+    // person mode
+    return (
+      <Space wrap>
+        <Segmented
+          size="small"
+          value={personSubMode}
+          onChange={v => { setPersonSubMode(v as 'range'|'month'); setRangeData(null); setPersonList([]) }}
+          options={[{ label: '整月', value: 'month' }, { label: '區間', value: 'range' }]}
+        />
+        {personSubMode === 'month' ? (
+          <DatePicker
+            picker="month"
+            value={personMonthDate}
+            onChange={v => setPersonMonthDate(v)}
+            format="YYYY 年 MM 月"
+            style={{ width: 150 }}
+            disabledDate={cur => cur && cur > dayjs().endOf('month')}
+          />
+        ) : (
+          <DatePicker.RangePicker
+            value={personRangeDates}
+            onChange={v => setPersonRangeDates(v as [Dayjs, Dayjs] | null)}
+            format="YYYY/MM/DD"
+            style={{ width: 260 }}
+            disabledDate={cur => cur && cur > dayjs().endOf('day')}
+          />
+        )}
+        {personList.length > 0 && (
+          <Select
+            value={personFilter}
+            onChange={v => setPersonFilter(v)}
+            style={{ width: 120 }}
+            placeholder="選擇人員"
+            options={personList.map(p => ({ label: p, value: p }))}
+            suffixIcon={<UserOutlined />}
+          />
+        )}
+      </Space>
+    )
   }
 
   // 結果摘要文字
@@ -1433,11 +1498,23 @@ function WorkJournalTab() {
         {singleData.date} ｜ 共 <Text strong>{singleData.total_rows}</Text> 筆
       </Text>
     )
-    if (rangeData) return (
+    if (rangeData && mode !== 'person') return (
       <Text type="secondary" style={{ fontSize: 12 }}>
         {rangeData.date_from} ～ {rangeData.date_to} ｜ 共 <Text strong>{rangeData.total_rows}</Text> 筆（{rangeData.days.length} 天）
       </Text>
     )
+    if (rangeData && mode === 'person' && personFilter) {
+      const personRows = rangeData.days.reduce((acc, d) => {
+        const p = d.persons.find(p => p.person === personFilter)
+        return acc + (p?.rows.length ?? 0)
+      }, 0)
+      return (
+        <Text type="secondary" style={{ fontSize: 12 }}>
+          <UserOutlined style={{ marginRight: 4 }} /><Text strong>{personFilter}</Text>
+          　{rangeData.date_from} ～ {rangeData.date_to} ｜ 共 <Text strong>{personRows}</Text> 筆（{rangeData.days.length} 天）
+        </Text>
+      )
+    }
     return null
   }
 
@@ -1459,6 +1536,49 @@ function WorkJournalTab() {
       return <DayPersonCollapse persons={singleData.persons} />
     }
 
+    // 人員模式
+    if (mode === 'person' && rangeData) {
+      if (!personFilter) return (
+        <div style={{ textAlign: 'center', paddingTop: 40, color: '#aaa', fontSize: 14 }}>
+          請選擇人員後按下「查詢」
+        </div>
+      )
+      const filteredDays = rangeData.days
+        .map(daily => ({
+          ...daily,
+          persons: daily.persons.filter(p => p.person === personFilter),
+        }))
+        .filter(daily => daily.persons.length > 0)
+
+      if (filteredDays.length === 0) return (
+        <div style={{ textAlign: 'center', paddingTop: 40, color: '#aaa', fontSize: 14 }}>
+          {personFilter} 在此區間內無工作記錄
+        </div>
+      )
+      const personDateItems = filteredDays.map((daily, di) => {
+        const dayMin = daily.persons[0]?.rows.reduce((a, r) => a + (r.work_min ?? 0), 0) ?? 0
+        const rowCount = daily.persons[0]?.rows.length ?? 0
+        return {
+          key: `pday-${di}`,
+          label: (
+            <Space>
+              <Text strong style={{ fontSize: 14, color: '#1B3A5C' }}>{daily.date}</Text>
+              <Tag color="blue">{rowCount} 項</Tag>
+              {dayMin > 0 && <Tag color="geekblue">{dayMin} min</Tag>}
+            </Space>
+          ),
+          children: <DayPersonCollapse persons={daily.persons} />,
+        }
+      })
+      return (
+        <Collapse
+          defaultActiveKey={filteredDays.map((_, i) => `pday-${i}`)}
+          items={personDateItems}
+          style={{ background: '#f0f4f8' }}
+        />
+      )
+    }
+
     // 區間 / 整月
     if (rangeData) {
       if (rangeData.total_rows === 0) return (
@@ -1468,7 +1588,7 @@ function WorkJournalTab() {
       )
       const dateItems = rangeData.days.map((daily, di) => {
         const totalWH = daily.persons.reduce(
-          (acc, p) => acc + p.rows.reduce((a, r) => a + (r.work_hours ?? 0), 0), 0
+          (acc, p) => acc + p.rows.reduce((a, r) => a + (r.work_min ?? 0), 0), 0
         )
         return {
           key: `day-${di}`,
@@ -1476,7 +1596,7 @@ function WorkJournalTab() {
             <Space>
               <Text strong style={{ fontSize: 14, color: '#1B3A5C' }}>{daily.date}</Text>
               <Tag color="blue">{daily.total_rows} 筆</Tag>
-              {totalWH > 0 && <Tag color="geekblue">{totalWH.toFixed(2)} HR</Tag>}
+              {totalWH > 0 && <Tag color="geekblue">{totalWH} min</Tag>}
               <Text type="secondary" style={{ fontSize: 12 }}>{daily.persons.length} 位人員</Text>
             </Space>
           ),
@@ -1505,11 +1625,16 @@ function WorkJournalTab() {
       <div style={{ marginBottom: 12 }}>
         <Segmented
           value={mode}
-          onChange={v => { setMode(v as JournalMode); setSingleData(null); setRangeData(null) }}
+          onChange={v => {
+            setMode(v as JournalMode)
+            setSingleData(null); setRangeData(null)
+            setPersonList([]); setPersonFilter('')
+          }}
           options={[
-            { label: '單日', value: 'single' },
-            { label: '區間', value: 'range' },
-            { label: '整月', value: 'month' },
+            { label: '單日',  value: 'single' },
+            { label: '區間',  value: 'range' },
+            { label: '整月',  value: 'month' },
+            { label: <Space size={4}><UserOutlined />人員</Space>, value: 'person' },
           ]}
         />
       </div>
@@ -1521,6 +1646,33 @@ function WorkJournalTab() {
           <Button type="primary" icon={<ReloadOutlined />} onClick={handleLoad} loading={loading}>
             查詢
           </Button>
+          {/* Excel 匯出按鈕：有資料才顯示 */}
+          {(singleData || rangeData) && (() => {
+            let from = '', to = '', exportPerson: string | undefined
+            if (mode === 'single' && singleData) {
+              const d = singleData.date.replace(/\//g, '-')
+              from = d; to = d
+            } else if ((mode === 'range' || mode === 'month') && rangeData) {
+              from = rangeData.date_from; to = rangeData.date_to
+            } else if (mode === 'person' && rangeData) {
+              from = rangeData.date_from; to = rangeData.date_to
+              exportPerson = personFilter || undefined
+            }
+            if (!from) return null
+            const label = exportPerson ? `${exportPerson}_${from}_${to}` : `${from}_${to}`
+            return (
+              <Button
+                icon={<FileExcelOutlined />}
+                style={{ color: '#52c41a', borderColor: '#52c41a' }}
+                onClick={() => downloadFile(
+                  getJournalExcelUrl(from, to, exportPerson),
+                  `工作日誌_${label}.xlsx`,
+                )}
+              >
+                匯出 Excel
+              </Button>
+            )
+          })()}
           {renderSummary()}
         </Space>
       </Card>
