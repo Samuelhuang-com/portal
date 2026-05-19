@@ -636,14 +636,6 @@ export default function NichiyoClaimReportPage() {
         />
       )}
 
-      {selectedOrder.order.ragic_url && (
-        <div style={{ marginTop: 16, textAlign: 'right' }}>
-          <Button type="link" size="small"
-            href={selectedOrder.order.ragic_url} target="_blank" rel="noopener noreferrer">
-            在 Ragic 中開啟 ↗
-          </Button>
-        </div>
-      )}
     </>
   )
 
@@ -895,12 +887,23 @@ export default function NichiyoClaimReportPage() {
 
       {/* ── Detail Drawer ── */}
       <Drawer
-        title={selectedOrder
-          ? `${selectedOrder.order.claim_no || '請款單'} — ${selectedOrder.order.department_display}`
-          : '請款單明細'}
+        title={
+          selectedOrder ? (
+            <Space size={6}>
+              <Tag color="blue" style={{ margin: 0 }}>日曜請款</Tag>
+              <span>請款單：{selectedOrder.order.claim_no || selectedOrder.order.ragic_record_id}</span>
+              {selectedOrder.order.ragic_url && (
+                <a href={selectedOrder.order.ragic_url} target="_blank" rel="noopener noreferrer"
+                   style={{ color: '#4BA8E8', fontSize: 13 }}>
+                  <LinkOutlined /> 在 Ragic 查看
+                </a>
+              )}
+            </Space>
+          ) : '請款單明細'
+        }
         open={drawerOpen}
         onClose={() => { setDrawerOpen(false); setSelectedOrder(null) }}
-        width={680}
+        width={480}
         bodyStyle={{ padding: 16 }}
         destroyOnClose
       >

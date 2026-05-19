@@ -18,6 +18,7 @@ import {
   CheckCircleOutlined, ClockCircleOutlined, ExclamationCircleOutlined,
   DashboardOutlined, FileTextOutlined, DownloadOutlined,
   WarningOutlined, DollarOutlined, SearchOutlined, BuildOutlined, ApiOutlined, QuestionCircleOutlined, PictureOutlined, AuditOutlined,
+  LinkOutlined,
 } from '@ant-design/icons'
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
@@ -47,6 +48,8 @@ const { Option } = Select
 
 // ── 常數 ──────────────────────────────────────────────────────────────────────
 const MONTHS = Array.from({ length: 12 }, (_, i) => i + 1)
+const RAGIC_DAZHI_BASE = 'https://ap12.ragic.com/soutlet001/lequn-public-works/8'
+const ragicCaseUrl = (ragicId: string) => `${RAGIC_DAZHI_BASE}/${ragicId}?PAGEID=fV8`
 const STATUS_COLOR: Record<string, string> = {
   '已驗收': '#52C41A', '已結案': '#52C41A', '結案': '#52C41A',
   '完修': '#52C41A', '已完成': '#52C41A', '完成': '#52C41A',
@@ -263,6 +266,11 @@ function CaseDetailDrawer({
         <Space>
           <ToolOutlined style={{ color: '#1B3A5C' }} />
           <span>報修詳情：{caseData.case_no || caseData.ragic_id}</span>
+          <a href={ragicCaseUrl(caseData.ragic_id)} target="_blank" rel="noopener noreferrer">
+            <Button size="small" type="link" icon={<LinkOutlined />} style={{ padding: 0, fontSize: 12 }}>
+              在 Ragic 查看
+            </Button>
+          </a>
         </Space>
       }
       open={!!caseData}
@@ -1828,6 +1836,13 @@ function DetailTab({
           <Space>
             <ToolOutlined style={{ color: '#1B3A5C' }} />
             <span>報修詳情：{drawerCase?.case_no || drawerCase?.ragic_id}</span>
+            {drawerCase?.ragic_id && (
+              <a href={ragicCaseUrl(drawerCase.ragic_id)} target="_blank" rel="noopener noreferrer">
+                <Button size="small" type="link" icon={<LinkOutlined />} style={{ padding: 0, fontSize: 12 }}>
+                  在 Ragic 查看
+                </Button>
+              </a>
+            )}
           </Space>
         }
         open={!!drawerCase}

@@ -26,7 +26,7 @@ import {
   AlertOutlined, BuildOutlined, ToolOutlined,
   DollarOutlined, RiseOutlined, WarningOutlined, BankOutlined,
   ArrowUpOutlined, ArrowDownOutlined, InfoCircleOutlined,
-  FileExcelOutlined, UserOutlined,
+  FileExcelOutlined, UserOutlined, LinkOutlined,
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import relativeTime from 'dayjs/plugin/relativeTime'
@@ -1202,14 +1202,33 @@ function DayPersonCollapse({ persons }: { persons: WorkJournalDaily['persons'] }
         open={!!selectedRow}
         onClose={() => { setSelectedRow(null); setDrawerImages([]) }}
         title={
-          selectedRow && (
-            <Space>
-              <Tag color={CATEGORY_COLOR[selectedRow.category as keyof typeof CATEGORY_COLOR]}>
-                {selectedRow.category}
-              </Tag>
-              <span style={{ fontSize: 14, color: '#1B3A5C' }}>{selectedRow.source_label}</span>
-            </Space>
-          )
+          selectedRow && (() => {
+            // 取最有意義的識別碼：報修編號 > 日誌編號 > 房號 > ragic_id
+            const d = selectedRow.detail ?? {}
+            const identifier = d['報修編號'] || d['日誌編號'] || d['房號'] || selectedRow.ragic_id || ''
+            return (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <Tag color={CATEGORY_COLOR[selectedRow.category as keyof typeof CATEGORY_COLOR]}
+                     style={{ margin: 0 }}>
+                  {selectedRow.category}
+                </Tag>
+                <span style={{ fontSize: 14, color: '#1B3A5C', fontWeight: 600 }}>
+                  {selectedRow.source_label}
+                  {identifier && <>：<span style={{ fontWeight: 400 }}>{identifier}</span></>}
+                </span>
+                {selectedRow.ragic_url && (
+                  <a
+                    href={selectedRow.ragic_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ fontSize: 12, color: '#4BA8E8', display: 'flex', alignItems: 'center', gap: 3, fontWeight: 400 }}
+                  >
+                    <LinkOutlined /> 在 Ragic 查看
+                  </a>
+                )}
+              </div>
+            )
+          })()
         }
         width={480}
         styles={{ body: { padding: '16px 20px' } }}
@@ -1332,24 +1351,6 @@ function DayPersonCollapse({ persons }: { persons: WorkJournalDaily['persons'] }
               </>
             )}
 
-            {selectedRow.ragic_id && (
-              <div style={{ marginTop: 16, textAlign: 'right' }}>
-                {selectedRow.ragic_url ? (
-                  <a
-                    href={selectedRow.ragic_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    style={{ fontSize: 11, color: '#8c8c8c' }}
-                  >
-                    Ragic ID: {selectedRow.ragic_id} ↗
-                  </a>
-                ) : (
-                  <Text type="secondary" style={{ fontSize: 11 }}>
-                    Ragic ID: {selectedRow.ragic_id}
-                  </Text>
-                )}
-              </div>
-            )}
           </>
         )}
       </Drawer>

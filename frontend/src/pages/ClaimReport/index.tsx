@@ -1397,10 +1397,21 @@ export default function ClaimReportPage() {
 
       {/* ── 請購 Detail Drawer ── */}
       <Drawer
-        title={selectedOrder
-          ? `${selectedOrder.order.purchase_no || '請購單'} — ${selectedOrder.order.department_display}`
-          : '請購單明細'}
-        width={680} open={drawerOpen} onClose={() => setDrawerOpen(false)}
+        title={
+          selectedOrder ? (
+            <Space size={6}>
+              <Tag color="blue" style={{ margin: 0 }}>請購單</Tag>
+              <span>請購單：{selectedOrder.order.purchase_no || selectedOrder.order.ragic_record_id}</span>
+              {selectedOrder.order.ragic_url && (
+                <a href={selectedOrder.order.ragic_url} target="_blank" rel="noopener noreferrer"
+                   style={{ color: '#4BA8E8', fontSize: 13 }}>
+                  <LinkOutlined /> 在 Ragic 查看
+                </a>
+              )}
+            </Space>
+          ) : '請購單明細'
+        }
+        width={480} open={drawerOpen} onClose={() => setDrawerOpen(false)}
         bodyStyle={{ padding: 16 }}
       >
         <Spin spinning={drawerLoading}>
@@ -1472,16 +1483,6 @@ export default function ClaimReportPage() {
                 />
               )}
 
-              {selectedOrder.order.ragic_url && (
-                <div style={{ marginTop: 16, textAlign: 'right' }}>
-                  <Button
-                    type="link" size="small"
-                    href={selectedOrder.order.ragic_url} target="_blank" rel="noopener noreferrer"
-                  >
-                    在 Ragic 中開啟 ↗
-                  </Button>
-                </div>
-              )}
             </>
           )}
         </Spin>
@@ -1489,10 +1490,21 @@ export default function ClaimReportPage() {
 
       {/* ── 請款 Detail Drawer ── */}
       <Drawer
-        title={selectedClaimOrder
-          ? `${selectedClaimOrder.order.request_no || '請款單'} — ${selectedClaimOrder.order.department_display}`
-          : '請款單明細'}
-        width={700} open={claimDrawerOpen} onClose={() => setClaimDrawerOpen(false)}
+        title={
+          selectedClaimOrder ? (
+            <Space size={6}>
+              <Tag color="orange" style={{ margin: 0 }}>請款單</Tag>
+              <span>請款單：{selectedClaimOrder.order.request_no || selectedClaimOrder.order.ragic_record_id}</span>
+              {selectedClaimOrder.order.ragic_url && (
+                <a href={selectedClaimOrder.order.ragic_url} target="_blank" rel="noopener noreferrer"
+                   style={{ color: '#4BA8E8', fontSize: 13 }}>
+                  <LinkOutlined /> 在 Ragic 查看
+                </a>
+              )}
+            </Space>
+          ) : '請款單明細'
+        }
+        width={480} open={claimDrawerOpen} onClose={() => setClaimDrawerOpen(false)}
         bodyStyle={{ padding: 16 }}
       >
         <Spin spinning={claimDrawerLoading}>
@@ -1566,16 +1578,6 @@ export default function ClaimReportPage() {
                 />
               )}
 
-              {selectedClaimOrder.order.ragic_url && (
-                <div style={{ marginTop: 16, textAlign: 'right' }}>
-                  <Button
-                    type="link" size="small"
-                    href={selectedClaimOrder.order.ragic_url} target="_blank" rel="noopener noreferrer"
-                  >
-                    在 Ragic 中開啟 ↗
-                  </Button>
-                </div>
-              )}
             </>
           )}
         </Spin>
