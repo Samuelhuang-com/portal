@@ -36,7 +36,6 @@ from app.models.luqun_repair            import LuqunRepairCase
 from app.models.periodic_maintenance    import PeriodicMaintenanceBatch, PeriodicMaintenanceItem
 from app.models.ihg_room_maintenance    import IHGRoomMaintenanceMaster
 from app.models.hotel_daily_inspection  import HotelDIBatch
-from app.models.security_patrol         import SecurityPatrolBatch
 from app.models.mall_periodic_maintenance import MallPeriodicMaintenanceBatch, MallPeriodicMaintenanceItem
 from app.models.full_building_maintenance import FullBldgPMBatch, FullBldgPMItem
 from app.models.mall_facility_inspection  import MallFIBatch
@@ -64,7 +63,6 @@ SOURCE_LABEL = {
     "hotel_pm":     "飯店週期保養",
     "ihg":          "IHG客房保養",
     "hotel_di":     "飯店每日巡檢",
-    "security":     "保全巡檢",
     "mall_pm":      "商場週期保養",
     "full_bldg_pm": "整棟保養",
     "mall_fi":      "商場設施巡檢",
@@ -93,15 +91,6 @@ _HOTEL_DI_PATHS: dict[str, str] = {
     "4f":     "main-project-inspection/19",
     "2f":     "main-project-inspection/20",
     "1f":     "main-project-inspection/21",
-}
-_SECURITY_PATHS: dict[str, str] = {
-    "b1f-b4f":  "security-patrol/1",
-    "1f-3f":    "security-patrol/2",
-    "5f-10f":   "security-patrol/3",
-    "4f":       "security-patrol/4",
-    "1f-hotel": "security-patrol/5",
-    "1f-close": "security-patrol/6",
-    "1f-open":  "security-patrol/9",
 }
 _MALL_FI_PATHS: dict[str, str] = {
     "4f":      "mall-facility-inspection/2",
@@ -497,40 +486,6 @@ def _fetch_hotel_di(db: Session, year: int, month: int, day: int) -> list[dict]:
     return rows
 
 
-def _fetch_security(db: Session, year: int, month: int, day: int) -> list[dict]:
-    """保全巡檢：security_patrol_batch"""
-    rows = []
-    date_str = _date_str(year, month, day)
-    for b in (
-        db.query(SecurityPatrolBatch)
-        .filter(SecurityPatrolBatch.inspection_date == date_str)
-        .all()
-    ):
-        person = (b.inspector_name or "").strip() or "未指定"
-        task   = f"{b.sheet_name} 保全巡邏" if b.sheet_name else "保全巡邏"
-        wm     = _parse_wm(b.work_hours)
-        rows.append(_make_row(
-            source="security",
-            category="每日巡檢",
-            task=task,
-            person=person,
-            start_time=b.start_time or "",
-            end_time=b.end_time or "",
-            work_min=wm,
-            ragic_id=b.ragic_id,
-            ragic_url=_ragic_url(_SECURITY_PATHS.get(b.sheet_key, ""), b.ragic_id),
-            detail={
-                "巡邏表名稱": b.sheet_name or "",
-                "巡邏人員":   b.inspector_name or "",
-                "巡檢日期":   b.inspection_date or "",
-                "開始時間":   b.start_time or "",
-                "結束時間":   b.end_time or "",
-                "工時":       f"{wm} min" if wm else "",
-            },
-        ))
-    return rows
-
-
 def _fetch_mall_pm(db: Session, year: int, month: int, day: int) -> list[dict]:
     """商場週期保養：mall_pm_batch + mall_pm_batch_item"""
     rows = []
@@ -733,7 +688,6 @@ def _build_daily(db: Session, year: int, month: int, day: int) -> dict:
     all_rows += _fetch_hotel_pm(db, year, month, day)
     all_rows += _fetch_ihg(db, year, month, day)
     all_rows += _fetch_hotel_di(db, year, month, day)
-    all_rows += _fetch_security(db, year, month, day)
     all_rows += _fetch_mall_pm(db, year, month, day)
     all_rows += _fetch_full_bldg_pm(db, year, month, day)
     all_rows += _fetch_mall_fi(db, year, month, day)
