@@ -73,6 +73,61 @@ SOURCE_LABEL = {
 
 SORT_ORDER = list(SOURCE_LABEL.keys())
 
+# ── Ragic 直連 URL ─────────────────────────────────────────────────────────────
+# 全部模組均位於 ap12.ragic.com / soutlet001
+_RAGIC_BASE    = "https://ap12.ragic.com/soutlet001"
+
+_SOURCE_PATH: dict[str, str] = {
+    "dazhi":        "lequn-public-works/8",
+    "luqun":        "luqun-public-works-repair-reporting-system/6",
+    "hotel_pm":     "periodic-maintenance/8",
+    "ihg":          "periodic-maintenance/4",
+    "mall_pm":      "periodic-maintenance/18",
+    "full_bldg_pm": "periodic-maintenance/21",
+}
+
+# 多 Sheet 來源：sheet_key → Ragic path
+_HOTEL_DI_PATHS: dict[str, str] = {
+    "rf":     "main-project-inspection/17",
+    "4f-10f": "main-project-inspection/18",
+    "4f":     "main-project-inspection/19",
+    "2f":     "main-project-inspection/20",
+    "1f":     "main-project-inspection/21",
+}
+_SECURITY_PATHS: dict[str, str] = {
+    "b1f-b4f":  "security-patrol/1",
+    "1f-3f":    "security-patrol/2",
+    "5f-10f":   "security-patrol/3",
+    "4f":       "security-patrol/4",
+    "1f-hotel": "security-patrol/5",
+    "1f-close": "security-patrol/6",
+    "1f-open":  "security-patrol/9",
+}
+_MALL_FI_PATHS: dict[str, str] = {
+    "4f":      "mall-facility-inspection/2",
+    "3f":      "mall-facility-inspection/3",
+    "1f-3f":   "mall-facility-inspection/4",
+    "1f":      "mall-facility-inspection/5",
+    "b1f-b4f": "mall-facility-inspection/7",
+}
+_FULL_BI_PATHS: dict[str, str] = {
+    "b1f": "full-building-inspection/4",
+    "b2f": "full-building-inspection/3",
+    "b4f": "full-building-inspection/2",
+    "rf":  "full-building-inspection/1",
+}
+
+
+def _ragic_url(path: str, ragic_id: str) -> str:
+    """組出 Ragic 記錄直連 URL。
+    多 Sheet 來源的 ragic_id 格式為 '{sheet_key}_{numeric_id}'，取最後一段數字作 record ID。
+    """
+    if not path or not ragic_id:
+        return ""
+    # 取尾段：'rf_2431' → '2431'；'2431' → '2431'
+    numeric_id = ragic_id.rsplit("_", 1)[-1] if "_" in ragic_id else ragic_id
+    return f"{_RAGIC_BASE}/{path}/{numeric_id}"
+
 
 # ── 工具函數 ───────────────────────────────────────────────────────────────────
 
@@ -157,6 +212,7 @@ def _make_row(
     remark: str = "",
     report: str = "",
     ragic_id: str = "",
+    ragic_url: str = "",
     detail: Optional[dict] = None,
 ) -> dict:
     st = _clean_time(start_time)
@@ -177,6 +233,7 @@ def _make_row(
         "remark":       (remark or "").strip(),
         "report":       (report or "").strip(),
         "ragic_id":     ragic_id,
+        "ragic_url":    ragic_url,
         "detail":       detail or {},
     }
 
@@ -210,6 +267,7 @@ def _fetch_dazhi(db: Session, year: int, month: int, day: int) -> list[dict]:
             work_min=wm,
             remark=c.finance_note or "",
             ragic_id=c.ragic_id,
+            ragic_url=_ragic_url(_SOURCE_PATH["dazhi"], c.ragic_id),
             detail={
                 "報修編號":  c.case_no or "",
                 "標題":      c.title or "",
@@ -263,6 +321,7 @@ def _fetch_luqun(db: Session, year: int, month: int, day: int) -> list[dict]:
             work_min=wm,
             remark=c.mgmt_response or c.finance_note or "",
             ragic_id=c.ragic_id,
+            ragic_url=_ragic_url(_SOURCE_PATH["luqun"], c.ragic_id),
             detail={
                 "報修編號":  c.case_no or "",
                 "標題":      c.title or "",
@@ -335,6 +394,7 @@ def _fetch_hotel_pm(db: Session, year: int, month: int, day: int) -> list[dict]:
                 work_min=wm,
                 remark=item.result_note or "",
                 ragic_id=item.ragic_id,
+                ragic_url=_ragic_url(_SOURCE_PATH["hotel_pm"], item.ragic_id),
                 detail={
                     "日誌編號":  (batch.journal_no if batch else "") or "",
                     "保養月份":  (batch.period_month if batch else "") or "",
@@ -386,6 +446,7 @@ def _fetch_ihg(db: Session, year: int, month: int, day: int) -> list[dict]:
             work_min=wm,
             remark=rec.notes or "",
             ragic_id=rec.ragic_id,
+            ragic_url=_ragic_url(_SOURCE_PATH["ihg"], rec.ragic_id),
             detail={
                 "房號":     rec.room_no or "",
                 "樓層":     rec.floor or "",
@@ -423,6 +484,7 @@ def _fetch_hotel_di(db: Session, year: int, month: int, day: int) -> list[dict]:
             end_time=b.end_time or "",
             work_min=wm,
             ragic_id=b.ragic_id,
+            ragic_url=_ragic_url(_HOTEL_DI_PATHS.get(b.sheet_key, ""), b.ragic_id),
             detail={
                 "巡檢表名稱": b.sheet_name or "",
                 "巡檢人員":   b.inspector_name or "",
@@ -456,6 +518,7 @@ def _fetch_security(db: Session, year: int, month: int, day: int) -> list[dict]:
             end_time=b.end_time or "",
             work_min=wm,
             ragic_id=b.ragic_id,
+            ragic_url=_ragic_url(_SECURITY_PATHS.get(b.sheet_key, ""), b.ragic_id),
             detail={
                 "巡邏表名稱": b.sheet_name or "",
                 "巡邏人員":   b.inspector_name or "",
@@ -509,6 +572,7 @@ def _fetch_mall_pm(db: Session, year: int, month: int, day: int) -> list[dict]:
                 work_min=wm,
                 remark=item.result_note or "",
                 ragic_id=item.ragic_id,
+                ragic_url=_ragic_url(_SOURCE_PATH["mall_pm"], item.ragic_id),
                 detail={
                     "日誌編號":  (batch.journal_no if batch else "") or "",
                     "保養月份":  (batch.period_month if batch else "") or "",
@@ -567,6 +631,7 @@ def _fetch_full_bldg_pm(db: Session, year: int, month: int, day: int) -> list[di
                 work_min=wm,
                 remark=item.result_note or "",
                 ragic_id=item.ragic_id,
+                ragic_url=_ragic_url(_SOURCE_PATH["full_bldg_pm"], item.ragic_id),
                 detail={
                     "日誌編號":  (batch.journal_no if batch else "") or "",
                     "保養月份":  (batch.period_month if batch else "") or "",
@@ -605,6 +670,7 @@ def _fetch_mall_fi(db: Session, year: int, month: int, day: int) -> list[dict]:
             end_time=b.end_time or "",
             work_min=wm,
             ragic_id=b.ragic_id,
+            ragic_url=_ragic_url(_MALL_FI_PATHS.get(b.sheet_key, ""), b.ragic_id),
             detail={
                 "巡檢表名稱": b.sheet_name or "",
                 "巡檢人員":   b.inspector_name or "",
@@ -622,12 +688,12 @@ def _fetch_full_bi(db: Session, year: int, month: int, day: int) -> list[dict]:
     rows = []
     date_str = _date_str(year, month, day)
     SHEETS = [
-        (B1FInspectionBatch, "B1F 整棟巡檢"),
-        (B2FInspectionBatch, "B2F 整棟巡檢"),
-        (B4FInspectionBatch, "B4F 整棟巡檢"),
-        (RFInspectionBatch,  "RF 整棟巡檢"),
+        (B1FInspectionBatch, "B1F 整棟巡檢", "b1f"),
+        (B2FInspectionBatch, "B2F 整棟巡檢", "b2f"),
+        (B4FInspectionBatch, "B4F 整棟巡檢", "b4f"),
+        (RFInspectionBatch,  "RF 整棟巡檢",  "rf"),
     ]
-    for Model, label in SHEETS:
+    for Model, label, bi_key in SHEETS:
         for b in (
             db.query(Model)
             .filter(Model.inspection_date == date_str)
@@ -644,6 +710,7 @@ def _fetch_full_bi(db: Session, year: int, month: int, day: int) -> list[dict]:
                 end_time=b.end_time or "",
                 work_min=wm,
                 ragic_id=b.ragic_id,
+                ragic_url=_ragic_url(_FULL_BI_PATHS[bi_key], b.ragic_id),
                 detail={
                     "巡檢表名稱": label,
                     "巡檢人員":   b.inspector_name or "",
@@ -1056,8 +1123,11 @@ def export_work_journal_excel(
                 r="medium" if c == NCOLS else "thin",
                 t="medium", b="medium",
             )
-        tc = ws.cell(row=total_row, column=12,
-                     value=f"合計工時：{total_min} min")
+            cell.alignment = CENTER
+            cell.font      = Font(size=10)
+
+        # 合計工時欄（L:M 合併）
+        tc = ws.cell(row=total_row, column=12, value=f"合計工時：{total_min} min")
         tc.font      = Font(bold=True, size=10, color="1B3A5C")
         tc.alignment = RIGHT
         ws.merge_cells(f"L{total_row}:M{total_row}")

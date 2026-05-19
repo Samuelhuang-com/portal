@@ -1334,9 +1334,20 @@ function DayPersonCollapse({ persons }: { persons: WorkJournalDaily['persons'] }
 
             {selectedRow.ragic_id && (
               <div style={{ marginTop: 16, textAlign: 'right' }}>
-                <Text type="secondary" style={{ fontSize: 11 }}>
-                  Ragic ID: {selectedRow.ragic_id}
-                </Text>
+                {selectedRow.ragic_url ? (
+                  <a
+                    href={selectedRow.ragic_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ fontSize: 11, color: '#8c8c8c' }}
+                  >
+                    Ragic ID: {selectedRow.ragic_id} ↗
+                  </a>
+                ) : (
+                  <Text type="secondary" style={{ fontSize: 11 }}>
+                    Ragic ID: {selectedRow.ragic_id}
+                  </Text>
+                )}
               </div>
             )}
           </>

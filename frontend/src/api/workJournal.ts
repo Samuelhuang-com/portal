@@ -58,6 +58,7 @@ export interface JournalRow {
   remark:       string          // 備註
   report:       string          // 回報事項
   ragic_id:     string          // 原始記錄 Ragic ID
+  ragic_url:    string          // Ragic 記錄直連 URL（空字串 = 無）
   detail:       Record<string, string>  // 模組專屬明細欄位
 }
 
