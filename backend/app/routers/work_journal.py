@@ -116,6 +116,23 @@ def _clean_time(t: str) -> str:
     return t[:5] if len(t) >= 5 else t
 
 
+def _calc_wm_from_times(start: str, end: str) -> Optional[int]:
+    """由 HH:MM 起/迄計算工時分鐘；跨午夜視為 +1 天；失敗回 None"""
+    s = _clean_time(start)
+    e = _clean_time(end)
+    if not s or not e:
+        return None
+    try:
+        sh, sm = map(int, s.split(":"))
+        eh, em = map(int, e.split(":"))
+        total = (eh * 60 + em) - (sh * 60 + sm)
+        if total < 0:
+            total += 24 * 60   # 跨午夜
+        return total if total > 0 else None
+    except Exception:
+        return None
+
+
 def _persons(name: str) -> list[str]:
     """executor_name 可能含多人（空格分隔），拆成 list；空白 → ['未指定']"""
     if not name or not name.strip():
@@ -142,6 +159,11 @@ def _make_row(
     ragic_id: str = "",
     detail: Optional[dict] = None,
 ) -> dict:
+    st = _clean_time(start_time)
+    et = _clean_time(end_time)
+    # 無工時時，由起迄時間自動計算
+    if work_min is None:
+        work_min = _calc_wm_from_times(st, et)
     return {
         "source":       source,
         "source_label": SOURCE_LABEL.get(source, source),
@@ -149,8 +171,8 @@ def _make_row(
         "task":         task.strip(),
         "person":       person or "未指定",
         "est_min":      est_min,
-        "start_time":   _clean_time(start_time),
-        "end_time":     _clean_time(end_time),
+        "start_time":   st,
+        "end_time":     et,
         "work_min":     work_min,
         "remark":       (remark or "").strip(),
         "report":       (report or "").strip(),
@@ -172,15 +194,19 @@ def _fetch_dazhi(db: Session, year: int, month: int, day: int) -> list[dict]:
             continue
         if c.occurred_at.date() != target:
             continue
-        person = (c.responsible_unit or "").strip() or "未指定"
-        task = " ".join(filter(None, [c.repair_type, c.floor, c.title]))
-        wm   = round(c.work_hours * 60) if c.work_hours and c.work_hours > 0 else None
-        occ  = c.occurred_at.strftime("%Y/%m/%d %H:%M") if c.occurred_at else ""
+        person     = (c.responsible_unit or "").strip() or "未指定"
+        task       = " ".join(filter(None, [c.repair_type, c.floor, c.title]))
+        wm         = round(c.work_hours * 60) if c.work_hours and c.work_hours > 0 else None
+        occ        = c.occurred_at.strftime("%Y/%m/%d %H:%M") if c.occurred_at else ""
+        start_t    = c.occurred_at.strftime("%H:%M")  if c.occurred_at  else ""
+        end_t      = c.completed_at.strftime("%H:%M") if c.completed_at else ""
         rows.append(_make_row(
             source="dazhi",
             category=_classify(c.title or "", c.repair_type or ""),
             task=task or "(無說明)",
             person=person,
+            start_time=start_t,
+            end_time=end_t,
             work_min=wm,
             remark=c.finance_note or "",
             ragic_id=c.ragic_id,
@@ -221,15 +247,19 @@ def _fetch_luqun(db: Session, year: int, month: int, day: int) -> list[dict]:
             continue
         if c.occurred_at.date() != target:
             continue
-        person = (c.responsible_unit or "").strip() or "未指定"
-        task = " ".join(filter(None, [c.repair_type, c.floor, c.title]))
-        wm   = round(c.work_hours * 60) if c.work_hours and c.work_hours > 0 else None
-        occ  = c.occurred_at.strftime("%Y/%m/%d %H:%M") if c.occurred_at else ""
+        person     = (c.responsible_unit or "").strip() or "未指定"
+        task       = " ".join(filter(None, [c.repair_type, c.floor, c.title]))
+        wm         = round(c.work_hours * 60) if c.work_hours and c.work_hours > 0 else None
+        occ        = c.occurred_at.strftime("%Y/%m/%d %H:%M") if c.occurred_at else ""
+        start_t    = c.occurred_at.strftime("%H:%M")  if c.occurred_at  else ""
+        end_t      = c.completed_at.strftime("%H:%M") if c.completed_at else ""
         rows.append(_make_row(
             source="luqun",
             category=_classify(c.title or "", c.repair_type or ""),
             task=task or "(無說明)",
             person=person,
+            start_time=start_t,
+            end_time=end_t,
             work_min=wm,
             remark=c.mgmt_response or c.finance_note or "",
             ragic_id=c.ragic_id,
@@ -339,14 +369,20 @@ def _fetch_ihg(db: Session, year: int, month: int, day: int) -> list[dict]:
             mins_val = raw.get("工時計算", "")
             wm_raw = float(re.search(r"[\d.]+", str(mins_val)).group()) if mins_val and re.search(r"[\d.]+", str(mins_val)) else None
         except Exception:
-            wm_raw = None
-        wm = round(wm_raw) if wm_raw and wm_raw > 0 else 30
+            wm_raw  = None
+            mins_val = ""
+        wm = round(wm_raw) if wm_raw and wm_raw > 0 else None
+        # IHG 起迄時間：嘗試從 raw_json 取；model 無獨立欄位
+        ihg_start = _clean_time(raw.get("開始時間", "") or raw.get("保養開始時間", ""))
+        ihg_end   = _clean_time(raw.get("結束時間", "") or raw.get("保養結束時間", ""))
         rows.append(_make_row(
             source="ihg",
             category="例行維護",
             task=task,
             person=person,
-            est_min=30,
+            est_min=wm,          # IHG 無獨立預估欄位，以實際工時帶入
+            start_time=ihg_start,
+            end_time=ihg_end,
             work_min=wm,
             remark=rec.notes or "",
             ragic_id=rec.ragic_id,
@@ -359,6 +395,7 @@ def _fetch_ihg(db: Session, year: int, month: int, day: int) -> list[dict]:
                 "保養日期": rec.maint_date or "",
                 "完成日期": rec.completion_date or "",
                 "狀態":     rec.status or "",
+                "工時計算": str(mins_val) if mins_val else "",  # 帶入 Drawer 顯示
                 "備註":     rec.notes or "",
             },
         ))
@@ -1040,26 +1077,28 @@ def export_work_journal_excel(
                 cell.border = _border(
                     l="medium" if c == 1     else "thin",
                     r="medium" if c == NCOLS else "thin",
-                    t="thin",  b="medium",
+                    t="thin",
+                    b="medium",
                 )
 
-        ws.cell(row=row_idx, column=1, value="主管覆核").font = Font(bold=True, size=11)
+        # 主管覆核
+        ws.cell(row=row_idx, column=1, value="主管覆核").font      = Font(bold=True, size=10, color="FFFFFF")
         ws.cell(row=row_idx, column=1).alignment = CENTER
+        ws.cell(row=row_idx, column=1).fill      = PatternFill("solid", fgColor="1B3A5C")
         ws.merge_cells(f"A{row_idx}:D{row_idx + 2}")
 
-        ws.cell(row=row_idx, column=5, value="值班人員簽名").font = Font(bold=True, size=11)
+        # 值班人員簽名
+        ws.cell(row=row_idx, column=5, value="值班人員簽名").font      = Font(bold=True, size=10, color="FFFFFF")
         ws.cell(row=row_idx, column=5).alignment = CENTER
+        ws.cell(row=row_idx, column=5).fill      = PatternFill("solid", fgColor="1B3A5C")
         ws.merge_cells(f"E{row_idx}:H{row_idx + 2}")
 
-        ws.cell(row=row_idx, column=9, value="備註").font = Font(bold=True, size=11)
+        # 備註
+        ws.cell(row=row_idx, column=9, value="備註").font      = Font(bold=True, size=10, color="FFFFFF")
         ws.cell(row=row_idx, column=9).alignment = CENTER
+        ws.cell(row=row_idx, column=9).fill      = PatternFill("solid", fgColor="1B3A5C")
         ws.merge_cells(f"I{row_idx}:M{row_idx + 2}")
 
-    if not wb.sheetnames:
-        ws = wb.create_sheet("無記錄")
-        ws.cell(row=1, column=1, value="查詢區間內無工作記錄")
-
-    buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)
 
