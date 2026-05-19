@@ -14,7 +14,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react'
 import {
   Row, Col, Card, Statistic, Typography, Breadcrumb, Select,
   Spin, Alert, Tabs, Tag, Space, Progress, Divider, Tooltip,
-  Badge, Table, Button, DatePicker,
+  Badge, Table, Button, DatePicker, message,
 } from 'antd'
 import {
   HomeOutlined, ToolOutlined, SafetyOutlined, BuildOutlined,
@@ -167,11 +167,11 @@ function adaptIHG(stats: IHGStats): NormalizedSource {
     source_key:      'ihg',
     source_name:     'IHG客房保養',
     source_color:    SOURCE_COLORS.ihg,
-    case_count:      stats.total_scheduled,  // 當月有執行的房間數（distinct room_no）
-    completed_count: stats.completed,
-    work_hours:      stats.work_hours ?? -1, // 來自 raw_json「工時計算」加總 / 60
-    completion_rate: stats.completion_rate,
-    abnormal_count:  stats.abnormal,
+    case_count:      stats.total_scheduled  ?? 0,
+    completed_count: stats.completed         ?? 0,
+    work_hours:      stats.work_hours        ?? -1, // 來自 raw_json「工時計算」加總 / 60
+    completion_rate: stats.completion_rate   ?? 0,
+    abnormal_count:  stats.abnormal          ?? 0,
     overdue_count:   0,
     status_label:    `完成率 ${(stats.completion_rate ?? 0).toFixed(1)}%`,
     is_ok:           (stats.completion_rate ?? 0) >= 70,
@@ -185,11 +185,11 @@ function adaptHotelDI(summary: HotelDIMonthlyDashboard): NormalizedSource {
     source_key:      'daily_inspection',
     source_name:     '飯店每日巡檢',
     source_color:    SOURCE_COLORS.daily_inspection,
-    case_count:      summary.total_items,
-    completed_count: summary.checked_items,
-    work_hours:      summary.total_minutes / 60,
-    completion_rate: rate,
-    abnormal_count:  summary.abnormal_items,
+    case_count:      summary.total_items    ?? 0,
+    completed_count: summary.checked_items  ?? 0,
+    work_hours:      (summary.total_minutes ?? 0) / 60,
+    completion_rate: rate                   ?? 0,
+    abnormal_count:  summary.abnormal_items ?? 0,
     overdue_count:   0,
     status_label:    `完成率 ${(rate ?? 0).toFixed(1)}%`,
     is_ok:           (rate ?? 0) >= 80,
@@ -202,11 +202,11 @@ function adaptSecurity(summary: SecurityMonthlyDashboard): NormalizedSource {
     source_key:      'security',
     source_name:     '保全巡檢',
     source_color:    SOURCE_COLORS.security,
-    case_count:      summary.total_items,
-    completed_count: summary.checked_items,
-    work_hours:      summary.total_minutes / 60,
-    completion_rate: summary.completion_rate,
-    abnormal_count:  summary.abnormal_items,
+    case_count:      summary.total_items      ?? 0,
+    completed_count: summary.checked_items    ?? 0,
+    work_hours:      (summary.total_minutes   ?? 0) / 60,
+    completion_rate: summary.completion_rate  ?? 0,
+    abnormal_count:  summary.abnormal_items   ?? 0,
     overdue_count:   0,
     status_label:    `完成率 ${(summary.completion_rate ?? 0).toFixed(1)}%`,
     is_ok:           (summary.completion_rate ?? 0) >= 80,
@@ -323,6 +323,8 @@ export default function HotelMgmtDashboardPage() {
   const [yearlyYear,       setYearlyYear]        = useState<number>(thisYear)
   const [tabYearlyLoading, setTabYearlyLoading]  = useState(false)
   const [exportLoading,    setExportLoading]     = useState(false)
+  const [exportProgress,   setExportProgress]    = useState(0)
+  const exportTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // ── Tab 獨立篩選狀態（各 Tab 不影響 Dashboard 的 year/month）────────────
   const [tabBYear,   setTabBYear]   = useState<number>(thisYear)
@@ -404,9 +406,9 @@ export default function HotelMgmtDashboardPage() {
   // ── 聚合 KPI ──────────────────────────────────────────────────────────
   const totalWorkHours    = sources.reduce((s, x) => s + (x.work_hours > 0 ? x.work_hours : 0), 0)
   const totalCases        = sources.reduce((s, x) => s + (x.case_count > 0 ? x.case_count : 0), 0)
-  const totalCompleted    = sources.reduce((s, x) => s + x.completed_count, 0)
-  const totalAbnormal     = sources.reduce((s, x) => s + x.abnormal_count, 0)
-  const totalOverdue      = sources.reduce((s, x) => s + x.overdue_count, 0)
+  const totalCompleted    = sources.reduce((s, x) => s + (x.completed_count ?? 0), 0)
+  const totalAbnormal     = sources.reduce((s, x) => s + (x.abnormal_count  ?? 0), 0)
+  const totalOverdue      = sources.reduce((s, x) => s + (x.overdue_count   ?? 0), 0)
   const overallRate       = totalCases > 0 ? Math.round(totalCompleted / totalCases * 100) : 0
 
   // ── 篩選選項 + 費用標籤 ───────────────────────────────────────────────
@@ -1647,6 +1649,17 @@ export default function HotelMgmtDashboardPage() {
                 style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)', color: '#fff', border: 'none' }}
                 onClick={async () => {
                   setExportLoading(true)
+                  setExportProgress(5)
+                  // Simulate progress: crawl from 5 → 88 over ~12 seconds
+                  exportTimerRef.current = setInterval(() => {
+                    setExportProgress(prev => {
+                      if (prev >= 88) {
+                        clearInterval(exportTimerRef.current!)
+                        return 88
+                      }
+                      return prev + Math.random() * 4 + 1
+                    })
+                  }, 600)
                   try {
                     const payload: HotelPptxPayload = {
                       kpi_summary: {
@@ -1677,10 +1690,14 @@ export default function HotelMgmtDashboardPage() {
                       },
                     }
                     await exportHotelOverviewPptx(year, month, payload)
+                    setExportProgress(100)
                   } catch (e) {
                     console.error('PPTX export failed', e)
+                    message.error('PPTX 匯出失敗，請確認資料已載入後重試')
                   } finally {
+                    clearInterval(exportTimerRef.current!)
                     setExportLoading(false)
+                    setTimeout(() => setExportProgress(0), 1200)
                   }
                 }}
               >
@@ -1689,6 +1706,19 @@ export default function HotelMgmtDashboardPage() {
             </Space>
           </Col>
         </Row>
+        {exportLoading && (
+          <Row style={{ marginTop: 8 }}>
+            <Col span={24}>
+              <Progress
+                percent={Math.round(exportProgress)}
+                status={exportProgress >= 100 ? 'success' : 'active'}
+                strokeColor={{ from: '#667eea', to: '#764ba2' }}
+                size="small"
+                format={pct => pct! >= 100 ? '完成！' : `正在生成 ${pct}%`}
+              />
+            </Col>
+          </Row>
+        )}
       </Card>
 
       {/* 資料載入錯誤提示 */}

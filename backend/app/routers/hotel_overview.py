@@ -888,6 +888,103 @@ def _build_slide2_kpi(slide, kpi: "HotelPptxPayload", period_str: str,
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# PPTX 模板輔助函式
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _clone_template_slide(prs, src_idx: int):
+    """Clone slide at src_idx to end of presentation, preserving image relationships."""
+    import copy
+    R_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
+    src = prs.slides[src_idx]
+    new_slide = prs.slides.add_slide(src.slide_layout)
+    sp_tree = new_slide.shapes._spTree
+    src_sp_tree = src.shapes._spTree
+    for el in list(sp_tree):
+        sp_tree.remove(el)
+    for el in list(src_sp_tree):
+        sp_tree.append(copy.deepcopy(el))
+    for rel_id, rel in src.part.rels.items():
+        if 'image' in rel.reltype:
+            img_part = rel._target
+            new_rId = new_slide.part.relate_to(img_part, rel.reltype)
+            if new_rId != rel_id:
+                for el in sp_tree.iter():
+                    for attr in [f'{{{R_NS}}}embed', f'{{{R_NS}}}id']:
+                        if el.get(attr) == rel_id:
+                            el.set(attr, new_rId)
+    return new_slide
+
+
+def _delete_slide(prs, idx: int):
+    """Delete slide at index idx from presentation."""
+    from pptx.oxml.ns import qn
+    sldIdLst = prs.slides._sldIdLst
+    sldId = sldIdLst[idx]
+    rId = sldId.get(qn('r:id'))
+    sldIdLst.remove(sldId)
+    try:
+        prs.part.drop_rel(rId)
+    except Exception:
+        try:
+            del prs.part.rels._rels[rId]
+        except Exception:
+            pass
+
+
+def _update_cover_date(slide, year: int, month: int):
+    """Update YYYY.M date text run in cover slide."""
+    import re
+    new_text = f"{year}.{month}"
+    for shape in slide.shapes:
+        if not shape.has_text_frame:
+            continue
+        for para in shape.text_frame.paragraphs:
+            for run in para.runs:
+                if re.match(r'^\d{4}\.\d{1,2}$', run.text.strip()):
+                    run.text = new_text
+                    return
+
+
+def _set_slide_title(slide, title: str, subtitle: str = "",
+                     now_str: str = "", SW: float = 13.33, SH: float = 7.5):
+    """Update template content slide: clear original title box, add new title,
+    subtitle below header, and footer."""
+    from pptx.dml.color import RGBColor
+    from pptx.util import Pt
+    from pptx.enum.text import PP_ALIGN
+
+    C_WHITE = RGBColor(0xFF, 0xFF, 0xFF)
+    C_LIGHT = RGBColor(0xB0, 0xDC, 0xFF)
+    C_GRAY  = RGBColor(0x88, 0x88, 0x88)
+
+    # Clear original title text box to remove stale template text
+    for shape in slide.shapes:
+        if shape.has_text_frame and shape.name == "Text Box 3":
+            for para in shape.text_frame.paragraphs:
+                for run in para.runs:
+                    run.text = ""
+            break
+
+    # Add slide title in the green header area
+    _pptx_txt(slide, title, 0.35, 0.07, SW - 4.5, 0.40,
+              size=18, bold=True, color=C_WHITE)
+
+    # Subtitle just below the header bar
+    if subtitle:
+        _pptx_txt(slide, subtitle, 0.35, 0.52, SW - 4.5, 0.22,
+                  size=10, color=C_LIGHT)
+
+    # Footer
+    if now_str:
+        _pptx_txt(slide, f"匯出時間：{now_str}",
+                  SW - 4.5, SH - 0.35, 4.2, 0.3,
+                  size=8, color=C_GRAY, align=PP_ALIGN.RIGHT)
+        _pptx_txt(slide, "飯店管理系統  ·  自動生成，資料以系統為準",
+                  0.4, SH - 0.35, 8.0, 0.3,
+                  size=8, color=C_GRAY)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # PPTX 主建構函式
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -895,74 +992,75 @@ def _build_hotel_pptx(year: int, month: int,
                       daily: dict, monthly: dict, persons: dict,
                       kpi_payload: Optional["HotelPptxPayload"] = None) -> BytesIO:
     """
-    使用 python-pptx 產生 5 張投影片的飯店管理 Dashboard 報告。
-    daily   = get_hotel_daily_hours 回傳值（year/month 口徑）
-    monthly = get_hotel_monthly_hours 回傳值（全年口徑）
-    persons = get_hotel_person_hours 回傳值（全年口徑）
+    使用模板 hotel_report_template.pptx 產生飯店管理 Dashboard 報告（5 張投影片）。
+    Slide 1: Cover（更新日期）
+    Slide 2: 本期績效總覽（KPI 摘要）
+    Slide 3: 每日工時累計
+    Slide 4: 每月工時累計
+    Slide 5: 人員工時排名
     """
+    import os
     from pptx import Presentation
     from pptx.util import Inches, Pt
     from pptx.dml.color import RGBColor
     from pptx.enum.text import PP_ALIGN
 
-    SW, SH = 13.33, 7.5
-    C_DARK     = RGBColor(0x1B, 0x3A, 0x5C)
-    C_DARK_BG  = RGBColor(0x0F, 0x26, 0x40)
-    C_ACCENT   = RGBColor(0x4B, 0xA8, 0xE8)
-    C_WHITE    = RGBColor(0xFF, 0xFF, 0xFF)
-    C_ROW_ALT  = RGBColor(0xEE, 0xF5, 0xFB)
-    C_TOTAL    = RGBColor(0xE8, 0xF4, 0xFF)
-    C_GRAY     = RGBColor(0x88, 0x88, 0x88)
+    TEMPLATE_PATH = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), '..', 'static',
+                     'pptx_templates', 'hotel_report_template.pptx')
+    )
+    prs = Presentation(TEMPLATE_PATH)
+    SW = prs.slide_width.inches
+    SH = prs.slide_height.inches
 
-    prs = Presentation()
-    prs.slide_width  = Inches(SW)
-    prs.slide_height = Inches(SH)
-    blank = prs.slide_layouts[6]
+    C_DARK    = RGBColor(0x1B, 0x3A, 0x5C)
+    C_ROW_ALT = RGBColor(0xEE, 0xF5, 0xFB)
+    C_TOTAL   = RGBColor(0xE8, 0xF4, 0xFF)
+    C_GRAY    = RGBColor(0x88, 0x88, 0x88)
 
     now_str    = datetime.now().strftime("%Y-%m-%d %H:%M")
     period_str = f"{year}年{month:02d}月"
 
-    # ── Slide 1: Cover ────────────────────────────────────────────────────────
-    s1 = prs.slides.add_slide(blank)
-    s1.background.fill.solid()
-    s1.background.fill.fore_color.rgb = C_DARK_BG
-    _pptx_rect(s1, 0, 0, SW, 0.12, C_ACCENT)
-    _pptx_txt(s1, "飯店管理 Dashboard", SW/2 - 5, 2.2, 10, 1.0,
-              size=38, bold=True, color=C_WHITE, align=PP_ALIGN.CENTER)
-    _pptx_txt(s1, "匯出報告", SW/2 - 5, 3.1, 10, 0.7,
-              size=38, bold=True, color=C_ACCENT, align=PP_ALIGN.CENTER)
-    _pptx_rect(s1, SW/2 - 2.0, 4.05, 4.0, 0.55, C_ACCENT)
-    _pptx_txt(s1, f"統計月份：{period_str}", SW/2 - 2.0, 4.1, 4.0, 0.5,
-              size=16, bold=True, color=C_WHITE, align=PP_ALIGN.CENTER)
-    _pptx_txt(s1,
-              f"匯出時間：{now_str}　　飯店管理系統  ·  自動生成",
-              0.6, SH - 0.55, SW - 1.2, 0.4,
-              size=10, color=RGBColor(0xAA, 0xBB, 0xCC), align=PP_ALIGN.CENTER)
+    # ── Slide 1: Cover — update date ─────────────────────────────────────────
+    _update_cover_date(prs.slides[0], year, month)
 
-    # ── Slide 2: 本期績效總覽（主管摘要 + 各來源狀態 + 費用）─────────────────────
-    s2 = prs.slides.add_slide(blank)
-    _pptx_header(s2, "本期績效總覽",
-                 f"{period_str}  主管摘要 · 各來源狀態 · 報修費用",
-                 period_str, now_str)
+    # ── Clone content template (index 2) 3 times, then delete TOC (index 1) ──
+    # After 3 clones: [0]=cover, [1]=TOC, [2]=content, [3..5]=clones
+    for _ in range(3):
+        _clone_template_slide(prs, 2)
+    # Delete TOC → [0]=cover, [1]=content, [2..4]=clones
+    _delete_slide(prs, 1)
 
+    s_kpi     = prs.slides[1]   # original content template → KPI 總覽
+    s_daily   = prs.slides[2]   # clone 1 → 每日工時
+    s_monthly = prs.slides[3]   # clone 2 → 每月工時
+    s_persons = prs.slides[4]   # clone 3 → 人員排名
+
+    TABLE_Y = 0.95   # content starts below header
+    TABLE_H = SH - TABLE_Y - 0.45   # leave room for footer
+    TABLE_W = SW - 0.8
+
+    # ── Slide 2: 本期績效總覽 ─────────────────────────────────────────────────
+    _set_slide_title(s_kpi, "本期績效總覽",
+                     f"{period_str}  主管摘要 · 各來源狀態 · 報修費用",
+                     now_str, SW, SH)
     if kpi_payload is not None:
-        _build_slide2_kpi(s2, kpi_payload, period_str, SW=SW, SH=SH)
+        _build_slide2_kpi(s_kpi, kpi_payload, period_str, SW=SW, SH=SH)
 
-    # ── Slide 3: B. 每日累計摘要 ─────────────────────────────────────────────
-    s3 = prs.slides.add_slide(blank)
-    _pptx_header(s3, "每日工時累計",
-                 f"{period_str}  各來源每日工時分布摘要",
-                 period_str, now_str)
+    # ── Slide 3: 每日工時累計 ─────────────────────────────────────────────────
+    _set_slide_title(s_daily, "每日工時累計",
+                     f"{period_str}  各來源每日工時分布摘要",
+                     now_str, SW, SH)
     n_rows3 = len(daily["rows"]) + 1
-    t3 = s3.shapes.add_table(
+    t3 = s_daily.shapes.add_table(
         n_rows3, 5,
-        Inches(0.4), Inches(0.95), Inches(12.53), Inches(5.8)
+        Inches(0.4), Inches(TABLE_Y), Inches(TABLE_W), Inches(TABLE_H)
     ).table
     t3.columns[0].width = Inches(2.8)
     t3.columns[1].width = Inches(2.5)
     t3.columns[2].width = Inches(1.8)
     t3.columns[3].width = Inches(2.3)
-    t3.columns[4].width = Inches(3.13)
+    t3.columns[4].width = Inches(TABLE_W - 2.8 - 2.5 - 1.8 - 2.3)
     for c, h in enumerate(["來源", "月合計(HR)", "占比 %", "最高工時日", "最高日工時(HR)"]):
         _pptx_cell(t3, 0, c, h, bold=True)
     _pptx_header_row(t3, 5, size=10)
@@ -979,33 +1077,35 @@ def _build_hotel_pptx(year: int, month: int,
         else:
             peak_str, peak_val = "—", 0.0
         is_total = cat == "TOTAL"
-        bg = C_TOTAL if is_total else (C_ROW_ALT if ri % 2 == 0 else None)
+        bg  = C_TOTAL if is_total else (C_ROW_ALT if ri % 2 == 0 else None)
         num = PP_ALIGN.RIGHT
-        _pptx_cell(t3, ri, 0, cat,                                    bold=is_total, fg=C_DARK, bg=bg, size=10)
-        _pptx_cell(t3, ri, 1, f"{total:,.1f}",                       bold=is_total, align=num,  fg=C_DARK, bg=bg, size=10)
-        _pptx_cell(t3, ri, 2, f"{pct:.1f}",                          bold=is_total, align=num,  fg=C_DARK, bg=bg, size=10)
-        _pptx_cell(t3, ri, 3, peak_str,                              bold=is_total, align=PP_ALIGN.CENTER, fg=C_DARK, bg=bg, size=10)
-        _pptx_cell(t3, ri, 4, f"{peak_val:.1f}" if peak_val else "—", bold=is_total, align=num, fg=C_DARK, bg=bg, size=10)
+        _pptx_cell(t3, ri, 0, cat,                                     bold=is_total, fg=C_DARK, bg=bg, size=10)
+        _pptx_cell(t3, ri, 1, f"{total:,.1f}",                        bold=is_total, align=num,  fg=C_DARK, bg=bg, size=10)
+        _pptx_cell(t3, ri, 2, f"{pct:.1f}",                           bold=is_total, align=num,  fg=C_DARK, bg=bg, size=10)
+        _pptx_cell(t3, ri, 3, peak_str,                               bold=is_total, align=PP_ALIGN.CENTER, fg=C_DARK, bg=bg, size=10)
+        _pptx_cell(t3, ri, 4, f"{peak_val:.1f}" if peak_val else "—", bold=is_total, align=num,  fg=C_DARK, bg=bg, size=10)
     t3.rows[0].height = Pt(30)
     for ri in range(1, n_rows3):
         t3.rows[ri].height = Pt(28)
-    _pptx_txt(s3, f"※ 統計範圍：{year}年{month:02d}月，共 {len(daily['days'])} 天",
-              0.4, SH - 0.5, 10, 0.3, size=8, color=C_GRAY, italic=True)
+    _pptx_txt(s_daily, f"※ 統計範圍：{year}年{month:02d}月，共 {len(daily['days'])} 天",
+              0.4, SH - 0.4, TABLE_W, 0.3, size=8, color=C_GRAY, italic=True)
 
-    # ── Slide 4: C. 每月累計 ──────────────────────────────────────────────────
-    s4 = prs.slides.add_slide(blank)
-    _pptx_header(s4, "每月工時累計",
-                 f"{year} 全年各來源月度工時彙總",
-                 f"{year}年全年", now_str)
+    # ── Slide 4: 每月工時累計 ─────────────────────────────────────────────────
+    _set_slide_title(s_monthly, "每月工時累計",
+                     f"{year} 全年各來源月度工時彙總",
+                     now_str, SW, SH)
     n_rows4 = len(monthly["rows"]) + 1
-    t4 = s4.shapes.add_table(
+    t4 = s_monthly.shapes.add_table(
         n_rows4, 14,
-        Inches(0.4), Inches(0.95), Inches(12.53), Inches(5.8)
+        Inches(0.4), Inches(TABLE_Y), Inches(TABLE_W), Inches(TABLE_H)
     ).table
-    t4.columns[0].width = Inches(2.0)
+    col0_w    = 2.0
+    col_last_w = 0.93
+    mid_col_w = round((TABLE_W - col0_w - col_last_w) / 12, 4)
+    t4.columns[0].width = Inches(col0_w)
     for i in range(1, 13):
-        t4.columns[i].width = Inches(0.80)
-    t4.columns[13].width = Inches(0.93)
+        t4.columns[i].width = Inches(mid_col_w)
+    t4.columns[13].width = Inches(col_last_w)
     mth_labels = ["1月","2月","3月","4月","5月","6月",
                   "7月","8月","9月","10月","11月","12月"]
     for c, h in enumerate(["來源"] + mth_labels + ["全年合計"]):
@@ -1027,22 +1127,21 @@ def _build_hotel_pptx(year: int, month: int,
                    bold=is_total, align=PP_ALIGN.RIGHT, fg=C_DARK, bg=bg, size=9)
     for ri in range(n_rows4):
         t4.rows[ri].height = Pt(26)
-    _pptx_txt(s4, f"※ 統計年份：{year}，工時單位：小時（HR）",
-              0.4, SH - 0.5, 10, 0.3, size=8, color=C_GRAY, italic=True)
+    _pptx_txt(s_monthly, f"※ 統計年份：{year}，工時單位：小時（HR）",
+              0.4, SH - 0.4, TABLE_W, 0.3, size=8, color=C_GRAY, italic=True)
 
-    # ── Slide 5: D. 人員工時排名 ──────────────────────────────────────────────
-    s5 = prs.slides.add_slide(blank)
+    # ── Slide 5: 人員工時排名 ─────────────────────────────────────────────────
     person_names  = persons.get("persons", [])
     person_totals = persons.get("person_totals", [])
-    _pptx_header(s5, "人員工時排名",
-                 f"{year} 全年  Top {len(person_names)} 人",
-                 f"{year}年全年", now_str)
+    _set_slide_title(s_persons, "人員工時排名",
+                     f"{year} 全年  Top {len(person_names)} 人",
+                     now_str, SW, SH)
     grand_person = sum(person_totals)
     if person_names:
         n_rows5 = len(person_names) + 2
-        t5 = s5.shapes.add_table(
+        t5 = s_persons.shapes.add_table(
             n_rows5, 4,
-            Inches(0.4), Inches(0.95), Inches(8.2), Inches(5.8)
+            Inches(0.4), Inches(TABLE_Y), Inches(8.2), Inches(TABLE_H)
         ).table
         t5.columns[0].width = Inches(0.8)
         t5.columns[1].width = Inches(3.1)
@@ -1060,19 +1159,21 @@ def _build_hotel_pptx(year: int, month: int,
             _pptx_cell(t5, ri, 3, f"{pct:.1f} %", bold=False, align=PP_ALIGN.RIGHT, fg=C_DARK, bg=bg, size=10)
         tr = n_rows5 - 1
         _pptx_cell(t5, tr, 0, "", bg=C_TOTAL)
-        _pptx_cell(t5, tr, 1, "合計",               bold=True, fg=C_DARK, bg=C_TOTAL, size=10)
+        _pptx_cell(t5, tr, 1, "合計",                bold=True, fg=C_DARK, bg=C_TOTAL, size=10)
         _pptx_cell(t5, tr, 2, f"{grand_person:.1f}", bold=True, align=PP_ALIGN.RIGHT, fg=C_DARK, bg=C_TOTAL, size=10)
-        _pptx_cell(t5, tr, 3, "100.0 %",            bold=True, align=PP_ALIGN.RIGHT, fg=C_DARK, bg=C_TOTAL, size=10)
+        _pptx_cell(t5, tr, 3, "100.0 %",             bold=True, align=PP_ALIGN.RIGHT, fg=C_DARK, bg=C_TOTAL, size=10)
         for ri in range(n_rows5):
             t5.rows[ri].height = Pt(24)
-        _pptx_txt(s5,
+        note_x = 8.8
+        _pptx_txt(s_persons,
                   "工時來源：\n飯店週期保養 / IHG客房保養\n飯店每日巡檢 / 保全巡檢\n飯店工務部",
-                  8.9, 1.0, 4.0, 2.0, size=9, color=C_GRAY, italic=True, wrap=True)
+                  note_x, TABLE_Y, SW - note_x - 0.3, 2.0,
+                  size=9, color=C_GRAY, italic=True, wrap=True)
     else:
-        _pptx_txt(s5, f"（{year} 年暫無人員工時記錄）",
+        _pptx_txt(s_persons, f"（{year} 年暫無人員工時記錄）",
                   2.0, 3.0, 9.0, 1.0, size=18, color=C_GRAY, align=PP_ALIGN.CENTER)
-    _pptx_txt(s5, f"※ 統計來源：六項飯店模組全年工時，人員依總工時降冪排列（Top 15）",
-              0.4, SH - 0.5, 12, 0.3, size=8, color=C_GRAY, italic=True)
+    _pptx_txt(s_persons, "※ 統計來源：六項飯店模組全年工時，人員依總工時降冪排列（Top 15）",
+              0.4, SH - 0.4, TABLE_W, 0.3, size=8, color=C_GRAY, italic=True)
 
     buf = BytesIO()
     prs.save(buf)
@@ -1095,7 +1196,6 @@ def export_hotel_overview_pptx(
     body 由前端帶入已計算好的 KPI 資料（主管摘要 / 各來源狀態 / 費用摘要），
     Slide 3-5 工時資料由後端自行查 DB。
     """
-    daily   = get_hotel_daily_hours(year, month, db)
     daily   = get_hotel_daily_hours(year, month, db)
     monthly = get_hotel_monthly_hours(year, db)
     persons = get_hotel_person_hours(year, db)
