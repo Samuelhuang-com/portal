@@ -24,7 +24,6 @@ export interface HotelMRSheetSummary {
   is_current_month:   boolean             // 是否為當月查詢
   month_count:        number              // 查詢月份登錄筆數
   latest_record_date: string              // 查詢月份內最近登錄日期 YYYY/MM/DD
-  total_readings:     number              // 查詢月份讀數欄位總筆數
   missing_days:       string[]            // 缺漏日期清單
   missing_count:      number              // 缺漏天數
   trend_7d:           HotelMRTrendPoint[] // 近 7 天趨勢
@@ -46,12 +45,37 @@ export interface HotelMRDashboardSummary {
 
 /** 登錄清單（列表頁）每一列資料 */
 export interface HotelMRBatchRow {
-  id:             string
-  record_date:    string
-  recorder_name:  string
-  readings_count: number
-  synced_at:      string
-  ragic_url:      string
+  id:            string
+  record_date:   string
+  recorder_name: string
+  start_time:    string
+  end_time:      string
+  work_hours:    string
+  synced_at:     string
+  ragic_url:     string
+}
+
+/** 月曆格單日資料 */
+export interface HotelMRCalendarCell {
+  has_record:      boolean
+  completion_rate: number
+  abnormal_count:  number
+  pending_count:   number
+}
+
+/** 月曆格單 Sheet 行資料 */
+export interface HotelMRCalendarRow {
+  key:   string
+  label: string
+  daily: Record<string, HotelMRCalendarCell>
+}
+
+/** 月曆格 API 回傳 */
+export interface HotelMRCalendarResponse {
+  year:    number
+  month:   number
+  max_day: number
+  rows:    HotelMRCalendarRow[]
 }
 
 // ── API 函式 ──────────────────────────────────────────────────────────────────
@@ -104,4 +128,20 @@ export async function syncHotelMeterFromRagic(sheetKey: string): Promise<void> {
  */
 export async function syncHotelMeterAllFromRagic(): Promise<void> {
   await apiClient.post(`${BASE}/sync/all`)
+}
+
+/**
+ * 取得月曆格資料（MonthlyCalendarGrid 用）
+ * @param year  年份（如 2026）
+ * @param month 月份 1-12（如 5）
+ */
+export async function fetchHotelMeterCalendar(
+  year: number,
+  month: number,
+): Promise<HotelMRCalendarResponse> {
+  const res = await apiClient.get<HotelMRCalendarResponse>(
+    `${BASE}/daily-calendar`,
+    { params: { year, month } },
+  )
+  return res.data
 }

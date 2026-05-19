@@ -2,7 +2,7 @@
  * Ragic 應用程式對應表
  * 路徑：/settings/ragic-app-directory
  *
- * 顯示 219 筆 Ragic 應用程式，前兩欄為可編輯的 Portal 對應資訊：
+ * 顯示 235 筆 Ragic 應用程式，前兩欄為可編輯的 Portal 對應資訊：
  *   - Portal 名稱（portal_name）
  *   - Portal 超連結（portal_url）
  * 其餘欄位為靜態參考資料（序號、模組、應用程式名稱、URL、類型、備註）。
@@ -291,6 +291,12 @@ const RAGIC_APPS_STATIC: Omit<RagicApp, 'portalName' | 'portalUrl' | 'localTable
 // ── 本地 DB 表對應（Ragic sheet 路徑 → 本地 SQLite table name(s)）────────────
 // 格式：多張表用 \n 分隔；未同步本地（直連 Ragic）的 sheet 不列入
 const LOCAL_TABLE_MAP: Record<number, string> = {
+  // 例行抄表/設備檢查 — 4 張 synced sheets → hotel_mr_batch / hotel_mr_reading（sheet_key 區分）
+  1:  'hotel_mr_batch\nhotel_mr_reading',   // hotel-routine-inspection/11  (全棟電錶 ACB123)
+  2:  'hotel_mr_batch\nhotel_mr_reading',   // hotel-routine-inspection/12  (商場空調箱電錶)
+  3:  'hotel_mr_batch\nhotel_mr_reading',   // hotel-routine-inspection/15  (專櫃水錶)
+  4:  'hotel_mr_batch\nhotel_mr_reading',   // hotel-routine-inspection/14  (專櫃電錶)
+
   // 保全巡檢 — 7 張 synced sheets → security_patrol_batch / _item（sheet_key 區分）
   5:  'security_patrol_batch\nsecurity_patrol_item',   // security-patrol/2  (1F~3F 夜間)
   6:  'security_patrol_batch\nsecurity_patrol_item',   // security-patrol/6  (1F 閉店)
@@ -323,6 +329,46 @@ const LOCAL_TABLE_MAP: Record<number, string> = {
   54: 'mall_fi_inspection_batch\nmall_fi_inspection_item',  // mall-facility-inspection/2 (4F)
   55: 'mall_fi_inspection_batch\nmall_fi_inspection_item',  // mall-facility-inspection/7 (B1F~B4F)
 
+  // 核准請購單（樂群）— 原始清單 sheet（同步資料來源）
+  84:  'approved_purchase_requests\napproved_purchase_request_items',  // lequn-executive-office/10    (商場主管室/執董室 請購單)
+  99:  'approved_purchase_requests\napproved_purchase_request_items',  // lequn-public-works-department/1 (商場工務部 請購單)
+  107: 'approved_purchase_requests\napproved_purchase_request_items',  // new-tab/10                   (商場營業 請購單)
+  114: 'approved_purchase_requests\napproved_purchase_request_items',  // lequn-marketing-department/12 (商場行銷部 請購單)
+  122: 'approved_purchase_requests\napproved_purchase_request_items',  // lequn-finance-department/9   (商場財務部 請購單)
+  127: 'approved_purchase_requests\napproved_purchase_request_items',  // lequn-traffic-management/6   (商場車務管理/停管部 請購單)
+  132: 'approved_purchase_requests\napproved_purchase_request_items',  // community-management-department/22 (社區管理部 請購單)
+  199: 'approved_purchase_requests\napproved_purchase_request_items',  // joy-group-it-department/11   (資訊部 請購單)
+  212: 'approved_purchase_requests\napproved_purchase_request_items',  // happy-group-project/2        (集團專案 請購單)
+
+  // 核准請款單（樂群）— 各部門請款清單 sheet
+  98:  'approved_claim_requests\napproved_claim_request_items',  // lequn-public-works-department/2   (商場工務部 請款單)
+  106: 'approved_claim_requests\napproved_claim_request_items',  // new-tab/8                         (商場營業 請款單)
+  113: 'approved_claim_requests\napproved_claim_request_items',  // lequn-marketing-department/13     (商場行銷部 請款單)
+  121: 'approved_claim_requests\napproved_claim_request_items',  // lequn-finance-department/6        (商場財務部 請款單)
+  126: 'approved_claim_requests\napproved_claim_request_items',  // lequn-traffic-management/5        (商場車務管理 請款單)
+  131: 'approved_claim_requests\napproved_claim_request_items',  // community-management-department/24 (社區管理部 請款單)
+  198: 'approved_claim_requests\napproved_claim_request_items',  // joy-group-it-department/14        (資訊部 請款單)
+  211: 'approved_claim_requests\napproved_claim_request_items',  // happy-group-project/1             (集團專案 請款單)
+
+  // 日曜核准請購單（自由系列 請購單）→ nichiyo_purchase_requests / _items
+  139: 'nichiyo_purchase_requests\nnichiyo_purchase_request_items',  // free-executive-office/9       (自由主管室 請購單)
+  149: 'nichiyo_purchase_requests\nnichiyo_purchase_request_items',  // free-business-division/21     (自由營業部 請購單)
+  154: 'nichiyo_purchase_requests\nnichiyo_purchase_request_items',  // freed-management-division/19  (自由管理處 請購單)
+  162: 'nichiyo_purchase_requests\nnichiyo_purchase_request_items',  // free-management-department/10 (自由管理部 請購單)
+  170: 'nichiyo_purchase_requests\nnichiyo_purchase_request_items',  // marketing/40                  (自由行銷部 請購單)
+  177: 'nichiyo_purchase_requests\nnichiyo_purchase_request_items',  // free-design-department/2      (自由設計部 請購單)
+  195: 'nichiyo_purchase_requests\nnichiyo_purchase_request_items',  // department-of-free-information/23 (自由資訊部 請購單)
+
+  // 日曜核准請款單（自由系列 請款單）→ nichiyo_claim_requests / _items
+  137: 'nichiyo_claim_requests\nnichiyo_claim_request_items',  // free-executive-office/8              (自由主管室 請款單)
+  148: 'nichiyo_claim_requests\nnichiyo_claim_request_items',  // free-business-division/12            (自由營業部 請款單)
+  153: 'nichiyo_claim_requests\nnichiyo_claim_request_items',  // freed-management-division/8          (自由管理處 請款單)
+  161: 'nichiyo_claim_requests\nnichiyo_claim_request_items',  // free-management-department/8         (自由管理部 請款單)
+  169: 'nichiyo_claim_requests\nnichiyo_claim_request_items',  // marketing/32                         (自由行銷部 請款單)
+  176: 'nichiyo_claim_requests\nnichiyo_claim_request_items',  // free-design-department/1             (自由設計部 請款單)
+  183: 'nichiyo_claim_requests\nnichiyo_claim_request_items',  // free-finance-department/15           (自由財務部 請款單)
+  192: 'nichiyo_claim_requests\nnichiyo_claim_request_items',  // department-of-free-information/22    (自由資訊部 請款單)
+
   // 週期保養 — 商場
   203: 'mall_pm_batch\nmall_pm_batch_item',            // periodic-maintenance/18 (同仁執行)
 
@@ -334,7 +380,14 @@ const LOCAL_TABLE_MAP: Record<number, string> = {
   207: 'pm_batch_item',                                // periodic-maintenance/8  (同仁執行明細)
   208: 'pm_batch_item',                                // periodic-maintenance/11 (子表：項目)
 
-  // 核准請購單 — 9 部門清單 + 內頁 → approved_purchase_requests + approved_purchase_request_items
+  // 飯店工務每日巡檢 — 5 張 synced sheets → hotel_di_inspection_batch / _item（sheet_key 區分）
+  215: 'hotel_di_inspection_batch\nhotel_di_inspection_item',  // main-project-inspection/21 (1F)
+  216: 'hotel_di_inspection_batch\nhotel_di_inspection_item',  // main-project-inspection/20 (2F)
+  217: 'hotel_di_inspection_batch\nhotel_di_inspection_item',  // main-project-inspection/19 (4F)
+  218: 'hotel_di_inspection_batch\nhotel_di_inspection_item',  // main-project-inspection/18 (4F~10F)
+  219: 'hotel_di_inspection_batch\nhotel_di_inspection_item',  // main-project-inspection/17 (RF)
+
+  // 核准請購單（樂群）— 重複列出的 Portal 同步標記版（220-235）
   220: 'approved_purchase_requests\napproved_purchase_request_items',  // 執董室（清單）
   221: 'approved_purchase_requests\napproved_purchase_request_items',  // 執董室（內頁）
   222: 'approved_purchase_requests\napproved_purchase_request_items',  // 行銷部（清單）
@@ -402,6 +455,13 @@ const LEVEL_CONFIG: Record<1 | 2 | 3, { label: string; color: string; bg: string
 interface PortalDefault { portalName: string; portalUrl: string }
 
 const PORTAL_DEFAULTS: Record<number, PortalDefault> = {
+  // ── 例行抄表/設備檢查 (1~4) → 每日數值登錄表 ─────────────────────────────────
+  ...(Object.fromEntries(
+    [1,2,3,4].map((n) => [
+      n, { portalName: '每日數值登錄表', portalUrl: '/hotel/daily-meter-readings' },
+    ])
+  ) as Record<number, PortalDefault>),
+
   // ── 保全巡檢 (5~18) → 保全巡檢（整合後統一入口）──────────────────────────────
   ...(Object.fromEntries(
     [5,6,7,8,9,10,11,12,13,14,15,16,17,18].map((n) => [
@@ -455,6 +515,34 @@ const PORTAL_DEFAULTS: Record<number, PortalDefault> = {
     ])
   ) as Record<number, PortalDefault>),
 
+  // ── 核准請購單（樂群）— 原始 sheet (84,99,107,114,122,127,132,199,212) ───────
+  ...(Object.fromEntries(
+    [84,99,107,114,122,127,132,199,212].map((n) => [
+      n, { portalName: '核准請購單月報表', portalUrl: '/purchase-report/monthly' },
+    ])
+  ) as Record<number, PortalDefault>),
+
+  // ── 核准請款單（樂群）— 各部門請款 sheet ─────────────────────────────────────
+  ...(Object.fromEntries(
+    [98,106,113,121,126,131,198,211].map((n) => [
+      n, { portalName: '核准請款單月報表', portalUrl: '/claim-report/monthly' },
+    ])
+  ) as Record<number, PortalDefault>),
+
+  // ── 日曜核准請購單（自由系列 請購單）────────────────────────────────────────
+  ...(Object.fromEntries(
+    [139,149,154,162,170,177,195].map((n) => [
+      n, { portalName: '日曜請購月報表', portalUrl: '/nichiyo-purchase-report/monthly' },
+    ])
+  ) as Record<number, PortalDefault>),
+
+  // ── 日曜核准請款單（自由系列 請款單）────────────────────────────────────────
+  ...(Object.fromEntries(
+    [137,148,153,161,169,176,183,192].map((n) => [
+      n, { portalName: '日曜請款月報表', portalUrl: '/nichiyo-claim-report/monthly' },
+    ])
+  ) as Record<number, PortalDefault>),
+
   // ── 週期保養 — 商場 (201~203) → 商場週期保養 ─────────────────────────────────
   ...(Object.fromEntries(
     [201,202,203].map((n) => [
@@ -469,6 +557,20 @@ const PORTAL_DEFAULTS: Record<number, PortalDefault> = {
   ...(Object.fromEntries(
     [205,206,207,208].map((n) => [
       n, { portalName: '飯店週期保養', portalUrl: '/hotel/periodic-maintenance' },
+    ])
+  ) as Record<number, PortalDefault>),
+
+  // ── 飯店工務每日巡檢 (215~219) → 飯店每日巡檢 ───────────────────────────────
+  ...(Object.fromEntries(
+    [215,216,217,218,219].map((n) => [
+      n, { portalName: '飯店每日巡檢', portalUrl: '/hotel/daily-inspection' },
+    ])
+  ) as Record<number, PortalDefault>),
+
+  // ── 核准請購單（樂群）— Portal 同步標記版 (220~235) ──────────────────────────
+  ...(Object.fromEntries(
+    [220,221,222,223,224,225,226,227,228,229,230,231,232,233,234,235].map((n) => [
+      n, { portalName: '核准請購單月報表', portalUrl: '/purchase-report/monthly' },
     ])
   ) as Record<number, PortalDefault>),
 }

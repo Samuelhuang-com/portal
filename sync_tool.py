@@ -286,11 +286,13 @@ class SyncApp(tk.Tk):
         self._log_buffer: list[tuple[str, str, int]] = []  # (msg, color, levelno)
         self._log_filter_active = False     # True = Log 面板只顯示 WARNING+
         self._disabled_modules: set[str] = self._load_disabled()  # 暫停同步的模組名稱集合
+        self._single_syncing: set[str] = set()  # 正在單獨同步中的模組名稱
 
         self._build_ui()
         self._setup_logging()
         self._update_sync_btn_label()   # 若有暫停模組，按鈕立即顯示數量
         self._check_env()
+        self._ensure_db_schema()        # 確保 DB Schema 與 ORM 模型一致（migration）
 
     # ─────────────────────────────────────────────────────────────────────────
     # UI 建構
@@ -462,7 +464,7 @@ class SyncApp(tk.Tk):
         self._btn_filter.pack(side=tk.RIGHT, padx=4)
 
         # Treeview 表格
-        cols = ("模組", "狀態", "開始時間", "耗時(秒)", "撈取", "寫入", "錯誤", "觸發")
+        cols = ("模組", "狀態", "開始時間", "耗時(秒)", "撈取", "寫入", "錯誤", "觸發", "操作")
         self._tree = ttk.Treeview(
             tbl_frame,
             columns=cols,
@@ -480,6 +482,7 @@ class SyncApp(tk.Tk):
             "寫入":    ( 52, tk.E),
             "錯誤":    ( 48, tk.E),
             "觸發":    ( 52, tk.CENTER),
+            "操作":    ( 58, tk.CENTER),
         }
         for col, (w, anchor) in col_cfg.items():
             self._tree.heading(col, text=col)
@@ -511,6 +514,10 @@ class SyncApp(tk.Tk):
         self._tree.tag_configure("running",  foreground=C_ACCENT)
         self._tree.tag_configure("disabled", foreground=C_DISABLED)
 
+        # 左鍵點擊（操作欄同步按鈕）
+        self._tree.bind("<Button-1>", self._on_tree_left_click)
+        # 滑鼠移動（游標提示）
+        self._tree.bind("<Motion>", self._on_tree_motion)
         # 右鍵選單綁定
         self._tree.bind("<Button-3>", self._on_tree_right_click)
 
@@ -528,7 +535,8 @@ class SyncApp(tk.Tk):
             iid = self._tree.insert(
                 "", tk.END,
                 values=(name, "⏸ 暫停" if is_disabled else "—",
-                        "—", "—", "—", "—", "—", "—"),
+                        "—", "—", "—", "—", "—", "—",
+                        "" if is_disabled else "▶ 同步"),
                 tags=("disabled" if is_disabled else "pending",),
             )
             self._tree_ids[name] = iid
@@ -585,6 +593,94 @@ class SyncApp(tk.Tk):
             logger.error(f"設定載入失敗：{exc}")
             self._lbl_status.config(text="⚠ 設定錯誤", fg=C_ERROR)
             self._lbl_bottom.config(text=f"⚠ 無法載入 app.core.config：{exc}")
+
+    def _ensure_db_schema(self):
+        """
+        確保 SQLite DB Schema 與目前 ORM 模型一致（獨立於 FastAPI lifespan）。
+
+        執行順序（與 main.py lifespan 保持一致）：
+          1. import 所有 ORM model → Base.metadata 知道所有表格
+          2. hotel_mr_reading 舊版偵測 + DROP（必須在 create_all 之前）
+          3. Base.metadata.create_all → 建立尚未存在的表格（不影響已有表格）
+          4. hotel_mr_batch 時間欄位補丁（ALTER TABLE，必須在 create_all 之後）
+        """
+        logger = logging.getLogger(__name__)
+        try:
+            from app.core.database import Base, engine
+            from sqlalchemy import text
+
+            # ── 1. import 所有 ORM models ────────────────────────────────────
+            import app.models.room_maintenance          # noqa
+            import app.models.inventory                # noqa
+            import app.models.room_maintenance_detail  # noqa
+            import app.models.room                     # noqa
+            import app.models.periodic_maintenance     # noqa
+            import app.models.mall_periodic_maintenance  # noqa
+            import app.models.full_building_maintenance  # noqa
+            import app.models.b4f_inspection           # noqa
+            import app.models.rf_inspection            # noqa
+            import app.models.b2f_inspection           # noqa
+            import app.models.b1f_inspection           # noqa
+            import app.models.security_patrol          # noqa
+            import app.models.approval                 # noqa
+            import app.models.memo                     # noqa
+            import app.models.memo_file                # noqa
+            import app.models.calendar_event           # noqa
+            import app.models.dazhi_repair             # noqa
+            import app.models.luqun_repair             # noqa
+            import app.models.module_sync_log          # noqa
+            import app.models.ragic_app_directory      # noqa
+            import app.models.mall_facility_inspection  # noqa
+            import app.models.hotel_daily_inspection   # noqa
+            import app.models.hotel_meter_readings     # noqa
+            import app.models.ihg_room_maintenance     # noqa
+            import app.models.menu_config              # noqa
+            import app.models.role_permission          # noqa
+            import app.models.wiki                     # noqa
+            import app.models.purchase_request         # noqa
+            import app.models.claim_request            # noqa
+            import app.models.nichiyo_purchase_request  # noqa
+            import app.models.nichiyo_claim_request    # noqa
+            import app.models.ragic_sheet_config       # noqa
+
+            # ── 2. hotel_mr_reading 舊版偵測 → DROP（在 create_all 之前）────
+            with engine.connect() as conn:
+                try:
+                    result = conn.execute(text("PRAGMA table_info(hotel_mr_reading)"))
+                    cols = {row[1] for row in result.fetchall()}
+                    if cols and "meter_name" in cols:
+                        conn.execute(text("DROP TABLE IF EXISTS hotel_mr_reading"))
+                        conn.commit()
+                        logger.info("[DB] hotel_mr_reading（舊版 per-meter）已刪除，等待重建")
+                except Exception as e:
+                    logger.warning("[DB] hotel_mr_reading 遷移檢查失敗：%s", e)
+
+            # ── 3. create_all：建立尚未存在的表格 ─────────────────────────────
+            Base.metadata.create_all(bind=engine)
+            logger.info("[DB] 資料表確認完成（create_all）")
+
+            # ── 4. hotel_mr_batch 時間欄位補丁（ALTER TABLE）────────────────
+            new_cols = [
+                ("start_time", "TEXT NOT NULL DEFAULT ''"),
+                ("end_time",   "TEXT NOT NULL DEFAULT ''"),
+                ("work_hours", "TEXT NOT NULL DEFAULT ''"),
+            ]
+            with engine.connect() as conn:
+                result = conn.execute(text("PRAGMA table_info(hotel_mr_batch)"))
+                existing = {row[1] for row in result.fetchall()}
+                for col, typedef in new_cols:
+                    if col not in existing:
+                        conn.execute(
+                            text(f"ALTER TABLE hotel_mr_batch ADD COLUMN {col} {typedef}")
+                        )
+                        conn.commit()
+                        logger.info("[DB] hotel_mr_batch.%s 欄位已新增", col)
+
+            logger.info("[DB] Schema 確認完成 ✓")
+
+        except Exception as exc:
+            logger.error("[DB] Schema 確認失敗：%s", exc, exc_info=True)
+            self._lbl_bottom.config(text=f"⚠ DB Schema 確認失敗：{exc}")
 
     # ─────────────────────────────────────────────────────────────────────────
     # 自動同步間隔
@@ -674,13 +770,13 @@ class SyncApp(tk.Tk):
             if name in self._disabled_modules:
                 self._tree.item(
                     self._tree_ids[name],
-                    values=(name, "⏸ 暫停", "—", "—", "—", "—", "—", "—"),
+                    values=(name, "⏸ 暫停", "—", "—", "—", "—", "—", "—", ""),
                     tags=("disabled",),
                 )
             else:
                 self._tree.item(
                     self._tree_ids[name],
-                    values=(name, "⟳", "—", "—", "—", "—", "—", triggered_by),
+                    values=(name, "⟳", "—", "—", "—", "—", "—", triggered_by, "⟳"),
                     tags=("running",),
                 )
         threading.Thread(
@@ -811,16 +907,27 @@ class SyncApp(tk.Tk):
     def _update_tree_row(self, name: str, tag: str, status_txt: str,
                          start_str: str, dur: str,
                          fetched: int, upserted: int, err_count: int,
-                         triggered_by: str):
+                         triggered_by: str, sync_btn: str = "▶ 同步"):
         iid = self._tree_ids.get(name)
         if iid:
             err_disp = str(err_count) if err_count else "0"
             self._tree.item(
                 iid,
                 values=(name, status_txt, start_str, dur,
-                        fetched, upserted, err_disp, triggered_by),
+                        fetched, upserted, err_disp, triggered_by, sync_btn),
                 tags=(tag,),
             )
+
+    def _on_sync_done_single(self, name: str, tag: str, status_txt: str,
+                             start_str: str, dur: str,
+                             fetched: int, upserted: int, err_count: int):
+        """單一模組同步完成後的 UI 更新。"""
+        self._single_syncing.discard(name)
+        self._update_tree_row(
+            name, tag, status_txt, start_str, dur,
+            fetched, upserted, err_count, "手動",
+            sync_btn="▶ 同步",
+        )
 
     def _on_sync_done(self, ok: int, partial: int, err: int,
                       log_path: pathlib.Path, results: list[dict]):
@@ -869,6 +976,134 @@ class SyncApp(tk.Tk):
                       f"失敗：{err}  ({ts})  ← {log_path}")
             )
         self._lbl_logpath.config(text=f"Log：{log_path.name}")
+
+    # ── 單一模組同步（操作欄點擊）────────────────────────────────────────────
+    def _on_tree_left_click(self, event: tk.Event):
+        """偵測是否點擊「操作」欄的「▶ 同步」，若是則觸發單一模組同步。"""
+        region = self._tree.identify_region(event.x, event.y)
+        if region != "cell":
+            return
+        col_id = self._tree.identify_column(event.x)
+        # 找出欄位名稱（col_id 形如 "#9"）
+        cols = self._tree["columns"]
+        try:
+            col_idx = int(col_id.lstrip("#")) - 1
+            col_name = cols[col_idx]
+        except (ValueError, IndexError):
+            return
+        if col_name != "操作":
+            return
+        iid = self._tree.identify_row(event.y)
+        if not iid:
+            return
+        name = self._tree.item(iid, "values")[0]
+        if not name:
+            return
+        # 已暫停、或全體同步中、或本模組正在單同步 → 忽略
+        if (name in self._disabled_modules
+                or self._running
+                or name in self._single_syncing):
+            return
+        self._trigger_single_module_sync(name)
+
+    def _on_tree_motion(self, event: tk.Event):
+        """滑鼠移到「操作」欄且可點擊時，游標顯示 hand2。"""
+        region = self._tree.identify_region(event.x, event.y)
+        if region != "cell":
+            self._tree.config(cursor="")
+            return
+        col_id = self._tree.identify_column(event.x)
+        cols = self._tree["columns"]
+        try:
+            col_idx = int(col_id.lstrip("#")) - 1
+            col_name = cols[col_idx]
+        except (ValueError, IndexError):
+            self._tree.config(cursor="")
+            return
+        if col_name != "操作":
+            self._tree.config(cursor="")
+            return
+        iid = self._tree.identify_row(event.y)
+        if not iid:
+            self._tree.config(cursor="")
+            return
+        name = self._tree.item(iid, "values")[0]
+        if (name in self._disabled_modules
+                or self._running
+                or name in self._single_syncing):
+            self._tree.config(cursor="")
+        else:
+            self._tree.config(cursor="hand2")
+
+    def _trigger_single_module_sync(self, name: str):
+        """觸發單一模組同步（背景執行）。"""
+        self._single_syncing.add(name)
+        # 更新操作欄顯示
+        iid = self._tree_ids.get(name)
+        if iid:
+            vals = list(self._tree.item(iid, "values"))
+            vals[8] = "⟳"
+            self._tree.item(iid, values=vals)
+        logging.getLogger(__name__).info("▶ 單一同步開始：%s", name)
+        threading.Thread(
+            target=self._single_module_thread,
+            args=(name,),
+            daemon=True,
+        ).start()
+
+    def _single_module_thread(self, name: str):
+        """單一模組同步執行緒（背景）。"""
+        logger = logging.getLogger(__name__)
+        # 找對應的 service module/function
+        entry = next(((m, f) for n, m, f in MODULES if n == name), None)
+        if entry is None:
+            logger.error("找不到模組定義：%s", name)
+            self._single_syncing.discard(name)
+            return
+
+        mod_path, func_name = entry
+        t0 = datetime.now()
+        status = "success"
+        fetched = upserted = err_count = 0
+        duration = 0.0
+
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            mod  = importlib.import_module(mod_path)
+            func = getattr(mod, func_name)
+            if inspect.iscoroutinefunction(func):
+                result = loop.run_until_complete(func())
+            else:
+                result = func()
+            duration = round((datetime.now() - t0).total_seconds(), 2)
+            if isinstance(result, dict):
+                fetched   = result.get("fetched",  0)
+                upserted  = result.get("upserted", 0)
+                errors    = result.get("errors",   [])
+                err_count = len(errors)
+                if errors:
+                    status = "partial"
+        except Exception as exc:
+            duration  = round((datetime.now() - t0).total_seconds(), 2)
+            status    = "error"
+            err_count = 1
+            logger.error("單一同步 ✗ %s：%s", name, exc, exc_info=True)
+        finally:
+            loop.close()
+
+        status_txt = {"success": "✓ 成功", "partial": "~ 部分", "error": "✗ 失敗"}[status]
+        start_str  = t0.strftime("%H:%M:%S")
+        logger.info(
+            "單一同步 %s %s fetched=%d upserted=%d dur=%.1fs",
+            name, status_txt, fetched, upserted, duration,
+        )
+
+        self.after(
+            0, self._on_sync_done_single,
+            name, status, status_txt, start_str,
+            f"{duration:.1f}", fetched, upserted, err_count,
+        )
 
     # ── 錯誤篩選 ─────────────────────────────────────────────────────────────
     def _toggle_filter(self):
@@ -953,7 +1188,6 @@ class SyncApp(tk.Tk):
         iid = self._tree.identify_row(event.y)
         if not iid:
             return
-        # 找出對應模組名稱
         name = self._tree.item(iid, "values")[0]
         if not name:
             return
@@ -993,7 +1227,7 @@ class SyncApp(tk.Tk):
             self._disabled_modules.add(name)
             self._tree.item(
                 iid,
-                values=(name, "⏸ 暫停", "—", "—", "—", "—", "—", "—"),
+                values=(name, "⏸ 暫停", "—", "—", "—", "—", "—", "—", ""),
                 tags=("disabled",),
             )
             logging.getLogger(__name__).info("⏸  已暫停模組：%s", name)
@@ -1001,7 +1235,7 @@ class SyncApp(tk.Tk):
             self._disabled_modules.discard(name)
             self._tree.item(
                 iid,
-                values=(name, "—", "—", "—", "—", "—", "—", "—"),
+                values=(name, "—", "—", "—", "—", "—", "—", "—", "▶ 同步"),
                 tags=("pending",),
             )
             logging.getLogger(__name__).info("▶  已恢復模組：%s", name)

@@ -159,3 +159,15 @@ export async function triggerAllModulesSync(): Promise<{ success: boolean; messa
   const { data } = await apiClient.post(`${BASE}/sync-logs/trigger`)
   return data
 }
+
+/** 取得所有可單獨觸發同步的模組名稱清單 */
+export async function listSyncableModules(): Promise<string[]> {
+  const { data } = await apiClient.get<{ modules: string[] }>(`${BASE}/sync-logs/modules`)
+  return data.modules
+}
+
+/** 手動觸發單一模組同步 */
+export async function triggerSingleModuleSync(moduleName: string): Promise<{ success: boolean; message: string }> {
+  const { data } = await apiClient.post(`${BASE}/sync-logs/trigger/${encodeURIComponent(moduleName)}`)
+  return data
+}

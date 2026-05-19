@@ -39,7 +39,7 @@ from app.models.ihg_room_maintenance import (
     IHGRoomMaintenanceDetail,
     IHGRoomMaintenanceSection,
 )
-from app.services.ihg_room_maintenance_sync import sync_from_ragic, _derive_floor
+from app.services.ihg_room_maintenance_sync import sync_from_ragic, _derive_floor, _parse_minutes
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
 
@@ -98,6 +98,18 @@ def _is_check_field(key: str, value: object) -> bool:
 
 
 # ── 輔助 ─────────────────────────────────────────────────────────────────────
+
+_RAGIC_BASE = "https://ap12.ragic.com/soutlet001"
+_IHG_RAGIC_PATH = "periodic-maintenance/4"
+
+
+def _ragic_url(ragic_id: str) -> str:
+    """組出 IHG 客房保養 Ragic 記錄直連 URL。"""
+    if not ragic_id:
+        return ""
+    numeric_id = ragic_id.rsplit("_", 1)[-1] if "_" in ragic_id else ragic_id
+    return f"{_RAGIC_BASE}/{_IHG_RAGIC_PATH}/{numeric_id}"
+
 
 def _cell_status(rec: IHGRoomMaintenanceMaster) -> str:
     """
@@ -224,16 +236,19 @@ async def get_stats(
     # 有執行的房間數 = distinct room_no（不受月份去重影響）
     total = len({r.room_no for r in dedup.values()})
 
-    # 工時加總：對全部原始記錄加總（與 /matrix 行為一致，不去重）
+    # 工時加總：優先用 DB 欄位 work_minutes，fallback 解析 raw_json（舊資料相容）
     total_work_minutes = 0.0
     for r in all_recs:
-        try:
-            raw_data = json.loads(r.raw_json or "{}")
-            v = raw_data.get("工時計算")
-            if v not in (None, "", "None"):
-                total_work_minutes += float(v)
-        except Exception:
-            pass
+        if r.work_minutes is not None:
+            total_work_minutes += r.work_minutes
+        else:
+            try:
+                raw_data = json.loads(r.raw_json or "{}")
+                v = _parse_minutes(raw_data.get("工時計算"))
+                if v is not None:
+                    total_work_minutes += v
+            except Exception:
+                pass
 
     # 以 raw_json check 欄位計算各狀態（與 /matrix 邏輯完全一致，使用去重後記錄）
     completed_count = 0
@@ -354,14 +369,10 @@ async def get_matrix(
             raw_data = json.loads(rec.raw_json or "{}")
             for k, v in raw_data.items():
                 # 單筆工時（分鐘）— 先獨立抽取，不受 _is_check_field 影響
-                if k == "工時計算" and v not in (None, "", "None"):
-                    try:
-                        work_minutes = float(v)
-                        month_minutes[month_key] = (
-                            month_minutes.get(month_key, 0.0) + work_minutes
-                        )
-                    except (ValueError, TypeError):
-                        pass
+                if k == "工時計算":
+                    parsed = _parse_minutes(v)
+                    if parsed is not None:
+                        work_minutes = parsed
 
                 # 保養檢查項目計數
                 if not _is_check_field(k, v):
@@ -377,6 +388,12 @@ async def get_matrix(
                     unchecked_count += 1
         except Exception:
             pass
+
+        # 工時：優先 DB 欄位，fallback raw_json 解析（確保已同步記錄也正確）
+        if rec.work_minutes is not None:
+            work_minutes = rec.work_minutes
+        if work_minutes:
+            month_minutes[month_key] = month_minutes.get(month_key, 0.0) + work_minutes
 
         # ── 以 check 欄位結果決定狀態（優先於日期邏輯）────────────────────
         if maint_count > 0:
@@ -611,6 +628,9 @@ async def list_records(
                 "completion_date": r.completion_date,
                 "maint_type":      r.maint_type,
                 "notes":           r.notes,
+                "start_time":      r.start_time,
+                "end_time":        r.end_time,
+                "work_minutes":    r.work_minutes,
                 "synced_at":       r.synced_at.isoformat() if r.synced_at else None,
             }
             for r in recs
@@ -639,8 +659,38 @@ async def get_record(ragic_id: str, db: Session = Depends(get_db)):
     except Exception:
         raw_fields = {}
 
+    # ── detail dict（中文 key，供 Drawer 第二區段顯示）─────────────────────────
+    wm_str = f"{master.work_minutes} 分鐘" if master.work_minutes is not None else (
+        str(raw_fields.get("工時計算", "")) or ""
+    )
+    start_str = (master.start_time or "").strip() or str(raw_fields.get("保養時間起", "")).strip()
+    end_str   = (master.end_time   or "").strip() or str(raw_fields.get("保養時間迄", "")).strip()
+
+    detail: dict[str, str] = {
+        "房號":     master.room_no or "",
+        "樓層":     master.floor or "",
+        "保養年份": master.maint_year or "",
+        "保養月份": master.maint_month or "",
+        "保養類型": master.maint_type or "",
+        "保養日期": master.maint_date or "",
+        "完成日期": master.completion_date or "",
+        "狀態":     "已完成" if master.is_completed else "未完成",
+        "保養人員": master.assignee_name or "",
+        "複核人員": master.checker_name or "",
+        "保養時間起": start_str,
+        "保養時間迄": end_str,
+        "工時":     wm_str,
+        "備註":     master.notes or "",
+        "是否有陽台": str(raw_fields.get("是否有陽台", "")).strip(),
+        "保養項目數": str(len(details)),
+        "同步時間":  master.synced_at.strftime("%Y-%m-%d %H:%M") if master.synced_at else "",
+    }
+    # 去除空值，保留有意義的欄位
+    detail = {k: v for k, v in detail.items() if v}
+
     return {
         "ragic_id":         master.ragic_id,
+        "ragic_url":        _ragic_url(master.ragic_id),
         "room_no":          master.room_no,
         "floor":            master.floor,
         "maint_year":       master.maint_year,
@@ -653,10 +703,14 @@ async def get_record(ragic_id: str, db: Session = Depends(get_db)):
         "completion_date":  master.completion_date,
         "maint_type":       master.maint_type,
         "notes":            master.notes,
+        "start_time":       master.start_time,
+        "end_time":         master.end_time,
+        "work_minutes":     master.work_minutes,
         "ragic_created_at": master.ragic_created_at,
         "ragic_updated_at": master.ragic_updated_at,
         "synced_at":        master.synced_at.isoformat() if master.synced_at else None,
         "raw_fields":       raw_fields,
+        "detail":           detail,
         "details": [
             {
                 "ragic_id":  d.ragic_id,

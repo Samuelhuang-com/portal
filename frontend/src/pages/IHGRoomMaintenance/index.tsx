@@ -18,7 +18,7 @@ import {
 } from 'antd'
 import {
   CheckCircleOutlined, ClockCircleOutlined,
-  HomeOutlined, QuestionCircleOutlined, ReloadOutlined, TableOutlined, ToolOutlined, WarningOutlined,
+  HomeOutlined, LinkOutlined, QuestionCircleOutlined, ReloadOutlined, TableOutlined, ToolOutlined, WarningOutlined,
 } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import dayjs from 'dayjs'
@@ -1286,11 +1286,20 @@ export default function IHGRoomMaintenancePage() {
       {/* ── 保養明細 Drawer（右側滑入）────────────────────────────── */}
       <Drawer
         title={
-          <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <ToolOutlined style={{ color: '#1B3A5C' }} />
-            {drawerCell
-              ? `${drawerCell.room_no}  ${MONTH_LABELS[drawerCell.month]}保養明細`
-              : '保養明細'}
+          <span style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <Tag color="#1B3A5C" style={{ margin: 0 }}>IHG保養</Tag>
+            <span>IHG客房保養：{drawerRecord?.room_no || drawerCell?.room_no || '—'}</span>
+            {drawerRecord?.ragic_url && (
+              <a
+                href={drawerRecord.ragic_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ color: '#4BA8E8', fontSize: 13, display: 'flex', alignItems: 'center', gap: 3 }}
+                onClick={e => e.stopPropagation()}
+              >
+                <LinkOutlined /> 在 Ragic 查看
+              </a>
+            )}
           </span>
         }
         open={drawerOpen}
@@ -1304,6 +1313,7 @@ export default function IHGRoomMaintenancePage() {
           </div>
         ) : drawerRecord ? (
           <>
+            {/* ① 基本欄位 */}
             <Descriptions
               column={1}
               bordered
@@ -1323,9 +1333,13 @@ export default function IHGRoomMaintenancePage() {
               <Descriptions.Item label="保養日期">
                 {drawerRecord.maint_date || '—'}
               </Descriptions.Item>
-
               <Descriptions.Item label="完成日期">
                 {drawerRecord.completion_date || '—'}
+              </Descriptions.Item>
+              <Descriptions.Item label="狀態">
+                {drawerRecord.is_completed
+                  ? <Tag color="green">已完成</Tag>
+                  : <Tag color="red">未完成</Tag>}
               </Descriptions.Item>
               <Descriptions.Item label="保養人員">
                 {drawerRecord.assignee_name || '—'}
@@ -1336,12 +1350,23 @@ export default function IHGRoomMaintenancePage() {
               <Descriptions.Item label="保養類型">
                 {drawerRecord.maint_type || '—'}
               </Descriptions.Item>
-              {drawerRecord.raw_fields?.['工時計算'] !== undefined && (
-                <Descriptions.Item label="工時計算">
-                  {String(drawerRecord.raw_fields['工時計算']) || '—'}
-                  <span style={{ marginLeft: 4, fontSize: 11, color: '#8c8c8c' }}>分鐘</span>
-                </Descriptions.Item>
-              )}
+              <Descriptions.Item label="保養時間起">
+                {drawerRecord.start_time
+                  || String(drawerRecord.raw_fields?.['保養時間起'] ?? '')
+                  || '—'}
+              </Descriptions.Item>
+              <Descriptions.Item label="保養時間迄">
+                {drawerRecord.end_time
+                  || String(drawerRecord.raw_fields?.['保養時間迄'] ?? '')
+                  || '—'}
+              </Descriptions.Item>
+              <Descriptions.Item label="工時">
+                {drawerRecord.work_minutes != null
+                  ? <span style={{ color: '#4BA8E8', fontWeight: 600 }}>{drawerRecord.work_minutes} 分鐘</span>
+                  : drawerRecord.raw_fields?.['工時計算']
+                    ? <span style={{ color: '#4BA8E8', fontWeight: 600 }}>{String(drawerRecord.raw_fields['工時計算'])}</span>
+                    : '—'}
+              </Descriptions.Item>
               {drawerRecord.notes && (
                 <Descriptions.Item label="備註">
                   <span style={{ whiteSpace: 'pre-wrap' }}>{drawerRecord.notes}</span>
@@ -1349,7 +1374,54 @@ export default function IHGRoomMaintenancePage() {
               )}
             </Descriptions>
 
-            {/* 子表格保養項目（Ragic 保養明細無「狀態/結果」欄，僅顯示項目與備註）*/}
+            {/* ② 明細欄位（detail dict 逐項渲染）*/}
+            {drawerRecord.detail && Object.keys(drawerRecord.detail).length > 0 && (
+              <>
+                <Divider orientation="left" style={{ fontSize: 12 }}>
+                  Ragic 原始明細
+                </Divider>
+                <Descriptions
+                  column={1}
+                  bordered
+                  size="small"
+                  labelStyle={{ width: 100, fontWeight: 500, background: '#f8f9fb' }}
+                  style={{ marginBottom: 16 }}
+                >
+                  {Object.entries(drawerRecord.detail).map(([k, v]) => {
+                    // 狀態欄 → 彩色 Tag
+                    if (k === '狀態') {
+                      const color = v === '已完成' ? 'green' : v === '未完成' ? 'red' : 'default'
+                      return (
+                        <Descriptions.Item key={k} label={k}>
+                          <Tag color={color}>{v || '—'}</Tag>
+                        </Descriptions.Item>
+                      )
+                    }
+                    // 費用欄 → $ 前綴
+                    if (k.includes('費用') || k.includes('金額')) {
+                      return (
+                        <Descriptions.Item key={k} label={k}>
+                          {v ? `$${v}` : '—'}
+                        </Descriptions.Item>
+                      )
+                    }
+                    // 總費用/工時/標題 → 粗體
+                    const isBold = k.includes('工時') || k.includes('總費用')
+                    return (
+                      <Descriptions.Item key={k} label={k}>
+                        {v
+                          ? isBold
+                            ? <strong style={{ color: '#4BA8E8' }}>{v}</strong>
+                            : v
+                          : '—'}
+                      </Descriptions.Item>
+                    )
+                  })}
+                </Descriptions>
+              </>
+            )}
+
+            {/* 子表格保養項目 */}
             {drawerRecord.details.length > 0 && (
               <>
                 <Divider orientation="left" style={{ fontSize: 12 }}>
@@ -1370,32 +1442,8 @@ export default function IHGRoomMaintenancePage() {
               </>
             )}
 
-            {/* 維護異常項目表格（有「等待維護(待料中)」欄位時才顯示，含 ALL/正常/完成/維護 篩選）*/}
+            {/* 維護異常項目表格 */}
             <CheckItemsPanel rawFields={drawerRecord.raw_fields} />
-
-            {/* Ragic 原始欄位（欄位 mapping 確認用）*/}
-            {Object.keys(drawerRecord.raw_fields).length > 0 && (
-              <>
-                <Divider orientation="left" style={{ fontSize: 12, color: '#999' }}>
-                  Ragic 原始欄位（mapping 確認）
-                </Divider>
-                <div
-                  style={{
-                    maxHeight: 220, overflowY: 'auto', background: '#fafafa',
-                    padding: 8, borderRadius: 4, fontSize: 11, fontFamily: 'monospace',
-                    border: '1px solid #f0f0f0',
-                  }}
-                >
-                  {Object.entries(drawerRecord.raw_fields).map(([k, v]) => (
-                    <div key={k} style={{ marginBottom: 3, lineHeight: 1.6 }}>
-                      <span style={{ color: '#4BA8E8' }}>{k}</span>
-                      <span style={{ color: '#bbb' }}> = </span>
-                      <span style={{ color: '#555' }}>{JSON.stringify(v)}</span>
-                    </div>
-                  ))}
-                </div>
-              </>
-            )}
 
             <div style={{ marginTop: 16, paddingTop: 12, borderTop: '1px solid #f0f0f0' }}>
               <Text type="secondary" style={{ fontSize: 11 }}>

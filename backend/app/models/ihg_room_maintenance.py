@@ -14,7 +14,7 @@ IHG 客房保養 SQLAlchemy ORM Models
 """
 import json
 from datetime import datetime
-from sqlalchemy import Column, String, Integer, Text, DateTime, Boolean, Index, func
+from sqlalchemy import Column, String, Integer, Float, Text, DateTime, Boolean, Index, func
 from app.core.database import Base
 
 
@@ -47,6 +47,11 @@ class IHGRoomMaintenanceMaster(Base):
     maint_type      = Column(String(50),  nullable=False, default="", comment="保養類型")
     notes           = Column(Text,        nullable=False, default="", comment="備註")
     completion_date = Column(String(20),  nullable=False, default="", comment="完成日期")
+
+    # ── 時間起迄 / 工時 ──────────────────────────────────────────────────────────
+    start_time   = Column(String(30),  nullable=False, default="", comment="保養時間起（Ragic 欄位）")
+    end_time     = Column(String(30),  nullable=False, default="", comment="保養時間迄（Ragic 欄位）")
+    work_minutes = Column(Float, nullable=True, comment="工時（分鐘），由 工時計算 欄位解析")
 
     # ── Ragic 原始資料（保留完整 JSON，供欄位補正）───────────────────────────
     raw_json         = Column(Text, nullable=False, default="{}", comment="Ragic 原始 JSON")

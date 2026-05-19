@@ -161,16 +161,21 @@ def _load_all(db: Session, sources: set[str]) -> list[dict]:
             })
 
     # ── IHG 客房保養 ──────────────────────────────────────────────────────────
-    # 工時：raw_json["工時計算"] 分鐘 ÷ 60 → HR（與 /matrix 端點同一來源）
-    # 類別：固定「例行維護」（定期客房保養性質）
-    # 日期：maint_date（優先）；無效則以 maint_year/maint_month 第 1 日為準
+    # 工時：優先用 DB 欄位 rec.work_minutes（分鐘）÷ 60 → HR；
+    #       fallback raw_json["工時計算"]（相容未重新同步的舊記錄）
+    # 類別：固定「例行維護」
+    # 日期：maint_date（優先）；無效則 maint_year/maint_month 第 1 日
     if "ihg_room" in sources:
         for rec in db.query(IHGRoomMaintenanceMaster).all():
-            raw = rec.get_raw()
-            mins_val = raw.get("工時計算", "")
-            if mins_val in (None, "", "None"):
-                continue
-            hours = _parse_minutes_to_hours(str(mins_val))
+            # 工時取值（分鐘 → 小時）
+            if rec.work_minutes is not None and rec.work_minutes > 0:
+                hours = rec.work_minutes / 60.0
+            else:
+                raw = rec.get_raw()
+                mins_val = raw.get("工時計算", "")
+                if mins_val in (None, "", "None"):
+                    continue
+                hours = _parse_minutes_to_hours(str(mins_val))
             if hours <= 0:
                 continue
             # 嘗試 maint_date 取日級精度

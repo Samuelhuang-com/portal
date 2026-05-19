@@ -71,6 +71,9 @@ FIELD_CANDIDATES = {
     "maint_type":    ["保養類型", "類型", "保養種類", "種類"],
     "notes":         ["備註", "說明", "補充說明"],
     "status_raw":    ["完成狀態", "狀態", "保養狀態", "執行狀態"],
+    "start_time":    ["保養時間起", "開始時間", "起始時間", "保養起"],
+    "end_time":      ["保養時間迄", "結束時間", "迄止時間", "保養迄"],
+    "work_minutes_raw": ["工時計算", "工時", "作業工時"],
 }
 
 # ── 區段欄位 mapping（Ragic raw key → Portal 顯示名稱）────────────────────────
@@ -130,6 +133,28 @@ def _pick(raw: dict, candidates: list[str], fallback: str = "") -> str:
             if val:
                 return val
     return fallback
+
+
+def _parse_minutes(val: Any) -> "float | None":
+    """
+    解析工時分鐘值。
+    支援 Ragic 回傳格式：
+      "12.00 分鐘" → 12.0
+      "12"         → 12.0
+      12.0 (float) → 12.0
+      None / ""    → None
+    """
+    if val is None or val == "":
+        return None
+    s = str(val).strip()
+    # 移除非數字/小數點字元（如「分鐘」、空格）
+    cleaned = re.sub(r"[^\d.]", "", s)
+    if not cleaned:
+        return None
+    try:
+        return float(cleaned)
+    except ValueError:
+        return None
 
 
 def _derive_floor(room_no: str) -> str:
@@ -276,6 +301,10 @@ def _master_to_model(ragic_id: str, raw: dict) -> IHGRoomMaintenanceMaster:
     rec.completion_date = _pick(raw, FIELD_CANDIDATES["completion_date"])
     rec.maint_type      = _pick(raw, FIELD_CANDIDATES["maint_type"])
     rec.notes           = _pick(raw, FIELD_CANDIDATES["notes"])
+    rec.start_time      = _pick(raw, FIELD_CANDIDATES["start_time"])
+    rec.end_time        = _pick(raw, FIELD_CANDIDATES["end_time"])
+    rec.work_minutes    = _parse_minutes(_pick(raw, FIELD_CANDIDATES["work_minutes_raw"])
+                                         or raw.get("工時計算"))
 
     # 年度、月份
     year, month = _derive_year_month(raw, rec.maint_date)
@@ -384,6 +413,9 @@ async def sync_master_from_ragic() -> dict:
                     existing.completion_date = new_rec.completion_date
                     existing.maint_type      = new_rec.maint_type
                     existing.notes           = new_rec.notes
+                    existing.start_time      = new_rec.start_time
+                    existing.end_time        = new_rec.end_time
+                    existing.work_minutes    = new_rec.work_minutes
                     existing.raw_json        = new_rec.raw_json
                     existing.ragic_created_at = new_rec.ragic_created_at
                     existing.ragic_updated_at = new_rec.ragic_updated_at

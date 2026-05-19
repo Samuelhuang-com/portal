@@ -59,6 +59,7 @@ export interface IHGDetail {
 
 export interface IHGRecord {
   ragic_id: string
+  ragic_url: string
   room_no: string
   floor: string
   maint_year: string
@@ -71,10 +72,14 @@ export interface IHGRecord {
   completion_date: string
   maint_type: string
   notes: string
+  start_time: string
+  end_time: string
+  work_minutes: number | null
   ragic_created_at: string
   ragic_updated_at: string
   synced_at: string | null
   raw_fields: Record<string, unknown>
+  detail: Record<string, string>
   details: IHGDetail[]
 }
 
@@ -123,6 +128,9 @@ export interface IHGListItem {
   completion_date: string
   maint_type: string
   notes: string
+  start_time: string
+  end_time: string
+  work_minutes: number | null
   synced_at: string | null
 }
 

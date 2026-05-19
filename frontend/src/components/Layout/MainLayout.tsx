@@ -603,6 +603,13 @@ export default function MainLayout() {
         // 呼叫失敗也要解鎖 Skeleton，否則 loading 永遠不結束
         permissionsReadyRef.current = true
         setMenuLoading(false)
+        // 重要：/me 失敗時也必須把 permissions 從 undefined 改為 []，
+        // 否則 PermissionGuard 的 `permissions === undefined` 判斷永遠為 true，
+        // 頁面會永久空白（不顯示 403，也不顯示內容）。
+        const currentUser = useAuthStore.getState().user
+        if (currentUser && currentUser.permissions === undefined) {
+          setUser({ ...currentUser, permissions: [] })
+        }
       })
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps

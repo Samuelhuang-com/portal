@@ -480,6 +480,57 @@ def _migrate_menu_config_permission_key():
             print("[Migration] menu_configs.icon_key 欄位已新增")
 
 
+def _migrate_hotel_mr_reading_flat():
+    """重建 hotel_mr_reading 為扁平化場次摘要表（2026-05-19）"""
+    from sqlalchemy import text
+    with engine.connect() as conn:
+        try:
+            result = conn.execute(text("PRAGMA table_info(hotel_mr_reading)"))
+            cols = {row[1] for row in result.fetchall()}
+            if cols and "meter_name" in cols:
+                conn.execute(text("DROP TABLE IF EXISTS hotel_mr_reading"))
+                conn.commit()
+                print("[Migration] hotel_mr_reading 舊版已刪除，等待重建")
+        except Exception:
+            pass
+
+
+def _migrate_hotel_mr_batch_time_fields():
+    """為 hotel_mr_batch 加入 start_time / end_time / work_hours（2026-05-19）"""
+    from sqlalchemy import text
+    new_cols = [
+        ("start_time", "TEXT NOT NULL DEFAULT ''"),
+        ("end_time",   "TEXT NOT NULL DEFAULT ''"),
+        ("work_hours", "TEXT NOT NULL DEFAULT ''"),
+    ]
+    with engine.connect() as conn:
+        result = conn.execute(text("PRAGMA table_info(hotel_mr_batch)"))
+        existing = {row[1] for row in result.fetchall()}
+        for col, typedef in new_cols:
+            if col not in existing:
+                conn.execute(text(f"ALTER TABLE hotel_mr_batch ADD COLUMN {col} {typedef}"))
+                conn.commit()
+                print(f"[Migration] hotel_mr_batch.{col} added")
+
+
+def _migrate_ihg_rm_time_fields():
+    """為 ihg_rm_master 加入 start_time / end_time / work_minutes（2026-05-19）"""
+    from sqlalchemy import text
+    new_cols = [
+        ("start_time",   "TEXT NOT NULL DEFAULT ''"),
+        ("end_time",     "TEXT NOT NULL DEFAULT ''"),
+        ("work_minutes", "REAL"),
+    ]
+    with engine.connect() as conn:
+        result = conn.execute(text("PRAGMA table_info(ihg_rm_master)"))
+        existing = {row[1] for row in result.fetchall()}
+        for col, typedef in new_cols:
+            if col not in existing:
+                conn.execute(text(f"ALTER TABLE ihg_rm_master ADD COLUMN {col} {typedef}"))
+                conn.commit()
+                print(f"[Migration] ihg_rm_master.{col} added")
+
+
 def _migrate_security_patrol_is_note():
     """
     欄位遷移 + 回填：
@@ -741,6 +792,48 @@ async def _manual_sync():
 
 
 # ── 請購單專屬排程 ──────────────────────────────────────────────────────────────
+# ── 單一模組立即同步 ─────────────────────────────────────────────────────────
+_SINGLE_MODULE_MAP: dict[str, tuple[str, str]] = {
+    "客房保養":          ("app.services.room_maintenance_sync",         "sync_from_ragic"),
+    "倉庫庫存":          ("app.services.inventory_sync",                "sync_from_ragic"),
+    "客房保養明細":       ("app.services.room_maintenance_detail_sync",  "sync_from_ragic"),
+    "飯店週期保養":       ("app.services.periodic_maintenance_sync",     "sync_from_ragic"),
+    "B4F巡檢":          ("app.services.b4f_inspection_sync",            "sync_from_ragic"),
+    "RF巡檢":           ("app.services.rf_inspection_sync",             "sync_from_ragic"),
+    "B2F巡檢":          ("app.services.b2f_inspection_sync",            "sync_from_ragic"),
+    "B1F巡檢":          ("app.services.b1f_inspection_sync",            "sync_from_ragic"),
+    "商場週期保養":       ("app.services.mall_periodic_maintenance_sync","sync_from_ragic"),
+    "全棟例行維護":       ("app.services.full_building_maintenance_sync","sync_from_ragic"),
+    "大直工務報修":       ("app.services.dazhi_repair_sync",             "sync_from_ragic"),
+    "商場工務報修":       ("app.services.luqun_repair_sync",             "sync_from_ragic"),
+    "保全巡檢":          ("app.services.security_patrol_sync",          "sync_all"),
+    "商場工務巡檢":       ("app.services.mall_facility_inspection_sync", "sync_all"),
+    "飯店每日巡檢":       ("app.services.hotel_daily_inspection_sync",   "sync_all"),
+    "每日數值登錄":       ("app.services.hotel_meter_readings_sync",     "sync_all"),
+    "IHG客房保養":       ("app.services.ihg_room_maintenance_sync",     "sync_from_ragic"),
+    "核准請購單清單":     ("app.services.purchase_request_sync",         "sync_list_only"),
+    "核准請款單清單":     ("app.services.claim_request_sync",            "sync_list_only"),
+    "日曜核准請購單清單": ("app.services.nichiyo_purchase_request_sync", "sync_list_only"),
+    "日曜核准請款單清單": ("app.services.nichiyo_claim_request_sync",    "sync_list_only"),
+}
+
+def list_syncable_modules() -> list[str]:
+    return list(_SINGLE_MODULE_MAP.keys())
+
+async def _single_module_sync(module_name: str) -> None:
+    import importlib
+    entry = _SINGLE_MODULE_MAP.get(module_name)
+    if entry is None:
+        print(f"[SingleSync] unknown: {module_name}")
+        return
+    svc, fn_name = entry
+    try:
+        mod = importlib.import_module(svc)
+        await _run_and_log(module_name, getattr(mod, fn_name)(), triggered_by="manual")
+    except Exception as exc:
+        print(f"[SingleSync] {module_name} failed: {exc}")
+
+
 async def _purchase_list_sync():
     """請購單清單同步（每 15 分鐘：僅清單 API + subtable 品項）"""
     from app.services.purchase_request_sync import sync_list_only
@@ -836,6 +929,9 @@ async def lifespan(app: FastAPI):
     _migrate_b4f_flatten()
     print("[Portal] B4F flatten migration checked.")
 
+    _migrate_hotel_mr_reading_flat()
+    print("[Portal] hotel_mr_reading flat migration checked.")
+
     # 建立尚未存在的資料表（不影響已有表格）
     Base.metadata.create_all(bind=engine)
     print("[Portal] Database tables ensured.")
@@ -882,6 +978,12 @@ async def lifespan(app: FastAPI):
     # 保全巡檢 is_note 欄位遷移 + 回填異常說明項目
     _migrate_security_patrol_is_note()
     print("[Portal] Security patrol is_note migration checked.")
+
+    _migrate_hotel_mr_batch_time_fields()
+    print("[Portal] hotel_mr_batch time fields migration checked.")
+
+    _migrate_ihg_rm_time_fields()
+    print("[Portal] ihg_rm_master time fields migration checked.")
 
     # 商場扣款專櫃欄位補丁（2026-04-24）
     _migrate_luqun_counter_name()
@@ -1137,6 +1239,20 @@ app.include_router(
     hotel_overview.router,
     prefix=f"{API_PREFIX}",
     tags=["飯店管理 Dashboard"],
+)
+
+# ── 新增：飯店每日巡檢 ────────────────────────────────────────────────────────
+app.include_router(
+    hotel_daily_inspection.router,
+    prefix=f"{API_PREFIX}/hotel-daily-inspection",
+    tags=["飯店每日巡檢"],
+)
+
+# ── 新增：每日數值登錄表 ──────────────────────────────────────────────────────
+app.include_router(
+    hotel_meter_readings.router,
+    prefix=f"{API_PREFIX}/hotel-meter-readings",
+    tags=["每日數值登錄表"],
 )
 
 # ── 新增：商場管理統計 Dashboard ──────────────────────────────────────────────

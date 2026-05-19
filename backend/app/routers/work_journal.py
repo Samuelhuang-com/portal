@@ -43,6 +43,7 @@ from app.models.b1f_inspection  import B1FInspectionBatch
 from app.models.b2f_inspection  import B2FInspectionBatch
 from app.models.b4f_inspection  import B4FInspectionBatch
 from app.models.rf_inspection   import RFInspectionBatch
+from app.models.hotel_meter_readings import HotelMRBatch
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
 
@@ -67,6 +68,7 @@ SOURCE_LABEL = {
     "full_bldg_pm": "整棟保養",
     "mall_fi":      "商場設施巡檢",
     "full_bi":      "整棟巡檢",
+    "hotel_mr":     "飯店水電錶抄表",
 }
 
 SORT_ORDER = list(SOURCE_LABEL.keys())
@@ -104,6 +106,12 @@ _FULL_BI_PATHS: dict[str, str] = {
     "b2f": "full-building-inspection/3",
     "b4f": "full-building-inspection/2",
     "rf":  "full-building-inspection/1",
+}
+_HOTEL_MR_PATHS: dict[str, str] = {
+    "building-electric": "hotel-routine-inspection/11",
+    "mall-ac-electric":  "hotel-routine-inspection/12",
+    "tenant-electric":   "hotel-routine-inspection/14",
+    "tenant-water":      "hotel-routine-inspection/15",
 }
 
 
@@ -412,24 +420,30 @@ def _fetch_ihg(db: Session, year: int, month: int, day: int) -> list[dict]:
     ):
         person = (rec.assignee_name or "").strip() or "未指定"
         task   = f"IHG客房保養 {rec.room_no}".strip()
-        # 工時：raw_json 工時計算（分鐘）；無則固定 30 分鐘
-        try:
-            raw = rec.get_raw() if hasattr(rec, "get_raw") else {}
-            mins_val = raw.get("工時計算", "")
-            wm_raw = float(re.search(r"[\d.]+", str(mins_val)).group()) if mins_val and re.search(r"[\d.]+", str(mins_val)) else None
-        except Exception:
-            wm_raw  = None
-            mins_val = ""
-        wm = round(wm_raw) if wm_raw and wm_raw > 0 else None
-        # IHG 起迄時間：嘗試從 raw_json 取；model 無獨立欄位
-        ihg_start = _clean_time(raw.get("開始時間", "") or raw.get("保養開始時間", ""))
-        ihg_end   = _clean_time(raw.get("結束時間", "") or raw.get("保養結束時間", ""))
+        # 工時：優先用 DB 欄位 work_minutes；fallback raw_json 解析
+        raw = rec.get_raw() if hasattr(rec, "get_raw") else {}
+        wm_float: float | None = None
+        if rec.work_minutes is not None and rec.work_minutes > 0:
+            wm_float = rec.work_minutes
+        else:
+            try:
+                mins_val = raw.get("工時計算", "")
+                if mins_val and re.search(r"[\d.]+", str(mins_val)):
+                    wm_float = float(re.search(r"[\d.]+", str(mins_val)).group())
+            except Exception:
+                pass
+        wm = round(wm_float) if wm_float and wm_float > 0 else None
+        # 起迄時間：DB 欄位優先，fallback raw_json（未重新同步的舊記錄）
+        def _str_or_raw(db_val: str, raw_key: str) -> str:
+            return db_val.strip() if db_val and db_val.strip() else str(raw.get(raw_key) or "").strip()
+        ihg_start = _clean_time(_str_or_raw(rec.start_time or "", "保養時間起"))
+        ihg_end   = _clean_time(_str_or_raw(rec.end_time   or "", "保養時間迄"))
         rows.append(_make_row(
             source="ihg",
             category="例行維護",
             task=task,
             person=person,
-            est_min=wm,          # IHG 無獨立預估欄位，以實際工時帶入
+            est_min=wm,
             start_time=ihg_start,
             end_time=ihg_end,
             work_min=wm,
@@ -437,16 +451,18 @@ def _fetch_ihg(db: Session, year: int, month: int, day: int) -> list[dict]:
             ragic_id=rec.ragic_id,
             ragic_url=_ragic_url(_SOURCE_PATH["ihg"], rec.ragic_id),
             detail={
-                "房號":     rec.room_no or "",
-                "樓層":     rec.floor or "",
-                "保養類型": rec.maint_type or "",
-                "保養人員": rec.assignee_name or "",
-                "複核人員": rec.checker_name or "",
-                "保養日期": rec.maint_date or "",
-                "完成日期": rec.completion_date or "",
-                "狀態":     rec.status or "",
-                "工時計算": str(mins_val) if mins_val else "",  # 帶入 Drawer 顯示
-                "備註":     rec.notes or "",
+                "房號":       rec.room_no or "",
+                "樓層":       rec.floor or "",
+                "保養類型":   rec.maint_type or "",
+                "保養人員":   rec.assignee_name or "",
+                "複核人員":   rec.checker_name or "",
+                "保養日期":   rec.maint_date or "",
+                "完成日期":   rec.completion_date or "",
+                "狀態":       rec.status or "",
+                "保養時間起": ihg_start,
+                "保養時間迄": ihg_end,
+                "工時（分鐘）": str(wm) if wm else "",
+                "備註":       rec.notes or "",
             },
         ))
     return rows
@@ -678,6 +694,40 @@ def _fetch_full_bi(db: Session, year: int, month: int, day: int) -> list[dict]:
     return rows
 
 
+def _fetch_hotel_mr(db: Session, year: int, month: int, day: int) -> list[dict]:
+    """飯店水電錶抄表：hotel_mr_batch（4 張 Sheet，每張獨立一行）"""
+    rows = []
+    date_str = _date_str(year, month, day)
+    for b in (
+        db.query(HotelMRBatch)
+        .filter(HotelMRBatch.record_date == date_str)
+        .all()
+    ):
+        person = (b.recorder_name or "").strip() or "未指定"
+        task   = f"{b.sheet_name} 抄表" if b.sheet_name else "水電錶抄表"
+        wm     = _parse_wm(b.work_hours)
+        rows.append(_make_row(
+            source="hotel_mr",
+            category="每日巡檢",
+            task=task,
+            person=person,
+            start_time=b.start_time or "",
+            end_time=b.end_time or "",
+            work_min=wm,
+            ragic_id=b.ragic_id,
+            ragic_url=_ragic_url(_HOTEL_MR_PATHS.get(b.sheet_key, ""), b.ragic_id),
+            detail={
+                "抄表表名稱": b.sheet_name or "",
+                "抄表人員":   b.recorder_name or "",
+                "抄表日期":   b.record_date or "",
+                "開始時間":   b.start_time or "",
+                "結束時間":   b.end_time or "",
+                "工時":       f"{wm} min" if wm else "",
+            },
+        ))
+    return rows
+
+
 # ── 端點 ─────────────────────────────────────────────────────────────────────
 
 def _build_daily(db: Session, year: int, month: int, day: int) -> dict:
@@ -692,6 +742,7 @@ def _build_daily(db: Session, year: int, month: int, day: int) -> dict:
     all_rows += _fetch_full_bldg_pm(db, year, month, day)
     all_rows += _fetch_mall_fi(db, year, month, day)
     all_rows += _fetch_full_bi(db, year, month, day)
+    all_rows += _fetch_hotel_mr(db, year, month, day)
 
     person_map: dict[str, list[dict]] = defaultdict(list)
     for r in all_rows:

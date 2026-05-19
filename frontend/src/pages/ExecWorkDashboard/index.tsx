@@ -1087,10 +1087,23 @@ const CAT_COLS: JournalCategory[] = ['現場報修', '上級交辦', '緊急事�
 type JournalMode = 'single' | 'range' | 'month' | 'person'
 
 // 單一日期的人員分組 Collapse（單日 or 區間內每天複用）
-function DayPersonCollapse({ persons }: { persons: WorkJournalDaily['persons'] }) {
+function DayPersonCollapse({
+  persons,
+  collapsed,
+}: {
+  persons: WorkJournalDaily['persons']
+  collapsed?: boolean
+}) {
   const [selectedRow, setSelectedRow] = useState<JournalRow | null>(null)
   const [drawerImages, setDrawerImages] = useState<CaseImageItem[]>([])
   const [imgLoading,   setImgLoading]   = useState(false)
+  const [personActiveKeys, setPersonActiveKeys] = useState<string[]>(() =>
+    persons.map((_, i) => `person-${i}`)
+  )
+  useEffect(() => {
+    if (collapsed === undefined) return
+    setPersonActiveKeys(collapsed ? [] : persons.map((_, i) => `person-${i}`))
+  }, [collapsed]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const journalColumns = [
     {
@@ -1194,7 +1207,8 @@ function DayPersonCollapse({ persons }: { persons: WorkJournalDaily['persons'] }
   return (
     <>
       <Collapse
-        defaultActiveKey={persons.map((_, i) => `person-${i}`)}
+        activeKey={personActiveKeys}
+        onChange={keys => setPersonActiveKeys(keys as string[])}
         items={items}
         style={{ background: '#fff' }}
       />
@@ -1252,14 +1266,14 @@ function DayPersonCollapse({ persons }: { persons: WorkJournalDaily['persons'] }
                   <Text strong style={{ color: '#1B3A5C' }}>{selectedRow.work_min}</Text>
                 </Descriptions.Item>
               )}
-              {selectedRow.start_time && (
-                <Descriptions.Item label="起">
-                  {selectedRow.start_time}
+              {(selectedRow.start_time || selectedRow.detail?.['保養時間起']) && (
+                <Descriptions.Item label="保養時間起">
+                  {selectedRow.start_time || selectedRow.detail?.['保養時間起']}
                 </Descriptions.Item>
               )}
-              {selectedRow.end_time && (
-                <Descriptions.Item label="迄">
-                  {selectedRow.end_time}
+              {(selectedRow.end_time || selectedRow.detail?.['保養時間迄']) && (
+                <Descriptions.Item label="保養時間迄">
+                  {selectedRow.end_time || selectedRow.detail?.['保養時間迄']}
                 </Descriptions.Item>
               )}
               {selectedRow.remark && (
@@ -1373,6 +1387,8 @@ function WorkJournalTab() {
   const [personSubMode,    setPersonSubMode]    = useState<'range'|'month'>('month')
   const [personRangeDates, setPersonRangeDates] = useState<[Dayjs, Dayjs] | null>(null)
   const [personMonthDate,  setPersonMonthDate]  = useState<Dayjs | null>(dayjs())
+  const [globalCollapsed,  setGlobalCollapsed]  = useState(false)
+  const [dateActiveKeys,   setDateActiveKeys]   = useState<string[]>([])
 
   const daysInMonth = dayjs(`${year}-${String(month).padStart(2,'0')}-01`).daysInMonth()
   const dayOptions  = Array.from({ length: daysInMonth }, (_, i) => ({ label: `${i + 1} 日`, value: i + 1 }))
@@ -1380,22 +1396,26 @@ function WorkJournalTab() {
   const handleLoad = useCallback(async () => {
     setLoading(true)
     try {
+      setGlobalCollapsed(false)
       if (mode === 'single') {
         const d = await fetchWorkJournalDaily(year, month, day)
         setSingleData(d)
         setRangeData(null)
+        setDateActiveKeys([])
       } else if (mode === 'range' && rangeDates) {
         const from = rangeDates[0].format('YYYY-MM-DD')
         const to   = rangeDates[1].format('YYYY-MM-DD')
         const d = await fetchWorkJournalRange(from, to)
         setRangeData(d)
         setSingleData(null)
+        setDateActiveKeys(d.days.map((_, i) => `day-${i}`))
       } else if (mode === 'month' && monthDate) {
         const from = monthDate.startOf('month').format('YYYY-MM-DD')
         const to   = monthDate.endOf('month').format('YYYY-MM-DD')
         const d = await fetchWorkJournalRange(from, to)
         setRangeData(d)
         setSingleData(null)
+        setDateActiveKeys(d.days.map((_, i) => `day-${i}`))
       } else if (mode === 'person') {
         let from = '', to = ''
         if (personSubMode === 'range' && personRangeDates) {
@@ -1408,6 +1428,7 @@ function WorkJournalTab() {
         if (!from) return
         const d = await fetchWorkJournalRange(from, to)
         setRangeData(d); setSingleData(null)
+        setDateActiveKeys(d.days.map((_, i) => `pday-${i}`))
         const names: string[] = []
         const seen = new Set<string>()
         d.days.forEach(dy => dy.persons.forEach(p => {
@@ -1545,7 +1566,7 @@ function WorkJournalTab() {
           {singleData.date} 無工作記錄
         </div>
       )
-      return <DayPersonCollapse persons={singleData.persons} />
+      return <DayPersonCollapse persons={singleData.persons} collapsed={globalCollapsed} />
     }
 
     // 人員模式
@@ -1584,7 +1605,8 @@ function WorkJournalTab() {
       })
       return (
         <Collapse
-          defaultActiveKey={filteredDays.map((_, i) => `pday-${i}`)}
+          activeKey={dateActiveKeys}
+          onChange={keys => setDateActiveKeys(keys as string[])}
           items={personDateItems}
           style={{ background: '#f0f4f8' }}
         />
@@ -1617,7 +1639,8 @@ function WorkJournalTab() {
       })
       return (
         <Collapse
-          defaultActiveKey={rangeData.days.map((_, i) => `day-${i}`)}
+          activeKey={dateActiveKeys}
+          onChange={keys => setDateActiveKeys(keys as string[])}
           items={dateItems}
           style={{ background: '#f0f4f8' }}
         />
@@ -1658,6 +1681,22 @@ function WorkJournalTab() {
           <Button type="primary" icon={<ReloadOutlined />} onClick={handleLoad} loading={loading}>
             查詢
           </Button>
+          {/* 縮合/展開按鈕：有資料才顯示 */}
+          {(singleData || rangeData) && (
+            <Button
+              size="small"
+              onClick={() => {
+                const next = !globalCollapsed
+                setGlobalCollapsed(next)
+                if (rangeData) {
+                  const prefix = mode === 'person' ? 'pday' : 'day'
+                  setDateActiveKeys(next ? [] : rangeData.days.map((_, i) => `${prefix}-${i}`))
+                }
+              }}
+            >
+              {globalCollapsed ? '全部展開' : '全部縮合'}
+            </Button>
+          )}
           {/* Excel 匯出按鈕：有資料才顯示 */}
           {(singleData || rangeData) && (() => {
             let from = '', to = '', exportPerson: string | undefined

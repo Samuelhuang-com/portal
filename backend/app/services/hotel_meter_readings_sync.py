@@ -1,21 +1,22 @@
 """
-每日數值登錄表 同步服務【統一 Sync + 寬表格 Pivot + 動態欄位偵測】
+每日數值登錄表 同步服務【統一 Sync + 場次登錄（不讀子表單）】
 
 支援 4 張 Ragic Sheet（hotel-routine-inspection/11、12、14、15）。
-  Sheet 11: 全棟電錶
+  Sheet 11: 全棟水電錶
   Sheet 12: 商場空調箱電錶
   Sheet 14: 專櫃電錶
   Sheet 15: 專櫃水錶
 
-【動態欄位偵測】
-  同步時自動掃描欄位，排除已知 metadata 欄位後，其餘視為儀表讀數欄位。
-  欄位名稱以實際 Ragic 表單為準。
+【設計說明】
+  每筆 Ragic 主表記錄 = 一次抄表登錄場次（hotel_mr_batch）。
+  同步只讀主表欄位，不讀子表單（無 HotelMRReading 寫入）。
+  抄表人員、抄表日期、抄表時間起/迄、工時計算均從主表欄位自動偵測。
 
-【注意】
-  以下欄位名稱為候選清單，如 Ragic 表單欄位名不符請修改 METADATA_FIELDS、
-  DATE_CANDIDATES、RECORDER_CANDIDATES 等常數。
+【欄位名稱候選清單】
+  若 Ragic 表單欄位名稱與下列不符，請修改各 *_CANDIDATES 常數。
 """
 import logging
+import re
 from typing import Any
 
 from app.core.config import settings
@@ -32,11 +33,10 @@ HMR_SERVER_URL = getattr(settings, "RAGIC_HDI_SERVER_URL", "ap12.ragic.com")
 HMR_ACCOUNT    = getattr(settings, "RAGIC_HDI_ACCOUNT",    "soutlet001")
 
 # ── Sheet 設定表 ──────────────────────────────────────────────────────────────
-# hotel-routine-inspection（注意：與 daily-inspection 使用的 main-project-inspection 不同）
 SHEET_CONFIGS: dict[str, dict] = {
     "building-electric": {
         "path": "hotel-routine-inspection/11",
-        "name": "全棟電錶",
+        "name": "全棟水電錶",
     },
     "mall-ac-electric": {
         "path": "hotel-routine-inspection/12",
@@ -52,37 +52,47 @@ SHEET_CONFIGS: dict[str, dict] = {
     },
 }
 
-# ── 場次 metadata 欄位（不視為儀表讀數欄位）──────────────────────────────────
-# TODO: 若 Ragic 實際欄位名稱與下列不符，請修改此集合
-METADATA_FIELDS: set[str] = {
-    # 日期欄位候選
+# ── 欄位候選清單（依優先順序，取第一個有值的欄位）────────────────────────────
+#
+# 注意：「錶」（金字旁，電錶/水錶的錶）與「表」（一般的表）是不同字！
+# Ragic 表單可能使用「抄錶日期」（錶）或「抄表日期」（表），兩者都納入候選。
+#
+DATE_CANDIDATES = [
+    "抄錶日期",   # ★ Ragic 實際欄位名（錶 = 金字旁，確認於 2026-05-19）
+    "抄表日期",   # 備援（表 = 一般的表）
     "登錄日期",
     "記錄日期",
     "日期",
     "填寫日期",
-    "抄表日期",
-    # 人員欄位候選
+]
+RECORDER_CANDIDATES = [
+    "抄表人員",   # ★ Ragic 實際欄位名（確認於 2026-05-19）
+    "抄錶人員",   # 備援（錶 字旁）
     "登錄人員",
     "記錄人員",
     "人員",
     "填寫人員",
-    "抄表人員",
-    # Ragic 系統欄位
-    "_ragicId",
-    "_owner",
-    "_create",
-    "_modify",
-    "_approval",
-    "_approvalLog",
-}
-
-# ── 登錄日期欄位候選（依優先順序）────────────────────────────────────────────
-# TODO: 確認 Ragic 表單實際欄位名稱
-DATE_CANDIDATES = ["登錄日期", "抄表日期", "日期", "記錄日期", "填寫日期"]
-
-# ── 登錄人員欄位候選（依優先順序）────────────────────────────────────────────
-# TODO: 確認 Ragic 表單實際欄位名稱
-RECORDER_CANDIDATES = ["登錄人員", "抄表人員", "記錄人員", "人員", "填寫人員"]
+]
+TIME_START_CANDIDATES = [
+    "抄表時間起",   # ★ Ragic 實際欄位名（確認於 2026-05-19）
+    "抄錶時間起",   # 備援
+    "開始時間",
+    "起始時間",
+    "時間起",
+]
+TIME_END_CANDIDATES = [
+    "抄表時間迄",   # ★ Ragic 實際欄位名（確認於 2026-05-19）
+    "抄錶時間迄",   # 備援
+    "結束時間",
+    "截止時間",
+    "時間迄",
+]
+WORK_HOURS_CANDIDATES = [
+    "工時計算",   # ★ Ragic 實際欄位名（確認於 2026-05-19）
+    "工時",
+    "工作時數",
+    "作業時間",
+]
 
 
 # ── 欄位值輔助函式 ─────────────────────────────────────────────────────────────
@@ -107,47 +117,72 @@ def _extract_date(raw: str) -> str:
     if not raw:
         return ""
     raw = raw.strip()
-    # 取空格前的日期部分
     date_part = raw.split(" ")[0]
-    # 統一用 / 分隔
     return date_part.replace("-", "/")
 
 
-def _extract_meter_fields(row: dict) -> list[tuple[int, str, str]]:
+def _extract_time(raw: str) -> str:
     """
-    動態偵測並萃取儀表讀數欄位。
-
-    排除規則（不視為讀數欄位）：
-      1. 在 METADATA_FIELDS 集合中的欄位
-      2. 以底線 _ 開頭的欄位（Ragic 系統欄位）
-      3. 純數字 key（Ragic 內部 ID）
-      4. 空值欄位不排除（保留讀數為空的情況）
-
-    返回：[(seq_no, meter_name, reading_value), ...]
+    從各種時間格式萃取 HH:MM（或保留原始字串）。
+    Ragic 常見格式：
+      2026/04/30 08:30       → 08:30
+      08:30                  → 08:30
+      08:30:00               → 08:30
     """
-    results: list[tuple[int, str, str]] = []
-    seq = 0
+    if not raw:
+        return ""
+    raw = raw.strip()
+    # 若含空格（日期+時間），取空格後半
+    if " " in raw:
+        raw = raw.split(" ", 1)[1]
+    # 截取 HH:MM（前 5 字元）
+    if len(raw) >= 5 and ":" in raw:
+        return raw[:5]
+    return raw
+
+
+# 日期值正規表達式（用於自動偵測）：YYYY/MM/DD 或 YYYY-MM-DD
+_DATE_VALUE_PATTERN = re.compile(r"^\d{4}[/\-]\d{1,2}[/\-]\d{1,2}")
+
+# 不應被誤判為日期欄位的欄位（數值型或時間型）
+_NON_DATE_CANDIDATES = set(
+    TIME_START_CANDIDATES + TIME_END_CANDIDATES + WORK_HOURS_CANDIDATES
+)
+
+
+def _auto_detect_date_field(row: dict) -> tuple[str, str]:
+    """
+    若候選清單（DATE_CANDIDATES）找不到日期，自動掃描所有欄位：
+    取第一個「值符合 YYYY/MM/DD 或 YYYY-MM-DD 開頭」的文字欄位。
+
+    返回 (field_name, raw_value)。找不到時返回 ("", "")。
+    排除：以 "_" 開頭的系統欄位、純數字 key、已知時間/工時欄位。
+    """
     for key, val in row.items():
-        # 排除 metadata / 系統欄位
-        if key in METADATA_FIELDS:
+        key_str = str(key)
+        # 跳過系統欄位（"_ragicId", "_create" 等）
+        if key_str.startswith("_"):
             continue
-        if str(key).startswith("_"):
+        # 跳過數字 key（Ragic 欄位 ID）
+        if key_str.lstrip("-").isdigit():
             continue
-        if str(key).isdigit():
+        # 跳過已知非日期欄位（時間起/迄、工時）
+        if key_str in _NON_DATE_CANDIDATES:
             continue
-
-        reading_value = str(val).strip() if val is not None else ""
-        results.append((seq, str(key), reading_value))
-        seq += 1
-
-    return results
+        val_str = str(val or "").strip()
+        if _DATE_VALUE_PATTERN.match(val_str):
+            return key_str, val_str
+    return "", ""
 
 
 # ── 主同步邏輯 ─────────────────────────────────────────────────────────────────
 
 async def sync_sheet(sheet_key: str) -> dict:
     """
-    從 Ragic 同步指定 Sheet 的資料到本地 DB。
+    從 Ragic 同步指定 Sheet 的主表資料到本地 DB（不讀子表單）。
+
+    每筆記錄 = 一次抄表場次（HotelMRBatch），包含：
+      抄表人員、抄表日期、抄表時間起/迄、工時計算。
 
     返回：{"fetched": N, "upserted": N, "errors": [], "sheet_key": ..., "sheet_name": ...}
     """
@@ -158,7 +193,6 @@ async def sync_sheet(sheet_key: str) -> dict:
     sheet_name = cfg["name"]
     sheet_path = cfg["path"]
 
-    # ★ sheet_path 必須傳入 constructor，fetch_all() 不接受路徑參數
     adapter = RagicAdapter(
         sheet_path=sheet_path,
         server_url=HMR_SERVER_URL,
@@ -169,7 +203,6 @@ async def sync_sheet(sheet_key: str) -> dict:
     logger.info("[HMR Sync] 開始同步 sheet=%s path=%s", sheet_key, sheet_path)
 
     try:
-        # ★ fetch_all 是 async，回傳 dict[ragic_id_str, record_dict]
         raw_data: dict[str, Any] = await adapter.fetch_all()
     except Exception as exc:
         logger.error("[HMR Sync] Ragic 取資料失敗 sheet=%s: %s", sheet_key, exc)
@@ -180,19 +213,63 @@ async def sync_sheet(sheet_key: str) -> dict:
     skipped  = 0
     errors: list[str] = []
 
+    # ── 首筆資料：印出所有 Ragic 欄位名稱供診斷（INFO 等級，方便在 sync_tool 確認）──
+    _first_row_logged = False
+
     try:
-        # ★ 以 .items() 迭代，key 即 ragic_id
         for raw_id_str, row in raw_data.items():
             if not raw_id_str:
                 skipped += 1
                 continue
 
+            # 印出第一筆的所有欄位名稱，方便確認 Ragic 實際回傳欄位
+            if not _first_row_logged:
+                _first_row_logged = True
+                all_keys     = list(row.keys())
+                visible_keys = [k for k in all_keys
+                                if not str(k).startswith("_") and not str(k).isdigit()]
+                numeric_keys = [k for k in all_keys if str(k).lstrip("-").isdigit()]
+                logger.info(
+                    "[HMR Sync] sheet=%s 第一筆欄位（共%d個）文字key=%s 數字key個數=%d",
+                    sheet_key, len(all_keys), visible_keys, len(numeric_keys),
+                )
+
             batch_ragic_id = f"{sheet_key}_{raw_id_str}"
 
-            # ── 萃取場次欄位 ───────────────────────────────────────────────
-            raw_date      = _pick_field(row, DATE_CANDIDATES)
+            # ── 萃取主表欄位 ───────────────────────────────────────────────
+            raw_date = _pick_field(row, DATE_CANDIDATES)
+
+            # ── 日期自動偵測 Fallback（候選清單未命中時掃描所有欄位的值）──
+            auto_date_field = ""
+            if not raw_date:
+                auto_date_field, raw_date = _auto_detect_date_field(row)
+                if auto_date_field:
+                    logger.info(
+                        "[HMR Sync] sheet=%s id=%s 日期自動偵測成功：field='%s' value='%s'（請將此欄位名加入 DATE_CANDIDATES）",
+                        sheet_key, raw_id_str, auto_date_field, raw_date,
+                    )
+
             record_date   = _extract_date(raw_date) if raw_date else ""
             recorder_name = _pick_field(row, RECORDER_CANDIDATES)
+            raw_start     = _pick_field(row, TIME_START_CANDIDATES)
+            raw_end       = _pick_field(row, TIME_END_CANDIDATES)
+            start_time    = _extract_time(raw_start)
+            end_time      = _extract_time(raw_end)
+            work_hours    = _pick_field(row, WORK_HOURS_CANDIDATES)
+
+            # ── 欄位命中情況（INFO，每筆都記，方便核對）──────────────────
+            logger.info(
+                "[HMR Sync] sheet=%s id=%s → date='%s' recorder='%s' start='%s' end='%s' hours='%s'",
+                sheet_key, raw_id_str, record_date, recorder_name, start_time, end_time, work_hours,
+            )
+
+            # ── 日期最終仍未命中：記警告並附出所有 key ─────────────────────
+            if not record_date:
+                logger.warning(
+                    "[HMR Sync] ⚠ sheet=%s id=%s 日期欄位未命中！row所有key=%s",
+                    sheet_key, raw_id_str,
+                    [k for k in row.keys() if not str(k).startswith("_")],
+                )
 
             # ── Upsert Batch ───────────────────────────────────────────────
             batch = db.get(HotelMRBatch, batch_ragic_id)
@@ -204,24 +281,25 @@ async def sync_sheet(sheet_key: str) -> dict:
             batch.sheet_name    = sheet_name
             batch.record_date   = record_date
             batch.recorder_name = recorder_name
+            batch.start_time    = start_time
+            batch.end_time      = end_time
+            batch.work_hours    = work_hours
             batch.synced_at     = twnow()
 
-            # ── 萃取儀表讀數欄位並 Upsert ──────────────────────────────────
-            meter_fields = _extract_meter_fields(row)
-            for seq_no, meter_name, reading_value in meter_fields:
-                reading_ragic_id = f"{batch_ragic_id}_{seq_no:04d}"
+            # ── Upsert HotelMRReading（扁平化摘要，與 Batch 一對一）──────────
+            reading = db.get(HotelMRReading, batch_ragic_id)
+            if reading is None:
+                reading = HotelMRReading(ragic_id=batch_ragic_id)
+                db.add(reading)
 
-                reading = db.get(HotelMRReading, reading_ragic_id)
-                if reading is None:
-                    reading = HotelMRReading(ragic_id=reading_ragic_id)
-                    db.add(reading)
-
-                reading.batch_ragic_id = batch_ragic_id
-                reading.sheet_key      = sheet_key
-                reading.seq_no         = seq_no
-                reading.meter_name     = meter_name
-                reading.reading_value  = reading_value
-                reading.synced_at      = twnow()
+            reading.sheet_key     = sheet_key
+            reading.sheet_name    = sheet_name
+            reading.record_date   = record_date
+            reading.recorder_name = recorder_name
+            reading.start_time    = start_time
+            reading.end_time      = end_time
+            reading.work_hours    = work_hours
+            reading.synced_at     = twnow()
 
             upserted += 1
 

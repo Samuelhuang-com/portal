@@ -267,6 +267,32 @@ def trigger_all_modules_sync(
     return {"success": True, "message": "所有模組同步已在背景啟動，完成後可重新整理查看紀錄"}
 
 
+# ── GET /sync-logs/modules ────────────────────────────────────────────────────
+
+@router.get("/sync-logs/modules")
+def list_syncable_modules(current_user=Depends(is_system_admin)):
+    """回傳所有可單獨觸發同步的模組名稱清單。"""
+    from app.main import list_syncable_modules as _list  # noqa: PLC0415
+    return {"modules": _list()}
+
+
+# ── POST /sync-logs/trigger/{module_name} ────────────────────────────────────
+
+@router.post("/sync-logs/trigger/{module_name}")
+def trigger_single_module_sync(
+    module_name: str,
+    background_tasks: BackgroundTasks,
+    current_user=Depends(is_system_admin),
+):
+    """手動觸發單一模組同步（背景執行，立即回傳）。"""
+    from app.main import _single_module_sync, list_syncable_modules  # noqa: PLC0415
+    if module_name not in list_syncable_modules():
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail=f"未知模組：{module_name}")
+    background_tasks.add_task(_single_module_sync, module_name)
+    return {"success": True, "message": f"{module_name} 同步已在背景啟動，約 30 秒後重新整理可查看結果"}
+
+
 # ── GET /sync-logs/recent ─────────────────────────────────────────────────────
 
 @router.get("/sync-logs/recent")

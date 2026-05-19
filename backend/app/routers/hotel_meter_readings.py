@@ -8,6 +8,7 @@ Prefix: /api/v1/hotel-meter-readings
   POST /sync/all                — 從 Ragic 同步全部 4 張 Sheet（背景執行）
   GET  /{sheet_key}/batches     — 指定 Sheet 登錄清單（月份篩選）
   GET  /dashboard/summary       — 跨 Sheet 統計（Dashboard 總覽用）
+  GET  /daily-calendar          — 月曆格資料（MonthlyCalendarGrid 用）
 """
 from datetime import date, timedelta
 from typing import List, Optional
@@ -18,7 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.dependencies import get_current_user
-from app.models.hotel_meter_readings import HotelMRBatch, HotelMRReading
+from app.models.hotel_meter_readings import HotelMRBatch
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
 
@@ -37,9 +38,9 @@ class MeterSheetConfig(BaseModel):
 SHEET_CONFIGS: List[MeterSheetConfig] = [
     MeterSheetConfig(
         key="building-electric",
-        title="全棟電錶",
+        title="全棟水電錶",
         ragic_url="https://ap12.ragic.com/soutlet001/hotel-routine-inspection/11",
-        description="全棟電力儀表每日數值登錄",
+        description="全棟水電儀表每日數值登錄",
     ),
     MeterSheetConfig(
         key="mall-ac-electric",
@@ -65,15 +66,6 @@ VALID_KEYS = {c.key for c in SHEET_CONFIGS}
 
 
 # ── 業務邏輯輔助 ───────────────────────────────────────────────────────────────
-
-def _count_readings(db: Session, batch_ragic_id: str) -> int:
-    """計算一次登錄場次的讀數筆數"""
-    return (
-        db.query(HotelMRReading)
-        .filter(HotelMRReading.batch_ragic_id == batch_ragic_id)
-        .count()
-    )
-
 
 def _get_missing_days(
     db: Session,
@@ -189,17 +181,18 @@ def list_batches(
 
     batches = q.order_by(HotelMRBatch.record_date.desc()).all()
 
+    cfg = next((c for c in SHEET_CONFIGS if c.key == sheet_key), None)
     result = []
     for b in batches:
-        readings_count = _count_readings(db, b.ragic_id)
-        cfg = next((c for c in SHEET_CONFIGS if c.key == sheet_key), None)
         result.append({
-            "id":             b.ragic_id,
-            "record_date":    b.record_date,
-            "recorder_name":  b.recorder_name,
-            "readings_count": readings_count,
-            "synced_at":      b.synced_at.strftime("%Y/%m/%d %H:%M") if b.synced_at else "",
-            "ragic_url":      cfg.ragic_url if cfg else "",
+            "id":            b.ragic_id,
+            "record_date":   b.record_date,
+            "recorder_name": b.recorder_name,
+            "start_time":    getattr(b, "start_time", ""),
+            "end_time":      getattr(b, "end_time", ""),
+            "work_hours":    getattr(b, "work_hours", ""),
+            "synced_at":     b.synced_at.strftime("%Y/%m/%d %H:%M") if b.synced_at else "",
+            "ragic_url":     cfg.ragic_url if cfg else "",
         })
 
     return result
@@ -291,19 +284,6 @@ def get_dashboard_summary(
         )
         latest_record_date = latest.record_date if latest else ""
 
-        # ── 查詢月份讀數欄位總筆數 ─────────────────────────────────────────
-        month_batches = (
-            db.query(HotelMRBatch)
-            .filter(
-                HotelMRBatch.sheet_key == key,
-                HotelMRBatch.record_date.like(f"{year_month}%"),
-            )
-            .all()
-        )
-        total_readings = sum(
-            _count_readings(db, b.ragic_id) for b in month_batches
-        )
-
         # ── 缺漏日期（月初到 missing_end）────────────────────────────────
         missing_days = _get_missing_days(db, key, start_date, missing_end)
 
@@ -330,7 +310,6 @@ def get_dashboard_summary(
             "is_current_month":   is_current,
             "month_count":        month_count,
             "latest_record_date": latest_record_date,
-            "total_readings":     total_readings,
             "missing_days":       missing_days,
             "missing_count":      len(missing_days),
             "trend_7d":           trend_7d,
@@ -342,4 +321,71 @@ def get_dashboard_summary(
         "target_date": ref_date_str,    # 向後相容
         "year_month":  year_month,
         "sheets":      results,
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GET /daily-calendar  — 月曆格資料（MonthlyCalendarGrid 用）
+# ══════════════════════════════════════════════════════════════════════════════
+
+@router.get(
+    "/daily-calendar",
+    summary="取得每日數值登錄月曆格資料（所有 Sheet）",
+    tags=["每日數值登錄表"],
+)
+def get_daily_calendar(
+    year:  int = Query(..., description="年份，如 2026"),
+    month: int = Query(..., description="月份 1-12，如 5"),
+    db: Session = Depends(get_db),
+):
+    """
+    回傳用於 MonthlyCalendarGrid 的月曆格資料。
+    rows = 4 張 Sheet；cols = 當月各日（1-31）。
+    每格只有兩個狀態：has_record=true（✓）/ has_record=false（—）。
+    """
+    import calendar
+
+    max_day = calendar.monthrange(year, month)[1]
+
+    rows = []
+    for cfg in SHEET_CONFIGS:
+        key   = cfg.key
+        title = cfg.title
+        year_month_str = f"{year}/{month:02d}"
+
+        # 一次查出本月所有登錄，以 record_date 為 key
+        batches = (
+            db.query(HotelMRBatch.record_date)
+            .filter(
+                HotelMRBatch.sheet_key == key,
+                HotelMRBatch.record_date.like(f"{year_month_str}%"),
+            )
+            .all()
+        )
+        recorded_days: set[int] = set()
+        for (record_date,) in batches:
+            # record_date 格式 "YYYY/MM/DD"
+            try:
+                day = int(record_date.split("/")[2])
+                recorded_days.add(day)
+            except (IndexError, ValueError):
+                pass
+
+        daily: dict[str, dict] = {}
+        for d in range(1, max_day + 1):
+            has = d in recorded_days
+            daily[str(d)] = {
+                "has_record":       has,
+                "completion_rate":  1.0 if has else 0.0,
+                "abnormal_count":   0,
+                "pending_count":    0,
+            }
+
+        rows.append({"key": key, "label": title, "daily": daily})
+
+    return {
+        "year":    year,
+        "month":   month,
+        "max_day": max_day,
+        "rows":    rows,
     }

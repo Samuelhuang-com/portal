@@ -311,11 +311,7 @@ export default function AppRouter() {
           <Route path="periodic-maintenance/:batchId"    element={<PeriodicMaintenanceDetailPage />} />
           <Route path="ihg-room-maintenance"    element={<IHGRoomMaintenancePage />} />
           <Route path="daily-inspection"        element={<HotelDailyInspectionDashboard />} />
-          <Route path="daily-meter-readings"    element={
-            <PermissionGuard permissionKey="hotel_meter_readings_view">
-              <HotelMeterReadingsDashboard />
-            </PermissionGuard>
-          } />
+          <Route path="daily-meter-readings"    element={<HotelMeterReadingsDashboard />} />
         </Route>
 
         {/* ── 商場管理 ──────────────────────────────────────────────── */}

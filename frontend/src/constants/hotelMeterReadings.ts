@@ -18,11 +18,11 @@ export interface HotelMeterReadingsSheet {
 export const HOTEL_METER_READINGS_SHEETS: Record<string, HotelMeterReadingsSheet> = {
   'building-electric': {
     key:         'building-electric',
-    title:       '全棟電錶',
+    title:       '全棟水電錶',
     ragicUrl:    'https://ap12.ragic.com/soutlet001/hotel-routine-inspection/11',
-    description: '全棟電力儀表每日數值登錄',
+    description: '全棟水電儀表每日數值登錄',
     color:       '#1B3A5C',
-    unit:        '度',
+    unit:        '度/噸',
   },
   'mall-ac-electric': {
     key:         'mall-ac-electric',

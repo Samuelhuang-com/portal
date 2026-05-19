@@ -9,7 +9,7 @@ export type JournalCategory = typeof JOURNAL_CATEGORIES[number]
 
 export const JOURNAL_SOURCES = [
   'dazhi', 'luqun', 'hotel_pm', 'ihg', 'hotel_di',
-  'security', 'mall_pm', 'full_bldg_pm', 'mall_fi', 'full_bi',
+  'security', 'mall_pm', 'full_bldg_pm', 'mall_fi', 'full_bi', 'hotel_mr',
 ] as const
 export type JournalSource = typeof JOURNAL_SOURCES[number]
 
@@ -24,6 +24,7 @@ export const SOURCE_LABEL: Record<JournalSource, string> = {
   full_bldg_pm: '整棟保養',
   mall_fi:      '商場設施巡檢',
   full_bi:      '整棟巡檢',
+  hotel_mr:     '飯店水電錶抄表',
 }
 
 export const CATEGORY_COLOR: Record<JournalCategory, string> = {
