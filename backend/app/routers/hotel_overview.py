@@ -8,8 +8,7 @@ GET /api/v1/hotel/person-hours  人員工時佔比（五項來源，Top-15）
   ① 飯店週期保養 — pm_batch + pm_batch_item（period_month, estimated_minutes）
   ② IHG客房保養  — ihg_rm_master（maint_date，每筆固定 0.5 hr）
   ③ 飯店每日巡檢 — hotel_di_inspection_batch（inspection_date, start/end_time）
-  ④ 保全巡檢     — security_patrol_batch（inspection_date, start/end_time）
-  ⑤ 飯店工務部   — dazhi_repair_case（occurred_at, work_hours=float）
+  ④ 飯店工務部   — dazhi_repair_case（occurred_at, work_hours=float）
 
 回傳格式與 mall_overview.py 完全一致，供前端直接套用相同表格元件。
 """
@@ -37,16 +36,13 @@ from app.models.periodic_maintenance import (
     PeriodicMaintenanceBatch,
     PeriodicMaintenanceItem,
 )
-from app.models.security_patrol import SecurityPatrolBatch
-
 router = APIRouter(prefix="/hotel", tags=["飯店管理 Dashboard"])
 
-# 固定五項來源（順序即表格列順序）
+# 固定四項來源（順序即表格列順序）
 HOTEL_CATEGORIES = [
     "飯店週期保養",
     "IHG客房保養",
     "飯店每日巡檢",
-    "保全巡檢",
     "飯店工務部",
 ]
 
@@ -63,14 +59,14 @@ PM_MONTHLY_FREQ = {"月", "每月", "月維護", "Monthly", "monthly"}
 # B. 每日累計
 # ─────────────────────────────────────────────────────────────────────────────
 
-@router.get("/daily-hours", summary="飯店管理 — 每日工時彙總（五項來源）")
+@router.get("/daily-hours", summary="飯店管理 — 每日工時彙總（四項來源）")
 def get_hotel_daily_hours(
     year:  int = Query(..., ge=2020, le=2030, description="年份"),
     month: int = Query(..., ge=1,    le=12,   description="月份（1–12）"),
     db: Session = Depends(get_db),
 ):
     """
-    彙整五項飯店來源的每日工時（HR），供「B. 每日累計」Tab 使用。
+    彙整四項飯店來源的每日工時（HR），供「B. 每日累計」Tab 使用。
 
     回傳格式：
     ```json
@@ -167,22 +163,7 @@ def get_hotel_daily_hours(
         except (ValueError, IndexError):
             pass
 
-    # ── ⑤ 保全巡檢：inspection_date "YYYY/MM/DD"，start/end_time → 分鐘 ──────
-    for b in (
-        db.query(SecurityPatrolBatch)
-        .filter(SecurityPatrolBatch.inspection_date.like(f"{date_prefix}%"))
-        .all()
-    ):
-        try:
-            day = int(b.inspection_date.split("/")[2])
-            if 1 <= day <= days_in_month:
-                mins = _parse_minutes(b.start_time or "", b.end_time or "")
-                bucket["保全巡檢"][day] += mins / 60
-                cases_bucket["保全巡檢"][day] += 1
-        except (ValueError, IndexError):
-            pass
-
-    # ── ⑥ 飯店工務部 ────────────────────────────────────────────────────────────
+    # ── ⑤ 飯店工務部 ────────────────────────────────────────────────────────────
     # 案件數（stat-month 口徑）：已完成→completed_at 月，未完成→occurred_at 月
     #   與 dazhi-repair/dashboard、work_category_analysis 保持一致（P0 fix）
     # 工時：只統計已結案（completed_at 不為空），以 completed_at 為時間軸
@@ -260,13 +241,13 @@ def get_hotel_daily_hours(
 # C. 每月累計
 # ─────────────────────────────────────────────────────────────────────────────
 
-@router.get("/monthly-hours", summary="飯店管理 — 每月工時彙總（五項來源）")
+@router.get("/monthly-hours", summary="飯店管理 — 每月工時彙總（四項來源）")
 def get_hotel_monthly_hours(
     year: int = Query(..., ge=2020, le=2030, description="年份"),
     db: Session = Depends(get_db),
 ):
     """
-    彙整五項飯店來源的每月工時（HR），供「C. 每月累計」Tab 使用。
+    彙整四項飯店來源的每月工時（HR），供「C. 每月累計」Tab 使用。
 
     回傳格式：
     ```json
@@ -362,23 +343,7 @@ def get_hotel_monthly_hours(
         except (ValueError, IndexError):
             pass
 
-    # ── ⑤ 保全巡檢 ────────────────────────────────────────────────────────────
-    for b in (
-        db.query(SecurityPatrolBatch)
-        .filter(SecurityPatrolBatch.inspection_date.like(f"{year_prefix}%"))
-        .all()
-    ):
-        try:
-            m = int(b.inspection_date.split("/")[1])
-            if 1 <= m <= 12:
-                bucket["保全巡檢"][m] += (
-                    _parse_minutes(b.start_time or "", b.end_time or "") / 60
-                )
-                cases_bucket["保全巡檢"][m] += 1
-        except (ValueError, IndexError):
-            pass
-
-    # ── ⑥ 飯店工務部 ────────────────────────────────────────────────────────────
+    # ── ⑤ 飯店工務部 ────────────────────────────────────────────────────────────
     # 案件數（stat-month 口徑）：已完成→completed_at 月，未完成→occurred_at 月
     #   與 dazhi-repair/dashboard、work_category_analysis 保持一致（P0 fix）
     # 工時：只統計已結案（completed_at 不為空），以 completed_at 為時間軸
@@ -526,19 +491,7 @@ def get_hotel_person_hours(
             if mins > 0:
                 ph[person]["飯店每日巡檢"] += mins / 60
 
-    # ── ⑤ 保全巡檢：inspector_name ──────────────────────────────────────────────
-    for b in (
-        db.query(SecurityPatrolBatch)
-        .filter(SecurityPatrolBatch.inspection_date.like(f"{year_prefix}%"))
-        .all()
-    ):
-        person = (b.inspector_name or "").strip()
-        if person and person != "未指定":
-            mins = _parse_minutes(b.start_time or "", b.end_time or "")
-            if mins > 0:
-                ph[person]["保全巡檢"] += mins / 60
-
-    # ── ⑥ 飯店工務部：acceptor ─────────────────────────────────────────────────
+    # ── ⑤ 飯店工務部：acceptor ─────────────────────────────────────────────────
     # ① 取消 案件排除
     for c in db.query(DazhiRepairCase).filter(DazhiRepairCase.year == year).all():
         if (c.status or '').strip() == '取消':  # ① 排除取消案件
@@ -735,7 +688,6 @@ def _build_slide2_kpi(slide, kpi: "HotelPptxPayload", period_str: str,
         "periodic":         RGBColor(0x4B, 0xA8, 0xE8),
         "ihg":              RGBColor(0x72, 0x2E, 0xD1),
         "daily_inspection": RGBColor(0x52, 0xC4, 0x1A),
-        "security":         RGBColor(0xFA, 0x8C, 0x16),
         "dazhi":            RGBColor(0x13, 0xC2, 0xC2),
     }
 
@@ -1166,7 +1118,7 @@ def _build_hotel_pptx(year: int, month: int,
             t5.rows[ri].height = Pt(24)
         note_x = 8.8
         _pptx_txt(s_persons,
-                  "工時來源：\n飯店週期保養 / IHG客房保養\n飯店每日巡檢 / 保全巡檢\n飯店工務部",
+                  "工時來源：\n飯店週期保養 / IHG客房保養\n飯店每日巡檢 / 飯店工務部",
                   note_x, TABLE_Y, SW - note_x - 0.3, 2.0,
                   size=9, color=C_GRAY, italic=True, wrap=True)
     else:

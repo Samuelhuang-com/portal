@@ -5,8 +5,7 @@
  *   1. 飯店週期保養表    /periodic-maintenance/stats
  *   2. IHG客房保養       /ihg-room-maintenance/stats
  *   3. 飯店每日巡檢      /hotel-daily-inspection/dashboard/summary
- *   4. 保全巡檢          /security/dashboard/summary + trend
- *   5. 工務部            /dazhi-repair/dashboard
+ *   4. 工務部            /dazhi-repair/dashboard
  *
  * 不新增後端 API，所有 normalize 在前端 adapter layer 完成。
  */
@@ -41,17 +40,6 @@ import {
   type HotelDIDashboardSummary,
   type HotelDIMonthlyDashboard,
 } from '@/api/hotelDailyInspection'
-import {
-  fetchSecurityDashboardSummary,
-  fetchSecurityDashboardTrend,
-  fetchSecurityMonthlyDashboard,
-  type SecurityMonthlyDashboard,
-} from '@/api/securityPatrol'
-import type {
-  SecurityDashboardSummary,
-  SecurityDashboardTrend,
-  SecurityTrendPoint,
-} from '@/types/securityPatrol'
 import { fetchDashboard }                from '@/api/dazhiRepair'
 import { SourceStatusCard }              from '@/components/SourceStatusCard'
 import {
@@ -85,7 +73,6 @@ const SOURCE_COLORS: Record<string, string> = {
   periodic:          ACCENT_BLUE,
   ihg:               PURPLE,
   daily_inspection:  GREEN,
-  security:          ORANGE,
   dazhi:             CYAN,
 }
 
@@ -108,7 +95,6 @@ const HOTEL_SOURCE_ICONS: Record<string, React.ReactNode> = {
   periodic:         <BuildOutlined />,
   ihg:              <BuildOutlined />,
   daily_inspection: <SafetyOutlined />,
-  security:         <SafetyOutlined />,
   dazhi:            <ToolOutlined />,
 }
 
@@ -116,7 +102,6 @@ const HOTEL_SOURCE_ROUTES: Record<string, string> = {
   periodic:         '/hotel/periodic-maintenance',
   ihg:              '/hotel/ihg-room-maintenance',
   daily_inspection: '/hotel/daily-inspection',
-  security:         '/security/dashboard',
   dazhi:            '/hotel/dazhi-repair/dashboard',
 }
 
@@ -196,23 +181,6 @@ function adaptHotelDI(summary: HotelDIMonthlyDashboard): NormalizedSource {
   }
 }
 
-/** 月份彙總口徑：SecurityMonthlyDashboard（後端 /monthly-summary） */
-function adaptSecurity(summary: SecurityMonthlyDashboard): NormalizedSource {
-  return {
-    source_key:      'security',
-    source_name:     '保全巡檢',
-    source_color:    SOURCE_COLORS.security,
-    case_count:      summary.total_items      ?? 0,
-    completed_count: summary.checked_items    ?? 0,
-    work_hours:      (summary.total_minutes   ?? 0) / 60,
-    completion_rate: summary.completion_rate  ?? 0,
-    abnormal_count:  summary.abnormal_items   ?? 0,
-    overdue_count:   0,
-    status_label:    `完成率 ${(summary.completion_rate ?? 0).toFixed(1)}%`,
-    is_ok:           (summary.completion_rate ?? 0) >= 80,
-  }
-}
-
 function adaptDazhi(data: DashboardData): NormalizedSource {
   const kpi  = data.kpi ?? {} as DashboardKpi
   const total     = kpi.total             ?? 0
@@ -279,11 +247,8 @@ export default function HotelMgmtDashboardPage() {
       ce('b', null, '總和 = ①＋②'),
     ),
     每日巡檢: ce('div', { style: { fontSize: 12, lineHeight: 1.9 } },
-      '① ', ce('b', null, '飯店每日巡檢 / Hotel Daily Inspection'), '（hotel/daily-inspection）', ce('br'),
-      '　以 ', ce('code', null, 'inspection_date'), ' 歸屬，每筆批次 = 一次巡邏', ce('br'),
-      '② ', ce('b', null, '保全巡檢 / Security Patrol'), '（security/patrol）', ce('br'),
-      '　以 ', ce('code', null, 'inspection_date'), ' 歸屬，每筆批次 = 一次巡邏', ce('br'),
-      ce('b', null, '總和 = ①＋②'),
+      ce('b', null, '飯店每日巡檢 / Hotel Daily Inspection'), '（hotel/daily-inspection）', ce('br'),
+      '　以 ', ce('code', null, 'inspection_date'), ' 歸屬，每筆批次 = 一次巡邏',
     ),
   }
 
@@ -305,11 +270,8 @@ export default function HotelMgmtDashboardPage() {
   const [pmStats,           setPmStats]           = useState<PMStats | null>(null)
   const [ihgStats,          setIhgStats]          = useState<IHGStats | null>(null)
   const [hotelDiMonthly,    setHotelDiMonthly]    = useState<HotelDIMonthlyDashboard | null>(null)
-  const [secMonthly,        setSecMonthly]        = useState<SecurityMonthlyDashboard | null>(null)
   // 以下保留供圖表 / 趨勢 Tab 使用（單日口徑）
   const [hotelDiSummary,    setHotelDiSummary]    = useState<HotelDIDashboardSummary | null>(null)
-  const [secSummary,        setSecSummary]        = useState<SecurityDashboardSummary | null>(null)
-  const [secTrend,          setSecTrend]          = useState<SecurityDashboardTrend | null>(null)
   const [dazhiData,         setDazhiData]         = useState<DashboardData | null>(null)
 
   // ── 新 Tab 資料狀態（懶載入）─────────────────────────────────────────────
@@ -348,15 +310,8 @@ export default function HotelMgmtDashboardPage() {
         ? [fetchHotelDailyMonthlyDashboard(year, month).then(setHotelDiMonthly).catch(() => { errs.push('飯店每日巡檢') })]
         : []
       ),
-      // 保全巡檢：改為月份彙總口徑
-      ...(month > 0
-        ? [fetchSecurityMonthlyDashboard(year, month).then(setSecMonthly).catch(() => { errs.push('保全巡檢') })]
-        : []
-      ),
       // 單日口徑保留供趨勢圖使用
       fetchHotelDailyDashboardSummary(targetDate).then(setHotelDiSummary).catch(() => {}),
-      fetchSecurityDashboardSummary(targetDate).then(setSecSummary).catch(() => {}),
-      fetchSecurityDashboardTrend(30).then(setSecTrend).catch(() => {}),
       fetchDashboard(year, month).then(setDazhiData).catch(() => { errs.push('工務部') }),
     ])
 
@@ -369,8 +324,6 @@ export default function HotelMgmtDashboardPage() {
     setLoading(true)
     await Promise.allSettled([
       fetchHotelDailyDashboardSummary(date).then(setHotelDiSummary).catch(() => {}),
-      fetchSecurityDashboardSummary(date).then(setSecSummary).catch(() => {}),
-      fetchSecurityDashboardTrend(30).then(setSecTrend).catch(() => {}),
     ])
     setLoading(false)
   }, [])
@@ -399,7 +352,6 @@ export default function HotelMgmtDashboardPage() {
     pmStats         ? adaptPeriodic(pmStats)           : null,
     ihgStats        ? adaptIHG(ihgStats)               : null,
     hotelDiMonthly  ? adaptHotelDI(hotelDiMonthly)     : null,  // 月份彙總
-    secMonthly      ? adaptSecurity(secMonthly)        : null,  // 月份彙總
     dazhiData       ? adaptDazhi(dazhiData)            : null,
   ].filter(Boolean) as NormalizedSource[]
 
@@ -439,12 +391,6 @@ export default function HotelMgmtDashboardPage() {
 
   // 2. 工務 12個月趨勢
   const dazhiTrend = dazhiData?.trend_12m ?? []
-
-  // 3. 保全巡檢近 30 日異常趨勢
-  const secTrendData = (secTrend?.trend ?? [])
-    .filter((t: SecurityTrendPoint) => t.has_data)
-    .map((t: SecurityTrendPoint) => ({ date: t.date.slice(5), abnormal: t.abnormal_count }))
-    .slice(-14) // 最近 14 天有資料的
 
   // ── 來源卡片（6 有資料 + 2 佔位，共 8 張，2 排 × 4 欄）──────────────────
   function SourceCards() {
@@ -521,7 +467,7 @@ export default function HotelMgmtDashboardPage() {
           <Card bodyStyle={{ padding: '14px 16px' }} style={{ borderLeft: `3px solid ${ORANGE}` }}>
             <Statistic
               title={
-                <Tooltip title="五大來源工時加總：週期保養（計劃工時）＋ IHG 客房保養（計劃工時）＋ 每日巡檢（實際）＋ 保全巡檢（實際）＋ 飯店工務報修（維修工時，小時）">
+                <Tooltip title="四大來源工時加總：週期保養（計劃工時）＋ IHG 客房保養（計劃工時）＋ 每日巡檢（實際）＋ 飯店工務報修（維修工時，小時）">
                   <span style={{ fontSize: 11, color: '#888', cursor: 'help' }}>
                     本期工時合計 <QuestionCircleOutlined style={{ color: '#bbb' }} />
                   </span>
@@ -685,14 +631,13 @@ export default function HotelMgmtDashboardPage() {
     const periodic = find('飯店週期保養')
     const ihg      = find('IHG客房保養')
     const diHotel  = find('飯店每日巡檢')
-    const security = find('保全巡檢')
 
     const catCases: Record<Hotel5Cat, number[]> = {
       現場報修: dazhi?.cases                                     ?? zeroes(),
       上級交辦: zeroes(),
       緊急事件: zeroes(),
       例行維護: addH(addH(room?.cases, periodic?.cases), ihg?.cases),
-      每日巡檢: addH(diHotel?.cases, security?.cases),
+      每日巡檢: diHotel?.cases                                   ?? zeroes(),
     }
 
     const grandTotal = (HOTEL_5CATS as readonly Hotel5Cat[]).reduce(
@@ -875,14 +820,13 @@ export default function HotelMgmtDashboardPage() {
     const periodic = find('飯店週期保養')
     const ihg      = find('IHG客房保養')
     const diHotel  = find('飯店每日巡檢')
-    const security = find('保全巡檢')
 
     const catCases: Record<Hotel5Cat, number[]> = {
       現場報修: dazhi?.cases                                      ?? zeroes(),
       上級交辦: zeroes(),
       緊急事件: zeroes(),
       例行維護: addH(addH(room?.cases, periodic?.cases), ihg?.cases),
-      每日巡檢: addH(diHotel?.cases, security?.cases),
+      每日巡檢: diHotel?.cases                                    ?? zeroes(),
     }
 
     const grandTotal = (HOTEL_5CATS as readonly Hotel5Cat[]).reduce(
@@ -1008,14 +952,13 @@ export default function HotelMgmtDashboardPage() {
     const periodic = find('飯店週期保養')
     const ihg      = find('IHG客房保養')
     const diHotel  = find('飯店每日巡檢')
-    const security = find('保全巡檢')
 
     const catMonthly: Record<Hotel5Cat, number[]> = {
       現場報修: dazhi?.cases                                      ?? zeroes(),
       上級交辦: zeroes(),
       緊急事件: zeroes(),
       例行維護: addH(addH(room?.cases, periodic?.cases), ihg?.cases),
-      每日巡檢: addH(diHotel?.cases, security?.cases),
+      每日巡檢: diHotel?.cases                                    ?? zeroes(),
     }
 
     // 轉為累計（Running Total）：每月值 = 1 月到該月的加總（案件數，整數）
@@ -1593,7 +1536,7 @@ export default function HotelMgmtDashboardPage() {
       children: (
         <Spin spinning={tabDLoading}>
           <div style={{ marginBottom: 8, fontSize: 12, color: '#888' }}>
-            {year}年 — 六大來源 × Top-15 人員工時佔比
+            {year}年 — 五大來源 × Top-15 人員工時佔比
           </div>
           <TabDPerson />
         </Spin>
@@ -1633,7 +1576,7 @@ export default function HotelMgmtDashboardPage() {
               🏨 {NAV_PAGE.hotelMgmtDashboard}
             </Title>
             <Text type="secondary" style={{ fontSize: 12 }}>
-              客房保養 · 週期保養 · IHG保養 · 每日巡檢 · 保全巡檢 · 工務 — 整合總覽
+              客房保養 · 週期保養 · IHG保養 · 每日巡檢 · 工務 — 整合總覽
             </Text>
           </Col>
           <Col>

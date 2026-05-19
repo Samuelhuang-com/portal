@@ -346,7 +346,7 @@ function HotelDailyTable({ data }: { data: HotelDailyHoursData }) {
     上級交辦: zeroes(),
     緊急事件: zeroes(),
     例行維護: addH(addH(find('客房保養管理')?.cases, find('飯店週期保養')?.cases), find('IHG客房保養')?.cases),
-    每日巡檢: addH(find('飯店每日巡檢')?.cases, find('保全巡檢')?.cases),
+    每日巡檢: find('飯店每日巡檢')?.cases ?? zeroes(),
   }
   const grandTotal = CATS.reduce((s, c) => s + catCases[c].reduce((a, b) => a + b, 0), 0)
   type DRow = { key: string; category: string; cases: number[]; total: number; pct: number }
@@ -1781,7 +1781,7 @@ export default function ExecWorkDashboardPage() {
       上級交辦: 0,
       緊急事件: 0,
       例行維護: hd('客房保養管理') + hd('飯店週期保養') + hd('IHG客房保養'),
-      每日巡檢: hd('飯店每日巡檢') + hd('保全巡檢'),
+      每日巡檢: hd('飯店每日巡檢'),
     }
 
     // 商場：monthly-hours cases[mi]（商場無 IHG 口徑差異問題）
