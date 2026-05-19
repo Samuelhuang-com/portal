@@ -1196,10 +1196,21 @@ def export_hotel_overview_pptx(
     body 由前端帶入已計算好的 KPI 資料（主管摘要 / 各來源狀態 / 費用摘要），
     Slide 3-5 工時資料由後端自行查 DB。
     """
-    daily   = get_hotel_daily_hours(year, month, db)
-    monthly = get_hotel_monthly_hours(year, db)
-    persons = get_hotel_person_hours(year, db)
-    buf     = _build_hotel_pptx(year, month, daily, monthly, persons, kpi_payload=body)
+    import logging
+    import traceback as _tb
+    from fastapi import HTTPException
+    logger = logging.getLogger("hotel_pptx_export")
+
+    try:
+        daily   = get_hotel_daily_hours(year, month, db)
+        monthly = get_hotel_monthly_hours(year, db)
+        persons = get_hotel_person_hours(year, db)
+        buf     = _build_hotel_pptx(year, month, daily, monthly, persons, kpi_payload=body)
+    except Exception as exc:
+        err_detail = _tb.format_exc()
+        logger.error("PPTX export failed:\n%s", err_detail)
+        raise HTTPException(status_code=500, detail=f"PPTX 建立失敗：{exc}")
+
     filename = f"飯店管理報告_{year}年{month:02d}月.pptx"
     content_disposition = f"attachment; filename*=UTF-8''{quote(filename)}"
     return StreamingResponse(

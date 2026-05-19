@@ -1693,7 +1693,8 @@ export default function HotelMgmtDashboardPage() {
                     setExportProgress(100)
                   } catch (e) {
                     console.error('PPTX export failed', e)
-                    message.error('PPTX 匯出失敗，請確認資料已載入後重試')
+                    const msg = e instanceof Error ? e.message : String(e)
+                    message.error(`PPTX 匯出失敗：${msg}`)
                   } finally {
                     clearInterval(exportTimerRef.current!)
                     setExportLoading(false)

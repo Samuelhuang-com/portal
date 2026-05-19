@@ -146,7 +146,14 @@ export async function exportHotelOverviewPptx(
     },
     body: JSON.stringify(payload),
   })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  if (!res.ok) {
+    let detail = `HTTP ${res.status}`
+    try {
+      const errJson = await res.json()
+      if (errJson?.detail) detail = errJson.detail
+    } catch { /* ignore parse error */ }
+    throw new Error(detail)
+  }
   const blob = await res.blob()
   const objectUrl = URL.createObjectURL(blob)
   const a = document.createElement('a')
