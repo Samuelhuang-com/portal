@@ -627,6 +627,55 @@ async def trigger_sync(
     return {"status": "started", "message": f"日曜請款同步已啟動（full_resync={full_resync}）"}
 
 
+# ── POST /sync/reparse-items ──────────────────────────────────────────────────
+
+@router.post("/sync/reparse-items")
+def reparse_items_from_raw(
+    db: Session = Depends(get_db),
+    _:  object  = Depends(require_permission(_PERM_ADMIN)),
+):
+    """
+    從已存在 DB 的 raw_data_json 重新解析品項，不需打 Ragic API。
+    適用於 ITEM_FIELD_CANDIDATES 欄位名稱更新後，讓現有資料立即生效。
+    """
+    import json as _json
+    from app.services.nichiyo_claim_request_sync import (
+        _find_subtable_from_list_raw,
+        _parse_item_row_from_raw,
+    )
+
+    orders = (
+        db.query(NichiyoClaimRequest)
+        .filter(
+            NichiyoClaimRequest.company == _COMPANY,
+            NichiyoClaimRequest.raw_data_json.isnot(None),
+        )
+        .all()
+    )
+
+    updated = skipped = errors = 0
+    for order in orders:
+        try:
+            raw = _json.loads(order.raw_data_json)
+            item_rows = _find_subtable_from_list_raw(raw)
+            if not item_rows:
+                skipped += 1
+                continue
+            db.query(NichiyoClaimRequestItem).filter_by(order_id=order.id).delete(synchronize_session=False)
+            for idx, row in enumerate(item_rows, start=1):
+                item = NichiyoClaimRequestItem(**_parse_item_row_from_raw(row, order.id, idx))
+                db.add(item)
+            order.detail_synced = True
+            updated += 1
+        except Exception as exc:
+            errors += 1
+            logger.warning("[reparse-items] order_id=%s 失敗: %s", order.id, exc)
+
+    db.commit()
+    return {"updated": updated, "skipped": skipped, "errors": errors,
+            "message": f"重解析完成：{updated} 筆更新、{skipped} 筆無 subtable、{errors} 筆錯誤"}
+
+
 # ── GET /sync/status ──────────────────────────────────────────────────────────
 
 @router.get("/sync/status")

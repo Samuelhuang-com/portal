@@ -83,11 +83,12 @@ DETAIL_FIELD_CANDIDATES: dict[str, list[str]] = {
 
 ITEM_FIELD_CANDIDATES: dict[str, list[str]] = {
     "seq":          ["項次", "序號"],
-    "product_name": ["品名", "品項名稱", "名稱", "摘要", "說明"],
+    "product_name": ["產品名稱", "品名", "品項名稱", "名稱", "摘要", "說明",
+                     "費用說明", "費用名稱", "服務項目", "費用項目", "明細"],
     "qty":          ["數量"],
     "unit":         ["單位"],
     "unit_price":   ["單價"],
-    "amount":       ["金額", "小計", "品項金額"],
+    "amount":       ["擬定廠商金額", "廠商金額", "金額", "小計", "品項金額", "請款金額"],
     "item_remark":  ["備註", "品項備註"],
 }
 
@@ -232,6 +233,24 @@ def _find_subtable_from_list_raw(raw: dict) -> list[dict]:
     return rows
 
 
+# ── 品項 Row 解析（可被 router import 用於 reparse-items）───────────────────
+
+def _parse_item_row_from_raw(row: dict, order_id: int, seq_override: int) -> dict:
+    """將一個 subtable row dict 解析為 NichiyoClaimRequestItem 欄位 dict。
+    供 sync service 和 reparse-items admin endpoint 共用。
+    """
+    return {
+        "order_id":     order_id,
+        "seq":          seq_override,
+        "product_name": _strip_ragic_rtf(str(_pick(row, ITEM_FIELD_CANDIDATES["product_name"], "")).strip()) or None,
+        "qty":          str(_pick(row, ITEM_FIELD_CANDIDATES["qty"], "")).strip() or None,
+        "unit":         str(_pick(row, ITEM_FIELD_CANDIDATES["unit"], "")).strip() or None,
+        "unit_price":   _to_int(_pick(row, ITEM_FIELD_CANDIDATES["unit_price"])),
+        "amount":       _to_int(_pick(row, ITEM_FIELD_CANDIDATES["amount"])),
+        "item_remark":  str(_pick(row, ITEM_FIELD_CANDIDATES["item_remark"], "")).strip() or None,
+    }
+
+
 # ── 清單記錄解析 ──────────────────────────────────────────────────────────────
 
 def _parse_list_record(record_id: str, data: dict, sheet_path: str, dept_config: dict) -> dict:
@@ -345,7 +364,6 @@ async def _sync_list_for_dept(dept_config: dict, db) -> dict:
                                 seq = int(str(_pick(row, ["項次", "序號"], "0") or "0"))
                             except (ValueError, TypeError):
                                 seq = loop_idx
-                            # 若 seq 與同批次已用的重複，改用 loop_idx 保證唯一
                             if seq in seen_seqs:
                                 seq = loop_idx
                                 while seq in seen_seqs:
@@ -353,14 +371,7 @@ async def _sync_list_for_dept(dept_config: dict, db) -> dict:
                             seen_seqs.add(seq)
 
                             item = NichiyoClaimRequestItem(
-                                order_id     = order_obj.id,
-                                seq          = seq,
-                                product_name = str(_pick(row, ITEM_FIELD_CANDIDATES["product_name"], "")).strip() or None,
-                                qty          = str(_pick(row, ITEM_FIELD_CANDIDATES["qty"], "")).strip() or None,
-                                unit         = str(_pick(row, ITEM_FIELD_CANDIDATES["unit"], "")).strip() or None,
-                                unit_price   = _to_int(_pick(row, ITEM_FIELD_CANDIDATES["unit_price"])),
-                                amount       = _to_int(_pick(row, ITEM_FIELD_CANDIDATES["amount"])),
-                                item_remark  = str(_pick(row, ITEM_FIELD_CANDIDATES["item_remark"], "")).strip() or None,
+                                **_parse_item_row_from_raw(row, order_obj.id, seq),
                                 sync_at      = now,
                             )
                             db.add(item)
@@ -429,17 +440,14 @@ async def _sync_detail_for_order(order: NichiyoClaimRequest, db) -> bool:
     item_rows = _find_subtable(data)
     if item_rows:
         db.query(NichiyoClaimRequestItem).filter_by(order_id=order.id).delete(synchronize_session=False)
-        for row in item_rows:
+        for idx, row in enumerate(item_rows, start=1):
+            try:
+                seq = int(str(_pick(row, ["項次", "序號"], "0") or "0")) or idx
+            except (ValueError, TypeError):
+                seq = idx
             item = NichiyoClaimRequestItem(
-                order_id     = order.id,
-                seq          = int(str(_pick(row, ["項次", "序號"], "0") or "0")),
-                product_name = str(_pick(row, ITEM_FIELD_CANDIDATES["product_name"], "")).strip() or None,
-                qty          = str(_pick(row, ITEM_FIELD_CANDIDATES["qty"], "")).strip() or None,
-                unit         = str(_pick(row, ITEM_FIELD_CANDIDATES["unit"], "")).strip() or None,
-                unit_price   = _to_int(_pick(row, ITEM_FIELD_CANDIDATES["unit_price"])),
-                amount       = _to_int(_pick(row, ITEM_FIELD_CANDIDATES["amount"])),
-                item_remark  = str(_pick(row, ITEM_FIELD_CANDIDATES["item_remark"], "")).strip() or None,
-                sync_at      = now,
+                **_parse_item_row_from_raw(row, order.id, seq),
+                sync_at = now,
             )
             db.add(item)
 

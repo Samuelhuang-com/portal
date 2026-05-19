@@ -763,82 +763,297 @@ def export_work_journal_excel(
                     persons_order.append(pd["person"])
                     seen.add(pd["person"])
 
-    # ── 樣式 ───────────────────────────────────────────────────────────────────
-    HEADERS    = ["日期", "模組", "類別", "工作事項", "預估耗時(min)", "起", "迄", "工時(min)", "備註", "回報事項"]
-    COL_WIDTHS = [12,     12,    10,    35,          14,              8,   8,   10,       25,   25]
-    header_fill = PatternFill(start_color="1B3A5C", end_color="1B3A5C", fill_type="solid")
-    header_font = Font(color="FFFFFF", bold=True, size=10)
-    thin = Border(
-        left=Side(style="thin"), right=Side(style="thin"),
-        top=Side(style="thin"), bottom=Side(style="thin"),
-    )
-    cat_colors = {
-        "現場報修": "4BA8E8", "上級交辦": "52C41A",
-        "緊急事件": "FF4D4F", "例行維護": "FA8C16", "每日巡檢": "722ED1",
-    }
-    total_fill = PatternFill(start_color="EBF3FB", end_color="EBF3FB", fill_type="solid")
+    # ── openpyxl helpers ──────────────────────────────────────────────────────────
+    from openpyxl.utils import get_column_letter
 
+    THIN   = Side(style="thin")
+    MEDIUM = Side(style="medium")
+
+    def _border(l="thin", r="thin", t="thin", b="thin"):
+        def _s(x):
+            return Side(style=x) if x else Side(style=None)
+        return Border(left=_s(l), right=_s(r), top=_s(t), bottom=_s(b))
+
+    def _apply_row(ws, ri, n_cols, fill=None, font=None, alignment=None, border_fn=None, height=None):
+        for c in range(1, n_cols + 1):
+            cell = ws.cell(row=ri, column=c)
+            if fill:      cell.fill      = fill
+            if font:      cell.font      = font
+            if alignment: cell.alignment = alignment
+            if border_fn: cell.border    = border_fn(c)
+        if height is not None:
+            ws.row_dimensions[ri].height = height
+
+    # ── 樣式常數 ──────────────────────────────────────────────────────────────────
+    NCOLS       = 13
+    CAT_COLS    = {"現場報修": 2, "上級交辦": 3, "緊急事件": 4, "例行維護": 5, "每日巡檢": 6}
+    COL_WIDTHS  = {1:5, 2:7, 3:7, 4:7, 5:7, 6:7, 7:46, 8:9, 9:10, 10:10, 11:9, 12:22, 13:34}
+
+    TITLE_FONT  = Font(bold=True, size=18)
+    META_FONT   = Font(size=10)
+    HDR_FILL    = PatternFill(start_color="D9EAF7",  end_color="D9EAF7",  fill_type="solid")
+    HDR_FONT    = Font(bold=True, size=10)
+    DATE_FILL   = PatternFill(start_color="1B3A5C",  end_color="1B3A5C",  fill_type="solid")
+    DATE_FONT   = Font(bold=True, size=11, color="FFFFFF")
+    TOTAL_FILL  = PatternFill(start_color="EBF3FB",  end_color="EBF3FB",  fill_type="solid")
+    FOOTER_FILL = PatternFill(start_color="D9EAF7",  end_color="D9EAF7",  fill_type="solid")
+
+    CENTER = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    LEFT   = Alignment(horizontal="left",   vertical="center", wrap_text=True)
+    RIGHT  = Alignment(horizontal="right",  vertical="center", wrap_text=True)
+
+    # ── 標題文字（支援 YYYY-MM-DD 與 YYYY/MM/DD 兩種格式） ────────────────────────
+    def _parse_dt(s: str):
+        for fmt in ("%Y-%m-%d", "%Y/%m/%d"):
+            try:
+                return datetime.strptime(s, fmt)
+            except ValueError:
+                pass
+        raise ValueError(f"Cannot parse date: {s}")
+
+    try:
+        df_dt = _parse_dt(date_from)
+        dt_dt = _parse_dt(date_to)
+        if df_dt.year == dt_dt.year and df_dt.month == dt_dt.month:
+            yyyymm_txt = f"{df_dt.month}月"          # e.g. "5月" — matches paper form
+        else:
+            yyyymm_txt = f"{df_dt.year}/{df_dt.month:02d}~{dt_dt.year}/{dt_dt.month:02d}"
+        date_display = date_from if date_from == date_to else f"{date_from} ~ {date_to}"
+    except Exception:
+        yyyymm_txt   = date_from
+        date_display = f"{date_from} ~ {date_to}"
+
+    is_multi_day = len(days_data) > 1
+
+    # ── 建立 Workbook ─────────────────────────────────────────────────────────────
     wb = openpyxl.Workbook()
     wb.remove(wb.active)
 
     for pname in persons_order:
         ws = wb.create_sheet(title=(pname or "未指定")[:31])
 
-        # 標題行
-        for ci, h in enumerate(HEADERS, 1):
-            cell = ws.cell(row=1, column=ci, value=h)
-            cell.fill      = header_fill
-            cell.font      = header_font
-            cell.alignment = Alignment(horizontal="center", vertical="center")
-            cell.border    = thin
-        ws.row_dimensions[1].height = 20
+        # 欄寬
+        for ci, w in COL_WIDTHS.items():
+            ws.column_dimensions[get_column_letter(ci)].width = w
 
-        row_idx   = 2
+        # ── Row 1: 大標題 ─────────────────────────────────────────────────────────
+        title_val = f"{yyyymm_txt} 飯店每日工作日誌 - {pname}"
+        c1 = ws.cell(row=1, column=1, value=title_val)
+        c1.font = TITLE_FONT
+        c1.alignment = CENTER
+        ws.merge_cells("A1:M1")
+        ws.row_dimensions[1].height = 28
+
+        # ── Row 2: 日期行 ─────────────────────────────────────────────────────────
+        # G 欄寬 48，把班別+時間合在同一格避免 H 欄（寬9）換行
+        ws.cell(row=2, column=1, value="日期").font = META_FONT
+        ws.cell(row=2, column=1).alignment = CENTER
+        ws.cell(row=2, column=2, value=f"　{date_display}").font = META_FONT
+        ws.cell(row=2, column=2).alignment = LEFT
+        ws.merge_cells("B2:F2")
+        ws.cell(row=2, column=7, value="早班值班　08:30-17:30").font = META_FONT
+        ws.cell(row=2, column=7).alignment = LEFT
+        ws.merge_cells("G2:H2")
+        ws.cell(row=2, column=9, value="簽名：").font = META_FONT
+        ws.cell(row=2, column=9).alignment = LEFT
+        ws.merge_cells("I2:M2")
+        ws.row_dimensions[2].height = 20
+
+        # ── Row 3: 天氣行 ─────────────────────────────────────────────────────────
+        ws.cell(row=3, column=1, value="天氣").font = META_FONT
+        ws.cell(row=3, column=1).alignment = CENTER
+        ws.cell(row=3, column=2, value="□ 晴").font = META_FONT
+        ws.cell(row=3, column=2).alignment = CENTER
+        ws.cell(row=3, column=3, value="□ 陰").font = META_FONT
+        ws.cell(row=3, column=3).alignment = CENTER
+        ws.cell(row=3, column=4, value="□ 雨").font = META_FONT
+        ws.cell(row=3, column=4).alignment = LEFT
+        ws.merge_cells("D3:F3")
+        ws.cell(row=3, column=7, value="晚班值班　14:00-23:00").font = META_FONT
+        ws.cell(row=3, column=7).alignment = LEFT
+        ws.merge_cells("G3:H3")
+        ws.cell(row=3, column=9, value="簽名：").font = META_FONT
+        ws.cell(row=3, column=9).alignment = LEFT
+        ws.merge_cells("I3:M3")
+        ws.row_dimensions[3].height = 20
+
+        # ── Row 4: 溫度行 ─────────────────────────────────────────────────────────
+        ws.cell(row=4, column=1, value="溫度").font = META_FONT
+        ws.cell(row=4, column=1).alignment = CENTER
+        ws.cell(row=4, column=2, value="　　　度").font = META_FONT
+        ws.cell(row=4, column=2).alignment = LEFT
+        ws.merge_cells("B4:F4")
+        ws.merge_cells("G4:M4")
+        ws.row_dimensions[4].height = 20
+
+        # ── Row 5: 空白分隔 ───────────────────────────────────────────────────────
+        ws.merge_cells("A5:M5")
+        ws.row_dimensions[5].height = 8
+
+        # ── Row 6: 欄位表頭 ───────────────────────────────────────────────────────
+        HDR_LABELS = [
+            "項次", "現場\n報修", "上級\n交辦", "緊急\n事件", "例行\n維護", "每日\n巡檢",
+            "工作事項", "預估\n耗時\n(min)", "執行時間\n起", "執行時間\n迄", "工時\n(min)", "備註", "回報事項",
+        ]
+        for ci, label in enumerate(HDR_LABELS, 1):
+            cell = ws.cell(row=6, column=ci, value=label)
+            cell.fill      = HDR_FILL
+            cell.font      = HDR_FONT
+            cell.alignment = CENTER
+            l_style = "medium" if ci == 1    else "thin"
+            r_style = "medium" if ci == NCOLS else "thin"
+            cell.border = _border(l=l_style, r=r_style, t="medium", b="medium")
+        ws.row_dimensions[6].height = 42
+
+        # ── 資料行 ────────────────────────────────────────────────────────────────
+        row_idx   = 7
         total_min = 0
+        global_seq = 0  # sequential item number (resets per day for multi-day)
 
         for daily in days_data:
+            person_rows_for_day: list = []
             for pd in daily["persons"]:
-                if pd["person"] != pname:
-                    continue
-                for r in pd["rows"]:
-                    cat = r.get("category", "")
-                    wm  = r.get("work_min")
-                    if isinstance(wm, int):
-                        total_min += wm
-                    row_data = [
-                        daily["date"],
-                        r.get("source_label", ""),
-                        cat,
-                        r.get("task", ""),
-                        r.get("est_min") or "",
-                        r.get("start_time") or "",
-                        r.get("end_time") or "",
-                        wm if wm is not None else "",
-                        r.get("remark", ""),
-                        r.get("report", ""),
-                    ]
-                    for ci, val in enumerate(row_data, 1):
-                        cell = ws.cell(row=row_idx, column=ci, value=val)
-                        cell.border    = thin
-                        cell.alignment = Alignment(vertical="center")
-                    if cat in cat_colors:
-                        ws.cell(row=row_idx, column=3).font = Font(color=cat_colors[cat], bold=True)
-                    if r.get("report"):
-                        ws.cell(row=row_idx, column=10).font = Font(color="D46B08")
-                    row_idx += 1
+                if pd["person"] == pname:
+                    person_rows_for_day = pd["rows"]
+                    break
+            if not person_rows_for_day:
+                continue
 
-        # 合計行
-        if row_idx > 2:
-            ws.cell(row=row_idx, column=1, value="合計").font = Font(bold=True)
-            tc = ws.cell(row=row_idx, column=8, value=total_min)
-            tc.font   = Font(bold=True, color="1B3A5C")
-            tc.border = thin
-            for ci in range(1, len(HEADERS) + 1):
-                ws.cell(row=row_idx, column=ci).fill = total_fill
+            # 多日模式：日期分隔行
+            if is_multi_day:
+                date_cell = ws.cell(row=row_idx, column=1, value=f"  {daily['date']}")
+                date_cell.fill      = DATE_FILL
+                date_cell.font      = DATE_FONT
+                date_cell.alignment = LEFT
+                ws.merge_cells(f"A{row_idx}:L{row_idx}")
+                ws.row_dimensions[row_idx].height = 22
+                row_idx += 1
+                day_seq = 0  # reset seq per day
 
-        # 欄寬
-        for ci, w in enumerate(COL_WIDTHS, 1):
-            ws.column_dimensions[ws.cell(row=1, column=ci).column_letter].width = w
+            # 依起始時間排序
+            sorted_rows = sorted(
+                person_rows_for_day,
+                key=lambda r: r.get("start_time") or "99:99",
+            )
+
+            for r in sorted_rows:
+                if is_multi_day:
+                    day_seq += 1
+                    seq_val = day_seq
+                else:
+                    global_seq += 1
+                    seq_val = global_seq
+
+                cat = r.get("category", "")
+                wm  = r.get("work_min")
+                if isinstance(wm, int):
+                    total_min += wm
+                cat_col = CAT_COLS.get(cat)
+
+                # 項次
+                a = ws.cell(row=row_idx, column=1, value=seq_val)
+                a.alignment = CENTER
+                a.font      = Font(size=10)
+                a.border    = _border(l="medium")
+
+                # 類別勾選欄 B-F
+                for c in range(2, 7):
+                    mark = "✓" if c == cat_col else ""
+                    cell = ws.cell(row=row_idx, column=c, value=mark)
+                    cell.alignment = CENTER
+                    cell.font      = Font(size=10, bold=(mark == "✓"))
+                    cell.border    = _border()
+
+                # 工作事項
+                g = ws.cell(row=row_idx, column=7, value=r.get("task", ""))
+                g.alignment = LEFT
+                g.font      = Font(size=10)
+                g.border    = _border()
+
+                # 預估耗時
+                h = ws.cell(row=row_idx, column=8, value=r.get("est_min") or "")
+                h.alignment = CENTER
+                h.font      = Font(size=10)
+                h.border    = _border()
+
+                # 起
+                i = ws.cell(row=row_idx, column=9, value=r.get("start_time") or "")
+                i.alignment = CENTER
+                i.font      = Font(size=10)
+                i.border    = _border()
+
+                # 迄
+                j = ws.cell(row=row_idx, column=10, value=r.get("end_time") or "")
+                j.alignment = CENTER
+                j.font      = Font(size=10)
+                j.border    = _border()
+
+                # 工時(min)
+                k = ws.cell(row=row_idx, column=11, value=wm if wm is not None else "")
+                k.alignment = CENTER
+                k.font      = Font(size=10, bold=True, color="1B3A5C") if wm is not None else Font(size=10)
+                k.border    = _border()
+
+                # 備註
+                l_cell = ws.cell(row=row_idx, column=12, value=r.get("remark", ""))
+                l_cell.alignment = LEFT
+                l_cell.font      = Font(size=10)
+                l_cell.border    = _border()
+
+                # 回報事項
+                m_cell = ws.cell(row=row_idx, column=13, value=r.get("report", ""))
+                m_cell.alignment = LEFT
+                m_cell.font      = Font(size=10, color="D46B08") if r.get("report") else Font(size=10)
+                m_cell.border    = _border(r="medium")
+
+                ws.row_dimensions[row_idx].height = 24
+                row_idx += 1
+
+        # ── 合計行 ────────────────────────────────────────────────────────────────
+        total_row = row_idx
+        for c in range(1, NCOLS + 1):
+            cell = ws.cell(row=total_row, column=c)
+            cell.fill   = TOTAL_FILL
+            cell.border = _border(
+                l="medium" if c == 1     else "thin",
+                r="medium" if c == NCOLS else "thin",
+                t="medium", b="medium",
+            )
+        tc = ws.cell(row=total_row, column=12,
+                     value=f"合計工時：{total_min} min")
+        tc.font      = Font(bold=True, size=10, color="1B3A5C")
+        tc.alignment = RIGHT
+        ws.merge_cells(f"L{total_row}:M{total_row}")
+        ws.row_dimensions[total_row].height = 22
+        row_idx += 1
+
+        # ── Footer: 主管覆核 / 值班人員簽名 / 備註 ───────────────────────────────
+        for fr in range(row_idx, row_idx + 3):
+            ws.row_dimensions[fr].height = 22
+
+        # Footer — 先設樣式再 merge，避免對 MergedCell 設 fill/border 時 AttributeError
+        # 每格先設 fill + border，再做 merge_cells（merge 只影響顯示，不影響已設的樣式）
+        for fr in range(row_idx, row_idx + 3):
+            for c in range(1, NCOLS + 1):
+                cell = ws.cell(row=fr, column=c)
+                cell.fill   = FOOTER_FILL
+                cell.border = _border(
+                    l="medium" if c == 1     else "thin",
+                    r="medium" if c == NCOLS else "thin",
+                    t="thin",  b="medium",
+                )
+
+        ws.cell(row=row_idx, column=1, value="主管覆核").font = Font(bold=True, size=11)
+        ws.cell(row=row_idx, column=1).alignment = CENTER
+        ws.merge_cells(f"A{row_idx}:D{row_idx + 2}")
+
+        ws.cell(row=row_idx, column=5, value="值班人員簽名").font = Font(bold=True, size=11)
+        ws.cell(row=row_idx, column=5).alignment = CENTER
+        ws.merge_cells(f"E{row_idx}:H{row_idx + 2}")
+
+        ws.cell(row=row_idx, column=9, value="備註").font = Font(bold=True, size=11)
+        ws.cell(row=row_idx, column=9).alignment = CENTER
+        ws.merge_cells(f"I{row_idx}:M{row_idx + 2}")
 
     if not wb.sheetnames:
         ws = wb.create_sheet("無記錄")
@@ -857,8 +1072,8 @@ def export_work_journal_excel(
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={
             "Content-Disposition": (
-                f"attachment; filename=\"{filename_safe}\"; "
-                f"filename*=UTF-8\'\'{quote(filename_cn)}"
+                f'attachment; filename="{filename_safe}"; '
+                f"filename*=UTF-8''{quote(filename_cn)}"
             ),
         },
     )
