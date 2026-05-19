@@ -873,7 +873,7 @@ function RepairStatsTab({ year, focusMonth }: { year: number; focusMonth: number
           <thead>
             <tr style={{ background: '#1B3A5C', color: '#fff' }}>
               <th style={{ padding: '8px 12px', textAlign: 'left', minWidth: 220, position: 'sticky', left: 0, background: '#1B3A5C', zIndex: 1 }}>
-                商場報修維護事項
+                飯店報修維護事項
               </th>
               {MONTHS.map(m => (
                 <th key={m} style={{
