@@ -1216,6 +1216,7 @@ def export_work_journal_excel(
         ws.cell(row=row_idx, column=9).fill      = PatternFill("solid", fgColor="1B3A5C")
         ws.merge_cells(f"I{row_idx}:M{row_idx + 2}")
 
+    buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from typing import List, Optional
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 
 class WikiArticleBase(BaseModel):
@@ -80,6 +80,8 @@ class WikiAskRequest(BaseModel):
 
 
 class WikiAskResponse(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+
     answer: str
     sources: List[WikiArticleOut]
     model_used: Optional[str] = None
