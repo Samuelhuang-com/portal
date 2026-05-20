@@ -48,6 +48,10 @@ import {
 import {
   fetchDashboard as fetchLuqunDash,
 } from '@/api/luqunRepair'
+import {
+  fetchOtherTaskStats,
+  type OtherTaskTypeStat,
+} from '@/api/otherTasks'
 import { SourceStatusCard }              from '@/components/SourceStatusCard'
 import {
   fetchMallDailyHours, fetchMallMonthlyHours, fetchMallPersonHours,
@@ -110,8 +114,8 @@ const SOURCE_CONFIG_ROW1 = [
 // 第二列：報修 / 交辦 / 緊急事件
 const SOURCE_CONFIG_ROW2 = [
   { key: 'luqun_repair',    label: '商場工務報修', color: '#FA8C16', icon: <WarningOutlined />,          route: '/luqun-repair/dashboard', showPmHours: false },
-  { key: 'mall_supervisor', label: '商場主管交辦', color: '#C0392B', icon: <ExclamationCircleOutlined />, route: '/dashboard',              showPmHours: false },
-  { key: 'mall_emergency',  label: '商場緊急事件', color: '#D4380D', icon: <WarningOutlined />,           route: '/dashboard',              showPmHours: false },
+  { key: 'mall_supervisor', label: '商場主管交辦', color: '#C0392B', icon: <ExclamationCircleOutlined />, route: '/hotel/other-tasks', showPmHours: false },
+  { key: 'mall_emergency',  label: '商場緊急事件', color: '#D4380D', icon: <WarningOutlined />,           route: '/hotel/other-tasks', showPmHours: false },
 ] as const
 
 const SOURCE_CONFIG = [...SOURCE_CONFIG_ROW1, ...SOURCE_CONFIG_ROW2] as const
@@ -185,6 +189,20 @@ function normalizeLuqun(data: DashboardData | null) {
     overdue_count:   0,
     is_placeholder:  false,
     category_breakdown: data.type_dist?.map(t => ({ name: t.type, count: t.count, rate: case_count > 0 ? Math.round((t.count / case_count) * 100) : 0 })),
+  }
+}
+
+function normalizeOtherTask(stat: OtherTaskTypeStat | undefined): NormalizedSummary {
+  if (!stat) return { work_hours: 0, actual_hours: 0, case_count: 0, completed_count: 0, completion_rate: 0, abnormal_count: 0, overdue_count: 0, is_placeholder: true }
+  return {
+    work_hours:      stat.work_hours,
+    actual_hours:    0,
+    case_count:      stat.total,
+    completed_count: 0,
+    completion_rate: 0,
+    abnormal_count:  0,
+    overdue_count:   0,
+    is_placeholder:  false,
   }
 }
 
@@ -267,6 +285,11 @@ export default function MallMgmtDashboardPage() {
   const [loadingYearly,  setLoadingYearly]  = useState(false)
   const [yearlyYear,     setYearlyYear]     = useState<number>(thisYear)
 
+  // ── 主管交辦／緊急事件 stats ──────────────────────────────────────────────────
+  const [otherTasksStats,   setOtherTasksStats]   = useState<Record<string, OtherTaskTypeStat> | null>(null)
+  const [loadingOtherTasks, setLoadingOtherTasks] = useState(false)
+  const [errorOtherTasks,   setErrorOtherTasks]   = useState<string | null>(null)
+
   // ── 匯出狀態 ──────────────────────────────────────────────────────────────
   const [exportLoading, setExportLoading] = useState(false)
 
@@ -315,9 +338,17 @@ export default function MallMgmtDashboardPage() {
     finally { setLoadingLuqun(false) }
   }, [year, month])
 
+  const loadOtherTasks = useCallback(async (y?: number, m?: number) => {
+    setLoadingOtherTasks(true); setErrorOtherTasks(null)
+    try     { setOtherTasksStats(await fetchOtherTaskStats(y ?? year, m ?? month)) }
+    catch   { setErrorOtherTasks('主管交辦／緊急事件載入失敗') }
+    finally { setLoadingOtherTasks(false) }
+  }, [year, month])
+
   const loadAll = useCallback(() => {
-    loadMallPm(); loadFullBldgPm(); loadMallFacility(); loadMallFacilityByMonth(); loadLuqun()
-  }, [loadMallPm, loadFullBldgPm, loadMallFacility, loadMallFacilityByMonth, loadLuqun])
+    loadMallPm(); loadFullBldgPm(); loadMallFacility(); loadMallFacilityByMonth()
+    loadLuqun(); loadOtherTasks()
+  }, [loadMallPm, loadFullBldgPm, loadMallFacility, loadMallFacilityByMonth, loadLuqun, loadOtherTasks])
 
   useEffect(() => { loadAll() }, []) // eslint-disable-line
 
@@ -397,16 +428,18 @@ export default function MallMgmtDashboardPage() {
     mall_facility:    mallFacilitySummary,
     full_bldg_insp:   fullBldgInspSummary,
     luqun_repair:     luqunSummary,
-    mall_supervisor:  placeholderSummary,
-    mall_emergency:   placeholderSummary,
+    mall_supervisor:  normalizeOtherTask(otherTasksStats?.['上級交辦']),
+    mall_emergency:   normalizeOtherTask(otherTasksStats?.['緊急事件']),
   }
   const loadingMap: Record<string, boolean> = {
     mall_pm: loadingMallPm, full_bldg_pm: loadingFullBldgPm, mall_facility: loadingMallFacility,
-    full_bldg_insp: false,  luqun_repair: loadingLuqun, mall_supervisor: false, mall_emergency: false,
+    full_bldg_insp: false,  luqun_repair: loadingLuqun,
+    mall_supervisor: loadingOtherTasks, mall_emergency: loadingOtherTasks,
   }
   const errorMap: Record<string, string | null> = {
     mall_pm: errorMallPm, full_bldg_pm: errorFullBldgPm, mall_facility: errorMallFacility,
-    full_bldg_insp: null, luqun_repair: errorLuqun, mall_supervisor: null, mall_emergency: null,
+    full_bldg_insp: null, luqun_repair: errorLuqun,
+    mall_supervisor: errorOtherTasks, mall_emergency: errorOtherTasks,
   }
 
   // ── 彙總 KPI ───────────────────────────────────────────────────────────────
@@ -501,8 +534,16 @@ export default function MallMgmtDashboardPage() {
       ce('span', { style: { color: '#ccc', fontSize: 11 } },
         '已結案狀態：結案／已辦驗／已驗收／已結案／完修／已完成／完成'),
     ),
-    上級交辦: ce('div', { style: { fontSize: 12 } }, '建置中，目前顯示 0'),
-    緊急事件: ce('div', { style: { fontSize: 12 } }, '建置中，目前顯示 0'),
+    上級交辦: ce('div', { style: { fontSize: 12, lineHeight: 1.9 } },
+      ce('b', null, '主管交辦'), '（hotel/other-tasks，task_type = 上級交辦）', ce('br'),
+      '以 ', ce('code', null, 'year / month'), ' 篩選建立日期歸屬', ce('br'),
+      '件數 = 本期 上級交辦 筆數；工時 = SUM(work_hours)',
+    ),
+    緊急事件: ce('div', { style: { fontSize: 12, lineHeight: 1.9 } },
+      ce('b', null, '緊急事件'), '（hotel/other-tasks，task_type = 緊急事件）', ce('br'),
+      '以 ', ce('code', null, 'year / month'), ' 篩選建立日期歸屬', ce('br'),
+      '件數 = 本期 緊急事件 筆數；工時 = SUM(work_hours)',
+    ),
     例行維護: ce('div', { style: { fontSize: 12, lineHeight: 1.9 } },
       '① ', ce('b', null, '商場例行維護'), '（mall/periodic-maintenance）', ce('br'),
       '　以 ', ce('code', null, 'scheduled_date'), ' 落在目標月份的保養項目數', ce('br'),
@@ -997,7 +1038,9 @@ export default function MallMgmtDashboardPage() {
           </Space>
         ))}
         <Text type="secondary" style={{ fontSize: 13 }}>
-          （上級交辦、緊急事件模組建置中，目前顯示 0）
+          上級交辦 <Text strong style={{ color: '#C0392B' }}>{otherTasksStats?.['上級交辦']?.total ?? '—'} 件</Text>
+          {' ／ '}
+          緊急事件 <Text strong style={{ color: '#D4380D' }}>{otherTasksStats?.['緊急事件']?.total ?? '—'} 件</Text>
         </Text>
       </Space>
 
@@ -1131,7 +1174,11 @@ export default function MallMgmtDashboardPage() {
             </Tooltip>
           </Space>
         ))}
-        <Text type="secondary" style={{ fontSize: 13 }}>（上級交辦、緊急事件模組建置中，目前顯示 0）</Text>
+        <Text type="secondary" style={{ fontSize: 13 }}>
+          上級交辦 <Text strong style={{ color: '#C0392B' }}>{otherTasksStats?.['上級交辦']?.total ?? '—'} 件 / {otherTasksStats?.['上級交辦']?.work_hours ?? '—'} HR</Text>
+          {' ／ '}
+          緊急事件 <Text strong style={{ color: '#D4380D' }}>{otherTasksStats?.['緊急事件']?.total ?? '—'} 件 / {otherTasksStats?.['緊急事件']?.work_hours ?? '—'} HR</Text>
+        </Text>
       </Space>
 
       <Spin spinning={loadingMonthly}>
@@ -1383,7 +1430,7 @@ export default function MallMgmtDashboardPage() {
 
       <Alert
         type="info" showIcon
-        description="人員識別規則：現場報修 = 結案人（acceptor）、例行維護 = 執行人員（executor_name，可多人分攤）、每日巡檢 = 巡檢人員（inspector_name）。上級交辦／緊急事件模組尚未開發，暫無人員資料。"
+        description="人員識別規則：現場報修 = 結案人（acceptor）、例行維護 = 執行人員（executor_name，可多人分攤）、每日巡檢 = 巡檢人員（inspector_name）。上級交辦／緊急事件（hotel/other-tasks）目前無人員欄位，工時以 work_hours 計入彙總。"
         style={{ marginBottom: 12 }}
       />
 

@@ -44,6 +44,7 @@ from app.models.b2f_inspection  import B2FInspectionBatch
 from app.models.b4f_inspection  import B4FInspectionBatch
 from app.models.rf_inspection   import RFInspectionBatch
 from app.models.hotel_meter_readings import HotelMRBatch
+from app.models.other_tasks          import OtherTask
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
 
@@ -69,6 +70,7 @@ SOURCE_LABEL = {
     "mall_fi":      "商場設施巡檢",
     "full_bi":      "整棟巡檢",
     "hotel_mr":     "飯店水電錶抄表",
+    "other_tasks":  "主管交辦/緊急事件",
 }
 
 SORT_ORDER = list(SOURCE_LABEL.keys())
@@ -84,6 +86,7 @@ _SOURCE_PATH: dict[str, str] = {
     "ihg":          "periodic-maintenance/4",
     "mall_pm":      "periodic-maintenance/18",
     "full_bldg_pm": "periodic-maintenance/21",
+    "other_tasks":  "other-tasks/1",
 }
 
 # 多 Sheet 來源：sheet_key → Ragic path
@@ -728,6 +731,44 @@ def _fetch_hotel_mr(db: Session, year: int, month: int, day: int) -> list[dict]:
     return rows
 
 
+def _fetch_other_tasks(db: Session, year: int, month: int, day: int) -> list[dict]:
+    """主管交辦／緊急事件：created_at 日期口徑"""
+    rows = []
+    target = _date(year, month, day)
+    for rec in db.query(OtherTask).all():
+        if not rec.created_at:
+            continue
+        if rec.created_at.date() != target:
+            continue
+        wm = round(rec.work_hours * 60) if rec.work_hours and rec.work_hours > 0 else None
+        created_str = rec.created_at.strftime("%Y/%m/%d %H:%M")
+        updated_str = rec.updated_at.strftime("%Y/%m/%d %H:%M") if rec.updated_at else ""
+        ragic_url_val = _ragic_url(_SOURCE_PATH["other_tasks"], rec.ragic_id) if rec.ragic_id else ""
+        for person in _persons(rec.engineer):
+            rows.append(_make_row(
+                source="other_tasks",
+                category=rec.task_type or "上級交辦",
+                task=rec.description or "(無說明)",
+                person=person,
+                work_min=wm,
+                remark=rec.notes or "",
+                ragic_id=rec.ragic_id or "",
+                ragic_url=ragic_url_val,
+                detail={
+                    "屬性":       rec.task_type or "",
+                    "交辦主管":   rec.supervisor or "",
+                    "工程人員":   rec.engineer or "",
+                    "建立日期":   created_str,
+                    "最後更新日期": updated_str,
+                    "狀態":       rec.status or "",
+                    "維修工時":   f"{rec.work_hours:.2f} hr" if rec.work_hours else "",
+                    "問題說明":   rec.description or "",
+                    "備註":       rec.notes or "",
+                },
+            ))
+    return rows
+
+
 # ── 端點 ─────────────────────────────────────────────────────────────────────
 
 def _build_daily(db: Session, year: int, month: int, day: int) -> dict:
@@ -743,6 +784,7 @@ def _build_daily(db: Session, year: int, month: int, day: int) -> dict:
     all_rows += _fetch_mall_fi(db, year, month, day)
     all_rows += _fetch_full_bi(db, year, month, day)
     all_rows += _fetch_hotel_mr(db, year, month, day)
+    all_rows += _fetch_other_tasks(db, year, month, day)
 
     person_map: dict[str, list[dict]] = defaultdict(list)
     for r in all_rows:

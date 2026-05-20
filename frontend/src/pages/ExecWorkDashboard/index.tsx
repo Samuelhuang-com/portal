@@ -60,6 +60,10 @@ import {
   CATEGORY_COLOR,
 } from '@/api/workJournal'
 import { downloadFile } from '@/api/downloadFile'
+import {
+  fetchOtherTaskStats,
+  type OtherTaskTypeStat,
+} from '@/api/otherTasks'
 
 import type { Dayjs } from 'dayjs'
 dayjs.extend(relativeTime)
@@ -333,7 +337,15 @@ const HOTEL_CAT_ROUTES: Record<string, string> = {
   每日巡檢: '/hotel/daily-inspection',
 }
 
-function HotelDailyTable({ data }: { data: HotelDailyHoursData }) {
+function HotelDailyTable({
+  data,
+  supervisorTotal = 0,
+  emergencyTotal  = 0,
+}: {
+  data: HotelDailyHoursData
+  supervisorTotal?: number
+  emergencyTotal?:  number
+}) {
   const navigate = useNavigate()
   const n = data.days.length
   const zeroes = (): number[] => Array(n).fill(0)
@@ -343,20 +355,29 @@ function HotelDailyTable({ data }: { data: HotelDailyHoursData }) {
   const CATS = ['現場報修', '上級交辦', '緊急事件', '例行維護', '每日巡檢']
   const catCases: Record<string, number[]> = {
     現場報修: find('飯店工務部')?.cases ?? zeroes(),
-    上級交辦: zeroes(),
+    上級交辦: zeroes(),   // daily breakdown not available; monthly total shown in TOTAL column
     緊急事件: zeroes(),
     例行維護: addH(addH(find('客房保養管理')?.cases, find('飯店週期保養')?.cases), find('IHG客房保養')?.cases),
     每日巡檢: find('飯店每日巡檢')?.cases ?? zeroes(),
   }
-  const grandTotal = CATS.reduce((s, c) => s + catCases[c].reduce((a, b) => a + b, 0), 0)
+  // Override monthly totals for 上級交辦 / 緊急事件
+  const catMonthlyOverrides: Record<string, number> = {
+    上級交辦: supervisorTotal,
+    緊急事件: emergencyTotal,
+  }
+  // Effective totals per category (use monthly override for 上級交辦/緊急事件)
+  const catEffectiveTotal = (cat: string) =>
+    catMonthlyOverrides[cat] !== undefined ? catMonthlyOverrides[cat] : catCases[cat].reduce((a, b) => a + b, 0)
+  const grandTotal = CATS.reduce((s, c) => s + catEffectiveTotal(c), 0)
   type DRow = { key: string; category: string; cases: number[]; total: number; pct: number }
   const rows: DRow[] = CATS.map(cat => {
     const cases = catCases[cat]
-    const total = cases.reduce((a, b) => a + b, 0)
+    const total = catEffectiveTotal(cat)
     return { key: cat, category: cat, cases, total, pct: grandTotal > 0 ? Math.round(total / grandTotal * 1000) / 10 : 0 }
   })
   const totalCases = data.days.map((_, i) => CATS.reduce((s, c) => s + (catCases[c][i] ?? 0), 0))
-  rows.push({ key: 'TOTAL', category: 'TOTAL', cases: totalCases, total: totalCases.reduce((a, b) => a + b, 0), pct: 100 })
+  const grandEffTotal = CATS.reduce((s, c) => s + catEffectiveTotal(c), 0)
+  rows.push({ key: 'TOTAL', category: 'TOTAL', cases: totalCases, total: grandEffTotal, pct: 100 })
 
   const goTo = (cat: string) => { const r = HOTEL_CAT_ROUTES[cat]; if (r) navigate(r) }
 
@@ -391,8 +412,17 @@ function HotelDailyTable({ data }: { data: HotelDailyHoursData }) {
       },
     })),
     {
-      title: '案件數', key: 'total', width: 70, align: 'right' as const,
+      title: '案件數', key: 'total', width: 80, align: 'right' as const,
       render: (_: unknown, row: DRow) => {
+        // 上級交辦/緊急事件 only have monthly totals (no daily breakdown)
+        if (catMonthlyOverrides[row.category] !== undefined) {
+          return (
+            <span>
+              <Text strong style={{ fontSize: 15, color: '#722ed1' }}>{row.total}</Text>
+              <Text style={{ fontSize: 10, color: '#aaa', marginLeft: 2 }}>月計</Text>
+            </span>
+          )
+        }
         if (row.category === 'TOTAL' || !HOTEL_CAT_ROUTES[row.category] || row.total === 0)
           return <Text strong style={{ fontSize: 15, color: row.category === 'TOTAL' ? '#0d6b4e' : '#333' }}>{row.total}</Text>
         return (
@@ -1189,7 +1219,7 @@ function DayPersonCollapse({
               const r = row as JournalRow
               setSelectedRow(r)
               setDrawerImages([])
-              if (r.ragic_id && (r.source === 'dazhi' || r.source === 'luqun')) {
+              if (r.ragic_id && (r.source === 'dazhi' || r.source === 'luqun' || r.source === 'other_tasks')) {
                 setImgLoading(true)
                 fetchJournalImages(r.source, r.ragic_id)
                   .then(imgs => setDrawerImages(imgs))
@@ -1335,7 +1365,7 @@ function DayPersonCollapse({
               </>
             )}
 
-            {/* 維修圖片（dazhi / luqun） */}
+            {/* 維修圖片（dazhi / luqun / other_tasks） */}
             {(imgLoading || drawerImages.length > 0) && (
               <>
                 <Divider style={{ margin: '16px 0 8px' }} />
@@ -1754,6 +1784,8 @@ export default function ExecWorkDashboardPage() {
   const [mallMonthlyData,  setMallMonthlyData]  = useState<MallMonthlyHoursData | null>(null)
   const [hotelDailyData,   setHotelDailyData]   = useState<HotelDailyHoursData | null>(null)
   const [mallDailyData,    setMallDailyData]    = useState<MallDailyHoursData | null>(null)
+  // 主管交辦／緊急事件 stats
+  const [otherTasksStats, setOtherTasksStats] = useState<Record<string, OtherTaskTypeStat> | null>(null)
   // 受控 Collapse activeKey（全收合/全展開用）
   // 頁籤狀態
   const [activeTab, setActiveTab] = useState<string>('overview')
@@ -1772,7 +1804,7 @@ export default function ExecWorkDashboardPage() {
   const loadAll = useCallback(async () => {
     setLoading(true)
     try {
-      const [luqun, dazhi, hotelMon, mallMon, hotelDay, mallDay, execSt, execStYr, dazhiSt, luqunSt] =
+      const [luqun, dazhi, hotelMon, mallMon, hotelDay, mallDay, execSt, execStYr, dazhiSt, luqunSt, otherSt] =
         await Promise.allSettled([
           fetchLuqunDashboard(selectedYear, selectedMonth),
           fetchDazhiDashboard(selectedYear, selectedMonth),
@@ -1784,6 +1816,7 @@ export default function ExecWorkDashboardPage() {
           fetchStats({ year: selectedYear, month: 0,             sources: 'all', category: 'all', person: 'all' }),
           fetchDazhiRepairStats(selectedYear),
           fetchLuqunRepairStats(selectedYear),
+          fetchOtherTaskStats(selectedYear, selectedMonth),
         ])
       if (luqun.status     === 'fulfilled') setLuqunData(luqun.value)
       if (dazhi.status     === 'fulfilled') setDazhiData(dazhi.value as unknown as RepairDashboardData)
@@ -1795,6 +1828,7 @@ export default function ExecWorkDashboardPage() {
       if (execStYr.status  === 'fulfilled') setExecStatsYear(execStYr.value)
       if (dazhiSt.status   === 'fulfilled') setDazhiRepairStats(dazhiSt.value)
       if (luqunSt.status   === 'fulfilled') setLuqunRepairStats(luqunSt.value)
+      if (otherSt.status   === 'fulfilled') setOtherTasksStats(otherSt.value)
       setRefreshed(new Date())
     } finally {
       setLoading(false)
@@ -1817,8 +1851,8 @@ export default function ExecWorkDashboardPage() {
     }
     const hotelCatCases: Record<string, number> = {
       現場報修: hd('飯店工務部'),
-      上級交辦: 0,
-      緊急事件: 0,
+      上級交辦: otherTasksStats?.['上級交辦']?.total ?? 0,
+      緊急事件: otherTasksStats?.['緊急事件']?.total ?? 0,
       例行維護: hd('客房保養管理') + hd('飯店週期保養') + hd('IHG客房保養'),
       每日巡檢: hd('飯店每日巡檢'),
     }
@@ -2062,6 +2096,60 @@ export default function ExecWorkDashboardPage() {
                 valueStyle={{ fontSize: 22, fontWeight: 700, color: luqunPrevUncomp > 0 ? C.danger : C.success }}
               />
             </Tooltip>
+          </Card>
+        </Col>
+      </Row>
+
+      {/* ── 集團 KPI Row 3：主管交辦 + 緊急事件 件數/工時 ──────────────────── */}
+      <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
+        {/* 上級交辦 件數 */}
+        <Col xs={12} sm={6} md={6} lg={6}>
+          <Card size="small" bordered={false} style={{ borderTop: '3px solid #722ed1', textAlign: 'center' }}>
+            <Tooltip title="來源：hotel/other-tasks（task_type = 上級交辦），以建立日期 year/month 篩選">
+              <Statistic
+                title={<Text style={{ fontSize: 12, color: C.gray }}>上級交辦 件數 ℹ</Text>}
+                value={otherTasksStats?.['上級交辦']?.total ?? 0}
+                suffix="件"
+                valueStyle={{ fontSize: 22, fontWeight: 700, color: '#722ed1' }}
+              />
+            </Tooltip>
+          </Card>
+        </Col>
+        {/* 上級交辦 工時 */}
+        <Col xs={12} sm={6} md={6} lg={6}>
+          <Card size="small" bordered={false} style={{ borderTop: '3px solid #722ed1', textAlign: 'center' }}>
+            <Statistic
+              title={<Text style={{ fontSize: 12, color: C.gray }}>上級交辦 工時</Text>}
+              value={otherTasksStats?.['上級交辦']?.work_hours ?? 0}
+              precision={1}
+              suffix="HR"
+              valueStyle={{ fontSize: 22, fontWeight: 700, color: '#9254de' }}
+            />
+          </Card>
+        </Col>
+        {/* 緊急事件 件數 */}
+        <Col xs={12} sm={6} md={6} lg={6}>
+          <Card size="small" bordered={false} style={{ borderTop: '3px solid #cf1322', textAlign: 'center' }}>
+            <Tooltip title="來源：hotel/other-tasks（task_type = 緊急事件），以建立日期 year/month 篩選">
+              <Statistic
+                title={<Text style={{ fontSize: 12, color: C.gray }}>緊急事件 件數 ℹ</Text>}
+                value={otherTasksStats?.['緊急事件']?.total ?? 0}
+                suffix="件"
+                valueStyle={{ fontSize: 22, fontWeight: 700, color: '#cf1322' }}
+              />
+            </Tooltip>
+          </Card>
+        </Col>
+        {/* 緊急事件 工時 */}
+        <Col xs={12} sm={6} md={6} lg={6}>
+          <Card size="small" bordered={false} style={{ borderTop: '3px solid #cf1322', textAlign: 'center' }}>
+            <Statistic
+              title={<Text style={{ fontSize: 12, color: C.gray }}>緊急事件 工時</Text>}
+              value={otherTasksStats?.['緊急事件']?.work_hours ?? 0}
+              precision={1}
+              suffix="HR"
+              valueStyle={{ fontSize: 22, fontWeight: 700, color: '#f5222d' }}
+            />
           </Card>
         </Col>
       </Row>
@@ -2382,7 +2470,11 @@ export default function ExecWorkDashboardPage() {
                   </Space>
                 ),
                 children: hotelDailyData
-                  ? <HotelDailyTable data={hotelDailyData} />
+                  ? <HotelDailyTable
+                      data={hotelDailyData}
+                      supervisorTotal={otherTasksStats?.['上級交辦']?.total ?? 0}
+                      emergencyTotal={otherTasksStats?.['緊急事件']?.total ?? 0}
+                    />
                   : <div style={{ color: '#aaa', padding: '12px 0', textAlign: 'center' }}>資料載入中…</div>,
               },
               {
@@ -2586,7 +2678,55 @@ export default function ExecWorkDashboardPage() {
           {
             key: 'journal',
             label: '工作日誌',
-            children: <WorkJournalTab />,
+            children: (
+              <>
+                {/* 主管交辦／緊急事件 本期摘要（hotel/other-tasks）*/}
+                <Card
+                  size="small"
+                  style={{ marginBottom: 12, borderLeft: '3px solid #722ed1' }}
+                  bodyStyle={{ padding: '10px 16px' }}
+                >
+                  <Row align="middle" gutter={[16, 8]}>
+                    <Col flex="none">
+                      <Text strong style={{ fontSize: 13, color: C.primary }}>
+                        <AlertOutlined style={{ marginRight: 6, color: '#722ed1' }} />
+                        主管交辦／緊急事件（{selectedYear} 年 {selectedMonth} 月）
+                      </Text>
+                    </Col>
+                    <Col flex="auto">
+                      <Space size={20} wrap>
+                        <Space size={6}>
+                          <Tag color="#722ed1" style={{ margin: 0 }}>上級交辦</Tag>
+                          <Text strong style={{ color: '#722ed1', fontSize: 15 }}>
+                            {otherTasksStats?.['上級交辦']?.total ?? '—'} 件
+                          </Text>
+                          <Text type="secondary" style={{ fontSize: 13 }}>
+                            {otherTasksStats?.['上級交辦']?.work_hours ?? '—'} HR
+                          </Text>
+                        </Space>
+                        <Space size={6}>
+                          <Tag color="#cf1322" style={{ margin: 0 }}>緊急事件</Tag>
+                          <Text strong style={{ color: '#cf1322', fontSize: 15 }}>
+                            {otherTasksStats?.['緊急事件']?.total ?? '—'} 件
+                          </Text>
+                          <Text type="secondary" style={{ fontSize: 13 }}>
+                            {otherTasksStats?.['緊急事件']?.work_hours ?? '—'} HR
+                          </Text>
+                        </Space>
+                        <Text
+                          type="secondary"
+                          style={{ fontSize: 11, cursor: 'pointer', textDecoration: 'underline' }}
+                          onClick={() => window.open('/hotel/other-tasks', '_self')}
+                        >
+                          → 查看明細
+                        </Text>
+                      </Space>
+                    </Col>
+                  </Row>
+                </Card>
+                <WorkJournalTab />
+              </>
+            ),
           },
         ]}
       />

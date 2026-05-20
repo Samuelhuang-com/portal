@@ -10,6 +10,7 @@ export type JournalCategory = typeof JOURNAL_CATEGORIES[number]
 export const JOURNAL_SOURCES = [
   'dazhi', 'luqun', 'hotel_pm', 'ihg', 'hotel_di',
   'security', 'mall_pm', 'full_bldg_pm', 'mall_fi', 'full_bi', 'hotel_mr',
+  'other_tasks',
 ] as const
 export type JournalSource = typeof JOURNAL_SOURCES[number]
 
@@ -25,6 +26,7 @@ export const SOURCE_LABEL: Record<JournalSource, string> = {
   mall_fi:      '商場設施巡檢',
   full_bi:      '整棟巡檢',
   hotel_mr:     '飯店水電錶抄表',
+  other_tasks:  '主管交辦/緊急事件',
 }
 
 export const CATEGORY_COLOR: Record<JournalCategory, string> = {
@@ -118,7 +120,7 @@ export function getJournalExcelUrl(
 export interface CaseImageItem { url: string; filename: string }
 
 /**
- * 依來源模組取案件圖片（目前僅 dazhi / luqun 有圖片端點）
+ * 依來源模組取案件圖片（dazhi / luqun / other_tasks 有圖片端點）
  */
 export async function fetchJournalImages(
   source: string,
@@ -126,8 +128,9 @@ export async function fetchJournalImages(
 ): Promise<CaseImageItem[]> {
   if (!ragicId) return []
   const BASE_MAP: Record<string, string> = {
-    dazhi: '/dazhi-repair',
-    luqun: '/luqun-repair',
+    dazhi:       '/dazhi-repair',
+    luqun:       '/luqun-repair',
+    other_tasks: '/other-tasks',
   }
   const base = BASE_MAP[source]
   if (!base) return []

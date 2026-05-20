@@ -1,0 +1,223 @@
+"""
+主管交辦／緊急事件 API Router
+Prefix: /api/v1/other-tasks
+
+端點：
+  GET  /raw-fields            — Ragic 欄位名稱（debug 用）
+  POST /sync                  — 觸發背景同步：Ragic → SQLite
+  GET  /years                 — 資料中的年份清單
+  GET  /filter-options        — 過濾條件選項（狀態、主管、工程人員）
+  GET  /detail                — 明細清單（分頁+排序+搜尋+類型篩選）
+  GET  /db-images/{ragic_id}  — 從 DB 讀取附圖（不打 Ragic）
+"""
+from __future__ import annotations
+
+import json
+import logging
+from typing import Optional
+
+from fastapi import APIRouter, BackgroundTasks, Depends, Query
+from sqlalchemy import text
+from sqlalchemy.orm import Session
+
+from app.core.database import get_db, engine
+from app.dependencies import get_current_user, require_roles
+from app.models.other_tasks import OtherTask
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(dependencies=[Depends(get_current_user)])
+
+
+# ── 啟動時自動補 images_json 欄位（輕量 migration）────────────────────────────
+
+def _ensure_images_column() -> None:
+    """若 other_task 表已存在但缺少 images_json 欄位，自動 ALTER TABLE 補上。"""
+    try:
+        with engine.connect() as conn:
+            cols = [row[1] for row in conn.execute(text("PRAGMA table_info(other_task)"))]
+            if "images_json" not in cols:
+                conn.execute(text("ALTER TABLE other_task ADD COLUMN images_json TEXT"))
+                conn.commit()
+                logger.info("[OtherTasks] 已補充 images_json 欄位")
+    except Exception as exc:
+        logger.warning(f"[OtherTasks] images_json migration 跳過：{exc}")
+
+
+_ensure_images_column()
+
+
+# ── /raw-fields ───────────────────────────────────────────────────────────────
+
+@router.get("/raw-fields", summary="回傳 Ragic 第一筆欄位名稱（debug 用）",
+            dependencies=[Depends(require_roles("system_admin", "module_manager"))])
+async def get_raw_fields():
+    from app.services.other_tasks_service import fetch_raw_fields
+    return await fetch_raw_fields()
+
+
+# ── /sync ─────────────────────────────────────────────────────────────────────
+
+@router.post("/sync", summary="觸發背景同步：Ragic → SQLite")
+async def trigger_sync(background_tasks: BackgroundTasks):
+    from app.services.other_tasks_sync import sync_from_ragic
+    background_tasks.add_task(sync_from_ragic)
+    return {"ok": True, "message": "主管交辦／緊急事件同步已啟動（背景執行）"}
+
+
+# ── /years ────────────────────────────────────────────────────────────────────
+
+@router.get("/years", summary="回傳資料中的年份清單")
+def get_years(db: Session = Depends(get_db)):
+    rows = (
+        db.query(OtherTask.year)
+        .filter(OtherTask.year.isnot(None))
+        .distinct()
+        .order_by(OtherTask.year.desc())
+        .all()
+    )
+    return {"years": [r.year for r in rows]}
+
+
+# ── /filter-options ──────────────────────────────────────────────────────────
+
+@router.get("/filter-options", summary="回傳過濾條件選項")
+def get_filter_options(db: Session = Depends(get_db)):
+    statuses = [
+        r.status for r in
+        db.query(OtherTask.status).distinct().order_by(OtherTask.status).all()
+        if r.status
+    ]
+    supervisors = [
+        r.supervisor for r in
+        db.query(OtherTask.supervisor).distinct().order_by(OtherTask.supervisor).all()
+        if r.supervisor
+    ]
+    engineers = [
+        r.engineer for r in
+        db.query(OtherTask.engineer).distinct().order_by(OtherTask.engineer).all()
+        if r.engineer
+    ]
+    return {
+        "statuses":    statuses,
+        "supervisors": supervisors,
+        "engineers":   engineers,
+    }
+
+
+# ── /detail ───────────────────────────────────────────────────────────────────
+
+@router.get("/detail", summary="明細清單（分頁+過濾+搜尋）")
+def get_detail(
+    task_type:  Optional[str] = Query(None,  description="屬性篩選：上級交辦 / 緊急事件"),
+    year:       Optional[int] = Query(None),
+    month:      Optional[int] = Query(None),
+    status:     Optional[str] = Query(None),
+    supervisor: Optional[str] = Query(None),
+    engineer:   Optional[str] = Query(None),
+    search:     Optional[str] = Query(None,  description="關鍵字搜尋（問題說明/備註）"),
+    page:       int           = Query(1,     ge=1),
+    page_size:  int           = Query(50,    ge=1, le=200),
+    sort_field: str           = Query("created_at", description="排序欄位"),
+    sort_order: str           = Query("desc",        description="排序方向：asc / desc"),
+    db: Session = Depends(get_db),
+):
+    q = db.query(OtherTask)
+
+    if task_type:
+        q = q.filter(OtherTask.task_type == task_type)
+    if year:
+        q = q.filter(OtherTask.year == year)
+    if month:
+        q = q.filter(OtherTask.month == month)
+    if status:
+        q = q.filter(OtherTask.status == status)
+    if supervisor:
+        q = q.filter(OtherTask.supervisor == supervisor)
+    if engineer:
+        q = q.filter(OtherTask.engineer == engineer)
+    if search:
+        like = f"%{search}%"
+        q = q.filter(
+            OtherTask.description.ilike(like) |
+            OtherTask.notes.ilike(like)
+        )
+
+    total = q.count()
+
+    sort_col = {
+        "created_at": OtherTask.created_at,
+        "updated_at": OtherTask.updated_at,
+        "status":     OtherTask.status,
+        "work_hours": OtherTask.work_hours,
+        "supervisor": OtherTask.supervisor,
+        "engineer":   OtherTask.engineer,
+    }.get(sort_field, OtherTask.created_at)
+
+    if sort_order == "asc":
+        q = q.order_by(sort_col.asc())
+    else:
+        q = q.order_by(sort_col.desc())
+
+    offset = (page - 1) * page_size
+    items = q.offset(offset).limit(page_size).all()
+
+    return {
+        "items":     [item.to_dict() for item in items],
+        "total":     total,
+        "page":      page,
+        "page_size": page_size,
+    }
+
+
+# ── /stats ────────────────────────────────────────────────────────────────────
+
+@router.get("/stats", summary="各 task_type 件數與工時統計（供 Dashboard 用）")
+def get_stats(
+    year:  Optional[int] = Query(None),
+    month: Optional[int] = Query(None),
+    db: Session = Depends(get_db),
+):
+    """
+    按 task_type 分組回傳件數（total）與工時合計（work_hours）。
+    MallMgmtDashboard、ExecWorkDashboard 的 KPI 卡片使用此端點。
+    """
+    from sqlalchemy import func as sqlfunc
+
+    q = db.query(
+        OtherTask.task_type,
+        sqlfunc.count(OtherTask.ragic_id).label("total"),
+        sqlfunc.sum(OtherTask.work_hours).label("work_hours"),
+    )
+    if year:
+        q = q.filter(OtherTask.year == year)
+    if month:
+        q = q.filter(OtherTask.month == month)
+
+    rows = q.group_by(OtherTask.task_type).all()
+
+    result: dict = {}
+    for row in rows:
+        result[row.task_type] = {
+            "total":      row.total or 0,
+            "work_hours": round(float(row.work_hours or 0), 1),
+        }
+    return result
+
+
+# ── /db-images/{ragic_id} ─────────────────────────────────────────────────────
+
+@router.get("/db-images/{ragic_id}", summary="從 DB 讀取附圖（不打 Ragic）")
+def get_db_images(ragic_id: str, db: Session = Depends(get_db)):
+    """
+    從本地 SQLite other_task.images_json 讀取附圖清單。
+    Drawer 圖片預覽使用此端點，不依賴 Ragic 即時連線。
+    """
+    record = db.get(OtherTask, ragic_id)
+    if not record:
+        return {"ragic_id": ragic_id, "images": [], "source": "not_found"}
+    try:
+        images = json.loads(record.images_json) if record.images_json else []
+    except Exception:
+        images = []
+    return {"ragic_id": ragic_id, "images": images, "source": "db"}

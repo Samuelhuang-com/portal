@@ -51,6 +51,7 @@
  *   2026-05-10  新增 knowledgeGraph（專案知識圖譜）graphify 整合，route /settings/knowledge-graph
  *   2026-05-13  新增 purchaseReport（請購單報表）核准請購單月報表，route /purchase-report/monthly
  *   2026-05-17  新增 staticPages（靜態頁面）docs/ 目錄 iframe 瀏覽器，route /settings/static-pages
+ *   2026-05-19  新增 ragicFieldAudit（Ragic 欄位比對）欄位稽核工具，route /settings/ragic-field-audit
  */
 
 // ── 系統標題 ──────────────────────────────────────────────────────────────────
@@ -105,6 +106,7 @@ export const NAV_PAGE = {
   roomMaintenanceDetail:  '※1.1飯店客房保養管理',       // ← 原「客房保養明細」
   periodicMaintenance:    '飯店例行維護',
   ihgRoomMaintenance:     '2. IHG客房保養',             // ← 新增：年度矩陣保養
+  otherTasks:             '主管交辦／緊急事件',          // ← 新增：主管交辦 + 緊急事件 2 TAB
   repairs:                '報修管理',
 
   // 商場管理
@@ -183,6 +185,7 @@ export const NAV_PAGE = {
   rolesManage:              '角色管理',
   ragicConnections:         'Ragic 連線',
   ragicAppDirectory:        'Ragic 對應表',
+  ragicFieldAudit:          'Ragic 欄位比對',  // ← 新增：Ragic 與 Portal 欄位稽核
   menuConfig:               '選單管理',
   employeeManualExport:     '員工操作手冊匯出',
   knowledgeGraph:           '專案知識圖譜',

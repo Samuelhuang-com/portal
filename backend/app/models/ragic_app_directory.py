@@ -19,6 +19,8 @@ class RagicAppPortalAnnotation(Base):
     item_no: Mapped[int] = mapped_column(Integer, primary_key=True)
     portal_name: Mapped[str] = mapped_column(String(200), default="")
     portal_url: Mapped[str] = mapped_column(Text, default="")
+    # 使用者手動設定的 Ragic 表單 URL（供欄位比對稽核同步使用）
+    ragic_url: Mapped[str] = mapped_column(Text, default="")
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=twnow, onupdate=twnow
     )

@@ -8,6 +8,11 @@ from app.models.sync_log import SyncLog
 from app.models.data_snapshot import DataSnapshot
 from app.models.audit_log import AuditLog
 from app.models.ragic_app_directory import RagicAppPortalAnnotation
+from app.models.ragic_field_audit import (
+    RagicPortalAuditRun,
+    RagicPortalFieldMapping,
+    RagicPortalKpiMapping,
+)
 
 __all__ = [
     "Base",
@@ -20,4 +25,7 @@ __all__ = [
     "DataSnapshot",
     "AuditLog",
     "RagicAppPortalAnnotation",
+    "RagicPortalAuditRun",
+    "RagicPortalFieldMapping",
+    "RagicPortalKpiMapping",
 ]

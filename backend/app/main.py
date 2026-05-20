@@ -96,7 +96,9 @@ from app.routers import (
     nichiyo_purchase_report,
     nichiyo_claim_report,
     ragic_sheet_config,
+    ragic_field_audit,
     static_pages,
+    other_tasks,
 )
 
 
@@ -480,6 +482,25 @@ def _migrate_menu_config_permission_key():
             print("[Migration] menu_configs.icon_key 欄位已新增")
 
 
+def _migrate_annotation_ragic_url():
+    """
+    輕量欄位補丁（2026-05-19）：
+    為 ragic_app_portal_annotations 表新增 ragic_url 欄位（TEXT DEFAULT ''）。
+    供使用者手動設定各模組對應的 Ragic 表單 URL，持久化存儲以供欄位比對稽核同步使用。
+    """
+    from sqlalchemy import text
+
+    with engine.connect() as conn:
+        result = conn.execute(text("PRAGMA table_info(ragic_app_portal_annotations)"))
+        existing = {row[1] for row in result.fetchall()}
+        if "ragic_url" not in existing:
+            conn.execute(
+                text("ALTER TABLE ragic_app_portal_annotations ADD COLUMN ragic_url TEXT DEFAULT ''")
+            )
+            conn.commit()
+            print("[Migration] ragic_app_portal_annotations.ragic_url 欄位已新增")
+
+
 def _migrate_hotel_mr_reading_flat():
     """重建 hotel_mr_reading 為扁平化場次摘要表（2026-05-19）"""
     from sqlalchemy import text
@@ -738,6 +759,8 @@ async def _auto_sync():
     await _run_and_log("飯店每日巡檢", sync_hdi())
     await _run_and_log("每日數值登錄", sync_hmr())
     await _run_and_log("IHG客房保養", sync_ihg_rm())
+    from app.services.other_tasks_sync import sync_from_ragic as sync_other_tasks
+    await _run_and_log("主管交辦／緊急事件", sync_other_tasks())
     # 請購單 / 請款單：立即同步時執行清單同步（Detail API 由獨立排程補全）
     from app.services.purchase_request_sync import sync_list_only as sync_purchase_list
     from app.services.claim_request_sync import sync_list_only as sync_claim_list
@@ -815,6 +838,7 @@ _SINGLE_MODULE_MAP: dict[str, tuple[str, str]] = {
     "核准請款單清單":     ("app.services.claim_request_sync",            "sync_list_only"),
     "日曜核准請購單清單": ("app.services.nichiyo_purchase_request_sync", "sync_list_only"),
     "日曜核准請款單清單": ("app.services.nichiyo_claim_request_sync",    "sync_list_only"),
+    "主管交辦／緊急事件": ("app.services.other_tasks_sync",              "sync_from_ragic"),
 }
 
 def list_syncable_modules() -> list[str]:
@@ -924,6 +948,7 @@ async def lifespan(app: FastAPI):
     import app.models.nichiyo_purchase_request  # noqa: F401
     import app.models.nichiyo_claim_request     # noqa: F401
     import app.models.ragic_sheet_config        # noqa: F401
+    import app.models.other_tasks               # noqa: F401
 
     # B4F 扁平化遷移：刪除舊 batch 表 + 檢查 item 表欄位（必須在 create_all 之前）
     _migrate_b4f_flatten()
@@ -992,6 +1017,10 @@ async def lifespan(app: FastAPI):
     # Menu 權限欄位補丁（2026-04-29）：menu_configs.permission_key
     _migrate_menu_config_permission_key()
     print("[Portal] menu_configs permission_key migration checked.")
+
+    # Ragic URL 欄位補丁（2026-05-19）：ragic_app_portal_annotations.ragic_url
+    _migrate_annotation_ragic_url()
+    print("[Portal] ragic_app_portal_annotations ragic_url migration checked.")
 
     # 選單設定補丁（2026-04-28）：隱藏舊 custom_1777348120465，補齊 mall-pm-group 子項 DB 記錄
     _seed_menu_config_mall_pm_group()
@@ -1333,6 +1362,13 @@ app.include_router(
     tags=["大直工務部"],
 )
 
+# ── 新增：主管交辦／緊急事件 ────────────────────────────────────────────────
+app.include_router(
+    other_tasks.router,
+    prefix=f"{API_PREFIX}/other-tasks",
+    tags=["主管交辦／緊急事件"],
+)
+
 # ── 新增：★工項類別分析（整合商場+大直）────────────────────────────────────
 app.include_router(
     work_category_analysis.router,
@@ -1389,6 +1425,13 @@ app.include_router(
     tags=["Ragic Sheet 設定"],
 )
 
+# ── Ragic 與 Portal 欄位比對稽核 ─────────────────────────────────────────────
+app.include_router(
+    ragic_field_audit.router,
+    prefix=f"{API_PREFIX}/settings/ragic-field-audit",
+    tags=["Ragic 欄位比對"],
+)
+
 # ── 員工操作手冊匯出 ──────────────────────────────────────────────────────────
 app.include_router(
     employee_manual_export.router,
@@ -1421,28 +1464,5 @@ app.include_router(
 app.include_router(
     role_permissions.router,
     prefix=f"{API_PREFIX}/role-permissions",
-    tags=["角色權限"],
+    tags=["權限管理"],
 )
-
-# ── 正式環境：serve 前端靜態檔案 + SPA fallback（所有路由之後）─────────────────
-import os as _os
-from fastapi.staticfiles import StaticFiles as _StaticFiles
-from fastapi.responses import FileResponse as _FileResponse
-
-# ── docs 靜態目錄（HTML 說明文件）— 必須在 SPA catch-all 之前 mount ──────────
-_docs_dir = _os.path.join(_os.path.dirname(__file__), "..", "..", "docs")
-if _os.path.isdir(_docs_dir):
-    app.mount("/docs-static", _StaticFiles(directory=_docs_dir), name="docs-static")
-    print(f"[Portal] Docs static files served from: {_docs_dir}")
-
-_frontend_dist = _os.path.join(_os.path.dirname(__file__), "..", "..", "frontend", "dist")
-if _os.path.isdir(_frontend_dist):
-    # ① assets 靜態檔案必須在 catch-all 之前 mount，否則 JS/CSS 會被攔截
-    app.mount("/assets", _StaticFiles(directory=_os.path.join(_frontend_dist, "assets")), name="assets")
-
-    # ② SPA catch-all：所有其他路徑都回傳 index.html，讓 React Router 處理
-    @app.get("/{full_path:path}", include_in_schema=False)
-    async def spa_fallback(full_path: str):
-        return _FileResponse(_os.path.join(_frontend_dist, "index.html"))
-
-    print(f"[Portal] Frontend static files (SPA mode) served from: {_frontend_dist}")

@@ -47,6 +47,7 @@ import MenuConfigPage        from '@/pages/Settings/MenuConfig'
 import EmployeeManualExportPage from '@/pages/Settings/EmployeeManualExport'
 import KnowledgeGraphPage        from '@/pages/Settings/KnowledgeGraph'
 import StaticPagesPage           from '@/pages/Settings/StaticPages'
+import RagicFieldAuditPage        from '@/pages/Settings/RagicFieldAudit'
 import ApprovalListPage   from '@/pages/Approvals/List'
 import ApprovalNewPage    from '@/pages/Approvals/New'
 import ApprovalDetailPage from '@/pages/Approvals/Detail'
@@ -101,6 +102,9 @@ import HotelMeterReadingsDashboard     from '@/pages/HotelMeterReadings'
 
 // ── IHG 客房保養 ───────────────────────────────────────────────────────────────
 import IHGRoomMaintenancePage          from '@/pages/IHGRoomMaintenance'
+
+// ── 主管交辦／緊急事件 ─────────────────────────────────────────────────────────
+import OtherTasksPage                  from '@/pages/OtherTasks'
 
 // ── 預算管理 ──────────────────────────────────────────────────────────────────
 import BudgetDashboardPage             from '@/pages/Budget'
@@ -312,6 +316,7 @@ export default function AppRouter() {
           <Route path="ihg-room-maintenance"    element={<IHGRoomMaintenancePage />} />
           <Route path="daily-inspection"        element={<HotelDailyInspectionDashboard />} />
           <Route path="daily-meter-readings"    element={<HotelMeterReadingsDashboard />} />
+          <Route path="other-tasks"             element={<OtherTasksPage />} />
         </Route>
 
         {/* ── 商場管理 ──────────────────────────────────────────────── */}
@@ -504,6 +509,11 @@ export default function AppRouter() {
           } />
           <Route path="employee-manual-export" element={
             <EmployeeManualExportPage />
+          } />
+          <Route path="ragic-field-audit" element={
+            <PermissionGuard permissionKey="ragic_field_audit_view">
+              <RagicFieldAuditPage />
+            </PermissionGuard>
           } />
           <Route path="knowledge-graph" element={
             <PermissionGuard permissionKey="system_admin_only">

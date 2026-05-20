@@ -31,6 +31,7 @@ import {
   RadarChartOutlined,
   ReadOutlined,
   BookOutlined,
+  AlertOutlined,
 } from '@ant-design/icons'
 import { useNavigate, useLocation, Outlet } from 'react-router-dom'
 import { useAuthStore } from '@/stores/authStore'
@@ -169,6 +170,7 @@ export const menuItems: MenuItem[] = [
       { key: '/hotel/ihg-room-maintenance',     icon: <ToolOutlined />,    label: NAV_PAGE.ihgRoomMaintenance,   permissionKey: 'hotel_ihg_room_maintenance_view'  },
       { key: '/hotel/daily-inspection',         icon: <SafetyOutlined />,  label: NAV_PAGE.hotelDailyInspection, permissionKey: 'hotel_daily_inspection_view'      },
       { key: '/hotel/daily-meter-readings',     icon: <DatabaseOutlined />, label: NAV_PAGE.hotelMeterReadings,   permissionKey: 'hotel_meter_readings_view'        },
+      { key: '/hotel/other-tasks',              icon: <AlertOutlined />,   label: NAV_PAGE.otherTasks,           permissionKey: 'hotel_view'                       },
       // { key: '/hotel/repairs',                 icon: <ToolOutlined />, label: NAV_PAGE.repairs },
     ],
   },
@@ -278,6 +280,7 @@ export const menuItems: MenuItem[] = [
       { key: '/settings/roles',               icon: <SettingOutlined />,  label: NAV_PAGE.rolesManage,       permissionKey: 'settings_roles_manage' },
       { key: '/settings/ragic-app-directory', icon: <DatabaseOutlined />, label: NAV_PAGE.ragicAppDirectory, permissionKey: 'settings_ragic_manage' },
       { key: '/settings/ragic-connections',   icon: <ApiOutlined />,      label: NAV_PAGE.ragicConnections,  permissionKey: 'settings_ragic_manage' },
+      { key: '/settings/ragic-field-audit',   icon: <AuditOutlined />,    label: NAV_PAGE.ragicFieldAudit,   permissionKey: 'ragic_field_audit_view' },
       { key: '/settings/menu-config',              icon: <MenuOutlined />,      label: NAV_PAGE.menuConfig,           permissionKey: 'settings_menu_manage' },
       { key: '/settings/static-pages',             icon: <FileTextOutlined />,  label: NAV_PAGE.staticPages,          permissionKey: 'settings_menu_manage' },
       { key: '/settings/employee-manual-export',   icon: <BookOutlined />,      label: NAV_PAGE.employeeManualExport, permissionKey: 'system_admin_only' },
