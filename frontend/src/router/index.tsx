@@ -55,6 +55,13 @@ import MemoListPage       from '@/pages/Memos/List'
 import MemoNewPage        from '@/pages/Memos/New'
 import MemoDetailPage     from '@/pages/Memos/Detail'
 import CalendarPage       from '@/pages/Calendar'
+// ── 班表管理 ──────────────────────────────────────────────────────────────────
+import ScheduleOverviewPage    from '@/pages/Schedule'
+import ScheduleCalendarPage    from '@/pages/Schedule/Calendar'
+import ScheduleImportPage      from '@/pages/Schedule/Import'
+import ScheduleStaffPage       from '@/pages/Schedule/Staff'
+import ScheduleShiftsPage      from '@/pages/Schedule/Shifts'
+import ScheduleDepartmentsPage from '@/pages/Schedule/Departments'
 import MallFacilityInspectionDashboard from '@/pages/MallFacilityInspection'
 import MallFacilityInspection4F        from '@/pages/MallFacilityInspection/4F'
 import MallFacilityInspection3F        from '@/pages/MallFacilityInspection/3F'
@@ -305,6 +312,16 @@ export default function AppRouter() {
 
         {/* ── 行事曆 ────────────────────────────────────────────────── */}
         <Route path="calendar" element={<CalendarPage />} />
+
+        {/* ── 班表管理（本地 SQLite 模組，不對接 Ragic）───────────────── */}
+        <Route path="schedule">
+          <Route index element={<ScheduleOverviewPage />} />
+          <Route path="calendar"    element={<ScheduleCalendarPage />} />
+          <Route path="import"      element={<ScheduleImportPage />} />
+          <Route path="staff"       element={<ScheduleStaffPage />} />
+          <Route path="shifts"      element={<ScheduleShiftsPage />} />
+          <Route path="departments" element={<ScheduleDepartmentsPage />} />
+        </Route>
 
         {/* ── 飯店管理 ──────────────────────────────────────────────── */}
         <Route path="hotel">

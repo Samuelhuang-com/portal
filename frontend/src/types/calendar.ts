@@ -4,9 +4,9 @@
 
 // ── 事件類型 ──────────────────────────────────────────────────────────────────
 export type CalendarEventType =
-  | 'hotel_pm'    // 飯店週期保養
-  | 'mall_pm'     // 商場週期保養
-  | 'security'    // 保全巡檢
+  | 'hotel_pm'    // 飯店週期保養（執行記錄）
+  | 'mall_pm'     // 商場週期保養（執行記錄）
+  | 'pm_plan'     // 週期保養預排（主管排定 /7 /13 /20）
   | 'inspection'  // 工務巡檢
   | 'approval'    // 簽核管理
   | 'memo'        // 公告牆
@@ -21,9 +21,9 @@ export type CalendarEventStatus =
 
 // ── 事件顏色常數 ──────────────────────────────────────────────────────────────
 export const EVENT_TYPE_COLORS: Record<CalendarEventType, string> = {
-  hotel_pm:   '#1B3A5C',  // 飯店保養 — 品牌主色
-  mall_pm:    '#4BA8E8',  // 商場保養 — 品牌輔色
-  security:   '#52c41a',  // 保全巡檢 — 綠
+  hotel_pm:   '#1B3A5C',  // 飯店保養 — 品牌主色（深藍）
+  mall_pm:    '#4BA8E8',  // 商場保養 — 品牌輔色（天藍）
+  pm_plan:    '#52c41a',  // 週期保養預排 — 綠（主管排定）
   inspection: '#1677ff',  // 工務巡檢 — 藍
   approval:   '#fa8c16',  // 簽核管理 — 橙
   memo:       '#722ed1',  // 公告牆   — 紫
@@ -33,7 +33,7 @@ export const EVENT_TYPE_COLORS: Record<CalendarEventType, string> = {
 export const EVENT_TYPE_LABELS: Record<CalendarEventType, string> = {
   hotel_pm:   '飯店保養',
   mall_pm:    '商場保養',
-  security:   '保全巡檢',
+  pm_plan:    '週期預排',
   inspection: '工務巡檢',
   approval:   '簽核管理',
   memo:       '公告牆',

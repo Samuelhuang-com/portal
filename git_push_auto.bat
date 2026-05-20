@@ -1,5 +1,13 @@
 @echo off
 chcp 65001 >nul
+
+REM -- 防止雙擊閃退：用 cmd /k 重新開一個不會自關的視窗
+if not "%GIT_LAUNCHED%"=="1" (
+    set GIT_LAUNCHED=1
+    cmd /k ""%~f0""
+    exit /b
+)
+
 setlocal enabledelayedexpansion
 
 cd /d C:\OneDrive\_Ragic\portal

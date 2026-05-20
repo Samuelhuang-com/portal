@@ -32,6 +32,11 @@ import {
   ReadOutlined,
   BookOutlined,
   AlertOutlined,
+  ScheduleOutlined,
+  TeamOutlined,
+  ClockCircleOutlined,
+  UploadOutlined,
+  TableOutlined,
 } from '@ant-design/icons'
 import { useNavigate, useLocation, Outlet } from 'react-router-dom'
 import { useAuthStore } from '@/stores/authStore'
@@ -157,6 +162,21 @@ export const menuItems: MenuItem[] = [
     label: NAV_GROUP.calendar,
     permissionKey: 'calendar_view',
   },
+  // ── 班表管理（行事曆之後、飯店管理之前）────────────────────────────────────
+  {
+    key: 'schedule',
+    icon: <ScheduleOutlined />,
+    label: NAV_GROUP.schedule,
+    permissionKey: 'schedule_view',
+    children: [
+      { key: '/schedule',              icon: <TableOutlined />,        label: NAV_PAGE.scheduleOverview,    permissionKey: 'schedule_view'   },
+      { key: '/schedule/calendar',     icon: <CalendarOutlined />,     label: NAV_PAGE.scheduleCalendar,    permissionKey: 'schedule_view'   },
+      { key: '/schedule/import',       icon: <UploadOutlined />,       label: NAV_PAGE.scheduleImport,      permissionKey: 'schedule_manage' },
+      { key: '/schedule/staff',        icon: <TeamOutlined />,         label: NAV_PAGE.scheduleStaff,       permissionKey: 'schedule_admin'  },
+      { key: '/schedule/shifts',       icon: <ClockCircleOutlined />,  label: NAV_PAGE.scheduleShifts,      permissionKey: 'schedule_admin'  },
+      { key: '/schedule/departments',  icon: <DatabaseOutlined />,     label: NAV_PAGE.scheduleDepartments, permissionKey: 'schedule_admin'  },
+    ],
+  },
   {
     key: 'hotel',
     icon: <HomeOutlined />,
@@ -170,7 +190,7 @@ export const menuItems: MenuItem[] = [
       { key: '/hotel/ihg-room-maintenance',     icon: <ToolOutlined />,    label: NAV_PAGE.ihgRoomMaintenance,   permissionKey: 'hotel_ihg_room_maintenance_view'  },
       { key: '/hotel/daily-inspection',         icon: <SafetyOutlined />,  label: NAV_PAGE.hotelDailyInspection, permissionKey: 'hotel_daily_inspection_view'      },
       { key: '/hotel/daily-meter-readings',     icon: <DatabaseOutlined />, label: NAV_PAGE.hotelMeterReadings,   permissionKey: 'hotel_meter_readings_view'        },
-      { key: '/hotel/other-tasks',              icon: <AlertOutlined />,   label: NAV_PAGE.otherTasks,           permissionKey: 'hotel_view'                       },
+      { key: '/hotel/other-tasks',              icon: <AlertOutlined />,   label: NAV_PAGE.otherTasks,           permissionKey: 'hotel_other_tasks_view'           },
       // { key: '/hotel/repairs',                 icon: <ToolOutlined />, label: NAV_PAGE.repairs },
     ],
   },

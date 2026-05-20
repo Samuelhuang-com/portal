@@ -56,6 +56,7 @@ from app.routers import (
     claim_report,
     combined_report,
     purchase_report,
+    schedule,
     auth,
     budget,
     b4f_inspection,
@@ -951,6 +952,7 @@ async def lifespan(app: FastAPI):
     import app.models.nichiyo_claim_request     # noqa: F401
     import app.models.ragic_sheet_config        # noqa: F401
     import app.models.other_tasks               # noqa: F401
+    import app.models.schedule                  # noqa: F401  班表模組（本地 SQLite，不對接 Ragic）
 
     # B4F 扁平化遷移：刪除舊 batch 表 + 檢查 item 表欄位（必須在 create_all 之前）
     _migrate_b4f_flatten()
@@ -1042,6 +1044,13 @@ async def lifespan(app: FastAPI):
     # 知識庫範例資料植入（首次啟動時若 wiki_articles 為空）
     from app.services.wiki_seed import seed_wiki_articles
     seed_wiki_articles()
+
+    # 班表模組種子（部門 + 班別）
+    from app.services.schedule_seed import run_all_seeds as _schedule_seed
+    from app.core.database import SessionLocal as _SessionLocal
+    with _SessionLocal() as _seed_db:
+        _schedule_seed(_seed_db)
+    print("[Portal] Schedule seed checked.")
 
     # ── 排程同步（可透過 .env SCHEDULER_ENABLED=False 完全關閉）────────────────
     # DEV 模式請設 SCHEDULER_ENABLED=False，改用 sync_tool.py 手動同步。
@@ -1466,27 +1475,12 @@ app.include_router(
 app.include_router(
     role_permissions.router,
     prefix=f"{API_PREFIX}/role-permissions",
-    tags=["權限管理"],
+    tags=["角色權限設定"],
 )
 
-# ── 前端靜態檔（SPA）─────────────────────────────────────────────────────────
-# dist/ 資料夾位於 backend/ 的上一層（portal/frontend/dist）
-_FRONTEND_DIST = pathlib.Path(__file__).parent.parent.parent / "frontend" / "dist"
-
-if _FRONTEND_DIST.exists():
-    # /assets/* 直接回傳打包後的 JS / CSS
-    app.mount(
-        "/assets",
-        StaticFiles(directory=_FRONTEND_DIST / "assets"),
-        name="frontend-assets",
-    )
-
-    # favicon
-    @app.get("/favicon.svg", include_in_schema=False)
-    async def favicon():
-        return FileResponse(_FRONTEND_DIST / "favicon.svg")
-
-    # SPA catch-all：所有非 /api、非靜態資源的路徑一律回傳 index.html
-    @app.get("/{full_path:path}", include_in_schema=False)
-    async def spa_fallback(full_path: str):
-        return FileResponse(_FRONTEND_DIST / "index.html")
+# ── 班表模組（本地 SQLite，不對接 Ragic）────────────────────────────────────
+app.include_router(
+    schedule.router,
+    prefix=f"{API_PREFIX}/schedule",
+    tags=["班表管理"],
+)

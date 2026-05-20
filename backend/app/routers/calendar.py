@@ -10,10 +10,10 @@ Prefix: /api/v1/calendar
   PUT  /custom/{id}      — 更新自訂事件
   DELETE /custom/{id}    — 刪除自訂事件
 
-事件來源（第一階段已整合）：
+事件來源：
   hotel_pm    — 飯店週期保養（pm_batch_item.scheduled_date + pm_batch.period_month）
   mall_pm     — 商場週期保養（mall_pm_batch_item.scheduled_date + mall_pm_batch.period_month）
-  security    — 保全巡檢（security_patrol_batch.inspection_date）
+  pm_plan     — 週期保養預排（pm_plan_item.scheduled_date，來源 Sheet /7、/13、/20 主管排定）
   inspection  — 工務巡檢（b1f/b2f/rf/b4f_inspection_batch.inspection_date）
   approval    — 簽核管理（approvals.submitted_at）
   memo        — 公告牆（memos.created_at）
@@ -35,7 +35,7 @@ from app.models.mall_periodic_maintenance import (
     MallPeriodicMaintenanceBatch,
     MallPeriodicMaintenanceItem,
 )
-from app.models.security_patrol import SecurityPatrolBatch
+from app.models.pm_plan import PmPlanItem
 from app.models.b1f_inspection import B1FInspectionBatch
 from app.models.b2f_inspection import B2FInspectionBatch
 from app.models.rf_inspection import RFInspectionBatch
@@ -217,47 +217,66 @@ def _collect_mall_pm(db: Session, start: date, end: date) -> List[CalendarEventO
     return events
 
 
-def _collect_security_patrol(db: Session, start: date, end: date) -> List[CalendarEventOut]:
-    """收集保全巡檢事件（security_patrol_batch）"""
+def _collect_pm_plan(db: Session, start: date, end: date) -> List[CalendarEventOut]:
+    """收集週期保養預排事件（pm_plan_item，來源 Sheet /7 /13 /20 主管排定）"""
     events: List[CalendarEventOut] = []
-    color = EVENT_TYPE_COLORS["security"]
-    label = EVENT_TYPE_LABELS["security"]
+    color = EVENT_TYPE_COLORS["pm_plan"]
+    label = EVENT_TYPE_LABELS["pm_plan"]
 
-    start_str = start.strftime("%Y/%m/%d")
-    end_str   = end.strftime("%Y/%m/%d")
+    start_iso = _date_to_iso(start)
+    end_iso   = _date_to_iso(end)
 
-    batches = db.query(SecurityPatrolBatch).filter(
-        SecurityPatrolBatch.inspection_date >= start_str,
-        SecurityPatrolBatch.inspection_date <= end_str,
+    items = db.query(PmPlanItem).filter(
+        PmPlanItem.scheduled_date >= start_iso,
+        PmPlanItem.scheduled_date <= end_iso,
+        PmPlanItem.scheduled_date != "",
     ).all()
 
-    # 同日同 sheet 只顯示一筆（避免重複）
-    seen: set = set()
-    for b in batches:
-        key = (b.inspection_date, b.sheet_key)
-        if key in seen:
-            continue
-        seen.add(key)
+    # 頻率 → 中文顯示
+    FREQ_TAG: dict = {
+        "年":   "年保",
+        "半年": "半年保",
+        "季":   "季保",
+        "月":   "月保",
+    }
 
-        item_date = _slash_to_date(b.inspection_date)
+    for item in items:
+        item_date = _iso_to_date(item.scheduled_date)
         if not item_date:
             continue
 
+        freq_tag   = FREQ_TAG.get(item.frequency, item.frequency)
+        title_text = f"[{freq_tag}] {item.task_name}" if freq_tag else f"[預排] {item.task_name}"
+        src_label  = item.source_label or ""   # 飯店/商場/全棟
+
+        # deep_link：指向對應的週期保養模組
+        DEEP_LINK_MAP = {
+            "飯店": "/hotel/periodic-maintenance",
+            "商場": "/mall/periodic-maintenance",
+            "全棟": "/hotel/full-building-maintenance",
+        }
+        deep_link = DEEP_LINK_MAP.get(src_label, "/hotel/periodic-maintenance")
+
         events.append(CalendarEventOut(
-            id           = f"security_{b.sheet_key}_{b.inspection_date.replace('/', '')}",
-            title        = f"[保全] {b.sheet_key} 巡檢",
+            id           = f"pm_plan_{item.ragic_id}",
+            title        = title_text,
             start        = _date_to_iso(item_date),
             all_day      = True,
-            event_type   = "security",
-            module_label = label,
-            source_id    = b.ragic_id,
-            status       = "completed",
-            status_label = "已巡檢",
-            responsible  = b.inspector_name or "",
-            description  = f"巡檢日期：{b.inspection_date}",
-            deep_link    = f"/security/patrol/{b.sheet_key}",
+            event_type   = "pm_plan",
+            module_label = f"{label}（{src_label}）" if src_label else label,
+            source_id    = item.ragic_id,
+            status       = "pending",
+            status_label = "預排",
+            responsible  = item.scheduler_name,
+            description  = (
+                f"{item.category}｜{item.location}｜頻率：{item.frequency}"
+                if (item.category or item.location)
+                else f"頻率：{item.frequency}"
+            ),
+            deep_link    = deep_link,
             color        = color,
         ))
+
     return events
 
 
@@ -439,7 +458,7 @@ def get_calendar_events(
     end:    str           = Query(..., description="查詢結束日期 YYYY-MM-DD"),
     types:  Optional[str] = Query(
         None,
-        description="事件類型篩選，逗號分隔：hotel_pm,mall_pm,security,inspection,approval,memo,custom"
+        description="事件類型篩選，逗號分隔：hotel_pm,mall_pm,pm_plan,inspection,approval,memo,custom"
     ),
     db: Session = Depends(get_db),
 ):
@@ -455,8 +474,8 @@ def get_calendar_events(
         all_events.extend(_collect_hotel_pm(db, start_date, end_date))
     if _should_include("mall_pm",    types):
         all_events.extend(_collect_mall_pm(db, start_date, end_date))
-    if _should_include("security",   types):
-        all_events.extend(_collect_security_patrol(db, start_date, end_date))
+    if _should_include("pm_plan",    types):
+        all_events.extend(_collect_pm_plan(db, start_date, end_date))
     if _should_include("inspection", types):
         all_events.extend(_collect_inspection(db, start_date, end_date))
     if _should_include("approval",   types):

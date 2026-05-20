@@ -60,6 +60,7 @@ export const SITE_TITLE = '維春集團管理 Portal'
 // ── 一級選單（群組） ──────────────────────────────────────────────────────────
 export const NAV_GROUP = {
   dashboard:  'Dashboard',
+  schedule:   '班表',               // ← 新增：班表管理（行事曆之後）
   budget:     '預算管理',         // ← 新增：預算管理（在 dashboard 之後、行事曆之前）
   calendar:   '行事曆',           // ← 新增：Command Calendar（在 dashboard 之後、hotel 之前）
   hotel:      '飯店管理',
@@ -203,4 +204,12 @@ export const NAV_PAGE = {
 
   // 日曜請款月報表
   nichiyoClaimReportMonthly: '日曜核准請款單月報表',  // ← route /nichiyo-claim-report/monthly
+
+  // 班表管理（本地 SQLite 模組）
+  scheduleOverview:     '班表總覽',            // ← route /schedule
+  scheduleCalendar:     '月曆式班表',           // ← route /schedule/calendar
+  scheduleImport:       '匯入班表',             // ← route /schedule/import
+  scheduleStaff:        '人員管理',             // ← route /schedule/staff
+  scheduleShifts:       '班別管理',             // ← route /schedule/shifts
+  scheduleDepartments:  '部門管理',             // ← route /schedule/departments
 } as const

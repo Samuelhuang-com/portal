@@ -47,9 +47,11 @@ interface RagicApp {
   portalUrl: string
   // 本地 DB 表（靜態推導，不存 DB）
   localTable: string
+  // 對應的後端 sync 模組（位於 backend/app/services/*_sync.py）
+  syncModule: string
 }
 
-const RAGIC_APPS_STATIC: Omit<RagicApp, 'portalName' | 'portalUrl' | 'localTable'>[] = [
+const RAGIC_APPS_STATIC: Omit<RagicApp, 'portalName' | 'portalUrl' | 'localTable' | 'syncModule'>[] = [
   { itemNo: 1,   module: '例行抄表/設備檢查', name: '全棟電錶ACB123',                      url: 'https://ap12.ragic.com/soutlet001/hotel-routine-inspection/11',                  type: '表單/作業', note: '' },
   { itemNo: 2,   module: '例行抄表/設備檢查', name: '商場空調箱電錶-2',                     url: 'https://ap12.ragic.com/soutlet001/hotel-routine-inspection/12',                  type: '表單/作業', note: '' },
   { itemNo: 3,   module: '例行抄表/設備檢查', name: '專櫃水錶',                             url: 'https://ap12.ragic.com/soutlet001/hotel-routine-inspection/15',                  type: '表單/作業', note: '' },
@@ -406,6 +408,80 @@ const LOCAL_TABLE_MAP: Record<number, string> = {
   235: 'approved_purchase_requests\napproved_purchase_request_items',  // 資訊部（內頁，Ragic重導向至lequn-finance-department/5）
 }
 
+// ── Sync 模組對應表（itemNo → backend service 檔名，不含 .py）─────────────
+// 對應關係詳見 docs/RAGIC_MODULE_MAP.md
+const SYNC_MODULE_MAP: Record<number, string> = {
+  // 例行抄表/設備檢查 → hotel_meter_readings_sync
+  1: 'hotel_meter_readings_sync', 2: 'hotel_meter_readings_sync',
+  3: 'hotel_meter_readings_sync', 4: 'hotel_meter_readings_sync',
+
+  // 保全巡檢 → security_patrol_sync
+  5: 'security_patrol_sync', 6: 'security_patrol_sync', 7: 'security_patrol_sync',
+  8: 'security_patrol_sync', 9: 'security_patrol_sync', 10: 'security_patrol_sync',
+  13: 'security_patrol_sync',
+
+  // 商場設施巡檢 → mall_facility_inspection_sync
+  51: 'mall_facility_inspection_sync', 52: 'mall_facility_inspection_sync',
+  53: 'mall_facility_inspection_sync', 54: 'mall_facility_inspection_sync',
+  55: 'mall_facility_inspection_sync',
+
+  // 客房保養明細 → room_maintenance_detail_sync
+  68: 'room_maintenance_detail_sync',
+
+  // 全棟巡檢（各樓層）
+  71: 'b1f_inspection_sync', 72: 'b2f_inspection_sync',
+  73: 'b4f_inspection_sync', 74: 'rf_inspection_sync',
+
+  // 報修系統
+  77: 'luqun_repair_sync',
+  87: 'dazhi_repair_sync', 88: 'dazhi_repair_sync',
+
+  // 核准請購單（維春）→ purchase_request_sync
+  84: 'purchase_request_sync',  98: 'claim_request_sync',
+  99: 'purchase_request_sync',  106: 'claim_request_sync',
+  107: 'purchase_request_sync', 113: 'claim_request_sync',
+  114: 'purchase_request_sync', 121: 'claim_request_sync',
+  122: 'purchase_request_sync', 126: 'claim_request_sync',
+  127: 'purchase_request_sync', 131: 'claim_request_sync',
+  132: 'purchase_request_sync', 198: 'claim_request_sync',
+  199: 'purchase_request_sync', 211: 'claim_request_sync',
+  212: 'purchase_request_sync',
+
+  // 日曜請款 / 請購 → nichiyo_*_sync
+  137: 'nichiyo_claim_request_sync',    139: 'nichiyo_purchase_request_sync',
+  148: 'nichiyo_claim_request_sync',    149: 'nichiyo_purchase_request_sync',
+  153: 'nichiyo_claim_request_sync',    154: 'nichiyo_purchase_request_sync',
+  161: 'nichiyo_claim_request_sync',    162: 'nichiyo_purchase_request_sync',
+  169: 'nichiyo_claim_request_sync',    170: 'nichiyo_purchase_request_sync',
+  176: 'nichiyo_claim_request_sync',    177: 'nichiyo_purchase_request_sync',
+  183: 'nichiyo_claim_request_sync',    192: 'nichiyo_claim_request_sync',
+  195: 'nichiyo_purchase_request_sync',
+
+  // 週期保養（商場 / IHG / 飯店）
+  203: 'mall_periodic_maintenance_sync',
+  204: 'ihg_room_maintenance_sync',
+  206: 'periodic_maintenance_sync', 207: 'periodic_maintenance_sync',
+  208: 'periodic_maintenance_sync',
+
+  // 全棟保養
+  // (full_building_maintenance_sync — itemNo 待確認後補入)
+
+  // 飯店每日巡檢
+  215: 'hotel_daily_inspection_sync', 216: 'hotel_daily_inspection_sync',
+  217: 'hotel_daily_inspection_sync', 218: 'hotel_daily_inspection_sync',
+  219: 'hotel_daily_inspection_sync',
+
+  // 維春請購（明細 sheets 220-235）
+  220: 'purchase_request_sync', 221: 'purchase_request_sync',
+  222: 'purchase_request_sync', 223: 'purchase_request_sync',
+  224: 'purchase_request_sync', 225: 'purchase_request_sync',
+  226: 'purchase_request_sync', 227: 'purchase_request_sync',
+  228: 'purchase_request_sync', 229: 'purchase_request_sync',
+  230: 'purchase_request_sync', 231: 'purchase_request_sync',
+  232: 'purchase_request_sync', 233: 'purchase_request_sync',
+  234: 'purchase_request_sync', 235: 'purchase_request_sync',
+}
+
 // 類型 → Tag 顏色對應
 const TYPE_COLOR: Record<string, string> = {
   '表單/作業': 'blue',
@@ -622,6 +698,7 @@ const RagicAppDirectory: React.FC = () => {
             portalName: dbRow.portal_name,
             portalUrl:  dbRow.portal_url,
             localTable: LOCAL_TABLE_MAP[app.itemNo] ?? '',
+            syncModule: SYNC_MODULE_MAP[app.itemNo] ?? '',
           }
         }
         return {
@@ -629,6 +706,7 @@ const RagicAppDirectory: React.FC = () => {
           portalName: defRow?.portalName ?? '',
           portalUrl:  defRow?.portalUrl  ?? '',
           localTable: LOCAL_TABLE_MAP[app.itemNo] ?? '',
+          syncModule: SYNC_MODULE_MAP[app.itemNo] ?? '',
         }
       })
       setData(merged)
@@ -640,6 +718,7 @@ const RagicAppDirectory: React.FC = () => {
           portalName: PORTAL_DEFAULTS[a.itemNo]?.portalName ?? '',
           portalUrl:  PORTAL_DEFAULTS[a.itemNo]?.portalUrl  ?? '',
           localTable: LOCAL_TABLE_MAP[a.itemNo] ?? '',
+          syncModule: SYNC_MODULE_MAP[a.itemNo] ?? '',
         })),
       )
     } finally {
@@ -920,6 +999,39 @@ const RagicAppDirectory: React.FC = () => {
               </code>
             ))}
           </Space>
+        )
+      },
+    },
+    {
+      title: (
+        <Tooltip title="對應的後端同步服務（backend/app/services/*_sync.py）">
+          <span>Sync 模組</span>
+        </Tooltip>
+      ),
+      dataIndex: 'syncModule',
+      key: 'syncModule',
+      width: 220,
+      filters: [
+        { text: '有 Sync 模組', value: '__has__' },
+        { text: '無 Sync（直連）', value: '' },
+      ],
+      onFilter: (v, r) =>
+        v === '__has__' ? !!r.syncModule : r.syncModule === '',
+      render: (v: string) => {
+        if (!v) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>
+        return (
+          <code
+            style={{
+              fontSize: 11,
+              background: '#f0f4f8',
+              padding: '1px 5px',
+              borderRadius: 3,
+              color: '#764ba2',
+              display: 'block',
+            }}
+          >
+            {v}
+          </code>
         )
       },
     },

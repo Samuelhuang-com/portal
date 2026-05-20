@@ -198,6 +198,7 @@ MODULES: list[tuple[str, str, str]] = [
     ("日曜請購單清單", "app.services.nichiyo_purchase_request_sync",    "sync_list_only"),
     ("日曜請款單清單", "app.services.nichiyo_claim_request_sync",       "sync_list_only"),
     ("主管交辦／緊急事件", "app.services.other_tasks_sync",             "sync_from_ragic"),
+    ("週期保養預排",       "app.services.pm_plan_sync",                 "sync_from_ragic"),
 ]
 
 # ── 自動同步間隔選項（分鐘，0 = 關閉）─────────────────────────────────────
@@ -644,6 +645,7 @@ class SyncApp(tk.Tk):
             import app.models.nichiyo_claim_request    # noqa
             import app.models.ragic_sheet_config       # noqa
             import app.models.other_tasks              # noqa
+            import app.models.pm_plan                  # noqa
 
             # ── 2. hotel_mr_reading 舊版偵測 → DROP（在 create_all 之前）────
             with engine.connect() as conn:

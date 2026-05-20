@@ -51,7 +51,7 @@ const { Title, Text } = Typography
 
 // ── 可選的事件類型清單 ────────────────────────────────────────────────────────
 const ALL_TYPES: CalendarEventType[] = [
-  'hotel_pm', 'mall_pm', 'security', 'inspection', 'approval', 'memo', 'custom',
+  'hotel_pm', 'mall_pm', 'pm_plan', 'inspection', 'approval', 'memo', 'custom',
 ]
 
 // ── 將 CalendarEvent 轉換為 FullCalendar EventInput ────────────────────────

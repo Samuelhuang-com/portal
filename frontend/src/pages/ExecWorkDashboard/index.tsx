@@ -27,6 +27,7 @@ import {
   DollarOutlined, RiseOutlined, WarningOutlined, BankOutlined,
   ArrowUpOutlined, ArrowDownOutlined, InfoCircleOutlined,
   FileExcelOutlined, UserOutlined, LinkOutlined,
+  MinusCircleOutlined, FileUnknownOutlined, UserDeleteOutlined,
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import relativeTime from 'dayjs/plugin/relativeTime'
@@ -59,6 +60,7 @@ import {
   type WorkJournalDaily, type WorkJournalRange, type JournalRow, type CaseImageItem,
   CATEGORY_COLOR,
 } from '@/api/workJournal'
+import { fetchShiftsRange, type ShiftInfo, type ShiftsRangeData } from '@/api/schedule'
 import { downloadFile } from '@/api/downloadFile'
 import {
   fetchOtherTaskStats,
@@ -1116,13 +1118,96 @@ const CAT_COLS: JournalCategory[] = ['現場報修', '上級交辦', '緊急事�
 
 type JournalMode = 'single' | 'range' | 'month' | 'person'
 
+// 班別 Tag 渲染輔助
+// shiftMap = undefined → 班表資料尚未載入，不顯示任何標記
+// shiftMap = {}        → 已載入但該日無班表資料，仍不顯示（避免誤報）
+// shiftMap 有資料      → 依 is_working 判斷顯示彩色代碼或紅色 ?
+function ShiftTag({
+  person,
+  shiftMap,
+}: {
+  person:   string
+  shiftMap: Record<string, ShiftInfo> | undefined
+}) {
+  // 警示 icon 共用樣式
+  const warnTagStyle: React.CSSProperties = {
+    fontWeight: 700, fontSize: 14, padding: '0 4px',
+    lineHeight: '20px', marginRight: 4, cursor: 'default',
+  }
+
+  // 「未指定」人員 → UserDeleteOutlined（身分不明）
+  if (person === '未指定') return (
+    <Tooltip title="人員未指定" placement="top">
+      <Tag color="error" style={warnTagStyle}>
+        <UserDeleteOutlined />
+      </Tag>
+    </Tooltip>
+  )
+
+  // 班表資料未載入或整日無班表 → 不顯示
+  if (!shiftMap || Object.keys(shiftMap).length === 0) return null
+
+  const info = shiftMap[person]
+
+  // 有班表記錄 + 非上班班別 → MinusCircleOutlined（明確排休）
+  if (info && !info.is_working) {
+    const tipText = info.shift_name
+      ? `${info.shift_code}（${info.shift_name}）— 非上班班別`
+      : `${info.shift_code} — 非上班班別`
+    return (
+      <Tooltip title={tipText} placement="top">
+        <Tag color="error" style={warnTagStyle}>
+          <MinusCircleOutlined />
+        </Tag>
+      </Tooltip>
+    )
+  }
+
+  // 無班表記錄（有工單卻沒排班）→ FileUnknownOutlined（查無記錄）
+  if (!info) return (
+    <Tooltip title="此日無班表記錄" placement="top">
+      <Tag color="warning" style={warnTagStyle}>
+        <FileUnknownOutlined />
+      </Tag>
+    </Tooltip>
+  )
+
+  // 正常上班班別 → 彩色班別代碼 + Tooltip 顯示班別名稱
+  const tipText = info.shift_name
+    ? `${info.shift_code}｜${info.shift_name}`
+    : info.shift_code
+  return (
+    <Tooltip title={tipText} placement="top">
+      <Tag
+        style={{
+          backgroundColor: info.shift_color,
+          color: '#fff',
+          fontWeight: 700,
+          fontSize: 13,
+          minWidth: 26,
+          textAlign: 'center',
+          padding: '0 5px',
+          lineHeight: '20px',
+          marginRight: 4,
+          border: 'none',
+          cursor: 'default',
+        }}
+      >
+        {info.shift_code}
+      </Tag>
+    </Tooltip>
+  )
+}
+
 // 單一日期的人員分組 Collapse（單日 or 區間內每天複用）
 function DayPersonCollapse({
   persons,
   collapsed,
+  shiftMap,
 }: {
-  persons: WorkJournalDaily['persons']
+  persons:   WorkJournalDaily['persons']
   collapsed?: boolean
+  shiftMap?:  Record<string, ShiftInfo>
 }) {
   const [selectedRow, setSelectedRow] = useState<JournalRow | null>(null)
   const [drawerImages, setDrawerImages] = useState<CaseImageItem[]>([])
@@ -1197,7 +1282,8 @@ function DayPersonCollapse({
     return {
       key: `person-${idx}`,
       label: (
-        <Space>
+        <Space align="center">
+          <ShiftTag person={p.person} shiftMap={shiftMap} />
           <Text strong style={{ fontSize: 14, color: p.person === '未指定' ? '#aaa' : '#1B3A5C' }}>
             {p.person}
           </Text>
@@ -1409,9 +1495,10 @@ function WorkJournalTab() {
   const [day,       setDay]       = useState<number>(dayjs().date())
   const [rangeDates, setRangeDates] = useState<[Dayjs, Dayjs] | null>(null)
   const [monthDate,  setMonthDate]  = useState<Dayjs | null>(dayjs())
-  const [singleData,    setSingleData]    = useState<WorkJournalDaily | null>(null)
-  const [rangeData,     setRangeData]     = useState<WorkJournalRange | null>(null)
-  const [loading,       setLoading]       = useState(false)
+  const [singleData,      setSingleData]      = useState<WorkJournalDaily | null>(null)
+  const [rangeData,       setRangeData]       = useState<WorkJournalRange | null>(null)
+  const [shiftMapByDate,  setShiftMapByDate]  = useState<ShiftsRangeData>({})
+  const [loading,         setLoading]         = useState(false)
   const [personFilter,     setPersonFilter]     = useState<string>('')
   const [personList,       setPersonList]       = useState<string[]>([])
   const [personSubMode,    setPersonSubMode]    = useState<'range'|'month'>('month')
@@ -1427,25 +1514,43 @@ function WorkJournalTab() {
     setLoading(true)
     try {
       setGlobalCollapsed(false)
+
       if (mode === 'single') {
-        const d = await fetchWorkJournalDaily(year, month, day)
-        setSingleData(d)
+        // 單日：格式化為 YYYY-MM-DD（班表 API 需要此格式）
+        const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+        const [journal, shifts] = await Promise.all([
+          fetchWorkJournalDaily(year, month, day),
+          fetchShiftsRange(dateStr, dateStr).catch(() => ({} as ShiftsRangeData)),
+        ])
+        setSingleData(journal)
         setRangeData(null)
+        setShiftMapByDate(shifts)
         setDateActiveKeys([])
+
       } else if (mode === 'range' && rangeDates) {
         const from = rangeDates[0].format('YYYY-MM-DD')
         const to   = rangeDates[1].format('YYYY-MM-DD')
-        const d = await fetchWorkJournalRange(from, to)
-        setRangeData(d)
+        const [journal, shifts] = await Promise.all([
+          fetchWorkJournalRange(from, to),
+          fetchShiftsRange(from, to).catch(() => ({} as ShiftsRangeData)),
+        ])
+        setRangeData(journal)
         setSingleData(null)
-        setDateActiveKeys(d.days.map((_, i) => `day-${i}`))
+        setShiftMapByDate(shifts)
+        setDateActiveKeys(journal.days.map((_, i) => `day-${i}`))
+
       } else if (mode === 'month' && monthDate) {
         const from = monthDate.startOf('month').format('YYYY-MM-DD')
         const to   = monthDate.endOf('month').format('YYYY-MM-DD')
-        const d = await fetchWorkJournalRange(from, to)
-        setRangeData(d)
+        const [journal, shifts] = await Promise.all([
+          fetchWorkJournalRange(from, to),
+          fetchShiftsRange(from, to).catch(() => ({} as ShiftsRangeData)),
+        ])
+        setRangeData(journal)
         setSingleData(null)
-        setDateActiveKeys(d.days.map((_, i) => `day-${i}`))
+        setShiftMapByDate(shifts)
+        setDateActiveKeys(journal.days.map((_, i) => `day-${i}`))
+
       } else if (mode === 'person') {
         let from = '', to = ''
         if (personSubMode === 'range' && personRangeDates) {
@@ -1456,12 +1561,17 @@ function WorkJournalTab() {
           to   = personMonthDate.endOf('month').format('YYYY-MM-DD')
         }
         if (!from) return
-        const d = await fetchWorkJournalRange(from, to)
-        setRangeData(d); setSingleData(null)
-        setDateActiveKeys(d.days.map((_, i) => `pday-${i}`))
+        const [journal, shifts] = await Promise.all([
+          fetchWorkJournalRange(from, to),
+          fetchShiftsRange(from, to).catch(() => ({} as ShiftsRangeData)),
+        ])
+        setRangeData(journal)
+        setSingleData(null)
+        setShiftMapByDate(shifts)
+        setDateActiveKeys(journal.days.map((_, i) => `pday-${i}`))
         const names: string[] = []
         const seen = new Set<string>()
-        d.days.forEach(dy => dy.persons.forEach(p => {
+        journal.days.forEach(dy => dy.persons.forEach(p => {
           if (!seen.has(p.person)) { names.push(p.person); seen.add(p.person) }
         }))
         setPersonList(names)
@@ -1470,6 +1580,7 @@ function WorkJournalTab() {
     } catch {
       setSingleData(null)
       setRangeData(null)
+      setShiftMapByDate({})
     } finally {
       setLoading(false)
     }
@@ -1596,7 +1707,13 @@ function WorkJournalTab() {
           {singleData.date} 無工作記錄
         </div>
       )
-      return <DayPersonCollapse persons={singleData.persons} collapsed={globalCollapsed} />
+      return (
+        <DayPersonCollapse
+          persons={singleData.persons}
+          collapsed={globalCollapsed}
+          shiftMap={shiftMapByDate[singleData.date.replace(/\//g, '-')]}
+        />
+      )
     }
 
     // 人員模式
@@ -1630,7 +1747,12 @@ function WorkJournalTab() {
               {dayMin > 0 && <Tag color="geekblue">{dayMin} min</Tag>}
             </Space>
           ),
-          children: <DayPersonCollapse persons={daily.persons} />,
+          children: (
+            <DayPersonCollapse
+              persons={daily.persons}
+              shiftMap={shiftMapByDate[daily.date.replace(/\//g, '-')]}
+            />
+          ),
         }
       })
       return (
@@ -1664,7 +1786,12 @@ function WorkJournalTab() {
               <Text type="secondary" style={{ fontSize: 12 }}>{daily.persons.length} 位人員</Text>
             </Space>
           ),
-          children: <DayPersonCollapse persons={daily.persons} />,
+          children: (
+            <DayPersonCollapse
+              persons={daily.persons}
+              shiftMap={shiftMapByDate[daily.date.replace(/\//g, '-')]}
+            />
+          ),
         }
       })
       return (
