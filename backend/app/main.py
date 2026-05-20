@@ -1484,3 +1484,22 @@ app.include_router(
     prefix=f"{API_PREFIX}/schedule",
     tags=["班表管理"],
 )
+
+# ── 前端靜態檔（SPA catch-all）────────────────────────────────────────────────
+# dist/ 位於 portal/frontend/dist，由 npm run build 產生
+_FRONTEND_DIST = pathlib.Path(__file__).parent.parent.parent / "frontend" / "dist"
+
+if _FRONTEND_DIST.exists():
+    app.mount(
+        "/assets",
+        StaticFiles(directory=_FRONTEND_DIST / "assets"),
+        name="frontend-assets",
+    )
+
+    @app.get("/favicon.svg", include_in_schema=False)
+    async def favicon():
+        return FileResponse(_FRONTEND_DIST / "favicon.svg")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def spa_fallback(full_path: str):
+        return FileResponse(_FRONTEND_DIST / "index.html")
