@@ -1044,7 +1044,7 @@ function TabIssues({ onResolve }: { onResolve: () => void }) {
           placeholder="處理狀態"
           style={{ width: 130 }}
           defaultValue={false}
-          onChange={(v) => setFilterResolved(v === 'all' ? undefined : v)}
+          onChange={(v: boolean | string) => setFilterResolved(v === 'all' ? undefined : v as boolean)}
           options={[
             { value: false, label: '待處理' },
             { value: true,  label: '已處理' },
