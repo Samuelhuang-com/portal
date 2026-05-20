@@ -6,6 +6,8 @@ import logging
 import pathlib
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from contextlib import asynccontextmanager
 from datetime import datetime
 
@@ -1466,3 +1468,25 @@ app.include_router(
     prefix=f"{API_PREFIX}/role-permissions",
     tags=["權限管理"],
 )
+
+# ── 前端靜態檔（SPA）─────────────────────────────────────────────────────────
+# dist/ 資料夾位於 backend/ 的上一層（portal/frontend/dist）
+_FRONTEND_DIST = pathlib.Path(__file__).parent.parent.parent / "frontend" / "dist"
+
+if _FRONTEND_DIST.exists():
+    # /assets/* 直接回傳打包後的 JS / CSS
+    app.mount(
+        "/assets",
+        StaticFiles(directory=_FRONTEND_DIST / "assets"),
+        name="frontend-assets",
+    )
+
+    # favicon
+    @app.get("/favicon.svg", include_in_schema=False)
+    async def favicon():
+        return FileResponse(_FRONTEND_DIST / "favicon.svg")
+
+    # SPA catch-all：所有非 /api、非靜態資源的路徑一律回傳 index.html
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def spa_fallback(full_path: str):
+        return FileResponse(_FRONTEND_DIST / "index.html")
