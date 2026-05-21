@@ -1131,7 +1131,7 @@ function ShiftTag({
 }) {
   // 警示 icon 共用樣式
   const warnTagStyle: React.CSSProperties = {
-    fontWeight: 700, fontSize: 14, padding: '0 4px',
+    fontWeight: 700, fontSize: 16, padding: '0 4px',
     lineHeight: '20px', marginRight: 4, cursor: 'default',
   }
 
@@ -1183,7 +1183,7 @@ function ShiftTag({
           backgroundColor: info.shift_color,
           color: '#fff',
           fontWeight: 700,
-          fontSize: 13,
+          fontSize: 15,
           minWidth: 26,
           textAlign: 'center',
           padding: '0 5px',
@@ -1223,47 +1223,61 @@ function DayPersonCollapse({
   const journalColumns = [
     {
       title: '項次', dataIndex: 'seq', key: 'seq', width: 48, align: 'center' as const,
-      render: (v: number) => <Text style={{ fontSize: 12, color: '#888' }}>{v}</Text>,
+      render: (v: number) => <Text style={{ fontSize: 14, color: '#888' }}>{v}</Text>,
     },
     ...CAT_COLS.map(cat => ({
-      title: <span style={{ fontSize: 11, color: CATEGORY_COLOR[cat as JournalCategory], whiteSpace: 'nowrap' as const }}>{cat}</span>,
+      title: <span style={{ fontSize: 13, color: CATEGORY_COLOR[cat as JournalCategory], whiteSpace: 'nowrap' as const }}>{cat}</span>,
       key: cat, width: 56, align: 'center' as const,
       render: (_: unknown, row: JournalRow) =>
         row.category === cat
-          ? <span style={{ color: CATEGORY_COLOR[cat as JournalCategory], fontSize: 16, fontWeight: 700 }}>✓</span>
+          ? <span style={{ color: CATEGORY_COLOR[cat as JournalCategory], fontSize: 18, fontWeight: 700 }}>✓</span>
           : null,
     })),
     {
       title: '工作事項', dataIndex: 'task', key: 'task', width: 200,
-      render: (v: string) => <Text style={{ fontSize: 12 }}>{v}</Text>,
+      render: (v: string, row: JournalRow) => {
+        const isHotel = _HOTEL_SOURCES.has(row.source)
+        return (
+          <Text style={{ fontSize: 14 }}>
+            <span style={{
+              display: 'inline-block', marginRight: 4,
+              fontSize: 11, fontWeight: 700, lineHeight: '16px',
+              padding: '0 4px', borderRadius: 3,
+              background: isHotel ? '#e8f4fd' : '#e8f5e9',
+              color:      isHotel ? '#1565C0' : '#2E7D32',
+            }}>{isHotel ? '飯' : '商'}</span>
+            {v}
+          </Text>
+        )
+      },
     },
     {
       title: '預估耗時(min)', dataIndex: 'est_min', key: 'est_min', width: 88, align: 'center' as const,
       render: (v: number | null) => v != null
-        ? <Text style={{ fontSize: 12 }}>{v}</Text>
-        : <Text style={{ color: '#ccc', fontSize: 12 }}>—</Text>,
+        ? <Text style={{ fontSize: 14 }}>{v}</Text>
+        : <Text style={{ color: '#ccc', fontSize: 14 }}>—</Text>,
     },
     {
       title: '起', dataIndex: 'start_time', key: 'start', width: 52, align: 'center' as const,
-      render: (v: string) => v ? <Text style={{ fontSize: 12 }}>{v}</Text> : <Text style={{ color: '#ccc', fontSize: 12 }}>—</Text>,
+      render: (v: string) => v ? <Text style={{ fontSize: 14 }}>{v}</Text> : <Text style={{ color: '#ccc', fontSize: 14 }}>—</Text>,
     },
     {
       title: '迄', dataIndex: 'end_time', key: 'end', width: 52, align: 'center' as const,
-      render: (v: string) => v ? <Text style={{ fontSize: 12 }}>{v}</Text> : <Text style={{ color: '#ccc', fontSize: 12 }}>—</Text>,
+      render: (v: string) => v ? <Text style={{ fontSize: 14 }}>{v}</Text> : <Text style={{ color: '#ccc', fontSize: 14 }}>—</Text>,
     },
     {
       title: '工時(min)', dataIndex: 'work_min', key: 'wh', width: 72, align: 'center' as const,
       render: (v: number | null) => v != null
-        ? <Text strong style={{ fontSize: 12, color: '#1B3A5C' }}>{v}</Text>
-        : <Text style={{ color: '#ccc', fontSize: 12 }}>—</Text>,
+        ? <Text strong style={{ fontSize: 14, color: '#1B3A5C' }}>{v}</Text>
+        : <Text style={{ color: '#ccc', fontSize: 14 }}>—</Text>,
     },
     {
       title: '備註', dataIndex: 'remark', key: 'remark', width: 160,
-      render: (v: string) => v ? <Text style={{ fontSize: 12, color: '#666' }}>{v}</Text> : null,
+      render: (v: string) => v ? <Text style={{ fontSize: 14, color: '#666' }}>{v}</Text> : null,
     },
     {
       title: '回報事項', dataIndex: 'report', key: 'report', width: 160,
-      render: (v: string) => v ? <Text style={{ fontSize: 12, color: '#d46b08' }}>{v}</Text> : null,
+      render: (v: string) => v ? <Text style={{ fontSize: 14, color: '#d46b08' }}>{v}</Text> : null,
     },
   ]
 
@@ -1284,12 +1298,12 @@ function DayPersonCollapse({
       label: (
         <Space align="center">
           <ShiftTag person={p.person} shiftMap={shiftMap} />
-          <Text strong style={{ fontSize: 14, color: p.person === '未指定' ? '#aaa' : '#1B3A5C' }}>
+          <Text strong style={{ fontSize: 16, color: p.person === '未指定' ? '#aaa' : '#1B3A5C' }}>
             {p.person}
           </Text>
-          <Tag color="blue" style={{ fontSize: 11 }}>{p.rows.length} 項</Tag>
-          {totalWH > 0 && <Tag color="geekblue" style={{ fontSize: 11 }}>{totalWH} min</Tag>}
-          {sources && <Text type="secondary" style={{ fontSize: 11 }}>{sources}</Text>}
+          <Tag color="blue" style={{ fontSize: 13 }}>{p.rows.length} 項</Tag>
+          {totalWH > 0 && <Tag color="geekblue" style={{ fontSize: 13 }}>{totalWH} min</Tag>}
+          {sources && <Text type="secondary" style={{ fontSize: 13 }}>{sources}</Text>}
         </Space>
       ),
       children: (
@@ -1342,7 +1356,7 @@ function DayPersonCollapse({
                      style={{ margin: 0 }}>
                   {selectedRow.category}
                 </Tag>
-                <span style={{ fontSize: 14, color: '#1B3A5C', fontWeight: 600 }}>
+                <span style={{ fontSize: 16, color: '#1B3A5C', fontWeight: 600 }}>
                   {selectedRow.source_label}
                   {identifier && <>：<span style={{ fontWeight: 400 }}>{identifier}</span></>}
                 </span>
@@ -1351,7 +1365,7 @@ function DayPersonCollapse({
                     href={selectedRow.ragic_url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    style={{ fontSize: 12, color: '#4BA8E8', display: 'flex', alignItems: 'center', gap: 3, fontWeight: 400 }}
+                    style={{ fontSize: 14, color: '#4BA8E8', display: 'flex', alignItems: 'center', gap: 3, fontWeight: 400 }}
                   >
                     <LinkOutlined /> 在 Ragic 查看
                   </a>
@@ -1411,8 +1425,8 @@ function DayPersonCollapse({
                   bordered
                   size="small"
                   column={1}
-                  labelStyle={{ width: 96, background: '#f5f7fa', fontWeight: 500, fontSize: 13 }}
-                  contentStyle={{ background: '#fff', fontSize: 13 }}
+                  labelStyle={{ width: 96, background: '#f5f7fa', fontWeight: 500, fontSize: 15 }}
+                  contentStyle={{ background: '#fff', fontSize: 15 }}
                 >
                   {Object.entries(selectedRow.detail).map(([k, v]) => {
                     const isEmpty = !v
@@ -1435,11 +1449,11 @@ function DayPersonCollapse({
                     } else if (isType) {
                       content = <Tag style={{ margin: 0 }}>{v}</Tag>
                     } else if (isTotalFee) {
-                      content = <Text strong style={{ fontSize: 14 }}>${v}</Text>
+                      content = <Text strong style={{ fontSize: 16 }}>${v}</Text>
                     } else if (isFee) {
                       content = <Text>${v}</Text>
                     } else if (isTitle) {
-                      content = <Text strong style={{ fontSize: 14 }}>{v}</Text>
+                      content = <Text strong style={{ fontSize: 16 }}>{v}</Text>
                     } else {
                       content = <Text>{v}</Text>
                     }
@@ -1455,7 +1469,7 @@ function DayPersonCollapse({
             {(imgLoading || drawerImages.length > 0) && (
               <>
                 <Divider style={{ margin: '16px 0 8px' }} />
-                <div style={{ fontWeight: 500, marginBottom: 8, color: '#555', fontSize: 13 }}>
+                <div style={{ fontWeight: 500, marginBottom: 8, color: '#555', fontSize: 15 }}>
                   維修圖片
                 </div>
                 {imgLoading
@@ -1488,7 +1502,38 @@ function DayPersonCollapse({
   )
 }
 
-function WorkJournalTab() {
+export interface WJVenueStat { cases: number; hours: number }
+export interface WJCatStat {
+  cases: number; hours: number
+  hotel: WJVenueStat
+  mall:  WJVenueStat
+}
+export type WJStats = Record<string, WJCatStat>
+
+const _HOTEL_SOURCES = new Set<string>(['dazhi', 'hotel_pm', 'ihg', 'hotel_di', 'hotel_mr'])
+
+function _computeWJStats(days: WorkJournalDaily[]): WJStats {
+  const stats: WJStats = {}
+  const _empty = (): WJCatStat => ({ cases: 0, hours: 0, hotel: { cases: 0, hours: 0 }, mall: { cases: 0, hours: 0 } })
+  days.forEach(d => d.persons.forEach(p => p.rows.forEach(r => {
+    if (!stats[r.category]) stats[r.category] = _empty()
+    const s = stats[r.category]
+    const min = (r.work_min ?? 0) / 60
+    s.cases++
+    s.hours += min
+    const venue = _HOTEL_SOURCES.has(r.source) ? s.hotel : s.mall
+    venue.cases++
+    venue.hours += min
+  })))
+  Object.keys(stats).forEach(k => {
+    stats[k].hours = Math.round(stats[k].hours * 10) / 10
+    stats[k].hotel.hours = Math.round(stats[k].hotel.hours * 10) / 10
+    stats[k].mall.hours  = Math.round(stats[k].mall.hours  * 10) / 10
+  })
+  return stats
+}
+
+function WorkJournalTab({ onStatsChange }: { onStatsChange?: (s: WJStats) => void }) {
   const [mode,      setMode]      = useState<JournalMode>('single')
   const [year,      setYear]      = useState<number>(dayjs().year())
   const [month,     setMonth]     = useState<number>(dayjs().month() + 1)
@@ -1538,6 +1583,7 @@ function WorkJournalTab() {
         setSingleData(null)
         setShiftMapByDate(shifts)
         setDateActiveKeys(journal.days.map((_, i) => `day-${i}`))
+        onStatsChange?.(_computeWJStats(journal.days))
 
       } else if (mode === 'month' && monthDate) {
         const from = monthDate.startOf('month').format('YYYY-MM-DD')
@@ -1550,6 +1596,7 @@ function WorkJournalTab() {
         setSingleData(null)
         setShiftMapByDate(shifts)
         setDateActiveKeys(journal.days.map((_, i) => `day-${i}`))
+        onStatsChange?.(_computeWJStats(journal.days))
 
       } else if (mode === 'person') {
         let from = '', to = ''
@@ -1569,6 +1616,7 @@ function WorkJournalTab() {
         setSingleData(null)
         setShiftMapByDate(shifts)
         setDateActiveKeys(journal.days.map((_, i) => `pday-${i}`))
+        onStatsChange?.(_computeWJStats(journal.days))
         const names: string[] = []
         const seen = new Set<string>()
         journal.days.forEach(dy => dy.persons.forEach(p => {
@@ -1586,11 +1634,21 @@ function WorkJournalTab() {
     }
   }, [mode, year, month, day, rangeDates, monthDate, personSubMode, personRangeDates, personMonthDate, personFilter])
 
+  // 掛載時自動載入當月份統計，供上方摘要卡片立即顯示；不觸碰表格狀態
+  useEffect(() => {
+    const from = dayjs().startOf('month').format('YYYY-MM-DD')
+    const to   = dayjs().format('YYYY-MM-DD')
+    fetchWorkJournalRange(from, to)
+      .then(j => onStatsChange?.(_computeWJStats(j.days)))
+      .catch(() => {})
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   // 日期 pickers
   const renderPickers = () => {
     if (mode === 'single') return (
       <Space wrap>
-        <Text type="secondary" style={{ fontSize: 13 }}>查詢日期：</Text>
+        <Text type="secondary" style={{ fontSize: 15 }}>查詢日期：</Text>
         <Select value={year} onChange={v => setYear(v)} style={{ width: 90 }}
           options={Array.from({ length: 3 }, (_, i) => { const y = dayjs().year() - i; return { label: `${y} 年`, value: y } })} />
         <Select value={month} onChange={v => { setMonth(v); if (day > dayjs(`${year}-${String(v).padStart(2,'0')}-01`).daysInMonth()) setDay(1) }}
@@ -1601,7 +1659,7 @@ function WorkJournalTab() {
     )
     if (mode === 'range') return (
       <Space wrap>
-        <Text type="secondary" style={{ fontSize: 13 }}>查詢區間（最多 31 天）：</Text>
+        <Text type="secondary" style={{ fontSize: 15 }}>查詢區間（最多 31 天）：</Text>
         <DatePicker.RangePicker
           value={rangeDates}
           onChange={v => setRangeDates(v as [Dayjs, Dayjs] | null)}
@@ -1613,7 +1671,7 @@ function WorkJournalTab() {
     )
     if (mode === 'month') return (
       <Space wrap>
-        <Text type="secondary" style={{ fontSize: 13 }}>查詢月份：</Text>
+        <Text type="secondary" style={{ fontSize: 15 }}>查詢月份：</Text>
         <DatePicker
           picker="month"
           value={monthDate}
@@ -1668,12 +1726,12 @@ function WorkJournalTab() {
   // 結果摘要文字
   const renderSummary = () => {
     if (singleData) return (
-      <Text type="secondary" style={{ fontSize: 12 }}>
+      <Text type="secondary" style={{ fontSize: 14 }}>
         {singleData.date} ｜ 共 <Text strong>{singleData.total_rows}</Text> 筆
       </Text>
     )
     if (rangeData && mode !== 'person') return (
-      <Text type="secondary" style={{ fontSize: 12 }}>
+      <Text type="secondary" style={{ fontSize: 14 }}>
         {rangeData.date_from} ～ {rangeData.date_to} ｜ 共 <Text strong>{rangeData.total_rows}</Text> 筆（{rangeData.days.length} 天）
       </Text>
     )
@@ -1683,7 +1741,7 @@ function WorkJournalTab() {
         return acc + (p?.rows.length ?? 0)
       }, 0)
       return (
-        <Text type="secondary" style={{ fontSize: 12 }}>
+        <Text type="secondary" style={{ fontSize: 14 }}>
           <UserOutlined style={{ marginRight: 4 }} /><Text strong>{personFilter}</Text>
           　{rangeData.date_from} ～ {rangeData.date_to} ｜ 共 <Text strong>{personRows}</Text> 筆（{rangeData.days.length} 天）
         </Text>
@@ -1703,7 +1761,7 @@ function WorkJournalTab() {
     // 單日
     if (singleData) {
       if (singleData.total_rows === 0) return (
-        <div style={{ textAlign: 'center', paddingTop: 40, color: '#aaa', fontSize: 14 }}>
+        <div style={{ textAlign: 'center', paddingTop: 40, color: '#aaa', fontSize: 16 }}>
           {singleData.date} 無工作記錄
         </div>
       )
@@ -1719,7 +1777,7 @@ function WorkJournalTab() {
     // 人員模式
     if (mode === 'person' && rangeData) {
       if (!personFilter) return (
-        <div style={{ textAlign: 'center', paddingTop: 40, color: '#aaa', fontSize: 14 }}>
+        <div style={{ textAlign: 'center', paddingTop: 40, color: '#aaa', fontSize: 16 }}>
           請選擇人員後按下「查詢」
         </div>
       )
@@ -1731,20 +1789,28 @@ function WorkJournalTab() {
         .filter(daily => daily.persons.length > 0)
 
       if (filteredDays.length === 0) return (
-        <div style={{ textAlign: 'center', paddingTop: 40, color: '#aaa', fontSize: 14 }}>
+        <div style={{ textAlign: 'center', paddingTop: 40, color: '#aaa', fontSize: 16 }}>
           {personFilter} 在此區間內無工作記錄
         </div>
       )
       const personDateItems = filteredDays.map((daily, di) => {
-        const dayMin = daily.persons[0]?.rows.reduce((a, r) => a + (r.work_min ?? 0), 0) ?? 0
-        const rowCount = daily.persons[0]?.rows.length ?? 0
+        const personRows = daily.persons[0]?.rows ?? []
+        const dayMin = personRows.reduce((a, r) => a + (r.work_min ?? 0), 0)
+        const rowCount = personRows.length
         return {
           key: `pday-${di}`,
           label: (
-            <Space>
-              <Text strong style={{ fontSize: 14, color: '#1B3A5C' }}>{daily.date}</Text>
+            <Space wrap style={{ rowGap: 4 }}>
+              <Text strong style={{ fontSize: 16, color: '#1B3A5C' }}>{daily.date}</Text>
               <Tag color="blue">{rowCount} 項</Tag>
               {dayMin > 0 && <Tag color="geekblue">{dayMin} min</Tag>}
+              {CAT_COLS.map(cat => {
+                const cnt = personRows.filter(r => r.category === cat).length
+                return cnt > 0 ? (
+                  <Tag key={cat} color={CATEGORY_TAG_COLORS[cat] ?? 'default'}
+                       style={{ fontSize: 13, margin: 0 }}>{cat} {cnt}</Tag>
+                ) : null
+              })}
             </Space>
           ),
           children: (
@@ -1768,7 +1834,7 @@ function WorkJournalTab() {
     // 區間 / 整月
     if (rangeData) {
       if (rangeData.total_rows === 0) return (
-        <div style={{ textAlign: 'center', paddingTop: 40, color: '#aaa', fontSize: 14 }}>
+        <div style={{ textAlign: 'center', paddingTop: 40, color: '#aaa', fontSize: 16 }}>
           查詢區間內無工作記錄
         </div>
       )
@@ -1776,14 +1842,22 @@ function WorkJournalTab() {
         const totalWH = daily.persons.reduce(
           (acc, p) => acc + p.rows.reduce((a, r) => a + (r.work_min ?? 0), 0), 0
         )
+        const allRows = daily.persons.flatMap(p => p.rows)
         return {
           key: `day-${di}`,
           label: (
-            <Space>
-              <Text strong style={{ fontSize: 14, color: '#1B3A5C' }}>{daily.date}</Text>
+            <Space wrap style={{ rowGap: 4 }}>
+              <Text strong style={{ fontSize: 16, color: '#1B3A5C' }}>{daily.date}</Text>
               <Tag color="blue">{daily.total_rows} 筆</Tag>
               {totalWH > 0 && <Tag color="geekblue">{totalWH} min</Tag>}
-              <Text type="secondary" style={{ fontSize: 12 }}>{daily.persons.length} 位人員</Text>
+              <Text type="secondary" style={{ fontSize: 14 }}>{daily.persons.length} 位人員</Text>
+              {CAT_COLS.map(cat => {
+                const cnt = allRows.filter(r => r.category === cat).length
+                return cnt > 0 ? (
+                  <Tag key={cat} color={CATEGORY_TAG_COLORS[cat] ?? 'default'}
+                       style={{ fontSize: 13, margin: 0 }}>{cat} {cnt}</Tag>
+                ) : null
+              })}
             </Space>
           ),
           children: (
@@ -1805,7 +1879,7 @@ function WorkJournalTab() {
     }
 
     return (
-      <div style={{ textAlign: 'center', paddingTop: 40, color: '#aaa', fontSize: 14 }}>
+      <div style={{ textAlign: 'center', paddingTop: 40, color: '#aaa', fontSize: 16 }}>
         請選擇日期後按下「查詢」
       </div>
     )
@@ -1913,6 +1987,8 @@ export default function ExecWorkDashboardPage() {
   const [mallDailyData,    setMallDailyData]    = useState<MallDailyHoursData | null>(null)
   // 主管交辦／緊急事件 stats
   const [otherTasksStats, setOtherTasksStats] = useState<Record<string, OtherTaskTypeStat> | null>(null)
+  // 工作日誌 TAB 類別統計（從表格資料直接加總，確保上方摘要卡片與表格數字一致）
+  const [wjStats, setWjStats] = useState<WJStats>({})
   // 受控 Collapse activeKey（全收合/全展開用）
   // 頁籤狀態
   const [activeTab, setActiveTab] = useState<string>('overview')
@@ -2807,39 +2883,38 @@ export default function ExecWorkDashboardPage() {
             label: '工作日誌',
             children: (
               <>
-                {/* 主管交辦／緊急事件 本期摘要（hotel/other-tasks）*/}
+                {/* 主管交辦／緊急事件 本期摘要（來源：工作日誌表格加總）*/}
                 <Card
                   size="small"
-                  style={{ marginBottom: 12, borderLeft: '3px solid #722ed1' }}
+                  style={{ marginBottom: 12, borderLeft: `3px solid ${CATEGORY_COLOR['上級交辦']}` }}
                   bodyStyle={{ padding: '10px 16px' }}
                 >
                   <Row align="middle" gutter={[16, 8]}>
                     <Col flex="none">
                       <Text strong style={{ fontSize: 13, color: C.primary }}>
-                        <AlertOutlined style={{ marginRight: 6, color: '#722ed1' }} />
-                        主管交辦／緊急事件（{selectedYear} 年 {selectedMonth} 月）
+                        <AlertOutlined style={{ marginRight: 6, color: CATEGORY_COLOR['上級交辦'] }} />
+                        主管交辦／緊急事件
                       </Text>
                     </Col>
                     <Col flex="auto">
                       <Space size={20} wrap>
-                        <Space size={6}>
-                          <Tag color="#722ed1" style={{ margin: 0 }}>上級交辦</Tag>
-                          <Text strong style={{ color: '#722ed1', fontSize: 15 }}>
-                            {otherTasksStats?.['上級交辦']?.total ?? '—'} 件
-                          </Text>
-                          <Text type="secondary" style={{ fontSize: 13 }}>
-                            {otherTasksStats?.['上級交辦']?.work_hours ?? '—'} HR
-                          </Text>
-                        </Space>
-                        <Space size={6}>
-                          <Tag color="#cf1322" style={{ margin: 0 }}>緊急事件</Tag>
-                          <Text strong style={{ color: '#cf1322', fontSize: 15 }}>
-                            {otherTasksStats?.['緊急事件']?.total ?? '—'} 件
-                          </Text>
-                          <Text type="secondary" style={{ fontSize: 13 }}>
-                            {otherTasksStats?.['緊急事件']?.work_hours ?? '—'} HR
-                          </Text>
-                        </Space>
+                        {(['上級交辦', '緊急事件'] as const).map(cat => {
+                          const s = wjStats[cat]
+                          return (
+                            <Space key={cat} size={4} style={{ alignItems: 'baseline' }}>
+                              <Tag color={CATEGORY_TAG_COLORS[cat]} style={{ margin: 0 }}>{cat}</Tag>
+                              <Text strong style={{ color: CATEGORY_COLOR[cat], fontSize: 15 }}>
+                                {s ? s.cases : '—'} 件
+                              </Text>
+                              <Text type="secondary" style={{ fontSize: 12 }}>
+                                飯{s ? s.hotel.cases : 0} 場{s ? s.mall.cases : 0}
+                              </Text>
+                              <Text type="secondary" style={{ fontSize: 13 }}>
+                                {s ? `${s.hours} HR` : '—'}
+                              </Text>
+                            </Space>
+                          )
+                        })}
                         <Text
                           type="secondary"
                           style={{ fontSize: 11, cursor: 'pointer', textDecoration: 'underline' }}
@@ -2851,8 +2926,64 @@ export default function ExecWorkDashboardPage() {
                     </Col>
                   </Row>
                 </Card>
-                <WorkJournalTab />
+                {/* 現場報修 / 例行維護 / 每日巡檢 本期摘要（來源：工作日誌表格加總）*/}
+                {(() => {
+                  const CAT_DEFS: Array<{ key: keyof typeof CATEGORY_COLOR }> = [
+                    { key: '現場報修' },
+                    { key: '例行維護' },
+                    { key: '每日巡檢' },
+                  ]
+                  return (
+                    <Card
+                      size="small"
+                      style={{ marginBottom: 12, borderLeft: `3px solid ${CATEGORY_COLOR['現場報修']}` }}
+                      bodyStyle={{ padding: '10px 16px' }}
+                    >
+                      <Row align="middle" gutter={[16, 8]}>
+                        <Col flex="none">
+                          <Text strong style={{ fontSize: 13, color: C.primary }}>
+                            <ToolOutlined style={{ marginRight: 6, color: CATEGORY_COLOR['現場報修'] }} />
+                            工務作業
+                          </Text>
+                        </Col>
+                        <Col flex="auto">
+                          <Space size={20} wrap>
+                            {CAT_DEFS.map(({ key }) => {
+                              const s = wjStats[key]
+                              return (
+                                <Space key={key} size={4} style={{ alignItems: 'baseline' }}>
+                                  <Tag color={CATEGORY_TAG_COLORS[key]} style={{ margin: 0 }}>{key}</Tag>
+                                  <Text strong style={{ color: CATEGORY_COLOR[key], fontSize: 15 }}>
+                                    {s ? s.cases : '—'} 件
+                                  </Text>
+                                  <Text type="secondary" style={{ fontSize: 12 }}>
+                                    飯{s ? s.hotel.cases : 0} 場{s ? s.mall.cases : 0}
+                                  </Text>
+                                  <Text type="secondary" style={{ fontSize: 13 }}>
+                                    {s ? `${s.hours} HR` : '—'}
+                                  </Text>
+                                </Space>
+                              )
+                            })}
+                          </Space>
+                        </Col>
+                      </Row>
+                    </Card>
+                  )
+                })()}
+                <WorkJournalTab onStatsChange={setWjStats} />
               </>
+            ),
+          },
+          {
+            key: 'methodology',
+            label: '統計基準說明',
+            children: (
+              <iframe
+                src="/report-count-methodology.html"
+                style={{ width: '100%', height: 'calc(100vh - 180px)', border: 'none', borderRadius: 8 }}
+                title="統計基準說明"
+              />
             ),
           },
         ]}

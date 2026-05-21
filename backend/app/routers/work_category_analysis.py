@@ -41,6 +41,13 @@ from app.dependencies import get_current_user
 from app.models.luqun_repair import LuqunRepairCase
 from app.models.dazhi_repair import DazhiRepairCase
 from app.models.ihg_room_maintenance import IHGRoomMaintenanceMaster
+from app.models.hotel_daily_inspection import HotelDIBatch
+from app.models.mall_facility_inspection import MallFIBatch
+from app.models.b1f_inspection import B1FInspectionBatch
+from app.models.b2f_inspection import B2FInspectionBatch
+from app.models.b4f_inspection import B4FInspectionBatch
+from app.models.rf_inspection import RFInspectionBatch
+from app.services.time_utils import parse_minutes as _parse_di_minutes
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
 
@@ -54,6 +61,9 @@ SOURCE_LABELS = {
     "luqun":    "商場工務",
     "dazhi":    "大直工務",
     "ihg_room": "IHG客房保養",
+    "hotel_di": "飯店每日巡檢",
+    "mall_fi":  "商場設施巡檢",
+    "full_bi":  "整棟巡檢",
 }
 
 # 關鍵字 → 工項類別（先匹配者優先；hotel_room 強制「每日巡檢」）
@@ -197,12 +207,122 @@ def _load_all(db: Session, sources: set[str]) -> list[dict]:
                 "case_id":    rec.ragic_id,
             })
 
+    # ── 飯店每日巡檢 ──────────────────────────────────────────────────────────────
+    # 人員：inspector_name（巡檢人員）
+    # 日期：inspection_date "YYYY/MM/DD"
+    #       ⚠️ 某些 Sheet 的 start_time 存入的是完整日期時間 "2026/04/14 09:26"，
+    #          inspection_date 由 _extract_date(start_time) 產生，格式正確；
+    #          但若 start_time 只有時間 "09:26"，inspection_date 也只有 "09:26"
+    #          → _parse_hotel_date 回 None → 需 fallback 嘗試從 start_time 萃取日期
+    # 工時：start/end_time 可能含完整日期時間前綴，需取時間部分再解析
+    #       fallback：inspection 記錄的 work_hours 欄（Ragic 預算值）
+    def _time_only(s: str) -> str:
+        """'2026/04/14 09:26' → '09:26';  '09:26' → '09:26';  '' → ''"""
+        s = (s or "").strip()
+        return s.rsplit(" ", 1)[-1] if " " in s else s
+
+    if "hotel_di" in sources:
+        for b in db.query(HotelDIBatch).all():
+            # ── 日期解析（雙重 fallback）────────────────────────────────────────
+            yd = _parse_hotel_date(b.inspection_date) if b.inspection_date else None
+            if yd is None and b.start_time:
+                # start_time 含完整日期時間 "2026/04/14 09:26" 時可再嘗試
+                yd = _parse_hotel_date(b.start_time)
+            if not yd:
+                continue  # 完全無法取得日期，跳過
+
+            # ── 工時解析（雙重 fallback）────────────────────────────────────────
+            mins = _parse_di_minutes(
+                _time_only(b.start_time or ""),
+                _time_only(b.end_time   or ""),
+            )
+            if mins > 0:
+                hours = mins / 60.0
+            else:
+                # fallback：Ragic 預計算的工時欄（字串，視為小時數）
+                m = re.search(r"[\d.]+", b.work_hours or "")
+                hours = float(m.group()) if m else 0.0
+
+            rows.append({
+                "year":       yd[0],
+                "month":      yd[1],
+                "day":        yd[2],
+                "work_hours": hours,
+                "category":   "每日巡檢",
+                "person":     (b.inspector_name or "").strip() or "未指定",
+                "source":     "hotel_di",
+                "case_id":    b.ragic_id,
+            })
+
+    # ── 商場設施巡檢（MallFIBatch，5 張 Sheet，類別固定「每日巡檢」）────────────
+    if "mall_fi" in sources:
+        for b in db.query(MallFIBatch).all():
+            yd = _parse_hotel_date(b.inspection_date) if b.inspection_date else None
+            if yd is None and b.start_time:
+                yd = _parse_hotel_date(b.start_time)
+            if not yd:
+                continue
+            mins = _parse_di_minutes(
+                _time_only(b.start_time or ""),
+                _time_only(b.end_time   or ""),
+            )
+            if mins > 0:
+                hours = mins / 60.0
+            else:
+                m = re.search(r"[\d.]+", b.work_hours or "")
+                hours = float(m.group()) if m else 0.0
+            rows.append({
+                "year":       yd[0],
+                "month":      yd[1],
+                "day":        yd[2],
+                "work_hours": hours,
+                "category":   "每日巡檢",
+                "person":     (b.inspector_name or "").strip() or "未指定",
+                "source":     "mall_fi",
+                "case_id":    b.ragic_id,
+            })
+
+    # ── 整棟巡檢（B1F/B2F/B4F/RF，類別固定「每日巡檢」）────────────────────────
+    if "full_bi" in sources:
+        _BI_MODELS = [
+            (B1FInspectionBatch, "B1F 整棟巡檢"),
+            (B2FInspectionBatch, "B2F 整棟巡檢"),
+            (B4FInspectionBatch, "B4F 整棟巡檢"),
+            (RFInspectionBatch,  "RF 整棟巡檢"),
+        ]
+        for Model, label in _BI_MODELS:
+            for b in db.query(Model).all():
+                yd = _parse_hotel_date(b.inspection_date) if b.inspection_date else None
+                if yd is None and b.start_time:
+                    yd = _parse_hotel_date(b.start_time)
+                if not yd:
+                    continue
+                mins = _parse_di_minutes(
+                    _time_only(b.start_time or ""),
+                    _time_only(b.end_time   or ""),
+                )
+                if mins > 0:
+                    hours = mins / 60.0
+                else:
+                    m = re.search(r"[\d.]+", b.work_hours or "")
+                    hours = float(m.group()) if m else 0.0
+                rows.append({
+                    "year":       yd[0],
+                    "month":      yd[1],
+                    "day":        yd[2],
+                    "work_hours": hours,
+                    "category":   "每日巡檢",
+                    "person":     (b.inspector_name or "").strip() or "未指定",
+                    "source":     "full_bi",
+                    "case_id":    b.ragic_id,
+                })
+
     return rows
 
 
 def _parse_sources(sources_str: str) -> set[str]:
     if sources_str.strip().lower() == "all":
-        return {"luqun", "dazhi", "ihg_room"}
+        return {"luqun", "dazhi", "ihg_room", "hotel_di", "mall_fi", "full_bi"}
     return {s.strip() for s in sources_str.split(",") if s.strip()}
 
 
@@ -261,7 +381,7 @@ def _build_kpi(rows: list[dict], prev_rows: list[dict]) -> dict:
             "hours":  round(source_hours.get(s, 0), 1),
             "pct":    round(source_hours.get(s, 0) / total_hours * 100, 1) if total_hours else 0,
         }
-        for s in ["luqun", "dazhi", "ihg_room"]
+        for s in ["luqun", "dazhi", "ihg_room", "hotel_di", "mall_fi", "full_bi"]
         if source_hours.get(s, 0) > 0
     ]
 
@@ -327,13 +447,16 @@ def _build_category_breakdown(rows: list[dict]) -> list[dict]:
     """B. 類別占比（圓餅圖）。"""
     total = sum(r["work_hours"] for r in rows)
     cat_hours: dict[str, float] = defaultdict(float)
+    cat_cases: dict[str, int]   = defaultdict(int)
     for r in rows:
         cat_hours[r["category"]] += r["work_hours"]
+        cat_cases[r["category"]] += 1
     return [
         {
             "name":  c,
             "value": round(cat_hours.get(c, 0), 1),
             "pct":   round(cat_hours.get(c, 0) / total * 100, 1) if total else 0,
+            "cases": cat_cases.get(c, 0),
         }
         for c in CATEGORIES
     ]

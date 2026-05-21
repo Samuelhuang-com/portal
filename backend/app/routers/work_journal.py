@@ -31,6 +31,7 @@ from app.core.database import get_db
 from app.dependencies import get_current_user
 
 # ── Models ────────────────────────────────────────────────────────────────────
+from app.models.schedule                import ScheduleDetail, ShiftType
 from app.models.dazhi_repair            import DazhiRepairCase
 from app.models.luqun_repair            import LuqunRepairCase
 from app.models.periodic_maintenance    import PeriodicMaintenanceBatch, PeriodicMaintenanceItem
@@ -914,6 +915,38 @@ def export_work_journal_excel(
                     persons_order.append(pd["person"])
                     seen.add(pd["person"])
 
+    # ── 班別對照表：{ staff_name: { "YYYY-MM-DD": { name, start, end } } } ────────
+    # 查詢區間內所有相關人員的班表明細，join ShiftType 取名稱與時間
+    _shift_type_map: dict[str, dict] = {
+        s.code: {"name": s.name, "start": s.start_time, "end": s.end_time}
+        for s in db.query(ShiftType).filter(ShiftType.is_deleted == False).all()
+    }
+    _details = (
+        db.query(ScheduleDetail)
+        .filter(
+            ScheduleDetail.work_date >= start,
+            ScheduleDetail.work_date <= end,
+            ScheduleDetail.is_deleted == False,
+        )
+        .all()
+    )
+    # shift_lookup[staff_name][date_iso] = "班別名稱　HH:MM-HH:MM"
+    shift_lookup: dict[str, dict[str, str]] = {}
+    for _d in _details:
+        _sn = _d.staff_name
+        _ds = _d.work_date.isoformat()          # "2026-05-20"
+        _st = _shift_type_map.get(_d.shift_code, {})
+        _name  = _st.get("name", "") or _d.shift_code
+        _start = _d.start_time or _st.get("start", "")
+        _end   = _d.end_time   or _st.get("end",   "")
+        _time_range = f"{_start}-{_end}" if _start and _end else (_start or "")
+        _label = f"{_name}　{_time_range}".rstrip() if _time_range else _name
+        shift_lookup.setdefault(_sn, {})[_ds] = _label
+
+    def _shift_label(pname: str, date_iso: str) -> str:
+        """取某人某天的班別顯示字串，查不到回空字串。"""
+        return shift_lookup.get(pname, {}).get(date_iso, "")
+
     # ── openpyxl helpers ──────────────────────────────────────────────────────────
     from openpyxl.utils import get_column_letter
 
@@ -934,6 +967,27 @@ def export_work_journal_excel(
             if border_fn: cell.border    = border_fn(c)
         if height is not None:
             ws.row_dimensions[ri].height = height
+
+    # ── 飯店 / 商場 來源集合（供工作事項前綴用）────────────────────────────────────
+    _HOTEL_SRC = {"dazhi", "hotel_pm", "ihg", "hotel_di", "hotel_mr"}
+
+    def _venue_prefix(source: str) -> str:
+        return "飯：" if source in _HOTEL_SRC else "商："
+
+    def _row_height(task: str, remark: str, report: str) -> float:
+        import math
+        def _lines(text: str, col_w: float) -> int:
+            """估算折行數：依欄寬（Excel 字元單位），中文字算 2、ASCII 算 1；
+            文字中若含換行符則逐段計算後加總。"""
+            if not text:
+                return 1
+            total = 0
+            for seg in text.replace('\r\n', '\n').replace('\r', '\n').split('\n'):
+                w = sum(2 if ord(c) > 127 else 1 for c in seg)
+                total += max(1, math.ceil(w / col_w)) if w else 1
+            return total
+        max_lines = max(_lines(task, 46), _lines(remark, 22), _lines(report, 34))
+        return max(20.0, max_lines * 15.0) + 2
 
     # ── 樣式常數 ──────────────────────────────────────────────────────────────────
     NCOLS       = 13
@@ -988,7 +1042,14 @@ def export_work_journal_excel(
             ws.column_dimensions[get_column_letter(ci)].width = w
 
         # ── Row 1: 大標題 ─────────────────────────────────────────────────────────
-        title_val = f"{yyyymm_txt} 飯店每日工作日誌 - {pname}"
+        # 單日模式：人員名稱後附上班別名稱 + 上下班時間
+        if not is_multi_day:
+            _single_date_iso = start.isoformat()   # 單日 start == end
+            _sl = _shift_label(pname, _single_date_iso)
+            title_val = f"{yyyymm_txt} 飯店每日工作日誌 - {pname}　{_sl}".rstrip() if _sl \
+                        else f"{yyyymm_txt} 飯店每日工作日誌 - {pname}"
+        else:
+            title_val = f"{yyyymm_txt} 飯店每日工作日誌 - {pname}"
         c1 = ws.cell(row=1, column=1, value=title_val)
         c1.font = TITLE_FONT
         c1.alignment = CENTER
@@ -1070,9 +1131,14 @@ def export_work_journal_excel(
             if not person_rows_for_day:
                 continue
 
-            # 多日模式：日期分隔行
+            # 多日模式：日期分隔行（日期 + 當日班別名稱 + 上班時間）
             if is_multi_day:
-                date_cell = ws.cell(row=row_idx, column=1, value=f"  {daily['date']}")
+                # daily["date"] 格式 "2026/05/20" → 轉 ISO 查班別
+                _day_iso = daily["date"].replace("/", "-")
+                _sl = _shift_label(pname, _day_iso)
+                _sep_val = f"  {daily['date']}　{_sl}".rstrip() if _sl \
+                           else f"  {daily['date']}"
+                date_cell = ws.cell(row=row_idx, column=1, value=_sep_val)
                 date_cell.fill      = DATE_FILL
                 date_cell.font      = DATE_FONT
                 date_cell.alignment = LEFT
@@ -1115,8 +1181,9 @@ def export_work_journal_excel(
                     cell.font      = Font(size=10, bold=(mark == "✓"))
                     cell.border    = _border()
 
-                # 工作事項
-                g = ws.cell(row=row_idx, column=7, value=r.get("task", ""))
+                # 工作事項（前綴飯：/ 商：）
+                _task_val = _venue_prefix(r.get("source", "")) + r.get("task", "")
+                g = ws.cell(row=row_idx, column=7, value=_task_val)
                 g.alignment = LEFT
                 g.font      = Font(size=10)
                 g.border    = _border()
@@ -1157,7 +1224,11 @@ def export_work_journal_excel(
                 m_cell.font      = Font(size=10, color="D46B08") if r.get("report") else Font(size=10)
                 m_cell.border    = _border(r="medium")
 
-                ws.row_dimensions[row_idx].height = 24
+                ws.row_dimensions[row_idx].height = _row_height(
+                    _task_val,
+                    r.get("remark", "") or "",
+                    r.get("report", "") or "",
+                )
                 row_idx += 1
 
         # ── 合計行 ────────────────────────────────────────────────────────────────

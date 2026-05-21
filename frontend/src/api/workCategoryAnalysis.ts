@@ -11,13 +11,14 @@ const BASE = '/work-category-analysis'
 export const CATEGORIES = ['現場報修', '上級交辦', '緊急事件', '例行維護', '每日巡檢'] as const
 export type Category = typeof CATEGORIES[number]
 
-export const SOURCES = ['luqun', 'dazhi', 'hotel_room'] as const
+export const SOURCES = ['luqun', 'dazhi', 'hotel_room', 'hotel_di'] as const
 export type Source = typeof SOURCES[number]
 
 export const SOURCE_LABELS: Record<Source | string, string> = {
   luqun:      '商場工務',
   dazhi:      '大直工務',
   hotel_room: '房務保養',
+  hotel_di:   '飯店每日巡檢',
 }
 
 export const CATEGORY_COLORS: Record<string, string> = {
@@ -40,6 +41,7 @@ export const SOURCE_COLORS: Record<string, string> = {
   luqun:      '#1B3A5C',
   dazhi:      '#4BA8E8',
   hotel_room: '#722ED1',
+  hotel_di:   '#52C41A',
 }
 
 // ── 型別定義 ──────────────────────────────────────────────────────────────────
@@ -64,7 +66,7 @@ export interface ChartPoint {
   現場報修: number; 上級交辦: number; 緊急事件: number; 例行維護: number; 每日巡檢: number
 }
 
-export interface CategoryBreakdownItem { name: string; value: number; pct: number }
+export interface CategoryBreakdownItem { name: string; value: number; pct: number; cases: number }
 
 export interface PersonRankingItem {
   rank: number; person: string; hours: number; cases: number; avg_hr: number; pct: number

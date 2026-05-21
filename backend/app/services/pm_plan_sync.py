@@ -133,7 +133,7 @@ def _ragic_url(sheet_no: int, record_id: str) -> str:
 
 # ── 單一 Sheet 同步 ──────────────────────────────────────────────────────────
 
-def _sync_one_sheet(db, adapter: RagicAdapter, cfg: dict, stats: dict) -> None:
+async def _sync_one_sheet(db, cfg: dict, stats: dict) -> None:
     """同步單一主管排定 Sheet（含主表批次 + 子表格項目）"""
     sheet_no = cfg["sheet_no"]
     path     = cfg["path"]
@@ -141,9 +141,12 @@ def _sync_one_sheet(db, adapter: RagicAdapter, cfg: dict, stats: dict) -> None:
 
     logger.info("pm_plan_sync: 開始同步 Sheet %d (%s) path=%s", sheet_no, label, path)
 
+    # 每個 Sheet 使用獨立的 adapter（sheet_path 在 constructor 設定）
+    adapter = RagicAdapter(sheet_path=path)
+
     # ── Step 1：抓主表批次清單 ────────────────────────────────────────────────
     try:
-        batches_raw = adapter.fetch_all(path)
+        batches_raw = await adapter.fetch_all()
     except Exception as exc:
         logger.error("pm_plan_sync: Sheet %d 抓取失敗: %s", sheet_no, exc)
         stats["errors"] += 1
@@ -164,7 +167,7 @@ def _sync_one_sheet(db, adapter: RagicAdapter, cfg: dict, stats: dict) -> None:
 
         # 抓完整批次資料（含子表格）
         try:
-            full = adapter.fetch_one(path, batch_id)
+            full = await adapter.fetch_one(batch_id)
         except Exception as exc:
             logger.warning("pm_plan_sync: Sheet %d 批次 %s fetch_one 失敗: %s",
                            sheet_no, batch_id, exc)
@@ -224,20 +227,20 @@ def _sync_one_sheet(db, adapter: RagicAdapter, cfg: dict, stats: dict) -> None:
 
 # ── 公開同步函式 ─────────────────────────────────────────────────────────────
 
-def sync_from_ragic() -> dict:
+@register("週期保養預排")
+async def sync_from_ragic() -> dict:
     """
     同步三個主管排定 Sheet（/7、/13、/20）的預排資料到本地 SQLite。
 
     Returns:
         {"upserted": N, "errors": N}
     """
-    adapter = RagicAdapter(server=_SERVER, account=_ACCOUNT)
-    stats   = {"upserted": 0, "errors": 0}
+    stats = {"upserted": 0, "errors": 0}
 
     db = SessionLocal()
     try:
         for cfg in SHEET_CONFIGS:
-            _sync_one_sheet(db, adapter, cfg, stats)
+            await _sync_one_sheet(db, cfg, stats)
     except Exception as exc:
         logger.error("pm_plan_sync: 頂層例外 %s", exc, exc_info=True)
         stats["errors"] += 1
@@ -249,6 +252,3 @@ def sync_from_ragic() -> dict:
                 stats["upserted"], stats["errors"])
     return stats
 
-
-# ── 同步分發器註冊 ────────────────────────────────────────────────────────────
-register("週期保養預排", sync_from_ragic)

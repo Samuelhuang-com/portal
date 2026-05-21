@@ -1,10 +1,11 @@
 @echo off
 chcp 65001 >nul
+title Git Push Auto
 
-REM -- 防止雙擊閃退：用 cmd /k 重新開一個不會自關的視窗
+REM -- anti-close: open new window
 if not "%GIT_LAUNCHED%"=="1" (
     set GIT_LAUNCHED=1
-    cmd /k ""%~f0""
+    start "Git Push Auto" cmd /k ""%~f0""
     exit /b
 )
 
@@ -14,20 +15,20 @@ cd /d C:\OneDrive\_Ragic\portal
 
 echo.
 echo ==========================================
-powershell -NoProfile -Command "Write-Host '目前目錄：'"
+echo  Directory:
 cd
 echo ==========================================
 echo.
 
 REM -- clear stale index.lock
 if exist .git\index.lock (
-    powershell -NoProfile -Command "Write-Host '[WARN] 發現殘留 .git\index.lock，自動清除...' -ForegroundColor Yellow"
+    echo [WARN] Removing stale .git\index.lock...
     del /f .git\index.lock
-    powershell -NoProfile -Command "Write-Host '[OK] index.lock 已清除' -ForegroundColor Green"
+    echo [OK] index.lock removed
     echo.
 )
 
-REM -- get date YYYYMMDD
+REM -- get today YYYYMMDD
 for /f %%i in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd"') do set TODAY=%%i
 
 REM -- find max sequence number today
@@ -37,12 +38,15 @@ set SEQ=00%SEQ%
 set SEQ=%SEQ:~-3%
 set COMMIT_MSG=fix: %TODAY%-%SEQ%
 
-powershell -NoProfile -Command "Write-Host 'Commit Message: %COMMIT_MSG%' -ForegroundColor Cyan"
+echo Commit Message: %COMMIT_MSG%
 echo.
+
+REM -- force re-read all file contents (fixes OneDrive mtime issue)
+git update-index --really-refresh >nul 2>&1
 
 REM -- show changed files
 echo ==========================================
-powershell -NoProfile -Command "Write-Host '異動檔案清單：'"
+echo Changed files:
 echo ==========================================
 git status --short
 echo.
@@ -50,19 +54,19 @@ echo.
 REM -- check if anything changed
 for /f %%i in ('git status --porcelain ^| find /c /v ""') do set CHANGED=%%i
 if "%CHANGED%"=="0" (
-    powershell -NoProfile -Command "Write-Host '沒有偵測到任何檔案變動，不需要 commit。' -ForegroundColor Yellow"
+    echo No changes detected. Nothing to commit.
     echo.
     pause
     exit /b 0
 )
 
-REM -- git add
-echo ==========================================
-echo git add .
-echo ==========================================
-git add .
+REM -- git add (double-add for OneDrive reliability)
+git add -A
+git update-index --really-refresh >nul 2>&1
+git add -A
+
 if errorlevel 1 (
-    powershell -NoProfile -Command "Write-Host '[ERROR] git add 失敗！' -ForegroundColor Red"
+    echo [ERROR] git add failed!
     pause
     exit /b 1
 )
@@ -70,41 +74,45 @@ if errorlevel 1 (
 REM -- show what will be committed
 echo.
 echo ==========================================
-powershell -NoProfile -Command "Write-Host '即將 commit 的檔案：'"
+echo Files to be committed:
 echo ==========================================
+git diff --cached --name-status
+echo.
 git diff --cached --stat
 echo.
 
+REM -- check staged is not empty
+for /f %%i in ('git diff --cached --name-only ^| find /c /v ""') do set STAGED=%%i
+if "%STAGED%"=="0" (
+    echo [WARN] Nothing staged. Aborting.
+    pause
+    exit /b 0
+)
+
 REM -- git commit
-echo ==========================================
-echo git commit
-echo ==========================================
 git commit -m "%COMMIT_MSG%"
 if errorlevel 1 (
-    powershell -NoProfile -Command "Write-Host 'Commit 失敗，請檢查錯誤訊息。' -ForegroundColor Red"
+    echo [ERROR] Commit failed!
     pause
     exit /b 1
 )
 
 REM -- git push
 echo.
-echo ==========================================
-echo git push
-echo ==========================================
 git push origin main
 if errorlevel 1 (
-    powershell -NoProfile -Command "Write-Host 'Push 失敗，請檢查 GitHub 權限或網路。' -ForegroundColor Red"
+    echo [ERROR] Push failed! Check GitHub credentials or network.
     pause
     exit /b 1
 )
 
-REM -- done: show latest commits
+REM -- done
 echo.
 echo ==========================================
-powershell -NoProfile -Command "Write-Host '完成！已推上 GitHub' -ForegroundColor Green"
+echo Done! Pushed to GitHub: %COMMIT_MSG%
 echo ==========================================
 echo.
-powershell -NoProfile -Command "Write-Host '最新 5 筆 commit：'"
+echo Latest 5 commits:
 git log --oneline -5
 echo.
 echo ==========================================

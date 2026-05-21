@@ -871,12 +871,13 @@ class SyncApp(tk.Tk):
                 if isinstance(result, dict):
                     fetched   = result.get("fetched",  0)
                     upserted  = result.get("upserted", 0)
-                    errors    = result.get("errors",   [])
-                    err_count = len(errors)
+                    _e        = result.get("errors",   0)
+                    # 相容 int（計數）或 list（明細）兩種格式
+                    err_count = _e if isinstance(_e, int) else len(_e)
                 else:
-                    errors = []
+                    err_count = 0
 
-                if errors:
+                if err_count > 0:
                     status = "partial"
                     logger.warning(
                         f"  ✗ {name}：fetched={fetched}, "
@@ -1084,9 +1085,10 @@ class SyncApp(tk.Tk):
             if isinstance(result, dict):
                 fetched   = result.get("fetched",  0)
                 upserted  = result.get("upserted", 0)
-                errors    = result.get("errors",   [])
-                err_count = len(errors)
-                if errors:
+                _e        = result.get("errors",   0)
+                # 相容 int（計數）或 list（明細）兩種格式
+                err_count = _e if isinstance(_e, int) else len(_e)
+                if err_count > 0:
                     status = "partial"
         except Exception as exc:
             duration  = round((datetime.now() - t0).total_seconds(), 2)

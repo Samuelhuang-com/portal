@@ -72,7 +72,9 @@ SESSION_FIELDS = {
 
 # 常用的場次欄位 key（候選清單，sync 時逐一嘗試）
 INSPECTOR_CANDIDATES  = ["巡檢人員", "工務人員", "保全人員"]
-START_TIME_CANDIDATES = ["開始巡檢時間", "開始時間", "巡檢開始時間", "巡檢日期", "日期"]
+# ⚠️  "巡檢日期"/"日期" 只含日期，不能拿來當 start_time → 移到獨立的 DATE_CANDIDATES
+START_TIME_CANDIDATES = ["開始巡檢時間", "開始時間", "巡檢開始時間"]
+DATE_CANDIDATES       = ["巡檢日期", "日期"]          # 專用日期欄（YYYY/MM/DD）
 END_TIME_CANDIDATES   = ["巡檢結束時間", "結束時間", "結束巡檢時間"]
 WORK_HOURS_CANDIDATES = ["工時計算"]
 
@@ -134,6 +136,34 @@ def _pick_field(raw: dict, candidates: list[str]) -> str:
         val = _stringify(raw.get(key, ""))
         if val:
             return val
+    return ""
+
+
+def _is_date_str(s: str) -> bool:
+    """判斷字串是否為合法日期格式（YYYY/MM/DD 或 YYYY-MM-DD）。"""
+    parts = (s or "").replace("-", "/").split("/")
+    return len(parts) == 3 and len(parts[0]) == 4
+
+
+def _best_date(raw: dict, start_raw: str) -> str:
+    """
+    優先從 DATE_CANDIDATES（巡檢日期/日期）取日期字串；
+    若無，則嘗試從 start_raw 萃取；都失敗回傳空字串。
+
+    解決問題：某些 Sheet「開始巡檢時間」只存時間 "09:26"（無日期），
+    此時 _extract_date("09:26") 回傳 "09:26"（非合法日期），
+    必須另外從專用日期欄取值。
+    """
+    # 1. 優先從專用日期欄取
+    date_raw = _pick_field(raw, DATE_CANDIDATES)
+    if date_raw:
+        d = _extract_date(date_raw)
+        if _is_date_str(d):
+            return d
+    # 2. 從開始時間萃取（時間含完整日期時間時有效，如 "2026/05/09 09:26"）
+    d = _extract_date(start_raw)
+    if _is_date_str(d):
+        return d
     return ""
 
 
@@ -216,7 +246,7 @@ async def sync_sheet(sheet_key: str) -> dict:
                     ragic_id        = batch_id,
                     sheet_key       = sheet_key,
                     sheet_name      = sheet_name,
-                    inspection_date = _extract_date(start_raw),
+                    inspection_date = _best_date(raw, start_raw),   # ← 修正：優先從日期欄取
                     inspector_name  = _pick_field(raw, INSPECTOR_CANDIDATES),
                     start_time      = start_raw,
                     end_time        = _pick_field(raw, END_TIME_CANDIDATES),
