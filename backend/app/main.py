@@ -1502,4 +1502,9 @@ if _FRONTEND_DIST.exists():
 
     @app.get("/{full_path:path}", include_in_schema=False)
     async def spa_fallback(full_path: str):
+        # 若 dist 中存在對應的實體檔案（例如靜態 HTML 頁面），直接回傳；
+        # 否則一律回傳 index.html 讓前端 Router 處理（SPA 模式）
+        candidate = _FRONTEND_DIST / full_path
+        if candidate.is_file():
+            return FileResponse(candidate)
         return FileResponse(_FRONTEND_DIST / "index.html")

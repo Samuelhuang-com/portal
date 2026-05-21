@@ -166,19 +166,22 @@ function HomeRedirect() {
     return <Navigate to={stored ?? '/dashboard'} replace />
   }
 
-  // 非 admin：先算出此使用者可以進入的路由清單
+  // stored route：使用者在 menu-config 明確設定的首頁，直接信任並採用。
+  // 頁面層的 PermissionGuard 會處理無權限情況；登出時已清除跨帳號的殘留設定。
+  // ⚠️  不再做白名單比對——PERM_DEFAULT_ROUTES 只涵蓋預設路由，自訂路由或重新命名的
+  //     路由都可能不在清單中，導致設定完全無效。
+  if (stored) {
+    return <Navigate to={stored} replace />
+  }
+
+  // 無首頁設定：依優先序選第一個有權限的 route
   const perms = user?.permissions ?? []
   const hasWildcard = perms.includes('*')
   const validRoutes = PERM_DEFAULT_ROUTES
     .filter(({ key }) => hasWildcard || perms.includes(key))
     .map(({ route }) => route)
 
-  // stored route 只有在使用者有權限時才採用（避免跨帳號殘留的首頁設定把人導到沒權限的頁面）
-  if (stored && validRoutes.some((r) => stored === r || stored.startsWith(r + '/'))) {
-    return <Navigate to={stored} replace />
-  }
-
-  // 依優先序選第一個有權限的 route；若真的什麼都沒有，進 /dashboard（no-permission screen 會顯示）
+  // 若真的什麼都沒有，進 /dashboard（no-permission screen 會顯示）
   return <Navigate to={validRoutes[0] ?? '/dashboard'} replace />
 }
 
