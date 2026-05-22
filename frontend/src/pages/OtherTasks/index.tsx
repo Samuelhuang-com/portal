@@ -7,6 +7,7 @@
  * 遵守 CLAUDE.md Drawer Detail 強制規範
  */
 import React, { useState, useEffect, useCallback } from 'react'
+import { useLocation } from 'react-router-dom'
 import {
   Row, Col, Card, Table, Tag, Button, Space,
   Typography, Select, Tabs,
@@ -20,7 +21,7 @@ import {
 } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 
-import { fetchYears, fetchFilterOptions, fetchDetail, fetchDbImages } from '@/api/otherTasks'
+import { fetchYears, fetchFilterOptions, fetchDetail, fetchDbImages, fetchOtherTaskStats } from '@/api/otherTasks'
 import type { OtherTask, OtherTaskFilterOptions, OtherTaskImage } from '@/types/otherTasks'
 
 const { Title, Text } = Typography
@@ -58,18 +59,33 @@ const fmtHours = (h: number | null | undefined) => {
 // 主元件
 // ═════════════════════════════════════════════════════════════════════════════
 export default function OtherTasksPage() {
+  const { pathname } = useLocation()
+
+  // 依路徑前綴決定預設歸屬篩選
+  const defaultVenue: string | undefined =
+    pathname.startsWith('/hotel') ? '飯店' :
+    pathname.startsWith('/mall')  ? '商場' :
+    undefined
+
   // ── 篩選狀態 ────────────────────────────────────────────────────────────────
   const [years, setYears] = useState<number[]>([])
   const [filterOptions, setFilterOptions] = useState<OtherTaskFilterOptions>({
-    statuses: [], supervisors: [], engineers: [],
+    statuses: [], supervisors: [], engineers: [], venues: [],
   })
   const [selectedYear,       setSelectedYear]       = useState<number | undefined>(undefined)
   const [selectedMonth,      setSelectedMonth]      = useState<number | undefined>(undefined)
   const [selectedStatus,     setSelectedStatus]     = useState<string | undefined>(undefined)
   const [selectedSupervisor, setSelectedSupervisor] = useState<string | undefined>(undefined)
   const [selectedEngineer,   setSelectedEngineer]   = useState<string | undefined>(undefined)
+  const [selectedVenue,      setSelectedVenue]      = useState<string | undefined>(defaultVenue)
   const [search,             setSearch]             = useState<string>('')
   const [activeTab,          setActiveTab]          = useState<string>('上級交辦')
+
+  // ── TAB 小計計數 ─────────────────────────────────────────────────────────────
+  const [tabCounts, setTabCounts] = useState<Record<string, number>>({
+    '上級交辦': 0,
+    '緊急事件': 0,
+  })
 
   // ── 表格狀態 ────────────────────────────────────────────────────────────────
   const [loading,  setLoading]  = useState(false)
@@ -83,6 +99,40 @@ export default function OtherTasksPage() {
   const [drawerRecord, setDrawerRecord] = useState<OtherTask | null>(null)
   const [drawerImages, setDrawerImages] = useState<OtherTaskImage[]>([])
   const [imagesLoading, setImagesLoading] = useState(false)
+
+  // ── TAB 小計載入（隨全部篩選自動重算）────────────────────────────────────────
+  const loadCounts = useCallback(() => {
+    fetchOtherTaskStats({
+      year:       selectedYear,
+      month:      selectedMonth,
+      status:     selectedStatus,
+      supervisor: selectedSupervisor,
+      engineer:   selectedEngineer,
+      venue:      selectedVenue,
+      search:     search || undefined,
+    })
+      .then(stats => {
+        setTabCounts({
+          '上級交辦': stats['上級交辦']?.total ?? 0,
+          '緊急事件': stats['緊急事件']?.total ?? 0,
+        })
+      })
+      .catch(() => {})
+  }, [selectedYear, selectedMonth, selectedStatus, selectedSupervisor,
+      selectedEngineer, selectedVenue, search])
+
+  // 任何篩選變動時自動重算小計
+  useEffect(() => { loadCounts() }, [loadCounts])
+
+  // ── 路徑切換時同步預設歸屬（防止同元件 re-render 不重設 state）──────────────
+  useEffect(() => {
+    const venue =
+      pathname.startsWith('/hotel') ? '飯店' :
+      pathname.startsWith('/mall')  ? '商場' :
+      undefined
+    setSelectedVenue(venue)
+    setPage(1)
+  }, [pathname])
 
   // ── 初始化 ───────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -106,6 +156,7 @@ export default function OtherTasksPage() {
         status:     selectedStatus,
         supervisor: selectedSupervisor,
         engineer:   selectedEngineer,
+        venue:      selectedVenue,
         search:     search || undefined,
         page:       currentPage,
         page_size:  pageSize,
@@ -120,7 +171,7 @@ export default function OtherTasksPage() {
       setLoading(false)
     }
   }, [activeTab, selectedYear, selectedMonth, selectedStatus,
-      selectedSupervisor, selectedEngineer, search, page, pageSize])
+      selectedSupervisor, selectedEngineer, selectedVenue, search, page, pageSize])
 
   useEffect(() => { loadData() }, [loadData])
 
@@ -147,6 +198,14 @@ export default function OtherTasksPage() {
 
   // ── 表格欄位定義 ─────────────────────────────────────────────────────────────
   const columns: ColumnsType<OtherTask> = [
+    {
+      title: '歸屬',
+      dataIndex: 'venue',
+      width: 80,
+      render: (v: string) => v
+        ? <Tag color={v === '飯店' ? '#1565C0' : '#2E7D32'} style={{ margin: 0 }}>{v}</Tag>
+        : <span style={{ color: '#bbb' }}>—</span>,
+    },
     {
       title: '建立日期',
       dataIndex: 'created_at',
@@ -268,6 +327,21 @@ export default function OtherTasksPage() {
           {filterOptions.engineers.map(e => <Option key={e} value={e}>{e}</Option>)}
         </Select>
       </Col>
+      <Col>
+        <Select
+          placeholder="歸屬"
+          allowClear
+          style={{ width: 90 }}
+          value={selectedVenue}
+          onChange={(v) => { setSelectedVenue(v); setPage(1) }}
+        >
+          {(filterOptions.venues ?? ['飯店', '商場']).map(v => (
+            <Option key={v} value={v}>
+              <Tag color={v === '飯店' ? '#1565C0' : '#2E7D32'} style={{ margin: 0 }}>{v}</Tag>
+            </Option>
+          ))}
+        </Select>
+      </Col>
       <Col flex="1">
         <Search
           placeholder="搜尋問題說明、備註"
@@ -350,7 +424,11 @@ export default function OtherTasksPage() {
     const d = drawerRecord.detail
 
     // 基本欄位
+    const venueVal = d['歸屬'] || drawerRecord.venue || ''
     const basicItems = [
+      { label: '歸屬',       children: venueVal
+          ? <Tag color={venueVal === '飯店' ? '#1565C0' : '#2E7D32'}>{venueVal}</Tag>
+          : <span style={{ color: '#bbb' }}>—</span> },
       { label: '屬性',       children: <Tag color={drawerRecord.task_type === '緊急事件' ? '#c0392b' : '#1B3A5C'}>{d['屬性'] || '—'}</Tag> },
       { label: '交辦主管',   children: d['交辦主管'] || '—' },
       { label: '工程人員',   children: d['工程人員'] || '—' },
@@ -461,8 +539,13 @@ export default function OtherTasksPage() {
               <Space>
                 {tab.icon}
                 {tab.label}
-                {activeTab === tab.key && total > 0 && (
-                  <Badge count={total} size="small" style={{ backgroundColor: tab.key === '緊急事件' ? '#c0392b' : '#1B3A5C' }} />
+                {tabCounts[tab.key] > 0 && (
+                  <Badge
+                    count={tabCounts[tab.key]}
+                    size="small"
+                    style={{ backgroundColor: tab.key === '緊急事件' ? '#c0392b' : '#1B3A5C' }}
+                    overflowCount={999}
+                  />
                 )}
               </Space>
             ),

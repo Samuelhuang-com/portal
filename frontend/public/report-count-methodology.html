@@ -1,201 +1,467 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="zh-Hant">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>工務報修件數統計基準說明</title>
-<style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: 'Noto Sans TC', 'PingFang TC', 'Microsoft JhengHei', sans-serif; background: #f7f8fa; color: #1a1a2e; line-height: 1.7; }
-  .page { max-width: 100%; margin: 0 auto; padding: 40px 75px 60px; }
-  h1 { font-size: 25px; font-weight: 600; color: #1B3A5C; margin-bottom: 6px; }
-  .subtitle { font-size: 17px; color: #666; margin-bottom: 36px; border-bottom: 1px solid #e2e6ec; padding-bottom: 16px; }
-  .intro { background: #fff; border-radius: 10px; border: 1px solid #e2e6ec; padding: 20px 24px; margin-bottom: 32px; font-size: 17px; color: #444; }
-  .intro strong { color: #1B3A5C; }
-  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 32px; }
-  @media (max-width: 680px) { .cards { grid-template-columns: 1fr; } }
-  .card { background: #fff; border-radius: 10px; border: 1px solid #e2e6ec; padding: 20px; }
-  .card-badge { display: inline-block; font-size: 14px; font-weight: 600; padding: 3px 10px; border-radius: 20px; margin-bottom: 12px; }
-  .badge-journal  { background: #e8f4fd; color: #1565C0; }
-  .badge-analysis { background: #fef3e2; color: #9E5000; }
-  .badge-dashboard{ background: #e8f5e9; color: #2E7D32; }
-  .card h2 { font-size: 18px; font-weight: 600; color: #1B3A5C; margin-bottom: 6px; }
-  .card .api { font-size: 14px; color: #888; font-family: 'Courier New', monospace; background: #f5f5f5; padding: 2px 6px; border-radius: 4px; display: inline-block; margin-bottom: 12px; }
-  .card .rule-label { font-size: 15px; font-weight: 600; color: #888; text-transform: uppercase; letter-spacing: 0.5px; margin: 10px 0 4px; }
-  .card .rule-value { font-size: 16px; color: #333; margin-bottom: 4px; }
-  .card .rule-value.highlight { color: #1B3A5C; font-weight: 600; }
-  .card .number-row { display: flex; gap: 12px; margin-top: 14px; padding-top: 14px; border-top: 1px dashed #e2e6ec; }
-  .card .num-block { flex: 1; text-align: center; }
-  .card .num-block .venue { font-size: 14px; color: #888; margin-bottom: 3px; }
-  .card .num-block .val { font-size: 25px; font-weight: 700; }
-  .card .num-block .val.hotel { color: #1B3A5C; }
-  .card .num-block .val.mall  { color: #4BA8E8; }
-  .card .num-block .val.total { color: #333; }
-  .section-title { font-size: 14px; font-weight: 700; letter-spacing: 1px; color: #888; text-transform: uppercase; margin-bottom: 12px; }
-  .diff-section h2, .reason-section h2 { font-size: 19px; font-weight: 600; color: #1B3A5C; margin-bottom: 16px; }
-  .diff-table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 10px; overflow: hidden; border: 1px solid #e2e6ec; font-size: 16px; margin-bottom: 32px; }
-  .diff-table thead th { background: #1B3A5C; color: #fff; padding: 10px 14px; text-align: left; font-weight: 500; }
-  .diff-table thead th:not(:first-child) { text-align: center; }
-  .diff-table tbody td { padding: 10px 14px; border-bottom: 1px solid #f0f2f5; color: #333; }
-  .diff-table tbody td:not(:first-child) { text-align: center; }
-  .diff-table tbody tr:last-child td { border-bottom: none; background: #f7f9fc; }
-  .diff-table .match { color: #2E7D32; font-weight: 600; }
-  .diff-table .diff  { color: #C62828; font-weight: 600; }
-  .diff-table .dim   { color: #999; }
-  .reasons { display: flex; flex-direction: column; gap: 12px; margin-bottom: 32px; }
-  .reason { background: #fff; border-radius: 10px; border-left: 4px solid #4BA8E8; border-top: 1px solid #e2e6ec; border-right: 1px solid #e2e6ec; border-bottom: 1px solid #e2e6ec; padding: 14px 18px; }
-  .reason .reason-title { font-size: 17px; font-weight: 600; color: #1B3A5C; margin-bottom: 6px; }
-  .reason .reason-body { font-size: 16px; color: #444; line-height: 1.7; }
-  .reason .reason-body code { background: #f0f2f5; padding: 1px 5px; border-radius: 3px; font-family: monospace; font-size: 15px; color: #555; }
-  .conclusion { background: #EBF4FF; border-radius: 10px; border: 1px solid #bdd9f5; padding: 18px 22px; }
-  .conclusion h2 { font-size: 18px; font-weight: 600; color: #1B3A5C; margin-bottom: 10px; }
-  .conclusion p { font-size: 16px; color: #2d4a6a; line-height: 1.8; }
-  .footer { margin-top: 40px; font-size: 15px; color: #aaa; text-align: center; border-top: 1px solid #e2e6ec; padding-top: 16px; }
-</style>
-</head>
-<body>
-<div class="page">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>工務報修件數統計基準說明</title>
+    <style>
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        font-family:
+          "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+        background: #f7f8fa;
+        color: #1a1a2e;
+        line-height: 1.7;
+      }
+      .page {
+        max-width: 100%;
+        margin: 0 auto;
+        padding: 40px 75px 60px;
+      }
+      h1 {
+        font-size: 25px;
+        font-weight: 600;
+        color: #1b3a5c;
+        margin-bottom: 6px;
+      }
+      .subtitle {
+        font-size: 17px;
+        color: #666;
+        margin-bottom: 36px;
+        border-bottom: 1px solid #e2e6ec;
+        padding-bottom: 16px;
+      }
+      .intro {
+        background: #fff;
+        border-radius: 10px;
+        border: 1px solid #e2e6ec;
+        padding: 20px 24px;
+        margin-bottom: 32px;
+        font-size: 17px;
+        color: #444;
+      }
+      .intro strong {
+        color: #1b3a5c;
+      }
+      .cards {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 16px;
+        margin-bottom: 32px;
+      }
+      @media (max-width: 680px) {
+        .cards {
+          grid-template-columns: 1fr;
+        }
+      }
+      .card {
+        background: #fff;
+        border-radius: 10px;
+        border: 1px solid #e2e6ec;
+        padding: 20px;
+      }
+      .card-badge {
+        display: inline-block;
+        font-size: 14px;
+        font-weight: 600;
+        padding: 3px 10px;
+        border-radius: 20px;
+        margin-bottom: 12px;
+      }
+      .badge-journal {
+        background: #e8f4fd;
+        color: #1565c0;
+      }
+      .badge-analysis {
+        background: #fef3e2;
+        color: #9e5000;
+      }
+      .badge-dashboard {
+        background: #e8f5e9;
+        color: #2e7d32;
+      }
+      .card h2 {
+        font-size: 18px;
+        font-weight: 600;
+        color: #1b3a5c;
+        margin-bottom: 6px;
+      }
+      .card .api {
+        font-size: 14px;
+        color: #888;
+        font-family: "Courier New", monospace;
+        background: #f5f5f5;
+        padding: 2px 6px;
+        border-radius: 4px;
+        display: inline-block;
+        margin-bottom: 12px;
+      }
+      .card .rule-label {
+        font-size: 15px;
+        font-weight: 600;
+        color: #888;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin: 10px 0 4px;
+      }
+      .card .rule-value {
+        font-size: 16px;
+        color: #333;
+        margin-bottom: 4px;
+      }
+      .card .rule-value.highlight {
+        color: #1b3a5c;
+        font-weight: 600;
+      }
+      .card .number-row {
+        display: flex;
+        gap: 12px;
+        margin-top: 14px;
+        padding-top: 14px;
+        border-top: 1px dashed #e2e6ec;
+      }
+      .card .num-block {
+        flex: 1;
+        text-align: center;
+      }
+      .card .num-block .venue {
+        font-size: 14px;
+        color: #888;
+        margin-bottom: 3px;
+      }
+      .card .num-block .val {
+        font-size: 25px;
+        font-weight: 700;
+      }
+      .card .num-block .val.hotel {
+        color: #1b3a5c;
+      }
+      .card .num-block .val.mall {
+        color: #4ba8e8;
+      }
+      .card .num-block .val.total {
+        color: #333;
+      }
+      .section-title {
+        font-size: 14px;
+        font-weight: 700;
+        letter-spacing: 1px;
+        color: #888;
+        text-transform: uppercase;
+        margin-bottom: 12px;
+      }
+      .diff-section h2,
+      .reason-section h2 {
+        font-size: 19px;
+        font-weight: 600;
+        color: #1b3a5c;
+        margin-bottom: 16px;
+      }
+      .diff-table {
+        width: 100%;
+        border-collapse: collapse;
+        background: #fff;
+        border-radius: 10px;
+        overflow: hidden;
+        border: 1px solid #e2e6ec;
+        font-size: 16px;
+        margin-bottom: 32px;
+      }
+      .diff-table thead th {
+        background: #1b3a5c;
+        color: #fff;
+        padding: 10px 14px;
+        text-align: left;
+        font-weight: 500;
+      }
+      .diff-table thead th:not(:first-child) {
+        text-align: center;
+      }
+      .diff-table tbody td {
+        padding: 10px 14px;
+        border-bottom: 1px solid #f0f2f5;
+        color: #333;
+      }
+      .diff-table tbody td:not(:first-child) {
+        text-align: center;
+      }
+      .diff-table tbody tr:last-child td {
+        border-bottom: none;
+        background: #f7f9fc;
+      }
+      .diff-table .match {
+        color: #2e7d32;
+        font-weight: 600;
+      }
+      .diff-table .diff {
+        color: #c62828;
+        font-weight: 600;
+      }
+      .diff-table .dim {
+        color: #999;
+      }
+      .reasons {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        margin-bottom: 32px;
+      }
+      .reason {
+        background: #fff;
+        border-radius: 10px;
+        border-left: 4px solid #4ba8e8;
+        border-top: 1px solid #e2e6ec;
+        border-right: 1px solid #e2e6ec;
+        border-bottom: 1px solid #e2e6ec;
+        padding: 14px 18px;
+      }
+      .reason .reason-title {
+        font-size: 17px;
+        font-weight: 600;
+        color: #1b3a5c;
+        margin-bottom: 6px;
+      }
+      .reason .reason-body {
+        font-size: 16px;
+        color: #444;
+        line-height: 1.7;
+      }
+      .reason .reason-body code {
+        background: #f0f2f5;
+        padding: 1px 5px;
+        border-radius: 3px;
+        font-family: monospace;
+        font-size: 15px;
+        color: #555;
+      }
+      .conclusion {
+        background: #ebf4ff;
+        border-radius: 10px;
+        border: 1px solid #bdd9f5;
+        padding: 18px 22px;
+      }
+      .conclusion h2 {
+        font-size: 18px;
+        font-weight: 600;
+        color: #1b3a5c;
+        margin-bottom: 10px;
+      }
+      .conclusion p {
+        font-size: 16px;
+        color: #2d4a6a;
+        line-height: 1.8;
+      }
+      .footer {
+        margin-top: 40px;
+        font-size: 15px;
+        color: #aaa;
+        text-align: center;
+        border-top: 1px solid #e2e6ec;
+        padding-top: 16px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <h1>工務報修件數——統計基準說明</h1>
+      <p class="subtitle">
+        Portal
+        系統各模組採用不同統計基準，同一筆資料在不同頁面呈現的件數可能不同，本文件說明原因。
+      </p>
 
-  <h1>工務報修件數——統計基準說明</h1>
-  <p class="subtitle">Portal 系統各模組採用不同統計基準，同一筆資料在不同頁面呈現的件數可能不同，本文件說明原因。</p>
-
-  <div class="intro">
-    <strong>為什麼同樣是「現場報修」，三個地方的數字不一樣？</strong><br>
-    因為三個頁面量的是不同的事——一個量「何時報修」、一個量「何時完工」、一個量「當月工作隊列有多大」。三種統計基準各有其用途，數字不同是正確行為。
-  </div>
-
-  <p class="section-title">三種統計基準</p>
-  <div class="cards">
-
-    <div class="card">
-      <span class="card-badge badge-journal">① 工作日誌 TAB</span>
-      <h2>報修日統計基準</h2>
-      <span class="api">工作日誌 / 查詢區間</span>
-      <div class="rule-label">日期基準</div>
-      <div class="rule-value highlight">occurred_at（報修日）</div>
-      <div class="rule-label">過濾條件</div>
-      <div class="rule-value">落在使用者選擇的查詢期間</div>
-      <div class="rule-value">所有案件，無工時要求</div>
-      <div class="rule-label">語義</div>
-      <div class="rule-value">「這段期間<strong>新發生</strong>的報修」</div>
-      <div class="number-row">
-        <div class="num-block"><div class="venue">飯店</div><div class="val hotel">189</div></div>
-        <div class="num-block"><div class="venue">商場</div><div class="val mall">53</div></div>
-        <div class="num-block"><div class="venue">合計</div><div class="val total">242</div></div>
+      <div class="intro">
+        <strong>為什麼同樣是「現場報修」，三個地方的數字不一樣？</strong><br />
+        因為三個頁面量的是不同的事——一個量「何時報修」、一個量「何時完工」、一個量「當月工作隊列有多大」。三種統計基準各有其用途，數字不同是正確行為。
       </div>
-    </div>
 
-    <div class="card">
-      <span class="card-badge badge-analysis">② 集團工務概覽</span>
-      <h2>完工月統計基準</h2>
-      <span class="api">飯店／商場工項類別比較</span>
-      <div class="rule-label">日期基準</div>
-      <div class="rule-value highlight">completed_at（完工日）優先<br>未結案則用 occurred_at</div>
-      <div class="rule-label">過濾條件</div>
-      <div class="rule-value">stat 月份 = 當月</div>
-      <div class="rule-value">必須有工時記錄（work_hours &gt; 0）</div>
-      <div class="rule-label">語義</div>
-      <div class="rule-value">「本月<strong>完成且有工時記錄</strong>的工作」</div>
-      <div class="number-row">
-        <div class="num-block"><div class="venue">飯店</div><div class="val hotel">216</div></div>
-        <div class="num-block"><div class="venue">商場</div><div class="val mall">78</div></div>
-        <div class="num-block"><div class="venue">合計</div><div class="val total">294</div></div>
-      </div>
-    </div>
+      <p class="section-title">三種統計基準</p>
+      <div class="cards">
+        <div class="card">
+          <span class="card-badge badge-journal">① 工作日誌 TAB</span>
+          <h2>報修日統計基準</h2>
+          <span class="api">工作日誌 / 查詢區間</span>
+          <div class="rule-label">日期基準</div>
+          <div class="rule-value highlight">occurred_at（報修日）</div>
+          <div class="rule-label">過濾條件</div>
+          <div class="rule-value">落在使用者選擇的查詢期間</div>
+          <div class="rule-value">所有案件，無工時要求</div>
+          <div class="rule-label">語義</div>
+          <div class="rule-value">
+            「這段期間<strong>新發生</strong>的報修」
+          </div>
+          <div class="number-row">
+            <div class="num-block">
+              <div class="venue">飯店</div>
+              <div class="val hotel">189</div>
+            </div>
+            <div class="num-block">
+              <div class="venue">商場</div>
+              <div class="val mall">53</div>
+            </div>
+            <div class="num-block">
+              <div class="venue">合計</div>
+              <div class="val total">242</div>
+            </div>
+          </div>
+        </div>
 
-    <div class="card">
-      <span class="card-badge badge-dashboard">③ 報修 Dashboard</span>
-      <h2>工作隊列統計基準</h2>
-      <span class="api">本月報修項目數 KPI</span>
-      <div class="rule-label">日期基準</div>
-      <div class="rule-value highlight">occ_month（報修月）</div>
-      <div class="rule-label">計算方式</div>
-      <div class="rule-value">上月未結案件 + 本月新報修</div>
-      <div class="rule-value">排除已取消案件</div>
-      <div class="rule-label">語義</div>
-      <div class="rule-value">「本月需要處理的<strong>工作量負荷</strong>」</div>
-      <div class="number-row">
-        <div class="num-block"><div class="venue">飯店</div><div class="val hotel">189</div></div>
-        <div class="num-block"><div class="venue">商場</div><div class="val mall">56</div></div>
-        <div class="num-block"><div class="venue">合計</div><div class="val total">245</div></div>
-      </div>
-    </div>
+        <div class="card">
+          <span class="card-badge badge-analysis">② 集團工務概覽</span>
+          <h2>完工月統計基準</h2>
+          <span class="api">飯店／商場工項類別比較</span>
+          <div class="rule-label">日期基準</div>
+          <div class="rule-value highlight">
+            completed_at（完工日）優先<br />未結案則用 occurred_at
+          </div>
+          <div class="rule-label">過濾條件</div>
+          <div class="rule-value">stat 月份 = 當月</div>
+          <div class="rule-value">必須有工時記錄（work_hours &gt; 0）</div>
+          <div class="rule-label">語義</div>
+          <div class="rule-value">
+            「本月<strong>完成且有工時記錄</strong>的工作」
+          </div>
+          <div class="number-row">
+            <div class="num-block">
+              <div class="venue">飯店</div>
+              <div class="val hotel">216</div>
+            </div>
+            <div class="num-block">
+              <div class="venue">商場</div>
+              <div class="val mall">78</div>
+            </div>
+            <div class="num-block">
+              <div class="venue">合計</div>
+              <div class="val total">294</div>
+            </div>
+          </div>
+        </div>
 
-  </div>
-
-  <div class="diff-section">
-    <h2>現場報修數字差異對照（2026 年 5 月）</h2>
-    <table class="diff-table">
-      <thead>
-        <tr>
-          <th>比較項目</th>
-          <th>飯店</th>
-          <th>商場</th>
-          <th>合計</th>
-          <th>差異說明</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td>① 工作日誌（報修日）</td>
-          <td>189</td>
-          <td>53</td>
-          <td>242</td>
-          <td class="dim">基準值</td>
-        </tr>
-        <tr>
-          <td>② 集團工務概覽（完工月）</td>
-          <td class="diff">216 <span style="font-size: 14px;color:#E53935">＋27</span></td>
-          <td class="diff">78 <span style="font-size: 14px;color:#E53935">＋25</span></td>
-          <td class="diff">294</td>
-          <td>含舊月報修、本月完工的案件</td>
-        </tr>
-        <tr>
-          <td>③ 報修 Dashboard（工作隊列）</td>
-          <td class="match">189</td>
-          <td class="diff">56 <span style="font-size: 14px;color:#E53935">＋3</span></td>
-          <td>245</td>
-          <td>含上月遺留未結案件 3 件</td>
-        </tr>
-      </tbody>
-    </table>
-  </div>
-
-  <div class="reason-section">
-    <h2>差異成因詳解</h2>
-    <div class="reasons">
-      <div class="reason">
-        <div class="reason-title">① vs ②：27 件（飯店）／25 件（商場）差異</div>
-        <div class="reason-body">
-          集團工務概覽以 <code>completed_at</code>（完工日）為統計月份。4 月、3 月等舊月份報修、在 5 月完工的案件，會以「5 月完工」計入②，但不會出現在①（①只看 5 月新發生的報修）。此外，②額外要求 <code>work_hours &gt; 0</code>，沒填工時的案件會被排除，但此限制的影響遠小於跨月完工所帶來的增量。
+        <div class="card">
+          <span class="card-badge badge-dashboard">③ 報修 Dashboard</span>
+          <h2>工作報修統計基準</h2>
+          <span class="api">本月報修項目數 KPI</span>
+          <div class="rule-label">日期基準</div>
+          <div class="rule-value highlight">occ_month（報修月）</div>
+          <div class="rule-label">計算方式</div>
+          <div class="rule-value">上月未結案件 + 本月新報修</div>
+          <div class="rule-value">排除已取消案件</div>
+          <div class="rule-label">語義</div>
+          <div class="rule-value">
+            「本月需要處理的<strong>工作量負荷</strong>」
+          </div>
+          <div class="number-row">
+            <div class="num-block">
+              <div class="venue">飯店</div>
+              <div class="val hotel">189</div>
+            </div>
+            <div class="num-block">
+              <div class="venue">商場</div>
+              <div class="val mall">56</div>
+            </div>
+            <div class="num-block">
+              <div class="venue">合計</div>
+              <div class="val total">245</div>
+            </div>
+          </div>
         </div>
       </div>
-      <div class="reason">
-        <div class="reason-title">① vs ③：3 件（商場）差異</div>
-        <div class="reason-body">
-          報修 Dashboard 以「上月帶入的未結案件 + 本月新報修」為工作隊列。商場有 3 件在 4 月底之前報修、5 月仍未結案的案件被帶入③，但這 3 件的 <code>occurred_at</code> 是 4 月，不進入①的 5 月計數。
+
+      <div class="diff-section">
+        <h2>現場報修數字差異對照（2026 年 5 月）</h2>
+        <table class="diff-table">
+          <thead>
+            <tr>
+              <th>比較項目</th>
+              <th>飯店</th>
+              <th>商場</th>
+              <th>合計</th>
+              <th>差異說明</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>① 工作日誌（報修日）</td>
+              <td>189</td>
+              <td>53</td>
+              <td>242</td>
+              <td class="dim">基準值</td>
+            </tr>
+            <tr>
+              <td>② 集團工務概覽（完工月）</td>
+              <td class="diff">
+                216 <span style="font-size: 14px; color: #e53935">＋27</span>
+              </td>
+              <td class="diff">
+                78 <span style="font-size: 14px; color: #e53935">＋25</span>
+              </td>
+              <td class="diff">294</td>
+              <td>含舊月報修、本月完工的案件</td>
+            </tr>
+            <tr>
+              <td>③ 報修 Dashboard（工作隊列）</td>
+              <td class="match">189</td>
+              <td class="diff">
+                56 <span style="font-size: 14px; color: #e53935">＋3</span>
+              </td>
+              <td>245</td>
+              <td>含上月遺留未結案件 3 件</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="reason-section">
+        <h2>差異成因詳解</h2>
+        <div class="reasons">
+          <div class="reason">
+            <div class="reason-title">
+              ① vs ②：27 件（飯店）／25 件（商場）差異
+            </div>
+            <div class="reason-body">
+              集團工務概覽以 <code>completed_at</code>（完工日）為統計月份。4
+              月、3 月等舊月份報修、在 5 月完工的案件，會以「5
+              月完工」計入②，但不會出現在①（①只看 5
+              月新發生的報修）。此外，②額外要求
+              <code>work_hours &gt; 0</code
+              >，沒填工時的案件會被排除，但此限制的影響遠小於跨月完工所帶來的增量。
+            </div>
+          </div>
+          <div class="reason">
+            <div class="reason-title">① vs ③：3 件（商場）差異</div>
+            <div class="reason-body">
+              報修 Dashboard 以「上月帶入的未結案件 +
+              本月新報修」為工作隊列。商場有 3 件在 4 月底之前報修、5
+              月仍未結案的案件被帶入③，但這 3 件的 <code>occurred_at</code> 是 4
+              月，不進入①的 5 月計數。
+            </div>
+          </div>
+          <div class="reason">
+            <div class="reason-title">飯店①和③數字相同（189）是巧合</div>
+            <div class="reason-body">
+              兩者採用完全不同的算法，換一個月份或查詢日期就會分叉。不應依賴這個巧合做對帳。
+            </div>
+          </div>
         </div>
       </div>
-      <div class="reason">
-        <div class="reason-title">飯店①和③數字相同（189）是巧合</div>
-        <div class="reason-body">
-          兩者採用完全不同的算法，換一個月份或查詢日期就會分叉。不應依賴這個巧合做對帳。
-        </div>
+
+      <div class="conclusion">
+        <h2>結論：各統計基準用途不同，均為正確數字</h2>
+        <p>
+          <strong>① 工作日誌</strong
+          >適合回答「這段期間發生了哪些事」，是最直觀的事件計數，與日誌表格完全一致。<br />
+          <strong>② 集團工務概覽</strong
+          >適合回答「本月工時投入了多少、各類別工作量如何分配」，強調完工月與工時記錄。<br />
+          <strong>③ 報修 Dashboard</strong
+          >適合回答「本月工務團隊的工作負荷有多重」，包含歷史積壓未結案件。<br /><br />
+          若需對帳，建議以<strong>工作日誌統計基準（①）</strong>為基準，因為它與下方明細表同源，可以直接逐筆驗證。
+        </p>
       </div>
+
+      <div class="footer">Portal 系統內部技術說明文件 · 2026 年 5 月</div>
     </div>
-  </div>
-
-  <div class="conclusion">
-    <h2>結論：各統計基準用途不同，均為正確數字</h2>
-    <p>
-      <strong>① 工作日誌</strong>適合回答「這段期間發生了哪些事」，是最直觀的事件計數，與日誌表格完全一致。<br>
-      <strong>② 集團工務概覽</strong>適合回答「本月工時投入了多少、各類別工作量如何分配」，強調完工月與工時記錄。<br>
-      <strong>③ 報修 Dashboard</strong>適合回答「本月工務團隊的工作負荷有多重」，包含歷史積壓未結案件。<br><br>
-      若需對帳，建議以<strong>工作日誌統計基準（①）</strong>為基準，因為它與下方明細表同源，可以直接逐筆驗證。
-    </p>
-  </div>
-
-  <div class="footer">Portal 系統內部技術說明文件 · 2026 年 5 月</div>
-</div>
-</body>
+  </body>
 </html>

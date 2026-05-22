@@ -66,23 +66,6 @@ SOURCE_LABELS = {
     "full_bi":  "整棟巡檢",
 }
 
-# 關鍵字 → 工項類別（先匹配者優先；hotel_room 強制「每日巡檢」）
-_CATEGORY_RULES: list[tuple[str, list[str]]] = [
-    ("緊急事件",  ["緊急", "急修", "突發", "漏電緊急", "火警", "停電"]),
-    ("每日巡檢",  ["巡檢", "巡視", "例巡", "日巡"]),
-    ("例行維護",  ["例行", "定期", "保養", "維護", "定保", "年保", "季保", "月保"]),
-    ("上級交辦",  ["交辦", "上級", "主管指示", "主管交辦", "院長", "指示", "指派"]),
-]
-
-
-def _classify(title: str, repair_type: str) -> str:
-    text = (title or "") + (repair_type or "")
-    for cat, keywords in _CATEGORY_RULES:
-        if any(kw in text for kw in keywords):
-            return cat
-    return "現場報修"
-
-
 def _parse_minutes_to_hours(val: str) -> float:
     """'22.00  分鐘' → 22.0 / 60 → 0.367 hours"""
     if not val:
@@ -142,7 +125,7 @@ def _load_all(db: Session, sources: set[str]) -> list[dict]:
                 "month":      dt.month,
                 "day":        dt.day,
                 "work_hours": c.work_hours,
-                "category":   _classify(c.title or "", c.repair_type or ""),
+                "category":   "現場報修",
                 "person":     (c.responsible_unit or "").strip() or "未指定",
                 "source":     "luqun",
                 "case_id":    c.ragic_id,
@@ -164,7 +147,7 @@ def _load_all(db: Session, sources: set[str]) -> list[dict]:
                 "month":      dt.month,
                 "day":        dt.day,
                 "work_hours": c.work_hours,
-                "category":   _classify(c.title or "", c.repair_type or ""),
+                "category":   "現場報修",
                 "person":     (c.closer or "").strip() or "未指定",
                 "source":     "dazhi",
                 "case_id":    c.ragic_id,

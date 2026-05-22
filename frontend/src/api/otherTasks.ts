@@ -38,20 +38,32 @@ export async function fetchDbImages(ragicId: string): Promise<{ images: { url: s
 
 export interface OtherTaskTypeStat {
   total:      number
+  hotel:      number   // venue = 飯店 的件數
+  mall:       number   // venue = 商場 的件數
   work_hours: number
 }
 
+export interface OtherTaskStatsParams {
+  year?:       number
+  month?:      number
+  status?:     string
+  supervisor?: string
+  engineer?:   string
+  venue?:      string
+  search?:     string
+}
+
 /**
- * 按 task_type 分組回傳件數與工時（供 Dashboard KPI 用）
+ * 按 task_type 分組回傳件數與工時（供 Dashboard KPI 及 OtherTasksPage TAB 小計用）
  * 回傳 key 為 task_type（'上級交辦' | '緊急事件'）
+ * 支援完整篩選參數（year / month / status / supervisor / engineer / venue / search）
  */
 export async function fetchOtherTaskStats(
-  year?: number,
-  month?: number,
+  params?: OtherTaskStatsParams,
 ): Promise<Record<string, OtherTaskTypeStat>> {
   const res = await apiClient.get<Record<string, OtherTaskTypeStat>>(
     `${BASE}/stats`,
-    { params: { year, month } },
+    { params },
   )
   return res.data
 }

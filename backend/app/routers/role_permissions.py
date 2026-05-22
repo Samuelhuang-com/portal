@@ -44,6 +44,7 @@ PERMISSION_DEFINITIONS = [
     {"key": "mall_full_building_maintenance_view", "label": "全棟例行維護",      "group": "商場管理"},
     {"key": "mall_facility_inspection_view",       "label": "商場工務巡檢",      "group": "商場管理"},
     {"key": "mall_full_building_inspection_view",  "label": "整棟巡檢",          "group": "商場管理"},
+    {"key": "mall_other_tasks_view",               "label": "主管交辦／緊急事件","group": "商場管理"},
     {"key": "luqun_repair_view",        "label": "商場工務報修",  "group": "工務報修"},
     {"key": "dazhi_repair_view",        "label": "大直工務部",    "group": "工務報修"},
     {"key": "security_view",            "label": "保全模組",      "group": "保全管理"},

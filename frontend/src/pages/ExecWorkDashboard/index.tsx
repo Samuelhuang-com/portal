@@ -1236,7 +1236,7 @@ function DayPersonCollapse({
     {
       title: '工作事項', dataIndex: 'task', key: 'task', width: 200,
       render: (v: string, row: JournalRow) => {
-        const isHotel = _HOTEL_SOURCES.has(row.source)
+        const isHotel = _isHotelRow(row)
         return (
           <Text style={{ fontSize: 14 }}>
             <span style={{
@@ -1391,6 +1391,13 @@ function DayPersonCollapse({
             >
               <Descriptions.Item label="人員">{selectedRow.person}</Descriptions.Item>
               <Descriptions.Item label="來源">{selectedRow.source_label}</Descriptions.Item>
+              {selectedRow.source === 'other_tasks' && selectedRow.venue && (
+                <Descriptions.Item label="歸屬">
+                  <Tag color={selectedRow.venue === '飯店' ? '#1565C0' : '#2E7D32'} style={{ margin: 0 }}>
+                    {selectedRow.venue}
+                  </Tag>
+                </Descriptions.Item>
+              )}
               {selectedRow.work_min != null && (
                 <Descriptions.Item label="工時(min)">
                   <Text strong style={{ color: '#1B3A5C' }}>{selectedRow.work_min}</Text>
@@ -1510,7 +1517,14 @@ export interface WJCatStat {
 }
 export type WJStats = Record<string, WJCatStat>
 
-const _HOTEL_SOURCES = new Set<string>(['dazhi', 'hotel_pm', 'ihg', 'hotel_di', 'hotel_mr'])
+const _HOTEL_SOURCES = new Set<string>(['dazhi', 'hotel_pm', 'ihg', 'hotel_di'])
+
+/** 判斷工作日誌一行是否屬飯店。
+ *  other_tasks 以 venue 欄位為準；其餘來源以 source 集合判斷。 */
+function _isHotelRow(row: JournalRow): boolean {
+  if (row.source === 'other_tasks') return row.venue === '飯店'
+  return _HOTEL_SOURCES.has(row.source)
+}
 
 function _computeWJStats(days: WorkJournalDaily[]): WJStats {
   const stats: WJStats = {}
@@ -1521,7 +1535,7 @@ function _computeWJStats(days: WorkJournalDaily[]): WJStats {
     const min = (r.work_min ?? 0) / 60
     s.cases++
     s.hours += min
-    const venue = _HOTEL_SOURCES.has(r.source) ? s.hotel : s.mall
+    const venue = _isHotelRow(r) ? s.hotel : s.mall
     venue.cases++
     venue.hours += min
   })))
@@ -2019,7 +2033,7 @@ export default function ExecWorkDashboardPage() {
           fetchStats({ year: selectedYear, month: 0,             sources: 'all', category: 'all', person: 'all' }),
           fetchDazhiRepairStats(selectedYear),
           fetchLuqunRepairStats(selectedYear),
-          fetchOtherTaskStats(selectedYear, selectedMonth),
+          fetchOtherTaskStats({ year: selectedYear, month: selectedMonth }),
         ])
       if (luqun.status     === 'fulfilled') setLuqunData(luqun.value)
       if (dazhi.status     === 'fulfilled') setDazhiData(dazhi.value as unknown as RepairDashboardData)
@@ -2054,8 +2068,9 @@ export default function ExecWorkDashboardPage() {
     }
     const hotelCatCases: Record<string, number> = {
       現場報修: hd('飯店工務部'),
-      上級交辦: otherTasksStats?.['上級交辦']?.total ?? 0,
-      緊急事件: otherTasksStats?.['緊急事件']?.total ?? 0,
+      // 上級交辦/緊急事件 依 venue 欄位分開：.hotel = venue=飯店的件數
+      上級交辦: otherTasksStats?.['上級交辦']?.hotel ?? 0,
+      緊急事件: otherTasksStats?.['緊急事件']?.hotel ?? 0,
       例行維護: hd('客房保養管理') + hd('飯店週期保養') + hd('IHG客房保養'),
       每日巡檢: hd('飯店每日巡檢'),
     }
@@ -2064,13 +2079,22 @@ export default function ExecWorkDashboardPage() {
     const mFind = (name: string) => mallMonthlyData?.rows.find(r => r.category === name)
     const mc = (name: string) => mFind(name)?.cases[mi] ?? 0
 
+    const mallCatCases: Record<string, number> = {
+      現場報修: mc('現場報修'),
+      // 上級交辦/緊急事件 依 venue 欄位分開：.mall = venue=商場的件數
+      上級交辦: otherTasksStats?.['上級交辦']?.mall ?? 0,
+      緊急事件: otherTasksStats?.['緊急事件']?.mall ?? 0,
+      例行維護: mc('例行維護'),
+      每日巡檢: mc('每日巡檢'),
+    }
+
     return CATS.map(cat => ({
       key:        cat,
       category:   cat,
       hotelCases: hotelCatCases[cat] ?? 0,
-      mallCases:  mc(cat),
+      mallCases:  mallCatCases[cat] ?? 0,
     }))
-  }, [hotelDailyData, mallMonthlyData, selectedMonth])
+  }, [hotelDailyData, mallMonthlyData, otherTasksStats, selectedMonth])
 
   // ── 骨架畫面 ────────────────────────────────────────────────────────────────
   if (loading) {

@@ -52,6 +52,7 @@ async def sync_from_ragic() -> dict:
                 existing = existing_map.get(rec.ragic_id)
                 if existing:
                     existing.task_type   = rec.task_type
+                    existing.venue       = rec.venue
                     existing.supervisor  = rec.supervisor
                     existing.engineer    = rec.engineer
                     existing.created_at  = rec.created_at
@@ -68,6 +69,7 @@ async def sync_from_ragic() -> dict:
                     db.add(OtherTask(
                         ragic_id    = rec.ragic_id,
                         task_type   = rec.task_type,
+                        venue       = rec.venue,
                         supervisor  = rec.supervisor,
                         engineer    = rec.engineer,
                         created_at  = rec.created_at,

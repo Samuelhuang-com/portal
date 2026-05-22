@@ -340,7 +340,7 @@ export default function MallMgmtDashboardPage() {
 
   const loadOtherTasks = useCallback(async (y?: number, m?: number) => {
     setLoadingOtherTasks(true); setErrorOtherTasks(null)
-    try     { setOtherTasksStats(await fetchOtherTaskStats(y ?? year, m ?? month)) }
+    try     { setOtherTasksStats(await fetchOtherTaskStats({ year: y ?? year, month: m ?? month })) }
     catch   { setErrorOtherTasks('主管交辦／緊急事件載入失敗') }
     finally { setLoadingOtherTasks(false) }
   }, [year, month])

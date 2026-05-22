@@ -44,7 +44,21 @@ def _ensure_images_column() -> None:
         logger.warning(f"[OtherTasks] images_json migration 跳過：{exc}")
 
 
+def _ensure_venue_column() -> None:
+    """若 other_task 表已存在但缺少 venue 欄位，自動 ALTER TABLE 補上。"""
+    try:
+        with engine.connect() as conn:
+            cols = [row[1] for row in conn.execute(text("PRAGMA table_info(other_task)"))]
+            if "venue" not in cols:
+                conn.execute(text("ALTER TABLE other_task ADD COLUMN venue TEXT DEFAULT ''"))
+                conn.commit()
+                logger.info("[OtherTasks] 已補充 venue 欄位")
+    except Exception as exc:
+        logger.warning(f"[OtherTasks] venue migration 跳過：{exc}")
+
+
 _ensure_images_column()
+_ensure_venue_column()
 
 
 # ── /raw-fields ───────────────────────────────────────────────────────────────
@@ -98,10 +112,16 @@ def get_filter_options(db: Session = Depends(get_db)):
         db.query(OtherTask.engineer).distinct().order_by(OtherTask.engineer).all()
         if r.engineer
     ]
+    venues = [
+        r.venue for r in
+        db.query(OtherTask.venue).distinct().order_by(OtherTask.venue).all()
+        if r.venue
+    ]
     return {
         "statuses":    statuses,
         "supervisors": supervisors,
         "engineers":   engineers,
+        "venues":      venues,
     }
 
 
@@ -115,6 +135,7 @@ def get_detail(
     status:     Optional[str] = Query(None),
     supervisor: Optional[str] = Query(None),
     engineer:   Optional[str] = Query(None),
+    venue:      Optional[str] = Query(None,  description="歸屬篩選：飯店 / 商場"),
     search:     Optional[str] = Query(None,  description="關鍵字搜尋（問題說明/備註）"),
     page:       int           = Query(1,     ge=1),
     page_size:  int           = Query(50,    ge=1, le=200),
@@ -136,6 +157,8 @@ def get_detail(
         q = q.filter(OtherTask.supervisor == supervisor)
     if engineer:
         q = q.filter(OtherTask.engineer == engineer)
+    if venue:
+        q = q.filter(OtherTask.venue == venue)
     if search:
         like = f"%{search}%"
         q = q.filter(
@@ -174,34 +197,78 @@ def get_detail(
 
 @router.get("/stats", summary="各 task_type 件數與工時統計（供 Dashboard 用）")
 def get_stats(
-    year:  Optional[int] = Query(None),
-    month: Optional[int] = Query(None),
+    year:       Optional[int] = Query(None),
+    month:      Optional[int] = Query(None),
+    status:     Optional[str] = Query(None),
+    supervisor: Optional[str] = Query(None),
+    engineer:   Optional[str] = Query(None),
+    venue:      Optional[str] = Query(None),
+    search:     Optional[str] = Query(None),
     db: Session = Depends(get_db),
 ):
     """
-    按 task_type 分組回傳件數（total）與工時合計（work_hours）。
-    MallMgmtDashboard、ExecWorkDashboard 的 KPI 卡片使用此端點。
+    按 task_type 分組回傳件數（total / hotel / mall）與工時合計（work_hours）。
+    MallMgmtDashboard、ExecWorkDashboard 的 KPI 卡片與工項比較表使用此端點。
+    hotel / mall 件數依 venue 欄位（飯店 / 商場）拆分；venue 空白者歸入 total 但不計入 hotel/mall。
+    支援 status / supervisor / engineer / venue / search 額外篩選（供 OtherTasksPage TAB 小計用）。
     """
     from sqlalchemy import func as sqlfunc
 
-    q = db.query(
+    def _apply_filters(q):
+        if year:
+            q = q.filter(OtherTask.year == year)
+        if month:
+            q = q.filter(OtherTask.month == month)
+        if status:
+            q = q.filter(OtherTask.status == status)
+        if supervisor:
+            q = q.filter(OtherTask.supervisor == supervisor)
+        if engineer:
+            q = q.filter(OtherTask.engineer == engineer)
+        if venue:
+            q = q.filter(OtherTask.venue == venue)
+        if search:
+            like = f"%{search}%"
+            q = q.filter(
+                OtherTask.description.ilike(like) |
+                OtherTask.notes.ilike(like)
+            )
+        return q
+
+    # ── 1. 總計（task_type 分組）
+    base_q = db.query(
         OtherTask.task_type,
         sqlfunc.count(OtherTask.ragic_id).label("total"),
         sqlfunc.sum(OtherTask.work_hours).label("work_hours"),
     )
-    if year:
-        q = q.filter(OtherTask.year == year)
-    if month:
-        q = q.filter(OtherTask.month == month)
-
-    rows = q.group_by(OtherTask.task_type).all()
+    base_q = _apply_filters(base_q)
+    rows = base_q.group_by(OtherTask.task_type).all()
 
     result: dict = {}
     for row in rows:
         result[row.task_type] = {
             "total":      row.total or 0,
+            "hotel":      0,
+            "mall":       0,
             "work_hours": round(float(row.work_hours or 0), 1),
         }
+
+    # ── 2. venue 拆分（task_type × venue 分組）
+    venue_q = db.query(
+        OtherTask.task_type,
+        OtherTask.venue,
+        sqlfunc.count(OtherTask.ragic_id).label("cnt"),
+    )
+    venue_q = _apply_filters(venue_q)
+    venue_q = venue_q.filter(OtherTask.venue != "")
+    for vrow in venue_q.group_by(OtherTask.task_type, OtherTask.venue).all():
+        if vrow.task_type not in result:
+            continue
+        if vrow.venue == "飯店":
+            result[vrow.task_type]["hotel"] += vrow.cnt or 0
+        elif vrow.venue == "商場":
+            result[vrow.task_type]["mall"] += vrow.cnt or 0
+
     return result
 
 

@@ -53,13 +53,6 @@ router = APIRouter(dependencies=[Depends(get_current_user)])
 
 CATEGORIES = ["現場報修", "上級交辦", "緊急事件", "例行維護", "每日巡檢"]
 
-_CATEGORY_RULES = [
-    ("緊急事件",  ["緊急", "急修", "突發", "漏電緊急", "火警", "停電"]),
-    ("每日巡檢",  ["巡檢", "巡視", "例巡", "日巡"]),
-    ("例行維護",  ["例行", "定期", "保養", "維護", "定保", "年保", "季保", "月保"]),
-    ("上級交辦",  ["交辦", "上級", "主管指示", "主管交辦", "院長", "指示", "指派"]),
-]
-
 SOURCE_LABEL = {
     "dazhi":        "飯店工務",
     "luqun":        "商場工務",
@@ -131,14 +124,6 @@ def _ragic_url(path: str, ragic_id: str) -> str:
 
 
 # ── 工具函數 ───────────────────────────────────────────────────────────────────
-
-def _classify(title: str, repair_type: str) -> str:
-    text = (title or "") + (repair_type or "")
-    for cat, keywords in _CATEGORY_RULES:
-        if any(kw in text for kw in keywords):
-            return cat
-    return "現場報修"
-
 
 def _parse_wm(val: str) -> Optional[int]:
     """'2.50 小時' / '30 分鐘' / '8'（無單位→分鐘）→ int 分鐘，解析不到 → None
@@ -214,6 +199,7 @@ def _make_row(
     report: str = "",
     ragic_id: str = "",
     ragic_url: str = "",
+    venue: str = "",
     detail: Optional[dict] = None,
 ) -> dict:
     st = _clean_time(start_time)
@@ -235,6 +221,7 @@ def _make_row(
         "report":       (report or "").strip(),
         "ragic_id":     ragic_id,
         "ragic_url":    ragic_url,
+        "venue":        venue,
         "detail":       detail or {},
     }
 
@@ -260,7 +247,7 @@ def _fetch_dazhi(db: Session, year: int, month: int, day: int) -> list[dict]:
         end_t      = c.completed_at.strftime("%H:%M") if c.completed_at else ""
         rows.append(_make_row(
             source="dazhi",
-            category=_classify(c.title or "", c.repair_type or ""),
+            category="現場報修",
             task=task or "(無說明)",
             person=person,
             start_time=start_t,
@@ -314,7 +301,7 @@ def _fetch_luqun(db: Session, year: int, month: int, day: int) -> list[dict]:
         end_t      = c.completed_at.strftime("%H:%M") if c.completed_at else ""
         rows.append(_make_row(
             source="luqun",
-            category=_classify(c.title or "", c.repair_type or ""),
+            category="現場報修",
             task=task or "(無說明)",
             person=person,
             start_time=start_t,
@@ -755,16 +742,18 @@ def _fetch_other_tasks(db: Session, year: int, month: int, day: int) -> list[dic
                 remark=rec.notes or "",
                 ragic_id=rec.ragic_id or "",
                 ragic_url=ragic_url_val,
+                venue=rec.venue or "",
                 detail={
-                    "屬性":       rec.task_type or "",
-                    "交辦主管":   rec.supervisor or "",
-                    "工程人員":   rec.engineer or "",
-                    "建立日期":   created_str,
+                    "歸屬":         rec.venue or "",
+                    "屬性":         rec.task_type or "",
+                    "交辦主管":     rec.supervisor or "",
+                    "工程人員":     rec.engineer or "",
+                    "建立日期":     created_str,
                     "最後更新日期": updated_str,
-                    "狀態":       rec.status or "",
-                    "維修工時":   f"{rec.work_hours:.2f} hr" if rec.work_hours else "",
-                    "問題說明":   rec.description or "",
-                    "備註":       rec.notes or "",
+                    "狀態":         rec.status or "",
+                    "維修工時":     f"{rec.work_hours:.2f} hr" if rec.work_hours else "",
+                    "問題說明":     rec.description or "",
+                    "備註":         rec.notes or "",
                 },
             ))
     return rows
@@ -969,9 +958,13 @@ def export_work_journal_excel(
             ws.row_dimensions[ri].height = height
 
     # ── 飯店 / 商場 來源集合（供工作事項前綴用）────────────────────────────────────
-    _HOTEL_SRC = {"dazhi", "hotel_pm", "ihg", "hotel_di", "hotel_mr"}
+    _HOTEL_SRC = {"dazhi", "hotel_pm", "ihg", "hotel_di"}
 
-    def _venue_prefix(source: str) -> str:
+    def _venue_prefix(source: str, venue: str = "") -> str:
+        """回傳工作事項前綴（飯：/ 商：）。
+        other_tasks 以「歸屬」欄位為準；其餘來源依 source 判斷。"""
+        if source == "other_tasks":
+            return "飯：" if venue == "飯店" else "商："
         return "飯：" if source in _HOTEL_SRC else "商："
 
     def _row_height(task: str, remark: str, report: str) -> float:
@@ -1182,7 +1175,7 @@ def export_work_journal_excel(
                     cell.border    = _border()
 
                 # 工作事項（前綴飯：/ 商：）
-                _task_val = _venue_prefix(r.get("source", "")) + r.get("task", "")
+                _task_val = _venue_prefix(r.get("source", ""), r.get("venue", "")) + r.get("task", "")
                 g = ws.cell(row=row_idx, column=7, value=_task_val)
                 g.alignment = LEFT
                 g.font      = Font(size=10)

@@ -29,6 +29,7 @@ class OtherTask(Base):
     work_hours:  Mapped[float|None]    = mapped_column(Float,        nullable=True)  # 維修工時
     year:        Mapped[int|None]      = mapped_column(Integer,      nullable=True)
     month:       Mapped[int|None]      = mapped_column(Integer,      nullable=True)
+    venue:       Mapped[str]           = mapped_column(String(50),   default="")   # 歸屬: 飯店 / 商場
     images_json: Mapped[str|None]      = mapped_column(Text,         nullable=True, default=None)  # 附圖 JSON
     synced_at:   Mapped[datetime]      = mapped_column(DateTime,     default=twnow)
 
@@ -61,8 +62,10 @@ class OtherTask(Base):
             "work_hours":  self.work_hours,
             "year":        self.year,
             "month":       self.month,
+            "venue":       self.venue,
             "images":      self._parse_images(),
             "detail": {
+                "歸屬":         self.venue,
                 "屬性":         self.task_type,
                 "交辦主管":     self.supervisor,
                 "工程人員":     self.engineer,

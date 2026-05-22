@@ -355,6 +355,8 @@ export default function AppRouter() {
           <Route path="b2f-inspection/:batchId"       element={<B2FInspectionDetailPage />} />
           <Route path="b1f-inspection"                element={<B1FInspectionPage />} />
           <Route path="b1f-inspection/:batchId"       element={<B1FInspectionDetailPage />} />
+          {/* 主管交辦／緊急事件共用同一元件（飯店/商場雙入口） */}
+          <Route path="other-tasks"             element={<OtherTasksPage />} />
         </Route>
 
         {/* ── 核准請購單月報表 ──────────────────────────────────────────── */}

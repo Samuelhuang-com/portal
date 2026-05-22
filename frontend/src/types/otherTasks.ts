@@ -11,6 +11,7 @@ export interface OtherTask {
   ragic_id:    string
   ragic_url:   string
   task_type:   string   // "上級交辦" | "緊急事件"
+  venue:       string   // "飯店" | "商場" | ""
   supervisor:  string   // 交辦主管
   engineer:    string   // 工程人員
   created_at:  string   // 建立日期
@@ -36,6 +37,7 @@ export interface OtherTaskFilterOptions {
   statuses:    string[]
   supervisors: string[]
   engineers:   string[]
+  venues:      string[]
 }
 
 export interface OtherTaskDetailParams {
@@ -45,6 +47,7 @@ export interface OtherTaskDetailParams {
   status?:     string
   supervisor?: string
   engineer?:   string
+  venue?:      string
   search?:     string
   page?:       number
   page_size?:  number

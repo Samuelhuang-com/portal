@@ -46,6 +46,7 @@ _RAGIC_PATH    = "other-tasks/1"
 # ═════════════════════════════════════════════════════════════════════════════
 
 RK_TASK_TYPE   = "屬性"
+RK_VENUE       = "歸屬"
 RK_SUPERVISOR  = "交辦主管"
 RK_ENGINEER    = "工程人員"
 RK_CREATED_AT  = "建立日期"
@@ -61,6 +62,7 @@ IMAGE_FIELD_CANDIDATES = ["附圖", "圖片", "上傳圖片", "照片", "附件"
 
 RK_ALIASES: dict[str, list[str]] = {
     RK_TASK_TYPE:   ["屬性", "類型", "任務類型", "事件類型"],
+    RK_VENUE:       ["歸屬", "歸屬類別", "場館歸屬", "所屬場館", "所屬"],
     RK_SUPERVISOR:  ["交辦主管", "主管", "督導主管", "負責主管", "交辦人"],
     RK_ENGINEER:    ["工程人員", "執行人員", "負責人員", "維修人員", "工務人員", "技術人員"],
     # 建立日期：Ragic 可能回傳多種名稱
@@ -192,6 +194,7 @@ def _parse_image_fields(raw: dict) -> list[dict]:
 class OtherTaskRecord:
     ragic_id:    str
     task_type:   str
+    venue:       str
     supervisor:  str
     engineer:    str
     created_at:  Optional[datetime]
@@ -243,6 +246,7 @@ class OtherTaskRecord:
         return cls(
             ragic_id    = str(ragic_id),
             task_type   = _str(_get_field(raw, RK_TASK_TYPE)),
+            venue       = _str(_get_field(raw, RK_VENUE)),
             supervisor  = _str(_get_field(raw, RK_SUPERVISOR)),
             engineer    = _str(_get_field(raw, RK_ENGINEER)),
             created_at  = created_at,

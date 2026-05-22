@@ -62,6 +62,7 @@ export interface JournalRow {
   report:       string          // 回報事項
   ragic_id:     string          // 原始記錄 Ragic ID
   ragic_url:    string          // Ragic 記錄直連 URL（空字串 = 無）
+  venue:        string          // 歸屬（飯店 / 商場），僅 other_tasks 有值
   detail:       Record<string, string>  // 模組專屬明細欄位
 }
 

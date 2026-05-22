@@ -215,6 +215,7 @@ export const menuItems: MenuItem[] = [
       },
       { key: '/full-building-inspection/dashboard', icon: <SafetyOutlined />, label: NAV_PAGE.fullBuildingDashboard, permissionKey: 'mall_full_building_inspection_view' },
       { key: '/mall-facility-inspection/dashboard', icon: <ToolOutlined />,    label: NAV_PAGE.mallFacilityDashboard, permissionKey: 'mall_facility_inspection_view'      },
+      { key: '/mall/other-tasks',                   icon: <AlertOutlined />,   label: NAV_PAGE.otherTasks,           permissionKey: 'mall_other_tasks_view'            },
     ],
   },
   // ── 商場工務報修（商場管理之後）──────────────────────────────────────────
