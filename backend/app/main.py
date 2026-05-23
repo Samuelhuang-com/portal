@@ -103,6 +103,7 @@ from app.routers import (
     static_pages,
     other_tasks,
     repair_report,
+    usage_stats,
 )
 
 
@@ -956,6 +957,7 @@ async def lifespan(app: FastAPI):
     import app.models.ragic_sheet_config        # noqa: F401
     import app.models.other_tasks               # noqa: F401
     import app.models.schedule                  # noqa: F401  班表模組（本地 SQLite，不對接 Ragic）
+    import app.models.api_access_log            # noqa: F401  使用監控日誌
 
     # B4F 扁平化遷移：刪除舊 batch 表 + 檢查 item 表欄位（必須在 create_all 之前）
     _migrate_b4f_flatten()
@@ -1171,15 +1173,20 @@ async def lifespan(app: FastAPI):
     print("[Portal] Shutting down.")
 
 
+# ── API 文件：僅在 development 環境開放，production 自動關閉 ─────────────────
+# 生產環境請在 .env 設 APP_ENV=production 或 ENV=production
+_is_dev = settings.APP_ENV.lower() in ("development", "dev") or \
+          settings.ENV.lower() in ("development", "dev")
+
 app = FastAPI(
     title="集團 Portal API",
     version="1.0.0",
     description="Hotel/Mall 集團管理 Portal — 後端 API",
     lifespan=lifespan,
     redirect_slashes=False,   # 防止 307 繞過 Vite proxy 觸發 CORS
-    docs_url="/api/docs",
-    redoc_url="/api/redoc",
-    openapi_url="/api/openapi.json",
+    docs_url="/api/docs"         if _is_dev else None,
+    redoc_url="/api/redoc"       if _is_dev else None,
+    openapi_url="/api/openapi.json" if _is_dev else None,
 )
 
 # ── CORS ──────────────────────────────────────────────────────────────────────
@@ -1190,6 +1197,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ── 使用監控 Middleware（CORS 之後掛載，才能正確讀到 Authorization header）──
+from app.middleware.audit_middleware import AuditMiddleware
+app.add_middleware(AuditMiddleware)
 
 # ── Routers ───────────────────────────────────────────────────────────────────
 API_PREFIX = "/api/v1"
@@ -1502,6 +1513,13 @@ app.include_router(
     repair_report.router,
     prefix=f"{API_PREFIX}/repair-report",
     tags=["報修未完成報表"],
+)
+
+# ── 使用監控統計（system_admin only）─────────────────────────────────────────
+app.include_router(
+    usage_stats.router,
+    prefix=f"{API_PREFIX}/usage",
+    tags=["使用監控"],
 )
 
 # ── 前端靜態檔（SPA catch-all）────────────────────────────────────────────────

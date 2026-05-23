@@ -192,6 +192,7 @@ export const NAV_PAGE = {
   knowledgeGraph:           '專案知識圖譜',
   staticPages:              '靜態頁面',
   repairUnfinishedReport:   '報修未完成報表',
+  usageMonitor:             '使用監控',             // ← 2026-05-23 API 存取日誌統計
 
   // 請購單報表
   purchaseReportMonthly:    '核准請購單月報表',  // ← 品項級月報表，route /purchase-report/monthly

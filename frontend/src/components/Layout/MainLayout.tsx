@@ -4,7 +4,8 @@
  * ✅  執行期自訂 label 與排序由 /api/v1/settings/menu-config 動態載入
  */
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import { Layout, Menu, Typography, Avatar, Dropdown, Space, theme, Skeleton } from 'antd'
+import { Layout, Menu, Typography, Avatar, Dropdown, Space, theme, Skeleton, Modal, Button } from 'antd'
+import { useIdleTimeout } from '@/hooks/useIdleTimeout'
 import {
   ApartmentOutlined,
   DashboardOutlined,
@@ -307,6 +308,7 @@ export const menuItems: MenuItem[] = [
       { key: '/settings/employee-manual-export',   icon: <BookOutlined />,      label: NAV_PAGE.employeeManualExport, permissionKey: 'system_admin_only' },
       { key: '/settings/knowledge-graph',          icon: <ApartmentOutlined />, label: NAV_PAGE.knowledgeGraph,       permissionKey: 'system_admin_only' },
       { key: '/settings/repair-unfinished-report', icon: <AlertOutlined />,     label: NAV_PAGE.repairUnfinishedReport, permissionKey: 'repair_unfinished_report_view' },
+      { key: '/settings/usage-monitor',            icon: <BarChartOutlined />,  label: NAV_PAGE.usageMonitor,           permissionKey: 'system_admin_only' },
     ],
   },
 ]
@@ -603,6 +605,18 @@ export default function MainLayout() {
   const setUser = useAuthStore((s) => s.setUser)
   const user    = useAuthStore((s) => s.user)
   const { token: designToken } = theme.useToken()
+
+  // ── 閒置逾時自動登出 ─────────────────────────────────────────────────────────
+  const handleIdleLogout = useCallback(async () => {
+    try { await authApi.logout() } catch { /* ignore */ }
+    logout()
+    navigate('/login')
+  }, [logout, navigate])
+
+  const { warningVisible, countdown, resetTimer } = useIdleTimeout(
+    handleIdleLogout,
+    !!user, // 只在登入狀態下啟動
+  )
 
   // 頁面重新整理後 permissions 為 undefined（JWT 不含 permissions），
   // 呼叫 /me 補回權限，讓非 system_admin 使用者的選單與守衛正常運作。
@@ -924,6 +938,41 @@ export default function MainLayout() {
           )}
         </Content>
       </Layout>
+
+      {/* ── 閒置逾時警告 Modal ──────────────────────────────────────────── */}
+      <Modal
+        open={warningVisible}
+        closable={false}
+        maskClosable={false}
+        footer={null}
+        width={420}
+        centered
+      >
+        <div style={{ textAlign: 'center', padding: '8px 0 4px' }}>
+          <div style={{ fontSize: 48, marginBottom: 12 }}>⏱️</div>
+          <div style={{ fontSize: 18, fontWeight: 700, color: '#1B3A5C', marginBottom: 8 }}>
+            閒置逾時提醒
+          </div>
+          <div style={{ fontSize: 14, color: '#64748b', marginBottom: 4 }}>
+            您已閒置超過 15 分鐘，系統將在
+          </div>
+          <div style={{ fontSize: 32, fontWeight: 800, color: '#e74c3c', margin: '8px 0' }}>
+            {countdown} 秒
+          </div>
+          <div style={{ fontSize: 14, color: '#64748b', marginBottom: 20 }}>
+            後自動登出以保護您的帳號安全
+          </div>
+          <Button
+            type="primary"
+            size="large"
+            block
+            onClick={resetTimer}
+            style={{ background: '#1B3A5C', borderColor: '#1B3A5C' }}
+          >
+            繼續使用
+          </Button>
+        </div>
+      </Modal>
     </Layout>
   )
 }
