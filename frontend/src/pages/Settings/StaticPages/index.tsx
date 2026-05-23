@@ -91,7 +91,7 @@ function HtmlViewer({ url }: { url: string }) {
 
   return (
     <iframe
-      srcdoc={content}
+      srcDoc={content}
       style={{ flex: 1, border: 'none', width: '100%', minHeight: 0 }}
       sandbox="allow-scripts allow-same-origin"
       title="html-preview"
