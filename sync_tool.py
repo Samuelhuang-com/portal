@@ -81,11 +81,12 @@ import json
 import logging
 import os
 import pathlib
+import queue
 import sys
 import threading
 import tkinter as tk
 from tkinter import scrolledtext, ttk
-from datetime import datetime
+from datetime import date, datetime
 
 # ── 路徑設定：讓 app.* 可以被 import ─────────────────────────────────────────
 # 注意：所有路徑先解析為絕對路徑，再切換 CWD。
@@ -201,6 +202,9 @@ MODULES: list[tuple[str, str, str]] = [
     ("週期保養預排",       "app.services.pm_plan_sync",                 "sync_from_ragic"),
 ]
 
+# ── 報修報表寄信排程 key（非同步模組，獨立處理）─────────────────────────────
+MAIL_KEY = "📧 報修未完成報表寄信"
+
 # ── 自動同步間隔選項（分鐘，0 = 關閉）─────────────────────────────────────
 INTERVAL_OPTIONS: list[tuple[str, int]] = [
     ("關閉",   0),
@@ -290,6 +294,23 @@ class SyncApp(tk.Tk):
         self._disabled_modules: set[str] = self._load_disabled()  # 暫停同步的模組名稱集合
         self._single_syncing: set[str] = set()  # 正在單獨同步中的模組名稱
 
+        # ── 排程執行緒狀態 ────────────────────────────────────────────────────
+        self._sched_last_interval: dict[str, datetime]        = {}  # 間隔模式：上次執行時間
+        self._sched_daily_done:    dict[str, tuple[date, str]] = {}  # 每日模式：(已觸發日期, 設定時間)
+        self._sched_thread_running = True
+
+        # FIFO 任務佇列：scheduler tick 入佇列，runner thread 依序取出執行
+        self._task_queue: queue.Queue = queue.Queue()
+
+        self._sched_thread = threading.Thread(
+            target=self._scheduler_loop, daemon=True, name="SyncScheduler",
+        )
+        self._runner_thread = threading.Thread(
+            target=self._task_runner_loop, daemon=True, name="SyncTaskRunner",
+        )
+        self._sched_thread.start()
+        self._runner_thread.start()
+
         self._build_ui()
         self._setup_logging()
         self._update_sync_btn_label()   # 若有暫停模組，按鈕立即顯示數量
@@ -322,6 +343,15 @@ class SyncApp(tk.Tk):
         )
         self._lbl_status.pack(side=tk.RIGHT, padx=4)
 
+        # 即時時鐘（YYYYMMDD  HH:MM:SS）
+        self._lbl_clock = tk.Label(
+            hdr, text="",
+            bg=C_HEADER, fg="#90c0e8",
+            font=("Consolas", 11, "bold"),
+        )
+        self._lbl_clock.pack(side=tk.RIGHT, padx=(24, 4))
+        self._tick_clock()   # 啟動每秒更新
+
         # ── 控制列 ──────────────────────────────────────────────────────────
         ctrl = tk.Frame(self, bg=C_PANEL, pady=7, padx=14)
         ctrl.pack(fill=tk.X)
@@ -345,6 +375,29 @@ class SyncApp(tk.Tk):
             font=("Microsoft JhengHei UI", 10),
             relief=tk.FLAT, padx=10, pady=5,
             command=self._on_clear, cursor="hand2",
+        ).pack(side=tk.LEFT, padx=(0, 12))
+
+        self._btn_send_repair = tk.Button(
+            ctrl,
+            text="📧 寄送報修未完成報表",
+            bg="#1a4a2e", fg="#4ec9b0",
+            activebackground="#1e6038", activeforeground="white",
+            font=("Microsoft JhengHei UI", 10),
+            relief=tk.FLAT, padx=12, pady=5,
+            command=self._on_send_repair_report,
+            cursor="hand2",
+        )
+        self._btn_send_repair.pack(side=tk.LEFT, padx=(0, 12))
+
+        tk.Button(
+            ctrl,
+            text="⚙ 排程設定",
+            bg="#3a3a5c", fg="#c0c0e0",
+            activebackground="#4a4a7c", activeforeground="white",
+            font=("Microsoft JhengHei UI", 10),
+            relief=tk.FLAT, padx=12, pady=5,
+            command=self._open_schedule_dialog,
+            cursor="hand2",
         ).pack(side=tk.LEFT, padx=(0, 12))
 
         self._progress = ttk.Progressbar(ctrl, mode="indeterminate", length=180)
@@ -550,6 +603,14 @@ class SyncApp(tk.Tk):
             anchor=tk.W, padx=8, pady=2,
         )
         self._lbl_bottom.pack(fill=tk.X, side=tk.BOTTOM)
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # 即時時鐘
+    # ─────────────────────────────────────────────────────────────────────────
+    def _tick_clock(self):
+        """每秒更新 Header 時鐘標籤。"""
+        self._lbl_clock.config(text=datetime.now().strftime("%Y%m%d  %H:%M:%S"))
+        self.after(1000, self._tick_clock)
 
     # ─────────────────────────────────────────────────────────────────────────
     # Logging 設定
@@ -1167,6 +1228,28 @@ class SyncApp(tk.Tk):
                 )
 
     # ── 模組暫停 / 恢復 ──────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # Config 讀寫（disabled_modules + module_schedules 合併存一個 JSON）
+    # ─────────────────────────────────────────────────────────────────────────
+    def _load_config(self) -> dict:
+        """讀取 sync_tool_config.json，回傳完整 dict。"""
+        try:
+            if _CONFIG_PATH.exists():
+                return json.loads(_CONFIG_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+        return {}
+
+    def _save_config(self, data: dict):
+        """將 config dict 寫回 sync_tool_config.json。"""
+        try:
+            _CONFIG_PATH.write_text(
+                json.dumps(data, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except Exception as exc:
+            logging.getLogger(__name__).warning("無法儲存設定：%s", exc)
+
     @staticmethod
     def _load_disabled() -> set[str]:
         """從 sync_tool_config.json 讀取暫停模組清單。"""
@@ -1179,15 +1262,23 @@ class SyncApp(tk.Tk):
         return set()
 
     def _save_disabled(self):
-        """將目前暫停清單寫回 sync_tool_config.json。"""
+        """將目前暫停清單合併寫回 sync_tool_config.json（保留其他欄位）。"""
         try:
-            _CONFIG_PATH.write_text(
-                json.dumps({"disabled_modules": sorted(self._disabled_modules)},
-                           ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
+            data = self._load_config()
+            data["disabled_modules"] = sorted(self._disabled_modules)
+            self._save_config(data)
         except Exception as exc:
             logging.getLogger(__name__).warning("無法儲存暫停設定：%s", exc)
+
+    def get_module_schedules(self) -> dict:
+        """讀取 module_schedules 設定，回傳 dict[module_name, schedule_dict]。"""
+        return self._load_config().get("module_schedules", {})
+
+    def save_module_schedules(self, schedules: dict):
+        """將 module_schedules 合併寫回 config（保留 disabled_modules 等其他欄位）。"""
+        data = self._load_config()
+        data["module_schedules"] = schedules
+        self._save_config(data)
 
     def _on_tree_right_click(self, event: tk.Event):
         """右鍵點擊 Treeview 行 → 彈出暫停/恢復選單。"""
@@ -1291,6 +1382,492 @@ class SyncApp(tk.Tk):
         self._log_text.see(tk.END)
         self._log_text.config(state=tk.DISABLED)
 
+    # ── 寄送報修未完成報表 ───────────────────────────────────────────────────
+    def _on_send_repair_report(self):
+        """點擊「寄送報修未完成報表」按鈕。"""
+        if self._running:
+            logging.getLogger(__name__).warning("同步中，請稍後再寄送報表")
+            return
+        self._btn_send_repair.config(state=tk.DISABLED, text="寄送中…")
+        self._lbl_status.config(text="寄送報修報表…", fg=C_ACCENT)
+        threading.Thread(target=self._send_repair_report_thread, daemon=True).start()
+
+    def _send_repair_report_thread(self):
+        """
+        背景執行 force_send_now（強制寄送，不檢查 is_enabled / 不防重複）。
+        完成後還原按鈕狀態並在 Log 顯示結果。
+        """
+        logger = logging.getLogger(__name__)
+        now = datetime.now()
+        year, month = now.year, now.month
+        logger.info("━━━  手動觸發：寄送報修未完成報表（%d年%02d月）  ━━━", year, month)
+        t0 = datetime.now()
+        try:
+            from app.core.database import SessionLocal as _SL
+            from app.services.repair_report_service import force_send_now as _send
+            with _SL() as db:
+                result = _send(db, year=year, month=month)
+            dur = round((datetime.now() - t0).total_seconds(), 1)
+            sent, failed = result.get("sent", 0), result.get("failed", 0)
+            if failed == 0:
+                logger.info("✓ 報修未完成報表寄送完成：sent=%d failed=%d（%.1fs）", sent, failed, dur)
+            else:
+                logger.warning("⚠ 報修未完成報表寄送部分失敗：sent=%d failed=%d（%.1fs）", sent, failed, dur)
+            self.after(0, self._on_send_repair_done, failed == 0, dur)
+        except Exception as exc:
+            dur = round((datetime.now() - t0).total_seconds(), 1)
+            logger.error("✗ 寄送失敗：%s", exc, exc_info=True)
+            self.after(0, self._on_send_repair_done, False, dur)
+
+    def _on_send_repair_done(self, success: bool, dur: float):
+        """寄送完成後更新 UI（必須在主執行緒呼叫）。"""
+        ts = datetime.now().strftime("%H:%M:%S")
+        if success:
+            self._lbl_status.config(text=f"✓ 報表寄送完成  {ts}", fg=C_SUCCESS)
+            self._lbl_bottom.config(text=f"報修未完成報表寄送完成（{dur:.1f}s）  {ts}")
+        else:
+            self._lbl_status.config(text=f"⚠ 報表寄送失敗  {ts}", fg=C_ERROR)
+            self._lbl_bottom.config(text=f"⚠ 報修未完成報表寄送失敗，請查看 Log  {ts}")
+        self._btn_send_repair.config(state=tk.NORMAL, text="📧 寄送報修未完成報表")
+
+    # ── 排程執行緒 ───────────────────────────────────────────────────────────
+    def _scheduler_loop(self):
+        """
+        背景排程主迴圈，每 30 秒 tick 一次。
+        讀取 sync_tool_config.json 的 module_schedules，依模式觸發任務。
+        """
+        import time
+        logger = logging.getLogger(__name__)
+        logger.info("[排程] 排程執行緒啟動（每 30 秒檢查一次）")
+        while self._sched_thread_running:
+            try:
+                self._scheduler_tick()
+            except Exception as exc:
+                logger.error("[排程] tick 發生例外：%s", exc, exc_info=True)
+            time.sleep(30)
+        logger.info("[排程] 排程執行緒結束")
+
+    def _scheduler_tick(self):
+        """
+        單次排程檢查：
+          - interval 模式：距上次執行已超過設定分鐘數 → 觸發
+          - daily 模式：目前時間在設定 HH:MM 同一分鐘內、且今天尚未觸發 → 觸發
+        """
+        schedules = self.get_module_schedules()
+        if not schedules:
+            return
+
+        now   = datetime.now()
+        today = now.date()
+        logger = logging.getLogger(__name__)
+
+        for module_name, cfg in schedules.items():
+            mode = cfg.get("mode", "off")
+            if mode == "off":
+                continue
+
+            if mode == "interval":
+                ivl = cfg.get("interval_minutes", 0)
+                if ivl <= 0:
+                    continue
+                # 全體同步中或此模組正在單獨同步中 → 跳過，下次再試
+                if self._running or module_name in self._single_syncing:
+                    continue
+                last = self._sched_last_interval.get(module_name)
+                elapsed = (now - last).total_seconds() if last else float("inf")
+                if elapsed >= ivl * 60:
+                    self._sched_last_interval[module_name] = now
+                    logger.info("[排程] ⏱ 間隔觸發：%s（%d 分鐘）", module_name, ivl)
+                    self.after(0, self._lbl_bottom.config,
+                               {"text": f"[排程] ⏱ 觸發：{module_name}"})
+                    self._trigger_scheduled(module_name)
+
+            elif mode == "daily":
+                time_str = cfg.get("time", "")
+                if not time_str:
+                    continue
+                try:
+                    h, m = map(int, time_str.split(":"))
+                except ValueError:
+                    logger.warning("[排程] 指定時間格式錯誤（%s）：%s", module_name, time_str)
+                    continue
+                # 目前時間在目標分鐘內，且 (今天, 設定時間) 組合尚未觸發
+                # ⚠️ dedup key 包含 time_str：改了時間後同一天仍可重新觸發
+                done_key = self._sched_daily_done.get(module_name)
+                if (now.hour == h and now.minute == m
+                        and done_key != (today, time_str)):
+                    self._sched_daily_done[module_name] = (today, time_str)
+                    logger.info("[排程] 🕐 每日觸發：%s（設定 %s）", module_name, time_str)
+                    self.after(0, self._lbl_bottom.config,
+                               {"text": f"[排程] 🕐 觸發：{module_name}（{time_str}）"})
+                    self._trigger_scheduled(module_name)
+
+    def _trigger_scheduled(self, module_name: str):
+        """將排程任務加入 FIFO 佇列，由 runner thread 依序執行（避免 SQLite 競爭）。"""
+        logger = logging.getLogger(__name__)
+        if module_name == MAIL_KEY:
+            self._task_queue.put((module_name, self._scheduled_mail_thread, ()))
+        else:
+            if module_name in self._disabled_modules:
+                logger.info("[排程] 模組已暫停，跳過：%s", module_name)
+                return
+            self._task_queue.put((module_name, self._scheduled_sync_thread, (module_name,)))
+        qsize = self._task_queue.qsize()
+        logger.info("[排程] 加入佇列：%s（佇列共 %d 項）", module_name, qsize)
+        self.after(0, self._lbl_bottom.config,
+                   {"text": f"[排程] 佇列：{module_name}（共 {qsize} 項待執行）"})
+
+    def _task_runner_loop(self):
+        """
+        FIFO 任務 runner（獨立 thread，永久執行）。
+        scheduler tick 只負責入佇列，本 thread 依序取出並執行，
+        確保同一時間絕不會有兩個同步/寄信任務並發，避免 SQLite 鎖定。
+        """
+        logger = logging.getLogger(__name__)
+        logger.info("[排程] 任務 runner 執行緒啟動")
+        while self._sched_thread_running:
+            try:
+                module_name, func, args = self._task_queue.get(timeout=1)
+                remaining = self._task_queue.qsize()
+                logger.info("[排程] ▶ 開始執行：%s（佇列剩 %d 項）",
+                            module_name, remaining)
+                self.after(0, self._lbl_bottom.config,
+                           {"text": f"[排程] ▶ 執行中：{module_name}（佇列剩 {remaining} 項）"})
+                try:
+                    func(*args)
+                except Exception as exc:
+                    logger.error("[排程] 執行例外 %s：%s", module_name, exc, exc_info=True)
+                finally:
+                    self._task_queue.task_done()
+            except queue.Empty:
+                pass   # 沒有任務，繼續等
+        logger.info("[排程] 任務 runner 執行緒結束")
+
+    def _scheduled_sync_thread(self, name: str):
+        """排程觸發的單一模組同步（背景執行緒）。"""
+        import time as _time
+        logger = logging.getLogger(__name__)
+        entry = next(((m, f) for n, m, f in MODULES if n == name), None)
+        if entry is None:
+            logger.error("[排程] 找不到模組定義：%s", name)
+            return
+
+        # 若全體同步進行中，最多等 60 秒後放棄
+        wait = 0
+        while self._running and wait < 60:
+            _time.sleep(5); wait += 5
+        if self._running:
+            logger.warning("[排程] 等待逾時，略過：%s", name)
+            return
+
+        self._single_syncing.add(name)
+        mod_path, func_name = entry
+        t0       = datetime.now()
+        status   = "success"
+        fetched  = upserted = err_count = 0
+        duration = 0.0
+
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            mod  = importlib.import_module(mod_path)
+            func = getattr(mod, func_name)
+            if inspect.iscoroutinefunction(func):
+                result = loop.run_until_complete(func())
+            else:
+                result = func()
+            duration = round((datetime.now() - t0).total_seconds(), 2)
+            if isinstance(result, dict):
+                fetched   = result.get("fetched",  0)
+                upserted  = result.get("upserted", 0)
+                _e        = result.get("errors",   0)
+                err_count = _e if isinstance(_e, int) else len(_e)
+                if err_count > 0:
+                    status = "partial"
+        except Exception as exc:
+            duration  = round((datetime.now() - t0).total_seconds(), 2)
+            status    = "error"
+            err_count = 1
+            logger.error("[排程] 同步失敗 %s：%s", name, exc, exc_info=True)
+        finally:
+            loop.close()
+
+        status_txt = {"success": "✓ 成功", "partial": "~ 部分", "error": "✗ 失敗"}[status]
+        logger.info("[排程] 同步完成 %s %s fetched=%d upserted=%d dur=%.1fs",
+                    name, status_txt, fetched, upserted, duration)
+        start_str = t0.strftime("%H:%M:%S")
+        self.after(
+            0, self._on_sync_done_single,
+            name, status, status_txt, start_str,
+            f"{duration:.1f}", fetched, upserted, err_count,
+        )
+
+    def _scheduled_mail_thread(self):
+        """排程觸發的報修報表寄信（背景執行緒）。"""
+        logger = logging.getLogger(__name__)
+        now = datetime.now()
+        year, month = now.year, now.month
+        logger.info("[排程] 📧 報修未完成報表寄信觸發（%d年%02d月）", year, month)
+        t0 = datetime.now()
+        try:
+            from app.core.database import SessionLocal as _SL
+            from app.services.repair_report_service import force_send_now as _send
+            with _SL() as db:
+                result = _send(db, year=year, month=month)
+            dur  = round((datetime.now() - t0).total_seconds(), 1)
+            sent = result.get("sent", 0)
+            fail = result.get("failed", 0)
+            if fail == 0:
+                logger.info("[排程] 📧 寄信完成：sent=%d（%.1fs）", sent, dur)
+                self.after(0, self._lbl_bottom.config,
+                           {"text": f"[排程] 📧 報修報表寄信完成 sent={sent}（{dur:.1f}s）"})
+            else:
+                logger.warning("[排程] 📧 寄信部分失敗：sent=%d failed=%d（%.1fs）",
+                               sent, fail, dur)
+                self.after(0, self._lbl_bottom.config,
+                           {"text": f"⚠ [排程] 📧 報修報表寄信部分失敗 sent={sent} failed={fail}"})
+        except Exception as exc:
+            dur = round((datetime.now() - t0).total_seconds(), 1)
+            logger.error("[排程] 📧 寄信失敗：%s", exc, exc_info=True)
+            self.after(0, self._lbl_bottom.config,
+                       {"text": "⚠ [排程] 📧 報修報表寄信失敗，請查看 Log"})
+
+    # ── 排程設定對話框 ────────────────────────────────────────────────────────
+    def _open_schedule_dialog(self):
+        """開啟「每模組排程設定」對話框。"""
+        dlg = tk.Toplevel(self)
+        dlg.title("⚙ 排程設定")
+        dlg.configure(bg=C_BG)
+        dlg.resizable(True, True)
+        dlg.grab_set()   # modal
+
+        # ── 說明 ──────────────────────────────────────────────────────────────
+        tk.Label(
+            dlg,
+            text="各模組可獨立設定排程模式。設定後由 sync_tool 的排程 thread 執行。",
+            bg=C_BG, fg=C_DIM,
+            font=("Microsoft JhengHei UI", 9),
+            wraplength=700,
+            justify=tk.LEFT,
+        ).pack(anchor=tk.W, padx=16, pady=(10, 0))
+
+        # ── 可捲動區域 ────────────────────────────────────────────────────────
+        outer = tk.Frame(dlg, bg=C_BG)
+        outer.pack(fill=tk.BOTH, expand=True, padx=10, pady=6)
+
+        canvas = tk.Canvas(outer, bg=C_BG, highlightthickness=0)
+        vsb = tk.Scrollbar(outer, orient=tk.VERTICAL, command=canvas.yview)
+        canvas.configure(yscrollcommand=vsb.set)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        inner = tk.Frame(canvas, bg=C_BG)
+        canvas_win = canvas.create_window((0, 0), window=inner, anchor=tk.NW)
+
+        def _on_inner_configure(event):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        def _on_canvas_configure(event):
+            canvas.itemconfig(canvas_win, width=event.width)
+
+        inner.bind("<Configure>", _on_inner_configure)
+        canvas.bind("<Configure>", _on_canvas_configure)
+
+        # 滑鼠滾輪支援
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
+        # ── 表頭 ──────────────────────────────────────────────────────────────
+        hdr_cfg = [
+            ("模組名稱",     220, tk.W),
+            ("模式",         200, tk.CENTER),
+            ("間隔（分鐘）", 150, tk.CENTER),
+            ("指定時間（HH:MM）", 160, tk.CENTER),
+        ]
+        for col_idx, (text, width, anchor) in enumerate(hdr_cfg):
+            lbl = tk.Label(
+                inner, text=text,
+                bg="#2d2d2d", fg=C_DIM,
+                font=("Microsoft JhengHei UI", 9, "bold"),
+                width=width // 10, anchor=anchor,
+                relief=tk.FLAT, padx=6, pady=4,
+            )
+            lbl.grid(row=0, column=col_idx, padx=2, pady=(0, 2), sticky=tk.EW)
+
+        # ── 載入已儲存設定 ────────────────────────────────────────────────────
+        saved = self.get_module_schedules()
+
+        # 排程項目 = 所有同步模組 + 報修報表寄信（使用 module-level MAIL_KEY）
+        sched_items = [(name,) for name, _, _ in MODULES] + [(MAIL_KEY,)]
+
+        INTERVAL_CHOICES = [
+            ("關閉（僅手動）", 0),
+            ("15 分", 15),
+            ("30 分", 30),
+            ("1 小時", 60),
+            ("2 小時", 120),
+            ("4 小時", 240),
+            ("8 小時", 480),
+        ]
+        INTERVAL_VALUES = [v for _, v in INTERVAL_CHOICES]
+        INTERVAL_LABELS = [l for l, _ in INTERVAL_CHOICES]
+
+        # 存放每列的控制變數
+        row_vars: list[dict] = []   # [{mode_var, interval_var, time_var, ...}, ...]
+
+        for row_idx, (name,) in enumerate(sched_items, start=1):
+            cfg = saved.get(name, {})
+            mode_val = cfg.get("mode", "off")  # off | interval | daily
+            ivl_val  = cfg.get("interval_minutes", 60)
+            time_val = cfg.get("time", "08:00")
+
+            # 模組名稱
+            is_mail = (name == MAIL_KEY)
+            row_bg = "#1a2e1a" if is_mail else (C_PANEL if row_idx % 2 == 0 else C_BG)
+
+            tk.Label(
+                inner, text=name,
+                bg=row_bg, fg="#4ec9b0" if is_mail else C_TEXT,
+                font=("Microsoft JhengHei UI", 9, "bold" if is_mail else "normal"),
+                anchor=tk.W, padx=6, pady=4,
+            ).grid(row=row_idx, column=0, padx=2, pady=1, sticky=tk.EW)
+
+            # 模式 Radiobuttons（關閉 / 間隔 / 指定時間）
+            mode_var = tk.StringVar(value=mode_val)
+            mode_frame = tk.Frame(inner, bg=row_bg)
+            mode_frame.grid(row=row_idx, column=1, padx=2, pady=1, sticky=tk.EW)
+
+            for m_label, m_val in [("關閉", "off"), ("間隔", "interval"), ("指定時間", "daily")]:
+                tk.Radiobutton(
+                    mode_frame, text=m_label, variable=mode_var, value=m_val,
+                    bg=row_bg, fg=C_TEXT, selectcolor="#094771",
+                    activebackground=row_bg, activeforeground=C_ACCENT,
+                    font=("Microsoft JhengHei UI", 9),
+                ).pack(side=tk.LEFT, padx=4)
+
+            # 間隔 Combobox
+            interval_var = tk.StringVar()
+            # 找對應 label
+            try:
+                ivl_label = INTERVAL_LABELS[INTERVAL_VALUES.index(ivl_val)]
+            except ValueError:
+                ivl_label = INTERVAL_LABELS[0]
+            interval_var.set(ivl_label)
+
+            ivl_cb = ttk.Combobox(
+                inner, textvariable=interval_var,
+                values=INTERVAL_LABELS,
+                width=12, state="readonly",
+                font=("Microsoft JhengHei UI", 9),
+            )
+            ivl_cb.grid(row=row_idx, column=2, padx=6, pady=1)
+
+            # 指定時間 Entry (HH:MM)
+            time_var = tk.StringVar(value=time_val)
+            time_entry = tk.Entry(
+                inner, textvariable=time_var,
+                width=8,
+                bg="#2d2d2d", fg=C_TEXT,
+                insertbackground=C_ACCENT,
+                font=("Consolas", 10),
+                relief=tk.FLAT,
+            )
+            time_entry.grid(row=row_idx, column=3, padx=6, pady=1)
+
+            # 動態啟用/停用控制項
+            # ⚠️ 必須用 closure factory，避免 trace_add 傳入的 3 個位置參數
+            # 覆蓋掉 default value（Python 的 default arg 陷阱）
+            def _make_state_updater(_mv, _cb, _entry):
+                def _update(*_args):
+                    m = _mv.get()
+                    _cb.configure(state="readonly" if m == "interval" else "disabled")
+                    _entry.configure(state=tk.NORMAL if m == "daily" else tk.DISABLED)
+                return _update
+
+            _updater = _make_state_updater(mode_var, ivl_cb, time_entry)
+            mode_var.trace_add("write", _updater)
+            _updater()   # 初始套用
+
+            row_vars.append({
+                "name":         name,
+                "mode_var":     mode_var,
+                "interval_var": interval_var,
+                "time_var":     time_var,
+            })
+
+        # ── 按鈕列 ────────────────────────────────────────────────────────────
+        btn_frame = tk.Frame(dlg, bg=C_BG, pady=8)
+        btn_frame.pack(fill=tk.X, padx=16)
+
+        def _on_save():
+            result = {}
+            for rv in row_vars:
+                name     = rv["name"]
+                mode     = rv["mode_var"].get()
+                ivl_lbl  = rv["interval_var"].get()
+                time_str = rv["time_var"].get().strip()
+
+                # 驗證指定時間格式
+                if mode == "daily":
+                    import re as _re
+                    if not _re.match(r"^\d{2}:\d{2}$", time_str):
+                        from tkinter import messagebox
+                        messagebox.showerror("格式錯誤", f"「{name}」的指定時間格式必須為 HH:MM，例如 23:05", parent=dlg)
+                        return
+
+                try:
+                    ivl_val = INTERVAL_VALUES[INTERVAL_LABELS.index(ivl_lbl)]
+                except ValueError:
+                    ivl_val = 0
+
+                entry = {"mode": mode}
+                if mode == "interval":
+                    entry["interval_minutes"] = ivl_val
+                elif mode == "daily":
+                    entry["time"] = time_str
+                result[name] = entry
+
+            self.save_module_schedules(result)
+            logging.getLogger(__name__).info(
+                "[排程設定] 已儲存 %d 個模組排程設定", len(result)
+            )
+            canvas.unbind_all("<MouseWheel>")
+            dlg.destroy()
+
+        def _on_cancel():
+            canvas.unbind_all("<MouseWheel>")
+            dlg.destroy()
+
+        tk.Button(
+            btn_frame, text="✓  儲存",
+            bg=C_BTN, fg="white",
+            activebackground="#1177bb", activeforeground="white",
+            font=("Microsoft JhengHei UI", 10, "bold"),
+            relief=tk.FLAT, padx=18, pady=5,
+            command=_on_save, cursor="hand2",
+        ).pack(side=tk.LEFT, padx=(0, 8))
+
+        tk.Button(
+            btn_frame, text="取消",
+            bg="#3c3c3c", fg=C_TEXT,
+            activebackground="#555555",
+            font=("Microsoft JhengHei UI", 10),
+            relief=tk.FLAT, padx=12, pady=5,
+            command=_on_cancel, cursor="hand2",
+        ).pack(side=tk.LEFT)
+
+        # ── 視窗大小與置中 ────────────────────────────────────────────────────
+        dlg.update_idletasks()
+        row_count   = len(sched_items) + 1   # +1 表頭
+        dlg_height  = min(row_count * 34 + 130, 700)
+        dlg.geometry(f"740x{dlg_height}")
+        # 置中於主視窗
+        x = self.winfo_x() + (self.winfo_width()  - 740) // 2
+        y = self.winfo_y() + (self.winfo_height() - dlg_height) // 2
+        dlg.geometry(f"740x{dlg_height}+{max(0,x)}+{max(0,y)}")
+        dlg.minsize(600, 400)
+
     # ── 清除 Log ─────────────────────────────────────────────────────────────
     def _on_clear(self):
         self._log_buffer.clear()
@@ -1305,6 +1882,7 @@ class SyncApp(tk.Tk):
 
     # ── 關閉時清理 ───────────────────────────────────────────────────────────
     def destroy(self):
+        self._sched_thread_running = False   # 通知排程 thread 結束
         if self._auto_timer:
             self._auto_timer.cancel()
         if self._countdown_job:

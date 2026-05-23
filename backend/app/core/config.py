@@ -141,6 +141,17 @@ class Settings(BaseSettings):
     SCHEDULER_ENABLED: bool = True
     SCHEDULER_DEFAULT_INTERVAL_MINUTES: int = 60
 
+    # ── 郵件設定（報修未完成報表排程寄信）────────────────────────────────────
+    MAIL_HOST:       str  = ""
+    MAIL_SMTP_PORT:  int  = 25
+    MAIL_POP3_PORT:  int  = 110
+    MAIL_USERNAME:   str  = ""
+    MAIL_PASSWORD:   str  = ""
+    MAIL_FROM:       str  = ""
+    MAIL_FROM_NAME:  str  = "維春集團報修系統"   # 寄件人顯示名稱
+    MAIL_USE_TLS:    bool = False
+    MAIL_USE_SSL:    bool = False
+
     # ── 便利屬性：統一取 server prefix ───────────────────────────────────────
     @property
     def ragic_server_prefix(self) -> str:

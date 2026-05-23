@@ -102,6 +102,7 @@ from app.routers import (
     ragic_field_audit,
     static_pages,
     other_tasks,
+    repair_report,
 )
 
 
@@ -912,6 +913,7 @@ async def _nichiyo_claim_full_sync():
     await _run_and_log("日曜核准請款單", sync_nichiyo_claim())
 
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan: startup / shutdown hooks."""
@@ -938,6 +940,7 @@ async def lifespan(app: FastAPI):
     import app.models.dazhi_repair  # noqa: F401
     import app.models.luqun_repair  # noqa: F401
     import app.models.module_sync_log  # noqa: F401
+    import app.models.repair_report  # noqa: F401
     import app.models.ragic_app_directory  # noqa: F401
     import app.models.mall_facility_inspection  # noqa: F401
     import app.models.hotel_daily_inspection  # noqa: F401
@@ -964,6 +967,13 @@ async def lifespan(app: FastAPI):
     # 建立尚未存在的資料表（不影響已有表格）
     Base.metadata.create_all(bind=engine)
     print("[Portal] Database tables ensured.")
+
+    # 報修未完成報表：確保預設排程設定存在（is_enabled=False，不會自動寄信）
+    from app.core.database import SessionLocal as _RepairSessionLocal
+    from app.services.repair_report_service import ensure_default_schedule as _ensure_repair_sched
+    with _RepairSessionLocal() as _repair_db:
+        _ensure_repair_sched(_repair_db)
+    print("[Portal] Repair report schedule settings checked.")
 
     # 內建角色 seed（system_admin / tenant_admin / module_manager / viewer）
     _seed_builtin_roles()
@@ -1145,6 +1155,9 @@ async def lifespan(app: FastAPI):
         print("[Portal] AutoSync scheduler started (cron-aligned, default every 30 minutes).")
     else:
         print("[Portal] AutoSync scheduler DISABLED (SCHEDULER_ENABLED=False). Use sync_tool.py to sync manually.")
+
+    # 報修未完成報表排程寄信已移至 sync_tool.py 管理（per-module 排程設定）
+    print("[Portal] Repair report daily send: managed by sync_tool.py (not backend scheduler).")
 
     yield
     # ── Shutdown ──────────────────────────────────────────────────────────────
@@ -1463,7 +1476,6 @@ app.include_router(
     prefix=f"{API_PREFIX}/settings",
     tags=["靜態頁面"],
 )
-
 # ── 角色管理 ──────────────────────────────────────────────────────────────────
 app.include_router(
     roles.router,
@@ -1483,6 +1495,13 @@ app.include_router(
     schedule.router,
     prefix=f"{API_PREFIX}/schedule",
     tags=["班表管理"],
+)
+
+# ── 新增：報修未完成報表 ──────────────────────────────────────────────────────
+app.include_router(
+    repair_report.router,
+    prefix=f"{API_PREFIX}/repair-report",
+    tags=["報修未完成報表"],
 )
 
 # ── 前端靜態檔（SPA catch-all）────────────────────────────────────────────────

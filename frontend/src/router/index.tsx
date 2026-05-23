@@ -48,6 +48,7 @@ import EmployeeManualExportPage from '@/pages/Settings/EmployeeManualExport'
 import KnowledgeGraphPage        from '@/pages/Settings/KnowledgeGraph'
 import StaticPagesPage           from '@/pages/Settings/StaticPages'
 import RagicFieldAuditPage        from '@/pages/Settings/RagicFieldAudit'
+import RepairUnfinishedReportPage from '@/pages/Settings/RepairUnfinishedReport'
 import ApprovalListPage   from '@/pages/Approvals/List'
 import ApprovalNewPage    from '@/pages/Approvals/New'
 import ApprovalDetailPage from '@/pages/Approvals/Detail'
@@ -540,6 +541,11 @@ export default function AppRouter() {
           <Route path="knowledge-graph" element={
             <PermissionGuard permissionKey="system_admin_only">
               <KnowledgeGraphPage />
+            </PermissionGuard>
+          } />
+          <Route path="repair-unfinished-report" element={
+            <PermissionGuard permissionKey="repair_unfinished_report_view">
+              <RepairUnfinishedReportPage />
             </PermissionGuard>
           } />
         </Route>

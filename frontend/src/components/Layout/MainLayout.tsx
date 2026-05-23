@@ -306,6 +306,7 @@ export const menuItems: MenuItem[] = [
       { key: '/settings/static-pages',             icon: <FileTextOutlined />,  label: NAV_PAGE.staticPages,          permissionKey: 'settings_menu_manage' },
       { key: '/settings/employee-manual-export',   icon: <BookOutlined />,      label: NAV_PAGE.employeeManualExport, permissionKey: 'system_admin_only' },
       { key: '/settings/knowledge-graph',          icon: <ApartmentOutlined />, label: NAV_PAGE.knowledgeGraph,       permissionKey: 'system_admin_only' },
+      { key: '/settings/repair-unfinished-report', icon: <AlertOutlined />,     label: NAV_PAGE.repairUnfinishedReport, permissionKey: 'repair_unfinished_report_view' },
     ],
   },
 ]

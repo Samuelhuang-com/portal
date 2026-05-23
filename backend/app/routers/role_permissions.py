@@ -76,6 +76,9 @@ PERMISSION_DEFINITIONS = [
     {"key": "ragic_field_audit_view",   "label": "Ragic 欄位比對：查看",     "group": "系統設定"},
     {"key": "ragic_field_audit_manage", "label": "Ragic 欄位比對：執行/標記","group": "系統設定"},
     {"key": "ragic_field_audit_admin",  "label": "Ragic 欄位比對：管理員",   "group": "系統設定"},
+    {"key": "repair_unfinished_report_view",   "label": "報修未完成報表",         "group": "系統設定"},
+    {"key": "repair_unfinished_report_manage", "label": "報修未完成報表：管理",   "group": "系統設定"},
+    {"key": "repair_unfinished_report_admin",  "label": "報修未完成報表：管理員", "group": "系統設定"},
 ]
 
 

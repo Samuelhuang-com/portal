@@ -191,6 +191,7 @@ export const NAV_PAGE = {
   employeeManualExport:     '員工操作手冊匯出',
   knowledgeGraph:           '專案知識圖譜',
   staticPages:              '靜態頁面',
+  repairUnfinishedReport:   '報修未完成報表',
 
   // 請購單報表
   purchaseReportMonthly:    '核准請購單月報表',  // ← 品項級月報表，route /purchase-report/monthly

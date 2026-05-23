@@ -184,8 +184,10 @@
       "bases:Create new base": false
     }
   },
-  "active": "25933a3e745314df",
+  "active": "96834202b5f1eff3",
   "lastOpenFiles": [
+    "backend/app/services/repair_report_service.py.tmp.95024.6b03bc49a469",
+    "backend/app/models/repair_report.py.tmp.95024.b7b0b0e7813c",
     "CLAUDE.md",
     "AGENTS.md",
     "frontend/node_modules/ajv/README.md",
@@ -216,7 +218,6 @@
     "docs/wiki/sop/每日水電錶數值登錄作業-sop.md",
     "docs/wiki/sop/新進員工-portal-系統使用導覽.md",
     "docs/wiki/sop/客房報修快速處理流程.md",
-    "docs/wiki/sop/保養工單新增與完成確認-sop.md",
     "docs/wiki/sop",
     "docs/wiki/dev",
     "docs/wiki"
