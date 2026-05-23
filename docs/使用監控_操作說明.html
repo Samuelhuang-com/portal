@@ -1,0 +1,767 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>使用監控 — 操作說明</title>
+<style>
+  :root {
+    --brand:   #1B3A5C;
+    --accent:  #4BA8E8;
+    --bg:      #f0f4f8;
+    --card:    #ffffff;
+    --border:  #e2e8f0;
+    --text:    #1e293b;
+    --muted:   #64748b;
+    --green:   #22863a;
+    --orange:  #e67e22;
+    --red:     #e74c3c;
+    --tag-bg:  #eef6ff;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: -apple-system, "Noto Sans TC", "Microsoft JhengHei", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 14px;
+    line-height: 1.7;
+  }
+
+  /* ── Layout ── */
+  .layout { display: flex; min-height: 100vh; }
+
+  /* ── Sidebar TOC ── */
+  .toc {
+    width: 220px;
+    flex-shrink: 0;
+    background: var(--brand);
+    color: #e2e8f0;
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
+    padding: 28px 0 40px;
+  }
+  .toc-logo {
+    padding: 0 20px 20px;
+    font-size: 15px;
+    font-weight: 700;
+    color: #fff;
+    border-bottom: 1px solid rgba(255,255,255,0.1);
+    margin-bottom: 12px;
+  }
+  .toc-logo span { color: var(--accent); }
+  .toc a {
+    display: block;
+    padding: 7px 20px;
+    color: #94a3b8;
+    text-decoration: none;
+    font-size: 13px;
+    transition: all .15s;
+    border-left: 3px solid transparent;
+  }
+  .toc a:hover, .toc a.active {
+    color: #fff;
+    background: rgba(255,255,255,0.07);
+    border-left-color: var(--accent);
+  }
+  .toc .section-label {
+    padding: 16px 20px 4px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    color: #475569;
+  }
+
+  /* ── Main content ── */
+  .content {
+    flex: 1;
+    padding: 40px 48px;
+    max-width: 900px;
+  }
+
+  /* ── Page header ── */
+  .page-header {
+    background: linear-gradient(135deg, var(--brand) 0%, #2a5a8c 100%);
+    border-radius: 12px;
+    padding: 32px 36px;
+    color: #fff;
+    margin-bottom: 36px;
+  }
+  .page-header h1 { font-size: 24px; font-weight: 700; margin-bottom: 6px; }
+  .page-header p  { color: #a8c8e8; font-size: 14px; }
+  .badge-row { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
+  .badge {
+    background: rgba(255,255,255,0.15);
+    border: 1px solid rgba(255,255,255,0.25);
+    border-radius: 20px;
+    padding: 3px 12px;
+    font-size: 12px;
+    color: #dbeeff;
+  }
+
+  /* ── Section ── */
+  section { margin-bottom: 44px; }
+  h2 {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--brand);
+    margin-bottom: 16px;
+    padding-bottom: 8px;
+    border-bottom: 2px solid var(--accent);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  h2 .icon { font-size: 20px; }
+  h3 {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--brand);
+    margin: 20px 0 10px;
+  }
+  p { margin-bottom: 10px; color: var(--text); }
+
+  /* ── Card ── */
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px 24px;
+    margin-bottom: 16px;
+  }
+  .card-title {
+    font-weight: 600;
+    color: var(--brand);
+    margin-bottom: 8px;
+    font-size: 14px;
+  }
+
+  /* ── KPI grid ── */
+  .kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+    gap: 14px;
+    margin-bottom: 20px;
+  }
+  .kpi-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 18px;
+    border-top: 3px solid var(--accent);
+  }
+  .kpi-label { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  .kpi-value { font-size: 22px; font-weight: 700; color: var(--brand); }
+  .kpi-sub   { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+  /* ── Tab pills ── */
+  .tab-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 20px;
+  }
+  .tab-pill {
+    background: var(--tag-bg);
+    border: 1px solid var(--accent);
+    border-radius: 20px;
+    padding: 4px 14px;
+    font-size: 13px;
+    color: var(--accent);
+    font-weight: 500;
+  }
+
+  /* ── Table ── */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    margin-bottom: 16px;
+  }
+  th {
+    background: var(--brand);
+    color: #fff;
+    text-align: left;
+    padding: 9px 12px;
+    font-weight: 600;
+    font-size: 12px;
+  }
+  td {
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  tr:last-child td { border-bottom: none; }
+  tr:nth-child(even) td { background: #f8fafc; }
+  code {
+    background: #eef2f7;
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-family: "Cascadia Code", Consolas, monospace;
+    font-size: 12px;
+    color: var(--brand);
+  }
+
+  /* ── Callout boxes ── */
+  .callout {
+    border-radius: 8px;
+    padding: 14px 18px;
+    margin-bottom: 14px;
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+  }
+  .callout .ico { font-size: 18px; flex-shrink: 0; margin-top: 1px; }
+  .callout.info  { background: #eef6ff; border-left: 4px solid var(--accent); }
+  .callout.warn  { background: #fff7ed; border-left: 4px solid var(--orange); }
+  .callout.tip   { background: #f0fdf4; border-left: 4px solid var(--green); }
+
+  /* ── Color chips ── */
+  .chip {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 600;
+    margin-right: 4px;
+  }
+  .chip.green  { background: #d4edda; color: var(--green); }
+  .chip.orange { background: #fde8cc; color: var(--orange); }
+  .chip.red    { background: #fde8e8; color: var(--red); }
+  .chip.blue   { background: #dbeeff; color: #1a6ca8; }
+
+  /* ── Step list ── */
+  .steps { counter-reset: step; }
+  .step {
+    display: flex;
+    gap: 16px;
+    margin-bottom: 18px;
+    align-items: flex-start;
+  }
+  .step-num {
+    counter-increment: step;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: var(--brand);
+    color: #fff;
+    font-weight: 700;
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+  .step-body { flex: 1; padding-top: 3px; }
+  .step-body strong { color: var(--brand); }
+
+  /* ── Flow diagram ── */
+  .flow {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    flex-wrap: wrap;
+    margin: 16px 0;
+  }
+  .flow-box {
+    background: var(--brand);
+    color: #fff;
+    border-radius: 8px;
+    padding: 8px 16px;
+    font-size: 13px;
+    font-weight: 500;
+    text-align: center;
+    min-width: 110px;
+  }
+  .flow-box.light {
+    background: var(--tag-bg);
+    color: var(--brand);
+    border: 1px solid var(--accent);
+  }
+  .flow-arrow {
+    padding: 0 8px;
+    color: var(--muted);
+    font-size: 18px;
+  }
+
+  /* ── FAQ ── */
+  details {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin-bottom: 10px;
+    overflow: hidden;
+  }
+  summary {
+    padding: 13px 18px;
+    font-weight: 600;
+    cursor: pointer;
+    color: var(--brand);
+    list-style: none;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  summary::after { content: '▾'; color: var(--accent); }
+  details[open] summary::after { content: '▴'; }
+  details .answer {
+    padding: 0 18px 14px;
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1.8;
+  }
+
+  @media (max-width: 760px) {
+    .toc { display: none; }
+    .content { padding: 24px 20px; }
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+
+<!-- ── Sidebar TOC ───────────────────────────────────────────────── -->
+<nav class="toc">
+  <div class="toc-logo">📊 <span>使用監控</span><br><small style="font-size:11px;font-weight:400;color:#94a3b8;">操作說明</small></div>
+
+  <div class="section-label">概覽</div>
+  <a href="#overview">什麼是使用監控</a>
+  <a href="#data-flow">資料流程</a>
+  <a href="#access">誰能看到</a>
+
+  <div class="section-label">功能說明</div>
+  <a href="#kpi">KPI 概覽卡片</a>
+  <a href="#tab-modules">TAB：模組使用排行</a>
+  <a href="#tab-users">TAB：用戶活躍度</a>
+  <a href="#tab-response">TAB：回應時間</a>
+  <a href="#tab-dau">TAB：DAU 趨勢</a>
+  <a href="#tab-timeline">TAB：請求量時間軸</a>
+  <a href="#tab-errors">TAB：錯誤率</a>
+
+  <div class="section-label">操作指引</div>
+  <a href="#howto">如何使用</a>
+  <a href="#scenarios">常見使用情境</a>
+  <a href="#faq">FAQ</a>
+
+  <div class="section-label">參考</div>
+  <a href="#tables">資料表說明</a>
+  <a href="#exclusions">排除清單</a>
+</nav>
+
+<!-- ── Main content ─────────────────────────────────────────────── -->
+<main class="content">
+
+  <!-- Page header -->
+  <div class="page-header">
+    <h1>📊 使用監控 — 完整操作說明</h1>
+    <p>自動記錄每位使用者的 API 呼叫行為，提供模組使用統計、用戶活躍度、效能分析與錯誤率監控。</p>
+    <div class="badge-row">
+      <span class="badge">v1.69.26 新功能</span>
+      <span class="badge">system_admin 專屬</span>
+      <span class="badge">無需額外設定</span>
+      <span class="badge">即時更新</span>
+    </div>
+  </div>
+
+  <!-- ── 1. 什麼是使用監控 ─────────────────────────────────────── -->
+  <section id="overview">
+    <h2><span class="icon">🔍</span> 什麼是使用監控</h2>
+    <p>使用監控是一套內建於 Portal 後端的行為追蹤系統。每當使用者在任何模組執行操作（開啟列表、查詢資料、儲存記錄等），系統會自動在背景記錄一筆日誌，包含：</p>
+
+    <div class="kpi-grid">
+      <div class="kpi-card">
+        <div class="kpi-label">記錄誰</div>
+        <div class="kpi-value" style="font-size:16px">用戶 Email</div>
+        <div class="kpi-sub">從登入 Token 自動解出</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">記錄哪個模組</div>
+        <div class="kpi-value" style="font-size:16px">模組名稱</div>
+        <div class="kpi-sub">從 API 路徑自動解析</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">記錄做了什麼</div>
+        <div class="kpi-value" style="font-size:16px">讀取 / 寫入</div>
+        <div class="kpi-sub">GET = 瀏覽；其他 = 操作</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">記錄多快</div>
+        <div class="kpi-value" style="font-size:16px">毫秒計時</div>
+        <div class="kpi-sub">每筆紀錄含回應時間</div>
+      </div>
+    </div>
+
+    <div class="callout info">
+      <span class="ico">ℹ️</span>
+      <div>所有記錄均為<strong>自動進行</strong>，不需要使用者或管理員手動操作。系統從後端 API 層攔截，不影響任何現有功能的速度或行為。</div>
+    </div>
+  </section>
+
+  <!-- ── 2. 資料流程 ───────────────────────────────────────────── -->
+  <section id="data-flow">
+    <h2><span class="icon">🔄</span> 資料流程</h2>
+
+    <div class="flow">
+      <div class="flow-box">使用者操作<br><small>點擊、查詢…</small></div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-box light">前端 API 呼叫<br><small>/api/v1/…</small></div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-box">AuditMiddleware<br><small>攔截計時</small></div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-box light">業務邏輯執行<br><small>正常回應</small></div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-box">背景寫入 DB<br><small>api_access_logs</small></div>
+    </div>
+
+    <p>寫入 DB 採用<strong>非同步背景任務</strong>，不會增加任何 API 的回應時間。即使寫入失敗（例如磁碟滿），也只會記錄錯誤 log，不影響使用者操作。</p>
+
+    <h3>什麼會被記錄？</h3>
+    <table>
+      <tr><th>類型</th><th>範例</th><th>是否記錄</th></tr>
+      <tr><td>模組資料查詢</td><td>開啟客房保養列表、查看工務報修</td><td><span class="chip green">✓ 記錄</span></td></tr>
+      <tr><td>資料同步觸發</td><td>點擊「立即同步」按鈕</td><td><span class="chip green">✓ 記錄</span></td></tr>
+      <tr><td>設定操作</td><td>修改角色權限、選單設定</td><td><span class="chip green">✓ 記錄</span></td></tr>
+      <tr><td>登入 / 登出</td><td>帳號登入、點擊登出</td><td><span class="chip blue">另表記錄</span>（audit_logs）</td></tr>
+      <tr><td>頁面重整</td><td>F5 重新載入</td><td><span class="chip orange">排除</span>（/auth/me 不計）</td></tr>
+      <tr><td>APScheduler 自動同步</td><td>每 30 分鐘排程同步</td><td><span class="chip orange">排除</span>（不走 HTTP）</td></tr>
+    </table>
+  </section>
+
+  <!-- ── 3. 誰能看到 ──────────────────────────────────────────── -->
+  <section id="access">
+    <h2><span class="icon">🔐</span> 誰能看到</h2>
+    <p>使用監控頁面僅限 <strong>系統管理員（system_admin）</strong> 角色存取，一般用戶與據點管理員無法看到此頁面及相關 API。</p>
+    <div class="callout warn">
+      <span class="ico">⚠️</span>
+      <div>使用監控統計包含所有用戶的行為資料。管理員應注意資料使用符合內部規範，僅作為系統維護與效能優化之用途。</div>
+    </div>
+  </section>
+
+  <!-- ── 4. KPI 卡片 ───────────────────────────────────────────── -->
+  <section id="kpi">
+    <h2><span class="icon">📈</span> KPI 概覽卡片</h2>
+    <p>頁面頂端顯示 4 張 KPI 卡片，提供目前統計區間（預設 7 天）的整體數字。</p>
+
+    <table>
+      <tr><th>卡片</th><th>說明</th><th>顏色警示</th></tr>
+      <tr>
+        <td><strong>今日活躍用戶（DAU）</strong></td>
+        <td>今天有實際操作任何模組的不重複用戶數。<br><small>定義：今日曾呼叫過業務 API 的 user_id 數量（不包含登入）</small></td>
+        <td>—</td>
+      </tr>
+      <tr>
+        <td><strong>總請求數</strong></td>
+        <td>統計區間內所有 API 呼叫次數（含 GET 與寫入）</td>
+        <td>—</td>
+      </tr>
+      <tr>
+        <td><strong>平均回應時間</strong></td>
+        <td>所有 API 的平均毫秒數，代表系統整體速度</td>
+        <td><span class="chip green">&lt; 200ms</span> 良好<br><span class="chip orange">&lt; 800ms</span> 注意<br><span class="chip red">≥ 800ms</span> 需優化</td>
+      </tr>
+      <tr>
+        <td><strong>API 錯誤率</strong></td>
+        <td>4xx + 5xx 錯誤佔總請求的百分比</td>
+        <td><span class="chip green">&lt; 1%</span> 正常<br><span class="chip orange">1–5%</span> 注意<br><span class="chip red">&gt; 5%</span> 異常</td>
+      </tr>
+    </table>
+
+    <h3>統計區間切換</h3>
+    <p>右上角下拉選單可切換 <strong>1 / 7 / 14 / 30 天</strong>。切換後所有 TAB 數據同步更新。點擊 <strong>↻ 重新整理</strong> 圖示可手動重新載入最新資料。</p>
+  </section>
+
+  <!-- ── 5. TAB 說明 ───────────────────────────────────────────── -->
+  <section id="tab-modules">
+    <h2><span class="icon">📋</span> TAB：模組使用排行</h2>
+    <p>顯示各模組在統計區間內的使用次數，依總次數<strong>由高至低</strong>排序。</p>
+
+    <table>
+      <tr><th>欄位</th><th>說明</th></tr>
+      <tr><td><strong>模組</strong></td><td>API 路徑解析出的模組名稱，例如 <code>room-maintenance</code>、<code>security-patrol</code></td></tr>
+      <tr><td><strong>總請求</strong></td><td>所有方法合計</td></tr>
+      <tr><td><strong>瀏覽（GET）</strong></td><td>查詢類請求，代表「有人打開這個頁面/查詢了資料」</td></tr>
+      <tr><td><strong>操作（寫入）</strong></td><td>POST / PATCH / DELETE，代表「有人實際修改了資料」</td></tr>
+    </table>
+
+    <div class="callout tip">
+      <span class="ico">💡</span>
+      <div><strong>使用技巧</strong>：瀏覽數遠大於操作數的模組，通常是「只看不動」的查詢頁面。若某模組瀏覽數突然暴增，可能是有用戶在大量下載或頻繁查詢。</div>
+    </div>
+  </section>
+
+  <section id="tab-users">
+    <h2><span class="icon">👥</span> TAB：用戶活躍度</h2>
+    <p>顯示統計區間內各用戶的操作次數排行，預設顯示前 20 名。</p>
+
+    <table>
+      <tr><th>欄位</th><th>說明</th></tr>
+      <tr><td><strong>Email</strong></td><td>用戶帳號（從登入 Token 記錄）</td></tr>
+      <tr><td><strong>請求數</strong></td><td>統計區間內的總操作次數</td></tr>
+      <tr><td><strong>最常用模組</strong></td><td>該用戶使用最頻繁的模組名稱</td></tr>
+      <tr><td><strong>最後活動</strong></td><td>最後一次 API 呼叫的時間（台灣時間）</td></tr>
+    </table>
+
+    <div class="callout info">
+      <span class="ico">ℹ️</span>
+      <div>表格可點擊「請求數」欄位標題進行<strong>升降序排列</strong>。若某用戶長期不活躍，可考慮停用帳號以確保資安。</div>
+    </div>
+  </section>
+
+  <section id="tab-response">
+    <h2><span class="icon">⚡</span> TAB：回應時間</h2>
+    <p>分析各模組的 API 效能，找出需要優化的慢速端點。</p>
+
+    <table>
+      <tr><th>欄位</th><th>說明</th></tr>
+      <tr><td><strong>平均（ms）</strong></td><td>所有請求的平均回應時間</td></tr>
+      <tr><td><strong>P95（ms）</strong></td><td>第 95 百分位數。95% 的請求都在此時間內完成，剩下 5% 更慢。比平均值更能反映「慢的時候有多慢」</td></tr>
+      <tr><td><strong>最慢（ms）</strong></td><td>統計區間內最慢的單次回應</td></tr>
+    </table>
+
+    <h3>顏色代碼</h3>
+    <p>
+      <span class="chip green">綠色 &lt; 200ms</span> 良好，用戶感受流暢
+      <span class="chip orange">橘色 &lt; 800ms</span> 偶爾感受到延遲
+      <span class="chip red">紅色 ≥ 800ms</span> 明顯卡頓，建議排查
+    </p>
+
+    <div class="callout tip">
+      <span class="ico">💡</span>
+      <div><strong>P95 是最重要的指標</strong>。即使平均值正常，若 P95 過高（例如 2000ms），代表每 20 次操作中就有 1 次體驗很差，用戶可能已有感受。</div>
+    </div>
+  </section>
+
+  <section id="tab-dau">
+    <h2><span class="icon">📉</span> TAB：DAU 趨勢</h2>
+    <p>顯示過去 N 天每日不重複的活躍用戶數折線圖，幫助了解系統整體使用趨勢。</p>
+
+    <div class="callout info">
+      <span class="ico">ℹ️</span>
+      <div>
+        <strong>DAU 定義</strong>：當天曾呼叫任一業務 API（非 login/logout）的不重複 user_id 數量。<br>
+        若某天 DAU 異常低（例如假日、節慶），屬正常現象。若工作日持續低迷，建議了解原因。
+      </div>
+    </div>
+
+    <h3>圖表操作</h3>
+    <p>滑鼠移到圖表上可查看各日期詳細數值。切換右上角統計區間可看 7 天 / 14 天 / 30 天趨勢。</p>
+  </section>
+
+  <section id="tab-timeline">
+    <h2><span class="icon">📊</span> TAB：請求量時間軸</h2>
+    <p>以<strong>每小時為單位</strong>顯示 API 請求量長條圖，可看出系統使用的高峰與低谷時段。</p>
+
+    <table>
+      <tr><th>用途</th><th>說明</th></tr>
+      <tr><td>找出使用高峰</td><td>通常在 08:30–11:00 和 14:00–16:00 出現峰值</td></tr>
+      <tr><td>排程維護時間</td><td>選擇請求量最低的時段進行系統重啟或更新</td></tr>
+      <tr><td>識別異常流量</td><td>非工作時間出現高峰，可能是自動化腳本或異常存取</td></tr>
+    </table>
+  </section>
+
+  <section id="tab-errors">
+    <h2><span class="icon">🚨</span> TAB：錯誤率</h2>
+    <p>顯示各模組的 HTTP 錯誤（4xx / 5xx）統計，依錯誤數<strong>由高至低</strong>排序。</p>
+
+    <table>
+      <tr><th>欄位</th><th>說明</th></tr>
+      <tr><td><strong>4xx</strong></td><td>用戶端錯誤（403 權限不足、404 找不到、429 被 Rate Limit 等）</td></tr>
+      <tr><td><strong>5xx</strong></td><td>伺服器錯誤，代表後端程式或資料庫異常，需要立即排查</td></tr>
+      <tr><td><strong>錯誤率</strong></td><td>(4xx + 5xx) ÷ 總請求 × 100%</td></tr>
+    </table>
+
+    <div class="callout warn">
+      <span class="ico">⚠️</span>
+      <div>任何模組出現 <strong>5xx 錯誤</strong>，應立即查看後端 <code>logs/</code> 目錄的對應 log 檔案。4xx 若持續偏高（&gt; 5%），可能是某用戶反覆碰到權限問題，建議檢視角色設定。</div>
+    </div>
+  </section>
+
+  <!-- ── 6. 操作指引 ───────────────────────────────────────────── -->
+  <section id="howto">
+    <h2><span class="icon">🚀</span> 如何進入使用監控</h2>
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-body">以 <strong>系統管理員（system_admin）</strong> 帳號登入 Portal</div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-body">點擊左側選單「<strong>系統設定</strong>」群組展開</div>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-body">點擊「<strong>使用監控</strong>」進入頁面</div>
+      </div>
+      <div class="step">
+        <div class="step-num">4</div>
+        <div class="step-body">右上角選擇統計區間（1 / 7 / 14 / 30 天），點擊各 TAB 查看不同維度的分析</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── 7. 常見使用情境 ───────────────────────────────────────── -->
+  <section id="scenarios">
+    <h2><span class="icon">💼</span> 常見使用情境</h2>
+
+    <div class="card">
+      <div class="card-title">情境 1：了解哪個模組最常被使用</div>
+      <p>進入「模組使用排行」TAB，選擇 30 天統計區間，查看總請求數排行。排名高的模組代表使用者最依賴，優化時應優先考慮這些模組的效能。</p>
+    </div>
+
+    <div class="card">
+      <div class="card-title">情境 2：哪些員工沒有在用系統</div>
+      <p>進入「用戶活躍度」TAB，選擇 30 天統計區間。若某帳號完全不出現在清單，代表該用戶過去 30 天沒有操作任何模組，可考慮確認帳號狀態。</p>
+    </div>
+
+    <div class="card">
+      <div class="card-title">情境 3：系統感覺變慢，找出哪個模組有問題</div>
+      <p>進入「回應時間」TAB，以 P95 欄位排序（點擊欄位標題），找出 P95 最高的模組。若超過 1000ms，可進一步查看後端 log 或資料庫查詢是否有效率問題。</p>
+    </div>
+
+    <div class="card">
+      <div class="card-title">情境 4：安排系統維護時間</div>
+      <p>進入「請求量時間軸」TAB，選擇 7–14 天，觀察哪個時段請求量最低（通常是凌晨 01:00–06:00）。選擇此時段進行重啟或更新，對用戶影響最小。</p>
+    </div>
+
+    <div class="card">
+      <div class="card-title">情境 5：確認新功能是否有人在用</div>
+      <p>新模組上線後，進入「模組使用排行」TAB，查看該模組的請求數。若上線後一週請求數為 0，可能是權限設定未開放或選單未顯示，需要排查。</p>
+    </div>
+  </section>
+
+  <!-- ── 8. FAQ ─────────────────────────────────────────────────── -->
+  <section id="faq">
+    <h2><span class="icon">❓</span> 常見問題</h2>
+
+    <details>
+      <summary>使用監控是否會影響系統效能？</summary>
+      <div class="answer">
+        不會。所有日誌寫入均採用背景非同步處理（fire-and-forget），不會增加 API 的回應時間。即使寫入 DB 發生錯誤，也只會在系統 log 留下記錄，不影響使用者操作。
+      </div>
+    </details>
+
+    <details>
+      <summary>登入、登出有被記錄嗎？</summary>
+      <div class="answer">
+        登入與登出事件記錄在 <code>audit_logs</code> 資料表（含 IP 位址），這是更早期就有的資安功能。使用監控的 <code>api_access_logs</code> 只記錄模組操作，兩者分開管理，各司其職。
+      </div>
+    </details>
+
+    <details>
+      <summary>DAU 只算進來看頁面，還是要實際操作才算？</summary>
+      <div class="answer">
+        兩者都算。只要用戶開啟任何模組頁面（前端會呼叫 GET API 取得資料），就會被計入 DAU。單純登入後停留在 Dashboard 但不點任何模組，<strong>不</strong>計入 DAU。
+      </div>
+    </details>
+
+    <details>
+      <summary>資料會保存多久？會自動清除嗎？</summary>
+      <div class="answer">
+        目前版本不自動清除，資料一直累積在 SQLite 資料庫的 <code>api_access_logs</code> 資料表。若資料量過大，可由系統管理員手動執行 SQL 清理（例如保留最近 6 個月）。未來版本可能加入自動保留期設定。
+      </div>
+    </details>
+
+    <details>
+      <summary>定時自動同步（APScheduler）的 API 呼叫有被記錄嗎？</summary>
+      <div class="answer">
+        沒有。APScheduler 排程任務直接在伺服器內部呼叫 service 函數，不走 HTTP 請求，因此不會經過 Middleware，也不會出現在使用監控記錄中。這是設計上的刻意排除，確保統計數字代表真實的「人為操作」。
+      </div>
+    </details>
+
+    <details>
+      <summary>統計頁面右上角的時間區間變更後，所有 TAB 都會更新嗎？</summary>
+      <div class="answer">
+        是的。切換統計區間後，所有 TAB（模組排行、用戶活躍度、回應時間、DAU、時間軸、錯誤率）都會重新拉取對應時段的資料。
+      </div>
+    </details>
+
+    <details>
+      <summary>為什麼有些 API 路徑沒有出現在模組排行？</summary>
+      <div class="answer">
+        以下路徑被系統刻意排除，不會出現在記錄中：
+        <ul style="margin: 8px 0 0 20px;">
+          <li><code>/api/v1/auth/</code> — 登入、登出、取得個人資訊</li>
+          <li><code>/api/docs</code>、<code>/api/redoc</code> — API 文件頁面</li>
+          <li><code>/assets/</code>、<code>/favicon</code> — 前端靜態資源</li>
+          <li><code>GET /api/v1/auth/me</code> — 頁面重整時的身份驗證查詢（高頻、無意義）</li>
+        </ul>
+      </div>
+    </details>
+  </section>
+
+  <!-- ── 9. 資料表說明 ─────────────────────────────────────────── -->
+  <section id="tables">
+    <h2><span class="icon">🗄️</span> 資料表說明</h2>
+    <p>使用監控使用一張新的資料表 <code>api_access_logs</code>，與原有的 <code>audit_logs</code> 分開存放。</p>
+
+    <h3>api_access_logs — 欄位說明</h3>
+    <table>
+      <tr><th>欄位</th><th>型別</th><th>說明</th></tr>
+      <tr><td><code>id</code></td><td>UUID</td><td>主鍵，自動產生</td></tr>
+      <tr><td><code>user_id</code></td><td>String(36)</td><td>從 JWT Token 解出的用戶 UUID；未登入時為 NULL</td></tr>
+      <tr><td><code>user_email</code></td><td>String(100)</td><td>用戶 Email（冗餘存放，避免 JOIN）</td></tr>
+      <tr><td><code>module</code></td><td>String(80)</td><td>從 API 路徑解析的模組名稱</td></tr>
+      <tr><td><code>method</code></td><td>String(10)</td><td>HTTP 方法（GET / POST / PATCH / DELETE）</td></tr>
+      <tr><td><code>path</code></td><td>String(250)</td><td>完整 API 路徑</td></tr>
+      <tr><td><code>status_code</code></td><td>Integer</td><td>HTTP 回應狀態碼</td></tr>
+      <tr><td><code>response_ms</code></td><td>Integer</td><td>回應時間（毫秒）</td></tr>
+      <tr><td><code>ip_address</code></td><td>String(45)</td><td>用戶 IP（支援 IPv6，優先讀取 X-Forwarded-For）</td></tr>
+      <tr><td><code>created_at</code></td><td>DateTime</td><td>記錄時間（台灣時間 UTC+8）</td></tr>
+    </table>
+
+    <h3>模組名稱解析規則</h3>
+    <table>
+      <tr><th>API 路徑</th><th>解析結果</th></tr>
+      <tr><td><code>/api/v1/room-maintenance/…</code></td><td><code>room-maintenance</code></td></tr>
+      <tr><td><code>/api/v1/mall/b4f-inspection/…</code></td><td><code>b4f-inspection</code></td></tr>
+      <tr><td><code>/api/v1/security/patrol/…</code></td><td><code>patrol</code></td></tr>
+      <tr><td><code>/api/v1/settings/users/…</code></td><td><code>settings/users</code></td></tr>
+      <tr><td><code>/api/v1/dashboard/…</code></td><td><code>dashboard</code></td></tr>
+    </table>
+  </section>
+
+  <!-- ── 10. 排除清單 ──────────────────────────────────────────── -->
+  <section id="exclusions">
+    <h2><span class="icon">🚫</span> 排除清單（不記錄的路徑）</h2>
+    <table>
+      <tr><th>路徑前綴</th><th>原因</th></tr>
+      <tr><td><code>/api/v1/auth/</code></td><td>登入 / 登出由 <code>audit_logs</code> 負責，避免重複記錄</td></tr>
+      <tr><td><code>/api/docs</code>、<code>/api/redoc</code>、<code>/api/openapi.json</code></td><td>API 文件存取，非業務操作</td></tr>
+      <tr><td><code>/assets/</code>、<code>/favicon</code></td><td>前端靜態資源</td></tr>
+      <tr><td><code>GET /api/v1/auth/me</code>（精確排除）</td><td>每次頁面重整都會呼叫，頻率極高、無分析意義</td></tr>
+    </table>
+
+    <div class="callout tip">
+      <span class="ico">💡</span>
+      <div>若未來需要新增排除項目（例如 health check API），可修改 <code>backend/app/middleware/audit_middleware.py</code> 中的 <code>_EXCLUDE_PREFIXES</code> 或 <code>_EXCLUDE_EXACT</code> 常數。</div>
+    </div>
+  </section>
+
+  <hr style="border: none; border-top: 1px solid var(--border); margin: 40px 0 20px;">
+  <p style="color: var(--muted); font-size: 12px; text-align: center;">
+    Portal 使用監控說明文件 — v1.69.26 &nbsp;|&nbsp; 最後更新：2026-05-23 &nbsp;|&nbsp; 僅供系統管理員參考
+  </p>
+
+</main>
+</div>
+
+<script>
+// Highlight active TOC item on scroll
+const sections = document.querySelectorAll('section[id]')
+const links = document.querySelectorAll('.toc a')
+const observer = new IntersectionObserver((entries) => {
+  entries.forEach(e => {
+    if (e.isIntersecting) {
+      links.forEach(l => l.classList.remove('active'))
+      const active = document.querySelector(`.toc a[href="#${e.target.id}"]`)
+      if (active) active.classList.add('active')
+    }
+  })
+}, { rootMargin: '-20% 0px -70% 0px' })
+sections.forEach(s => observer.observe(s))
+</script>
+</body>
+</html>

@@ -800,9 +800,10 @@ export default function MainLayout() {
         label: '登出',
         danger: true,
         onClick: () => {
-          // 登出時清除 menu config 快取與首頁設定，防止帳號切換時殘留前一位使用者的設定
+          // 登出時清除 menu config 快取（DB 資料快照，下個使用者應重新拉取）
+          // 首頁設定（portal_home_page_route）屬於使用者偏好，保留不清除，
+          // 跨帳號的無權限情況由頁面層 PermissionGuard 處理
           localStorage.removeItem(MENU_CONFIG_CACHE_KEY)
-          localStorage.removeItem('portal_home_page_route')
           logout()
           navigate('/login')
         },

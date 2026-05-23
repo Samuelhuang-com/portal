@@ -1522,6 +1522,17 @@ app.include_router(
     tags=["使用監控"],
 )
 
+# ── 靜態說明文件（docs-static）──────────────────────────────────────────────
+# 供 settings/static-pages 的 iframe 預覽使用
+# 路徑：/docs-static/<filename>  →  portal/docs/<filename>
+_DOCS_DIR = pathlib.Path(__file__).parent.parent.parent / "docs"
+if _DOCS_DIR.exists():
+    app.mount(
+        "/docs-static",
+        StaticFiles(directory=_DOCS_DIR),
+        name="docs-static",
+    )
+
 # ── 前端靜態檔（SPA catch-all）────────────────────────────────────────────────
 # dist/ 位於 portal/frontend/dist，由 npm run build 產生
 _FRONTEND_DIST = pathlib.Path(__file__).parent.parent.parent / "frontend" / "dist"

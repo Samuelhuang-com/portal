@@ -78,15 +78,28 @@ def _reset_failures(key: str) -> None:
         _attempts.pop(key, None)
 
 
+def _is_locked(key: str) -> None:
+    """僅檢查是否已在鎖定期，不記錄失敗次數。"""
+    with _lock:
+        now = datetime.now(timezone.utc)
+        rec = _attempts[key]
+        if rec["locked_until"] and now < rec["locked_until"]:
+            remaining = int((rec["locked_until"] - now).total_seconds())
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"登入失敗次數過多，請於 {remaining} 秒後再試",
+            )
+
+
 def _check_rate_limit(request: Request, identifier: str) -> tuple[str, str]:
     """
-    同時檢查 IP 維度與帳號維度是否超限。
-    回傳 (ip_key, account_key) 供登入成功後清除用。
+    同時檢查 IP 維度與帳號維度是否超限（只檢查，不計數）。
+    回傳 (ip_key, account_key) 供登入失敗時記錄、成功時清除用。
     """
     ip_key      = _rate_limit_key_ip(request)
     account_key = f"account:{identifier}"
-    _check_and_record_failure(ip_key)
-    _check_and_record_failure(account_key)
+    _is_locked(ip_key)
+    _is_locked(account_key)
     return ip_key, account_key
 
 
@@ -131,8 +144,7 @@ def login(data: LoginRequest, request: Request, db: Session = Depends(get_db)):
         db.query(User).filter(User.email == identifier, User.is_active == True).first()
     )
     if not user or not verify_password(data.password, user.hashed_password):
-        # 驗證失敗：不需要再呼叫 _check_and_record_failure（已在 _check_rate_limit 記錄過）
-        # 但這裡需要「再記一次」—— _check_rate_limit 是事前檢查，實際失敗要再加計
+        # 驗證失敗：記錄這次失敗（_check_rate_limit 只檢查鎖定，不計數）
         _check_and_record_failure(ip_key)
         _check_and_record_failure(account_key)
         raise HTTPException(

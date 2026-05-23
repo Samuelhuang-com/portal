@@ -308,14 +308,16 @@ class SyncApp(tk.Tk):
         self._runner_thread = threading.Thread(
             target=self._task_runner_loop, daemon=True, name="SyncTaskRunner",
         )
-        self._sched_thread.start()
-        self._runner_thread.start()
 
         self._build_ui()
         self._setup_logging()
         self._update_sync_btn_label()   # 若有暫停模組，按鈕立即顯示數量
         self._check_env()
         self._ensure_db_schema()        # 確保 DB Schema 與 ORM 模型一致（migration）
+
+        # ⚠️ 必須在 _build_ui() 之後啟動，確保 _lbl_bottom 等 UI 元件已建立完成
+        self._sched_thread.start()
+        self._runner_thread.start()
 
     # ─────────────────────────────────────────────────────────────────────────
     # UI 建構

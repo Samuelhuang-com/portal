@@ -92,25 +92,11 @@ def get_modules(
 ):
     """各模組請求次數排行（GET 為瀏覽，POST/PATCH/DELETE 為操作）。"""
     since = _since(days)
-    rows = (
-        db.query(
-            ApiAccessLog.module,
-            func.count(ApiAccessLog.id).label("total"),
-            func.sum(
-                func.cast(ApiAccessLog.method == "GET", db.bind.dialect.name == "sqlite" and "INTEGER" or "INT")
-            ).label("reads"),
-        )
-        .filter(ApiAccessLog.created_at >= since)
-        .group_by(ApiAccessLog.module)
-        .order_by(func.count(ApiAccessLog.id).desc())
-        .all()
-    )
 
-    # SQLite 不支援 CAST(bool)，改用 Python 計算
-    since_dt = since
+    # 用 Python 端計算 reads/writes（SQLite 不支援 CAST(bool)）
     all_rows = (
         db.query(ApiAccessLog.module, ApiAccessLog.method)
-        .filter(ApiAccessLog.created_at >= since_dt)
+        .filter(ApiAccessLog.created_at >= since)
         .all()
     )
     from collections import defaultdict

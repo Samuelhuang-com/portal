@@ -52,28 +52,30 @@ export default function UsageMonitor() {
 
   const fetchAll = useCallback(async (d: number) => {
     setLoading(true)
-    try {
-      const [s, m, u, r, dauRes, e, t] = await Promise.all([
-        usageStatsApi.getSummary(d),
-        usageStatsApi.getModules(d),
-        usageStatsApi.getUsers(d),
-        usageStatsApi.getResponseTimes(d),
-        usageStatsApi.getDau(d),
-        usageStatsApi.getErrors(d),
-        usageStatsApi.getTimeline(d),
-      ])
-      setSummary(s.data)
-      setModules(m.data.modules)
-      setUsers(u.data.users)
-      setResponseTimes(r.data.modules)
-      setDau(dauRes.data.data)
-      setErrors(e.data.modules)
-      setTimeline(t.data.data)
-    } catch (err) {
-      console.error('UsageMonitor fetch error:', err)
-    } finally {
-      setLoading(false)
-    }
+    const [s, m, u, r, dauRes, e, t] = await Promise.allSettled([
+      usageStatsApi.getSummary(d),
+      usageStatsApi.getModules(d),
+      usageStatsApi.getUsers(d),
+      usageStatsApi.getResponseTimes(d),
+      usageStatsApi.getDau(d),
+      usageStatsApi.getErrors(d),
+      usageStatsApi.getTimeline(d),
+    ])
+    if (s.status === 'fulfilled')        setSummary(s.value.data)
+    if (m.status === 'fulfilled')        setModules(m.value.data.modules ?? [])
+    if (u.status === 'fulfilled')        setUsers(u.value.data.users ?? [])
+    if (r.status === 'fulfilled')        setResponseTimes(r.value.data.modules ?? [])
+    if (dauRes.status === 'fulfilled')   setDau(dauRes.value.data.data ?? [])
+    if (e.status === 'fulfilled')        setErrors(e.value.data.modules ?? [])
+    if (t.status === 'fulfilled')        setTimeline(t.value.data.data ?? [])
+
+    // 記錄失敗的端點（不影響畫面）
+    const failed = [s, m, u, r, dauRes, e, t]
+      .map((res, i) => res.status === 'rejected' ? ['summary','modules','users','response-times','dau','errors','timeline'][i] : null)
+      .filter(Boolean)
+    if (failed.length) console.warn('UsageMonitor 部分端點失敗:', failed)
+
+    setLoading(false)
   }, [])
 
   useEffect(() => { fetchAll(days) }, [days, fetchAll])
