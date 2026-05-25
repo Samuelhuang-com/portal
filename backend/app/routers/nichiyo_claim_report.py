@@ -137,6 +137,7 @@ def _format_item_row(order: NichiyoClaimRequest, item: NichiyoClaimRequestItem) 
         "claim_no":            order.claim_no,
         "request_date":        order.request_date.isoformat()  if order.request_date  else None,
         "approved_date":       order.approved_date.isoformat() if order.approved_date else None,
+        "payment_date":        order.payment_date.isoformat()  if order.payment_date  else None,
         "applicant":           order.applicant,
         "purpose_description": order.purpose_description,
         "account_category":    order.account_category,
@@ -156,6 +157,7 @@ def _format_item_row(order: NichiyoClaimRequest, item: NichiyoClaimRequestItem) 
         "unit_price":          item.unit_price,
         "amount":              item.amount,
         "item_remark":         item.item_remark,
+        "invoice_no":          None,   # 日曜請款無發票號碼欄位，恆為 null
     }
 
 
@@ -163,16 +165,18 @@ def _format_item_row(order: NichiyoClaimRequest, item: NichiyoClaimRequestItem) 
 
 @router.get("/approved/orders")
 def get_approved_orders(
-    year_month:       Optional[str] = Query(None, description="YYYY-MM（單月）"),
-    year_month_from:  Optional[str] = Query(None, description="YYYY-MM（區間起）"),
-    year_month_to:    Optional[str] = Query(None, description="YYYY-MM（區間迄）"),
-    department:       Optional[str] = Query(None),
-    account_category: Optional[str] = Query(None),
-    q:                Optional[str] = Query(None, description="關鍵字（事由/單號/申請人/受款者）"),
-    page:             int           = Query(1, ge=1),
-    per_page:         int           = Query(20, ge=1, le=200),  # B10：統一用 per_page
-    db:               Session       = Depends(get_db),
-    _:                object        = Depends(require_permission(_PERM)),
+    year_month:        Optional[str] = Query(None, description="YYYY-MM（單月）"),
+    year_month_from:   Optional[str] = Query(None, description="YYYY-MM（區間起）"),
+    year_month_to:     Optional[str] = Query(None, description="YYYY-MM（區間迄）"),
+    department:        Optional[str] = Query(None),
+    account_category:  Optional[str] = Query(None),
+    payment_date_from: Optional[str] = Query(None, description="付款日期起（YYYY-MM-DD）"),
+    payment_date_to:   Optional[str] = Query(None, description="付款日期迄（YYYY-MM-DD）"),
+    q:                 Optional[str] = Query(None, description="關鍵字（事由/單號/申請人/受款者）"),
+    page:              int           = Query(1, ge=1),
+    per_page:          int           = Query(20, ge=1, le=200),
+    db:                Session       = Depends(get_db),
+    _:                 object        = Depends(require_permission(_PERM)),
 ):
     """請款單清單（訂單級，分頁）"""
     base_q = db.query(NichiyoClaimRequest).filter(
@@ -182,6 +186,10 @@ def get_approved_orders(
     base_q = _apply_dept_filter(base_q, department)
     base_q = _apply_account_filter(base_q, account_category)
     base_q = _apply_search(base_q, q)
+    if payment_date_from:
+        base_q = base_q.filter(NichiyoClaimRequest.payment_date >= payment_date_from)
+    if payment_date_to:
+        base_q = base_q.filter(NichiyoClaimRequest.payment_date <= payment_date_to)
     base_q = base_q.order_by(NichiyoClaimRequest.approved_date.desc(),
                               NichiyoClaimRequest.id.desc())
 
@@ -242,16 +250,18 @@ def get_order_detail(
 
 @router.get("/approved/monthly")
 def get_monthly_report(
-    year_month:       Optional[str] = Query(None),
-    year_month_from:  Optional[str] = Query(None),
-    year_month_to:    Optional[str] = Query(None),
-    department:       Optional[str] = Query(None),
-    account_category: Optional[str] = Query(None),
-    q:                Optional[str] = Query(None),
-    page:             int           = Query(1, ge=1),
-    per_page:         int           = Query(50, ge=1, le=200),
-    db:               Session       = Depends(get_db),
-    _:                object        = Depends(require_permission(_PERM)),
+    year_month:        Optional[str] = Query(None),
+    year_month_from:   Optional[str] = Query(None),
+    year_month_to:     Optional[str] = Query(None),
+    department:        Optional[str] = Query(None),
+    account_category:  Optional[str] = Query(None),
+    payment_date_from: Optional[str] = Query(None, description="付款日期起（YYYY-MM-DD）"),
+    payment_date_to:   Optional[str] = Query(None, description="付款日期迄（YYYY-MM-DD）"),
+    q:                 Optional[str] = Query(None),
+    page:              int           = Query(1, ge=1),
+    per_page:          int           = Query(50, ge=1, le=200),
+    db:                Session       = Depends(get_db),
+    _:                 object        = Depends(require_permission(_PERM)),
 ):
     """月報明細（品項級，分頁）"""
     order_q = db.query(NichiyoClaimRequest).filter(
@@ -261,6 +271,10 @@ def get_monthly_report(
     order_q = _apply_dept_filter(order_q, department)
     order_q = _apply_account_filter(order_q, account_category)
     order_q = _apply_search(order_q, q)
+    if payment_date_from:
+        order_q = order_q.filter(NichiyoClaimRequest.payment_date >= payment_date_from)
+    if payment_date_to:
+        order_q = order_q.filter(NichiyoClaimRequest.payment_date <= payment_date_to)
 
     order_ids = [r.id for r in order_q.with_entities(NichiyoClaimRequest.id).all()]
     if not order_ids:

@@ -10,6 +10,7 @@ export interface User {
   is_active: boolean;
   last_login?: string;
   created_at?: string;
+  must_change_password?: boolean;
 }
 
 export interface Tenant {

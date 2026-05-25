@@ -3,16 +3,21 @@ from sqlalchemy.orm import Session
 from datetime import datetime, timezone, timedelta
 from threading import Lock
 from collections import defaultdict
+import random
+import string
 from app.core.time import twnow
 from app.core.database import get_db
-from app.core.security import verify_password, create_access_token, decode_token
+from app.core.security import verify_password, hash_password, create_access_token, decode_token
 from app.dependencies import get_current_user, get_user_permissions
 from app.models.user import User
 from app.models.user_role import UserRole
 from app.models.role import Role
 from app.models.tenant import Tenant
 from app.models.audit_log import AuditLog
-from app.schemas.auth import LoginRequest, TokenResponse, UserInfo
+from app.schemas.auth import LoginRequest, TokenResponse, UserInfo, ForgotPasswordRequest
+
+OTP_EXPIRES_MINUTES = 15
+_FAKE_EMAIL_SUFFIX  = "@portal.local"
 
 router = APIRouter()
 
@@ -126,7 +131,12 @@ def _build_user_info(user: User, db: Session) -> UserInfo:
         roles=_get_user_roles(user.id, db),
         permissions=get_user_permissions(user.id, db),
         is_active=user.is_active,
+        must_change_password=user.must_change_password or False,
     )
+
+
+def _generate_otp() -> str:
+    return "".join(random.choices(string.digits, k=6))
 
 
 # ── Endpoints ────────────────────────────────────────────────────────────────
@@ -143,8 +153,26 @@ def login(data: LoginRequest, request: Request, db: Session = Depends(get_db)):
     user = (
         db.query(User).filter(User.email == identifier, User.is_active == True).first()
     )
-    if not user or not verify_password(data.password, user.hashed_password):
-        # 驗證失敗：記錄這次失敗（_check_rate_limit 只檢查鎖定，不計數）
+
+    # ── 驗證：一般密碼 或 OTP ─────────────────────────────────────────────────
+    password_ok = False
+    otp_login   = False
+
+    if user:
+        # 1. 先試一般密碼
+        if verify_password(data.password, user.hashed_password):
+            password_ok = True
+        # 2. 若一般密碼不符，試 OTP（需未過期且有 otp_code）
+        elif (
+            user.otp_code
+            and user.otp_expires_at
+            and twnow() <= user.otp_expires_at
+            and verify_password(data.password, user.otp_code)
+        ):
+            password_ok = True
+            otp_login   = True
+
+    if not user or not password_ok:
         _check_and_record_failure(ip_key)
         _check_and_record_failure(account_key)
         raise HTTPException(
@@ -155,10 +183,21 @@ def login(data: LoginRequest, request: Request, db: Session = Depends(get_db)):
     _reset_failures(ip_key)
     _reset_failures(account_key)
 
+    # OTP 登入：清除 otp_code，保留 must_change_password=True
+    if otp_login:
+        user.otp_code       = None
+        user.otp_expires_at = None
+        # must_change_password 已在產生 OTP 時設為 True，此處維持不動
+
+    must_change = bool(user.must_change_password)
     roles = _get_user_roles(user.id, db)
     token = create_access_token(
         subject=user.id,
-        extra_claims={"email": user.email, "roles": roles},
+        extra_claims={
+            "email": user.email,
+            "roles": roles,
+            "must_change_password": must_change,
+        },
     )
 
     user.last_login = twnow()
@@ -166,13 +205,77 @@ def login(data: LoginRequest, request: Request, db: Session = Depends(get_db)):
         AuditLog(
             user_id=user.id,
             tenant_id=user.tenant_id,
-            action="login",
+            action="login_otp" if otp_login else "login",
             ip_address=request.client.host if request.client else None,
         )
     )
     db.commit()
 
-    return TokenResponse(access_token=token, user=_build_user_info(user, db))
+    return TokenResponse(
+        access_token=token,
+        user=_build_user_info(user, db),
+        must_change_password=must_change,
+    )
+
+
+@router.post("/forgot-password")
+def forgot_password(data: ForgotPasswordRequest, db: Session = Depends(get_db)):
+    """
+    使用者申請忘記密碼。
+    - 若 email 是真實 email → 產生 OTP 並寄信
+    - 若 email 是 @portal.local 假 email → 回傳錯誤，要求聯繫管理員
+    - 為防止帳號列舉攻擊（account enumeration），找不到帳號時回傳相同訊息
+    """
+    identifier = data.identifier.lower().strip()
+    if "@" not in identifier:
+        identifier = f"{identifier}@portal.local"
+
+    # 帳號是假 email → 直接拒絕，不寄信
+    if identifier.endswith(_FAKE_EMAIL_SUFFIX):
+        raise HTTPException(
+            status_code=400,
+            detail="此帳號未設定真實 Email，無法透過信箱重設密碼。請聯繫管理員重設密碼。",
+        )
+
+    user = db.query(User).filter(User.email == identifier, User.is_active == True).first()
+
+    # 帳號不存在：回傳相同訊息避免帳號列舉
+    if not user:
+        return {"message": "若帳號存在，一次性密碼已寄出，請查收信箱。"}
+
+    # 產生 OTP
+    otp = _generate_otp()
+    user.otp_code       = hash_password(otp)
+    user.otp_expires_at = twnow() + timedelta(minutes=OTP_EXPIRES_MINUTES)
+    user.must_change_password = True
+
+    db.add(
+        AuditLog(
+            user_id=user.id,
+            tenant_id=user.tenant_id,
+            action="forgot_password",
+        )
+    )
+    db.commit()
+
+    # 寄信（失敗不回滾 OTP，讓使用者可重試；記錄 log 即可）
+    try:
+        from app.services.email_service import send_otp_email
+        send_otp_email(
+            to_email=user.email,
+            to_name=user.full_name,
+            otp=otp,
+            expires_minutes=OTP_EXPIRES_MINUTES,
+        )
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).error(f"[forgot_password] 寄信失敗 → {user.email}: {exc}")
+        raise HTTPException(
+            status_code=500,
+            detail="OTP 產生成功，但寄信失敗，請稍後再試或聯繫管理員。",
+        )
+
+    return {"message": "若帳號存在，一次性密碼已寄出，請查收信箱。"}
 
 
 @router.get("/me", response_model=UserInfo)

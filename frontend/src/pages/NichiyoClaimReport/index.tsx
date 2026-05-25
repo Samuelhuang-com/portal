@@ -90,6 +90,13 @@ const statusTag = (v: string) => {
   return <Tag color="orange">待審</Tag>
 }
 
+// ── 付款種類 Tag ─────────────────────────────────────────────────────────────────
+const paymentTag = (v: string | null) => {
+  if (!v) return <span style={{ color: '#aaa' }}>—</span>
+  const color = v === '匯款' ? 'blue' : v === '零用金' ? 'green' : 'default'
+  return <Tag color={color}>{v}</Tag>
+}
+
 export default function NichiyoClaimReportPage() {
   const hasPermission = useAuthStore((s) => s.hasPermission)
   const isAdmin = hasPermission('system_admin_only') || hasPermission('nichiyo_claim.admin')
@@ -107,6 +114,9 @@ export default function NichiyoClaimReportPage() {
   const [accountFilter, setAccountFilter] = useState<string | undefined>(undefined)
   const [searchInput, setSearchInput]   = useState<string>('')
   const [searchKeyword, setSearchKeyword] = useState<string>('')
+  const [paymentDateFrom, setPaymentDateFrom] = useState<string | undefined>(undefined)
+  const [paymentDateTo, setPaymentDateTo]     = useState<string | undefined>(undefined)
+  const [paymentDateRange, setPaymentDateRange] = useState<[Dayjs | null, Dayjs | null]>([null, null])
   const [availableMonths, setAvailableMonths] = useState<string[]>([])
   const [deptOptions, setDeptOptions]   = useState<string[]>([])
   const [accountOptions, setAccountOptions] = useState<string[]>([])
@@ -184,22 +194,28 @@ export default function NichiyoClaimReportPage() {
     setOrdersPage(page)
     getNichiyoClaimOrders({
       ...dateParams(), department: deptFilter, account_category: accountFilter,
-      keyword: searchKeyword || undefined, page, per_page: 20,
+      keyword: searchKeyword || undefined,
+      payment_date_from: paymentDateFrom,
+      payment_date_to: paymentDateTo,
+      page, per_page: 20,
     })
       .then((r) => { setOrders(r.data.items ?? []); setOrdersTotal(r.data.total ?? 0) })
       .finally(() => setOrdersLoading(false))
-  }, [dateParams, deptFilter, accountFilter, searchKeyword])
+  }, [dateParams, deptFilter, accountFilter, searchKeyword, paymentDateFrom, paymentDateTo])
 
   const loadItems = useCallback((page = 1) => {
     setItemsLoading(true)
     setItemsPage(page)
     getNichiyoClaimMonthlyItems({
       ...dateParams(), department: deptFilter, account_category: accountFilter,
-      q: searchKeyword || undefined, page, per_page: PAGE_SIZE,
+      q: searchKeyword || undefined,
+      payment_date_from: paymentDateFrom,
+      payment_date_to: paymentDateTo,
+      page, per_page: PAGE_SIZE,
     })
       .then((r) => { setItems(r.data.items ?? []); setItemsTotal(r.data.total ?? 0) })
       .finally(() => setItemsLoading(false))
-  }, [dateParams, deptFilter, accountFilter, searchKeyword])
+  }, [dateParams, deptFilter, accountFilter, searchKeyword, paymentDateFrom, paymentDateTo])
 
   const loadDeptStats = useCallback(() => {
     setDeptStatsLoading(true)
@@ -247,7 +263,7 @@ export default function NichiyoClaimReportPage() {
     if (activeTab === 'monthly') { loadSummary(); loadItems(1) }
     if (activeTab === 'dept')    { loadSummary(); loadDeptStats() }
     if (activeTab === 'audit')   { loadAuditSummary(); loadAuditAnomalies(1) }
-  }, [yearMonth, yearMonthFrom, yearMonthTo, deptFilter, accountFilter, searchKeyword]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [yearMonth, yearMonthFrom, yearMonthTo, deptFilter, accountFilter, searchKeyword, paymentDateFrom, paymentDateTo]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── 日期模式切換 ───────────────────────────────────────────────────────────────
   const handleDateModeChange = (mode: string | number) => {
@@ -328,31 +344,32 @@ export default function NichiyoClaimReportPage() {
       render: (v: string) => <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{v || '-'}</span>,
       sorter: (a: NichiyoClaimOrder, b: NichiyoClaimOrder) => (a.claim_no ?? '').localeCompare(b.claim_no ?? '') },
     { title: '部門', dataIndex: 'department_display', key: 'dept', width: 80,
-      render: (v: string) => <Tag color="blue">{v}</Tag>,
+      render: (v: string) => <Tag color="orange">{v}</Tag>,
       sorter: (a: NichiyoClaimOrder, b: NichiyoClaimOrder) => a.department_display.localeCompare(b.department_display) },
     { title: '會科', dataIndex: 'account_category', key: 'account_category', width: 110, ellipsis: true,
       render: (v: string | null) => v || <span style={{ color: '#aaa' }}>—</span>,
       sorter: (a: NichiyoClaimOrder, b: NichiyoClaimOrder) => (a.account_category ?? '').localeCompare(b.account_category ?? '') },
+    { title: '付款種類', dataIndex: 'payment_type', key: 'payment_type', width: 90, render: paymentTag,
+      sorter: (a: NichiyoClaimOrder, b: NichiyoClaimOrder) => (a.payment_type ?? '').localeCompare(b.payment_type ?? '') },
     { title: '申請人', dataIndex: 'applicant', key: 'applicant', width: 80,
       render: (v: string | null) => v || <span style={{ color: '#aaa' }}>—</span>,
       sorter: (a: NichiyoClaimOrder, b: NichiyoClaimOrder) => (a.applicant ?? '').localeCompare(b.applicant ?? '') },
     { title: '事由', dataIndex: 'purpose_description', key: 'purpose_description', ellipsis: true,
       render: (v: string | null) => v || <span style={{ color: '#aaa' }}>—</span> },
-    { title: '受款者', dataIndex: 'payee', key: 'payee', width: 120, ellipsis: true,
+    { title: '受款人', dataIndex: 'payee', key: 'payee', width: 100, ellipsis: true,
       render: (v: string | null) => v || <span style={{ color: '#aaa' }}>—</span>,
       sorter: (a: NichiyoClaimOrder, b: NichiyoClaimOrder) => (a.payee ?? '').localeCompare(b.payee ?? '') },
-    { title: '付款種類', dataIndex: 'payment_type', key: 'payment_type', width: 90,
-      render: (v: string | null) => v
-        ? <Tag color={v === '匯款' ? 'blue' : 'default'}>{v}</Tag>
-        : <span style={{ color: '#aaa' }}>—</span> },
-    { title: '應付款', dataIndex: 'payable_amount', key: 'payable_amount', width: 110, align: 'right' as const,
-      render: (v: number | null) => <span style={{ fontWeight: 600, color: '#1B3A5C' }}>{fmt(v)}</span>,
+    { title: '應付金額', dataIndex: 'payable_amount', key: 'payable_amount', width: 110, align: 'right' as const,
+      render: (v: number | null) => <span style={{ fontWeight: 600, color: '#d46b08' }}>{fmt(v)}</span>,
       sorter: (a: NichiyoClaimOrder, b: NichiyoClaimOrder) => (a.payable_amount ?? 0) - (b.payable_amount ?? 0) },
     { title: '狀態', dataIndex: 'status', key: 'status', width: 80, render: statusTag,
       sorter: (a: NichiyoClaimOrder, b: NichiyoClaimOrder) => a.status.localeCompare(b.status) },
     { title: '核准日期', dataIndex: 'approved_date', key: 'approved_date', width: 100,
       render: (v: string | null) => <span style={{ fontSize: 12, color: '#666' }}>{v || '-'}</span>,
       sorter: (a: NichiyoClaimOrder, b: NichiyoClaimOrder) => (a.approved_date ?? '').localeCompare(b.approved_date ?? '') },
+    { title: '付款日期', dataIndex: 'payment_date', key: 'payment_date', width: 100,
+      render: (v: string | null) => v ? <span style={{ fontSize: 12, color: '#1B3A5C' }}>{v}</span> : <span style={{ color: '#aaa' }}>—</span>,
+      sorter: (a: NichiyoClaimOrder, b: NichiyoClaimOrder) => (a.payment_date ?? '').localeCompare(b.payment_date ?? '') },
     { title: '', key: 'action', width: 48, fixed: 'right' as const,
       render: (_: unknown, r: NichiyoClaimOrder) => (
         <Button type="link" size="small" icon={<EyeOutlined />}
@@ -360,38 +377,49 @@ export default function NichiyoClaimReportPage() {
       ) },
   ]
 
-  // ── 欄位定義：月報明細（品項級） ─────────────────────────────────────────────
+  // ── 欄位定義：月報明細（品項級）— 對齊 claim-report/monthly 欄位順序 ───────────
   const itemColumns = [
-    { title: '部門', dataIndex: 'department_display', key: 'dept', width: 90,
-      render: (v: string) => <Tag color="blue">{v}</Tag>,
+    { title: '核准日期', dataIndex: 'approved_date', key: 'approved_date', width: 100,
+      render: (v: string | null) => v ?? '-', fixed: 'left' as const,
+      sorter: (a: NichiyoClaimReportItem, b: NichiyoClaimReportItem) => (a.approved_date ?? '').localeCompare(b.approved_date ?? '') },
+    { title: '付款日期', dataIndex: 'payment_date', key: 'payment_date', width: 100,
+      render: (v: string | null) => v ? <span style={{ fontSize: 12, color: '#1B3A5C' }}>{v}</span> : <span style={{ color: '#aaa' }}>—</span>,
+      sorter: (a: NichiyoClaimReportItem, b: NichiyoClaimReportItem) => (a.payment_date ?? '').localeCompare(b.payment_date ?? '') },
+    { title: '部門', dataIndex: 'department_display', key: 'dept', width: 80, fixed: 'left' as const,
+      render: (v: string) => <Tag color="orange">{v}</Tag>,
       sorter: (a: NichiyoClaimReportItem, b: NichiyoClaimReportItem) => a.department_display.localeCompare(b.department_display) },
-    { title: '請款單號', dataIndex: 'claim_no', key: 'claim_no', width: 180, ellipsis: true,
+    { title: '申請單號', dataIndex: 'claim_no', key: 'claim_no', width: 180, ellipsis: true,
       render: (v: string) => <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{v || '-'}</span>,
-      sorter: (a: NichiyoClaimReportItem, b: NichiyoClaimReportItem) => a.claim_no.localeCompare(b.claim_no) },
+      sorter: (a: NichiyoClaimReportItem, b: NichiyoClaimReportItem) => (a.claim_no ?? '').localeCompare(b.claim_no ?? '') },
     { title: '會科', dataIndex: 'account_category', key: 'account_category', width: 120, ellipsis: true,
-      render: (v: string | null) => v || <span style={{ color: '#aaa' }}>—</span> },
-    { title: '事由', dataIndex: 'purpose_description', key: 'purpose_description', ellipsis: true,
-      render: (v: string | null) => v || <span style={{ color: '#aaa' }}>—</span> },
+      render: (v: string | null) => v || <span style={{ color: '#aaa' }}>—</span>,
+      sorter: (a: NichiyoClaimReportItem, b: NichiyoClaimReportItem) => (a.account_category ?? '').localeCompare(b.account_category ?? '') },
+    { title: '付款種類', dataIndex: 'payment_type', key: 'payment_type', width: 90, render: paymentTag,
+      sorter: (a: NichiyoClaimReportItem, b: NichiyoClaimReportItem) => (a.payment_type ?? '').localeCompare(b.payment_type ?? '') },
+    { title: '事由', dataIndex: 'purpose_description', key: 'purpose_description', minWidth: 120, ellipsis: true,
+      render: (v: string | null) => v || <span style={{ color: '#aaa' }}>—</span>,
+      sorter: (a: NichiyoClaimReportItem, b: NichiyoClaimReportItem) => (a.purpose_description ?? '').localeCompare(b.purpose_description ?? '') },
     { title: '品名', dataIndex: 'product_name', key: 'product_name', minWidth: 120, ellipsis: true,
-      render: (v: string | null) => v || <Text type="secondary">—</Text> },
-    { title: '受款者', dataIndex: 'payee', key: 'payee', width: 120, ellipsis: true,
-      render: (v: string | null) => v || <span style={{ color: '#aaa' }}>—</span> },
-    { title: '數量', dataIndex: 'qty', key: 'qty', width: 70, align: 'right' as const,
-      render: (v: string | null) => v ?? '-' },
+      render: (v: string | null) => v || <Text type="secondary">—</Text>,
+      sorter: (a: NichiyoClaimReportItem, b: NichiyoClaimReportItem) => (a.product_name ?? '').localeCompare(b.product_name ?? '') },
+    { title: '數量', dataIndex: 'qty', key: 'qty', width: 60, align: 'right' as const,
+      render: (v: string | null) => v ?? '-',
+      sorter: (a: NichiyoClaimReportItem, b: NichiyoClaimReportItem) => parseFloat(a.qty ?? '0') - parseFloat(b.qty ?? '0') },
     { title: '單位', dataIndex: 'unit', key: 'unit', width: 55 },
-    { title: '品項金額', dataIndex: 'amount', key: 'item_amount', width: 110, align: 'right' as const,
+    { title: '品項金額', dataIndex: 'amount', key: 'item_amount', width: 100, align: 'right' as const,
       render: (v: number | null) => <span style={{ whiteSpace: 'nowrap' }}>{fmt(v)}</span>,
       sorter: (a: NichiyoClaimReportItem, b: NichiyoClaimReportItem) => (a.amount ?? 0) - (b.amount ?? 0) },
-    { title: '應付款', dataIndex: 'payable_amount', key: 'payable_amount', width: 110, align: 'right' as const,
+    { title: '應付合計', dataIndex: 'payable_amount', key: 'payable_amount', width: 110, align: 'right' as const,
       render: (v: number | null, r: NichiyoClaimReportItem, idx: number) => {
         const prev = items[idx - 1]?.order_id
         if (idx === 0 || prev !== r.order_id)
-          return <span style={{ fontWeight: 600, color: '#1B3A5C', whiteSpace: 'nowrap' }}>{fmt(v)}</span>
+          return <span style={{ fontWeight: 600, color: '#d46b08', whiteSpace: 'nowrap' }}>{fmt(v)}</span>
         return <span style={{ color: '#aaa' }}>—</span>
       },
       sorter: (a: NichiyoClaimReportItem, b: NichiyoClaimReportItem) => (a.payable_amount ?? 0) - (b.payable_amount ?? 0) },
-    { title: '核准日', dataIndex: 'approved_date', key: 'approved_date', width: 100,
-      render: (v: string | null) => v || <span style={{ color: '#aaa' }}>—</span> },
+    { title: '發票號碼', dataIndex: 'invoice_no', key: 'invoice_no', width: 110, ellipsis: true,
+      render: (v: string | null) => v || <span style={{ color: '#aaa' }}>—</span>,
+      sorter: (a: NichiyoClaimReportItem, b: NichiyoClaimReportItem) => (a.invoice_no ?? '').localeCompare(b.invoice_no ?? '') },
   ]
 
   // ── 欄位定義：部門統計（雙色：請購藍 + 請款橙）────────────────────────────────
@@ -526,6 +554,21 @@ export default function NichiyoClaimReportPage() {
         options={accountOptions.map((a) => ({ label: a, value: a }))}
         showSearch
       />
+      {(activeTab === 'orders' || activeTab === 'monthly') && (
+        <DatePicker.RangePicker
+          placeholder={['付款日期起', '付款日期迄']}
+          value={paymentDateRange}
+          onChange={(vals) => {
+            const [s, e] = vals ?? [null, null]
+            setPaymentDateRange([s, e])
+            setPaymentDateFrom(s ? s.format('YYYY-MM-DD') : undefined)
+            setPaymentDateTo(e ? e.format('YYYY-MM-DD') : undefined)
+          }}
+          size="small"
+          style={{ width: 230 }}
+          allowClear
+        />
+      )}
       {(activeTab === 'orders' || activeTab === 'monthly') && (
         <Input.Search
           placeholder="搜尋關鍵字" size="small" style={{ width: 160 }}
@@ -705,7 +748,7 @@ export default function NichiyoClaimReportPage() {
                 rowKey={(r) => `${r.order_id}-${r.item_id ?? r.seq}`}
                 loading={itemsLoading}
                 columns={itemColumns}
-                scroll={{ x: 1200 }}
+                scroll={{ x: 1500 }}
                 onRow={(r) => ({ onClick: () => handleOpenDrawer(r.order_id), style: { cursor: 'pointer' } })}
                 pagination={{
                   current: itemsPage,

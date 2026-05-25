@@ -66,6 +66,7 @@ export interface ClaimReportItem {
   account_subject: string | null
   apply_date: string | null
   approved_date: string | null
+  payment_date: string | null
   applicant: string | null
   payment_type: string | null
   purpose_description: string | null
@@ -153,6 +154,8 @@ export const getClaimOrders = (params: {
   department?: string
   account_subject?: string
   payment_type?: string
+  payment_date_from?: string
+  payment_date_to?: string
   status?: string
   keyword?: string
   page?: number
@@ -176,6 +179,8 @@ export const getClaimMonthlyItems = (params: {
   department?: string
   account_subject?: string
   payment_type?: string
+  payment_date_from?: string
+  payment_date_to?: string
   q?: string
   page?: number
   per_page?: number

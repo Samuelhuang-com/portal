@@ -9,18 +9,16 @@ import type {
   IHGRecord,
   IHGListResponse,
   SectionMatrixResponse,
+  IHGCalendarResponse,
 } from '@/types/ihgRoomMaintenance'
 
 const BASE = '/ihg-room-maintenance'
 
-// ── 同步 Ragic → 本地 DB ──────────────────────────────────────────────────────
 export async function syncIHGFromRagic(): Promise<{ success: boolean; message: string }> {
   const res = await apiClient.post<{ success: boolean; message: string }>(`${BASE}/sync`)
   return res.data
 }
 
-// ── KPI 統計 ──────────────────────────────────────────────────────────────────
-/** year: 年度（如 "2026"）；month: 月份（如 "4"），傳入月份時回傳當月房間數與工時 */
 export async function fetchIHGStats(year?: string, month?: string): Promise<IHGStats> {
   const params: Record<string, string> = {}
   if (year)  params.year  = year
@@ -29,7 +27,6 @@ export async function fetchIHGStats(year?: string, month?: string): Promise<IHGS
   return res.data
 }
 
-// ── 年度矩陣表 ────────────────────────────────────────────────────────────────
 export async function fetchIHGMatrix(params?: {
   year?: string
   room_no?: string
@@ -40,10 +37,10 @@ export async function fetchIHGMatrix(params?: {
   return res.data
 }
 
-// ── 記錄清單（帶篩選/分頁）──────────────────────────────────────────────────
 export async function fetchIHGRecords(params?: {
   year?: string
   month?: string
+  day?: string
   room_no?: string
   floor?: string
   status?: string
@@ -54,13 +51,19 @@ export async function fetchIHGRecords(params?: {
   return res.data
 }
 
-// ── 單筆明細 ─────────────────────────────────────────────────────────────────
+export async function fetchIHGCalendar(params: {
+  year: string
+  month: string
+}): Promise<IHGCalendarResponse> {
+  const res = await apiClient.get<IHGCalendarResponse>(`${BASE}/calendar`, { params })
+  return res.data
+}
+
 export async function fetchIHGRecord(ragicId: string): Promise<IHGRecord> {
   const res = await apiClient.get<IHGRecord>(`${BASE}/${ragicId}`)
   return res.data
 }
 
-// ── 區段矩陣（月份 × 類別，V/▲/X）────────────────────────────────────────────
 export async function fetchIHGSectionMatrix(params: {
   year: string
   month: string
@@ -70,7 +73,6 @@ export async function fetchIHGSectionMatrix(params: {
   return res.data
 }
 
-// ── 除錯：Ragic 原始欄位結構 ─────────────────────────────────────────────────
 export async function fetchIHGDebugRaw(): Promise<Record<string, unknown>> {
   const res = await apiClient.get<Record<string, unknown>>(`${BASE}/debug-raw`)
   return res.data

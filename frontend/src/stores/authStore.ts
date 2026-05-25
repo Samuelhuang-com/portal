@@ -14,6 +14,7 @@ export interface AuthUser {
   // 使用者所有 permission_key 清單；system_admin 為 ["*"]（萬用符）
   permissions?: string[]
   is_active?: boolean
+  must_change_password?: boolean
 }
 
 interface AuthState {
@@ -47,12 +48,13 @@ function decodeUserFromToken(token: string | null): AuthUser | null {
     const payload = JSON.parse(atob(token.split('.')[1]))
     if (typeof payload.exp === 'number' && payload.exp * 1000 < Date.now()) return null
     return {
-      id:          payload.sub   || '',
-      email:       payload.email || '',
-      name:        '',
-      full_name:   '',
-      roles:       Array.isArray(payload.roles) ? payload.roles : [],
-      permissions: undefined,  // 需等 /me 回應後才有
+      id:                   payload.sub   || '',
+      email:                payload.email || '',
+      name:                 '',
+      full_name:            '',
+      roles:                Array.isArray(payload.roles) ? payload.roles : [],
+      permissions:          undefined,  // 需等 /me 回應後才有
+      must_change_password: !!payload.must_change_password,
     }
   } catch {
     return null

@@ -127,6 +127,7 @@ def _format_item_row(order: ApprovedClaimRequest, item: ApprovedClaimRequestItem
         "account_subject":       order.account_subject,
         "apply_date":            order.apply_date.isoformat() if order.apply_date else None,
         "approved_date":         order.approved_date.isoformat() if order.approved_date else None,
+        "payment_date":          order.payment_date.isoformat() if order.payment_date else None,
         "applicant":             order.applicant,
         "payment_type":          order.payment_type,
         "purpose_description":   order.purpose_description,
@@ -172,19 +173,21 @@ def _empty_summary(year_month: str, company: str, department: Optional[str]) -> 
 
 @router.get("/approved/orders")
 def get_approved_orders(
-    year_month:      Optional[str] = Query(None, description="YYYY-MM"),
-    year_month_from: Optional[str] = Query(None, description="YYYY-MM 區間起"),
-    year_month_to:   Optional[str] = Query(None, description="YYYY-MM 區間迄"),
-    company:         str           = Query("樂群"),
-    department:      Optional[str] = Query(None),
-    account_subject: Optional[str] = Query(None),
-    payment_type:    Optional[str] = Query(None, description="零用金 / 匯款"),
-    status:          Optional[str] = Query(None),
-    keyword:         Optional[str] = Query(None, description="全文搜尋"),
-    page:            int           = Query(1, ge=1),
-    per_page:        int           = Query(20, ge=1, le=200),
-    db:              Session       = Depends(get_db),
-    _:               object        = Depends(require_permission(_PERM)),
+    year_month:        Optional[str] = Query(None, description="YYYY-MM"),
+    year_month_from:   Optional[str] = Query(None, description="YYYY-MM 區間起"),
+    year_month_to:     Optional[str] = Query(None, description="YYYY-MM 區間迄"),
+    company:           str           = Query("樂群"),
+    department:        Optional[str] = Query(None),
+    account_subject:   Optional[str] = Query(None),
+    payment_type:      Optional[str] = Query(None, description="零用金 / 匯款"),
+    payment_date_from: Optional[str] = Query(None, description="付款日期起（YYYY-MM-DD）"),
+    payment_date_to:   Optional[str] = Query(None, description="付款日期迄（YYYY-MM-DD）"),
+    status:            Optional[str] = Query(None),
+    keyword:           Optional[str] = Query(None, description="全文搜尋"),
+    page:              int           = Query(1, ge=1),
+    per_page:          int           = Query(20, ge=1, le=200),
+    db:                Session       = Depends(get_db),
+    _:                 object        = Depends(require_permission(_PERM)),
 ):
     q = db.query(ApprovedClaimRequest).filter(ApprovedClaimRequest.company == company)
 
@@ -202,6 +205,10 @@ def get_approved_orders(
         q = _apply_account_filter(q, account_subject)
     if payment_type:
         q = _apply_payment_type_filter(q, payment_type)
+    if payment_date_from:
+        q = q.filter(ApprovedClaimRequest.payment_date >= payment_date_from)
+    if payment_date_to:
+        q = q.filter(ApprovedClaimRequest.payment_date <= payment_date_to)
     if status:
         q = q.filter(ApprovedClaimRequest.status == status)
     if keyword:
@@ -301,18 +308,20 @@ def get_order_detail(
 
 @router.get("/approved/monthly")
 def get_monthly_report(
-    year_month:      Optional[str] = Query(None, description="YYYY-MM"),
-    year_month_from: Optional[str] = Query(None, description="YYYY-MM 區間起"),
-    year_month_to:   Optional[str] = Query(None, description="YYYY-MM 區間迄"),
-    company:         str           = Query("樂群"),
-    department:      Optional[str] = Query(None),
-    account_subject: Optional[str] = Query(None),
-    payment_type:    Optional[str] = Query(None),
-    q:               Optional[str] = Query(None, description="關鍵字搜尋"),
-    page:            int           = Query(1, ge=1),
-    per_page:        int           = Query(50, ge=1, le=200),
-    db:              Session       = Depends(get_db),
-    _:               object        = Depends(require_permission(_PERM)),
+    year_month:        Optional[str] = Query(None, description="YYYY-MM"),
+    year_month_from:   Optional[str] = Query(None, description="YYYY-MM 區間起"),
+    year_month_to:     Optional[str] = Query(None, description="YYYY-MM 區間迄"),
+    company:           str           = Query("樂群"),
+    department:        Optional[str] = Query(None),
+    account_subject:   Optional[str] = Query(None),
+    payment_type:      Optional[str] = Query(None),
+    payment_date_from: Optional[str] = Query(None, description="付款日期起（YYYY-MM-DD）"),
+    payment_date_to:   Optional[str] = Query(None, description="付款日期迄（YYYY-MM-DD）"),
+    q:                 Optional[str] = Query(None, description="關鍵字搜尋"),
+    page:              int           = Query(1, ge=1),
+    per_page:          int           = Query(50, ge=1, le=200),
+    db:                Session       = Depends(get_db),
+    _:                 object        = Depends(require_permission(_PERM)),
 ):
     order_q = db.query(ApprovedClaimRequest).filter(ApprovedClaimRequest.company == company)
     order_q = _build_date_filter(order_q, year_month, year_month_from, year_month_to)
@@ -320,6 +329,10 @@ def get_monthly_report(
     order_q = _apply_account_filter(order_q, account_subject)
     order_q = _apply_payment_type_filter(order_q, payment_type)
     order_q = _apply_search(order_q, q)
+    if payment_date_from:
+        order_q = order_q.filter(ApprovedClaimRequest.payment_date >= payment_date_from)
+    if payment_date_to:
+        order_q = order_q.filter(ApprovedClaimRequest.payment_date <= payment_date_to)
 
     order_ids = [r.id for r in order_q.with_entities(ApprovedClaimRequest.id).all()]
     if not order_ids:

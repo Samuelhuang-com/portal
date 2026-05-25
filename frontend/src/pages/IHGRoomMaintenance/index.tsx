@@ -17,8 +17,9 @@ import {
   Typography, message,
 } from 'antd'
 import {
-  CheckCircleOutlined, ClockCircleOutlined,
-  HomeOutlined, LinkOutlined, QuestionCircleOutlined, ReloadOutlined, TableOutlined, ToolOutlined, WarningOutlined,
+  CalendarOutlined, CheckCircleOutlined, ClockCircleOutlined,
+  HomeOutlined, LinkOutlined, QuestionCircleOutlined, ReloadOutlined,
+  TableOutlined, ToolOutlined, UnorderedListOutlined, WarningOutlined,
 } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import dayjs from 'dayjs'
@@ -28,6 +29,8 @@ import {
   fetchIHGStats,
   fetchIHGRecord,
   fetchIHGSectionMatrix,
+  fetchIHGCalendar,
+  fetchIHGRecords,
 } from '@/api/ihgRoomMaintenance'
 import type {
   CellStatus,
@@ -39,6 +42,10 @@ import type {
   SectionMatrixResponse,
   SectionRoom,
   SectionValue,
+  IHGCalendarResponse,
+  IHGCalendarDayCell,
+  IHGListItem,
+  IHGListResponse,
 } from '@/types/ihgRoomMaintenance'
 import { NAV_GROUP, NAV_PAGE } from '@/constants/navLabels'
 
@@ -736,6 +743,532 @@ function SectionMatrixTab({
   )
 }
 
+// ── 月曆格 TAB ────────────────────────────────────────────────────────────────
+function CalendarTab({
+  defaultYear,
+  defaultMonth,
+  onRecordClick,
+}: {
+  defaultYear: string
+  defaultMonth: string
+  onRecordClick: (ragicId: string, roomNo: string) => void
+}) {
+  const [year,  setYear]  = useState<string>(defaultYear)
+  const [month, setMonth] = useState<string>(defaultMonth)
+  const [data,  setData]  = useState<IHGCalendarResponse | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  // Cell Drawer：點擊某格後顯示該格所有記錄
+  const [cellDrawer, setCellDrawer] = useState<{
+    open: boolean
+    floor: string
+    day: string
+    records: IHGListItem[]
+    loading: boolean
+  }>({ open: false, floor: '', day: '', records: [], loading: false })
+
+  const monthOptions = Array.from({ length: 12 }, (_, i) => ({
+    value: String(i + 1).padStart(2, '0'),
+    label: `${i + 1} 月`,
+  }))
+
+  const loadData = useCallback(async () => {
+    setLoading(true)
+    try {
+      const res = await fetchIHGCalendar({ year, month })
+      setData(res)
+    } catch {
+      message.error('載入月曆格資料失敗')
+    } finally {
+      setLoading(false)
+    }
+  }, [year, month])
+
+  useEffect(() => { loadData() }, [loadData])
+
+  // 點擊格子
+  const handleCellClick = async (floor: string, day: string, cell: IHGCalendarDayCell) => {
+    if (!cell || cell.total === 0) return
+    if (cell.ragic_ids.length === 1) {
+      // 單筆直接開明細 Drawer
+      onRecordClick(cell.ragic_ids[0], '')
+      return
+    }
+    // 多筆先開清單 Drawer
+    setCellDrawer({ open: true, floor, day, records: [], loading: true })
+    try {
+      const res = await fetchIHGRecords({
+        year, month,
+        floor: floor === 'TOTAL' ? undefined : floor,
+        day,
+        per_page: 100,
+      })
+      setCellDrawer(prev => ({ ...prev, records: res.data, loading: false }))
+    } catch {
+      message.error('載入記錄失敗')
+      setCellDrawer(prev => ({ ...prev, loading: false }))
+    }
+  }
+
+  const today = dayjs()
+  const isCurrentMonth = Number(year) === today.year() && Number(month) === today.month() + 1
+  const todayDay = isCurrentMonth ? today.date() : -1
+
+  // 單格樣式
+  const getCellCfg = (cell: IHGCalendarDayCell | undefined, day: number) => {
+    const isFuture = isCurrentMonth && day > today.date()
+    if (!cell || cell.total === 0) return { bg: 'transparent', text: '#bfbfbf', border: '1px dashed #e0e0e0', isFuture: false, isEmpty: true }
+    if (isFuture) return { bg: '#fafafa', text: '#bfbfbf', border: '1px dashed #d9d9d9', isFuture: true, isEmpty: false }
+    if (cell.abnormal > 0) return { bg: '#fff7e6', text: '#d46b08', border: '1px solid #ffc069', isFuture: false, isEmpty: false }
+    if (cell.completed === cell.total) return { bg: '#f6ffed', text: '#52c41a', border: '1px solid #b7eb8f', isFuture: false, isEmpty: false }
+    return { bg: '#e6f4ff', text: '#1677ff', border: '1px solid #91caff', isFuture: false, isEmpty: false }
+  }
+
+  if (!data && loading) {
+    return <div style={{ padding: 60, textAlign: 'center' }}><Spin tip="載入中..." /></div>
+  }
+
+  const { max_day = 31, floors = [], kpi = { total_rooms: 0, completed: 0, abnormal: 0, pending: 0, completion_rate: 0 }, calendar = {} } = data ?? {}
+  const days = Array.from({ length: max_day }, (_, i) => i + 1)
+  const rowKeys = [...floors, 'TOTAL']
+
+  return (
+    <div>
+      {/* ── KPI 卡 ──────────────────────────────────────────────────── */}
+      <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
+        {[
+          { label: '本月應保養', value: kpi.total_rooms,      color: '#1B3A5C' },
+          { label: '已完成',     value: kpi.completed,        color: '#52c41a' },
+          { label: '異常',       value: kpi.abnormal,         color: '#d46b08' },
+          { label: '待保養',     value: kpi.pending,          color: '#8c8c8c' },
+          { label: '完成率',     value: `${kpi.completion_rate}%`, color: '#4BA8E8' },
+        ].map(k => (
+          <Col key={k.label} xs={12} sm={8} md={6} lg={4}>
+            <Card size="small" style={{ borderTop: `3px solid ${k.color}` }}>
+              <Statistic
+                title={<span style={{ fontSize: 12 }}>{k.label}</span>}
+                value={k.value}
+                valueStyle={{ color: k.color, fontSize: 22 }}
+              />
+            </Card>
+          </Col>
+        ))}
+      </Row>
+
+      {/* ── 篩選列 ──────────────────────────────────────────────────── */}
+      <Card size="small" style={{ marginBottom: 16 }}>
+        <Row gutter={[12, 8]} align="middle">
+          <Col>
+            <Text type="secondary" style={{ fontSize: 12 }}>年度</Text>
+            <Select value={year} onChange={setYear} options={YEAR_OPTIONS}
+              style={{ width: 110, marginLeft: 8 }} size="small" />
+          </Col>
+          <Col>
+            <Text type="secondary" style={{ fontSize: 12 }}>月份</Text>
+            <Select value={month} onChange={setMonth} options={monthOptions}
+              style={{ width: 90, marginLeft: 8 }} size="small" />
+          </Col>
+          <Col flex={1}>
+            <div style={{ display: 'flex', gap: 16, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+              {([
+                { bg: '#f6ffed', border: '#b7eb8f', text: '#52c41a', label: '全部完成' },
+                { bg: '#e6f4ff', border: '#91caff', text: '#1677ff', label: '部分完成' },
+                { bg: '#fff7e6', border: '#ffc069', text: '#d46b08', label: '異常'     },
+                { bg: 'transparent', border: '#e0e0e0', text: '#bfbfbf', label: '無紀錄' },
+              ] as const).map(l => (
+                <span key={l.label} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11 }}>
+                  <span style={{ width: 14, height: 14, background: l.bg, border: `1px solid ${l.border}`, borderRadius: 2, display: 'inline-block' }} />
+                  <span style={{ color: l.text }}>{l.label}</span>
+                </span>
+              ))}
+            </div>
+          </Col>
+        </Row>
+      </Card>
+
+      {/* ── 月曆格 ──────────────────────────────────────────────────── */}
+      <Spin spinning={loading}>
+        <Card size="small" style={{ overflowX: 'auto' }}>
+          <table style={{ borderCollapse: 'collapse', fontSize: 12, width: '100%', minWidth: `${64 + max_day * 46}px` }}>
+            <thead>
+              <tr>
+                <th style={{
+                  position: 'sticky', left: 0, background: '#f8f9fb', zIndex: 2,
+                  padding: '6px 10px', border: '1px solid #e8e8e8',
+                  fontWeight: 700, minWidth: 64, textAlign: 'center',
+                }}>
+                  樓層
+                </th>
+                {days.map(d => (
+                  <th key={d} style={{
+                    padding: '4px 0', border: '1px solid #e8e8e8', minWidth: 44,
+                    background: d === todayDay ? '#e6f4ff' : '#f8f9fb',
+                    color:      d === todayDay ? '#1677ff' : '#595959',
+                    fontWeight: d === todayDay ? 700 : 400,
+                    textAlign: 'center',
+                    outline: d === todayDay ? '2px solid #1677ff' : undefined,
+                  }}>
+                    {d}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rowKeys.map(fl => {
+                const isTotal = fl === 'TOTAL'
+                return (
+                  <tr key={fl} style={{ background: isTotal ? '#f0f4f8' : 'white' }}>
+                    <td style={{
+                      position: 'sticky', left: 0, zIndex: 1,
+                      background: isTotal ? '#e8edf2' : '#fafafa',
+                      border: '1px solid #e8e8e8',
+                      padding: '4px 8px',
+                      fontWeight: isTotal ? 700 : 600,
+                      textAlign: 'center',
+                      color: isTotal ? '#1B3A5C' : '#262626',
+                    }}>
+                      {isTotal ? '合計' : fl}
+                    </td>
+                    {days.map(d => {
+                      const cell = calendar[fl]?.[String(d)]
+                      const cfg = getCellCfg(cell, d)
+                      return (
+                        <td key={d} style={{ padding: '2px', border: '1px solid #f0f0f0', background: '#fff' }}>
+                          {cell && cell.total > 0 ? (
+                            <Tooltip title={
+                              <div style={{ fontSize: 11 }}>
+                                <div>共 {cell.total} 筆</div>
+                                {cell.completed > 0 && <div style={{ color: '#95de64' }}>完成 {cell.completed}</div>}
+                                {cell.abnormal  > 0 && <div style={{ color: '#ffc069' }}>異常 {cell.abnormal}</div>}
+                                {cell.pending   > 0 && <div style={{ color: '#91caff' }}>待保養 {cell.pending}</div>}
+                                {!cfg.isFuture && <div style={{ color: '#aaa', marginTop: 2 }}>點擊查看</div>}
+                              </div>
+                            }>
+                              <div
+                                onClick={() => !cfg.isFuture && handleCellClick(fl, String(d), cell)}
+                                style={{
+                                  height: 38, borderRadius: 3,
+                                  background: cfg.bg,
+                                  border: cfg.border,
+                                  color: cfg.text,
+                                  cursor: cfg.isFuture ? 'default' : 'pointer',
+                                  display: 'flex', flexDirection: 'column',
+                                  alignItems: 'center', justifyContent: 'center',
+                                  lineHeight: 1.3, fontWeight: 600,
+                                  transition: 'box-shadow 0.15s',
+                                  opacity: cfg.isFuture ? 0.5 : 1,
+                                }}
+                                onMouseEnter={(e) => { if (!cfg.isFuture) (e.currentTarget as HTMLDivElement).style.boxShadow = '0 2px 6px rgba(0,0,0,0.18)' }}
+                                onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.boxShadow = 'none' }}
+                              >
+                                {cell.abnormal > 0 ? (
+                                  <span style={{ fontSize: 14 }}>⚠</span>
+                                ) : cell.completed === cell.total ? (
+                                  <span style={{ fontSize: 14 }}>✓</span>
+                                ) : (
+                                  <span style={{ fontSize: 11 }}>{cell.completed}/{cell.total}</span>
+                                )}
+                              </div>
+                            </Tooltip>
+                          ) : (
+                            <div style={{
+                              height: 38, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                              color: '#e0e0e0', fontSize: 12,
+                            }}>—</div>
+                          )}
+                        </td>
+                      )
+                    })}
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </Card>
+      </Spin>
+
+      {/* ── Cell Drawer（多筆清單）──────────────────────────────────── */}
+      <Drawer
+        title={
+          <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Tag color="#1B3A5C" style={{ margin: 0 }}>IHG保養</Tag>
+            {cellDrawer.floor === 'TOTAL' ? '合計' : cellDrawer.floor}
+            ／{year}/{month}/{cellDrawer.day}
+          </span>
+        }
+        open={cellDrawer.open}
+        onClose={() => setCellDrawer(prev => ({ ...prev, open: false }))}
+        width={520}
+        destroyOnClose
+      >
+        {cellDrawer.loading ? (
+          <div style={{ textAlign: 'center', padding: 40 }}><Spin tip="載入中..." /></div>
+        ) : (
+          <Table<IHGListItem>
+            size="small"
+            dataSource={cellDrawer.records}
+            rowKey="ragic_id"
+            pagination={false}
+            columns={[
+              {
+                title: '房號', dataIndex: 'room_no', key: 'room_no', width: 64,
+                render: (rn: string, row: IHGListItem) => (
+                  <div style={{ textAlign: 'center' }}>
+                    <div style={{ fontWeight: 700 }}>{rn}</div>
+                    <div style={{ fontSize: 11, color: '#999' }}>{row.floor}</div>
+                  </div>
+                ),
+              },
+              {
+                title: '狀態', key: 'status', width: 88,
+                render: (_: unknown, row: IHGListItem) => (
+                  row.is_completed
+                    ? <Tag color="success"><CheckCircleOutlined /> 已完成</Tag>
+                    : <Tag color="default"><ClockCircleOutlined /> 未完成</Tag>
+                ),
+              },
+              { title: '保養人員', dataIndex: 'assignee_name', key: 'assignee', ellipsis: true,
+                render: (a: string) => a || '—' },
+              {
+                title: '工時(分)', dataIndex: 'work_minutes', key: 'wm', width: 72,
+                render: (m: number | null) => m != null
+                  ? <span style={{ color: '#4BA8E8', fontWeight: 600 }}>{m}</span> : '—',
+              },
+              {
+                title: '', key: 'action', width: 52,
+                render: (_: unknown, row: IHGListItem) => (
+                  <Button type="link" size="small" style={{ padding: 0 }}
+                    onClick={() => {
+                      setCellDrawer(prev => ({ ...prev, open: false }))
+                      onRecordClick(row.ragic_id, row.room_no)
+                    }}>
+                    查看
+                  </Button>
+                ),
+              },
+            ]}
+          />
+        )}
+      </Drawer>
+    </div>
+  )
+}
+
+// ── 每日明細 TAB ──────────────────────────────────────────────────────────────
+function DailyTab({
+  defaultYear,
+  defaultMonth,
+  onRecordClick,
+}: {
+  defaultYear: string
+  defaultMonth: string
+  onRecordClick: (ragicId: string, roomNo: string) => void
+}) {
+  const [year,   setYear]   = useState<string>(defaultYear)
+  const [month,  setMonth]  = useState<string>(defaultMonth)
+  const [day,    setDay]    = useState<string>('')
+  const [floor,  setFloor]  = useState<string>('')
+  const [status, setStatus] = useState<string>('')
+  const [data,   setData]   = useState<IHGListResponse | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [page,   setPage]   = useState(1)
+  const PER_PAGE = 50
+
+  const monthOptions = Array.from({ length: 12 }, (_, i) => ({
+    value: String(i + 1).padStart(2, '0'),
+    label: `${i + 1} 月`,
+  }))
+
+  const maxDay = dayjs(`${year}-${month}-01`).daysInMonth()
+  const dayOptions = Array.from({ length: maxDay }, (_, i) => ({
+    value: String(i + 1),
+    label: `${i + 1} 日`,
+  }))
+
+  const ALL_FLOORS = ['5F','6F','7F','8F','9F','10F']
+
+  const loadData = useCallback(async () => {
+    setLoading(true)
+    try {
+      const res = await fetchIHGRecords({
+        year,
+        month,
+        day:     day    || undefined,
+        floor:   floor  || undefined,
+        status:  status || undefined,
+        page,
+        per_page: PER_PAGE,
+      })
+      setData(res)
+    } catch {
+      message.error('載入每日明細失敗')
+    } finally {
+      setLoading(false)
+    }
+  }, [year, month, day, floor, status, page])
+
+  // 篩選條件變更時重置頁碼
+  useEffect(() => { setPage(1) }, [year, month, day, floor, status])
+  useEffect(() => { loadData() }, [loadData])
+
+  const dailyCols: ColumnsType<IHGListItem> = [
+    {
+      title: '房號', dataIndex: 'room_no', key: 'room_no', width: 68, fixed: 'left',
+      render: (rn: string, row: IHGListItem) => (
+        <div style={{ textAlign: 'center' }}>
+          <div style={{ fontWeight: 700, fontSize: 13 }}>{rn}</div>
+          <div style={{ fontSize: 11, color: '#999' }}>{row.floor}</div>
+        </div>
+      ),
+    },
+    {
+      title: '保養日期', dataIndex: 'maint_date', key: 'date', width: 100,
+      render: (d: string) => d || '—',
+    },
+    {
+      title: '狀態', key: 'status', width: 92,
+      render: (_: unknown, row: IHGListItem) => (
+        row.is_completed
+          ? <Tag color="success"><CheckCircleOutlined /> 已完成</Tag>
+          : <Tag color="default"><ClockCircleOutlined /> 未完成</Tag>
+      ),
+    },
+    {
+      title: '保養人員', dataIndex: 'assignee_name', key: 'assignee', ellipsis: true,
+      render: (a: string) => a || '—',
+    },
+    {
+      title: '開始時間', dataIndex: 'start_time', key: 'start', width: 90,
+      render: (t: string) => t || '—',
+    },
+    {
+      title: '結束時間', dataIndex: 'end_time', key: 'end', width: 90,
+      render: (t: string) => t || '—',
+    },
+    {
+      title: '工時(分)', dataIndex: 'work_minutes', key: 'wm', width: 80,
+      render: (m: number | null) => m != null
+        ? <span style={{ color: '#4BA8E8', fontWeight: 600 }}>{m}</span> : '—',
+    },
+    {
+      title: '備注', dataIndex: 'notes', key: 'notes', ellipsis: true,
+      render: (n: string) => n || '—',
+    },
+    {
+      title: '', key: 'action', width: 52, fixed: 'right',
+      render: (_: unknown, row: IHGListItem) => (
+        <Button type="link" size="small" style={{ padding: 0 }}
+          onClick={(e) => { e.stopPropagation(); onRecordClick(row.ragic_id, row.room_no) }}>
+          查看
+        </Button>
+      ),
+    },
+  ]
+
+  return (
+    <div>
+      {/* ── 篩選列 ──────────────────────────────────────────────────── */}
+      <Card size="small" style={{ marginBottom: 16 }}>
+        <Row gutter={[12, 8]} align="middle">
+          <Col>
+            <Text type="secondary" style={{ fontSize: 12 }}>年度</Text>
+            <Select value={year} onChange={setYear} options={YEAR_OPTIONS}
+              style={{ width: 110, marginLeft: 8 }} size="small" />
+          </Col>
+          <Col>
+            <Text type="secondary" style={{ fontSize: 12 }}>月份</Text>
+            <Select value={month} onChange={setMonth} options={monthOptions}
+              style={{ width: 90, marginLeft: 8 }} size="small" />
+          </Col>
+          <Col>
+            <Text type="secondary" style={{ fontSize: 12 }}>日期</Text>
+            <Select
+              allowClear
+              value={day || undefined}
+              onChange={v => setDay(v ?? '')}
+              placeholder="全部"
+              options={dayOptions}
+              style={{ width: 90, marginLeft: 8 }}
+              size="small"
+            />
+          </Col>
+          <Col>
+            <Text type="secondary" style={{ fontSize: 12 }}>樓層</Text>
+            <Select
+              allowClear
+              value={floor || undefined}
+              onChange={v => setFloor(v ?? '')}
+              placeholder="全部"
+              options={ALL_FLOORS.map(f => ({ value: f, label: f }))}
+              style={{ width: 90, marginLeft: 8 }}
+              size="small"
+            />
+          </Col>
+          <Col>
+            <Text type="secondary" style={{ fontSize: 12 }}>狀態</Text>
+            <Select
+              allowClear
+              value={status || undefined}
+              onChange={v => setStatus(v ?? '')}
+              placeholder="全部"
+              options={[
+                { value: 'completed', label: '已完成' },
+                { value: 'pending',   label: '未完成' },
+              ]}
+              style={{ width: 110, marginLeft: 8 }}
+              size="small"
+            />
+          </Col>
+          <Col>
+            <Button size="small" icon={<ReloadOutlined />}
+              onClick={() => { setDay(''); setFloor(''); setStatus('') }}>
+              清除篩選
+            </Button>
+          </Col>
+        </Row>
+      </Card>
+
+      {/* ── 列表 ────────────────────────────────────────────────────── */}
+      <Spin spinning={loading}>
+        <Card
+          size="small"
+          title={
+            <span style={{ fontSize: 13 }}>
+              每日保養明細
+              {data && (
+                <Text type="secondary" style={{ marginLeft: 12, fontSize: 11 }}>
+                  共 {data.total} 筆
+                </Text>
+              )}
+            </span>
+          }
+        >
+          <Table<IHGListItem>
+            columns={dailyCols}
+            dataSource={data?.data ?? []}
+            rowKey="ragic_id"
+            size="small"
+            loading={loading}
+            scroll={{ x: 'max-content', y: 'calc(100vh - 380px)' }}
+            pagination={{
+              current: page,
+              pageSize: PER_PAGE,
+              total: data?.total ?? 0,
+              onChange: setPage,
+              showSizeChanger: false,
+              showTotal: (t) => `共 ${t} 筆`,
+            }}
+            onRow={(row) => ({
+              onClick: () => onRecordClick(row.ragic_id, row.room_no),
+              style: { cursor: 'pointer' },
+            })}
+          />
+        </Card>
+      </Spin>
+    </div>
+  )
+}
+
 // ── 主元件 ────────────────────────────────────────────────────────────────────
 export default function IHGRoomMaintenancePage() {
   const [searchParams, setSearchParams] = useSearchParams()
@@ -834,6 +1367,22 @@ export default function IHGRoomMaintenancePage() {
       setKpiDrawer(prev => ({ ...prev, loading: false }))
     }
   }
+
+  // ── 月曆格 / 每日明細 TAB 使用的通用 Record 點擊（不需知道月份）──────────
+  const handleRecordClick = useCallback(async (ragicId: string, roomNo: string) => {
+    setDrawerCell({ room_no: roomNo, month: 0 })
+    setDrawerOpen(true)
+    setDrawerRecord(null)
+    setDrawerLoading(true)
+    try {
+      const rec = await fetchIHGRecord(ragicId)
+      setDrawerRecord(rec)
+    } catch {
+      message.error('載入明細失敗')
+    } finally {
+      setDrawerLoading(false)
+    }
+  }, [])
 
   // ── 點擊格子 → 開啟右側 Drawer ──────────────────────────────────────────
   const handleCellClick = async (ragic_id: string, room_no: string, month: number) => {
@@ -1277,6 +1826,28 @@ export default function IHGRoomMaintenancePage() {
           <SectionMatrixTab
             defaultYear={year}
             onCellClick={(ragicId, roomNo, monthNum) => handleCellClick(ragicId, roomNo, monthNum)}
+          />
+        ),
+      },
+      {
+        key: 'calendar',
+        label: <span><CalendarOutlined /> 月曆格</span>,
+        children: (
+          <CalendarTab
+            defaultYear={year}
+            defaultMonth={String(dayjs().month() + 1).padStart(2, '0')}
+            onRecordClick={handleRecordClick}
+          />
+        ),
+      },
+      {
+        key: 'daily',
+        label: <span><UnorderedListOutlined /> 每日明細</span>,
+        children: (
+          <DailyTab
+            defaultYear={year}
+            defaultMonth={String(dayjs().month() + 1).padStart(2, '0')}
+            onRecordClick={handleRecordClick}
           />
         ),
       },

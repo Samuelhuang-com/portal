@@ -2,7 +2,6 @@
  * IHG 客房保養 TypeScript 型別定義
  */
 
-// ── 矩陣表欄格 ────────────────────────────────────────────────────────────────
 export type CellStatus = 'completed' | 'pending' | 'scheduled' | 'abnormal'
 
 export interface MatrixCell {
@@ -34,7 +33,6 @@ export interface MatrixResponse {
   month_hours: Partial<Record<number, number>>
 }
 
-// ── KPI 統計 ──────────────────────────────────────────────────────────────────
 export interface IHGStats {
   year:             string
   month?:           string | null
@@ -47,7 +45,6 @@ export interface IHGStats {
   synced_at:        string
 }
 
-// ── 單筆記錄明細 ──────────────────────────────────────────────────────────────
 export interface IHGDetail {
   ragic_id: string
   seq_no: number
@@ -83,8 +80,7 @@ export interface IHGRecord {
   details: IHGDetail[]
 }
 
-// ── 區段矩陣 API ──────────────────────────────────────────────────────────────
-export type SectionValue = 'V' | '\u25b2' | 'X'
+export type SectionValue = 'V' | '▲' | 'X'
 
 export interface SectionRoom {
   room_no: string
@@ -100,20 +96,43 @@ export interface CategoryStat {
   triangle_count: number
   x_count: number
   reported: number
-  rate: number   // V 數 / total_rooms * 100
+  rate: number
 }
 
 export interface SectionMatrixResponse {
   year: string
   month: string
-
   categories: string[]
   rooms: SectionRoom[]
   category_stats: Record<string, CategoryStat>
   total_rooms: number
 }
 
-// ── 清單 API 回傳 ─────────────────────────────────────────────────
+export interface IHGCalendarDayCell {
+  total: number
+  completed: number
+  abnormal: number
+  pending: number
+  ragic_ids: string[]
+}
+
+export interface IHGCalendarKpi {
+  total_rooms: number
+  completed: number
+  abnormal: number
+  pending: number
+  completion_rate: number
+}
+
+export interface IHGCalendarResponse {
+  year: string
+  month: string
+  max_day: number
+  floors: string[]
+  kpi: IHGCalendarKpi
+  calendar: Record<string, Record<string, IHGCalendarDayCell>>
+}
+
 export interface IHGListItem {
   ragic_id: string
   room_no: string

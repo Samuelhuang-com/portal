@@ -28,6 +28,11 @@ class User(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=_now, onupdate=_now, nullable=False
     )
+    # ── 忘記密碼 / 管理員重設密碼 ──────────────────────────────────────────
+    # OTP 以 bcrypt 雜湊儲存，明文只在生成當下回傳一次
+    otp_code: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    otp_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    must_change_password: Mapped[bool] = mapped_column(Boolean, default=False)
 
     tenant: Mapped["Tenant"] = relationship("Tenant", back_populates="users")
     user_roles: Mapped[list["UserRole"]] = relationship(

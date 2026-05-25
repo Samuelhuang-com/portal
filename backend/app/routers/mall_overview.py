@@ -34,6 +34,7 @@ from app.models.mall_periodic_maintenance import (
     MallPeriodicMaintenanceItem,
 )
 from app.models.rf_inspection import RFInspectionBatch
+from app.models.other_tasks import OtherTask
 
 router = APIRouter(prefix="/mall", tags=["商場管理 Dashboard"])
 
@@ -42,7 +43,7 @@ MALL_CATEGORIES = ["現場報修", "上級交辦", "緊急事件", "例行維護
 
 
 
-@router.get("/daily-hours", summary="商場管理 — 每日工時彙總（五項工項）")
+@router.get("/daily-hours", summary="商場管理 — 每日工時彙總（五項工項，含主管交辦／緊急事件）")
 def get_mall_daily_hours(
     year:  int = Query(..., ge=2020, le=2030, description="年份"),
     month: int = Query(..., ge=1,    le=12,   description="月份（1–12）"),
@@ -189,6 +190,24 @@ def get_mall_daily_hours(
         except (ValueError, IndexError):
             pass
 
+    # ── ② 上級交辦 / ③ 緊急事件：OtherTask，venue='商場'，created_at 歸屬日 ─────
+    for ot in (
+        db.query(OtherTask)
+        .filter(OtherTask.year == year, OtherTask.month == month, OtherTask.venue == "商場")
+        .all()
+    ):
+        tt = ot.task_type
+        if tt not in ("上級交辦", "緊急事件"):
+            continue
+        if ot.created_at is None:
+            continue
+        d = ot.created_at.day
+        if 1 <= d <= days_in_month:
+            case_bucket[tt][d] += 1
+            wh = ot.work_hours or 0
+            if wh > 0:
+                bucket[tt][d] += wh
+
     # ── 組裝結果（與 WCA _build_daily 格式完全一致）──────────────────────────
     result_rows: list[dict] = []
     grand_total = 0.0
@@ -235,7 +254,7 @@ def get_mall_daily_hours(
     }
 
 
-@router.get("/monthly-hours", summary="商場管理 — 每月工時彙總（五項工項）")
+@router.get("/monthly-hours", summary="商場管理 — 每月工時彙總（五項工項，含主管交辦／緊急事件）")
 def get_mall_monthly_hours(
     year: int = Query(..., ge=2020, le=2030, description="年份"),
     db: Session = Depends(get_db),
@@ -346,6 +365,22 @@ def get_mall_monthly_hours(
             case_bucket["每日巡檢"][m] += 1
             bucket["每日巡檢"][m] += _parse_minutes(b.start_time or "", b.end_time or "") / 60
 
+    # ── ② 上級交辦 / ③ 緊急事件：OtherTask，venue='商場'，year+month 歸屬月 ────
+    for ot in (
+        db.query(OtherTask)
+        .filter(OtherTask.year == year, OtherTask.venue == "商場")
+        .all()
+    ):
+        tt = ot.task_type
+        if tt not in ("上級交辦", "緊急事件"):
+            continue
+        m = ot.month
+        if m and 1 <= m <= 12:
+            case_bucket[tt][m] += 1
+            wh = ot.work_hours or 0
+            if wh > 0:
+                bucket[tt][m] += wh
+
     # ── 組裝結果 ─────────────────────────────────────────────────────────────
     result_rows: list[dict] = []
     grand_total = 0.0
@@ -384,7 +419,7 @@ def get_mall_monthly_hours(
     return {"year": year, "months": list(range(1, 13)), "rows": result_rows}
 
 
-@router.get("/person-hours", summary="商場管理 — 人員工時佔比（五項工項）")
+@router.get("/person-hours", summary="商場管理 — 人員工時佔比（五項工項，含主管交辦／緊急事件）")
 def get_mall_person_hours(
     year: int = Query(..., ge=2020, le=2030, description="年份"),
     db: Session = Depends(get_db),
@@ -395,9 +430,10 @@ def get_mall_person_hours(
 
     人員識別規則：
       ① 現場報修 — LuqunRepairCase.acceptor（結案人）
+      ② 上級交辦 — OtherTask.engineer（task_type='上級交辦'，venue='商場'）
+      ③ 緊急事件 — OtherTask.engineer（task_type='緊急事件'，venue='商場'）
       ④ 例行維護 — MallPeriodicMaintenanceItem / FullBldgPMItem.executor_name（可空格分隔多人）
       ⑤ 每日巡檢 — MallFIBatch / RFInspectionBatch.inspector_name
-      ②③ 上級交辦 / 緊急事件 — 模組未開發，無人員資料
 
     回傳格式：
     ```json
@@ -472,6 +508,22 @@ def get_mall_person_hours(
             mins = _parse_minutes(b.start_time or "", b.end_time or "")
             if mins > 0:
                 ph[person]["每日巡檢"] += mins / 60
+
+    # ── ② 上級交辦 / ③ 緊急事件：OtherTask，engineer 人員，venue='商場' ──────────
+    for ot in (
+        db.query(OtherTask)
+        .filter(OtherTask.year == year, OtherTask.venue == "商場")
+        .all()
+    ):
+        tt = ot.task_type
+        if tt not in ("上級交辦", "緊急事件"):
+            continue
+        person = (ot.engineer or "").strip()
+        if not person or person == "未指定":
+            continue
+        wh = ot.work_hours or 0
+        if wh > 0:
+            ph[person][tt] += wh
 
     # ── 找出 Top-15 人員（依全類別合計工時降冪）─────────────────────────────────
     person_totals: dict[str, float] = {

@@ -52,6 +52,7 @@
  *   2026-05-13  新增 purchaseReport（請購單報表）核准請購單月報表，route /purchase-report/monthly
  *   2026-05-17  新增 staticPages（靜態頁面）docs/ 目錄 iframe 瀏覽器，route /settings/static-pages
  *   2026-05-19  新增 ragicFieldAudit（Ragic 欄位比對）欄位稽核工具，route /settings/ragic-field-audit
+ *   2026-05-24  新增 pptExport（飯店 Dashboard PPT 匯出設定）Section Registry 架構，route /ppt-export
  */
 
 // ── 系統標題 ──────────────────────────────────────────────────────────────────
@@ -214,4 +215,7 @@ export const NAV_PAGE = {
   scheduleStaff:        '人員管理',             // ← route /schedule/staff
   scheduleShifts:       '班別管理',             // ← route /schedule/shifts
   scheduleDepartments:  '部門管理',             // ← route /schedule/departments
+
+  // PPT 匯出設定（飯店 Dashboard，全公司共用設定，一階選單）
+  pptExport:            '飯店 Dashboard PPT 匯出設定',  // ← route /ppt-export
 } as const

@@ -1,12 +1,13 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
   Table, Button, Space, Tag, Modal, Form, Input, Select, Switch,
-  message, Typography, Card, Popconfirm, Tooltip, Avatar, Row, Col,
+  message, Typography, Card, Popconfirm, Tooltip, Avatar, Row, Col, Alert,
 } from 'antd';
 import {
   PlusOutlined, EditOutlined, DeleteOutlined, SearchOutlined, ReloadOutlined,
+  KeyOutlined, CopyOutlined,
 } from '@ant-design/icons';
-import { usersApi, type CreateUserPayload, type UpdateUserPayload } from '../../api/users';
+import { usersApi, type CreateUserPayload, type UpdateUserPayload, type AdminResetPasswordResponse } from '../../api/users';
 import { tenantsApi } from '../../api/tenants';
 import type { User, Tenant } from '../../types';
 import { ROLE_LABELS } from '../../types';
@@ -26,6 +27,8 @@ function getRoleLabel(roleName: string): string {
 
 const UserManagement: React.FC = () => {
   const { user: me } = useAuthStore();
+  const isAdmin = me?.roles?.some(r => ['system_admin', 'tenant_admin'].includes(r)) ?? false;
+
   const [users, setUsers]     = useState<User[]>([]);
   const [tenants, setTenants] = useState<Tenant[]>([]);
   const [allRoles, setAllRoles] = useState<RoleData[]>([]);
@@ -37,6 +40,11 @@ const UserManagement: React.FC = () => {
   const [editUser, setEditUser]     = useState<User | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [form] = Form.useForm();
+
+  // ── 管理員重設密碼 Modal ─────────────────────────────────────────────────
+  const [resetTarget,   setResetTarget]   = useState<User | null>(null);
+  const [resetLoading,  setResetLoading]  = useState(false);
+  const [resetResult,   setResetResult]   = useState<AdminResetPasswordResponse | null>(null);
 
   const fetchUsers = useCallback(async () => {
     setLoading(true);
@@ -68,12 +76,33 @@ const UserManagement: React.FC = () => {
   const openEdit = (user: User) => {
     setEditUser(user);
     form.setFieldsValue({
-      full_name: user.full_name,
-      is_active: user.is_active,
+      full_name:  user.full_name,
+      is_active:  user.is_active,
       role_names: user.roles,
-      tenant_id: user.tenant_id,
+      tenant_id:  user.tenant_id,
+      email:      user.email,
     });
     setModalOpen(true);
+  };
+
+  // ── 管理員重設密碼 ────────────────────────────────────────────────────────
+  const openReset = (user: User) => {
+    setResetTarget(user);
+    setResetResult(null);
+  };
+
+  const handleResetPassword = async () => {
+    if (!resetTarget) return;
+    setResetLoading(true);
+    try {
+      const { data } = await usersApi.resetPassword(resetTarget.id);
+      setResetResult(data);
+    } catch (err: any) {
+      message.error(err?.response?.data?.detail || '重設密碼失敗');
+      setResetTarget(null);
+    } finally {
+      setResetLoading(false);
+    }
   };
 
   const handleSubmit = async () => {
@@ -83,9 +112,10 @@ const UserManagement: React.FC = () => {
 
       if (editUser) {
         const payload: UpdateUserPayload = {
-          full_name: values.full_name,
-          is_active: values.is_active,
+          full_name:  values.full_name,
+          is_active:  values.is_active,
           role_names: values.role_names,
+          email:      values.email !== editUser.email ? values.email : undefined,
         };
         await usersApi.update(editUser.id, payload);
         message.success('使用者已更新');
@@ -187,6 +217,16 @@ const UserManagement: React.FC = () => {
           <Tooltip title="編輯">
             <Button type="text" size="small" icon={<EditOutlined />} onClick={() => openEdit(u)} />
           </Tooltip>
+          {u.id !== me?.id && isAdmin && (
+            <Tooltip title="重設密碼（產生一次性密碼）">
+              <Button
+                type="text" size="small"
+                icon={<KeyOutlined />}
+                style={{ color: '#4BA8E8' }}
+                onClick={() => openReset(u)}
+              />
+            </Tooltip>
+          )}
           {u.id !== me?.id && (
             <Popconfirm
               title="確認刪除此使用者？"
@@ -305,12 +345,96 @@ const UserManagement: React.FC = () => {
               }}
             />
           </Form.Item>
+          {editUser && isAdmin && (
+            <Form.Item
+              name="email"
+              label="Email（帳號識別碼）"
+              extra="修改後使用者須使用新 Email 登入（舊 token 約 30 分鐘後失效）"
+              rules={[{ required: true, message: '請輸入 Email' }]}
+            >
+              <Input placeholder="例：john@company.com 或 john（自動補 @portal.local）" />
+            </Form.Item>
+          )}
           {editUser && (
             <Form.Item name="is_active" label="帳號狀態" valuePropName="checked">
               <Switch checkedChildren="啟用" unCheckedChildren="停用" />
             </Form.Item>
           )}
         </Form>
+      </Modal>
+
+      {/* ── 管理員重設密碼 Modal ── */}
+      <Modal
+        title={`重設密碼：${resetTarget?.full_name ?? ''}`}
+        open={!!resetTarget}
+        onCancel={() => { setResetTarget(null); setResetResult(null); }}
+        footer={
+          resetResult ? (
+            <Button type="primary" onClick={() => { setResetTarget(null); setResetResult(null); }}
+              style={{ background: '#1B3A5C' }}>
+              完成
+            </Button>
+          ) : [
+            <Button key="cancel" onClick={() => setResetTarget(null)}>取消</Button>,
+            <Button key="ok" type="primary" loading={resetLoading} onClick={handleResetPassword}
+              danger>
+              確認產生一次性密碼
+            </Button>,
+          ]
+        }
+        width={440}
+        destroyOnClose
+      >
+        {resetResult ? (
+          <div>
+            <Alert
+              type="warning"
+              showIcon
+              message="請將以下一次性密碼口頭告知使用者"
+              description={`密碼 ${resetResult.expires_minutes} 分鐘後失效，使用者登入後系統將強制要求設定新密碼。`}
+              style={{ marginBottom: 16 }}
+            />
+            <div style={{
+              textAlign: 'center', background: '#f0f4f8', borderRadius: 8,
+              padding: '20px 24px', border: '2px dashed #4BA8E8',
+            }}>
+              <div style={{ fontSize: 11, color: '#64748b', marginBottom: 6 }}>一次性密碼</div>
+              <div style={{
+                fontSize: 40, fontWeight: 700, letterSpacing: 10,
+                color: '#1B3A5C', fontFamily: 'monospace',
+              }}>
+                {resetResult.otp}
+              </div>
+            </div>
+            <div style={{ textAlign: 'center', marginTop: 10 }}>
+              <Button
+                size="small"
+                icon={<CopyOutlined />}
+                onClick={() => {
+                  navigator.clipboard.writeText(resetResult.otp);
+                  message.success('已複製到剪貼簿');
+                }}
+              >
+                複製 OTP
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div>
+            <Alert
+              type="info"
+              showIcon
+              message="此操作將為該使用者產生一次性登入密碼"
+              description={
+                <>
+                  <div>• OTP 有效期 15 分鐘</div>
+                  <div>• 使用者以 OTP 登入後，系統將強制要求設定新密碼</div>
+                  <div>• OTP 僅顯示一次，請口頭告知使用者</div>
+                </>
+              }
+            />
+          </div>
+        )}
       </Modal>
     </div>
   );

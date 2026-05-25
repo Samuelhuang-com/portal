@@ -79,6 +79,8 @@ PERMISSION_DEFINITIONS = [
     {"key": "repair_unfinished_report_view",   "label": "報修未完成報表",         "group": "系統設定"},
     {"key": "repair_unfinished_report_manage", "label": "報修未完成報表：管理",   "group": "系統設定"},
     {"key": "repair_unfinished_report_admin",  "label": "報修未完成報表：管理員", "group": "系統設定"},
+    {"key": "hotel_overview_ppt_export", "label": "飯店 Dashboard 匯出 PowerPoint", "group": "飯店管理"},
+    {"key": "hotel_overview_ppt_config", "label": "飯店 Dashboard PPT 匯出設定",    "group": "飯店管理"},
 ]
 
 

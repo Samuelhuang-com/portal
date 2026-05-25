@@ -4,7 +4,7 @@
  * ✅  執行期自訂 label 與排序由 /api/v1/settings/menu-config 動態載入
  */
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import { Layout, Menu, Typography, Avatar, Dropdown, Space, theme, Skeleton, Modal, Button } from 'antd'
+import { Layout, Menu, Typography, Avatar, Dropdown, Space, theme, Skeleton, Modal, Button, Form, Input, Alert } from 'antd'
 import { useIdleTimeout } from '@/hooks/useIdleTimeout'
 import {
   ApartmentOutlined,
@@ -38,6 +38,7 @@ import {
   ClockCircleOutlined,
   UploadOutlined,
   TableOutlined,
+  FilePptOutlined,
 } from '@ant-design/icons'
 import { useNavigate, useLocation, Outlet } from 'react-router-dom'
 import { useAuthStore } from '@/stores/authStore'
@@ -194,6 +195,13 @@ export const menuItems: MenuItem[] = [
       { key: '/hotel/other-tasks',              icon: <AlertOutlined />,   label: NAV_PAGE.otherTasks,           permissionKey: 'hotel_other_tasks_view'           },
       // { key: '/hotel/repairs',                 icon: <ToolOutlined />, label: NAV_PAGE.repairs },
     ],
+  },
+  // ── 飯店 Dashboard PPT 匯出設定（一階，全公司共用）──────────────────────────
+  {
+    key: '/ppt-export',
+    icon: <FilePptOutlined />,
+    label: NAV_PAGE.pptExport,
+    permissionKey: 'hotel_overview_ppt_config',
   },
   {
     key: 'mall',
@@ -606,6 +614,41 @@ export default function MainLayout() {
   const user    = useAuthStore((s) => s.user)
   const { token: designToken } = theme.useToken()
 
+  // ── 強制改密碼（OTP 登入後）──────────────────────────────────────────────────
+  const [forcePwForm]       = Form.useForm()
+  const [forcePwLoading,    setForcePwLoading]    = useState(false)
+  const [forcePwError,      setForcePwError]      = useState<string | null>(null)
+  const mustChangePw = !!user?.must_change_password
+
+  const handleForceChangePw = async () => {
+    try {
+      const { new_password, confirm_password } = await forcePwForm.validateFields()
+      if (new_password !== confirm_password) {
+        setForcePwError('兩次輸入的密碼不一致')
+        return
+      }
+      setForcePwLoading(true)
+      setForcePwError(null)
+      const { authApi: _authApi } = await import('@/api/auth')
+      await _authApi.changePasswordForced(new_password)
+      // 強制登出，使用者須以新密碼重新登入
+      try { await _authApi.logout() } catch { /* ignore */ }
+      logout()
+      navigate('/login')
+      // 使用 setTimeout 確保 navigate 完成後再顯示訊息
+      setTimeout(() => {
+        import('antd').then(({ message: msg }) => {
+          msg.success('密碼已更新，請重新登入')
+        })
+      }, 300)
+    } catch (err: any) {
+      if (err?.errorFields) return // form validation error，不處理
+      setForcePwError(err?.response?.data?.detail || err?.message || '更新失敗，請稍後再試')
+    } finally {
+      setForcePwLoading(false)
+    }
+  }
+
   // ── 閒置逾時自動登出 ─────────────────────────────────────────────────────────
   const handleIdleLogout = useCallback(async () => {
     try { await authApi.logout() } catch { /* ignore */ }
@@ -973,6 +1016,64 @@ export default function MainLayout() {
             繼續使用
           </Button>
         </div>
+      </Modal>
+
+      {/* ── 強制改密碼 Modal（OTP 登入後，不可關閉）──────────────────────── */}
+      <Modal
+        open={mustChangePw}
+        closable={false}
+        maskClosable={false}
+        keyboard={false}
+        footer={null}
+        width={440}
+        centered
+      >
+        <div style={{ textAlign: 'center', marginBottom: 20 }}>
+          <div style={{ fontSize: 48, marginBottom: 8 }}>🔑</div>
+          <div style={{ fontSize: 20, fontWeight: 700, color: '#1B3A5C', marginBottom: 4 }}>
+            請設定新密碼
+          </div>
+          <div style={{ fontSize: 13, color: '#64748b' }}>
+            您使用一次性密碼登入，必須立即設定新密碼才能繼續使用系統。
+          </div>
+        </div>
+        {forcePwError && (
+          <Alert type="error" message={forcePwError} showIcon style={{ marginBottom: 12 }} />
+        )}
+        <Form form={forcePwForm} layout="vertical" requiredMark={false}>
+          <Form.Item
+            name="new_password"
+            label="新密碼"
+            rules={[
+              { required: true, message: '請輸入新密碼' },
+              { min: 8, message: '至少 8 個字元' },
+            ]}
+          >
+            <Input.Password placeholder="至少 8 個字元" size="large" />
+          </Form.Item>
+          <Form.Item
+            name="confirm_password"
+            label="確認新密碼"
+            rules={[{ required: true, message: '請再次輸入新密碼' }]}
+          >
+            <Input.Password placeholder="再次輸入新密碼" size="large" />
+          </Form.Item>
+          <Button
+            type="primary"
+            size="large"
+            block
+            loading={forcePwLoading}
+            onClick={handleForceChangePw}
+            style={{ background: '#1B3A5C', borderColor: '#1B3A5C', marginTop: 4 }}
+          >
+            {forcePwLoading ? '更新中…' : '確認更新密碼'}
+          </Button>
+          <div style={{ textAlign: 'center', marginTop: 10 }}>
+            <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+              更新完成後系統將自動登出，請以新密碼重新登入
+            </Typography.Text>
+          </div>
+        </Form>
       </Modal>
     </Layout>
   )

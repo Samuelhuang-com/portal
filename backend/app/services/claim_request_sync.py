@@ -477,10 +477,29 @@ async def sync_list_only() -> dict:
     """
     清單同步（每 15 分鐘執行）：
     只更新主單欄位，若 subtable 存在也一併寫入品項。
+    同時清除 ragic_sheet_path 已不在當前設定的孤兒記錄（路徑變更時自動清理）。
     """
     db = SessionLocal()
     total = {"fetched": 0, "upserted": 0, "errors": []}
     try:
+        # 清除路徑已不在設定中的孤兒記錄（路徑變更時自動清理）
+        valid_paths = {d["list_path"] for d in get_sheet_configs("claim")}
+        orphan_ids = [
+            row.id
+            for row in db.query(ApprovedClaimRequest.id)
+            .filter(~ApprovedClaimRequest.ragic_sheet_path.in_(valid_paths))
+            .all()
+        ]
+        if orphan_ids:
+            db.query(ApprovedClaimRequestItem).filter(
+                ApprovedClaimRequestItem.claim_id.in_(orphan_ids)
+            ).delete(synchronize_session=False)
+            db.query(ApprovedClaimRequest).filter(
+                ApprovedClaimRequest.id.in_(orphan_ids)
+            ).delete(synchronize_session=False)
+            db.commit()
+            logger.info("[ClaimSync] 清除孤兒記錄 %d 筆（路徑已失效）", len(orphan_ids))
+
         for dept in get_sheet_configs("claim"):
             result = await _sync_list_for_dept(dept, db)
             total["fetched"]  += result["fetched"]

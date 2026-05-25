@@ -104,6 +104,7 @@ from app.routers import (
     other_tasks,
     repair_report,
     usage_stats,
+    hotel_ppt_export,
 )
 
 
@@ -958,6 +959,8 @@ async def lifespan(app: FastAPI):
     import app.models.other_tasks               # noqa: F401
     import app.models.schedule                  # noqa: F401  班表模組（本地 SQLite，不對接 Ragic）
     import app.models.api_access_log            # noqa: F401  使用監控日誌
+    import app.models.ppt_export_config        # noqa: F401  PPT 匯出設定
+    import app.models.ppt_export_history       # noqa: F401  PPT 匯出歷史紀錄
 
     # B4F 扁平化遷移：刪除舊 batch 表 + 檢查 item 表欄位（必須在 create_all 之前）
     _migrate_b4f_flatten()
@@ -969,6 +972,35 @@ async def lifespan(app: FastAPI):
     # 建立尚未存在的資料表（不影響已有表格）
     Base.metadata.create_all(bind=engine)
     print("[Portal] Database tables ensured.")
+
+    # PPT 匯出設定 Migration：為已存在的 ppt_export_configs 表補充新欄位
+    from sqlalchemy import text as _ppt_text
+    with engine.connect() as _conn:
+        _ppt_cols = {row[1] for row in _conn.execute(_ppt_text("PRAGMA table_info(ppt_export_configs)"))}
+        if "user_id" not in _ppt_cols:
+            _conn.execute(_ppt_text("ALTER TABLE ppt_export_configs ADD COLUMN user_id TEXT"))
+            print("[Portal] ppt_export_configs: added user_id column.")
+        if "template_id" not in _ppt_cols:
+            _conn.execute(_ppt_text("ALTER TABLE ppt_export_configs ADD COLUMN template_id TEXT DEFAULT 'default'"))
+            print("[Portal] ppt_export_configs: added template_id column.")
+        _conn.commit()
+    print("[Portal] PPT export config migration checked.")
+
+    # users 表：補充忘記密碼 / OTP 欄位（2026-05-25）
+    from sqlalchemy import text as _user_text
+    with engine.connect() as _conn:
+        _user_cols = {row[1] for row in _conn.execute(_user_text("PRAGMA table_info(users)"))}
+        if "otp_code" not in _user_cols:
+            _conn.execute(_user_text("ALTER TABLE users ADD COLUMN otp_code TEXT"))
+            print("[Portal] users: added otp_code column.")
+        if "otp_expires_at" not in _user_cols:
+            _conn.execute(_user_text("ALTER TABLE users ADD COLUMN otp_expires_at DATETIME"))
+            print("[Portal] users: added otp_expires_at column.")
+        if "must_change_password" not in _user_cols:
+            _conn.execute(_user_text("ALTER TABLE users ADD COLUMN must_change_password BOOLEAN DEFAULT 0"))
+            print("[Portal] users: added must_change_password column.")
+        _conn.commit()
+    print("[Portal] users OTP migration checked.")
 
     # 報修未完成報表：確保預設排程設定存在（is_enabled=False，不會自動寄信）
     from app.core.database import SessionLocal as _RepairSessionLocal
@@ -1152,6 +1184,21 @@ async def lifespan(app: FastAPI):
 
         # 依各 RagicConnection 的 sync_interval 建立個別排程任務
         _init_ragic_connection_jobs()
+
+        # C-4：PPT 自動匯出（每月固定日期，預設 5 日 08:00）
+        from app.services.ppt_auto_export import (
+            run_auto_export as _ppt_auto_export,
+            AUTO_EXPORT_DAY, AUTO_EXPORT_HOUR,
+        )
+        from apscheduler.triggers.cron import CronTrigger as _CronTrigger
+        _scheduler.add_job(
+            _ppt_auto_export,
+            trigger=_CronTrigger(day=AUTO_EXPORT_DAY, hour=AUTO_EXPORT_HOUR, minute=0),
+            id="ppt_auto_export",
+            replace_existing=True,
+            misfire_grace_time=3600,
+        )
+        print(f"[Portal] PPT auto-export scheduled: every month day {AUTO_EXPORT_DAY} at {AUTO_EXPORT_HOUR:02d}:00")
 
         _scheduler.start()
         print("[Portal] AutoSync scheduler started (cron-aligned, default every 30 minutes).")
@@ -1520,6 +1567,14 @@ app.include_router(
     usage_stats.router,
     prefix=f"{API_PREFIX}/usage",
     tags=["使用監控"],
+)
+
+# ── 飯店 Dashboard PPT 匯出設定（Section Registry 架構）──────────────────────
+# 注意：router 本身已設 prefix="/hotel/ppt-export"，此處只加 API_PREFIX 即可
+app.include_router(
+    hotel_ppt_export.router,
+    prefix=f"{API_PREFIX}",
+    tags=["飯店 Dashboard PPT 匯出"],
 )
 
 # ── 靜態說明文件（docs-static）──────────────────────────────────────────────

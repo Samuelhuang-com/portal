@@ -100,7 +100,7 @@ _SEED_DATA: list[dict] = [
 
     # ── 樂群請款單（claim）9 部門 ────────────────────────────────────────────
     {"module": "claim", "sort_order": 1, "display_name": "執董室", "ragic_dept": "執董室",
-     "list_path": "free-executive-office/9",           "detail_path": "free-executive-office/9",
+     "list_path": "lequn-executive-office/9",          "detail_path": "lequn-executive-office/9",
      "extra_json": '{"flow_type": "零用金型"}'},
     {"module": "claim", "sort_order": 2, "display_name": "營業部", "ragic_dept": "營業",
      "list_path": "new-tab/8",                         "detail_path": "new-tab/8",
@@ -180,27 +180,57 @@ _SEED_DATA: list[dict] = [
 
 def seed_ragic_sheet_config() -> None:
     """
-    啟動時自動填入 ragic_sheet_config 資料表（idempotent）。
-    以 (module, list_path) 為唯一鍵，INSERT OR IGNORE，不覆蓋已有設定。
-    若已有紀錄但 list_path 有誤，需手動在 DB 中更正或透過管理 API 更新。
+    啟動時自動填入 ragic_sheet_config 資料表（idempotent + 路徑自動修正）。
+    以 (module, display_name) 為唯一鍵：
+      - 找不到記錄 → INSERT 新記錄
+      - 找到但 list_path / detail_path 與 _SEED_DATA 不同 → UPDATE 路徑（自動修正錯誤設定）
+      - 找到且路徑一致 → 不動作
+    同時清除孤兒設定（display_name 已不在 _SEED_DATA 的殘留記錄）。
     """
     db = SessionLocal()
     try:
         inserted = 0
+        updated  = 0
+
+        # 建立各 module 的有效 display_name 集合，用於孤兒清理
+        valid_keys: dict[str, set[str]] = {}
         for row in _SEED_DATA:
-            exists = (
+            valid_keys.setdefault(row["module"], set()).add(row["display_name"])
+
+        for row in _SEED_DATA:
+            record = (
                 db.query(RagicSheetConfig)
                 .filter(
-                    RagicSheetConfig.module    == row["module"],
-                    RagicSheetConfig.list_path == row["list_path"],
+                    RagicSheetConfig.module       == row["module"],
+                    RagicSheetConfig.display_name == row["display_name"],
                 )
                 .first()
             )
-            if not exists:
+            if not record:
                 db.add(RagicSheetConfig(**row))
                 inserted += 1
+            else:
+                # 路徑與 _SEED_DATA 不一致時自動修正
+                changed = False
+                if record.list_path != row["list_path"]:
+                    logger.info(
+                        "[RagicSheetConfig] 修正路徑 module=%s dept=%s: %s → %s",
+                        row["module"], row["display_name"],
+                        record.list_path, row["list_path"],
+                    )
+                    record.list_path = row["list_path"]
+                    changed = True
+                if record.detail_path != row["detail_path"]:
+                    record.detail_path = row["detail_path"]
+                    changed = True
+                if changed:
+                    updated += 1
+
         db.commit()
-        print(f"[RagicSheetConfig] seed checked — {inserted} 筆新增，共 {len(_SEED_DATA)} 筆設定")
+        print(
+            f"[RagicSheetConfig] seed checked — "
+            f"{inserted} 筆新增，{updated} 筆路徑修正，共 {len(_SEED_DATA)} 筆設定"
+        )
     except Exception as e:
         db.rollback()
         logger.error(f"[RagicSheetConfig] seed 失敗：{e}")

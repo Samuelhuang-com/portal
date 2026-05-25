@@ -15,6 +15,7 @@ class UserUpdate(BaseModel):
     full_name: Optional[str] = None
     is_active: Optional[bool] = None
     role_names: Optional[List[str]] = None
+    email: Optional[str] = None  # 僅 system_admin / tenant_admin 可更新
 
 
 class UserOut(BaseModel):
@@ -27,14 +28,22 @@ class UserOut(BaseModel):
     roles: List[str]
     last_login: Optional[datetime] = None
     created_at: datetime
+    must_change_password: bool = False
 
     class Config:
         from_attributes = True
 
 
 class ChangePasswordRequest(BaseModel):
-    old_password: str
+    old_password: Optional[str] = None   # must_change_password=True 時免填
     new_password: str = Field(min_length=8)
+
+
+class AdminResetPasswordResponse(BaseModel):
+    """管理員重設密碼後回傳的 OTP（明文，只出現一次）"""
+    otp: str
+    expires_minutes: int = 15
+    message: str
 
 
 class UserListResponse(BaseModel):

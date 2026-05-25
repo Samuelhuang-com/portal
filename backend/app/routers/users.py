@@ -1,8 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from typing import Optional
+import random
+import string
+from datetime import timedelta
 from app.core.database import get_db
 from app.core.security import hash_password, verify_password
+from app.core.time import twnow
 from app.dependencies import get_current_user, is_system_admin, require_roles
 from app.models.user import User
 from app.models.role import Role
@@ -15,7 +19,10 @@ from app.schemas.user import (
     UserOut,
     UserListResponse,
     ChangePasswordRequest,
+    AdminResetPasswordResponse,
 )
+
+OTP_EXPIRES_MINUTES = 15
 
 router = APIRouter()
 
@@ -42,7 +49,13 @@ def _build_user_out(user: User, db: Session) -> UserOut:
         roles=_get_roles(user.id, db),
         last_login=user.last_login,
         created_at=user.created_at,
+        must_change_password=user.must_change_password or False,
     )
+
+
+def _generate_otp() -> str:
+    """產生 6 位數字 OTP。"""
+    return "".join(random.choices(string.digits, k=6))
 
 
 @router.get("", response_model=UserListResponse)
@@ -150,6 +163,16 @@ def update_user(
                         granted_by=current_user.id,
                     )
                 )
+    # email 更新（system_admin + tenant_admin 皆可；需唯一性檢查）
+    if data.email is not None:
+        new_email = data.email.lower().strip()
+        if "@" not in new_email:
+            new_email = f"{new_email}@portal.local"
+        if new_email != user.email:
+            conflict = db.query(User).filter(User.email == new_email, User.id != user_id).first()
+            if conflict:
+                raise HTTPException(status_code=400, detail="此 Email 已被其他帳號使用")
+            user.email = new_email
     db.add(
         AuditLog(
             user_id=current_user.id,
@@ -186,8 +209,66 @@ def change_password(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    if not verify_password(data.old_password, current_user.hashed_password):
-        raise HTTPException(status_code=400, detail="舊密碼錯誤")
+    # 若帳號標記為「必須更改密碼」（OTP 登入後），免驗舊密碼
+    if not current_user.must_change_password:
+        if not data.old_password:
+            raise HTTPException(status_code=400, detail="請輸入舊密碼")
+        if not verify_password(data.old_password, current_user.hashed_password):
+            raise HTTPException(status_code=400, detail="舊密碼錯誤")
+
     current_user.hashed_password = hash_password(data.new_password)
+    # 清除 OTP 狀態與強制更改旗標
+    current_user.must_change_password = False
+    current_user.otp_code = None
+    current_user.otp_expires_at = None
+    db.add(
+        AuditLog(
+            user_id=current_user.id,
+            tenant_id=current_user.tenant_id,
+            action="change_password",
+            resource_type="user",
+            resource_id=current_user.id,
+        )
+    )
     db.commit()
     return {"message": "密碼已更新"}
+
+
+@router.post("/{user_id}/reset-password", response_model=AdminResetPasswordResponse)
+def admin_reset_password(
+    user_id: str,
+    current_user: User = Depends(require_roles("system_admin", "tenant_admin")),
+    db: Session = Depends(get_db),
+):
+    """
+    管理員替指定使用者產生 OTP。
+    OTP 明文僅回傳一次，管理員需口頭告知使用者。
+    使用者以 OTP 登入後，系統強制要求設定新密碼。
+    """
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="使用者不存在")
+    if user_id == current_user.id:
+        raise HTTPException(status_code=400, detail="不能重設自己的密碼（請使用「修改密碼」功能）")
+
+    otp = _generate_otp()
+    user.otp_code = hash_password(otp)
+    user.otp_expires_at = twnow() + timedelta(minutes=OTP_EXPIRES_MINUTES)
+    user.must_change_password = True
+
+    db.add(
+        AuditLog(
+            user_id=current_user.id,
+            tenant_id=current_user.tenant_id,
+            action="admin_reset_password",
+            resource_type="user",
+            resource_id=user_id,
+        )
+    )
+    db.commit()
+
+    return AdminResetPasswordResponse(
+        otp=otp,
+        expires_minutes=OTP_EXPIRES_MINUTES,
+        message=f"已為 {user.full_name} 產生一次性密碼，請口頭告知使用者，密碼 {OTP_EXPIRES_MINUTES} 分鐘後失效。",
+    )

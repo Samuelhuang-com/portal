@@ -160,7 +160,9 @@ export default function ClaimReportPage() {
   const [claimSearchKeyword, setClaimSearchKeyword]   = useState<string>('')
   const [paymentTypeOptions, setPaymentTypeOptions]   = useState<string[]>([])
   const [claimAccountOptions, setClaimAccountOptions] = useState<string[]>([])
-
+  const [claimPaymentDateFrom, setClaimPaymentDateFrom] = useState<string | undefined>(undefined)
+  const [claimPaymentDateTo, setClaimPaymentDateTo]     = useState<string | undefined>(undefined)
+  const [claimPaymentDateRange, setClaimPaymentDateRange] = useState<[Dayjs | null, Dayjs | null]>([null, null])
 
   // ── 下拉選項 ──────────────────────────────────────────────────────────────────
   const [deptOptions, setDeptOptions] = useState<string[]>([])
@@ -310,11 +312,13 @@ export default function ClaimReportPage() {
       year_month_from: yearMonthFrom, year_month_to: yearMonthTo,
       department: deptFilter, payment_type: paymentTypeFilter,
       account_subject: claimAccountFilter, keyword: claimSearchKeyword || undefined,
+      payment_date_from: claimPaymentDateFrom,
+      payment_date_to: claimPaymentDateTo,
       page, per_page: 20,
     })
       .then((r) => { setClaimOrders(r.data.items ?? []); setClaimOrdersTotal(r.data.total ?? 0) })
       .finally(() => setClaimOrdersLoading(false))
-  }, [yearMonth, yearMonthFrom, yearMonthTo, deptFilter, paymentTypeFilter, claimAccountFilter, claimSearchKeyword])
+  }, [yearMonth, yearMonthFrom, yearMonthTo, deptFilter, paymentTypeFilter, claimAccountFilter, claimSearchKeyword, claimPaymentDateFrom, claimPaymentDateTo])
 
   const loadClaimItems = useCallback((page = 1) => {
     setClaimItemsLoading(true)
@@ -324,11 +328,13 @@ export default function ClaimReportPage() {
       year_month_from: yearMonthFrom, year_month_to: yearMonthTo,
       department: deptFilter, payment_type: paymentTypeFilter,
       account_subject: claimAccountFilter, q: claimSearchKeyword || undefined,
+      payment_date_from: claimPaymentDateFrom,
+      payment_date_to: claimPaymentDateTo,
       page, per_page: PAGE_SIZE,
     })
       .then((r) => { setClaimItems(r.data.items ?? []); setClaimItemsTotal(r.data.total ?? 0) })
       .finally(() => setClaimItemsLoading(false))
-  }, [yearMonth, yearMonthFrom, yearMonthTo, deptFilter, paymentTypeFilter, claimAccountFilter, claimSearchKeyword])
+  }, [yearMonth, yearMonthFrom, yearMonthTo, deptFilter, paymentTypeFilter, claimAccountFilter, claimSearchKeyword, claimPaymentDateFrom, claimPaymentDateTo])
 
   const loadClaimDeptStats = useCallback(() => {
     getClaimDepartments({ year_month: yearMonthFrom ? undefined : yearMonth, year_month_from: yearMonthFrom, year_month_to: yearMonthTo, payment_type: paymentTypeFilter, account_subject: claimAccountFilter })
@@ -419,7 +425,7 @@ export default function ClaimReportPage() {
     } else if (activeTab === 'audit') {
       loadAuditAnomalies()
     }
-  }, [yearMonth, yearMonthFrom, yearMonthTo, deptFilter, accountFilter, searchKeyword, paymentTypeFilter, claimAccountFilter, claimSearchKeyword]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [yearMonth, yearMonthFrom, yearMonthTo, deptFilter, accountFilter, searchKeyword, paymentTypeFilter, claimAccountFilter, claimSearchKeyword, claimPaymentDateFrom, claimPaymentDateTo]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── TAB 切換 → 載入新 TAB 資料 ───────────────────────────────────────────────
   useEffect(() => {
@@ -681,6 +687,9 @@ export default function ClaimReportPage() {
     { title: '核准日期', dataIndex: 'approved_date', key: 'approved_date', width: 100,
       render: (v: string | null) => <span style={{ fontSize: 12, color: '#666' }}>{v || '-'}</span>,
       sorter: (a: ClaimOrder, b: ClaimOrder) => (a.approved_date ?? '').localeCompare(b.approved_date ?? '') },
+    { title: '付款日期', dataIndex: 'payment_date', key: 'payment_date', width: 100,
+      render: (v: string | null) => v ? <span style={{ fontSize: 12, color: '#1B3A5C' }}>{v}</span> : <span style={{ color: '#aaa' }}>—</span>,
+      sorter: (a: ClaimOrder, b: ClaimOrder) => (a.payment_date ?? '').localeCompare(b.payment_date ?? '') },
     { title: '', key: 'action', width: 48, fixed: 'right' as const,
       render: (_: unknown, r: ClaimOrder) => (
         <Button type="link" size="small" icon={<EyeOutlined />}
@@ -693,6 +702,9 @@ export default function ClaimReportPage() {
     { title: '核准日期', dataIndex: 'approved_date', key: 'approved_date', width: 100,
       render: (v: string | null) => v ?? '-', fixed: 'left' as const,
       sorter: (a: ClaimReportItem, b: ClaimReportItem) => (a.approved_date ?? '').localeCompare(b.approved_date ?? '') },
+    { title: '付款日期', dataIndex: 'payment_date', key: 'payment_date', width: 100,
+      render: (v: string | null) => v ? <span style={{ fontSize: 12, color: '#1B3A5C' }}>{v}</span> : <span style={{ color: '#aaa' }}>—</span>,
+      sorter: (a: ClaimReportItem, b: ClaimReportItem) => (a.payment_date ?? '').localeCompare(b.payment_date ?? '') },
     { title: '部門', dataIndex: 'department_display', key: 'dept', width: 80, fixed: 'left' as const,
       render: (v: string) => <Tag color="orange">{v}</Tag>,
       sorter: (a: ClaimReportItem, b: ClaimReportItem) => a.department_display.localeCompare(b.department_display) },
@@ -780,11 +792,11 @@ export default function ClaimReportPage() {
   return (
     <div>
       {/* ── Header ── */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
-        <Title level={4} style={{ margin: 0 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
+        <Title level={4} style={{ margin: 0, whiteSpace: 'nowrap' }}>
           {isPurchaseTab ? '核准請購單月報表' : isClaimTab ? '核准請款單月報表' : isCombinedTab ? '部門統計' : '資料異常稽核'}
         </Title>
-        <Space wrap style={{ justifyContent: 'flex-end' }}>
+        <Space wrap>
           {/* 日期模式切換（共用） */}
           <Segmented
             value={dateMode}
@@ -799,25 +811,18 @@ export default function ClaimReportPage() {
 
           {/* 單月選擇器 */}
           {dateMode === 'month' && (
-            <Tooltip
-              title={availableMonths.length > 0
-                ? `有資料的月份：${availableMonths.slice(0, 6).join('、')}${availableMonths.length > 6 ? '…' : ''}`
-                : '尚無核准資料（請先執行同步）'}
-            >
-              <DatePicker
-                picker="month" value={pickerValue} onChange={handleMonthChange}
-                format="YYYY年MM月" allowClear={false} style={{ width: 140 }}
-                status={availableMonths.length > 0 && !availableMonths.includes(yearMonth) ? 'warning' : undefined}
-              />
-            </Tooltip>
+            <DatePicker
+              picker="month" value={pickerValue} onChange={handleMonthChange}
+              allowClear={false} size="small"
+              disabledDate={(d) => availableMonths.length > 0 && !availableMonths.includes(d.format('YYYY-MM'))}
+            />
           )}
 
           {/* 全年度選擇器 */}
           {dateMode === 'year' && (
             <DatePicker
               picker="year" value={yearPickerValue} onChange={handleYearChange}
-              format="YYYY年" allowClear={false} style={{ width: 110 }}
-              placeholder="選擇年度"
+              allowClear={false} size="small" placeholder="選擇年度"
             />
           )}
 
@@ -827,32 +832,31 @@ export default function ClaimReportPage() {
               picker="month"
               value={rangeValues}
               onChange={handleRangeChange as any}
-              format="YYYY-MM"
-              style={{ width: 220 }}
+              size="small"
               placeholder={['起始月份', '結束月份']}
             />
           )}
 
           {/* 部門篩選（共用） */}
-          <Select placeholder="全部部門" allowClear style={{ width: 120 }}
+          <Select placeholder="全部部門" allowClear size="small" style={{ width: 120 }}
             value={deptFilter} onChange={setDeptFilter}
             options={deptOptions.map((d) => ({ label: d, value: d }))} />
 
           {/* 請購專用篩選 */}
           {isPurchaseTab && (
             <>
-              <Select placeholder="全部會科" allowClear style={{ width: 160 }}
+              <Select placeholder="全部會科" allowClear size="small" style={{ width: 150 }}
                 value={accountFilter} onChange={setAccountFilter}
                 showSearch optionFilterProp="label"
                 options={accountOptions.map((a) => ({ label: a, value: a }))} />
               <Input.Search
-                placeholder="說明/單號/申請人/廠商" allowClear style={{ width: 230 }}
+                placeholder="說明/單號/申請人/廠商" allowClear size="small" style={{ width: 200 }}
                 value={searchInput}
                 onChange={(e) => { setSearchInput(e.target.value); if (!e.target.value) setSearchKeyword('') }}
                 onSearch={(v) => setSearchKeyword(v.trim())}
               />
               <Button icon={<FileExcelOutlined />} loading={exportPurchaseLoading} onClick={handleExportPurchase}
-                style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)', border: 'none', color: '#fff' }}>
+                size="small" type="primary">
                 匯出 Excel
               </Button>
             </>
@@ -861,21 +865,36 @@ export default function ClaimReportPage() {
           {/* 請款專用篩選 */}
           {isClaimTab && (
             <>
-              <Select placeholder="全部付款種類" allowClear style={{ width: 130 }}
+              <Select placeholder="全部付款種類" allowClear size="small" style={{ width: 120 }}
                 value={paymentTypeFilter} onChange={setPaymentTypeFilter}
                 options={paymentTypeOptions.map((t) => ({ label: t, value: t }))} />
-              <Select placeholder="全部會科" allowClear style={{ width: 160 }}
+              <Select placeholder="全部會科" allowClear size="small" style={{ width: 150 }}
                 value={claimAccountFilter} onChange={setClaimAccountFilter}
                 showSearch optionFilterProp="label"
                 options={claimAccountOptions.map((a) => ({ label: a, value: a }))} />
+              {(activeTab === 'claim-orders' || activeTab === 'claim-detail') && (
+                <DatePicker.RangePicker
+                  placeholder={['付款日期起', '付款日期迄']}
+                  value={claimPaymentDateRange}
+                  onChange={(vals) => {
+                    const [s, e] = vals ?? [null, null]
+                    setClaimPaymentDateRange([s, e])
+                    setClaimPaymentDateFrom(s ? s.format('YYYY-MM-DD') : undefined)
+                    setClaimPaymentDateTo(e ? e.format('YYYY-MM-DD') : undefined)
+                  }}
+                  size="small"
+                  style={{ width: 230 }}
+                  allowClear
+                />
+              )}
               <Input.Search
-                placeholder="事由/單號/申請人/受款人" allowClear style={{ width: 230 }}
+                placeholder="事由/單號/申請人/受款人" allowClear size="small" style={{ width: 200 }}
                 value={claimSearchInput}
                 onChange={(e) => { setClaimSearchInput(e.target.value); if (!e.target.value) setClaimSearchKeyword('') }}
                 onSearch={(v) => setClaimSearchKeyword(v.trim())}
               />
               <Button icon={<FileExcelOutlined />} loading={exportClaimLoading} onClick={handleExportClaim}
-                style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)', border: 'none', color: '#fff' }}>
+                size="small" type="primary">
                 匯出 Excel
               </Button>
             </>

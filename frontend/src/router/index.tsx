@@ -115,6 +115,9 @@ import IHGRoomMaintenancePage          from '@/pages/IHGRoomMaintenance'
 // ── 主管交辦／緊急事件 ─────────────────────────────────────────────────────────
 import OtherTasksPage                  from '@/pages/OtherTasks'
 
+// ── 飯店 Dashboard PPT 匯出設定 ────────────────────────────────────────────────
+import HotelPptExportPage              from '@/pages/HotelPptExport'
+
 // ── 預算管理 ──────────────────────────────────────────────────────────────────
 import BudgetDashboardPage             from '@/pages/Budget'
 import BudgetPlansPage                 from '@/pages/Budget/Plans'
@@ -327,6 +330,13 @@ export default function AppRouter() {
           <Route path="shifts"      element={<ScheduleShiftsPage />} />
           <Route path="departments" element={<ScheduleDepartmentsPage />} />
         </Route>
+
+        {/* ── 飯店 Dashboard PPT 匯出設定（一階，全公司共用）────────── */}
+        <Route path="ppt-export" element={
+          <PermissionGuard permissionKey="hotel_overview_ppt_config">
+            <HotelPptExportPage />
+          </PermissionGuard>
+        } />
 
         {/* ── 飯店管理 ──────────────────────────────────────────────── */}
         <Route path="hotel">

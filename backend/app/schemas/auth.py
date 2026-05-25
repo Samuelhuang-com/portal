@@ -17,6 +17,7 @@ class UserInfo(BaseModel):
     # 使用者所有 permission_key 清單；system_admin 為 ["*"]
     permissions: List[str] = []
     is_active: bool
+    must_change_password: bool = False
 
     class Config:
         from_attributes = True
@@ -26,3 +27,8 @@ class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     user: UserInfo
+    must_change_password: bool = False
+
+
+class ForgotPasswordRequest(BaseModel):
+    identifier: str  # email 或 username（與登入欄位一致）

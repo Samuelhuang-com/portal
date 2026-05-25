@@ -13,7 +13,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react'
 import {
   Row, Col, Card, Statistic, Typography, Breadcrumb, Select,
   Spin, Alert, Tabs, Tag, Space, Progress, Divider, Tooltip,
-  Badge, Table, Button, DatePicker, message,
+  Badge, Table, Button, DatePicker, message, Modal,
 } from 'antd'
 import {
   HomeOutlined, ToolOutlined, SafetyOutlined, BuildOutlined,
@@ -21,7 +21,7 @@ import {
   BarChartOutlined, LineChartOutlined, PieChartOutlined,
   DashboardOutlined, WarningOutlined, RightOutlined,
   ReloadOutlined, QuestionCircleOutlined, FilePptOutlined, DownloadOutlined,
-  CalendarOutlined,
+  CalendarOutlined, SettingOutlined, LinkOutlined,
 } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import {
@@ -41,18 +41,18 @@ import {
   type HotelDIMonthlyDashboard,
 } from '@/api/hotelDailyInspection'
 import { fetchDashboard }                from '@/api/dazhiRepair'
+import { fetchOtherTaskStats, type OtherTaskTypeStat } from '@/api/otherTasks'
 import { SourceStatusCard }              from '@/components/SourceStatusCard'
 import {
   fetchHotelDailyHours,
   fetchHotelMonthlyHours,
   fetchHotelPersonHours,
-  exportHotelOverviewPptx,
   HOTEL_CATEGORY_COLORS,
   type HotelDailyHoursData,
   type HotelMonthlyHoursData,
   type HotelPersonHoursData,
-  type HotelPptxPayload,
 } from '@/api/hotelOverview'
+import { exportPptx, type PptFrontendData } from '@/api/hotelPptExport'
 import type { PMStats }                  from '@/types/periodicMaintenance'
 import type { IHGStats }                 from '@/types/ihgRoomMaintenance'
 import type { DashboardData, DashboardKpi } from '@/types/dazhiRepair'
@@ -74,6 +74,8 @@ const SOURCE_COLORS: Record<string, string> = {
   ihg:               PURPLE,
   daily_inspection:  GREEN,
   dazhi:             CYAN,
+  mgmt_order:        ORANGE,
+  emergency:         RED,
 }
 
 const PIE_COLORS = [ACCENT_BLUE, PURPLE, GREEN, ORANGE, CYAN]
@@ -96,6 +98,8 @@ const HOTEL_SOURCE_ICONS: Record<string, React.ReactNode> = {
   ihg:              <BuildOutlined />,
   daily_inspection: <SafetyOutlined />,
   dazhi:            <ToolOutlined />,
+  mgmt_order:       <ExclamationCircleOutlined />,
+  emergency:        <WarningOutlined />,
 }
 
 const HOTEL_SOURCE_ROUTES: Record<string, string> = {
@@ -103,6 +107,8 @@ const HOTEL_SOURCE_ROUTES: Record<string, string> = {
   ihg:              '/hotel/ihg-room-maintenance',
   daily_inspection: '/hotel/daily-inspection',
   dazhi:            '/hotel/dazhi-repair/dashboard',
+  mgmt_order:       '/hotel/other-tasks',
+  emergency:        '/hotel/other-tasks',
 }
 
 // ── Normalize 結構 ────────────────────────────────────────────────────────────
@@ -201,6 +207,40 @@ function adaptDazhi(data: DashboardData): NormalizedSource {
   }
 }
 
+function adaptMgmtOrder(stats: Record<string, OtherTaskTypeStat>): NormalizedSource {
+  const s = stats['上級交辦'] ?? { total: 0, hotel: 0, mall: 0, work_hours: 0 }
+  return {
+    source_key:      'mgmt_order',
+    source_name:     '飯店主管交辦',
+    source_color:    SOURCE_COLORS.mgmt_order,
+    case_count:      s.hotel,
+    completed_count: 0,
+    work_hours:      s.work_hours > 0 ? s.work_hours : -1,
+    completion_rate: -1,
+    abnormal_count:  0,
+    overdue_count:   0,
+    status_label:    `本月 ${s.hotel} 件`,
+    is_ok:           true,
+  }
+}
+
+function adaptEmergency(stats: Record<string, OtherTaskTypeStat>): NormalizedSource {
+  const s = stats['緊急事件'] ?? { total: 0, hotel: 0, mall: 0, work_hours: 0 }
+  return {
+    source_key:      'emergency',
+    source_name:     '飯店緊急事件',
+    source_color:    SOURCE_COLORS.emergency,
+    case_count:      s.hotel,
+    completed_count: 0,
+    work_hours:      s.work_hours > 0 ? s.work_hours : -1,
+    completion_rate: -1,
+    abnormal_count:  0,
+    overdue_count:   0,
+    status_label:    `本月 ${s.hotel} 件`,
+    is_ok:           s.hotel === 0,
+  }
+}
+
 // ── 工具函式 ──────────────────────────────────────────────────────────────────
 const fmtHours = (h: number) =>
   h < 0 ? '—' : h < 100 ? `${h.toFixed(1)} HR` : `${Math.round(h)} HR`
@@ -234,8 +274,14 @@ export default function HotelMgmtDashboardPage() {
       ce('span', { style: { color: '#aaa', fontSize: 11 } },
         '取消狀態案件不計入'),
     ),
-    上級交辦: ce('div', { style: { fontSize: 12 } }, '建置中，目前顯示 0'),
-    緊急事件: ce('div', { style: { fontSize: 12 } }, '建置中，目前顯示 0'),
+    上級交辦: ce('div', { style: { fontSize: 12, lineHeight: 1.9 } },
+      ce('b', null, '飯店主管交辦 / Hotel Mgmt Order'), '（hotel/other-tasks）', ce('br'),
+      '以 ', ce('code', null, 'created_at'), ' 歸屬月份，統計 task_type=「上級交辦」、venue=「飯店」的案件數與工時。',
+    ),
+    緊急事件: ce('div', { style: { fontSize: 12, lineHeight: 1.9 } },
+      ce('b', null, '飯店緊急事件 / Hotel Emergency'), '（hotel/other-tasks）', ce('br'),
+      '以 ', ce('code', null, 'created_at'), ' 歸屬月份，統計 task_type=「緊急事件」、venue=「飯店」的案件數與工時。',
+    ),
     例行維護: ce('div', { style: { fontSize: 12, lineHeight: 1.9 } },
       '① ', ce('b', null, '飯店例行維護 / Hotel Periodic Maintenance'), '（hotel/periodic-maintenance）', ce('br'),
       '　同「每月維護」TAB「本月週期保養項目數」口徑：', ce('br'),
@@ -269,6 +315,7 @@ export default function HotelMgmtDashboardPage() {
 
   const [pmStats,           setPmStats]           = useState<PMStats | null>(null)
   const [ihgStats,          setIhgStats]          = useState<IHGStats | null>(null)
+  const [otherStats,        setOtherStats]        = useState<Record<string, OtherTaskTypeStat> | null>(null)
   const [hotelDiMonthly,    setHotelDiMonthly]    = useState<HotelDIMonthlyDashboard | null>(null)
   // 以下保留供圖表 / 趨勢 Tab 使用（單日口徑）
   const [hotelDiSummary,    setHotelDiSummary]    = useState<HotelDIDashboardSummary | null>(null)
@@ -286,6 +333,7 @@ export default function HotelMgmtDashboardPage() {
   const [tabYearlyLoading, setTabYearlyLoading]  = useState(false)
   const [exportLoading,    setExportLoading]     = useState(false)
   const [exportProgress,   setExportProgress]    = useState(0)
+  const [exportModalOpen,  setExportModalOpen]   = useState(false)
   const exportTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // ── Tab 獨立篩選狀態（各 Tab 不影響 Dashboard 的 year/month）────────────
@@ -313,6 +361,8 @@ export default function HotelMgmtDashboardPage() {
       // 單日口徑保留供趨勢圖使用
       fetchHotelDailyDashboardSummary(targetDate).then(setHotelDiSummary).catch(() => {}),
       fetchDashboard(year, month).then(setDazhiData).catch(() => { errs.push('工務部') }),
+      fetchOtherTaskStats({ year, month: month > 0 ? month : undefined, venue: '飯店' })
+        .then(setOtherStats).catch(() => { errs.push('主管交辦/緊急事件') }),
     ])
 
     setErrors(errs)
@@ -353,6 +403,8 @@ export default function HotelMgmtDashboardPage() {
     ihgStats        ? adaptIHG(ihgStats)               : null,
     hotelDiMonthly  ? adaptHotelDI(hotelDiMonthly)     : null,  // 月份彙總
     dazhiData       ? adaptDazhi(dazhiData)            : null,
+    otherStats      ? adaptMgmtOrder(otherStats)       : null,
+    otherStats      ? adaptEmergency(otherStats)       : null,
   ].filter(Boolean) as NormalizedSource[]
 
   // ── 聚合 KPI ──────────────────────────────────────────────────────────
@@ -392,44 +444,18 @@ export default function HotelMgmtDashboardPage() {
   // 2. 工務 12個月趨勢
   const dazhiTrend = dazhiData?.trend_12m ?? []
 
-  // ── 來源卡片（6 有資料 + 2 佔位，共 8 張，2 排 × 4 欄）──────────────────
+  // ── 來源卡片（六大來源，共 6 張，2 排 × 3 欄）──────────────────────────
   function SourceCards() {
     if (!sources.length) return null
 
-    const PLACEHOLDER_CARDS = [
-      { key: 'mgmt_order', label: '飯店主管交辦', color: ORANGE, icon: <ExclamationCircleOutlined /> },
-      { key: 'emergency',  label: '飯店緊急事件', color: RED,    icon: <WarningOutlined />           },
-    ]
-
     return (
       <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
-        {/* ── 六個有資料的來源卡 ── */}
         {sources.map(s => (
-          <Col key={s.source_key} xs={12} sm={12} md={6}>
+          <Col key={s.source_key} xs={12} sm={12} md={8}>
             <SourceStatusCard
               {...s}
               icon={HOTEL_SOURCE_ICONS[s.source_key]}
               onClick={() => navigate(HOTEL_SOURCE_ROUTES[s.source_key] ?? '#')}
-            />
-          </Col>
-        ))}
-
-        {/* ── 兩張佔位卡（數據準備中）── */}
-        {PLACEHOLDER_CARDS.map(p => (
-          <Col key={p.key} xs={12} sm={12} md={6}>
-            <SourceStatusCard
-              source_key={p.key}
-              source_name={p.label}
-              source_color={p.color}
-              case_count={-1}
-              completed_count={0}
-              work_hours={-1}
-              completion_rate={-1}
-              abnormal_count={0}
-              overdue_count={0}
-              status_label=""
-              is_placeholder
-              icon={p.icon}
             />
           </Col>
         ))}
@@ -631,11 +657,13 @@ export default function HotelMgmtDashboardPage() {
     const periodic = find('飯店週期保養')
     const ihg      = find('IHG客房保養')
     const diHotel  = find('飯店每日巡檢')
+    const mgmt     = find('上級交辦')
+    const emerg    = find('緊急事件')
 
     const catCases: Record<Hotel5Cat, number[]> = {
       現場報修: dazhi?.cases                                     ?? zeroes(),
-      上級交辦: zeroes(),
-      緊急事件: zeroes(),
+      上級交辦: mgmt?.cases                                      ?? zeroes(),
+      緊急事件: emerg?.cases                                     ?? zeroes(),
       例行維護: addH(addH(room?.cases, periodic?.cases), ihg?.cases),
       每日巡檢: diHotel?.cases                                   ?? zeroes(),
     }
@@ -820,11 +848,13 @@ export default function HotelMgmtDashboardPage() {
     const periodic = find('飯店週期保養')
     const ihg      = find('IHG客房保養')
     const diHotel  = find('飯店每日巡檢')
+    const mgmt     = find('上級交辦')
+    const emerg    = find('緊急事件')
 
     const catCases: Record<Hotel5Cat, number[]> = {
       現場報修: dazhi?.cases                                      ?? zeroes(),
-      上級交辦: zeroes(),
-      緊急事件: zeroes(),
+      上級交辦: mgmt?.cases                                       ?? zeroes(),
+      緊急事件: emerg?.cases                                      ?? zeroes(),
       例行維護: addH(addH(room?.cases, periodic?.cases), ihg?.cases),
       每日巡檢: diHotel?.cases                                    ?? zeroes(),
     }
@@ -952,11 +982,13 @@ export default function HotelMgmtDashboardPage() {
     const periodic = find('飯店週期保養')
     const ihg      = find('IHG客房保養')
     const diHotel  = find('飯店每日巡檢')
+    const mgmt     = find('上級交辦')
+    const emerg    = find('緊急事件')
 
     const catMonthly: Record<Hotel5Cat, number[]> = {
       現場報修: dazhi?.cases                                      ?? zeroes(),
-      上級交辦: zeroes(),
-      緊急事件: zeroes(),
+      上級交辦: mgmt?.cases                                       ?? zeroes(),
+      緊急事件: emerg?.cases                                      ?? zeroes(),
       例行維護: addH(addH(room?.cases, periodic?.cases), ihg?.cases),
       每日巡檢: diHotel?.cases                                    ?? zeroes(),
     }
@@ -1587,63 +1619,9 @@ export default function HotelMgmtDashboardPage() {
               <Button
                 size="small"
                 icon={<FilePptOutlined />}
-                loading={exportLoading}
                 disabled={month === 0}
                 style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)', color: '#fff', border: 'none' }}
-                onClick={async () => {
-                  setExportLoading(true)
-                  setExportProgress(5)
-                  // Simulate progress: crawl from 5 → 88 over ~12 seconds
-                  exportTimerRef.current = setInterval(() => {
-                    setExportProgress(prev => {
-                      if (prev >= 88) {
-                        clearInterval(exportTimerRef.current!)
-                        return 88
-                      }
-                      return prev + Math.random() * 4 + 1
-                    })
-                  }, 600)
-                  try {
-                    const payload: HotelPptxPayload = {
-                      kpi_summary: {
-                        total_cases:      totalCases,
-                        completed_cases:  totalCompleted,
-                        total_work_hours: Math.round(totalWorkHours * 10) / 10,
-                        abnormal_count:   totalAbnormal,
-                        overdue_count:    totalOverdue,
-                      },
-                      source_cards: sources.map(s => ({
-                        source_name:     s.source_name,
-                        source_key:      s.source_key,
-                        case_count:      Math.max(0, s.case_count),
-                        completed_count: s.completed_count,
-                        completion_rate: Math.round(s.completion_rate * 10) / 10,
-                        abnormal_count:  s.abnormal_count,
-                        overdue_count:   s.overdue_count,
-                        work_hours:      Math.max(0, s.work_hours),
-                        actual_hours:    s.actual_hours,
-                      })),
-                      repair_costs: {
-                        outsource_fee:   dazhiData?.kpi.annual_outsource_fee   ?? 0,
-                        maintenance_fee: dazhiData?.kpi.annual_maintenance_fee ?? 0,
-                        deduction_fee:   dazhiData?.kpi.annual_deduction_fee   ?? 0,
-                        month_total_fee: (dazhiData?.kpi.month_outsource_fee   ?? 0)
-                                       + (dazhiData?.kpi.month_maintenance_fee ?? 0),
-                        period_label:    ytdLabel,
-                      },
-                    }
-                    await exportHotelOverviewPptx(year, month, payload)
-                    setExportProgress(100)
-                  } catch (e) {
-                    console.error('PPTX export failed', e)
-                    const msg = e instanceof Error ? e.message : String(e)
-                    message.error(`PPTX 匯出失敗：${msg}`)
-                  } finally {
-                    clearInterval(exportTimerRef.current!)
-                    setExportLoading(false)
-                    setTimeout(() => setExportProgress(0), 1200)
-                  }
-                }}
+                onClick={() => setExportModalOpen(true)}
               >
                 匯出 PowerPoint
               </Button>
@@ -1663,6 +1641,124 @@ export default function HotelMgmtDashboardPage() {
             </Col>
           </Row>
         )}
+
+        {/* ── 匯出確認 Modal ──────────────────────────────────────────────── */}
+        <Modal
+          title={<Space><FilePptOutlined style={{ color: '#764ba2' }} />飯店管理 Dashboard — 匯出 PowerPoint</Space>}
+          open={exportModalOpen}
+          onCancel={() => setExportModalOpen(false)}
+          footer={null}
+          width={480}
+        >
+          <div style={{ marginBottom: 16 }}>
+            <Tag color="blue">{year} 年 {month > 0 ? `${month} 月` : '全年'}</Tag>
+            <Tag color="default">巡檢日期：{targetDate}</Tag>
+          </div>
+          <Alert
+            type="info"
+            showIcon
+            message="匯出設定說明"
+            description={
+              <span>
+                匯出內容與區塊順序依「PPT 匯出設定」頁的設定為準。如需調整，請
+                <a
+                  href="/ppt-export"
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{ color: '#4BA8E8', marginLeft: 4 }}
+                >
+                  <LinkOutlined /> 前往設定頁
+                </a>
+              </span>
+            }
+            style={{ marginBottom: 16 }}
+          />
+          {exportLoading && (
+            <Progress
+              percent={Math.round(exportProgress)}
+              status={exportProgress >= 100 ? 'success' : 'active'}
+              strokeColor={{ from: '#667eea', to: '#764ba2' }}
+              size="small"
+              format={pct => pct! >= 100 ? '完成！' : `正在生成 ${pct}%`}
+              style={{ marginBottom: 12 }}
+            />
+          )}
+          <Row justify="end" gutter={8}>
+            <Col>
+              <Button onClick={() => setExportModalOpen(false)}>取消</Button>
+            </Col>
+            <Col>
+              <Button
+                type="primary"
+                icon={<FilePptOutlined />}
+                loading={exportLoading}
+                style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)', border: 'none' }}
+                onClick={async () => {
+                  setExportLoading(true)
+                  setExportProgress(5)
+                  exportTimerRef.current = setInterval(() => {
+                    setExportProgress(prev => {
+                      if (prev >= 88) {
+                        clearInterval(exportTimerRef.current!)
+                        return 88
+                      }
+                      return prev + Math.random() * 4 + 1
+                    })
+                  }, 600)
+                  try {
+                    const frontendData: PptFrontendData = {
+                      kpi_summary: {
+                        total_cases:      totalCases,
+                        total_completed:  totalCompleted,
+                        total_work_hours: Math.round(totalWorkHours * 10) / 10,
+                        completion_rate:  totalCases > 0
+                          ? Math.round((totalCompleted / totalCases) * 1000) / 10
+                          : 0,
+                      },
+                      source_cards: sources.map(s => ({
+                        category:         s.source_name,
+                        total:            Math.max(0, s.case_count),
+                        completed:        s.completed_count,
+                        work_hours:       Math.max(0, s.work_hours),
+                        completion_rate:  Math.round(s.completion_rate * 10) / 10,
+                      })),
+                      repair_costs: [
+                        { category: '外包費', amount: dazhiData?.kpi.annual_outsource_fee   ?? 0 },
+                        { category: '保養費', amount: dazhiData?.kpi.annual_maintenance_fee ?? 0 },
+                        { category: '扣款費', amount: dazhiData?.kpi.annual_deduction_fee   ?? 0 },
+                      ],
+                      bar_chart_data:  barData.map(d => ({ date: d.name, 工項數: d.工項數, 完成數: d.完成數 })),
+                      rate_chart_data: rateBarData.map(d => ({ date: d.name, rate: d.完成率 })),
+                      dazhi_trend_data: dazhiTrend.map(d => ({
+                        date:      d.month ?? '',
+                        total:     d.total ?? 0,
+                        completed: d.completed ?? 0,
+                      })),
+                      hours_pie_data: sourcePieData.map(d => ({ category: d.name, hours: d.value })),
+                    }
+                    const filename = `飯店管理Dashboard_${year}年${month}月.pptx`
+                    await exportPptx(
+                      { year, month, inspection_date: targetDate, frontend_data: frontendData },
+                      filename,
+                    )
+                    setExportProgress(100)
+                    setTimeout(() => setExportModalOpen(false), 800)
+                  } catch (e) {
+                    console.error('PPTX export failed', e)
+                    const msg = e instanceof Error ? e.message : String(e)
+                    message.error(`PPTX 匯出失敗：${msg}`)
+                  } finally {
+                    clearInterval(exportTimerRef.current!)
+                    setExportLoading(false)
+                    setTimeout(() => setExportProgress(0), 1200)
+                  }
+                }}
+              >
+                開始匯出
+              </Button>
+            </Col>
+          </Row>
+        </Modal>
       </Card>
 
       {/* 資料載入錯誤提示 */}

@@ -23,12 +23,13 @@ Prefix: /api/v1/ihg-room-maintenance
 統計卡：
   全年應保養數、已完成數、未完成數、逾期數、完成率
 """
+import calendar as _calendar
 import json
 from datetime import date, datetime
 from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -139,6 +140,33 @@ def _room_sort_key(room_no: str) -> tuple:
         return (floor, seq)
     except ValueError:
         return (999, 0)
+
+
+def _calc_record_status(raw_json_str: Optional[str]) -> str:
+    """
+    從 raw_json 字串計算保養記錄狀態（與 /matrix 邏輯一致）。
+    回傳值：'completed' | 'abnormal' | 'pending'
+    """
+    normal_c = done_c = maint_c = 0
+    try:
+        raw_data = json.loads(raw_json_str or "{}")
+        for k, v in raw_data.items():
+            if not _is_check_field(k, v):
+                continue
+            val = v if isinstance(v, str) else ""
+            if val == "正常":
+                normal_c += 1
+            elif val == "當時維護完成":
+                done_c += 1
+            elif val == "等待維護(待料中)":
+                maint_c += 1
+    except Exception:
+        pass
+    if maint_c > 0:
+        return "abnormal"
+    if normal_c + done_c > 0:
+        return "completed"
+    return "pending"
 
 
 # ── GET /debug-raw ────────────────────────────────────────────────────────────
@@ -576,14 +604,15 @@ async def section_matrix(
 async def list_records(
     year:    Optional[str] = Query(None, description="年度"),
     month:   Optional[str] = Query(None, description="月份（不補零，如 4）"),
+    day:     Optional[str] = Query(None, description="日（不補零，如 5）；篩選 maint_date 的日部分"),
     room_no: Optional[str] = Query(None, description="房號（前綴匹配）"),
     floor:   Optional[str] = Query(None, description="樓層，如 5F"),
-    rec_status: Optional[str] = Query(None, alias="status", description="狀態"),
+    rec_status: Optional[str] = Query(None, alias="status", description="狀態：completed / pending"),
     page:    int = Query(1, ge=1),
     per_page: int = Query(50, ge=1, le=500),
     db: Session = Depends(get_db),
 ):
-    """原始清單，支援多維篩選與分頁"""
+    """原始清單，支援多維篩選與分頁（新增 day 篩選）"""
     q = db.query(IHGRoomMaintenanceMaster).filter(
         IHGRoomMaintenanceMaster.room_no.in_(CANONICAL_ROOM_SET)
     )
@@ -591,6 +620,19 @@ async def list_records(
         q = q.filter(IHGRoomMaintenanceMaster.maint_year == year)
     if month:
         q = q.filter(IHGRoomMaintenanceMaster.maint_month == month.zfill(2))
+    if day:
+        try:
+            d = int(day)
+            day_zf = str(d).zfill(2)
+            # 支援 YYYY/MM/DD（補零）與 YYYY/MM/D（不補零）兩種格式
+            q = q.filter(
+                or_(
+                    IHGRoomMaintenanceMaster.maint_date.like(f"%/{day_zf}"),
+                    IHGRoomMaintenanceMaster.maint_date.like(f"%/{d}"),
+                )
+            )
+        except (ValueError, TypeError):
+            pass
     if room_no:
         q = q.filter(IHGRoomMaintenanceMaster.room_no.ilike(f"{room_no}%"))
     if floor:
@@ -598,6 +640,8 @@ async def list_records(
     if rec_status:
         if rec_status == "completed":
             q = q.filter(IHGRoomMaintenanceMaster.is_completed == True)
+        elif rec_status == "pending":
+            q = q.filter(IHGRoomMaintenanceMaster.is_completed == False)
         else:
             q = q.filter(IHGRoomMaintenanceMaster.status == rec_status)
 
@@ -635,6 +679,120 @@ async def list_records(
             }
             for r in recs
         ],
+    }
+
+
+# ── GET /calendar ────────────────────────────────────────────────────────────
+
+@router.get("/calendar", summary="IHG 客房保養月曆格資料（樓層 × 日）")
+async def get_calendar(
+    year:  str = Query(..., description="年度，如 2026"),
+    month: str = Query(..., description="月份，如 05 或 5"),
+    db: Session = Depends(get_db),
+):
+    """
+    回傳指定月份各樓層每日保養狀態，供月曆格 TAB 使用。
+
+    Response 格式：
+    {
+      "year": "2026",
+      "month": "05",
+      "max_day": 31,
+      "floors": ["5F","6F","7F","8F","9F","10F"],
+      "kpi": {
+        "total_rooms": int, "completed": int, "abnormal": int,
+        "pending": int, "completion_rate": float
+      },
+      "calendar": {
+        "5F": {
+          "15": { "total": 4, "completed": 3, "abnormal": 0, "pending": 1, "ragic_ids": [...] }
+        },
+        ...
+        "TOTAL": { ... }
+      }
+    }
+    """
+    month_zf = month.zfill(2)
+    try:
+        max_day = _calendar.monthrange(int(year), int(month_zf))[1]
+    except Exception:
+        max_day = 31
+
+    FLOORS = ["5F", "6F", "7F", "8F", "9F", "10F"]
+
+    # 取當月所有規範房間記錄
+    all_recs = db.query(IHGRoomMaintenanceMaster).filter(
+        IHGRoomMaintenanceMaster.maint_year  == year,
+        IHGRoomMaintenanceMaster.maint_month == month_zf,
+        IHGRoomMaintenanceMaster.room_no.in_(CANONICAL_ROOM_SET),
+    ).all()
+
+    def _empty_cell() -> dict:
+        return {"total": 0, "completed": 0, "abnormal": 0, "pending": 0, "ragic_ids": []}
+
+    # 初始化月曆格結構：floor → day_str → cell_dict
+    cal: dict[str, dict[str, dict]] = {f: {} for f in FLOORS}
+    cal["TOTAL"] = {}
+
+    # 以 room_no 去重統計 KPI（後者覆蓋前者）
+    room_status_map: dict[str, str] = {}
+
+    for rec in all_recs:
+        # ── 解析日 ─────────────────────────────────────────────────────────
+        day_str = ""
+        if rec.maint_date:
+            parts = rec.maint_date.replace("-", "/").split("/")
+            if len(parts) >= 3:
+                try:
+                    d = int(parts[2])
+                    if 1 <= d <= 31:
+                        day_str = str(d)
+                except (ValueError, IndexError):
+                    pass
+
+        floor = rec.floor or _derive_floor(rec.room_no or "")
+        rec_status = _calc_record_status(rec.raw_json)
+
+        # KPI 去重（同一房號以最後一筆覆蓋）
+        room_status_map[rec.room_no] = rec_status
+
+        if not day_str or floor not in FLOORS:
+            continue
+
+        # ── 更新樓層格 ──────────────────────────────────────────────────────
+        if day_str not in cal[floor]:
+            cal[floor][day_str] = _empty_cell()
+        cal[floor][day_str]["total"] += 1
+        cal[floor][day_str][rec_status] += 1
+        cal[floor][day_str]["ragic_ids"].append(rec.ragic_id)
+
+        # ── 更新 TOTAL 格 ───────────────────────────────────────────────────
+        if day_str not in cal["TOTAL"]:
+            cal["TOTAL"][day_str] = _empty_cell()
+        cal["TOTAL"][day_str]["total"] += 1
+        cal["TOTAL"][day_str][rec_status] += 1
+        cal["TOTAL"][day_str]["ragic_ids"].append(rec.ragic_id)
+
+    # ── KPI 統計 ─────────────────────────────────────────────────────────────
+    completed_cnt = sum(1 for s in room_status_map.values() if s == "completed")
+    abnormal_cnt  = sum(1 for s in room_status_map.values() if s == "abnormal")
+    pending_cnt   = sum(1 for s in room_status_map.values() if s == "pending")
+    total_cnt     = len(room_status_map)
+    rate          = round(completed_cnt / total_cnt * 100, 1) if total_cnt else 0.0
+
+    return {
+        "year":    year,
+        "month":   month_zf,
+        "max_day": max_day,
+        "floors":  FLOORS,
+        "kpi": {
+            "total_rooms":     total_cnt,
+            "completed":       completed_cnt,
+            "abnormal":        abnormal_cnt,
+            "pending":         pending_cnt,
+            "completion_rate": rate,
+        },
+        "calendar": cal,
     }
 
 

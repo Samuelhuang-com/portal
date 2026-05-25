@@ -17,6 +17,7 @@ export interface NichiyoClaimReportItem {
   account_category: string | null
   request_date: string | null
   approved_date: string | null
+  payment_date: string | null
   applicant: string | null
   purpose_description: string | null
   payment_type: string | null
@@ -34,6 +35,7 @@ export interface NichiyoClaimReportItem {
   unit_price: number | null
   amount: number | null
   item_remark: string | null
+  invoice_no: string | null
 }
 
 /** 月報摘要 KPI */
@@ -174,6 +176,8 @@ export const getNichiyoClaimOrders = (params: {
   year_month_to?: string
   department?: string
   account_category?: string
+  payment_date_from?: string
+  payment_date_to?: string
   status?: string
   keyword?: string
   page?: number
@@ -195,6 +199,8 @@ export const getNichiyoClaimMonthlyItems = (params: {
   year_month_to?: string
   department?: string
   account_category?: string
+  payment_date_from?: string
+  payment_date_to?: string
   q?: string
   page?: number
   per_page?: number

@@ -36,14 +36,18 @@ from app.models.periodic_maintenance import (
     PeriodicMaintenanceBatch,
     PeriodicMaintenanceItem,
 )
+from app.models.other_tasks import OtherTask
+
 router = APIRouter(prefix="/hotel", tags=["飯店管理 Dashboard"])
 
-# 固定四項來源（順序即表格列順序）
+# 固定六項來源（順序即表格列順序）
 HOTEL_CATEGORIES = [
     "飯店週期保養",
     "IHG客房保養",
     "飯店每日巡檢",
     "飯店工務部",
+    "上級交辦",
+    "緊急事件",
 ]
 
 # IHG 無工時欄位，每筆記錄固定估算 30 分鐘 = 0.5 hr
@@ -177,13 +181,31 @@ def get_hotel_daily_hours(
             d = stat_dt.day
             if 1 <= d <= days_in_month:
                 cases_bucket["飯店工務部"][d] += 1
-        # -- 工時：completed_at 口徑 --
+        # -- 工時：completed_at 口徑，只用 work_hours（close_days 單位不一致，排除）--
         if c.completed_at is not None and c.completed_at.year == year and c.completed_at.month == month:
-            hrs = (c.work_hours or 0) if (c.work_hours or 0) > 0 else (c.close_days or 0)
+            hrs = c.work_hours or 0
             if hrs > 0:
                 d = c.completed_at.day
                 if 1 <= d <= days_in_month:
                     bucket["飯店工務部"][d] += hrs
+
+    # ── ⑥ 主管交辦 / 緊急事件：OtherTask，venue='飯店'，created_at 歸屬日 ────────
+    for ot in (
+        db.query(OtherTask)
+        .filter(OtherTask.year == year, OtherTask.month == month, OtherTask.venue == "飯店")
+        .all()
+    ):
+        tt = ot.task_type
+        if tt not in ("上級交辦", "緊急事件"):
+            continue
+        if ot.created_at is None:
+            continue
+        d = ot.created_at.day
+        if 1 <= d <= days_in_month:
+            cases_bucket[tt][d] += 1
+            wh = ot.work_hours or 0
+            if wh > 0:
+                bucket[tt][d] += wh
 
     # ── 組裝結果（與 mall_overview 格式完全一致）───────────────────────────────
     result_rows: list[dict] = []
@@ -241,13 +263,13 @@ def get_hotel_daily_hours(
 # C. 每月累計
 # ─────────────────────────────────────────────────────────────────────────────
 
-@router.get("/monthly-hours", summary="飯店管理 — 每月工時彙總（四項來源）")
+@router.get("/monthly-hours", summary="飯店管理 — 每月工時彙總（六項來源）")
 def get_hotel_monthly_hours(
     year: int = Query(..., ge=2020, le=2030, description="年份"),
     db: Session = Depends(get_db),
 ):
     """
-    彙整四項飯店來源的每月工時（HR），供「C. 每月累計」Tab 使用。
+    彙整六項飯店來源的每月工時（HR），供「C. 每月累計」Tab 使用。
 
     回傳格式：
     ```json
@@ -357,13 +379,29 @@ def get_hotel_monthly_hours(
             stat_m = stat_dt_c.month
             if 1 <= stat_m <= 12:
                 cases_bucket["飯店工務部"][stat_m] += 1
-        # -- 工時：completed_at 口徑 --
+        # -- 工時：completed_at 口徑，只用 work_hours（close_days 單位不一致，排除）--
         if c.completed_at is not None and c.completed_at.year == year:
-            hrs = (c.work_hours or 0) if (c.work_hours or 0) > 0 else (c.close_days or 0)
+            hrs = c.work_hours or 0
             if hrs > 0:
                 m = c.completed_at.month
                 if 1 <= m <= 12:
                     bucket["飯店工務部"][m] += hrs
+
+    # ── ⑥ 主管交辦 / 緊急事件：OtherTask，venue='飯店'，year+month 歸屬月 ─────────
+    for ot in (
+        db.query(OtherTask)
+        .filter(OtherTask.year == year, OtherTask.venue == "飯店")
+        .all()
+    ):
+        tt = ot.task_type
+        if tt not in ("上級交辦", "緊急事件"):
+            continue
+        m = ot.month
+        if m and 1 <= m <= 12:
+            cases_bucket[tt][m] += 1
+            wh = ot.work_hours or 0
+            if wh > 0:
+                bucket[tt][m] += wh
 
     # ── 組裝結果 ─────────────────────────────────────────────────────────────
     result_rows: list[dict] = []
@@ -412,20 +450,21 @@ def get_hotel_monthly_hours(
 # D. 人員工時%
 # ─────────────────────────────────────────────────────────────────────────────
 
-@router.get("/person-hours", summary="飯店管理 — 人員工時佔比（五項來源，Top-15）")
+@router.get("/person-hours", summary="飯店管理 — 人員工時佔比（六項來源，Top-15）")
 def get_hotel_person_hours(
     year: int = Query(..., ge=2020, le=2030, description="年份"),
     db: Session = Depends(get_db),
 ):
     """
-    彙整五項飯店來源各人員工時佔比，供「D. 人員工時%」與「人員排名」Tab 使用。
+    彙整六項飯店來源各人員工時佔比，供「D. 人員工時%」與「人員排名」Tab 使用。
 
     人員識別規則：
       ① 飯店週期保養 — PeriodicMaintenanceItem.executor_name（空格分隔多人）
       ② IHG客房保養  — IHGRoomMaintenanceMaster.assignee_name
       ③ 飯店每日巡檢 — HotelDIBatch.inspector_name
-      ④ 保全巡檢     — SecurityPatrolBatch.inspector_name
-      ⑤ 飯店工務部   — DazhiRepairCase.acceptor
+      ④ 飯店工務部   — DazhiRepairCase.acceptor
+      ⑤ 上級交辦     — OtherTask.engineer（task_type='上級交辦'）
+      ⑥ 緊急事件     — OtherTask.engineer（task_type='緊急事件'）
 
     回傳格式：
     ```json
@@ -499,6 +538,22 @@ def get_hotel_person_hours(
         person = (c.acceptor or "").strip()
         if person and person != "未指定" and (c.work_hours or 0) > 0:
             ph[person]["飯店工務部"] += c.work_hours
+
+    # ── ⑥ 主管交辦 / 緊急事件：OtherTask，engineer 人員 ──────────────────────────
+    for ot in (
+        db.query(OtherTask)
+        .filter(OtherTask.year == year, OtherTask.venue == "飯店")
+        .all()
+    ):
+        tt = ot.task_type
+        if tt not in ("上級交辦", "緊急事件"):
+            continue
+        person = (ot.engineer or "").strip()
+        if not person or person == "未指定":
+            continue
+        wh = ot.work_hours or 0
+        if wh > 0:
+            ph[person][tt] += wh
 
     # ── 找出 Top-15 人員（依全類別合計工時降冪）─────────────────────────────────
     person_totals_map: dict[str, float] = {
@@ -588,6 +643,7 @@ def _pptx_txt(slide, text: str, x: float, y: float, w: float, h: float,
     p.alignment = align
     run = p.add_run()
     run.text = text
+    run.font.name = "微軟正黑體"
     run.font.size = Pt(size)
     run.font.bold = bold
     run.font.italic = italic
@@ -644,6 +700,7 @@ def _pptx_cell(tbl, row: int, col: int, text: str,
     p = cell.text_frame.paragraphs[0]
     p.alignment = align
     r = p.runs[0] if p.runs else p.add_run()
+    r.font.name = "微軟正黑體"
     r.font.size = Pt(size)
     r.font.bold = bold
     if fg:
@@ -689,6 +746,8 @@ def _build_slide2_kpi(slide, kpi: "HotelPptxPayload", period_str: str,
         "ihg":              RGBColor(0x72, 0x2E, 0xD1),
         "daily_inspection": RGBColor(0x52, 0xC4, 0x1A),
         "dazhi":            RGBColor(0x13, 0xC2, 0xC2),
+        "mgmt_order":       RGBColor(0xFA, 0x8C, 0x16),
+        "emergency":        RGBColor(0xFF, 0x4D, 0x4F),
     }
 
     # ── Layer 1: 主管摘要（5 KPI boxes）─────────────────────────────────────

@@ -114,8 +114,8 @@ const SOURCE_CONFIG_ROW1 = [
 // 第二列：報修 / 交辦 / 緊急事件
 const SOURCE_CONFIG_ROW2 = [
   { key: 'luqun_repair',    label: '商場工務報修', color: '#FA8C16', icon: <WarningOutlined />,          route: '/luqun-repair/dashboard', showPmHours: false },
-  { key: 'mall_supervisor', label: '商場主管交辦', color: '#C0392B', icon: <ExclamationCircleOutlined />, route: '/hotel/other-tasks', showPmHours: false },
-  { key: 'mall_emergency',  label: '商場緊急事件', color: '#D4380D', icon: <WarningOutlined />,           route: '/hotel/other-tasks', showPmHours: false },
+  { key: 'mall_supervisor', label: '商場主管交辦', color: '#C0392B', icon: <ExclamationCircleOutlined />, route: '/mall/other-tasks', showPmHours: false },
+  { key: 'mall_emergency',  label: '商場緊急事件', color: '#D4380D', icon: <WarningOutlined />,           route: '/mall/other-tasks', showPmHours: false },
 ] as const
 
 const SOURCE_CONFIG = [...SOURCE_CONFIG_ROW1, ...SOURCE_CONFIG_ROW2] as const
@@ -340,7 +340,7 @@ export default function MallMgmtDashboardPage() {
 
   const loadOtherTasks = useCallback(async (y?: number, m?: number) => {
     setLoadingOtherTasks(true); setErrorOtherTasks(null)
-    try     { setOtherTasksStats(await fetchOtherTaskStats({ year: y ?? year, month: m ?? month })) }
+    try     { setOtherTasksStats(await fetchOtherTaskStats({ year: y ?? year, month: m ?? month, venue: '商場' })) }
     catch   { setErrorOtherTasks('主管交辦／緊急事件載入失敗') }
     finally { setLoadingOtherTasks(false) }
   }, [year, month])
