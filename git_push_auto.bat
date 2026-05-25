@@ -11,9 +11,6 @@ if not "%GIT_LAUNCHED%"=="1" (
 
 setlocal enabledelayedexpansion
 
-REM -- 關閉 git pager，避免大量檔案時停在 (END) 等待按鍵
-set GIT_PAGER=
-
 cd /d C:\OneDrive\_Ragic\portal
 
 echo.
