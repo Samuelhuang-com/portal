@@ -14,6 +14,7 @@
 """
 from __future__ import annotations
 
+import calendar
 import io
 import logging
 import smtplib
@@ -119,6 +120,10 @@ def get_unfinished_cases(
     today = date.today()
     cases: list[dict] = []
 
+    # 報表月底截止時間：occurred_at > 月底的案件不納入（支援查詢歷史月份）
+    _last_day = calendar.monthrange(year, month)[1]
+    _cutoff   = datetime(year, month, _last_day, 23, 59, 59)
+
     # ── 飯店（大直工務部）──────────────────────────────────────────────────
     if source in ("all", "hotel"):
         for c in db.query(DazhiRepairCase).all():
@@ -128,7 +133,11 @@ def get_unfinished_cases(
                 continue
             if not c.occurred_at:
                 continue
-            if c.occurred_at.year != year or c.occurred_at.month != month:
+            # 只納入報表月底前的案件（跨月歷史未結清一併計入）
+            if c.occurred_at > _cutoff:
+                continue
+            # 待辦驗：與 dashboard 口徑一致，獨立類別，不算未完成
+            if (c.status or "").strip() == "待辦驗":
                 continue
             cases.append(_normalize(c, "hotel"))
 
@@ -141,7 +150,11 @@ def get_unfinished_cases(
                 continue
             if not c.occurred_at:
                 continue
-            if c.occurred_at.year != year or c.occurred_at.month != month:
+            # 只納入報表月底前的案件（跨月歷史未結清一併計入）
+            if c.occurred_at > _cutoff:
+                continue
+            # 待辦驗：與 dashboard 口徑一致，獨立類別，不算未完成
+            if (c.status or "").strip() == "待辦驗":
                 continue
             cases.append(_normalize(c, "mall"))
 
@@ -193,12 +206,16 @@ def _calc_kpi(cases: list[dict], year: int, month: int, today: date) -> dict:
     pending_days = [c["pending_days"] for c in cases if c["pending_days"] is not None]
     today_str    = today.isoformat()
 
+    month_prefix = f"{year}-{month:02d}"
     new_today = sum(
         1 for c in cases
         if c["occurred_at"] and c["occurred_at"][:10] == today_str
     )
-    # new_this_month = 選取月份中的全部案件（因為已依年月過濾，等同 total）
-    new_this_month = len(cases)
+    # new_this_month = occurred_at 落在報表年月的未完成案件數（歷史跨月案件不計入）
+    new_this_month = sum(
+        1 for c in cases
+        if c["occurred_at"] and c["occurred_at"][:7] == month_prefix
+    )
 
     return {
         "total_unfinished":  len(cases),
