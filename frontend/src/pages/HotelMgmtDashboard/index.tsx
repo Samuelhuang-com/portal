@@ -1730,7 +1730,7 @@ export default function HotelMgmtDashboardPage() {
                       bar_chart_data:  barData.map(d => ({ date: d.name, 工項數: d.工項數, 完成數: d.完成數 })),
                       rate_chart_data: rateBarData.map(d => ({ date: d.name, rate: d.完成率 })),
                       dazhi_trend_data: dazhiTrend.map(d => ({
-                        date:      d.month ?? '',
+                        date:      String(d.month ?? ''),
                         total:     d.total ?? 0,
                         completed: d.completed ?? 0,
                       })),
