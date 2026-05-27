@@ -153,3 +153,164 @@ export async function fetchFullBldgPMCatalog(
   const res = await apiClient.get<FullBldgPMCatalogResponse>(`${BASE}/items/catalog`, { params })
   return res.data
 }
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 排程管理（full_bldg_pm_schedule）API
+// ══════════════════════════════════════════════════════════════════════════════
+
+export interface FullBldgPMScheduleItem {
+  id:               number
+  year_month:       string
+  item_ragic_id:    string
+  category:         string
+  task_name:        string
+  location:         string
+  frequency:        string
+  estimated_minutes: number
+  scheduled_date:   string
+  executor_name:    string
+  schedule_source:  string   // 'auto' | 'manual'
+  start_time:       string
+  end_time:         string
+  is_completed:     boolean
+  result_note:      string
+  abnormal_flag:    boolean
+  abnormal_note:    string
+  portal_edited_at: string | null
+  created_at:       string
+  updated_at:       string
+  status:    string   // 動態計算：completed / in_progress / scheduled / unscheduled / overdue
+  ragic_url: string   // 對應月份批次的 Ragic 連結（後端動態注入）
+}
+
+export interface FullBldgPMScheduleKpi {
+  total:               number
+  unscheduled:         number
+  scheduled:           number
+  in_progress:         number
+  completed:           number
+  overdue:             number
+  abnormal:            number
+  should_do_not_done:  number
+  completion_rate:     number
+}
+
+export interface FullBldgPMScheduleListResponse {
+  year_month:         string
+  total:              number
+  should_do_not_done: number
+  items:              FullBldgPMScheduleItem[]
+}
+
+export interface FullBldgPMScheduleGenerateResult {
+  year_month:              string
+  generated:               number
+  updated:                 number
+  skipped_completed:       number
+  skipped_edited:          number
+  skipped_non_month:       number
+  skipped_no_frequency:    number
+  errors:                  string[]
+}
+
+export interface FullBldgPMScheduleOverdueResponse {
+  total:           number
+  months_affected: string[]
+  items:           (FullBldgPMScheduleItem & { overdue_days: number })[]
+}
+
+export interface FullBldgPMScheduleMatrixCell {
+  month:          number
+  status:         string
+  schedule_id:    number | null
+  scheduled_date: string | null
+}
+
+export interface FullBldgPMScheduleMatrixRow {
+  item_ragic_id: string
+  category:      string
+  task_name:     string
+  location:      string
+  frequency:     string
+  cells:         FullBldgPMScheduleMatrixCell[]
+}
+
+export interface FullBldgPMScheduleAnnualMatrix {
+  year:             number
+  rows:             FullBldgPMScheduleMatrixRow[]
+  month_batch_urls: Record<string, string>   // { "5": "https://...", "6": "https://..." }
+  summary: {
+    total_items:     number
+    total_cells:     number
+    completed_count: number
+    completion_rate: number
+  }
+}
+
+export interface FullBldgPMScheduleUpdatePayload {
+  scheduled_date?: string
+  executor_name?:  string
+  start_time?:     string
+  end_time?:       string
+  is_completed?:   boolean
+  result_note?:    string
+  abnormal_flag?:  boolean
+  abnormal_note?:  string
+}
+
+/** 排程列表（含 should_do_not_done） */
+export async function getFullBldgScheduleList(params: {
+  year_month?: string
+  category?:   string
+  status?:     string
+}): Promise<FullBldgPMScheduleListResponse> {
+  const res = await apiClient.get<FullBldgPMScheduleListResponse>(`${BASE}/schedule`, { params })
+  return res.data
+}
+
+/** 排程 KPI（9 個指標） */
+export async function getFullBldgScheduleKpi(year_month?: string): Promise<FullBldgPMScheduleKpi> {
+  const params: Record<string, string> = {}
+  if (year_month) params.year_month = year_month
+  const res = await apiClient.get<FullBldgPMScheduleKpi>(`${BASE}/schedule/kpi`, { params })
+  return res.data
+}
+
+/** 跨月逾期未執行清單 */
+export async function getFullBldgOverdueSchedule(): Promise<FullBldgPMScheduleOverdueResponse> {
+  const res = await apiClient.get<FullBldgPMScheduleOverdueResponse>(`${BASE}/schedule/overdue`)
+  return res.data
+}
+
+/** 更新單筆排程 */
+export async function patchFullBldgSchedule(
+  id: number,
+  payload: FullBldgPMScheduleUpdatePayload,
+): Promise<FullBldgPMScheduleItem> {
+  const res = await apiClient.patch<FullBldgPMScheduleItem>(`${BASE}/schedule/${id}`, payload)
+  return res.data
+}
+
+/** 產生指定月份排程 */
+export async function postGenerateFullBldgSchedule(
+  year: number,
+  month: number,
+): Promise<FullBldgPMScheduleGenerateResult> {
+  const res = await apiClient.post<FullBldgPMScheduleGenerateResult>(
+    `${BASE}/schedule/generate`,
+    null,
+    { params: { year, month } },
+  )
+  return res.data
+}
+
+/** 年度計劃矩陣 */
+export async function getFullBldgAnnualMatrix(
+  year: number,
+  category?: string,
+): Promise<FullBldgPMScheduleAnnualMatrix> {
+  const params: Record<string, string | number> = { year }
+  if (category) params.category = category
+  const res = await apiClient.get<FullBldgPMScheduleAnnualMatrix>(`${BASE}/schedule/annual-matrix`, { params })
+  return res.data
+}

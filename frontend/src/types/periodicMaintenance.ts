@@ -6,6 +6,7 @@ export interface PMBatch {
   period_month:     string
   ragic_created_at: string
   ragic_updated_at: string
+  ragic_url?:       string
   synced_at?:       string
 }
 
@@ -185,4 +186,111 @@ export interface PMTaskHistory {
   exec_months_raw:  string
   monthly_summary:  PMItemHistorySummary[]
   stats:            PMTaskHistoryStats
+}
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// 排程管理（pm_schedule）TypeScript 型別
+// ════════════════════════════════════════════════════════════════════════════
+
+export type PMScheduleStatus =
+  | 'completed'
+  | 'in_progress'
+  | 'overdue'
+  | 'scheduled'
+  | 'unscheduled'
+
+export interface PMScheduleItem {
+  id:               number
+  year_month:       string
+  item_ragic_id:    string
+  category:         string
+  task_name:        string
+  location:         string
+  frequency:        string
+  estimated_minutes: number
+  scheduled_date:   string
+  executor_name:    string
+  schedule_source:  'auto' | 'manual'
+  start_time:       string
+  end_time:         string
+  is_completed:     boolean
+  result_note:      string
+  abnormal_flag:    boolean
+  abnormal_note:    string
+  portal_edited_at: string | null
+  created_at:       string
+  updated_at:       string
+  status:           PMScheduleStatus
+  overdue_days?:    number   // 逾期清單專用
+}
+
+export interface PMScheduleKPI {
+  total:               number
+  unscheduled:         number
+  scheduled:           number
+  in_progress:         number
+  completed:           number
+  overdue:             number
+  abnormal:            number
+  should_do_not_done:  number
+  completion_rate:     number
+}
+
+export interface PMScheduleGenerateResult {
+  year_month:             string
+  generated:              number
+  updated:                number
+  skipped_completed:      number
+  skipped_edited:         number
+  skipped_non_month:      number
+  skipped_no_frequency:   number
+  errors:                 string[]
+}
+
+export interface PMScheduleListResponse {
+  year_month:         string
+  total:              number
+  should_do_not_done: number
+  items:              PMScheduleItem[]
+}
+
+export interface PMScheduleOverdueResponse {
+  total:           number
+  months_affected: string[]
+  items:           PMScheduleItem[]
+}
+
+// ── 年度計劃矩陣 ──────────────────────────────────────────────────────────────
+
+export type PMMatrixCellStatus =
+  | 'completed'
+  | 'overdue'
+  | 'in_progress'
+  | 'scheduled'
+  | 'unscheduled'
+  | 'non_month'
+  | 'no_data'
+  | 'no_frequency'
+
+export interface PMScheduleMatrixCell {
+  month:          number
+  status:         PMMatrixCellStatus
+  schedule_id:    number | null
+  scheduled_date: string | null   // e.g. "05/15"
+}
+
+export interface PMScheduleMatrixRow {
+  item_ragic_id: string
+  category:      string
+  task_name:     string
+  location:      string
+  frequency:     string
+  cells:         PMScheduleMatrixCell[]
+}
+
+export interface PMScheduleAnnualMatrix {
+  year:    number
+  rows:    PMScheduleMatrixRow[]
+  summary: { total_items: number; completed_count: number }
 }

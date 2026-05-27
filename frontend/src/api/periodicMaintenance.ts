@@ -158,3 +158,84 @@ export async function fetchPMTaskHistory(
   })
   return res.data
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// 排程管理（pm_schedule）API
+// ════════════════════════════════════════════════════════════════════════════
+
+import type {
+  PMScheduleListResponse,
+  PMScheduleKPI,
+  PMScheduleGenerateResult,
+  PMScheduleOverdueResponse,
+  PMScheduleAnnualMatrix,
+  PMScheduleItem,
+} from '@/types/periodicMaintenance'
+
+/** 產生指定月份排程（防重複） */
+export async function generatePMSchedule(
+  year: number,
+  month: number,
+): Promise<PMScheduleGenerateResult> {
+  const res = await apiClient.post<PMScheduleGenerateResult>(
+    `${BASE}/schedule/generate`,
+    null,
+    { params: { year, month } },
+  )
+  return res.data
+}
+
+/** 查詢排程明細列表 */
+export async function fetchPMSchedule(
+  yearMonth?: string,
+  category?: string,
+  status?: string,
+): Promise<PMScheduleListResponse> {
+  const params: Record<string, string> = {}
+  if (yearMonth) params.year_month = yearMonth
+  if (category)  params.category  = category
+  if (status)    params.status    = status
+  const res = await apiClient.get<PMScheduleListResponse>(`${BASE}/schedule`, { params })
+  return res.data
+}
+
+/** 排程 KPI */
+export async function fetchPMScheduleKPI(yearMonth?: string): Promise<PMScheduleKPI> {
+  const params: Record<string, string> = {}
+  if (yearMonth) params.year_month = yearMonth
+  const res = await apiClient.get<PMScheduleKPI>(`${BASE}/schedule/kpi`, { params })
+  return res.data
+}
+
+/** 跨月逾期清單 */
+export async function fetchPMOverdueSchedule(
+  beforeDate?: string,
+): Promise<PMScheduleOverdueResponse> {
+  const params: Record<string, string> = {}
+  if (beforeDate) params.before_date = beforeDate
+  const res = await apiClient.get<PMScheduleOverdueResponse>(`${BASE}/schedule/overdue`, { params })
+  return res.data
+}
+
+/** 年度計劃矩陣 */
+export async function fetchPMAnnualMatrix(
+  year: number,
+  category?: string,
+): Promise<PMScheduleAnnualMatrix> {
+  const params: Record<string, string | number> = { year }
+  if (category) params.category = category
+  const res = await apiClient.get<PMScheduleAnnualMatrix>(`${BASE}/schedule/annual-matrix`, { params })
+  return res.data
+}
+
+/** 人工調整排程明細 */
+export async function updatePMSchedule(
+  id: number,
+  data: Partial<Pick<PMScheduleItem,
+    'scheduled_date' | 'executor_name' | 'start_time' | 'end_time' |
+    'is_completed' | 'result_note' | 'abnormal_flag' | 'abnormal_note'
+  >>,
+): Promise<PMScheduleItem> {
+  const res = await apiClient.patch<PMScheduleItem>(`${BASE}/schedule/${id}`, data)
+  return res.data
+}

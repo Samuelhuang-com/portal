@@ -928,8 +928,11 @@ async def lifespan(app: FastAPI):
     import app.models.room_maintenance_detail  # noqa: F401
     import app.models.room  # noqa: F401
     import app.models.periodic_maintenance  # noqa: F401
+    import app.models.pm_schedule  # noqa: F401
+    import app.models.mall_pm_schedule  # noqa: F401
     import app.models.mall_periodic_maintenance  # noqa: F401
     import app.models.full_building_maintenance  # noqa: F401
+    import app.models.full_bldg_pm_schedule  # noqa: F401
     import app.models.b4f_inspection  # noqa: F401
     import app.models.rf_inspection  # noqa: F401
     import app.models.b2f_inspection  # noqa: F401

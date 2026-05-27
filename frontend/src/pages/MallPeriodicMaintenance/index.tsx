@@ -2,23 +2,27 @@
  * 商場週期保養表主頁
  *
  * Tab 1「Dashboard」：KPI 五卡（含保養時間）+ 類別 Bar 圖 + 狀態 Donut 圖 + 逾期/即將到期預警
- * Tab 2「每月維護」：月統計（上月累計 / 本月完成 / 未完成說明）
- * Tab 3「每季維護」：季統計（上季累計 / 本季完成 / 月份分布）
- * Tab 4「每年維護」：年統計（上年累計 / 本年完成 / Q1-Q4 分布）
- * Tab 5「批次清單」：保養批次列表，含進度條、狀態標籤、操作入口
+ * Tab 2「每日巡檢表」：商場每日工務巡檢表
+ * Tab 3「每月維護」：月統計（上月累計 / 本月完成 / 未完成說明）
+ * Tab 4「每季維護」：季統計（上季累計 / 本季完成 / 月份分布）
+ * Tab 5「每年維護」：年統計（上年累計 / 本年完成 / Q1-Q4 分布）
+ * Tab 6「排程管理」：Portal 自有排程，可產生任意月份排程（新增）
+ * Tab 7「年度計劃表」：12欄矩陣視圖（新增）
+ * Tab 8「批次清單」：保養批次列表，含進度條、狀態標籤、操作入口
  */
-import { useEffect, useState, useCallback } from 'react'
+import React, { useEffect, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Row, Col, Card, Statistic, Table, Tag, Button, Space,
   Typography, Breadcrumb, Tabs, Progress, Alert, Select,
   message, Tooltip, Badge, Divider, Modal, Spin,
+  Drawer, Descriptions, Form, Input, Switch,
 } from 'antd'
 import {
   HomeOutlined, ReloadOutlined, ToolOutlined,
   WarningOutlined, CheckCircleOutlined, ClockCircleOutlined,
   ExclamationCircleOutlined, RightOutlined, BarChartOutlined,
-  ShopOutlined, CalendarOutlined, LineChartOutlined, FileTextOutlined,
+  ShopOutlined, CalendarOutlined, LineChartOutlined, FileTextOutlined, LinkOutlined,
 } from '@ant-design/icons'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RcTooltip,
@@ -31,9 +35,13 @@ import {
   fetchMallPMStats, fetchMallPMBatches,
   fetchMallPMPeriodStats, fetchMallPMYearMatrix,
   fetchMallPMMatrixItems, fetchMallPMCatalog,
+  generateMallSchedule, getMallScheduleList, getMallScheduleKpi,
+  getMallOverdueSchedule, getMallAnnualMatrix, updateMallSchedule,
 } from '@/api/mallPeriodicMaintenance'
 import type {
   PMMatrixMetric, MallPMMatrixItem, MallPMCatalogItem,
+  MallPMScheduleItem, MallPMScheduleKPI, MallPMScheduleGenerateResult,
+  MallPMScheduleAnnualMatrix,
 } from '@/api/mallPeriodicMaintenance'
 import type {
   PMStats, PMBatchListItem, PMItem,
@@ -47,6 +55,15 @@ import type { CalendarRow } from '@/components/MonthlyCalendarGrid'
 import { fetchMallFIDailyCalendar } from '@/api/mallFacilityInspection'
 
 const { Title, Text } = Typography
+
+// ── 年度計劃表儲存格樣式常數 ─────────────────────────────────────────────────
+const TH: React.CSSProperties = {
+  padding: '6px 8px', fontWeight: 600, border: '1px solid #e8e8e8',
+  whiteSpace: 'nowrap', textAlign: 'left',
+}
+const TD: React.CSSProperties = {
+  padding: '4px 8px', border: '1px solid #f0f0f0', verticalAlign: 'middle',
+}
 
 const STATUS_CFG: Record<string, { label: string; color: string; tagColor: string }> = {
   completed:         { label: '已完成', color: '#52C41A', tagColor: 'success' },
@@ -398,9 +415,21 @@ function YearMatrixTable({
   })
 
   const freqTitle = frequencyType === 'monthly' ? '每月' : frequencyType === 'quarterly' ? '每季' : frequencyType === 'yearly' ? '每年' : ''
+  const peakPeriodTotal = pastMonths.length > 0 ? Math.max(...pastMonths.map((m) => m.period_total)) : 0
 
   return (
-    <Card title={<><BarChartOutlined /> {data.year} 年度商場週期保養統計總表{freqTitle ? `（${freqTitle}）` : ''}</>} size="small" style={{ marginBottom: 16 }}>
+    <Card
+      title={
+        <>
+          <BarChartOutlined /> {data.year} 年度商場週期保養統計總表{freqTitle ? `（${freqTitle}）` : ''}
+          {peakPeriodTotal > 0 && (
+            <Tag color="blue" style={{ marginLeft: 10, fontSize: 13, verticalAlign: 'middle' }}>
+              共 {peakPeriodTotal} 件
+            </Tag>
+          )}
+        </>
+      }
+      size="small" style={{ marginBottom: 16 }}>
       <Table dataSource={tableData} columns={cols} pagination={false} size="small" scroll={{ x: 'max-content' }} bordered />
     </Card>
   )
@@ -559,6 +588,159 @@ export default function MallPeriodicMaintenancePage() {
   useEffect(() => { if (activeTab === 'quarterly') loadQuarterlyMatrix()  }, [loadQuarterlyMatrix])
   useEffect(() => { if (activeTab === 'quarterly') loadQuarterlyStats()   }, [loadQuarterlyStats])
   useEffect(() => { if (activeTab === 'yearly')    loadYearlyMatrix()     }, [loadYearlyMatrix])
+
+  // ── 排程管理 Tab state ────────────────────────────────────────────────────
+  const [schedYear,         setSchedYear]         = useState(dayjs().year())
+  const [schedMonth,        setSchedMonth]        = useState(dayjs().month() + 1)
+  const [schedItems,        setSchedItems]        = useState<MallPMScheduleItem[]>([])
+  const [schedKpi,          setSchedKpi]          = useState<MallPMScheduleKPI | null>(null)
+  const [schedLoading,      setSchedLoading]      = useState(false)
+  const [schedShouldDo,     setSchedShouldDo]     = useState(0)
+  const [schedCatFilter,    setSchedCatFilter]    = useState<string | undefined>(undefined)
+  const [schedStatusFilter, setSchedStatusFilter] = useState<string | undefined>(undefined)
+  const [overdueItems,      setOverdueItems]      = useState<MallPMScheduleItem[]>([])
+  const [overdueTotal,      setOverdueTotal]      = useState(0)
+  const [overdueMonths,     setOverdueMonths]     = useState<string[]>([])
+  const [overdueLoading,    setOverdueLoading]    = useState(false)
+  const [overdueVisible,    setOverdueVisible]    = useState(false)
+  const [schedDrawerOpen,   setSchedDrawerOpen]   = useState(false)
+  const [schedDrawerItem,   setSchedDrawerItem]   = useState<MallPMScheduleItem | null>(null)
+  const [schedEditMode,     setSchedEditMode]     = useState(false)
+  const [schedEditForm]                           = Form.useForm()
+
+  const schedYearMonth = `${schedYear}/${String(schedMonth).padStart(2, '0')}`
+
+  const loadSchedule = useCallback(async () => {
+    setSchedLoading(true)
+    try {
+      const [listRes, kpiRes] = await Promise.all([
+        getMallScheduleList({ year_month: schedYearMonth, category: schedCatFilter, status: schedStatusFilter }),
+        getMallScheduleKpi(schedYearMonth),
+      ])
+      setSchedItems(listRes.items)
+      setSchedShouldDo(listRes.should_do_not_done)
+      setSchedKpi(kpiRes)
+    } catch {
+      message.error('載入排程資料失敗')
+    } finally {
+      setSchedLoading(false)
+    }
+  }, [schedYearMonth, schedCatFilter, schedStatusFilter])
+
+  const loadOverdue = useCallback(async () => {
+    setOverdueLoading(true)
+    try {
+      const res = await getMallOverdueSchedule()
+      setOverdueItems(res.items ?? [])
+      setOverdueTotal(res.total ?? 0)
+      setOverdueMonths(res.months_affected ?? [])
+    } catch {
+      message.error('載入逾期資料失敗')
+    } finally {
+      setOverdueLoading(false)
+    }
+  }, [])
+
+  const handleGenerateSchedule = useCallback(async () => {
+    Modal.confirm({
+      title: `產生 ${schedYearMonth} 保養排程`,
+      content: '系統將依頻率規則自動產生排程，已完成與人工調整的記錄不會被覆蓋。確認繼續？',
+      okText: '確認產生',
+      cancelText: '取消',
+      onOk: async () => {
+        try {
+          const res: MallPMScheduleGenerateResult = await generateMallSchedule(schedYear, schedMonth)
+          message.success(
+            `已產生 ${res.generated} 筆，更新 ${res.updated} 筆，` +
+            `跳過已完成 ${res.skipped_completed} 筆，非本月 ${res.skipped_non_month} 筆`
+          )
+          loadSchedule()
+        } catch {
+          message.error('產生排程失敗')
+        }
+      },
+    })
+  }, [schedYear, schedMonth, schedYearMonth, loadSchedule])
+
+  const openSchedDrawer = useCallback((item: MallPMScheduleItem) => {
+    setSchedDrawerItem(item)
+    setSchedEditMode(false)
+    setSchedDrawerOpen(true)
+  }, [])
+
+  const handleSchedUpdate = useCallback(async () => {
+    if (!schedDrawerItem) return
+    try {
+      const values = await schedEditForm.validateFields()
+      await updateMallSchedule(schedDrawerItem.id, values)
+      message.success('已更新')
+      setSchedDrawerOpen(false)
+      loadSchedule()
+    } catch {
+      message.error('更新失敗')
+    }
+  }, [schedDrawerItem, schedEditForm, loadSchedule])
+
+  useEffect(() => {
+    if (activeTab === 'schedule') loadSchedule()
+  }, [activeTab, loadSchedule])
+
+  useEffect(() => {
+    if (activeTab === 'schedule') loadOverdue()
+  }, [activeTab, loadOverdue])
+
+  // ── 年度計劃表 Tab state ──────────────────────────────────────────────────
+  const [annualYear,        setAnnualYear]        = useState(dayjs().year())
+  const [annualCat,         setAnnualCat]         = useState<string | undefined>(undefined)
+  const [annualFreq,        setAnnualFreq]        = useState<string | undefined>(undefined)
+  const [annualMatrix,      setAnnualMatrix]      = useState<MallPMScheduleAnnualMatrix | null>(null)
+  const [annualLoading,     setAnnualLoading]     = useState(false)
+  const [annualDrawerOpen,  setAnnualDrawerOpen]  = useState(false)
+  const [annualDrawerCell,  setAnnualDrawerCell]  = useState<{
+    scheduleId: number | null; status: string; month: number
+    row: MallPMScheduleAnnualMatrix['rows'][0]
+  } | null>(null)
+  const [annualCellDetail,  setAnnualCellDetail]  = useState<MallPMScheduleItem | null>(null)
+  const [annualCellLoading, setAnnualCellLoading] = useState(false)
+
+  const loadAnnualMatrix = useCallback(async () => {
+    setAnnualLoading(true)
+    try {
+      const res = await getMallAnnualMatrix(annualYear, annualCat)
+      setAnnualMatrix(res)
+    } catch {
+      message.error('載入年度計劃表失敗')
+    } finally {
+      setAnnualLoading(false)
+    }
+  }, [annualYear, annualCat])
+
+  useEffect(() => {
+    if (activeTab === 'annual') loadAnnualMatrix()
+  }, [activeTab, loadAnnualMatrix])
+
+  const openAnnualDrawer = useCallback(async (
+    scheduleId: number | null,
+    status: string,
+    month: number,
+    row: MallPMScheduleAnnualMatrix['rows'][0],
+  ) => {
+    setAnnualDrawerCell({ scheduleId, status, month, row })
+    setAnnualDrawerOpen(true)
+    setAnnualCellDetail(null)
+    if (scheduleId) {
+      setAnnualCellLoading(true)
+      try {
+        const res = await getMallScheduleList({
+          year_month: `${annualYear}/${String(month).padStart(2, '0')}`,
+        })
+        const found = res.items.find(i => i.id === scheduleId) ?? null
+        setAnnualCellDetail(found)
+      } finally {
+        setAnnualCellLoading(false)
+      }
+    }
+  }, [annualYear])
 
   const yearOptions    = [2024, 2025, 2026, 2027].map(y => ({ value: String(y), label: `${y} 年` }))
   const yearNumOptions = [2024, 2025, 2026, 2027].map(y => ({ value: y,         label: `${y} 年` }))
@@ -936,13 +1118,486 @@ export default function MallPeriodicMaintenancePage() {
       render: (v) => v > 0 ? <Badge count={v} color="#722ED1" /> : <Text type="secondary">—</Text> },
     { title: '最後更新', dataIndex: ['batch', 'ragic_updated_at'], width: 140, render: (v) => v || '—' },
     {
-      title: '操作', width: 100,
+      title: '操作', width: 140,
       render: (_, row) => (
-        <Button type="primary" size="small" icon={<RightOutlined />} style={{ background: '#1B3A5C' }}
-          onClick={() => navigate(`/mall/periodic-maintenance/${row.batch.ragic_id}`)}>查看明細</Button>
+        <Space size={8}>
+          <Button type="primary" size="small" icon={<RightOutlined />} style={{ background: '#1B3A5C' }}
+            onClick={() => navigate(`/mall/periodic-maintenance/${row.batch.ragic_id}`)}>查看明細</Button>
+          {row.batch.ragic_url && (
+            <Tooltip title="在 Ragic 查看原始表單">
+              <a
+                href={row.batch.ragic_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ color: '#4BA8E8', fontSize: 16, lineHeight: 1 }}
+              >
+                <LinkOutlined />
+              </a>
+            </Tooltip>
+          )}
+        </Space>
       ),
     },
   ]
+
+  // ── 排程管理 Tab ────────────────────────────────────────────────────────────
+
+  const SCHED_STATUS_CFG: Record<string, { label: string; color: string }> = {
+    completed:   { label: '已完成', color: 'success' },
+    in_progress: { label: '進行中', color: 'processing' },
+    overdue:     { label: '逾期',   color: 'error' },
+    scheduled:   { label: '待執行', color: 'warning' },
+    unscheduled: { label: '未排定', color: 'default' },
+  }
+
+  const schedColumns: ColumnsType<MallPMScheduleItem> = [
+    {
+      title: '類別', dataIndex: 'category', width: 80,
+      render: (v: string) => v || <Text type="secondary">—</Text>,
+    },
+    {
+      title: '保養項目', dataIndex: 'task_name',
+      render: (v: string, row) => (
+        <Button type="link" style={{ padding: 0, textAlign: 'left' }}
+          onClick={() => openSchedDrawer(row)}>
+          {v}
+        </Button>
+      ),
+    },
+    {
+      title: '位置', dataIndex: 'location', width: 120,
+      render: (v: string) => v || <Text type="secondary">—</Text>,
+    },
+    {
+      title: '頻率', dataIndex: 'frequency', width: 70,
+      render: (v: string) => v ? <Tag>{v}</Tag> : <Text type="secondary">—</Text>,
+    },
+    {
+      title: '排定日期', dataIndex: 'scheduled_date', width: 90,
+      render: (v: string) => v || <Text type="secondary">未排定</Text>,
+    },
+    {
+      title: '執行人員', dataIndex: 'executor_name', width: 100,
+      render: (v: string) => v || <Text type="secondary">—</Text>,
+    },
+    {
+      title: '狀態', width: 90,
+      render: (_: unknown, row: MallPMScheduleItem) => {
+        const cfg = SCHED_STATUS_CFG[row.status] ?? { label: row.status, color: 'default' }
+        return <Tag color={cfg.color}>{cfg.label}</Tag>
+      },
+    },
+    {
+      title: '來源', dataIndex: 'schedule_source', width: 80,
+      render: (v: string) => (
+        <Tag color={v === 'manual' ? 'purple' : 'cyan'}>{v === 'manual' ? '人工' : '自動'}</Tag>
+      ),
+    },
+    {
+      title: '操作', width: 70,
+      render: (_: unknown, row: MallPMScheduleItem) => (
+        <Button size="small" onClick={() => openSchedDrawer(row)}>詳情</Button>
+      ),
+    },
+  ]
+
+  const overdueColumns: ColumnsType<MallPMScheduleItem & { overdue_days?: number }> = [
+    { title: '月份',     dataIndex: 'year_month',     width: 90 },
+    { title: '類別',     dataIndex: 'category',       width: 80 },
+    { title: '保養項目', dataIndex: 'task_name' },
+    { title: '排定日期', dataIndex: 'scheduled_date', width: 90 },
+    { title: '逾期天數', dataIndex: 'overdue_days',   width: 90,
+      render: (v?: number) => v != null
+        ? <Tag color="error">{v} 天</Tag>
+        : <Text type="secondary">—</Text> },
+    { title: '操作', width: 70,
+      render: (_: unknown, row: MallPMScheduleItem) => (
+        <Button size="small" onClick={() => openSchedDrawer(row)}>處理</Button>
+      ) },
+  ]
+
+  const schedCatOptions = [
+    { value: '', label: '全部類別' },
+    ...Array.from(new Set(schedItems.map(i => i.category).filter(Boolean)))
+      .map(c => ({ value: c, label: c })),
+  ]
+
+  const ScheduleTab = (
+    <div>
+      <Row gutter={8} align="middle" style={{ marginBottom: 12 }} wrap>
+        <Col>
+          <Select value={schedYear} onChange={setSchedYear}
+            options={[2024,2025,2026,2027].map(y=>({value:y,label:`${y}年`}))} style={{ width: 90 }} />
+        </Col>
+        <Col>
+          <Select value={schedMonth} onChange={setSchedMonth} style={{ width: 80 }}
+            options={Array.from({length:12},(_,i)=>({value:i+1,label:`${i+1}月`}))} />
+        </Col>
+        <Col>
+          <Select allowClear placeholder="全部類別" value={schedCatFilter}
+            onChange={setSchedCatFilter} options={schedCatOptions} style={{ width: 110 }} />
+        </Col>
+        <Col>
+          <Select allowClear placeholder="全部狀態" value={schedStatusFilter}
+            onChange={setSchedStatusFilter} style={{ width: 110 }}
+            options={[
+              {value:'unscheduled',label:'未排定'},
+              {value:'scheduled',  label:'待執行'},
+              {value:'in_progress',label:'進行中'},
+              {value:'overdue',    label:'逾期'  },
+              {value:'completed',  label:'已完成'},
+              {value:'abnormal',   label:'異常'  },
+            ]} />
+        </Col>
+        <Col>
+          <Button icon={<ReloadOutlined />} onClick={loadSchedule} loading={schedLoading}>重新整理</Button>
+        </Col>
+        <Col>
+          <Button type="primary" style={{ background: '#1B3A5C' }} onClick={handleGenerateSchedule}>
+            ▶ 產生本月排程
+          </Button>
+        </Col>
+      </Row>
+
+      {schedShouldDo > 0 && (
+        <Alert type="warning" showIcon style={{ marginBottom: 12 }}
+          message={
+            <span>本月尚有 <strong>{schedShouldDo}</strong> 筆項目依頻率應執行，但尚未納入排程。
+              請點擊「產生本月排程」補建。</span>
+          } />
+      )}
+
+      {schedKpi && (
+        <Row gutter={8} style={{ marginBottom: 16 }}>
+          {[
+            {label:'全部',     value:schedKpi.total,              color:'#1B3A5C'},
+            {label:'應做未做', value:schedShouldDo,               color:'#FA8C16'},
+            {label:'未排定',   value:schedKpi.unscheduled,        color:'#FAAD14'},
+            {label:'待執行',   value:schedKpi.scheduled,          color:'#4BA8E8'},
+            {label:'進行中',   value:schedKpi.in_progress,        color:'#52C41A'},
+            {label:'逾期',     value:schedKpi.overdue,            color:'#C0392B'},
+            {label:'已完成',   value:schedKpi.completed,          color:'#52C41A'},
+            {label:'異常',     value:schedKpi.abnormal,           color:'#722ED1'},
+          ].map(({label,value,color}) => (
+            <Col key={label}>
+              <Card size="small" style={{minWidth:80,textAlign:'center'}}>
+                <div style={{fontSize:20,fontWeight:700,color}}>{value}</div>
+                <div style={{fontSize:11,color:'#666'}}>{label}</div>
+              </Card>
+            </Col>
+          ))}
+          <Col>
+            <Card size="small" style={{minWidth:90,textAlign:'center'}}>
+              <div style={{fontSize:20,fontWeight:700,color:'#52C41A'}}>{schedKpi.completion_rate}%</div>
+              <div style={{fontSize:11,color:'#666'}}>完成率</div>
+            </Card>
+          </Col>
+        </Row>
+      )}
+
+      <Table<MallPMScheduleItem>
+        dataSource={schedItems} rowKey="id" columns={schedColumns}
+        loading={schedLoading} size="small"
+        pagination={{pageSize:20,showTotal:(t)=>`共 ${t} 筆`}}
+        locale={{emptyText:'尚無排程資料，請先點擊「產生本月排程」'}}
+        rowClassName={(row) => row.status === 'overdue' ? 'ant-table-row-danger' : ''}
+      />
+
+      <Divider orientation="left">
+        <span style={{cursor:'pointer', color:overdueTotal>0?'#C0392B':undefined}}
+          onClick={()=>{setOverdueVisible(v=>!v); if(!overdueItems.length) loadOverdue()}}>
+          逾期未執行（跨月累積）
+          {overdueTotal>0 && <Badge count={overdueTotal} style={{marginLeft:8}} />}
+        </span>
+      </Divider>
+      {overdueVisible && (
+        <Table<MallPMScheduleItem & {overdue_days?:number}>
+          dataSource={overdueItems as (MallPMScheduleItem & {overdue_days?:number})[]}
+          rowKey="id" columns={overdueColumns} loading={overdueLoading} size="small"
+          pagination={{pageSize:10,showTotal:(t)=>`共 ${t} 筆`}}
+          locale={{emptyText:'無逾期未執行記錄'}}
+        />
+      )}
+    </div>
+  )
+
+  // ── 排程明細 Drawer ────────────────────────────────────────────────────────
+  const ScheduleDrawer = (
+    <Drawer open={schedDrawerOpen} onClose={()=>setSchedDrawerOpen(false)} width={480}
+      title={schedDrawerItem && (
+        <Space>
+          <Tag>{schedDrawerItem.category||'未分類'}</Tag>
+          <span style={{fontWeight:600}}>{schedDrawerItem.task_name}</span>
+          <Tag color={SCHED_STATUS_CFG[schedDrawerItem.status]?.color??'default'}>
+            {SCHED_STATUS_CFG[schedDrawerItem.status]?.label??schedDrawerItem.status}
+          </Tag>
+          {schedDrawerItem.item_ragic_id && (
+            <Tooltip title="在 Ragic 查看原始表單">
+              <a
+                href={`https://ap12.ragic.com/soutlet001/periodic-maintenance/18/${schedDrawerItem.item_ragic_id.split('_')[0]}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ color: '#4BA8E8', fontSize: 16, lineHeight: 1 }}
+              >
+                <LinkOutlined />
+              </a>
+            </Tooltip>
+          )}
+        </Space>
+      )}
+      extra={
+        <Space>
+          {!schedEditMode && (
+            <Button size="small" onClick={()=>{setSchedEditMode(true);schedEditForm.setFieldsValue(schedDrawerItem)}}>
+              編輯
+            </Button>
+          )}
+          {schedEditMode && (
+            <>
+              <Button size="small" onClick={()=>setSchedEditMode(false)}>取消</Button>
+              <Button size="small" type="primary" onClick={handleSchedUpdate}>儲存</Button>
+            </>
+          )}
+        </Space>
+      }
+    >
+      {schedDrawerItem && !schedEditMode && (
+        <Descriptions column={1} size="small" bordered>
+          <Descriptions.Item label="月份">{schedDrawerItem.year_month}</Descriptions.Item>
+          <Descriptions.Item label="頻率">{schedDrawerItem.frequency||'—'}</Descriptions.Item>
+          <Descriptions.Item label="位置">{schedDrawerItem.location||'—'}</Descriptions.Item>
+          <Descriptions.Item label="預估工時">
+            {schedDrawerItem.estimated_minutes?`${schedDrawerItem.estimated_minutes} 分鐘`:'—'}
+          </Descriptions.Item>
+          <Descriptions.Item label="排定日期">{schedDrawerItem.scheduled_date||'未排定'}</Descriptions.Item>
+          <Descriptions.Item label="執行人員">{schedDrawerItem.executor_name||'—'}</Descriptions.Item>
+          <Descriptions.Item label="開始時間">{schedDrawerItem.start_time||'—'}</Descriptions.Item>
+          <Descriptions.Item label="結束時間">{schedDrawerItem.end_time||'—'}</Descriptions.Item>
+          <Descriptions.Item label="完成">
+            <Tag color={schedDrawerItem.is_completed?'success':'default'}>
+              {schedDrawerItem.is_completed?'已完成':'未完成'}
+            </Tag>
+          </Descriptions.Item>
+          <Descriptions.Item label="異常">
+            {schedDrawerItem.abnormal_flag
+              ? <Tag color="error">異常：{schedDrawerItem.abnormal_note||'—'}</Tag>
+              : <Tag color="default">無</Tag>}
+          </Descriptions.Item>
+          <Descriptions.Item label="備註">{schedDrawerItem.result_note||'—'}</Descriptions.Item>
+          <Descriptions.Item label="來源">
+            <Tag color={schedDrawerItem.schedule_source==='manual'?'purple':'cyan'}>
+              {schedDrawerItem.schedule_source==='manual'?'人工調整':'自動產生'}
+            </Tag>
+          </Descriptions.Item>
+          {schedDrawerItem.portal_edited_at && (
+            <Descriptions.Item label="最後編輯">{schedDrawerItem.portal_edited_at}</Descriptions.Item>
+          )}
+        </Descriptions>
+      )}
+      {schedEditMode && (
+        <Form form={schedEditForm} layout="vertical" size="small">
+          <Form.Item name="scheduled_date" label="排定日期（MM/DD）">
+            <Input placeholder="如 05/15" />
+          </Form.Item>
+          <Form.Item name="executor_name" label="執行人員"><Input /></Form.Item>
+          <Form.Item name="start_time" label="開始時間"><Input placeholder="如 2026/05/15 09:00" /></Form.Item>
+          <Form.Item name="end_time" label="結束時間"><Input placeholder="如 2026/05/15 10:30" /></Form.Item>
+          <Form.Item name="is_completed" label="標記完成" valuePropName="checked"><Switch /></Form.Item>
+          <Form.Item name="result_note" label="執行備註"><Input.TextArea rows={3} /></Form.Item>
+          <Form.Item name="abnormal_flag" label="標記異常" valuePropName="checked"><Switch /></Form.Item>
+          <Form.Item name="abnormal_note" label="異常說明"><Input.TextArea rows={2} /></Form.Item>
+        </Form>
+      )}
+    </Drawer>
+  )
+
+  // ── 年度計劃表 Tab ────────────────────────────────────────────────────────
+
+  const MATRIX_CELL_CFG: Record<string, { bg: string; text: string; label: string }> = {
+    completed:    { bg: '#f6ffed', text: '#52C41A', label: '✅' },
+    overdue:      { bg: '#fff1f0', text: '#C0392B', label: '🔴' },
+    in_progress:  { bg: '#e6f4ff', text: '#1890FF', label: '🔵' },
+    scheduled:    { bg: '#fff7e6', text: '#FA8C16', label: '⭕' },
+    unscheduled:  { bg: '#fffbe6', text: '#FAAD14', label: '?' },
+    non_month:    { bg: '#fafafa', text: '#aaa',    label: '─' },
+    no_data:      { bg: '#fff0f6', text: '#eb2f96', label: '！' },
+    no_frequency: { bg: '#f5f5f5', text: '#ccc',    label: '∅' },
+  }
+
+  const annualCatOptions = annualMatrix
+    ? [
+        {value:'',label:'全部類別'},
+        ...Array.from(new Set(annualMatrix.rows.map(r=>r.category).filter(Boolean)))
+          .map(c=>({value:c,label:c})),
+      ]
+    : [{value:'',label:'全部類別'}]
+
+  const annualFreqOptions = annualMatrix
+    ? [
+        { value: '', label: '全部頻率' },
+        ...Array.from(new Set(annualMatrix.rows.map(r => r.frequency).filter(Boolean)))
+          .sort().map(f => ({ value: f, label: f })),
+      ]
+    : [{ value: '', label: '全部頻率' }]
+
+  const filteredAnnualRows = annualMatrix
+    ? annualMatrix.rows.filter(r => !annualFreq || r.frequency === annualFreq)
+    : []
+
+  const MONTHS = ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月']
+
+  const AnnualTab = (
+    <div>
+      <Row gutter={8} align="middle" style={{marginBottom:12}}>
+        <Col>
+          <Select value={annualYear} onChange={setAnnualYear}
+            options={[2024,2025,2026,2027].map(y=>({value:y,label:`${y}年`}))} style={{width:90}} />
+        </Col>
+        <Col>
+          <Select allowClear placeholder="全部類別" value={annualCat} onChange={setAnnualCat}
+            options={annualCatOptions} style={{width:110}} />
+        </Col>
+        <Col>
+          <Select allowClear placeholder="全部頻率" value={annualFreq} onChange={setAnnualFreq}
+            options={annualFreqOptions} style={{width:100}} />
+        </Col>
+        <Col>
+          <Button icon={<ReloadOutlined />} onClick={loadAnnualMatrix} loading={annualLoading}>重新整理</Button>
+        </Col>
+      </Row>
+
+      <Row gutter={4} style={{marginBottom:12}}>
+        {Object.entries(MATRIX_CELL_CFG).map(([k, v]) => (
+          <Col key={k}>
+            <span style={{display:'inline-flex',alignItems:'center',gap:4,padding:'2px 8px',
+              borderRadius:4,background:v.bg,border:'1px solid #eee',fontSize:12,color:v.text}}>
+              {v.label}&nbsp;{({completed:'已完成',overdue:'逾期',in_progress:'進行中',
+                scheduled:'待執行',unscheduled:'未排定',non_month:'非本月',
+                no_data:'應做未排',no_frequency:'頻率未設'} as Record<string,string>)[k]}
+            </span>
+          </Col>
+        ))}
+      </Row>
+
+      <Spin spinning={annualLoading}>
+        {annualMatrix && (
+          <div style={{overflowX:'auto'}}>
+            <table style={{width:'100%',borderCollapse:'collapse',fontSize:14,tableLayout:'auto'}}>
+              <thead>
+                <tr style={{background:'#f0f4f8'}}>
+                  <th style={{...TH,fontSize:14,width:'1%',whiteSpace:'nowrap'}}>類別</th>
+                  <th style={{...TH,fontSize:14,width:'1%',whiteSpace:'nowrap'}}>保養項目</th>
+                  <th style={{...TH,fontSize:14,width:'1%',whiteSpace:'nowrap'}}>頻率</th>
+                  {MONTHS.map(m=><th key={m} style={{...TH,fontSize:14,textAlign:'center'}}>{m}</th>)}
+                </tr>
+              </thead>
+              <tbody>
+                {filteredAnnualRows.map(row=>(
+                  <tr key={row.item_ragic_id} style={{borderBottom:'1px solid #eee'}}>
+                    <td style={{...TD,whiteSpace:'nowrap'}}><Tag style={{fontSize:12}}>{row.category||'—'}</Tag></td>
+                    <td style={{...TD,whiteSpace:'nowrap'}}>
+                      <Tooltip title={row.location||undefined}>
+                        <span style={{fontSize:13}}>{row.task_name}</span>
+                      </Tooltip>
+                    </td>
+                    <td style={{...TD,textAlign:'center',whiteSpace:'nowrap'}}>
+                      {row.frequency?<Tag style={{fontSize:12}}>{row.frequency}</Tag>:'—'}
+                    </td>
+                    {row.cells.map(cell=>{
+                      const cfg = MATRIX_CELL_CFG[cell.status] ?? {bg:'#fff',text:'#666',label:'?'}
+                      const clickable = cell.status !== 'non_month' && cell.status !== 'no_frequency'
+                      return (
+                        <td key={cell.month} style={{...TD,textAlign:'center',background:cfg.bg,color:cfg.text,
+                          cursor:clickable?'pointer':'default',fontWeight:600,padding:'4px 2px',fontSize:16}}
+                          onClick={()=>clickable&&openAnnualDrawer(cell.schedule_id,cell.status,cell.month,row)}>
+                          <Tooltip title={({completed:'已完成',overdue:'逾期',in_progress:'進行中',
+                            scheduled:'待執行',unscheduled:'未排定',non_month:'非本月',
+                            no_data:'應做未排程',no_frequency:'頻率未設定'} as Record<string,string>)[cell.status]}>
+                            <div style={{lineHeight:1.2}}>
+                              {cfg.label}
+                              {cell.scheduled_date && (
+                                <div style={{fontSize:11,fontWeight:500,color:cfg.text,
+                                  opacity:cell.status==='no_data'?1:0.85,marginTop:1}}>
+                                  {cell.scheduled_date}
+                                </div>
+                              )}
+                            </div>
+                          </Tooltip>
+                        </td>
+                      )
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {!annualMatrix && !annualLoading && (
+          <Alert message="尚無資料，請先產生排程後再查看年度計劃表" type="info" showIcon />
+        )}
+      </Spin>
+      {annualMatrix && (
+        <Row style={{marginTop:12}}>
+          <Col>
+            <Text type="secondary">
+              共 {annualMatrix.summary.total_items} 個保養項目，本年已完成 {annualMatrix.summary.completed_count} 筆排程記錄
+            </Text>
+          </Col>
+        </Row>
+      )}
+    </div>
+  )
+
+  // 年度計劃表 Drawer
+  const AnnualCellDrawer = (
+    <Drawer open={annualDrawerOpen} onClose={()=>setAnnualDrawerOpen(false)} width={420}
+      title={annualDrawerCell&&(
+        <Space>
+          <Tag>{annualDrawerCell.row.category||'—'}</Tag>
+          <span>{annualDrawerCell.row.task_name}</span>
+          <Tag>{annualYear}/{String(annualDrawerCell.month).padStart(2,'0')}</Tag>
+          {annualDrawerCell.row.item_ragic_id && (
+            <Tooltip title="在 Ragic 查看原始表單">
+              <a
+                href={`https://ap12.ragic.com/soutlet001/periodic-maintenance/18/${annualDrawerCell.row.item_ragic_id.split('_')[0]}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ color: '#4BA8E8', fontSize: 16, lineHeight: 1 }}
+              >
+                <LinkOutlined />
+              </a>
+            </Tooltip>
+          )}
+        </Space>
+      )}>
+      {annualCellLoading && <Spin />}
+      {!annualCellLoading && annualCellDetail && (
+        <Descriptions column={1} size="small" bordered>
+          <Descriptions.Item label="狀態">
+            <Tag color={SCHED_STATUS_CFG[annualCellDetail.status]?.color??'default'}>
+              {SCHED_STATUS_CFG[annualCellDetail.status]?.label??annualCellDetail.status}
+            </Tag>
+          </Descriptions.Item>
+          <Descriptions.Item label="排定日期">{annualCellDetail.scheduled_date||'—'}</Descriptions.Item>
+          <Descriptions.Item label="執行人員">{annualCellDetail.executor_name||'—'}</Descriptions.Item>
+          <Descriptions.Item label="開始時間">{annualCellDetail.start_time||'—'}</Descriptions.Item>
+          <Descriptions.Item label="結束時間">{annualCellDetail.end_time||'—'}</Descriptions.Item>
+          <Descriptions.Item label="備註">{annualCellDetail.result_note||'—'}</Descriptions.Item>
+          {annualCellDetail.abnormal_flag && (
+            <Descriptions.Item label="異常">
+              <Tag color="error">{annualCellDetail.abnormal_note||'有異常'}</Tag>
+            </Descriptions.Item>
+          )}
+        </Descriptions>
+      )}
+      {!annualCellLoading && !annualCellDetail && annualDrawerCell && (
+        <Alert type={annualDrawerCell.status==='no_data'?'warning':'info'} showIcon
+          message={annualDrawerCell.status==='no_data'
+            ?'此月份應執行保養但尚未產生排程，請至「排程管理」Tab 產生排程。'
+            :'此月份無排程記錄。'} />
+      )}
+    </Drawer>
+  )
 
   const ListTab = (
     <div>
@@ -987,14 +1642,18 @@ export default function MallPeriodicMaintenancePage() {
         activeKey={activeTab}
         onChange={setActiveTab}
         items={[
-          { key: 'dashboard',   label: 'Dashboard', children: DashboardTab },
-          { key: 'daily-form', label: <span><FileTextOutlined /> 每日巡檢表</span>, children: <MallDailyInspectionFormTab /> },
-          { key: 'monthly',    label: <span><CalendarOutlined /> 每月維護</span>,  children: MonthlyStatsTab },
-          { key: 'quarterly',  label: <span><LineChartOutlined /> 每季維護</span>, children: QuarterlyStatsTab },
-          { key: 'yearly',     label: <span><BarChartOutlined /> 每年維護</span>,  children: YearlyStatsTab },
-          { key: 'list',       label: '批次清單', children: ListTab },
+          { key: 'dashboard',  label: 'Dashboard',                                        children: DashboardTab },
+          { key: 'daily-form', label: <span><FileTextOutlined /> 每日巡檢表</span>,       children: <MallDailyInspectionFormTab /> },
+          { key: 'monthly',    label: <span><CalendarOutlined /> 每月維護</span>,          children: MonthlyStatsTab },
+          { key: 'quarterly',  label: <span><LineChartOutlined /> 每季維護</span>,         children: QuarterlyStatsTab },
+          { key: 'yearly',     label: <span><BarChartOutlined /> 每年維護</span>,           children: YearlyStatsTab },
+          { key: 'schedule',   label: <span><CalendarOutlined /> 排程管理</span>,           children: ScheduleTab },
+          { key: 'annual',     label: <span><BarChartOutlined /> 年度計劃表</span>,         children: AnnualTab },
+          { key: 'list',       label: '批次清單',                                           children: ListTab },
         ]}
       />
+      {ScheduleDrawer}
+      {AnnualCellDrawer}
     </div>
     <MatrixDetailModal
       open={modalOpen}

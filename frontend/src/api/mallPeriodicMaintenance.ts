@@ -142,3 +142,144 @@ export async function fetchMallPMCatalog(
   const res = await apiClient.get<MallPMCatalogResponse>(`${BASE}/items/catalog`, { params })
   return res.data
 }
+
+// ══════════════════════════════════════════════════════════════════════
+// 排程管理（mall_pm_schedule）相關 API
+// ══════════════════════════════════════════════════════════════════════
+
+export interface MallPMScheduleItem {
+  id:                number
+  year_month:        string
+  item_ragic_id:     string
+  category:          string
+  task_name:         string
+  location:          string
+  frequency:         string
+  estimated_minutes: number
+  scheduled_date:    string
+  executor_name:     string
+  schedule_source:   string
+  start_time:        string
+  end_time:          string
+  is_completed:      boolean
+  result_note:       string
+  abnormal_flag:     boolean
+  abnormal_note:     string
+  portal_edited_at:  string | null
+  created_at:        string
+  updated_at:        string
+  status:            string
+}
+
+export interface MallPMScheduleKPI {
+  total:              number
+  unscheduled:        number
+  scheduled:          number
+  in_progress:        number
+  completed:          number
+  overdue:            number
+  abnormal:           number
+  should_do_not_done: number
+  completion_rate:    number
+}
+
+export interface MallPMScheduleGenerateResult {
+  year_month:             string
+  generated:              number
+  updated:                number
+  skipped_completed:      number
+  skipped_edited:         number
+  skipped_non_month:      number
+  skipped_no_frequency:   number
+  errors:                 string[]
+}
+
+export interface MallPMScheduleListResponse {
+  year_month:         string
+  total:              number
+  should_do_not_done: number
+  items:              MallPMScheduleItem[]
+}
+
+export interface MallPMScheduleMatrixCell {
+  month:          number
+  status:         string
+  schedule_id:    number | null
+  scheduled_date: string | null
+}
+
+export interface MallPMScheduleMatrixRow {
+  item_ragic_id: string
+  category:      string
+  task_name:     string
+  location:      string
+  frequency:     string
+  cells:         MallPMScheduleMatrixCell[]
+}
+
+export interface MallPMScheduleAnnualMatrix {
+  year:    number
+  rows:    MallPMScheduleMatrixRow[]
+  summary: {
+    total_items:     number
+    total_cells:     number
+    completed_count: number
+    completion_rate: number
+  }
+}
+
+/** 產生指定月份商場排程 */
+export async function generateMallSchedule(year: number, month: number): Promise<MallPMScheduleGenerateResult> {
+  const res = await apiClient.post<MallPMScheduleGenerateResult>(
+    `${BASE}/schedule/generate`,
+    null,
+    { params: { year, month } }
+  )
+  return res.data
+}
+
+/** 查詢商場排程明細列表 */
+export async function getMallScheduleList(params: {
+  year_month?: string
+  category?: string
+  status?: string
+}): Promise<MallPMScheduleListResponse> {
+  const res = await apiClient.get<MallPMScheduleListResponse>(`${BASE}/schedule`, { params })
+  return res.data
+}
+
+/** 商場排程 KPI 統計 */
+export async function getMallScheduleKpi(year_month?: string): Promise<MallPMScheduleKPI> {
+  const params: Record<string, string> = {}
+  if (year_month) params.year_month = year_month
+  const res = await apiClient.get<MallPMScheduleKPI>(`${BASE}/schedule/kpi`, { params })
+  return res.data
+}
+
+/** 商場跨月逾期清單 */
+export async function getMallOverdueSchedule(before_date?: string) {
+  const params: Record<string, string> = {}
+  if (before_date) params.before_date = before_date
+  const res = await apiClient.get(`${BASE}/schedule/overdue`, { params })
+  return res.data
+}
+
+/** 商場年度計劃矩陣 */
+export async function getMallAnnualMatrix(year: number, category?: string): Promise<MallPMScheduleAnnualMatrix> {
+  const params: Record<string, string | number> = { year }
+  if (category) params.category = category
+  const res = await apiClient.get<MallPMScheduleAnnualMatrix>(`${BASE}/schedule/annual-matrix`, { params })
+  return res.data
+}
+
+/** 人工調整商場排程明細 */
+export async function updateMallSchedule(
+  scheduleId: number,
+  body: Partial<Pick<MallPMScheduleItem,
+    'scheduled_date' | 'executor_name' | 'start_time' | 'end_time' |
+    'is_completed' | 'result_note' | 'abnormal_flag' | 'abnormal_note'
+  >>
+): Promise<MallPMScheduleItem> {
+  const res = await apiClient.patch<MallPMScheduleItem>(`${BASE}/schedule/${scheduleId}`, body)
+  return res.data
+}
