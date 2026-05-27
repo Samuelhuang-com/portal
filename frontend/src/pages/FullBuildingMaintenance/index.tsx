@@ -1703,15 +1703,16 @@ export default function FullBuildingMaintenancePage() {
       />
 
       {/* 逾期累積清單 */}
-      <Divider style={{ cursor: 'pointer' }}
-        onClick={() => setOverdueExpanded(e => !e)}>
-        <Space>
-          <Badge count={overdueItems.length} size="small">
-            <Text style={{ fontSize: 13 }}>逾期未執行（跨月累積）</Text>
-          </Badge>
-          <Text type="secondary" style={{ fontSize: 12 }}>{overdueExpanded ? '▲ 收合' : '▼ 展開'}</Text>
-        </Space>
-      </Divider>
+      <div style={{ cursor: 'pointer' }} onClick={() => setOverdueExpanded(e => !e)}>
+        <Divider>
+          <Space>
+            <Badge count={overdueItems.length} size="small">
+              <Text style={{ fontSize: 13 }}>逾期未執行（跨月累積）</Text>
+            </Badge>
+            <Text type="secondary" style={{ fontSize: 12 }}>{overdueExpanded ? '▲ 收合' : '▼ 展開'}</Text>
+          </Space>
+        </Divider>
+      </div>
       {overdueExpanded && (
         <Table<FullBldgPMScheduleItem & { overdue_days: number }>
           dataSource={overdueItems}
