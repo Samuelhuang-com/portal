@@ -1587,33 +1587,38 @@ def get_mall_annual_matrix(
                 if not freq:
                     cells.append(MallPMScheduleMatrixCell(month=m, status="no_frequency", schedule_id=None))
                 elif _should_schedule(item, year, m):
-                    cell_sched_date: Optional[str] = None
-                    cell_status = "no_data"
-                    if item.scheduled_date:
-                        try:
-                            parts = item.scheduled_date.split("/")
-                            sched_month = int(parts[0])
-                            day = parts[-1].zfill(2)
-                            cell_sched_date = f"{m:02d}/{day}"
-                            if sched_month == m:
-                                if item.is_completed or (item.start_time and item.end_time):
-                                    cell_status = "completed"
-                                    completed_cnt += 1
-                                elif item.start_time:
-                                    cell_status = "in_progress"
-                                else:
-                                    full_sched = datetime.strptime(
-                                        f"{year}/{item.scheduled_date}", "%Y/%m/%d"
-                                    ).date()
-                                    cell_status = "overdue" if full_sched < date.today() else "scheduled"
-                        except Exception:
-                            cell_sched_date = None
-                    cells.append(MallPMScheduleMatrixCell(
-                        month          = m,
-                        status         = cell_status,
-                        schedule_id    = None,
-                        scheduled_date = cell_sched_date,
-                    ))
+                    # 未來月份尚未建立排程屬正常，不顯示「應做未排」（！），改以 non_month（—）呈現
+                    today = date.today()
+                    if year > today.year or (year == today.year and m > today.month):
+                        cells.append(MallPMScheduleMatrixCell(month=m, status="non_month", schedule_id=None))
+                    else:
+                        cell_sched_date: Optional[str] = None
+                        cell_status = "no_data"
+                        if item.scheduled_date:
+                            try:
+                                parts = item.scheduled_date.split("/")
+                                sched_month = int(parts[0])
+                                day = parts[-1].zfill(2)
+                                cell_sched_date = f"{m:02d}/{day}"
+                                if sched_month == m:
+                                    if item.is_completed or (item.start_time and item.end_time):
+                                        cell_status = "completed"
+                                        completed_cnt += 1
+                                    elif item.start_time:
+                                        cell_status = "in_progress"
+                                    else:
+                                        full_sched = datetime.strptime(
+                                            f"{year}/{item.scheduled_date}", "%Y/%m/%d"
+                                        ).date()
+                                        cell_status = "overdue" if full_sched < date.today() else "scheduled"
+                            except Exception:
+                                cell_sched_date = None
+                        cells.append(MallPMScheduleMatrixCell(
+                            month          = m,
+                            status         = cell_status,
+                            schedule_id    = None,
+                            scheduled_date = cell_sched_date,
+                        ))
                 else:
                     cells.append(MallPMScheduleMatrixCell(month=m, status="non_month", schedule_id=None))
 
