@@ -129,6 +129,16 @@ import BudgetAccountCodesPage          from '@/pages/Budget/Masters/AccountCodes
 import BudgetItemsPage                 from '@/pages/Budget/Masters/BudgetItems'
 import BudgetMappingsPage              from '@/pages/Budget/Mappings'
 
+// ── 合約管理 ──────────────────────────────────────────────────────────────────
+import ContractPage            from '@/pages/Contract'
+import ContractDashboardPage   from '@/pages/Contract/Dashboard'
+import ContractImportPage      from '@/pages/Contract/Import'
+import ContractExpiringPage    from '@/pages/Contract/Expiring'
+import ContractClaimsPage      from '@/pages/Contract/Claims'
+import ContractRenewalsPage    from '@/pages/Contract/Renewals'
+import VendorsPage             from '@/pages/Contract/Vendors'
+import SettingsPage            from '@/pages/Contract/Settings'
+
 // ── 首頁重定向（讀取 menu-config 設定，fallback 到第一個有權限的 menu 項目）──────
 export const HOME_PAGE_STORAGE_KEY = 'portal_home_page_route'
 
@@ -144,6 +154,10 @@ const PERM_DEFAULT_ROUTES: { key: string; route: string }[] = [
   { key: 'claim_report_view',                 route: '/claim-report/monthly' },
   { key: 'nichiyo_purchase.view',             route: '/nichiyo-purchase-report/monthly' },
   { key: 'nichiyo_claim.view',                route: '/nichiyo-claim-report/monthly' },
+  { key: 'contract_view',                     route: '/contract' },
+  { key: 'contract_expiring_view',            route: '/contract/expiring' },
+  { key: 'contract_claims_view',              route: '/contract/claims' },
+  { key: 'contract_renewals_view',            route: '/contract/renewals' },
   { key: 'budget_view',                       route: '/budget/dashboard' },
   { key: 'calendar_view',                     route: '/calendar' },
   { key: 'luqun_repair_view',                 route: '/luqun-repair/dashboard' },
@@ -436,6 +450,38 @@ export default function AppRouter() {
           <Route path="mappings"                 element={<BudgetMappingsPage />} />
         </Route>
 
+        {/* ── 合約管理 ──────────────────────────────────────────────────── */}
+        <Route path="contract" element={
+          <PermissionGuard permissionKey="contract_view">
+            <Outlet />
+          </PermissionGuard>
+        }>
+          <Route index element={<ContractPage />} />
+          <Route path="dashboard" element={<ContractDashboardPage />} />
+          <Route path="expiring" element={
+            <PermissionGuard permissionKey="contract_expiring_view">
+              <ContractExpiringPage />
+            </PermissionGuard>
+          } />
+          <Route path="claims" element={
+            <PermissionGuard permissionKey="contract_claims_view">
+              <ContractClaimsPage />
+            </PermissionGuard>
+          } />
+          <Route path="renewals" element={
+            <PermissionGuard permissionKey="contract_renewals_view">
+              <ContractRenewalsPage />
+            </PermissionGuard>
+          } />
+          <Route path="import" element={
+            <PermissionGuard permissionKey="contract_create_edit">
+              <ContractImportPage />
+            </PermissionGuard>
+          } />
+          <Route path="vendors" element={<VendorsPage />} />
+          <Route path="settings" element={<SettingsPage />} />
+        </Route>
+
         {/* ── 商場工務報修 ──────────────────────────────────────────────── */}
         <Route path="luqun-repair">
           <Route path="dashboard" element={<LuqunRepairPage />} />
@@ -549,14 +595,14 @@ export default function AppRouter() {
               <RagicFieldAuditPage />
             </PermissionGuard>
           } />
-          <Route path="knowledge-graph" element={
-            <PermissionGuard permissionKey="system_admin_only">
-              <KnowledgeGraphPage />
-            </PermissionGuard>
-          } />
           <Route path="repair-unfinished-report" element={
             <PermissionGuard permissionKey="repair_unfinished_report_view">
               <RepairUnfinishedReportPage />
+            </PermissionGuard>
+          } />
+          <Route path="knowledge-graph" element={
+            <PermissionGuard permissionKey="system_admin_only">
+              <KnowledgeGraphPage />
             </PermissionGuard>
           } />
           <Route path="usage-monitor" element={

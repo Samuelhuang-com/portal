@@ -53,6 +53,7 @@
  *   2026-05-17  新增 staticPages（靜態頁面）docs/ 目錄 iframe 瀏覽器，route /settings/static-pages
  *   2026-05-19  新增 ragicFieldAudit（Ragic 欄位比對）欄位稽核工具，route /settings/ragic-field-audit
  *   2026-05-24  新增 pptExport（飯店 Dashboard PPT 匯出設定）Section Registry 架構，route /ppt-export
+ *   2026-05-27  新增 contract（合約管理）Phase 1.3 Portal 集成，route /contract + /contract/vendors + /contract/settings
  */
 
 // ── 系統標題 ──────────────────────────────────────────────────────────────────
@@ -62,6 +63,7 @@ export const SITE_TITLE = '維春集團管理 Portal'
 export const NAV_GROUP = {
   dashboard:  'Dashboard',
   schedule:   '班表',               // ← 新增：班表管理（行事曆之後）
+  contract:   '合約管理',           // ← 新增：合約管理（班表之後、預算之前）
   budget:     '預算管理',         // ← 新增：預算管理（在 dashboard 之後、行事曆之前）
   calendar:   '行事曆',           // ← 新增：Command Calendar（在 dashboard 之後、hotel 之前）
   hotel:      '飯店管理',
@@ -215,6 +217,16 @@ export const NAV_PAGE = {
   scheduleStaff:        '人員管理',             // ← route /schedule/staff
   scheduleShifts:       '班別管理',             // ← route /schedule/shifts
   scheduleDepartments:  '部門管理',             // ← route /schedule/departments
+
+  // 合約管理
+  contractList:         '合約清單',             // ← route /contract
+  contractDashboard:    'Dashboard',            // ← route /contract/dashboard
+  contractImport:       '資料導入',             // ← route /contract/import
+  contractVendors:      '廠商管理',             // ← route /contract/vendors
+  contractSettings:     '合約設定',             // ← route /contract/settings
+  contractExpiring:     '到期預警',             // ← route /contract/expiring (Phase 2)
+  contractClaims:       '請款管理',             // ← route /contract/claims   (Phase 2)
+  contractRenewals:     '續約管理',             // ← route /contract/renewals (Phase 3)
 
   // PPT 匯出設定（飯店 Dashboard，全公司共用設定，一階選單）
   pptExport:            '飯店 Dashboard PPT 匯出設定',  // ← route /ppt-export

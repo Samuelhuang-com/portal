@@ -81,6 +81,14 @@ PERMISSION_DEFINITIONS = [
     {"key": "repair_unfinished_report_admin",  "label": "報修未完成報表：管理員", "group": "系統設定"},
     {"key": "hotel_overview_ppt_export", "label": "飯店 Dashboard 匯出 PowerPoint", "group": "飯店管理"},
     {"key": "hotel_overview_ppt_config", "label": "飯店 Dashboard PPT 匯出設定",    "group": "飯店管理"},
+    {"key": "contract_view",          "label": "合約清單",       "group": "合約管理"},
+    {"key": "contract_create_edit",   "label": "合約新增/編輯", "group": "合約管理"},
+    {"key": "contract_vendor_manage", "label": "廠商管理",       "group": "合約管理"},
+    {"key": "contract_admin",         "label": "合約設定",       "group": "合約管理"},
+    {"key": "contract_expiring_view", "label": "到期預警",       "group": "合約管理"},
+    {"key": "contract_claims_view",   "label": "請款管理",       "group": "合約管理"},
+    {"key": "contract_renewals_view", "label": "續約管理",       "group": "合約管理"},
+    {"key": "contract_approve",       "label": "合約審核",       "group": "合約管理"},
 ]
 
 
@@ -172,7 +180,7 @@ def save_role_permissions(
         db.add(RolePermission(role_id=role_id, permission_key=key))
     db.commit()
 
-    perms_after = (
+    perms = (
         db.query(RolePermission.permission_key)
         .filter(RolePermission.role_id == role_id)
         .all()
@@ -180,5 +188,5 @@ def save_role_permissions(
     return RolePermissionsOut(
         role_id=role_id,
         role_name=role.name,
-        permissions=[p[0] for p in perms_after],
+        permissions=[p[0] for p in perms],
     )

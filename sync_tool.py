@@ -1504,6 +1504,29 @@ class SyncApp(tk.Tk):
                                {"text": f"[排程] 🕐 觸發：{module_name}（{time_str}）"})
                     self._trigger_scheduled(module_name)
 
+            elif mode == "weekly":
+                time_str = cfg.get("time", "07:00")
+                try:
+                    weekday = int(cfg.get("weekday", 0))  # 0=週一, 6=週日
+                    h, m = map(int, time_str.split(":"))
+                except (ValueError, TypeError):
+                    logger.warning("[排程] 每週設定格式錯誤（%s）：weekday=%s time=%s",
+                                   module_name, cfg.get("weekday"), time_str)
+                    continue
+                _WD_NAMES = ["週一", "週二", "週三", "週四", "週五", "週六", "週日"]
+                wd_name   = _WD_NAMES[weekday] if 0 <= weekday <= 6 else f"weekday={weekday}"
+                # dedup key 格式與 daily 不同，避免互相覆蓋
+                dedup_val = f"weekly:{weekday}:{time_str}"
+                done_key  = self._sched_daily_done.get(module_name)
+                if (now.weekday() == weekday
+                        and now.hour == h and now.minute == m
+                        and done_key != (today, dedup_val)):
+                    self._sched_daily_done[module_name] = (today, dedup_val)
+                    logger.info("[排程] 📅 每週觸發：%s（%s %s）", module_name, wd_name, time_str)
+                    self.after(0, self._lbl_bottom.config,
+                               {"text": f"[排程] 📅 觸發：{module_name}（{wd_name} {time_str}）"})
+                    self._trigger_scheduled(module_name)
+
     def _trigger_scheduled(self, module_name: str):
         """將排程任務加入 FIFO 佇列，由 runner thread 依序執行（避免 SQLite 競爭）。"""
         logger = logging.getLogger(__name__)
@@ -1682,10 +1705,11 @@ class SyncApp(tk.Tk):
 
         # ── 表頭 ──────────────────────────────────────────────────────────────
         hdr_cfg = [
-            ("模組名稱",     220, tk.W),
-            ("模式",         200, tk.CENTER),
-            ("間隔（分鐘）", 150, tk.CENTER),
-            ("指定時間（HH:MM）", 160, tk.CENTER),
+            ("模組名稱",         220, tk.W),
+            ("模式",             240, tk.CENTER),
+            ("間隔（分鐘）",     130, tk.CENTER),
+            ("星期",             110, tk.CENTER),
+            ("時間（HH:MM）",   130, tk.CENTER),
         ]
         for col_idx, (text, width, anchor) in enumerate(hdr_cfg):
             lbl = tk.Label(
@@ -1715,6 +1739,9 @@ class SyncApp(tk.Tk):
         INTERVAL_VALUES = [v for _, v in INTERVAL_CHOICES]
         INTERVAL_LABELS = [l for l, _ in INTERVAL_CHOICES]
 
+        WEEKDAY_LABELS = ["週一", "週二", "週三", "週四", "週五", "週六", "週日"]
+        WEEKDAY_VALUES = [0, 1, 2, 3, 4, 5, 6]
+
         # 存放每列的控制變數
         row_vars: list[dict] = []   # [{mode_var, interval_var, time_var, ...}, ...]
 
@@ -1735,18 +1762,24 @@ class SyncApp(tk.Tk):
                 anchor=tk.W, padx=6, pady=4,
             ).grid(row=row_idx, column=0, padx=2, pady=1, sticky=tk.EW)
 
-            # 模式 Radiobuttons（關閉 / 間隔 / 指定時間）
+            # 讀取 weekly 設定（weekday 預設週一=0）
+            wd_val = cfg.get("weekday", 0)
+
+            # 模式 Radiobuttons（關閉 / 間隔 / 指定時間 / 每週）
             mode_var = tk.StringVar(value=mode_val)
             mode_frame = tk.Frame(inner, bg=row_bg)
             mode_frame.grid(row=row_idx, column=1, padx=2, pady=1, sticky=tk.EW)
 
-            for m_label, m_val in [("關閉", "off"), ("間隔", "interval"), ("指定時間", "daily")]:
+            for m_label, m_val in [
+                ("關閉", "off"), ("間隔", "interval"),
+                ("每日", "daily"), ("每週", "weekly"),
+            ]:
                 tk.Radiobutton(
                     mode_frame, text=m_label, variable=mode_var, value=m_val,
                     bg=row_bg, fg=C_TEXT, selectcolor="#094771",
                     activebackground=row_bg, activeforeground=C_ACCENT,
                     font=("Microsoft JhengHei UI", 9),
-                ).pack(side=tk.LEFT, padx=4)
+                ).pack(side=tk.LEFT, padx=3)
 
             # 間隔 Combobox
             interval_var = tk.StringVar()
@@ -1765,7 +1798,23 @@ class SyncApp(tk.Tk):
             )
             ivl_cb.grid(row=row_idx, column=2, padx=6, pady=1)
 
-            # 指定時間 Entry (HH:MM)
+            # 星期 Combobox（供 weekly 模式使用）
+            weekday_var = tk.StringVar()
+            try:
+                wd_label = WEEKDAY_LABELS[WEEKDAY_VALUES.index(int(wd_val))]
+            except (ValueError, IndexError):
+                wd_label = WEEKDAY_LABELS[0]
+            weekday_var.set(wd_label)
+
+            wd_cb = ttk.Combobox(
+                inner, textvariable=weekday_var,
+                values=WEEKDAY_LABELS,
+                width=7, state="readonly",
+                font=("Microsoft JhengHei UI", 9),
+            )
+            wd_cb.grid(row=row_idx, column=3, padx=4, pady=1)
+
+            # 指定時間 Entry (HH:MM) — daily 與 weekly 共用
             time_var = tk.StringVar(value=time_val)
             time_entry = tk.Entry(
                 inner, textvariable=time_var,
@@ -1775,19 +1824,21 @@ class SyncApp(tk.Tk):
                 font=("Consolas", 10),
                 relief=tk.FLAT,
             )
-            time_entry.grid(row=row_idx, column=3, padx=6, pady=1)
+            time_entry.grid(row=row_idx, column=4, padx=6, pady=1)
 
             # 動態啟用/停用控制項
             # ⚠️ 必須用 closure factory，避免 trace_add 傳入的 3 個位置參數
-            # 覆蓋掉 default value（Python 的 default arg 陷阱）
-            def _make_state_updater(_mv, _cb, _entry):
+            def _make_state_updater(_mv, _cb, _wd_cb, _entry):
                 def _update(*_args):
                     m = _mv.get()
                     _cb.configure(state="readonly" if m == "interval" else "disabled")
-                    _entry.configure(state=tk.NORMAL if m == "daily" else tk.DISABLED)
+                    _wd_cb.configure(state="readonly" if m == "weekly" else "disabled")
+                    _entry.configure(
+                        state=tk.NORMAL if m in ("daily", "weekly") else tk.DISABLED
+                    )
                 return _update
 
-            _updater = _make_state_updater(mode_var, ivl_cb, time_entry)
+            _updater = _make_state_updater(mode_var, ivl_cb, wd_cb, time_entry)
             mode_var.trace_add("write", _updater)
             _updater()   # 初始套用
 
@@ -1795,6 +1846,7 @@ class SyncApp(tk.Tk):
                 "name":         name,
                 "mode_var":     mode_var,
                 "interval_var": interval_var,
+                "weekday_var":  weekday_var,
                 "time_var":     time_var,
             })
 
@@ -1803,19 +1855,20 @@ class SyncApp(tk.Tk):
         btn_frame.pack(fill=tk.X, padx=16)
 
         def _on_save():
+            import re as _re
             result = {}
             for rv in row_vars:
                 name     = rv["name"]
                 mode     = rv["mode_var"].get()
                 ivl_lbl  = rv["interval_var"].get()
+                wd_lbl   = rv["weekday_var"].get()
                 time_str = rv["time_var"].get().strip()
 
-                # 驗證指定時間格式
-                if mode == "daily":
-                    import re as _re
+                # 驗證指定時間格式（daily / weekly 共用）
+                if mode in ("daily", "weekly"):
                     if not _re.match(r"^\d{2}:\d{2}$", time_str):
                         from tkinter import messagebox
-                        messagebox.showerror("格式錯誤", f"「{name}」的指定時間格式必須為 HH:MM，例如 23:05", parent=dlg)
+                        messagebox.showerror("格式錯誤", f"「{name}」的指定時間格式必須為 HH:MM，例如 07:00", parent=dlg)
                         return
 
                 try:
@@ -1823,11 +1876,19 @@ class SyncApp(tk.Tk):
                 except ValueError:
                     ivl_val = 0
 
+                try:
+                    wd_val = WEEKDAY_VALUES[WEEKDAY_LABELS.index(wd_lbl)]
+                except ValueError:
+                    wd_val = 0
+
                 entry = {"mode": mode}
                 if mode == "interval":
                     entry["interval_minutes"] = ivl_val
                 elif mode == "daily":
                     entry["time"] = time_str
+                elif mode == "weekly":
+                    entry["weekday"] = wd_val
+                    entry["time"]    = time_str
                 result[name] = entry
 
             self.save_module_schedules(result)
@@ -1863,12 +1924,12 @@ class SyncApp(tk.Tk):
         dlg.update_idletasks()
         row_count   = len(sched_items) + 1   # +1 表頭
         dlg_height  = min(row_count * 34 + 130, 700)
-        dlg.geometry(f"740x{dlg_height}")
+        dlg.geometry(f"860x{dlg_height}")
         # 置中於主視窗
-        x = self.winfo_x() + (self.winfo_width()  - 740) // 2
+        x = self.winfo_x() + (self.winfo_width()  - 860) // 2
         y = self.winfo_y() + (self.winfo_height() - dlg_height) // 2
-        dlg.geometry(f"740x{dlg_height}+{max(0,x)}+{max(0,y)}")
-        dlg.minsize(600, 400)
+        dlg.geometry(f"860x{dlg_height}+{max(0,x)}+{max(0,y)}")
+        dlg.minsize(700, 400)
 
     # ── 清除 Log ─────────────────────────────────────────────────────────────
     def _on_clear(self):

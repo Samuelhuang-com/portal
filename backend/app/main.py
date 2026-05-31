@@ -105,6 +105,8 @@ from app.routers import (
     repair_report,
     usage_stats,
     hotel_ppt_export,
+    repair_ppt_export,
+    contract,
 )
 
 
@@ -280,6 +282,87 @@ def _seed_builtin_roles():
                 print(f"[Portal] Built-in role '{name}' created.")
         conn.commit()
     print("[Portal] Built-in roles seed checked.")
+
+
+def _seed_admin_user():
+    """
+    確保預設的 admin 用戶存在於資料庫（idempotent）。
+    建立流程：
+    1. 確保預設 Tenant（code="default"）存在
+    2. 確保 admin 用戶存在（email="admin", password="admin1234"）
+    3. 確保 admin 用戶擁有 system_admin 角色
+    """
+    from sqlalchemy import text
+    import uuid
+    from app.core.security import hash_password
+
+    with engine.connect() as conn:
+        # ── 1. 確保預設 Tenant 存在 ───────────────────────────────────────────
+        tenant_id = None
+        existing_tenant = conn.execute(
+            text("SELECT id FROM tenants WHERE code = 'default'")
+        ).fetchone()
+        if existing_tenant:
+            tenant_id = existing_tenant[0]
+        else:
+            tenant_id = str(uuid.uuid4())
+            conn.execute(
+                text(
+                    "INSERT INTO tenants (id, code, name, type, is_active, created_at, updated_at) "
+                    "VALUES (:id, 'default', 'Default Tenant', 'system', 1, datetime('now'), datetime('now'))"
+                ),
+                {"id": tenant_id},
+            )
+            print("[Portal] Default tenant created.")
+
+        # ── 2. 確保 admin 用戶存在 ───────────────────────────────────────────
+        user_id = None
+        existing_user = conn.execute(
+            text("SELECT id FROM users WHERE email = 'admin'")
+        ).fetchone()
+        if existing_user:
+            user_id = existing_user[0]
+        else:
+            user_id = str(uuid.uuid4())
+            hashed_password = hash_password("admin1234")
+            conn.execute(
+                text(
+                    "INSERT INTO users (id, tenant_id, email, full_name, hashed_password, is_active, must_change_password, created_at, updated_at) "
+                    "VALUES (:id, :tenant_id, 'admin', 'Administrator', :hashed_pwd, 1, 0, datetime('now'), datetime('now'))"
+                ),
+                {"id": user_id, "tenant_id": tenant_id, "hashed_pwd": hashed_password},
+            )
+            print("[Portal] Default admin user created.")
+
+        # ── 3. 確保 admin 用戶擁有 system_admin 角色 ──────────────────────────
+        existing_role = conn.execute(
+            text(
+                "SELECT user_roles.id FROM user_roles "
+                "JOIN roles ON user_roles.role_id = roles.id "
+                "WHERE user_roles.user_id = :user_id AND roles.name = 'system_admin'"
+            ),
+            {"user_id": user_id},
+        ).fetchone()
+        if not existing_role:
+            role_id = conn.execute(
+                text("SELECT id FROM roles WHERE name = 'system_admin'")
+            ).fetchone()[0]
+            conn.execute(
+                text(
+                    "INSERT INTO user_roles (id, user_id, role_id, tenant_id, granted_at) "
+                    "VALUES (:id, :user_id, :role_id, :tenant_id, datetime('now'))"
+                ),
+                {
+                    "id": str(uuid.uuid4()),
+                    "user_id": user_id,
+                    "role_id": role_id,
+                    "tenant_id": tenant_id,
+                },
+            )
+            print("[Portal] system_admin role assigned to default admin user.")
+
+        conn.commit()
+    print("[Portal] Admin user seed checked.")
 
 
 def _seed_menu_config_mall_pm_group():
@@ -556,6 +639,30 @@ def _migrate_ihg_rm_time_fields():
                 conn.execute(text(f"ALTER TABLE ihg_rm_master ADD COLUMN {col} {typedef}"))
                 conn.commit()
                 print(f"[Migration] ihg_rm_master.{col} added")
+
+
+def _migrate_contract_approval_fields():
+    """
+    欄位補丁（2026-05-28）：為 contracts 表加入合約審核三欄位
+      - approved_by     VARCHAR(100) 核准人
+      - approved_at     DATETIME     核准時間
+      - approval_comment TEXT        審核意見
+    皆為 nullable，不影響現有資料。
+    """
+    from sqlalchemy import text
+    new_cols = [
+        ("approved_by",      "VARCHAR(100)"),
+        ("approved_at",      "DATETIME"),
+        ("approval_comment", "TEXT"),
+    ]
+    with engine.connect() as conn:
+        result = conn.execute(text("PRAGMA table_info(contracts)"))
+        existing = {row[1] for row in result.fetchall()}
+        for col, typedef in new_cols:
+            if col not in existing:
+                conn.execute(text(f"ALTER TABLE contracts ADD COLUMN {col} {typedef}"))
+                conn.commit()
+                print(f"[Migration] contracts.{col} added")
 
 
 def _migrate_security_patrol_is_note():
@@ -964,6 +1071,7 @@ async def lifespan(app: FastAPI):
     import app.models.api_access_log            # noqa: F401  使用監控日誌
     import app.models.ppt_export_config        # noqa: F401  PPT 匯出設定
     import app.models.ppt_export_history       # noqa: F401  PPT 匯出歷史紀錄
+    import app.models.contract                 # noqa: F401  合約管理（含 ContractClaim）
 
     # B4F 扁平化遷移：刪除舊 batch 表 + 檢查 item 表欄位（必須在 create_all 之前）
     _migrate_b4f_flatten()
@@ -1014,6 +1122,9 @@ async def lifespan(app: FastAPI):
 
     # 內建角色 seed（system_admin / tenant_admin / module_manager / viewer）
     _seed_builtin_roles()
+
+    # 預設 admin 用戶 seed（email: admin, password: admin1234）
+    _seed_admin_user()
 
     # Ragic Sheet 設定 seed（各模組各部門的 list_path / detail_path）
     from app.services.ragic_sheet_config_service import seed_ragic_sheet_config
@@ -1072,6 +1183,11 @@ async def lifespan(app: FastAPI):
     # Ragic URL 欄位補丁（2026-05-19）：ragic_app_portal_annotations.ragic_url
     _migrate_annotation_ragic_url()
     print("[Portal] ragic_app_portal_annotations ragic_url migration checked.")
+
+    # 合約審核欄位補丁（2026-05-28）：contracts.approved_by / approved_at / approval_comment
+    _migrate_contract_approval_fields()
+    print("[Portal] contracts approval fields migration checked.")
+    # contract_attachments 資料表已由 app.models.contract import + create_all 自動建立
 
     # 選單設定補丁（2026-04-28）：隱藏舊 custom_1777348120465，補齊 mall-pm-group 子項 DB 記錄
     _seed_menu_config_mall_pm_group()
@@ -1202,6 +1318,17 @@ async def lifespan(app: FastAPI):
             misfire_grace_time=3600,
         )
         print(f"[Portal] PPT auto-export scheduled: every month day {AUTO_EXPORT_DAY} at {AUTO_EXPORT_HOUR:02d}:00")
+
+        # E3：合約到期自動通知（每日 09:00）
+        from app.services.contract_expiry_notify import notify_expiring_contracts as _contract_expiry_notify
+        _scheduler.add_job(
+            _contract_expiry_notify,
+            trigger=_CronTrigger(hour=9, minute=0),
+            id="contract_expiry_notify",
+            replace_existing=True,
+            misfire_grace_time=3600,
+        )
+        print("[Portal] Contract expiry notification scheduled: daily at 09:00")
 
         _scheduler.start()
         print("[Portal] AutoSync scheduler started (cron-aligned, default every 30 minutes).")
@@ -1580,6 +1707,20 @@ app.include_router(
     tags=["飯店 Dashboard PPT 匯出"],
 )
 
+# ── 報修模組 PPT 匯出 ─────────────────────────────────────────────────────────
+app.include_router(
+    repair_ppt_export.router,
+    prefix=f"{API_PREFIX}",
+    tags=["報修 PPT 匯出"],
+)
+
+# ── 合約管理系統 ─────────────────────────────────────────────────────────────
+app.include_router(
+    contract.router,
+    prefix=f"{API_PREFIX}/contract",
+    tags=["合約管理"],
+)
+
 # ── 靜態說明文件（docs-static）──────────────────────────────────────────────
 # 供 settings/static-pages 的 iframe 預覽使用
 # 路徑：/docs-static/<filename>  →  portal/docs/<filename>
@@ -1591,7 +1732,7 @@ if _DOCS_DIR.exists():
         name="docs-static",
     )
 
-# ── 前端靜態檔（SPA catch-all）────────────────────────────────────────────────
+# ── 前端靜態檔（SPA catch-all）────────────────────────────────────────────
 # dist/ 位於 portal/frontend/dist，由 npm run build 產生
 _FRONTEND_DIST = pathlib.Path(__file__).parent.parent.parent / "frontend" / "dist"
 
@@ -1612,5 +1753,6 @@ if _FRONTEND_DIST.exists():
         # 否則一律回傳 index.html 讓前端 Router 處理（SPA 模式）
         candidate = _FRONTEND_DIST / full_path
         if candidate.is_file():
-            return FileResponse(candidate)
-        return FileResponse(_FRONTEND_DIST / "index.html")
+      
+            return FileResponse(str(candidate))
+        return FileResponse(str(_FRONTEND_DIST / "index.html"))

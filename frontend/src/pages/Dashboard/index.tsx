@@ -22,7 +22,7 @@ import { useEffect, useState, useCallback, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Row, Col, Card, Statistic, Typography, Tag, Table, Collapse,
-  Spin, Tooltip, Progress, Space, Button, Breadcrumb, Divider, Badge, Select,
+  Spin, Tooltip, Progress, Space, Button, Breadcrumb, Divider, Badge, Select, Alert,
 } from 'antd'
 import {
   HomeOutlined, ReloadOutlined, CheckCircleOutlined,
@@ -30,7 +30,7 @@ import {
   RightOutlined, SafetyOutlined, ShopOutlined,
   AlertOutlined, BuildOutlined, ToolOutlined,
   DollarOutlined, RiseOutlined, WarningOutlined, BankOutlined,
-  ArrowUpOutlined, ArrowDownOutlined,
+  ArrowUpOutlined, ArrowDownOutlined, FileProtectOutlined, CalendarOutlined,
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import relativeTime from 'dayjs/plugin/relativeTime'
@@ -51,6 +51,7 @@ import { fetchDashboard as fetchLuqunDashboard } from '@/api/luqunRepair'
 import { fetchDashboard as fetchDazhiDashboard } from '@/api/dazhiRepair'
 import type { DashboardData as RepairDashboardData, TypeDistItem } from '@/types/luqunRepair'
 import { getBudgetDashboard, type DashboardData as BudgetDashboardData } from '@/api/budget'
+import { fetchExpiringContracts, fetchClaimsStats } from '@/api/contract'
 import {
   fetchStats,
   type CategoryStats, type HoursRow, type PersonHoursRow, type PersonRankingItem,
@@ -1057,6 +1058,14 @@ export default function DashboardPage() {
   const [selectedYear,   setSelectedYear]   = useState<number>(dayjs().year())
   const [selectedMonth,  setSelectedMonth]  = useState<number>(dayjs().month() + 1)
   const [execStats,        setExecStats]        = useState<CategoryStats | null>(null)
+  const [contractExpiring, setContractExpiring] = useState<Array<{
+    contract_id: string; contract_name: string; vendor_name: string
+    remaining_days: number; end_date: string; risk_level: string
+  }>>([])
+  const [contractClaimsStats, setContractClaimsStats] = useState<{
+    total_claims: number; monthly_amount: number; pending_count: number
+    by_status: Record<string, number>
+  } | null>(null)
   const [hotelMonthlyData, setHotelMonthlyData] = useState<HotelMonthlyHoursData | null>(null)
   const [mallMonthlyData,  setMallMonthlyData]  = useState<MallMonthlyHoursData | null>(null)
   const [hotelDailyData,   setHotelDailyData]   = useState<HotelDailyHoursData | null>(null)
@@ -1076,7 +1085,7 @@ export default function DashboardPage() {
   const loadAll = useCallback(async () => {
     setLoading(true)
     try {
-      const [hotel, mall, sec, trend, closure, luqun, dazhi, budget, hotelMon, mallMon, hotelDay, mallDay, execSt] =
+      const [hotel, mall, sec, trend, closure, luqun, dazhi, budget, hotelMon, mallMon, hotelDay, mallDay, execSt, ctExp, ctClaims] =
         await Promise.allSettled([
           dashboardApi.kpi().then(r => r.data),
           fetchDashboardSummary(today),
@@ -1091,6 +1100,8 @@ export default function DashboardPage() {
           fetchHotelDailyHours(selectedYear, selectedMonth),
           fetchMallDailyHours(selectedYear, selectedMonth),
           fetchStats({ year: selectedYear, month: selectedMonth, sources: 'all', category: 'all', person: 'all' }),
+          fetchExpiringContracts(30),
+          fetchClaimsStats(),
         ])
       if (hotel.status      === 'fulfilled') setHotelKpi(hotel.value)
       if (mall.status       === 'fulfilled') setMallData(mall.value)
@@ -1104,7 +1115,9 @@ export default function DashboardPage() {
       if (mallMon.status    === 'fulfilled') setMallMonthlyData(mallMon.value)
       if (hotelDay.status   === 'fulfilled') setHotelDailyData(hotelDay.value)
       if (mallDay.status    === 'fulfilled') setMallDailyData(mallDay.value)
-      if (execSt.status    === 'fulfilled') setExecStats(execSt.value)
+      if (execSt.status     === 'fulfilled') setExecStats(execSt.value)
+      if (ctExp.status      === 'fulfilled') setContractExpiring(ctExp.value.items ?? [])
+      if (ctClaims.status   === 'fulfilled') setContractClaimsStats(ctClaims.value)
       setRefreshed(new Date())
     } finally {
       setLoading(false)
@@ -1244,6 +1257,48 @@ export default function DashboardPage() {
           </Space>
         </Space>
       </div>
+
+      {/* ── D1：合約到期 Alert 橫幅 ──────────────────────────────── */}
+      {contractExpiring.length > 0 && (
+        <Alert
+          type={contractExpiring.some(c => c.remaining_days <= 7) ? 'error' : 'warning'}
+          showIcon
+          icon={<CalendarOutlined />}
+          style={{ marginBottom: 16, borderRadius: 6 }}
+          message={
+            <Space>
+              <strong style={{ fontSize: 14 }}>
+                {contractExpiring.length} 份合約
+              </strong>
+              <span>將於 30 天內到期</span>
+              <Button
+                size="small" type="link" style={{ padding: 0 }}
+                onClick={() => navigate('/contract/expiring')}
+              >
+                查看全部 →
+              </Button>
+            </Space>
+          }
+          description={
+            <div style={{ fontSize: 12, marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: '4px 16px' }}>
+              {contractExpiring.slice(0, 5).map(c => (
+                <span key={c.contract_id}>
+                  {c.contract_name || c.contract_id}
+                  <Tag
+                    color={c.remaining_days <= 7 ? 'red' : c.remaining_days <= 14 ? 'orange' : 'gold'}
+                    style={{ marginLeft: 4, fontSize: 11 }}
+                  >
+                    剩 {c.remaining_days} 天
+                  </Tag>
+                </span>
+              ))}
+              {contractExpiring.length > 5 && (
+                <span style={{ color: '#8c8c8c' }}>…共 {contractExpiring.length} 份</span>
+              )}
+            </div>
+          }
+        />
+      )}
 
       {/* ══════════════════════════════════════════════════════════════
           ROW 0.3 — 工務報修主管摘要（飯店 + 商場 + 工項比較表）
@@ -1630,6 +1685,103 @@ export default function DashboardPage() {
               },
             ]}
           />
+        </Col>
+      </Row>
+
+      {/* ══════════════════════════════════════════════════════════════
+          ROW 合約 — 合約管理 KPI
+      ══════════════════════════════════════════════════════════════ */}
+      <Card
+        size="small"
+        bordered={false}
+        style={{ borderTop: '3px solid #1B3A5C', marginBottom: 10, marginTop: 16 }}
+        bodyStyle={{ padding: '10px 16px' }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <FileProtectOutlined style={{ color: '#1B3A5C', fontSize: 16 }} />
+          <Text strong style={{ color: '#1B3A5C', fontSize: 15 }}>合約管理</Text>
+          <Button
+            size="small" type="link" style={{ padding: 0, fontSize: 12 }}
+            onClick={() => navigate('/contract')}
+          >
+            進入合約管理 →
+          </Button>
+        </div>
+      </Card>
+
+      <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+        {/* KPI 卡 1：即將到期（30天） */}
+        <Col xs={24} sm={12} lg={6}>
+          <Card
+            size="small"
+            hoverable
+            onClick={() => navigate('/contract/expiring')}
+            style={{ cursor: 'pointer' }}
+          >
+            <Statistic
+              title="即將到期（30天）"
+              value={contractExpiring.length}
+              suffix="份"
+              valueStyle={{ color: contractExpiring.length > 0 ? '#cf1322' : '#52c41a', fontWeight: 700 }}
+              prefix={<CalendarOutlined />}
+            />
+            <Text type="secondary" style={{ fontSize: 11 }}>
+              {contractExpiring.filter(c => c.remaining_days <= 7).length > 0
+                ? `其中 ${contractExpiring.filter(c => c.remaining_days <= 7).length} 份 ≤7 天`
+                : '無緊急到期'}
+            </Text>
+          </Card>
+        </Col>
+        {/* KPI 卡 2：本月請款金額 */}
+        <Col xs={24} sm={12} lg={6}>
+          <Card size="small" hoverable onClick={() => navigate('/contract/claims')} style={{ cursor: 'pointer' }}>
+            <Statistic
+              title="本月請款金額"
+              value={contractClaimsStats?.monthly_amount ?? 0}
+              prefix="$"
+              precision={0}
+              formatter={v => Number(v).toLocaleString('zh-TW')}
+              valueStyle={{ color: '#722ED1', fontWeight: 700 }}
+            />
+            <Text type="secondary" style={{ fontSize: 11 }}>
+              累計 {contractClaimsStats?.total_claims ?? 0} 筆請款
+            </Text>
+          </Card>
+        </Col>
+        {/* KPI 卡 3：待審核請款 */}
+        <Col xs={24} sm={12} lg={6}>
+          <Card size="small" hoverable onClick={() => navigate('/contract/claims')} style={{ cursor: 'pointer' }}>
+            <Statistic
+              title="待審核請款"
+              value={contractClaimsStats?.pending_count ?? 0}
+              suffix="筆"
+              valueStyle={{ color: (contractClaimsStats?.pending_count ?? 0) > 0 ? '#faad14' : '#52c41a', fontWeight: 700 }}
+              prefix={<DollarOutlined />}
+            />
+            <Text type="secondary" style={{ fontSize: 11 }}>需要審核處理</Text>
+          </Card>
+        </Col>
+        {/* KPI 卡 4：請款狀態分布 */}
+        <Col xs={24} sm={12} lg={6}>
+          <Card size="small">
+            <Text strong style={{ fontSize: 13, color: '#595959' }}>請款狀態分布</Text>
+            <div style={{ marginTop: 8 }}>
+              {contractClaimsStats?.by_status
+                ? Object.entries(contractClaimsStats.by_status).map(([status, count]) => {
+                    const COLOR: Record<string, string> = {
+                      '待審核': 'default', '已核准': 'success', '已拒絕': 'error', '已付款': 'blue',
+                    }
+                    return (
+                      <div key={status} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2 }}>
+                        <Tag color={COLOR[status] ?? 'default'} style={{ fontSize: 11, margin: 0 }}>{status}</Tag>
+                        <Text style={{ fontSize: 12, fontWeight: 600 }}>{count as number} 筆</Text>
+                      </div>
+                    )
+                  })
+                : <Text type="secondary" style={{ fontSize: 12 }}>載入中…</Text>
+              }
+            </div>
+          </Card>
         </Col>
       </Row>
 

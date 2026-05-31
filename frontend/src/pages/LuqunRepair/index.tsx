@@ -16,7 +16,7 @@ import {
 import {
   HomeOutlined, ReloadOutlined, ToolOutlined,
   CheckCircleOutlined, ClockCircleOutlined, ExclamationCircleOutlined,
-  DashboardOutlined, FileTextOutlined, DownloadOutlined,
+  DashboardOutlined, FileTextOutlined, DownloadOutlined, FilePptOutlined,
   WarningOutlined, DollarOutlined, SearchOutlined, ApiOutlined, QuestionCircleOutlined, AuditOutlined,
   SyncOutlined, LinkOutlined,
 } from '@ant-design/icons'
@@ -24,6 +24,7 @@ import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip as RcTooltip, ResponsiveContainer, Legend,
   PieChart, Pie, Cell,
+  ComposedChart, LabelList, ReferenceLine,
 } from 'recharts'
 import type { ColumnsType } from 'antd/es/table'
 import dayjs from 'dayjs'
@@ -35,6 +36,7 @@ import {
   fetchSync, fetchPing, fetchFeeStats, fetchCaseImages,
 } from '@/api/luqunRepair'
 import type { SyncResult, PingResult, SyncFeeTotals } from '@/api/luqunRepair'
+import { exportRepairPptx } from '@/api/repairPptExport'
 import type {
   DashboardData, RepairStatsData, ClosingTimeData, TypeStatsData,
   RoomRepairTableData, DetailResult, FilterOptions, RepairCase,
@@ -771,17 +773,24 @@ function DashboardTab({
         {/* 報修類型分布 */}
         <Col xs={24} lg={10}>
           <Card title="報修類型分布" size="small">
-            <ResponsiveContainer width="100%" height={200}>
+            <ResponsiveContainer width="100%" height={300}>
               <PieChart>
-                <Pie data={type_dist} dataKey="count" nameKey="type" cx="50%" cy="50%"
-                  outerRadius={75} label={({ type, percent }) =>
-                    percent > 0.04 ? `${type} ${(percent * 100).toFixed(0)}%` : ''
-                  } labelLine={false}>
+                <Pie data={type_dist} dataKey="count" nameKey="type" cx="50%" cy="42%"
+                  outerRadius={80}
+                  label={({ percent }) =>
+                    percent > 0.04 ? `${(percent * 100).toFixed(0)}%` : ''
+                  }
+                  labelLine={false}>
                   {type_dist.map((_, idx) => (
                     <Cell key={idx} fill={PIE_COLORS[idx % PIE_COLORS.length]} />
                   ))}
                 </Pie>
-                <RcTooltip formatter={(v, n) => [v, n]} />
+                <RcTooltip formatter={(v, n) => [`${v} 件`, n]} />
+                <Legend
+                  iconType="circle"
+                  iconSize={8}
+                  wrapperStyle={{ fontSize: 11, paddingTop: 4 }}
+                />
               </PieChart>
             </ResponsiveContainer>
           </Card>
@@ -1357,32 +1366,185 @@ function RepairTypeTab({ year, focusMonth }: { year: number; focusMonth: number 
 
   return (
     <div>
-      {/* 摘要卡 */}
-      <Row gutter={12} style={{ marginBottom: 16 }}>
-        <Col>
-          <Card size="small">
-            <Statistic title="今年累計件數" value={data.year_total} suffix="件" />
-          </Card>
-        </Col>
-        {focusMonth != null && (
-          <>
-            <Col>
-              <Card size="small">
-                <Statistic
-                  title={`${focusMonth > 1 ? focusMonth - 1 : 12} 月件數`}
-                  value={data.rows.reduce((s, r) => s + r.prev_month, 0)}
-                  suffix="件"
+      {/* 摘要列 */}
+      {focusMonth != null && (
+        <Row gutter={16} style={{ marginBottom: 16 }}>
+          <Col span={8}>
+            <Card size="small" style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: 14, color: '#999' }}>今年累計件數</div>
+              <div style={{ fontSize: 20, fontWeight: 700, color: '#52C41A' }}>
+                {data.year_total}
+              </div>
+            </Card>
+          </Col>
+          <Col span={8}>
+            <Card size="small" style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: 14, color: '#999' }}>{focusMonth > 1 ? focusMonth - 1 : 12} 月件數</div>
+              <div style={{ fontSize: 20, fontWeight: 700, color: '#1B3A5C' }}>
+                {data.rows.reduce((s, r) => s + r.prev_month, 0)}
+              </div>
+            </Card>
+          </Col>
+          <Col span={8}>
+            <Card size="small" style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: 14, color: '#999' }}>{focusMonth} 月件數</div>
+              <div style={{ fontSize: 20, fontWeight: 700, color: '#4BA8E8' }}>
+                {data.rows.reduce((s, r) => s + r.this_month, 0)}
+              </div>
+            </Card>
+          </Col>
+        </Row>
+      )}
+
+      {/* ── 柏拉圖 ── */}
+      {(() => {
+        const sorted = [...data.rows]
+          .filter(r => r.row_total > 0)
+          .sort((a, b) => b.row_total - a.row_total)
+        const grandTotal = sorted.reduce((s, r) => s + r.row_total, 0)
+        let running = 0
+        const paretoData = sorted.map(r => {
+          running += r.row_total
+          return {
+            type: r.type,
+            count: r.row_total,
+            cumPct: grandTotal > 0 ? Math.round(running / grandTotal * 100) : 0,
+          }
+        })
+        const maxCount = sorted[0]?.row_total ?? 1
+
+        // 摘要卡數據
+        const top3Pct   = paretoData[2]?.cumPct ?? 0
+        const reach80Idx = paretoData.findIndex(d => d.cumPct >= 80)
+        const reach80Cnt = reach80Idx >= 0 ? reach80Idx + 1 : paretoData.length
+        const topType   = sorted[0]?.type ?? '—'
+        const topCount  = sorted[0]?.row_total ?? 0
+        const topPct    = grandTotal > 0 ? Math.round(topCount / grandTotal * 100) : 0
+
+        return (
+          <Card
+            title="柏拉圖分析（年度報修類型）"
+            size="small"
+            style={{ marginBottom: 20 }}
+          >
+            {/* 摘要卡 */}
+            <Row gutter={12} style={{ marginBottom: 14 }}>
+              <Col span={8}>
+                <div style={{ background: '#f0f4f8', borderRadius: 8, padding: '10px 14px', textAlign: 'center' }}>
+                  <div style={{ fontSize: 13, color: '#888', marginBottom: 4 }}>前 3 類累計</div>
+                  <div style={{ fontSize: 26, fontWeight: 700, color: '#1B3A5C', lineHeight: 1.2 }}>{top3Pct}%</div>
+                  <div style={{ fontSize: 12, color: '#aaa', marginTop: 3 }}>{sorted.slice(0, 3).map(r => r.type).join('、')}</div>
+                </div>
+              </Col>
+              <Col span={8}>
+                <div style={{ background: '#f0f4f8', borderRadius: 8, padding: '10px 14px', textAlign: 'center' }}>
+                  <div style={{ fontSize: 13, color: '#888', marginBottom: 4 }}>達 80% 需前幾類</div>
+                  <div style={{ fontSize: 26, fontWeight: 700, color: '#1B3A5C', lineHeight: 1.2 }}>{reach80Cnt} 類</div>
+                  <div style={{ fontSize: 12, color: '#aaa', marginTop: 3 }}>共 {sorted.length} 類中的 {Math.round(reach80Cnt / sorted.length * 100)}%</div>
+                </div>
+              </Col>
+              <Col span={8}>
+                <div style={{ background: '#f0f4f8', borderRadius: 8, padding: '10px 14px', textAlign: 'center' }}>
+                  <div style={{ fontSize: 13, color: '#888', marginBottom: 4 }}>最大改善槓桿</div>
+                  <div style={{ fontSize: 26, fontWeight: 700, color: '#1B3A5C', lineHeight: 1.2 }}>{topType}</div>
+                  <div style={{ fontSize: 12, color: '#aaa', marginTop: 3 }}>{topCount} 件，佔 {topPct}%</div>
+                </div>
+              </Col>
+            </Row>
+
+            {/* 圖表 */}
+            <ResponsiveContainer width="100%" height={340}>
+              <ComposedChart
+                data={paretoData}
+                barCategoryGap="8%"
+                margin={{ top: 30, right: 55, left: 0, bottom: 48 }}
+              >
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#eee" />
+                <XAxis
+                  dataKey="type"
+                  tick={{ fontSize: 14 }}
+                  angle={-35}
+                  textAnchor="end"
+                  interval={0}
                 />
-              </Card>
-            </Col>
-            <Col>
-              <Card size="small">
-                <Statistic title={`${focusMonth} 月件數`} value={data.rows.reduce((s, r) => s + r.this_month, 0)} suffix="件" />
-              </Card>
-            </Col>
-          </>
-        )}
-      </Row>
+                <YAxis
+                  yAxisId="left"
+                  allowDecimals={false}
+                  tick={{ fontSize: 14 }}
+                  domain={[0, Math.ceil(maxCount * 1.25)]}
+                  tickLine={false}
+                  axisLine={false}
+                />
+                <YAxis
+                  yAxisId="right"
+                  orientation="right"
+                  tick={{ fontSize: 14 }}
+                  domain={[0, 100]}
+                  tickFormatter={v => `${v}%`}
+                  tickLine={false}
+                  axisLine={false}
+                />
+                <RcTooltip
+                  formatter={(value, name) =>
+                    name === 'count'
+                      ? [`${value} 件`, '件數']
+                      : [`${value}%`, '累計佔比']
+                  }
+                />
+                <Bar yAxisId="left" dataKey="count" name="count" radius={[3, 3, 0, 0]}>
+                  {paretoData.map((entry, i) => (
+                    <Cell
+                      key={i}
+                      fill={entry.cumPct <= 80 ? '#1B3A5C' : '#4BA8E8'}
+                    />
+                  ))}
+                </Bar>
+                <Line
+                  yAxisId="right"
+                  type="linear"
+                  dataKey="cumPct"
+                  name="cumPct"
+                  stroke="#c0392b"
+                  strokeWidth={2.5}
+                  dot={{ r: 4, fill: '#c0392b', strokeWidth: 0 }}
+                  activeDot={{ r: 6 }}
+                >
+                  <LabelList
+                    dataKey="cumPct"
+                    position="top"
+                    formatter={(v: number) => `${v}%`}
+                    style={{ fontSize: 13, fill: '#c0392b', fontWeight: 700 }}
+                  />
+                </Line>
+                <ReferenceLine
+                  yAxisId="right"
+                  y={80}
+                  stroke="#e74c3c"
+                  strokeDasharray="5 4"
+                  strokeWidth={1.5}
+                  label={{ value: '80%', position: 'right', fontSize: 14, fill: '#e74c3c' }}
+                />
+              </ComposedChart>
+            </ResponsiveContainer>
+
+            {/* 圖例 */}
+            <div style={{ display: 'flex', gap: 20, fontSize: 13, color: '#888', marginTop: 4, paddingLeft: 8 }}>
+              <span>
+                <span style={{ display: 'inline-block', width: 11, height: 11, background: '#1B3A5C', borderRadius: 2, marginRight: 5, verticalAlign: 'middle' }} />
+                累計 ≤ 80%（重點類別）
+              </span>
+              <span>
+                <span style={{ display: 'inline-block', width: 11, height: 11, background: '#4BA8E8', borderRadius: 2, marginRight: 5, verticalAlign: 'middle' }} />
+                累計 &gt; 80%（次要類別）
+              </span>
+              <span>
+                <span style={{ display: 'inline-block', width: 18, height: 0, borderTop: '2px dashed #e74c3c', verticalAlign: 'middle', marginRight: 5 }} />
+                80% 基準線
+              </span>
+            </div>
+          </Card>
+        )
+      })()}
 
       <div style={{ overflowX: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 15 }}>
@@ -2072,6 +2234,21 @@ export default function LuqunRepairPage() {
     }
   }, [])
 
+  // PPT 匯出
+  const [pptLoading, setPptLoading] = useState(false)
+  const handlePptExport = useCallback(async () => {
+    setPptLoading(true)
+    try {
+      await exportRepairPptx({ module: 'luqun', year: queryYear, month: queryMonth ?? currentMonth })
+      message.success('PowerPoint 匯出成功！')
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      message.error(`匯出失敗：${msg}`)
+    } finally {
+      setPptLoading(false)
+    }
+  }, [queryYear, queryMonth])
+
   useEffect(() => {
     fetchYears().then(d => {
       const ys = d.years
@@ -2159,6 +2336,14 @@ export default function LuqunRepairPage() {
           </div>
         </div>
         <Space>
+          <Button
+            icon={<FilePptOutlined />}
+            loading={pptLoading}
+            onClick={handlePptExport}
+            style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)', border: 'none', color: '#fff' }}
+          >
+            匯出 PowerPoint
+          </Button>
           <Button
             icon={<ApiOutlined />}
             loading={pinging}

@@ -1,0 +1,15 @@
+[
+  "tests/test_contract_models.py::TestBudgetCategoryModel::test_budget_category_composite_unique",
+  "tests/test_contract_models.py::TestBudgetCategoryModel::test_create_budget_category",
+  "tests/test_contract_models.py::TestContractIntegration::test_complete_contract_workflow",
+  "tests/test_contract_models.py::TestContractItemModel::test_contract_item_cascade_delete",
+  "tests/test_contract_models.py::TestContractItemModel::test_contract_item_unique_seq",
+  "tests/test_contract_models.py::TestContractItemModel::test_create_contract_items",
+  "tests/test_contract_models.py::TestContractModel::test_contract_budget_source_validation",
+  "tests/test_contract_models.py::TestContractModel::test_contract_date_order_check",
+  "tests/test_contract_models.py::TestContractModel::test_contract_risk_level_validation",
+  "tests/test_contract_models.py::TestContractModel::test_create_contract",
+  "tests/test_contract_models.py::TestVendorModel::test_create_vendor",
+  "tests/test_contract_models.py::TestVendorModel::test_vendor_cascade_delete",
+  "tests/test_contract_models.py::TestVendorModel::test_vendor_unique_name"
+]

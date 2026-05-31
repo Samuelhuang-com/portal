@@ -19,3 +19,11 @@ body {
 .ant-table-tbody > tr > td {
   vertical-align: middle;
 }
+
+/* 逾期待審核請款列 — 淡黃底色 */
+.ant-table-tbody > tr.row-overdue > td {
+  background-color: #fffbe6 !important;
+}
+.ant-table-tbody > tr.row-overdue:hover > td {
+  background-color: #fff1b8 !important;
+}

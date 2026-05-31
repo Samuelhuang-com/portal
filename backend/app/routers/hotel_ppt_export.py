@@ -8,9 +8,10 @@
   POST /config    → 儲存使用者設定
   POST /export    → 觸發匯出（Registry-driven _build_hotel_pptx_v2）
 
-Section Registry 於本模組 import 時自動執行（共 14 個 sections）：
+Section Registry 於本模組 import 時自動執行（共 17 個 sections）：
   - hotel_overview 原有 12 個（Dashboard 7 + 每日/每月/每年/人員工時%/人員排名）
-  - 報修管理新增 2 個（報修未完成報表 / 本月結案工單）
+  - 報修管理 2 個（報修未完成報表 / 本月結案工單）
+  - 大直工務部 3 個（年度報修統計 / 未完成工單 / 本月結案工單）
 """
 
 import json
@@ -1495,4 +1496,296 @@ register_section(
     ),
     data_provider=_provide_repair_closed,
     detail_provider=_provide_repair_closed_detail,
+)
+
+
+# =============================================================================
+# 大直工務部 — Section 15：年度報修統計表（對應前端 3.1 報修 TAB）
+# =============================================================================
+
+def _provide_dazhi_repair_monthly_stats(db: Session, params: dict) -> list[dict]:
+    """
+    大直工務部 3.1 報修統計：全年 12 月份 × 9 欄交叉表。
+    直接呼叫 compute_repair_stats() — 確保口徑與前端 TAB 完全一致。
+    year 取自 params["year"]；month 不用於此 Section（全年展開）。
+    """
+    from app.models.dazhi_repair import DazhiRepairCase
+    from app.services.dazhi_repair_service import compute_repair_stats
+
+    year  = params.get("year", datetime.now().year)
+    cases = db.query(DazhiRepairCase).all()
+    stats = compute_repair_stats(cases, year)
+
+    rows: list[dict] = []
+    sum_closed_from_prev = 0
+    sum_this_total       = 0
+    sum_this_completed   = 0
+    sum_this_uncompleted = 0
+
+    for m in range(1, 13):
+        d  = stats["months"].get(m, {})
+        pv = d.get("prev_uncompleted",       0) or 0
+        cf = d.get("closed_from_prev",       0) or 0
+        pr = d.get("prev_remaining",         0) or 0
+        tt = d.get("this_month_total",       0) or 0
+        tc = d.get("this_month_completed",   0) or 0
+        tu = d.get("this_month_uncompleted", 0) or 0
+        mr = d.get("this_month_completion_rate")
+        cr = d.get("cum_completion_rate")
+
+        rows.append({
+            "月份":           f"{m:02d} 月",
+            "上月累計未完成":  str(pv),
+            "本月結案上月":    str(cf),
+            "上月遙留":        str(pr),
+            "本月報修":        str(tt),
+            "本月完成":        str(tc),
+            "本月未完成":     str(tu),
+            "本月完成率":      f"{mr:.1f}%" if mr is not None else "—",
+            "累計完成率":      f"{cr:.1f}%" if cr is not None else "—",
+        })
+        sum_closed_from_prev += cf
+        sum_this_total       += tt
+        sum_this_completed   += tc
+        sum_this_uncompleted += tu
+
+    full_rate = (
+        f"{round(sum_this_completed / sum_this_total * 100, 1):.1f}%"
+        if sum_this_total else "—"
+    )
+    rows.append({
+        "月份":           "[全年合計]",
+        "上月累計未完成":  "—",
+        "本月結案上月":    str(sum_closed_from_prev),
+        "上月遙留":        "—",
+        "本月報修":        str(sum_this_total),
+        "本月完成":        str(sum_this_completed),
+        "本月未完成":     str(sum_this_uncompleted),
+        "本月完成率":      full_rate,
+        "累計完成率":      "—",
+    })
+    return rows
+
+
+_dazhi_monthly_stats_cols = [
+    {"key": "月份",          "label": "月份",           "width": 0.60, "align": "center"},
+    {"key": "上月累計未完成", "label": "上月累計未完成", "width": 0.95, "align": "right"},
+    {"key": "本月結案上月",   "label": "本月結案(上月)", "width": 0.95, "align": "right"},
+    {"key": "上月遙留",       "label": "上月遙留",        "width": 0.85, "align": "right"},
+    {"key": "本月報修",       "label": "本月報修",        "width": 0.80, "align": "right"},
+    {"key": "本月完成",       "label": "本月完成",        "width": 0.80, "align": "right"},
+    {"key": "本月未完成",     "label": "本月未完成",      "width": 0.85, "align": "right"},
+    {"key": "本月完成率",     "label": "本月完成率",    "width": 0.90, "align": "right"},
+    {"key": "累計完成率",     "label": "累計完成率",    "width": 0.90, "align": "right"},
+]
+
+register_section(
+    PptSectionDef(
+        export_key="dazhi_repair_monthly_stats", module_key=MODULE_KEY,
+        tab_name="大直工務部", second_title="年度報修統計",
+        description="全年 1~12 月報修指標交叉表（對應前端 3.1 報修 TAB，口徑完全一致）",
+        export_type="table", slide_layout="table_full",
+        supports_detail=False,
+        data_source="backend_db", sort_order=15,
+        columns=_dazhi_monthly_stats_cols,
+    ),
+    data_provider=_provide_dazhi_repair_monthly_stats,
+)
+
+
+# =============================================================================
+# 大直工務部 — Section 16：未完成工單（按等待天數降序）
+# =============================================================================
+
+def _provide_dazhi_repair_unfinished(db: Session, params: dict) -> list[dict]:
+    """所有尚未結案的大直工務部工單，按等待天數降序（最久在最前）。"""
+    from app.models.dazhi_repair import DazhiRepairCase
+    from app.services.dazhi_repair_service import is_completed, is_excluded
+
+    cases = db.query(DazhiRepairCase).all()
+    now   = datetime.now()
+    enriched: list = []
+
+    for c in cases:
+        if is_excluded(c.status or ""):
+            continue
+        if is_completed(c.status or ""):
+            continue
+        if not c.occurred_at:
+            continue
+        wait = int((now - c.occurred_at).total_seconds() // 86400)
+        enriched.append((wait, c))
+
+    enriched.sort(key=lambda x: x[0], reverse=True)
+
+    return [
+        {
+            "案件編號": c.case_no or "—",
+            "報修日期": c.occurred_at.strftime("%Y/%m/%d"),
+            "地點":     c.floor    or "—",
+            "工作說明": (c.title   or "—")[:25],
+            "目前狀態": c.status   or "—",
+            "負責人":   c.acceptor or "—",
+            "等待天數": f"{wait} 天",
+        }
+        for wait, c in enriched
+    ]
+
+
+def _provide_dazhi_repair_unfinished_detail(db: Session, params: dict) -> list[dict]:
+    """明細附頁：附加委外費用 / 維修費用欄位（排序與主表相同）。"""
+    from app.models.dazhi_repair import DazhiRepairCase
+    from app.services.dazhi_repair_service import is_completed, is_excluded
+
+    cases = db.query(DazhiRepairCase).all()
+    now   = datetime.now()
+    enriched: list = []
+
+    for c in cases:
+        if is_excluded(c.status or ""):
+            continue
+        if is_completed(c.status or ""):
+            continue
+        if not c.occurred_at:
+            continue
+        wait = int((now - c.occurred_at).total_seconds() // 86400)
+        enriched.append((wait, c))
+
+    enriched.sort(key=lambda x: x[0], reverse=True)
+
+    return [
+        {
+            "案件編號": c.case_no or "—",
+            "報修日期": c.occurred_at.strftime("%Y/%m/%d"),
+            "地點":     c.floor    or "—",
+            "工作說明": (c.title   or "—")[:25],
+            "目前狀態": c.status   or "—",
+            "負責人":   c.acceptor or "—",
+            "等待天數": f"{wait} 天",
+            "委外費用": f"${c.outsource_fee:,.0f}"   if c.outsource_fee   else "—",
+            "維修費用": f"${c.maintenance_fee:,.0f}" if c.maintenance_fee else "—",
+        }
+        for wait, c in enriched
+    ]
+
+
+_dazhi_unfinished_cols = [
+    {"key": "案件編號", "label": "案件編號", "width": 1.20},
+    {"key": "報修日期", "label": "報修日期", "width": 1.10},
+    {"key": "地點",     "label": "地點",     "width": 1.50},
+    {"key": "工作說明", "label": "工作說明", "width": 2.60},
+    {"key": "目前狀態", "label": "狀態",     "width": 1.00},
+    {"key": "負責人",   "label": "負責人",   "width": 1.10},
+    {"key": "等待天數", "label": "等待天數", "width": 0.90, "align": "right"},
+]
+
+register_section(
+    PptSectionDef(
+        export_key="dazhi_repair_unfinished", module_key=MODULE_KEY,
+        tab_name="大直工務部", second_title="大直工務部未完成工單",
+        description="所有尚未結案工單，依等待天數由久至近排序（排除取消案件）",
+        export_type="table", slide_layout="table_full",
+        supports_detail=True,
+        detail_description="附加委外費用 / 維修費用欄位",
+        data_source="backend_db", sort_order=16,
+        columns=_dazhi_unfinished_cols,
+    ),
+    data_provider=_provide_dazhi_repair_unfinished,
+    detail_provider=_provide_dazhi_repair_unfinished_detail,
+)
+
+
+# =============================================================================
+# 大直工務部 — Section 17：本月結案工單（含費用）
+# =============================================================================
+
+def _provide_dazhi_repair_closed_this_month(db: Session, params: dict) -> list[dict]:
+    """本月（簾選年月）已結案工單，主表直接含委外 / 維修費用。"""
+    from app.models.dazhi_repair import DazhiRepairCase
+    from app.services.dazhi_repair_service import is_completed, is_excluded
+
+    year, month = params.get("year"), params.get("month")
+    cases = db.query(DazhiRepairCase).all()
+    rows: list[dict] = []
+
+    for c in cases:
+        if is_excluded(c.status or ""):
+            continue
+        if not is_completed(c.status or ""):
+            continue
+        if not (c.completed_at
+                and c.completed_at.year  == year
+                and c.completed_at.month == month):
+            continue
+        rows.append({
+            "案件編號": c.case_no or "—",
+            "報修日期": c.occurred_at.strftime("%Y/%m/%d") if c.occurred_at else "—",
+            "結案日期": c.completed_at.strftime("%Y/%m/%d"),
+            "地點":     c.floor    or "—",
+            "工作說明": (c.title   or "—")[:22],
+            "工時":     f"{c.work_hours:.1f}" if c.work_hours else "—",
+            "委外費用": f"${c.outsource_fee:,.0f}"   if c.outsource_fee   else "—",
+            "維修費用": f"${c.maintenance_fee:,.0f}" if c.maintenance_fee else "—",
+        })
+    return rows
+
+
+def _provide_dazhi_repair_closed_detail(db: Session, params: dict) -> list[dict]:
+    """明細附頁：附加扣款費用 / 負責人 / 備註。"""
+    from app.models.dazhi_repair import DazhiRepairCase
+    from app.services.dazhi_repair_service import is_completed, is_excluded
+
+    year, month = params.get("year"), params.get("month")
+    cases = db.query(DazhiRepairCase).all()
+    rows: list[dict] = []
+
+    for c in cases:
+        if is_excluded(c.status or ""):
+            continue
+        if not is_completed(c.status or ""):
+            continue
+        if not (c.completed_at
+                and c.completed_at.year  == year
+                and c.completed_at.month == month):
+            continue
+        rows.append({
+            "案件編號": c.case_no or "—",
+            "報修日期": c.occurred_at.strftime("%Y/%m/%d") if c.occurred_at else "—",
+            "結案日期": c.completed_at.strftime("%Y/%m/%d"),
+            "地點":     c.floor    or "—",
+            "工作說明": (c.title   or "—")[:22],
+            "工時":     f"{c.work_hours:.1f}" if c.work_hours else "—",
+            "委外費用": f"${c.outsource_fee:,.0f}"   if c.outsource_fee   else "—",
+            "維修費用": f"${c.maintenance_fee:,.0f}" if c.maintenance_fee else "—",
+            "扣款費用": f"${c.deduction_fee:,.0f}"   if c.deduction_fee   else "—",
+            "負責人":   c.acceptor or "—",
+            "備註":     (c.finance_note or "")[:20] or "—",
+        })
+    return rows
+
+
+_dazhi_closed_cols = [
+    {"key": "案件編號", "label": "案件編號", "width": 1.10},
+    {"key": "報修日期", "label": "報修日期", "width": 1.00},
+    {"key": "結案日期", "label": "結案日期", "width": 1.00},
+    {"key": "地點",     "label": "地點",     "width": 1.30},
+    {"key": "工作說明", "label": "工作說明", "width": 2.20},
+    {"key": "工時",     "label": "工時",     "width": 0.75, "align": "right"},
+    {"key": "委外費用", "label": "委外費",   "width": 0.95, "align": "right"},
+    {"key": "維修費用", "label": "維修費",   "width": 0.95, "align": "right"},
+]
+
+register_section(
+    PptSectionDef(
+        export_key="dazhi_repair_closed_month", module_key=MODULE_KEY,
+        tab_name="大直工務部", second_title="大直工務部本月結案工單",
+        description="本月（簾選年月）已結案工單，主表直接顯示委外 / 維修費用",
+        export_type="table", slide_layout="table_full",
+        supports_detail=True,
+        detail_description="附加扣款費用 / 負責人 / 備註欄位",
+        data_source="backend_db", sort_order=17,
+        columns=_dazhi_closed_cols,
+    ),
+    data_provider=_provide_dazhi_repair_closed_this_month,
+    detail_provider=_provide_dazhi_repair_closed_detail,
 )

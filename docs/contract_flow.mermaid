@@ -1,0 +1,50 @@
+flowchart TD
+    %% ── 廠商管理 ──
+    subgraph VM["廠商管理"]
+        V1([新增廠商]) --> V2[廠商資料庫]
+        V3([Excel 批次匯入]) -->|openpyxl 解析| V2
+        V2 --> V4([績效評分分析])
+    end
+
+    %% ── 合約生命週期 ──
+    subgraph CL["合約生命週期"]
+        direction TB
+        C1([建立合約 草稿]) -->|contract_create_edit| C2{草稿}
+        C2 -->|送審 submit| C3{審核中}
+        C3 -->|approve 核准| C4{生效中}
+        C3 -->|reject 拒絕| C2
+        C4 -->|到期 / 終止| C5([合約結束])
+    end
+
+    %% ── 請款流程 ──
+    subgraph CLA["請款管理"]
+        direction TB
+        R1([新增請款單]) --> R2{待審核}
+        R2 -->|approve| R3{已核准}
+        R2 -->|reject| R4{已拒絕}
+        R4 -->|resubmit 重提| R2
+        R3 -->|mark_paid 付款| R5{已付款}
+        R2 -->|逾期 >7天| R6([⚠ 黃底警示])
+    end
+
+    %% ── 續約管理 ──
+    subgraph REN["續約管理"]
+        direction TB
+        N1([申請續約]) --> N2{待審核}
+        N2 -->|核准| N3{已核准}
+        N2 -->|拒絕| N4{已拒絕}
+        N2 -->|撤回| N5{已撤回}
+        N3 -->|建立新合約| C1
+    end
+
+    %% ── 到期預警 ──
+    subgraph ALERT["到期預警"]
+        A1{生效中合約} -->|≤ 90 天到期| A2([Dashboard 到期清單])
+        A1 -->|≤ 30 天到期| A3([首頁 Alert 橫幅])
+    end
+
+    %% ── 跨域連線 ──
+    V2 -->|選擇廠商| C1
+    C4 --> A1
+    C4 --> R1
+    C4 --> N1

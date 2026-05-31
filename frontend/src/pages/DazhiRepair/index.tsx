@@ -16,7 +16,7 @@ import {
 import {
   HomeOutlined, ReloadOutlined, ToolOutlined,
   CheckCircleOutlined, ClockCircleOutlined, ExclamationCircleOutlined,
-  DashboardOutlined, FileTextOutlined, DownloadOutlined,
+  DashboardOutlined, FileTextOutlined, DownloadOutlined, FilePptOutlined,
   WarningOutlined, DollarOutlined, SearchOutlined, BuildOutlined, ApiOutlined, QuestionCircleOutlined, PictureOutlined, AuditOutlined,
   LinkOutlined,
 } from '@ant-design/icons'
@@ -24,6 +24,7 @@ import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip as RcTooltip, ResponsiveContainer, Legend,
   PieChart, Pie, Cell,
+  ComposedChart, LabelList, ReferenceLine,
 } from 'recharts'
 import type { ColumnsType } from 'antd/es/table'
 import dayjs from 'dayjs'
@@ -35,6 +36,7 @@ import {
   fetchFeeStats, fetchCaseImages,
 } from '@/api/dazhiRepair'
 import type { SyncResult, PingResult, CaseImageItem } from '@/api/dazhiRepair'
+import { exportRepairPptx } from '@/api/repairPptExport'
 import type {
   DashboardData, RepairStatsData, ClosingTimeData, TypeStatsData,
   RoomRepairTableData, DetailResult, FilterOptions, RepairCase,
@@ -1194,6 +1196,156 @@ function RepairTypeTab({ year, month }: { year: number; month: number | null }) 
         </Row>
       )}
 
+      {/* ── 柏拉圖 ── */}
+      {(() => {
+        const sorted = [...data.rows]
+          .filter(r => r.row_total > 0)
+          .sort((a, b) => b.row_total - a.row_total)
+        const grandTotal = sorted.reduce((s, r) => s + r.row_total, 0)
+        let running = 0
+        const paretoData = sorted.map(r => {
+          running += r.row_total
+          return {
+            type: r.type,
+            count: r.row_total,
+            cumPct: grandTotal > 0 ? Math.round(running / grandTotal * 100) : 0,
+          }
+        })
+        const maxCount = sorted[0]?.row_total ?? 1
+
+        // 摘要卡數據
+        const top3Pct    = paretoData[2]?.cumPct ?? 0
+        const reach80Idx = paretoData.findIndex(d => d.cumPct >= 80)
+        const reach80Cnt = reach80Idx >= 0 ? reach80Idx + 1 : paretoData.length
+        const topType    = sorted[0]?.type ?? '—'
+        const topCount   = sorted[0]?.row_total ?? 0
+        const topPct     = grandTotal > 0 ? Math.round(topCount / grandTotal * 100) : 0
+
+        return (
+          <Card
+            title="柏拉圖分析（年度報修類型）"
+            size="small"
+            style={{ marginBottom: 20 }}
+          >
+            {/* 摘要卡 */}
+            <Row gutter={12} style={{ marginBottom: 14 }}>
+              <Col span={8}>
+                <div style={{ background: '#f0f4f8', borderRadius: 8, padding: '10px 14px', textAlign: 'center' }}>
+                  <div style={{ fontSize: 13, color: '#888', marginBottom: 4 }}>前 3 類累計</div>
+                  <div style={{ fontSize: 26, fontWeight: 700, color: '#1B3A5C', lineHeight: 1.2 }}>{top3Pct}%</div>
+                  <div style={{ fontSize: 12, color: '#aaa', marginTop: 3 }}>{sorted.slice(0, 3).map(r => r.type).join('、')}</div>
+                </div>
+              </Col>
+              <Col span={8}>
+                <div style={{ background: '#f0f4f8', borderRadius: 8, padding: '10px 14px', textAlign: 'center' }}>
+                  <div style={{ fontSize: 13, color: '#888', marginBottom: 4 }}>達 80% 需前幾類</div>
+                  <div style={{ fontSize: 26, fontWeight: 700, color: '#1B3A5C', lineHeight: 1.2 }}>{reach80Cnt} 類</div>
+                  <div style={{ fontSize: 12, color: '#aaa', marginTop: 3 }}>共 {sorted.length} 類中的 {Math.round(reach80Cnt / sorted.length * 100)}%</div>
+                </div>
+              </Col>
+              <Col span={8}>
+                <div style={{ background: '#f0f4f8', borderRadius: 8, padding: '10px 14px', textAlign: 'center' }}>
+                  <div style={{ fontSize: 13, color: '#888', marginBottom: 4 }}>最大改善槓桿</div>
+                  <div style={{ fontSize: 26, fontWeight: 700, color: '#1B3A5C', lineHeight: 1.2 }}>{topType}</div>
+                  <div style={{ fontSize: 12, color: '#aaa', marginTop: 3 }}>{topCount} 件，佔 {topPct}%</div>
+                </div>
+              </Col>
+            </Row>
+
+            {/* 圖表 */}
+            <ResponsiveContainer width="100%" height={340}>
+              <ComposedChart
+                data={paretoData}
+                barCategoryGap="8%"
+                margin={{ top: 30, right: 55, left: 0, bottom: 48 }}
+              >
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#eee" />
+                <XAxis
+                  dataKey="type"
+                  tick={{ fontSize: 14 }}
+                  angle={-35}
+                  textAnchor="end"
+                  interval={0}
+                />
+                <YAxis
+                  yAxisId="left"
+                  allowDecimals={false}
+                  tick={{ fontSize: 14 }}
+                  domain={[0, Math.ceil(maxCount * 1.25)]}
+                  tickLine={false}
+                  axisLine={false}
+                />
+                <YAxis
+                  yAxisId="right"
+                  orientation="right"
+                  tick={{ fontSize: 14 }}
+                  domain={[0, 100]}
+                  tickFormatter={v => `${v}%`}
+                  tickLine={false}
+                  axisLine={false}
+                />
+                <RcTooltip
+                  formatter={(value, name) =>
+                    name === 'count'
+                      ? [`${value} 件`, '件數']
+                      : [`${value}%`, '累計佔比']
+                  }
+                />
+                <Bar yAxisId="left" dataKey="count" name="count" radius={[3, 3, 0, 0]}>
+                  {paretoData.map((entry, i) => (
+                    <Cell
+                      key={i}
+                      fill={entry.cumPct <= 80 ? '#1B3A5C' : '#4BA8E8'}
+                    />
+                  ))}
+                </Bar>
+                <Line
+                  yAxisId="right"
+                  type="linear"
+                  dataKey="cumPct"
+                  name="cumPct"
+                  stroke="#c0392b"
+                  strokeWidth={2.5}
+                  dot={{ r: 4, fill: '#c0392b', strokeWidth: 0 }}
+                  activeDot={{ r: 6 }}
+                >
+                  <LabelList
+                    dataKey="cumPct"
+                    position="top"
+                    formatter={(v: number) => `${v}%`}
+                    style={{ fontSize: 13, fill: '#c0392b', fontWeight: 700 }}
+                  />
+                </Line>
+                <ReferenceLine
+                  yAxisId="right"
+                  y={80}
+                  stroke="#e74c3c"
+                  strokeDasharray="5 4"
+                  strokeWidth={1.5}
+                  label={{ value: '80%', position: 'right', fontSize: 14, fill: '#e74c3c' }}
+                />
+              </ComposedChart>
+            </ResponsiveContainer>
+
+            {/* 圖例 */}
+            <div style={{ display: 'flex', gap: 20, fontSize: 13, color: '#888', marginTop: 4, paddingLeft: 8 }}>
+              <span>
+                <span style={{ display: 'inline-block', width: 11, height: 11, background: '#1B3A5C', borderRadius: 2, marginRight: 5, verticalAlign: 'middle' }} />
+                累計 ≤ 80%（重點類別）
+              </span>
+              <span>
+                <span style={{ display: 'inline-block', width: 11, height: 11, background: '#4BA8E8', borderRadius: 2, marginRight: 5, verticalAlign: 'middle' }} />
+                累計 &gt; 80%（次要類別）
+              </span>
+              <span>
+                <span style={{ display: 'inline-block', width: 18, height: 0, borderTop: '2px dashed #e74c3c', verticalAlign: 'middle', marginRight: 5 }} />
+                80% 基準線
+              </span>
+            </div>
+          </Card>
+        )
+      })()}
+
       <div style={{ overflowX: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 15 }}>
           <thead>
@@ -1926,6 +2078,21 @@ export default function DazhiRepairPage() {
   const [pingResult, setPingResult] = useState<PingResult | null>(null)
   const [pingModalOpen, setPingModal] = useState(false)
 
+  // PPT 匯出
+  const [pptLoading, setPptLoading] = useState(false)
+  const handlePptExport = useCallback(async () => {
+    setPptLoading(true)
+    try {
+      await exportRepairPptx({ module: 'dazhi', year: appliedYear, month: appliedMonth ?? (now.getMonth() + 1) })
+      message.success('PowerPoint 匯出成功！')
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      message.error(`匯出失敗：${msg}`)
+    } finally {
+      setPptLoading(false)
+    }
+  }, [appliedYear, appliedMonth])
+
   useEffect(() => {
     fetchYears()
       .then(r => {
@@ -2049,6 +2216,14 @@ export default function DazhiRepairPage() {
           <Tag color="blue">{appliedYear} 年{appliedMonth ? ` ${appliedMonth} 月` : ' 全年'}</Tag>
         </div>
         <Space>
+          <Button
+            icon={<FilePptOutlined />}
+            loading={pptLoading}
+            onClick={handlePptExport}
+            style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)', border: 'none', color: '#fff' }}
+          >
+            匯出 PowerPoint
+          </Button>
           <Button
             icon={<ApiOutlined />}
             loading={pinging}

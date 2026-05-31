@@ -39,6 +39,7 @@ import {
   UploadOutlined,
   TableOutlined,
   FilePptOutlined,
+  SyncOutlined,
 } from '@ant-design/icons'
 import { useNavigate, useLocation, Outlet } from 'react-router-dom'
 import { useAuthStore } from '@/stores/authStore'
@@ -177,6 +178,23 @@ export const menuItems: MenuItem[] = [
       { key: '/schedule/staff',        icon: <TeamOutlined />,         label: NAV_PAGE.scheduleStaff,       permissionKey: 'schedule_admin'  },
       { key: '/schedule/shifts',       icon: <ClockCircleOutlined />,  label: NAV_PAGE.scheduleShifts,      permissionKey: 'schedule_admin'  },
       { key: '/schedule/departments',  icon: <DatabaseOutlined />,     label: NAV_PAGE.scheduleDepartments, permissionKey: 'schedule_admin'  },
+    ],
+  },
+  // ── 合約管理（班表管理之後、飯店管理之前）────────────────────────────────────
+  {
+    key: 'contract',
+    icon: <AuditOutlined />,
+    label: NAV_GROUP.contract,
+    permissionKey: 'contract_view',
+    children: [
+      { key: '/contract',            icon: <FileTextOutlined />,  label: NAV_PAGE.contractList,      permissionKey: 'contract_view'         },
+      { key: '/contract/dashboard',  icon: <DashboardOutlined />, label: NAV_PAGE.contractDashboard, permissionKey: 'contract_view'         },
+      { key: '/contract/expiring',   icon: <AlertOutlined />,     label: NAV_PAGE.contractExpiring,  permissionKey: 'contract_expiring_view' },
+      { key: '/contract/claims',     icon: <DollarOutlined />,    label: NAV_PAGE.contractClaims,    permissionKey: 'contract_claims_view'    },
+      { key: '/contract/renewals',   icon: <SyncOutlined />,      label: NAV_PAGE.contractRenewals,  permissionKey: 'contract_renewals_view'  },
+      { key: '/contract/import',     icon: <UploadOutlined />,    label: NAV_PAGE.contractImport,    permissionKey: 'contract_create_edit'    },
+      { key: '/contract/vendors',    icon: <TeamOutlined />,      label: NAV_PAGE.contractVendors,   permissionKey: 'contract_vendor_manage' },
+      { key: '/contract/settings',   icon: <SettingOutlined />,   label: NAV_PAGE.contractSettings,  permissionKey: 'contract_admin'        },
     ],
   },
   {
@@ -1068,10 +1086,8 @@ export default function MainLayout() {
           >
             {forcePwLoading ? '更新中…' : '確認更新密碼'}
           </Button>
-          <div style={{ textAlign: 'center', marginTop: 10 }}>
-            <Typography.Text type="secondary" style={{ fontSize: 11 }}>
-              更新完成後系統將自動登出，請以新密碼重新登入
-            </Typography.Text>
+          <div style={{ marginTop: 8, fontSize: 12, color: '#94a3b8', textAlign: 'center' }}>
+            設定完成後將自動跳轉至系統首頁
           </div>
         </Form>
       </Modal>

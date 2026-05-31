@@ -29,6 +29,12 @@ export interface AdminResetPasswordResponse {
   message: string;
 }
 
+export interface UserOptionItem {
+  value: string   // full_name
+  label: string   // full_name
+  user_id: string
+}
+
 export const usersApi = {
   list: (params?: { page?: number; per_page?: number; tenant_id?: string; search?: string }) =>
     client.get<UserListResponse>('/users', { params }),
@@ -38,7 +44,10 @@ export const usersApi = {
     client.put<User>(`/users/${id}`, data),
   delete: (id: string) =>
     client.delete(`/users/${id}`),
-  /** 管理員產生 OTP（僅顯示，需口頭告知使用者） */
+    /** 管理員產生 OTP（僅顯示，需口頭告知使用者） */
   resetPassword: (id: string) =>
     client.post<AdminResetPasswordResponse>(`/users/${id}/reset-password`),
+  /** 取得啟用中使用者名稱清單，供 manager/reviewer 下拉使用（任何登入者可呼叫） */
+  options: () =>
+    client.get<UserOptionItem[]>('/users/options'),
 };

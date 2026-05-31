@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from typing import Optional
+from pydantic import BaseModel
 import random
 import string
 from datetime import timedelta
@@ -270,5 +271,30 @@ def admin_reset_password(
     return AdminResetPasswordResponse(
         otp=otp,
         expires_minutes=OTP_EXPIRES_MINUTES,
-        message=f"已為 {user.full_name} 產生一次性密碼，請口頭告知使用者，密碼 {OTP_EXPIRES_MINUTES} 分鐘後失效。",
+        message=f"已為 {user.full_name} 產生一次性密碼，請口頭告知使用者，密碼 {OTP_EXPIRES_MINUTES_MINUTES} 分鐘後失效。",
     )
+
+
+# ── 人員選單（供合約等模組的 manager/reviewer 下拉使用）────────────────
+class UserOptionItem(BaseModel):
+    value: str   # full_name
+    label: str   # full_name
+    user_id: str
+
+
+@router.get("/options", response_model=list[UserOptionItem])
+def list_user_options(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """取得啟用中使用者名稱清單，供 manager/reviewer 下拉使用（任何登入者可呼叫）"""
+    users = (
+        db.query(User)
+        .filter(User.is_active == True)
+        .order_by(User.full_name)
+        .all()
+    )
+    return [
+        UserOptionItem(value=u.full_name, label=u.full_name, user_id=u.id)
+        for u in users
+    ]
