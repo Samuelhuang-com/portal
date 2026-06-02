@@ -537,7 +537,7 @@ export function ContractDepositsTab({
           <Form.Item name="deposit_amount" label="金額" rules={[{ required: true }]}>
             <InputNumber style={{ width: '100%' }} min={0} precision={0}
               formatter={v => `$ ${v}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
-              parser={(v) => Number(String(v).replace(/\$\s?|(,*)/g, ''))} />
+              parser={(v) => Number(String(v).replace(/\$\s?|(,*)/g, '')) as 0} />
           </Form.Item>
           <Space style={{ width: '100%' }}>
             <Form.Item name="deposit_date" label="存入日期" rules={[{ required: true, message: '請選擇' }]} style={{ flex: 1 }}>

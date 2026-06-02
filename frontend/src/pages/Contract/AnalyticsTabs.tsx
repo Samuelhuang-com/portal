@@ -143,8 +143,8 @@ export function VendorConcentrationChart() {
             <CartesianGrid strokeDasharray="3 3" />
             <XAxis dataKey="name" tick={{ fontSize: 11 }} />
             <YAxis tickFormatter={v => `${v}%`} tick={{ fontSize: 11 }} />
-            <Tooltip formatter={(v: number, n, props) => [`${v.toFixed(1)}% (${fmtMoney(props.payload.amount)})`, '佔比']}
-              labelFormatter={(l, items) => items[0]?.payload?.fullName || l} />
+            <Tooltip formatter={(v: number, _n: any, props: any) => [`${v.toFixed(1)}% (${fmtMoney(props.payload.amount)})`, '佔比']}
+              labelFormatter={(l: any, items: any[]) => items[0]?.payload?.fullName || l} />
             <ReferenceLine y={threshold} stroke="#ff4d4f" strokeDasharray="4 2"
               label={{ value: `${threshold}%警示線`, fill: '#ff4d4f', fontSize: 11, position: 'right' }} />
             <Bar dataKey="percentage" name="佔比" isAnimationActive={false}
@@ -341,7 +341,7 @@ export function SummaryReportTab() {
                 <Table.Summary.Cell index={2} align="right">{fmtMoney(totals.new_amount)}</Table.Summary.Cell>
                 <Table.Summary.Cell index={3} align="center">{totals.claim_count}</Table.Summary.Cell>
                 <Table.Summary.Cell index={4} align="right">{fmtMoney(totals.claim_amount)}</Table.Summary.Cell>
-                <Table.Summary.Cell index={5} align="right" style={{ color: '#52c41a' }}>{fmtMoney(totals.approved_amount)}</Table.Summary.Cell>
+                <Table.Summary.Cell index={5} align="right"><span style={{ color: '#52c41a' }}>{fmtMoney(totals.approved_amount)}</span></Table.Summary.Cell>
               </Table.Summary.Row>
             </Table.Summary>
           ) : null

@@ -303,7 +303,7 @@ export function ContractPaymentScheduleTab({
               min={0}
               precision={0}
               formatter={v => `$ ${v}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
-              parser={(v) => Number(String(v).replace(/\$\s?|(,*)/g, ''))}
+              parser={(v) => Number(String(v).replace(/\$\s?|(,*)/g, '')) as 0}
             />
           </Form.Item>
           <Form.Item name="notes" label="備註">

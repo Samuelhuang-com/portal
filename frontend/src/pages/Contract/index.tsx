@@ -563,7 +563,7 @@ export default function ContractListPage() {
               onChange={setBatchNewManager}
               filterOption={(input, opt) =>
                 String(opt?.label ?? '').toLowerCase().includes(input.toLowerCase())}
-              options={userOptions.map(u => ({ value: u.username, label: `${u.display_name} (${u.username})` }))}
+              options={userOptions.map(u => ({ value: u.value, label: u.label }))}
             />
           </Form.Item>
         </Form>
