@@ -28,7 +28,7 @@ interface TodayPanelProps {
 
 // ── 事件類型優先排序 ───────────────────────────────────────────────────────────
 const TYPE_ORDER: CalendarEventType[] = [
-  'approval', 'hotel_pm', 'mall_pm', 'security', 'inspection', 'memo', 'custom',
+  'approval', 'hotel_pm', 'mall_pm', 'inspection', 'memo', 'custom',
 ]
 
 export default function TodayPanel({ events, loading, onSelect }: TodayPanelProps) {
