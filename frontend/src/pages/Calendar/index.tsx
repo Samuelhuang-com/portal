@@ -57,7 +57,7 @@ const { Title, Text } = Typography
 
 // ── 可選的事件類型清單 ────────────────────────────────────────────────────────
 const ALL_TYPES: CalendarEventType[] = [
-  'hotel_pm', 'mall_pm', 'pm_plan', 'inspection', 'approval', 'memo', 'custom',
+  'hotel_pm', 'mall_pm', 'full_pm', 'pm_plan', 'inspection', 'approval', 'memo', 'custom',
 ]
 
 // ── 將 CalendarEvent 轉換為 FullCalendar EventInput ────────────────────────
@@ -486,6 +486,40 @@ export default function CalendarPage() {
               noEventsText="此期間無事件"
               listDayFormat={{ month: 'long', day: 'numeric', weekday: 'short' }}
               eventTimeFormat={{ hour: '2-digit', minute: '2-digit', meridiem: false }}
+              eventContent={(arg) => {
+                const ev = arg.event.extendedProps as CalendarEvent
+                // 區域 → 單字徽章
+                const ZONE_BADGE: Record<string, string> = {
+                  '飯店': '飯', '商場': '商', '公區': '公', '其它': '',
+                }
+                const badge     = ZONE_BADGE[ev.zone] ?? ''
+                const badgeColor = ZONE_COLORS[ev.zone as CalendarZone] ?? ev.color
+                // 去掉 [xxx] 前綴，顯示乾淨標題
+                const cleanTitle = arg.event.title.replace(/^\[.*?\]\s*/, '')
+                return (
+                  <div style={{
+                    display: 'flex', alignItems: 'center', gap: 3,
+                    overflow: 'hidden', padding: '0 3px', height: '100%',
+                  }}>
+                    {badge && (
+                      <span style={{
+                        background: badgeColor, color: '#fff',
+                        borderRadius: 3, padding: '0 4px',
+                        fontSize: 10, fontWeight: 700,
+                        flexShrink: 0, lineHeight: '16px',
+                      }}>
+                        {badge}
+                      </span>
+                    )}
+                    <span style={{
+                      overflow: 'hidden', textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap', fontSize: 11,
+                    }}>
+                      {cleanTitle}
+                    </span>
+                  </div>
+                )
+              }}
             />
           </Card>
         </Col>

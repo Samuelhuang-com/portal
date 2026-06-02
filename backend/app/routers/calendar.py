@@ -21,6 +21,7 @@ Prefix: /api/v1/calendar
 
 注意：附件舊 DB 連線一概不採用，僅使用 Portal 現有 SQLAlchemy Session (get_db)。
 """
+import re
 from datetime import date, datetime
 from typing import Optional, List
 
@@ -36,6 +37,7 @@ from app.models.mall_periodic_maintenance import (
     MallPeriodicMaintenanceItem,
 )
 from app.models.pm_plan import PmPlanItem
+from app.models.full_building_maintenance import FullBldgPMBatch, FullBldgPMItem
 from app.models.b1f_inspection import B1FInspectionBatch
 from app.models.b2f_inspection import B2FInspectionBatch
 from app.models.rf_inspection import RFInspectionBatch
@@ -90,17 +92,29 @@ def _date_to_iso(d: Optional[date]) -> str:
 
 def _pm_item_full_date(period_month: str, scheduled_date: str) -> Optional[date]:
     """
-    飯店/商場週期保養項目的完整日期計算：
-      period_month = "2026/04"   (YYYY/MM)
-      scheduled_date = "04/23"  (MM/DD)
-    → full = "2026/" + "04/23" = "2026/04/23"
-    → return date(2026, 4, 23)
+    飯店/商場週期保養項目的完整日期計算，支援兩種格式：
+
+    格式 A（完整日期，Ragic 直接存 YYYY/MM/DD）：
+      scheduled_date = "2026/06/26"  →  直接解析，不需要 period_month
+      scheduled_date = "2026-06-26"  →  同上
+
+    格式 B（MM/DD，需搭配 period_month 補年份）：
+      period_month   = "2026/04"
+      scheduled_date = "04/23"
+      → full = "2026/" + "04/23" = "2026/04/23"
     """
-    if not period_month or not scheduled_date:
+    if not scheduled_date:
+        return None
+
+    # ── 格式 A：已包含年份（4 位數字開頭）──────────────────────────────────
+    if re.match(r'^\d{4}[/-]', scheduled_date):
+        return _slash_to_date(scheduled_date)
+
+    # ── 格式 B：MM/DD，需要 period_month 補年份 ──────────────────────────────
+    if not period_month:
         return None
     try:
-        # period_month[:5] = "2026/"
-        full = period_month[:5] + scheduled_date
+        full = period_month[:5] + scheduled_date   # "2026/" + "06/26"
         return _slash_to_date(full)
     except Exception:
         return None
@@ -165,6 +179,7 @@ def _collect_hotel_pm(db: Session, start: date, end: date) -> List[CalendarEvent
                 deep_link    = "/hotel/periodic-maintenance",
                 color        = color,
                 zone         = "飯店",
+                ragic_url    = f"https://ap12.ragic.com/soutlet001/periodic-maintenance/6/{batch.ragic_id}",
             ))
     return events
 
@@ -216,6 +231,59 @@ def _collect_mall_pm(db: Session, start: date, end: date) -> List[CalendarEventO
                 deep_link    = "/mall/periodic-maintenance",
                 color        = color,
                 zone         = "商場",
+                ragic_url    = f"https://ap12.ragic.com/soutlet001/periodic-maintenance/18/{batch.ragic_id}",
+            ))
+    return events
+
+
+def _collect_full_bldg_pm(db: Session, start: date, end: date) -> List[CalendarEventOut]:
+    """收集全棟例行維護事件（full_bldg_pm_batch + full_bldg_pm_batch_item）"""
+    events: List[CalendarEventOut] = []
+    color = EVENT_TYPE_COLORS["full_pm"]
+    label = EVENT_TYPE_LABELS["full_pm"]
+
+    start_month = start.strftime("%Y/%m")
+    end_month   = end.strftime("%Y/%m")
+
+    batches = db.query(FullBldgPMBatch).filter(
+        FullBldgPMBatch.period_month >= start_month,
+        FullBldgPMBatch.period_month <= end_month,
+    ).all()
+
+    for batch in batches:
+        items = db.query(FullBldgPMItem).filter(
+            FullBldgPMItem.batch_ragic_id == batch.ragic_id,
+            FullBldgPMItem.scheduled_date != "",
+        ).all()
+
+        for item in items:
+            item_date = _pm_item_full_date(batch.period_month, item.scheduled_date)
+            if not item_date or not (start <= item_date <= end):
+                continue
+
+            if item.is_completed:
+                status, status_label = "completed", "已完成"
+            elif item.abnormal_flag:
+                status, status_label = "abnormal", "異常"
+            else:
+                status, status_label = "pending", "待執行"
+
+            events.append(CalendarEventOut(
+                id           = f"full_pm_{item.ragic_id}",
+                title        = f"[全棟維護] {item.task_name}",
+                start        = _date_to_iso(item_date),
+                all_day      = True,
+                event_type   = "full_pm",
+                module_label = label,
+                source_id    = item.ragic_id,
+                status       = status,
+                status_label = status_label,
+                responsible  = item.executor_name or item.scheduler_name,
+                description  = f"{item.category} | {item.location}",
+                deep_link    = "/mall/full-building-maintenance",
+                color        = color,
+                zone         = "公區",
+                ragic_url    = f"https://ap12.ragic.com/soutlet001/periodic-maintenance/21/{batch.ragic_id}",
             ))
     return events
 
@@ -283,6 +351,7 @@ def _collect_pm_plan(db: Session, start: date, end: date) -> List[CalendarEventO
             deep_link    = deep_link,
             color        = color,
             zone         = item_zone,
+            ragic_url    = item.ragic_url or "",
         ))
 
     return events
@@ -470,7 +539,7 @@ def get_calendar_events(
     end:    str           = Query(..., description="查詢結束日期 YYYY-MM-DD"),
     types:  Optional[str] = Query(
         None,
-        description="事件類型篩選，逗號分隔：hotel_pm,mall_pm,pm_plan,inspection,approval,memo,custom"
+        description="事件類型篩選，逗號分隔：hotel_pm,mall_pm,full_pm,pm_plan,inspection,approval,memo,custom"
     ),
     db: Session = Depends(get_db),
 ):
@@ -486,6 +555,8 @@ def get_calendar_events(
         all_events.extend(_collect_hotel_pm(db, start_date, end_date))
     if _should_include("mall_pm",    types):
         all_events.extend(_collect_mall_pm(db, start_date, end_date))
+    if _should_include("full_pm",    types):
+        all_events.extend(_collect_full_bldg_pm(db, start_date, end_date))
     if _should_include("pm_plan",    types):
         all_events.extend(_collect_pm_plan(db, start_date, end_date))
     if _should_include("inspection", types):

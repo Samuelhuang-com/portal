@@ -25,9 +25,9 @@ export const ZONE_LABELS: Record<CalendarZone, string> = {
 export type CalendarEventType =
   | 'hotel_pm'    // 飯店週期保養（執行記錄）
   | 'mall_pm'     // 商場週期保養（執行記錄）
+  | 'full_pm'     // 全棟例行維護（執行記錄，Sheet /21）
   | 'pm_plan'     // 週期保養預排（主管排定 /7 /13 /20）
   | 'inspection'  // 工務巡檢
-  | 'security'    // 保全巡檢
   | 'approval'    // 簽核管理
   | 'memo'        // 公告牆
   | 'custom'      // 自訂事件
@@ -43,9 +43,9 @@ export type CalendarEventStatus =
 export const EVENT_TYPE_COLORS: Record<CalendarEventType, string> = {
   hotel_pm:   '#1B3A5C',  // 飯店保養 — 品牌主色（深藍）
   mall_pm:    '#4BA8E8',  // 商場保養 — 品牌輔色（天藍）
+  full_pm:    '#006d75',  // 全棟維護 — 暗青
   pm_plan:    '#52c41a',  // 週期保養預排 — 綠（主管排定）
   inspection: '#1677ff',  // 工務巡檢 — 藍
-  security:   '#eb2f96',  // 保全巡檢 — 粉紅
   approval:   '#fa8c16',  // 簽核管理 — 橙
   memo:       '#722ed1',  // 公告牆   — 紫
   custom:     '#13c2c2',  // 自訂事件 — 青
@@ -54,9 +54,9 @@ export const EVENT_TYPE_COLORS: Record<CalendarEventType, string> = {
 export const EVENT_TYPE_LABELS: Record<CalendarEventType, string> = {
   hotel_pm:   '飯店保養',
   mall_pm:    '商場保養',
+  full_pm:    '全棟維護',
   pm_plan:    '週期預排',
   inspection: '工務巡檢',
-  security:   '保全巡檢',
   approval:   '簽核管理',
   memo:       '公告牆',
   custom:     '自訂事件',
@@ -79,6 +79,7 @@ export interface CalendarEvent {
   deep_link:    string           // React Router 路徑
   color:        string
   zone:         string           // 區域別：飯店/商場/公區/其它
+  ragic_url:    string           // Ragic 原始記錄連結（空=無連結）
 }
 
 export interface CalendarEventsResponse {

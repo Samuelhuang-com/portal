@@ -1,76 +1,93 @@
 /**
  * 行事曆 — 事件詳情抽屜
- * 點擊事件後從右側滑出，顯示事件完整資訊 + 深連結跳轉
  *
- * 若事件類型為 custom（自訂事件），footer 額外顯示「編輯」「刪除」按鈕。
+ * 標題列：[區域 Tag]  [module_label]：[identifier]  [🔗 在 Ragic 查看]
+ * Body  ：① 基本資訊 Descriptions  ② 詳細說明 Descriptions
+ * Footer：前往原模組查看 / custom 事件：編輯、刪除
  */
-import { Drawer, Tag, Button, Space, Typography, Descriptions, Badge, Popconfirm } from 'antd'
+import { Drawer, Tag, Button, Space, Typography, Descriptions, Popconfirm } from 'antd'
 import {
-  CalendarOutlined, UserOutlined, LinkOutlined,
-  TagOutlined, InfoCircleOutlined, EditOutlined, DeleteOutlined,
-  EnvironmentOutlined,
+  LinkOutlined, EditOutlined, DeleteOutlined, EnvironmentOutlined,
 } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
-import type { CalendarEvent } from '@/types/calendar'
+import type { CalendarEvent, CalendarZone } from '@/types/calendar'
 import { EVENT_TYPE_LABELS, ZONE_COLORS } from '@/types/calendar'
 
-const { Title, Text } = Typography
+const { Text } = Typography
 
-// ── 狀態顏色映射 ───────────────────────────────────────────────────────────────
-const STATUS_COLOR: Record<string, string> = {
-  pending:   'warning',
-  completed: 'success',
-  abnormal:  'error',
-  overdue:   'error',
+// ── 狀態 → Ant Design Tag color ───────────────────────────────────────────────
+const STATUS_TAG: Record<string, { color: string; label: string }> = {
+  pending:   { color: 'warning',    label: '待執行' },
+  completed: { color: 'success',    label: '已完成' },
+  abnormal:  { color: 'error',      label: '異常'   },
+  overdue:   { color: 'error',      label: '逾期'   },
+  預排:      { color: 'processing', label: '預排'   },
+  已巡檢:    { color: 'success',    label: '已巡檢' },
+  已發布:    { color: 'success',    label: '已發布' },
+  待簽核:    { color: 'warning',    label: '待簽核' },
+  已核准:    { color: 'success',    label: '已核准' },
+  已退回:    { color: 'error',      label: '已退回' },
+  自訂:      { color: 'default',    label: '自訂'   },
+}
+
+function StatusTag({ status, statusLabel }: { status: string; statusLabel: string }) {
+  const cfg = STATUS_TAG[statusLabel] ?? STATUS_TAG[status] ?? { color: 'default', label: statusLabel || status }
+  return <Tag color={cfg.color}>{cfg.label}</Tag>
+}
+
+function val(v?: string | null): React.ReactNode {
+  return v?.trim() ? v : <Text type="secondary">—</Text>
+}
+
+function cleanTitle(title: string): string {
+  return title.replace(/^\[.*?\]\s*/, '').trim() || title
 }
 
 interface EventDrawerProps {
   event:     CalendarEvent | null
   open:      boolean
   onClose:   () => void
-  /** 僅 custom 事件有效：開啟編輯 Modal */
   onEdit?:   (event: CalendarEvent) => void
-  /** 僅 custom 事件有效：確認後刪除 */
   onDelete?: (event: CalendarEvent) => void
 }
 
-export default function EventDrawer({
-  event,
-  open,
-  onClose,
-  onEdit,
-  onDelete,
-}: EventDrawerProps) {
-  const navigate = useNavigate()
-  const isCustom = event?.event_type === 'custom'
+export default function EventDrawer({ event, open, onClose, onEdit, onDelete }: EventDrawerProps) {
+  const navigate  = useNavigate()
+  const isCustom  = event?.event_type === 'custom'
 
-  const handleDeepLink = () => {
-    if (event?.deep_link) {
-      onClose()
-      navigate(event.deep_link)
-    }
-  }
+  const zoneColor   = event?.zone ? (ZONE_COLORS[event.zone as CalendarZone] ?? '#8c8c8c') : '#8c8c8c'
+  const moduleLabel = event?.module_label?.replace(/（.*?）/, '') ?? ''
+  const identifier  = event ? cleanTitle(event.title) : ''
+  const ragicUrl    = event?.ragic_url ?? ''
 
-  // ── Footer ────────────────────────────────────────────────────────────────
-  const renderFooter = () => {
-    if (!event) return null
+  // ── 標題列 ──────────────────────────────────────────────────────────────────
+  const drawerTitle = event ? (
+    <Space size={8} wrap style={{ lineHeight: 1.8 }}>
+      {event.zone && (
+        <Tag icon={<EnvironmentOutlined />} color={zoneColor} style={{ margin: 0 }}>
+          {event.zone}
+        </Tag>
+      )}
+      <span style={{ fontWeight: 600 }}>
+        {moduleLabel}{identifier ? `：${identifier}` : ''}
+      </span>
+      {ragicUrl && (
+        <a
+          href={ragicUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{ color: '#4BA8E8', fontSize: 13 }}
+        >
+          <LinkOutlined style={{ marginRight: 3 }} />在 Ragic 查看
+        </a>
+      )}
+    </Space>
+  ) : '事件詳情'
 
-    const deepLinkBtn = event.deep_link ? (
-      <Button
-        type="primary"
-        icon={<LinkOutlined />}
-        onClick={handleDeepLink}
-        block={!isCustom}
-      >
-        前往原模組查看
-      </Button>
-    ) : null
-
-    if (!isCustom) return deepLinkBtn
-
-    // 自訂事件：顯示編輯 + 刪除 + 深連結（通常 custom 沒有 deep_link，但防守）
-    return (
-      <Space direction="vertical" style={{ width: '100%' }} size={8}>
+  // ── Footer ──────────────────────────────────────────────────────────────────
+  const footer = event ? (
+    <Space direction="vertical" style={{ width: '100%' }} size={8}>
+      {isCustom && (
         <Space style={{ width: '100%' }}>
           <Button
             icon={<EditOutlined />}
@@ -87,101 +104,105 @@ export default function EventDrawer({
             okButtonProps={{ danger: true }}
             onConfirm={() => { onDelete?.(event); onClose() }}
           >
-            <Button danger icon={<DeleteOutlined />} style={{ flex: 1 }}>
-              刪除
-            </Button>
+            <Button danger icon={<DeleteOutlined />} style={{ flex: 1 }}>刪除</Button>
           </Popconfirm>
         </Space>
-        {deepLinkBtn}
-      </Space>
-    )
-  }
+      )}
+      {event.deep_link && (
+        <Button
+          type="primary"
+          icon={<LinkOutlined />}
+          block
+          onClick={() => { onClose(); navigate(event.deep_link) }}
+        >
+          前往原模組查看
+        </Button>
+      )}
+    </Space>
+  ) : null
 
   return (
     <Drawer
-      title={
-        <Space>
-          <CalendarOutlined />
-          <span>事件詳情</span>
-        </Space>
-      }
+      title={drawerTitle}
       placement="right"
-      width={420}
+      width={480}
       open={open}
       onClose={onClose}
-      footer={renderFooter()}
+      footer={footer}
     >
       {event && (
-        <Space direction="vertical" style={{ width: '100%' }} size="large">
-          {/* 標題 */}
-          <div>
-            <div style={{
-              width: 4,
-              height: 24,
-              backgroundColor: event.color,
-              borderRadius: 2,
-              display: 'inline-block',
-              marginRight: 10,
-              verticalAlign: 'middle',
-            }} />
-            <Title level={4} style={{ display: 'inline', verticalAlign: 'middle' }}>
-              {event.title}
-            </Title>
-          </div>
+        <Space direction="vertical" style={{ width: '100%' }} size={16}>
 
-          {/* 標籤列 */}
-          <Space wrap>
-            <Tag color={event.color} icon={<TagOutlined />}>
-              {EVENT_TYPE_LABELS[event.event_type as keyof typeof EVENT_TYPE_LABELS] || event.event_type}
-            </Tag>
-            {event.zone && (
-              <Tag
-                icon={<EnvironmentOutlined />}
-                color={ZONE_COLORS[event.zone as keyof typeof ZONE_COLORS] || '#8c8c8c'}
-              >
-                {event.zone}
-              </Tag>
-            )}
-            <Tag color={STATUS_COLOR[event.status] || 'default'}>
-              {event.status_label || event.status}
-            </Tag>
-            {isCustom && (
-              <Tag icon={<EditOutlined />} color="default">
-                可編輯
-              </Tag>
-            )}
-          </Space>
-
-          {/* 詳情表格 */}
-          <Descriptions column={1} size="small" bordered>
-            <Descriptions.Item label={<><CalendarOutlined /> 日期</>}>
-              {event.start}{event.end && event.end !== event.start ? ` ～ ${event.end}` : ''}
+          {/* ── ① 基本資訊 ─────────────────────────────────────────────────── */}
+          <Descriptions
+            title="基本資訊"
+            column={1}
+            size="small"
+            bordered
+            labelStyle={{ width: 90, whiteSpace: 'nowrap' }}
+          >
+            <Descriptions.Item label="日期">
+              {event.start}
+              {event.end && event.end !== event.start ? ` ～ ${event.end}` : ''}
             </Descriptions.Item>
 
-            <Descriptions.Item label={<><TagOutlined /> 來源模組</>}>
-              {event.module_label}
+            <Descriptions.Item label="狀態">
+              <StatusTag status={event.status} statusLabel={event.status_label} />
+              {isCustom && (
+                <Tag icon={<EditOutlined />} color="default" style={{ marginLeft: 4 }}>
+                  可編輯
+                </Tag>
+              )}
             </Descriptions.Item>
 
-            {event.responsible && (
-              <Descriptions.Item label={<><UserOutlined /> 負責人</>}>
-                {event.responsible}
-              </Descriptions.Item>
-            )}
+            <Descriptions.Item label="來源模組">
+              <Tag color={event.color}>
+                {EVENT_TYPE_LABELS[event.event_type as keyof typeof EVENT_TYPE_LABELS] || event.event_type}
+              </Tag>
+            </Descriptions.Item>
 
+            <Descriptions.Item label="區域">
+              {event.zone
+                ? <Tag color={zoneColor}>{event.zone}</Tag>
+                : <Text type="secondary">—</Text>
+              }
+            </Descriptions.Item>
+
+            <Descriptions.Item label="負責人">{val(event.responsible)}</Descriptions.Item>
+          </Descriptions>
+
+          {/* ── ② 詳細說明 ─────────────────────────────────────────────────── */}
+          <Descriptions
+            title="詳細說明"
+            column={1}
+            size="small"
+            bordered
+            labelStyle={{ width: 90, whiteSpace: 'nowrap' }}
+          >
             {event.description && (
-              <Descriptions.Item label={<><InfoCircleOutlined /> 說明</>}>
-                {event.description}
-              </Descriptions.Item>
+              <Descriptions.Item label="說明">{event.description}</Descriptions.Item>
             )}
 
             {event.source_id && (
               <Descriptions.Item label="記錄 ID">
-                <Text type="secondary" style={{ fontSize: 11 }}>
-                  {event.source_id}
-                </Text>
+                <Text type="secondary" style={{ fontSize: 11 }}>{event.source_id}</Text>
+              </Descriptions.Item>
+            )}
+
+            {ragicUrl && (
+              <Descriptions.Item label="Ragic 連結">
+                <a
+                  href={ragicUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ color: '#4BA8E8' }}
+                >
+                  <LinkOutlined style={{ marginRight: 4 }} />在 Ragic 查看原始記錄
+                </a>
               </Descriptions.Item>
             )}
           </Descriptions>
+
         </Space>
       )}
     </Drawer>

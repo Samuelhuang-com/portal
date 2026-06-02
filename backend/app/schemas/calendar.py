@@ -26,6 +26,7 @@ ZONE_LABELS: Dict[str, str] = {
 EVENT_TYPE_COLORS: Dict[str, str] = {
     "hotel_pm":   "#1B3A5C",   # 飯店保養 — 品牌主色（深藍）
     "mall_pm":    "#4BA8E8",   # 商場保養 — 品牌輔色（天藍）
+    "full_pm":    "#006d75",   # 全棟例行維護 — 暗青
     "pm_plan":    "#52c41a",   # 週期保養預排 — 綠（主管排定）
     "inspection": "#1677ff",   # 工務巡檢 — Ant Design 藍
     "approval":   "#fa8c16",   # 簽核管理 — 橙
@@ -36,6 +37,7 @@ EVENT_TYPE_COLORS: Dict[str, str] = {
 EVENT_TYPE_LABELS: Dict[str, str] = {
     "hotel_pm":   "飯店保養",
     "mall_pm":    "商場保養",
+    "full_pm":    "全棟維護",
     "pm_plan":    "週期預排",
     "inspection": "工務巡檢",
     "approval":   "簽核管理",
@@ -61,6 +63,7 @@ class CalendarEventOut(BaseModel):
     deep_link:    str = ""                  # 跳轉路徑（前端 React Router 路徑）
     color:        str = ""                  # 顏色 hex
     zone:         str = "其它"              # 區域別：飯店/商場/公區/其它
+    ragic_url:    str = ""                  # Ragic 原始記錄連結（空=無連結）
 
     class Config:
         from_attributes = True
