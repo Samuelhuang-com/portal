@@ -5,6 +5,23 @@ from typing import Optional, List, Dict, Any
 from pydantic import BaseModel
 
 
+# ── 區域別常數 ────────────────────────────────────────────────────────────────
+ZONE_VALUES  = ["飯店", "商場", "公區", "其它"]
+
+ZONE_COLORS: Dict[str, str] = {
+    "飯店": "#1B3A5C",   # 品牌主色（深藍）
+    "商場": "#4BA8E8",   # 品牌輔色（天藍）
+    "公區": "#389e0d",   # 公共區域（深綠）
+    "其它": "#8c8c8c",   # 其他（灰）
+}
+
+ZONE_LABELS: Dict[str, str] = {
+    "飯店": "飯店",
+    "商場": "商場",
+    "公區": "公區",
+    "其它": "其它",
+}
+
 # ── 事件類型 / 顏色 / 標籤常數 ────────────────────────────────────────────────
 EVENT_TYPE_COLORS: Dict[str, str] = {
     "hotel_pm":   "#1B3A5C",   # 飯店保養 — 品牌主色（深藍）
@@ -34,7 +51,7 @@ class CalendarEventOut(BaseModel):
     start:        str                       # ISO date "2026-04-15"
     end:          Optional[str] = None
     all_day:      bool = True
-    event_type:   str                       # hotel_pm|mall_pm|security|inspection|approval|memo|custom
+    event_type:   str                       # hotel_pm|mall_pm|pm_plan|inspection|approval|memo|custom
     module_label: str                       # 飯店保養|商場保養|...
     source_id:    str = ""                  # 原模組記錄 ID
     status:       str = ""                  # pending|completed|abnormal|overdue
@@ -43,6 +60,7 @@ class CalendarEventOut(BaseModel):
     description:  str = ""                  # 補充說明
     deep_link:    str = ""                  # 跳轉路徑（前端 React Router 路徑）
     color:        str = ""                  # 顏色 hex
+    zone:         str = "其它"              # 區域別：飯店/商場/公區/其它
 
     class Config:
         from_attributes = True
@@ -75,6 +93,7 @@ class CustomEventCreate(BaseModel):
     start_time:  str = ""         # HH:MM（all_day=False 時有效）
     end_time:    str = ""         # HH:MM
     color:       str = "#13c2c2"
+    zone:        str = "其它"     # 區域別：飯店/商場/公區/其它
     responsible: str = ""
 
 
@@ -93,6 +112,7 @@ class CustomEventOut(BaseModel):
     start_time:   str
     end_time:     str
     color:        str
+    zone:         str = "其它"
     responsible:  str
     created_by:   str
     created_at:   Optional[Any] = None

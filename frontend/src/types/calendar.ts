@@ -2,6 +2,25 @@
  * 行事曆模組 TypeScript 型別定義
  */
 
+// ── 區域別 ────────────────────────────────────────────────────────────────────
+export type CalendarZone = '飯店' | '商場' | '公區' | '其它'
+
+export const ZONE_VALUES: CalendarZone[] = ['飯店', '商場', '公區', '其它']
+
+export const ZONE_COLORS: Record<CalendarZone, string> = {
+  飯店: '#1B3A5C',  // 品牌主色（深藍）
+  商場: '#4BA8E8',  // 品牌輔色（天藍）
+  公區: '#389e0d',  // 公共區域（深綠）
+  其它: '#8c8c8c',  // 其他（灰）
+}
+
+export const ZONE_LABELS: Record<CalendarZone, string> = {
+  飯店: '飯店',
+  商場: '商場',
+  公區: '公區',
+  其它: '其它',
+}
+
 // ── 事件類型 ──────────────────────────────────────────────────────────────────
 export type CalendarEventType =
   | 'hotel_pm'    // 飯店週期保養（執行記錄）
@@ -59,6 +78,7 @@ export interface CalendarEvent {
   description:  string
   deep_link:    string           // React Router 路徑
   color:        string
+  zone:         string           // 區域別：飯店/商場/公區/其它
 }
 
 export interface CalendarEventsResponse {
@@ -103,6 +123,7 @@ export interface CustomEventCreatePayload {
   start_time?:  string
   end_time?:    string
   color?:       string
+  zone?:        string           // 區域別：飯店/商場/公區/其它
   responsible?: string
 }
 

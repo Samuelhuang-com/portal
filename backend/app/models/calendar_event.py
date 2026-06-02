@@ -33,6 +33,7 @@ class CalendarCustomEvent(Base):
     start_time    = Column(String(8),   nullable=False, default="")         # HH:MM
     end_time      = Column(String(8),   nullable=False, default="")         # HH:MM
     color         = Column(String(20),  nullable=False, default="#13c2c2")  # 事件顏色
+    zone          = Column(String(10),  nullable=False, default="其它")      # 區域別：飯店/商場/公區/其它
     responsible   = Column(String(200), nullable=False, default="")         # 負責人
     created_by    = Column(String(100), nullable=False, default="")         # 建立者 full_name
     created_by_id = Column(String(36),  nullable=False, default="")         # 建立者 user.id

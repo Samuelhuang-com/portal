@@ -51,6 +51,7 @@ from app.schemas.calendar import (
     CustomEventOut,
     EVENT_TYPE_COLORS,
     EVENT_TYPE_LABELS,
+    ZONE_VALUES,
 )
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
@@ -163,6 +164,7 @@ def _collect_hotel_pm(db: Session, start: date, end: date) -> List[CalendarEvent
                 description  = f"{item.category} | {item.location}",
                 deep_link    = "/hotel/periodic-maintenance",
                 color        = color,
+                zone         = "飯店",
             ))
     return events
 
@@ -213,6 +215,7 @@ def _collect_mall_pm(db: Session, start: date, end: date) -> List[CalendarEventO
                 description  = f"{item.category} | {item.location}",
                 deep_link    = "/mall/periodic-maintenance",
                 color        = color,
+                zone         = "商場",
             ))
     return events
 
@@ -257,6 +260,10 @@ def _collect_pm_plan(db: Session, start: date, end: date) -> List[CalendarEventO
         }
         deep_link = DEEP_LINK_MAP.get(src_label, "/hotel/periodic-maintenance")
 
+        # zone：依主管排定來源決定
+        ZONE_MAP = {"飯店": "飯店", "商場": "商場", "全棟": "公區"}
+        item_zone = ZONE_MAP.get(src_label, "其它")
+
         events.append(CalendarEventOut(
             id           = f"pm_plan_{item.ragic_id}",
             title        = title_text,
@@ -275,6 +282,7 @@ def _collect_pm_plan(db: Session, start: date, end: date) -> List[CalendarEventO
             ),
             deep_link    = deep_link,
             color        = color,
+            zone         = item_zone,
         ))
 
     return events
@@ -329,6 +337,7 @@ def _collect_inspection(db: Session, start: date, end: date) -> List[CalendarEve
                 description  = f"{floor_label}，巡檢日期：{b.inspection_date}",
                 deep_link    = deep_link,
                 color        = color,
+                zone         = "商場",
             ))
     return events
 
@@ -374,6 +383,7 @@ def _collect_approvals(db: Session, start: date, end: date) -> List[CalendarEven
             description  = f"申請人：{ap.requester}｜部門：{ap.requester_dept}",
             deep_link    = f"/approvals/{ap.id}",
             color        = color,
+            zone         = "其它",
         ))
     return events
 
@@ -411,6 +421,7 @@ def _collect_memos(db: Session, start: date, end: date) -> List[CalendarEventOut
             description  = f"發文者：{memo.author}",
             deep_link    = f"/memos/{memo.id}",
             color        = color,
+            zone         = "其它",
         ))
     return events
 
@@ -444,6 +455,7 @@ def _collect_custom(db: Session, start: date, end: date) -> List[CalendarEventOu
             description  = ev.description,
             deep_link    = "",
             color        = ev.color or EVENT_TYPE_COLORS["custom"],
+            zone         = getattr(ev, "zone", "其它") or "其它",
         ))
     return events
 
@@ -557,6 +569,7 @@ def create_custom_event(
     payload: CustomEventCreate,
     db: Session = Depends(get_db),
 ):
+    zone_val = payload.zone if payload.zone in ZONE_VALUES else "其它"
     ev = CalendarCustomEvent(
         title       = payload.title,
         description = payload.description,
@@ -566,6 +579,7 @@ def create_custom_event(
         start_time  = payload.start_time or "",
         end_time    = payload.end_time or "",
         color       = payload.color or EVENT_TYPE_COLORS["custom"],
+        zone        = zone_val,
         responsible = payload.responsible or "",
     )
     db.add(ev)

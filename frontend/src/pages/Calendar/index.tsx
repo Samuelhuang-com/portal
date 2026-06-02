@@ -13,13 +13,13 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import {
   Row, Col, Card, Statistic, Space, Typography, Breadcrumb,
-  Tag, Button, Checkbox, Tooltip, Modal, Form, Input, DatePicker,
+  Tag, Button, Modal, Form, Input, DatePicker, Select,
   Switch, TimePicker, ColorPicker, message, Spin,
 } from 'antd'
 import {
   HomeOutlined, CalendarOutlined, PlusOutlined, ReloadOutlined,
-  WarningOutlined, CheckCircleOutlined, ClockCircleOutlined,
-  ExclamationCircleOutlined, TeamOutlined, BellOutlined,
+  WarningOutlined, ClockCircleOutlined,
+  ExclamationCircleOutlined, BellOutlined, EditOutlined, DeleteOutlined,
 } from '@ant-design/icons'
 import FullCalendar from '@fullcalendar/react'
 import dayGridPlugin  from '@fullcalendar/daygrid'
@@ -33,15 +33,21 @@ import {
   fetchCalendarEvents,
   fetchCalendarToday,
   createCustomEvent,
+  updateCustomEvent,
+  deleteCustomEvent,
 } from '@/api/calendar'
 import type {
   CalendarEvent,
   CalendarTodaySummary,
   CalendarEventType,
+  CalendarZone,
 } from '@/types/calendar'
 import {
   EVENT_TYPE_COLORS,
   EVENT_TYPE_LABELS,
+  ZONE_VALUES,
+  ZONE_COLORS,
+  ZONE_LABELS,
 } from '@/types/calendar'
 import { NAV_GROUP } from '@/constants/navLabels'
 import EventDrawer from './components/EventDrawer'
@@ -79,15 +85,20 @@ export default function CalendarPage() {
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null)
   const [drawerOpen,   setDrawerOpen]   = useState(false)
   const [activeFilters, setActiveFilters] = useState<CalendarEventType[]>(ALL_TYPES)
+  const [activeZones,   setActiveZones]   = useState<CalendarZone[]>([...ZONE_VALUES])
   const [addModalOpen,  setAddModalOpen]  = useState(false)
   const [addLoading,    setAddLoading]    = useState(false)
+  const [editModalOpen,  setEditModalOpen]  = useState(false)
+  const [editLoading,    setEditLoading]    = useState(false)
+  const [editingEvent,   setEditingEvent]   = useState<CalendarEvent | null>(null)
   const [dateRange,     setDateRange]     = useState<{ start: string; end: string }>({
     start: dayjs().startOf('month').format('YYYY-MM-DD'),
     end:   dayjs().endOf('month').format('YYYY-MM-DD'),
   })
 
   const calendarRef = useRef<FullCalendar>(null)
-  const [addForm] = Form.useForm()
+  const [addForm]  = Form.useForm()
+  const [editForm] = Form.useForm()
 
   // ── 載入事件 ──────────────────────────────────────────────────────────────
   const loadEvents = useCallback(async (start: string, end: string) => {
@@ -160,6 +171,18 @@ export default function CalendarPage() {
     )
   }
 
+  const toggleZone = (zone: CalendarZone) => {
+    setActiveZones((prev) =>
+      prev.includes(zone) ? prev.filter((z) => z !== zone) : [...prev, zone]
+    )
+  }
+
+  const toggleAllZones = () => {
+    setActiveZones(
+      activeZones.length === ZONE_VALUES.length ? [] : [...ZONE_VALUES]
+    )
+  }
+
   // ── 新增自訂事件 ───────────────────────────────────────────────────────────
   const handleAddEvent = async () => {
     try {
@@ -176,6 +199,7 @@ export default function CalendarPage() {
         color:        typeof values.color === 'string'
                         ? values.color
                         : (values.color?.toHexString?.() || '#13c2c2'),
+        zone:         values.zone || '其它',
         responsible:  values.responsible || '',
       })
       message.success('自訂事件已新增')
@@ -191,8 +215,77 @@ export default function CalendarPage() {
     }
   }
 
-  // ── 轉換事件格式給 FullCalendar ─────────────────────────────────────────────
-  const fcEvents: EventInput[] = events.map(toFCEvent)
+  // ── 開啟編輯 Modal（預填現有自訂事件資料）────────────────────────────────────
+  const handleOpenEdit = useCallback((ev: CalendarEvent) => {
+    setEditingEvent(ev)
+    // ev.title 原本是原始 title（custom 事件沒有前綴）
+    editForm.setFieldsValue({
+      title:        ev.title,
+      description:  ev.description || '',
+      start_date:   dayjs(ev.start),
+      end_date:     ev.end && ev.end !== ev.start ? dayjs(ev.end) : null,
+      all_day:      ev.all_day !== false,
+      zone:         ev.zone || '其它',
+      responsible:  ev.responsible || '',
+      color:        ev.color || '#13c2c2',
+    })
+    setEditModalOpen(true)
+  }, [editForm])
+
+  // ── 送出編輯 ──────────────────────────────────────────────────────────────
+  const handleEditEvent = async () => {
+    if (!editingEvent) return
+    try {
+      const values = await editForm.validateFields()
+      setEditLoading(true)
+      await updateCustomEvent(editingEvent.source_id, {
+        title:       values.title,
+        description: values.description || '',
+        start_date:  values.start_date.format('YYYY-MM-DD'),
+        end_date:    values.end_date ? values.end_date.format('YYYY-MM-DD') : '',
+        all_day:     values.all_day !== false,
+        start_time:  '',
+        end_time:    '',
+        color:       typeof values.color === 'string'
+                       ? values.color
+                       : (values.color?.toHexString?.() || '#13c2c2'),
+        zone:        values.zone || '其它',
+        responsible: values.responsible || '',
+      })
+      message.success('事件已更新')
+      editForm.resetFields()
+      setEditModalOpen(false)
+      setEditingEvent(null)
+      loadEvents(dateRange.start, dateRange.end)
+      loadToday()
+    } catch (err: any) {
+      if (err?.errorFields) return
+      message.error('更新失敗')
+    } finally {
+      setEditLoading(false)
+    }
+  }
+
+  // ── 刪除自訂事件 ───────────────────────────────────────────────────────────
+  const handleDeleteEvent = useCallback(async (ev: CalendarEvent) => {
+    try {
+      await deleteCustomEvent(ev.source_id)
+      message.success('事件已刪除')
+      loadEvents(dateRange.start, dateRange.end)
+      loadToday()
+    } catch {
+      message.error('刪除失敗')
+    }
+  }, [dateRange, loadEvents, loadToday])
+
+  // ── 轉換事件格式給 FullCalendar（套用區域篩選，AND 邏輯）───────────────────
+  const fcEvents: EventInput[] = events
+    .filter((ev) =>
+      activeZones.length === 0 ||
+      activeZones.length === ZONE_VALUES.length ||
+      activeZones.includes((ev.zone || '其它') as CalendarZone)
+    )
+    .map(toFCEvent)
 
   // ── 快速導航按鈕 ──────────────────────────────────────────────────────────
   const goToday = () => calendarRef.current?.getApi().today()
@@ -281,9 +374,9 @@ export default function CalendarPage() {
       </Row>
 
       {/* ── 事件類型篩選器 ───────────────────────────────────────────────── */}
-      <Card size="small" style={{ marginBottom: 12 }}>
+      <Card size="small" style={{ marginBottom: 8 }}>
         <Space wrap align="center">
-          <Text strong style={{ fontSize: 12 }}>篩選：</Text>
+          <Text strong style={{ fontSize: 12 }}>類型：</Text>
           <Button
             size="small"
             type={activeFilters.length === ALL_TYPES.length ? 'primary' : 'default'}
@@ -304,6 +397,35 @@ export default function CalendarPage() {
               }}
             >
               {EVENT_TYPE_LABELS[type]}
+            </Tag.CheckableTag>
+          ))}
+        </Space>
+      </Card>
+
+      {/* ── 區域別篩選器 ─────────────────────────────────────────────────── */}
+      <Card size="small" style={{ marginBottom: 12 }}>
+        <Space wrap align="center">
+          <Text strong style={{ fontSize: 12 }}>區域：</Text>
+          <Button
+            size="small"
+            type={activeZones.length === ZONE_VALUES.length ? 'primary' : 'default'}
+            onClick={toggleAllZones}
+          >
+            全選
+          </Button>
+          {ZONE_VALUES.map((zone) => (
+            <Tag.CheckableTag
+              key={zone}
+              checked={activeZones.includes(zone)}
+              onChange={() => toggleZone(zone)}
+              style={{
+                backgroundColor: activeZones.includes(zone) ? ZONE_COLORS[zone] : undefined,
+                color:           activeZones.includes(zone) ? '#fff' : undefined,
+                borderColor:     ZONE_COLORS[zone],
+                border:          `1px solid ${ZONE_COLORS[zone]}`,
+              }}
+            >
+              {ZONE_LABELS[zone]}
             </Tag.CheckableTag>
           ))}
         </Space>
@@ -374,23 +496,29 @@ export default function CalendarPage() {
         event={selectedEvent}
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
+        onEdit={handleOpenEdit}
+        onDelete={handleDeleteEvent}
       />
 
-      {/* ── 新增自訂事件 Modal ──────────────────────────────────────────── */}
+      {/* ── 編輯自訂事件 Modal ──────────────────────────────────────────── */}
       <Modal
-        title={<><PlusOutlined /> 新增自訂事件</>}
-        open={addModalOpen}
-        onOk={handleAddEvent}
-        onCancel={() => { setAddModalOpen(false); addForm.resetFields() }}
-        confirmLoading={addLoading}
-        okText="新增"
+        title={<><EditOutlined /> 編輯自訂事件</>}
+        open={editModalOpen}
+        onOk={handleEditEvent}
+        onCancel={() => {
+          setEditModalOpen(false)
+          setEditingEvent(null)
+          editForm.resetFields()
+        }}
+        confirmLoading={editLoading}
+        okText="儲存"
         cancelText="取消"
         width={520}
       >
         <Form
-          form={addForm}
+          form={editForm}
           layout="vertical"
-          initialValues={{ all_day: true, color: '#13c2c2' }}
+          initialValues={{ all_day: true, color: '#13c2c2', zone: '其它' }}
         >
           <Form.Item name="title" label="事件標題" rules={[{ required: true, message: '請填寫標題' }]}>
             <Input placeholder="請輸入事件標題" />
@@ -409,9 +537,78 @@ export default function CalendarPage() {
             </Col>
           </Row>
 
-          <Form.Item name="all_day" label="全天事件" valuePropName="checked">
-            <Switch />
+          <Row gutter={12}>
+            <Col span={12}>
+              <Form.Item name="zone" label="區域別">
+                <Select options={ZONE_VALUES.map((z) => ({ label: z, value: z }))} />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="all_day" label="全天事件" valuePropName="checked">
+                <Switch />
+              </Form.Item>
+            </Col>
+          </Row>
+
+          <Form.Item name="responsible" label="負責人（選填）">
+            <Input placeholder="填入負責人姓名" />
           </Form.Item>
+
+          <Form.Item name="description" label="說明（選填）">
+            <Input.TextArea rows={2} placeholder="事件說明" />
+          </Form.Item>
+
+          <Form.Item name="color" label="事件顏色">
+            <ColorPicker />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      {/* ── 新增自訂事件 Modal ──────────────────────────────────────────── */}
+      <Modal
+        title={<><PlusOutlined /> 新增自訂事件</>}
+        open={addModalOpen}
+        onOk={handleAddEvent}
+        onCancel={() => { setAddModalOpen(false); addForm.resetFields() }}
+        confirmLoading={addLoading}
+        okText="新增"
+        cancelText="取消"
+        width={520}
+      >
+        <Form
+          form={addForm}
+          layout="vertical"
+          initialValues={{ all_day: true, color: '#13c2c2', zone: '其它' }}
+        >
+          <Form.Item name="title" label="事件標題" rules={[{ required: true, message: '請填寫標題' }]}>
+            <Input placeholder="請輸入事件標題" />
+          </Form.Item>
+
+          <Row gutter={12}>
+            <Col span={12}>
+              <Form.Item name="start_date" label="開始日期" rules={[{ required: true, message: '請選擇日期' }]}>
+                <DatePicker style={{ width: '100%' }} format="YYYY-MM-DD" />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="end_date" label="結束日期（選填）">
+                <DatePicker style={{ width: '100%' }} format="YYYY-MM-DD" />
+              </Form.Item>
+            </Col>
+          </Row>
+
+          <Row gutter={12}>
+            <Col span={12}>
+              <Form.Item name="zone" label="區域別">
+                <Select options={ZONE_VALUES.map((z) => ({ label: z, value: z }))} />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="all_day" label="全天事件" valuePropName="checked">
+                <Switch />
+              </Form.Item>
+            </Col>
+          </Row>
 
           <Form.Item
             noStyle

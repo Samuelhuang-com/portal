@@ -743,6 +743,18 @@ class SyncApp(tk.Tk):
                         conn.commit()
                         logger.info("[DB] hotel_mr_batch.%s 欄位已新增", col)
 
+            # ── 5. calendar_custom_events.zone 欄位補丁（區域別）─────────────
+            with engine.connect() as conn:
+                result = conn.execute(text("PRAGMA table_info(calendar_custom_events)"))
+                existing = {row[1] for row in result.fetchall()}
+                if "zone" not in existing:
+                    conn.execute(text(
+                        "ALTER TABLE calendar_custom_events "
+                        "ADD COLUMN zone TEXT NOT NULL DEFAULT '其它'"
+                    ))
+                    conn.commit()
+                    logger.info("[DB] calendar_custom_events.zone 欄位已新增")
+
             logger.info("[DB] Schema 確認完成 ✓")
 
         except Exception as exc:

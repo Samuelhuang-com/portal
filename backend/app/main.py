@@ -716,6 +716,21 @@ def _migrate_f7_vendor_managing_company():
             print("[Migration] vendors.managing_company added")
 
 
+def _migrate_calendar_custom_event_zone():
+    """calendar_custom_events.zone 欄位補丁（區域別：飯店/商場/公區/其它）。"""
+    from sqlalchemy import text
+    with engine.connect() as conn:
+        result = conn.execute(text("PRAGMA table_info(calendar_custom_events)"))
+        existing = {row[1] for row in result.fetchall()}
+        if "zone" not in existing:
+            conn.execute(text(
+                "ALTER TABLE calendar_custom_events "
+                "ADD COLUMN zone TEXT NOT NULL DEFAULT '其它'"
+            ))
+            conn.commit()
+            print("[Migration] calendar_custom_events.zone 欄位已新增")
+
+
 def _migrate_f6_claim_cost_company():
     """F6 — contract_claims.cost_company（nullable VARCHAR 100）。"""
     from sqlalchemy import text
@@ -1174,6 +1189,7 @@ async def lifespan(app: FastAPI):
     import app.models.nichiyo_claim_request     # noqa: F401
     import app.models.ragic_sheet_config        # noqa: F401
     import app.models.other_tasks               # noqa: F401
+    import app.models.pm_plan                   # noqa: F401  週期保養預排（主管排定 Sheet /7 /13 /20）
     import app.models.schedule                  # noqa: F401  班表模組（本地 SQLite，不對接 Ragic）
     import app.models.api_access_log            # noqa: F401  使用監控日誌
     import app.models.ppt_export_config        # noqa: F401  PPT 匯出設定
@@ -1313,6 +1329,10 @@ async def lifespan(app: FastAPI):
     # F7（2026-06-01）：vendors.managing_company
     _migrate_f7_vendor_managing_company()
     print("[Portal] F7 vendor managing_company migration checked.")
+
+    # 行事曆區域別（2026-06-02）：calendar_custom_events.zone
+    _migrate_calendar_custom_event_zone()
+    print("[Portal] calendar_custom_events zone migration checked.")
 
     # 選單設定補丁（2026-04-28）：隱藏舊 custom_1777348120465，補齊 mall-pm-group 子項 DB 記錄
     _seed_menu_config_mall_pm_group()
