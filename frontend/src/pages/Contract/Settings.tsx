@@ -2,11 +2,12 @@
  * 合約管理 — 設定頁面
  *
  * 功能：
+ *  0. 公司別 / 部門別 / 計價規格 管理（F2）
  *  1. 預算科目管理（新增、查看、編輯、刪除）
  *  2. 通知設定
  *  3. 同步設定
  */
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import {
   Card, Row, Col, Tabs, Form, Input, Select, Button, Switch, Divider,
   message, Typography, Breadcrumb, Space, Table, Tag, Popconfirm,
@@ -16,6 +17,7 @@ import { DatePicker } from 'antd'
 import {
   SaveOutlined, ReloadOutlined, DeleteOutlined, PlusOutlined,
   AuditOutlined, EditOutlined, BarChartOutlined,
+  BankOutlined, TeamOutlined, ProfileOutlined, FileTextOutlined,
 } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 
@@ -24,11 +26,18 @@ import {
   fetchBudgetCategories, createBudgetCategory, updateBudgetCategory,
   deleteBudgetCategory, syncContractsFromRagic, fetchBudgetAnalysis,
 } from '@/api/contract'
+import {
+  companiesApi, departmentsApi, pricingSpecsApi, slaMetricTypesApi,
+} from '@/api/referenceData'
+import type {
+  CompanyRecord, DepartmentRecord, PricingSpecRecord, SlaMetricTypeRecord,
+} from '@/api/referenceData'
+import TemplatesTab from './TemplatesTab'
 
 const { Text } = Typography
 
 export default function SettingsPage() {
-  const [activeTab, setActiveTab] = useState('budget-categories')
+  const [activeTab, setActiveTab] = useState('companies')
   const [budgetCategories, setBudgetCategories] = useState<BudgetCategoryRecord[]>([])
   const [loading, setLoading] = useState(false)
   const [form] = Form.useForm()
@@ -230,6 +239,21 @@ export default function SettingsPage() {
         onChange={setActiveTab}
         items={[
           {
+            key: 'companies',
+            label: <span><BankOutlined /> 公司別</span>,
+            children: <CompaniesTab />,
+          },
+          {
+            key: 'departments',
+            label: <span><TeamOutlined /> 部門別</span>,
+            children: <DepartmentsTab />,
+          },
+          {
+            key: 'pricing-specs',
+            label: <span><ProfileOutlined /> 計價規格</span>,
+            children: <PricingSpecsTab />,
+          },
+          {
             key: 'budget-categories',
             label: '預算科目管理',
             children: (
@@ -411,6 +435,20 @@ export default function SettingsPage() {
                 />
               </Card>
             ),
+          },
+          {
+            key: 'templates',
+            label: <span><FileTextOutlined /> 合約範本</span>,
+            children: (
+              <Card>
+                <TemplatesTab />
+              </Card>
+            ),
+          },
+          {
+            key: 'sla-types',
+            label: <span><BarChartOutlined /> SLA 指標類型</span>,
+            children: <SlaTypesTab />,
           },
           {
             key: 'notification',
@@ -689,5 +727,391 @@ export default function SettingsPage() {
         </Form>
       </Modal>
     </div>
+  )
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// F2 — 公司別 Tab
+// ═════════════════════════════════════════════════════════════════════════════
+function CompaniesTab() {
+  const [rows, setRows] = useState<CompanyRecord[]>([])
+  const [loading, setLoading] = useState(false)
+  const [modalOpen, setModalOpen] = useState(false)
+  const [editRecord, setEditRecord] = useState<CompanyRecord | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [form] = Form.useForm()
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try { setRows((await companiesApi.list()).data) }
+    catch { message.error('載入公司別失敗') }
+    finally { setLoading(false) }
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  const openAdd = () => { setEditRecord(null); form.resetFields(); setModalOpen(true) }
+  const openEdit = (r: CompanyRecord) => { setEditRecord(r); form.setFieldsValue({ name: r.name }); setModalOpen(true) }
+
+  const handleOk = async () => {
+    const { name } = await form.validateFields()
+    setSaving(true)
+    try {
+      if (editRecord) {
+        await companiesApi.update(editRecord.id, name)
+        message.success('已更新')
+      } else {
+        await companiesApi.create(name)
+        message.success('已新增')
+      }
+      setModalOpen(false)
+      load()
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail ?? '操作失敗')
+    } finally { setSaving(false) }
+  }
+
+  const handleToggle = async (r: CompanyRecord) => {
+    try {
+      await companiesApi.toggle(r.id)
+      message.success(r.is_active ? '已停用' : '已啟用')
+      load()
+    } catch { message.error('操作失敗') }
+  }
+
+  const columns: ColumnsType<CompanyRecord> = [
+    { title: '公司名稱', dataIndex: 'name', key: 'name' },
+    {
+      title: '狀態', dataIndex: 'is_active', key: 'is_active', width: 90,
+      render: (v: boolean) => <Tag color={v ? 'success' : 'default'}>{v ? '啟用' : '停用'}</Tag>,
+    },
+    {
+      title: '操作', key: 'actions', width: 160,
+      render: (_: any, r: CompanyRecord) => (
+        <Space size="small">
+          <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(r)}>修改</Button>
+          <Popconfirm
+            title={r.is_active ? '確認停用此公司？停用後不出現於下拉選單。' : '確認啟用此公司？'}
+            onConfirm={() => handleToggle(r)} okText="確認" cancelText="取消"
+          >
+            <Button size="small" danger={r.is_active}>{r.is_active ? '停用' : '啟用'}</Button>
+          </Popconfirm>
+        </Space>
+      ),
+    },
+  ]
+
+  return (
+    <Card>
+      <div style={{ marginBottom: 12, display: 'flex', justifyContent: 'space-between' }}>
+        <Button icon={<ReloadOutlined />} onClick={load} loading={loading}>重整</Button>
+        <Button type="primary" icon={<PlusOutlined />} onClick={openAdd}>新增公司</Button>
+      </div>
+      <Table rowKey="id" size="small" columns={columns} dataSource={rows} loading={loading} pagination={false} locale={{ emptyText: <Empty description="尚無公司資料" /> }} />
+      <Modal title={editRecord ? '修改公司別' : '新增公司別'} open={modalOpen}
+        onOk={handleOk} onCancel={() => setModalOpen(false)} confirmLoading={saving} okText="儲存" cancelText="取消" destroyOnClose>
+        <Form form={form} layout="vertical" style={{ marginTop: 12 }}>
+          <Form.Item name="name" label="公司名稱" rules={[{ required: true, message: '請輸入公司名稱' }]}>
+            <Input placeholder="例：大直" />
+          </Form.Item>
+        </Form>
+      </Modal>
+    </Card>
+  )
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// F2 — 部門別 Tab
+// ═════════════════════════════════════════════════════════════════════════════
+function DepartmentsTab() {
+  const [rows, setRows] = useState<DepartmentRecord[]>([])
+  const [companies, setCompanies] = useState<CompanyRecord[]>([])
+  const [filterCompanyId, setFilterCompanyId] = useState<number | undefined>()
+  const [loading, setLoading] = useState(false)
+  const [modalOpen, setModalOpen] = useState(false)
+  const [editRecord, setEditRecord] = useState<DepartmentRecord | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [form] = Form.useForm()
+
+  const loadCompanies = useCallback(async () => {
+    try { setCompanies((await companiesApi.list()).data) }
+    catch { /* ignore */ }
+  }, [])
+
+  const load = useCallback(async (cid?: number) => {
+    setLoading(true)
+    try { setRows((await departmentsApi.list(cid)).data) }
+    catch { message.error('載入部門別失敗') }
+    finally { setLoading(false) }
+  }, [])
+
+  useEffect(() => { loadCompanies(); load() }, [load, loadCompanies])
+
+  const handleFilterChange = (v: number | undefined) => { setFilterCompanyId(v); load(v) }
+
+  const openAdd = () => { setEditRecord(null); form.resetFields(); setModalOpen(true) }
+  const openEdit = (r: DepartmentRecord) => {
+    setEditRecord(r)
+    form.setFieldsValue({ name: r.name, company_id: r.company_id })
+    setModalOpen(true)
+  }
+
+  const handleOk = async () => {
+    const { name, company_id } = await form.validateFields()
+    setSaving(true)
+    try {
+      if (editRecord) {
+        await departmentsApi.update(editRecord.id, name, company_id)
+        message.success('已更新')
+      } else {
+        await departmentsApi.create(name, company_id)
+        message.success('已新增')
+      }
+      setModalOpen(false)
+      load(filterCompanyId)
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail ?? '操作失敗')
+    } finally { setSaving(false) }
+  }
+
+  const handleToggle = async (r: DepartmentRecord) => {
+    try {
+      await departmentsApi.toggle(r.id)
+      message.success(r.is_active ? '已停用' : '已啟用')
+      load(filterCompanyId)
+    } catch { message.error('操作失敗') }
+  }
+
+  const columns: ColumnsType<DepartmentRecord> = [
+    { title: '歸屬公司', dataIndex: 'company_name', key: 'company_name', width: 120 },
+    { title: '部門名稱', dataIndex: 'name', key: 'name' },
+    {
+      title: '狀態', dataIndex: 'is_active', key: 'is_active', width: 90,
+      render: (v: boolean) => <Tag color={v ? 'success' : 'default'}>{v ? '啟用' : '停用'}</Tag>,
+    },
+    {
+      title: '操作', key: 'actions', width: 160,
+      render: (_: any, r: DepartmentRecord) => (
+        <Space size="small">
+          <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(r)}>修改</Button>
+          <Popconfirm
+            title={r.is_active ? '確認停用此部門？' : '確認啟用此部門？'}
+            onConfirm={() => handleToggle(r)} okText="確認" cancelText="取消"
+          >
+            <Button size="small" danger={r.is_active}>{r.is_active ? '停用' : '啟用'}</Button>
+          </Popconfirm>
+        </Space>
+      ),
+    },
+  ]
+
+  return (
+    <Card>
+      <div style={{ marginBottom: 12, display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+        <Space>
+          <Select allowClear placeholder="篩選公司別" style={{ width: 140 }}
+            value={filterCompanyId} onChange={handleFilterChange}
+            options={companies.map(c => ({ value: c.id, label: c.name }))} />
+          <Button icon={<ReloadOutlined />} onClick={() => load(filterCompanyId)} loading={loading}>重整</Button>
+        </Space>
+        <Button type="primary" icon={<PlusOutlined />} onClick={openAdd}>新增部門</Button>
+      </div>
+      <Table rowKey="id" size="small" columns={columns} dataSource={rows} loading={loading} pagination={false} locale={{ emptyText: <Empty description="尚無部門資料" /> }} />
+      <Modal title={editRecord ? '修改部門別' : '新增部門別'} open={modalOpen}
+        onOk={handleOk} onCancel={() => setModalOpen(false)} confirmLoading={saving} okText="儲存" cancelText="取消" destroyOnClose>
+        <Form form={form} layout="vertical" style={{ marginTop: 12 }}>
+          <Form.Item name="company_id" label="歸屬公司" rules={[{ required: true, message: '請選擇公司' }]}>
+            <Select placeholder="請選擇公司" options={companies.map(c => ({ value: c.id, label: c.name }))} />
+          </Form.Item>
+          <Form.Item name="name" label="部門名稱" rules={[{ required: true, message: '請輸入部門名稱' }]}>
+            <Input placeholder="例：資訊部" />
+          </Form.Item>
+        </Form>
+      </Modal>
+    </Card>
+  )
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// F2 — 計價規格 Tab
+// ═════════════════════════════════════════════════════════════════════════════
+function PricingSpecsTab() {
+  const [rows, setRows] = useState<PricingSpecRecord[]>([])
+  const [loading, setLoading] = useState(false)
+  const [modalOpen, setModalOpen] = useState(false)
+  const [editRecord, setEditRecord] = useState<PricingSpecRecord | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [form] = Form.useForm()
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try { setRows((await pricingSpecsApi.list()).data) }
+    catch { message.error('載入計價規格失敗') }
+    finally { setLoading(false) }
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  const openAdd = () => { setEditRecord(null); form.resetFields(); setModalOpen(true) }
+  const openEdit = (r: PricingSpecRecord) => { setEditRecord(r); form.setFieldsValue({ name: r.name }); setModalOpen(true) }
+
+  const handleOk = async () => {
+    const { name } = await form.validateFields()
+    setSaving(true)
+    try {
+      if (editRecord) {
+        await pricingSpecsApi.update(editRecord.id, name)
+        message.success('已更新')
+      } else {
+        await pricingSpecsApi.create(name)
+        message.success('已新增')
+      }
+      setModalOpen(false)
+      load()
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail ?? '操作失敗')
+    } finally { setSaving(false) }
+  }
+
+  const handleToggle = async (r: PricingSpecRecord) => {
+    try {
+      await pricingSpecsApi.toggle(r.id)
+      message.success(r.is_active ? '已停用' : '已啟用')
+      load()
+    } catch { message.error('操作失敗') }
+  }
+
+  const columns: ColumnsType<PricingSpecRecord> = [
+    { title: '計價規格名稱', dataIndex: 'name', key: 'name' },
+    {
+      title: '狀態', dataIndex: 'is_active', key: 'is_active', width: 90,
+      render: (v: boolean) => <Tag color={v ? 'success' : 'default'}>{v ? '啟用' : '停用'}</Tag>,
+    },
+    {
+      title: '操作', key: 'actions', width: 160,
+      render: (_: any, r: PricingSpecRecord) => (
+        <Space size="small">
+          <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(r)}>修改</Button>
+          <Popconfirm
+            title={r.is_active ? '確認停用此計價規格？' : '確認啟用？'}
+            onConfirm={() => handleToggle(r)} okText="確認" cancelText="取消"
+          >
+            <Button size="small" danger={r.is_active}>{r.is_active ? '停用' : '啟用'}</Button>
+          </Popconfirm>
+        </Space>
+      ),
+    },
+  ]
+
+  return (
+    <Card>
+      <div style={{ marginBottom: 12, display: 'flex', justifyContent: 'space-between' }}>
+        <Button icon={<ReloadOutlined />} onClick={load} loading={loading}>重整</Button>
+        <Button type="primary" icon={<PlusOutlined />} onClick={openAdd}>新增計價規格</Button>
+      </div>
+      <Table rowKey="id" size="small" columns={columns} dataSource={rows} loading={loading} pagination={false} locale={{ emptyText: <Empty description="尚無計價規格" /> }} />
+      <Modal title={editRecord ? '修改計價規格' : '新增計價規格'} open={modalOpen}
+        onOk={handleOk} onCancel={() => setModalOpen(false)} confirmLoading={saving} okText="儲存" cancelText="取消" destroyOnClose>
+        <Form form={form} layout="vertical" style={{ marginTop: 12 }}>
+          <Form.Item name="name" label="計價規格名稱" rules={[{ required: true, message: '請輸入名稱' }]}>
+            <Input placeholder="例：月租型、按次計費" />
+          </Form.Item>
+        </Form>
+      </Modal>
+    </Card>
+  )
+}
+
+// ── SLA 指標類型 Tab ─────────────────────────────────────────────────────────
+
+function SlaTypesTab() {
+  const [rows, setRows] = useState<SlaMetricTypeRecord[]>([])
+  const [loading, setLoading] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [modalOpen, setModalOpen] = useState(false)
+  const [editRecord, setEditRecord] = useState<SlaMetricTypeRecord | null>(null)
+  const [form] = Form.useForm()
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try { setRows((await slaMetricTypesApi.list()).data) }
+    catch { message.error('載入失敗') }
+    finally { setLoading(false) }
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  const openAdd = () => { setEditRecord(null); form.resetFields(); setModalOpen(true) }
+  const openEdit = (r: SlaMetricTypeRecord) => {
+    setEditRecord(r)
+    form.setFieldsValue({ name: r.name, description: r.description })
+    setModalOpen(true)
+  }
+  const handleToggle = async (r: SlaMetricTypeRecord) => {
+    try { await slaMetricTypesApi.toggle(r.id); load() }
+    catch { message.error('操作失敗') }
+  }
+  const handleOk = async () => {
+    try {
+      const v = await form.validateFields()
+      setSaving(true)
+      if (editRecord) {
+        await slaMetricTypesApi.update(editRecord.id, v.name, v.description)
+        message.success('已更新')
+      } else {
+        await slaMetricTypesApi.create(v.name, v.description)
+        message.success('已新增')
+      }
+      setModalOpen(false); load()
+    } catch (e: any) {
+      if (e?.response?.data?.detail) message.error(e.response.data.detail)
+    } finally { setSaving(false) }
+  }
+
+  const columns = [
+    { title: 'SLA 指標類型名稱', dataIndex: 'name', key: 'name', render: (v: string) => <Text strong>{v}</Text> },
+    { title: '說明', dataIndex: 'description', key: 'description', render: (v: string) => v || <Text type="secondary">—</Text> },
+    {
+      title: '狀態', dataIndex: 'is_active', key: 'is_active', width: 90,
+      render: (v: boolean) => <Tag color={v ? 'success' : 'default'}>{v ? '啟用' : '停用'}</Tag>,
+    },
+    {
+      title: '操作', key: 'actions', width: 180,
+      render: (_: any, r: SlaMetricTypeRecord) => (
+        <Space size="small">
+          <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(r)}>修改</Button>
+          <Popconfirm
+            title={r.is_active ? '確認停用？' : '確認啟用？'}
+            onConfirm={() => handleToggle(r)} okText="確認" cancelText="取消"
+          >
+            <Button size="small" danger={r.is_active}>{r.is_active ? '停用' : '啟用'}</Button>
+          </Popconfirm>
+        </Space>
+      ),
+    },
+  ]
+
+  return (
+    <Card>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 12 }}>
+        <Text type="secondary" style={{ fontSize: 13 }}>
+          定義 SLA 指標的分類（如：可用率、回應時間），新增 SLA 指標時可從此清單選取。
+        </Text>
+        <Button type="primary" icon={<PlusOutlined />} onClick={openAdd}>新增類型</Button>
+      </div>
+      <Table rowKey="id" size="small" columns={columns} dataSource={rows} loading={loading}
+        pagination={false} locale={{ emptyText: <Empty description="尚無 SLA 指標類型" /> }} />
+      <Modal title={editRecord ? '修改 SLA 指標類型' : '新增 SLA 指標類型'} open={modalOpen}
+        onOk={handleOk} onCancel={() => setModalOpen(false)} confirmLoading={saving} okText="儲存" cancelText="取消" destroyOnClose>
+        <Form form={form} layout="vertical" style={{ marginTop: 12 }}>
+          <Form.Item name="name" label="類型名稱" rules={[{ required: true, message: '請輸入名稱' }]}>
+            <Input placeholder="例：可用率、回應時間" />
+          </Form.Item>
+          <Form.Item name="description" label="說明（選填）">
+            <Input.TextArea rows={2} placeholder="此指標類型的定義與量測方式" />
+          </Form.Item>
+        </Form>
+      </Modal>
+    </Card>
   )
 }

@@ -69,6 +69,7 @@ class ContractService:
         risk_level: Optional[str] = None,
         budget_year: Optional[int] = None,
         responsible_dept: Optional[str] = None,
+        manager: Optional[str] = None,
         sort_by: str = "updated_at",
         sort_order: str = "desc",
     ) -> tuple[List[ContractDetailResponse], int]:
@@ -93,13 +94,18 @@ class ContractService:
         """
         query = db.query(Contract)
 
-        # 應用篩選條件
+        # 應用篩選條件 — G3 全文搜尋（跨 8 個欄位）
         if search:
             search_pattern = f"%{search}%"
             query = query.filter(
                 (Contract.contract_id.ilike(search_pattern))
                 | (Contract.contract_name.ilike(search_pattern))
                 | (Contract.vendor_name.ilike(search_pattern))
+                | (Contract.responsible_dept.ilike(search_pattern))
+                | (Contract.manager.ilike(search_pattern))
+                | (Contract.reviewer.ilike(search_pattern))
+                | (Contract.remarks.ilike(search_pattern))
+                | (Contract.signing_company.ilike(search_pattern))
             )
 
         if status:
@@ -116,6 +122,10 @@ class ContractService:
 
         if responsible_dept:
             query = query.filter(Contract.responsible_dept == responsible_dept)
+
+        # J5 — 個人化篩選：只看我的合約
+        if manager:
+            query = query.filter(Contract.manager == manager)
 
         # 計算總筆數
         total = query.count()
@@ -596,23 +606,30 @@ class ContractService:
         }
 
     @staticmethod
-    def get_by_dept(db: Session, budget_year: Optional[int] = None) -> Dict[str, Any]:
-        """Dashboard 部門金額分組"""
+    def get_by_dept(
+        db: Session,
+        budget_year: Optional[int] = None,
+        company: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Dashboard 部門金額分組（可依 signing_company 篩選）"""
         year = budget_year or date.today().year
 
-        rows = db.query(
+        q = db.query(
             Contract.responsible_dept,
             func.sum(Contract.total_amount_tax_included).label("amount"),
             func.count(Contract.contract_id).label("count"),
-        ).filter(
-            Contract.budget_year == year
-        ).group_by(Contract.responsible_dept).all()
+        ).filter(Contract.budget_year == year)
+
+        if company:
+            q = q.filter(Contract.signing_company == company)
+
+        rows = q.group_by(Contract.responsible_dept).all()
 
         items = [
             {"dept": row.responsible_dept or "未分類", "amount": float(row.amount or 0), "count": row.count}
             for row in rows
         ]
-        return {"budget_year": year, "items": items}
+        return {"budget_year": year, "items": items, "company": company or ""}
 
     @staticmethod
     def get_expiring(db: Session, days: int = 90) -> Dict[str, Any]:
@@ -1587,19 +1604,26 @@ _HEADER_FILL = PatternFill("solid", fgColor="1B3A5C")
 _LINK_FONT   = Font(color="4BA8E8", underline="single")
 
 
-def generate_contract_excel(contracts: list) -> bytes:
-    """產生合約列表 Excel，單一工作表。contracts 為 ContractDetailResponse list。"""
+def generate_contract_excel(contracts: list, db=None) -> bytes:
+    """產生合約列表 Excel，單一工作表。contracts 為 ContractDetailResponse list。
+    db: 若傳入，則一併查詢費用分攤明細（多欄展開）。
+    """
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "合約列表"
 
-    COLS = [
+    # ── 固定欄位 ────────────────────────────────────────────────────────────
+    FIXED_COLS = [
         ("合約編號",       "contract_id",               20),
         ("合約名稱",       "contract_name",             35),
         ("合約類型",       "contract_type",             15),
         ("狀態",           "contract_status",           12),
         ("廠商名稱",       "vendor_name",               25),
         ("負責部門",       "responsible_dept",          15),
+        ("簽約公司",       "signing_company",           15),  # F3
+        ("簽約權責部門",   "signing_dept",              15),  # F3
+        ("預算使用部門",   "budget_dept",               15),  # F3
+        ("計價規格",       "pricing_spec",              15),  # F3
         ("開始日期",       "start_date",                14),
         ("結束日期",       "end_date",                  14),
         ("合約金額（含稅）", "total_amount_tax_included", 20),
@@ -1614,8 +1638,33 @@ def generate_contract_excel(contracts: list) -> bytes:
         ("建立時間",       "created_at",                18),
     ]
 
-    # 表頭
-    for col_idx, (header, _, width) in enumerate(COLS, start=1):
+    # ── 費用分攤：查詢並建立 dict {contract_id: [rows]} ─────────────────────
+    alloc_map: dict = {}
+    max_alloc = 0
+    if db is not None:
+        try:
+            from app.models.contract import ContractCostAllocation
+            cids = [getattr(c, "contract_id", None) for c in contracts]
+            cids = [c for c in cids if c]
+            rows = db.query(ContractCostAllocation).filter(
+                ContractCostAllocation.contract_id.in_(cids)
+            ).order_by(ContractCostAllocation.contract_id, ContractCostAllocation.id).all()
+            for r in rows:
+                alloc_map.setdefault(r.contract_id, []).append(r)
+            max_alloc = max((len(v) for v in alloc_map.values()), default=0)
+        except Exception:
+            pass
+
+    # ── 動態費用分攤欄 ───────────────────────────────────────────────────────
+    ALLOC_COLS = []  # (header, width) tuples for allocation expansion
+    for i in range(1, max_alloc + 1):
+        ALLOC_COLS.append((f"分攤公司{i}", 14))
+        ALLOC_COLS.append((f"分攤類型{i}", 12))
+        ALLOC_COLS.append((f"分攤數值{i}", 12))
+
+    # ── 表頭 ─────────────────────────────────────────────────────────────────
+    all_headers = [(h, w) for h, _, w in FIXED_COLS] + ALLOC_COLS
+    for col_idx, (header, width) in enumerate(all_headers, start=1):
         cell = ws.cell(row=1, column=col_idx, value=header)
         cell.font  = _HEADER_FONT
         cell.fill  = _HEADER_FILL
@@ -1625,22 +1674,34 @@ def generate_contract_excel(contracts: list) -> bytes:
     ws.freeze_panes = "A2"
     ws.row_dimensions[1].height = 22
 
-    # 資料列
+    # ── 資料列 ───────────────────────────────────────────────────────────────
     for row_idx, c in enumerate(contracts, start=2):
-        for col_idx, (_, field, _) in enumerate(COLS, start=1):
+        # 固定欄
+        for col_idx, (_, field, _) in enumerate(FIXED_COLS, start=1):
             val = getattr(c, field, None)
             if val is None:
                 val = ""
             elif hasattr(val, "isoformat"):
                 val = str(val)[:10] if field in ("start_date", "end_date", "created_at") else str(val)[:19]
-            elif field == "total_amount_tax_included" and isinstance(val, (int, float)):
-                pass
             ws.cell(row=row_idx, column=col_idx, value=val).alignment = Alignment(vertical="top")
 
-    # 金額欄格式
-    amount_col = openpyxl.utils.get_column_letter(9)
+        # 費用分攤欄（多欄展開）
+        if max_alloc > 0:
+            cid = getattr(c, "contract_id", None)
+            allocations = alloc_map.get(cid, [])
+            base_col = len(FIXED_COLS) + 1
+            for i, alloc in enumerate(allocations):
+                offset = i * 3
+                ws.cell(row=row_idx, column=base_col + offset,     value=alloc.company_name).alignment = Alignment(vertical="top")
+                type_label = "比例%" if alloc.allocation_type == "percentage" else "固定金額"
+                ws.cell(row=row_idx, column=base_col + offset + 1, value=type_label).alignment = Alignment(vertical="top")
+                ws.cell(row=row_idx, column=base_col + offset + 2, value=float(alloc.value)).alignment = Alignment(vertical="top")
+
+    # 金額欄格式（第 13 欄，固定欄含新增後的位置）
+    amt_col_idx = next(i for i, (_, f, _) in enumerate(FIXED_COLS, start=1) if f == "total_amount_tax_included")
+    amount_col_letter = openpyxl.utils.get_column_letter(amt_col_idx)
     for r in range(2, len(contracts) + 2):
-        ws[f"{amount_col}{r}"].number_format = '#,##0.00'
+        ws[f"{amount_col_letter}{r}"].number_format = '#,##0.00'
 
     buf = io.BytesIO()
     wb.save(buf)
@@ -1653,17 +1714,18 @@ def generate_claims_excel(claims: list) -> bytes:
     ws.title = "請款清單"
 
     COLS = [
-        ("請款ID",   "id",            10),
-        ("合約編號", "contract_id",   20),
-        ("合約名稱", "contract_name", 35),
-        ("請款類型", "claim_type",    12),
-        ("請款日期", "claim_date",    14),
-        ("發票號碼", "invoice_no",    18),
-        ("請款金額", "amount",        16),
-        ("狀態",     "status",        12),
-        ("審核人",   "approver",      12),
-        ("備註",     "remarks",       30),
-        ("建立時間", "created_at",    18),
+        ("請款ID",     "id",             10),
+        ("合約編號",   "contract_id",    20),
+        ("合約名稱",   "contract_name",  35),
+        ("請款類型",   "claim_type",     12),
+        ("請款日期",   "claim_date",     14),
+        ("費用歸屬公司", "cost_company", 15),  # F6
+        ("發票號碼",   "invoice_no",     18),
+        ("請款金額",   "amount",         16),
+        ("狀態",       "status",         12),
+        ("審核人",     "approver",       12),
+        ("備註",       "remarks",        30),
+        ("建立時間",   "created_at",     18),
     ]
 
     for col_idx, (header, _, width) in enumerate(COLS, start=1):
@@ -1685,7 +1747,9 @@ def generate_claims_excel(claims: list) -> bytes:
                 val = str(val)[:10] if field in ("claim_date", "created_at") else str(val)[:19]
             ws.cell(row=row_idx, column=col_idx, value=val).alignment = Alignment(vertical="top")
 
-    amount_col = openpyxl.utils.get_column_letter(7)
+    # amount 欄動態定位（避免加欄後 hardcode 出錯）
+    amt_col_idx = next(i for i, (_, f, _) in enumerate(COLS, start=1) if f == "amount")
+    amount_col = openpyxl.utils.get_column_letter(amt_col_idx)
     for r in range(2, len(claims) + 2):
         ws[f"{amount_col}{r}"].number_format = '#,##0.00'
 

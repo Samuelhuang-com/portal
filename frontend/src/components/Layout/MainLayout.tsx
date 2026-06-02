@@ -40,6 +40,7 @@ import {
   TableOutlined,
   FilePptOutlined,
   SyncOutlined,
+  SwapOutlined,
 } from '@ant-design/icons'
 import { useNavigate, useLocation, Outlet } from 'react-router-dom'
 import { useAuthStore } from '@/stores/authStore'
@@ -192,6 +193,8 @@ export const menuItems: MenuItem[] = [
       { key: '/contract/expiring',   icon: <AlertOutlined />,     label: NAV_PAGE.contractExpiring,  permissionKey: 'contract_expiring_view' },
       { key: '/contract/claims',     icon: <DollarOutlined />,    label: NAV_PAGE.contractClaims,    permissionKey: 'contract_claims_view'    },
       { key: '/contract/renewals',   icon: <SyncOutlined />,      label: NAV_PAGE.contractRenewals,  permissionKey: 'contract_renewals_view'  },
+      { key: '/contract/calendar',   icon: <CalendarOutlined />,  label: NAV_PAGE.contractCalendar,  permissionKey: 'contract_view'           },
+      { key: '/contract/compare',    icon: <SwapOutlined />,      label: NAV_PAGE.contractCompare,   permissionKey: 'contract_view'           },
       { key: '/contract/import',     icon: <UploadOutlined />,    label: NAV_PAGE.contractImport,    permissionKey: 'contract_create_edit'    },
       { key: '/contract/vendors',    icon: <TeamOutlined />,      label: NAV_PAGE.contractVendors,   permissionKey: 'contract_vendor_manage' },
       { key: '/contract/settings',   icon: <SettingOutlined />,   label: NAV_PAGE.contractSettings,  permissionKey: 'contract_admin'        },

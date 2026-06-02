@@ -6,6 +6,14 @@ import apiClient from './client'
 import type {
   ContractRecord,
   ContractListResponse,
+  VendorConcentrationResponse,
+  CostTrendResponse,
+  SummaryReportResponse,
+  SlaMetric,
+  SlaMetricCreate,
+  SlaRecord,
+  SlaRecordCreate,
+  SlaSummary,
   VendorRecord,
   VendorListResponse,
   BudgetCategoryRecord,
@@ -19,6 +27,20 @@ import type {
   BudgetAnalysisRecord,
   RenewalRecord,
   RenewalListResponse,
+  ContractTemplate,
+  ContractTemplateCreate,
+  ContractChangeLog,
+  PaymentSchedule,
+  PaymentScheduleCreate,
+  ContractAuditLog,
+  ApprovalStage,
+  ApprovalConfig,
+  ApprovalConfigCreate,
+  Acceptance,
+  AcceptanceCreate,
+  Deposit,
+  DepositCreate,
+  CostSummary,
 } from '@/types/contract'
 
 const BASE = '/contract'
@@ -285,13 +307,20 @@ export async function fetchDashboardKPI(budgetYear?: number): Promise<{
   return data
 }
 
-/** 取得 Dashboard 部門金額分組 */
-export async function fetchDashboardByDept(budgetYear?: number): Promise<{
+/** 取得 Dashboard 部門金額分組（可依簽約公司篩選） */
+export async function fetchDashboardByDept(
+  budgetYear?: number,
+  company?: string,
+): Promise<{
   budget_year: number
   items: Array<{ dept: string; amount: number; count: number }>
+  company?: string
 }> {
+  const params: Record<string, any> = {}
+  if (budgetYear) params.budget_year = budgetYear
+  if (company)    params.company     = company
   const { data } = await apiClient.get(`${BASE}/dashboard/by-dept`, {
-    params: budgetYear ? { budget_year: budgetYear } : undefined,
+    params: Object.keys(params).length ? params : undefined,
   })
   return data
 }
@@ -336,6 +365,7 @@ export interface ClaimRecord {
   review_log?: string      // JSON string，解析為 ClaimReviewLogEntry[]
   created_at: string
   updated_at: string
+  cost_company?: string    // F6 費用歸屬公司
 }
 
 export interface ContractItemRecord {
@@ -381,6 +411,7 @@ export interface ClaimCreate {
   status?: string
   approver?: string
   remarks?: string
+  cost_company?: string  // F6
 }
 
 export interface ClaimUpdate {
@@ -639,4 +670,428 @@ export async function uploadContractAttachment(contractId: string, file: File): 
 /** 刪除合約本體附件 */
 export async function deleteContractAttachment(attachmentId: number): Promise<void> {
   await apiClient.delete(`${BASE}/doc-attachments/${attachmentId}`)
+}
+
+// ── F3 費用分攤 ───────────────────────────────────────────────────────────────
+
+export interface CostAllocationItem {
+  company_name:    string
+  allocation_type: 'percentage' | 'fixed'
+  value:           number
+}
+
+export interface CostAllocationRecord extends CostAllocationItem {
+  id:          number
+  contract_id: string
+  created_at:  string
+}
+
+/** 查詢費用分攤明細 */
+export async function fetchCostAllocations(contractId: string): Promise<CostAllocationRecord[]> {
+  const { data } = await apiClient.get<CostAllocationRecord[]>(`${BASE}/${contractId}/cost-allocations`)
+  return data
+}
+
+/** 整批覆寫費用分攤明細 */
+export async function saveCostAllocations(
+  contractId: string,
+  items: CostAllocationItem[],
+): Promise<CostAllocationRecord[]> {
+  const { data } = await apiClient.put<CostAllocationRecord[]>(
+    `${BASE}/${contractId}/cost-allocations`,
+    items,
+  )
+  return data
+}
+
+// ── H1 — 合約範本 ─────────────────────────────────────────────────────────────
+
+/** 取得合約範本清單 */
+export async function fetchTemplates(enabledOnly = false): Promise<{
+  total: number
+  templates: ContractTemplate[]
+}> {
+  const { data } = await apiClient.get(`${BASE}/templates`, {
+    params: enabledOnly ? { enabled_only: true } : undefined,
+  })
+  return data
+}
+
+/** 新增合約範本 */
+export async function createTemplate(
+  payload: ContractTemplateCreate,
+): Promise<ContractTemplate> {
+  const { data } = await apiClient.post<ContractTemplate>(`${BASE}/templates`, payload)
+  return data
+}
+
+/** 修改合約範本 */
+export async function updateTemplate(
+  templateId: number,
+  payload: Partial<ContractTemplateCreate>,
+): Promise<ContractTemplate> {
+  const { data } = await apiClient.put<ContractTemplate>(
+    `${BASE}/templates/${templateId}`,
+    payload,
+  )
+  return data
+}
+
+/** 刪除合約範本 */
+export async function deleteTemplate(templateId: number): Promise<void> {
+  await apiClient.delete(`${BASE}/templates/${templateId}`)
+}
+
+// ── H2 — 合約變更歷程 ─────────────────────────────────────────────────────────
+
+/** 查詢合約欄位變更歷程 */
+export async function fetchChangeLogs(
+  contractId: string,
+  limit = 100,
+): Promise<{ total: number; logs: ContractChangeLog[] }> {
+  const { data } = await apiClient.get(
+    `${BASE}/${contractId}/change-logs`,
+    { params: { limit } },
+  )
+  return data
+}
+
+// ── H3 — 分期付款計劃 ─────────────────────────────────────────────────────────
+
+/** 查詢分期付款計劃 */
+export async function fetchPaymentSchedules(
+  contractId: string,
+): Promise<{ total: number; schedules: PaymentSchedule[] }> {
+  const { data } = await apiClient.get(`${BASE}/${contractId}/payment-schedules`)
+  return data
+}
+
+/** 新增付款里程碑 */
+export async function createPaymentSchedule(
+  contractId: string,
+  payload: PaymentScheduleCreate,
+): Promise<PaymentSchedule> {
+  const { data } = await apiClient.post<PaymentSchedule>(
+    `${BASE}/${contractId}/payment-schedules`,
+    payload,
+  )
+  return data
+}
+
+/** 更新付款里程碑（含標記已付款） */
+export async function updatePaymentSchedule(
+  contractId: string,
+  scheduleId: number,
+  payload: Partial<PaymentScheduleCreate & { status: string; paid_date: string }>,
+): Promise<PaymentSchedule> {
+  const { data } = await apiClient.put<PaymentSchedule>(
+    `${BASE}/${contractId}/payment-schedules/${scheduleId}`,
+    payload,
+  )
+  return data
+}
+
+/** 刪除付款里程碑 */
+export async function deletePaymentSchedule(
+  contractId: string,
+  scheduleId: number,
+): Promise<void> {
+  await apiClient.delete(`${BASE}/${contractId}/payment-schedules/${scheduleId}`)
+}
+
+// ── H4 — 操作稽核日誌 ─────────────────────────────────────────────────────────
+
+/** 查詢合約操作稽核日誌 */
+export async function fetchAuditLogs(
+  contractId: string,
+  limit = 100,
+): Promise<{ total: number; logs: ContractAuditLog[] }> {
+  const { data } = await apiClient.get(
+    `${BASE}/${contractId}/audit-logs`,
+    { params: { limit } },
+  )
+  return data
+}
+
+// ── I1 — 多層審核關卡 ─────────────────────────────────────────────────────────
+
+/** 查詢合約審核關卡（預設只回最新一輪） */
+export async function fetchApprovalStages(
+  contractId: string,
+  latestOnly = true,
+): Promise<{ total: number; stages: ApprovalStage[] }> {
+  const { data } = await apiClient.get(`${BASE}/${contractId}/approval-stages`, {
+    params: { latest_only: latestOnly },
+  })
+  return data
+}
+
+/** 核准某審核關卡 */
+export async function approveStage(
+  contractId: string,
+  stageId: number,
+  comment?: string,
+): Promise<{ success: boolean; contract_promoted: boolean }> {
+  const { data } = await apiClient.post(
+    `${BASE}/${contractId}/approval-stages/${stageId}/approve`,
+    { comment },
+  )
+  return data
+}
+
+/** 拒絕某審核關卡 */
+export async function rejectStage(
+  contractId: string,
+  stageId: number,
+  comment?: string,
+): Promise<{ success: boolean }> {
+  const { data } = await apiClient.post(
+    `${BASE}/${contractId}/approval-stages/${stageId}/reject`,
+    { comment },
+  )
+  return data
+}
+
+/** 取得審核關卡設定清單 */
+export async function fetchApprovalConfigs(): Promise<{ total: number; configs: ApprovalConfig[] }> {
+  const { data } = await apiClient.get(`${BASE}/approval-configs`)
+  return data
+}
+
+/** 新增審核關卡設定 */
+export async function createApprovalConfig(payload: ApprovalConfigCreate): Promise<ApprovalConfig> {
+  const { data } = await apiClient.post<ApprovalConfig>(`${BASE}/approval-configs`, payload)
+  return data
+}
+
+/** 修改審核關卡設定 */
+export async function updateApprovalConfig(
+  configId: number,
+  payload: Partial<ApprovalConfigCreate>,
+): Promise<ApprovalConfig> {
+  const { data } = await apiClient.put<ApprovalConfig>(`${BASE}/approval-configs/${configId}`, payload)
+  return data
+}
+
+/** 刪除審核關卡設定 */
+export async function deleteApprovalConfig(configId: number): Promise<void> {
+  await apiClient.delete(`${BASE}/approval-configs/${configId}`)
+}
+
+// ── I2 — 驗收管理 ─────────────────────────────────────────────────────────────
+
+export async function fetchAcceptances(
+  contractId: string,
+): Promise<{ total: number; acceptances: Acceptance[] }> {
+  const { data } = await apiClient.get(`${BASE}/${contractId}/acceptances`)
+  return data
+}
+
+export async function createAcceptance(
+  contractId: string,
+  payload: AcceptanceCreate,
+): Promise<Acceptance> {
+  const { data } = await apiClient.post<Acceptance>(`${BASE}/${contractId}/acceptances`, payload)
+  return data
+}
+
+export async function updateAcceptance(
+  contractId: string,
+  acceptanceId: number,
+  payload: Partial<AcceptanceCreate & { status: string }>,
+): Promise<Acceptance> {
+  const { data } = await apiClient.put<Acceptance>(
+    `${BASE}/${contractId}/acceptances/${acceptanceId}`,
+    payload,
+  )
+  return data
+}
+
+export async function deleteAcceptance(contractId: string, acceptanceId: number): Promise<void> {
+  await apiClient.delete(`${BASE}/${contractId}/acceptances/${acceptanceId}`)
+}
+
+// ── I3 — 保證金追蹤 ─────────────────────────────────────────────────────────
+
+export async function fetchDeposits(
+  contractId: string,
+): Promise<{ total: number; deposits: Deposit[] }> {
+  const { data } = await apiClient.get(`${BASE}/${contractId}/deposits`)
+  return data
+}
+
+export async function createDeposit(
+  contractId: string,
+  payload: DepositCreate,
+): Promise<Deposit> {
+  const { data } = await apiClient.post<Deposit>(`${BASE}/${contractId}/deposits`, payload)
+  return data
+}
+
+export async function updateDeposit(
+  contractId: string,
+  depositId: number,
+  payload: Partial<DepositCreate & { actual_return_date: string; status: string }>,
+): Promise<Deposit> {
+  const { data } = await apiClient.put<Deposit>(
+    `${BASE}/${contractId}/deposits/${depositId}`,
+    payload,
+  )
+  return data
+}
+
+export async function deleteDeposit(contractId: string, depositId: number): Promise<void> {
+  await apiClient.delete(`${BASE}/${contractId}/deposits/${depositId}`)
+}
+
+// ── I4 — 年化費用摘要 ─────────────────────────────────────────────────────────
+
+export async function fetchCostSummary(contractId: string): Promise<CostSummary> {
+  const { data } = await apiClient.get<CostSummary>(`${BASE}/${contractId}/cost-summary`)
+  return data
+}
+
+// ── J1 — 廠商集中度分析 ───────────────────────────────────────────────────────
+
+export async function fetchVendorConcentration(
+  budgetYear?: number,
+  threshold = 30,
+): Promise<VendorConcentrationResponse> {
+  const params: Record<string, any> = { threshold }
+  if (budgetYear) params.budget_year = budgetYear
+  const { data } = await apiClient.get<VendorConcentrationResponse>(
+    `${BASE}/vendors/concentration`,
+    { params },
+  )
+  return data
+}
+
+// ── J2 — 合約成本趨勢 ─────────────────────────────────────────────────────────
+
+export async function fetchCostTrend(params: {
+  budget_year?: number
+  granularity?: 'month' | 'quarter'
+  company?: string
+  dept?: string
+}): Promise<CostTrendResponse> {
+  const { data } = await apiClient.get<CostTrendResponse>(
+    `${BASE}/analytics/cost-trend`,
+    { params },
+  )
+  return data
+}
+
+// ── J3 — 月度/季度報表 ────────────────────────────────────────────────────────
+
+export async function fetchSummaryReport(
+  budgetYear: number,
+  periodType: 'monthly' | 'quarterly',
+): Promise<SummaryReportResponse> {
+  const { data } = await apiClient.get<SummaryReportResponse>(
+    `${BASE}/reports/summary`,
+    { params: { budget_year: budgetYear, period_type: periodType } },
+  )
+  return data
+}
+
+export function exportSummaryReport(budgetYear: number, periodType: 'monthly' | 'quarterly'): void {
+  const params = new URLSearchParams({
+    budget_year: String(budgetYear),
+    period_type: periodType,
+  })
+  window.open(`/api/v1/contract/reports/summary/export?${params}`, '_blank')
+}
+
+// ── J4 — 批次操作 ─────────────────────────────────────────────────────────────
+
+export async function batchUpdateManager(
+  contractIds: string[],
+  manager: string,
+): Promise<{ success: boolean; updated: number }> {
+  const { data } = await apiClient.patch(`${BASE}/batch/manager`, {
+    contract_ids: contractIds,
+    manager,
+  })
+  return data
+}
+
+export async function batchSubmit(
+  contractIds: string[],
+): Promise<{ success: boolean; submitted: number; failed: Array<{ contract_id: string; reason: string }> }> {
+  const { data } = await apiClient.post(`${BASE}/batch/submit`, {
+    contract_ids: contractIds,
+  })
+  return data
+}
+
+// ── K2 — SLA 追蹤 ─────────────────────────────────────────────────────────────
+
+export async function fetchSlaMetrics(
+  contractId: string,
+): Promise<{ total: number; metrics: SlaMetric[] }> {
+  const { data } = await apiClient.get(`${BASE}/${contractId}/sla-metrics`)
+  return data
+}
+
+export async function createSlaMetric(
+  contractId: string,
+  payload: SlaMetricCreate,
+): Promise<SlaMetric> {
+  const { data } = await apiClient.post<SlaMetric>(
+    `${BASE}/${contractId}/sla-metrics`,
+    payload,
+  )
+  return data
+}
+
+export async function updateSlaMetric(
+  contractId: string,
+  metricId: number,
+  payload: Partial<SlaMetricCreate>,
+): Promise<SlaMetric> {
+  const { data } = await apiClient.put<SlaMetric>(
+    `${BASE}/${contractId}/sla-metrics/${metricId}`,
+    payload,
+  )
+  return data
+}
+
+export async function deleteSlaMetric(
+  contractId: string,
+  metricId: number,
+): Promise<void> {
+  await apiClient.delete(`${BASE}/${contractId}/sla-metrics/${metricId}`)
+}
+
+export async function fetchSlaRecords(
+  contractId: string,
+  metricId?: number,
+): Promise<{ total: number; records: SlaRecord[] }> {
+  const { data } = await apiClient.get(`${BASE}/${contractId}/sla-records`, {
+    params: metricId ? { metric_id: metricId } : undefined,
+  })
+  return data
+}
+
+export async function createSlaRecord(
+  contractId: string,
+  payload: SlaRecordCreate,
+): Promise<SlaRecord> {
+  const { data } = await apiClient.post<SlaRecord>(
+    `${BASE}/${contractId}/sla-records`,
+    payload,
+  )
+  return data
+}
+
+export async function deleteSlaRecord(
+  contractId: string,
+  recordId: number,
+): Promise<void> {
+  await apiClient.delete(`${BASE}/${contractId}/sla-records/${recordId}`)
+}
+
+export async function fetchSlaSummary(contractId: string): Promise<SlaSummary> {
+  const { data } = await apiClient.get<SlaSummary>(`${BASE}/${contractId}/sla-summary`)
+  return data
 }

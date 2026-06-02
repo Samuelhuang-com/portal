@@ -11,13 +11,20 @@ import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Row, Col, Card, Statistic, Typography, Breadcrumb,
-  Empty, Spin, message, Select, Table, Tag, Badge,
+  Empty, Spin, message, Select, Table, Tag, Badge, Tabs, Button,
 } from 'antd'
 import {
   HomeOutlined, FileProtectOutlined,
   ClockCircleOutlined, WarningOutlined, DollarOutlined,
   AlertOutlined, AuditOutlined,
+  LineChartOutlined, FileExcelOutlined, TeamOutlined,
+  QuestionCircleOutlined, ExportOutlined,
 } from '@ant-design/icons'
+import {
+  VendorConcentrationChart,
+  CostTrendChart,
+  SummaryReportTab,
+} from './AnalyticsTabs'
 import {
   BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -28,6 +35,8 @@ import {
   fetchDashboardKPI, fetchDashboardByDept, fetchContractStats,
   fetchExpiringContracts, fetchClaimsStats,
 } from '@/api/contract'
+import { companiesApi } from '@/api/referenceData'
+import type { CompanyOption } from '@/api/referenceData'
 import { NAV_GROUP } from '@/constants/navLabels'
 
 const { Option } = Select
@@ -79,7 +88,30 @@ export default function ContractDashboard() {
   const [claimsPieData, setClaimsPieData] = useState<Array<{ name: string; value: number }>>([])
   const [loading, setLoading]           = useState(false)
   const [budgetYear, setBudgetYear]     = useState<number>(currentYear)
+  // 公司別篩選（部門金額圖）
+  const [deptCompany, setDeptCompany]   = useState<string | undefined>(undefined)
+  const [companyOptions, setCompanyOptions] = useState<CompanyOption[]>([])
   const navigate = useNavigate()
+
+  // 載入公司別選項
+  useEffect(() => {
+    companiesApi.options()
+      .then(res => setCompanyOptions(Array.isArray(res.data) ? res.data : []))
+      .catch(() => {})
+  }, [])
+
+  // 只重新載入部門金額（公司篩選變更時）
+  const loadDeptData = React.useCallback(async (year: number, company?: string) => {
+    try {
+      const deptResult = await fetchDashboardByDept(year, company)
+      const sortedDept = [...(deptResult.items || [])].sort((a, b) => b.amount - a.amount)
+      setDeptData(sortedDept)
+    } catch { /* ignore */ }
+  }, [])
+
+  useEffect(() => {
+    loadDeptData(budgetYear, deptCompany)
+  }, [deptCompany, loadDeptData])
 
   useEffect(() => {
     const loadData = async () => {
@@ -87,7 +119,7 @@ export default function ContractDashboard() {
       try {
         const [kpiResult, deptResult, statsResult, expiringResult, claimsResult] = await Promise.all([
           fetchDashboardKPI(budgetYear),
-          fetchDashboardByDept(budgetYear),
+          fetchDashboardByDept(budgetYear, deptCompany),
           fetchContractStats(),
           fetchExpiringContracts(90),
           fetchClaimsStats(),
@@ -262,7 +294,22 @@ export default function ContractDashboard() {
         {/* ── Row 3：圖表（部門金額 + 合約狀態）───────────── */}
         <Row gutter={16} style={{ marginBottom: 16 }}>
           <Col xs={24} lg={14}>
-            <Card title={`${budgetYear} 年各部門合約金額`}>
+            <Card
+              title={`${budgetYear} 年各部門合約金額${deptCompany ? `（${deptCompany}）` : ''}`}
+              extra={
+                <Select
+                  allowClear
+                  showSearch
+                  placeholder="篩選公司別"
+                  style={{ width: 140 }}
+                  size="small"
+                  value={deptCompany}
+                  optionFilterProp="label"
+                  options={companyOptions}
+                  onChange={(val) => setDeptCompany(val ?? undefined)}
+                />
+              }
+            >
               {deptData.length > 0 ? (
                 <ResponsiveContainer width="100%" height={300}>
                   <BarChart data={deptData} layout="vertical" margin={{ top: 4, right: 40, left: 80, bottom: 4 }}>
@@ -274,7 +321,7 @@ export default function ContractDashboard() {
                   </BarChart>
                 </ResponsiveContainer>
               ) : (
-                <Empty description="無部門資料" style={{ padding: '40px 0' }} />
+                <Empty description={deptCompany ? `${deptCompany} 無部門合約資料` : '無部門資料'} style={{ padding: '40px 0' }} />
               )}
             </Card>
           </Col>
@@ -383,6 +430,63 @@ export default function ContractDashboard() {
         </Row>
 
       </Spin>
+
+      {/* ── Phase J 分析 + 說明指南 Tabs ─────────────────── */}
+      <Card style={{ marginTop: 24 }} bodyStyle={{ padding: '0 24px 24px' }}>
+        <Tabs
+          items={[
+            {
+              key: 'concentration',
+              label: <span><TeamOutlined /> 廠商集中度分析</span>,
+              children: <VendorConcentrationChart />,
+            },
+            {
+              key: 'trend',
+              label: <span><LineChartOutlined /> 成本趨勢圖</span>,
+              children: <CostTrendChart companyOptions={companyOptions.map(c => c.label)} />,
+            },
+            {
+              key: 'report',
+              label: <span><FileExcelOutlined /> 月度/季度報表</span>,
+              children: <SummaryReportTab />,
+            },
+            {
+              key: 'guide',
+              label: <span><QuestionCircleOutlined /> 說明指南</span>,
+              children: (
+                <div>
+                  <div style={{
+                    display: 'flex', justifyContent: 'space-between',
+                    alignItems: 'center', marginBottom: 8, paddingTop: 16,
+                  }}>
+                    <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+                      合約管理系統操作暨技術手冊 v2.02.0
+                    </Typography.Text>
+                    <Button
+                      size="small"
+                      icon={<ExportOutlined />}
+                      onClick={() => window.open('/docs-static/contract_manual.html', '_blank')}
+                    >
+                      新視窗開啟
+                    </Button>
+                  </div>
+                  <iframe
+                    src="/docs-static/contract_manual.html"
+                    style={{
+                      width: '100%',
+                      height: 'calc(100vh - 280px)',
+                      minHeight: 600,
+                      border: '1px solid #e0e6ed',
+                      borderRadius: 6,
+                    }}
+                    title="合約管理系統說明指南"
+                  />
+                </div>
+              ),
+            },
+          ]}
+        />
+      </Card>
     </div>
   )
 }

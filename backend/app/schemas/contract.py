@@ -168,6 +168,13 @@ class ContractUpdate(BaseModel):
     attachment_url: Optional[str] = Field(None, max_length=500)
     remarks: Optional[str] = None
 
+    # F3 — 公司別 / 部門別 / 計價規格
+    signing_company: Optional[str] = Field(None, max_length=100)
+    signing_dept:    Optional[str] = Field(None, max_length=100)
+    budget_company:  Optional[str] = Field(None, max_length=100)
+    budget_dept:     Optional[str] = Field(None, max_length=100)
+    pricing_spec:    Optional[str] = Field(None, max_length=200)
+
     @validator("start_date", "end_date", pre=True)
     def parse_date(cls, v):
         if isinstance(v, str):
@@ -184,6 +191,12 @@ class ContractResponse(ContractBase):
     approved_by: Optional[str] = None
     approved_at: Optional[datetime] = None
     approval_comment: Optional[str] = None
+    # F3 新欄位
+    signing_company: Optional[str] = None
+    signing_dept:    Optional[str] = None
+    budget_company:  Optional[str] = None
+    budget_dept:     Optional[str] = None
+    pricing_spec:    Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -264,6 +277,7 @@ class VendorBase(BaseModel):
     vendor_type: Optional[str] = Field(None, max_length=50)
     risk_level: Optional[str] = Field(None, max_length=20)
     is_critical: bool = Field(False)
+    managing_company: Optional[str] = Field(None, max_length=100)  # F7
 
 
 class VendorCreate(VendorBase):
@@ -285,6 +299,7 @@ class VendorUpdate(BaseModel):
     vendor_type: Optional[str] = Field(None, max_length=50)
     risk_level: Optional[str] = Field(None, max_length=20)
     is_critical: Optional[bool] = None
+    managing_company: Optional[str] = Field(None, max_length=100)  # F7
 
 
 class VendorResponse(VendorBase):
@@ -460,6 +475,7 @@ class ContractClaimCreate(BaseModel):
     status:      Optional[str] = Field("待審核", max_length=20)
     approver:    Optional[str] = Field(None, max_length=100)
     remarks:     Optional[str] = Field(None, max_length=500)
+    cost_company: Optional[str] = Field(None, max_length=100)  # F6
 
 
 class ContractClaimUpdate(BaseModel):
@@ -470,6 +486,7 @@ class ContractClaimUpdate(BaseModel):
     status:      Optional[str] = Field(None, max_length=20)
     approver:    Optional[str] = Field(None, max_length=100)
     remarks:     Optional[str] = Field(None, max_length=500)
+    cost_company: Optional[str] = Field(None, max_length=100)  # F6
 
 
 class ContractClaimResponse(BaseModel):
@@ -486,6 +503,7 @@ class ContractClaimResponse(BaseModel):
     review_log:    Optional[str] = None   # JSON string，前端自行 JSON.parse
     created_at:    datetime
     updated_at:    datetime
+    cost_company:  Optional[str] = None  # F6
 
     class Config:
         from_attributes = True
@@ -599,3 +617,397 @@ class RenewalResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# ── F3 費用分攤 Schema ────────────────────────────────────────────────────────
+
+class CostAllocationItem(BaseModel):
+    """單筆費用分攤（建立/更新用）"""
+    company_name:    str   = Field(..., min_length=1, max_length=100, description="分攤公司名稱")
+    allocation_type: str   = Field("percentage", description="percentage 或 fixed")
+    value:           float = Field(..., ge=0, description="比例（0~100）或固定金額（≥0）")
+
+    @validator("allocation_type")
+    @classmethod
+    def check_type(cls, v):
+        if v not in ("percentage", "fixed"):
+            raise ValueError("allocation_type 必須為 percentage 或 fixed")
+        return v
+
+
+class CostAllocationResponse(BaseModel):
+    """單筆費用分攤回應"""
+    id:              int
+    contract_id:     str
+    company_name:    str
+    allocation_type: str
+    value:           float
+    created_at:      datetime
+
+    class Config:
+        from_attributes = True
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# H1 — 合約範本 Schema
+# ══════════════════════════════════════════════════════════════════════════
+
+class ContractTemplateCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100, description="範本名稱")
+    contract_type: str = Field(..., max_length=50, description="合約類型")
+    description: Optional[str] = Field(None, description="範本說明")
+    default_currency: str = Field("TWD", max_length=10)
+    default_notification_days: int = Field(30, ge=0)
+    default_auto_renewal: bool = Field(False)
+    default_needs_purchase_order: bool = Field(False)
+    default_require_acceptance: bool = Field(False)
+    default_risk_level: str = Field("中", max_length=20)
+    default_pricing_method: str = Field("", max_length=100)
+    default_budget_source: str = Field("年度預算", max_length=50)
+    default_remarks: Optional[str] = Field(None)
+    is_enabled: bool = Field(True)
+
+
+class ContractTemplateUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=100)
+    contract_type: Optional[str] = Field(None, max_length=50)
+    description: Optional[str] = None
+    default_currency: Optional[str] = Field(None, max_length=10)
+    default_notification_days: Optional[int] = Field(None, ge=0)
+    default_auto_renewal: Optional[bool] = None
+    default_needs_purchase_order: Optional[bool] = None
+    default_require_acceptance: Optional[bool] = None
+    default_risk_level: Optional[str] = Field(None, max_length=20)
+    default_pricing_method: Optional[str] = Field(None, max_length=100)
+    default_budget_source: Optional[str] = Field(None, max_length=50)
+    default_remarks: Optional[str] = None
+    is_enabled: Optional[bool] = None
+
+
+class ContractTemplateResponse(BaseModel):
+    id: int
+    name: str
+    contract_type: str
+    description: Optional[str]
+    default_currency: str
+    default_notification_days: int
+    default_auto_renewal: bool
+    default_needs_purchase_order: bool
+    default_require_acceptance: bool
+    default_risk_level: str
+    default_pricing_method: str
+    default_budget_source: str
+    default_remarks: Optional[str]
+    is_enabled: bool
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# H2 — 合約變更歷程 Schema
+# ══════════════════════════════════════════════════════════════════════════
+
+class ContractChangeLogResponse(BaseModel):
+    id: int
+    contract_id: str
+    field_name: str
+    field_label: str
+    old_value: Optional[str]
+    new_value: Optional[str]
+    operator: str
+    operated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# H3 — 分期付款計劃 Schema
+# ══════════════════════════════════════════════════════════════════════════
+
+class PaymentScheduleCreate(BaseModel):
+    milestone_name: str = Field(..., min_length=1, max_length=200, description="里程碑名稱")
+    due_date: str = Field(..., description="應付日期（YYYY-MM-DD）")
+    amount: float = Field(..., ge=0, description="應付金額（含稅）")
+    notes: Optional[str] = Field(None, description="備註")
+
+
+class PaymentScheduleUpdate(BaseModel):
+    milestone_name: Optional[str] = Field(None, min_length=1, max_length=200)
+    due_date: Optional[str] = None
+    amount: Optional[float] = Field(None, ge=0)
+    status: Optional[str] = Field(None, description="狀態（待付款/已付款/逾期/取消）")
+    paid_date: Optional[str] = Field(None, description="實際付款日期（YYYY-MM-DD）")
+    notes: Optional[str] = None
+
+
+class PaymentScheduleResponse(BaseModel):
+    id: int
+    contract_id: str
+    milestone_name: str
+    due_date: str
+    amount: float
+    status: str
+    paid_date: Optional[str]
+    notes: Optional[str]
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# H4 — 操作稽核日誌 Schema
+# ══════════════════════════════════════════════════════════════════════════
+
+class ContractAuditLogResponse(BaseModel):
+    id: int
+    contract_id: Optional[str]
+    action: str
+    resource: str
+    resource_id: Optional[str]
+    operator: str
+    payload_summary: Optional[str]
+    result: str
+    error_detail: Optional[str]
+    operated_at: datetime
+    ip_address: Optional[str]
+
+    class Config:
+        from_attributes = True
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# I1 — 多層審核關卡 Schema
+# ══════════════════════════════════════════════════════════════════════════
+
+class ApprovalStageResponse(BaseModel):
+    id: int
+    contract_id: str
+    submission_round: int
+    stage_order: int
+    stage_name: str
+    assigned_to: Optional[str]
+    status: str
+    reviewer: Optional[str]
+    comment: Optional[str]
+    reviewed_at: Optional[datetime]
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ApprovalConfigCreate(BaseModel):
+    contract_type: str = Field(..., max_length=50, description="合約類型（'*' 表示全部類型預設）")
+    stage_order: int = Field(..., ge=1, le=10)
+    stage_name: str = Field(..., min_length=1, max_length=50)
+    assigned_to: Optional[str] = Field(None, max_length=100)
+    is_enabled: bool = Field(True)
+
+
+class ApprovalConfigUpdate(BaseModel):
+    stage_name: Optional[str] = Field(None, min_length=1, max_length=50)
+    assigned_to: Optional[str] = Field(None, max_length=100)
+    is_enabled: Optional[bool] = None
+
+
+class ApprovalConfigResponse(BaseModel):
+    id: int
+    contract_type: str
+    stage_order: int
+    stage_name: str
+    assigned_to: Optional[str]
+    is_enabled: bool
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class StageReviewRequest(BaseModel):
+    comment: Optional[str] = Field(None, description="審核意見（選填）")
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# I2 — 驗收記錄 Schema
+# ══════════════════════════════════════════════════════════════════════════
+
+class AcceptanceCreate(BaseModel):
+    acceptance_name: str = Field(..., min_length=1, max_length=200, description="驗收項目名稱")
+    acceptance_date: str = Field(..., description="驗收日期（YYYY-MM-DD）")
+    accepted_by: str = Field(..., max_length=100, description="驗收人帳號")
+    status: str = Field("待驗收", description="驗收狀態（待驗收/已驗收/驗收失敗）")
+    period_start: Optional[str] = Field(None, description="服務期間起（YYYY-MM-DD）")
+    period_end: Optional[str] = Field(None, description="服務期間迄（YYYY-MM-DD）")
+    notes: Optional[str] = None
+
+
+class AcceptanceUpdate(BaseModel):
+    acceptance_name: Optional[str] = Field(None, min_length=1, max_length=200)
+    acceptance_date: Optional[str] = None
+    accepted_by: Optional[str] = Field(None, max_length=100)
+    status: Optional[str] = None
+    period_start: Optional[str] = None
+    period_end: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class AcceptanceResponse(BaseModel):
+    id: int
+    contract_id: str
+    acceptance_name: str
+    acceptance_date: str
+    accepted_by: str
+    status: str
+    period_start: Optional[str]
+    period_end: Optional[str]
+    notes: Optional[str]
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# I3 — 保證金追蹤 Schema
+# ══════════════════════════════════════════════════════════════════════════
+
+class DepositCreate(BaseModel):
+    deposit_type: str = Field("履約保證金", max_length=50, description="保證金類型")
+    deposit_amount: float = Field(..., ge=0, description="保證金金額")
+    deposit_date: str = Field(..., description="存入日期（YYYY-MM-DD）")
+    expected_return_date: str = Field(..., description="預計退還日（YYYY-MM-DD）")
+    bank_name: Optional[str] = Field(None, max_length=100)
+    notes: Optional[str] = None
+
+
+class DepositUpdate(BaseModel):
+    deposit_type: Optional[str] = Field(None, max_length=50)
+    deposit_amount: Optional[float] = Field(None, ge=0)
+    deposit_date: Optional[str] = None
+    expected_return_date: Optional[str] = None
+    actual_return_date: Optional[str] = None
+    status: Optional[str] = Field(None, description="狀態（保留中/申請退還/已退還/已沒收）")
+    bank_name: Optional[str] = Field(None, max_length=100)
+    notes: Optional[str] = None
+
+
+class DepositResponse(BaseModel):
+    id: int
+    contract_id: str
+    deposit_type: str
+    deposit_amount: float
+    deposit_date: str
+    expected_return_date: str
+    actual_return_date: Optional[str]
+    status: str
+    bank_name: Optional[str]
+    notes: Optional[str]
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# I4 — 年化費用計算 Schema
+# ══════════════════════════════════════════════════════════════════════════
+
+class CostSummaryResponse(BaseModel):
+    contract_id: str
+    contract_name: str
+    total_amount: float
+    monthly_fixed_amount: Optional[float]
+    annual_amount: Optional[float]        # monthly_fixed_amount * 12（月費類型）
+    monthly_amortization: Optional[float] # total_amount / duration_months
+    duration_days: int
+    duration_months: float
+    claimed_total: float                  # 所有狀態請款加總
+    approved_total: float                 # 已核准+已付款
+    claimed_percentage: float             # approved_total / total_amount * 100
+    remaining_amount: float               # total_amount - approved_total
+    is_monthly_contract: bool             # True = 月費合約（有 monthly_fixed_amount）
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# K2 — SLA 追蹤 Schema
+# ══════════════════════════════════════════════════════════════════════════
+
+class SlaMetricCreate(BaseModel):
+    metric_name: str = Field(..., min_length=1, max_length=100)
+    metric_type: str = Field("自訂", max_length=50,
+                             description="可用率/回應時間/解決時間/自訂")
+    target_value: float = Field(..., description="目標值")
+    target_unit: str = Field("%", max_length=20, description="單位（%/小時/天/次）")
+    measurement_period: str = Field("monthly",
+                                    description="衡量週期（monthly/quarterly/annual）")
+    description: Optional[str] = None
+    is_enabled: bool = True
+
+
+class SlaMetricUpdate(BaseModel):
+    metric_name: Optional[str] = Field(None, min_length=1, max_length=100)
+    metric_type: Optional[str] = Field(None, max_length=50)
+    target_value: Optional[float] = None
+    target_unit: Optional[str] = Field(None, max_length=20)
+    measurement_period: Optional[str] = None
+    description: Optional[str] = None
+    is_enabled: Optional[bool] = None
+
+
+class SlaMetricResponse(BaseModel):
+    id: int
+    contract_id: str
+    metric_name: str
+    metric_type: str
+    target_value: float
+    target_unit: str
+    measurement_period: str
+    description: Optional[str]
+    is_enabled: bool
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class SlaRecordCreate(BaseModel):
+    metric_id: int
+    period_label: str = Field(..., description="期間標籤，如 2026-01 或 2026-Q1")
+    period_start: str = Field(..., description="期間起（YYYY-MM-DD）")
+    period_end: str = Field(..., description="期間迄（YYYY-MM-DD）")
+    actual_value: float = Field(..., description="實際達成值")
+    notes: Optional[str] = None
+
+
+class SlaRecordResponse(BaseModel):
+    id: int
+    metric_id: int
+    contract_id: str
+    period_label: str
+    period_start: str
+    period_end: str
+    actual_value: float
+    target_value: float
+    achieved: bool
+    notes: Optional[str]
+    recorded_by: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class SlaSummaryResponse(BaseModel):
+    contract_id: str
+    metrics: List[dict]   # 每個指標的達成率統計
+    overall_achievement_rate: float  # 所有指標所有期間的平均達成率

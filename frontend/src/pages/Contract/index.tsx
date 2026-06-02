@@ -21,6 +21,9 @@ import {
   EditOutlined, SaveOutlined, CloseOutlined,
   UnorderedListOutlined, DollarOutlined, DownloadOutlined, SyncOutlined,
   PaperClipOutlined, FilePdfOutlined, InboxOutlined,
+  ClockCircleOutlined, AuditOutlined,
+  ExpandOutlined, CompressOutlined,
+  SafetyOutlined, CheckSquareOutlined, SolutionOutlined, DashboardOutlined,
 } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import type { ColumnsType, TableProps } from 'antd/es/table'
@@ -35,7 +38,12 @@ import {
   fetchClaimAttachments, uploadClaimAttachment, deleteClaimAttachment, getAttachmentUrl,
   submitContractForReview, approveContract, rejectContract,
   fetchContractAttachments, uploadContractAttachment, deleteContractAttachment,
+  fetchCostAllocations, saveCostAllocations,
+  batchUpdateManager, batchSubmit,
 } from '@/api/contract'
+import type { CostAllocationItem, CostAllocationRecord } from '@/api/contract'
+import { companiesApi, departmentsApi, pricingSpecsApi } from '@/api/referenceData'
+import type { CompanyOption, DepartmentOption, PricingSpecOption } from '@/api/referenceData'
 import { usersApi } from '@/api/users'
 import type { UserOptionItem } from '@/api/users'
 import type {
@@ -44,6 +52,18 @@ import type {
 } from '@/types/contract'
 import type { ContractItemRecord, ContractItemCreate, ClaimRecord } from '@/api/contract'
 import { NAV_GROUP, NAV_PAGE } from '@/constants/navLabels'
+import {
+  ContractChangeLogTab,
+  ContractPaymentScheduleTab,
+  ContractAuditLogTab,
+} from './HistoryTabs'
+import {
+  ContractApprovalStagesTab,
+  ContractAcceptancesTab,
+  ContractDepositsTab,
+  CostSummaryCard,
+} from './PhasITabs'
+import ContractSlaTab from './SlaTab'
 
 const { Title } = Typography
 const { Option } = Select
@@ -98,6 +118,12 @@ export default function ContractListPage() {
   const [userOptions, setUserOptions] = useState<UserOptionItem[]>([])
   const [addForm] = Form.useForm()
 
+  // F4 — 基礎參考資料下拉（新增 Modal 用）
+  const [companyOptions, setCompanyOptions] = useState<CompanyOption[]>([])
+  const [addSigningDeptOpts, setAddSigningDeptOpts] = useState<DepartmentOption[]>([])
+  const [addBudgetDeptOpts, setAddBudgetDeptOpts] = useState<DepartmentOption[]>([])
+  const [pricingSpecOptions, setPricingSpecOptions] = useState<PricingSpecOption[]>([])
+
   // 預算科目聯動下拉
   // 預算科目聯動下拉（options 端點已過濾 is_enabled=true）
   const [budgetCatOptions, setBudgetCatOptions] = useState<BudgetCategoryListResponse[]>([])
@@ -108,6 +134,17 @@ export default function ContractListPage() {
   const [searchText, setSearchText] = useState('')
   const [statusFilter, setStatusFilter] = useState<string | undefined>()
   const [riskLevelFilter, setRiskLevelFilter] = useState<string | undefined>()
+
+  // J4 — 批次操作
+  const [selectedRowKeys, setSelectedRowKeys] = useState<string[]>([])
+  const [batchManagerModal, setBatchManagerModal] = useState(false)
+  const [batchNewManager, setBatchNewManager] = useState('')
+  const [batchLoading, setBatchLoading] = useState(false)
+
+  // J5 — 個人化篩選（記憶 localStorage）
+  const [myContractsOnly, setMyContractsOnly] = useState<boolean>(() => {
+    try { return localStorage.getItem('contract_my_only') === 'true' } catch { return false }
+  })
 
   // ── 載入合約清單 ──────────────────────────────────────────────────────────
   const loadContracts = useCallback(async (page: number, size: number, f: ContractFilters) => {
@@ -136,17 +173,30 @@ export default function ContractListPage() {
   // ── 初始化 ────────────────────────────────────────────────────────────────
   useEffect(() => {
     loadStats()
+    // 預先載入使用者清單供 J4 批次改管理人用
+    usersApi.options().then(res => setUserOptions(Array.isArray(res.data) ? res.data : [])).catch(() => {})
   }, [loadStats])
 
-  // ── 搜尋和篩選 ────────────────────────────────────────────────────────────
+  // ── 搜尋和篩選（含 J5 個人化）──────────────────────────────────────────────
   useEffect(() => {
     const newFilters: ContractFilters = {}
     if (searchText) newFilters.search = searchText
     if (statusFilter) newFilters.status = statusFilter
     if (riskLevelFilter) newFilters.risk_level = riskLevelFilter
+    // J5：若開啟「只看我的合約」，從 localStorage 取當前使用者 username
+    if (myContractsOnly) {
+      try {
+        const authRaw = localStorage.getItem('auth-storage')
+        if (authRaw) {
+          const auth = JSON.parse(authRaw)
+          const username = auth?.state?.user?.username || auth?.state?.username
+          if (username) newFilters.manager = username
+        }
+      } catch { /* 靜默處理 */ }
+    }
     setFilters(newFilters)
     loadContracts(1, pagination.size, newFilters)
-  }, [searchText, statusFilter, riskLevelFilter, pagination.size, loadContracts])
+  }, [searchText, statusFilter, riskLevelFilter, myContractsOnly, pagination.size, loadContracts])
 
   // ── 開啟新增 Modal ────────────────────────────────────────────────────────
   const openAddModal = async () => {
@@ -162,14 +212,21 @@ export default function ContractListPage() {
     setSelectedL1(undefined)
     setAddOpen(true)
     try {
-      const [vendors, cats, usersRes] = await Promise.all([
+      const [vendors, cats, usersRes, companies, specs] = await Promise.all([
         fetchVendorOptions(),
         fetchBudgetCategoryOptions(),
         usersApi.options(),
+        companiesApi.options(),
+        pricingSpecsApi.options(),
       ])
       setVendorOptions(Array.isArray(vendors) ? vendors : [])
       setBudgetCatOptions(Array.isArray(cats) ? cats : [])
       setUserOptions(Array.isArray(usersRes.data) ? usersRes.data : [])
+      setCompanyOptions(Array.isArray(companies.data) ? companies.data : [])
+      setPricingSpecOptions(Array.isArray(specs.data) ? specs.data : [])
+      // 部門清單等選公司後才載入
+      setAddSigningDeptOpts([])
+      setAddBudgetDeptOpts([])
     } catch {
       setVendorOptions([])
       setBudgetCatOptions([])
@@ -379,7 +436,7 @@ export default function ContractListPage() {
         <Row gutter={16}>
           <Col xs={24} sm={12} lg={8}>
             <Input
-              placeholder="搜尋合約名稱或編號..."
+              placeholder="搜尋合約名稱、編號、廠商、管理人、部門、備註…"
               prefix={<SearchOutlined />}
               value={searchText}
               onChange={(e) => setSearchText(e.target.value)}
@@ -415,7 +472,19 @@ export default function ContractListPage() {
             </Select>
           </Col>
           <Col xs={24} sm={12} lg={8}>
-            <Space style={{ width: '100%', justifyContent: 'flex-end' }}>
+            <Space style={{ width: '100%', justifyContent: 'flex-end' }} wrap>
+              {/* J5 — 只看我的合約 Toggle */}
+              <Button
+                type={myContractsOnly ? 'primary' : 'default'}
+                onClick={() => {
+                  const next = !myContractsOnly
+                  setMyContractsOnly(next)
+                  try { localStorage.setItem('contract_my_only', String(next)) } catch {}
+                }}
+                style={myContractsOnly ? { background: '#1B3A5C', borderColor: '#1B3A5C' } : {}}
+              >
+                {myContractsOnly ? '✓ 只看我的合約' : '只看我的合約'}
+              </Button>
               <Button icon={<ReloadOutlined />} onClick={() => loadContracts(1, pagination.size, filters)}>
                 重新整理
               </Button>
@@ -437,12 +506,81 @@ export default function ContractListPage() {
         </Row>
       </Card>
 
+      {/* J4 — 批次操作浮動工具列 */}
+      {selectedRowKeys.length > 0 && (
+        <div style={{
+          position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)',
+          background: '#1B3A5C', color: '#fff', borderRadius: 8,
+          padding: '10px 20px', zIndex: 1000, boxShadow: '0 4px 16px rgba(0,0,0,0.25)',
+          display: 'flex', alignItems: 'center', gap: 12,
+        }}>
+          <span style={{ fontWeight: 600 }}>已選 {selectedRowKeys.length} 份合約</span>
+          <Button size="small" ghost onClick={() => setBatchManagerModal(true)}>批次改管理人</Button>
+          <Button size="small" ghost loading={batchLoading} onClick={async () => {
+            setBatchLoading(true)
+            try {
+              const res = await batchSubmit(selectedRowKeys)
+              message.success(`批次送審：${res.submitted} 份成功`)
+              if (res.failed.length) message.warning(`${res.failed.length} 份失敗：${res.failed.map(f => f.reason).join('；')}`)
+              setSelectedRowKeys([])
+              loadContracts(pagination.page, pagination.size, filters)
+            } catch { message.error('批次送審失敗') }
+            finally { setBatchLoading(false) }
+          }}>批次送審</Button>
+          <Button size="small" ghost onClick={() => setSelectedRowKeys([])}>取消選取</Button>
+        </div>
+      )}
+
+      {/* 批次改管理人 Modal */}
+      <Modal
+        title={`批次更新管理人（${selectedRowKeys.length} 份合約）`}
+        open={batchManagerModal}
+        onOk={async () => {
+          if (!batchNewManager.trim()) { message.warning('請輸入管理人帳號'); return }
+          setBatchLoading(true)
+          try {
+            const res = await batchUpdateManager(selectedRowKeys, batchNewManager.trim())
+            message.success(`已更新 ${res.updated} 份合約的管理人`)
+            setBatchManagerModal(false)
+            setBatchNewManager('')
+            setSelectedRowKeys([])
+            loadContracts(pagination.page, pagination.size, filters)
+          } catch { message.error('批次更新失敗') }
+          finally { setBatchLoading(false) }
+        }}
+        onCancel={() => { setBatchManagerModal(false); setBatchNewManager('') }}
+        confirmLoading={batchLoading}
+        okText="確認更新"
+        cancelText="取消"
+        destroyOnClose
+      >
+        <Form layout="vertical" style={{ marginTop: 12 }}>
+          <Form.Item label="新管理人帳號" required>
+            <Select
+              showSearch
+              placeholder="搜尋使用者帳號"
+              value={batchNewManager || undefined}
+              onChange={setBatchNewManager}
+              filterOption={(input, opt) =>
+                String(opt?.label ?? '').toLowerCase().includes(input.toLowerCase())}
+              options={userOptions.map(u => ({ value: u.username, label: `${u.display_name} (${u.username})` }))}
+            />
+          </Form.Item>
+        </Form>
+      </Modal>
+
       {/* 表格 */}
       <Card>
         <Table<ContractRecord>
           columns={columns}
           dataSource={contracts}
           loading={loading}
+          rowSelection={{
+            type: 'checkbox',
+            selectedRowKeys,
+            onChange: (keys) => setSelectedRowKeys(keys as string[]),
+            getCheckboxProps: () => ({}),
+          }}
           pagination={{
             current: pagination.page,
             pageSize: pagination.size,
@@ -700,6 +838,72 @@ export default function ContractListPage() {
             </Col>
           </Row>
 
+          <Divider orientation="left" orientationMargin={0} style={{ fontSize: 13 }}>公司與部門</Divider>
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item name="signing_company" label="簽約公司">
+                <Select
+                  showSearch allowClear placeholder="請選擇" optionFilterProp="label"
+                  options={companyOptions}
+                  onChange={(val: string | undefined) => {
+                    addForm.setFieldsValue({ signing_dept: undefined })
+                    setAddSigningDeptOpts([])
+                    if (!val) return
+                    const co = companyOptions.find(c => c.value === val)
+                    if (co) {
+                      departmentsApi.options(co.id)
+                        .then(res => setAddSigningDeptOpts(Array.isArray(res.data) ? res.data : []))
+                        .catch(() => {})
+                    }
+                  }}
+                />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="signing_dept" label="簽約權責部門">
+                <Select showSearch allowClear placeholder="先選簽約公司" optionFilterProp="label"
+                  options={addSigningDeptOpts}
+                  disabled={addSigningDeptOpts.length === 0 && !addForm.getFieldValue('signing_company')} />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item name="budget_company" label="預算使用公司">
+                <Select
+                  showSearch allowClear placeholder="請選擇" optionFilterProp="label"
+                  options={companyOptions}
+                  onChange={(val: string | undefined) => {
+                    addForm.setFieldsValue({ budget_dept: undefined })
+                    setAddBudgetDeptOpts([])
+                    if (!val) return
+                    const co = companyOptions.find(c => c.value === val)
+                    if (co) {
+                      departmentsApi.options(co.id)
+                        .then(res => setAddBudgetDeptOpts(Array.isArray(res.data) ? res.data : []))
+                        .catch(() => {})
+                    }
+                  }}
+                />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="budget_dept" label="預算使用部門">
+                <Select showSearch allowClear placeholder="先選預算使用公司" optionFilterProp="label"
+                  options={addBudgetDeptOpts}
+                  disabled={addBudgetDeptOpts.length === 0 && !addForm.getFieldValue('budget_company')} />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item name="pricing_spec" label="計價規格">
+                <Select showSearch allowClear placeholder="請選擇" optionFilterProp="label"
+                  options={pricingSpecOptions} />
+              </Form.Item>
+            </Col>
+          </Row>
+
           <Form.Item name="remarks" label="備註">
             <Input.TextArea rows={2} placeholder="選填" />
           </Form.Item>
@@ -724,10 +928,19 @@ interface ContractDetailDrawerProps {
 function ContractDetailDrawer({ contract, open, onClose, onUpdate }: ContractDetailDrawerProps) {
   const [isEditing, setIsEditing] = useState(false)
   const [saveLoading, setSaveLoading] = useState(false)
+  const [isFullscreen, setIsFullscreen] = useState(false)
   const [editForm] = Form.useForm()
 
   // 人員下拉選單（Drawer 內自行管理）
   const [userOptions, setUserOptions] = useState<UserOptionItem[]>([])
+  // F4 — 費用分攤
+  const [costAllocations, setCostAllocations] = useState<CostAllocationRecord[]>([])
+  const [editAllocations, setEditAllocations] = useState<CostAllocationItem[]>([])
+  // F4 — 基礎下拉
+  const [drawerCompanyOpts, setDrawerCompanyOpts] = useState<CompanyOption[]>([])
+  const [drawerSigningDeptOpts, setDrawerSigningDeptOpts] = useState<DepartmentOption[]>([])
+  const [drawerBudgetDeptOpts, setDrawerBudgetDeptOpts] = useState<DepartmentOption[]>([])
+  const [drawerSpecOpts, setDrawerSpecOpts] = useState<PricingSpecOption[]>([])
 
   // 審核操作狀態
   const [approvalLoading, setApprovalLoading] = useState(false)
@@ -738,11 +951,47 @@ function ContractDetailDrawer({ contract, open, onClose, onUpdate }: ContractDet
   const ragicUrl = contract.ragic_url
   const identifier = contract.contract_id
 
+  // F4 — Drawer 開啟時載入費用分攤 + 公司下拉 + 現有部門清單
+  useEffect(() => {
+    if (!open) return
+    fetchCostAllocations(contract.contract_id)
+      .then(rows => setCostAllocations(rows))
+      .catch(() => {})
+
+    // 載入公司 + 計價規格下拉
+    Promise.all([
+      companiesApi.options(),
+      pricingSpecsApi.options(),
+    ]).then(([c, s]) => {
+      const cos = Array.isArray(c.data) ? c.data : []
+      setDrawerCompanyOpts(cos)
+      setDrawerSpecOpts(Array.isArray(s.data) ? s.data : [])
+
+      // 依現有合約的公司值初始化部門清單
+      const loadDepts = async (companyName: string | undefined, setter: (v: DepartmentOption[]) => void) => {
+        if (!companyName) return
+        const co = cos.find(x => x.value === companyName)
+        if (!co) return
+        try {
+          const res = await departmentsApi.options(co.id)
+          setter(Array.isArray(res.data) ? res.data : [])
+        } catch {}
+      }
+      loadDepts(contract.signing_company, setDrawerSigningDeptOpts)
+      loadDepts(contract.budget_company,  setDrawerBudgetDeptOpts)
+    }).catch(() => {})
+  }, [open, contract.contract_id])
+
   // 進入編輯模式時初始化 form 值（同時確保 userOptions 已載入）
   const enterEdit = () => {
     if (userOptions.length === 0) {
       usersApi.options().then(res => setUserOptions(Array.isArray(res.data) ? res.data : [])).catch(() => {})
     }
+    setEditAllocations(costAllocations.map(r => ({
+      company_name:    r.company_name,
+      allocation_type: r.allocation_type,
+      value:           r.value,
+    })))
     editForm.setFieldsValue({
       contract_name:             contract.contract_name,
       contract_type:             contract.contract_type,
@@ -756,6 +1005,11 @@ function ContractDetailDrawer({ contract, open, onClose, onUpdate }: ContractDet
       monthly_fixed_amount:      contract.monthly_fixed_amount ?? undefined,
       manager:                   contract.manager,
       reviewer:                  contract.reviewer,
+      signing_company:           contract.signing_company ?? undefined,
+      signing_dept:              contract.signing_dept ?? undefined,
+      budget_company:            contract.budget_company ?? undefined,
+      budget_dept:               contract.budget_dept ?? undefined,
+      pricing_spec:              contract.pricing_spec ?? undefined,
       remarks:                   contract.remarks,
     })
     setIsEditing(true)
@@ -769,6 +1023,33 @@ function ContractDetailDrawer({ contract, open, onClose, onUpdate }: ContractDet
   const handleSave = async () => {
     try {
       const values = await editForm.validateFields()
+
+      // ── 費用分攤驗證（存檔前） ─────────────────────────────────────────
+      if (editAllocations.length > 0) {
+        const contractAmt = values.total_amount_tax_included ?? contract.total_amount_tax_included
+        const pricingMeth = values.pricing_method ?? contract.pricing_method
+        const allocResult = validateAllocations(editAllocations, contractAmt, pricingMeth)
+        // 混用類型：詢問使用者確認
+        if (allocResult.warnings.length > 0) {
+          const confirmed = await new Promise<boolean>(resolve =>
+            Modal.confirm({
+              title: '費用分攤：類型混用提醒',
+              content: allocResult.warnings[0],
+              okText: '我了解，繼續存檔',
+              cancelText: '返回修改',
+              onOk:    () => resolve(true),
+              onCancel: () => resolve(false),
+            })
+          )
+          if (!confirmed) return
+        }
+        // 加總不符：阻擋存檔
+        if (allocResult.errors.length > 0) {
+          allocResult.errors.forEach(e => message.error(e, 6))
+          return
+        }
+      }
+
       setSaveLoading(true)
       const payload: ContractUpdate = {
         ...values,
@@ -776,6 +1057,9 @@ function ContractDetailDrawer({ contract, open, onClose, onUpdate }: ContractDet
         end_date:   values.end_date   ? values.end_date.format('YYYY-MM-DD')   : undefined,
       }
       const result = await updateContract(contract.contract_id, payload)
+      // 費用分攤整批儲存
+      const saved = await saveCostAllocations(contract.contract_id, editAllocations)
+      setCostAllocations(saved)
       message.success('合約已更新')
       setIsEditing(false)
       onUpdate?.(result)
@@ -834,7 +1118,7 @@ function ContractDetailDrawer({ contract, open, onClose, onUpdate }: ContractDet
               <LinkOutlined style={{ fontSize: 13 }} /> 在 Ragic 查看
             </a>
           )}
-          <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
             {isEditing ? (
               <>
                 <Button size="small" icon={<CloseOutlined />} onClick={cancelEdit}>取消</Button>
@@ -880,14 +1164,24 @@ function ContractDetailDrawer({ contract, open, onClose, onUpdate }: ContractDet
                 <Button size="small" icon={<EditOutlined />} onClick={enterEdit}>編輯</Button>
               </>
             )}
+            {/* 放大 / 縮小切換 */}
+            <Tooltip title={isFullscreen ? '縮小' : '全螢幕'}>
+              <Button
+                size="small"
+                icon={isFullscreen ? <CompressOutlined /> : <ExpandOutlined />}
+                onClick={() => setIsFullscreen(f => !f)}
+                style={{ color: '#4BA8E8', borderColor: '#4BA8E8' }}
+              />
+            </Tooltip>
           </div>
         </div>
       }
       placement="right"
-      width={640}
-      onClose={() => { cancelEdit(); onClose() }}
+      width={isFullscreen ? '100vw' : 640}
+      onClose={() => { cancelEdit(); setIsFullscreen(false); onClose() }}
       open={open}
       bodyStyle={{ paddingBottom: 80 }}
+      styles={{ header: { paddingRight: 16 } }}
     >
       {isEditing ? (
         /* ── 編輯模式 ─────────────────────────────────────────────────────── */
@@ -996,6 +1290,79 @@ function ContractDetailDrawer({ contract, open, onClose, onUpdate }: ContractDet
               </Col>
             </Row>
 
+            <Divider orientation="left" orientationMargin={0}>公司與部門</Divider>
+            <Row gutter={16}>
+              <Col span={12}>
+                <Form.Item name="signing_company" label="簽約公司">
+                  <Select
+                    showSearch allowClear placeholder="請選擇" optionFilterProp="label"
+                    options={drawerCompanyOpts}
+                    onChange={(val: string | undefined) => {
+                      editForm.setFieldsValue({ signing_dept: undefined })
+                      setDrawerSigningDeptOpts([])
+                      if (!val) return
+                      const co = drawerCompanyOpts.find(c => c.value === val)
+                      if (co) {
+                        departmentsApi.options(co.id)
+                          .then(res => setDrawerSigningDeptOpts(Array.isArray(res.data) ? res.data : []))
+                          .catch(() => {})
+                      }
+                    }}
+                  />
+                </Form.Item>
+              </Col>
+              <Col span={12}>
+                <Form.Item name="signing_dept" label="簽約權責部門">
+                  <Select showSearch allowClear placeholder="先選簽約公司" optionFilterProp="label"
+                    options={drawerSigningDeptOpts} />
+                </Form.Item>
+              </Col>
+            </Row>
+            <Row gutter={16}>
+              <Col span={12}>
+                <Form.Item name="budget_company" label="預算使用公司">
+                  <Select
+                    showSearch allowClear placeholder="請選擇" optionFilterProp="label"
+                    options={drawerCompanyOpts}
+                    onChange={(val: string | undefined) => {
+                      editForm.setFieldsValue({ budget_dept: undefined })
+                      setDrawerBudgetDeptOpts([])
+                      if (!val) return
+                      const co = drawerCompanyOpts.find(c => c.value === val)
+                      if (co) {
+                        departmentsApi.options(co.id)
+                          .then(res => setDrawerBudgetDeptOpts(Array.isArray(res.data) ? res.data : []))
+                          .catch(() => {})
+                      }
+                    }}
+                  />
+                </Form.Item>
+              </Col>
+              <Col span={12}>
+                <Form.Item name="budget_dept" label="預算使用部門">
+                  <Select showSearch allowClear placeholder="先選預算使用公司" optionFilterProp="label"
+                    options={drawerBudgetDeptOpts} />
+                </Form.Item>
+              </Col>
+            </Row>
+            <Row gutter={16}>
+              <Col span={12}>
+                <Form.Item name="pricing_spec" label="計價規格">
+                  <Select showSearch allowClear placeholder="請選擇" optionFilterProp="label"
+                    options={drawerSpecOpts} />
+                </Form.Item>
+              </Col>
+            </Row>
+
+            <Divider orientation="left" orientationMargin={0}>費用分攤</Divider>
+            <CostAllocationEditor
+              value={editAllocations}
+              onChange={setEditAllocations}
+              companyOptions={drawerCompanyOpts}
+              contractAmount={contract.total_amount_tax_included}
+              pricingMethod={contract.pricing_method}
+            />
+
             <Divider orientation="left" orientationMargin={0}>備註</Divider>
             <Form.Item name="remarks" label="備註">
               <Input.TextArea rows={3} />
@@ -1012,6 +1379,8 @@ function ContractDetailDrawer({ contract, open, onClose, onUpdate }: ContractDet
               label: <span>基本資訊</span>,
               children: (
                 <>
+          {/* I4 財務摘要卡 */}
+          <CostSummaryCard contractId={contract.contract_id} open={open} />
           <Title level={5}>基本資訊</Title>
           <Descriptions column={2} bordered size="small" style={{ marginBottom: '24px' }}>
             <Descriptions.Item label="合約編號"><strong>{contract.contract_id}</strong></Descriptions.Item>
@@ -1024,7 +1393,29 @@ function ContractDetailDrawer({ contract, open, onClose, onUpdate }: ContractDet
             <Descriptions.Item label="合約類型">{contract.contract_type || '-'}</Descriptions.Item>
             <Descriptions.Item label="管理人">{contract.manager || '-'}</Descriptions.Item>
             <Descriptions.Item label="審核人">{contract.reviewer || '-'}</Descriptions.Item>
+            <Descriptions.Item label="簽約公司">{contract.signing_company || '-'}</Descriptions.Item>
+            <Descriptions.Item label="簽約權責部門">{contract.signing_dept || '-'}</Descriptions.Item>
+            <Descriptions.Item label="預算使用公司">{contract.budget_company || '-'}</Descriptions.Item>
+            <Descriptions.Item label="預算使用部門">{contract.budget_dept || '-'}</Descriptions.Item>
+            <Descriptions.Item label="計價規格">{contract.pricing_spec || '-'}</Descriptions.Item>
           </Descriptions>
+
+          {costAllocations.length > 0 && (
+            <>
+              <Title level={5}>費用分攤</Title>
+              <Descriptions column={1} bordered size="small" style={{ marginBottom: '24px' }}>
+                {costAllocations.map((r, i) => (
+                  <Descriptions.Item key={r.id} label={`分攤 ${i + 1}`}>
+                    {r.company_name}
+                    {r.allocation_type === 'percentage'
+                      ? <Tag color="blue">{r.value}%</Tag>
+                      : <Tag color="purple">${Number(r.value).toLocaleString('zh-TW')}</Tag>
+                    }
+                  </Descriptions.Item>
+                ))}
+              </Descriptions>
+            </>
+          )}
 
           <Title level={5}>期限</Title>
           <Descriptions column={2} bordered size="small" style={{ marginBottom: '24px' }}>
@@ -1099,6 +1490,41 @@ function ContractDetailDrawer({ contract, open, onClose, onUpdate }: ContractDet
               key: 'attachments',
               label: <span><PaperClipOutlined /> 合約附件</span>,
               children: <ContractAttachmentsTab contractId={contract.contract_id} open={open} />,
+            },
+            {
+              key: 'payment-schedules',
+              label: <span><DollarOutlined /> 付款計劃</span>,
+              children: <ContractPaymentScheduleTab contractId={contract.contract_id} open={open} />,
+            },
+            {
+              key: 'change-logs',
+              label: <span><ClockCircleOutlined /> 變更歷程</span>,
+              children: <ContractChangeLogTab contractId={contract.contract_id} open={open} />,
+            },
+            {
+              key: 'audit-logs',
+              label: <span><AuditOutlined /> 稽核日誌</span>,
+              children: <ContractAuditLogTab contractId={contract.contract_id} open={open} />,
+            },
+            {
+              key: 'approval-stages',
+              label: <span><SolutionOutlined /> 審核關卡</span>,
+              children: <ContractApprovalStagesTab contractId={contract.contract_id} open={open} contractStatus={contract.contract_status} />,
+            },
+            {
+              key: 'acceptances',
+              label: <span><CheckSquareOutlined /> 驗收記錄</span>,
+              children: <ContractAcceptancesTab contractId={contract.contract_id} open={open} />,
+            },
+            {
+              key: 'deposits',
+              label: <span><SafetyOutlined /> 保證金</span>,
+              children: <ContractDepositsTab contractId={contract.contract_id} open={open} />,
+            },
+            {
+              key: 'sla',
+              label: <span><DashboardOutlined /> SLA 追蹤</span>,
+              children: <ContractSlaTab contractId={contract.contract_id} open={open} />,
             },
           ]}
         />
@@ -1383,6 +1809,8 @@ function ContractClaimsTab({ contractId, open, totalAmount }: ContractClaimsTabP
   const [addClaimOpen, setAddClaimOpen] = useState(false)
   const [addClaimLoading, setAddClaimLoading] = useState(false)
   const [addClaimForm] = Form.useForm()
+  // F6 費用歸屬公司下拉
+  const [claimCompanyOpts, setClaimCompanyOpts] = useState<CompanyOption[]>([])
   // 附件 Modal
   const [claimDetailOpen, setClaimDetailOpen] = useState(false)
   const [selectedClaim, setSelectedClaim] = useState<ClaimRecord | null>(null)
@@ -1422,6 +1850,13 @@ function ContractClaimsTab({ contractId, open, totalAmount }: ContractClaimsTabP
 
   useEffect(() => { loadClaims() }, [loadClaims])
 
+  // 載入費用歸屬公司下拉（lazy，只在第一次開啟時載入）
+  useEffect(() => {
+    if (open && claimCompanyOpts.length === 0) {
+      companiesApi.options().then(res => setClaimCompanyOpts(Array.isArray(res.data) ? res.data : [])).catch(() => {})
+    }
+  }, [open])
+
   const handleAddClaimOk = async () => {
     const values = await addClaimForm.validateFields()
     setAddClaimLoading(true)
@@ -1434,6 +1869,7 @@ function ContractClaimsTab({ contractId, open, totalAmount }: ContractClaimsTabP
         invoice_no: values.invoice_no,
         claim_type: values.claim_type ?? '請款',
         remarks: values.remarks,
+        cost_company: values.cost_company,
       })
       message.success('請款已新增')
       setAddClaimOpen(false)
@@ -1499,6 +1935,13 @@ function ContractClaimsTab({ contractId, open, totalAmount }: ContractClaimsTabP
       key: 'invoice_no',
       width: 110,
       render: (v?: string) => v || '—',
+    },
+    {
+      title: '費用歸屬',
+      dataIndex: 'cost_company',
+      key: 'cost_company',
+      width: 90,
+      render: (v?: string) => v ? <Tag color="blue">{v}</Tag> : '—',
     },
     {
       title: '金額',
@@ -1641,6 +2084,9 @@ function ContractClaimsTab({ contractId, open, totalAmount }: ContractClaimsTabP
             <Descriptions.Item label="金額">
               <strong style={{ color: '#722ED1' }}>${Number(selectedClaim.amount).toLocaleString()}</strong>
             </Descriptions.Item>
+            <Descriptions.Item label="費用歸屬公司">
+              {selectedClaim.cost_company ? <Tag color="blue">{selectedClaim.cost_company}</Tag> : '—'}
+            </Descriptions.Item>
             <Descriptions.Item label="發票號碼">{selectedClaim.invoice_no || '—'}</Descriptions.Item>
             <Descriptions.Item label="核准人">{selectedClaim.approver || '—'}</Descriptions.Item>
             <Descriptions.Item label="備註">{selectedClaim.remarks || '—'}</Descriptions.Item>
@@ -1747,6 +2193,9 @@ function ContractClaimsTab({ contractId, open, totalAmount }: ContractClaimsTabP
               { value: '核銷', label: '核銷' },
               { value: '其他', label: '其他' },
             ]} />
+          </Form.Item>
+          <Form.Item name="cost_company" label="費用歸屬公司">
+            <Select showSearch allowClear placeholder="選填" optionFilterProp="label" options={claimCompanyOpts} />
           </Form.Item>
           <Form.Item name="remarks" label="備註">
             <Input.TextArea rows={2} placeholder="選填" />
@@ -2019,6 +2468,176 @@ function ContractAttachmentsTab({ contractId, open }: ContractAttachmentsTabProp
           })}
         </Image.PreviewGroup>
       </Spin>
+    </div>
+  )
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// F4 — 費用分攤驗證邏輯
+// ═════════════════════════════════════════════════════════════════════════════
+
+/** 固定總額計價方式 → 需驗證固定金額加總等於合約金額 */
+const STRICT_PRICING = ['固定費用', '月費', '里程碑付款']
+
+interface AllocValidationResult {
+  errors:   string[]  // 阻擋存檔，需修正
+  warnings: string[]  // 詢問使用者確認後可繼續
+}
+
+function validateAllocations(
+  items: CostAllocationItem[],
+  contractAmount: number | undefined,
+  pricingMethod: string | undefined,
+): AllocValidationResult {
+  const errors: string[] = []
+  const warnings: string[] = []
+  if (items.length === 0) return { errors, warnings }
+
+  const hasPct   = items.some(i => i.allocation_type === 'percentage')
+  const hasFixed = items.some(i => i.allocation_type === 'fixed')
+  const isMixed  = hasPct && hasFixed
+
+  if (isMixed) {
+    warnings.push(
+      '費用分攤同時包含「比例 %」與「固定金額」兩種類型。\n' +
+      '混用時系統無法自動確認加總是否等於合約金額，請手動確認後再存檔。'
+    )
+  }
+
+  const isStrictPricing = pricingMethod ? STRICT_PRICING.includes(pricingMethod) : false
+
+  if (hasPct) {
+    const pctSum = items.filter(i => i.allocation_type === 'percentage').reduce((s, i) => s + (i.value || 0), 0)
+    if (Math.abs(pctSum - 100) > 0.01) {
+      errors.push(`比例行加總為 ${pctSum.toFixed(2)}%，必須等於 100%（尚差 ${(100 - pctSum).toFixed(2)}%）`)
+    }
+  }
+
+  if (hasFixed && isStrictPricing && contractAmount && !isMixed) {
+    const fixedSum = items.filter(i => i.allocation_type === 'fixed').reduce((s, i) => s + (i.value || 0), 0)
+    const diff = fixedSum - contractAmount
+    if (Math.abs(diff) > 1) {
+      errors.push(
+        `固定金額加總 $${fixedSum.toLocaleString('zh-TW')}，` +
+        `必須等於合約總額 $${contractAmount.toLocaleString('zh-TW')}` +
+        `（差額 ${diff > 0 ? '+' : ''}$${diff.toLocaleString('zh-TW')}）`
+      )
+    }
+  }
+
+  return { errors, warnings }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// F4 — 費用分攤編輯器元件
+// ═════════════════════════════════════════════════════════════════════════════
+
+interface CostAllocationEditorProps {
+  value: CostAllocationItem[]
+  onChange: (v: CostAllocationItem[]) => void
+  companyOptions: CompanyOption[]
+  contractAmount?: number   // 合約總額，供即時驗證
+  pricingMethod?: string    // 計價方式，決定是否驗證固定金額加總
+}
+
+function CostAllocationEditor({
+  value, onChange, companyOptions, contractAmount, pricingMethod,
+}: CostAllocationEditorProps) {
+  const addRow = () => onChange([...value, { company_name: '', allocation_type: 'percentage', value: 0 }])
+  const updateRow = (index: number, patch: Partial<CostAllocationItem>) =>
+    onChange(value.map((r, i) => (i === index ? { ...r, ...patch } : r)))
+  const removeRow = (index: number) => onChange(value.filter((_, i) => i !== index))
+
+  const hasPct   = value.some(r => r.allocation_type === 'percentage')
+  const hasFixed = value.some(r => r.allocation_type === 'fixed')
+  const pctSum   = value.filter(r => r.allocation_type === 'percentage').reduce((s, r) => s + (r.value || 0), 0)
+  const fixedSum = value.filter(r => r.allocation_type === 'fixed').reduce((s, r) => s + (r.value || 0), 0)
+  const isStrictPricing = pricingMethod ? STRICT_PRICING.includes(pricingMethod) : false
+  const { errors, warnings } = validateAllocations(value, contractAmount, pricingMethod)
+  const hasIssue = errors.length > 0
+  const hasWarn  = warnings.length > 0
+
+  return (
+    <div>
+      {value.map((row, idx) => (
+        <div key={idx} style={{ display: 'flex', gap: 8, marginBottom: 8, alignItems: 'center' }}>
+          <Select
+            style={{ flex: 2 }} showSearch allowClear placeholder="選擇公司"
+            value={row.company_name || undefined} options={companyOptions}
+            onChange={(v) => updateRow(idx, { company_name: v ?? '' })}
+          />
+          <Select
+            style={{ width: 120 }} value={row.allocation_type}
+            onChange={(v) => updateRow(idx, { allocation_type: v as 'percentage' | 'fixed' })}
+            options={[{ value: 'percentage', label: '比例 %' }, { value: 'fixed', label: '固定金額' }]}
+          />
+          <InputNumber
+            style={{ flex: 1 }} min={0}
+            max={row.allocation_type === 'percentage' ? 100 : undefined}
+            value={row.value}
+            onChange={(v) => updateRow(idx, { value: v ?? 0 })}
+            suffix={row.allocation_type === 'percentage' ? '%' : '元'}
+          />
+          <Button type="text" danger size="small" icon={<DeleteOutlined />} onClick={() => removeRow(idx)} />
+        </div>
+      ))}
+
+      <Button size="small" icon={<PlusOutlined />} onClick={addRow} style={{ marginBottom: 10 }}>
+        新增分攤行
+      </Button>
+
+      {/* ── 即時狀態面板 ── */}
+      {value.length > 0 && (
+        <div style={{
+          padding: '8px 12px', borderRadius: 6, fontSize: 12,
+          background: hasIssue ? '#fff2f0' : hasWarn ? '#fffbe6' : '#f6ffed',
+          border: `1px solid ${hasIssue ? '#ffccc7' : hasWarn ? '#ffe58f' : '#b7eb8f'}`,
+        }}>
+          {/* 比例加總 */}
+          {hasPct && (
+            <div>
+              比例加總：
+              <span style={{ fontWeight: 600, color: Math.abs(pctSum - 100) <= 0.01 ? '#52c41a' : '#ff4d4f' }}>
+                {pctSum.toFixed(2)}%
+              </span>
+              {Math.abs(pctSum - 100) > 0.01 && (
+                <span style={{ color: '#ff4d4f', marginLeft: 4 }}>
+                  （尚差 {(100 - pctSum).toFixed(2)}%）
+                </span>
+              )}
+            </div>
+          )}
+          {/* 固定金額加總（僅固定計價方式顯示） */}
+          {hasFixed && isStrictPricing && contractAmount && (
+            <div style={{ marginTop: hasPct ? 4 : 0 }}>
+              固定金額加總：
+              <span style={{ fontWeight: 600, color: Math.abs(fixedSum - contractAmount) <= 1 ? '#52c41a' : '#ff4d4f' }}>
+                ${fixedSum.toLocaleString('zh-TW')}
+              </span>
+              <span style={{ color: '#8c8c8c', marginLeft: 4 }}>
+                / 合約總額 ${contractAmount.toLocaleString('zh-TW')}
+              </span>
+              {Math.abs(fixedSum - contractAmount) > 1 && (
+                <span style={{ color: '#ff4d4f', marginLeft: 4 }}>
+                  （差額 {fixedSum > contractAmount ? '+' : ''}${(fixedSum - contractAmount).toLocaleString('zh-TW')}）
+                </span>
+              )}
+            </div>
+          )}
+          {/* 非固定計價說明 */}
+          {hasFixed && !isStrictPricing && pricingMethod && (
+            <div style={{ color: '#8c8c8c' }}>
+              計價方式「{pricingMethod}」為變動計費，固定金額不強制驗證加總
+            </div>
+          )}
+          {/* 混用警告 */}
+          {hasWarn && (
+            <div style={{ color: '#d48806', marginTop: 4 }}>
+              ⚠ 比例與固定金額混用 — 存檔前將請求確認
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }

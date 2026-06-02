@@ -9,11 +9,11 @@
  *
  * 不新增後端 API，所有 normalize 在前端 adapter layer 完成。
  */
-import React, { useState, useEffect, useCallback, useRef } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import {
   Row, Col, Card, Statistic, Typography, Breadcrumb, Select,
   Spin, Alert, Tabs, Tag, Space, Progress, Divider, Tooltip,
-  Badge, Table, Button, DatePicker, message, Modal,
+  Badge, Table, Button, DatePicker, message,
 } from 'antd'
 import {
   HomeOutlined, ToolOutlined, SafetyOutlined, BuildOutlined,
@@ -21,7 +21,7 @@ import {
   BarChartOutlined, LineChartOutlined, PieChartOutlined,
   DashboardOutlined, WarningOutlined, RightOutlined,
   ReloadOutlined, QuestionCircleOutlined, FilePptOutlined, DownloadOutlined,
-  CalendarOutlined, SettingOutlined, LinkOutlined,
+  CalendarOutlined, SettingOutlined,
 } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import {
@@ -52,7 +52,7 @@ import {
   type HotelMonthlyHoursData,
   type HotelPersonHoursData,
 } from '@/api/hotelOverview'
-import { exportPptx, type PptFrontendData } from '@/api/hotelPptExport'
+import { exportRepairPptx } from '@/api/repairPptExport'
 import type { PMStats }                  from '@/types/periodicMaintenance'
 import type { IHGStats }                 from '@/types/ihgRoomMaintenance'
 import type { DashboardData, DashboardKpi } from '@/types/dazhiRepair'
@@ -146,7 +146,7 @@ function adaptPeriodic(stats: PMStats): NormalizedSource {
     work_hours:      (kpi?.planned_minutes  ?? 0) / 60,  // 預估工時（計劃工時）
     actual_hours:    (kpi?.actual_minutes   ?? 0) / 60,  // 保養時間（實際工時）⚠️ 後端目前未輸出，值為 0
     completion_rate: rate,
-    abnormal_count:  kpi?.overdue ?? 0,
+    abnormal_count:  (kpi?.current_month_total ?? 0) - (kpi?.completed ?? 0),  // 未完成 = 異常
     overdue_count:   kpi?.overdue ?? 0,
     status_label:    `完成率 ${rate.toFixed(1)}%`,
     is_ok:           rate >= 70,
@@ -332,9 +332,20 @@ export default function HotelMgmtDashboardPage() {
   const [yearlyYear,       setYearlyYear]        = useState<number>(thisYear)
   const [tabYearlyLoading, setTabYearlyLoading]  = useState(false)
   const [exportLoading,    setExportLoading]     = useState(false)
-  const [exportProgress,   setExportProgress]    = useState(0)
-  const [exportModalOpen,  setExportModalOpen]   = useState(false)
-  const exportTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  // ── PPTX 匯出 ────────────────────────────────────────────────────────────
+  const handlePptExport = useCallback(async () => {
+    setExportLoading(true)
+    try {
+      await exportRepairPptx({ module: 'dazhi', year, month: month > 0 ? month : new Date().getMonth() + 1 })
+      message.success('PowerPoint 匯出成功！')
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      message.error(`匯出失敗：${msg}`)
+    } finally {
+      setExportLoading(false)
+    }
+  }, [year, month])
 
   // ── Tab 獨立篩選狀態（各 Tab 不影響 Dashboard 的 year/month）────────────
   const [tabBYear,   setTabBYear]   = useState<number>(thisYear)
@@ -1619,146 +1630,16 @@ export default function HotelMgmtDashboardPage() {
               <Button
                 size="small"
                 icon={<FilePptOutlined />}
+                loading={exportLoading}
                 disabled={month === 0}
                 style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)', color: '#fff', border: 'none' }}
-                onClick={() => setExportModalOpen(true)}
+                onClick={handlePptExport}
               >
                 匯出 PowerPoint
               </Button>
             </Space>
           </Col>
         </Row>
-        {exportLoading && (
-          <Row style={{ marginTop: 8 }}>
-            <Col span={24}>
-              <Progress
-                percent={Math.round(exportProgress)}
-                status={exportProgress >= 100 ? 'success' : 'active'}
-                strokeColor={{ from: '#667eea', to: '#764ba2' }}
-                size="small"
-                format={pct => pct! >= 100 ? '完成！' : `正在生成 ${pct}%`}
-              />
-            </Col>
-          </Row>
-        )}
-
-        {/* ── 匯出確認 Modal ──────────────────────────────────────────────── */}
-        <Modal
-          title={<Space><FilePptOutlined style={{ color: '#764ba2' }} />飯店管理 Dashboard — 匯出 PowerPoint</Space>}
-          open={exportModalOpen}
-          onCancel={() => setExportModalOpen(false)}
-          footer={null}
-          width={480}
-        >
-          <div style={{ marginBottom: 16 }}>
-            <Tag color="blue">{year} 年 {month > 0 ? `${month} 月` : '全年'}</Tag>
-            <Tag color="default">巡檢日期：{targetDate}</Tag>
-          </div>
-          <Alert
-            type="info"
-            showIcon
-            message="匯出設定說明"
-            description={
-              <span>
-                匯出內容與區塊順序依「PPT 匯出設定」頁的設定為準。如需調整，請
-                <a
-                  href="/ppt-export"
-                  target="_blank"
-                  rel="noreferrer"
-                  style={{ color: '#4BA8E8', marginLeft: 4 }}
-                >
-                  <LinkOutlined /> 前往設定頁
-                </a>
-              </span>
-            }
-            style={{ marginBottom: 16 }}
-          />
-          {exportLoading && (
-            <Progress
-              percent={Math.round(exportProgress)}
-              status={exportProgress >= 100 ? 'success' : 'active'}
-              strokeColor={{ from: '#667eea', to: '#764ba2' }}
-              size="small"
-              format={pct => pct! >= 100 ? '完成！' : `正在生成 ${pct}%`}
-              style={{ marginBottom: 12 }}
-            />
-          )}
-          <Row justify="end" gutter={8}>
-            <Col>
-              <Button onClick={() => setExportModalOpen(false)}>取消</Button>
-            </Col>
-            <Col>
-              <Button
-                type="primary"
-                icon={<FilePptOutlined />}
-                loading={exportLoading}
-                style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)', border: 'none' }}
-                onClick={async () => {
-                  setExportLoading(true)
-                  setExportProgress(5)
-                  exportTimerRef.current = setInterval(() => {
-                    setExportProgress(prev => {
-                      if (prev >= 88) {
-                        clearInterval(exportTimerRef.current!)
-                        return 88
-                      }
-                      return prev + Math.random() * 4 + 1
-                    })
-                  }, 600)
-                  try {
-                    const frontendData: PptFrontendData = {
-                      kpi_summary: {
-                        total_cases:      totalCases,
-                        total_completed:  totalCompleted,
-                        total_work_hours: Math.round(totalWorkHours * 10) / 10,
-                        completion_rate:  totalCases > 0
-                          ? Math.round((totalCompleted / totalCases) * 1000) / 10
-                          : 0,
-                      },
-                      source_cards: sources.map(s => ({
-                        category:         s.source_name,
-                        total:            Math.max(0, s.case_count),
-                        completed:        s.completed_count,
-                        work_hours:       Math.max(0, s.work_hours),
-                        completion_rate:  Math.round(s.completion_rate * 10) / 10,
-                      })),
-                      repair_costs: [
-                        { category: '外包費', amount: dazhiData?.kpi.annual_outsource_fee   ?? 0 },
-                        { category: '保養費', amount: dazhiData?.kpi.annual_maintenance_fee ?? 0 },
-                        { category: '扣款費', amount: dazhiData?.kpi.annual_deduction_fee   ?? 0 },
-                      ],
-                      bar_chart_data:  barData.map(d => ({ date: d.name, 工項數: d.工項數, 完成數: d.完成數 })),
-                      rate_chart_data: rateBarData.map(d => ({ date: d.name, rate: d.完成率 })),
-                      dazhi_trend_data: dazhiTrend.map(d => ({
-                        date:      String(d.month ?? ''),
-                        total:     d.total ?? 0,
-                        completed: d.completed ?? 0,
-                      })),
-                      hours_pie_data: sourcePieData.map(d => ({ category: d.name, hours: d.value })),
-                    }
-                    const filename = `飯店管理Dashboard_${year}年${month}月.pptx`
-                    await exportPptx(
-                      { year, month, inspection_date: targetDate, frontend_data: frontendData },
-                      filename,
-                    )
-                    setExportProgress(100)
-                    setTimeout(() => setExportModalOpen(false), 800)
-                  } catch (e) {
-                    console.error('PPTX export failed', e)
-                    const msg = e instanceof Error ? e.message : String(e)
-                    message.error(`PPTX 匯出失敗：${msg}`)
-                  } finally {
-                    clearInterval(exportTimerRef.current!)
-                    setExportLoading(false)
-                    setTimeout(() => setExportProgress(0), 1200)
-                  }
-                }}
-              >
-                開始匯出
-              </Button>
-            </Col>
-          </Row>
-        </Modal>
       </Card>
 
       {/* 資料載入錯誤提示 */}

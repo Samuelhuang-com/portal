@@ -2220,7 +2220,7 @@ export default function DazhiRepairPage() {
             icon={<FilePptOutlined />}
             loading={pptLoading}
             onClick={handlePptExport}
-            style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)', border: 'none', color: '#fff' }}
+            style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)', border: 'none', color: '#fff', display: 'none' }}
           >
             匯出 PowerPoint
           </Button>

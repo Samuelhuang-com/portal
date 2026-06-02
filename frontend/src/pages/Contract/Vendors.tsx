@@ -28,6 +28,8 @@ import {
 import type { VendorImportResult } from '@/api/contract'
 import type { VendorRecord, VendorPerformance } from '@/types/contract'
 import { NAV_GROUP, NAV_PAGE } from '@/constants/navLabels'
+import { companiesApi } from '@/api/referenceData'
+import type { CompanyOption } from '@/api/referenceData'
 
 const { Title } = Typography
 
@@ -55,6 +57,8 @@ export default function VendorListPage() {
   const [addOpen, setAddOpen] = useState(false)
   const [addLoading, setAddLoading] = useState(false)
   const [addForm] = Form.useForm()
+  // F7 管理公司下拉
+  const [vendorCompanyOpts, setVendorCompanyOpts] = useState<CompanyOption[]>([])
 
   // 搜尋
   const [searchText, setSearchText] = useState('')
@@ -81,6 +85,7 @@ export default function VendorListPage() {
   // ── 初始化 ────────────────────────────────────────────────────────────────
   useEffect(() => {
     loadVendors(1, pagination.size)
+    companiesApi.options().then(res => setVendorCompanyOpts(Array.isArray(res.data) ? res.data : [])).catch(() => {})
   }, [])
 
   // ── 搜尋變更 ──────────────────────────────────────────────────────────────
@@ -208,6 +213,12 @@ export default function VendorListPage() {
       dataIndex: 'is_critical',
       width: 100,
       render: (isCritical) => isCritical ? <Tag color="red">是</Tag> : <span>—</span>,
+    },
+    {
+      title: '管理公司',
+      dataIndex: 'managing_company',
+      width: 100,
+      render: (v?: string) => v ? <Tag color="blue">{v}</Tag> : '—',
     },
     {
       title: '操作',
@@ -406,6 +417,14 @@ export default function VendorListPage() {
               </Form.Item>
             </Col>
           </Row>
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item name="managing_company" label="管理公司">
+                <Select showSearch allowClear placeholder="選填" optionFilterProp="label"
+                  options={vendorCompanyOpts} />
+              </Form.Item>
+            </Col>
+          </Row>
         </Form>
       </Modal>
 
@@ -532,6 +551,9 @@ function VendorDetailDrawer({ vendor, open, onClose }: VendorDetailDrawerProps) 
         </Descriptions.Item>
         <Descriptions.Item label="關鍵廠商">
           {vendor.is_critical ? <Tag color="red">是</Tag> : <span>否</span>}
+        </Descriptions.Item>
+        <Descriptions.Item label="管理公司">
+          {vendor.managing_company ? <Tag color="blue">{vendor.managing_company}</Tag> : '—'}
         </Descriptions.Item>
       </Descriptions>
     </>

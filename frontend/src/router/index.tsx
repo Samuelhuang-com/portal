@@ -136,6 +136,8 @@ import ContractImportPage      from '@/pages/Contract/Import'
 import ContractExpiringPage    from '@/pages/Contract/Expiring'
 import ContractClaimsPage      from '@/pages/Contract/Claims'
 import ContractRenewalsPage    from '@/pages/Contract/Renewals'
+import ContractCalendarPage    from '@/pages/Contract/CalendarView'
+import ContractComparePage     from '@/pages/Contract/CompareContracts'
 import VendorsPage             from '@/pages/Contract/Vendors'
 import SettingsPage            from '@/pages/Contract/Settings'
 
@@ -471,6 +473,16 @@ export default function AppRouter() {
           <Route path="renewals" element={
             <PermissionGuard permissionKey="contract_renewals_view">
               <ContractRenewalsPage />
+            </PermissionGuard>
+          } />
+          <Route path="calendar" element={
+            <PermissionGuard permissionKey="contract_view">
+              <ContractCalendarPage />
+            </PermissionGuard>
+          } />
+          <Route path="compare" element={
+            <PermissionGuard permissionKey="contract_view">
+              <ContractComparePage />
             </PermissionGuard>
           } />
           <Route path="import" element={

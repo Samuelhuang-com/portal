@@ -1,0 +1,2099 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>合約管理系統 — 操作暨技術手冊 v1.99.0</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<style>
+:root {
+  --primary: #1B3A5C;
+  --accent:  #4BA8E8;
+  --success: #52C41A;
+  --warn:    #FAAD14;
+  --danger:  #FF4D4F;
+  --bg:      #f0f4f8;
+  --card:    #ffffff;
+  --border:  #e0e6ed;
+  --text:    #2c3e50;
+  --muted:   #8c9db5;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: "PingFang TC","Microsoft JhengHei",sans-serif; background: var(--bg); color: var(--text); line-height: 1.7; font-size: 19px; }
+
+/* ── Layout ── */
+.layout { display: flex; min-height: 100vh; }
+.sidebar {
+  width: 300px; min-width: 300px; background: #111827; color: #d1d5db;
+  position: sticky; top: 0; height: 100vh; overflow-y: auto; padding: 0;
+  flex-shrink: 0;
+}
+.sidebar-logo { padding: 20px 20px 16px; border-bottom: 1px solid #374151; }
+.sidebar-logo h2 { color: #fff; font-size: 17px; font-weight: 700; line-height: 1.4; }
+.sidebar-logo p { color: #9ca3af; font-size: 14px; margin-top: 4px; }
+.sidebar nav a {
+  display: block; padding: 8px 20px; font-size: 19px; color: #d1d5db;
+  text-decoration: none; transition: background .15s;
+}
+.sidebar nav a:hover, .sidebar nav a.active { background: #374151; color: #fff; }
+.sidebar nav .nav-section { padding: 14px 20px 4px; font-size: 16px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .08em; color: #6b7280; }
+.main { flex: 1; padding: 32px 40px; max-width: 1200px; }
+
+/* ── Typography ── */
+h1 { font-size: 31px; color: var(--primary); margin-bottom: 8px; }
+h2 { font-size: 23px; color: var(--primary); margin: 40px 0 16px; padding-bottom: 8px;
+     border-bottom: 2px solid var(--accent); }
+h3 { font-size: 19px; color: var(--primary); margin: 24px 0 10px; }
+h4 { font-size: 17px; color: var(--primary); margin: 16px 0 8px; font-weight: 600; }
+p  { margin-bottom: 10px; }
+
+/* ── Cards ── */
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+        padding: 20px 24px; margin-bottom: 20px; }
+.card-title { font-size: 17px; font-weight: 700; color: var(--primary); margin-bottom: 12px; }
+
+/* ── Tables ── */
+.tbl-wrap { overflow-x: auto; margin-bottom: 20px; }
+table { width: 100%; border-collapse: collapse; font-size: 19px; }
+thead tr { background: var(--primary); color: #fff; }
+thead th { padding: 10px 14px; text-align: left; font-weight: 600; white-space: nowrap; }
+tbody tr:nth-child(even) { background: #f8fafc; }
+tbody td { padding: 9px 14px; border-bottom: 1px solid var(--border); vertical-align: top; }
+tbody tr:hover td { background: #eef4fb; }
+
+/* ── Badges ── */
+.badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 14px; font-weight: 600; }
+.badge-pk  { background: #fff3cd; color: #856404; }
+.badge-fk  { background: #cce5ff; color: #004085; }
+.badge-req { background: #f8d7da; color: #721c24; }
+.badge-opt { background: #e2e3e5; color: #495057; }
+.badge-uni { background: #d4edda; color: #155724; }
+.badge-idx { background: #d1ecf1; color: #0c5460; }
+
+.tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 14px; margin: 1px; }
+.tag-draft    { background:#f5f5f5; color:#595959; border:1px solid #d9d9d9; }
+.tag-review   { background:#e6f7ff; color:#096dd9; border:1px solid #91d5ff; }
+.tag-active   { background:#f6ffed; color:#389e0d; border:1px solid #b7eb8f; }
+.tag-expiring { background:#fffbe6; color:#d48806; border:1px solid #ffe58f; }
+.tag-ended    { background:#fff2f0; color:#cf1322; border:1px solid #ffccc7; }
+
+/* ── Alert boxes ── */
+.alert { padding: 12px 16px; border-radius: 6px; margin-bottom: 14px; font-size: 19px; }
+.alert-info   { background:#e6f7ff; border-left: 4px solid var(--accent); }
+.alert-warn   { background:#fffbe6; border-left: 4px solid var(--warn); }
+.alert-danger { background:#fff2f0; border-left: 4px solid var(--danger); }
+.alert-ok     { background:#f6ffed; border-left: 4px solid var(--success); }
+
+/* ── Code ── */
+code { background:#f0f0f0; padding:2px 6px; border-radius:3px; font-family:monospace; font-size:15px; color:#c0392b; }
+pre  { background:#1e1e1e; color:#d4d4d4; padding:16px; border-radius:6px; font-size:15px;
+       overflow-x:auto; margin-bottom:16px; line-height:1.6; }
+
+/* ── Flow diagram ── */
+.flow { display:flex; align-items:center; flex-wrap:wrap; gap:4px; margin:12px 0; }
+.flow-box { padding:6px 14px; border-radius:6px; font-size:19px; font-weight:600; }
+.flow-arrow { font-size:21px; color:var(--muted); }
+
+/* ── Mermaid ── */
+.mermaid-wrap { background:#fff; border:1px solid var(--border); border-radius:8px; padding:20px;
+                overflow-x:auto; margin-bottom:20px; }
+.mermaid { font-size:15px; }
+
+/* ── TOC ── */
+.toc-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px 20px; }
+.toc-grid a { color: var(--accent); text-decoration:none; font-size:19px; }
+.toc-grid a:hover { text-decoration:underline; }
+
+/* ── Rule list ── */
+.rule-list { list-style:none; padding:0; }
+.rule-list li { padding: 6px 0 6px 24px; position:relative; font-size:19px; border-bottom:1px solid #f0f0f0; }
+.rule-list li::before { content:"▶"; color:var(--accent); position:absolute; left:0; font-size:16px; top:9px; }
+.rule-list li:last-child { border-bottom:none; }
+
+/* ── Responsive ── */
+@media(max-width:900px){
+  .sidebar { display:none; }
+  .main { padding:20px; }
+}
+</style>
+</head>
+<body>
+<div class="layout">
+
+<!-- ═══════════════════ SIDEBAR ═══════════════════ -->
+<aside class="sidebar">
+  <div class="sidebar-logo">
+    <h2>合約管理系統</h2>
+    <p>操作暨技術手冊 v1.99.0<br>2026-06-01</p>
+  </div>
+  <nav>
+    <div class="nav-section">總覽</div>
+    <a href="#overview">系統概述</a>
+    <a href="#modules">功能模組</a>
+    <a href="#erd">ERD 資料關聯圖</a>
+
+    <div class="nav-section">資料表規格</div>
+    <a href="#tbl-contracts">contracts 合約主表</a>
+    <a href="#tbl-contract-items">contract_items 合約項目</a>
+    <a href="#tbl-vendors">vendors 廠商</a>
+    <a href="#tbl-claims">contract_claims 請款</a>
+    <a href="#tbl-claim-attach">claim_attachments 請款附件</a>
+    <a href="#tbl-renewals">contract_renewals 續約</a>
+    <a href="#tbl-contract-attach">contract_attachments 合約附件</a>
+    <a href="#tbl-cost-alloc">contract_cost_allocations 費用分攤</a>
+    <a href="#tbl-budget">budget_categories 預算科目</a>
+    <a href="#tbl-companies">companies 公司別</a>
+    <a href="#tbl-departments">departments 部門別</a>
+    <a href="#tbl-pricing">pricing_specs 計價規格</a>
+
+    <div class="nav-section">操作說明</div>
+    <a href="#drawer-ui">合約明細 Drawer</a>
+    <a href="#drawer-tabs">Drawer Tab 總覽</a>
+    <a href="#drawer-fullscreen">全螢幕模式</a>
+
+    <div class="nav-section">業務邏輯</div>
+    <a href="#status-machine">合約狀態機</a>
+    <a href="#approval-flow">審核流程</a>
+    <a href="#cost-alloc-rules">費用分攤規則與計算</a>
+    <a href="#cost-alloc-calc">　├ 計算公式與範例</a>
+    <a href="#cost-alloc-mixed">　├ 混用類型規則</a>
+    <a href="#cost-alloc-ui">　└ UI 行為與存檔攔截</a>
+    <a href="#expiry-notify">到期通知規則</a>
+    <a href="#input-rules">輸入限制總表</a>
+
+    <div class="nav-section">API 速查</div>
+    <a href="#api-contracts">合約端點</a>
+    <a href="#api-claims">請款端點</a>
+    <a href="#api-renewals">續約端點</a>
+    <a href="#api-settings">設定端點</a>
+
+    <div class="nav-section">Phase G — 自動化強化</div>
+    <a href="#g1-budget-alert">G1 預算使用率警示</a>
+    <a href="#g2-calendar">G2 合約行事曆</a>
+    <a href="#g3-budget-analysis">G3 預算執行率分析</a>
+    <a href="#g4-auto-close">G4 到期自動終止</a>
+
+    <div class="nav-section">Phase H — 流程強化</div>
+    <a href="#h1-templates">H1 合約範本管理</a>
+    <a href="#h2-change-logs">H2 合約變更歷程</a>
+    <a href="#h3-payment-schedule">H3 分期付款計劃</a>
+    <a href="#h4-audit-log">H4 操作稽核日誌</a>
+
+    <div class="nav-section">Phase I — 審核與財務深化</div>
+    <a href="#i1-approval-stages">I1 多層審核流程</a>
+    <a href="#i2-acceptances">I2 驗收管理</a>
+    <a href="#i3-deposits">I3 保證金追蹤</a>
+    <a href="#i4-cost-summary">I4 年化費用計算</a>
+
+    <div class="nav-section">Phase J — 分析與體驗強化</div>
+    <a href="#j1-concentration">J1 廠商集中度分析</a>
+    <a href="#j2-cost-trend">J2 合約成本趨勢圖</a>
+    <a href="#j3-summary-report">J3 月度/季度報表</a>
+    <a href="#j4-batch">J4 批次操作</a>
+    <a href="#j5-personal">J5 個人化篩選</a>
+
+    <div class="nav-section">Phase K — 整合擴展</div>
+    <a href="#k2-sla">K2 SLA 達成率追蹤 ✅</a>
+    <a href="#k5-compare">K5 合約並排比較 ✅</a>
+    <a href="#k1-email">K1 Email 通知 📋</a>
+    <a href="#k3-currency">K3 多幣別換算 📋</a>
+    <a href="#k4-erp">K4 財務系統匯出 📋</a>
+    <a href="#k6-esign">K6 電子簽核整合 📋</a>
+  </nav>
+</aside>
+
+<!-- ═══════════════════ MAIN ═══════════════════ -->
+<main class="main">
+
+<!-- ───── 封面 ───── -->
+<div style="margin-bottom:32px;">
+  <h1>合約管理系統</h1>
+  <p style="font-size:19px;color:var(--muted);">操作暨技術手冊 — v2.00.0　2026-06-01</p>
+  <div class="card" style="margin-top:16px;">
+    <div class="toc-grid">
+      <a href="#overview">1. 系統概述</a>
+      <a href="#modules">2. 功能模組</a>
+      <a href="#drawer-ui">2.5 合約明細 Drawer 操作說明</a>
+      <a href="#erd">3. ERD 資料關聯圖</a>
+      <a href="#tbl-contracts">4. 資料表規格</a>
+      <a href="#status-machine">5. 合約狀態機</a>
+      <a href="#approval-flow">6. 審核流程</a>
+      <a href="#cost-alloc-rules">7. 費用分攤規則與計算</a>
+      <a href="#expiry-notify">8. 到期通知規則</a>
+      <a href="#input-rules">9. 輸入限制總表</a>
+      <a href="#api-contracts">10. API 端點速查</a>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ 1. 系統概述 ═══ -->
+<section id="overview">
+<h2>1. 系統概述</h2>
+<p>合約管理系統（Contract Management System）是集團 Portal 的核心模組之一，涵蓋合約全生命週期管理，從草稿建立、審核生效、請款核銷，到續約申請與到期通知。</p>
+
+<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:16px 0;">
+  <div class="card" style="text-align:center;padding:16px;">
+    <div style="font-size:28px;font-weight:700;color:var(--primary);">12</div>
+    <div style="font-size:16px;color:var(--muted);">資料表</div>
+  </div>
+  <div class="card" style="text-align:center;padding:16px;">
+    <div style="font-size:28px;font-weight:700;color:var(--accent);">50+</div>
+    <div style="font-size:16px;color:var(--muted);">API 端點</div>
+  </div>
+  <div class="card" style="text-align:center;padding:16px;">
+    <div style="font-size:28px;font-weight:700;color:var(--success);">5</div>
+    <div style="font-size:16px;color:var(--muted);">合約狀態</div>
+  </div>
+</div>
+
+<div class="alert alert-info">
+  <strong>技術棧：</strong>後端 FastAPI + SQLAlchemy（SQLite），前端 React + TypeScript + Ant Design 5，API 前綴 <code>/api/v1/contract/</code>
+</div>
+</section>
+
+<!-- ═══ 2. 功能模組 ═══ -->
+<section id="modules">
+<h2>2. 功能模組</h2>
+<div class="tbl-wrap">
+<table>
+<thead><tr><th>模組</th><th>說明</th><th>主要資料表</th><th>路由路徑</th></tr></thead>
+<tbody>
+<tr><td><strong>合約主表</strong></td><td>建立、編輯、查詢合約基本資訊</td><td>contracts, vendors</td><td>/contract</td></tr>
+<tr><td><strong>合約項目</strong></td><td>合約明細行項（含稅/未稅金額）</td><td>contract_items</td><td>/contract/{id}/items</td></tr>
+<tr><td><strong>請款管理</strong></td><td>請款申請、審核、批次核准</td><td>contract_claims</td><td>/contract/claims</td></tr>
+<tr><td><strong>請款附件</strong></td><td>發票、收據等 PDF/圖片上傳</td><td>contract_claim_attachments</td><td>/contract/claims/{id}/attachments</td></tr>
+<tr><td><strong>合約附件</strong></td><td>合約本體 PDF/Word/圖片上傳</td><td>contract_attachments</td><td>/contract/{id}/attachments</td></tr>
+<tr><td><strong>費用分攤</strong></td><td>多公司分攤（比例或固定金額）</td><td>contract_cost_allocations</td><td>/contract/{id}/cost-allocations</td></tr>
+<tr><td><strong>續約管理</strong></td><td>續約申請與審核流程</td><td>contract_renewals</td><td>/contract/{id}/renewals</td></tr>
+<tr><td><strong>廠商管理</strong></td><td>廠商主檔、績效、批次匯入</td><td>vendors</td><td>/contract/vendors</td></tr>
+<tr><td><strong>預算科目</strong></td><td>預算大/細項字典</td><td>budget_categories</td><td>/contract/budget-categories</td></tr>
+<tr><td><strong>公司別</strong></td><td>集團公司清單維護</td><td>companies</td><td>/settings/companies</td></tr>
+<tr><td><strong>部門別</strong></td><td>各公司部門清單維護</td><td>departments</td><td>/settings/departments</td></tr>
+<tr><td><strong>計價規格</strong></td><td>計價規格字典維護</td><td>pricing_specs</td><td>/settings/pricing-specs</td></tr>
+</tbody>
+</table>
+</div>
+</section>
+
+<!-- ═══ 2.5 合約明細 Drawer 操作說明 ═══ -->
+<section id="drawer-ui">
+<h2>2.5 合約明細 Drawer — 操作說明</h2>
+<p>在合約清單點擊任一列，右側滑出「合約明細 Drawer」。Drawer 提供查看模式與編輯模式，並整合多個功能 Tab，可在不離開清單頁的情況下完成大部分合約操作。</p>
+
+<!-- 標題列 -->
+<h3 id="drawer-tabs">2.5.1 Drawer Tab 總覽</h3>
+<p>查看模式下，Drawer 內容以 Tab 呈現，共 9 個 Tab：</p>
+
+<div class="tbl-wrap"><table>
+<thead><tr><th>Tab 名稱</th><th>功能說明</th><th>對應資料表</th><th>Phase</th></tr></thead>
+<tbody>
+<tr><td>📋 基本資訊</td><td>合約所有欄位 Descriptions 查看（含費用分攤）</td><td>contracts, contract_cost_allocations</td><td>A–F</td></tr>
+<tr><td>📝 合約項目</td><td>明細行項（品項名稱、單價、數量、金額）</td><td>contract_items</td><td>C</td></tr>
+<tr><td>💵 請款紀錄</td><td>請款申請、審核狀態、批次核准、附件</td><td>contract_claims</td><td>C</td></tr>
+<tr><td>🔄 續約申請</td><td>提交續約、審核，顯示歷次續約記錄</td><td>contract_renewals</td><td>D</td></tr>
+<tr><td>📎 合約附件</td><td>PDF/Word/圖片上傳，Lightbox 預覽</td><td>contract_attachments</td><td>E</td></tr>
+<tr><td>💰 付款計劃</td><td>設定付款里程碑、標記已付款、逾期自動提醒</td><td>contract_payment_schedules</td><td><strong>H3</strong></td></tr>
+<tr><td>🕐 變更歷程</td><td>每次欄位修改的舊值→新值記錄（含操作人）</td><td>contract_change_logs</td><td><strong>H2</strong></td></tr>
+<tr><td>🔍 稽核日誌</td><td>所有寫入操作（新增/修改/刪除/審核）的時間軸</td><td>contract_audit_logs</td><td><strong>H4</strong></td></tr>
+</tbody>
+</table></div>
+
+<div class="alert alert-info">
+  Tab 數量較多時，部分 Tab 標籤可能超出 Drawer 寬度而被隱藏。請使用<strong>全螢幕模式</strong>展開 Drawer 以顯示所有 Tab。
+</div>
+
+<!-- 全螢幕 -->
+<h3 id="drawer-fullscreen">2.5.2 全螢幕模式</h3>
+
+<div class="card" style="border-left:4px solid var(--accent);">
+  <div class="card-title">⊞ 全螢幕展開 / ⊟ 縮回</div>
+  <p>Drawer 標題列右上角有一個藍色框線按鈕，圖示為 <strong>ExpandOutlined（⊞）</strong> 或 <strong>CompressOutlined（⊟）</strong>：</p>
+  <ul class="rule-list">
+    <li>點擊 <strong>⊞</strong>：Drawer 展開至 <code>100vw</code>（全視窗寬），所有 Tab 標籤完整顯示，大型資料表（付款計劃、變更歷程等）有更充裕的水平空間。</li>
+    <li>點擊 <strong>⊟</strong>：縮回預設寬度 <strong>640px</strong>，恢復右側浮窗形式。</li>
+    <li>點擊關閉（×）時，無論當前是否全螢幕，均自動重置為 640px，下次開啟合約時從 640px 開始。</li>
+  </ul>
+</div>
+
+<h4>標題列按鈕排列（由左至右）</h4>
+<div class="flow">
+  <div class="flow-box" style="background:#e6f7ff;color:#096dd9;">合約 [tag]</div>
+  <div class="flow-arrow">→</div>
+  <div class="flow-box" style="background:#f0f0f0;">合約編號：CON-YYYY-NNNN</div>
+  <div class="flow-arrow">→</div>
+  <div class="flow-box" style="background:#e6f7ff;color:#4BA8E8;">🔗 在 Ragic 查看</div>
+  <div class="flow-arrow">→ 右側靠齊 →</div>
+  <div class="flow-box" style="background:#f6ffed;color:#389e0d;">送審 / 核准 / 拒絕</div>
+  <div class="flow-arrow">+</div>
+  <div class="flow-box" style="background:#f9f0ff;color:#722ed1;">✏ 編輯</div>
+  <div class="flow-arrow">+</div>
+  <div class="flow-box" style="background:#e6f7ff;color:#4BA8E8;border:1px solid #4BA8E8;">⊞ 全螢幕</div>
+</div>
+
+<h4>適用場景建議</h4>
+<div class="tbl-wrap"><table>
+<thead><tr><th>使用情境</th><th>建議寬度</th></tr></thead>
+<tbody>
+<tr><td>快速查看基本資訊或單一 Tab 內容</td><td>640px（預設）</td></tr>
+<tr><td>查看付款計劃、變更歷程、稽核日誌等多欄 Tab</td><td>全螢幕</td></tr>
+<tr><td>同時查看合約清單與 Drawer 明細（對照用）</td><td>640px（Drawer 不蓋住清單）</td></tr>
+<tr><td>編輯合約欄位（欄位數多，需充裕空間）</td><td>全螢幕</td></tr>
+</tbody>
+</table></div>
+
+</section><!-- /drawer-ui -->
+
+<!-- ═══ 3. ERD ═══ -->
+<section id="erd">
+<h2>3. ERD 資料關聯圖</h2>
+<div class="alert alert-info">
+  <strong>圖例說明：</strong>實線 = 資料庫實際 FK 約束（CASCADE DELETE）；虛線 = 邏輯對應（名稱冗餘儲存，歷史資料不受基礎資料變動影響）
+</div>
+<div class="mermaid-wrap">
+<div class="mermaid">
+erDiagram
+    vendors {
+        string  vendor_id        PK
+        string  vendor_name      "唯一"
+        string  tax_id
+        string  vendor_type
+        string  risk_level
+        boolean is_critical
+        string  managing_company "邏輯→companies"
+    }
+    contracts {
+        string  contract_id      PK
+        string  vendor_id        FK
+        string  contract_name
+        string  contract_status  "草稿/審核中/生效中/即將到期/已終止"
+        string  contract_type
+        date    start_date
+        date    end_date
+        numeric total_amount_tax_included
+        string  pricing_method
+        string  signing_company  "邏輯→companies"
+        string  signing_dept     "邏輯→departments"
+        string  budget_company   "邏輯→companies"
+        string  budget_dept      "邏輯→departments"
+        string  pricing_spec     "邏輯→pricing_specs"
+        string  manager
+        string  reviewer
+        string  approved_by
+    }
+    contract_items {
+        int     id           PK
+        string  contract_id  FK
+        int     item_seq
+        string  item_name
+        numeric unit_price_tax_excluded
+        numeric amount_tax_included
+    }
+    contract_claims {
+        int     id           PK
+        string  contract_id  FK
+        string  claim_type
+        string  claim_date
+        numeric amount
+        string  status       "待審核/已核准/已拒絕/已付款"
+        string  cost_company "邏輯→companies"
+    }
+    contract_claim_attachments {
+        int    id        PK
+        int    claim_id  FK
+        string original_filename
+        string content_type
+        int    file_size
+    }
+    contract_renewals {
+        int     id           PK
+        string  contract_id  FK
+        string  renewal_start_date
+        string  renewal_end_date
+        numeric new_amount
+        string  status
+        string  applicant
+    }
+    contract_attachments {
+        int    id            PK
+        string contract_id   FK
+        string original_filename
+        string content_type
+        int    file_size
+    }
+    contract_cost_allocations {
+        int     id           PK
+        string  contract_id  FK
+        string  company_name "冗餘儲存"
+        string  allocation_type
+        numeric value
+    }
+    budget_categories {
+        int     id          PK
+        int     budget_year
+        string  category_l1
+        string  category_l2
+        string  accounting_code
+        boolean is_enabled
+    }
+    companies {
+        int     id   PK
+        string  name "唯一"
+        boolean is_active
+    }
+    departments {
+        int     id         PK
+        string  name
+        int     company_id FK
+        boolean is_active
+    }
+    pricing_specs {
+        int     id   PK
+        string  name "唯一"
+        boolean is_active
+    }
+
+    vendors          ||--o{ contracts                  : "承包"
+    contracts        ||--o{ contract_items             : "包含"
+    contracts        ||--o{ contract_claims            : "產生請款"
+    contracts        ||--o{ contract_renewals          : "續約申請"
+    contracts        ||--o{ contract_attachments       : "合約附件"
+    contracts        ||--o{ contract_cost_allocations  : "費用分攤"
+    contract_claims  ||--o{ contract_claim_attachments : "請款附件"
+    companies        ||--o{ departments                : "旗下部門"
+    companies        }o..o{ contracts                  : "signing/budget company"
+    companies        }o..o{ contract_claims            : "cost_company"
+    companies        }o..o{ vendors                    : "managing_company"
+    departments      }o..o{ contracts                  : "signing/budget dept"
+    pricing_specs    }o..o{ contracts                  : "pricing_spec"
+    budget_categories }o..o{ contracts                 : "budget_category_l1/l2"
+</div>
+</div>
+</section>
+
+<!-- ═══ 4. 資料表規格 ═══ -->
+<h2 id="tables">4. 資料表欄位規格</h2>
+
+<!-- contracts -->
+<section id="tbl-contracts">
+<h3>4.1 contracts — 合約主表</h3>
+<p>每筆代表一份合約，以 <code>contract_id</code> 為自然主鍵。</p>
+<div class="tbl-wrap"><table>
+<thead><tr><th>欄位名稱</th><th>型別</th><th>必填</th><th>預設值</th><th>說明 / 限制</th></tr></thead>
+<tbody>
+<tr><td><code>contract_id</code></td><td>VARCHAR(50)</td><td><span class="badge badge-pk">PK</span></td><td>—</td><td>格式必須符合 <code>^CON-\d{4}-\d{4}$</code>（例：CON-2026-0001）</td></tr>
+<tr><td><code>vendor_id</code></td><td>VARCHAR(50)</td><td><span class="badge badge-fk">FK</span> <span class="badge badge-req">必填</span></td><td>—</td><td>參照 vendors.vendor_id，RESTRICT（不允許刪除有合約的廠商）</td></tr>
+<tr><td><code>vendor_name</code></td><td>VARCHAR(255)</td><td><span class="badge badge-req">必填</span></td><td>""</td><td>冗餘儲存廠商名稱，不因廠商改名而影響歷史記錄</td></tr>
+<tr><td><code>contract_name</code></td><td>VARCHAR(255)</td><td><span class="badge badge-req">必填</span></td><td>""</td><td>最長 255 字元</td></tr>
+<tr><td><code>contract_type</code></td><td>VARCHAR(50)</td><td><span class="badge badge-req">必填</span></td><td>""</td><td>服務合約/採購合約/工程合約/租賃合約/顧問合約/其他</td></tr>
+<tr><td><code>contract_status</code></td><td>VARCHAR(50)</td><td><span class="badge badge-req">必填</span></td><td>草稿</td><td>狀態機控制，不可任意跳轉（見 §5）</td></tr>
+<tr><td><code>responsible_dept</code></td><td>VARCHAR(100)</td><td><span class="badge badge-req">必填</span></td><td>""</td><td>權責部門（自由文字）</td></tr>
+<tr><td><code>start_date</code></td><td>DATE</td><td><span class="badge badge-req">必填</span></td><td>—</td><td>合約起日；CHECK: start_date ≤ end_date</td></tr>
+<tr><td><code>end_date</code></td><td>DATE</td><td><span class="badge badge-req">必填</span></td><td>—</td><td>合約迄日；CHECK: start_date ≤ end_date</td></tr>
+<tr><td><code>notification_days</code></td><td>INTEGER</td><td><span class="badge badge-req">必填</span></td><td>0</td><td>到期前提前通知天數（≥0）</td></tr>
+<tr><td><code>auto_renewal</code></td><td>BOOLEAN</td><td><span class="badge badge-req">必填</span></td><td>false</td><td>是否自動續約</td></tr>
+<tr><td><code>currency</code></td><td>VARCHAR(10)</td><td><span class="badge badge-req">必填</span></td><td>TWD</td><td>TWD / USD / EUR / JPY / CNY</td></tr>
+<tr><td><code>total_amount_tax_included</code></td><td>NUMERIC(12,2)</td><td><span class="badge badge-req">必填</span></td><td>0</td><td>合約總額（含稅）；必須 &gt; 0</td></tr>
+<tr><td><code>monthly_fixed_amount</code></td><td>NUMERIC(10,2)</td><td><span class="badge badge-opt">選填</span></td><td>NULL</td><td>月固定金額；計價方式為「月費」時建議填入</td></tr>
+<tr><td><code>pricing_method</code></td><td>VARCHAR(100)</td><td><span class="badge badge-req">必填</span></td><td>""</td><td>固定費用/月費/按次收費/依量計費/里程碑付款/其他</td></tr>
+<tr><td><code>budget_year</code></td><td>INTEGER</td><td><span class="badge badge-req">必填</span></td><td>0</td><td>範圍：2000–2100</td></tr>
+<tr><td><code>budget_category_l1</code></td><td>VARCHAR(100)</td><td><span class="badge badge-req">必填</span></td><td>""</td><td>預算大項，需對應 budget_categories</td></tr>
+<tr><td><code>budget_category_l2</code></td><td>VARCHAR(100)</td><td><span class="badge badge-req">必填</span></td><td>""</td><td>預算細項，需對應 budget_categories</td></tr>
+<tr><td><code>accounting_code</code></td><td>VARCHAR(50)</td><td><span class="badge badge-req">必填</span></td><td>""</td><td>會計科目代碼</td></tr>
+<tr><td><code>risk_level</code></td><td>VARCHAR(20)</td><td><span class="badge badge-req">必填</span></td><td>中</td><td>低 / 中 / 高 / 關鍵</td></tr>
+<tr><td><code>manager</code></td><td>VARCHAR(100)</td><td><span class="badge badge-opt">選填</span></td><td>""</td><td>管理人，從 /users/options 取得</td></tr>
+<tr><td><code>reviewer</code></td><td>VARCHAR(100)</td><td><span class="badge badge-opt">選填</span></td><td>""</td><td>審核人，從 /users/options 取得</td></tr>
+<tr><td><code>approved_by</code></td><td>VARCHAR(100)</td><td><span class="badge badge-opt">選填</span></td><td>NULL</td><td>審核通過後由系統填入，不可手動修改</td></tr>
+<tr><td><code>approved_at</code></td><td>DATETIME</td><td><span class="badge badge-opt">選填</span></td><td>NULL</td><td>核准時間，系統自動填入</td></tr>
+<tr><td><code>approval_comment</code></td><td>TEXT</td><td><span class="badge badge-opt">選填</span></td><td>NULL</td><td>審核意見（核准或拒絕原因）</td></tr>
+<tr><td><code>signing_company</code></td><td>VARCHAR(100)</td><td><span class="badge badge-opt">選填</span></td><td>NULL</td><td>簽約公司；邏輯對應 companies.name（儲存名稱字串）</td></tr>
+<tr><td><code>signing_dept</code></td><td>VARCHAR(100)</td><td><span class="badge badge-opt">選填</span></td><td>NULL</td><td>簽約權責部門；依 signing_company 連動篩選下拉</td></tr>
+<tr><td><code>budget_company</code></td><td>VARCHAR(100)</td><td><span class="badge badge-opt">選填</span></td><td>NULL</td><td>預算使用公司；邏輯對應 companies.name</td></tr>
+<tr><td><code>budget_dept</code></td><td>VARCHAR(100)</td><td><span class="badge badge-opt">選填</span></td><td>NULL</td><td>預算使用部門；依 budget_company 連動篩選下拉</td></tr>
+<tr><td><code>pricing_spec</code></td><td>VARCHAR(200)</td><td><span class="badge badge-opt">選填</span></td><td>NULL</td><td>計價規格；邏輯對應 pricing_specs.name</td></tr>
+<tr><td><code>remarks</code></td><td>TEXT</td><td><span class="badge badge-opt">選填</span></td><td>""</td><td>備註</td></tr>
+<tr><td><code>created_at</code></td><td>DATETIME</td><td>系統</td><td>now()</td><td>建立時間，不可修改</td></tr>
+<tr><td><code>updated_at</code></td><td>DATETIME</td><td>系統</td><td>now()</td><td>最後更新時間，每次 UPDATE 自動更新</td></tr>
+</tbody>
+</table></div>
+<div class="alert alert-warn">
+  <strong>CHECK 約束：</strong><code>start_date ≤ end_date</code> — 違反時後端回傳 422 InvalidContractDates
+</div>
+</section>
+
+<!-- contract_items -->
+<section id="tbl-contract-items">
+<h3>4.2 contract_items — 合約明細項目</h3>
+<div class="tbl-wrap"><table>
+<thead><tr><th>欄位</th><th>型別</th><th>必填</th><th>說明</th></tr></thead>
+<tbody>
+<tr><td><code>id</code></td><td>INTEGER</td><td><span class="badge badge-pk">PK</span> AUTO</td><td>自增主鍵</td></tr>
+<tr><td><code>contract_id</code></td><td>VARCHAR(50)</td><td><span class="badge badge-fk">FK</span></td><td>CASCADE DELETE（合約刪除時項目一併刪除）</td></tr>
+<tr><td><code>item_seq</code></td><td>INTEGER</td><td><span class="badge badge-req">必填</span></td><td>項次，系統自動遞增</td></tr>
+<tr><td><code>item_name</code></td><td>VARCHAR(255)</td><td><span class="badge badge-req">必填</span></td><td>項目名稱</td></tr>
+<tr><td><code>item_category</code></td><td>VARCHAR(50)</td><td><span class="badge badge-opt">選填</span></td><td>月費/年費/一次性/用量/加購/其他</td></tr>
+<tr><td><code>unit_price_tax_excluded</code></td><td>NUMERIC(10,2)</td><td><span class="badge badge-opt">選填</span></td><td>單價（未稅）</td></tr>
+<tr><td><code>quantity</code></td><td>NUMERIC(10,2)</td><td><span class="badge badge-opt">選填</span></td><td>數量</td></tr>
+<tr><td><code>unit</code></td><td>VARCHAR(20)</td><td><span class="badge badge-opt">選填</span></td><td>單位（月/年/次/人/間等）</td></tr>
+<tr><td><code>tax_rate</code></td><td>NUMERIC(5,2)</td><td><span class="badge badge-req">必填</span></td><td>稅率（%），預設 5</td></tr>
+<tr><td><code>amount_tax_excluded</code></td><td>NUMERIC(10,2)</td><td><span class="badge badge-req">必填</span></td><td>金額（未稅），預設 0</td></tr>
+<tr><td><code>amount_tax_included</code></td><td>NUMERIC(10,2)</td><td><span class="badge badge-req">必填</span></td><td>金額（含稅），預設 0</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<!-- vendors -->
+<section id="tbl-vendors">
+<h3>4.3 vendors — 廠商主檔</h3>
+<div class="tbl-wrap"><table>
+<thead><tr><th>欄位</th><th>型別</th><th>必填</th><th>說明 / 限制</th></tr></thead>
+<tbody>
+<tr><td><code>vendor_id</code></td><td>VARCHAR(50)</td><td><span class="badge badge-pk">PK</span></td><td>格式：<code>^VND-\d{4}$</code>（例：VND-0001）</td></tr>
+<tr><td><code>vendor_name</code></td><td>VARCHAR(255)</td><td><span class="badge badge-req">必填</span> <span class="badge badge-uni">唯一</span></td><td>不可重複</td></tr>
+<tr><td><code>tax_id</code></td><td>VARCHAR(20)</td><td><span class="badge badge-req">必填</span></td><td>統一編號</td></tr>
+<tr><td><code>vendor_type</code></td><td>VARCHAR(50)</td><td><span class="badge badge-opt">選填</span></td><td>維護廠商/採購廠商/服務廠商/工程廠商/顧問廠商/其他</td></tr>
+<tr><td><code>risk_level</code></td><td>VARCHAR(20)</td><td><span class="badge badge-opt">選填</span></td><td>低/中/高</td></tr>
+<tr><td><code>is_critical</code></td><td>BOOLEAN</td><td><span class="badge badge-req">必填</span></td><td>是否為關鍵供應商，預設 false</td></tr>
+<tr><td><code>managing_company</code></td><td>VARCHAR(100)</td><td><span class="badge badge-opt">選填</span></td><td>管理公司名稱（邏輯對應 companies.name，冗餘儲存）</td></tr>
+</tbody>
+</table></div>
+<div class="alert alert-warn">廠商被刪除時，若有關聯合約則回傳 403（RESTRICT）。批次匯入 Excel 使用 upsert 邏輯（依 vendor_id 更新）。</div>
+</section>
+
+<!-- contract_claims -->
+<section id="tbl-claims">
+<h3>4.4 contract_claims — 請款記錄</h3>
+<div class="tbl-wrap"><table>
+<thead><tr><th>欄位</th><th>型別</th><th>說明 / 限制</th></tr></thead>
+<tbody>
+<tr><td><code>id</code></td><td>INTEGER PK AUTO</td><td>自增主鍵</td></tr>
+<tr><td><code>contract_id</code></td><td>VARCHAR(50) FK</td><td>CASCADE DELETE</td></tr>
+<tr><td><code>claim_type</code></td><td>VARCHAR(20)</td><td>請款 / 核銷 / 其他；預設「請款」</td></tr>
+<tr><td><code>claim_date</code></td><td>VARCHAR(10)</td><td>格式 YYYY-MM-DD；必填</td></tr>
+<tr><td><code>invoice_no</code></td><td>VARCHAR(100)</td><td>選填</td></tr>
+<tr><td><code>amount</code></td><td>NUMERIC(14,2)</td><td>必填；≥ 0</td></tr>
+<tr><td><code>status</code></td><td>VARCHAR(20)</td><td>待審核 → 已核准 → 已付款（或→已拒絕）；預設「待審核」</td></tr>
+<tr><td><code>approver</code></td><td>VARCHAR(100)</td><td>核准人，審核後填入</td></tr>
+<tr><td><code>cost_company</code></td><td>VARCHAR(100)</td><td>費用歸屬公司（選填，邏輯對應 companies.name）</td></tr>
+<tr><td><code>review_log</code></td><td>TEXT（JSON）</td><td>審核軌跡陣列 [{actor, action, ts, comment}]</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<!-- claim_attachments -->
+<section id="tbl-claim-attach">
+<h3>4.5 contract_claim_attachments — 請款附件</h3>
+<p>每筆請款可上傳多個附件，支援 PDF / JPG / PNG / WEBP，單檔最大 <strong>20 MB</strong>。</p>
+<div class="tbl-wrap"><table>
+<thead><tr><th>欄位</th><th>型別</th><th>說明</th></tr></thead>
+<tbody>
+<tr><td><code>id</code></td><td>INTEGER PK AUTO</td><td></td></tr>
+<tr><td><code>claim_id</code></td><td>INTEGER FK</td><td>CASCADE DELETE</td></tr>
+<tr><td><code>stored_filename</code></td><td>VARCHAR(255)</td><td>磁碟上的 UUID 檔名</td></tr>
+<tr><td><code>original_filename</code></td><td>VARCHAR(500)</td><td>使用者上傳的原始檔名</td></tr>
+<tr><td><code>content_type</code></td><td>VARCHAR(100)</td><td>MIME type</td></tr>
+<tr><td><code>file_size</code></td><td>INTEGER</td><td>bytes</td></tr>
+<tr><td><code>uploader</code></td><td>VARCHAR(100)</td><td>上傳者帳號</td></tr>
+</tbody>
+</table></div>
+<div class="alert alert-info">允許格式：<code>.pdf .jpg .jpeg .png .webp</code>；儲存路徑：<code>uploads/claims/</code></div>
+</section>
+
+<!-- contract_renewals -->
+<section id="tbl-renewals">
+<h3>4.6 contract_renewals — 續約申請</h3>
+<div class="tbl-wrap"><table>
+<thead><tr><th>欄位</th><th>型別</th><th>說明 / 限制</th></tr></thead>
+<tbody>
+<tr><td><code>id</code></td><td>INTEGER PK AUTO</td><td></td></tr>
+<tr><td><code>contract_id</code></td><td>VARCHAR(50) FK</td><td>CASCADE DELETE</td></tr>
+<tr><td><code>renewal_start_date</code></td><td>VARCHAR(10)</td><td>格式 YYYY-MM-DD；必填</td></tr>
+<tr><td><code>renewal_end_date</code></td><td>VARCHAR(10)</td><td>格式 YYYY-MM-DD；必填</td></tr>
+<tr><td><code>new_amount</code></td><td>NUMERIC(14,2)</td><td>選填；NULL 代表同原合約金額</td></tr>
+<tr><td><code>renewal_reason</code></td><td>TEXT</td><td>必填（min_length=1）</td></tr>
+<tr><td><code>applicant</code></td><td>VARCHAR(100)</td><td>申請人姓名，系統自動填入</td></tr>
+<tr><td><code>applicant_dept</code></td><td>VARCHAR(100)</td><td>申請部門，選填</td></tr>
+<tr><td><code>status</code></td><td>VARCHAR(20)</td><td>待審核 / 已核准 / 已拒絕 / 已撤回</td></tr>
+<tr><td><code>reviewer</code></td><td>VARCHAR(100)</td><td>審核人，審核後填入</td></tr>
+<tr><td><code>review_comment</code></td><td>VARCHAR(500)</td><td>審核意見，選填</td></tr>
+<tr><td><code>review_log</code></td><td>TEXT（JSON）</td><td>審核軌跡</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<!-- contract_attachments -->
+<section id="tbl-contract-attach">
+<h3>4.7 contract_attachments — 合約本體附件</h3>
+<p>合約原始文件上傳（合約書 PDF、掃描件等），支援 PDF / Word / Excel / 圖片，單檔最大 <strong>20 MB</strong>。</p>
+<div class="tbl-wrap"><table>
+<thead><tr><th>欄位</th><th>型別</th><th>說明</th></tr></thead>
+<tbody>
+<tr><td><code>id</code></td><td>INTEGER PK AUTO</td><td></td></tr>
+<tr><td><code>contract_id</code></td><td>VARCHAR(50) FK</td><td>CASCADE DELETE</td></tr>
+<tr><td><code>stored_filename</code></td><td>VARCHAR(255)</td><td>UUID 檔名</td></tr>
+<tr><td><code>original_filename</code></td><td>VARCHAR(500)</td><td>原始檔名</td></tr>
+<tr><td><code>content_type</code></td><td>VARCHAR(100)</td><td>MIME type</td></tr>
+<tr><td><code>file_size</code></td><td>INTEGER</td><td>bytes</td></tr>
+<tr><td><code>uploader</code></td><td>VARCHAR(100)</td><td>上傳者帳號</td></tr>
+</tbody>
+</table></div>
+<div class="alert alert-info">允許格式：<code>.pdf .doc .docx .xls .xlsx .jpg .jpeg .png .webp</code>；儲存路徑：<code>uploads/contracts/</code>；下載端點使用靜態前綴 <code>/doc-attachments/{id}/download</code> 避免與動態路由衝突</div>
+</section>
+
+<!-- contract_cost_allocations -->
+<section id="tbl-cost-alloc">
+<h3>4.8 contract_cost_allocations — 費用分攤明細</h3>
+<p>一份合約可設定多筆分攤，支援按比例或固定金額，允許混用。</p>
+<div class="tbl-wrap"><table>
+<thead><tr><th>欄位</th><th>型別</th><th>說明 / 限制</th></tr></thead>
+<tbody>
+<tr><td><code>id</code></td><td>INTEGER PK AUTO</td><td></td></tr>
+<tr><td><code>contract_id</code></td><td>VARCHAR(50) FK</td><td>CASCADE DELETE</td></tr>
+<tr><td><code>company_name</code></td><td>VARCHAR(100)</td><td>必填；冗餘儲存公司名稱（不用 FK，保全歷史）</td></tr>
+<tr><td><code>allocation_type</code></td><td>VARCHAR(20)</td><td><code>percentage</code> 或 <code>fixed</code>；預設 percentage</td></tr>
+<tr><td><code>value</code></td><td>NUMERIC(14,4)</td><td>比例：0–100；固定金額：≥0</td></tr>
+<tr><td><code>created_at</code></td><td>DATETIME</td><td>系統填入</td></tr>
+</tbody>
+</table></div>
+<div class="alert alert-warn">
+  <strong>更新策略：整批覆寫（PUT）</strong> — 每次更新時先刪除該合約所有舊記錄，再整批插入新記錄。
+</div>
+</section>
+
+<!-- budget_categories -->
+<section id="tbl-budget">
+<h3>4.9 budget_categories — 預算科目字典</h3>
+<div class="tbl-wrap"><table>
+<thead><tr><th>欄位</th><th>型別</th><th>說明 / 限制</th></tr></thead>
+<tbody>
+<tr><td><code>id</code></td><td>INTEGER PK AUTO</td><td></td></tr>
+<tr><td><code>budget_year</code></td><td>INTEGER</td><td>必填</td></tr>
+<tr><td><code>dept</code></td><td>VARCHAR(100)</td><td>部門</td></tr>
+<tr><td><code>category_l1</code></td><td>VARCHAR(100)</td><td>預算大項；必填</td></tr>
+<tr><td><code>category_l2</code></td><td>VARCHAR(100)</td><td>預算細項；必填；UNIQUE(budget_year, category_l1, category_l2, dept)</td></tr>
+<tr><td><code>accounting_code</code></td><td>VARCHAR(50)</td><td>會計科目</td></tr>
+<tr><td><code>is_enabled</code></td><td>BOOLEAN</td><td>停用後不出現在下拉選單；預設 true</td></tr>
+<tr><td><code>effective_date</code></td><td>DATE</td><td>生效日期；必填</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<!-- companies -->
+<section id="tbl-companies">
+<h3>4.10 companies — 公司別</h3>
+<p>初始資料：大直、樂群、台中、自由、總公司（5 筆，系統首次啟動自動植入）</p>
+<div class="tbl-wrap"><table>
+<thead><tr><th>欄位</th><th>型別</th><th>說明</th></tr></thead>
+<tbody>
+<tr><td><code>id</code></td><td>INTEGER PK AUTO</td><td></td></tr>
+<tr><td><code>name</code></td><td>VARCHAR(100)</td><td>必填；UNIQUE — 不可重複</td></tr>
+<tr><td><code>is_active</code></td><td>BOOLEAN</td><td>停用後不出現於下拉選單；預設 true</td></tr>
+</tbody>
+</table></div>
+<div class="alert alert-warn">停用後，歷史合約中儲存的名稱字串仍正常顯示；只有新增/編輯下拉不再出現停用項目。</div>
+</section>
+
+<!-- departments -->
+<section id="tbl-departments">
+<h3>4.11 departments — 部門別</h3>
+<p>每家公司各有獨立的部門清單。初始資料：每家公司各 13 個部門（管理部、資訊部、工程部、工務部、財務部、營業部、採購部、房務部、商場部、客房部、餐飲部、客服部、安全部）。</p>
+<div class="tbl-wrap"><table>
+<thead><tr><th>欄位</th><th>型別</th><th>說明</th></tr></thead>
+<tbody>
+<tr><td><code>id</code></td><td>INTEGER PK AUTO</td><td></td></tr>
+<tr><td><code>name</code></td><td>VARCHAR(100)</td><td>必填；UNIQUE(name, company_id) — 同公司不可重複</td></tr>
+<tr><td><code>company_id</code></td><td>INTEGER FK</td><td>所屬公司；CASCADE DELETE</td></tr>
+<tr><td><code>is_active</code></td><td>BOOLEAN</td><td>停用後不出現下拉；預設 true</td></tr>
+</tbody>
+</table></div>
+<div class="alert alert-info"><strong>連動規則：</strong>合約表單選定「簽約公司」後，「簽約權責部門」自動以該公司 ID 篩選部門下拉（呼叫 <code>GET /settings/departments/options?company_id=X</code>）。「預算使用公司」→「預算使用部門」同理。</div>
+</section>
+
+<!-- pricing_specs -->
+<section id="tbl-pricing">
+<h3>4.12 pricing_specs — 計價規格</h3>
+<div class="tbl-wrap"><table>
+<thead><tr><th>欄位</th><th>型別</th><th>說明</th></tr></thead>
+<tbody>
+<tr><td><code>id</code></td><td>INTEGER PK AUTO</td><td></td></tr>
+<tr><td><code>name</code></td><td>VARCHAR(200)</td><td>必填；UNIQUE</td></tr>
+<tr><td><code>is_active</code></td><td>BOOLEAN</td><td>預設 true</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<!-- ═══ 5. 合約狀態機 ═══ -->
+<section id="status-machine">
+<h2>5. 合約狀態機</h2>
+<div class="card">
+  <div class="flow">
+    <div class="flow-box tag-draft">草稿</div>
+    <div class="flow-arrow">→ 送審 →</div>
+    <div class="flow-box tag-review">審核中</div>
+    <div class="flow-arrow">→ 核准 →</div>
+    <div class="flow-box tag-active">生效中</div>
+    <div class="flow-arrow">→ 自動 →</div>
+    <div class="flow-box tag-expiring">即將到期</div>
+    <div class="flow-arrow">→ 到期 →</div>
+    <div class="flow-box tag-ended">已終止</div>
+  </div>
+  <div class="flow" style="margin-top:8px;">
+    <div class="flow-box tag-review">審核中</div>
+    <div class="flow-arrow">→ 拒絕 →</div>
+    <div class="flow-box tag-draft">草稿</div>
+  </div>
+</div>
+
+<div class="tbl-wrap"><table>
+<thead><tr><th>當前狀態</th><th>允許操作</th><th>目標狀態</th><th>執行者</th><th>後端驗證</th></tr></thead>
+<tbody>
+<tr><td><span class="tag tag-draft">草稿</span></td><td>送審</td><td><span class="tag tag-review">審核中</span></td><td>任何有 contract_create_edit 權限者</td><td>狀態必須為「草稿」，否則 400</td></tr>
+<tr><td><span class="tag tag-review">審核中</span></td><td>核准</td><td><span class="tag tag-active">生效中</span></td><td>具備 contract_approve 權限者</td><td>狀態必須為「審核中」，否則 400</td></tr>
+<tr><td><span class="tag tag-review">審核中</span></td><td>拒絕</td><td><span class="tag tag-draft">草稿</span></td><td>具備 contract_approve 權限者</td><td>狀態必須為「審核中」，否則 400</td></tr>
+<tr><td><span class="tag tag-active">生效中</span></td><td>系統自動</td><td><span class="tag tag-expiring">即將到期</span></td><td>排程（每日 09:00）</td><td>end_date ≤ today + notification_days</td></tr>
+<tr><td>任何</td><td>手動編輯狀態</td><td>任何</td><td>管理員</td><td>僅在編輯模式可直接改狀態欄位</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<!-- ═══ 6. 審核流程 ═══ -->
+<section id="approval-flow">
+<h2>6. 審核流程</h2>
+
+<h3>6.1 合約審核</h3>
+<ul class="rule-list">
+  <li>送審：<code>POST /contract/{id}/submit</code>，狀態從「草稿」→「審核中」</li>
+  <li>核准：<code>POST /contract/{id}/approve</code>，狀態→「生效中」，系統填入 approved_by / approved_at</li>
+  <li>拒絕：<code>POST /contract/{id}/reject</code>，狀態退回「草稿」，填入 approval_comment</li>
+  <li>生效中/已終止的合約不可再送審</li>
+</ul>
+
+<h3>6.2 請款審核</h3>
+<div class="tbl-wrap"><table>
+<thead><tr><th>狀態</th><th>意義</th><th>可操作</th></tr></thead>
+<tbody>
+<tr><td>待審核</td><td>等待核准</td><td>可批次核准、可個別核准/拒絕</td></tr>
+<tr><td>已核准</td><td>已通過審核</td><td>可標記「已付款」</td></tr>
+<tr><td>已拒絕</td><td>審核不通過</td><td>唯讀</td></tr>
+<tr><td>已付款</td><td>款項已匯出</td><td>唯讀</td></tr>
+</tbody>
+</table></div>
+<div class="alert alert-info">
+  <strong>批次核准：</strong><code>POST /contract/claims/batch-review</code>，支援多選請款一次核准。逾期未審核（建立超過 7 天仍為「待審核」）在前端顯示黃色警示。
+</div>
+
+<h3>6.3 續約審核</h3>
+<ul class="rule-list">
+  <li>申請：<code>POST /contract/{id}/renewals</code>，狀態為「待審核」，系統記錄申請人</li>
+  <li>審核操作：<code>POST /contract/renewals/{id}/review</code>，action = approve / reject / withdraw</li>
+  <li>撤回（withdraw）：僅申請人本人可執行</li>
+</ul>
+</section>
+
+<!-- ═══ 7. 費用分攤 ═══ -->
+<section id="cost-alloc-rules">
+<h2>7. 分公司費用分攤規則、計算與條件</h2>
+
+<p>費用分攤功能允許一份合約的費用由集團內多家分公司共同承擔，支援兩種分攤模式：<strong>比例分攤</strong>（各公司依百分比）與<strong>固定金額分攤</strong>（各公司固定承擔金額），並允許兩者混用。</p>
+
+<div class="alert alert-info">
+  <strong>資料儲存方式：</strong>費用分攤資料儲存於獨立子表 <code>contract_cost_allocations</code>，採<strong>整批覆寫</strong>策略（每次儲存時刪除舊記錄再整批插入），公司名稱以字串冗餘儲存（不用 FK），確保歷史分攤記錄不受公司改名或停用影響。
+</div>
+
+<!-- 7.1 -->
+<h3 id="cost-alloc-types">7.1 分攤類型定義</h3>
+<div class="tbl-wrap"><table>
+<thead><tr><th>類型代碼</th><th>中文名稱</th><th>value 欄位意義</th><th>範圍</th><th>使用場景</th></tr></thead>
+<tbody>
+<tr>
+  <td><code>percentage</code></td>
+  <td>比例分攤</td>
+  <td>各公司承擔的百分比（0–100）</td>
+  <td>0 ≤ value ≤ 100</td>
+  <td>各公司按固定比例承擔費用，常見於集團統一採購的服務費分攤</td>
+</tr>
+<tr>
+  <td><code>fixed</code></td>
+  <td>固定金額分攤</td>
+  <td>各公司承擔的固定金額（TWD）</td>
+  <td>value ≥ 0</td>
+  <td>各公司依協議承擔特定金額，常見於廠房租賃、設備維護等固定分攤</td>
+</tr>
+</tbody>
+</table></div>
+
+<!-- 7.2 計算公式 -->
+<section id="cost-alloc-calc">
+<h3>7.2 計算公式與範例</h3>
+
+<h4>▍情境 A：純比例分攤</h4>
+<div class="card">
+  <div class="card-title">計算公式：各公司實際負擔金額 = 合約總額（含稅） × 各公司比例 ÷ 100</div>
+  <div class="tbl-wrap" style="margin-top:12px;"><table>
+  <thead><tr><th>分攤公司</th><th>類型</th><th>比例 value</th><th>實際負擔（合約總額 $1,200,000）</th></tr></thead>
+  <tbody>
+  <tr><td>大直</td><td>percentage</td><td>60%</td><td>$1,200,000 × 60% = <strong>$720,000</strong></td></tr>
+  <tr><td>樂群</td><td>percentage</td><td>30%</td><td>$1,200,000 × 30% = <strong>$360,000</strong></td></tr>
+  <tr><td>總公司</td><td>percentage</td><td>10%</td><td>$1,200,000 × 10% = <strong>$120,000</strong></td></tr>
+  <tr style="font-weight:700;background:#f0f4f8;"><td>合計</td><td></td><td>100%</td><td>$1,200,000 ✅</td></tr>
+  </tbody>
+  </table></div>
+  <div class="alert alert-ok" style="margin-top:8px;">✅ 驗證通過條件：所有 percentage 行的 value 加總 = 100（容差 ±0.01%）</div>
+</div>
+
+<h4>▍情境 B：純固定金額分攤（固定計價合約）</h4>
+<div class="card">
+  <div class="card-title">計算公式：各公司固定承擔金額直接記錄，加總必須等於合約總額</div>
+  <div class="tbl-wrap" style="margin-top:12px;"><table>
+  <thead><tr><th>分攤公司</th><th>類型</th><th>固定金額</th><th>說明</th></tr></thead>
+  <tbody>
+  <tr><td>大直</td><td>fixed</td><td>$800,000</td><td>主要使用方，承擔較高比例</td></tr>
+  <tr><td>台中</td><td>fixed</td><td>$200,000</td><td>部分共用服務</td></tr>
+  <tr><td>自由</td><td>fixed</td><td>$200,000</td><td>部分共用服務</td></tr>
+  <tr style="font-weight:700;background:#f0f4f8;"><td>合計</td><td></td><td>$1,200,000</td><td>✅ 等於合約總額</td></tr>
+  </tbody>
+  </table></div>
+  <div class="alert alert-ok" style="margin-top:8px;">✅ 驗證通過條件（固定計價方式）：所有 fixed 行的 value 加總 = 合約總額（容差 ±1 元，處理四捨五入誤差）</div>
+  <div class="alert alert-info" style="margin-top:4px;">ℹ️ 變動計價（按次收費、依量計費、其他）的合約：固定金額加總<strong>不強制驗證</strong>，因為合約總額為預估值而非確定值。</div>
+</div>
+
+<h4>▍情境 C：固定金額分攤（變動計價合約）</h4>
+<div class="card">
+  <div class="card-title">計價方式 = 按次收費 → 金額變動，固定分攤僅作參考，不驗證加總</div>
+  <div class="tbl-wrap" style="margin-top:12px;"><table>
+  <thead><tr><th>分攤公司</th><th>類型</th><th>每次固定負擔</th><th>說明</th></tr></thead>
+  <tbody>
+  <tr><td>大直</td><td>fixed</td><td>$2,000</td><td>每次服務大直負擔 $2,000</td></tr>
+  <tr><td>總公司</td><td>fixed</td><td>$100,000</td><td>總公司負擔年度基本費</td></tr>
+  <tr style="background:#fffbe6;"><td>合計</td><td></td><td>$102,000</td><td>⚠ 合約總額 $500,000（預估），系統不強制驗證加總</td></tr>
+  </tbody>
+  </table></div>
+  <div class="alert alert-warn" style="margin-top:8px;">⚠ 前端狀態面板顯示「計價方式「按次收費」為變動計費，固定金額不強制驗證加總」</div>
+</div>
+</section>
+
+<!-- 7.3 混用 -->
+<section id="cost-alloc-mixed">
+<h3>7.3 比例與固定金額混用規則</h3>
+<div class="alert alert-warn">
+  同一合約中同時存在 <code>percentage</code> 行與 <code>fixed</code> 行，即視為<strong>混用類型</strong>。
+</div>
+
+<h4>混用時的系統行為</h4>
+<div class="tbl-wrap"><table>
+<thead><tr><th>項目</th><th>行為說明</th></tr></thead>
+<tbody>
+<tr>
+  <td>系統是否允許</td>
+  <td>✅ 允許混用，不強制阻擋</td>
+</tr>
+<tr>
+  <td>金額加總驗證</td>
+  <td>❌ 系統<strong>無法自動驗證</strong>混用時的合計是否等於合約總額，需人工確認</td>
+</tr>
+<tr>
+  <td>比例加總驗證</td>
+  <td>✅ 仍驗證：所有 percentage 行加總必須 = 100%（即：比例部分各公司加總代表「比例份額」而非「整份合約」）</td>
+</tr>
+<tr>
+  <td>存檔時提示</td>
+  <td>出現 <strong>Modal 確認視窗</strong>，需使用者主動確認後方可儲存</td>
+</tr>
+<tr>
+  <td>即時面板</td>
+  <td>黃色背景 + 「⚠ 比例與固定金額混用 — 存檔前將請求確認」</td>
+</tr>
+</tbody>
+</table></div>
+
+<h4>▍情境 D：混用範例（需人工確認）</h4>
+<div class="card">
+  <div style="font-size:16px;color:var(--muted);margin-bottom:8px;">說明：總公司承擔年度固定基本費，其餘由各分公司依比例負擔</div>
+  <div class="tbl-wrap"><table>
+  <thead><tr><th>分攤公司</th><th>類型</th><th>value</th><th>意義</th></tr></thead>
+  <tbody>
+  <tr><td>總公司</td><td>fixed（固定金額）</td><td>$120,000</td><td>固定承擔年度管理費</td></tr>
+  <tr><td>大直</td><td>percentage（比例）</td><td>60%</td><td>剩餘費用的 60%</td></tr>
+  <tr><td>樂群</td><td>percentage（比例）</td><td>40%</td><td>剩餘費用的 40%</td></tr>
+  <tr style="background:#fffbe6;"><td colspan="4">⚠ 系統無法自動計算「剩餘費用」= 合約總額 - $120,000，需人工確認邏輯正確</td></tr>
+  </tbody>
+  </table></div>
+  <div class="alert alert-warn" style="margin-top:8px;">存檔時會出現確認視窗：<br>「費用分攤同時包含「比例 %」與「固定金額」兩種類型。混用時系統無法自動確認加總是否等於合約金額，請手動確認後再存檔。」</div>
+</div>
+</section>
+
+<!-- 7.4 計價方式驗證對照 -->
+<h3 id="cost-alloc-pricing">7.4 計價方式 × 分攤類型 驗證對照表</h3>
+<div class="tbl-wrap"><table>
+<thead><tr><th>計價方式</th><th>金額性質</th><th>比例行加總驗證</th><th>固定金額加總驗證</th><th>容差</th></tr></thead>
+<tbody>
+<tr><td><strong>固定費用</strong></td><td>固定</td><td>= 100%</td><td>= 合約總額（含稅）</td><td>±0.01% / ±1 元</td></tr>
+<tr><td><strong>月費</strong></td><td>固定</td><td>= 100%</td><td>= 合約總額（含稅）</td><td>±0.01% / ±1 元</td></tr>
+<tr><td><strong>里程碑付款</strong></td><td>固定</td><td>= 100%</td><td>= 合約總額（含稅）</td><td>±0.01% / ±1 元</td></tr>
+<tr><td><strong>按次收費</strong></td><td>變動</td><td>= 100%</td><td>不驗證（僅供參考）</td><td>±0.01%</td></tr>
+<tr><td><strong>依量計費</strong></td><td>變動</td><td>= 100%</td><td>不驗證（僅供參考）</td><td>±0.01%</td></tr>
+<tr><td><strong>其他</strong></td><td>不定</td><td>= 100%</td><td>不驗證（僅供參考）</td><td>±0.01%</td></tr>
+</tbody>
+</table></div>
+
+<!-- 7.5 UI 行為 -->
+<section id="cost-alloc-ui">
+<h3>7.5 UI 行為與存檔攔截機制</h3>
+
+<h4>即時狀態面板（填寫中即顯示）</h4>
+<div class="tbl-wrap"><table>
+<thead><tr><th>面板顏色</th><th>觸發條件</th><th>顯示內容</th></tr></thead>
+<tbody>
+<tr>
+  <td style="background:#f6ffed;color:#389e0d;font-weight:700;">綠色</td>
+  <td>所有驗證通過</td>
+  <td>比例加總 100% ✅ / 固定加總 = 合約總額 ✅</td>
+</tr>
+<tr>
+  <td style="background:#fffbe6;color:#d48806;font-weight:700;">黃色</td>
+  <td>混用類型</td>
+  <td>「⚠ 比例與固定金額混用 — 存檔前將請求確認」</td>
+</tr>
+<tr>
+  <td style="background:#fff2f0;color:#cf1322;font-weight:700;">紅色</td>
+  <td>加總不符（差額 &gt; 容差）</td>
+  <td>比例：「加總 XX%，尚差 XX%」<br>固定：「加總 $XX，差額 $XX」</td>
+</tr>
+</tbody>
+</table></div>
+
+<h4>存檔時的三層攔截</h4>
+<div style="counter-reset:step;">
+<div class="card" style="margin-bottom:12px;border-left:4px solid var(--accent);">
+  <div class="card-title">第一層：比例行加總驗證（前端）</div>
+  <p style="font-size:16px;">所有 <code>percentage</code> 行加總若不等於 100%，前端顯示 <strong>message.error</strong> 並<strong>阻擋存檔</strong>，不送出 API 請求。</p>
+  <pre style="font-size:14px;margin:0;">✗ 比例行加總為 85.00%，必須等於 100%（尚差 15.00%）</pre>
+</div>
+<div class="card" style="margin-bottom:12px;border-left:4px solid var(--warn);">
+  <div class="card-title">第二層：混用類型確認（前端）</div>
+  <p style="font-size:16px;">若同時有 percentage 與 fixed 行，前端彈出 <strong>Modal.confirm</strong> 視窗。</p>
+  <ul class="rule-list">
+    <li>使用者選「我了解，繼續存檔」→ 繼續進行第三層驗證</li>
+    <li>使用者選「返回修改」→ 取消儲存，回到編輯模式</li>
+  </ul>
+</div>
+<div class="card" style="margin-bottom:12px;border-left:4px solid var(--danger);">
+  <div class="card-title">第三層：固定金額加總驗證（前端）</div>
+  <p style="font-size:16px;">固定計價方式（固定費用/月費/里程碑）且無混用時，若固定金額加總與合約總額差距 &gt; 1 元，前端顯示 <strong>message.error</strong> 並<strong>阻擋存檔</strong>。</p>
+  <pre style="font-size:14px;margin:0;">✗ 固定金額加總 $1,150,000，必須等於合約總額 $1,200,000（差額 -$50,000）</pre>
+</div>
+</div>
+
+<h4>後端額外驗證（API 層）</h4>
+<pre>PUT /contract/{id}/cost-allocations
+# payload: List[{company_name, allocation_type, value}]
+
+# 驗證 1：比例行加總
+pct_rows = [i for i in items if i.allocation_type == "percentage"]
+if pct_rows:
+    total = sum(r.value for r in pct_rows)
+    if abs(total - 100) > 0.01:
+        raise HTTPException(400,
+            f"比例行加總為 {total:.2f}%，必須等於 100%")
+
+# ※ 固定金額加總驗證由前端負責，後端不重複驗證
+# ※ 混用類型後端允許，由前端詢問使用者確認</pre>
+
+<div class="alert alert-info">
+  <strong>資料更新邏輯（整批覆寫）：</strong>
+  <ol style="margin:6px 0 0 16px;font-size:16px;">
+    <li>刪除該合約所有舊有分攤記錄（<code>DELETE WHERE contract_id = X</code>）</li>
+    <li>整批插入前端傳來的新記錄</li>
+    <li>使用同一個 DB transaction，失敗時整批回滾</li>
+  </ol>
+</div>
+</section>
+
+<!-- 7.6 Excel 匯出 -->
+<h3>7.6 費用分攤 Excel 匯出格式</h3>
+<p>合約清單匯出（<code>GET /contract/export</code>）時，費用分攤採<strong>多欄展開</strong>方式呈現：</p>
+<div class="tbl-wrap"><table>
+<thead><tr><th>欄位名稱</th><th>內容說明</th><th>示例</th></tr></thead>
+<tbody>
+<tr><td>分攤公司1</td><td>第 1 筆分攤的公司名稱</td><td>大直</td></tr>
+<tr><td>分攤類型1</td><td>比例% 或 固定金額</td><td>比例%</td></tr>
+<tr><td>分攤數值1</td><td>比例值（0–100）或金額</td><td>60</td></tr>
+<tr><td>分攤公司2</td><td>第 2 筆分攤的公司名稱</td><td>樂群</td></tr>
+<tr><td>分攤類型2</td><td>比例% 或 固定金額</td><td>比例%</td></tr>
+<tr><td>分攤數值2</td><td></td><td>40</td></tr>
+<tr><td>分攤公司N …</td><td colspan="2">依最大分攤筆數動態展開</td></tr>
+</tbody>
+</table></div>
+<div class="alert alert-info">欄位數量依該次匯出資料中，單一合約最多分攤筆數動態決定（無上限）。無分攤的合約對應欄位為空白。</div>
+
+</section>
+
+<!-- ═══ 8. 到期通知規則 ═══ -->
+<section id="expiry-notify">
+<h2>8. 到期通知規則</h2>
+
+<h3>8.1 自動排程通知</h3>
+<div class="card">
+  <div class="card-title">每日 09:00 執行（APScheduler CronTrigger）</div>
+  <ul class="rule-list">
+    <li>掃描 <code>end_date</code> 介於 <code>today</code> 到 <code>today + 30 天</code> 的合約</li>
+    <li>合約狀態必須為「生效中」或「即將到期」</li>
+    <li>自動在系統 Memo 建立到期提醒（<code>source='contract_expiry'</code>）</li>
+    <li><strong>冪等保護</strong>：同一合約同一天只產生一筆 Memo（以 source_id + created_at date 去重）</li>
+  </ul>
+</div>
+
+<h3>8.2 首頁警示橫幅</h3>
+<ul class="rule-list">
+  <li>30 天內到期：黃色 Warning 橫幅</li>
+  <li>7 天內到期：紅色 Error 橫幅</li>
+  <li>可展開查看合約清單，點擊可跳轉到期預警頁</li>
+</ul>
+</section>
+
+<!-- ═══ 9. 輸入限制總表 ═══ -->
+<section id="input-rules">
+<h2>9. 輸入限制總表</h2>
+<div class="tbl-wrap"><table>
+<thead><tr><th>欄位 / 場景</th><th>規則</th><th>違反時</th></tr></thead>
+<tbody>
+<tr><td>contract_id 格式</td><td>必須符合 <code>CON-\d{4}-\d{4}</code></td><td>422 Validation Error</td></tr>
+<tr><td>vendor_id 格式</td><td>必須符合 <code>VND-\d{4}</code></td><td>422 Validation Error</td></tr>
+<tr><td>start_date ≤ end_date</td><td>DB CHECK + Service 層驗證</td><td>400 InvalidContractDates</td></tr>
+<tr><td>total_amount_tax_included</td><td>必須 &gt; 0（ge=0 接受，但業務上通常 &gt; 0）</td><td>422 Validation Error</td></tr>
+<tr><td>budget_year</td><td>範圍 2000–2100</td><td>422 Validation Error</td></tr>
+<tr><td>risk_level</td><td>低 / 中 / 高 / 關鍵（四選一）</td><td>422 Validation Error</td></tr>
+<tr><td>pricing_method</td><td>固定費用/月費/按次收費/依量計費/里程碑付款/其他</td><td>422 Validation Error</td></tr>
+<tr><td>費用分攤比例加總</td><td>所有 percentage 行加總需 = 100%（±0.01%）</td><td>前端阻擋存檔；後端 400</td></tr>
+<tr><td>費用分攤固定金額</td><td>固定計價時，加總需 = 合約總額（±1 元）</td><td>前端阻擋存檔；後端不另驗</td></tr>
+<tr><td>費用分攤混用</td><td>混用比例+固定 → Modal 確認</td><td>前端詢問；後端不阻擋</td></tr>
+<tr><td>附件格式（請款）</td><td>.pdf .jpg .jpeg .png .webp</td><td>400 Invalid format</td></tr>
+<tr><td>附件格式（合約）</td><td>.pdf .doc .docx .xls .xlsx .jpg .jpeg .png .webp</td><td>400 Invalid format</td></tr>
+<tr><td>附件大小</td><td>≤ 20 MB（20,971,520 bytes）</td><td>400 File too large</td></tr>
+<tr><td>company name 唯一性</td><td>UNIQUE 約束</td><td>400 公司名稱已存在</td></tr>
+<tr><td>department name 唯一性</td><td>UNIQUE(name, company_id)</td><td>400 同公司下已有此部門</td></tr>
+<tr><td>pricing_spec name 唯一性</td><td>UNIQUE 約束</td><td>400 計價規格已存在</td></tr>
+<tr><td>合約送審前提</td><td>狀態必須為「草稿」</td><td>400 InvalidInputData</td></tr>
+<tr><td>合約核准前提</td><td>狀態必須為「審核中」</td><td>400 InvalidInputData</td></tr>
+<tr><td>續約申請原因</td><td>renewal_reason min_length=1</td><td>422 Validation Error</td></tr>
+<tr><td>請款金額</td><td>amount ≥ 0</td><td>422 Validation Error</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<!-- ═══ 10. API 端點速查 ═══ -->
+<h2>10. API 端點速查（前綴：<code>/api/v1</code>）</h2>
+
+<section id="api-contracts">
+<h3>10.1 合約端點</h3>
+<div class="tbl-wrap"><table>
+<thead><tr><th>Method</th><th>路徑</th><th>說明</th><th>權限</th></tr></thead>
+<tbody>
+<tr><td>GET</td><td>/contract</td><td>合約清單（分頁、篩選、排序）</td><td>contract_view</td></tr>
+<tr><td>POST</td><td>/contract</td><td>新增合約</td><td>contract_create_edit</td></tr>
+<tr><td>GET</td><td>/contract/{id}</td><td>單筆詳情</td><td>contract_view</td></tr>
+<tr><td>PUT</td><td>/contract/{id}</td><td>編輯合約</td><td>contract_create_edit</td></tr>
+<tr><td>DELETE</td><td>/contract/{id}</td><td>刪除合約</td><td>contract_create_edit</td></tr>
+<tr><td>POST</td><td>/contract/{id}/submit</td><td>送審（草稿→審核中）</td><td>contract_create_edit</td></tr>
+<tr><td>POST</td><td>/contract/{id}/approve</td><td>核准（審核中→生效中）</td><td>contract_approve</td></tr>
+<tr><td>POST</td><td>/contract/{id}/reject</td><td>拒絕（審核中→草稿）</td><td>contract_approve</td></tr>
+<tr><td>GET</td><td>/contract/stats</td><td>合約統計（各狀態數量）</td><td>contract_view</td></tr>
+<tr><td>GET</td><td>/contract/export</td><td>匯出 Excel（含費用分攤多欄展開）</td><td>contract_view</td></tr>
+<tr><td>GET</td><td>/contract/{id}/items</td><td>合約項目清單</td><td>contract_view</td></tr>
+<tr><td>POST</td><td>/contract/{id}/items</td><td>新增合約項目</td><td>contract_create_edit</td></tr>
+<tr><td>PUT</td><td>/contract/{id}/items/{item_id}</td><td>編輯合約項目</td><td>contract_create_edit</td></tr>
+<tr><td>DELETE</td><td>/contract/{id}/items/{item_id}</td><td>刪除合約項目</td><td>contract_create_edit</td></tr>
+<tr><td>GET</td><td>/contract/{id}/cost-allocations</td><td>費用分攤明細</td><td>contract_view</td></tr>
+<tr><td>PUT</td><td>/contract/{id}/cost-allocations</td><td>整批覆寫費用分攤</td><td>contract_create_edit</td></tr>
+<tr><td>POST</td><td>/contract/{id}/attachments</td><td>上傳合約附件</td><td>contract_create_edit</td></tr>
+<tr><td>GET</td><td>/contract/{id}/attachments</td><td>合約附件清單</td><td>contract_view</td></tr>
+<tr><td>GET</td><td>/contract/doc-attachments/{id}/download</td><td>下載合約附件</td><td>任何登入者</td></tr>
+<tr><td>DELETE</td><td>/contract/doc-attachments/{id}</td><td>刪除合約附件</td><td>contract_create_edit</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<section id="api-claims">
+<h3>10.2 請款端點</h3>
+<div class="tbl-wrap"><table>
+<thead><tr><th>Method</th><th>路徑</th><th>說明</th><th>權限</th></tr></thead>
+<tbody>
+<tr><td>GET</td><td>/contract/claims</td><td>請款清單</td><td>contract_view</td></tr>
+<tr><td>POST</td><td>/contract/claims</td><td>新增請款</td><td>contract_create_edit</td></tr>
+<tr><td>PUT</td><td>/contract/claims/{id}</td><td>編輯請款</td><td>contract_create_edit</td></tr>
+<tr><td>POST</td><td>/contract/claims/batch-review</td><td>批次核准</td><td>contract_approve</td></tr>
+<tr><td>GET</td><td>/contract/claims/export</td><td>請款匯出 Excel（含費用歸屬公司）</td><td>contract_view</td></tr>
+<tr><td>POST</td><td>/contract/claims/{id}/attachments</td><td>上傳請款附件</td><td>contract_create_edit</td></tr>
+<tr><td>GET</td><td>/contract/claims/{id}/attachments</td><td>請款附件清單</td><td>contract_view</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<section id="api-renewals">
+<h3>10.3 續約端點</h3>
+<div class="tbl-wrap"><table>
+<thead><tr><th>Method</th><th>路徑</th><th>說明</th><th>權限</th></tr></thead>
+<tbody>
+<tr><td>GET</td><td>/contract/{id}/renewals</td><td>單一合約的續約清單</td><td>contract_view</td></tr>
+<tr><td>POST</td><td>/contract/{id}/renewals</td><td>申請續約</td><td>contract_create_edit</td></tr>
+<tr><td>GET</td><td>/contract/renewals/all</td><td>全部續約清單（跨合約）</td><td>contract_view</td></tr>
+<tr><td>POST</td><td>/contract/renewals/{id}/review</td><td>審核/拒絕/撤回</td><td>contract_approve</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<section id="api-settings">
+<h3>10.4 設定端點（基礎參考資料）</h3>
+<div class="tbl-wrap"><table>
+<thead><tr><th>Method</th><th>路徑</th><th>說明</th><th>權限</th></tr></thead>
+<tbody>
+<tr><td>GET</td><td>/settings/companies/options</td><td>公司下拉（啟用中）</td><td>任何登入者</td></tr>
+<tr><td>GET</td><td>/settings/companies</td><td>公司清單（含停用）</td><td>system_admin / tenant_admin</td></tr>
+<tr><td>POST</td><td>/settings/companies</td><td>新增公司</td><td>system_admin / tenant_admin</td></tr>
+<tr><td>PUT</td><td>/settings/companies/{id}</td><td>修改公司名稱</td><td>system_admin / tenant_admin</td></tr>
+<tr><td>PATCH</td><td>/settings/companies/{id}/toggle</td><td>啟用/停用切換</td><td>system_admin / tenant_admin</td></tr>
+<tr><td>GET</td><td>/settings/departments/options</td><td>部門下拉（可傳 company_id 篩選）</td><td>任何登入者</td></tr>
+<tr><td>GET</td><td>/settings/departments</td><td>部門清單</td><td>system_admin / tenant_admin</td></tr>
+<tr><td>POST / PUT / PATCH</td><td>/settings/departments/{id}</td><td>新增/修改/切換停用</td><td>system_admin / tenant_admin</td></tr>
+<tr><td>GET</td><td>/settings/pricing-specs/options</td><td>計價規格下拉（啟用中）</td><td>任何登入者</td></tr>
+<tr><td>GET</td><td>/settings/pricing-specs</td><td>計價規格清單</td><td>system_admin / tenant_admin</td></tr>
+<tr><td>POST / PUT / PATCH</td><td>/settings/pricing-specs/{id}</td><td>新增/修改/切換停用</td><td>system_admin / tenant_admin</td></tr>
+<tr><td>GET</td><td>/users/options</td><td>使用者下拉（供管理人/審核人選擇）</td><td>任何登入者</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<!-- ═══ Phase G — 自動化強化 ═══ -->
+<section id="phase-g">
+<h2>Phase G — 自動化強化</h2>
+<p>Phase G 為合約管理系統加入四項後台自動化能力，減少人工盯盤、強化財務預警與狀態自動維護。</p>
+
+<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin:16px 0;">
+  <div class="card" style="border-left:4px solid var(--warn);">
+    <div class="card-title">G1 — 預算使用率警示</div>
+    <p style="font-size:16px;color:var(--muted);">每日 09:30 掃描，請款比率跨越 80/90/100% 時自動建立 Memo</p>
+  </div>
+  <div class="card" style="border-left:4px solid var(--accent);">
+    <div class="card-title">G2 — 合約行事曆</div>
+    <p style="font-size:16px;color:var(--muted);">月曆視覺化三種事件：到期日・請款日・續約截止</p>
+  </div>
+  <div class="card" style="border-left:4px solid var(--success);">
+    <div class="card-title">G3 — 預算執行率分析</div>
+    <p style="font-size:16px;color:var(--muted);">依預算科目聚合請款金額，支援年度篩選</p>
+  </div>
+  <div class="card" style="border-left:4px solid var(--danger);">
+    <div class="card-title">G4 — 到期自動終止</div>
+    <p style="font-size:16px;color:var(--muted);">每日 01:00 掃描，end_date 已過期合約自動改為「已終止」</p>
+  </div>
+</div>
+
+<!-- G1 -->
+<section id="g1-budget-alert">
+<h3>G1 — 預算使用率警示</h3>
+<p>服務路徑：<code>app/services/contract_budget_alert.py</code>，由 APScheduler 每日 09:30 觸發。</p>
+
+<h4>觸發邏輯</h4>
+<p>掃描狀態為「生效中」或「即將到期」且合約總額 &gt; 0 的所有合約，計算已核准 + 已付款的請款金額使用率：</p>
+<pre>usage_rate = (已核准 + 已付款 請款金額) / total_amount_tax_included × 100</pre>
+
+<h4>警示閾值</h4>
+<div class="tbl-wrap"><table>
+<thead><tr><th>閾值</th><th>前綴</th><th>語氣</th></tr></thead>
+<tbody>
+<tr><td>80%</td><td>【使用率提醒】</td><td>請留意預算使用情況</td></tr>
+<tr><td>90%</td><td>【使用率警告】</td><td>剩餘額度即將耗盡</td></tr>
+<tr><td>100%</td><td>【超額警示】</td><td>請款金額已超過合約總額</td></tr>
+</tbody>
+</table></div>
+
+<h4>冪等機制</h4>
+<p>每筆警示以 <code>source='budget_alert'</code>、<code>source_id='{contract_id}_{threshold}'</code> 為唯一 key，同一閾值只發送一次，不重複建立 Memo。</p>
+
+<div class="alert alert-info">
+  <strong>Memo 接收人</strong>：填入合約的 <code>manager</code>（管理人）欄位。若管理人為空，recipient 為空字串，Memo 仍正常建立供系統查看。
+</div>
+</section>
+
+<!-- G2 -->
+<section id="g2-calendar">
+<h3>G2 — 合約行事曆</h3>
+<p>前端路由：<code>/contract/calendar</code>，元件：<code>pages/Contract/CalendarView.tsx</code>。</p>
+
+<h4>三種事件類型</h4>
+<div class="tbl-wrap"><table>
+<thead><tr><th>類型</th><th>顏色</th><th>資料來源</th><th>觸發欄位</th></tr></thead>
+<tbody>
+<tr><td>🔴 合約到期</td><td><code>#FF4D4F</code></td><td>contracts</td><td>end_date（排除「已終止」）</td></tr>
+<tr><td>🔵 請款日</td><td><code>#4BA8E8</code></td><td>contract_claims</td><td>claim_date</td></tr>
+<tr><td>🟢 續約截止</td><td><code>#52C41A</code></td><td>contract_renewals</td><td>renewal_end_date（僅「已核准」）</td></tr>
+</tbody>
+</table></div>
+
+<h4>API 端點</h4>
+<div class="tbl-wrap"><table>
+<thead><tr><th>Method</th><th>路徑</th><th>Query Params</th><th>回傳</th></tr></thead>
+<tbody>
+<tr><td>GET</td><td>/api/v1/contract/calendar-events</td><td>year, month</td><td><code>{ events: CalendarEvent[], total }</code></td></tr>
+</tbody>
+</table></div>
+
+<h4>前端行為</h4>
+<ul class="rule-list">
+  <li>月曆每格顯示最多 3 筆事件（超出顯示「+ N 筆」）</li>
+  <li>點擊日期→側欄顯示當日完整事件清單</li>
+  <li>點擊事件項目→跳轉至 <code>/contract?search={contract_id}</code></li>
+  <li>切換月份時重新呼叫 API，重新載入當月事件</li>
+  <li>本月統計卡：顯示三種事件各別筆數</li>
+</ul>
+</section>
+
+<!-- G3 -->
+<section id="g3-budget-analysis">
+<h3>G3 — 預算執行率分析</h3>
+<p>端點：<code>GET /api/v1/contract/budget-analysis?budget_year=2026</code></p>
+<p>依預算科目（L1 大項 / L2 細項）聚合，回傳各科目請款金額分佈，供預算追蹤使用。</p>
+
+<h4>回傳欄位</h4>
+<div class="tbl-wrap"><table>
+<thead><tr><th>欄位</th><th>說明</th></tr></thead>
+<tbody>
+<tr><td>budget_category_l1</td><td>預算大項</td></tr>
+<tr><td>budget_category_l2</td><td>預算細項</td></tr>
+<tr><td>contract_count</td><td>該科目下的合約數量</td></tr>
+<tr><td>total_claimed</td><td>請款總額（所有狀態加總）</td></tr>
+<tr><td>paid_amount</td><td>已付款金額</td></tr>
+<tr><td>approved_amount</td><td>已核准待撥款金額</td></tr>
+<tr><td>pending_amount</td><td>待審核金額</td></tr>
+</tbody>
+</table></div>
+
+<div class="alert alert-info">
+  <strong>權限要求</strong>：需 <code>contract_view</code> 或系統管理員（<code>*</code>）。
+</div>
+</section>
+
+<!-- G4 -->
+<section id="g4-auto-close">
+<h3>G4 — 到期自動終止</h3>
+<p>服務路徑：<code>app/services/contract_auto_close.py</code>，由 APScheduler 每日 01:00 觸發。</p>
+
+<h4>觸發條件</h4>
+<pre>end_date &lt; today AND contract_status IN ('生效中', '即將到期')</pre>
+
+<h4>執行動作</h4>
+<p>以 SQL UPDATE 批次將符合條件的合約狀態改為「已終止」，同步更新 <code>updated_at</code>。操作結果記錄於後端 stdout log。</p>
+
+<div class="alert alert-warn">
+  <strong>不可逆操作</strong>：自動終止後無還原機制，若需恢復合約狀態，管理員需手動在合約編輯 Modal 中修改 contract_status。
+</div>
+
+<h4>排程總覽</h4>
+<div class="tbl-wrap"><table>
+<thead><tr><th>服務</th><th>觸發時間</th><th>說明</th></tr></thead>
+<tbody>
+<tr><td>G4 auto_close_expired_contracts</td><td>每日 01:00</td><td>到期合約改「已終止」</td></tr>
+<tr><td>E3 notify_expiring_contracts</td><td>每日 09:00</td><td>30 天內到期合約建 Memo</td></tr>
+<tr><td>G1 check_budget_alerts</td><td>每日 09:30</td><td>預算使用率跨閾值警示</td></tr>
+</tbody>
+</table></div>
+</section>
+
+</section><!-- /phase-g -->
+
+
+<!-- ═══ Phase H — 流程強化 ═══ -->
+<section id="phase-h">
+<h2>Phase H — 流程強化</h2>
+<p>Phase H 在合約 Drawer 加入四個新 Tab，讓合約管理從「靜態資料」升級為「可追蹤的動態記錄」，並在 Settings 新增合約範本管理，加速建單效率。</p>
+
+<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin:16px 0;">
+  <div class="card" style="border-left:4px solid #722ED1;">
+    <div class="card-title">H1 — 合約範本管理</div>
+    <p style="font-size:16px;color:var(--muted);">Settings 新增「合約範本」Tab，儲存常用合約預設值，新增時一鍵套用</p>
+  </div>
+  <div class="card" style="border-left:4px solid var(--accent);">
+    <div class="card-title">H2 — 合約變更歷程</div>
+    <p style="font-size:16px;color:var(--muted);">每次 PUT 合約自動 diff，記錄欄位舊值→新值→操作人</p>
+  </div>
+  <div class="card" style="border-left:4px solid var(--warn);">
+    <div class="card-title">H3 — 分期付款計劃</div>
+    <p style="font-size:16px;color:var(--muted);">設定付款里程碑，逾期自動更新狀態並建立 Memo</p>
+  </div>
+  <div class="card" style="border-left:4px solid var(--muted);">
+    <div class="card-title">H4 — 操作稽核日誌</div>
+    <p style="font-size:16px;color:var(--muted);">完整記錄所有寫入操作，Drawer 以 Timeline 查歷程</p>
+  </div>
+</div>
+
+<!-- H1 -->
+<section id="h1-templates">
+<h3>H1 — 合約範本管理</h3>
+<p>路徑：<strong>設定 → 合約範本</strong>（<code>Settings.tsx → TemplatesTab</code>）</p>
+<p>儲存常用合約類型的預設欄位值（幣別、通知天數、風險等級、計價方式、預設備註等），新增合約時可選擇範本快速填入。</p>
+
+<h4>資料表：contract_templates</h4>
+<div class="tbl-wrap"><table>
+<thead><tr><th>欄位</th><th>類型</th><th>說明</th></tr></thead>
+<tbody>
+<tr><td>name</td><td>VARCHAR(100)</td><td>範本名稱（唯一）</td></tr>
+<tr><td>contract_type</td><td>VARCHAR(50)</td><td>對應的合約類型</td></tr>
+<tr><td>default_currency</td><td>VARCHAR(10)</td><td>預設幣別（TWD/USD）</td></tr>
+<tr><td>default_notification_days</td><td>Integer</td><td>預設到期通知天數</td></tr>
+<tr><td>default_risk_level</td><td>VARCHAR(20)</td><td>預設風險等級</td></tr>
+<tr><td>default_pricing_method</td><td>VARCHAR(100)</td><td>預設計價方式</td></tr>
+<tr><td>default_remarks</td><td>Text</td><td>預設備註範本（新增時自動填入）</td></tr>
+<tr><td>is_enabled</td><td>Boolean</td><td>是否啟用（停用後不出現在下拉）</td></tr>
+</tbody>
+</table></div>
+
+<h4>API 端點</h4>
+<div class="tbl-wrap"><table>
+<thead><tr><th>Method</th><th>路徑</th><th>說明</th><th>權限</th></tr></thead>
+<tbody>
+<tr><td>GET</td><td>/contract/templates</td><td>範本清單（可加 enabled_only=true）</td><td>任何登入者</td></tr>
+<tr><td>POST</td><td>/contract/templates</td><td>新增範本</td><td>contract_create_edit</td></tr>
+<tr><td>PUT</td><td>/contract/templates/{id}</td><td>修改範本</td><td>contract_create_edit</td></tr>
+<tr><td>DELETE</td><td>/contract/templates/{id}</td><td>刪除範本</td><td>contract_create_edit</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<!-- H2 -->
+<section id="h2-change-logs">
+<h3>H2 — 合約變更歷程</h3>
+<p>Drawer Tab：<strong>🕐 變更歷程</strong>（<code>ContractChangeLogTab</code>）</p>
+<p>每次 <code>PUT /{contract_id}</code> 執行時，系統自動 diff 修改前後所有欄位，有差異者各建一筆 <code>contract_change_logs</code> 記錄。</p>
+
+<h4>欄位映射（中文標籤）</h4>
+<p>系統追蹤的欄位涵蓋合約名稱、類型、狀態、廠商、日期、金額、計價、部門、管理人等共 30+ 個欄位，均以中文 <code>field_label</code> 顯示。</p>
+
+<h4>前端顯示規則</h4>
+<ul class="rule-list">
+  <li>舊值：刪除線灰色文字</li>
+  <li>新值：綠色文字</li>
+  <li>空值（None）：顯示為「—」</li>
+  <li>依操作時間降序排列，最新變更在最上方</li>
+</ul>
+
+<h4>API 端點</h4>
+<div class="tbl-wrap"><table>
+<thead><tr><th>Method</th><th>路徑</th><th>說明</th></tr></thead>
+<tbody>
+<tr><td>GET</td><td>/contract/{id}/change-logs?limit=100</td><td>欄位變更歷程（最多 500 筆）</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<!-- H3 -->
+<section id="h3-payment-schedule">
+<h3>H3 — 分期付款計劃</h3>
+<p>Drawer Tab：<strong>💰 付款計劃</strong>（<code>ContractPaymentScheduleTab</code>）</p>
+<p>為合約設定多個付款里程碑（第一期、第二期、尾款等），系統每日 09:45 自動掃描逾期未付里程碑。</p>
+
+<h4>里程碑狀態機</h4>
+<div class="flow">
+  <div class="flow-box" style="background:#e6f7ff;color:#096dd9;">待付款</div>
+  <div class="flow-arrow">→ 到期未付 →</div>
+  <div class="flow-box" style="background:#fff2f0;color:#cf1322;">逾期</div>
+  <br>
+  <div class="flow-box" style="background:#e6f7ff;color:#096dd9;">待付款</div>
+  <div class="flow-arrow">→ 手動標記 →</div>
+  <div class="flow-box" style="background:#f6ffed;color:#389e0d;">已付款</div>
+</div>
+
+<h4>排程行為</h4>
+<p>每日 09:45 掃描 <code>status='待付款' AND due_date &lt; today</code> 的里程碑：自動改為「逾期」並建立 Memo 提醒（冪等 key: <code>payment_overdue_{schedule.id}</code>）。</p>
+
+<h4>API 端點</h4>
+<div class="tbl-wrap"><table>
+<thead><tr><th>Method</th><th>路徑</th><th>說明</th></tr></thead>
+<tbody>
+<tr><td>GET</td><td>/contract/{id}/payment-schedules</td><td>付款計劃清單（依 due_date 升序）</td></tr>
+<tr><td>POST</td><td>/contract/{id}/payment-schedules</td><td>新增付款里程碑</td></tr>
+<tr><td>PUT</td><td>/contract/{id}/payment-schedules/{sid}</td><td>更新里程碑（含標記已付款）</td></tr>
+<tr><td>DELETE</td><td>/contract/{id}/payment-schedules/{sid}</td><td>刪除里程碑</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<!-- H4 -->
+<section id="h4-audit-log">
+<h3>H4 — 操作稽核日誌</h3>
+<p>Drawer Tab：<strong>🔍 稽核日誌</strong>（<code>ContractAuditLogTab</code>）</p>
+<p>自動記錄合約模組所有寫入操作，以 Timeline 格式呈現，便於稽核與問題追查。</p>
+
+<h4>自動記錄範圍</h4>
+<div class="tbl-wrap"><table>
+<thead><tr><th>操作</th><th>resource</th><th>action</th></tr></thead>
+<tbody>
+<tr><td>編輯合約</td><td>contract</td><td>update</td></tr>
+<tr><td>新增/修改/刪除合約範本</td><td>template</td><td>create / update / delete</td></tr>
+<tr><td>新增/修改/刪除付款里程碑</td><td>payment_schedule</td><td>create / update / delete</td></tr>
+<tr><td>新增/修改/刪除驗收記錄（I2）</td><td>acceptance</td><td>create / update / delete</td></tr>
+<tr><td>新增/修改保證金（I3）</td><td>deposit</td><td>create / update</td></tr>
+</tbody>
+</table></div>
+
+<div class="alert alert-info">
+  <strong>payload_summary</strong>：操作摘要文字，如「更新欄位：contract_name, end_date」或「新增里程碑：尾款 2026-09-30 $50,000」，敏感欄位已遮罩。
+</div>
+</section>
+
+</section><!-- /phase-h -->
+
+
+<!-- ═══ Phase I — 審核與財務深化 ═══ -->
+<section id="phase-i">
+<h2>Phase I — 審核與財務深化</h2>
+<p>Phase I 深化合約審核流程（多層關卡）與財務追蹤（驗收、保證金、年化費用），強化合規性與財務可視性。</p>
+
+<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin:16px 0;">
+  <div class="card" style="border-left:4px solid var(--primary);">
+    <div class="card-title">I1 — 多層審核流程</div>
+    <p style="font-size:16px;color:var(--muted);">主管→財務→法務多關卡，各關卡獨立核准；送審後自動建立關卡記錄</p>
+  </div>
+  <div class="card" style="border-left:4px solid var(--success);">
+    <div class="card-title">I2 — 驗收管理</div>
+    <p style="font-size:16px;color:var(--muted);">服務完成後建立驗收記錄；驗收通過後才可放行請款</p>
+  </div>
+  <div class="card" style="border-left:4px solid var(--warn);">
+    <div class="card-title">I3 — 保證金追蹤</div>
+    <p style="font-size:16px;color:var(--muted);">記錄廠商保證金，退還日 30 天前自動提醒</p>
+  </div>
+  <div class="card" style="border-left:4px solid #722ED1;">
+    <div class="card-title">I4 — 年化費用計算</div>
+    <p style="font-size:16px;color:var(--muted);">月費合約自動換算年度合計，顯示月攤提與請款比例</p>
+  </div>
+</div>
+
+<!-- I1 -->
+<section id="i1-approval-stages">
+<h3>I1 — 多層審核流程</h3>
+<p>Drawer Tab：<strong>📋 審核關卡</strong>（<code>ContractApprovalStagesTab</code>）</p>
+
+<h4>設計原則</h4>
+<ul class="rule-list">
+  <li><strong>向下相容</strong>：若某合約類型無關卡設定（<code>contract_approval_configs</code> 無記錄），送審後走原有單階段流程（直接由 contract_approve 權限者在 Drawer 核准/拒絕）</li>
+  <li><strong>自動建立</strong>：<code>POST /submit</code> 送審時，查詢符合合約類型的設定，自動建立本輪（<code>submission_round</code>）所有關卡記錄</li>
+  <li><strong>多次送審</strong>：每次重新送審 <code>submission_round +1</code>，歷次記錄均保留</li>
+</ul>
+
+<h4>關卡狀態機</h4>
+<div class="flow">
+  <div class="flow-box" style="background:#e6f7ff;color:#096dd9;">待審核</div>
+  <div class="flow-arrow">→ 核准 →</div>
+  <div class="flow-box" style="background:#f6ffed;color:#389e0d;">已核准（下一關解鎖）</div>
+</div>
+<div class="flow" style="margin-top:4px;">
+  <div class="flow-box" style="background:#e6f7ff;color:#096dd9;">待審核</div>
+  <div class="flow-arrow">→ 拒絕 →</div>
+  <div class="flow-box" style="background:#fff2f0;color:#cf1322;">已拒絕</div>
+  <div class="flow-arrow">+</div>
+  <div class="flow-box" style="background:#f5f5f5;color:#595959;">後續關卡→已取消</div>
+  <div class="flow-arrow">+</div>
+  <div class="flow-box" style="background:#fff2f0;color:#cf1322;">合約退回草稿</div>
+</div>
+
+<h4>全部核准後</h4>
+<p>同輪所有關卡均為「已核准」時，系統自動將合約升為「生效中」（<code>approved_by</code>、<code>approved_at</code> 同步更新），無需再次操作原有審核按鈕。</p>
+
+<h4>資料表：contract_approval_configs（設定）</h4>
+<div class="tbl-wrap"><table>
+<thead><tr><th>欄位</th><th>說明</th></tr></thead>
+<tbody>
+<tr><td>contract_type</td><td>合約類型（'*' 表示所有類型預設關卡）</td></tr>
+<tr><td>stage_order</td><td>關卡順序（1=主管，2=財務，3=法務）</td></tr>
+<tr><td>stage_name</td><td>關卡名稱（自訂）</td></tr>
+<tr><td>assigned_to</td><td>指定審核人帳號（空=任何有 contract_approve 權限者）</td></tr>
+</tbody>
+</table></div>
+
+<h4>API 端點</h4>
+<div class="tbl-wrap"><table>
+<thead><tr><th>Method</th><th>路徑</th><th>說明</th><th>權限</th></tr></thead>
+<tbody>
+<tr><td>GET</td><td>/contract/{id}/approval-stages</td><td>查詢關卡（?latest_only=true 預設只回最新輪）</td><td>contract_view</td></tr>
+<tr><td>POST</td><td>/contract/{id}/approval-stages/{sid}/approve</td><td>核准關卡</td><td>contract_approve</td></tr>
+<tr><td>POST</td><td>/contract/{id}/approval-stages/{sid}/reject</td><td>拒絕關卡</td><td>contract_approve</td></tr>
+<tr><td>GET/POST/PUT/DELETE</td><td>/contract/approval-configs</td><td>關卡設定 CRUD</td><td>contract_approve</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<!-- I2 -->
+<section id="i2-acceptances">
+<h3>I2 — 驗收管理</h3>
+<p>Drawer Tab：<strong>✅ 驗收記錄</strong>（<code>ContractAcceptancesTab</code>）</p>
+<p>服務完成後，由驗收人建立驗收記錄。當合約 <code>require_acceptance=True</code> 時，建立請款前應確認已有「已驗收」狀態的記錄（系統給予警告提示）。</p>
+
+<h4>驗收狀態</h4>
+<div class="tbl-wrap"><table>
+<thead><tr><th>狀態</th><th>顏色</th><th>說明</th></tr></thead>
+<tbody>
+<tr><td>待驗收</td><td>灰色</td><td>驗收記錄已建立，尚未執行驗收</td></tr>
+<tr><td>已驗收</td><td>綠色</td><td>驗收通過，可進行請款</td></tr>
+<tr><td>驗收失敗</td><td>紅色</td><td>服務未達標，需廠商重新提交</td></tr>
+</tbody>
+</table></div>
+
+<h4>記錄欄位</h4>
+<p>驗收項目名稱、驗收日期、驗收人、服務期間（起/迄）、備註；每次操作自動寫入 H4 稽核日誌。</p>
+
+<h4>API 端點</h4>
+<div class="tbl-wrap"><table>
+<thead><tr><th>Method</th><th>路徑</th><th>說明</th></tr></thead>
+<tbody>
+<tr><td>GET</td><td>/contract/{id}/acceptances</td><td>驗收記錄清單（依日期降序）</td></tr>
+<tr><td>POST</td><td>/contract/{id}/acceptances</td><td>新增驗收記錄</td></tr>
+<tr><td>PUT</td><td>/contract/{id}/acceptances/{aid}</td><td>更新驗收記錄（含改狀態）</td></tr>
+<tr><td>DELETE</td><td>/contract/{id}/acceptances/{aid}</td><td>刪除驗收記錄</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<!-- I3 -->
+<section id="i3-deposits">
+<h3>I3 — 保證金追蹤</h3>
+<p>Drawer Tab：<strong>🔒 保證金</strong>（<code>ContractDepositsTab</code>）</p>
+<p>記錄廠商繳交的保證金（履約保證金、投標保證金等），系統每日 10:00 掃描即將到期保證金並發出提醒。</p>
+
+<h4>保證金狀態機</h4>
+<div class="flow">
+  <div class="flow-box" style="background:#e6f7ff;color:#096dd9;">保留中</div>
+  <div class="flow-arrow">→ 申請退還 →</div>
+  <div class="flow-box" style="background:#fffbe6;color:#d48806;">申請退還</div>
+  <div class="flow-arrow">→ 退款完成 →</div>
+  <div class="flow-box" style="background:#f6ffed;color:#389e0d;">已退還</div>
+</div>
+<div class="flow" style="margin-top:4px;">
+  <div class="flow-box" style="background:#e6f7ff;color:#096dd9;">保留中</div>
+  <div class="flow-arrow">→ 廠商違約 →</div>
+  <div class="flow-box" style="background:#fff2f0;color:#cf1322;">已沒收</div>
+</div>
+
+<h4>排程提醒</h4>
+<p>每日 10:00，掃描 <code>status='保留中' AND expected_return_date BETWEEN today AND today+30</code>，建立 Memo（冪等 key: <code>deposit_expiry_{deposit.id}</code>）。前端：預計退還日距今 ≤30 天標橘色警示。</p>
+
+<h4>API 端點</h4>
+<div class="tbl-wrap"><table>
+<thead><tr><th>Method</th><th>路徑</th><th>說明</th></tr></thead>
+<tbody>
+<tr><td>GET</td><td>/contract/{id}/deposits</td><td>保證金清單（依預計退還日升序）</td></tr>
+<tr><td>POST</td><td>/contract/{id}/deposits</td><td>新增保證金記錄</td></tr>
+<tr><td>PUT</td><td>/contract/{id}/deposits/{did}</td><td>更新（含標記已退還）</td></tr>
+<tr><td>DELETE</td><td>/contract/{id}/deposits/{did}</td><td>刪除保證金記錄</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<!-- I4 -->
+<section id="i4-cost-summary">
+<h3>I4 — 年化費用計算</h3>
+<p>UI 位置：合約 Drawer <strong>基本資訊 Tab 頂部</strong>，財務摘要卡（<code>CostSummaryCard</code>）。</p>
+<p>對月費合約自動換算年度金額，並計算合約期間月攤提、請款比例與剩餘額度，讓財務狀況一目了然。</p>
+
+<h4>計算公式</h4>
+<div class="tbl-wrap"><table>
+<thead><tr><th>指標</th><th>計算方式</th><th>適用條件</th></tr></thead>
+<tbody>
+<tr><td>年化金額</td><td>monthly_fixed_amount × 12</td><td>月費合約（有填月固定金額）</td></tr>
+<tr><td>月攤提</td><td>total_amount ÷ duration_months</td><td>所有合約（duration_months = 天數 ÷ 30.44）</td></tr>
+<tr><td>請款比例</td><td>已核准+已付款金額 ÷ 合約總額 × 100%</td><td>所有合約</td></tr>
+<tr><td>剩餘額度</td><td>合約總額 − 已核准+已付款金額</td><td>所有合約（負值=超額）</td></tr>
+</tbody>
+</table></div>
+
+<h4>視覺警示規則</h4>
+<div class="tbl-wrap"><table>
+<thead><tr><th>請款比例</th><th>顏色</th><th>說明</th></tr></thead>
+<tbody>
+<tr><td>&lt; 80%</td><td>綠色</td><td>正常</td></tr>
+<tr><td>80% ~ 99%</td><td>橘色 + 警告條</td><td>預算即將耗盡</td></tr>
+<tr><td>≥ 100%</td><td>紅色 + 錯誤條</td><td>超額，剩餘額度為負值</td></tr>
+</tbody>
+</table></div>
+
+<h4>API 端點</h4>
+<div class="tbl-wrap"><table>
+<thead><tr><th>Method</th><th>路徑</th><th>說明</th></tr></thead>
+<tbody>
+<tr><td>GET</td><td>/contract/{id}/cost-summary</td><td>年化費用計算摘要（即時計算，無快取）</td></tr>
+</tbody>
+</table></div>
+
+<div class="alert alert-info">
+  財務摘要卡在 Drawer 開啟時自動載入，靜默失敗（API 錯誤時不影響主要資訊顯示）。
+</div>
+</section>
+
+<!-- 排程總覽（H+I） -->
+<section id="i-schedule-summary">
+<h3>Phase H + I 排程總覽</h3>
+<div class="tbl-wrap"><table>
+<thead><tr><th>服務</th><th>觸發時間</th><th>說明</th><th>Phase</th></tr></thead>
+<tbody>
+<tr><td>auto_close_expired_contracts</td><td>每日 01:00</td><td>到期合約改「已終止」</td><td>G4</td></tr>
+<tr><td>notify_expiring_contracts</td><td>每日 09:00</td><td>30 天內到期建 Memo</td><td>E3</td></tr>
+<tr><td>check_budget_alerts</td><td>每日 09:30</td><td>預算使用率跨閾值警示</td><td>G1</td></tr>
+<tr><td>notify_overdue_payment_schedules</td><td>每日 09:45</td><td>逾期付款里程碑改狀態 + Memo</td><td><strong>H3</strong></td></tr>
+<tr><td>notify_expiring_deposits</td><td>每日 10:00</td><td>保證金退還日 30 天內 Memo</td><td><strong>I3</strong></td></tr>
+</tbody>
+</table></div>
+</section>
+
+</section><!-- /phase-i -->
+
+
+<!-- ═══ Phase J — 分析與體驗強化 ═══ -->
+<section id="phase-j">
+<h2>Phase J — 分析與體驗強化</h2>
+<p>Phase J 在合約 Dashboard 加入三個分析 Tab，並強化清單頁面的批次操作與個人化體驗，讓合約管理從「單筆操作」升級為「分析驅動決策」。</p>
+
+<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:16px 0;">
+  <div class="card" style="border-left:4px solid var(--danger);">
+    <div class="card-title">J1 — 廠商集中度分析</div>
+    <p style="font-size:16px;color:var(--muted);">計算廠商金額佔比，&gt;30% 標紅色警示</p>
+  </div>
+  <div class="card" style="border-left:4px solid var(--accent);">
+    <div class="card-title">J2 — 合約成本趨勢圖</div>
+    <p style="font-size:16px;color:var(--muted);">月/季折線圖，支援公司/部門分組篩選</p>
+  </div>
+  <div class="card" style="border-left:4px solid var(--success);">
+    <div class="card-title">J3 — 月度/季度報表</div>
+    <p style="font-size:16px;color:var(--muted);">自動產生摘要報告，可匯出 Excel</p>
+  </div>
+  <div class="card" style="border-left:4px solid var(--primary);">
+    <div class="card-title">J4 — 批次操作</div>
+    <p style="font-size:16px;color:var(--muted);">多選合約批次改管理人、批次送審</p>
+  </div>
+  <div class="card" style="border-left:4px solid var(--warn);">
+    <div class="card-title">J5 — 個人化篩選</div>
+    <p style="font-size:16px;color:var(--muted);">「只看我的合約」快速篩選，記憶設定</p>
+  </div>
+</div>
+
+<!-- J1 -->
+<section id="j1-concentration">
+<h3>J1 — 廠商集中度分析</h3>
+<p>位置：<strong>合約 Dashboard → 廠商集中度分析</strong> Tab（<code>VendorConcentrationChart</code>）</p>
+<p>依廠商聚合生效中合約金額，計算各廠商佔整體合約組合的百分比。佔比超過閾值（預設 30%）的廠商標記為「高集中度」，以紅色長條圖和警示 Tag 顯示。</p>
+
+<div class="alert alert-warn">
+  <strong>路由注意</strong>：此端點必須宣告在 <code>/vendors/{vendor_id}</code> 之前，否則 FastAPI 會將 "concentration" 當作 vendor_id 匹配，導致 404/500。
+</div>
+
+<h4>API 端點</h4>
+<div class="tbl-wrap"><table>
+<thead><tr><th>Method</th><th>路徑</th><th>Query Params</th><th>說明</th></tr></thead>
+<tbody>
+<tr><td>GET</td><td>/contract/vendors/concentration</td><td>budget_year（選）, threshold（預設 30）</td><td>廠商集中度清單（含 is_high_concentration 旗標）</td></tr>
+</tbody>
+</table></div>
+
+<h4>回傳欄位</h4>
+<div class="tbl-wrap"><table>
+<thead><tr><th>欄位</th><th>說明</th></tr></thead>
+<tbody>
+<tr><td>grand_total</td><td>所有廠商合約金額總計（排除已終止合約）</td></tr>
+<tr><td>vendor_count</td><td>廠商總數</td></tr>
+<tr><td>high_concentration_count</td><td>超過閾值的廠商數</td></tr>
+<tr><td>items[].percentage</td><td>該廠商佔 grand_total 的百分比（四捨五入至小數第二位）</td></tr>
+<tr><td>items[].is_high_concentration</td><td>是否超過 threshold（boolean）</td></tr>
+</tbody>
+</table></div>
+
+<h4>前端顯示邏輯</h4>
+<ul class="rule-list">
+  <li>長條圖：高集中廠商（紅色）、一般廠商（藍色 #4BA8E8）；虛線標示警示閾值基準線</li>
+  <li>警示橫幅：若有廠商超過閾值，頁面頂部顯示紅色 Alert</li>
+  <li>表格：佔比 Tag 顏色 — ≥ threshold 紅色、≥15% 橘色、其他灰色</li>
+  <li>支援：年度篩選（含「全部年度」選項）+ 閾值調整（20/30/40/50%）</li>
+</ul>
+</section>
+
+<!-- J2 -->
+<section id="j2-cost-trend">
+<h3>J2 — 合約成本趨勢圖</h3>
+<p>位置：<strong>合約 Dashboard → 成本趨勢圖</strong> Tab（<code>CostTrendChart</code>）</p>
+<p>以折線圖顯示指定年度的合約新簽金額（依 start_date 歸期）與已核准請款金額（依 claim_date 歸期），支援月/季粒度切換與公司篩選。</p>
+
+<h4>API 端點</h4>
+<div class="tbl-wrap"><table>
+<thead><tr><th>Method</th><th>路徑</th><th>Query Params</th></tr></thead>
+<tbody>
+<tr><td>GET</td><td>/contract/analytics/cost-trend</td><td>budget_year, granularity（month/quarter）, company（選）, dept（選）</td></tr>
+</tbody>
+</table></div>
+
+<h4>回傳資料結構</h4>
+<pre>{ "data": [{ "period": "2026-01", "label": "1月", "contract_amount": 1200000, "claimed_amount": 850000 }] }</pre>
+
+<h4>圖表設計</h4>
+<ul class="rule-list">
+  <li>深藍實線 = 新簽合約總額（依合約 start_date 歸月/季）</li>
+  <li>藍色虛線 = 已核准請款金額（已核准 + 已付款，依 claim_date 歸月/季）</li>
+  <li>Y 軸單位：萬元（TWD），Tooltip 顯示精確萬元值</li>
+  <li>月/季切換：RadioButton（月 / 季）</li>
+  <li>公司篩選：Select 下拉（從 companiesApi 取得選項）</li>
+</ul>
+</section>
+
+<!-- J3 -->
+<section id="j3-summary-report">
+<h3>J3 — 月度/季度報表</h3>
+<p>位置：<strong>合約 Dashboard → 月度/季度報表</strong> Tab（<code>SummaryReportTab</code>）</p>
+<p>自動彙整指定年度各期間的合約與請款統計數據，支援 Excel 匯出。</p>
+
+<h4>報表欄位說明</h4>
+<div class="tbl-wrap"><table>
+<thead><tr><th>欄位</th><th>統計口徑</th></tr></thead>
+<tbody>
+<tr><td>新簽合約數</td><td>該期間 start_date 落入的合約筆數（含所有狀態）</td></tr>
+<tr><td>新簽金額</td><td>同上，total_amount_tax_included 加總</td></tr>
+<tr><td>請款筆數</td><td>該期間 claim_date 落入的請款記錄筆數</td></tr>
+<tr><td>請款金額</td><td>同上，amount 加總（所有狀態）</td></tr>
+<tr><td>已核准金額</td><td>同上，status IN（已核准, 已付款）的 amount 加總</td></tr>
+</tbody>
+</table></div>
+
+<h4>API 端點</h4>
+<div class="tbl-wrap"><table>
+<thead><tr><th>Method</th><th>路徑</th><th>說明</th></tr></thead>
+<tbody>
+<tr><td>GET</td><td>/contract/reports/summary</td><td>JSON 報表資料（含 totals 合計列）</td></tr>
+<tr><td>GET</td><td>/contract/reports/summary/export</td><td>Excel 匯出（StreamingResponse，直接觸發下載）</td></tr>
+</tbody>
+</table></div>
+
+<div class="alert alert-info">
+  Excel 匯出使用 <code>window.open('/api/v1/contract/reports/summary/export?...')</code> 觸發，不需要額外的 axios 呼叫。標題列為深藍色（#1B3A5C），末尾自動附加合計列。
+</div>
+</section>
+
+<!-- J4 -->
+<section id="j4-batch">
+<h3>J4 — 批次操作</h3>
+<p>位置：<strong>合約清單頁面</strong>，勾選合約後顯示底部浮動工具列。</p>
+
+<h4>操作流程</h4>
+<div class="flow">
+  <div class="flow-box" style="background:#e6f7ff;color:#096dd9;">勾選 Checkbox</div>
+  <div class="flow-arrow">→</div>
+  <div class="flow-box" style="background:#f0f4f8;">浮動工具列出現</div>
+  <div class="flow-arrow">→ 選擇操作 →</div>
+  <div class="flow-box" style="background:#f6ffed;color:#389e0d;">批次改管理人 / 批次送審</div>
+</div>
+
+<h4>批次改管理人</h4>
+<ul class="rule-list">
+  <li>點擊工具列「批次改管理人」→ 彈出 Modal，Select 下拉選擇新管理人（從 users/options 取得）</li>
+  <li>上限：100 筆；操作後自動寫入 H4 稽核日誌（action=batch_update, resource=contract）</li>
+</ul>
+
+<h4>批次送審</h4>
+<ul class="rule-list">
+  <li>點擊工具列「批次送審」→ 直接執行，回傳成功數與失敗明細</li>
+  <li>失敗原因顯示在 message.warning（例：「狀態為審核中，僅草稿可送審」）</li>
+  <li>上限：50 筆；自動建立多層審核關卡（若合約類型有設定）</li>
+</ul>
+
+<h4>API 端點</h4>
+<div class="tbl-wrap"><table>
+<thead><tr><th>Method</th><th>路徑</th><th>Body</th><th>說明</th></tr></thead>
+<tbody>
+<tr><td>PATCH</td><td>/contract/batch/manager</td><td>{ contract_ids[], manager }</td><td>批次更新管理人（上限 100）</td></tr>
+<tr><td>POST</td><td>/contract/batch/submit</td><td>{ contract_ids[] }</td><td>批次送審（上限 50，草稿限定）</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<!-- J5 -->
+<section id="j5-personal">
+<h3>J5 — 個人化「只看我的合約」篩選</h3>
+<p>位置：<strong>合約清單頁面標題列</strong>，搜尋欄右側。</p>
+
+<h4>運作機制</h4>
+<ul class="rule-list">
+  <li>點擊 Toggle Button → 啟用時從 <code>localStorage['auth-storage']</code> 取得當前使用者 username，作為 <code>manager</code> 參數傳給清單 API</li>
+  <li>偏好設定存入 <code>localStorage['contract_my_only']</code>，頁面重整後保持啟用狀態</li>
+  <li>啟用時按鈕顯示深藍色底色 + 勾號前綴（「✓ 只看我的合約」）</li>
+  <li>後端：<code>GET /contract?manager={username}</code> 篩選 <code>contracts.manager == manager</code></li>
+</ul>
+
+<div class="alert alert-info">
+  <strong>篩選邏輯</strong>：只比對 <code>contracts.manager</code>（管理人）欄位，不含覆核人（<code>reviewer</code>）。若希望同時篩選覆核人，需另行擴充 API 參數。
+</div>
+</section>
+
+<!-- J 端點總覽 -->
+<section id="j-api-summary">
+<h3>Phase J API 端點總覽</h3>
+<div class="tbl-wrap"><table>
+<thead><tr><th>Method</th><th>路徑</th><th>說明</th><th>Sub</th></tr></thead>
+<tbody>
+<tr><td>GET</td><td>/contract/vendors/concentration</td><td>廠商集中度分析</td><td>J1</td></tr>
+<tr><td>GET</td><td>/contract/analytics/cost-trend</td><td>月/季成本趨勢時序資料</td><td>J2</td></tr>
+<tr><td>GET</td><td>/contract/reports/summary</td><td>月度/季度統計報表</td><td>J3</td></tr>
+<tr><td>GET</td><td>/contract/reports/summary/export</td><td>Excel 匯出（StreamingResponse）</td><td>J3</td></tr>
+<tr><td>PATCH</td><td>/contract/batch/manager</td><td>批次更新管理人</td><td>J4</td></tr>
+<tr><td>POST</td><td>/contract/batch/submit</td><td>批次送審</td><td>J4</td></tr>
+<tr><td>GET</td><td>/contract?manager=xxx</td><td>個人化篩選（既有端點加參數）</td><td>J5</td></tr>
+</tbody>
+</table></div>
+</section>
+
+</section><!-- /phase-j -->
+
+<!-- ═══ Phase K — 整合擴展 ═══ -->
+<section id="phase-k">
+<h2>Phase K — 整合擴展</h2>
+<p>Phase K 將合約管理系統延伸至外部系統整合與進階分析能力。本 Phase 共 6 個子任務，其中 K2 與 K5 已完成實作，K1/K3/K4/K6 為規格設計，待後續執行。</p>
+
+<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:16px 0;">
+  <div class="card" style="border-left:4px solid var(--success);">
+    <div class="card-title">K2 ✅ SLA 達成率追蹤</div>
+    <p style="font-size:16px;color:var(--muted);">服務合約設定 SLA 指標，記錄達成率趨勢，折線圖呈現</p>
+  </div>
+  <div class="card" style="border-left:4px solid var(--success);">
+    <div class="card-title">K5 ✅ 合約並排比較</div>
+    <p style="font-size:16px;color:var(--muted);">兩份合約並排，差異欄位黃色高亮，支援分組篩選</p>
+  </div>
+  <div class="card" style="border-left:4px solid var(--muted);">
+    <div class="card-title">K1 📋 Email 自動通知</div>
+    <p style="font-size:16px;color:var(--muted);">審核結果、到期提醒、請款核准寄送 Email（待實作）</p>
+  </div>
+  <div class="card" style="border-left:4px solid var(--muted);">
+    <div class="card-title">K3 📋 多幣別匯率換算</div>
+    <p style="font-size:16px;color:var(--muted);">外幣合約依匯率換算台幣，Dashboard 統一顯示（待實作）</p>
+  </div>
+  <div class="card" style="border-left:4px solid var(--muted);">
+    <div class="card-title">K4 📋 財務系統匯出</div>
+    <p style="font-size:16px;color:var(--muted);">請款核准後產生 ERP 匯入格式 CSV（待實作）</p>
+  </div>
+  <div class="card" style="border-left:4px solid var(--muted);">
+    <div class="card-title">K6 📋 電子簽核整合</div>
+    <p style="font-size:16px;color:var(--muted);">審核通過後自動發 PDF 請廠商電子簽署（待實作）</p>
+  </div>
+</div>
+
+<!-- K2 -->
+<section id="k2-sla">
+<h3>K2 ✅ — SLA 達成率追蹤</h3>
+<p>位置：<strong>合約 Drawer → SLA 追蹤</strong> Tab（<code>SlaTab.tsx</code>）</p>
+<p>讓服務型合約可設定多個 SLA 指標（可用率、回應時間、解決時間等），每個衡量週期登錄實際達成值，系統自動判斷達標並計算趨勢。</p>
+
+<h4>資料表：contract_sla_metrics（指標定義）</h4>
+<div class="tbl-wrap"><table>
+<thead><tr><th>欄位</th><th>類型</th><th>說明</th></tr></thead>
+<tbody>
+<tr><td>metric_name</td><td>VARCHAR(100)</td><td>指標名稱（如：系統可用率）</td></tr>
+<tr><td>metric_type</td><td>VARCHAR(50)</td><td>類型（可用率/回應時間/解決時間/自訂）</td></tr>
+<tr><td>target_value</td><td>Numeric(10,4)</td><td>目標值</td></tr>
+<tr><td>target_unit</td><td>VARCHAR(20)</td><td>單位（%/小時/天/次/ms）</td></tr>
+<tr><td>measurement_period</td><td>VARCHAR(20)</td><td>衡量週期（monthly/quarterly/annual）</td></tr>
+<tr><td>is_enabled</td><td>Boolean</td><td>是否啟用</td></tr>
+</tbody>
+</table></div>
+
+<h4>資料表：contract_sla_records（達成記錄）</h4>
+<div class="tbl-wrap"><table>
+<thead><tr><th>欄位</th><th>說明</th></tr></thead>
+<tbody>
+<tr><td>metric_id</td><td>FK → contract_sla_metrics.id（CASCADE 刪除）</td></tr>
+<tr><td>period_label</td><td>衡量期間標籤（如 2026-01 或 2026-Q1）</td></tr>
+<tr><td>actual_value</td><td>實際達成值</td></tr>
+<tr><td>target_value</td><td>當期目標值（快照，歷史保全）</td></tr>
+<tr><td>achieved</td><td>是否達標（actual_value ≥ target_value 自動判定）</td></tr>
+<tr><td>recorded_by</td><td>登錄人帳號</td></tr>
+</tbody>
+</table></div>
+
+<h4>API 端點</h4>
+<div class="tbl-wrap"><table>
+<thead><tr><th>Method</th><th>路徑</th><th>說明</th></tr></thead>
+<tbody>
+<tr><td>GET</td><td>/contract/{id}/sla-metrics</td><td>指標清單</td></tr>
+<tr><td>POST</td><td>/contract/{id}/sla-metrics</td><td>新增指標</td></tr>
+<tr><td>PUT</td><td>/contract/{id}/sla-metrics/{mid}</td><td>修改指標</td></tr>
+<tr><td>DELETE</td><td>/contract/{id}/sla-metrics/{mid}</td><td>刪除指標（含所有記錄）</td></tr>
+<tr><td>GET</td><td>/contract/{id}/sla-records?metric_id=</td><td>達成記錄清單</td></tr>
+<tr><td>POST</td><td>/contract/{id}/sla-records</td><td>登錄達成記錄（自動判定 achieved）</td></tr>
+<tr><td>DELETE</td><td>/contract/{id}/sla-records/{rid}</td><td>刪除記錄</td></tr>
+<tr><td>GET</td><td>/contract/{id}/sla-summary</td><td>各指標達成率統計 + 整體達成率</td></tr>
+</tbody>
+</table></div>
+
+<h4>前端互動設計</h4>
+<ul class="rule-list">
+  <li>整體達成率 + 指標數量 + 未達標指標數 — 頂部三欄 KPI 卡</li>
+  <li>每個指標顯示環形達成率（≥90% 綠色 / 70~89% 橘色 / &lt;70% 紅色）</li>
+  <li>折線圖：藍色線 = 實際值；紅色虛線 = 目標基準線；點位顏色：達標綠、未達標紅</li>
+  <li>尚無指標時顯示空白頁 + 「新增第一個 SLA 指標」引導按鈕</li>
+</ul>
+</section>
+
+<!-- K5 -->
+<section id="k5-compare">
+<h3>K5 ✅ — 合約並排比較</h3>
+<p>路由：<strong>/contract/compare</strong>（<code>CompareContracts.tsx</code>），側欄：合約管理 → 合約比較。</p>
+<p>同時選擇兩份合約（A / B），並排顯示 28 個欄位，差異欄位以黃色背景高亮，方便快速辨識不同點。</p>
+
+<h4>比較欄位分組</h4>
+<div class="tbl-wrap"><table>
+<thead><tr><th>分組</th><th>欄位</th></tr></thead>
+<tbody>
+<tr><td>基本資訊</td><td>合約名稱、類型、狀態、風險等級、權責部門、使用部門</td></tr>
+<tr><td>廠商</td><td>廠商編號、廠商名稱</td></tr>
+<tr><td>期間</td><td>起日、迄日、通知天數、自動續約</td></tr>
+<tr><td>金額</td><td>幣別、合約總額（含稅）、月固定金額、計價方式</td></tr>
+<tr><td>預算</td><td>預算年度、大項、細項、會計科目、預算來源</td></tr>
+<tr><td>公司/部門</td><td>簽約公司、簽約部門、預算公司、預算部門</td></tr>
+<tr><td>人員</td><td>管理人、覆核人</td></tr>
+<tr><td>設定</td><td>需請購單、需驗收、需分攤</td></tr>
+</tbody>
+</table></div>
+
+<h4>UI 功能</h4>
+<ul class="rule-list">
+  <li>合約搜尋：即時搜尋（輸入關鍵字後呼叫清單 API），每次最多回傳 20 筆候選</li>
+  <li>「對調」按鈕：交換 A / B 兩份合約位置，不重新搜尋</li>
+  <li>「僅顯示差異」Toggle：過濾只顯示有差異的欄位</li>
+  <li>欄位分組篩選：Select 選擇特定分組只看該類欄位</li>
+  <li>差異計數：標題列顯示「共 N 個欄位，差異 M 個」</li>
+  <li>差異行整列黃底，相同行白底</li>
+</ul>
+
+<div class="alert alert-info">
+  <strong>無後端新端點</strong>：並排比較完全使用前端邏輯，呼叫現有 <code>GET /contract?search=</code> 搜尋合約，並在前端 diff 兩份資料。不需要後端修改。
+</div>
+</section>
+
+<!-- K1 -->
+<section id="k1-email">
+<h3>K1 📋 — Email 自動通知（待實作）</h3>
+<div class="alert alert-warn">此功能尚未實作，以下為規格設計文件。</div>
+
+<h4>觸發情境</h4>
+<div class="tbl-wrap"><table>
+<thead><tr><th>觸發事件</th><th>收件人</th><th>郵件主旨範例</th></tr></thead>
+<tbody>
+<tr><td>合約送審成功</td><td>各審核關卡 assigned_to</td><td>【待審核】CON-2026-0001 合約待您核准</td></tr>
+<tr><td>關卡核准/拒絕</td><td>合約管理人</td><td>【已核准/拒絕】CON-2026-0001 審核結果通知</td></tr>
+<tr><td>合約 30 天內到期</td><td>管理人 + 覆核人</td><td>【到期提醒】CON-2026-0001 將於 30 天後到期</td></tr>
+<tr><td>請款核准</td><td>申請人</td><td>【請款核准】$100,000 請款已核准</td></tr>
+<tr><td>保證金 30 天內到期</td><td>合約管理人</td><td>【保證金到期】履約保證金 2026-09-01 到期</td></tr>
+</tbody>
+</table></div>
+
+<h4>實作方向</h4>
+<ul class="rule-list">
+  <li>後端：新增 <code>EmailService</code>，使用 Python <code>smtplib</code> 或 <code>fastapi-mail</code></li>
+  <li>設定：<code>.env</code> 加入 <code>SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASS / EMAIL_FROM</code></li>
+  <li>整合點：排程服務呼叫 EmailService、審核端點觸發即時寄信</li>
+  <li>合約設定頁加「通知設定」Tab（目前已有 UI 框架，尚未串接後端）</li>
+</ul>
+</section>
+
+<!-- K3 -->
+<section id="k3-currency">
+<h3>K3 📋 — 多幣別匯率換算（待實作）</h3>
+<div class="alert alert-warn">此功能尚未實作，以下為規格設計文件。</div>
+
+<h4>需求說明</h4>
+<p>外幣合約（USD/JPY/EUR 等）在 Dashboard 及報表中統一以台幣（TWD）顯示，需依當日或指定日期的匯率換算。</p>
+
+<h4>資料模型設計</h4>
+<ul class="rule-list">
+  <li>新增 <code>exchange_rates</code> 資料表：currency_from, currency_to, rate, rate_date</li>
+  <li>排程每日 08:00 從公開匯率 API（如台灣銀行 Open API）自動更新</li>
+  <li>Dashboard KPI 卡加「換算幣別」切換按鈕</li>
+  <li>費用分析圖表統一以 TWD 顯示</li>
+</ul>
+</section>
+
+<!-- K4 -->
+<section id="k4-erp">
+<h3>K4 📋 — 財務系統匯出（待實作）</h3>
+<div class="alert alert-warn">此功能尚未實作，以下為規格設計文件。</div>
+
+<h4>需求說明</h4>
+<p>請款審核通過後，產生符合 ERP 系統匯入格式的 CSV 檔案，供財務人員直接匯入 ERP 無需重新鍵入。</p>
+
+<h4>CSV 欄位規劃</h4>
+<div class="tbl-wrap"><table>
+<thead><tr><th>ERP 欄位</th><th>來源欄位</th></tr></thead>
+<tbody>
+<tr><td>傳票日期</td><td>approved_at（請款核准時間）</td></tr>
+<tr><td>科目代碼</td><td>contracts.accounting_code</td></tr>
+<tr><td>供應商代碼</td><td>vendors.vendor_id</td></tr>
+<tr><td>金額</td><td>contract_claims.amount</td></tr>
+<tr><td>幣別</td><td>contracts.currency</td></tr>
+<tr><td>摘要</td><td>合約名稱 + 請款類型</td></tr>
+<tr><td>費用歸屬公司</td><td>contract_claims.cost_company</td></tr>
+</tbody>
+</table></div>
+
+<h4>實作方向</h4>
+<ul class="rule-list">
+  <li>後端：新增 <code>GET /contract/claims/erp-export?status=已核准&date_from=&date_to=</code></li>
+  <li>使用 Python <code>csv</code> 模組產生 <code>StreamingResponse</code></li>
+  <li>請款管理頁加「ERP 匯出」按鈕（需 contract_approve 權限）</li>
+</ul>
+</section>
+
+<!-- K6 -->
+<section id="k6-esign">
+<h3>K6 📋 — 電子簽核整合（待實作）</h3>
+<div class="alert alert-warn">此功能尚未實作，需外部電子簽核服務，複雜度最高。</div>
+
+<h4>需求說明</h4>
+<p>合約審核通過（生效中）後，自動將合約 PDF 發送給廠商進行電子簽署，廠商完成簽署後系統自動更新合約狀態。</p>
+
+<h4>整合架構（建議）</h4>
+<ul class="rule-list">
+  <li>電子簽核服務：DocuSign API 或台灣本地服務（如 eVidence 或 台灣網路認證）</li>
+  <li>觸發點：<code>approve_contract()</code> 成功後呼叫 e-sign API</li>
+  <li>Webhook：簽核服務回調後端 <code>POST /contract/esign-callback</code> 更新狀態</li>
+  <li>合約狀態新增：「待電子簽核」（審核通過 → 電子簽核中 → 生效中）</li>
+  <li>附件：合約附件中需有 PDF 版本才可發送簽核</li>
+</ul>
+
+<div class="alert alert-info">
+  <strong>前置條件</strong>：需先完成 K1 Email 通知功能，並確認廠商的電子信箱正確存在於 vendors.email 欄位。
+</div>
+</section>
+
+</section><!-- /phase-k -->
+
+<!-- ───── 頁尾 ───── -->
+<div style="margin-top:48px;padding:20px;text-align:center;font-size:15px;color:var(--muted);border-top:1px solid var(--border);">
+  合約管理系統操作暨技術手冊 v2.03.0 &nbsp;|&nbsp; 2026-06-01 &nbsp;|&nbsp; 集團 Portal
+</div>
+
+</main>
+</div>
+
+<script>
+mermaid.initialize({
+  startOnLoad: true,
+  theme: 'default',
+  er: { diagramPadding: 20, layoutDirection: 'TB', minEntityWidth: 100, entityPadding: 15 },
+  securityLevel: 'loose'
+});
+
+// 側欄 active 高亮
+const sections = document.querySelectorAll('section[id], h2[id], h3[id]');
+const navLinks  = document.querySelectorAll('.sidebar nav a');
+const observer  = new IntersectionObserver(entries => {
+  entries.forEach(e => {
+    if (e.isIntersecting) {
+      navLinks.forEach(a => a.classList.remove('active'));
+      const link = document.querySelector(`.sidebar nav a[href="#${e.target.id}"]`);
+      if (link) link.classList.add('active');
+    }
+  });
+}, { threshold: 0.3 });
+sections.forEach(s => observer.observe(s));
+</script>
+</body>
+</html>

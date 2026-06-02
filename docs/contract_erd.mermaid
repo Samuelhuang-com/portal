@@ -1,0 +1,204 @@
+erDiagram
+
+%% ════════════════════════════════════════════════════════
+%% 合約管理系統 — 完整 ERD
+%% 版本：v1.99.0　日期：2026-06-01
+%% 實線 = 資料庫 FK；虛線 = 邏輯對應（名稱冗餘儲存）
+%% ════════════════════════════════════════════════════════
+
+    vendors {
+        string  vendor_id        PK "廠商編號 VND-NNNN"
+        string  vendor_name         "廠商名稱（唯一）"
+        string  tax_id              "統一編號"
+        string  contact_person      "聯絡人"
+        string  phone               "聯絡電話"
+        string  email               "Email"
+        string  address             "地址"
+        string  payment_terms       "付款條件"
+        string  bank_name           "銀行名稱"
+        string  bank_account        "銀行帳號"
+        string  vendor_type         "廠商類別"
+        string  risk_level          "風險等級 低/中/高"
+        boolean is_critical         "是否關鍵供應商"
+        string  managing_company    "管理公司（邏輯對應 companies）"
+        datetime created_at         "建立時間"
+        datetime updated_at         "更新時間"
+    }
+
+    contracts {
+        string  contract_id          PK "合約編號 CON-YYYY-NNNN"
+        string  vendor_id            FK "廠商編號"
+        string  contract_name           "合約名稱"
+        string  contract_type           "合約類型"
+        string  contract_status         "草稿/審核中/生效中/即將到期/已終止"
+        string  responsible_dept        "權責部門"
+        date    start_date              "合約起日"
+        date    end_date                "合約迄日"
+        int     notification_days       "提前通知天數"
+        boolean auto_renewal            "是否自動續約"
+        string  currency                "幣別"
+        numeric total_amount_tax_included "合約總額（含稅）"
+        numeric monthly_fixed_amount    "月固定金額"
+        string  pricing_method          "計價方式"
+        int     budget_year             "預算年度"
+        string  budget_category_l1      "預算大項"
+        string  budget_category_l2      "預算細項"
+        string  accounting_code         "會計科目"
+        string  budget_source           "預算來源"
+        string  budget_control_method   "預算控管方式"
+        string  risk_level              "風險等級"
+        string  manager                 "管理人"
+        string  reviewer                "覆核人"
+        string  approved_by             "核准人"
+        datetime approved_at            "核准時間"
+        string  approval_comment        "審核意見"
+        string  signing_company         "簽約公司（邏輯→companies）"
+        string  signing_dept            "簽約權責部門（邏輯→departments）"
+        string  budget_company          "預算使用公司（邏輯→companies）"
+        string  budget_dept             "預算使用部門（邏輯→departments）"
+        string  pricing_spec            "計價規格（邏輯→pricing_specs）"
+        string  remarks                 "備註"
+        datetime created_at             "建立時間"
+        datetime updated_at             "更新時間"
+    }
+
+    contract_items {
+        int     id            PK "自增主鍵"
+        string  contract_id   FK "合約編號"
+        int     item_seq         "項次"
+        string  item_name        "項目名稱"
+        string  item_category    "項目類別"
+        numeric unit_price_tax_excluded "單價（未稅）"
+        numeric quantity         "數量"
+        string  unit             "單位"
+        numeric tax_rate         "稅率（%）"
+        numeric amount_tax_excluded "金額（未稅）"
+        numeric amount_tax_included "金額（含稅）"
+        boolean is_fixed         "是否固定金額"
+        datetime created_at      "建立時間"
+        datetime updated_at      "更新時間"
+    }
+
+    contract_claims {
+        int     id            PK "自增主鍵"
+        string  contract_id   FK "合約編號"
+        string  claim_type       "類型 請款/核銷/其他"
+        string  claim_date       "請款日期 YYYY-MM-DD"
+        string  invoice_no       "發票號碼"
+        numeric amount           "請款金額"
+        string  status           "待審核/已核准/已拒絕/已付款"
+        string  approver         "核准人"
+        string  cost_company     "費用歸屬公司（邏輯→companies）"
+        string  remarks          "備註"
+        text    review_log       "審核軌跡 JSON"
+        datetime created_at      "建立時間"
+        datetime updated_at      "更新時間"
+    }
+
+    contract_claim_attachments {
+        int     id               PK "自增主鍵"
+        int     claim_id         FK "請款 ID"
+        string  stored_filename     "磁碟檔名（UUID）"
+        string  original_filename   "原始檔名"
+        string  content_type        "MIME type"
+        int     file_size           "檔案大小（bytes）"
+        string  uploader            "上傳者帳號"
+        datetime created_at         "上傳時間"
+    }
+
+    contract_renewals {
+        int     id                 PK "自增主鍵"
+        string  contract_id        FK "原合約編號"
+        string  renewal_start_date    "續約起日 YYYY-MM-DD"
+        string  renewal_end_date      "續約迄日 YYYY-MM-DD"
+        numeric new_amount            "續約金額（含稅）"
+        text    renewal_reason        "續約原因"
+        string  applicant             "申請人"
+        string  applicant_dept        "申請部門"
+        string  status                "待審核/已核准/已拒絕/已撤回"
+        string  reviewer              "審核人"
+        datetime reviewed_at          "審核時間"
+        string  review_comment        "審核意見"
+        text    review_log            "審核軌跡 JSON"
+        datetime created_at           "建立時間"
+        datetime updated_at           "更新時間"
+    }
+
+    contract_attachments {
+        int     id               PK "自增主鍵"
+        string  contract_id      FK "合約編號"
+        string  stored_filename     "磁碟檔名（UUID）"
+        string  original_filename   "原始檔名"
+        string  content_type        "MIME type"
+        int     file_size           "檔案大小（bytes）"
+        string  uploader            "上傳者帳號"
+        datetime created_at         "上傳時間"
+    }
+
+    contract_cost_allocations {
+        int     id               PK "自增主鍵"
+        string  contract_id      FK "合約編號"
+        string  company_name        "分攤公司名稱（冗餘儲存）"
+        string  allocation_type     "percentage 或 fixed"
+        numeric value               "比例 0~100 或金額"
+        datetime created_at         "建立時間"
+    }
+
+    budget_categories {
+        int     id              PK "自增主鍵"
+        int     budget_year        "預算年度"
+        string  dept               "部門"
+        string  category_l1        "預算大項"
+        string  category_l2        "預算細項"
+        string  accounting_code    "會計科目"
+        string  payment_code       "付款科目"
+        boolean is_enabled         "是否啟用"
+        date    effective_date     "生效日期"
+        date    disabled_date      "停用日期"
+        string  maintain_unit      "維護單位"
+        datetime created_at        "建立時間"
+        datetime updated_at        "更新時間"
+    }
+
+    companies {
+        int     id          PK "自增主鍵"
+        string  name           "公司名稱（唯一）"
+        boolean is_active      "是否啟用"
+        datetime created_at    "建立時間"
+    }
+
+    departments {
+        int     id          PK "自增主鍵"
+        string  name           "部門名稱"
+        int     company_id  FK "所屬公司 ID"
+        boolean is_active      "是否啟用"
+        datetime created_at    "建立時間"
+    }
+
+    pricing_specs {
+        int     id          PK "自增主鍵"
+        string  name           "計價規格名稱（唯一）"
+        boolean is_active      "是否啟用"
+        datetime created_at    "建立時間"
+    }
+
+%% ════ 資料庫 FK 關係（實線） ════
+
+    vendors          ||--o{ contracts                  : "承包 1..N 合約"
+    contracts        ||--o{ contract_items             : "包含 N 個明細項目"
+    contracts        ||--o{ contract_claims            : "產生 N 筆請款"
+    contracts        ||--o{ contract_renewals          : "提出 N 次續約申請"
+    contracts        ||--o{ contract_attachments       : "上傳 N 個合約附件"
+    contracts        ||--o{ contract_cost_allocations  : "設定 N 筆費用分攤"
+    contract_claims  ||--o{ contract_claim_attachments : "上傳 N 個請款附件"
+    companies        ||--o{ departments                : "旗下 N 個部門"
+
+%% ════ 邏輯對應（虛線，名稱冗餘儲存） ════
+
+    companies        }o..o{ contracts                  : "signing_company / budget_company（名稱）"
+    companies        }o..o{ contract_claims            : "cost_company（名稱）"
+    companies        }o..o{ contract_cost_allocations  : "company_name（名稱）"
+    companies        }o..o{ vendors                    : "managing_company（名稱）"
+    departments      }o..o{ contracts                  : "signing_dept / budget_dept（名稱）"
+    pricing_specs    }o..o{ contracts                  : "pricing_spec（名稱）"
+    budget_categories }o..o{ contracts                 : "budget_category_l1/l2（名稱）"

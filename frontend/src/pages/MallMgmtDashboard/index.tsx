@@ -18,7 +18,7 @@ import {
   Row, Col, Card, Statistic, Typography, Breadcrumb,
   Select, Space, Tooltip, DatePicker, Button,
   Progress, Alert, Tag, Tabs, Table, Divider, Badge,
-  Spin,
+  Spin, message,
 } from 'antd'
 import {
   HomeOutlined, ReloadOutlined, ShopOutlined, DownloadOutlined,
@@ -55,13 +55,12 @@ import {
 import { SourceStatusCard }              from '@/components/SourceStatusCard'
 import {
   fetchMallDailyHours, fetchMallMonthlyHours, fetchMallPersonHours,
-  exportMallOverviewPptx,
   MALL_CATEGORY_TAG_COLORS,
   type MallDailyHoursData, type MallDailyRow,
   type MallMonthlyHoursData, type MallMonthlyRow,
   type MallPersonHoursData, type MallPersonRow,
-  type MallPptxPayload,
 } from '@/api/mallOverview'
+import { exportRepairPptx } from '@/api/repairPptExport'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 import type { PMStats }                       from '@/types/periodicMaintenance'
@@ -129,7 +128,7 @@ function normalizePM(data: PMStats | null) {
     case_count:      kpi?.total           ?? 0,
     completed_count: kpi?.completed       ?? 0,
     completion_rate: kpi?.completion_rate ?? 0,
-    abnormal_count:  kpi?.abnormal        ?? 0,
+    abnormal_count:  (kpi?.total ?? 0) - (kpi?.completed ?? 0),  // 未完成 = 異常
     overdue_count:   kpi?.overdue         ?? 0,
     is_placeholder:  !data || !kpi,
     category_breakdown: data?.category_stats?.map(c => ({ name: c.category, count: c.total, rate: c.rate })),
@@ -563,47 +562,18 @@ export default function MallMgmtDashboardPage() {
   }
 
   // ── PPTX 匯出 ────────────────────────────────────────────────────────────
-  const handleExportPptx = async () => {
+  const handleExportPptx = useCallback(async () => {
     setExportLoading(true)
     try {
-      const source_cards = SOURCE_CONFIG.map(cfg => {
-        const s = summaryMap[cfg.key] ?? { case_count: 0, completed_count: 0, completion_rate: 0, abnormal_count: 0, overdue_count: 0, work_hours: 0, actual_hours: 0 }
-        return {
-          source_name:     cfg.label,
-          source_key:      cfg.key,
-          case_count:      s.case_count,
-          completed_count: s.completed_count,
-          completion_rate: s.completion_rate,
-          abnormal_count:  s.abnormal_count,
-          overdue_count:   s.overdue_count,
-          work_hours:      s.work_hours,
-          actual_hours:    s.actual_hours ?? 0,
-        }
-      })
-      const payload: MallPptxPayload = {
-        kpi_summary: {
-          total_cases:      totalCases,
-          completed_cases:  totalCompleted,
-          total_work_hours: totalWorkHours,
-          abnormal_count:   totalAbnormal,
-          overdue_count:    totalOverdue,
-        },
-        source_cards,
-        repair_costs: {
-          outsource_fee:   kpi?.annual_outsource_fee   ?? 0,
-          maintenance_fee: kpi?.annual_maintenance_fee ?? 0,
-          deduction_fee:   kpi?.annual_deduction_fee   ?? 0,
-          month_total_fee: (kpi?.annual_outsource_fee ?? 0) + (kpi?.annual_maintenance_fee ?? 0),
-          period_label:    ytdLabel,
-        },
-      }
-      await exportMallOverviewPptx(year, month > 0 ? month : new Date().getMonth() + 1, payload)
-    } catch (e) {
-      console.error('PPTX 匯出失敗', e)
+      await exportRepairPptx({ module: 'luqun', year, month: month > 0 ? month : new Date().getMonth() + 1 })
+      message.success('PowerPoint 匯出成功！')
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      message.error(`匯出失敗：${msg}`)
     } finally {
       setExportLoading(false)
     }
-  }
+  }, [year, month])
 
   // ════════════════════════════════════════════════════════════════════════════
   // TAB A：Dashboard 總覽
@@ -1665,49 +1635,7 @@ export default function MallMgmtDashboardPage() {
                 loading={exportLoading}
                 disabled={month === 0}
                 style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)', color: '#fff', border: 'none' }}
-                onClick={async () => {
-                  if (month === 0) return
-                  setExportLoading(true)
-                  try {
-                    const sources = SOURCE_CONFIG.map(c => {
-                      const s = summaryMap[c.key as keyof typeof summaryMap]
-                      return {
-                        source_name:     c.label,
-                        source_key:      c.key,
-                        case_count:      Math.max(0, s?.case_count      ?? 0),
-                        completed_count: s?.completed_count ?? 0,
-                        completion_rate: Math.round((s?.completion_rate ?? 0) * 10) / 10,
-                        abnormal_count:  s?.abnormal_count  ?? 0,
-                        overdue_count:   s?.overdue_count   ?? 0,
-                        work_hours:      Math.max(0, s?.work_hours  ?? 0),
-                        actual_hours:    s?.actual_hours ?? 0,
-                      }
-                    })
-                    const payload: MallPptxPayload = {
-                      kpi_summary: {
-                        total_cases:      totalCases,
-                        completed_cases:  totalCompleted,
-                        total_work_hours: Math.round(totalWorkHours * 10) / 10,
-                        abnormal_count:   totalAbnormal,
-                        overdue_count:    totalOverdue,
-                      },
-                      source_cards: sources,
-                      repair_costs: {
-                        outsource_fee:   kpi?.annual_outsource_fee   ?? 0,
-                        maintenance_fee: kpi?.annual_maintenance_fee ?? 0,
-                        deduction_fee:   kpi?.annual_deduction_fee   ?? 0,
-                        month_total_fee: (kpi?.month_outsource_fee   ?? 0)
-                                       + (kpi?.month_maintenance_fee ?? 0),
-                        period_label:    ytdLabel,
-                      },
-                    }
-                    await exportMallOverviewPptx(year, month, payload)
-                  } catch (e) {
-                    console.error('PPTX export failed', e)
-                  } finally {
-                    setExportLoading(false)
-                  }
-                }}
+                onClick={handleExportPptx}
               >
                 匯出 PowerPoint
               </Button>

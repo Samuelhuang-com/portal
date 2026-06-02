@@ -107,6 +107,7 @@ from app.routers import (
     hotel_ppt_export,
     repair_ppt_export,
     contract,
+    reference_data,
 )
 
 
@@ -641,6 +642,112 @@ def _migrate_ihg_rm_time_fields():
                 print(f"[Migration] ihg_rm_master.{col} added")
 
 
+def _seed_reference_data():
+    """F1 — 首次啟動時植入公司別 / 部門別初始資料（冪等：若已有資料則跳過）。"""
+    from app.models.reference_data import Company  # noqa: F401 (unused — seed uses raw SQL)
+    with engine.connect() as conn:
+        from sqlalchemy import text
+        # ── 公司別 ──────────────────────────────────────────────────────────
+        count = conn.execute(text("SELECT COUNT(*) FROM companies")).scalar()
+        if count == 0:
+            company_names = ["大直", "樂群", "台中", "自由", "總公司"]
+            for name in company_names:
+                conn.execute(
+                    text("INSERT INTO companies (name, is_active, created_at) VALUES (:name, 1, CURRENT_TIMESTAMP)"),
+                    {"name": name},
+                )
+            conn.commit()
+            print(f"[Seed] companies: inserted {len(company_names)} records")
+
+        # ── SLA 指標類型（K2）─────────────────────────────────────────────────
+        try:
+            sla_count = conn.execute(text("SELECT COUNT(*) FROM sla_metric_types")).scalar()
+            if sla_count == 0:
+                default_types = [
+                    ("可用率",   "以百分比衡量服務系統的可用程度（如 99.9%）"),
+                    ("回應時間", "系統或服務的平均回應時間"),
+                    ("解決時間", "問題從通報到解決所需時間"),
+                    ("準時率",   "服務依約準時完成的百分比"),
+                    ("自訂",     "其他自訂指標"),
+                ]
+                for sname, sdesc in default_types:
+                    conn.execute(
+                        text("INSERT INTO sla_metric_types (name, description, is_active, created_at) "
+                             "VALUES (:name, :desc, 1, CURRENT_TIMESTAMP)"),
+                        {"name": sname, "desc": sdesc},
+                    )
+                conn.commit()
+                print(f"[Seed] sla_metric_types: inserted {len(default_types)} records")
+        except Exception:
+            pass  # 資料表尚未建立時靜默跳過（create_all 後再 seed）
+
+        # ── 部門別 ──────────────────────────────────────────────────────────
+        dept_count = conn.execute(text("SELECT COUNT(*) FROM departments")).scalar()
+        if dept_count == 0:
+            dept_names = [
+                "管理部", "資訊部", "工程部", "工務部", "財務部",
+                "營業部", "採購部", "房務部", "商場部", "客房部",
+                "餐飲部", "客服部", "安全部",
+            ]
+            companies = conn.execute(text("SELECT id FROM companies")).fetchall()
+            for company_row in companies:
+                cid = company_row[0]
+                for dname in dept_names:
+                    conn.execute(
+                        text(
+                            "INSERT INTO departments (name, company_id, is_active, created_at) "
+                            "VALUES (:name, :cid, 1, CURRENT_TIMESTAMP)"
+                        ),
+                        {"name": dname, "cid": cid},
+                    )
+            conn.commit()
+            print(f"[Seed] departments: inserted {len(dept_names)} × {len(companies)} records")
+
+
+def _migrate_f7_vendor_managing_company():
+    """F7 — vendors.managing_company（nullable VARCHAR 100）。"""
+    from sqlalchemy import text
+    with engine.connect() as conn:
+        result = conn.execute(text("PRAGMA table_info(vendors)"))
+        existing = {row[1] for row in result.fetchall()}
+        if "managing_company" not in existing:
+            conn.execute(text("ALTER TABLE vendors ADD COLUMN managing_company VARCHAR(100)"))
+            conn.commit()
+            print("[Migration] vendors.managing_company added")
+
+
+def _migrate_f6_claim_cost_company():
+    """F6 — contract_claims.cost_company（nullable VARCHAR 100）。"""
+    from sqlalchemy import text
+    with engine.connect() as conn:
+        result = conn.execute(text("PRAGMA table_info(contract_claims)"))
+        existing = {row[1] for row in result.fetchall()}
+        if "cost_company" not in existing:
+            conn.execute(text("ALTER TABLE contract_claims ADD COLUMN cost_company VARCHAR(100)"))
+            conn.commit()
+            print("[Migration] contract_claims.cost_company added")
+
+
+def _migrate_f3_contract_fields():
+    """F3 — contracts 表新增 signing_company / signing_dept / budget_company / budget_dept / pricing_spec（nullable）。"""
+    from sqlalchemy import text
+    new_cols = [
+        ("signing_company", "VARCHAR(100)"),
+        ("signing_dept",    "VARCHAR(100)"),
+        ("budget_company",  "VARCHAR(100)"),
+        ("budget_dept",     "VARCHAR(100)"),
+        ("pricing_spec",    "VARCHAR(200)"),
+    ]
+    with engine.connect() as conn:
+        result = conn.execute(text("PRAGMA table_info(contracts)"))
+        existing = {row[1] for row in result.fetchall()}
+        for col, typedef in new_cols:
+            if col not in existing:
+                conn.execute(text(f"ALTER TABLE contracts ADD COLUMN {col} {typedef}"))
+                conn.commit()
+                print(f"[Migration] contracts.{col} added")
+
+
 def _migrate_contract_approval_fields():
     """
     欄位補丁（2026-05-28）：為 contracts 表加入合約審核三欄位
@@ -1071,7 +1178,7 @@ async def lifespan(app: FastAPI):
     import app.models.api_access_log            # noqa: F401  使用監控日誌
     import app.models.ppt_export_config        # noqa: F401  PPT 匯出設定
     import app.models.ppt_export_history       # noqa: F401  PPT 匯出歷史紀錄
-    import app.models.contract                 # noqa: F401  合約管理（含 ContractClaim）
+    import app.models.contract                 # noqa: F401  合約管理（含 ContractClaim + H1~H4 新表）
 
     # B4F 扁平化遷移：刪除舊 batch 表 + 檢查 item 表欄位（必須在 create_all 之前）
     _migrate_b4f_flatten()
@@ -1188,6 +1295,24 @@ async def lifespan(app: FastAPI):
     _migrate_contract_approval_fields()
     print("[Portal] contracts approval fields migration checked.")
     # contract_attachments 資料表已由 app.models.contract import + create_all 自動建立
+
+    # F1（2026-06-01）：基礎參考資料種子（公司別 / 部門別 / 計價規格）
+    import app.models.reference_data  # noqa: F401 — 確保 create_all 建立資料表
+    _seed_reference_data()
+    print("[Portal] reference_data seed checked.")
+
+    # F3（2026-06-01）：contracts 新欄位 + contract_cost_allocations 資料表
+    import app.models.contract  # noqa: F401 — ContractCostAllocation 已在其中
+    _migrate_f3_contract_fields()
+    print("[Portal] F3 contract fields migration checked.")
+
+    # F6（2026-06-01）：contract_claims.cost_company
+    _migrate_f6_claim_cost_company()
+    print("[Portal] F6 claim cost_company migration checked.")
+
+    # F7（2026-06-01）：vendors.managing_company
+    _migrate_f7_vendor_managing_company()
+    print("[Portal] F7 vendor managing_company migration checked.")
 
     # 選單設定補丁（2026-04-28）：隱藏舊 custom_1777348120465，補齊 mall-pm-group 子項 DB 記錄
     _seed_menu_config_mall_pm_group()
@@ -1329,6 +1454,50 @@ async def lifespan(app: FastAPI):
             misfire_grace_time=3600,
         )
         print("[Portal] Contract expiry notification scheduled: daily at 09:00")
+
+        # G1：合約預算使用率警示（每日 09:30）
+        from app.services.contract_budget_alert import check_budget_alerts as _budget_alert
+        _scheduler.add_job(
+            _budget_alert,
+            trigger=_CronTrigger(hour=9, minute=30),
+            id="contract_budget_alert",
+            replace_existing=True,
+            misfire_grace_time=3600,
+        )
+        print("[Portal] Contract budget alert scheduled: daily at 09:30")
+
+        # G4：合約到期自動終止（每日 01:00）
+        from app.services.contract_auto_close import auto_close_expired_contracts as _auto_close
+        _scheduler.add_job(
+            _auto_close,
+            trigger=_CronTrigger(hour=1, minute=0),
+            id="contract_auto_close",
+            replace_existing=True,
+            misfire_grace_time=3600,
+        )
+        print("[Portal] Contract auto-close scheduled: daily at 01:00")
+
+        # H3：分期付款逾期提醒（每日 09:45）
+        from app.services.contract_payment_alert import notify_overdue_payment_schedules as _payment_alert
+        _scheduler.add_job(
+            _payment_alert,
+            trigger=_CronTrigger(hour=9, minute=45),
+            id="contract_payment_alert",
+            replace_existing=True,
+            misfire_grace_time=3600,
+        )
+        print("[Portal] Contract payment alert scheduled: daily at 09:45")
+
+        # I3：保證金退還提醒（每日 10:00）
+        from app.services.contract_deposit_alert import notify_expiring_deposits as _deposit_alert
+        _scheduler.add_job(
+            _deposit_alert,
+            trigger=_CronTrigger(hour=10, minute=0),
+            id="contract_deposit_alert",
+            replace_existing=True,
+            misfire_grace_time=3600,
+        )
+        print("[Portal] Contract deposit alert scheduled: daily at 10:00")
 
         _scheduler.start()
         print("[Portal] AutoSync scheduler started (cron-aligned, default every 30 minutes).")
@@ -1719,6 +1888,13 @@ app.include_router(
     contract.router,
     prefix=f"{API_PREFIX}/contract",
     tags=["合約管理"],
+)
+
+# ── F1：基礎參考資料（公司別 / 部門別 / 計價規格）─────────────────────────
+app.include_router(
+    reference_data.router,
+    prefix=f"{API_PREFIX}/settings",
+    tags=["基礎參考資料"],
 )
 
 # ── 靜態說明文件（docs-static）──────────────────────────────────────────────

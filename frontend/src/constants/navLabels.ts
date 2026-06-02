@@ -227,6 +227,8 @@ export const NAV_PAGE = {
   contractExpiring:     '到期預警',             // ← route /contract/expiring (Phase 2)
   contractClaims:       '請款管理',             // ← route /contract/claims   (Phase 2)
   contractRenewals:     '續約管理',             // ← route /contract/renewals (Phase 3)
+  contractCalendar:     '合約行事曆',           // ← route /contract/calendar  (G2)
+  contractCompare:      '合約比較',             // ← route /contract/compare   (K5)
 
   // PPT 匯出設定（飯店 Dashboard，全公司共用設定，一階選單）
   pptExport:            '飯店 Dashboard PPT 匯出設定',  // ← route /ppt-export
