@@ -864,7 +864,10 @@ def _build_repair_pptx(module: str, year: int, month: int, db: Session) -> Bytes
     # ══════════════════════════════════════════════════════════════════════════
     # Slide D — 3.3 報修類型各類別（表格）
     # ══════════════════════════════════════════════════════════════════════════
-    year_total = type_stats.get("year_total", 0) or 1
+    # 年度佔比：直接取 service 計算好的 cum_pct（= row_total / len(year_cases)），
+    # 與前端 3.3 TAB「年度佔比」欄位口徑完全一致。
+    # 不再自行用 year_total 重算（year_total 只計 REPAIR_TYPE_ORDER 內且 month 非 None 的案件，
+    # 分母不同會造成數字差異）。
     sorted_type_rows = sorted(type_rows, key=lambda r: -r.get("row_total", 0))
     type_table_rows = []
     for r in sorted_type_rows:
@@ -873,7 +876,7 @@ def _build_repair_pptx(module: str, year: int, month: int, db: Session) -> Bytes
         row_d = {
             "type":    r["type"],
             "total":   str(r.get("row_total", 0)),
-            "pct":     f"{round(r.get('row_total',0) / year_total * 100, 1)}%",
+            "pct":     f"{r.get('cum_pct', 0)}%",
         }
         for m in range(1, 13):
             v = r.get("monthly", {}).get(m, 0)
@@ -1105,8 +1108,7 @@ def export_repair_pptx(
 # 診斷端點 — 測試 matplotlib 圖表生成（管理員專用）
 # ═══════════════════════════════════════════════════════
 
-@router.get("/diag/chart", summary="測試 matplotlib 圖表生成（管理員專用）",
-            dependencies=[Depends(get_current_user)])
+@router.get("/diag/chart", summary="測試 matplotlib 圖表生成（免登入診斷用）")
 def diag_chart():
     """
     回傳 matplotlib 安裝狀態與測試圖表生成結果。
