@@ -172,7 +172,7 @@ def _make_pareto_chart(type_rows: list) -> Optional[BytesIO]:
         plt.close(fig)
         return buf
     except Exception as e:
-        logger.warning("Pareto chart error: %s", e)
+        logger.warning("Pareto chart error: %s", e, exc_info=True)
         return None
 
 
@@ -239,7 +239,7 @@ def _make_pie_chart(type_rows: list) -> Optional[BytesIO]:
         plt.close(fig)
         return buf
     except Exception as e:
-        logger.warning("Pie chart error: %s", e)
+        logger.warning("Pie chart error: %s", e, exc_info=True)
         return None
 
 
@@ -1099,3 +1099,91 @@ def export_repair_pptx(
             "Content-Disposition": f"attachment; filename*=UTF-8''{encoded}",
         },
     )
+
+
+# ═══════════════════════════════════════════════════════
+# 診斷端點 — 測試 matplotlib 圖表生成（管理員專用）
+# ═══════════════════════════════════════════════════════
+
+@router.get("/diag/chart", summary="測試 matplotlib 圖表生成（管理員專用）",
+            dependencies=[Depends(get_current_user)])
+def diag_chart():
+    """
+    回傳 matplotlib 安裝狀態與測試圖表生成結果。
+    若圖表生成失敗，回傳完整 error traceback 供除錯用。
+    """
+    import sys, traceback as _tb
+
+    result: dict = {}
+
+    # 1. 版本資訊
+    try:
+        import matplotlib
+        result["matplotlib_version"] = matplotlib.__version__
+        result["matplotlib_path"]    = matplotlib.__file__
+    except Exception as e:
+        result["matplotlib_import_error"] = str(e)
+        return result
+
+    # 2. 字型偵測
+    try:
+        font = _cjk_font()
+        result["cjk_font"] = font or "（找不到 CJK 字型，將使用預設字型）"
+    except Exception as e:
+        result["cjk_font_error"] = str(e)
+
+    # 3. Agg backend 測試
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        result["backend"] = matplotlib.get_backend()
+    except Exception as e:
+        result["backend_error"] = _tb.format_exc()
+        return result
+
+    # 4. 簡單圖表生成測試
+    try:
+        from io import BytesIO
+        fig, ax = plt.subplots(figsize=(4, 2), dpi=72)
+        ax.bar(["A", "B", "C"], [3, 7, 5])
+        ax.set_title("測試圖表")
+        buf = BytesIO()
+        fig.savefig(buf, format="png", dpi=72, bbox_inches="tight")
+        buf.seek(0)
+        size = len(buf.read())
+        plt.close(fig)
+        result["simple_chart_ok"]     = True
+        result["simple_chart_bytes"]  = size
+    except Exception:
+        result["simple_chart_ok"]     = False
+        result["simple_chart_error"]  = _tb.format_exc()
+        return result
+
+    # 5. 柏拉圖測試（使用假資料）
+    fake_rows = [
+        {"type": "空調", "row_total": 40},
+        {"type": "衛廁", "row_total": 25},
+        {"type": "機電", "row_total": 15},
+        {"type": "建築", "row_total": 10},
+        {"type": "消防", "row_total": 5},
+        {"type": "其他", "row_total": 5},
+    ]
+    try:
+        buf = _make_pareto_chart(fake_rows)
+        result["pareto_chart_ok"]    = buf is not None
+        result["pareto_chart_bytes"] = len(buf.read()) if buf else 0
+    except Exception:
+        result["pareto_chart_ok"]    = False
+        result["pareto_chart_error"] = _tb.format_exc()
+
+    try:
+        buf = _make_pie_chart(fake_rows)
+        result["pie_chart_ok"]    = buf is not None
+        result["pie_chart_bytes"] = len(buf.read()) if buf else 0
+    except Exception:
+        result["pie_chart_ok"]    = False
+        result["pie_chart_error"] = _tb.format_exc()
+
+    result["python_version"] = sys.version
+    return result
