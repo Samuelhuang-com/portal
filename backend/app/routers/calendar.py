@@ -36,8 +36,10 @@ from app.models.mall_periodic_maintenance import (
     MallPeriodicMaintenanceBatch,
     MallPeriodicMaintenanceItem,
 )
+from app.models.mall_pm_schedule import MallPMSchedule
 from app.models.pm_plan import PmPlanItem
 from app.models.full_building_maintenance import FullBldgPMBatch, FullBldgPMItem
+from app.models.full_bldg_pm_schedule import FullBldgPMSchedule
 from app.models.b1f_inspection import B1FInspectionBatch
 from app.models.b2f_inspection import B2FInspectionBatch
 from app.models.rf_inspection import RFInspectionBatch
@@ -233,6 +235,110 @@ def _collect_mall_pm(db: Session, start: date, end: date) -> List[CalendarEventO
                 zone         = "商場",
                 ragic_url    = f"https://ap12.ragic.com/soutlet001/periodic-maintenance/18/{batch.ragic_id}",
             ))
+    return events
+
+
+def _collect_mall_pm_schedule(db: Session, start: date, end: date) -> List[CalendarEventOut]:
+    """
+    收集商場 Portal 自有排程事件（mall_pm_schedule.scheduled_date）。
+
+    行事曆整合邏輯：
+      - scheduled_date 格式 "MM/DD"；搭配 year_month[:5]（"YYYY/"）組出完整日期
+      - 只取落在 [start, end] 日期範圍內的記錄
+      - 與 _collect_mall_pm（Ragic 批次）合併時，以本函式事件為優先（相同 title+date 去重）
+    """
+    events: List[CalendarEventOut] = []
+    color = EVENT_TYPE_COLORS["mall_pm"]
+    label = EVENT_TYPE_LABELS["mall_pm"]
+
+    recs = (
+        db.query(MallPMSchedule)
+        .filter(
+            MallPMSchedule.scheduled_date != "",
+        )
+        .all()
+    )
+
+    for rec in recs:
+        item_date = _pm_item_full_date(rec.year_month, rec.scheduled_date)
+        if not item_date or not (start <= item_date <= end):
+            continue
+
+        if rec.is_completed or (rec.start_time and rec.end_time):
+            status, status_label = "completed", "已完成"
+        elif rec.abnormal_flag:
+            status, status_label = "abnormal", "異常"
+        elif rec.start_time:
+            status, status_label = "in_progress", "進行中"
+        else:
+            status, status_label = "pending", "待執行"
+
+        events.append(CalendarEventOut(
+            id           = f"mall_pm_sched_{rec.id}",
+            title        = f"[商場保養] {rec.task_name}",
+            start        = _date_to_iso(item_date),
+            all_day      = True,
+            event_type   = "mall_pm",
+            module_label = label,
+            source_id    = str(rec.id),
+            status       = status,
+            status_label = status_label,
+            responsible  = rec.executor_name or "",
+            description  = f"{rec.category} | {rec.location} | {rec.frequency}",
+            deep_link    = "/mall/periodic-maintenance",
+            color        = color,
+            zone         = "商場",
+        ))
+
+    return events
+
+
+def _collect_full_bldg_pm_schedule(db: Session, start: date, end: date) -> List[CalendarEventOut]:
+    """
+    收集全棟 Portal 排程事件（full_bldg_pm_schedule.scheduled_date）。
+    與 _collect_full_bldg_pm（Ragic 批次）合併時，以本函式事件為優先（相同 title+date 去重）。
+    """
+    events: List[CalendarEventOut] = []
+    color = EVENT_TYPE_COLORS["full_pm"]
+    label = EVENT_TYPE_LABELS["full_pm"]
+
+    recs = (
+        db.query(FullBldgPMSchedule)
+        .filter(FullBldgPMSchedule.scheduled_date != "")
+        .all()
+    )
+
+    for rec in recs:
+        item_date = _pm_item_full_date(rec.year_month, rec.scheduled_date)
+        if not item_date or not (start <= item_date <= end):
+            continue
+
+        if rec.is_completed or (rec.start_time and rec.end_time):
+            status, status_label = "completed", "已完成"
+        elif rec.abnormal_flag:
+            status, status_label = "abnormal", "異常"
+        elif rec.start_time:
+            status, status_label = "in_progress", "進行中"
+        else:
+            status, status_label = "pending", "待執行"
+
+        events.append(CalendarEventOut(
+            id           = f"full_pm_sched_{rec.id}",
+            title        = f"[全棟維護] {rec.task_name}",
+            start        = _date_to_iso(item_date),
+            all_day      = True,
+            event_type   = "full_pm",
+            module_label = label,
+            source_id    = str(rec.id),
+            status       = status,
+            status_label = status_label,
+            responsible  = rec.executor_name or "",
+            description  = f"{rec.category} | {rec.location} | {rec.frequency}",
+            deep_link    = "/full-building/periodic-maintenance",
+            color        = color,
+            zone         = "公區",
+        ))
+
     return events
 
 
@@ -554,9 +660,21 @@ def get_calendar_events(
     if _should_include("hotel_pm",   types):
         all_events.extend(_collect_hotel_pm(db, start_date, end_date))
     if _should_include("mall_pm",    types):
-        all_events.extend(_collect_mall_pm(db, start_date, end_date))
+        # 合併 Ragic 批次事件 + Portal 排程事件；Portal 排程優先（相同 title+date 去重）
+        batch_events  = _collect_mall_pm(db, start_date, end_date)
+        sched_events  = _collect_mall_pm_schedule(db, start_date, end_date)
+        sched_keys    = {(e.title, e.start) for e in sched_events}
+        merged_mall   = [e for e in batch_events if (e.title, e.start) not in sched_keys]
+        merged_mall  += sched_events
+        all_events.extend(merged_mall)
     if _should_include("full_pm",    types):
-        all_events.extend(_collect_full_bldg_pm(db, start_date, end_date))
+        # 合併 Ragic 批次事件 + Portal 排程事件；Portal 排程優先（相同 title+date 去重）
+        full_batch_events = _collect_full_bldg_pm(db, start_date, end_date)
+        full_sched_events = _collect_full_bldg_pm_schedule(db, start_date, end_date)
+        full_sched_keys   = {(e.title, e.start) for e in full_sched_events}
+        merged_full       = [e for e in full_batch_events if (e.title, e.start) not in full_sched_keys]
+        merged_full      += full_sched_events
+        all_events.extend(merged_full)
     if _should_include("pm_plan",    types):
         all_events.extend(_collect_pm_plan(db, start_date, end_date))
     if _should_include("inspection", types):

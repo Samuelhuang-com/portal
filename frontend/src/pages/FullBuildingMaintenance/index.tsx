@@ -1,5 +1,5 @@
 /**
- * 全棟例行維護主頁
+ * 全棟例行維護主頁 (v2)
  *
  * Tab 1「Dashboard」：KPI 六卡（含保養時間）+ 類別 Bar 圖 + 狀態 Donut 圖 + 逾期/即將到期預警
  * Tab 2「每日巡檢表」：整棟巡檢每日巡檢表
@@ -10,7 +10,7 @@
  * Tab 7「年度計劃表」：12欄矩陣視圖
  * Tab 8「批次清單」：保養批次列表，含進度條、狀態標籤、操作入口
  */
-import { useEffect, useState, useCallback, type CSSProperties } from 'react'
+import React, { useEffect, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Row, Col, Card, Statistic, Table, Tag, Button, Space,
@@ -87,11 +87,11 @@ const ANNUAL_CELL_STYLE: Record<string, { icon: string; bg: string; color: strin
   no_frequency:{ icon: '∅',  bg: '#f5f5f5', color: '#ccc' },
 }
 
-const ANNUAL_TH: CSSProperties = {
+const ANNUAL_TH: React.CSSProperties = {
   padding: '6px 8px', fontWeight: 600, border: '1px solid #e8e8e8',
   whiteSpace: 'nowrap', textAlign: 'left',
 }
-const ANNUAL_TD: CSSProperties = {
+const ANNUAL_TD: React.CSSProperties = {
   padding: '4px 8px', border: '1px solid #f0f0f0', verticalAlign: 'middle',
 }
 
@@ -791,7 +791,7 @@ export default function FullBuildingMaintenancePage() {
     setOverdueLoading(true)
     try {
       const res = await getFullBldgOverdueSchedule()
-      setOverdueItems(res.items)
+      setOverdueItems(res.items ?? [])
     } catch {
       setOverdueItems([])
     } finally {
@@ -1558,7 +1558,9 @@ export default function FullBuildingMaintenancePage() {
 
   // ── 排程管理 Tab ──────────────────────────────────────────────────────────
 
-  const filteredSchedItems = schedItems.filter(item => {
+  const safeSchedItems = schedItems ?? []
+
+  const filteredSchedItems = safeSchedItems.filter(item => {
     if (schedCatFilter && item.category !== schedCatFilter) return false
     if (schedStatusFilter) {
       if (schedStatusFilter === 'abnormal') return item.abnormal_flag
@@ -1567,7 +1569,7 @@ export default function FullBuildingMaintenancePage() {
     return true
   })
 
-  const schedCatOptions = [...new Set(schedItems.map(i => i.category))].map(c => ({ value: c, label: c }))
+  const schedCatOptions = [...new Set(safeSchedItems.map(i => i.category).filter(Boolean))].map(c => ({ value: c, label: c }))
 
   const schedColumns: ColumnsType<FullBldgPMScheduleItem> = [
     { title: '類別', dataIndex: 'category', width: 80,
@@ -1706,7 +1708,7 @@ export default function FullBuildingMaintenancePage() {
       <div style={{ cursor: 'pointer' }} onClick={() => setOverdueExpanded(e => !e)}>
         <Divider>
           <Space>
-            <Badge count={overdueItems.length} size="small">
+            <Badge count={(overdueItems ?? []).length} size="small">
               <Text style={{ fontSize: 13 }}>逾期未執行（跨月累積）</Text>
             </Badge>
             <Text type="secondary" style={{ fontSize: 12 }}>{overdueExpanded ? '▲ 收合' : '▼ 展開'}</Text>
@@ -2287,7 +2289,7 @@ function CatalogModal({
           rowKey={(r) => `${r.category}-${r.seq_no}-${r.task_name}`}
           size="small"
           scroll={{ x: 800 }}
-          pagination={{ pageSize: 15, showTotal: (t) => `共 ${t} 項`, showSizeChanger: false }}
+          pagination={{ pageSize: 15, showTotal: (t: number) => '\u5171 ' + t + ' \u9805', showSizeChanger: false }}
         />
       )}
     </Modal>

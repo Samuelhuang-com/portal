@@ -111,6 +111,7 @@ export const NAV_PAGE = {
   periodicMaintenance:    '飯店例行維護',
   ihgRoomMaintenance:     '2. IHG客房保養',             // ← 新增：年度矩陣保養
   otherTasks:             '主管交辦／緊急事件',          // ← 新增：主管交辦 + 緊急事件 2 TAB
+  hotelRoutineMaintenance: '1.2 飯店例行維護',           // ← Sheet 11 平表版（含維修工時）
   repairs:                '報修管理',
 
   // 商場管理

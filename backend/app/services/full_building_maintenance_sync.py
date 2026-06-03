@@ -49,12 +49,23 @@ CK_EXECUTOR    = "執行人員"
 CK_START_TIME  = "保養時間啟"
 CK_END_TIME    = "保養時間迄"
 
-# ── Ragic 連線設定 ────────────────────────────────────────────────────────────
+# ── Ragic 連線設定（主表）────────────────────────────────────────────────────
 FULL_BLDG_PM_SERVER_URL   = getattr(settings, "RAGIC_FULL_BLDG_PM_SERVER_URL",   "ap12.ragic.com")
 FULL_BLDG_PM_ACCOUNT      = getattr(settings, "RAGIC_FULL_BLDG_PM_ACCOUNT",      "soutlet001")
 FULL_BLDG_PM_JOURNAL_PATH = getattr(settings, "RAGIC_FULL_BLDG_PM_JOURNAL_PATH", "periodic-maintenance/21")
 # 附表路徑：若全棟 items 另有獨立 Sheet 可在 .env 覆寫；預設同主表（子表格模式）
 FULL_BLDG_PM_ITEMS_PATH   = getattr(settings, "RAGIC_FULL_BLDG_PM_ITEMS_PATH",   "periodic-maintenance/21")
+
+# ── Ragic Sheet 28（子表平鋪視圖）欄位 key ──────────────────────────────────
+# Sheet 28 = 全棟週期保養日誌(同仁執行) — 子表:項目
+# https://ap12.ragic.com/soutlet001/periodic-maintenance/28
+FULL_BLDG_PM_SHEET28_PATH = getattr(settings, "RAGIC_FULL_BLDG_PM_SHEET28_PATH", "periodic-maintenance/28")
+CK28_REPAIR_HOURS = "維修工時"   # 實際維修工時（小時）
+CK28_START_TIME   = "保養時間啟"  # 保養開始時間（補強既有欄位）
+CK28_END_TIME     = "保養時間迄"  # 保養結束時間（補強既有欄位）
+CK28_TASK_NAME    = "項目"        # 保養項目名稱（配對用）
+CK28_CATEGORY     = "類別"        # 類別（配對用）
+CK28_PARENT_REF   = "保養日誌編號" # 連結回 Sheet 21 批次 ID（三層配對的主 key）
 
 
 # ── 轉換輔助函式 ──────────────────────────────────────────────────────────────
@@ -416,11 +427,145 @@ def _fix_period_month_format(db) -> int:
     return fixed
 
 
+def _to_float(val: Any) -> float | None:
+    """將 Ragic 值轉為 float，無法轉換時回傳 None。"""
+    try:
+        v = str(val).strip()
+        return float(v) if v not in ("", "None", "null", "-") else None
+    except (ValueError, TypeError):
+        return None
+
+
+async def sync_repair_hours_from_sheet28() -> dict:
+    """
+    從 Ragic Sheet 28（子表平鋪視圖）同步：
+      - 維修工時（repair_hours）
+      - 保養時間啟（start_time）
+      - 保養時間迄（end_time）
+
+    三層配對策略（同 mall/periodic-maintenance 的 Sheet 24 模式）：
+      策略 1：sheet28_id 直接比對（最快，O(1)）
+      策略 2：batch_ragic_id（保養日誌編號）+ task_name + category
+      策略 3：task_name + category 跨批次，取最近一筆（最後手段）
+    """
+    adapter = RagicAdapter(
+        server_url  = FULL_BLDG_PM_SERVER_URL,
+        account     = FULL_BLDG_PM_ACCOUNT,
+        api_key     = settings.RAGIC_API_KEY,
+        sheet_path  = FULL_BLDG_PM_SHEET28_PATH,
+    )
+
+    try:
+        raw_records = adapter.fetch_all()
+    except Exception as exc:
+        logger.error("[FullBldgPMSync][Sheet28] fetch_all 失敗：%s", exc)
+        return {"error": str(exc), "updated": 0, "skipped": 0}
+
+    if not isinstance(raw_records, dict):
+        logger.warning("[FullBldgPMSync][Sheet28] 非預期格式：%s", type(raw_records))
+        return {"error": "unexpected_format", "updated": 0, "skipped": 0}
+
+    db = SessionLocal()
+    updated = skipped = no_match = 0
+
+    try:
+        for sheet28_rec_id, row in raw_records.items():
+            if not isinstance(row, dict):
+                continue
+
+            # ── 擷取 Sheet 28 欄位值 ──────────────────────────────────────────
+            repair_hours_raw = _stringify(row.get(CK28_REPAIR_HOURS, ""))
+            start_time_raw   = _stringify(row.get(CK28_START_TIME, ""))
+            end_time_raw     = _stringify(row.get(CK28_END_TIME, ""))
+            task_name        = _stringify(row.get(CK28_TASK_NAME, ""))
+            category         = _stringify(row.get(CK28_CATEGORY, ""))
+            parent_ref       = _stringify(row.get(CK28_PARENT_REF, ""))
+
+            repair_hours = _to_float(repair_hours_raw)
+
+            # 三個欄位全為空 → 跳過
+            if not repair_hours and not start_time_raw and not end_time_raw:
+                skipped += 1
+                continue
+
+            # ── 策略 1：sheet28_id 直接比對 ──────────────────────────────────
+            target: FullBldgPMItem | None = (
+                db.query(FullBldgPMItem)
+                .filter(FullBldgPMItem.sheet28_id == str(sheet28_rec_id))
+                .first()
+            )
+
+            # ── 策略 2：batch_ragic_id + task_name + category ─────────────────
+            if target is None and parent_ref and task_name:
+                target = (
+                    db.query(FullBldgPMItem)
+                    .filter(
+                        FullBldgPMItem.batch_ragic_id == parent_ref,
+                        FullBldgPMItem.task_name      == task_name,
+                        FullBldgPMItem.category       == category,
+                    )
+                    .first()
+                )
+
+            # ── 策略 3：task_name + category 跨批次（取最近一筆）─────────────
+            if target is None and task_name:
+                candidates = (
+                    db.query(FullBldgPMItem)
+                    .filter(
+                        FullBldgPMItem.task_name == task_name,
+                        FullBldgPMItem.category  == category,
+                    )
+                    .all()
+                )
+                if candidates:
+                    target = max(candidates, key=lambda x: x.batch_ragic_id or "")
+
+            if target is None:
+                logger.debug(
+                    "[FullBldgPMSync][Sheet28] 無法配對：sheet28_id=%s task=%s cat=%s parent=%s",
+                    sheet28_rec_id, task_name, category, parent_ref,
+                )
+                no_match += 1
+                continue
+
+            # ── 寫入三個欄位（若有值才覆蓋；空字串亦覆蓋，讓資料以 Sheet 28 為準）──
+            changed = False
+            if repair_hours is not None:
+                target.repair_hours = repair_hours
+                changed = True
+            if start_time_raw:
+                target.start_time = start_time_raw
+                changed = True
+            if end_time_raw:
+                target.end_time = end_time_raw
+                changed = True
+            # 重算完成狀態
+            if changed:
+                target.is_completed = bool(target.start_time and target.end_time)
+                target.sheet28_id   = str(sheet28_rec_id)
+                updated += 1
+
+        db.commit()
+        logger.info(
+            "[FullBldgPMSync][Sheet28] 完成：updated=%d skipped=%d no_match=%d",
+            updated, skipped, no_match,
+        )
+    except Exception as exc:
+        db.rollback()
+        logger.error("[FullBldgPMSync][Sheet28] commit 失敗：%s", exc, exc_info=True)
+        return {"error": str(exc), "updated": updated, "skipped": skipped}
+    finally:
+        db.close()
+
+    return {"updated": updated, "skipped": skipped, "no_match": no_match}
+
+
 @register("full_building_maintenance")
 async def sync_from_ragic() -> dict:
-    """完整同步：先同步主表，再同步附表。"""
-    batch_result = await sync_batches_from_ragic()
-    items_result = await sync_items_from_ragic()
+    """完整同步：主表 → 子表 → Sheet 28（維修工時 + 保養時間補強）。"""
+    batch_result  = await sync_batches_from_ragic()
+    items_result  = await sync_items_from_ragic()
+    sheet28_result = await sync_repair_hours_from_sheet28()
 
     db = SessionLocal()
     try:
@@ -429,6 +574,7 @@ async def sync_from_ragic() -> dict:
         db.close()
 
     return {
-        "batches": batch_result,
-        "items":   items_result,
+        "batches":  batch_result,
+        "items":    items_result,
+        "sheet28":  sheet28_result,
     }

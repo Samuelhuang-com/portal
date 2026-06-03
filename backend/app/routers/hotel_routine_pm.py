@@ -1,16 +1,26 @@
 """
-商場週期保養表 API Router
-Prefix: /api/v1/mall/periodic-maintenance
+飯店例行維護 API Router
+Prefix: /api/v1/hotel/routine-maintenance
 
 端點：
   POST /sync                         — 手動從 Ragic 同步
   GET  /batches                      — 批次清單（年份篩選）
   GET  /batches/{batch_id}           — 單筆批次 + 所有項目 + KPI
+  GET  /batches/{batch_id}/items     — 該批次項目（含狀態篩選）
   GET  /batches/{batch_id}/kpi       — 批次 KPI 統計
   GET  /items                        — 所有項目跨批次查詢
   GET  /stats                        — 全站統計（Dashboard 資料來源）
-  GET  /items/task-history           — 依項目名稱查詢近 N 個月執行歷史
-  GET  /debug/ragic-raw              — 除錯：顯示 Ragic Sheet 18 原始欄位
+  GET  /items/task-history           — 依項目名稱查詢跨批次執行歷史
+  GET  /period-stats/year-matrix     — 全年 12 個月矩陣統計（必須在 /period-stats 之前）
+  GET  /period-stats                 — 週期統計（月/季/年）
+  GET  /period-stats/year-matrix/items — 矩陣格明細
+  GET  /items/catalog                — 保養項目目錄（依頻率分類）
+  POST /schedule/generate            — 產生指定月份保養排程
+  GET  /schedule                     — 查詢排程明細列表
+  GET  /schedule/kpi                 — 排程 KPI 統計
+  GET  /schedule/overdue             — 跨月逾期未執行清單
+  PATCH /schedule/{schedule_id}      — 人工調整排程明細
+  GET  /schedule/annual-matrix       — 年度計劃矩陣（12欄）
 """
 import json
 from calendar import monthrange
@@ -22,74 +32,23 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.dependencies import get_current_user, require_roles
-from app.models.mall_periodic_maintenance import MallPeriodicMaintenanceBatch, MallPeriodicMaintenanceItem
-from app.models.mall_pm_schedule import MallPMSchedule
-from app.schemas.periodic_maintenance import (
-    PMBatchOut, PMItemOut, PMBatchKPI, PMBatchDetail,
-    CategoryStat, StatusDistItem, PMStats, PMItemUpdate,
-    PMPeriodStats, PMSubPeriodBreakdown, PMIncompleteItem,
-    PMYearMatrix, PMYearMatrixMonth,
+from app.models.hotel_routine_pm import HotelRoutinePMBatch, HotelRoutinePMItem
+from app.models.hotel_routine_pm_schedule import HotelRoutinePMSchedule
+from app.schemas.hotel_routine_pm import (
+    HotelRoutinePMBatchOut, HotelRoutinePMItemOut, HotelRoutinePMBatchKPI,
+    HotelRoutinePMBatchDetail, HotelRoutinePMCategoryStat,
+    HotelRoutinePMStatusDistItem, HotelRoutinePMStats,
+    HotelRoutinePMPeriodStats, HotelRoutinePMSubPeriodBreakdown,
+    HotelRoutinePMIncompleteItem, HotelRoutinePMYearMatrix,
+    HotelRoutinePMYearMatrixMonth, HotelRoutinePMScheduleOut,
+    HotelRoutinePMScheduleKPI, HotelRoutinePMScheduleGenerateResult,
+    HotelRoutinePMScheduleUpdate, HotelRoutinePMScheduleMatrixCell,
+    HotelRoutinePMScheduleMatrixRow, HotelRoutinePMScheduleAnnualMatrix,
 )
-from app.schemas.mall_periodic_maintenance import (
-    MallPMScheduleOut, MallPMScheduleKPI, MallPMScheduleGenerateResult,
-    MallPMScheduleUpdate, MallPMScheduleMatrixCell, MallPMScheduleMatrixRow,
-    MallPMScheduleAnnualMatrix,
-)
-from app.services.mall_periodic_maintenance_sync import sync_from_ragic
-from app.services.ragic_adapter import RagicAdapter
+from app.services.hotel_routine_pm_sync import sync_from_ragic
 from app.core.config import settings
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
-
-# ── 頻率分類 mapping ─────────────────────────────────────────────────────────
-_FREQ_KEYWORDS: dict[str, set[str]] = {
-    "monthly":   {"月", "每月", "月維護", "Monthly", "monthly"},
-    "quarterly": {"季", "每季", "季維護", "Quarterly", "quarterly"},
-    "yearly":    {"年", "每年", "年維護", "Annual", "annual", "Yearly", "yearly"},
-}
-
-def _freq_match(frequency: str, frequency_type: Optional[str]) -> bool:
-    """回傳 True 表示該 item 的頻率符合篩選條件（None = 不篩選）"""
-    if not frequency_type:
-        return True
-    keywords = _FREQ_KEYWORDS.get(frequency_type, set())
-    return (frequency or "").strip() in keywords
-
-
-def _infer_freq_type_from_exec_months(exec_months: list) -> Optional[str]:
-    """
-    當 frequency 欄位為空時，依 exec_months 數量推算頻率類型（規格書規定的 fallback）。
-    10-12 個月 → monthly
-    3-5  個月 → quarterly
-    1-2  個月 → yearly
-    其餘      → None（無法推算）
-    """
-    n = len(exec_months)
-    if n >= 10:     return "monthly"
-    if 3 <= n <= 5: return "quarterly"
-    if 1 <= n <= 2: return "yearly"
-    return None
-
-
-def _freq_match_with_fallback(
-    frequency: str,
-    frequency_type: Optional[str],
-    exec_months: list,
-) -> bool:
-    """
-    同 _freq_match，但當 frequency 欄位為空時改用 exec_months 推算頻率類型。
-    確保 exec_months 有數據的項目也能正確篩選到對應統計 TAB。
-    """
-    if not frequency_type:
-        return True
-    freq = (frequency or "").strip()
-    if freq:
-        keywords = _FREQ_KEYWORDS.get(frequency_type, set())
-        return freq in keywords
-    # frequency 為空 → 從 exec_months 數量推算
-    inferred = _infer_freq_type_from_exec_months(exec_months)
-    return inferred == frequency_type
-
 
 # ── 狀態色彩對照 ──────────────────────────────────────────────────────────────
 STATUS_COLORS = {
@@ -110,10 +69,19 @@ STATUS_LABELS = {
     "non_current_month": "非本月",
 }
 
+RAGIC_PATH = "periodic-maintenance/6"
+
 
 # ── 業務邏輯輔助函式 ──────────────────────────────────────────────────────────
 
 _TIME_FMTS = ["%Y/%m/%d %H:%M:%S", "%Y/%m/%d %H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"]
+
+
+def _ragic_url(path: str, ragic_id: str) -> str:
+    ragic_server  = getattr(settings, "RAGIC_PM_SERVER_URL", "ap12.ragic.com")
+    ragic_account = "soutlet001"
+    return f"https://{ragic_server}/{ragic_account}/{path}/{ragic_id}"
+
 
 def _time_diff_minutes(start: str, end: str) -> int:
     """計算 start_time ~ end_time 差值（分鐘），解析失敗回傳 0。"""
@@ -129,12 +97,17 @@ def _time_diff_minutes(start: str, end: str) -> int:
     return 0
 
 
-def _calc_status(item: MallPeriodicMaintenanceItem, check_month: int) -> str:
+def _calc_status(item: HotelRoutinePMItem, check_month: int) -> str:
     """
-    依 Ragic 欄位值推導保養項目狀態（唯讀）。
+    依 Ragic 欄位值推導保養項目狀態。
 
-    修正（2026-05）：月頻率項目 exec_months 為空是正常情況（每月執行不需列月份），
-    應視為「本月適用」，不落入 unscheduled。
+    判斷順序：
+    1. 非本月 — 依頻率與 exec_months 判斷本月不適用
+    2. 已完成 — ragic_work_minutes 有值（> 0）
+    3. 進行中 — start_time 有值，但 ragic_work_minutes 無值
+    4. 逾期   — 排定日期有值，且該日期已過今天
+    5. 已排定 — 排定日期有值，尚未到期
+    6. 未排定 — 以上皆無
     """
     exec_months: list[int] = []
     try:
@@ -142,7 +115,7 @@ def _calc_status(item: MallPeriodicMaintenanceItem, check_month: int) -> str:
     except Exception:
         pass
 
-    # 非本月判斷：exec_months 有值 → 直接判斷；為空 + 頻率有值 → 依頻率公式
+    # 1. 非本月判斷
     if exec_months:
         if check_month not in exec_months:
             return "non_current_month"
@@ -150,27 +123,34 @@ def _calc_status(item: MallPeriodicMaintenanceItem, check_month: int) -> str:
         if not _should_schedule_by_frequency(item.frequency, check_month):
             return "non_current_month"
 
-    if item.start_time and item.end_time:
+    # 2. 已完成（ragic_work_minutes 有值）
+    if bool(item.ragic_work_minutes):
         return "completed"
+
+    # 3. 進行中
     if item.start_time:
         return "in_progress"
+
+    # 4. 逾期 / 5. 已排定
     if item.scheduled_date:
         try:
             today = date.today()
-            fd = _reconstruct_full_date(item.scheduled_date, f"{today.year}/{today.month:02d}")
-            if fd is None:
-                raise ValueError
-            scheduled = fd
+            scheduled = datetime.strptime(
+                f"{today.year}/{item.scheduled_date}", "%Y/%m/%d"
+            ).date()
             if scheduled < today:
                 return "overdue"
         except Exception:
             pass
         return "scheduled"
+
+    # 6. 未排定
     return "unscheduled"
 
 
 # ── 排程邏輯輔助函式 ──────────────────────────────────────────────────────────
 
+# 頻率 → 週期間隔（月數）
 _FREQ_INTERVAL: dict[str, int] = {
     "月":   1,
     "雙月": 2,
@@ -182,8 +162,16 @@ _FREQ_INTERVAL: dict[str, int] = {
 
 def _should_schedule_by_frequency(frequency: str, month: int) -> bool:
     """
-    純依頻率字串與月份判斷「本月是否應產生排程」（exec_months 為空時使用）。
-    月 → 永遠 True；其他 → (month - 1) % interval == 0（從 1 月起算）。
+    純依頻率字串與月份判斷「本月是否應產生排程」。
+    僅在 exec_months_json 為空時使用（有 exec_months 時以它為準）。
+
+    規則（從 1 月起算）：
+      月     → 永遠 True
+      雙月   → (month - 1) % 2 == 0  → 1,3,5,7,9,11 月
+      季     → (month - 1) % 3 == 0  → 1,4,7,10 月
+      半年   → (month - 1) % 6 == 0  → 1,7 月
+      年     → (month - 1) % 12 == 0 → 1 月
+      其他   → False
     """
     interval = _FREQ_INTERVAL.get(frequency.strip())
     if interval is None:
@@ -193,23 +181,34 @@ def _should_schedule_by_frequency(frequency: str, month: int) -> bool:
     return (month - 1) % interval == 0
 
 
-def _should_schedule(item: MallPeriodicMaintenanceItem, year: int, month: int) -> bool:
-    """判斷指定 year/month 是否應為此項目產生排程。"""
+def _should_schedule(item: HotelRoutinePMItem, year: int, month: int) -> bool:
+    """
+    判斷指定 year/month 是否應為此項目產生排程。
+
+    優先順序：
+    1. 頻率為空 → False（無法判斷，跳過）
+    2. exec_months_json 有值 → month in exec_months
+    3. exec_months_json 為空 → 依頻率公式推算
+    """
     freq = (item.frequency or "").strip()
     if not freq:
         return False
+
     exec_months: list[int] = []
     try:
         exec_months = json.loads(item.exec_months_json or "[]")
     except Exception:
         pass
+
     if exec_months:
         return month in exec_months
+
     return _should_schedule_by_frequency(freq, month)
 
 
-def _item_to_out(item: MallPeriodicMaintenanceItem, check_month: int) -> PMItemOut:
-    return PMItemOut(
+def _item_to_out(item: HotelRoutinePMItem, check_month: int) -> HotelRoutinePMItemOut:
+    """ORM → Pydantic，注入 status 計算值。"""
+    return HotelRoutinePMItemOut(
         ragic_id          = item.ragic_id,
         batch_ragic_id    = item.batch_ragic_id,
         seq_no            = item.seq_no,
@@ -225,7 +224,8 @@ def _item_to_out(item: MallPeriodicMaintenanceItem, check_month: int) -> PMItemO
         executor_name     = item.executor_name,
         start_time        = item.start_time,
         end_time          = item.end_time,
-        is_completed      = bool(item.start_time and item.end_time),
+        ragic_work_minutes= item.ragic_work_minutes,
+        is_completed      = bool(item.ragic_work_minutes),
         result_note       = item.result_note,
         abnormal_flag     = item.abnormal_flag,
         abnormal_note     = item.abnormal_note,
@@ -235,24 +235,29 @@ def _item_to_out(item: MallPeriodicMaintenanceItem, check_month: int) -> PMItemO
     )
 
 
-def _calc_kpi(items: list[MallPeriodicMaintenanceItem], check_month: int) -> PMBatchKPI:
+def _calc_kpi(items: list[HotelRoutinePMItem], check_month: int) -> HotelRoutinePMBatchKPI:
     statuses = [_calc_status(it, check_month) for it in items]
     current_items = [(it, s) for it, s in zip(items, statuses) if s != "non_current_month"]
+    total_current = len(current_items)
 
     total_all   = len(items)
-    completed   = sum(1 for it in items if it.start_time and it.end_time)
+    completed   = sum(1 for it in items if bool(it.ragic_work_minutes))
     in_progress = sum(1 for _, s in current_items if s == "in_progress")
     scheduled   = sum(1 for _, s in current_items if s == "scheduled")
     unscheduled = sum(1 for _, s in current_items if s == "unscheduled")
     overdue     = sum(1 for _, s in current_items if s == "overdue")
     abnormal    = sum(1 for it in items if it.abnormal_flag)
     planned     = sum(it.estimated_minutes for it, s in current_items)
-    actual      = sum(_time_diff_minutes(it.start_time, it.end_time) for it in items if it.start_time and it.end_time)
+    actual      = sum(
+        it.ragic_work_minutes if it.ragic_work_minutes is not None
+        else _time_diff_minutes(it.start_time, it.end_time)
+        for it in items if bool(it.ragic_work_minutes)
+    )
     rate = round(completed / total_all * 100, 1) if total_all > 0 else 0.0
 
-    return PMBatchKPI(
+    return HotelRoutinePMBatchKPI(
         total               = len(items),
-        current_month_total = len(current_items),
+        current_month_total = total_current,
         completed           = completed,
         in_progress         = in_progress,
         scheduled           = scheduled,
@@ -265,7 +270,9 @@ def _calc_kpi(items: list[MallPeriodicMaintenanceItem], check_month: int) -> PMB
     )
 
 
-def _calc_category_stats(items: list[MallPeriodicMaintenanceItem], check_month: int) -> list[CategoryStat]:
+def _calc_category_stats(
+    items: list[HotelRoutinePMItem], check_month: int
+) -> list[HotelRoutinePMCategoryStat]:
     from collections import defaultdict
     cats: dict[str, dict] = defaultdict(lambda: {"total": 0, "completed": 0})
     for it in items:
@@ -280,7 +287,7 @@ def _calc_category_stats(items: list[MallPeriodicMaintenanceItem], check_month: 
     for cat, counts in sorted(cats.items()):
         t = counts["total"]
         c = counts["completed"]
-        result.append(CategoryStat(
+        result.append(HotelRoutinePMCategoryStat(
             category  = cat,
             total     = t,
             completed = c,
@@ -290,6 +297,7 @@ def _calc_category_stats(items: list[MallPeriodicMaintenanceItem], check_month: 
 
 
 def _get_check_month(period_month: str) -> int:
+    """從 'YYYY/MM' 取得月份整數；若解析失敗則用今天的月份。"""
     try:
         return int(period_month.split("/")[1])
     except Exception:
@@ -298,25 +306,15 @@ def _get_check_month(period_month: str) -> int:
 
 # ── 週期統計輔助函式 ──────────────────────────────────────────────────────────
 
-_MONTH_LABELS_ZH = ["1月","2月","3月","4月","5月","6月",
-                    "7月","8月","9月","10月","11月","12月"]
-
-
 def _reconstruct_full_date(scheduled_date: str, period_month: str) -> "date | None":
     """
-    排定日期 + 批次月份 → date 物件。空值或解析失敗回傳 None。
-
-    支援兩種格式（向下相容 DB 中尚未 normalize 的舊資料）：
-      格式 A：'MM/DD'       → 以 period_month 的年份補齊
-      格式 B：'YYYY/MM/DD'  → 直接解析，忽略 period_month
+    'MM/DD' + 'YYYY/MM' → date(YYYY, MM, DD)
+    月份以 scheduled_date 為準，年份從 period_month 取。
     """
     if not scheduled_date:
         return None
     try:
         parts = scheduled_date.strip().split("/")
-        if len(parts) == 3:
-            # 格式 B：YYYY/MM/DD（尚未 normalize 的 Ragic 原始格式）
-            return date(int(parts[0]), int(parts[1]), int(parts[2]))
         if len(parts) != 2:
             return None
         month = int(parts[0])
@@ -328,7 +326,7 @@ def _reconstruct_full_date(scheduled_date: str, period_month: str) -> "date | No
 
 
 def _parse_end_date(end_time: str) -> "date | None":
-    """'YYYY/MM/DD HH:MM:SS' → date，解析失敗回傳 None。"""
+    """'YYYY/MM/DD HH:MM:SS' → date(YYYY, MM, DD)"""
     if not end_time:
         return None
     for fmt in _TIME_FMTS:
@@ -383,24 +381,6 @@ def _get_period_bounds(
     return p_start, p_end, prev_end
 
 
-def _latest_batch_ids_per_month(db: Session) -> set:
-    """每個 period_month 只保留 ragic_updated_at 最新的那張批次，回傳有效 ragic_id 集合。"""
-    batches = db.query(MallPeriodicMaintenanceBatch).all()
-    latest: dict[str, MallPeriodicMaintenanceBatch] = {}
-    for b in batches:
-        key = b.period_month
-        existing = latest.get(key)
-        if existing is None:
-            latest[key] = b
-        else:
-            # 比較 ragic_updated_at 字串（格式 YYYY/MM/DD HH:MM:SS 或 YYYY/MM/DD，字典序可比）
-            b_ts = b.ragic_updated_at or ""
-            e_ts = existing.ragic_updated_at or ""
-            if b_ts > e_ts:
-                latest[key] = b
-    return {b.ragic_id for b in latest.values()}
-
-
 def _calc_period_stats_core(
     db: Session,
     period_start: date,
@@ -408,15 +388,13 @@ def _calc_period_stats_core(
     prev_period_end: date,
     frequency_type: Optional[str] = None,
 ) -> dict:
-    """共用統計核心（使用 MallPeriodicMaintenanceBatch / MallPeriodicMaintenanceItem）。"""
-    valid_batch_ids = _latest_batch_ids_per_month(db)
+    """共用統計核心。"""
     rows = (
-        db.query(MallPeriodicMaintenanceItem, MallPeriodicMaintenanceBatch)
+        db.query(HotelRoutinePMItem, HotelRoutinePMBatch)
         .join(
-            MallPeriodicMaintenanceBatch,
-            MallPeriodicMaintenanceItem.batch_ragic_id == MallPeriodicMaintenanceBatch.ragic_id,
+            HotelRoutinePMBatch,
+            HotelRoutinePMItem.batch_ragic_id == HotelRoutinePMBatch.ragic_id,
         )
-        .filter(MallPeriodicMaintenanceBatch.ragic_id.in_(valid_batch_ids))
         .all()
     )
 
@@ -424,28 +402,23 @@ def _calc_period_stats_core(
     period_items_list:    list[dict] = []
 
     for item, batch in rows:
+        if not item.scheduled_date:
+            continue
+        if not _freq_match(item.frequency, frequency_type):
+            continue
         try:
             exec_months = json.loads(item.exec_months_json or "[]")
         except Exception:
             exec_months = []
-
-        # ── 頻率篩選：優先 frequency 欄位，空時從 exec_months 數量推算 ──────
-        if not _freq_match_with_fallback(item.frequency, frequency_type, exec_months):
+        batch_month = int(batch.period_month.split("/")[1])
+        if exec_months and batch_month not in exec_months:
             continue
 
-        try:
-            batch_month = int(batch.period_month.split("/")[1])
-            batch_year  = int(batch.period_month.split("/")[0])
-        except Exception:
+        full_date = _reconstruct_full_date(item.scheduled_date, batch.period_month)
+        if full_date is None:
             continue
 
-        # ── full_date 以批次月份 1 號為基準（規格書規定）────────────────────
-        # scheduled_date 是「排定計劃」，不代表執行月份；exec_months 亦不用於期間過濾
-        # period_total 以批次月份為準，確保與保養項目清單件數一致
-        full_date = date(batch_year, batch_month, 1)
-
-        # 執行完成判斷：只依 end_time 有值（規格書規定，不看 start_time）
-        is_done  = bool(item.end_time and item.end_time.strip())
+        is_done  = bool(item.ragic_work_minutes)
         end_date = _parse_end_date(item.end_time)
 
         entry = {
@@ -473,10 +446,11 @@ def _calc_period_stats_core(
         if x["end_date"] is not None
         and period_start <= x["end_date"] <= period_end
     ]
+
     period_completed_list = [x for x in period_items_list if x["is_done"]]
 
     incomplete_items = [
-        PMIncompleteItem(
+        HotelRoutinePMIncompleteItem(
             task_name           = x["item"].task_name,
             category            = x["item"].category or "未歸類位置",
             scheduled_date_full = x["full_date"].strftime("%Y/%m/%d"),
@@ -484,7 +458,7 @@ def _calc_period_stats_core(
             frequency           = x["item"].frequency,
         )
         for x in period_items_list
-        if not x["is_done"] and x["item"].result_note and x["item"].result_note.strip()
+        if not x["is_done"] and x["item"].result_note
     ]
 
     n_carry    = len(prev_carry_over_list)
@@ -508,12 +482,11 @@ def _calc_sub_breakdown(
     period_type: str,
     period_start: date,
     period_items_list: list[dict],
-) -> list[PMSubPeriodBreakdown]:
-    """季→月分布 / 年→Q分布 / 月→空清單"""
+) -> list[HotelRoutinePMSubPeriodBreakdown]:
     if period_type == "month":
         return []
 
-    breakdown: list[PMSubPeriodBreakdown] = []
+    breakdown: list[HotelRoutinePMSubPeriodBreakdown] = []
     year = period_start.year
 
     if period_type == "quarter":
@@ -526,7 +499,7 @@ def _calc_sub_breakdown(
             items_m = [x for x in period_items_list if m_start <= x["full_date"] <= m_end]
             total     = len(items_m)
             completed = sum(1 for x in items_m if x["is_done"])
-            breakdown.append(PMSubPeriodBreakdown(
+            breakdown.append(HotelRoutinePMSubPeriodBreakdown(
                 label     = f"{m}月",
                 total     = total,
                 completed = completed,
@@ -543,7 +516,7 @@ def _calc_sub_breakdown(
             items_q = [x for x in period_items_list if q_start <= x["full_date"] <= q_end]
             total     = len(items_q)
             completed = sum(1 for x in items_q if x["is_done"])
-            breakdown.append(PMSubPeriodBreakdown(
+            breakdown.append(HotelRoutinePMSubPeriodBreakdown(
                 label     = f"Q{q}",
                 total     = total,
                 completed = completed,
@@ -553,43 +526,56 @@ def _calc_sub_breakdown(
     return breakdown
 
 
-def _calc_year_matrix(db: Session, year: int, frequency_type: Optional[str] = None) -> PMYearMatrix:
-    """全年 12 個月矩陣統計（單次 JOIN 查詢）。"""
-    valid_batch_ids = _latest_batch_ids_per_month(db)
+# ── 頻率分類 mapping ─────────────────────────────────────────────────────────
+_FREQ_KEYWORDS: dict[str, set[str]] = {
+    "monthly":   {"月", "每月", "月維護", "Monthly", "monthly"},
+    "quarterly": {"季", "每季", "季維護", "Quarterly", "quarterly"},
+    "yearly":    {"年", "每年", "年維護", "Annual", "annual", "Yearly", "yearly"},
+}
+
+
+def _freq_match(frequency: str, frequency_type: Optional[str]) -> bool:
+    """回傳 True 表示該 item 的頻率符合篩選條件（None = 不篩選）"""
+    if not frequency_type:
+        return True
+    keywords = _FREQ_KEYWORDS.get(frequency_type, set())
+    return frequency.strip() in keywords
+
+
+_MONTH_LABELS_ZH = ["1月","2月","3月","4月","5月","6月",
+                    "7月","8月","9月","10月","11月","12月"]
+
+
+def _calc_year_matrix(
+    db: Session, year: int, frequency_type: Optional[str] = None
+) -> HotelRoutinePMYearMatrix:
+    """全年 12 個月矩陣統計。"""
     rows = (
-        db.query(MallPeriodicMaintenanceItem, MallPeriodicMaintenanceBatch)
+        db.query(HotelRoutinePMItem, HotelRoutinePMBatch)
         .join(
-            MallPeriodicMaintenanceBatch,
-            MallPeriodicMaintenanceItem.batch_ragic_id == MallPeriodicMaintenanceBatch.ragic_id,
-        )
-        .filter(
-            MallPeriodicMaintenanceBatch.ragic_id.in_(valid_batch_ids),
-            MallPeriodicMaintenanceBatch.period_month.like(f"{year}/%"),   # 限制在指定年份
+            HotelRoutinePMBatch,
+            HotelRoutinePMItem.batch_ragic_id == HotelRoutinePMBatch.ragic_id,
         )
         .all()
     )
 
     processed: list[dict] = []
     for item, batch in rows:
+        if not item.scheduled_date:
+            continue
+        if not _freq_match(item.frequency, frequency_type):
+            continue
         try:
             exec_months = json.loads(item.exec_months_json or "[]")
         except Exception:
             exec_months = []
-
-        # ── 頻率篩選：優先 frequency 欄位，空時從 exec_months 數量推算 ──────
-        if not _freq_match_with_fallback(item.frequency, frequency_type, exec_months):
+        batch_month = int(batch.period_month.split("/")[1])
+        if exec_months and batch_month not in exec_months:
             continue
-
-        try:
-            batch_month = int(batch.period_month.split("/")[1])
-            batch_year  = int(batch.period_month.split("/")[0])
-        except Exception:
+        full_date = _reconstruct_full_date(item.scheduled_date, batch.period_month)
+        if full_date is None:
             continue
-
-        # ── full_date 以批次月份 1 號為基準（規格書規定，exec_months 不影響期間歸屬）
-        full_date = date(batch_year, batch_month, 1)
-
-        is_done  = bool(item.end_time and item.end_time.strip())
+        is_done  = bool(item.ragic_work_minutes)
         end_date = _parse_end_date(item.end_time)
         processed.append({
             "item":      item,
@@ -598,7 +584,13 @@ def _calc_year_matrix(db: Session, year: int, frequency_type: Optional[str] = No
             "is_done":   is_done,
         })
 
-    month_results: list[PMYearMatrixMonth] = []
+    freq_kws: Optional[set] = _FREQ_KEYWORDS.get(frequency_type) if frequency_type else None
+
+    latest_items_all = _get_latest_batch_items(db)
+    if frequency_type:
+        latest_items_all = [it for it in latest_items_all if _freq_match(it.frequency, frequency_type)]
+
+    month_results: list[HotelRoutinePMYearMatrixMonth] = []
     for m in range(1, 13):
         p_start, p_end, prev_end = _get_period_bounds("month", year, month=m)
 
@@ -625,18 +617,35 @@ def _calc_year_matrix(db: Session, year: int, frequency_type: Optional[str] = No
         ]
         period_completed_list = [x for x in period_items_list if x["is_done"]]
 
-        notes_parts = [
-            f"{x['item'].task_name}：{x['item'].result_note}"
-            for x in period_items_list
-            if not x["is_done"] and x["item"].result_note and x["item"].result_note.strip()
-        ]
+        year_month_str = f"{year}/{m:02d}"
+        sched_q = db.query(HotelRoutinePMSchedule).filter(
+            HotelRoutinePMSchedule.year_month == year_month_str
+        )
+        if freq_kws:
+            sched_q = sched_q.filter(HotelRoutinePMSchedule.frequency.in_(freq_kws))
+        sched_recs = sched_q.all()
+
+        if sched_recs:
+            n_total = len(sched_recs)
+            n_done  = sum(1 for r in sched_recs if r.is_completed)
+            notes_parts = [
+                f"{r.task_name}：{r.result_note}"
+                for r in sched_recs
+                if not r.is_completed and r.result_note
+            ]
+        else:
+            n_total = sum(1 for it in latest_items_all if _should_schedule(it, year, m))
+            n_done  = len(period_completed_list)
+            notes_parts = [
+                f"{x['item'].task_name}：{x['item'].result_note}"
+                for x in period_items_list
+                if not x["is_done"] and x["item"].result_note
+            ]
 
         n_carry    = len(prev_carry_over_list)
         n_resolved = len(prev_resolved_list)
-        n_total    = len(period_items_list)
-        n_done     = len(period_completed_list)
 
-        month_results.append(PMYearMatrixMonth(
+        month_results.append(HotelRoutinePMYearMatrixMonth(
             month                   = m,
             label                   = _MONTH_LABELS_ZH[m - 1],
             prev_carry_over         = n_carry,
@@ -648,26 +657,19 @@ def _calc_year_matrix(db: Session, year: int, frequency_type: Optional[str] = No
             incomplete_notes        = "\n".join(notes_parts),
         ))
 
-    return PMYearMatrix(year=year, months=month_results)
-
-
-def _batch_to_out(batch: MallPeriodicMaintenanceBatch) -> PMBatchOut:
-    return PMBatchOut(
-        ragic_id         = batch.ragic_id,
-        journal_no       = batch.journal_no,
-        period_month     = batch.period_month,
-        ragic_created_at = batch.ragic_created_at,
-        ragic_updated_at = batch.ragic_updated_at,
-        synced_at        = batch.synced_at,
-    )
+    return HotelRoutinePMYearMatrix(year=year, months=month_results)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # POST /sync
 # ══════════════════════════════════════════════════════════════════════════════
-@router.post("/sync", summary="從 Ragic 同步商場週期保養資料（背景執行）", dependencies=[Depends(require_roles("system_admin", "module_manager"))])
-async def sync_mall_periodic_maintenance(background_tasks: BackgroundTasks):
-    """手動觸發：Ragic → SQLite，立即回傳，不阻塞畫面"""
+@router.post(
+    "/sync",
+    summary="從 Ragic 同步飯店例行維護資料（背景執行）",
+    dependencies=[Depends(require_roles("system_admin", "module_manager"))],
+)
+async def sync_hotel_routine_pm(background_tasks: BackgroundTasks):
+    """手動觸發：Ragic Sheet 6 + Sheet 11 → SQLite，立即回傳，不阻塞畫面"""
     background_tasks.add_task(sync_from_ragic)
     return {"status": "ok", "message": "同步已在背景啟動"}
 
@@ -675,27 +677,25 @@ async def sync_mall_periodic_maintenance(background_tasks: BackgroundTasks):
 # ══════════════════════════════════════════════════════════════════════════════
 # GET /batches
 # ══════════════════════════════════════════════════════════════════════════════
-@router.get("/batches", summary="取得商場保養批次清單")
+@router.get("/batches", summary="取得例行維護批次清單")
 def list_batches(
     year: Optional[str] = Query(None, description="篩選年份，如 2026"),
     db:   Session = Depends(get_db),
 ):
-    q = db.query(MallPeriodicMaintenanceBatch)
+    q = db.query(HotelRoutinePMBatch)
     if year:
-        q = q.filter(MallPeriodicMaintenanceBatch.period_month.like(f"{year}%"))
-    batches = q.order_by(MallPeriodicMaintenanceBatch.period_month.desc()).all()
+        q = q.filter(HotelRoutinePMBatch.period_month.like(f"{year}%"))
+    batches = q.order_by(HotelRoutinePMBatch.period_month.desc()).all()
 
     result = []
     for b in batches:
-        items = db.query(MallPeriodicMaintenanceItem).filter(
-            MallPeriodicMaintenanceItem.batch_ragic_id == b.ragic_id
+        items = db.query(HotelRoutinePMItem).filter(
+            HotelRoutinePMItem.batch_ragic_id == b.ragic_id
         ).all()
         check_month = _get_check_month(b.period_month)
         kpi = _calc_kpi(items, check_month)
-        batch_dict = _batch_to_out(b).model_dump()
-        batch_dict["ragic_url"] = (
-            f"https://ap12.ragic.com/soutlet001/periodic-maintenance/18/{b.ragic_id}"
-        )
+        batch_dict = HotelRoutinePMBatchOut.model_validate(b).model_dump()
+        batch_dict["ragic_url"] = _ragic_url(RAGIC_PATH, b.ragic_id)
         result.append({
             "batch": batch_dict,
             "kpi":   kpi.model_dump(),
@@ -709,18 +709,18 @@ def list_batches(
 @router.get("/batches/{batch_id}", summary="取得單筆批次完整資料（含所有項目 + KPI）")
 def get_batch_detail(
     batch_id:           str,
-    current_month_only: bool = Query(False),
+    current_month_only: bool = Query(False, description="只回傳本月有效項目"),
     category:           Optional[str] = Query(None),
     status_filter:      Optional[str] = Query(None, alias="status"),
     db:                 Session = Depends(get_db),
 ):
-    batch = db.get(MallPeriodicMaintenanceBatch, batch_id)
+    batch = db.get(HotelRoutinePMBatch, batch_id)
     if not batch:
         raise HTTPException(status_code=404, detail="Batch not found")
 
-    items = db.query(MallPeriodicMaintenanceItem).filter(
-        MallPeriodicMaintenanceItem.batch_ragic_id == batch_id
-    ).order_by(MallPeriodicMaintenanceItem.seq_no).all()
+    items = db.query(HotelRoutinePMItem).filter(
+        HotelRoutinePMItem.batch_ragic_id == batch_id
+    ).order_by(HotelRoutinePMItem.seq_no).all()
 
     check_month = _get_check_month(batch.period_month)
     kpi  = _calc_kpi(items, check_month)
@@ -737,8 +737,8 @@ def get_batch_detail(
             continue
         filtered.append(_item_to_out(it, check_month))
 
-    return PMBatchDetail(
-        batch      = _batch_to_out(batch),
+    return HotelRoutinePMBatchDetail(
+        batch      = HotelRoutinePMBatchOut.model_validate(batch),
         kpi        = kpi,
         items      = filtered,
         categories = cats,
@@ -746,24 +746,54 @@ def get_batch_detail(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# GET /batches/{batch_id}/items
+# ══════════════════════════════════════════════════════════════════════════════
+@router.get("/batches/{batch_id}/items", summary="取得批次下所有項目（含狀態篩選）")
+def list_batch_items(
+    batch_id:      str,
+    status_filter: Optional[str] = Query(None, alias="status"),
+    category:      Optional[str] = Query(None),
+    db:            Session = Depends(get_db),
+):
+    batch = db.get(HotelRoutinePMBatch, batch_id)
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch not found")
+
+    items = db.query(HotelRoutinePMItem).filter(
+        HotelRoutinePMItem.batch_ragic_id == batch_id
+    ).order_by(HotelRoutinePMItem.seq_no).all()
+
+    check_month = _get_check_month(batch.period_month)
+    result = []
+    for it in items:
+        s = _calc_status(it, check_month)
+        if category and it.category != category:
+            continue
+        if status_filter and s != status_filter:
+            continue
+        result.append(_item_to_out(it, check_month))
+    return result
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # GET /batches/{batch_id}/kpi
 # ══════════════════════════════════════════════════════════════════════════════
 @router.get("/batches/{batch_id}/kpi", summary="取得批次 KPI 統計")
 def get_batch_kpi(batch_id: str, db: Session = Depends(get_db)):
-    batch = db.get(MallPeriodicMaintenanceBatch, batch_id)
+    batch = db.get(HotelRoutinePMBatch, batch_id)
     if not batch:
         raise HTTPException(status_code=404, detail="Batch not found")
-    items = db.query(MallPeriodicMaintenanceItem).filter(
-        MallPeriodicMaintenanceItem.batch_ragic_id == batch_id
+    items = db.query(HotelRoutinePMItem).filter(
+        HotelRoutinePMItem.batch_ragic_id == batch_id
     ).all()
     check_month = _get_check_month(batch.period_month)
     return _calc_kpi(items, check_month)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# GET /items
+# GET /items  — 跨批次查詢
 # ══════════════════════════════════════════════════════════════════════════════
-@router.get("/items", summary="跨批次查詢商場保養項目")
+@router.get("/items", summary="跨批次查詢例行維護項目")
 def list_items(
     batch_id: Optional[str] = Query(None),
     category: Optional[str] = Query(None),
@@ -771,14 +801,14 @@ def list_items(
     month:    Optional[int] = Query(None, ge=1, le=12),
     db:       Session = Depends(get_db),
 ):
-    q = db.query(MallPeriodicMaintenanceItem)
+    q = db.query(HotelRoutinePMItem)
     if batch_id:
-        q = q.filter(MallPeriodicMaintenanceItem.batch_ragic_id == batch_id)
+        q = q.filter(HotelRoutinePMItem.batch_ragic_id == batch_id)
     if category:
-        q = q.filter(MallPeriodicMaintenanceItem.category == category)
+        q = q.filter(HotelRoutinePMItem.category == category)
     items = q.order_by(
-        MallPeriodicMaintenanceItem.batch_ragic_id,
-        MallPeriodicMaintenanceItem.seq_no,
+        HotelRoutinePMItem.batch_ragic_id,
+        HotelRoutinePMItem.seq_no,
     ).all()
 
     check_month = month or date.today().month
@@ -792,9 +822,9 @@ def list_items(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# GET /stats
+# GET /stats  — Dashboard 資料來源
 # ══════════════════════════════════════════════════════════════════════════════
-@router.get("/stats", summary="全站統計（Dashboard 資料來源）", response_model=PMStats)
+@router.get("/stats", summary="全站統計（Dashboard 資料來源）", response_model=HotelRoutinePMStats)
 def get_stats(
     year:  Optional[int] = Query(None, description="篩選年份，如 2026"),
     month: Optional[int] = Query(None, ge=1, le=12, description="篩選月份，如 5"),
@@ -806,28 +836,28 @@ def get_stats(
     check_month  = target_month
     target_ym    = f"{target_year}/{target_month:02d}"
 
-    current_batch = db.query(MallPeriodicMaintenanceBatch).filter(
-        MallPeriodicMaintenanceBatch.period_month == target_ym
+    current_batch = db.query(HotelRoutinePMBatch).filter(
+        HotelRoutinePMBatch.period_month == target_ym
     ).first()
 
     if not current_batch and not (year or month):
-        current_batch = db.query(MallPeriodicMaintenanceBatch).order_by(
-            MallPeriodicMaintenanceBatch.period_month.desc()
+        current_batch = db.query(HotelRoutinePMBatch).order_by(
+            HotelRoutinePMBatch.period_month.desc()
         ).first()
 
-    current_kpi    = None
-    overdue_items: list[PMItemOut] = []
-    upcoming_items: list[PMItemOut] = []
-    cats:           list[CategoryStat] = []
-    status_dist:    list[StatusDistItem] = []
+    current_kpi = None
+    overdue_items: list[HotelRoutinePMItemOut] = []
+    upcoming_items: list[HotelRoutinePMItemOut] = []
+    cats: list[HotelRoutinePMCategoryStat] = []
+    status_dist: list[HotelRoutinePMStatusDistItem] = []
 
     if current_batch:
-        items = db.query(MallPeriodicMaintenanceItem).filter(
-            MallPeriodicMaintenanceItem.batch_ragic_id == current_batch.ragic_id
-        ).order_by(MallPeriodicMaintenanceItem.seq_no).all()
+        items = db.query(HotelRoutinePMItem).filter(
+            HotelRoutinePMItem.batch_ragic_id == current_batch.ragic_id
+        ).order_by(HotelRoutinePMItem.seq_no).all()
 
         current_kpi = _calc_kpi(items, check_month)
-        cats        = _calc_category_stats(items, check_month)
+        cats = _calc_category_stats(items, check_month)
 
         overdue_items = [
             _item_to_out(it, check_month)
@@ -855,10 +885,11 @@ def get_stats(
         upcoming_items = upcoming_items[:10]
 
         from collections import Counter
-        def _dist_status(it: MallPeriodicMaintenanceItem) -> str | None:
+
+        def _dist_status(it: HotelRoutinePMItem) -> "str | None":
             s = _calc_status(it, check_month)
             if s == "non_current_month":
-                return "completed" if (it.start_time and it.end_time) else None
+                return "completed" if bool(it.ragic_work_minutes) else None
             return s
 
         status_counts = Counter(
@@ -866,15 +897,15 @@ def get_stats(
             if (s := _dist_status(it)) is not None
         )
         for s, cnt in status_counts.items():
-            status_dist.append(StatusDistItem(
+            status_dist.append(HotelRoutinePMStatusDistItem(
                 status=s,
                 label=STATUS_LABELS.get(s, s),
                 count=cnt,
                 color=STATUS_COLORS.get(s, "#666666"),
             ))
 
-    return PMStats(
-        current_batch       = _batch_to_out(current_batch) if current_batch else None,
+    return HotelRoutinePMStats(
+        current_batch       = HotelRoutinePMBatchOut.model_validate(current_batch) if current_batch else None,
         current_kpi         = current_kpi,
         overdue_items       = overdue_items,
         upcoming_items      = upcoming_items,
@@ -884,36 +915,37 @@ def get_stats(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# GET /items/task-history
+# GET /items/task-history — 依項目名稱查詢跨批次執行歷史
 # ══════════════════════════════════════════════════════════════════════════════
 def _offset_month(year: int, month: int, delta: int) -> tuple[int, int]:
+    """月份偏移（delta 可為負）"""
     total = (year * 12 + (month - 1)) + delta
     return total // 12, (total % 12) + 1
 
 
-@router.get("/items/task-history", summary="依保養項目名稱查詢近 N 個月執行歷史")
+@router.get("/items/task-history", summary="依例行維護項目名稱查詢近 N 個月執行歷史")
 def get_item_task_history(
     task_name: str = Query(..., description="保養項目名稱（完整比對）"),
-    months:    int = Query(12, ge=1, le=24),
+    months:    int = Query(12, ge=1, le=24, description="查詢最近幾個月"),
     db:        Session = Depends(get_db),
 ):
     today = date.today()
 
     rows = (
-        db.query(MallPeriodicMaintenanceItem, MallPeriodicMaintenanceBatch)
+        db.query(HotelRoutinePMItem, HotelRoutinePMBatch)
         .join(
-            MallPeriodicMaintenanceBatch,
-            MallPeriodicMaintenanceItem.batch_ragic_id == MallPeriodicMaintenanceBatch.ragic_id,
+            HotelRoutinePMBatch,
+            HotelRoutinePMItem.batch_ragic_id == HotelRoutinePMBatch.ragic_id,
         )
-        .filter(MallPeriodicMaintenanceItem.task_name == task_name)
-        .order_by(MallPeriodicMaintenanceBatch.period_month.desc())
+        .filter(HotelRoutinePMItem.task_name == task_name)
+        .order_by(HotelRoutinePMBatch.period_month.desc())
         .all()
     )
 
     if not rows:
-        raise HTTPException(status_code=404, detail=f"找不到保養項目：{task_name}")
+        raise HTTPException(status_code=404, detail=f"找不到例行維護項目：{task_name}")
 
-    first_item: MallPeriodicMaintenanceItem = rows[0][0]
+    first_item: HotelRoutinePMItem = rows[0][0]
 
     month_map: dict[str, tuple] = {}
     for item, batch in rows:
@@ -923,18 +955,20 @@ def get_item_task_history(
     for i in range(months - 1, -1, -1):
         y, m = _offset_month(today.year, today.month, -i)
         period_month = f"{y}/{m:02d}"
-        is_current   = (y == today.year and m == today.month)
+        is_current = (y == today.year and m == today.month)
 
         if period_month in month_map:
-            item, _ = month_map[period_month]
+            item, _batch = month_map[period_month]
+            item_status = _calc_status(item, m)
             monthly_summary.append({
                 "period_month":   period_month,
-                "status":         _calc_status(item, m),
+                "status":         item_status,
                 "has_record":     True,
                 "executor_name":  item.executor_name or "",
                 "scheduled_date": item.scheduled_date or "",
                 "start_time":     item.start_time or "",
                 "end_time":       item.end_time or "",
+                "ragic_work_minutes": item.ragic_work_minutes,
                 "result_note":    item.result_note or "",
                 "abnormal_flag":  bool(item.abnormal_flag),
                 "abnormal_note":  item.abnormal_note or "",
@@ -949,6 +983,7 @@ def get_item_task_history(
                 "scheduled_date": "",
                 "start_time":     "",
                 "end_time":       "",
+                "ragic_work_minutes": None,
                 "result_note":    "",
                 "abnormal_flag":  False,
                 "abnormal_note":  "",
@@ -973,13 +1008,16 @@ def get_item_task_history(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# GET /period-stats/year-matrix  — 全年 12 個月矩陣統計
-# ⚠️ 必須定義在 /period-stats 之前，否則 FastAPI 會誤判路徑
+# GET /period-stats/year-matrix  — 全年 12 個月矩陣統計（⚠️ 必須在 /period-stats 之前）
 # ══════════════════════════════════════════════════════════════════════════════
-@router.get("/period-stats/year-matrix", summary="全年 12 個月矩陣統計", response_model=PMYearMatrix)
+@router.get(
+    "/period-stats/year-matrix",
+    summary="全年 12 個月矩陣統計",
+    response_model=HotelRoutinePMYearMatrix,
+)
 def get_period_stats_year_matrix(
     year:           Optional[int] = Query(None, description="年份，如 2026；預設今年"),
-    frequency_type: Optional[str] = Query(None, description="monthly | quarterly | yearly"),
+    frequency_type: Optional[str] = Query(None, description="monthly | quarterly | yearly；None = 全部頻率"),
     db:             Session = Depends(get_db),
 ):
     target_year = year or date.today().year
@@ -989,13 +1027,13 @@ def get_period_stats_year_matrix(
 # ══════════════════════════════════════════════════════════════════════════════
 # GET /period-stats  — 週期統計（月 / 季 / 年）
 # ══════════════════════════════════════════════════════════════════════════════
-@router.get("/period-stats", summary="週期統計（月/季/年）", response_model=PMPeriodStats)
+@router.get("/period-stats", summary="週期統計（月/季/年）", response_model=HotelRoutinePMPeriodStats)
 def get_period_stats(
     period_type:    str           = Query("month", description="month | quarter | year"),
     year:           Optional[int] = Query(None, description="年份，如 2026；預設今年"),
     month:          Optional[int] = Query(None, ge=1, le=12, description="月份（period_type=month 時使用）"),
     quarter:        Optional[int] = Query(None, ge=1, le=4,  description="季度 1-4（period_type=quarter 時使用）"),
-    frequency_type: Optional[str] = Query(None, description="monthly | quarterly | yearly"),
+    frequency_type: Optional[str] = Query(None, description="monthly | quarterly | yearly；None = 全部頻率"),
     db:             Session = Depends(get_db),
 ):
     today = date.today()
@@ -1017,9 +1055,10 @@ def get_period_stats(
 
     core = _calc_period_stats_core(db, p_start, p_end, prev_end, frequency_type)
     period_items_list = core.pop("period_items_list")
+
     breakdown = _calc_sub_breakdown(period_type, p_start, period_items_list)
 
-    return PMPeriodStats(
+    return HotelRoutinePMPeriodStats(
         period_type              = period_type,
         period_label             = period_label,
         period_start             = p_start.strftime("%Y-%m-%d"),
@@ -1037,179 +1076,140 @@ def get_period_stats(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# GET /period-stats/year-matrix/items  — 矩陣格點擊查詢明細
+# GET /period-stats/year-matrix/items  — 矩陣格明細（數字點擊用）
 # ══════════════════════════════════════════════════════════════════════════════
-@router.get("/period-stats/year-matrix/items", summary="矩陣格點擊查詢明細")
+@router.get("/period-stats/year-matrix/items", summary="矩陣格明細查詢（數字點擊）")
 def get_year_matrix_items(
-    year:           int           = Query(...),
-    month:          int           = Query(..., description="0 = 全年合計"),
+    year:           int           = Query(..., description="年份，如 2026"),
+    month:          int           = Query(..., ge=0, le=12, description="月份 1-12；合計欄傳 0 查全年"),
     metric:         str           = Query(..., description="prev_carry_over | prev_resolved | period_total | period_completed"),
-    frequency_type: Optional[str] = Query(None),
-    db:             Session       = Depends(get_db),
+    frequency_type: Optional[str] = Query(None, description="monthly | quarterly | yearly；None = 全部"),
+    db:             Session = Depends(get_db),
 ):
-    """
-    矩陣格點擊查詢明細。
+    if month == 0:
+        p_start  = date(year, 1, 1)
+        p_end    = date(year, 12, 31)
+        prev_end = date(year - 1, 12, 31)
+    else:
+        p_start, p_end, prev_end = _get_period_bounds("month", year, month=month)
 
-    carry-over 邏輯說明：
-      - 排定日期（scheduled_date）≠ 執行日期
-      - 執行完成判斷：end_time 有值 → 已完成；end_time 空 → 未執行（未結案）
-      - prev_carry_over：full_date ≤ 上月底 且 end_time 空（或 end_date > 上月底）的項目
-      - prev_resolved ：full_date ≤ 上月底 且 end_date 落在本期內的項目
-      - period_total  ：full_date 落在本月的所有項目
-      - period_completed：period_total 中 end_time 有值的項目
-    """
-    valid_batch_ids = _latest_batch_ids_per_month(db)
     rows = (
-        db.query(MallPeriodicMaintenanceItem, MallPeriodicMaintenanceBatch)
-        .join(MallPeriodicMaintenanceBatch,
-              MallPeriodicMaintenanceItem.batch_ragic_id == MallPeriodicMaintenanceBatch.ragic_id)
-        .filter(
-            MallPeriodicMaintenanceBatch.ragic_id.in_(valid_batch_ids),
-            MallPeriodicMaintenanceBatch.period_month.like(f"{year}/%"),
-        )
+        db.query(HotelRoutinePMItem, HotelRoutinePMBatch)
+        .join(HotelRoutinePMBatch,
+              HotelRoutinePMItem.batch_ragic_id == HotelRoutinePMBatch.ragic_id)
         .all()
     )
 
-    # ── 計算期間邊界 ─────────────────────────────────────────────────────────────
-    if month == 0:
-        p_start = date(year, 1, 1)
-        _, p_last = monthrange(year, 12)
-        p_end    = date(year, 12, p_last)
-        prev_end = date(year - 1, 12, 31)
-    else:
-        _, p_last = monthrange(year, month)
-        p_start = date(year, month, 1)
-        p_end   = date(year, month, p_last)
-        if month == 1:
-            prev_end = date(year - 1, 12, 31)
-        else:
-            _, prev_last = monthrange(year, month - 1)
-            prev_end = date(year, month - 1, prev_last)
+    prev_carry_over_list: list[dict] = []
+    period_items_list:    list[dict] = []
 
-    results = []
     for item, batch in rows:
+        if not item.scheduled_date:
+            continue
         if not _freq_match(item.frequency, frequency_type):
             continue
-
         try:
             exec_months = json.loads(item.exec_months_json or "[]")
         except Exception:
             exec_months = []
-
-        try:
-            batch_month = int(batch.period_month.split("/")[1])
-            batch_year  = int(batch.period_month.split("/")[0])
-        except Exception:
+        batch_month = int(batch.period_month.split("/")[1])
+        if exec_months and batch_month not in exec_months:
             continue
-
-        # ── 判斷此批次月份是否為執行月份（與統計函式同邏輯）────────────────────
-        if exec_months:
-            if batch_month not in exec_months:
-                continue
-        elif not _should_schedule(item, batch_year, batch_month):
-            continue
-
-        # ── 計算 full_date ────────────────────────────────────────────────────
-        if item.scheduled_date:
-            full_date = _reconstruct_full_date(item.scheduled_date, batch.period_month)
-        else:
-            full_date = date(batch_year, batch_month, 1)
+        full_date = _reconstruct_full_date(item.scheduled_date, batch.period_month)
         if full_date is None:
             continue
+        is_done  = bool(item.ragic_work_minutes)
+        end_date = _parse_end_date(item.end_time)
+        entry = {
+            "item": item, "batch": batch, "full_date": full_date,
+            "end_date": end_date, "is_done": is_done,
+        }
 
-        # ── 執行完成判斷：end_time 有值 = 已完成 ─────────────────────────────
-        is_done  = bool(item.end_time and item.end_time.strip())
-        end_date = _parse_end_date(item.end_time) if item.end_time else None
-
-        # ── 依 metric 篩選 ────────────────────────────────────────────────────
-        if metric == 'prev_carry_over':
-            # 截至上月底：full_date ≤ 上月底，且尚未完成（end_time 空，或結案日期 > 上月底）
-            if full_date > prev_end:
-                continue
+        if full_date <= prev_end:
             done_before = is_done and end_date is not None and end_date <= prev_end
-            if done_before:
-                continue
+            if not done_before:
+                prev_carry_over_list.append(entry)
 
-        elif metric == 'prev_resolved':
-            # 截至上月底的未結案中，本月已結案的項目
-            if full_date > prev_end:
-                continue
-            if not (is_done and end_date and p_start <= end_date <= p_end):
-                continue
+        if p_start <= full_date <= p_end:
+            period_items_list.append(entry)
 
-        elif metric == 'period_total':
-            # 本月應完成的項目（full_date 落在本月）
-            if not (p_start <= full_date <= p_end):
-                continue
+    if metric == "prev_carry_over":
+        target = prev_carry_over_list
+    elif metric == "prev_resolved":
+        target = [x for x in prev_carry_over_list
+                  if x["end_date"] is not None and p_start <= x["end_date"] <= p_end]
+    elif metric == "period_completed":
+        target = [x for x in period_items_list if x["is_done"]]
+    else:  # period_total
+        target = period_items_list
 
-        elif metric == 'period_completed':
-            # 本月應完成且已完成
-            if not (p_start <= full_date <= p_end and is_done):
-                continue
-
-        # ── 組裝 scheduled_date_full ──────────────────────────────────────────
-        sched_full = ""
-        if item.scheduled_date:
-            fd = _reconstruct_full_date(item.scheduled_date, batch.period_month)
-            sched_full = fd.strftime("%Y/%m/%d") if fd else ""
-
-        results.append({
-            "ragic_id":            item.ragic_id,
-            "batch_ragic_id":      item.batch_ragic_id,
-            "period_month":        batch.period_month,
-            "category":            item.category,
-            "task_name":           item.task_name,
-            "frequency":           item.frequency,
-            "scheduled_date_full": sched_full,
-            "end_time":            item.end_time or "",
-            "status":              "已完成" if is_done else ("進行中" if item.start_time else "待排程"),
-            "executor_name":       item.executor_name or "",
-            "result_note":         item.result_note or "",
-            "abnormal_flag":       bool(item.abnormal_flag),
-            "abnormal_note":       item.abnormal_note or "",
-            "ragic_link":          "",
+    result = []
+    for e in target:
+        it: HotelRoutinePMItem  = e["item"]
+        b:  HotelRoutinePMBatch = e["batch"]
+        full_date_str = e["full_date"].strftime("%Y/%m/%d")
+        ragic_link = _ragic_url(RAGIC_PATH, it.batch_ragic_id)
+        result.append({
+            "ragic_id":            it.ragic_id,
+            "batch_ragic_id":      it.batch_ragic_id,
+            "period_month":        b.period_month,
+            "category":            it.category,
+            "task_name":           it.task_name,
+            "frequency":           it.frequency,
+            "scheduled_date_full": full_date_str,
+            "end_time":            it.end_time,
+            "ragic_work_minutes":  it.ragic_work_minutes,
+            "status": (
+                "completed"   if bool(it.ragic_work_minutes) else
+                "in_progress" if it.start_time else (
+                "overdue" if (e["full_date"] < date.today() and not it.start_time and it.scheduled_date)
+                else "scheduled" if it.scheduled_date else "unscheduled"
+                )
+            ),
+            "executor_name": it.executor_name,
+            "result_note":   it.result_note,
+            "abnormal_flag": it.abnormal_flag,
+            "abnormal_note": it.abnormal_note,
+            "ragic_link":    ragic_link,
         })
 
-    return {"total": len(results), "items": results}
+    return {"total": len(result), "items": result}
 
 
 # ── 保養項目目錄（依頻率分類）──────────────────────────────────────────────────
-@router.get("/items/catalog", summary="保養項目目錄（依頻率分類）")
+@router.get("/items/catalog", summary="取得例行維護項目目錄（依頻率分類）")
 def get_items_catalog(
     frequency_type: Optional[str] = Query(None, description="monthly | quarterly | yearly"),
-    db:             Session       = Depends(get_db),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
 ):
-    """
-    取得保養項目目錄（不分批次），依 frequency_type 篩選。
-    結果為去重後的保養項目列表，以最新 seq_no 的資料為準。
-    """
     from sqlalchemy import func as sqlfunc
 
     subq = (
         db.query(
-            MallPeriodicMaintenanceItem.task_name,
-            MallPeriodicMaintenanceItem.category,
-            MallPeriodicMaintenanceItem.frequency,
-            sqlfunc.max(MallPeriodicMaintenanceItem.seq_no).label("max_seq"),
+            HotelRoutinePMItem.task_name,
+            HotelRoutinePMItem.category,
+            HotelRoutinePMItem.frequency,
+            sqlfunc.max(HotelRoutinePMItem.seq_no).label("max_seq"),
         )
         .group_by(
-            MallPeriodicMaintenanceItem.task_name,
-            MallPeriodicMaintenanceItem.category,
-            MallPeriodicMaintenanceItem.frequency,
+            HotelRoutinePMItem.task_name,
+            HotelRoutinePMItem.category,
+            HotelRoutinePMItem.frequency,
         )
         .subquery()
     )
 
     rows = (
-        db.query(MallPeriodicMaintenanceItem)
+        db.query(HotelRoutinePMItem)
         .join(
             subq,
-            (MallPeriodicMaintenanceItem.task_name   == subq.c.task_name)
-            & (MallPeriodicMaintenanceItem.category  == subq.c.category)
-            & (MallPeriodicMaintenanceItem.frequency == subq.c.frequency)
-            & (MallPeriodicMaintenanceItem.seq_no    == subq.c.max_seq),
+            (HotelRoutinePMItem.task_name   == subq.c.task_name)
+            & (HotelRoutinePMItem.category  == subq.c.category)
+            & (HotelRoutinePMItem.frequency == subq.c.frequency)
+            & (HotelRoutinePMItem.seq_no    == subq.c.max_seq),
         )
-        .order_by(MallPeriodicMaintenanceItem.category, MallPeriodicMaintenanceItem.seq_no)
+        .order_by(HotelRoutinePMItem.category, HotelRoutinePMItem.seq_no)
         .all()
     )
 
@@ -1236,129 +1236,29 @@ def get_items_catalog(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# GET /debug/ragic-raw  — 除錯用
-# ══════════════════════════════════════════════════════════════════════════════
-@router.get("/debug/ragic-raw", summary="[除錯] 顯示 Ragic Sheet 18 原始欄位 key", dependencies=[Depends(require_roles("system_admin", "module_manager"))])
-async def debug_ragic_raw():
-    from app.services.mall_periodic_maintenance_sync import (
-        MALL_PM_SERVER_URL, MALL_PM_ACCOUNT,
-        MALL_PM_JOURNAL_PATH, MALL_PM_ITEMS_PATH,
-    )
-
-    adapter_batch = RagicAdapter(
-        sheet_path=MALL_PM_JOURNAL_PATH,
-        server_url=MALL_PM_SERVER_URL,
-        account=MALL_PM_ACCOUNT,
-    )
-    adapter_items = RagicAdapter(
-        sheet_path=MALL_PM_ITEMS_PATH,
-        server_url=MALL_PM_SERVER_URL,
-        account=MALL_PM_ACCOUNT,
-    )
-
-    try:
-        raw_batch = await adapter_batch.fetch_all()
-        raw_items = await adapter_items.fetch_all()
-    except Exception as exc:
-        return {"error": str(exc)}
-
-    first_batch = next(iter(raw_batch.values()), {}) if raw_batch else {}
-    first_item  = next(iter(raw_items.values()), {}) if raw_items else {}
-
-    return {
-        "sheet18_batch": {
-            "total_records":      len(raw_batch),
-            "record_ids":         list(raw_batch.keys()),
-            "first_record_fields": first_batch,
-        },
-        "sheet18_items": {
-            "total_records":      len(raw_items),
-            "record_ids":         list(raw_items.keys()),
-            "first_record_fields": first_item,
-        },
-    }
-
-
-# ── GET /debug/ragic-sheet24-raw ─────────────────────────────────────────────
-
-@router.get("/debug/ragic-sheet24-raw",
-            summary="[除錯] 顯示 Ragic Sheet 24 原始欄位 key（維修工時來源）",
-            dependencies=[Depends(require_roles("system_admin", "module_manager"))])
-async def debug_ragic_sheet24_raw(limit: int = 3):
-    """
-    顯示 Sheet 24（商場週期保養 - 子表: 項目）的前幾筆原始 JSON。
-
-    用途：確認以下欄位名稱：
-      1. 「維修工時」的實際 key（預設 CK24_REPAIR_HOURS）
-      2. 指向 Sheet 18 父記錄的關聯欄位 key（預設 CK24_PARENT_REF）
-      3. 其他可用於配對的欄位 key（項目/類別/位置）
-
-    確認後請更新 .env 或 sync 程式碼中對應的 CK24_* 常數。
-    """
-    from app.services.mall_periodic_maintenance_sync import (
-        MALL_PM_SERVER_URL, MALL_PM_ACCOUNT, MALL_PM_SHEET24_PATH,
-        CK24_REPAIR_HOURS, CK24_TASK_NAME, CK24_CATEGORY, CK24_LOCATION, CK24_PARENT_REF,
-    )
-
-    adapter = RagicAdapter(
-        sheet_path=MALL_PM_SHEET24_PATH,
-        server_url=MALL_PM_SERVER_URL,
-        account=MALL_PM_ACCOUNT,
-    )
-
-    try:
-        raw_data = await adapter.fetch_all()
-    except Exception as exc:
-        return {"error": str(exc)}
-
-    records = list(raw_data.items())[:limit]
-    samples = {}
-    for rec_id, rec in records:
-        samples[rec_id] = rec
-
-    all_keys = sorted(set(
-        k for _, rec in records for k in rec.keys()
-    ))
-
-    return {
-        "sheet24_path":      MALL_PM_SHEET24_PATH,
-        "total_records":     len(raw_data),
-        "all_field_keys":    all_keys,
-        "current_ck24_config": {
-            "CK24_REPAIR_HOURS": CK24_REPAIR_HOURS,
-            "CK24_TASK_NAME":    CK24_TASK_NAME,
-            "CK24_CATEGORY":     CK24_CATEGORY,
-            "CK24_LOCATION":     CK24_LOCATION,
-            "CK24_PARENT_REF":   CK24_PARENT_REF,
-        },
-        "sample_records": samples,
-    }
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# 排程管理（mall_pm_schedule）相關 Endpoints
+# 排程管理（hotel_routine_pm_schedule）相關 Endpoints
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _mall_get_latest_batch_items(db: Session) -> list[MallPeriodicMaintenanceItem]:
-    """取得最新批次的所有保養項目，作為主檔來源。"""
+def _get_latest_batch_items(db: Session) -> list[HotelRoutinePMItem]:
+    """取得最新批次的所有例行維護項目，作為主檔來源。"""
     latest_batch = (
-        db.query(MallPeriodicMaintenanceBatch)
-        .order_by(MallPeriodicMaintenanceBatch.period_month.desc())
+        db.query(HotelRoutinePMBatch)
+        .order_by(HotelRoutinePMBatch.period_month.desc())
         .first()
     )
     if not latest_batch:
         return []
     return (
-        db.query(MallPeriodicMaintenanceItem)
-        .filter(MallPeriodicMaintenanceItem.batch_ragic_id == latest_batch.ragic_id)
-        .order_by(MallPeriodicMaintenanceItem.seq_no)
+        db.query(HotelRoutinePMItem)
+        .filter(HotelRoutinePMItem.batch_ragic_id == latest_batch.ragic_id)
+        .order_by(HotelRoutinePMItem.seq_no)
         .all()
     )
 
 
-def _mall_calc_schedule_status(rec: MallPMSchedule) -> str:
-    """計算 mall_pm_schedule 記錄的狀態。"""
-    if rec.is_completed or (rec.start_time and rec.end_time):
+def _calc_schedule_status(rec: HotelRoutinePMSchedule) -> str:
+    """計算 hotel_routine_pm_schedule 記錄的狀態。"""
+    if rec.is_completed:
         return "completed"
     if rec.start_time:
         return "in_progress"
@@ -1375,9 +1275,9 @@ def _mall_calc_schedule_status(rec: MallPMSchedule) -> str:
     return "unscheduled"
 
 
-def _mall_schedule_to_out(rec: MallPMSchedule) -> MallPMScheduleOut:
+def _schedule_to_out(rec: HotelRoutinePMSchedule) -> HotelRoutinePMScheduleOut:
     """ORM → Pydantic，動態注入 status。"""
-    return MallPMScheduleOut(
+    return HotelRoutinePMScheduleOut(
         id               = rec.id,
         year_month       = rec.year_month,
         item_ragic_id    = rec.item_ragic_id,
@@ -1391,54 +1291,31 @@ def _mall_schedule_to_out(rec: MallPMSchedule) -> MallPMScheduleOut:
         schedule_source  = rec.schedule_source,
         start_time       = rec.start_time,
         end_time         = rec.end_time,
-        is_completed     = rec.is_completed or bool(rec.start_time and rec.end_time),
+        is_completed     = rec.is_completed,
         result_note      = rec.result_note,
         abnormal_flag    = rec.abnormal_flag,
         abnormal_note    = rec.abnormal_note,
         portal_edited_at = rec.portal_edited_at,
         created_at       = rec.created_at,
         updated_at       = rec.updated_at,
-        status           = _mall_calc_schedule_status(rec),
+        status           = _calc_schedule_status(rec),
     )
-
-
-# ── 輔助：依 exec_months 自動計算排定日期 ──────────────────────────────────────
-
-def _calc_auto_scheduled_date(exec_months_json: Optional[str], batch_month: int) -> str:
-    """
-    依 exec_months_json 自動計算最近的排定日期。
-
-    規則：找第一個 exec_month >= batch_month 的月份，回傳 "MM/01"。
-    若找不到（如 12 月批次後沒有下一個 exec_month），回傳空字串。
-
-    範例：
-      exec_months=[1,4,7,11], batch_month=6 → "07/01"（下個執行月=7）
-      exec_months=[1,4,7,11], batch_month=7 → "07/01"（當月即執行月）
-      exec_months=[1,4,7,11], batch_month=12 → ""（無下一個執行月）
-    """
-    if not exec_months_json:
-        return ""
-    try:
-        exec_months = json.loads(exec_months_json)
-        if not exec_months:
-            return ""
-        future = sorted([m for m in exec_months if m >= batch_month])
-        return f"{future[0]:02d}/01" if future else ""
-    except Exception:
-        return ""
 
 
 # ── POST /schedule/generate ───────────────────────────────────────────────────
 
-@router.post("/schedule/generate", summary="產生指定月份商場保養排程（防重複）",
-             response_model=MallPMScheduleGenerateResult)
-def generate_mall_schedule(
+@router.post(
+    "/schedule/generate",
+    summary="產生指定月份例行維護排程（防重複）",
+    response_model=HotelRoutinePMScheduleGenerateResult,
+)
+def generate_schedule(
     year:  int = Query(..., description="年份，如 2026"),
     month: int = Query(..., ge=1, le=12, description="月份 1-12"),
     db:    Session = Depends(get_db),
 ):
     """
-    依最新批次 mall_pm_batch_item 的頻率規則，為指定 year/month 產生 mall_pm_schedule 記錄。
+    依最新批次 hotel_routine_pm_batch_item 的頻率規則，為指定 year/month 產生排程記錄。
 
     保護規則：
       - is_completed=True → 跳過（不覆蓋已完成）
@@ -1446,19 +1323,18 @@ def generate_mall_schedule(
       - 其他已存在記錄 → 更新 scheduled_date / executor_name
     """
     year_month = f"{year}/{month:02d}"
-    items = _mall_get_latest_batch_items(db)
+    items = _get_latest_batch_items(db)
 
-    # 建立目標月份批次的 (task_name, category, location) -> "MM/DD" lookup
     target_batch = (
-        db.query(MallPeriodicMaintenanceBatch)
-        .filter(MallPeriodicMaintenanceBatch.period_month == year_month)
+        db.query(HotelRoutinePMBatch)
+        .filter(HotelRoutinePMBatch.period_month == year_month)
         .first()
     )
     month_sched_lookup: dict[tuple, str] = {}
     if target_batch:
         target_items = (
-            db.query(MallPeriodicMaintenanceItem)
-            .filter(MallPeriodicMaintenanceItem.batch_ragic_id == target_batch.ragic_id)
+            db.query(HotelRoutinePMItem)
+            .filter(HotelRoutinePMItem.batch_ragic_id == target_batch.ragic_id)
             .all()
         )
         for ti in target_items:
@@ -1471,7 +1347,9 @@ def generate_mall_schedule(
                 mmdd = ti.scheduled_date
             else:
                 continue
-            month_sched_lookup[(ti.task_name.strip(), ti.category.strip(), ti.location.strip())] = mmdd
+            month_sched_lookup[
+                (ti.task_name.strip(), ti.category.strip(), ti.location.strip())
+            ] = mmdd
 
     generated             = 0
     updated               = 0
@@ -1489,51 +1367,37 @@ def generate_mall_schedule(
                 skipped_no_frequency += 1
                 continue
 
-            # 有 exec_months 的項目：一律納入排程，scheduled_date 由 exec_months 自動計算
-            # 無 exec_months 的項目：依頻率公式，只在執行月份才建立排程記錄
-            has_exec_months = bool(
-                item.exec_months_json and item.exec_months_json.strip() not in ("[]", "")
-            )
-            if not has_exec_months and not _should_schedule(item, year, month):
+            if not _should_schedule(item, year, month):
                 skipped_non_month += 1
                 continue
 
             existing = (
-                db.query(MallPMSchedule)
+                db.query(HotelRoutinePMSchedule)
                 .filter(
-                    MallPMSchedule.year_month    == year_month,
-                    MallPMSchedule.item_ragic_id == item.ragic_id,
+                    HotelRoutinePMSchedule.year_month    == year_month,
+                    HotelRoutinePMSchedule.item_ragic_id == item.ragic_id,
                 )
                 .first()
             )
 
-            # resolved_date 優先順序：
-            #   1. 目標批次 / Ragic 已填的排定日期（month_sched_lookup 或 item.scheduled_date）
-            #   2. exec_months 自動計算（MM/01）
-            #   3. 空字串
-            key = (item.task_name.strip(), item.category.strip(), item.location.strip())
-            ragic_date = month_sched_lookup.get(key) or item.scheduled_date or ""
-            if ragic_date:
-                resolved_date = ragic_date
-            elif has_exec_months:
-                resolved_date = _calc_auto_scheduled_date(item.exec_months_json, month)
-            else:
-                resolved_date = ""
-
             if existing:
-                if existing.is_completed or (existing.start_time and existing.end_time):
+                if existing.is_completed:
                     skipped_completed += 1
                     continue
                 if existing.portal_edited_at is not None:
                     skipped_edited += 1
                     continue
+                key = (item.task_name.strip(), item.category.strip(), item.location.strip())
+                resolved_date = month_sched_lookup.get(key) or item.scheduled_date or ""
                 existing.scheduled_date    = resolved_date
                 existing.executor_name     = item.executor_name
                 existing.estimated_minutes = item.estimated_minutes
                 existing.updated_at        = datetime.now()
                 updated += 1
             else:
-                new_rec = MallPMSchedule(
+                key = (item.task_name.strip(), item.category.strip(), item.location.strip())
+                resolved_date = month_sched_lookup.get(key) or item.scheduled_date or ""
+                new_rec = HotelRoutinePMSchedule(
                     year_month        = year_month,
                     item_ragic_id     = item.ragic_id,
                     category          = item.category,
@@ -1557,7 +1421,7 @@ def generate_mall_schedule(
         db.rollback()
         errors.append(f"commit error: {exc}")
 
-    return MallPMScheduleGenerateResult(
+    return HotelRoutinePMScheduleGenerateResult(
         year_month            = year_month,
         generated             = generated,
         updated               = updated,
@@ -1571,8 +1435,8 @@ def generate_mall_schedule(
 
 # ── GET /schedule ─────────────────────────────────────────────────────────────
 
-@router.get("/schedule", summary="查詢商場排程明細列表")
-def list_mall_schedule(
+@router.get("/schedule", summary="查詢例行維護排程明細列表")
+def list_schedule(
     year_month: Optional[str] = Query(None, description="月份，如 2026/05；預設為本月"),
     category:   Optional[str] = Query(None),
     status:     Optional[str] = Query(None),
@@ -1582,12 +1446,12 @@ def list_mall_schedule(
         today = date.today()
         year_month = f"{today.year}/{today.month:02d}"
 
-    q = db.query(MallPMSchedule).filter(MallPMSchedule.year_month == year_month)
+    q = db.query(HotelRoutinePMSchedule).filter(HotelRoutinePMSchedule.year_month == year_month)
     if category:
-        q = q.filter(MallPMSchedule.category == category)
+        q = q.filter(HotelRoutinePMSchedule.category == category)
 
-    records   = q.order_by(MallPMSchedule.category, MallPMSchedule.task_name).all()
-    items_out = [_mall_schedule_to_out(r) for r in records]
+    records   = q.order_by(HotelRoutinePMSchedule.category, HotelRoutinePMSchedule.task_name).all()
+    items_out = [_schedule_to_out(r) for r in records]
 
     if status:
         if status == "abnormal":
@@ -1595,7 +1459,7 @@ def list_mall_schedule(
         else:
             items_out = [i for i in items_out if i.status == status]
 
-    all_items    = _mall_get_latest_batch_items(db)
+    all_items    = _get_latest_batch_items(db)
     year_i       = int(year_month.split("/")[0])
     month_i      = int(year_month.split("/")[1])
     existing_ids = {r.item_ragic_id for r in records}
@@ -1614,8 +1478,12 @@ def list_mall_schedule(
 
 # ── GET /schedule/kpi ─────────────────────────────────────────────────────────
 
-@router.get("/schedule/kpi", summary="商場排程 KPI 統計", response_model=MallPMScheduleKPI)
-def get_mall_schedule_kpi(
+@router.get(
+    "/schedule/kpi",
+    summary="例行維護排程 KPI 統計",
+    response_model=HotelRoutinePMScheduleKPI,
+)
+def get_schedule_kpi(
     year_month: Optional[str] = Query(None, description="月份，如 2026/05；預設本月"),
     db:         Session = Depends(get_db),
 ):
@@ -1623,13 +1491,15 @@ def get_mall_schedule_kpi(
         today = date.today()
         year_month = f"{today.year}/{today.month:02d}"
 
-    records   = db.query(MallPMSchedule).filter(MallPMSchedule.year_month == year_month).all()
-    items_out = [_mall_schedule_to_out(r) for r in records]
+    records   = db.query(HotelRoutinePMSchedule).filter(
+        HotelRoutinePMSchedule.year_month == year_month
+    ).all()
+    items_out = [_schedule_to_out(r) for r in records]
 
-    total       = len(items_out)
-    completed   = sum(1 for i in items_out if i.status == "completed")
+    total     = len(items_out)
+    completed = sum(1 for i in items_out if i.status == "completed")
 
-    all_items    = _mall_get_latest_batch_items(db)
+    all_items    = _get_latest_batch_items(db)
     year_i       = int(year_month.split("/")[0])
     month_i      = int(year_month.split("/")[1])
     existing_ids = {r.item_ragic_id for r in records}
@@ -1638,7 +1508,7 @@ def get_mall_schedule_kpi(
         if _should_schedule(it, year_i, month_i) and it.ragic_id not in existing_ids
     )
 
-    return MallPMScheduleKPI(
+    return HotelRoutinePMScheduleKPI(
         total              = total,
         unscheduled        = sum(1 for i in items_out if i.status == "unscheduled"),
         scheduled          = sum(1 for i in items_out if i.status == "scheduled"),
@@ -1653,8 +1523,8 @@ def get_mall_schedule_kpi(
 
 # ── GET /schedule/overdue ─────────────────────────────────────────────────────
 
-@router.get("/schedule/overdue", summary="商場跨月逾期未執行清單")
-def list_mall_overdue_schedule(
+@router.get("/schedule/overdue", summary="跨月逾期未執行清單")
+def list_overdue_schedule(
     before_date: Optional[str] = Query(None, description="截止日期 YYYY/MM/DD；預設今天"),
     db:          Session = Depends(get_db),
 ):
@@ -1667,10 +1537,10 @@ def list_mall_overdue_schedule(
         cutoff = date.today()
 
     all_records = (
-        db.query(MallPMSchedule)
-        .filter(MallPMSchedule.is_completed == False)
-        .filter(MallPMSchedule.scheduled_date != "")
-        .order_by(MallPMSchedule.year_month, MallPMSchedule.scheduled_date)
+        db.query(HotelRoutinePMSchedule)
+        .filter(HotelRoutinePMSchedule.is_completed == False)  # noqa: E712
+        .filter(HotelRoutinePMSchedule.scheduled_date != "")
+        .order_by(HotelRoutinePMSchedule.year_month, HotelRoutinePMSchedule.scheduled_date)
         .all()
     )
 
@@ -1688,7 +1558,7 @@ def list_mall_overdue_schedule(
         if sched >= cutoff:
             continue
 
-        out_dict = _mall_schedule_to_out(rec).model_dump()
+        out_dict = _schedule_to_out(rec).model_dump()
         out_dict["overdue_days"] = (cutoff - sched).days
         overdue_items.append(out_dict)
         months_set.add(rec.year_month)
@@ -1700,15 +1570,15 @@ def list_mall_overdue_schedule(
     }
 
 
-# ── PATCH /schedule/{id} ──────────────────────────────────────────────────────
+# ── PATCH /schedule/{schedule_id} ─────────────────────────────────────────────
 
-@router.patch("/schedule/{schedule_id}", summary="人工調整商場排程明細")
-def update_mall_schedule(
+@router.patch("/schedule/{schedule_id}", summary="人工調整例行維護排程明細")
+def update_schedule(
     schedule_id: int,
-    body:        MallPMScheduleUpdate,
+    body:        HotelRoutinePMScheduleUpdate,
     db:          Session = Depends(get_db),
 ):
-    rec = db.get(MallPMSchedule, schedule_id)
+    rec = db.get(HotelRoutinePMSchedule, schedule_id)
     if not rec:
         raise HTTPException(status_code=404, detail="Schedule record not found")
 
@@ -1728,28 +1598,31 @@ def update_mall_schedule(
         db.rollback()
         raise HTTPException(status_code=500, detail=str(exc))
 
-    return _mall_schedule_to_out(rec)
+    return _schedule_to_out(rec)
 
 
 # ── GET /schedule/annual-matrix ───────────────────────────────────────────────
 
-@router.get("/schedule/annual-matrix", summary="商場年度計劃矩陣（12欄）",
-            response_model=MallPMScheduleAnnualMatrix)
-def get_mall_annual_matrix(
+@router.get(
+    "/schedule/annual-matrix",
+    summary="年度計劃矩陣（12欄）",
+    response_model=HotelRoutinePMScheduleAnnualMatrix,
+)
+def get_annual_matrix(
     year:     int = Query(..., description="年份，如 2026"),
     category: Optional[str] = Query(None),
     db:       Session = Depends(get_db),
 ):
-    all_items = _mall_get_latest_batch_items(db)
+    all_items = _get_latest_batch_items(db)
     if category:
         all_items = [it for it in all_items if it.category == category]
 
     year_records = (
-        db.query(MallPMSchedule)
-        .filter(MallPMSchedule.year_month.like(f"{year}/%"))
+        db.query(HotelRoutinePMSchedule)
+        .filter(HotelRoutinePMSchedule.year_month.like(f"{year}/%"))
         .all()
     )
-    schedule_map: dict[tuple[str, int], MallPMSchedule] = {}
+    schedule_map: dict[tuple[str, int], HotelRoutinePMSchedule] = {}
     for rec in year_records:
         try:
             m = int(rec.year_month.split("/")[1])
@@ -1757,10 +1630,9 @@ def get_mall_annual_matrix(
         except Exception:
             pass
 
-    # 載入該年各月批次的排定日期 lookup（補回 scheduled_date 為空的情況）
     year_batches = (
-        db.query(MallPeriodicMaintenanceBatch)
-        .filter(MallPeriodicMaintenanceBatch.period_month.like(f"{year}/%"))
+        db.query(HotelRoutinePMBatch)
+        .filter(HotelRoutinePMBatch.period_month.like(f"{year}/%"))
         .all()
     )
     month_sched_lookup: dict[int, dict[tuple, str]] = {}
@@ -1770,8 +1642,8 @@ def get_mall_annual_matrix(
         except Exception:
             continue
         batch_items = (
-            db.query(MallPeriodicMaintenanceItem)
-            .filter(MallPeriodicMaintenanceItem.batch_ragic_id == batch.ragic_id)
+            db.query(HotelRoutinePMItem)
+            .filter(HotelRoutinePMItem.batch_ragic_id == batch.ragic_id)
             .all()
         )
         lookup: dict[tuple, str] = {}
@@ -1789,11 +1661,11 @@ def get_mall_annual_matrix(
             lookup[key] = mmdd
         month_sched_lookup[bm] = lookup
 
-    rows: list[MallPMScheduleMatrixRow] = []
+    rows: list[HotelRoutinePMScheduleMatrixRow] = []
     completed_cnt = 0
 
     for item in all_items:
-        cells: list[MallPMScheduleMatrixCell] = []
+        cells: list[HotelRoutinePMScheduleMatrixCell] = []
         for m in range(1, 13):
             rec = schedule_map.get((item.ragic_id, m))
             if rec:
@@ -1802,11 +1674,11 @@ def get_mall_annual_matrix(
                     key = (item.task_name.strip(), item.category.strip(), item.location.strip())
                     batch_mmdd = lookup.get(key)
                     if batch_mmdd:
-                        rec.scheduled_date = batch_mmdd   # 僅記憶體賦值，不 commit
-                status = _mall_calc_schedule_status(rec)
+                        rec.scheduled_date = batch_mmdd
+                status = _calc_schedule_status(rec)
                 if status == "completed":
                     completed_cnt += 1
-                cells.append(MallPMScheduleMatrixCell(
+                cells.append(HotelRoutinePMScheduleMatrixCell(
                     month          = m,
                     status         = status,
                     schedule_id    = rec.id,
@@ -1815,11 +1687,11 @@ def get_mall_annual_matrix(
             else:
                 freq = (item.frequency or "").strip()
                 if not freq:
-                    cells.append(MallPMScheduleMatrixCell(month=m, status="no_frequency", schedule_id=None))
+                    cells.append(HotelRoutinePMScheduleMatrixCell(
+                        month=m, status="no_frequency", schedule_id=None
+                    ))
                 elif _should_schedule(item, year, m):
-                    # ── 決定 cell_sched_date ──────────────────────────────────
-                    # 優先 1：Ragic item.scheduled_date；優先 2：MM/01（執行月預設）
-                    cell_sched_date: Optional[str] = f"{m:02d}/01"
+                    cell_sched_date: Optional[str] = None
                     cell_status = "no_data"
                     if item.scheduled_date:
                         try:
@@ -1828,7 +1700,7 @@ def get_mall_annual_matrix(
                             day = parts[-1].zfill(2)
                             cell_sched_date = f"{m:02d}/{day}"
                             if sched_month == m:
-                                if item.is_completed or (item.start_time and item.end_time):
+                                if item.is_completed or bool(item.ragic_work_minutes):
                                     cell_status = "completed"
                                     completed_cnt += 1
                                 elif item.start_time:
@@ -1839,24 +1711,19 @@ def get_mall_annual_matrix(
                                     ).date()
                                     cell_status = "overdue" if full_sched < date.today() else "scheduled"
                         except Exception:
-                            cell_sched_date = f"{m:02d}/01"
-
-                    # 未來月份不顯示「！」，改為「—」（但保留 scheduled_date 提示）
-                    today = date.today()
-                    if year > today.year or (year == today.year and m > today.month):
-                        cells.append(MallPMScheduleMatrixCell(
-                            month=m, status="non_month",
-                            schedule_id=None, scheduled_date=cell_sched_date,
-                        ))
-                    else:
-                        cells.append(MallPMScheduleMatrixCell(
-                            month=m, status=cell_status,
-                            schedule_id=None, scheduled_date=cell_sched_date,
-                        ))
+                            cell_sched_date = None
+                    cells.append(HotelRoutinePMScheduleMatrixCell(
+                        month          = m,
+                        status         = cell_status,
+                        schedule_id    = None,
+                        scheduled_date = cell_sched_date,
+                    ))
                 else:
-                    cells.append(MallPMScheduleMatrixCell(month=m, status="non_month", schedule_id=None))
+                    cells.append(HotelRoutinePMScheduleMatrixCell(
+                        month=m, status="non_month", schedule_id=None
+                    ))
 
-        rows.append(MallPMScheduleMatrixRow(
+        rows.append(HotelRoutinePMScheduleMatrixRow(
             item_ragic_id = item.ragic_id,
             category      = item.category,
             task_name     = item.task_name,
@@ -1871,7 +1738,7 @@ def get_mall_annual_matrix(
         if c.status not in ("non_month", "no_frequency")
     )
 
-    return MallPMScheduleAnnualMatrix(
+    return HotelRoutinePMScheduleAnnualMatrix(
         year    = year,
         rows    = rows,
         summary = {

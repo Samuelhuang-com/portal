@@ -82,6 +82,7 @@ from app.routers import (
     inventory,
     luqun_repair,
     periodic_maintenance,
+    hotel_routine_pm,
     ragic,
     role_permissions,
     roles,
@@ -716,6 +717,54 @@ def _migrate_f7_vendor_managing_company():
             print("[Migration] vendors.managing_company added")
 
 
+def _migrate_full_bldg_pm_sheet28_fields():
+    """
+    輕量欄位補丁（2026-06-02）：
+    為 full_bldg_pm_batch_item 加入 Sheet 28 同步欄位：
+      - repair_hours  REAL nullable        — 維修工時（小時），來源 Sheet 28
+      - sheet28_id    VARCHAR(50) nullable — Sheet 28 record ID，供直接比對
+    """
+    from sqlalchemy import text
+    new_cols = [
+        ("repair_hours", "REAL"),
+        ("sheet28_id",   "VARCHAR(50)"),
+    ]
+    with engine.connect() as conn:
+        existing = [
+            row[1]
+            for row in conn.execute(text("PRAGMA table_info(full_bldg_pm_batch_item)")).fetchall()
+        ]
+        for col, col_type in new_cols:
+            if col not in existing:
+                conn.execute(text(f"ALTER TABLE full_bldg_pm_batch_item ADD COLUMN {col} {col_type}"))
+                conn.commit()
+                print(f"[Migration] full_bldg_pm_batch_item.{col} 欄位已新增")
+
+
+def _migrate_mall_pm_sheet24_fields():
+    """
+    輕量欄位補丁（2026-06-02）：
+    為 mall_pm_batch_item 加入 Sheet 24 同步欄位：
+      - repair_hours  REAL nullable     — 維修工時（小時），來源 Sheet 24
+      - sheet24_id    VARCHAR(50) nullable — Sheet 24 record ID，供直接比對
+    """
+    from sqlalchemy import text
+    new_cols = [
+        ("repair_hours", "REAL"),
+        ("sheet24_id",   "VARCHAR(50)"),
+    ]
+    with engine.connect() as conn:
+        existing = [
+            row[1]
+            for row in conn.execute(text("PRAGMA table_info(mall_pm_batch_item)")).fetchall()
+        ]
+        for col, col_type in new_cols:
+            if col not in existing:
+                conn.execute(text(f"ALTER TABLE mall_pm_batch_item ADD COLUMN {col} {col_type}"))
+                conn.commit()
+                print(f"[Migration] mall_pm_batch_item.{col} 欄位已新增")
+
+
 def _migrate_calendar_custom_event_zone():
     """calendar_custom_events.zone 欄位補丁（區域別：飯店/商場/公區/其它）。"""
     from sqlalchemy import text
@@ -1195,6 +1244,8 @@ async def lifespan(app: FastAPI):
     import app.models.ppt_export_config        # noqa: F401  PPT 匯出設定
     import app.models.ppt_export_history       # noqa: F401  PPT 匯出歷史紀錄
     import app.models.contract                 # noqa: F401  合約管理（含 ContractClaim + H1~H4 新表）
+    import app.models.hotel_routine_pm         # noqa: F401  飯店例行維護（Sheet 11 平表，含維修工時）
+    import app.models.hotel_routine_pm_schedule  # noqa: F401  飯店例行維護排程
 
     # B4F 扁平化遷移：刪除舊 batch 表 + 檢查 item 表欄位（必須在 create_all 之前）
     _migrate_b4f_flatten()
@@ -1333,6 +1384,14 @@ async def lifespan(app: FastAPI):
     # 行事曆區域別（2026-06-02）：calendar_custom_events.zone
     _migrate_calendar_custom_event_zone()
     print("[Portal] calendar_custom_events zone migration checked.")
+
+    # 商場週期保養 Sheet 24 欄位（2026-06-02）：repair_hours + sheet24_id
+    _migrate_mall_pm_sheet24_fields()
+    print("[Portal] mall_pm_batch_item Sheet24 fields migration checked.")
+
+    # 全棟例行維護 Sheet 28 欄位（2026-06-02）：repair_hours + sheet28_id
+    _migrate_full_bldg_pm_sheet28_fields()
+    print("[Portal] full_bldg_pm_batch_item Sheet28 fields migration checked.")
 
     # 選單設定補丁（2026-04-28）：隱藏舊 custom_1777348120465，補齊 mall-pm-group 子項 DB 記錄
     _seed_menu_config_mall_pm_group()
@@ -1606,6 +1665,13 @@ app.include_router(
     periodic_maintenance.router,
     prefix=f"{API_PREFIX}/periodic-maintenance",
     tags=["週期保養表"],
+)
+
+# ── 新增：飯店例行維護（Sheet 6 主表 + Sheet 11 平表）────────────────────────
+app.include_router(
+    hotel_routine_pm.router,
+    prefix=f"{API_PREFIX}/hotel/routine-maintenance",
+    tags=["飯店例行維護"],
 )
 
 # ── 新增：IHG 客房保養（年度矩陣保養計畫）────────────────────────────────────

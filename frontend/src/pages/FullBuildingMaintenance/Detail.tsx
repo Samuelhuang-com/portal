@@ -22,6 +22,7 @@ import {
   FilterOutlined,
   CheckSquareOutlined,
   BorderOutlined,
+  LinkOutlined,
 } from '@ant-design/icons'
 import { Input } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
@@ -72,6 +73,15 @@ function fmtMinutes(mins: number): string {
   if (!mins) return '—'
   if (mins < 60) return `${mins} 分`
   return `${Math.floor(mins / 60)} 時 ${mins % 60} 分`
+}
+
+function fmtHours(hours: number | null | undefined): string {
+  if (hours == null) return '—'
+  const h = Math.floor(hours)
+  const m = Math.round((hours - h) * 60)
+  if (h === 0) return `${m} 分`
+  if (m === 0) return `${h} 時`
+  return `${h} 時 ${m} 分`
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -370,15 +380,29 @@ export default function FullBuildingMaintenanceDetailPage() {
       dataIndex: 'task_name',
       render: (v: string, rec) => (
         <Space direction="vertical" size={0}>
-          <Button
-            type="link"
-            size="small"
-            style={{ padding: 0, height: 'auto', fontWeight: 600, textAlign: 'left' }}
-            onClick={() => openHistory(v)}
-          >
-            {v}
-            <HistoryOutlined style={{ marginLeft: 4, fontSize: 11, color: '#4BA8E8' }} />
-          </Button>
+          <Space size={4}>
+            <Button
+              type="link"
+              size="small"
+              style={{ padding: 0, height: 'auto', fontWeight: 600, textAlign: 'left' }}
+              onClick={() => openHistory(v)}
+            >
+              {v}
+              <HistoryOutlined style={{ marginLeft: 4, fontSize: 11, color: '#4BA8E8' }} />
+            </Button>
+            {rec.ragic_url && (
+              <Tooltip title="在 Ragic 查看工單">
+                <a
+                  href={rec.ragic_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ color: '#4BA8E8', fontSize: 13, lineHeight: 1, display: 'inline-flex', alignItems: 'center' }}
+                >
+                  <LinkOutlined />
+                </a>
+              </Tooltip>
+            )}
+          </Space>
           {rec.location && (
             <Text type="secondary" style={{ fontSize: 12 }}>{rec.location}</Text>
           )}
@@ -393,11 +417,29 @@ export default function FullBuildingMaintenanceDetailPage() {
       render: (v: string) => v || '—',
     },
     {
+      title: '執行月份',
+      dataIndex: 'exec_months_raw',
+      width: 130,
+      ellipsis: true,
+      render: (v: string) => v || '—',
+    },
+    {
       title: '預估工時',
       dataIndex: 'estimated_minutes',
       width: 90,
       align: 'center',
       render: (v: number) => fmtMinutes(v),
+    },
+    {
+      title: '維修工時',
+      dataIndex: 'repair_hours',
+      width: 90,
+      align: 'center',
+      render: (v: number | null | undefined) => (
+        v != null
+          ? <Text style={{ color: '#52C41A', fontWeight: 600 }}>{fmtHours(v)}</Text>
+          : <Text type="secondary">—</Text>
+      ),
     },
     {
       title: '排定日期',
@@ -491,9 +533,23 @@ export default function FullBuildingMaintenanceDetailPage() {
             )}
           </Title>
         </Space>
-        <Button icon={<ReloadOutlined />} onClick={loadDetail} loading={loading}>
-          重新整理
-        </Button>
+        <Space>
+          {detail?.batch.ragic_url && (
+            <Tooltip title="在 Ragic 查看原始工單">
+              <a
+                href={detail.batch.ragic_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ color: '#4BA8E8', fontSize: 20, lineHeight: 1, display: 'inline-flex', alignItems: 'center' }}
+              >
+                <LinkOutlined />
+              </a>
+            </Tooltip>
+          )}
+          <Button icon={<ReloadOutlined />} onClick={loadDetail} loading={loading}>
+            重新整理
+          </Button>
+        </Space>
       </div>
 
       {/* KPI Cards */}

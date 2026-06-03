@@ -24,6 +24,7 @@ import RoomMaintenanceDetailPage from '@/pages/RoomMaintenanceDetail'
 import InventoryPage             from '@/pages/Inventory'
 import PeriodicMaintenancePage       from '@/pages/PeriodicMaintenance'
 import PeriodicMaintenanceDetailPage from '@/pages/PeriodicMaintenance/Detail'
+import HotelRoutineMaintenancePage   from '@/pages/HotelRoutineMaintenance'
 import MallMgmtDashboardPage             from '@/pages/MallMgmtDashboard'
 import MallDashboardPage                 from '@/pages/MallDashboard'
 import MallPeriodicMaintenancePage       from '@/pages/MallPeriodicMaintenance'
@@ -361,6 +362,7 @@ export default function AppRouter() {
           <Route path="room-maintenance-detail" element={<RoomMaintenanceDetailPage />} />
           <Route path="periodic-maintenance"             element={<PeriodicMaintenancePage />} />
           <Route path="periodic-maintenance/:batchId"    element={<PeriodicMaintenanceDetailPage />} />
+          <Route path="routine-maintenance"              element={<HotelRoutineMaintenancePage />} />
           <Route path="ihg-room-maintenance"    element={<IHGRoomMaintenancePage />} />
           <Route path="daily-inspection"        element={<HotelDailyInspectionDashboard />} />
           <Route path="daily-meter-readings"    element={<HotelMeterReadingsDashboard />} />

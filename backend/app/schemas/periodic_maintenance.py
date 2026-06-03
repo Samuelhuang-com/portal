@@ -50,6 +50,8 @@ class PMItemOut(BaseModel):
     portal_edited_at:  Optional[datetime] = None
     synced_at:         Optional[datetime] = None
     status:            str = "unscheduled"
+    ragic_url:         str = ""
+    repair_hours:      Optional[float] = None
 
     class Config:
         from_attributes = True

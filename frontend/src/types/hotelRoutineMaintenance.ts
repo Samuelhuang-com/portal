@@ -1,6 +1,6 @@
-// ── 週期保養表 TypeScript 型別定義 ────────────────────────────────────────────
+// ── 飯店例行維護 TypeScript 型別定義 ────────────────────────────────────────────
 
-export interface PMBatch {
+export interface HotelRoutinePMBatch {
   ragic_id:         string
   journal_no:       string
   period_month:     string
@@ -10,7 +10,7 @@ export interface PMBatch {
   synced_at?:       string
 }
 
-export interface PMItem {
+export interface HotelRoutinePMItem {
   ragic_id:          string
   batch_ragic_id:    string
   seq_no:            number
@@ -32,12 +32,12 @@ export interface PMItem {
   abnormal_note:     string
   portal_edited_at?: string
   synced_at?:        string
-  status:            PMItemStatus
+  status:            HotelRoutinePMItemStatus
   ragic_url?:        string
   repair_hours?:     number | null
 }
 
-export type PMItemStatus =
+export type HotelRoutinePMItemStatus =
   | 'completed'
   | 'in_progress'
   | 'scheduled'
@@ -45,7 +45,7 @@ export type PMItemStatus =
   | 'overdue'
   | 'non_current_month'
 
-export interface PMBatchKPI {
+export interface HotelRoutinePMBatchKPI {
   total:                number
   current_month_total:  number
   completed:            number
@@ -59,49 +59,49 @@ export interface PMBatchKPI {
   actual_minutes:       number   // 實際工時合計（end_time - start_time 加總，分鐘）
 }
 
-export interface CategoryStat {
+export interface HotelRoutineCategoryStat {
   category:  string
   total:     number
   completed: number
   rate:      number
 }
 
-export interface StatusDistItem {
+export interface HotelRoutineStatusDistItem {
   status: string
   label:  string
   count:  number
   color:  string
 }
 
-export interface PMBatchListItem {
-  batch: PMBatch
-  kpi:   PMBatchKPI
+export interface HotelRoutinePMBatchListItem {
+  batch: HotelRoutinePMBatch
+  kpi:   HotelRoutinePMBatchKPI
 }
 
-export interface PMBatchDetail {
-  batch:      PMBatch
-  kpi:        PMBatchKPI
-  items:      PMItem[]
-  categories: CategoryStat[]
+export interface HotelRoutinePMBatchDetail {
+  batch:      HotelRoutinePMBatch
+  kpi:        HotelRoutinePMBatchKPI
+  items:      HotelRoutinePMItem[]
+  categories: HotelRoutineCategoryStat[]
 }
 
-export interface PMStats {
-  current_batch?:       PMBatch
-  current_kpi?:         PMBatchKPI
-  overdue_items:        PMItem[]
-  upcoming_items:       PMItem[]
-  category_stats:       CategoryStat[]
-  status_distribution:  StatusDistItem[]
+export interface HotelRoutinePMStats {
+  current_batch?:       HotelRoutinePMBatch
+  current_kpi?:         HotelRoutinePMBatchKPI
+  overdue_items:        HotelRoutinePMItem[]
+  upcoming_items:       HotelRoutinePMItem[]
+  category_stats:       HotelRoutineCategoryStat[]
+  status_distribution:  HotelRoutineStatusDistItem[]
 }
 
-// PMItemUpdate 已停用（Portal 不提供編輯，資料全部來自 Ragic 同步）
-export interface PMItemUpdate {
+// HotelRoutinePMItemUpdate 已停用（Portal 不提供編輯，資料全部來自 Ragic 同步）
+export interface HotelRoutinePMItemUpdate {
   [key: string]: never
 }
 
 // ── 週期統計（月 / 季 / 年）─────────────────────────────────────────────────
 
-export interface PMIncompleteItem {
+export interface HotelRoutinePMIncompleteItem {
   task_name:            string
   category:             string
   scheduled_date_full:  string   // "YYYY/MM/DD"
@@ -109,14 +109,14 @@ export interface PMIncompleteItem {
   frequency:            string
 }
 
-export interface PMSubPeriodBreakdown {
+export interface HotelRoutinePMSubPeriodBreakdown {
   label:     string        // "1月" / "Q1" 等
   total:     number
   completed: number
   rate:      number | null  // null = N/A（分母為 0）
 }
 
-export interface PMPeriodStats {
+export interface HotelRoutinePMPeriodStats {
   period_type:   string    // "month" | "quarter" | "year"
   period_label:  string    // "2026年4月" / "2026 Q2" / "2026年"
   period_start:  string    // "2026-04-01"
@@ -134,15 +134,15 @@ export interface PMPeriodStats {
   period_rate:      number | null  // null = N/A
 
   // 子期間分布（季→月、年→Q1-Q4、月→空陣列）
-  sub_period_breakdown: PMSubPeriodBreakdown[]
+  sub_period_breakdown: HotelRoutinePMSubPeriodBreakdown[]
 
   // 未完成事項說明（僅含 result_note 非空的項目）
-  incomplete_items: PMIncompleteItem[]
+  incomplete_items: HotelRoutinePMIncompleteItem[]
 }
 
 // ── 年度矩陣統計（12個月橫軸）────────────────────────────────────────────────
 
-export interface PMYearMatrixMonth {
+export interface HotelRoutinePMYearMatrixMonth {
   month:                   number    // 1-12
   label:                   string    // "一月" ... "十二月"
   prev_carry_over:         number    // 上月累計未完成項目數
@@ -154,16 +154,16 @@ export interface PMYearMatrixMonth {
   incomplete_notes:        string    // 未完成備註（\n 分隔；空=無）
 }
 
-export interface PMYearMatrix {
+export interface HotelRoutinePMYearMatrix {
   year:   number
-  months: PMYearMatrixMonth[]
+  months: HotelRoutinePMYearMatrixMonth[]
 }
 
 // ── 保養項目歷史（跨批次 task-history）────────────────────────────────────────
 
-export interface PMItemHistorySummary {
+export interface HotelRoutinePMItemHistorySummary {
   period_month:   string   // e.g. "2026/04"
-  status:         string   // PMItemStatus | 'no_batch'
+  status:         string   // HotelRoutinePMItemStatus | 'no_batch'
   has_record:     boolean
   executor_name:  string
   scheduled_date: string
@@ -175,34 +175,34 @@ export interface PMItemHistorySummary {
   is_current:     boolean
 }
 
-export interface PMTaskHistoryStats {
+export interface HotelRoutinePMTaskHistoryStats {
   total_months:     number
   completed_months: number
   abnormal_count:   number
 }
 
-export interface PMTaskHistory {
+export interface HotelRoutinePMTaskHistory {
   task_name:        string
   category:         string
   frequency:        string
   exec_months_raw:  string
-  monthly_summary:  PMItemHistorySummary[]
-  stats:            PMTaskHistoryStats
+  monthly_summary:  HotelRoutinePMItemHistorySummary[]
+  stats:            HotelRoutinePMTaskHistoryStats
 }
 
 
 // ════════════════════════════════════════════════════════════════════════════
-// 排程管理（pm_schedule）TypeScript 型別
+// 排程管理（hotel_routine_pm_schedule）TypeScript 型別
 // ════════════════════════════════════════════════════════════════════════════
 
-export type PMScheduleStatus =
+export type HotelRoutinePMScheduleStatus =
   | 'completed'
   | 'in_progress'
   | 'overdue'
   | 'scheduled'
   | 'unscheduled'
 
-export interface PMScheduleItem {
+export interface HotelRoutinePMScheduleItem {
   id:               number
   year_month:       string
   item_ragic_id:    string
@@ -223,11 +223,11 @@ export interface PMScheduleItem {
   portal_edited_at: string | null
   created_at:       string
   updated_at:       string
-  status:           PMScheduleStatus
+  status:           HotelRoutinePMScheduleStatus
   overdue_days?:    number   // 逾期清單專用
 }
 
-export interface PMScheduleKPI {
+export interface HotelRoutinePMScheduleKPI {
   total:               number
   unscheduled:         number
   scheduled:           number
@@ -239,7 +239,7 @@ export interface PMScheduleKPI {
   completion_rate:     number
 }
 
-export interface PMScheduleGenerateResult {
+export interface HotelRoutinePMScheduleGenerateResult {
   year_month:             string
   generated:              number
   updated:                number
@@ -250,22 +250,22 @@ export interface PMScheduleGenerateResult {
   errors:                 string[]
 }
 
-export interface PMScheduleListResponse {
+export interface HotelRoutinePMScheduleListResponse {
   year_month:         string
   total:              number
   should_do_not_done: number
-  items:              PMScheduleItem[]
+  items:              HotelRoutinePMScheduleItem[]
 }
 
-export interface PMScheduleOverdueResponse {
+export interface HotelRoutinePMScheduleOverdueResponse {
   total:           number
   months_affected: string[]
-  items:           PMScheduleItem[]
+  items:           HotelRoutinePMScheduleItem[]
 }
 
 // ── 年度計劃矩陣 ──────────────────────────────────────────────────────────────
 
-export type PMMatrixCellStatus =
+export type HotelRoutinePMMatrixCellStatus =
   | 'completed'
   | 'overdue'
   | 'in_progress'
@@ -275,24 +275,24 @@ export type PMMatrixCellStatus =
   | 'no_data'
   | 'no_frequency'
 
-export interface PMScheduleMatrixCell {
+export interface HotelRoutinePMScheduleMatrixCell {
   month:          number
-  status:         PMMatrixCellStatus
+  status:         HotelRoutinePMMatrixCellStatus
   schedule_id:    number | null
   scheduled_date: string | null   // e.g. "05/15"
 }
 
-export interface PMScheduleMatrixRow {
+export interface HotelRoutinePMScheduleMatrixRow {
   item_ragic_id: string
   category:      string
   task_name:     string
   location:      string
   frequency:     string
-  cells:         PMScheduleMatrixCell[]
+  cells:         HotelRoutinePMScheduleMatrixCell[]
 }
 
-export interface PMScheduleAnnualMatrix {
+export interface HotelRoutinePMScheduleAnnualMatrix {
   year:    number
-  rows:    PMScheduleMatrixRow[]
+  rows:    HotelRoutinePMScheduleMatrixRow[]
   summary: { total_items: number; completed_count: number }
 }

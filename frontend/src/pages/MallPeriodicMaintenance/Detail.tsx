@@ -393,6 +393,13 @@ export default function MallPeriodicMaintenanceDetailPage() {
       render: (v: string) => v || '—',
     },
     {
+      title: '執行月份',
+      dataIndex: 'exec_months_raw',
+      width: 130,
+      ellipsis: true,
+      render: (v: string) => v || '—',
+    },
+    {
       title: '預估工時',
       dataIndex: 'estimated_minutes',
       width: 90,

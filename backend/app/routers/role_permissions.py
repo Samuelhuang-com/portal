@@ -37,6 +37,7 @@ PERMISSION_DEFINITIONS = [
     {"key": "hotel_daily_inspection_view",        "label": "飯店每日巡檢",     "group": "飯店管理"},
     {"key": "hotel_meter_readings_view",          "label": "每日數值登錄表",   "group": "飯店管理"},
     {"key": "hotel_other_tasks_view",             "label": "主管交辦／緊急事件","group": "飯店管理"},
+    {"key": "hotel_routine_pm_view",              "label": "飯店例行維護",      "group": "飯店管理"},
     {"key": "mall_view",                          "label": "商場模組",          "group": "商場管理"},
     {"key": "mall_overview_view",                 "label": "商場管理 Dashboard","group": "商場管理"},
     {"key": "mall_dashboard_view",                "label": "商場例行維護統計",  "group": "商場管理"},

@@ -7,7 +7,7 @@
 """
 import json
 from datetime import datetime
-from sqlalchemy import Column, String, Integer, Text, DateTime, Boolean, func, Index
+from sqlalchemy import Column, String, Integer, Float, Text, DateTime, Boolean, func, Index
 from app.core.database import Base
 
 
@@ -67,6 +67,10 @@ class MallPeriodicMaintenanceItem(Base):
 
     # ── 完成標記（start_time + end_time 均有值 → True）──
     is_completed   = Column(Boolean, nullable=False, default=False, comment="保養是否完成")
+
+    # ── Sheet 24 同步欄位（維修工時，從 /periodic-maintenance/24 拉取）──────────
+    repair_hours   = Column(Float,   nullable=True,  comment="維修工時（小時），來源 Sheet 24")
+    sheet24_id     = Column(String(50), nullable=True, comment="Sheet 24 的 Ragic record ID，用於直接比對")
 
     # ── Portal 回填欄位 ──────────────────────────────────────────────────────
     result_note    = Column(Text,    nullable=False, default="",    comment="執行結果備註")

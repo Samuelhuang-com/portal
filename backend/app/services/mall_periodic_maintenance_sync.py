@@ -55,6 +55,19 @@ MALL_PM_ACCOUNT       = getattr(settings, "RAGIC_MALL_PM_ACCOUNT",       "soutle
 MALL_PM_JOURNAL_PATH  = getattr(settings, "RAGIC_MALL_PM_JOURNAL_PATH",  "periodic-maintenance/18")
 # 附表路徑：若商場 items 另有獨立 Sheet 可在 .env 覆寫；預設同主表（子表格模式）
 MALL_PM_ITEMS_PATH    = getattr(settings, "RAGIC_MALL_PM_ITEMS_PATH",    "periodic-maintenance/18")
+# Sheet 24：商場週期保養日誌(同仁執行) - 子表: 項目（平鋪視圖，含 維修工時）
+MALL_PM_SHEET24_PATH  = getattr(settings, "RAGIC_MALL_PM_SHEET24_PATH",  "periodic-maintenance/24")
+
+# ── Sheet 24 欄位 key（待確認後可於 .env 覆寫）────────────────────────────────
+# 以下 key 需透過 /debug/ragic-sheet24-raw 端點確認 Ragic 實際回傳的欄位名稱
+CK24_REPAIR_HOURS     = getattr(settings, "RAGIC_S24_REPAIR_HOURS",  "維修工時")
+CK24_TASK_NAME        = getattr(settings, "RAGIC_S24_TASK_NAME",     "項目")
+CK24_CATEGORY         = getattr(settings, "RAGIC_S24_CATEGORY",      "類別")
+CK24_LOCATION         = getattr(settings, "RAGIC_S24_LOCATION",      "位置")
+# 父記錄關聯欄位：Sheet 24 每筆記錄指向 Sheet 18 父記錄的欄位名稱
+# 常見 Ragic 命名：「保養日誌編號」「_parent_id」或主表的 Primary Field 名稱
+# ⚠ 待確認：呼叫 GET /api/v1/mall/periodic-maintenance/debug/ragic-sheet24-raw 後填入
+CK24_PARENT_REF       = getattr(settings, "RAGIC_S24_PARENT_REF",    "保養日誌編號")
 
 
 # ── 轉換輔助函式 ──────────────────────────────────────────────────────────────
@@ -67,6 +80,28 @@ def _stringify(value: Any) -> str:
     if isinstance(value, dict):
         return _stringify(value.get("value") or value.get("label") or "")
     return str(value).strip()
+
+
+def _normalize_sched_date(raw: str) -> str:
+    """
+    Ragic 排定日期欄位可能回傳 'YYYY/MM/DD' 或 'MM/DD'。
+    統一轉為補零的 'MM/DD' 儲入 DB，避免下游函式解析失敗。
+
+    範例：
+      "2026/05/29" → "05/29"
+      "2026/5/9"   → "05/09"
+      "05/29"      → "05/29"（不變）
+      ""           → ""
+    """
+    if not raw:
+        return ""
+    parts = raw.strip().split("/")
+    if len(parts) == 3:
+        try:
+            return f"{int(parts[1]):02d}/{int(parts[2]):02d}"
+        except (ValueError, IndexError):
+            return raw
+    return raw
 
 
 def _to_int(val: Any) -> int:
@@ -134,7 +169,7 @@ def _ragic_item_to_model(
     rec.task_name         = _stringify(row_raw.get(CK_TASK_NAME, ""))
     rec.location          = _stringify(row_raw.get(CK_LOCATION, ""))
     rec.estimated_minutes = _to_int(row_raw.get(CK_EST_HOURS, 0))
-    rec.scheduled_date    = _stringify(row_raw.get(CK_SCHED_DATE, ""))
+    rec.scheduled_date    = _normalize_sched_date(_stringify(row_raw.get(CK_SCHED_DATE, "")))
     rec.scheduler_name    = _stringify(row_raw.get(CK_SCHEDULER, ""))
     rec.result_note       = _stringify(row_raw.get(CK_NOTE, ""))
     rec.executor_name     = _stringify(row_raw.get(CK_EXECUTOR, ""))
@@ -416,6 +451,161 @@ def _fix_period_month_format(db) -> int:
     return fixed
 
 
+def _normalize_existing_scheduled_dates(db) -> int:
+    """
+    修正 DB 中已存入的 'YYYY/MM/DD' 格式排定日期 → 'MM/DD'。
+    每次 sync 執行後呼叫，確保歷史資料格式一致。
+    """
+    fixed = 0
+    try:
+        from app.models.mall_periodic_maintenance import MallPeriodicMaintenanceItem
+        items = db.query(MallPeriodicMaintenanceItem).filter(
+            MallPeriodicMaintenanceItem.scheduled_date != ""
+        ).all()
+        for it in items:
+            normalized = _normalize_sched_date(it.scheduled_date)
+            if normalized != it.scheduled_date:
+                it.scheduled_date = normalized
+                fixed += 1
+        if fixed:
+            db.commit()
+            logger.info(f"[MallPMSync] scheduled_date 格式修正：{fixed} 筆")
+    except Exception as exc:
+        db.rollback()
+        logger.warning(f"[MallPMSync] scheduled_date 修正失敗：{exc}")
+    return fixed
+
+
+async def sync_repair_hours_from_sheet24() -> dict:
+    """
+    從 Sheet 24（商場週期保養日誌 - 子表: 項目）同步「維修工時」到 mall_pm_batch_item。
+
+    Sheet 24 是 Sheet 18 子表格的 Ragic 平鋪視圖（New sheet from subtable），
+    每筆記錄對應 Sheet 18 的一個子表格列，並含有獨立欄位「維修工時」。
+
+    配對策略（三層 fallback）：
+      1. 優先：sheet24_id 直接比對（若已有先前的 sheet24_id 快取）
+      2. 次之：parent_ref（Sheet 24 中指向 Sheet 18 父記錄的欄位）+ task_name + category
+      3. 再次：僅 task_name + category（跨所有批次，適合 Sheet 24 無父記錄欄位時）
+
+    ⚠ 父記錄欄位名稱（CK24_PARENT_REF）需先透過 /debug/ragic-sheet24-raw 確認。
+    """
+    adapter = RagicAdapter(
+        sheet_path=MALL_PM_SHEET24_PATH,
+        server_url=MALL_PM_SERVER_URL,
+        account=MALL_PM_ACCOUNT,
+    )
+    logger.info("[MallPMSync][Sheet24] 開始同步維修工時...")
+
+    try:
+        raw_data = await adapter.fetch_all()
+    except Exception as exc:
+        logger.error(f"[MallPMSync][Sheet24] 拉取失敗：{exc}")
+        return {"fetched": 0, "updated": 0, "errors": [str(exc)]}
+
+    if not raw_data:
+        logger.warning("[MallPMSync][Sheet24] Ragic 回傳空資料")
+        return {"fetched": 0, "updated": 0, "errors": []}
+
+    fetched  = len(raw_data)
+    updated  = 0
+    skipped  = 0
+    errors: list[str] = []
+
+    # 記錄第一筆原始欄位供除錯（避免反覆重新啟動才能看到 key）
+    first_keys = list(list(raw_data.values())[0].keys()) if raw_data else []
+    logger.info(f"[MallPMSync][Sheet24] 第一筆可用欄位 key：{first_keys}")
+
+    db = SessionLocal()
+    try:
+        for sheet24_id, record in raw_data.items():
+            try:
+                # ── 取欄位值 ─────────────────────────────────────────────────
+                repair_hours_raw = record.get(CK24_REPAIR_HOURS, "")
+                task_name        = _stringify(record.get(CK24_TASK_NAME, "")).strip()
+                category         = _stringify(record.get(CK24_CATEGORY, "")).strip()
+                location         = _stringify(record.get(CK24_LOCATION, "")).strip()
+                parent_ref       = _stringify(record.get(CK24_PARENT_REF, "")).strip()
+
+                if not repair_hours_raw:
+                    skipped += 1
+                    continue
+
+                try:
+                    repair_hours = float(str(repair_hours_raw).replace(",", "").strip())
+                except (ValueError, TypeError):
+                    skipped += 1
+                    continue
+
+                # ── 配對策略 1：sheet24_id 直接比對（最快）─────────────────
+                target = (
+                    db.query(MallPeriodicMaintenanceItem)
+                    .filter(MallPeriodicMaintenanceItem.sheet24_id == str(sheet24_id))
+                    .first()
+                )
+
+                # ── 配對策略 2：parent_ref（Sheet 18 ID）+ task_name + category ──
+                if not target and parent_ref:
+                    target = (
+                        db.query(MallPeriodicMaintenanceItem)
+                        .filter(
+                            MallPeriodicMaintenanceItem.batch_ragic_id == parent_ref,
+                            MallPeriodicMaintenanceItem.task_name      == task_name,
+                            MallPeriodicMaintenanceItem.category       == category,
+                        )
+                        .first()
+                    )
+
+                # ── 配對策略 3：僅 task_name + category（最後手段）──────────
+                if not target and task_name:
+                    candidates = (
+                        db.query(MallPeriodicMaintenanceItem)
+                        .filter(
+                            MallPeriodicMaintenanceItem.task_name == task_name,
+                            MallPeriodicMaintenanceItem.category  == category,
+                        )
+                        .all()
+                    )
+                    # 若多筆命中，以最近一筆批次為準（依 batch_ragic_id 最大值）
+                    if candidates:
+                        target = max(candidates, key=lambda x: x.batch_ragic_id)
+
+                if not target:
+                    logger.debug(
+                        f"[MallPMSync][Sheet24] 找不到對應 item："
+                        f"sheet24_id={sheet24_id} task={task_name} category={category} parent={parent_ref}"
+                    )
+                    skipped += 1
+                    continue
+
+                # ── 更新欄位 ─────────────────────────────────────────────────
+                target.repair_hours = repair_hours
+                target.sheet24_id   = str(sheet24_id)   # 快取供下次直接比對
+                updated += 1
+
+            except Exception as exc:
+                errors.append(f"sheet24_id={sheet24_id}: {exc}")
+
+        db.commit()
+        logger.info(
+            f"[MallPMSync][Sheet24] 完成：fetched={fetched}, "
+            f"updated={updated}, skipped={skipped}, errors={len(errors)}"
+        )
+    except Exception as exc:
+        db.rollback()
+        errors.append(f"DB commit error: {exc}")
+        logger.error(f"[MallPMSync][Sheet24] DB 寫入失敗：{exc}")
+    finally:
+        db.close()
+
+    return {
+        "fetched": fetched,
+        "updated": updated,
+        "skipped": skipped,
+        "errors":  errors,
+    }
+
+
 @register("mall_periodic_maintenance")
 async def sync_from_ragic() -> dict:
     """完整同步：先同步主表，再同步附表。"""
@@ -425,10 +615,14 @@ async def sync_from_ragic() -> dict:
     db = SessionLocal()
     try:
         _fix_period_month_format(db)
+        _normalize_existing_scheduled_dates(db)
     finally:
         db.close()
 
+    sheet24_result = await sync_repair_hours_from_sheet24()
+
     return {
-        "batches": batch_result,
-        "items":   items_result,
+        "batches":  batch_result,
+        "items":    items_result,
+        "sheet24":  sheet24_result,
     }

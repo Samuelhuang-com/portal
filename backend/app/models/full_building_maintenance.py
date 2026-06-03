@@ -7,7 +7,7 @@
 """
 import json
 from datetime import datetime
-from sqlalchemy import Column, String, Integer, Text, DateTime, Boolean, func
+from sqlalchemy import Column, String, Integer, Float, Text, DateTime, Boolean, func
 from app.core.database import Base
 
 
@@ -68,6 +68,10 @@ class FullBldgPMItem(Base):
     result_note    = Column(Text,    nullable=False, default="",    comment="執行結果備註")
     abnormal_flag  = Column(Boolean, nullable=False, default=False, comment="是否有異常")
     abnormal_note  = Column(Text,    nullable=False, default="",    comment="異常說明")
+
+    # ── Sheet 28（子表平鋪視圖）同步欄位 ─────────────────────────────────────
+    repair_hours = Column(Float,      nullable=True, comment="維修工時（小時），來源 Ragic Sheet 28")
+    sheet28_id   = Column(String(50), nullable=True, comment="Sheet 28 的 Ragic record ID 快取，供下次直接比對")
 
     # ── Portal 編輯時間戳 ──────────────────────────────────────────────────────
     portal_edited_at = Column(DateTime, nullable=True, comment="Portal 最後編輯時間（保護機制）")
