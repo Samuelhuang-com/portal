@@ -53,6 +53,33 @@ IHG_TEMPLATE_PATH = os.path.abspath(
 
 ROWS_PER_SLIDE = 14   # 每頁最多行數（12pt 字 × 26pt 列高，確保不超出頁面）
 
+# ─── 報修類別 MD 內容對照表（靜態參考，對應附圖一）────────────────────────────
+# None 表示該列為區隔標題（無 MD 內容），以深藍底色呈現
+_REPAIR_CATEGORY_MD: list = [
+    ("建築",          "連續壁／外觀玻璃／外觀門窗／電梯／手扶梯／招牌／植栽"),
+    ("衛廁",          "馬桶／洗手槽／烘手機／哺給乳室／衛生紙架／淋浴間／浴簾／吹風機"),
+    ("消防",          "偵煙感知器／灑水頭／鐵捲門／安全門／緊急廣播系統／煙霧偵測器／"
+                      "R型受信總機／消防圖控／緊急消防加壓送水泵"),
+    ("空調",          "主機／送風機／冷卻水塔／補風機／分離式冷氣／導流風機"),
+    ("機電",          "機房／緊急發電機／不斷電系統／鍋爐"),
+    ("給排水",        "漏水／水塔／污水處理／排水系統／截油槽"),
+    ("排煙",          "靜電機／水洗機／截油槽／排煙管／排風扇"),
+    ("監控",          "CCTV／監控主機"),
+    ("弱電",          "交換機／電話／網路／插座"),
+    ("照明",          "建築外觀／燈具"),
+    ("停車",          "車牌辨識／自動繳費機／柵欄機"),
+    ("其他",          "人流計數器／入金機"),
+    ("專櫃",          None),   # ← 區隔標題列，無 MD 內容
+    ("凍&藏類設備",   "冰箱（冷凍＆藏）／凍庫／飲料機／製冰機"),
+    ("內裝",          "天花板／牆壁／地板／門／窗簾／遮光簾／紗簾／家具／櫃子／地毯／保險箱"),
+    ("廚房&吧台設備", "蒸烤爐／洗碗機／封口機／洗杯機／層架／插蚊燈／熱水壺／咖啡機"),
+    ("會議設備",      "宴會顯示器／投影機／電視／影音設備"),
+    ("瓦斯類設備",    "天然氣緊急遮斷系統／熱盤櫃／單口爐／雙口爐"),
+    ("公區",          "電扶梯、商場、停車場／機廳／廚場／飯店、LOBBY／"
+                      "4F接待區／4F餐台／各層梯廳"),
+    ("後勤空間",      "辦公室／儲藏室／員工餐區／更衣室"),
+]
+
 
 # ═══════════════════════════════════════════════════════
 # Request schema
@@ -1193,6 +1220,88 @@ def _build_ihg_section_matrix_slides(
 
             tbl.rows[ri].height = Pt(22)
 
+def _add_pie_with_category_table(
+    prs, template_idx: int,
+    title: str, subtitle: str,
+    pie_buf: Optional[BytesIO],
+    now_str: str, SW: float, SH: float,
+    title_fn=None,
+):
+    """
+    Slide E 專用：左半部 = 類別 MD 參考表（_REPAIR_CATEGORY_MD），
+    右半部 = 圓餅分布圖圖片。
+    不修改其他任何投影片或現有函式。
+    """
+    from app.routers.hotel_overview import (
+        _clone_template_slide, _set_slide_title,
+        _pptx_txt, _pptx_cell,
+    )
+    from pptx.util import Inches, Pt
+    from pptx.dml.color import RGBColor
+    from pptx.enum.text import PP_ALIGN
+
+    _fn    = title_fn or _set_slide_title
+    C_DARK = RGBColor(0x1B, 0x3A, 0x5C)
+    C_WHITE= RGBColor(0xFF, 0xFF, 0xFF)
+    C_SEP  = RGBColor(0x2C, 0x55, 0x82)   # 「專櫃」區隔列底色
+    C_ALT  = RGBColor(0xEE, 0xF5, 0xFB)
+    C_GRAY = RGBColor(0x88, 0x88, 0x88)
+
+    slide = _clone_template_slide(prs, template_idx)
+    _fn(slide, title, "", now_str, SW, SH)
+    if subtitle:
+        _sub_y = 0.592 if title_fn is not None else 0.52
+        _pptx_txt(slide, subtitle, 0.35, _sub_y, SW - 4.5, 0.22,
+                  size=10, bold=True, color=RGBColor(0x00, 0x00, 0x00))
+
+    # ── 版面配置（單位：英吋）─────────────────────────────────────────────
+    TABLE_Y = 0.92
+    TABLE_H = SH - TABLE_Y - 0.45
+    LEFT_W  = 4.20
+    LEFT_X  = 0.30
+    RIGHT_X = LEFT_X + LEFT_W + 0.12   # gap = 0.12"
+    RIGHT_W = SW - RIGHT_X - 0.25
+
+    # ── 左側：類別 MD 參考表 ──────────────────────────────────────────────
+    CAT_W = 0.85
+    MD_W  = LEFT_W - CAT_W
+    N     = len(_REPAIR_CATEGORY_MD)
+
+    tbl = slide.shapes.add_table(
+        N + 1, 2,
+        Inches(LEFT_X), Inches(TABLE_Y),
+        Inches(LEFT_W), Inches(TABLE_H),
+    ).table
+    tbl.columns[0].width = Inches(CAT_W)
+    tbl.columns[1].width = Inches(MD_W)
+
+    # Header 列
+    _pptx_cell(tbl, 0, 0, "類別",   fg=C_WHITE, bg=C_DARK, size=8, bold=True, align=PP_ALIGN.CENTER)
+    _pptx_cell(tbl, 0, 1, "MD內容", fg=C_WHITE, bg=C_DARK, size=8, bold=True, align=PP_ALIGN.LEFT)
+    tbl.rows[0].height = Pt(22)
+
+    # 資料列
+    for ri, (cat, md_text) in enumerate(_REPAIR_CATEGORY_MD, start=1):
+        is_sep = (md_text is None)                        # 「專櫃」區隔列
+        bg     = C_SEP if is_sep else (C_ALT if ri % 2 == 0 else None)
+        fg     = C_WHITE if is_sep else C_DARK
+        _pptx_cell(tbl, ri, 0, cat,             fg=fg, bg=bg, size=7, bold=is_sep)
+        _pptx_cell(tbl, ri, 1, (md_text or ""), fg=fg, bg=bg, size=7)
+        tbl.rows[ri].height = Pt(20)
+
+    # ── 右側：圓餅圖圖片 ──────────────────────────────────────────────────
+    if pie_buf:
+        slide.shapes.add_picture(
+            pie_buf,
+            Inches(RIGHT_X), Inches(TABLE_Y),
+            Inches(RIGHT_W), Inches(TABLE_H),
+        )
+    else:
+        _pptx_txt(slide, "（本期暫無圖表資料）",
+                  RIGHT_X + 1.5, TABLE_Y + 2.0, 5.0, 1.0,
+                  size=14, color=C_GRAY, italic=True)
+
+
 # Core PPT builder
 # ═══════════════════════════════════════════════════════
 
@@ -1261,7 +1370,7 @@ def _build_repair_pptx(module: str, year: int, month: int, db: Session) -> Bytes
         ("① 上月累計未完成項目數",          "count", "prev_uncompleted",          None,      None),
         ("② 上月累計未完成，於本月結案",     "count", "closed_from_prev",           None,      None),
         ("③ 上月累計未完成，於本月仍未完成", "count", "prev_remaining",             _C_RED_BG, _C_RED_FG),
-        ("④ 累計項目完成率",                 "rate",  "cum_completion_rate",        None,      _C_RATE_FG),
+        ("④ 累計項目完成率",                 "pct_ratio", ("closed_from_prev", "prev_uncompleted"), None, _C_RATE_FG),
         ("⑤ 本月報修項目數",                 "count", "this_month_total",           None,      None),
         ("⑥ 本月報修項目完成數",             "count", "this_month_completed",       None,      None),
         ("⑦ 本月報修項目未完成",             "count", "this_month_uncompleted",     None,      _C_RED_FG),
@@ -1282,6 +1391,12 @@ def _build_repair_pptx(module: str, year: int, month: int, db: Session) -> Bytes
                 md = months_data.get(m, {})
                 if kind == "rate":
                     row[f"m{m}"] = _fmt_rate(md.get(field))
+                elif kind == "pct_ratio":
+                    # ④ 累計項目完成率 = ② ÷ ①（與 web 前端 compute 公式一致）
+                    num_f, den_f = field
+                    num_v = md.get(num_f) or 0
+                    den_v = md.get(den_f) or 0
+                    row[f"m{m}"] = _fmt_rate(round(num_v / den_v * 100, 1)) if den_v else "—"
                 elif kind == "sum2":
                     a, b = field
                     row[f"m{m}"] = _sanitize((md.get(a) or 0) + (md.get(b) or 0))
@@ -1416,16 +1531,16 @@ def _build_repair_pptx(module: str, year: int, month: int, db: Session) -> Bytes
     )
 
     # ══════════════════════════════════════════════════════════════════════════
-    # Slide E — Dashboard 報修類型分布（圓餅）
+    # Slide E — 報修類型分布（左：類別 MD 參考表；右：圓餅圖）
     # ══════════════════════════════════════════════════════════════════════════
     pie_buf = _make_pie_chart(type_rows)
-    _add_chart_slide(
+    _add_pie_with_category_table(
         prs, TMPL,
-        title     = "Dashboard — 報修類型分布",
-        subtitle  = f"{period_str}",
-        chart_buf = pie_buf,
-        now_str   = now_str, SW=SW, SH=SH,
-        title_fn  = _title_fn,
+        title    = "報修類型分布",
+        subtitle = f"{period_str}",
+        pie_buf  = pie_buf,
+        now_str  = now_str, SW=SW, SH=SH,
+        title_fn = _title_fn,
     )
 
     # ══════════════════════════════════════════════════════════════════════════
