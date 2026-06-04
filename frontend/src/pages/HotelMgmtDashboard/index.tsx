@@ -333,7 +333,7 @@ export default function HotelMgmtDashboardPage() {
   const [tabYearlyLoading, setTabYearlyLoading]  = useState(false)
   const [exportLoading,    setExportLoading]     = useState(false)
 
-  // ── PPTX 匯出 ────────────────────────────────────────────────────────────
+  // ── PPTX 匯出（repair/ppt-export dazhi → IHG 模板，報修統計格式）────────────
   const handlePptExport = useCallback(async () => {
     setExportLoading(true)
     try {

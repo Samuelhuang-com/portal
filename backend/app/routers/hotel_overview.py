@@ -699,12 +699,14 @@ def _pptx_cell(tbl, row: int, col: int, text: str,
     cell.margin_bottom = Inches(0.02)
     p = cell.text_frame.paragraphs[0]
     p.alignment = align
-    r = p.runs[0] if p.runs else p.add_run()
-    r.font.name = "微軟正黑體"
-    r.font.size = Pt(size)
-    r.font.bold = bold
-    if fg:
-        r.font.color.rgb = fg
+    # 對所有 runs 強制套用字體大小，防止 _x000D_ 等分裂成多個 run 後繼承較大字體
+    runs = p.runs if p.runs else [p.add_run()]
+    for r in runs:
+        r.font.name = "微軟正黑體"
+        r.font.size = Pt(size)
+        r.font.bold = bold
+        if fg:
+            r.font.color.rgb = fg
 
 
 def _pptx_header_row(tbl, n_cols: int, size: int = 10):

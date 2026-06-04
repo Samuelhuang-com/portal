@@ -2477,59 +2477,60 @@ function MatrixDetailModal({
   const [total,   setTotal]   = useState(0)
 
   useEffect(() => {
-    if (!open) return
+    if (!open || !year) return
     setLoading(true)
-    fetchPMMatrixItems({ year, month, metric, frequency_type: frequencyType })
+    fetchPMMatrixItems({ year, month, metric, frequency_type: frequencyType || undefined })
       .then((res) => { setItems(res.items); setTotal(res.total) })
-      .catch(() => message.error('載入明細失敗'))
+      .catch(() => { setItems([]); setTotal(0) })
       .finally(() => setLoading(false))
   }, [open, year, month, metric, frequencyType])
 
-  const columns: ColumnsType<PMMatrixItem> = [
-    { title: '類別',     dataIndex: 'category',           width: 80,  ellipsis: true },
-    { title: '保養項目', dataIndex: 'task_name',           width: 160, ellipsis: true },
-    { title: '頻率',     dataIndex: 'frequency',           width: 60  },
-    { title: '預定日期', dataIndex: 'scheduled_date_full', width: 90  },
-    { title: '結束時間', dataIndex: 'end_time',            width: 90  },
-    {
-      title: '狀態', dataIndex: 'status', width: 80,
-      render: (s: string) => (
-        <Tag color={STATUS_COLOR[s] ?? '#d9d9d9'} style={{ fontSize: 11 }}>{s || '—'}</Tag>
-      ),
-    },
-    { title: '執行人', dataIndex: 'executor_name', width: 80, ellipsis: true },
-    {
-      title: '連結', dataIndex: 'ragic_link', width: 60,
-      render: (url: string) => url ? <a href={url} target="_blank" rel="noreferrer">Ragic</a> : null,
-    },
-  ]
-
-  const monthStr = month === 0 ? '全年' : monthLabel
+  const freqLabel   = frequencyType === 'monthly' ? '每月' : frequencyType === 'quarterly' ? '每季' : frequencyType === 'yearly' ? '每年' : ''
   const metricLabel = METRIC_LABELS[metric] ?? metric
+  const monthDisplay = month === 0 ? '全年' : monthLabel
+
+  const columns: ColumnsType<PMMatrixItem> = [
+    { title: '保養月份', dataIndex: 'period_month',        width: 90 },
+    { title: '類別',     dataIndex: 'category',            width: 80,
+      render: (v: string) => <Tag color="blue"   style={{ fontSize: 11 }}>{v || '—'}</Tag> },
+    { title: '保養項目', dataIndex: 'task_name',           ellipsis: true },
+    { title: '頻率',     dataIndex: 'frequency',           width: 70, align: 'center' as const,
+      render: (v: string) => <Tag color="purple" style={{ fontSize: 11 }}>{v || '—'}</Tag> },
+    { title: '排定日期', dataIndex: 'scheduled_date_full', width: 100 },
+    { title: '狀態',     dataIndex: 'status',              width: 80,
+      render: (v: string) => {
+        const color = v === '已完成' ? 'success' : v === '進行中' ? 'processing' : v === '逾期' ? 'error' : 'default'
+        return <Tag color={color} style={{ fontSize: 11 }}>{v || '—'}</Tag>
+      } },
+    { title: '執行人員', dataIndex: 'executor_name',       width: 90, ellipsis: true },
+    { title: '備註',     dataIndex: 'result_note',         ellipsis: true,
+      render: (v: string) => <Typography.Text style={{ fontSize: 11 }}>{v || '—'}</Typography.Text> },
+  ]
 
   return (
     <Modal
       open={open}
       onCancel={onClose}
       footer={null}
-      width={900}
+      width={1000}
       title={
-        <span>
-          {year}年 {monthStr}・{metricLabel}
-          <Typography.Text type="secondary" style={{ fontSize: 12, marginLeft: 8 }}>共 {total} 筆</Typography.Text>
-        </span>
+        <Space>
+          <BarChartOutlined style={{ color: '#1677ff' }} />
+          <span style={{ fontWeight: 600 }}>{year} 年 {monthDisplay}｜{freqLabel}｜{metricLabel}</span>
+          {!loading && <Typography.Text type="secondary" style={{ fontSize: 12 }}>共 {total} 筆</Typography.Text>}
+        </Space>
       }
     >
       {loading ? (
-        <div style={{ textAlign: 'center', padding: 32 }}><Spin /></div>
+        <div style={{ textAlign: 'center', padding: 48 }}><Spin tip="載入明細中…" /></div>
       ) : (
         <Table
           dataSource={items}
           columns={columns}
-          rowKey="ragic_id"
+          rowKey={(r) => `${r.ragic_id}-${r.batch_ragic_id}`}
           size="small"
-          scroll={{ x: 700 }}
-          pagination={{ pageSize: 20, showSizeChanger: false }}
+          scroll={{ x: 900 }}
+          pagination={{ pageSize: 15, showTotal: (t) => `共 ${t} 筆`, showSizeChanger: false }}
         />
       )}
     </Modal>

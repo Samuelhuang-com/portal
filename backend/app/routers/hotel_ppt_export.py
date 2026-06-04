@@ -319,10 +319,96 @@ def _sanitize_cell_text(val: str) -> str:
     return val.replace('\r\n', ' ').replace('\r', ' ').replace('\n', ' ').replace('\t', ' ')
 
 
+def _update_ihg_cover(slide, year: int, month: int) -> None:
+    """
+    Add title text box to IHG cover slide (centre of image).
+    Format: "YYYY/MM \u98ef\u5e97\u7ba1\u7406\u5831\u544a"
+    The template's text lives in the slide LAYOUT (not the slide XML),
+    so we cannot update existing shapes \u2014 we ADD a new text box instead.
+    Remove any previously-added cover title box first to avoid duplicates.
+    """
+    from pptx.util import Inches, Pt
+    from pptx.dml.color import RGBColor
+    from pptx.enum.text import PP_ALIGN
+
+    TITLE_BOX_NAME = "_ihg_cover_title_"
+    title_text     = f"{year}/{month:02d}  \u98ef\u5e97\u7ba1\u7406\u5831\u544a"
+
+    # \u79fb\u9664\u5148\u524d\u758a\u52a0\u7684\u540c\u540d\u6587\u5b57\u65b9\u584a\uff08\u9632\u6b62\u91cd\u8907\u532f\u51fa\u6642\u7d2f\u7a4d\uff09
+    for shape in list(slide.shapes):
+        if shape.name == TITLE_BOX_NAME:
+            sp = shape._element
+            sp.getparent().remove(sp)
+            break
+
+    # \u65b0\u589e\u7f6e\u4e2d\u6587\u5b57\u65b9\u584a\uff08IHG \u6a21\u677f\u56fa\u5b9a 16:9 \u5bec\u87a2\u5e55\uff09
+    SW = 13.33
+    SH = 7.50
+    BOX_W = SW - 2.0
+    BOX_H = 1.20
+    BOX_X = 1.0
+    BOX_Y = (SH - BOX_H) / 2          # \u5782\u76f4\u7f6e\u4e2d
+
+    txBox = slide.shapes.add_textbox(
+        Inches(BOX_X), Inches(BOX_Y), Inches(BOX_W), Inches(BOX_H)
+    )
+    txBox.name = TITLE_BOX_NAME
+
+    tf = txBox.text_frame
+    tf.word_wrap = False
+    p  = tf.paragraphs[0]
+    p.alignment = PP_ALIGN.CENTER
+    run = p.add_run()
+    run.text = title_text
+    run.font.size  = Pt(36)
+    run.font.bold  = True
+    run.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)   # \u767d\u5b57\uff0c\u5728\u6df1\u8272\u7167\u7247\u4e0a\u6e05\u6670
+
+def _set_ihg_slide_title(slide, title: str, subtitle: str = "",
+                         now_str: str = "", SW: float = 13.33, SH: float = 7.5,
+                         **_kw) -> None:
+    """
+    IHG template content slide title — dark text on white background below thin line.
+    Does NOT add system footer (IHG master already has its own footer at y=7.2").
+    """
+    from pptx.dml.color import RGBColor
+    from pptx.enum.text import PP_ALIGN
+    from app.routers.hotel_overview import _pptx_txt
+
+    C_BRAND = RGBColor(0x1B, 0x3A, 0x5C)
+    C_BLUE  = RGBColor(0x4B, 0xA8, 0xE8)
+    C_GRAY  = RGBColor(0x88, 0x88, 0x88)
+
+    _pptx_txt(slide, title, 0.45, 0.27, SW - 5.0, 0.38,
+              size=18, bold=True, color=C_BRAND)
+
+    if subtitle:
+        _pptx_txt(slide, subtitle, 0.45, 0.592, SW - 5.0, 0.22,
+                  size=10, color=C_BLUE)
+
+    if now_str:
+        _pptx_txt(slide, f"\u532f\u51fa\u6642\u9593\uff1a{now_str}",
+                  SW - 4.5, SH - 0.60, 4.2, 0.3,
+                  size=8, color=C_GRAY, align=PP_ALIGN.RIGHT)
+        _pptx_txt(slide,
+                  "\u98ef\u5e97\u7ba1\u7406\u7cfb\u7d71  \u00b7  "
+                  "\u81ea\u52d5\u751f\u6210\uff0c\u8cc7\u6599\u4ee5\u7cfb\u7d71\u70ba\u6e96",
+                  0.45, SH - 0.60, 8.0, 0.3, size=8, color=C_GRAY)
+
+
+def _move_slide_to_end(prs, idx: int) -> None:
+    """Move slide at idx to the end of the presentation (XML-level operation)."""
+    sldIdLst = prs.slides._sldIdLst
+    sldId = sldIdLst[idx]
+    sldIdLst.remove(sldId)
+    sldIdLst.append(sldId)
+
+
 def _build_generic_table_slide(
     slide, title: str, subtitle: str,
     columns: list[dict], rows: list[dict],
     now_str: str, SW: float, SH: float,
+    title_fn=None,
 ) -> None:
     """
     通用表格 Slide builder。
@@ -336,6 +422,7 @@ def _build_generic_table_slide(
     from app.routers.hotel_overview import (
         _set_slide_title, _pptx_cell, _pptx_header_row, _pptx_txt,
     )
+    _title_fn = title_fn or _set_slide_title
 
     C_DARK    = RGBColor(0x1B, 0x3A, 0x5C)
     C_ROW_ALT = RGBColor(0xEE, 0xF5, 0xFB)
@@ -345,7 +432,7 @@ def _build_generic_table_slide(
     TABLE_H = SH - TABLE_Y - 0.45
     TABLE_W = SW - 0.8
 
-    _set_slide_title(slide, title, subtitle, now_str, SW, SH)
+    _title_fn(slide, title, subtitle, now_str, SW, SH)
 
     if not rows or not columns:
         _pptx_txt(slide, "（本期暫無資料）",
@@ -523,6 +610,7 @@ def _make_chart_image(chart_type: str, data: list[dict], title: str) -> Optional
 def _build_decision_charts_slide(
     slide, frontend_data: FrontendData,
     now_str: str, SW: float, SH: float,
+    title_fn=None,
 ) -> None:
     """
     C-3：Dashboard 決策分析圖表 → 4 張 matplotlib 圖形（2×2 版面）。
@@ -533,13 +621,14 @@ def _build_decision_charts_slide(
     from app.routers.hotel_overview import (
         _set_slide_title, _pptx_txt, _pptx_cell, _pptx_header_row,
     )
+    _title_fn = title_fn or _set_slide_title
 
     C_DARK    = RGBColor(0x1B, 0x3A, 0x5C)
     C_ROW_ALT = RGBColor(0xEE, 0xF5, 0xFB)
     C_GRAY    = RGBColor(0x88, 0x88, 0x88)
 
-    _set_slide_title(slide, "決策分析 — 數據彙整", "各來源工項/完成率/趨勢/工時占比",
-                     now_str, SW, SH)
+    _title_fn(slide, "決策分析 — 數據彙整", "各來源工項/完成率/趨勢/工時占比",
+              now_str, SW, SH)
 
     # 2×2 版面尺寸
     MARGIN_L = 0.35
@@ -672,16 +761,24 @@ def _build_hotel_pptx_v2(
 
     C_GRAY = RGBColor(0x88, 0x88, 0x88)
 
-    # ── Slide 1: Cover（固定）──────────────────────────────────────────────
-    _update_cover_date(prs.slides[0], year, month)
+    # 是否為 IHG 模板（結構不同：無 TOC、有封底、白底標題）
+    is_ihg = (template_id == "ihg")
 
-    # ── 預先算出需要 clone 幾次（每個 enabled section = 1 張，決策圖表合 1 張）──
-    # 簡單做法：先 clone 足夠多張，之後再刪除多餘的（python-pptx 刪除較難）
-    # 這裡改為逐一 clone + build，不預先 clone
+    # ── Slide 1: Cover（更新年月）──────────────────────────────────────────
+    if is_ihg:
+        _update_ihg_cover(prs.slides[0], year, month)
+    else:
+        _update_cover_date(prs.slides[0], year, month)
 
-    # Dashboard Sections 的特殊合併規則：
-    # dashboard_kpi_summary / dashboard_source_status / dashboard_repair_costs → 同一頁
-    # dashboard_bar_chart / dashboard_rate_chart / dashboard_dazhi_trend / dashboard_hours_pie → 同一頁
+    # 標題設定函式：IHG=白底深色文字，default=綠色header白字
+    _title_fn = _set_ihg_slide_title if is_ihg else _set_slide_title
+
+    # ── 非 IHG：刪除 TOC slide（index 1），保留 content_template(1)──
+    if not is_ihg:
+        _delete_slide(prs, 1)
+
+    # IHG 模板結構：[0]=Cover, [1]=ContentTemplate, [2]=BackCover
+    # 預設模板結構（TOC 已刪）：[0]=Cover, [1]=ContentTemplate
 
     enabled_keys  = {c["export_key"] for c in enabled_config}
     detail_keys   = {c["export_key"] for c in enabled_config if c.get("include_detail")}
@@ -710,17 +807,13 @@ def _build_hotel_pptx_v2(
             if k in detail_keys:
                 slide_groups.append(f"__detail__{k}")
 
-    # ── 刪除 TOC slide（index 1），保留 cover(0) + content_template(2)──
-    _delete_slide(prs, 1)
-    # 現在: [0]=cover, [1]=content_template
-
     # ── 逐一 clone + build ───────────────────────────────────────────────
     for group_key in slide_groups:
         slide = _clone_template_slide(prs, 1)  # clone content_template（始終是 index 1）
 
         # ── Slide: KPI 總覽（主管摘要 + 各來源狀態 + 費用）──────────────
         if group_key == "__kpi_group__":
-            _set_slide_title(slide, "本期績效總覽",
+            _title_fn(slide, "本期績效總覽",
                              f"{period_str}  主管摘要 · 各來源狀態 · 報修費用",
                              now_str, SW, SH)
             fd = frontend_data
@@ -749,7 +842,7 @@ def _build_hotel_pptx_v2(
 
         # ── Slide: 決策分析圖表（4 個數據表格）────────────────────────
         if group_key == "__chart_group__":
-            _build_decision_charts_slide(slide, frontend_data, now_str, SW, SH)
+            _build_decision_charts_slide(slide, frontend_data, now_str, SW, SH, title_fn=_title_fn)
             continue
 
         # ── Slide: 明細附錄 ─────────────────────────────────────────────
@@ -767,6 +860,7 @@ def _build_hotel_pptx_v2(
                 columns  = section_def.columns,
                 rows     = detail_rows,
                 now_str  = now_str, SW=SW, SH=SH,
+                title_fn = _title_fn,
             )
             continue
 
@@ -805,6 +899,7 @@ def _build_hotel_pptx_v2(
                         columns  = columns,
                         rows     = pg_rows,
                         now_str  = now_str, SW=SW, SH=SH,
+                        title_fn = _title_fn,
                     )
             else:
                 _build_generic_table_slide(
@@ -814,13 +909,20 @@ def _build_hotel_pptx_v2(
                     columns  = columns,
                     rows     = rows,
                     now_str  = now_str, SW=SW, SH=SH,
+                    title_fn = _title_fn,
                 )
 
         # frontend_payload 個別 sections（日後擴充用；目前均已合入 kpi_group）
         else:
-            _set_slide_title(slide, section_def.second_title, period_str, now_str, SW, SH)
+            _title_fn(slide, section_def.second_title, period_str, now_str, SW, SH)
             _pptx_txt(slide, "（此 section 由前端資料產生，版型開發中）",
                       2.0, 3.5, 9.0, 1.0, size=14, color=C_GRAY, italic=True)
+
+    # IHG 模板：刪除 ContentTemplate(index 1)，將封底移到末頁
+    if is_ihg:
+        _delete_slide(prs, 1)          # 刪 ContentTemplate
+        # 封底原在 index 2（後已成 index 1 因 ContentTemplate 被刪）
+        _move_slide_to_end(prs, 1)     # 移封底到最末頁
 
     buf = BytesIO()
     prs.save(buf)
@@ -929,13 +1031,12 @@ AVAILABLE_TEMPLATES: list[dict] = [
         "filename":    "hotel_report_template.pptx",
         "description": "品牌主色 #1B3A5C，標準版面",
     },
-    # 未來新增模板範例（檔案放至 static/pptx_templates/ 後取消註解）:
-    # {
-    #     "id":       "minimal",
-    #     "label":    "極簡白底版",
-    #     "filename": "hotel_report_minimal.pptx",
-    #     "description": "白底黑字，適合對外報告",
-    # },
+    {
+        "id":          "ihg",
+        "label":       "IHG Hotel Indigo",
+        "filename":    "hotel_report_template_ihg.pptx",
+        "description": "Hotel Indigo 官方品牌模板，白底深藍，含封底頁",
+    },
 ]
 
 
@@ -1771,6 +1872,7 @@ _dazhi_closed_cols = [
     {"key": "地點",     "label": "地點",     "width": 1.30},
     {"key": "工作說明", "label": "工作說明", "width": 2.20},
     {"key": "工時",     "label": "工時",     "width": 0.75, "align": "right"},
+ 
     {"key": "委外費用", "label": "委外費",   "width": 0.95, "align": "right"},
     {"key": "維修費用", "label": "維修費",   "width": 0.95, "align": "right"},
 ]
@@ -1779,7 +1881,7 @@ register_section(
     PptSectionDef(
         export_key="dazhi_repair_closed_month", module_key=MODULE_KEY,
         tab_name="大直工務部", second_title="大直工務部本月結案工單",
-        description="本月（簾選年月）已結案工單，主表直接顯示委外 / 維修費用",
+        description="本月（篩選年月）已結案工單，主表直接顯示委外 / 維修費用",
         export_type="table", slide_layout="table_full",
         supports_detail=True,
         detail_description="附加扣款費用 / 負責人 / 備註欄位",

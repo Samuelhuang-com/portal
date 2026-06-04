@@ -45,6 +45,12 @@ TEMPLATE_PATH = os.path.abspath(
                  "pptx_templates", "hotel_report_template.pptx")
 )
 
+# dazhi (hotel) module uses IHG Fion template
+IHG_TEMPLATE_PATH = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "static",
+                 "pptx_templates", "hotel_report_template_ihg.pptx")
+)
+
 ROWS_PER_SLIDE = 14   # 每頁最多行數（12pt 字 × 26pt 列高，確保不超出頁面）
 
 
@@ -262,7 +268,11 @@ def _make_pie_chart(type_rows: list) -> Optional[BytesIO]:
 
 def _sanitize(val) -> str:
     s = str(val) if val is not None else "—"
-    return s.replace('\r\n', ' ').replace('\r', ' ').replace('\n', ' ').replace('\t', ' ')
+    return (s
+            .replace("_x000D_", " ")
+            .replace('\r\n', ' ').replace('\r', ' ')
+            .replace('\n', ' ').replace('\t', ' '))
+
 
 
 def _fmt_rate(v) -> str:
@@ -278,7 +288,8 @@ def _fmt_money(v) -> str:
 def _add_chart_slide(prs, template_idx: int,
                      title: str, subtitle: str,
                      chart_buf: Optional[BytesIO],
-                     now_str: str, SW: float, SH: float):
+                     now_str: str, SW: float, SH: float,
+                     title_fn=None):
     """Clone template, set title, embed chart image."""
     from app.routers.hotel_overview import (
         _clone_template_slide, _set_slide_title, _pptx_txt,
@@ -286,14 +297,16 @@ def _add_chart_slide(prs, template_idx: int,
     from pptx.util import Inches
     from pptx.dml.color import RGBColor
     from pptx.enum.text import PP_ALIGN
+    _fn = title_fn or _set_slide_title
 
     C_BLACK = RGBColor(0x00, 0x00, 0x00)
     C_GRAY  = RGBColor(0x88, 0x88, 0x88)
 
     slide = _clone_template_slide(prs, template_idx)
-    _set_slide_title(slide, title, "", now_str, SW, SH)
+    _fn(slide, title, "", now_str, SW, SH)
     if subtitle:
-        _pptx_txt(slide, subtitle, 0.35, 0.52, SW - 4.5, 0.22,
+        _chart_sub_y = 0.592 if title_fn is not None else 0.52
+        _pptx_txt(slide, subtitle, 0.35, _chart_sub_y, SW - 4.5, 0.22,
                   size=10, bold=True, color=C_BLACK)
 
     if chart_buf:
@@ -350,7 +363,8 @@ def _add_table_slides(prs, template_idx: int,
                       columns: list, rows: list,
                       now_str: str, SW: float, SH: float,
                       max_rows: int = ROWS_PER_SLIDE,
-                      sep_after_rows: list = None):
+                      sep_after_rows: list = None,
+                      title_fn=None):
     """Clone 1+ slides, build generic table (≤ max_rows per page).
     sep_after_rows: 0-based data row indices (not counting header) that get a thick bottom border.
     """
@@ -361,6 +375,7 @@ def _add_table_slides(prs, template_idx: int,
     from pptx.util import Inches, Pt
     from pptx.dml.color import RGBColor
     from pptx.enum.text import PP_ALIGN
+    _fn = title_fn or _set_slide_title
 
     C_DARK    = RGBColor(0x1B, 0x3A, 0x5C)
     C_ROW_ALT = RGBColor(0xEE, 0xF5, 0xFB)
@@ -379,9 +394,10 @@ def _add_table_slides(prs, template_idx: int,
         pg_sub = (subtitle
                   if total_pages == 1
                   else f"{subtitle}　第 {pg_idx + 1} 頁／共 {total_pages} 頁　（共 {len(rows)} 筆）")
-        _set_slide_title(slide, title, "", now_str, SW, SH)
+        _fn(slide, title, "", now_str, SW, SH)
         if pg_sub:
-            _pptx_txt(slide, pg_sub, 0.35, 0.52, SW - 4.5, 0.22,
+            _sub_y = 0.592 if title_fn is not None else 0.52
+            _pptx_txt(slide, pg_sub, 0.35, _sub_y, SW - 4.5, 0.22,
                       size=10, bold=True, color=RGBColor(0x00, 0x00, 0x00))
 
         if not pg_rows or not columns:
@@ -600,7 +616,8 @@ def _get_annual_matrix_rows(module: str, year: int, db) -> list:
 def _add_annual_matrix_slide(prs, template_idx: int,
                               title: str, subtitle: str,
                               matrix_rows: list,
-                              now_str: str, SW: float, SH: float):
+                              now_str: str, SW: float, SH: float,
+                              title_fn=None):
     """
     年度計劃表矩陣投影片。
     每格依狀態顯示符號（✓/○/✗/△/?）+ 對應底色。
@@ -613,6 +630,7 @@ def _add_annual_matrix_slide(prs, template_idx: int,
     from pptx.util import Inches, Pt
     from pptx.dml.color import RGBColor
     from pptx.enum.text import PP_ALIGN
+    _fn = title_fn or _set_slide_title   # IHG: _set_ihg_slide_title
 
     C_DARK    = RGBColor(0x1B, 0x3A, 0x5C)
     C_WHITE   = RGBColor(0xFF, 0xFF, 0xFF)
@@ -650,9 +668,10 @@ def _add_annual_matrix_slide(prs, template_idx: int,
         slide = _clone_template_slide(prs, template_idx)
         pg_sub = (subtitle if total_pages == 1
                   else f"{subtitle}　第 {pg_idx + 1} 頁／共 {total_pages} 頁")
-        _set_slide_title(slide, title, "", now_str, SW, SH)
+        _fn(slide, title, "", now_str, SW, SH)
         if pg_sub:
-            _pptx_txt(slide, pg_sub, 0.35, 0.52, SW - 4.5, 0.22,
+            _sub_y2 = 0.592 if title_fn is not None else 0.52
+            _pptx_txt(slide, pg_sub, 0.35, _sub_y2, SW - 4.5, 0.22,
                       size=10, bold=True, color=RGBColor(0x00, 0x00, 0x00))
 
         if not pg_rows:
@@ -951,6 +970,229 @@ def _make_end_slide(prs, template_idx, now_str, SW, SH):
     return slide
 
 # ═══════════════════════════════════════════════════════
+
+
+def _make_hotel_pm_stats_table(db, year: int, freq_type: str):
+    """Hotel periodic maintenance annual stats table (months as columns)."""
+    from app.routers.periodic_maintenance import _calc_year_matrix
+
+    matrix = _calc_year_matrix(db, year, freq_type)
+    months = matrix.months
+
+    if not any(m.period_total > 0 or m.prev_carry_over > 0 for m in months):
+        return [], []
+
+    def _has(m):
+        return m.period_total > 0 or m.prev_carry_over > 0 or m.prev_resolved_in_period > 0
+
+    TABLE_W = 12.50
+    ITEM_W  = 2.20
+    mw = max(0.65, min(0.90, (TABLE_W - ITEM_W - 1.00) / 12))
+
+    cols = [{"key": "item", "label": "\u7d71\u8a08\u9805\u76ee", "width": ITEM_W, "align": "left"}]
+    for m in months:
+        cols.append({"key": f"m{m.month}", "label": f"{m.month}\u6708", "width": mw, "align": "center"})
+    cols.append({"key": "total", "label": "\u5408\u8a08", "align": "center"})
+
+    active = [m for m in months if _has(m)]
+    sum_res   = sum(m.prev_resolved_in_period for m in active)
+    sum_total = sum(m.period_total            for m in active)
+    sum_done  = sum(m.period_completed        for m in active)
+    fr = f"{round(sum_done/sum_total*100,1):.1f}%" if sum_total else "\u2014"
+
+    def _r(label, fn, tv):
+        row = {"item": label}
+        for m in months:
+            row[f"m{m.month}"] = fn(m) if _has(m) else "\u2014"
+        row["total"] = tv
+        return row
+
+    # Labels match frontend TAB display
+    rows = [
+        _r("\u622a\u81f3\u4e0a\u6708\u5e95\u7d2f\u8a08\u672a\u7d50\u6848\u6578",
+           lambda m: str(m.prev_carry_over), "\u2014"),
+        _r("\u5176\u4e2d\u672c\u6708\u5df2\u7d50\u6848\u6578",
+           lambda m: str(m.prev_resolved_in_period), str(sum_res)),
+        _r("\u7d2f\u8a08\u9805\u76ee\u5b8c\u6210\u7387",
+           lambda m: (f"{m.carry_over_rate:.1f}%" if m.carry_over_rate is not None else "\u2014"),
+           "\u2014"),
+        _r("\u672c\u6708\u9031\u671f\u4fdd\u990a\u9805\u76ee\u6578",
+           lambda m: str(m.period_total), str(sum_total)),
+        _r("\u672c\u6708\u9031\u671f\u4fdd\u990a\u5b8c\u6210\u6578",
+           lambda m: str(m.period_completed), str(sum_done)),
+        _r("\u672c\u6708\u9031\u671f\u4fdd\u990a\u5b8c\u6210\u7387",
+           lambda m: (f"{m.period_rate:.1f}%" if m.period_rate is not None else "\u2014"),
+           fr),
+    ]
+    return cols, rows
+
+
+def _get_ihg_section_matrix(db, year: int, month: int) -> dict:
+    """Query IHG section matrix directly from DB (mirrors /section-matrix API)."""
+    from app.models.ihg_room_maintenance import (
+        IHGRoomMaintenanceMaster, IHGRoomMaintenanceSection,
+    )
+    from app.routers.ihg_room_maintenance import (
+        CANONICAL_ROOMS, CANONICAL_ROOM_SET, CANONICAL_CATEGORIES, _derive_floor,
+    )
+    month_zf = str(month).zfill(2)
+    year_str = str(year)
+    master_q = db.query(
+        IHGRoomMaintenanceMaster.ragic_id,
+        IHGRoomMaintenanceMaster.room_no,
+        IHGRoomMaintenanceMaster.floor,
+        IHGRoomMaintenanceMaster.maint_date,
+    ).filter(
+        IHGRoomMaintenanceMaster.maint_year  == year_str,
+        IHGRoomMaintenanceMaster.maint_month == month_zf,
+        IHGRoomMaintenanceMaster.room_no.in_(CANONICAL_ROOM_SET),
+    ).all()
+    masters_by_room = {r.room_no: r for r in master_q}
+    master_ids      = [r.ragic_id for r in master_q]
+    secs = (db.query(IHGRoomMaintenanceSection)
+            .filter(IHGRoomMaintenanceSection.master_ragic_id.in_(master_ids))
+            .all()) if master_ids else []
+    sec_map: dict = {}
+    for s in secs:
+        sec_map.setdefault(s.master_ragic_id, {})[s.category] = s.value
+    rooms_out = []
+    for rno in CANONICAL_ROOMS:
+        if rno in masters_by_room:
+            mrow = masters_by_room[rno]
+            rooms_out.append({"room_no": rno, "floor": mrow.floor,
+                               "maint_date": mrow.maint_date,
+                               "sections": sec_map.get(mrow.ragic_id, {}),
+                               "has_data": True})
+        else:
+            rooms_out.append({"room_no": rno, "floor": _derive_floor(rno),
+                               "maint_date": "", "sections": {}, "has_data": False})
+    active_cats = [c for c in CANONICAL_CATEGORIES
+                   if any(r["sections"].get(c) for r in rooms_out if r["has_data"])]
+    return {"rooms": rooms_out, "categories": active_cats or list(CANONICAL_CATEGORIES),
+            "year": year_str, "month": month_zf}
+
+
+def _build_ihg_section_matrix_slides(
+    prs, template_idx: int,
+    title: str, subtitle: str,
+    matrix_data: dict,
+    now_str: str, SW: float, SH: float,
+    title_fn=None,
+    max_rows: int = 14,
+) -> None:
+    """Build IHG section matrix slides with per-cell V/tri/X coloring (web parity)."""
+    from pptx.util import Inches, Pt
+    from pptx.dml.color import RGBColor
+    from pptx.enum.text import PP_ALIGN
+    from app.routers.hotel_overview import (
+        _clone_template_slide, _set_slide_title,
+        _pptx_cell, _pptx_header_row, _pptx_txt,
+    )
+    _fn = title_fn or _set_slide_title
+
+    # Colours matching frontend SECTION_VALUE_CFG
+    C_V_BG   = RGBColor(0xE8, 0xF5, 0xE9);  C_V_FG   = RGBColor(0x2E, 0x7D, 0x32)
+    C_T_BG   = RGBColor(0xFF, 0xFD, 0xE7);  C_T_FG   = RGBColor(0xF5, 0x7F, 0x17)
+    C_X_BG   = RGBColor(0xFC, 0xE4, 0xEC);  C_X_FG   = RGBColor(0xC6, 0x28, 0x28)
+    C_NO_BG  = RGBColor(0xF5, 0xF5, 0xF5)
+    C_SKIP   = RGBColor(0xFA, 0xFA, 0xFA)
+    C_DARK   = RGBColor(0x1B, 0x3A, 0x5C)
+    C_GRAY   = RGBColor(0x88, 0x88, 0x88)
+    C_LIGHT  = RGBColor(0x4B, 0xA8, 0xE8)
+    C_ALT    = RGBColor(0xEE, 0xF5, 0xFB)
+
+    rooms      = matrix_data.get("rooms", [])
+    categories = matrix_data.get("categories", [])
+
+    if not rooms or not categories:
+        sl = _clone_template_slide(prs, template_idx)
+        _fn(sl, title, subtitle, now_str, SW, SH)
+        _pptx_txt(sl, "\uff08\u672c\u671f\u66ab\u7121\u8cc7\u6599\uff09",
+                  2.0, 3.5, 9.0, 1.0, size=14, color=C_GRAY, italic=True)
+        return
+
+    n_cats  = len(categories)
+    pages   = [rooms[i:i+max_rows] for i in range(0, max(len(rooms), 1), max_rows)]
+    total_p = len(pages)
+
+    TABLE_W = SW - 0.8
+    ROOM_W  = 0.65
+    FLR_W   = 0.45
+    cat_w   = max(0.52, (TABLE_W - ROOM_W - FLR_W) / n_cats)
+
+    for pg_idx, pg_rooms in enumerate(pages):
+        sl = _clone_template_slide(prs, template_idx)
+        pg_sub = (subtitle if total_p == 1
+                  else f"{subtitle}\u3000\u7b2c {pg_idx+1} \u9801\uff0f\u5171 {total_p} \u9801"
+                       f"\u3000\uff08\u5171 {len(rooms)} \u9593\uff09")
+        _fn(sl, title, "", now_str, SW, SH)
+        if pg_sub:
+            _pptx_txt(sl, pg_sub, 0.45, 0.592, SW - 5.0, 0.22, size=10, color=C_LIGHT)
+
+        n_cols = 2 + n_cats
+        n_rows = len(pg_rooms) + 1
+        TABLE_Y = 0.85
+        TABLE_H = SH - TABLE_Y - 0.65
+
+        tbl = sl.shapes.add_table(
+            n_rows, n_cols,
+            Inches(0.4), Inches(TABLE_Y), Inches(TABLE_W), Inches(TABLE_H)
+        ).table
+
+        tbl.columns[0].width = Inches(ROOM_W)
+        tbl.columns[1].width = Inches(FLR_W)
+        used = ROOM_W + FLR_W
+        for ci in range(2, n_cols):
+            w = max(TABLE_W - used, 0.3) if ci == n_cols - 1 else cat_w
+            tbl.columns[ci].width = Inches(w)
+            used += w
+
+        # Header
+        _pptx_cell(tbl, 0, 0, "\u623f\u865f", bold=True)
+        _pptx_cell(tbl, 0, 1, "\u6a13\u5c64", bold=True)
+        for ci, cat in enumerate(categories):
+            short = cat.replace("\u5ba2\u623f", "").strip() or cat
+            _pptx_cell(tbl, 0, 2+ci, short, bold=True)
+        _pptx_header_row(tbl, n_cols, size=9)
+        tbl.rows[0].height = Pt(28)
+
+        # Data rows
+        for ri, room in enumerate(pg_rooms, 1):
+            row_bg    = C_ALT if ri % 2 == 0 else None
+            has_data  = room.get("has_data", False)
+            sections  = room.get("sections", {})
+
+            _pptx_cell(tbl, ri, 0, room.get("room_no", ""),
+                       fg=C_DARK, bg=row_bg, size=9, bold=True, align=PP_ALIGN.CENTER)
+            _pptx_cell(tbl, ri, 1, room.get("floor", ""),
+                       fg=C_GRAY, bg=row_bg, size=8, align=PP_ALIGN.CENTER)
+
+            for ci, cat in enumerate(categories):
+                if not has_data:
+                    _pptx_cell(tbl, ri, 2+ci, "\u672a\u57f7",
+                               fg=RGBColor(0xBF, 0xBF, 0xBF), bg=C_SKIP,
+                               size=8, align=PP_ALIGN.CENTER)
+                else:
+                    val = sections.get(cat, "")
+                    if val == "V":
+                        _pptx_cell(tbl, ri, 2+ci, "V",
+                                   fg=C_V_FG, bg=C_V_BG, size=9, bold=True,
+                                   align=PP_ALIGN.CENTER)
+                    elif val == "\u25b2":          # ▲
+                        _pptx_cell(tbl, ri, 2+ci, "\u25b2",
+                                   fg=C_T_FG, bg=C_T_BG, size=9,
+                                   align=PP_ALIGN.CENTER)
+                    elif val == "X":
+                        _pptx_cell(tbl, ri, 2+ci, "X",
+                                   fg=C_X_FG, bg=C_X_BG, size=9, bold=True,
+                                   align=PP_ALIGN.CENTER)
+                    else:
+                        _pptx_cell(tbl, ri, 2+ci, "\u2014",
+                                   fg=C_GRAY, bg=C_NO_BG, size=8,
+                                   align=PP_ALIGN.CENTER)
+
+            tbl.rows[ri].height = Pt(22)
+
 # Core PPT builder
 # ═══════════════════════════════════════════════════════
 
@@ -976,17 +1218,29 @@ def _build_repair_pptx(module: str, year: int, month: int, db: Session) -> Bytes
     now_str     = datetime.now().strftime("%Y-%m-%d %H:%M")
     period_str  = f"{year}年{month:02d}月"
 
+    # ── IHG 模板偵測（dazhi 使用 Hotel Indigo 新版型）──────────────────────────
+    is_ihg = (module == "dazhi")
+    if is_ihg:
+        from app.routers.hotel_ppt_export import (
+            _update_ihg_cover, _set_ihg_slide_title, _move_slide_to_end,
+        )
+        _title_fn = _set_ihg_slide_title
+    else:
+        _title_fn = None
+
     # ── 載入 Presentation ─────────────────────────────────────────────────────
-    prs = Presentation(TEMPLATE_PATH)
+    _tpl_path = IHG_TEMPLATE_PATH if is_ihg else TEMPLATE_PATH
+    prs = Presentation(_tpl_path)
     SW  = prs.slide_width.inches
     SH  = prs.slide_height.inches
 
     # ── Slide 0: Cover ───────────────────────────────────────────────────────
-    _update_cover_date(prs.slides[0], year, month)
-
-    # 刪除 TOC slide(index=1)，保留 cover(0) + template(1)
-    _delete_slide(prs, 1)
-    TMPL = 1   # content template 索引（刪除 TOC 後固定為 1）
+    if is_ihg:
+        _update_ihg_cover(prs.slides[0], year, month)
+    else:
+        _update_cover_date(prs.slides[0], year, month)
+        _delete_slide(prs, 1)  # IHG 模板無 TOC，舊版才需刪
+    TMPL = 1
 
     # ══════════════════════════════════════════════════════════════════════════
     # Slide A — 3.1 報修統計（橫向：欄=月份1→12，列=統計項目）
@@ -1046,6 +1300,7 @@ def _build_repair_pptx(module: str, year: int, month: int, db: Session) -> Bytes
         now_str  = now_str,
         SW=SW, SH=SH,
         sep_after_rows = [3, 7],   # ④後（累計完成率↔本月報修）、⑧後（本月完成率↔合計件數）
+        title_fn       = _title_fn,
     )
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -1098,6 +1353,7 @@ def _build_repair_pptx(module: str, year: int, month: int, db: Session) -> Bytes
         rows     = closing_rows,
         now_str  = now_str,
         SW=SW, SH=SH,
+        title_fn = _title_fn,
     )
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -1112,6 +1368,7 @@ def _build_repair_pptx(module: str, year: int, month: int, db: Session) -> Bytes
         subtitle  = f"{period_str}　深藍＝累計≤80%重點類別",
         chart_buf = pareto_buf,
         now_str   = now_str, SW=SW, SH=SH,
+        title_fn  = _title_fn,
     )
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -1155,6 +1412,7 @@ def _build_repair_pptx(module: str, year: int, month: int, db: Session) -> Bytes
         now_str  = now_str,
         SW=SW, SH=SH,
         max_rows = 9999,   # 不分頁，全部類別同一張投影片
+        title_fn = _title_fn,
     )
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -1167,41 +1425,108 @@ def _build_repair_pptx(module: str, year: int, month: int, db: Session) -> Bytes
         subtitle  = f"{period_str}",
         chart_buf = pie_buf,
         now_str   = now_str, SW=SW, SH=SH,
+        title_fn  = _title_fn,
     )
 
     # ══════════════════════════════════════════════════════════════════════════
-    # Slide F — 3.4 本月客房報修表（僅飯店模組，商場不顯示）
+    # Slide F — 3.4 本月客房報修表（房號×報修類別矩陣，將飯店模組）
     # ══════════════════════════════════════════════════════════════════════════
     if module == "dazhi":
-        room_data = svc.compute_room_repair_table(all_cases, year, month)
-        room_rows_raw = room_data.get("rows", [])
-        room_table_rows = []
-        for r in room_rows_raw:
-            cats = r.get("categories", {})
-            cat_counts = {cat: len(cases) for cat, cases in cats.items()}
-            total_cnt  = sum(cat_counts.values())
-            involved   = "、".join(c for c, n in cat_counts.items() if n > 0)
-            room_table_rows.append({
-                "room_no": r.get("room_no", ""),
-                "floor":   r.get("floor", ""),
-                "total":   str(total_cnt),
-                "cats":    involved or "—",
-            })
-        _add_table_slides(
-            prs, TMPL,
-            title    = "3.4 本月客房報修表",
-            subtitle = f"{period_str}",
-            columns  = [
-                {"key": "room_no", "label": "房號",   "width": 1.0,  "align": "center"},
-                {"key": "floor",   "label": "樓層",   "width": 0.8,  "align": "center"},
-                {"key": "total",   "label": "報修件數","width": 1.0,  "align": "center"},
-                {"key": "cats",    "label": "涉及類別","width": 9.35, "align": "left"},
-            ],
-            rows     = room_table_rows,
-            now_str  = now_str,
-            SW=SW, SH=SH,
-            max_rows = ROWS_PER_SLIDE,
+        from pptx.util import Inches, Pt
+        from pptx.dml.color import RGBColor
+        from pptx.enum.text import PP_ALIGN
+        from app.routers.hotel_overview import (
+            _clone_template_slide, _pptx_cell, _pptx_header_row,
+            _set_slide_title, _pptx_txt,
         )
+        from app.services.dazhi_repair_service import REPAIR_TYPE_ORDER
+
+        _room_data = svc.compute_room_repair_table(all_cases, year, month)
+        _room_rows = _room_data.get("rows", [])
+
+        # 收集本月出現的類別
+        _cats_used: set = set()
+        for _rr in _room_rows:
+            for _cat, _cases in _rr.get("categories", {}).items():
+                if _cases:
+                    _cats_used.add(_cat)
+        _ordered_cats = [c for c in REPAIR_TYPE_ORDER if c in _cats_used]
+        _ordered_cats += sorted(_cats_used - set(REPAIR_TYPE_ORDER))
+
+        if _room_rows and _ordered_cats:
+            _rm_pages   = [_room_rows[i:i+14] for i in range(0, max(len(_room_rows),1), 14)]
+            _rm_total_p = len(_rm_pages)
+            _n_cats     = len(_ordered_cats)
+            _TABLE_W    = SW - 0.8
+            _ROOM_W     = 0.65; _FLR_W = 0.45
+            _cat_w      = max(0.65, (_TABLE_W - _ROOM_W - _FLR_W) / _n_cats)
+            _C_DARK     = RGBColor(0x1B, 0x3A, 0x5C)
+            _C_GRAY     = RGBColor(0x88, 0x88, 0x88)
+            _C_ALT      = RGBColor(0xEE, 0xF5, 0xFB)
+            _C_LIGHT    = RGBColor(0x4B, 0xA8, 0xE8)
+            _C_HIT_BG   = RGBColor(0xFF, 0xF7, 0xE6)
+            _C_HIT_FG   = RGBColor(0xD4, 0x60, 0x06)
+
+            for _pg_idx, _pg_rooms in enumerate(_rm_pages):
+                _slide = _clone_template_slide(prs, TMPL)
+                _pg_sub = (f"{period_str}" if _rm_total_p == 1
+                           else f"{period_str}　第 {_pg_idx+1} 頁/共 {_rm_total_p} 頁")
+                _tfn = _title_fn or _set_slide_title
+                _tfn(_slide, "3.4 本月客房報修表", "", now_str, SW, SH)
+                _pptx_txt(_slide, _pg_sub, 0.45, 0.592, SW-5.0, 0.22, size=10, color=_C_LIGHT)
+
+                _nc = 2 + _n_cats
+                _nr = len(_pg_rooms) + 1
+                _tbl = _slide.shapes.add_table(
+                    _nr, _nc,
+                    Inches(0.4), Inches(0.85), Inches(_TABLE_W), Inches(SH - 0.85 - 0.65)
+                ).table
+                _tbl.columns[0].width = Inches(_ROOM_W)
+                _tbl.columns[1].width = Inches(_FLR_W)
+                _used = _ROOM_W + _FLR_W
+                for _ci in range(2, _nc):
+                    _w = max(_TABLE_W-_used, 0.3) if _ci==_nc-1 else _cat_w
+                    _tbl.columns[_ci].width = Inches(_w); _used += _w
+
+                _pptx_cell(_tbl, 0, 0, "房號", bold=True)
+                _pptx_cell(_tbl, 0, 1, "樓層", bold=True)
+                for _ci, _cat in enumerate(_ordered_cats):
+                    _pptx_cell(_tbl, 0, 2+_ci, _cat, bold=True)
+                _pptx_header_row(_tbl, _nc, size=9)
+                _tbl.rows[0].height = Pt(28)
+
+                for _ri, _room in enumerate(_pg_rooms, 1):
+                    _rb = _C_ALT if _ri%2==0 else None
+                    _pptx_cell(_tbl, _ri, 0, _room.get("room_no",""),
+                               fg=_C_DARK, bg=_rb, size=9, bold=True, align=PP_ALIGN.CENTER)
+                    _pptx_cell(_tbl, _ri, 1, _room.get("floor",""),
+                               fg=_C_GRAY, bg=_rb, size=8, align=PP_ALIGN.CENTER)
+                    _cats_d = _room.get("categories", {})
+                    for _ci, _cat in enumerate(_ordered_cats):
+                        _cs = _cats_d.get(_cat, [])
+                        if _cs:
+                            _cd = _cs[0]
+                            _desc = _sanitize(_cd.get("title","") if isinstance(_cd, dict) else str(_cd))
+                            _txt  = (_desc[:18]+"...") if len(_desc)>18 else _desc
+                            if len(_cs) > 1:
+                                _txt = f"{len(_cs)}. {_txt}"
+                            _pptx_cell(_tbl, _ri, 2+_ci, _txt,
+                                       fg=_C_HIT_FG, bg=_C_HIT_BG, size=8, align=PP_ALIGN.LEFT)
+                        else:
+                            _pptx_cell(_tbl, _ri, 2+_ci, "",
+                                       fg=_C_GRAY, bg=_rb, size=8, align=PP_ALIGN.CENTER)
+                    _tbl.rows[_ri].height = Pt(22)
+        else:
+            _add_table_slides(
+                prs, TMPL,
+                title    = "3.4 本月客房報修表",
+                subtitle = f"{period_str}",
+                columns  = [{"key":"room_no","label":"房號","width":1.0,"align":"center"},
+                            {"key":"floor","label":"樓層","width":0.8,"align":"center"},
+                            {"key":"total","label":"報修件數","width":1.0,"align":"center"},
+                            {"key":"cats","label":"涉及類別","width":9.35,"align":"left"}],
+                rows=[], now_str=now_str, SW=SW, SH=SH, max_rows=14, title_fn=_title_fn,
+            )
 
     # ══════════════════════════════════════════════════════════════════════════
     # Slide G — 報修金額統計（橫向：欄=月份1→12+全年合計，列=費用項目）
@@ -1249,9 +1574,34 @@ def _build_repair_pptx(module: str, year: int, month: int, db: Session) -> Bytes
         rows     = fee_rows,
         now_str  = now_str,
         SW=SW, SH=SH,
+        title_fn = _title_fn,
     )
 
     # ══════════════════════════════════════════════════════════════════════════
+    # Slide HPM1~HPM4 — hotel PM stats + annual matrix (dazhi/IHG only)
+    if is_ihg:
+        _H_FREQ = {"monthly": "\u6bcf\u6708\u7dad\u8b77",
+                   "quarterly": "\u6bcf\u5b63\u7dad\u8b77",
+                   "yearly": "\u6bcf\u5e74\u7dad\u8b77"}
+        for _hfreq in ("monthly", "quarterly", "yearly"):
+            _hfl = _H_FREQ[_hfreq]
+            try:
+                _hcols, _hrows = _make_hotel_pm_stats_table(db, year, _hfreq)
+                if _hrows:
+                    _add_table_slides(
+                        prs, TMPL,
+                        title    = f"\u98ef\u5e97\u9031\u671f\u4fdd\u990a \u2014 {_hfl}\u5e74\u5ea6\u7d71\u8a08",
+                        subtitle = f"{year}\u5e74",
+                        columns  = _hcols,
+                        rows     = _hrows,
+                        now_str  = now_str,
+                        SW=SW, SH=SH,
+                        title_fn = _title_fn,
+                    )
+            except Exception as _he:
+                logger.warning("Hotel PM stats (%s) failed: %s", _hfl, _he, exc_info=True)
+
+
     # Slide PM1~PM3 — 商場週期保養年度統計（每月／每季／每年，luqun 專用）
     # 置於「商場週期保養年度計劃表」之前
     # ══════════════════════════════════════════════════════════════════════════
@@ -1277,146 +1627,285 @@ def _build_repair_pptx(module: str, year: int, month: int, db: Session) -> Bytes
 
         for freq_type in ("monthly", "quarterly", "yearly"):
             freq_label = _MALL_PM_FREQ_LABELS[freq_type]
-            try:
-                fb_cols, fb_rows = _make_fb_pm_stats_table(db, year, freq_type)
-                if not fb_rows:
-                    continue
-                _add_table_slides(
-                    prs, TMPL,
-                    title    = f"全棟例行維護 — {freq_label}年度統計",
-                    subtitle = f"{year}年",
-                    columns  = fb_cols,
-                    rows     = fb_rows,
-                    now_str  = now_str,
-                    SW=SW, SH=SH,
-                )
-            except Exception as _fb_e:
-                logger.warning("FB stats slide (%s) failed (skipped): %s",
-                               freq_label, _fb_e, exc_info=True)
+            if not is_ihg:
+                try:
+                    fb_cols, fb_rows = _make_fb_pm_stats_table(db, year, freq_type)
+                    if not fb_rows:
+                        continue
+                    _add_table_slides(
+                        prs, TMPL,
+                        title    = f"全棟例行維護 — {freq_label}年度統計",
+                        subtitle = f"{year}年",
+                        columns  = fb_cols,
+                        rows     = fb_rows,
+                        now_str  = now_str,
+                        SW=SW, SH=SH,
+                    )
+                except Exception as _fb_e:
+                    logger.warning("FB stats slide (%s) failed (skipped): %s",
+                                   freq_label, _fb_e, exc_info=True)
 
 
-    # ══════════════════════════════════════════════════════════════════════════
-    # Slide I — Annual maintenance plan matrix
-    #   dazhi -> hotel periodic maintenance (1 slide)
-    #   luqun -> mall periodic maintenance + full building maintenance
-    # ══════════════════════════════════════════════════════════════════════════
-    # Cross-section variables for hyperlink application in Slide H
-    z1_slide       = None
-    z1_runs        = []
-    ia_first_slide = None
-    ib_first_slide = None
+        logger.info("[CHECKPOINT] Reached before Slide I, module=%s", module)
+        # ══════════════════════════════════════════════════════════════════════════
+        # Slide I — Annual maintenance plan matrix
+        #   dazhi -> hotel periodic maintenance (1 slide)
+        #   luqun -> mall periodic maintenance + full building maintenance
+        # ══════════════════════════════════════════════════════════════════════════
+        # Cross-section variables for hyperlink application in Slide H
+        z1_slide       = None
+        z1_runs        = []
+        ia_first_slide = None
+        ib_first_slide = None
 
-    try:
-        all_matrix_rows = _get_annual_matrix_rows(module, year, db)
-
-        if module == "dazhi":
-            src_rows = [r for r in all_matrix_rows if r["source"] == "飯店週期保養"]
-            _add_annual_matrix_slide(
-                prs, TMPL,
-                title       = "飯店週期保養年度計劃表",
-                subtitle    = f"{{year}}年　狀態：✓已完成 ○已排定 ✗逾期 △未排定 ?待排",
-                matrix_rows = src_rows,
-                now_str     = now_str, SW=SW, SH=SH,
-            )
-
-        else:  # luqun
-            # Z1: index slide (hyperlinks applied after UF)
-            _link_labels = [
-                "商場週期保養年度計劃表",
-                "全棟例行維護年度計劃表",
-                "未完成附表",
-            ]
-            z1_slide, z1_runs = _make_index_slide(
-                prs, TMPL, _link_labels, now_str, SW, SH
-            )
-
-            # end slide
-            _make_end_slide(prs, TMPL, now_str, SW, SH)
-
-            # I-a
-            ia_first_idx  = len(prs.slides)
-            src_mall = [r for r in all_matrix_rows if r["source"] == "商場週期保養"]
-            _add_annual_matrix_slide(
-                prs, TMPL,
-                title       = "商場週期保養年度計劃表",
-                subtitle    = f"{{year}}年　狀態：✓已完成 ○已排定 ✗逾期 △未排定 ?待排",
-                matrix_rows = src_mall,
-                now_str     = now_str, SW=SW, SH=SH,
-            )
-            ia_first_slide = prs.slides[ia_first_idx]
-
-            # I-b
-            ib_first_idx  = len(prs.slides)
-            src_fb = [r for r in all_matrix_rows if r["source"] == "全棟例行維護"]
-            _add_annual_matrix_slide(
-                prs, TMPL,
-                title       = "全棟例行維護年度計劃表",
-                subtitle    = f"{{year}}年　狀態：✓已完成 ○已排定 ✗逾期 △未排定 ?待排",
-                matrix_rows = src_fb,
-                now_str     = now_str, SW=SW, SH=SH,
-            )
-            ib_first_slide = prs.slides[ib_first_idx]
-
-    except Exception as _e:
-        logger.warning("Annual matrix slide failed (skipped): %s", _e)
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # Slide H — Unfinished cases appendix
-    # ══════════════════════════════════════════════════════════════════════════
-    _is_hotel = (module == "dazhi")
-    unfinished = rr_svc.get_all_unfinished_cases(
-        db=db, year=year, month=month,
-        include_hotel=_is_hotel,
-        include_mall=not _is_hotel,
-    )
-    uf_title = "\u672a\u5b8c\u6210\u9644\u8868\uff08\u98ef\u5e97\uff09" if _is_hotel else "\u672a\u5b8c\u6210\u9644\u8868\uff08\u5546\u5834\uff09"
-    uf_rows = []
-    for c in unfinished:
-        uf_rows.append({
-            "case_no":  _sanitize(c.get("case_no", "")),
-            "occurred": (_sanitize(c.get("occurred_at", "")) or "")[:10],
-            "floor":    _sanitize(c.get("floor", "")),
-            "rtype":    _sanitize(c.get("repair_type", "")),
-            "title":    _sanitize(c.get("title", "")),
-            "status":   _sanitize(c.get("status", "")),
-            "days":     _sanitize(c.get("pending_days", "")),
-            "unit":     _sanitize(c.get("responsible_unit", "")),
-        })
-    uf_first_idx = len(prs.slides)
-    _add_table_slides(
-        prs, TMPL,
-        title    = uf_title,
-        subtitle = f"{period_str}",
-        columns  = [
-            {"key": "case_no",  "label": "\u6848\u4ef6\u7de8\u865f",   "width": 1.40, "align": "center"},
-            {"key": "occurred", "label": "\u5831\u4fee\u65e5\u671f",   "width": 1.05, "align": "center"},
-            {"key": "floor",    "label": "\u767c\u751f\u6a13\u5c64",   "width": 1.30, "align": "center"},
-            {"key": "rtype",    "label": "\u5de5\u9805\u985e\u5225",   "width": 1.35, "align": "center"},
-            {"key": "title",    "label": "\u5831\u4fee\u5167\u5bb9",   "width": 3.20, "align": "left"},
-            {"key": "status",   "label": "\u72c0\u614b",                "width": 1.05, "align": "center"},
-            {"key": "days",     "label": "\u7b49\u5f85\u5929\u6578",  "width": 1.00, "align": "center"},
-            {"key": "unit",     "label": "\u5de5\u52d9\u8655\u7406\u4eba\u54e1", "width": 1.80, "align": "left"},
-        ],
-        rows     = uf_rows,
-        now_str  = now_str,
-        SW=SW, SH=SH,
-        max_rows = ROWS_PER_SLIDE,
-    )
-
-    # Remove the content template placeholder slide
-    # Apply hyperlinks to Z1 index slide (luqun only)
-    if z1_slide is not None and z1_runs and ia_first_slide and ib_first_slide:
         try:
-            uf_first_slide = (prs.slides[uf_first_idx]
-                              if len(prs.slides) > uf_first_idx else None)
-            _add_slide_hyperlink(z1_slide, z1_runs[0], ia_first_slide)
-            _add_slide_hyperlink(z1_slide, z1_runs[1], ib_first_slide)
-            if uf_first_slide is not None:
-                _add_slide_hyperlink(z1_slide, z1_runs[2], uf_first_slide)
-        except Exception as _hl_e:
-            logger.warning("Index slide hyperlinks failed: %s", _hl_e, exc_info=True)
+            all_matrix_rows = _get_annual_matrix_rows(module, year, db)
 
-    _delete_slide(prs, TMPL)
+            if module == "dazhi":
+                src_rows = [r for r in all_matrix_rows if r["source"] == "飯店週期保養"]
+                _add_annual_matrix_slide(
+                    prs, TMPL,
+                    title       = "飯店週期保養年度計劃表",
+                    subtitle    = f"{{year}}年　狀態：✓已完成 ○已排定 ✗逾期 △未排定 ?待排",
+                    matrix_rows = src_rows,
+                    now_str     = now_str, SW=SW, SH=SH,
+                )
+
+            else:  # luqun
+                import traceback as _luqun_tb
+                logger.info("[Slide I] luqun: all_matrix_rows=%d", len(all_matrix_rows))
+                src_mall = [r for r in all_matrix_rows if r["source"] == "商場週期保養"]
+                src_fb   = [r for r in all_matrix_rows if r["source"] == "全棟例行維護"]
+                logger.info("[Slide I] luqun: src_mall=%d, src_fb=%d", len(src_mall), len(src_fb))
+
+                # Z1 各項清單連結（索引頁）— 置於兩張年度計劃表之前
+                # （超連結在未完成附表建立後再套用，見本區段末端）
+                _z1_labels = [
+                    "商場週期保養年度計劃表",
+                    "全棟例行維護年度計劃表",
+                    "未完成附表",
+                ]
+                z1_slide, z1_runs = _make_index_slide(prs, TMPL, _z1_labels, now_str, SW, SH)
+
+                # I-a: 商場週期保養年度計劃表
+                ia_first_idx = len(prs.slides)
+                try:
+                    _add_annual_matrix_slide(
+                        prs, TMPL,
+                        title       = "商場週期保養年度計劃表",
+                        subtitle    = f"{{year}}年　狀態：✓已完成 ○已排定 ✗逾期 △未排定 ?待排",
+                        matrix_rows = src_mall,
+                        now_str     = now_str, SW=SW, SH=SH,
+                    )
+                    ia_first_slide = prs.slides[ia_first_idx]
+                    logger.info("[Slide I] 商場週期保養年度計劃表 created OK")
+                except Exception as _ia_err:
+                    from app.routers.hotel_overview import _delete_slide as _ds_ia
+                    while len(prs.slides) > ia_first_idx:
+                        _ds_ia(prs, len(prs.slides) - 1)
+                    logger.error("[Slide I] 商場週期保養年度計劃表 FAILED: %s\n%s", _ia_err, _luqun_tb.format_exc())
+
+                # I-b: 全棟例行維護年度計劃表
+                ib_first_idx = len(prs.slides)
+                try:
+                    _add_annual_matrix_slide(
+                        prs, TMPL,
+                        title       = "全棟例行維護年度計劃表",
+                        subtitle    = f"{{year}}年　狀態：✓已完成 ○已排定 ✗逾期 △未排定 ?待排",
+                        matrix_rows = src_fb,
+                        now_str     = now_str, SW=SW, SH=SH,
+                    )
+                    ib_first_slide = prs.slides[ib_first_idx]
+                    logger.info("[Slide I] 全棟例行維護年度計劃表 created OK")
+                except Exception as _ib_err:
+                    from app.routers.hotel_overview import _delete_slide as _ds_ib
+                    while len(prs.slides) > ib_first_idx:
+                        _ds_ib(prs, len(prs.slides) - 1)
+                    logger.error("[Slide I] 全棟例行維護年度計劃表 FAILED: %s\n%s", _ib_err, _luqun_tb.format_exc())
+
+        except Exception as _e:
+            import traceback as _tb
+            logger.error("Annual matrix slide FAILED: %s\n%s", _e, _tb.format_exc())
+
+        # ══════════════════════════════════════════════════════════════════════════
+        # Slide H — Unfinished cases appendix
+        # ══════════════════════════════════════════════════════════════════════════
+        _is_hotel = (module == "dazhi")
+        unfinished = rr_svc.get_all_unfinished_cases(
+            db=db, year=year, month=month,
+            include_hotel=_is_hotel,
+            include_mall=not _is_hotel,
+        )
+        uf_title = "\u672a\u5b8c\u6210\u9644\u8868\uff08\u98ef\u5e97\uff09" if _is_hotel else "\u672a\u5b8c\u6210\u9644\u8868\uff08\u5546\u5834\uff09"
+        uf_rows = []
+        for c in unfinished:
+            uf_rows.append({
+                "case_no":  _sanitize(c.get("case_no", "")),
+                "occurred": (_sanitize(c.get("occurred_at", "")) or "")[:10],
+                "floor":    _sanitize(c.get("floor", "")),
+                "rtype":    _sanitize(c.get("repair_type", "")),
+                "title":    _sanitize(c.get("title", "")),
+                "status":   _sanitize(c.get("status", "")),
+                "days":     _sanitize(c.get("pending_days", "")),
+                "unit":     _sanitize(c.get("responsible_unit", "")),
+            })
+        # Z1 各項清單連結索引頁已於兩張年度計劃表之前建立；超連結於下方 UF 投影片建立後再套用
+        uf_first_idx = len(prs.slides)
+        _add_table_slides(
+            prs, TMPL,
+            title    = uf_title,
+            subtitle = f"{period_str}",
+            columns  = [
+                {"key": "case_no",  "label": "\u6848\u4ef6\u7de8\u865f",   "width": 1.40, "align": "center"},
+                {"key": "occurred", "label": "\u5831\u4fee\u65e5\u671f",   "width": 1.05, "align": "center"},
+                {"key": "floor",    "label": "\u767c\u751f\u6a13\u5c64",   "width": 1.30, "align": "center"},
+                {"key": "rtype",    "label": "\u5de5\u9805\u985e\u5225",   "width": 1.35, "align": "center"},
+                {"key": "title",    "label": "\u5831\u4fee\u5167\u5bb9",   "width": 3.20, "align": "left"},
+                {"key": "status",   "label": "\u72c0\u614b",                "width": 1.05, "align": "center"},
+                {"key": "days",     "label": "\u7b49\u5f85\u5929\u6578",  "width": 1.00, "align": "center"},
+                {"key": "unit",     "label": "\u5de5\u52d9\u8655\u7406\u4eba\u54e1", "width": 1.80, "align": "left"},
+            ],
+            rows     = uf_rows,
+            now_str  = now_str,
+            SW=SW, SH=SH,
+            max_rows = ROWS_PER_SLIDE,
+        )
+
+        # Remove the content template placeholder slide
+        # Apply hyperlinks to Z1 index slide (luqun only)
+        if z1_slide is not None and z1_runs and ia_first_slide and ib_first_slide:
+            try:
+                uf_first_slide = (prs.slides[uf_first_idx]
+                                  if len(prs.slides) > uf_first_idx else None)
+                _add_slide_hyperlink(z1_slide, z1_runs[0], ia_first_slide)
+                _add_slide_hyperlink(z1_slide, z1_runs[1], ib_first_slide)
+                if uf_first_slide is not None:
+                    _add_slide_hyperlink(z1_slide, z1_runs[2], uf_first_slide)
+            except Exception as _hl_e:
+                logger.warning("Index slide hyperlinks failed: %s", _hl_e, exc_info=True)
+
+
+
+    # IHG 客房保養表明細（section matrix）
+    if is_ihg:
+        try:
+            _sm_data = _get_ihg_section_matrix(db, year, month)
+            _sm_year = _sm_data.get("year", str(year))
+            _sm_month = _sm_data.get("month", str(month).zfill(2))
+            _build_ihg_section_matrix_slides(
+                prs, TMPL,
+                title    = "\u5ba2\u623f\u4fdd\u990a\u8868\u660e\u7d30",
+                subtitle = f"{_sm_year}\u5e74{_sm_month}\u6708",
+                matrix_data = _sm_data,
+                now_str  = now_str, SW=SW, SH=SH,
+                title_fn = _title_fn,
+                max_rows = 14,
+            )
+        except Exception as _sm_e:
+            logger.warning("IHG section matrix slides failed: %s", _sm_e, exc_info=True)
+
+    # ── 飯店 Z1 + 未完成附表（飯店），dazhi/IHG 專用 ─────────────────────────
+    if is_ihg:
+        # 記錄飯店週期保養年度計劃表的投影片（供 Z1 超連結使用）
+        _hpm_matrix_slide = None
+        try:
+            # 飯店週期保養年度計劃表已在 if is_ihg: block 中建立，取最後建立的矩陣投影片
+            _hmat_idx = c2.rfind("_add_annual_matrix_slide")  # 只用來找，不重複建立
+        except Exception:
+            pass
+
+        # 未完成附表（飯店）
+        _h_unfinished = rr_svc.get_all_unfinished_cases(
+            db=db, year=year, month=month,
+            include_hotel=True, include_mall=False,
+        )
+        _huf_rows = []
+        for _hc in _h_unfinished:
+            _huf_rows.append({
+                "case_no":  _sanitize(_hc.get("case_no", "")),
+                "occurred": (_sanitize(_hc.get("occurred_at", "")) or "")[:10],
+                "floor":    _sanitize(_hc.get("floor", "")),
+                "rtype":    _sanitize(_hc.get("repair_type", "")),
+                "title":    _sanitize(_hc.get("title", "")),
+                "status":   _sanitize(_hc.get("status", "")),
+                "days":     _sanitize(_hc.get("pending_days", "")),
+                "unit":     _sanitize(_hc.get("responsible_unit", "")),
+            })
+
+        # Z1 各項清單連結（倒數第2頁）
+        _h_z1_labels = [
+            "\u98ef\u5e97\u9031\u671f\u4fdd\u990a\u5e74\u5ea6\u8a08\u5283\u8868",
+            "\u672a\u5b8c\u6210\u9644\u8868\uff08\u98ef\u5e97\uff09",
+        ]
+        _h_z1_slide, _h_z1_runs = _make_index_slide(
+            prs, TMPL, _h_z1_labels, now_str, SW, SH
+        )
+
+        # 飯店週期保養年度計劃表（在 Z1 之後、UF 之前）
+        _hmat_first_slide = None
+        try:
+            _hmat_rows2 = _get_annual_matrix_rows("dazhi", year, db)
+            _hdazhi2 = [r for r in _hmat_rows2 if r["source"] == "飯店週期保養"]
+            if _hdazhi2:
+                _n_before2 = len(prs.slides)
+                try:
+                    _add_annual_matrix_slide(
+                        prs, TMPL,
+                        title       = "飯店週期保養年度計劃表",
+                        subtitle    = f"{year}年　狀態：✓已完成 ○已排定 ✗逾期 △未排定 ?待排",
+                        matrix_rows = _hdazhi2,
+                        now_str     = now_str, SW=SW, SH=SH,
+                        title_fn    = _title_fn,
+                    )
+                    _hmat_first_slide = prs.slides[_n_before2]
+                except Exception as _inner2:
+                    from app.routers.hotel_overview import _delete_slide as _ds2
+                    while len(prs.slides) > _n_before2:
+                        _ds2(prs, len(prs.slides) - 1)
+                    logger.warning("Hotel annual matrix error: %s", _inner2, exc_info=True)
+        except Exception as _hme2:
+            logger.warning("Hotel annual matrix failed: %s", _hme2, exc_info=True)
+
+
+        # 未完成附表（飯店）投影片
+        _h_uf_first_idx = len(prs.slides)
+        _add_table_slides(
+            prs, TMPL,
+            title    = "\u672a\u5b8c\u6210\u9644\u8868\uff08\u98ef\u5e97\uff09",
+            subtitle = f"{period_str}",
+            columns  = [
+                {"key": "case_no",  "label": "\u6848\u4ef6\u7de8\u865f",   "width": 1.40, "align": "center"},
+                {"key": "occurred", "label": "\u5831\u4fee\u65e5\u671f",   "width": 1.05, "align": "center"},
+                {"key": "floor",    "label": "\u767c\u751f\u6a13\u5c64",   "width": 1.30, "align": "center"},
+                {"key": "rtype",    "label": "\u5de5\u9805\u985e\u5225",   "width": 1.35, "align": "center"},
+                {"key": "title",    "label": "\u5831\u4fee\u5167\u5bb9",   "width": 3.20, "align": "left"},
+                {"key": "status",   "label": "\u72c0\u614b",               "width": 1.05, "align": "center"},
+                {"key": "days",     "label": "\u7b49\u5f85\u5929\u6578",  "width": 1.00, "align": "center"},
+                {"key": "unit",     "label": "\u5de5\u52d9\u8655\u7406\u4eba\u54e1","width": 1.80, "align": "left"},
+            ],
+            rows     = _huf_rows,
+            now_str  = now_str,
+            SW=SW, SH=SH,
+            max_rows = ROWS_PER_SLIDE,
+            title_fn = _title_fn,
+        )
+
+        # 套用 Z1 超連結（runs[0]=年度計劃表, runs[1]=未完成附表）
+        try:
+            if _hmat_first_slide is not None:
+                _add_slide_hyperlink(_h_z1_slide, _h_z1_runs[0], _hmat_first_slide)
+            if len(prs.slides) > _h_uf_first_idx:
+                _h_uf_slide = prs.slides[_h_uf_first_idx]
+                _add_slide_hyperlink(_h_z1_slide, _h_z1_runs[1], _h_uf_slide)
+        except Exception as _hlh:
+            logger.warning("Hotel Z1 hyperlinks failed: %s", _hlh, exc_info=True)
+
+    # ── IHG 模板：刪除 ContentTemplate，封底移到最末頁 ────────────────────────
+    if is_ihg:
+        _delete_slide(prs, TMPL)
+        _move_slide_to_end(prs, 1)
+    else:
+        _delete_slide(prs, TMPL)
 
     buf = BytesIO()
     prs.save(buf)
