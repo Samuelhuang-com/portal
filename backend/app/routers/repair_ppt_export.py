@@ -1243,7 +1243,6 @@ def _add_pie_with_category_table(
     _fn    = title_fn or _set_slide_title
     C_DARK = RGBColor(0x1B, 0x3A, 0x5C)
     C_WHITE= RGBColor(0xFF, 0xFF, 0xFF)
-    C_SEP  = RGBColor(0x2C, 0x55, 0x82)   # 「專櫃」區隔列底色
     C_ALT  = RGBColor(0xEE, 0xF5, 0xFB)
     C_GRAY = RGBColor(0x88, 0x88, 0x88)
 
@@ -1257,7 +1256,7 @@ def _add_pie_with_category_table(
     # ── 版面配置（單位：英吋）─────────────────────────────────────────────
     TABLE_Y = 0.92
     TABLE_H = SH - TABLE_Y - 0.45
-    LEFT_W  = 4.20
+    LEFT_W  = 14.2 / 2.54   # 表格寬度固定 14.2 公分（≈ 5.59 吋）
     LEFT_X  = 0.30
     RIGHT_X = LEFT_X + LEFT_W + 0.12   # gap = 0.12"
     RIGHT_W = SW - RIGHT_X - 0.25
@@ -1276,26 +1275,32 @@ def _add_pie_with_category_table(
     tbl.columns[1].width = Inches(MD_W)
 
     # Header 列
-    _pptx_cell(tbl, 0, 0, "類別",   fg=C_WHITE, bg=C_DARK, size=8, bold=True, align=PP_ALIGN.CENTER)
-    _pptx_cell(tbl, 0, 1, "MD內容", fg=C_WHITE, bg=C_DARK, size=8, bold=True, align=PP_ALIGN.LEFT)
+    _pptx_cell(tbl, 0, 0, "類別",   fg=C_WHITE, bg=C_DARK, size=10.5, bold=True, align=PP_ALIGN.CENTER)
+    _pptx_cell(tbl, 0, 1, "MD內容", fg=C_WHITE, bg=C_DARK, size=10.5, bold=True, align=PP_ALIGN.LEFT)
     tbl.rows[0].height = Pt(22)
 
     # 資料列
     for ri, (cat, md_text) in enumerate(_REPAIR_CATEGORY_MD, start=1):
-        is_sep = (md_text is None)                        # 「專櫃」區隔列
-        bg     = C_SEP if is_sep else (C_ALT if ri % 2 == 0 else None)
-        fg     = C_WHITE if is_sep else C_DARK
-        _pptx_cell(tbl, ri, 0, cat,             fg=fg, bg=bg, size=7, bold=is_sep)
-        _pptx_cell(tbl, ri, 1, (md_text or ""), fg=fg, bg=bg, size=7)
+        bg = C_ALT if ri % 2 == 0 else None               # 一律按順序斑馬底色（含「專櫃」列，不再特殊上色）
+        _pptx_cell(tbl, ri, 0, cat,             fg=C_DARK, bg=bg, size=10.5)
+        _pptx_cell(tbl, ri, 1, (md_text or ""), fg=C_DARK, bg=bg, size=10.5)
         tbl.rows[ri].height = Pt(20)
 
-    # ── 右側：圓餅圖圖片 ──────────────────────────────────────────────────
+    # ── 右側：圓餅圖圖片（寬度固定 21 公分、高度按比例、右緣對齊版面、送至最底層）──
     if pie_buf:
-        slide.shapes.add_picture(
-            pie_buf,
-            Inches(RIGHT_X), Inches(TABLE_Y),
-            Inches(RIGHT_W), Inches(TABLE_H),
-        )
+        from pptx.util import Cm
+        _box_h = Inches(TABLE_H)
+        # 寬度固定 21 公分；只給 width，height 由 python-pptx 依原圖長寬比自動（不變形）
+        _pic = slide.shapes.add_picture(pie_buf, Inches(RIGHT_X), Inches(TABLE_Y),
+                                        width=Cm(21))
+        # 水平：圖片右緣對齊版面右邊（留 0.25 吋邊界）；垂直：於右半框置中
+        _pic.left = int(Inches(SW - 0.25)) - _pic.width
+        _pic.top  = int(Inches(TABLE_Y)) + int((_box_h - _pic.height) / 2)
+        # 送至圖層最底（z-order 最下層；index 0=nvGrpSpPr,1=grpSpPr，故插在 2）
+        _sp = _pic._element
+        _spTree = _sp.getparent()
+        _spTree.remove(_sp)
+        _spTree.insert(2, _sp)
     else:
         _pptx_txt(slide, "（本期暫無圖表資料）",
                   RIGHT_X + 1.5, TABLE_Y + 2.0, 5.0, 1.0,
