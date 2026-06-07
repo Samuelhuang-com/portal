@@ -249,10 +249,10 @@ def _make_pie_chart(type_rows: list) -> Optional[BytesIO]:
             pctdistance=0.72,
             labeldistance=1.13,
             startangle=90,
-            textprops={"fontsize": 7.5},
+            textprops={"fontsize": 10.5},
         )
         for txt in texts:
-            txt.set_fontsize(7.5)
+            txt.set_fontsize(10.5)
 
         # 手動在 slice 內側標注 cum_pct（與 TAB 年度佔比一致）
         import numpy as np
@@ -264,7 +264,7 @@ def _make_pie_chart(type_rows: list) -> Optional[BytesIO]:
             x = 0.72 * np.cos(np.radians(angle))
             y = 0.72 * np.sin(np.radians(angle))
             ax.text(x, y, f"{pct}%", ha="center", va="center",
-                    fontsize=7, color="white", fontweight="bold")
+                    fontsize=10, color="white", fontweight="bold")
 
         # 圖例：顯示件數 + 年度佔比（與 TAB 欄位對齊）
         ax.legend(
@@ -272,10 +272,10 @@ def _make_pie_chart(type_rows: list) -> Optional[BytesIO]:
             [f"{lb}（{sz}件，{pct}%）" for lb, sz, pct in zip(labels, sizes, cum_pcts)],
             loc="center left",
             bbox_to_anchor=(1.0, 0.5),
-            fontsize=7.5,
+            fontsize=10.5,
             framealpha=0.8,
         )
-        ax.set_title("報修類型分布", fontsize=10, fontweight="bold",
+        ax.set_title("報修類型分布", fontsize=13, fontweight="bold",
                      color="#1B3A5C", pad=6)
         ax.axis("equal")
         fig.tight_layout(pad=0.5)
@@ -1095,7 +1095,19 @@ def _get_ihg_section_matrix(db, year: int, month: int) -> dict:
                                "maint_date": "", "sections": {}, "has_data": False})
     active_cats = [c for c in CANONICAL_CATEGORIES
                    if any(r["sections"].get(c) for r in rooms_out if r["has_data"])]
+    # 各類別統計（分母含未執行房間，與 Web /section-matrix API 同口徑）
+    _TRI = "▲"
+    total_rooms = len(rooms_out)
+    category_stats: dict = {}
+    for cat in CANONICAL_CATEGORIES:
+        v_count   = sum(1 for r in rooms_out if r["sections"].get(cat) == "V")
+        tri_count = sum(1 for r in rooms_out if r["sections"].get(cat) == _TRI)
+        x_count   = sum(1 for r in rooms_out if r["sections"].get(cat) == "X")
+        rate = round(v_count / total_rooms * 100, 1) if total_rooms > 0 else 0.0
+        category_stats[cat] = {"v_count": v_count, "triangle_count": tri_count,
+                               "x_count": x_count, "rate": rate}
     return {"rooms": rooms_out, "categories": active_cats or list(CANONICAL_CATEGORIES),
+            "category_stats": category_stats, "total_rooms": total_rooms,
             "year": year_str, "month": month_zf}
 
 
@@ -1127,9 +1139,18 @@ def _build_ihg_section_matrix_slides(
     C_GRAY   = RGBColor(0x88, 0x88, 0x88)
     C_LIGHT  = RGBColor(0x4B, 0xA8, 0xE8)
     C_ALT    = RGBColor(0xEE, 0xF5, 0xFB)
+    # 統計列（完成TOTAL／完成率）色彩，比照 Web SECTION_VALUE_CFG
+    C_SUM_TOT_BG = RGBColor(0xF0, 0xF4, 0xF8)   # 完成TOTAL 列底
+    C_SUM_RT_BG  = RGBColor(0xE6, 0xF4, 0xFF)   # 完成率 列底
+    C_RED2       = RGBColor(0xCF, 0x13, 0x22)
+    C_ORANGE2    = RGBColor(0xD4, 0x6B, 0x08)
+    C_GREEN2     = RGBColor(0x38, 0x9E, 0x0D)
 
-    rooms      = matrix_data.get("rooms", [])
+    # 需求3：僅顯示「整月有保養記錄」的房號（has_data=True）；無記錄者隱藏
+    # 統計（完成TOTAL／完成率）仍取自 category_stats，其分母含全部標準房間（含被隱藏者）
+    rooms      = [r for r in matrix_data.get("rooms", []) if r.get("has_data")]
     categories = matrix_data.get("categories", [])
+    category_stats = matrix_data.get("category_stats", {})
 
     if not rooms or not categories:
         sl = _clone_template_slide(prs, template_idx)
@@ -1157,7 +1178,7 @@ def _build_ihg_section_matrix_slides(
             _pptx_txt(sl, pg_sub, 0.45, 0.592, SW - 5.0, 0.22, size=10, color=C_LIGHT)
 
         n_cols = 2 + n_cats
-        n_rows = len(pg_rooms) + 1
+        n_rows = len(pg_rooms) + 1 + 2   # +表頭 +完成TOTAL +完成率（每頁都附）
         TABLE_Y = 0.85
         TABLE_H = SH - TABLE_Y - 0.65
 
@@ -1180,7 +1201,7 @@ def _build_ihg_section_matrix_slides(
         for ci, cat in enumerate(categories):
             short = cat.replace("\u5ba2\u623f", "").strip() or cat
             _pptx_cell(tbl, 0, 2+ci, short, bold=True)
-        _pptx_header_row(tbl, n_cols, size=9)
+        _pptx_header_row(tbl, n_cols, size=11)
         tbl.rows[0].height = Pt(28)
 
         # Data rows
@@ -1190,35 +1211,73 @@ def _build_ihg_section_matrix_slides(
             sections  = room.get("sections", {})
 
             _pptx_cell(tbl, ri, 0, room.get("room_no", ""),
-                       fg=C_DARK, bg=row_bg, size=9, bold=True, align=PP_ALIGN.CENTER)
+                       fg=C_DARK, bg=row_bg, size=11, bold=True, align=PP_ALIGN.CENTER)
             _pptx_cell(tbl, ri, 1, room.get("floor", ""),
-                       fg=C_GRAY, bg=row_bg, size=8, align=PP_ALIGN.CENTER)
+                       fg=C_GRAY, bg=row_bg, size=11, align=PP_ALIGN.CENTER)
 
             for ci, cat in enumerate(categories):
                 if not has_data:
                     _pptx_cell(tbl, ri, 2+ci, "\u672a\u57f7",
                                fg=RGBColor(0xBF, 0xBF, 0xBF), bg=C_SKIP,
-                               size=8, align=PP_ALIGN.CENTER)
+                               size=11, align=PP_ALIGN.CENTER)
                 else:
                     val = sections.get(cat, "")
                     if val == "V":
                         _pptx_cell(tbl, ri, 2+ci, "V",
-                                   fg=C_V_FG, bg=C_V_BG, size=9, bold=True,
+                                   fg=C_V_FG, bg=C_V_BG, size=11, bold=True,
                                    align=PP_ALIGN.CENTER)
                     elif val == "\u25b2":          # ▲
                         _pptx_cell(tbl, ri, 2+ci, "\u25b2",
-                                   fg=C_T_FG, bg=C_T_BG, size=9,
+                                   fg=C_T_FG, bg=C_T_BG, size=11,
                                    align=PP_ALIGN.CENTER)
                     elif val == "X":
                         _pptx_cell(tbl, ri, 2+ci, "X",
-                                   fg=C_X_FG, bg=C_X_BG, size=9, bold=True,
+                                   fg=C_X_FG, bg=C_X_BG, size=11, bold=True,
                                    align=PP_ALIGN.CENTER)
                     else:
                         _pptx_cell(tbl, ri, 2+ci, "\u2014",
-                                   fg=C_GRAY, bg=C_NO_BG, size=8,
+                                   fg=C_GRAY, bg=C_NO_BG, size=11,
                                    align=PP_ALIGN.CENTER)
 
             tbl.rows[ri].height = Pt(22)
+
+        # ── 完成TOTAL／完成率 兩列（每頁都附；數值為全體統計，分母含未執行房間）──
+        _tot_r = len(pg_rooms) + 1
+        _rt_r  = len(pg_rooms) + 2
+        _pptx_cell(tbl, _tot_r, 0, "完成TOTAL", fg=C_DARK,  bg=C_SUM_TOT_BG, size=11, bold=True, align=PP_ALIGN.CENTER)
+        _pptx_cell(tbl, _tot_r, 1, "",          bg=C_SUM_TOT_BG)
+        _pptx_cell(tbl, _rt_r,  0, "完成率",     fg=C_LIGHT, bg=C_SUM_RT_BG,  size=11, bold=True, align=PP_ALIGN.CENTER)
+        _pptx_cell(tbl, _rt_r,  1, "",          bg=C_SUM_RT_BG)
+        for ci, cat in enumerate(categories):
+            _st = category_stats.get(cat, {})
+            _v  = int(_st.get("v_count", 0))
+            _xc = int(_st.get("x_count", 0))
+            _tc = int(_st.get("triangle_count", 0))
+            _rt = float(_st.get("rate", 0.0))
+            _tot_fg = C_RED2 if _xc > 0 else (C_ORANGE2 if _tc > 0 else C_GREEN2)
+            _rt_fg  = C_GREEN2 if _rt >= 100 else (C_ORANGE2 if _rt >= 80 else C_RED2)
+            _pptx_cell(tbl, _tot_r, 2+ci, str(_v),       fg=_tot_fg, bg=C_SUM_TOT_BG, size=11, bold=True, align=PP_ALIGN.CENTER)
+            _pptx_cell(tbl, _rt_r,  2+ci, f"{_rt:.1f}%", fg=_rt_fg,  bg=C_SUM_RT_BG,  size=11, bold=True, align=PP_ALIGN.CENTER)
+        tbl.rows[_tot_r].height = Pt(20)
+        tbl.rows[_rt_r].height  = Pt(20)
+
+        # ── 最後一頁：整體統計總結一行（13 級字）──────────────────────────────
+        # 總房間數=全部標準房間；施作=有保養記錄(已顯示)房數；總完成率=施作÷總房數
+        if pg_idx == total_p - 1:
+            _tot_rooms    = int(matrix_data.get("total_rooms", 0))
+            _done_rooms   = len(rooms)
+            _undone_rooms = _tot_rooms - _done_rooms
+            _overall      = round(_done_rooms / _tot_rooms * 100, 1) if _tot_rooms else 0.0
+            _table_h_in   = (28 + len(pg_rooms) * 22 + 2 * 20) / 72.0
+            _sum_y        = TABLE_Y + _table_h_in + 0.12
+            _pptx_txt(
+                sl,
+                f"總房間數 {_tot_rooms} ／ 施作房間數 {_done_rooms} ／ "
+                f"未施作房間數 {_undone_rooms} ／ 總完成率 {_overall:.1f}%",
+                0.4, _sum_y, TABLE_W, 0.4,
+                size=13, bold=True, color=C_DARK, align=PP_ALIGN.CENTER,
+            )
+
 
 def _add_pie_with_category_table(
     prs, template_idx: int,
