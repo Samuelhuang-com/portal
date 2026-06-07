@@ -488,25 +488,28 @@ export default function MallMgmtDashboardPage() {
       name,
       total_hours: totals[i] ?? 0,
       pct:         grand > 0 ? Math.round(((totals[i] ?? 0) / grand) * 1000) / 10 : 0,
-      cats:        rows.map(r => ({ category: r.category, pct: r.pct_by_person[i] ?? 0 })),
+      cats:        rows.map(r => ({ category: r.category, pct: r.pct_by_person[i] ?? 0, hours: r.hours_by_person?.[i] ?? 0 })),
     }))
   }, [personHoursData])
 
   const totalPersonHours = personHoursData?.person_totals?.reduce((s, h) => s + h, 0) ?? 0
 
   // 人員來源分解資料（供 TabRanking 堆疊 BarChart 使用，顯示順序為降冪 → reverse 後正確）
-  const MALL_3CATS = ['現場報修', '例行維護', '每日巡檢'] as const
+  // 五項工項（與排名總時數一致）：分解圖直接用後端真實工時 hours_by_person
+  const MALL_5CATS = ['現場報修', '上級交辦', '緊急事件', '例行維護', '每日巡檢'] as const
   const MALL_CAT_HEX: Record<string, string> = {
     '現場報修': '#FA8C16',
+    '上級交辦': '#52C41A',
+    '緊急事件': '#FF4D4F',
     '例行維護': '#1B3A5C',
     '每日巡檢': '#722ED1',
   }
   const breakdownData = useMemo(() =>
     [...personRanking].reverse().map(p => {
       const obj: Record<string, number | string> = { name: p.name }
-      MALL_3CATS.forEach(cat => {
+      MALL_5CATS.forEach(cat => {
         const c = p.cats.find(c => c.category === cat)
-        obj[cat] = c ? Math.round(p.total_hours * c.pct / 100 * 10) / 10 : 0
+        obj[cat] = c ? c.hours : 0   // 真實工時 (HR)；各工項相加 = 該人總時數
       })
       return obj
     })
@@ -1374,6 +1377,17 @@ export default function MallMgmtDashboardPage() {
     ]
   }
 
+  // 非班表人員排除提示（人員工時%／人員排名共用，供覆核）
+  const excludedPersonsAlert =
+    (personHoursData?.excluded_persons?.length ?? 0) > 0 ? (
+      <Alert
+        type="warning" showIcon
+        message={`已排除 ${personHoursData!.excluded_persons!.length} 位非班表人員（不顯示、不計入）`}
+        description={`下列人名不在班表(人員管理)名單中，已從工時統計剔除：${personHoursData!.excluded_persons!.join('、')}`}
+        style={{ marginBottom: 12 }}
+      />
+    ) : null
+
   const TabPersonPct = (
     <>
       <Card size="small" style={{ marginBottom: 12, background: '#f9fbff' }}>
@@ -1403,6 +1417,8 @@ export default function MallMgmtDashboardPage() {
         description="人員識別規則：現場報修 = 結案人（acceptor）、例行維護 = 執行人員（executor_name，可多人分攤）、每日巡檢 = 巡檢人員（inspector_name）。上級交辦／緊急事件（hotel/other-tasks）目前無人員欄位，工時以 work_hours 計入彙總。"
         style={{ marginBottom: 12 }}
       />
+
+      {excludedPersonsAlert}
 
       <Spin spinning={loadingPerson}>
         {!personHoursData && !loadingPerson ? (
@@ -1504,6 +1520,8 @@ export default function MallMgmtDashboardPage() {
         description="人員工時排名彙整現場報修、例行維護、每日巡檢（及上級交辦、緊急事件）五項來源（Top-15，依全年合計工時降冪）。「來源分解」欄顯示各工項占該工項總工時的百分比（hover 查看）。"
         style={{ marginBottom: 12 }} />
 
+      {excludedPersonsAlert}
+
       {!personHoursData && !loadingPerson ? (
         <Alert message="尚未載入人員工時資料，請切換至此 Tab 後稍候" type="warning" showIcon />
       ) : personRanking.length === 0 ? (
@@ -1538,10 +1556,10 @@ export default function MallMgmtDashboardPage() {
                 <YAxis type="category" dataKey="name" width={80} tick={{ fontSize: 12 }} />
                 <RcTooltip formatter={(v: number, name) => [`${Number(v).toFixed(1)} HR`, name as string]} />
                 <Legend iconSize={10} wrapperStyle={{ fontSize: 12 }} />
-                {MALL_3CATS.map((cat, ci) => (
+                {MALL_5CATS.map((cat, ci) => (
                   <Bar
                     key={cat} dataKey={cat} stackId="src" fill={MALL_CAT_HEX[cat]} name={cat}
-                    radius={ci === MALL_3CATS.length - 1 ? [0, 4, 4, 0] : [0, 0, 0, 0]}
+                    radius={ci === MALL_5CATS.length - 1 ? [0, 4, 4, 0] : [0, 0, 0, 0]}
                   />
                 ))}
               </BarChart>

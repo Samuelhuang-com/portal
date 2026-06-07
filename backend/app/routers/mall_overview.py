@@ -35,11 +35,50 @@ from app.models.mall_periodic_maintenance import (
 )
 from app.models.rf_inspection import RFInspectionBatch
 from app.models.other_tasks import OtherTask
+from app.models.schedule import StaffMember
 
 router = APIRouter(prefix="/mall", tags=["商場管理 Dashboard"])
 
 # 固定五項工項（順序即表格列順序）
 MALL_CATEGORIES = ["現場報修", "上級交辦", "緊急事件", "例行維護", "每日巡檢"]
+
+
+def _norm_name(s: str) -> str:
+    """
+    人名正規化：去除所有空白（含全形空白）、統一全形英數→半形，供白名單比對。
+    比對兩端（staff 名單與 Ragic 人名）都須過此函式，避免格式差異造成誤判。
+    """
+    if not s:
+        return ""
+    out = []
+    for ch in s:
+        code = ord(ch)
+        # 全形英數／符號（FF01–FF5E）→ 半形（差 0xFEE0）
+        if 0xFF01 <= code <= 0xFF5E:
+            ch = chr(code - 0xFEE0)
+        # 略過所有空白字元（半形空白、全形空白 U+3000、tab 等）
+        if ch.isspace() or ch == "　":
+            continue
+        out.append(ch)
+    return "".join(out)
+
+
+def _load_staff_allowed(db: Session) -> set[str]:
+    """
+    讀取班表人員名單（schedule/staff），建立正規化後的白名單 set。
+    收錄條件：is_active=True 且未軟刪除；name 與 source_name 皆納入（任一相符即在名單內）。
+    """
+    allowed: set[str] = set()
+    for s in (
+        db.query(StaffMember)
+        .filter(StaffMember.is_active == True, StaffMember.is_deleted == False)  # noqa: E712
+        .all()
+    ):
+        for raw in (s.name, s.source_name):
+            n = _norm_name(raw or "")
+            if n:
+                allowed.add(n)
+    return allowed
 
 
 
@@ -525,6 +564,15 @@ def get_mall_person_hours(
         if wh > 0:
             ph[person][tt] += wh
 
+    # ── staff 白名單過濾：不在班表名單的人員整筆剔除（不顯示、不計算）──────────────
+    allowed = _load_staff_allowed(db)
+    excluded_persons: list[str] = []
+    for p in list(ph.keys()):
+        if _norm_name(p) not in allowed:
+            excluded_persons.append(p)
+            del ph[p]
+    excluded_persons = sorted(set(excluded_persons))
+
     # ── 找出 Top-15 人員（依全類別合計工時降冪）─────────────────────────────────
     person_totals: dict[str, float] = {
         p: sum(cats.values()) for p, cats in ph.items()
@@ -532,7 +580,7 @@ def get_mall_person_hours(
     persons = sorted(person_totals, key=lambda p: -person_totals[p])[:15]
 
     if not persons:
-        return {"year": year, "persons": [], "rows": []}
+        return {"year": year, "persons": [], "rows": [], "excluded_persons": excluded_persons}
 
     # ── 組裝結果（格式與 WCA _build_person_table 完全一致）───────────────────────
     result_rows = []
@@ -544,13 +592,16 @@ def get_mall_person_hours(
                 round(ph[p][cat] / cat_total * 100, 1) if cat_total else 0.0
                 for p in persons
             ],
+            # 每位人員在該工項的「真實工時(HR)」，供分解圖堆疊（各工項相加 = person_totals）
+            "hours_by_person": [round(ph[p][cat], 1) for p in persons],
         })
 
     return {
-        "year":          year,
-        "persons":       persons,
-        "person_totals": [round(person_totals[p], 1) for p in persons],
-        "rows":          result_rows,
+        "year":             year,
+        "persons":          persons,
+        "person_totals":    [round(person_totals[p], 1) for p in persons],
+        "rows":             result_rows,
+        "excluded_persons": excluded_persons,
     }
 
 

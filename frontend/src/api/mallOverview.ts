@@ -50,6 +50,7 @@ export interface MallMonthlyHoursData {
 export interface MallPersonRow {
   category:      string    // '現場報修' | ... (5 工項，無 TOTAL 列)
   pct_by_person: number[]  // 每位人員在該工項的工時佔比 (%)，與 persons[] 同長度
+  hours_by_person?: number[] // 每位人員在該工項的真實工時 (HR)，與 persons[] 同長度（各工項相加 = person_totals）
 }
 
 export interface MallPersonHoursData {
@@ -57,6 +58,7 @@ export interface MallPersonHoursData {
   persons:       string[]       // Top-15 人員名稱（依全類別合計工時降冪）
   person_totals: number[]       // 各人員全年合計工時（與 persons[] 同長度）
   rows:          MallPersonRow[]
+  excluded_persons?: string[]   // 非班表(schedule/staff)人員，已從統計剔除，供覆核提示
 }
 
 // ── 工項顏色常數（供表格 Tag 使用）──────────────────────────────────────────────
