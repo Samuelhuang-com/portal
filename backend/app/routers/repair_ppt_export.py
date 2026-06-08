@@ -1915,7 +1915,7 @@ def _build_repair_pptx(module: str, year: int, month: int, db: Session) -> Bytes
             include_hotel=_is_hotel,
             include_mall=not _is_hotel,
         )
-        uf_title = "\u672a\u5b8c\u6210\u9644\u8868\uff08\u98ef\u5e97\uff09" if _is_hotel else "\u672a\u5b8c\u6210\u9644\u8868\uff08\u5546\u5834\uff09"
+        uf_title = "\u5831\u4fee\u672a\u5b8c\u6210\u9644\u8868\uff08\u98ef\u5e97\uff09" if _is_hotel else "\u5831\u4fee\u672a\u5b8c\u6210\u9644\u8868\uff08\u5546\u5834\uff09"
         uf_rows = []
         for c in unfinished:
             uf_rows.append({
@@ -2050,7 +2050,7 @@ def _build_repair_pptx(module: str, year: int, month: int, db: Session) -> Bytes
         _h_uf_first_idx = len(prs.slides)
         _add_table_slides(
             prs, TMPL,
-            title    = "\u672a\u5b8c\u6210\u9644\u8868\uff08\u98ef\u5e97\uff09",
+            title    = "\u5831\u4fee\u672a\u5b8c\u6210\u9644\u8868\uff08\u98ef\u5e97\uff09",
             subtitle = f"{period_str}",
             columns  = [
                 {"key": "case_no",  "label": "\u6848\u4ef6\u7de8\u865f",   "width": 1.40, "align": "center"},
