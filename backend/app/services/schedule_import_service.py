@@ -360,7 +360,7 @@ def import_excel(
                 schedule_id=schedule.id,
                 work_date=work_date,
                 staff_id=staff.id,
-                staff_name=raw_name_str,
+                staff_name=name,   # 純姓名（已去除括號備註），source_name 保存在 schedule_staff_members
                 shift_code=shift_code,
                 shift_type_id=shift_type_id,
                 start_time=start_time,

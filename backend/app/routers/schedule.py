@@ -272,8 +272,22 @@ def update_staff(
     for k, v in body.model_dump().items():
         setattr(staff, k, v)
     staff.department_name = dept_name
+
+    # 若姓名有變更，同步更新所有班表明細快照
+    details_updated = 0
+    if old_name != body.name:
+        details = (
+            db.query(ScheduleDetail)
+            .filter(ScheduleDetail.staff_id == staff_id)
+            .all()
+        )
+        for d in details:
+            d.staff_name = body.name
+        details_updated = len(details)
+
     _audit(db, current_user, "update", "staff_member", staff_id,
-           {"old_name": old_name, "new_name": body.name})
+           {"old_name": old_name, "new_name": body.name,
+            "schedule_details_updated": details_updated})
     db.commit()
     return StaffOut.model_validate(staff)
 
