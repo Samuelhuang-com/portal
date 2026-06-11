@@ -761,8 +761,35 @@ def _fetch_other_tasks(db: Session, year: int, month: int, day: int) -> list[dic
 
 # ── 端點 ─────────────────────────────────────────────────────────────────────
 
-def _build_daily(db: Session, year: int, month: int, day: int) -> dict:
-    """內部共用：聚合指定日期的全模組工作記錄，回傳 WorkJournalDaily dict。"""
+# 飯店/商場歸屬判斷（與前端工作日誌「飯/商」標籤邏輯一致）：
+# 飯店 = dazhi / hotel_pm / ihg / hotel_di；other_tasks 依「歸屬」欄位；
+# 其餘來源（含 hotel_mr 飯店水電錶抄表）一律歸商場（2026-06-11 業主確認維持現狀）。
+_HOTEL_VENUE_SOURCES = {"dazhi", "hotel_pm", "ihg", "hotel_di"}
+
+
+def _row_venue(r: dict) -> str:
+    """回傳工作日誌一行的歸屬：'hotel' 或 'mall'。"""
+    if r["source"] == "other_tasks":
+        return "hotel" if (r.get("venue") or "") == "飯店" else "mall"
+    return "hotel" if r["source"] in _HOTEL_VENUE_SOURCES else "mall"
+
+
+def _build_daily(
+    db: Session, year: int, month: int, day: int,
+    person_scope: str = "all",
+    venue: str = "all",
+) -> dict:
+    """內部共用：聚合指定日期的全模組工作記錄，回傳 WorkJournalDaily dict。
+
+    person_scope:
+      - "all"        全部人員（預設，維持既有行為）
+      - "named"      只含具名人員
+      - "unassigned" 只含「未指定」
+    venue:
+      - "all"   全部（預設）
+      - "hotel" 只含飯店歸屬
+      - "mall"  只含商場歸屬
+    """
     all_rows: list[dict] = []
     all_rows += _fetch_dazhi(db, year, month, day)
     all_rows += _fetch_luqun(db, year, month, day)
@@ -776,6 +803,9 @@ def _build_daily(db: Session, year: int, month: int, day: int) -> dict:
     all_rows += _fetch_hotel_mr(db, year, month, day)
     all_rows += _fetch_other_tasks(db, year, month, day)
 
+    if venue in ("hotel", "mall"):
+        all_rows = [r for r in all_rows if _row_venue(r) == venue]
+
     person_map: dict[str, list[dict]] = defaultdict(list)
     for r in all_rows:
         person_map[r["person"]].append(r)
@@ -785,7 +815,12 @@ def _build_daily(db: Session, year: int, month: int, day: int) -> dict:
         key=lambda p: sum(r["work_min"] or 0 for r in person_map[p]),
         reverse=True,
     )
-    persons_order = named + (["未指定"] if "未指定" in person_map else [])
+    if person_scope == "named":
+        persons_order = named
+    elif person_scope == "unassigned":
+        persons_order = ["未指定"] if "未指定" in person_map else []
+    else:
+        persons_order = named + (["未指定"] if "未指定" in person_map else [])
 
     def _row_sort_key(r: dict):
         st = r["start_time"]
@@ -803,7 +838,7 @@ def _build_daily(db: Session, year: int, month: int, day: int) -> dict:
     return {
         "date":       _date_str(year, month, day),
         "persons":    persons_data,
-        "total_rows": len(all_rows),
+        "total_rows": sum(len(pd["rows"]) for pd in persons_data),
     }
 
 
@@ -812,16 +847,24 @@ def get_work_journal_daily(
     year:  int = Query(..., ge=2020, le=2030),
     month: int = Query(..., ge=1,    le=12),
     day:   int = Query(..., ge=1,    le=31),
+    person_scope: str = Query("all", pattern="^(all|named|unassigned)$",
+                              description="人員範圍：all=全部（預設）/ named=具名 / unassigned=未指定"),
+    venue: str = Query("all", pattern="^(all|hotel|mall)$",
+                       description="歸屬：all=全部（預設）/ hotel=飯店 / mall=商場"),
     db:    Session = Depends(get_db),
 ):
     """聚合 10 個模組當日工作記錄，依人員分組回傳。"""
-    return _build_daily(db, year, month, day)
+    return _build_daily(db, year, month, day, person_scope=person_scope, venue=venue)
 
 
 @router.get("/range", summary="工作日誌 — 日期區間（最多 31 天）")
 def get_work_journal_range(
     date_from: str = Query(..., description="起始日期 YYYY-MM-DD"),
     date_to:   str = Query(..., description="結束日期 YYYY-MM-DD"),
+    person_scope: str = Query("all", pattern="^(all|named|unassigned)$",
+                              description="人員範圍：all=全部（預設）/ named=具名 / unassigned=未指定"),
+    venue: str = Query("all", pattern="^(all|hotel|mall)$",
+                       description="歸屬：all=全部（預設）/ hotel=飯店 / mall=商場"),
     db: Session = Depends(get_db),
 ):
     """
@@ -843,7 +886,7 @@ def get_work_journal_range(
     days = []
     cur  = start
     while cur <= end:
-        daily = _build_daily(db, cur.year, cur.month, cur.day)
+        daily = _build_daily(db, cur.year, cur.month, cur.day, person_scope=person_scope, venue=venue)
         if daily["total_rows"] > 0:
             days.append(daily)
         cur += timedelta(days=1)
@@ -861,6 +904,10 @@ def export_work_journal_excel(
     date_from: str = Query(..., description="起始日期 YYYY-MM-DD"),
     date_to:   str = Query(..., description="結束日期 YYYY-MM-DD"),
     person:    Optional[str] = Query(None, description="指定人員；不傳則匯出全員"),
+    person_scope: str = Query("all", pattern="^(all|named|unassigned)$",
+                              description="人員範圍：all=全部（預設）/ named=具名 / unassigned=未指定"),
+    venue: str = Query("all", pattern="^(all|hotel|mall)$",
+                       description="歸屬：all=全部（預設）/ hotel=飯店 / mall=商場"),
     db: Session = Depends(get_db),
 ):
     """匯出指定日期區間工作日誌為 Excel；全員模式每人一 Sheet，最多 93 天。"""
@@ -887,7 +934,7 @@ def export_work_journal_excel(
     days_data = []
     cur = start
     while cur <= end:
-        daily = _build_daily(db, cur.year, cur.month, cur.day)
+        daily = _build_daily(db, cur.year, cur.month, cur.day, person_scope=person_scope, venue=venue)
         if daily["total_rows"] > 0:
             days_data.append(daily)
         cur += timedelta(days=1)

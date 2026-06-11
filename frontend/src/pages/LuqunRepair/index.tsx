@@ -1,10 +1,10 @@
 /**
  * 商場工務報修 — 主模組頁面
  *
- * 包含 6 個 Tab：
- *   Dashboard | 3.1 報修 | 3.2 結案時間 | 3.3 報修類型 | 3.4 本月客房報修表 | 春大直-報修清單總表
+ * 包含 8 個 Tab：
+ *   Dashboard | 3.1 報修 | 3.2 結案時間 | 3.3 報修類型 | 3.4 本月客房報修表 | 金額統計 | 報修清單總表 | 未指定工作日誌
  *
- * 查詢條件（年/月）置於頁面頂部，各 Tab 共享。
+ * 查詢條件（年/月）置於頁面頂部，各 Tab 共享（未指定工作日誌 TAB 自帶日期查詢）。
  */
 import React, { useState, useEffect, useCallback } from 'react'
 import {
@@ -42,6 +42,7 @@ import type {
   RoomRepairTableData, DetailResult, FilterOptions, RepairCase,
 } from '@/types/luqunRepair'
 import { NAV_GROUP } from '@/constants/navLabels'
+import UnassignedJournalTab from '@/components/WorkJournal/UnassignedJournalTab'
 import { LUQUN_KPI_DESC } from '@/constants/kpiDesc/luqunRepair'
 
 const { Title, Text } = Typography
@@ -2311,6 +2312,11 @@ export default function LuqunRepairPage() {
           filterOptions={filterOptions}
         />
       ),
+    },
+    {
+      key: 'unassigned-journal',
+      label: '未指定工作日誌',
+      children: <UnassignedJournalTab venue="mall" />,
     },
   ]
 

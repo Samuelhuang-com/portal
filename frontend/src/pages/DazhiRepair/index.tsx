@@ -43,6 +43,7 @@ import type {
   FeeStatsData,
 } from '@/types/dazhiRepair'
 import { NAV_GROUP } from '@/constants/navLabels'
+import UnassignedJournalTab from '@/components/WorkJournal/UnassignedJournalTab'
 import { DAZHI_KPI_DESC } from '@/constants/kpiDesc/dazhiRepair'
 
 const { Title, Text } = Typography
@@ -2196,6 +2197,11 @@ export default function DazhiRepairPage() {
           years={years}
         />
       ),
+    },
+    {
+      key: 'unassigned-journal',
+      label: '未指定工作日誌',
+      children: <UnassignedJournalTab venue="hotel" />,
     },
   ]
 

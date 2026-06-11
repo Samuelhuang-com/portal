@@ -79,13 +79,24 @@ export interface WorkJournalDaily {
 
 // ── API 函數 ──────────────────────────────────────────────────────────────────
 
+/** 人員範圍：all=全部（預設）/ named=具名 / unassigned=未指定 */
+export type PersonScope = 'all' | 'named' | 'unassigned'
+/** 歸屬：all=全部（預設）/ hotel=飯店 / mall=商場 */
+export type JournalVenue = 'all' | 'hotel' | 'mall'
+
 export async function fetchWorkJournalDaily(
   year: number,
   month: number,
   day: number,
+  personScope?: PersonScope,
+  venue?: JournalVenue,
 ): Promise<WorkJournalDaily> {
   const res = await apiClient.get<WorkJournalDaily>('/work-journal/daily', {
-    params: { year, month, day },
+    params: {
+      year, month, day,
+      ...(personScope ? { person_scope: personScope } : {}),
+      ...(venue ? { venue } : {}),
+    },
   })
   return res.data
 }
@@ -100,9 +111,15 @@ export interface WorkJournalRange {
 export async function fetchWorkJournalRange(
   date_from: string,
   date_to: string,
+  personScope?: PersonScope,
+  venue?: JournalVenue,
 ): Promise<WorkJournalRange> {
   const res = await apiClient.get<WorkJournalRange>('/work-journal/range', {
-    params: { date_from, date_to },
+    params: {
+      date_from, date_to,
+      ...(personScope ? { person_scope: personScope } : {}),
+      ...(venue ? { venue } : {}),
+    },
   })
   return res.data
 }
@@ -112,9 +129,13 @@ export function getJournalExcelUrl(
   date_from: string,
   date_to: string,
   person?: string,
+  personScope?: PersonScope,
+  venue?: JournalVenue,
 ): string {
   const params = new URLSearchParams({ date_from, date_to })
   if (person) params.set('person', person)
+  if (personScope) params.set('person_scope', personScope)
+  if (venue) params.set('venue', venue)
   return `/api/v1/work-journal/export-excel?${params.toString()}`
 }
 
