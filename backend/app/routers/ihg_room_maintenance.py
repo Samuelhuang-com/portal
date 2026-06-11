@@ -29,6 +29,7 @@ from datetime import date, datetime
 from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
@@ -478,6 +479,133 @@ async def get_matrix(
         "rooms": sorted_rooms,
         "month_hours": month_hours,   # {1: 12.50, 4: 10.33, ...} 只含有資料的月份
     }
+
+
+# ── GET /export-matrix ────────────────────────────────────────────────────────
+
+@router.get("/export-matrix", summary="IHG 客房保養年度矩陣匯出 Excel")
+async def export_matrix(
+    year:    Optional[str] = Query(None, description="年度，如 2026；空白=當年"),
+    room_no: Optional[str] = Query(None, description="房號篩選，支援前綴匹配"),
+    floor:   Optional[str] = Query(None, description="樓層篩選，如 5F"),
+    cell_status: Optional[str] = Query(None, description="狀態篩選：completed/abnormal/scheduled/pending"),
+    db: Session = Depends(get_db),
+):
+    """
+    匯出年度矩陣為 Excel（兩個 Sheet）：
+      Sheet 1「年度矩陣」 — 房號 × 月份（固定月份視角），格內為狀態＋保養日期，
+                            底色沿用畫面色系；底部附月工時列
+      Sheet 2「KPI 統計」 — 全年應保養/已完成/異常/待保養/完成率/工時合計
+    篩選參數與 /matrix 相同，矩陣內容與畫面當前篩選一致；KPI 統計固定為全年。
+    """
+    import io
+    from urllib.parse import quote
+
+    import openpyxl
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    # 複用 /matrix 與 /stats 的查詢邏輯，確保與畫面一致
+    matrix = await get_matrix(year=year, room_no=room_no, floor=floor, cell_status=cell_status, db=db)
+    stats  = await get_stats(year=matrix["year"], month=None, db=db)
+    y = matrix["year"]
+
+    # 狀態 → 顯示文字 / 色票（沿用前端年度矩陣 STATUS_CFG 色系）
+    status_cfg = {
+        "completed": ("已完成",     "F6FFED", "389E0D"),
+        "abnormal":  ("異常",       "FFF7E6", "D46B08"),
+        "scheduled": ("本月應保養", "E6F4FF", "1677FF"),
+        "pending":   ("待保養",     "FAFAFA", "8C8C8C"),
+    }
+
+    wb = openpyxl.Workbook()
+
+    # ── Sheet 1：年度矩陣 ────────────────────────────────────────────────────
+    ws = wb.active
+    ws.title = f"{y}年度矩陣"[:31]
+
+    header_fill = PatternFill("solid", start_color="1B3A5C")
+    header_font = Font(bold=True, color="FFFFFF")
+    center      = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    headers = ["樓層", "房號"] + [f"{m}月" for m in matrix["months"]]
+    for ci, h in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=ci, value=h)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = center
+
+    for ri, room in enumerate(matrix["rooms"], start=2):
+        ws.cell(row=ri, column=1, value=room["floor"]).alignment   = center
+        ws.cell(row=ri, column=2, value=room["room_no"]).alignment = center
+        for mi, m in enumerate(matrix["months"], start=3):
+            c = room["cells"].get(str(m))
+            cell = ws.cell(row=ri, column=mi)
+            cell.alignment = center
+            if not c:
+                continue
+            label, bg, fg = status_cfg.get(c["status"], ("", "FFFFFF", "000000"))
+            cell.value = f"{label}\n{c['date']}" if c.get("date") else label
+            cell.fill  = PatternFill("solid", start_color=bg)
+            cell.font  = Font(color=fg, size=10)
+
+    # 底部：月工時列
+    hours_row = len(matrix["rooms"]) + 2
+    ws.cell(row=hours_row, column=1, value="月工時(小時)").font = Font(bold=True)
+    for mi, m in enumerate(matrix["months"], start=3):
+        v = matrix["month_hours"].get(m)
+        if v is not None:
+            cell = ws.cell(row=hours_row, column=mi, value=v)
+            cell.font = Font(bold=True)
+            cell.alignment = center
+
+    ws.freeze_panes = "C2"
+    ws.column_dimensions["A"].width = 6
+    ws.column_dimensions["B"].width = 8
+    for i in range(3, len(headers) + 1):
+        ws.column_dimensions[get_column_letter(i)].width = 13
+
+    # ── Sheet 2：KPI 統計 ────────────────────────────────────────────────────
+    ws2 = wb.create_sheet("KPI 統計")
+    for ci, h in enumerate(("項目", "數值"), 1):
+        cell = ws2.cell(row=1, column=ci, value=h)
+        cell.fill = header_fill
+        cell.font = header_font
+    kpi_rows = [
+        ("年度",                  y),
+        ("全年應保養（房間數）",  stats["total_scheduled"]),
+        ("已完成",                stats["completed"]),
+        ("異常",                  stats["abnormal"]),
+        ("待保養",                stats["pending"]),
+        ("完成率（%）",           stats["completion_rate"]),
+        ("工時合計（小時）",      stats["work_hours"]),
+        ("統計範圍",              "全年（不受樓層/狀態篩選影響）"),
+        ("匯出時間",              twnow().strftime("%Y/%m/%d %H:%M")),
+    ]
+    for ri, (k, v) in enumerate(kpi_rows, start=2):
+        ws2.cell(row=ri, column=1, value=k)
+        ws2.cell(row=ri, column=2, value=v)
+    ws2.column_dimensions["A"].width = 24
+    ws2.column_dimensions["B"].width = 32
+
+    # ── 回傳 ────────────────────────────────────────────────────────────────
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    filename_cn   = f"IHG客房保養_年度矩陣_{y}.xlsx"
+    filename_safe = f"ihg_matrix_{y}.xlsx"
+    encoded = quote(filename_cn, safe="")
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="{filename_safe}"; '
+                f"filename*=UTF-8''{encoded}"
+            )
+        },
+    )
 
 
 # ── 區段類別標準清單（顯示順序）────────────────────────────────────────────────

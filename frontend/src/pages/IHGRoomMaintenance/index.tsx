@@ -18,8 +18,9 @@ import {
 } from 'antd'
 import {
   CalendarOutlined, CheckCircleOutlined, ClockCircleOutlined,
-  HomeOutlined, LinkOutlined, QuestionCircleOutlined, ReloadOutlined,
-  TableOutlined, ToolOutlined, UnorderedListOutlined, WarningOutlined,
+  FileExcelOutlined, HomeOutlined, LinkOutlined, QuestionCircleOutlined,
+  ReloadOutlined, TableOutlined, ToolOutlined, UnorderedListOutlined,
+  WarningOutlined,
 } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import dayjs from 'dayjs'
@@ -31,7 +32,9 @@ import {
   fetchIHGSectionMatrix,
   fetchIHGCalendar,
   fetchIHGRecords,
+  getIHGMatrixExportUrl,
 } from '@/api/ihgRoomMaintenance'
+import { downloadFile } from '@/api/downloadFile'
 import type {
   CellStatus,
   CategoryStat,
@@ -1701,6 +1704,25 @@ export default function IHGRoomMaintenancePage() {
               onClick={() => { setRoomFilter(''); setFloorFilter(''); setStatusFilter('') }}
             >
               清除篩選
+            </Button>
+          </Col>
+          <Col>
+            <Button
+              size="small"
+              icon={<FileExcelOutlined />}
+              onClick={() =>
+                downloadFile(
+                  getIHGMatrixExportUrl({
+                    year,
+                    room_no: roomFilter || undefined,
+                    floor: floorFilter || undefined,
+                    cell_status: statusFilter || undefined,
+                  }),
+                  `IHG客房保養_年度矩陣_${year}.xlsx`,
+                )
+              }
+            >
+              匯出 Excel
             </Button>
           </Col>
           <Col>

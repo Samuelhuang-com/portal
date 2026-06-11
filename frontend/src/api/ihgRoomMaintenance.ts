@@ -73,6 +73,20 @@ export async function fetchIHGSectionMatrix(params: {
   return res.data
 }
 
+/** 年度矩陣匯出 Excel — 回傳完整 API URL（供 downloadFile 使用） */
+export function getIHGMatrixExportUrl(params: {
+  year: string
+  room_no?: string
+  floor?: string
+  cell_status?: string
+}): string {
+  const qs = new URLSearchParams({ year: params.year })
+  if (params.room_no)     qs.set('room_no', params.room_no)
+  if (params.floor)       qs.set('floor', params.floor)
+  if (params.cell_status) qs.set('cell_status', params.cell_status)
+  return `/api/v1${BASE}/export-matrix?${qs.toString()}`
+}
+
 export async function fetchIHGDebugRaw(): Promise<Record<string, unknown>> {
   const res = await apiClient.get<Record<string, unknown>>(`${BASE}/debug-raw`)
   return res.data
