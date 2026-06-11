@@ -127,3 +127,22 @@ class LuqunRepairCase(Base):
             return json.loads(self.images_json)
         except Exception:
             return []
+
+
+class LuqunRepairRecord(Base):
+    """商場工務報修 — 工單明細子表（維修記錄）
+    對應 Ragic _subtable_1013290：項次/維修記錄/時間開始/時間結束/維修人員
+    （商場子表無「狀態」欄，status 恆為空字串，保留欄位與飯店端一致）
+    同步策略：每次 sync 以 parent_ragic_id 整批 delete + insert。
+    """
+    __tablename__ = "luqun_repair_record"
+
+    ragic_id:        Mapped[str] = mapped_column(String(50), primary_key=True)
+    parent_ragic_id: Mapped[str] = mapped_column(String(50), index=True, default="")
+    seq:             Mapped[str] = mapped_column(String(20),  default="")   # 項次
+    status:          Mapped[str] = mapped_column(String(50),  default="")   # 狀態（商場無此欄，恆空）
+    record:          Mapped[str] = mapped_column(Text,        default="")   # 維修記錄
+    start_at:        Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # 時間開始（含秒）
+    end_at:          Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # 時間結束（含秒）
+    person:          Mapped[str] = mapped_column(String(100), default="")   # 維修人員
+    synced_at:       Mapped[datetime] = mapped_column(DateTime, default=twnow)

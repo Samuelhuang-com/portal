@@ -64,7 +64,11 @@ export interface JournalRow {
   ragic_url:    string          // Ragic 記錄直連 URL（空字串 = 無）
   venue:        string          // 歸屬（飯店 / 商場），僅 other_tasks 有值
   detail:       Record<string, string>  // 模組專屬明細欄位
+  detail_records?: JournalDetailRecord[]  // 工單明細子表（維修記錄），dazhi/luqun 有值
 }
+
+/** 工單明細子表（維修記錄）一列：項次/狀態/維修記錄/時間開始/時間結束/維修人員 */
+export type JournalDetailRecord = Record<string, string>
 
 export interface JournalPerson {
   person: string

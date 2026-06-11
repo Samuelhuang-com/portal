@@ -214,6 +214,7 @@ export function DayPersonCollapse({
 
   const STATUS_COLOR: Record<string, string> = {
     '已完成': '#52c41a', '已修復': '#52c41a', '已結案': '#52c41a', '已調整': '#52c41a', '已固定': '#52c41a',
+    '完成':   '#52c41a',
     '待辦驗': '#faad14', '未完成': '#faad14', '進行中': '#1677ff',
   }
 
@@ -396,6 +397,51 @@ export function DayPersonCollapse({
                     )
                   })}
                 </Descriptions>
+              </>
+            )}
+
+            {/* 工單明細子表（維修記錄）— dazhi / luqun 有 Detail 時呈現 */}
+            {(selectedRow.detail_records?.length ?? 0) > 0 && (
+              <>
+                <Divider style={{ margin: '16px 0 8px' }} />
+                <div style={{ fontWeight: 500, marginBottom: 8, color: '#555', fontSize: 15 }}>
+                  維修記錄明細
+                </div>
+                <Table
+                  size="small"
+                  pagination={false}
+                  dataSource={(selectedRow.detail_records ?? []).map((r, i) => ({ ...r, key: i }))}
+                  scroll={{ x: 'max-content' }}
+                  columns={[
+                    {
+                      title: '項次', dataIndex: '項次', key: 'seq', width: 44, align: 'center' as const,
+                      render: (v: string) => <Text style={{ fontSize: 13, color: '#888' }}>{v || '—'}</Text>,
+                    },
+                    // 商場子表無「狀態」欄 → 全空時隱藏整欄
+                    ...((selectedRow.detail_records ?? []).some(r => r['狀態']) ? [{
+                      title: '狀態', dataIndex: '狀態', key: 'status', width: 64, align: 'center' as const,
+                      render: (v: string) => v
+                        ? <Tag color={STATUS_COLOR[v] ?? 'default'} style={{ margin: 0 }}>{v}</Tag>
+                        : <Text style={{ color: '#ccc' }}>—</Text>,
+                    }] : []),
+                    {
+                      title: '維修記錄', dataIndex: '維修記錄', key: 'record', width: 160,
+                      render: (v: string) => <Text style={{ fontSize: 13 }}>{v || '—'}</Text>,
+                    },
+                    {
+                      title: '時間開始', dataIndex: '時間開始', key: 'start', width: 128, align: 'center' as const,
+                      render: (v: string) => <Text style={{ fontSize: 12, color: '#666' }}>{v || '—'}</Text>,
+                    },
+                    {
+                      title: '時間結束', dataIndex: '時間結束', key: 'end', width: 128, align: 'center' as const,
+                      render: (v: string) => <Text style={{ fontSize: 12, color: '#666' }}>{v || '—'}</Text>,
+                    },
+                    {
+                      title: '維修人員', dataIndex: '維修人員', key: 'person', width: 72, align: 'center' as const,
+                      render: (v: string) => <Text style={{ fontSize: 13 }}>{v || '—'}</Text>,
+                    },
+                  ]}
+                />
               </>
             )}
 

@@ -32,8 +32,8 @@ from app.dependencies import get_current_user
 
 # ── Models ────────────────────────────────────────────────────────────────────
 from app.models.schedule                import ScheduleDetail, ShiftType
-from app.models.dazhi_repair            import DazhiRepairCase
-from app.models.luqun_repair            import LuqunRepairCase
+from app.models.dazhi_repair            import DazhiRepairCase, DazhiRepairRecord
+from app.models.luqun_repair            import LuqunRepairCase, LuqunRepairRecord
 from app.models.periodic_maintenance    import PeriodicMaintenanceBatch, PeriodicMaintenanceItem
 from app.models.ihg_room_maintenance    import IHGRoomMaintenanceMaster
 from app.models.hotel_daily_inspection  import HotelDIBatch
@@ -186,6 +186,72 @@ def _date_str(year: int, month: int, day: int) -> str:
     return f"{year}/{month:02d}/{day:02d}"
 
 
+# ── 工單明細子表（維修記錄）歸戶 helper ────────────────────────────────────────
+# 規格（2026-06-11 業主確認）：
+#   - 有 Detail（至少一列有「時間開始」）→ 整筆工單改按子表歸戶，
+#     以各列「時間開始」的日期決定出現在哪一天的日誌
+#   - 列有起＋迄（不論狀態，含「進行中」）→ 計入工時（秒級計算後 round 成分鐘）
+#   - 列無「時間結束」→ 仍呈現該人員列，該列不貢獻工時
+#   - 同人同工單多列 → 合併一列：工時加總、起=當日最早開始、迄=當日最晚結束
+#   - 維修人員空白 → 掛回工單頭「處理工務」（responsible_unit）
+#   - 一格多人（空白/、/,/;/／分隔）→ 拆開，每人各算該列全額工時
+
+def _split_detail_persons(name: str, fallback: str) -> list[str]:
+    """子表「維修人員」拆多人；空白 → fallback（工單頭處理工務）→ 未指定"""
+    s = re.sub(r"[、,;/／]+", " ", (name or "").strip())
+    parts = [p.strip() for p in s.split() if p.strip()]
+    if parts:
+        return parts
+    return _persons(fallback)
+
+
+def _group_detail_rows(recs: list, target: _date, fallback_person: str) -> list[dict]:
+    """
+    將子表列篩選至「時間開始」日期 == target 後按人員分組合併。
+    回傳 [{person, work_min(int|None), start_time, end_time}]（依人員首次出現排序）。
+    """
+    groups: dict[str, dict] = {}
+    for r in recs:
+        if not r.start_at or r.start_at.date() != target:
+            continue
+        sec = 0
+        has_end = r.end_at is not None
+        if r.end_at and r.end_at > r.start_at:
+            sec = (r.end_at - r.start_at).total_seconds()
+        for person in _split_detail_persons(r.person, fallback_person):
+            g = groups.setdefault(person, {
+                "sec": 0.0, "has_end": False, "min_start": None, "max_end": None,
+            })
+            g["sec"] += sec
+            g["has_end"] = g["has_end"] or has_end
+            if g["min_start"] is None or r.start_at < g["min_start"]:
+                g["min_start"] = r.start_at
+            if r.end_at and (g["max_end"] is None or r.end_at > g["max_end"]):
+                g["max_end"] = r.end_at
+
+    out = []
+    for person, g in groups.items():
+        out.append({
+            "person":     person,
+            "work_min":   round(g["sec"] / 60) if g["has_end"] else None,
+            "start_time": g["min_start"].strftime("%H:%M") if g["min_start"] else "",
+            "end_time":   g["max_end"].strftime("%H:%M")   if g["max_end"]   else "",
+        })
+    return out
+
+
+def _detail_records_payload(recs: list) -> list[dict]:
+    """Drawer 用：工單全部子表列（含秒，不限定日期）"""
+    return [{
+        "項次":     r.seq or "",
+        "狀態":     r.status or "",
+        "維修記錄": r.record or "",
+        "時間開始": r.start_at.strftime("%Y/%m/%d %H:%M:%S") if r.start_at else "",
+        "時間結束": r.end_at.strftime("%Y/%m/%d %H:%M:%S")   if r.end_at   else "",
+        "維修人員": r.person or "",
+    } for r in recs]
+
+
 def _make_row(
     source: str,
     category: str,
@@ -201,6 +267,7 @@ def _make_row(
     ragic_url: str = "",
     venue: str = "",
     detail: Optional[dict] = None,
+    detail_records: Optional[list] = None,
 ) -> dict:
     st = _clean_time(start_time)
     et = _clean_time(end_time)
@@ -223,39 +290,58 @@ def _make_row(
         "ragic_url":    ragic_url,
         "venue":        venue,
         "detail":       detail or {},
+        "detail_records": detail_records or [],
     }
 
 
 # ── 10 個模組 helper ──────────────────────────────────────────────────────────
 
 def _fetch_dazhi(db: Session, year: int, month: int, day: int) -> list[dict]:
-    """大直工務報修：occurred_at 日期口徑"""
+    """大直工務報修。
+    無 Detail（子表）→ occurred_at 日期口徑、人員=處理工務、工時=工單頭（原邏輯）。
+    有 Detail → 以子表「時間開始」日期歸戶，人員/工時按子表列計算（見 _group_detail_rows）。
+    """
     rows = []
     target = _date(year, month, day)
+
+    # 預載子表（維修記錄）並按工單分組
+    rec_map: dict[str, list] = defaultdict(list)
+    for r in db.query(DazhiRepairRecord).all():
+        rec_map[r.parent_ragic_id].append(r)
+    for recs in rec_map.values():
+        recs.sort(key=lambda r: (r.start_at is None, r.start_at or datetime.min))
+
     for c in db.query(DazhiRepairCase).all():
-        if not c.occurred_at:
-            continue
         if (c.status or "").strip() == "取消":
             continue
-        if c.occurred_at.date() != target:
-            continue
+        case_recs  = rec_map.get(c.ragic_id, [])
+        dated_recs = [r for r in case_recs if r.start_at is not None]
+
+        # 有 Detail → 子表歸戶；無（或子表全無時間開始）→ 原邏輯
+        if dated_recs:
+            groups = _group_detail_rows(dated_recs, target, (c.responsible_unit or "").strip())
+            if not groups:
+                continue   # 該日無子表活動 → 此工單不出現在本日日誌
+        else:
+            if not c.occurred_at or c.occurred_at.date() != target:
+                continue
+            groups = None
+
         person     = (c.responsible_unit or "").strip() or "未指定"
         task       = " ".join(filter(None, [c.repair_type, c.floor, c.title]))
         wm         = round(c.work_hours * 60) if c.work_hours and c.work_hours > 0 else None
         occ        = c.occurred_at.strftime("%Y/%m/%d %H:%M") if c.occurred_at else ""
         start_t    = c.occurred_at.strftime("%H:%M")  if c.occurred_at  else ""
         end_t      = c.completed_at.strftime("%H:%M") if c.completed_at else ""
-        rows.append(_make_row(
+        detail_recs = _detail_records_payload(case_recs)
+        common = dict(
             source="dazhi",
             category="現場報修",
             task=task or "(無說明)",
-            person=person,
-            start_time=start_t,
-            end_time=end_t,
-            work_min=wm,
             remark=c.finance_note or "",
             ragic_id=c.ragic_id,
             ragic_url=_ragic_url(_SOURCE_PATH["dazhi"], c.ragic_id),
+            detail_records=detail_recs,
             detail={
                 "報修編號":  c.case_no or "",
                 "標題":      c.title or "",
@@ -278,38 +364,69 @@ def _fetch_dazhi(db: Session, year: int, month: int, day: int) -> list[dict]:
                 "扣款費用":  str(int(c.deduction_fee or 0)),
                 "財務備註":  c.finance_note or "",
             },
-        ))
+        )
+        if groups is None:
+            # 無 Detail → 原邏輯：單列、occurred_at 起、工單頭工時
+            rows.append(_make_row(
+                person=person, start_time=start_t, end_time=end_t, work_min=wm,
+                **common,
+            ))
+        else:
+            # 有 Detail → 每人一列（同人多列已合併、工時加總）
+            for g in groups:
+                rows.append(_make_row(
+                    person=g["person"], start_time=g["start_time"],
+                    end_time=g["end_time"], work_min=g["work_min"],
+                    **common,
+                ))
     return rows
 
 
 def _fetch_luqun(db: Session, year: int, month: int, day: int) -> list[dict]:
-    """商場工務報修：occurred_at 日期口徑"""
+    """商場工務報修。
+    無 Detail（子表）→ occurred_at 日期口徑、人員=處理工務、工時=工單頭（原邏輯）。
+    有 Detail → 以子表「時間開始」日期歸戶，人員/工時按子表列計算（見 _group_detail_rows）。
+    """
     rows = []
     target = _date(year, month, day)
+
+    # 預載子表（維修記錄）並按工單分組
+    rec_map: dict[str, list] = defaultdict(list)
+    for r in db.query(LuqunRepairRecord).all():
+        rec_map[r.parent_ragic_id].append(r)
+    for recs in rec_map.values():
+        recs.sort(key=lambda r: (r.start_at is None, r.start_at or datetime.min))
+
     for c in db.query(LuqunRepairCase).all():
-        if not c.occurred_at:
-            continue
         if (c.status or "").strip() == "取消":
             continue
-        if c.occurred_at.date() != target:
-            continue
+        case_recs  = rec_map.get(c.ragic_id, [])
+        dated_recs = [r for r in case_recs if r.start_at is not None]
+
+        if dated_recs:
+            groups = _group_detail_rows(dated_recs, target, (c.responsible_unit or "").strip())
+            if not groups:
+                continue   # 該日無子表活動 → 此工單不出現在本日日誌
+        else:
+            if not c.occurred_at or c.occurred_at.date() != target:
+                continue
+            groups = None
+
         person     = (c.responsible_unit or "").strip() or "未指定"
         task       = " ".join(filter(None, [c.repair_type, c.floor, c.title]))
         wm         = round(c.work_hours * 60) if c.work_hours and c.work_hours > 0 else None
         occ        = c.occurred_at.strftime("%Y/%m/%d %H:%M") if c.occurred_at else ""
         start_t    = c.occurred_at.strftime("%H:%M")  if c.occurred_at  else ""
         end_t      = c.completed_at.strftime("%H:%M") if c.completed_at else ""
-        rows.append(_make_row(
+        detail_recs = _detail_records_payload(case_recs)
+        common = dict(
             source="luqun",
             category="現場報修",
             task=task or "(無說明)",
-            person=person,
-            start_time=start_t,
-            end_time=end_t,
-            work_min=wm,
             remark=c.mgmt_response or c.finance_note or "",
             ragic_id=c.ragic_id,
             ragic_url=_ragic_url(_SOURCE_PATH["luqun"], c.ragic_id),
+            detail_records=detail_recs,
             detail={
                 "報修編號":  c.case_no or "",
                 "標題":      c.title or "",
@@ -333,7 +450,21 @@ def _fetch_luqun(db: Session, year: int, month: int, day: int) -> list[dict]:
                 "管理回應":  c.mgmt_response or "",
                 "財務備註":  c.finance_note or "",
             },
-        ))
+        )
+        if groups is None:
+            # 無 Detail → 原邏輯：單列、occurred_at 起、工單頭工時
+            rows.append(_make_row(
+                person=person, start_time=start_t, end_time=end_t, work_min=wm,
+                **common,
+            ))
+        else:
+            # 有 Detail → 每人一列（同人多列已合併、工時加總）
+            for g in groups:
+                rows.append(_make_row(
+                    person=g["person"], start_time=g["start_time"],
+                    end_time=g["end_time"], work_min=g["work_min"],
+                    **common,
+                ))
     return rows
 
 

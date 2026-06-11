@@ -14,7 +14,8 @@ from datetime import datetime, timezone
 from app.core.time import twnow
 
 from app.core.database import SessionLocal
-from app.models.dazhi_repair import DazhiRepairCase
+from app.models.dazhi_repair import DazhiRepairCase, DazhiRepairRecord
+from app.services.repair_detail_utils import extract_detail_records
 from app.services.sync_dispatcher import register
 
 logger = logging.getLogger(__name__)
@@ -133,9 +134,34 @@ async def sync_from_ragic() -> dict:
                 errors.append(f"ragic_id={case.ragic_id}: {exc}")
                 logger.warning(f"[DazhiRepair Sync] 案件 {case.ragic_id} 失敗：{exc}")
 
+        # ── 工單明細子表（維修記錄）：整批 delete + insert ────────────────────
+        records = 0
+        try:
+            db.query(DazhiRepairRecord).filter(
+                DazhiRepairRecord.parent_ragic_id.in_(all_ragic_ids)
+            ).delete(synchronize_session=False)
+            for case in cases:
+                for rec in extract_detail_records(getattr(case, "_raw", None) or {}):
+                    db.add(DazhiRepairRecord(
+                        ragic_id        = rec["ragic_id"],
+                        parent_ragic_id = case.ragic_id,
+                        seq             = rec["seq"],
+                        status          = rec["status"],
+                        record          = rec["record"],
+                        start_at        = rec["start_at"],
+                        end_at          = rec["end_at"],
+                        person          = rec["person"],
+                        synced_at       = now,
+                    ))
+                    records += 1
+        except Exception as exc:
+            errors.append(f"detail records: {exc}")
+            logger.warning(f"[DazhiRepair Sync] 子表同步失敗：{exc}")
+
         db.commit()
         logger.info(
-            f"[DazhiRepair Sync] 完成：fetched={fetched}, upserted={upserted}, errors={len(errors)}"
+            f"[DazhiRepair Sync] 完成：fetched={fetched}, upserted={upserted}, "
+            f"records={records}, errors={len(errors)}"
         )
     except Exception as exc:
         db.rollback()
@@ -144,4 +170,4 @@ async def sync_from_ragic() -> dict:
     finally:
         db.close()
 
-    return {"fetched": fetched, "upserted": upserted, "errors": errors}
+    return {"fetched": fetched, "upserted": upserted, "records": records, "errors": errors}
