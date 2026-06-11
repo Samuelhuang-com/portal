@@ -73,7 +73,7 @@ export default function OtherTasksPage() {
     statuses: [], supervisors: [], engineers: [], venues: [],
   })
   const [selectedYear,       setSelectedYear]       = useState<number | undefined>(undefined)
-  const [selectedMonth,      setSelectedMonth]      = useState<number | undefined>(undefined)
+  const [selectedMonth,      setSelectedMonth]      = useState<number | undefined>(new Date().getMonth() + 1)
   const [selectedStatus,     setSelectedStatus]     = useState<string | undefined>(undefined)
   const [selectedSupervisor, setSelectedSupervisor] = useState<string | undefined>(undefined)
   const [selectedEngineer,   setSelectedEngineer]   = useState<string | undefined>(undefined)
@@ -124,13 +124,14 @@ export default function OtherTasksPage() {
   // 任何篩選變動時自動重算小計
   useEffect(() => { loadCounts() }, [loadCounts])
 
-  // ── 路徑切換時同步預設歸屬（防止同元件 re-render 不重設 state）──────────────
+  // ── 路徑切換時同步預設篩選（防止同元件 re-render 不重設 state）──────────────
   useEffect(() => {
     const venue =
       pathname.startsWith('/hotel') ? '飯店' :
       pathname.startsWith('/mall')  ? '商場' :
       undefined
     setSelectedVenue(venue)
+    setSelectedMonth(new Date().getMonth() + 1)
     setPage(1)
   }, [pathname])
 
