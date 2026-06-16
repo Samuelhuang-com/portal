@@ -1,0 +1,19 @@
+flowchart TB
+    SCH["APScheduler 每日觸發"]
+    CFG{"讀取排程設定<br/>repair_report_schedule_settings<br/>is_enabled？send_time 到了？"}
+    SKIP["跳過（is_enabled=False）"]
+    GATH["彙整未完成案件<br/>dazhi_repair_case（飯店）＋<br/>luqun_repair_case（商場）<br/>依 report_year_month_mode 取月份"]
+    XLS["產生 Excel 附件<br/>（include_excel_attachment=True 時）"]
+    SUBJ["套用主旨模板<br/>【報修未完成報表】{year}年{month}月｜<br/>未完成 {total} 件｜飯店 {hotel_count}｜商場 {mall_count}"]
+    RCP["讀取收件人<br/>repair_report_recipients（is_active=True）"]
+    SEND["SMTP 逐一寄送<br/>（MAIL_* 環境變數）"]
+    LOGOK["repair_report_mail_logs<br/>status=success"]
+    LOGNG["repair_report_mail_logs<br/>status=failed＋error_message"]
+    MAN["畫面手動寄送<br/>（send_source=manual）"]
+
+    SCH --> CFG
+    CFG -- "未啟用" --> SKIP
+    CFG -- "啟用且時間到" --> GATH --> XLS --> SUBJ --> RCP --> SEND
+    MAN --> GATH
+    SEND -- "成功" --> LOGOK
+    SEND -- "失敗（不中斷其他收件人）" --> LOGNG

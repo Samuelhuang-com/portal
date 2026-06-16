@@ -16,6 +16,7 @@ class UserUpdate(BaseModel):
     is_active: Optional[bool] = None
     role_names: Optional[List[str]] = None
     email: Optional[str] = None  # 僅 system_admin / tenant_admin 可更新
+    new_password: Optional[str] = Field(default=None, min_length=8)  # 管理員直接設定新密碼
 
 
 class UserOut(BaseModel):

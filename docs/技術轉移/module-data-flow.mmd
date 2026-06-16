@@ -1,0 +1,29 @@
+flowchart TB
+    subgraph RAGIC["Ragic 雲端"]
+        S1["Ragic Sheet<br/>例：periodic-maintenance/6＋/8"]
+    end
+
+    subgraph SYNC["同步層（每 30 分或手動）"]
+        ADP["ragic_adapter.py<br/>fetch_all／fetch_one"]
+        SY["模組 *_sync.py<br/>例：periodic_maintenance_sync<br/>欄位對應・清洗・正規化"]
+        LOGW["module_sync_log<br/>寫入同步結果"]
+    end
+
+    subgraph DB["SQLite"]
+        T1[("業務資料表<br/>例：pm_batch＋pm_batch_item")]
+    end
+
+    subgraph API["API 層"]
+        R1["模組 Router<br/>例：/api/v1/periodic-maintenance/*"]
+        SVCQ["查詢／統計服務<br/>KPI・月曆格・批次清單"]
+    end
+
+    subgraph FE["前端"]
+        PG["模組頁面<br/>例：/hotel/periodic-maintenance<br/>Dashboard／巡檢表／統計／批次清單 TAB"]
+        DRW["明細 Drawer<br/>ragic_id・ragic_url・detail dict"]
+    end
+
+    S1 -- "Ragic REST API" --> ADP --> SY --> T1
+    SY --> LOGW
+    T1 --> SVCQ --> R1 -- "HTTPS JSON" --> PG --> DRW
+    DRW -. "在 Ragic 查看（ragic_url）" .-> S1

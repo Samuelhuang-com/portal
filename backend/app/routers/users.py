@@ -174,6 +174,11 @@ def update_user(
             if conflict:
                 raise HTTPException(status_code=400, detail="此 Email 已被其他帳號使用")
             user.email = new_email
+    # 管理員直接設定新密碼（不走 OTP 流程）
+    if data.new_password is not None:
+        user.hashed_password = hash_password(data.new_password)
+        user.otp_code = None
+        user.must_change_password = False
     db.add(
         AuditLog(
             user_id=current_user.id,

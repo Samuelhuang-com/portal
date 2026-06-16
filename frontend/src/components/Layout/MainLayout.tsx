@@ -41,6 +41,7 @@ import {
   FilePptOutlined,
   SyncOutlined,
   SwapOutlined,
+  RobotOutlined,
 } from '@ant-design/icons'
 import { useNavigate, useLocation, Outlet } from 'react-router-dom'
 import { useAuthStore } from '@/stores/authStore'
@@ -270,6 +271,13 @@ export const menuItems: MenuItem[] = [
     children: [
       { key: '/dazhi-repair/dashboard', icon: <DashboardOutlined />, label: NAV_PAGE.dazhiRepairDashboard, permissionKey: 'dazhi_repair_view' },
     ],
+  },
+  // ── AI 工單查詢助理（開發期間預設不分配角色，須手動在權限設定開放）────────────
+  {
+    key: '/ai-assistant',
+    icon: <RobotOutlined />,
+    label: NAV_PAGE.aiWorkorderAssistant,
+    permissionKey: 'ai_workorder_view',
   },
   // 春大直商場工務巡檢已整合至商場管理群組，不再獨立顯示
   // ── 保全巡檢（整合為單一入口，各 Sheet 改為頁面內 TAB）───────────────────────

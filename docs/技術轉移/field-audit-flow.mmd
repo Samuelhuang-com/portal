@@ -1,0 +1,19 @@
+flowchart TB
+    TRG["觸發比對<br/>「Ragic 欄位比對」頁面手動執行<br/>（/settings/ragic-field-audit）"]
+    DIR["讀取模組清單<br/>ragic_app_portal_annotations<br/>（portal_name・portal_url・ragic_url）"]
+    RAGF["呼叫 Ragic API<br/>取欄位定義：ID・名稱・型態・<br/>必填・公式・子表格・選項"]
+    PORF["盤點 Portal 各層欄位<br/>DB table/field・API field・前端顯示名稱"]
+    CMP{"逐欄位比對"}
+    OK["normal 正常對應"]
+    WARN["警告：name_mismatch・type_mismatch・<br/>null_rate_high・formula_unmarked"]
+    ERR["錯誤：ragic_only（Ragic 有 Portal 沒有）・<br/>portal_only・unmapped"]
+    WRT["寫入結果<br/>ragic_portal_field_mappings（逐欄位）<br/>ragic_portal_kpi_mappings（KPI 追溯）"]
+    RUN["寫入任務摘要<br/>ragic_portal_audit_runs<br/>normal／warning／error 統計"]
+    VIEW["前端檢視與匯出<br/>severity 分級・issue_message・suggestion<br/>處理後標記 is_resolved"]
+
+    TRG --> DIR --> RAGF --> CMP
+    DIR --> PORF --> CMP
+    CMP --> OK --> WRT
+    CMP --> WARN --> WRT
+    CMP --> ERR --> WRT
+    WRT --> RUN --> VIEW

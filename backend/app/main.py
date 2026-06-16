@@ -1983,6 +1983,15 @@ app.include_router(
     tags=["基礎參考資料"],
 )
 
+# ── AI 工單查詢助理（AI_ENABLED=true 才掛載，正式環境可保持 false）────────────
+if settings.AI_ENABLED:
+    from app.routers import ai as ai_router
+    app.include_router(
+        ai_router.router,
+        prefix=f"{API_PREFIX}/ai",
+        tags=["AI 助理"],
+    )
+
 # ── 靜態說明文件（docs-static）──────────────────────────────────────────────
 # 供 settings/static-pages 的 iframe 預覽使用
 # 路徑：/docs-static/<filename>  →  portal/docs/<filename>

@@ -101,6 +101,9 @@ import NichiyoClaimReportPage          from '@/pages/NichiyoClaimReport'
 // ── 知識庫（LLM Wiki）──────────────────────────────────────────────────────────
 import WikiPage                        from '@/pages/Wiki'
 
+// ── AI 工單查詢助理 ────────────────────────────────────────────────────────────
+import AIAssistantPage                 from '@/pages/AIAssistant'
+
 // ── 飯店管理 Dashboard（跨模組總覽）───────────────────────────────────────────
 import HotelMgmtDashboardPage          from '@/pages/HotelMgmtDashboard'
 
@@ -334,6 +337,9 @@ export default function AppRouter() {
 
         {/* ── 知識庫（LLM Wiki）─────────────────────────────────── */}
         <Route path="wiki" element={<WikiPage />} />
+
+        {/* ── AI 工單查詢助理 ───────────────────────────────────────── */}
+        <Route path="ai-assistant" element={<AIAssistantPage />} />
 
         {/* ── 行事曆 ────────────────────────────────────────────────── */}
         <Route path="calendar" element={<CalendarPage />} />

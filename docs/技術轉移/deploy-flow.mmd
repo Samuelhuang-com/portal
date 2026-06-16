@@ -1,0 +1,21 @@
+flowchart TB
+    PRE["部署前確認<br/>備份 SQLite DB 檔＋.env<br/>確認版本紀錄已更新"]
+    FB["前端建置<br/>cd frontend && npm run build<br/>產出 dist/"]
+    BB["後端準備<br/>pip install -r requirements.txt<br/>核對 .env（正式環境設定）"]
+    DEP["部署<br/>dist/ 佈署至 Web Server<br/>後端程式更新至部署路徑"]
+    RST["重啟服務<br/>uvicorn app.main:app --port 8000<br/>（正式環境依服務管理機制重啟）"]
+    MIG["啟動時自動執行<br/>DB migration＋seed（main.py lifespan）"]
+    VER{"部署驗證"}
+    V1["登入正常（admin 帳號）"]
+    V2["任一模組頁面有資料"]
+    V3["module_sync_log 有新同步紀錄<br/>（SCHEDULER_ENABLED=True 時）"]
+    V4["/api/docs 在正式環境應為關閉"]
+    DONE["部署完成<br/>記錄版本與時間"]
+    RB["Rollback<br/>還原前一版程式＋dist/<br/>還原 DB 備份檔 → 重啟"]
+
+    PRE --> FB --> DEP
+    PRE --> BB --> DEP
+    DEP --> RST --> MIG --> VER
+    VER --> V1 & V2 & V3 & V4
+    V1 & V2 & V3 & V4 --> DONE
+    VER -- "驗證失敗" --> RB

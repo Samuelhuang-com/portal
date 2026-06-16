@@ -233,4 +233,7 @@ export const NAV_PAGE = {
 
   // PPT 匯出設定（飯店 Dashboard，全公司共用設定，一階選單）
   pptExport:            '飯店 Dashboard PPT 匯出設定',  // ← route /ppt-export
+
+  // AI 助理
+  aiWorkorderAssistant: 'AI 工單查詢助理',               // ← route /ai-assistant
 } as const

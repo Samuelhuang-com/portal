@@ -90,6 +90,10 @@ PERMISSION_DEFINITIONS = [
     {"key": "contract_claims_view",   "label": "請款管理",       "group": "合約管理"},
     {"key": "contract_renewals_view", "label": "續約管理",       "group": "合約管理"},
     {"key": "contract_approve",       "label": "合約審核",       "group": "合約管理"},
+    # ── AI 助理 ──────────────────────────────────────────────────────────────
+    # 開發期間預設不分配給任何角色（需手動在「角色管理→權限設定」中開放）
+    # 注意：擁有 dazhi_repair_view 或 luqun_repair_view 的角色也可查詢對應地點
+    {"key": "ai_workorder_view", "label": "AI 工單查詢助理", "group": "AI 功能"},
 ]
 
 

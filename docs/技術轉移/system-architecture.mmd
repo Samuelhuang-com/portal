@@ -1,0 +1,52 @@
+flowchart TB
+    subgraph CLIENT["使用者端"]
+        BR["瀏覽器<br/>各部門使用者／主管"]
+    end
+
+    subgraph FE["Portal Frontend｜React 18 + TypeScript + Vite + Ant Design 5"]
+        UI["MainLayout<br/>Sidebar 220/80px・Header 56px<br/>動態選單（menu_configs）"]
+        RT["React Router v6（70+ 路由）<br/>PermissionGuard / SettingsGuard"]
+        ST["Zustand authStore<br/>JWT（localStorage）・hasPermission<br/>閒置 15 分鐘自動登出"]
+        AX["api/ 封裝層（axios）<br/>baseURL = /api/v1<br/>401 自動清除 token 導回 /login"]
+    end
+
+    subgraph BE["Backend API｜FastAPI + SQLAlchemy 2.0（同步模式）"]
+        AUTH["認證層<br/>JWT HS256 + bcrypt<br/>登入 Rate Limit（IP+帳號，5 次鎖 5 分）"]
+        RTR["60+ Routers（前綴 /api/v1/）<br/>Dashboard／報修／保養／巡檢／<br/>請購請款／合約／班表／系統設定"]
+        SVC["Services 業務層<br/>24 個 *_sync.py + 統計／報表服務"]
+        ADP["ragic_adapter.py<br/>Basic Auth（API Key 直接用，不做 base64）<br/>fetch_all / fetch_one / create / update / delete"]
+        SCH["APScheduler（17 個排程）<br/>每 30 分全模組同步<br/>每 15／45 分財務清單／明細同步<br/>每日合約通知・每月 PPT 匯出"]
+        MAIL["Mail Service（SMTP）<br/>報修未完成報表<br/>合約到期／預算／付款／保證金提醒"]
+        EXP["匯出服務<br/>python-pptx（PPT）／openpyxl（Excel）"]
+    end
+
+    subgraph DB["Local Database｜SQLite"]
+        BIZ[("業務資料表 105+ 張<br/>報修／保養／巡檢／保全／<br/>請購請款／合約／班表／預算")]
+        SYS[("系統設定表<br/>users・roles・role_permissions<br/>menu_configs・ragic_sheet_config<br/>ragic_connections")]
+        LOG[("日誌表<br/>module_sync_log・api_access_logs<br/>audit_logs・repair_report_mail_logs<br/>sync_logs")]
+    end
+
+    subgraph RAGIC["Ragic 雲端｜https://ap12.ragic.com/soutlet001"]
+        SHEETS["50+ 張 Ragic 表單<br/>飯店／商場工務報修・週期保養<br/>每日巡檢・保全巡檢（7 張）<br/>請購／請款（多部門 Sheet）"]
+    end
+
+    SMTPS["SMTP Server"]
+    TOOL["sync_tool.py<br/>手動同步工具（DEV／維運）"]
+
+    BR --> UI
+    UI --> RT
+    RT --> AX
+    ST -. "JWT／權限檢查" .-> AX
+    AX -- "HTTPS /api/v1（Bearer JWT）" --> RTR
+    RTR --> AUTH
+    RTR --> SVC
+    RTR --> EXP
+    SVC --> ADP
+    ADP -- "Ragic REST API（HTTPS）" --> SHEETS
+    SVC --> BIZ
+    SVC --> SYS
+    SVC --> LOG
+    SCH --> SVC
+    SCH --> MAIL
+    MAIL -- "SMTP" --> SMTPS
+    TOOL --> SVC

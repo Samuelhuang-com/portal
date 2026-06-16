@@ -112,10 +112,11 @@ const UserManagement: React.FC = () => {
 
       if (editUser) {
         const payload: UpdateUserPayload = {
-          full_name:  values.full_name,
-          is_active:  values.is_active,
-          role_names: values.role_names,
-          email:      values.email !== editUser.email ? values.email : undefined,
+          full_name:    values.full_name,
+          is_active:    values.is_active,
+          role_names:   values.role_names,
+          email:        values.email !== editUser.email ? values.email : undefined,
+          new_password: values.new_password || undefined, // 留空則不傳
         };
         await usersApi.update(editUser.id, payload);
         message.success('使用者已更新');
@@ -353,6 +354,16 @@ const UserManagement: React.FC = () => {
               rules={[{ required: true, message: '請輸入 Email' }]}
             >
               <Input placeholder="例：john@company.com 或 john（自動補 @portal.local）" />
+            </Form.Item>
+          )}
+          {editUser && isAdmin && (
+            <Form.Item
+              name="new_password"
+              label="重設密碼"
+              extra="留空表示不修改密碼；至少 8 個字元"
+              rules={[{ min: 8, message: '至少 8 個字元' }]}
+            >
+              <Input.Password placeholder="輸入新密碼（選填）" />
             </Form.Item>
           )}
           {editUser && (

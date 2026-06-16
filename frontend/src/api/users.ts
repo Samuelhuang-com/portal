@@ -20,7 +20,8 @@ export interface UpdateUserPayload {
   full_name?: string;
   is_active?: boolean;
   role_names?: string[];
-  email?: string;  // 僅 system_admin / tenant_admin 可更新
+  email?: string;        // 僅 system_admin / tenant_admin 可更新
+  new_password?: string; // 管理員直接設定新密碼（選填，留空不改）
 }
 
 export interface AdminResetPasswordResponse {

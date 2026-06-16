@@ -1,0 +1,271 @@
+erDiagram
+    %% ============================================================
+    %% Ragic AP / Portal — 技術移轉核心資料模型 ERD
+    %% 範圍：認證權限、Ragic 同步與設定、欄位比對、報表寄送、
+    %%       操作／同步日誌、選單設定、業務模組範例（pm_batch）
+    %% 業務資料表共 105+ 張，完整清單見技術轉移文件第 4 章
+    %% ============================================================
+
+    tenants ||--o{ users : "tenant_id"
+    tenants ||--o{ user_roles : "tenant_id"
+    tenants ||--o{ ragic_connections : "tenant_id"
+    users ||--o{ user_roles : "user_id"
+    roles ||--o{ user_roles : "role_id"
+    roles ||--o{ role_permissions : "role_id"
+    users ||--o{ audit_logs : "user_id"
+    ragic_connections ||--o{ sync_logs : "connection_id"
+    ragic_connections ||--o{ data_snapshots : "connection_id"
+    sync_logs ||--o{ data_snapshots : "sync_log_id"
+    ragic_app_portal_annotations ||--o{ ragic_portal_field_mappings : "app_directory_id（邏輯關聯）"
+    ragic_portal_audit_runs ||--o{ ragic_portal_field_mappings : "每次比對任務更新（邏輯關聯）"
+    ragic_portal_audit_runs ||--o{ ragic_portal_kpi_mappings : "每次比對任務更新（邏輯關聯）"
+    repair_report_recipients ||--o{ repair_report_mail_logs : "recipient_email（邏輯關聯）"
+    repair_report_schedule_settings ||--o{ repair_report_mail_logs : "排程觸發（邏輯關聯）"
+    pm_batch ||--o{ pm_batch_item : "batch_ragic_id（業務模組範例）"
+
+    tenants {
+        string id PK "UUID"
+        string code UK "據點代碼"
+        string name "據點名稱"
+        string type "類型"
+        boolean is_active
+    }
+
+    users {
+        string id PK "UUID"
+        string tenant_id FK
+        string email UK
+        string full_name
+        string hashed_password "bcrypt"
+        boolean is_active
+        datetime last_login
+        string otp_code "OTP（bcrypt 雜湊）"
+        datetime otp_expires_at
+        boolean must_change_password
+    }
+
+    roles {
+        string id PK "UUID"
+        string name UK "角色名稱"
+        string scope "platform｜tenant"
+        string description
+    }
+
+    user_roles {
+        string id PK "UUID"
+        string user_id FK
+        string role_id FK
+        string tenant_id FK
+        string module "限定模組（可空）"
+        string granted_by FK "授權人 users.id"
+        datetime granted_at
+    }
+
+    role_permissions {
+        string id PK "UUID"
+        string role_id FK
+        string permission_key "格式 module_action，72+ 個定義"
+    }
+
+    audit_logs {
+        string id PK "UUID"
+        string user_id FK
+        string tenant_id FK
+        string action "login｜logout 等"
+        string resource_type
+        string resource_id
+        string ip_address
+        json extra
+        datetime created_at
+    }
+
+    api_access_logs {
+        string id PK "UUID"
+        string user_id "JWT 解出（可空）"
+        string user_email
+        string module "由 path 解析"
+        string method "GET｜POST 等"
+        string path "完整 endpoint"
+        int status_code
+        int response_ms "回應毫秒"
+        string ip_address
+        datetime created_at
+    }
+
+    module_sync_log {
+        int id PK "autoincrement"
+        string module_name "24 個同步模組"
+        datetime started_at
+        datetime finished_at
+        float duration_sec
+        string status "success｜error｜partial"
+        int fetched "Ragic 取得筆數"
+        int upserted "寫入筆數"
+        int errors_count
+        string error_msg
+        string triggered_by "scheduler｜manual"
+    }
+
+    ragic_connections {
+        string id PK "UUID"
+        string tenant_id FK
+        string display_name
+        string server "www｜ap8｜ap12 等"
+        string account_name
+        string api_key_enc "加密儲存"
+        string sheet_path
+        json field_mappings
+        string module_key
+        int sync_interval "分鐘"
+        boolean is_active
+        datetime last_synced_at
+    }
+
+    sync_logs {
+        string id PK "UUID"
+        string connection_id FK
+        datetime started_at
+        datetime finished_at
+        int records_fetched
+        string status "running｜success｜error｜partial"
+        string error_msg
+        string triggered_by "scheduler｜manual｜api"
+    }
+
+    data_snapshots {
+        string id PK "UUID"
+        string connection_id FK
+        string sync_log_id FK
+        datetime synced_at
+        json data "全量快照"
+        int record_count
+        string checksum "SHA-256"
+    }
+
+    ragic_sheet_config {
+        int id PK
+        string module "purchase｜claim｜nichiyo_purchase｜nichiyo_claim"
+        string display_name "Portal 顯示部門名"
+        string ragic_dept "Ragic 原始部門值"
+        string list_path "清單 API 路徑"
+        string detail_path "內頁 API 路徑"
+        string extra_json "pageid／flow_type 等"
+        int sort_order
+        boolean is_active
+    }
+
+    ragic_app_portal_annotations {
+        int item_no PK "Ragic 應用程式序號 1~219"
+        string portal_name "對應 Portal 頁面名稱"
+        string portal_url
+        string ragic_url "供欄位比對稽核使用"
+        datetime updated_at
+    }
+
+    ragic_portal_audit_runs {
+        int id PK
+        datetime run_time
+        string triggered_by "使用者 email"
+        string scope "all 或 module_name"
+        int total_modules
+        int normal_count
+        int warning_count
+        int error_count
+        string status "running｜completed｜failed"
+    }
+
+    ragic_portal_field_mappings {
+        int id PK
+        int app_directory_id FK "annotations.item_no"
+        string module_name "Portal 模組中文名"
+        string portal_route
+        string ragic_field_id
+        string ragic_field_name
+        string ragic_field_type "text｜number｜date｜formula｜subtable"
+        string portal_db_table
+        string portal_db_field
+        string portal_api_field
+        string display_name "前端顯示名稱"
+        string mapping_status "normal｜ragic_only｜name_mismatch 等"
+        string severity "high｜medium｜low"
+        boolean is_resolved
+    }
+
+    ragic_portal_kpi_mappings {
+        int id PK
+        string module_name
+        string kpi_name "KPI 名稱"
+        string api_endpoint
+        string db_table
+        string source_fields "JSON array"
+        string formula "計算公式說明"
+        string trace_status "traceable｜partial｜untraceable"
+    }
+
+    repair_report_recipients {
+        int id PK
+        string name
+        string email UK
+        string department
+        string role
+        boolean is_active
+    }
+
+    repair_report_schedule_settings {
+        int id PK "固定一筆 id=1"
+        string schedule_name
+        boolean is_enabled "預設關閉"
+        string send_time "HH:MM"
+        string report_year_month_mode "current_month｜previous_month"
+        boolean include_hotel
+        boolean include_mall
+        boolean include_excel_attachment
+        string email_subject_template
+    }
+
+    repair_report_mail_logs {
+        int id PK
+        date send_date
+        string send_time
+        int report_year
+        int report_month
+        string recipient_email
+        string subject
+        string status "success｜failed｜skipped"
+        string error_message
+        int total_unfinished_count
+        string send_source "scheduled｜manual"
+    }
+
+    menu_configs {
+        string menu_key PK "群組 key 或路由"
+        string parent_key
+        string custom_label "空值用 navLabels 預設"
+        int sort_order
+        boolean is_visible
+        string permission_key
+        string icon_key
+    }
+
+    pm_batch {
+        string ragic_id PK "Ragic 記錄 ID"
+        string journal_no "編號"
+        string period_month "YYYY/MM"
+        datetime ragic_updated_at
+        datetime synced_at
+    }
+
+    pm_batch_item {
+        string ragic_id PK "batch_id_row_key"
+        string batch_ragic_id FK
+        int seq_no "項次"
+        string category "類別"
+        string frequency "頻率"
+        string task_name "項目"
+        string scheduled_date "排定日期"
+        string executor_name "執行人員"
+        string start_time
+        string end_time
+        int ragic_work_minutes "Ragic 工時（分）"
+        boolean is_completed "起迄皆有值"
+    }

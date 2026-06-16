@@ -134,6 +134,14 @@ class Settings(BaseSettings):
     # ── Anthropic Claude（知識庫 AI 問答）─────────────────────────────────────
     ANTHROPIC_API_KEY: str = ""
 
+    # ── AI 助理設定 ───────────────────────────────────────────────────────────
+    # AI_ENABLED=false 時 AI router 不掛載（端點不存在）
+    AI_ENABLED: bool = False
+    # 使用 Haiku 模型：速度快、成本低，足夠結構化工單查詢使用
+    ANTHROPIC_MODEL: str = "claude-haiku-4-5-20251001"
+    # 單次查詢最多回傳筆數，防止大量資料塞爆 Claude context
+    AI_QUERY_MAX_ROWS: int = 50
+
     # ── Encryption（Fernet key）───────────────────────────────────────────────
     ENCRYPTION_KEY: str = ""
 
