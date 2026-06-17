@@ -38,7 +38,9 @@ export interface RepairCase {
   is_room_case:     boolean
   room_no:          string
   room_category:    string
-  images:           RepairImage[]
+  images:             RepairImage[]
+  is_ragic_deleted:   boolean           // Ragic 端已刪除（本地保留）
+  ragic_deleted_at:   string | null     // 偵測到刪除的時間
 }
 
 // ── Dashboard ─────────────────────────────────────────────────────────────────

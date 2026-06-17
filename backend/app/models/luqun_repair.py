@@ -50,6 +50,8 @@ class LuqunRepairCase(Base):
     room_no:           Mapped[str]   = mapped_column(String(20),  default="")
     room_category:     Mapped[str]   = mapped_column(String(50),  default="")
     images_json:       Mapped[str | None] = mapped_column(Text, nullable=True, default=None)  # JSON 序列化圖片列表
+    is_ragic_deleted:  Mapped[bool]  = mapped_column(Boolean,     default=False)               # Ragic 端已刪除（本地保留）
+    ragic_deleted_at:  Mapped[datetime | None] = mapped_column(DateTime, nullable=True)        # 偵測到刪除的時間
     synced_at:         Mapped[datetime] = mapped_column(DateTime, default=twnow)
 
     @property
@@ -68,8 +70,8 @@ class LuqunRepairCase(Base):
 
     @property
     def is_excluded_flag(self) -> bool:
-        """RepairCase 相容屬性：排除「取消」等不計入統計的案件"""
-        return self.status.strip() in {"取消"}
+        """RepairCase 相容屬性：排除「取消」「作廢」等不計入統計的案件"""
+        return self.status.strip() in {"取消", "作廢"}
 
     def to_dict(self) -> dict:
         """轉換為 API 回傳用 dict（與 RepairCase.to_dict 介面相同）"""
@@ -116,6 +118,8 @@ class LuqunRepairCase(Base):
             "room_no":            self.room_no,
             "room_category":      self.room_category,
             "images":             self._parse_images_json(),
+            "is_ragic_deleted":   self.is_ragic_deleted,
+            "ragic_deleted_at":   self.ragic_deleted_at.strftime("%Y/%m/%d %H:%M") if self.ragic_deleted_at else None,
         }
 
     def _parse_images_json(self) -> list:

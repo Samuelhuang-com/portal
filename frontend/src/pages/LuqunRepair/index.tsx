@@ -57,12 +57,14 @@ const STATUS_COLOR: Record<string, string> = {
   '完修': '#52C41A', '已完成': '#52C41A', '完成': '#52C41A',
   '處理中': '#1890FF', '待維修': '#FAAD14', '待驗收': '#FAAD14',
   '待協調': '#FF7A45', '待排除': '#FF4D4F',
+  '取消': '#8C8C8C', '作廢': '#8C8C8C',
 }
 const STATUS_TAG_COLOR: Record<string, string> = {
   '已驗收': 'success', '已結案': 'success', '結案': 'success',
   '完修': 'success', '已完成': 'success', '完成': 'success',
   '處理中': 'processing', '待維修': 'warning', '待驗收': 'warning',
-  '待協調': 'orange', '待排除': 'error', default: 'default',
+  '待協調': 'orange', '待排除': 'error',
+  '取消': 'default', '作廢': 'default',
 }
 const PIE_COLORS = ['#1B3A5C', '#4BA8E8', '#52C41A', '#FAAD14', '#FF4D4F', '#722ED1', '#13C2C2', '#FA8C16']
 
@@ -2185,6 +2187,7 @@ function DetailTab({
           showSizeChanger: false,
         }}
         onRow={row => ({ onClick: () => setDrawerCase(row), style: { cursor: 'pointer' } })}
+        rowClassName={(row) => row.is_ragic_deleted ? 'ragic-deleted-row' : ''}
       />
 
       {/* 詳情 Drawer — 使用共用 CaseDetailDrawer（含附圖顯示） */}

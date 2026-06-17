@@ -61,7 +61,7 @@ const STATUS_COLOR: Record<string, string> = {
   '待維修': '#FAAD14', '待驗收': '#FAAD14', '待修中': '#FAAD14',
   '待料中': '#FAAD14', '待辦驗': '#FAAD14', '待確認': '#FAAD14',
   '待協調': '#FF7A45', '待排除': '#FF4D4F', '辦驗未通過': '#FF4D4F',
-  '取消': '#8C8C8C',
+  '取消': '#8C8C8C', '作廢': '#8C8C8C',
 }
 const STATUS_TAG_COLOR: Record<string, string> = {
   '已驗收': 'success', '已結案': 'success', '結案': 'success',
@@ -71,7 +71,7 @@ const STATUS_TAG_COLOR: Record<string, string> = {
   '待維修': 'warning', '待驗收': 'warning', '待修中': 'warning',
   '待料中': 'warning', '待辦驗': 'warning', '待確認': 'warning',
   '待協調': 'orange', '待排除': 'error', '辦驗未通過': 'error',
-  '取消': 'default',
+  '取消': 'default', '作廢': 'default',
 }
 const PIE_COLORS = ['#1B3A5C', '#4BA8E8', '#52C41A', '#FAAD14', '#FF4D4F', '#722ED1', '#13C2C2', '#FA8C16']
 
@@ -1980,7 +1980,10 @@ function DetailTab({
           onClick: () => setDrawerCase(row),
           style: { cursor: 'pointer' },
         })}
-        rowClassName={(row) => row.is_completed ? '' : 'ant-table-row-uncompleted'}
+        rowClassName={(row) =>
+          row.is_ragic_deleted ? 'ragic-deleted-row' :
+          row.is_completed ? '' : 'ant-table-row-uncompleted'
+        }
       />
 
       {/* 點擊列詳情 Drawer */}

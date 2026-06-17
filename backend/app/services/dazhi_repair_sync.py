@@ -40,8 +40,9 @@ async def sync_from_ragic() -> dict:
         logger.error(f"[DazhiRepair Sync] 拉取失敗：{exc}")
         return {"fetched": 0, "upserted": 0, "errors": [str(exc)]}
 
-    fetched  = len(cases)
-    upserted = 0
+    fetched       = len(cases)
+    upserted      = 0
+    ghost_deleted = 0
     errors: list[str] = []
     now = _now()
 
@@ -95,6 +96,8 @@ async def sync_from_ragic() -> dict:
                     existing.room_no          = case.room_no
                     existing.room_category    = case.room_category
                     existing.images_json      = json.dumps(case.images, ensure_ascii=False) if case.images else None
+                    existing.is_ragic_deleted = False   # 重新出現 → 取消刪除標記
+                    existing.ragic_deleted_at = None
                     existing.synced_at        = now
                 else:
                     db.add(DazhiRepairCase(
@@ -158,10 +161,27 @@ async def sync_from_ragic() -> dict:
             errors.append(f"detail records: {exc}")
             logger.warning(f"[DazhiRepair Sync] 子表同步失敗：{exc}")
 
+        # ── Ghost 偵測：DB 中有但 Ragic 沒有回傳 → 標記為已刪除 ──────────────
+        try:
+            fetched_ids = set(all_ragic_ids)
+            ghost_rows = db.query(DazhiRepairCase).filter(
+                DazhiRepairCase.ragic_id.notin_(fetched_ids),
+                DazhiRepairCase.is_ragic_deleted == False,  # noqa: E712
+            ).all()
+            for row in ghost_rows:
+                row.is_ragic_deleted = True
+                row.ragic_deleted_at = now
+                ghost_deleted += 1
+            if ghost_deleted:
+                logger.info(f"[DazhiRepair Sync] Ghost 偵測：標記 {ghost_deleted} 筆為已刪除")
+        except Exception as exc:
+            errors.append(f"ghost detection: {exc}")
+            logger.warning(f"[DazhiRepair Sync] Ghost 偵測失敗：{exc}")
+
         db.commit()
         logger.info(
             f"[DazhiRepair Sync] 完成：fetched={fetched}, upserted={upserted}, "
-            f"records={records}, errors={len(errors)}"
+            f"records={records}, ghost_deleted={ghost_deleted}, errors={len(errors)}"
         )
     except Exception as exc:
         db.rollback()
@@ -170,4 +190,4 @@ async def sync_from_ragic() -> dict:
     finally:
         db.close()
 
-    return {"fetched": fetched, "upserted": upserted, "records": records, "errors": errors}
+    return {"fetched": fetched, "upserted": upserted, "records": records, "ghost_deleted": ghost_deleted, "errors": errors}

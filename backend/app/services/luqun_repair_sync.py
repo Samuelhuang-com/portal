@@ -43,8 +43,9 @@ async def sync_from_ragic() -> dict:
         logger.error(f"[LuqunRepair Sync] 拉取失敗：{exc}")
         return {"fetched": 0, "upserted": 0, "errors": [str(exc)]}
 
-    fetched  = len(cases)
-    upserted = 0
+    fetched       = len(cases)
+    upserted      = 0
+    ghost_deleted = 0
     errors: list[str] = []
     now = _now()
 
@@ -96,6 +97,8 @@ async def sync_from_ragic() -> dict:
                     existing.room_no           = case.room_no
                     existing.room_category     = case.room_category
                     existing.images_json       = json.dumps(case.images, ensure_ascii=False) if case.images else None
+                    existing.is_ragic_deleted  = False   # 重新出現 → 取消刪除標記
+                    existing.ragic_deleted_at  = None
                     existing.synced_at         = now
                 else:
                     db.add(LuqunRepairCase(
@@ -164,8 +167,26 @@ async def sync_from_ragic() -> dict:
             errors.append(f"detail records: {exc}")
             logger.warning(f"[LuqunRepair Sync] 子表同步失敗：{exc}")
 
+        # ── Ghost 偵測：DB 中有但 Ragic 沒有回傳 → 標記為已刪除 ──────────────
+        ghost_deleted = 0
+        try:
+            fetched_ids = set(all_ragic_ids)
+            ghost_rows = db.query(LuqunRepairCase).filter(
+                LuqunRepairCase.ragic_id.notin_(fetched_ids),
+                LuqunRepairCase.is_ragic_deleted == False,  # noqa: E712
+            ).all()
+            for row in ghost_rows:
+                row.is_ragic_deleted = True
+                row.ragic_deleted_at = now
+                ghost_deleted += 1
+            if ghost_deleted:
+                logger.info(f"[LuqunRepair Sync] Ghost 偵測：標記 {ghost_deleted} 筆為已刪除")
+        except Exception as exc:
+            errors.append(f"ghost detection: {exc}")
+            logger.warning(f"[LuqunRepair Sync] Ghost 偵測失敗：{exc}")
+
         db.commit()
-        logger.info(f"[LuqunRepair Sync] 完成：共 {upserted} 筆，records={records}，錯誤 {len(errors)} 筆")
+        logger.info(f"[LuqunRepair Sync] 完成：共 {upserted} 筆，records={records}，ghost={ghost_deleted}，錯誤 {len(errors)} 筆")
     except Exception as exc:
         db.rollback()
         logger.error(f"[LuqunRepair Sync] DB 寫入失敗：{exc}")
@@ -173,4 +194,4 @@ async def sync_from_ragic() -> dict:
     finally:
         db.close()
 
-    return {"fetched": fetched, "upserted": upserted, "records": records, "errors": errors}
+    return {"fetched": fetched, "upserted": upserted, "records": records, "ghost_deleted": ghost_deleted, "errors": errors}

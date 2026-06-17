@@ -55,6 +55,7 @@ COMPLETED_STATUSES: set[str] = {
 #   正確做法   → 從統計中排除，視為「不計算」，只在明細總表保留記錄
 EXCLUDED_STATUSES: set[str] = {
     "取消",
+    "作廢",   # 2026-06-17 新增：Ragic 端作廢的案件不計入統計，明細總表仍保留
 }
 
 
