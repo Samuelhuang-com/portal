@@ -17,7 +17,7 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query
-from sqlalchemy import text
+from sqlalchemy import case, text
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db, engine
@@ -207,12 +207,15 @@ def get_stats(
     db: Session = Depends(get_db),
 ):
     """
-    按 task_type 分組回傳件數（total / hotel / mall）與工時合計（work_hours）。
+    按 task_type 分組回傳件數（total / hotel / mall / completed / open）與工時合計（work_hours）。
     MallMgmtDashboard、ExecWorkDashboard 的 KPI 卡片與工項比較表使用此端點。
     hotel / mall 件數依 venue 欄位（飯店 / 商場）拆分；venue 空白者歸入 total 但不計入 hotel/mall。
+    completed = 狀態為 結案/已結案/已完成/完成 的件數；open = total - completed（未結案）。
     支援 status / supervisor / engineer / venue / search 額外篩選（供 OtherTasksPage TAB 小計用）。
     """
     from sqlalchemy import func as sqlfunc
+
+    COMPLETED_STATUSES = ("結案", "已結案", "已完成", "完成")
 
     def _apply_filters(q):
         if year:
@@ -240,17 +243,24 @@ def get_stats(
         OtherTask.task_type,
         sqlfunc.count(OtherTask.ragic_id).label("total"),
         sqlfunc.sum(OtherTask.work_hours).label("work_hours"),
+        sqlfunc.sum(
+            case((OtherTask.status.in_(COMPLETED_STATUSES), 1), else_=0)
+        ).label("completed"),
     )
     base_q = _apply_filters(base_q)
     rows = base_q.group_by(OtherTask.task_type).all()
 
     result: dict = {}
     for row in rows:
+        total     = row.total or 0
+        completed = int(row.completed or 0)
         result[row.task_type] = {
-            "total":      row.total or 0,
+            "total":      total,
             "hotel":      0,
             "mall":       0,
             "work_hours": round(float(row.work_hours or 0), 1),
+            "completed":  completed,
+            "open":       total - completed,
         }
 
     # ── 2. venue 拆分（task_type × venue 分組）

@@ -52,6 +52,10 @@ import {
   fetchOtherTaskStats,
   type OtherTaskTypeStat,
 } from '@/api/otherTasks'
+import {
+  fetchFullBuildingMonthlyDashboard,
+  type FullBuildingMonthlyDashboardSummary,
+} from '@/api/fullBuildingInspection'
 import { SourceStatusCard }              from '@/components/SourceStatusCard'
 import {
   fetchMallDailyHours, fetchMallMonthlyHours, fetchMallPersonHours,
@@ -193,13 +197,34 @@ function normalizeLuqun(data: DashboardData | null) {
 
 function normalizeOtherTask(stat: OtherTaskTypeStat | undefined): NormalizedSummary {
   if (!stat) return { work_hours: 0, actual_hours: 0, case_count: 0, completed_count: 0, completion_rate: 0, abnormal_count: 0, overdue_count: 0, is_placeholder: true }
+  const total     = stat.total
+  const completed = stat.completed ?? 0
+  const open      = stat.open ?? (total - completed)
   return {
     work_hours:      stat.work_hours,
     actual_hours:    0,
-    case_count:      stat.total,
-    completed_count: 0,
-    completion_rate: 0,
-    abnormal_count:  0,
+    case_count:      total,
+    completed_count: completed,
+    completion_rate: total > 0 ? Math.round((completed / total) * 100) : 0,
+    abnormal_count:  open,   // 未結案視為異常
+    overdue_count:   0,
+    is_placeholder:  false,
+  }
+}
+
+function normalizeFullBldgInsp(data: FullBuildingMonthlyDashboardSummary | null): NormalizedSummary {
+  if (!data?.sheets?.length) return { work_hours: 0, actual_hours: 0, case_count: 0, completed_count: 0, completion_rate: 0, abnormal_count: 0, overdue_count: 0, is_placeholder: !data }
+  // 以「場次」為單位：應巡 = month_count + missing_count，完成 = month_count，異常 = missing_count
+  const expected  = data.sheets.reduce((s, sh) => s + sh.month_count + sh.missing_count, 0)
+  const completed = data.sheets.reduce((s, sh) => s + sh.month_count, 0)
+  const missing   = data.sheets.reduce((s, sh) => s + sh.missing_count, 0)
+  return {
+    work_hours:      0,
+    actual_hours:    0,
+    case_count:      expected,
+    completed_count: completed,
+    completion_rate: expected > 0 ? Math.round((completed / expected) * 100) : 0,
+    abnormal_count:  missing,
     overdue_count:   0,
     is_placeholder:  false,
   }
@@ -289,6 +314,11 @@ export default function MallMgmtDashboardPage() {
   const [loadingOtherTasks, setLoadingOtherTasks] = useState(false)
   const [errorOtherTasks,   setErrorOtherTasks]   = useState<string | null>(null)
 
+  // ── 整棟巡檢 monthly summary ──────────────────────────────────────────────────
+  const [fullBldgInspData,   setFullBldgInspData]   = useState<FullBuildingMonthlyDashboardSummary | null>(null)
+  const [loadingFullBldgInsp, setLoadingFullBldgInsp] = useState(false)
+  const [errorFullBldgInsp,   setErrorFullBldgInsp]   = useState<string | null>(null)
+
   // ── 匯出狀態 ──────────────────────────────────────────────────────────────
   const [exportLoading, setExportLoading] = useState(false)
 
@@ -344,10 +374,20 @@ export default function MallMgmtDashboardPage() {
     finally { setLoadingOtherTasks(false) }
   }, [year, month])
 
+  const loadFullBldgInsp = useCallback(async (y?: number, m?: number) => {
+    setLoadingFullBldgInsp(true); setErrorFullBldgInsp(null)
+    const yr = y ?? year
+    const mo = m !== undefined ? m : month
+    const monthStr = mo > 0 ? `${yr}-${String(mo).padStart(2, '0')}` : undefined
+    try     { setFullBldgInspData(await fetchFullBuildingMonthlyDashboard(monthStr)) }
+    catch   { setErrorFullBldgInsp('整棟巡檢載入失敗') }
+    finally { setLoadingFullBldgInsp(false) }
+  }, [year, month])
+
   const loadAll = useCallback(() => {
     loadMallPm(); loadFullBldgPm(); loadMallFacility(); loadMallFacilityByMonth()
-    loadLuqun(); loadOtherTasks()
-  }, [loadMallPm, loadFullBldgPm, loadMallFacility, loadMallFacilityByMonth, loadLuqun, loadOtherTasks])
+    loadLuqun(); loadOtherTasks(); loadFullBldgInsp()
+  }, [loadMallPm, loadFullBldgPm, loadMallFacility, loadMallFacilityByMonth, loadLuqun, loadOtherTasks, loadFullBldgInsp])
 
   useEffect(() => { loadAll() }, []) // eslint-disable-line
 
@@ -418,8 +458,9 @@ export default function MallMgmtDashboardPage() {
     [mallFacilityMonthlyData, mallFacilityData]
   )
   const luqunSummary        = useMemo(() => normalizeLuqun(luqunData),             [luqunData])
-  const placeholderSummary = useMemo((): NormalizedSummary => ({ work_hours: 0, actual_hours: 0, case_count: 0, completed_count: 0, completion_rate: 0, abnormal_count: 0, overdue_count: 0, is_placeholder: true, category_breakdown: undefined }), [])
-  const fullBldgInspSummary = placeholderSummary
+  const fullBldgInspSummary = useMemo(() => normalizeFullBldgInsp(fullBldgInspData), [fullBldgInspData])
+  const supervisorSummary   = useMemo(() => normalizeOtherTask(otherTasksStats?.['上級交辦']), [otherTasksStats])
+  const emergencySummary    = useMemo(() => normalizeOtherTask(otherTasksStats?.['緊急事件']),  [otherTasksStats])
 
   const summaryMap: Record<string, NormalizedSummary> = {
     mall_pm:          mallPmSummary,
@@ -427,22 +468,22 @@ export default function MallMgmtDashboardPage() {
     mall_facility:    mallFacilitySummary,
     full_bldg_insp:   fullBldgInspSummary,
     luqun_repair:     luqunSummary,
-    mall_supervisor:  normalizeOtherTask(otherTasksStats?.['上級交辦']),
-    mall_emergency:   normalizeOtherTask(otherTasksStats?.['緊急事件']),
+    mall_supervisor:  supervisorSummary,
+    mall_emergency:   emergencySummary,
   }
   const loadingMap: Record<string, boolean> = {
     mall_pm: loadingMallPm, full_bldg_pm: loadingFullBldgPm, mall_facility: loadingMallFacility,
-    full_bldg_insp: false,  luqun_repair: loadingLuqun,
+    full_bldg_insp: loadingFullBldgInsp, luqun_repair: loadingLuqun,
     mall_supervisor: loadingOtherTasks, mall_emergency: loadingOtherTasks,
   }
   const errorMap: Record<string, string | null> = {
     mall_pm: errorMallPm, full_bldg_pm: errorFullBldgPm, mall_facility: errorMallFacility,
-    full_bldg_insp: null, luqun_repair: errorLuqun,
+    full_bldg_insp: errorFullBldgInsp, luqun_repair: errorLuqun,
     mall_supervisor: errorOtherTasks, mall_emergency: errorOtherTasks,
   }
 
   // ── 彙總 KPI ───────────────────────────────────────────────────────────────
-  const allSummaries   = [mallPmSummary, fullBldgPmSummary, mallFacilitySummary, luqunSummary]
+  const allSummaries   = [mallPmSummary, fullBldgPmSummary, mallFacilitySummary, fullBldgInspSummary, luqunSummary, supervisorSummary, emergencySummary]
   const totalCases     = allSummaries.reduce((s, x) => s + (x?.case_count      ?? 0), 0)
   const totalCompleted = allSummaries.reduce((s, x) => s + (x?.completed_count ?? 0), 0)
   const totalAbnormal  = allSummaries.reduce((s, x) => s + (x?.abnormal_count  ?? 0), 0)
@@ -629,7 +670,7 @@ export default function MallMgmtDashboardPage() {
         <Col flex="1">
           <Card bodyStyle={{ padding: '14px 16px' }} style={{ borderLeft: '3px solid #1B3A5C' }}>
             <Statistic
-              title={<Tooltip title="商場例行維護 + 全棟例行維護 + 商場工務巡檢 + 整棟巡檢 + 商場工務報修之工項/案件總和"><span style={{ fontSize: 13, color: '#888', cursor: 'help' }}>本期總工項 <QuestionCircleOutlined style={{ color: '#bbb' }} /></span></Tooltip>}
+              title={<Tooltip title="商場例行維護 + 全棟例行維護 + 商場工務巡檢 + 整棟巡檢 + 商場工務報修 + 商場主管交辦 + 商場緊急事件 來源之工項/案件總和"><span style={{ fontSize: 13, color: '#888', cursor: 'help' }}>本期總工項 <QuestionCircleOutlined style={{ color: '#bbb' }} /></span></Tooltip>}
               value={totalCases} suffix="筆"
               valueStyle={{ fontSize: 24, color: '#1B3A5C', fontWeight: 700 }}
               prefix={<BarChartOutlined style={{ fontSize: 16, marginRight: 4 }} />}
@@ -657,7 +698,7 @@ export default function MallMgmtDashboardPage() {
         </Col>
         <Col flex="1">
           <Card bodyStyle={{ padding: '14px 16px' }} style={{ borderLeft: `3px solid ${totalAbnormal > 0 ? '#FF4D4F' : '#52C41A'}` }}>
-            <Statistic title={<Text style={{ fontSize: 13, color: '#888' }}>異常/未結案件</Text>} value={totalAbnormal} suffix="件"
+            <Statistic title={<Tooltip title="商場例行維護 + 全棟例行維護 + 商場工務巡檢 + 整棟巡檢 + 商場工務報修 + 商場主管交辦 + 商場緊急事件 來源異常件數與未結案件之總和"><span style={{ fontSize: 13, color: '#888', cursor: 'help' }}>異常/未結案件 <QuestionCircleOutlined style={{ color: '#bbb' }} /></span></Tooltip>} value={totalAbnormal} suffix="件"
               valueStyle={{ fontSize: 24, fontWeight: 700, color: totalAbnormal > 0 ? '#FF4D4F' : '#52C41A' }}
               prefix={<WarningOutlined style={{ fontSize: 16, marginRight: 4 }} />}
             />

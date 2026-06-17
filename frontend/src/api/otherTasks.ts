@@ -41,6 +41,8 @@ export interface OtherTaskTypeStat {
   hotel:      number   // venue = 飯店 的件數
   mall:       number   // venue = 商場 的件數
   work_hours: number
+  completed:  number   // 狀態為 結案/已結案/已完成/完成 的件數
+  open:       number   // 未結案件數 = total - completed
 }
 
 export interface OtherTaskStatsParams {
