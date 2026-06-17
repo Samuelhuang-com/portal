@@ -29,6 +29,7 @@ import {
   RiseOutlined, FallOutlined, UserOutlined,
   TrophyOutlined, BarChartOutlined, DownloadOutlined,
   LineChartOutlined, TeamOutlined, ExclamationCircleOutlined,
+  LinkOutlined,
 } from '@ant-design/icons'
 import type { ColumnsType, TablePaginationConfig } from 'antd/es/table'
 import dayjs from 'dayjs'
@@ -230,6 +231,11 @@ function RoomHistoryDrawer({
     }
   })
 
+  const _latestRagicId = historyData?.records?.[0]?.ragic_id
+  const _ragicUrl = _latestRagicId
+    ? `https://ap12.ragic.com/soutlet001/report2/2/${_latestRagicId}`
+    : ''
+
   return (
     <Drawer
       title={
@@ -239,6 +245,19 @@ function RoomHistoryDrawer({
             房號 <Tag color="blue" style={{ fontSize: 14 }}>{room.room_no}</Tag>
             <Tag color="geekblue">{room.floor}</Tag> 保養歷史
           </span>
+          {_ragicUrl && (
+            <Tooltip title="在 Ragic 查看最近保養記錄">
+              <a
+                href={_ragicUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ color: '#4BA8E8', fontSize: 18, lineHeight: 1, display: 'inline-flex', alignItems: 'center' }}
+                onClick={e => e.stopPropagation()}
+              >
+                <LinkOutlined />
+              </a>
+            </Tooltip>
+          )}
         </Space>
       }
       width={640}

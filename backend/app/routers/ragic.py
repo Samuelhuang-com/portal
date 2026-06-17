@@ -318,20 +318,118 @@ def get_recent_sync_logs(
     )
     return [
         {
-            "id":           log.id,
-            "module_name":  log.module_name,
-            "started_at":   log.started_at.isoformat(),
-            "finished_at":  log.finished_at.isoformat() if log.finished_at else None,
-            "duration_sec": log.duration_sec,
-            "status":       log.status,
-            "fetched":      log.fetched,
-            "upserted":     log.upserted,
-            "errors_count": log.errors_count,
-            "error_msg":    log.error_msg,
-            "triggered_by": log.triggered_by,
+            "id":            log.id,
+            "module_name":   log.module_name,
+            "started_at":    log.started_at.isoformat(),
+            "finished_at":   log.finished_at.isoformat() if log.finished_at else None,
+            "duration_sec":  log.duration_sec,
+            "status":        log.status,
+            "fetched":       log.fetched,
+            "upserted":      log.upserted,
+            "errors_count":  log.errors_count,
+            "error_msg":     log.error_msg,
+            "triggered_by":  log.triggered_by,
+            "retry_count":   getattr(log, "retry_count", 0),
+            "parent_log_id": getattr(log, "parent_log_id", None),
+            "is_anomaly":    getattr(log, "is_anomaly", False),
         }
         for log in logs
     ]
+
+
+# ── GET /sync-logs/loop-health ────────────────────────────────────────────────
+
+@router.get("/sync-logs/loop-health")
+def get_loop_health(
+    current_user=Depends(is_system_admin),
+    db: Session = Depends(get_db),
+):
+    """
+    Loop Engineering 健康儀表板：各模組最新同步狀態、重試次數、異常旗標、連續失敗數。
+
+    每個模組回傳：
+    - module_name       : 模組名稱
+    - last_status       : 最新一次（retry_count=0）的狀態
+    - last_synced_at    : 最新一次同步時間
+    - total_retries_24h : 過去 24 小時內的重試記錄筆數
+    - anomaly_count_24h : 過去 24 小時內的異常標記筆數
+    - consecutive_fails : 最近連續失敗次數（遇到 success 停止計算）
+    """
+    from datetime import timedelta
+    from app.models.module_sync_log import ModuleSyncLog
+    from app.core.time import twnow
+    from sqlalchemy import func
+
+    now = twnow()
+    since = now - timedelta(hours=24)
+
+    # 每個模組最新一筆（首次嘗試，排除重試記錄）
+    subq = (
+        db.query(
+            ModuleSyncLog.module_name,
+            func.max(ModuleSyncLog.id).label("max_id"),
+        )
+        .filter(ModuleSyncLog.retry_count == 0)
+        .group_by(ModuleSyncLog.module_name)
+        .subquery()
+    )
+    latest_rows = (
+        db.query(ModuleSyncLog)
+        .join(subq, ModuleSyncLog.id == subq.c.max_id)
+        .all()
+    )
+
+    result = []
+    for row in sorted(latest_rows, key=lambda r: r.module_name):
+        # 過去 24h 重試次數
+        retries_24h = (
+            db.query(func.count(ModuleSyncLog.id))
+            .filter(
+                ModuleSyncLog.module_name == row.module_name,
+                ModuleSyncLog.retry_count > 0,
+                ModuleSyncLog.started_at >= since,
+            )
+            .scalar()
+            or 0
+        )
+        # 過去 24h 異常次數
+        anomaly_24h = (
+            db.query(func.count(ModuleSyncLog.id))
+            .filter(
+                ModuleSyncLog.module_name == row.module_name,
+                ModuleSyncLog.is_anomaly == True,  # noqa: E712
+                ModuleSyncLog.started_at >= since,
+            )
+            .scalar()
+            or 0
+        )
+        # 連續失敗次數（從最新往回算，遇到 success 停止）
+        recent_10 = (
+            db.query(ModuleSyncLog)
+            .filter(
+                ModuleSyncLog.module_name == row.module_name,
+                ModuleSyncLog.retry_count == 0,
+            )
+            .order_by(ModuleSyncLog.started_at.desc())
+            .limit(10)
+            .all()
+        )
+        consecutive_fails = 0
+        for r in recent_10:
+            if r.status == "success":
+                break
+            consecutive_fails += 1
+
+        result.append({
+            "module_name":        row.module_name,
+            "last_status":        row.status,
+            "last_synced_at":     row.started_at.isoformat(),
+            "total_retries_24h":  retries_24h,
+            "anomaly_count_24h":  anomaly_24h,
+            "consecutive_fails":  consecutive_fails,
+        })
+
+    return result
 
 
 # ── Ragic 應用程式對應表（Portal 標註）────────────────────────────────────────

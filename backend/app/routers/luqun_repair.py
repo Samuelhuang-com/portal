@@ -436,6 +436,98 @@ async def sync_from_ragic(background_tasks: BackgroundTasks):
     return {"success": True, "message": "同步已在背景啟動"}
 
 
+
+# ── /verify-count ─────────────────────────────────────────────────────────────
+
+@router.get("/verify-count", summary="與 Ragic 數量比對（管理員）",
+            dependencies=[Depends(require_roles("system_admin"))])
+async def verify_count(db: Session = Depends(get_db)):
+    """
+    比對本地 DB 與 Ragic 的資料筆數。
+    直接呼叫 Ragic（不走快取），約需 5–30 秒。
+    """
+    from app.models.module_sync_log import ModuleSyncLog
+    from sqlalchemy import desc as _desc
+    portal_count: int = db.query(LuqunRepairCase).count()
+
+    last_log = (
+        db.query(ModuleSyncLog)
+        .filter(ModuleSyncLog.module_name == "商場工務報修")
+        .order_by(_desc(ModuleSyncLog.started_at))
+        .first()
+    )
+    last_synced_at = last_log.started_at.isoformat() if last_log else None
+
+    from app.services.luqun_repair_service import _get_adapter
+    adapter = _get_adapter()
+    try:
+        ragic_count = await adapter.fetch_count()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Ragic 連線失敗：{exc}")
+
+    diff = ragic_count - portal_count
+    return {
+        "module":         "商場工務報修",
+        "portal_count":   portal_count,
+        "ragic_count":    ragic_count,
+        "diff":           diff,
+        "match":          diff == 0,
+        "last_synced_at": last_synced_at,
+    }
+
+
+# ── /verify-diff ───────────────────────────────────────────────────────────────
+
+@router.get("/verify-diff", summary="與 Ragic 明細差集比對（管理員）",
+            dependencies=[Depends(require_roles("system_admin"))])
+async def verify_diff(db: Session = Depends(get_db)):
+    """
+    比對本地 DB 與 Ragic 的 record ID 差集。
+    回傳「Ragic 有但 Portal 沒有」及「Portal 有但 Ragic 沒有」的明細。
+    """
+    from app.services.luqun_repair_service import _get_adapter
+
+    adapter = _get_adapter()
+    try:
+        ragic_ids: set[str] = await adapter.fetch_ids()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Ragic 連線失敗：{exc}")
+
+    portal_rows = db.query(
+        LuqunRepairCase.ragic_id,
+        LuqunRepairCase.case_no,
+        LuqunRepairCase.title,
+        LuqunRepairCase.status,
+    ).all()
+    portal_ids: set[str] = {r.ragic_id for r in portal_rows}
+    portal_map = {r.ragic_id: r for r in portal_rows}
+
+    base_url = "https://ap12.ragic.com/soutlet001/luqun-public-works-repair-reporting-system/6"
+
+    in_ragic_not_portal = [
+        {
+            "ragic_id":  rid,
+            "ragic_url": f"{base_url}/{rid}",
+        }
+        for rid in sorted(ragic_ids - portal_ids, key=lambda x: int(x))
+    ]
+
+    in_portal_not_ragic = [
+        {
+            "ragic_id": rid,
+            "case_no":  portal_map[rid].case_no,
+            "title":    portal_map[rid].title,
+            "status":   portal_map[rid].status,
+        }
+        for rid in sorted(portal_ids - ragic_ids, key=lambda x: int(x))
+    ]
+
+    return {
+        "in_ragic_not_portal": in_ragic_not_portal,
+        "in_portal_not_ragic": in_portal_not_ragic,
+    }
+
+
 # ── /years ─────────────────────────────────────────────────────────────────────
 
 @router.get("/years", summary="資料中的年份清單")

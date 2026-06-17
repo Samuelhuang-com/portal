@@ -1651,7 +1651,7 @@ def _build_repair_pptx(module: str, year: int, month: int, db: Session) -> Bytes
                 _pg_sub = (f"{period_str}" if _rm_total_p == 1
                            else f"{period_str}　第 {_pg_idx+1} 頁/共 {_rm_total_p} 頁")
                 _tfn = _title_fn or _set_slide_title
-                _tfn(_slide, "3.4 本月客房報修表", "", now_str, SW, SH)
+                _tfn(_slide, "3.4 本月客房報修表  - 報修表 +已完成", "", now_str, SW, SH)
                 _pptx_txt(_slide, _pg_sub, 0.45, 0.592, SW-5.0, 0.22, size=10, color=_C_LIGHT)
 
                 _nc = 2 + _n_cats
@@ -1698,7 +1698,7 @@ def _build_repair_pptx(module: str, year: int, month: int, db: Session) -> Bytes
         else:
             _add_table_slides(
                 prs, TMPL,
-                title    = "3.4 本月客房報修表",
+                title    = "3.4 本月客房報修表  - 報修表 +已完成",
                 subtitle = f"{period_str}",
                 columns  = [{"key":"room_no","label":"房號","width":1.0,"align":"center"},
                             {"key":"floor","label":"樓層","width":0.8,"align":"center"},

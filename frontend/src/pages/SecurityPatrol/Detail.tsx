@@ -6,13 +6,13 @@ import { useEffect, useState, useCallback } from 'react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import {
   Breadcrumb, Button, Card, Col, Row, Space,
-  Table, Tag, Typography, message, Statistic, Divider,
+  Table, Tag, Typography, message, Statistic, Divider, Tooltip,
 } from 'antd'
 import {
   ArrowLeftOutlined, ReloadOutlined, SearchOutlined,
   WarningOutlined, CheckCircleOutlined, ExclamationCircleOutlined,
   CalendarOutlined, ClockCircleOutlined, UserOutlined,
-  FileTextOutlined,
+  FileTextOutlined, LinkOutlined,
 } from '@ant-design/icons'
 import { Input, Select } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
@@ -181,6 +181,21 @@ export default function SecurityPatrolDetailPage() {
             {batch.work_hours && (
               <Col xs={24} sm={6}>
                 <Tag color="geekblue">{batch.work_hours}</Tag>
+              </Col>
+            )}
+            {batch.ragic_id && SECURITY_SHEETS[sheetKey]?.path && (
+              <Col xs={24} sm={6}>
+                <Tooltip title="在 Ragic 查看此巡檢批次原始資料">
+                  <a
+                    href={`https://ap12.ragic.com/soutlet001/${SECURITY_SHEETS[sheetKey].path}/${batch.ragic_id}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ color: '#4BA8E8', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                  >
+                    <LinkOutlined style={{ fontSize: 14 }} />
+                    <span style={{ fontSize: 12 }}>在 Ragic 查看</span>
+                  </a>
+                </Tooltip>
               </Col>
             )}
           </Row>

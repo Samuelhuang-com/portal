@@ -116,6 +116,69 @@ class RagicAdapter:
 
         return all_data
 
+    async def fetch_count(
+        self,
+        extra_params: dict | None = None,
+    ) -> int:
+        """
+        快速計算 Ragic 記錄總數（不儲存資料，僅累計筆數）。
+        分頁抓取直到最後一頁，回傳整數 count。
+        """
+        count = 0
+        limit = 1000
+        offset = 0
+        async with httpx.AsyncClient(timeout=60.0, verify=self.verify_ssl) as client:
+            while True:
+                params = self._base_params({"limit": limit, "offset": offset})
+                if extra_params:
+                    params.update(extra_params)
+                resp = await client.get(
+                    self.base_url,
+                    headers=self.auth_header,
+                    params=params,
+                )
+                resp.raise_for_status()
+                batch: dict = resp.json()
+                if not isinstance(batch, dict):
+                    break
+                records = {k: v for k, v in batch.items() if k.lstrip("-").isdigit()}
+                count += len(records)
+                if len(records) < limit:
+                    break
+                offset += limit
+        return count
+
+    async def fetch_ids(
+        self,
+        extra_params: dict | None = None,
+    ) -> set[str]:
+        """
+        抓取 Ragic 所有 record ID（不儲存欄位資料），用於與 Portal DB 做差集比對。
+        """
+        ids: set[str] = set()
+        limit = 1000
+        offset = 0
+        async with httpx.AsyncClient(timeout=60.0, verify=self.verify_ssl) as client:
+            while True:
+                params = self._base_params({"limit": limit, "offset": offset})
+                if extra_params:
+                    params.update(extra_params)
+                resp = await client.get(
+                    self.base_url,
+                    headers=self.auth_header,
+                    params=params,
+                )
+                resp.raise_for_status()
+                batch: dict = resp.json()
+                if not isinstance(batch, dict):
+                    break
+                records = {k: v for k, v in batch.items() if k.lstrip("-").isdigit()}
+                ids.update(records.keys())
+                if len(records) < limit:
+                    break
+                offset += limit
+        return ids
+
     async def fetch_one(self, record_id: int | str) -> dict[str, Any]:
         async with httpx.AsyncClient(timeout=15.0, verify=self.verify_ssl) as client:
             resp = await client.get(

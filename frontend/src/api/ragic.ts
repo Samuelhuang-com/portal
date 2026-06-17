@@ -171,3 +171,52 @@ export async function triggerSingleModuleSync(moduleName: string): Promise<{ suc
   const { data } = await apiClient.post(`${BASE}/sync-logs/trigger/${encodeURIComponent(moduleName)}`)
   return data
 }
+
+
+// ── 資料比對（verify-count）──────────────────────────────────────────────────
+
+export interface VerifyCountResult {
+  module:         string
+  portal_count:   number
+  ragic_count:    number
+  diff:           number
+  match:          boolean
+  last_synced_at: string | null
+}
+
+/** 比對大直工務報修 Portal DB vs Ragic 筆數 */
+export async function verifyDazhiRepairCount(): Promise<VerifyCountResult> {
+  const { data } = await apiClient.get<VerifyCountResult>('/dazhi-repair/verify-count')
+  return data
+}
+
+/** 比對商場工務報修 Portal DB vs Ragic 筆數 */
+export async function verifyLuqunRepairCount(): Promise<VerifyCountResult> {
+  const { data } = await apiClient.get<VerifyCountResult>('/luqun-repair/verify-count')
+  return data
+}
+
+// ── 差集明細（verify-diff）───────────────────────────────────────────────────
+
+export interface VerifyDiffItem {
+  ragic_id:  string
+  ragic_url?: string   // Ragic 有但 Portal 沒有時才有
+  case_no?:  string    // Portal 有但 Ragic 沒有時才有
+  title?:    string
+  status?:   string
+}
+
+export interface VerifyDiffResult {
+  in_ragic_not_portal: VerifyDiffItem[]   // Ragic 有，Portal 缺
+  in_portal_not_ragic: VerifyDiffItem[]   // Portal 有，Ragic 已刪
+}
+
+export async function verifyDazhiRepairDiff(): Promise<VerifyDiffResult> {
+  const { data } = await apiClient.get<VerifyDiffResult>('/dazhi-repair/verify-diff')
+  return data
+}
+
+export async function verifyLuqunRepairDiff(): Promise<VerifyDiffResult> {
+  const { data } = await apiClient.get<VerifyDiffResult>('/luqun-repair/verify-diff')
+  return data
+}

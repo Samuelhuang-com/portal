@@ -23,12 +23,13 @@ import {
   HomeOutlined, ReloadOutlined,
   WarningOutlined, CheckCircleOutlined, ExclamationCircleOutlined,
   DashboardOutlined, ToolOutlined, ClockCircleOutlined,
-  CalendarOutlined as CalendarOutlinedIcon,
+  CalendarOutlined as CalendarOutlinedIcon, LinkOutlined,
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { NAV_GROUP, NAV_PAGE } from '@/constants/navLabels'
 import {
   HOTEL_DAILY_INSPECTION_SHEET_LIST,
+  HOTEL_DAILY_INSPECTION_SHEETS,
   type HotelDailyInspectionSheet,
 } from '@/constants/hotelDailyInspection'
 import {
@@ -124,6 +125,30 @@ function FloorListTab({ sheetKey }: { sheetKey: string }) {
       title: '待處理', dataIndex: 'pending', width: 65, align: 'center' as const,
       render: (v: number) =>
         v > 0 ? <Badge count={v} color="#FAAD14" /> : <Text type="secondary">—</Text>,
+    },
+    {
+      title: 'Ragic',
+      key: 'ragic_link',
+      width: 60,
+      align: 'center' as const,
+      render: (_: unknown, row: BatchRow) => {
+        const sheet = HOTEL_DAILY_INSPECTION_SHEETS[sheetKey]
+        if (!sheet || !row.id) return null
+        const baseUrl = sheet.ragicUrl.split('?')[0]
+        return (
+          <Tooltip title="在 Ragic 查看原始記錄">
+            <a
+              href={`${baseUrl}/${row.id}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ color: '#4BA8E8', fontSize: 16 }}
+              onClick={e => e.stopPropagation()}
+            >
+              <LinkOutlined />
+            </a>
+          </Tooltip>
+        )
+      },
     },
   ]
 

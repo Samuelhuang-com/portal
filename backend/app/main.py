@@ -2,6 +2,7 @@
 集團 Portal — FastAPI Application Entry Point
 """
 
+import asyncio
 import logging
 import pathlib
 from fastapi import FastAPI
@@ -926,10 +927,18 @@ def _parse_sync_result(result: dict) -> tuple[int, int, list[str]]:
     return total_f, total_u, errors
 
 
-async def _run_and_log(module_name: str, coro, triggered_by: str = "scheduler"):
+async def _run_and_log(
+    module_name: str,
+    coro,
+    triggered_by: str = "scheduler",
+    retry_count: int = 0,
+    parent_log_id: int | None = None,
+) -> tuple:
     """
     執行 sync coroutine 並將結果寫入 module_sync_log。
     不論成功或失敗都會寫入，確保紀錄完整。
+
+    回傳 (result, log_id, fetched, status)，供 _run_loop() 做驗證決策。
     """
     from app.models.module_sync_log import ModuleSyncLog
     from app.core.database import SessionLocal
@@ -953,29 +962,133 @@ async def _run_and_log(module_name: str, coro, triggered_by: str = "scheduler"):
         fetched, upserted, errors = _parse_sync_result(result or {})
         status = "success" if not errors else "partial"
 
+    log_id = None
     db = SessionLocal()
     try:
-        db.add(
-            ModuleSyncLog(
-                module_name=module_name,
-                started_at=started,
-                finished_at=finished,
-                duration_sec=duration,
-                status=status,
-                fetched=fetched,
-                upserted=upserted,
-                errors_count=len(errors),
-                error_msg="; ".join(str(e) for e in errors[:3]) if errors else None,
-                triggered_by=triggered_by,
-            )
+        log = ModuleSyncLog(
+            module_name=module_name,
+            started_at=started,
+            finished_at=finished,
+            duration_sec=duration,
+            status=status,
+            fetched=fetched,
+            upserted=upserted,
+            errors_count=len(errors),
+            error_msg="; ".join(str(e) for e in errors[:3]) if errors else None,
+            triggered_by=triggered_by,
+            retry_count=retry_count,
+            parent_log_id=parent_log_id,
         )
+        db.add(log)
         db.commit()
+        db.refresh(log)
+        log_id = log.id
     except Exception as log_exc:
         print(f"[AutoSync][Log] 寫入失敗：{log_exc}")
     finally:
         db.close()
 
-    return result
+    return result, log_id, fetched, status
+
+
+# ── Loop Engineering ───────────────────────────────────────────────────────────
+
+_LOOP_MAX_RETRIES = 2
+_LOOP_RETRY_DELAYS = [30, 120]   # 秒：第1次重試等30s，第2次等2min
+_ANOMALY_MIN_HISTORY = 3         # 至少要有 N 筆歷史才做異常判斷
+_ANOMALY_FETCH_THRESHOLD = 5     # 歷史平均 fetched > 此值，現在 fetched=0 才算異常
+
+
+async def _verify_anomaly(module_name: str, log_id: int, fetched: int) -> None:
+    """
+    Loop 驗證階段：若本次 fetched=0，但過去 N 次成功同步都有穩定資料量，
+    將此筆 log 標記 is_anomaly=True，方便健康監控發現資料消失的問題。
+    """
+    if fetched > 0 or log_id is None:
+        return
+
+    from app.models.module_sync_log import ModuleSyncLog
+    from app.core.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        recent = (
+            db.query(ModuleSyncLog)
+            .filter(
+                ModuleSyncLog.module_name == module_name,
+                ModuleSyncLog.status == "success",
+                ModuleSyncLog.retry_count == 0,   # 只看原始首次嘗試，排除重試
+                ModuleSyncLog.id != log_id,
+            )
+            .order_by(ModuleSyncLog.started_at.desc())
+            .limit(_ANOMALY_MIN_HISTORY)
+            .all()
+        )
+        if len(recent) >= _ANOMALY_MIN_HISTORY and all(
+            r.fetched > _ANOMALY_FETCH_THRESHOLD for r in recent
+        ):
+            avg = sum(r.fetched for r in recent) // len(recent)
+            log = db.get(ModuleSyncLog, log_id)
+            if log:
+                log.is_anomaly = True
+                db.commit()
+                print(
+                    f"[Loop][Anomaly] ⚠️  {module_name}：本次 fetched=0，"
+                    f"過去 {len(recent)} 次平均 {avg} 筆，標記異常。"
+                )
+    except Exception as e:
+        print(f"[Loop][Anomaly] 異常偵測失敗（{module_name}）：{e}")
+    finally:
+        db.close()
+
+
+async def _run_loop(module_name: str, sync_fn, triggered_by: str = "scheduler"):
+    """
+    Loop Engineering 核心：執行同步並在失敗時自動重試，成功後執行驗證。
+
+    Loop 五階段：
+      1. State Check  — 依 retry_count 判斷這是第幾次嘗試
+      2. Decision     — 上次失敗才重試，成功直接結束
+      3. Execution    — 呼叫 sync_fn() 執行同步
+      4. Feedback     — 解析 fetched / status / errors
+      5. Verification — 成功時做異常偵測；失敗且未超限則進入下一輪
+
+    sync_fn 必須是可呼叫的 async 函數（不是已經建立的 coroutine），
+    因為重試時需要重新呼叫來建立新的 coroutine。
+    """
+    parent_id: int | None = None
+
+    for attempt in range(_LOOP_MAX_RETRIES + 1):
+        # Stage 3: Execution
+        _, log_id, fetched, status = await _run_and_log(
+            module_name,
+            sync_fn(),
+            triggered_by,
+            retry_count=attempt,
+            parent_log_id=parent_id if attempt > 0 else None,
+        )
+
+        # 首次嘗試記錄 parent_id，後續重試都指向它
+        if attempt == 0:
+            parent_id = log_id
+
+        # Stage 5: Verification
+        if status == "success":
+            await _verify_anomaly(module_name, log_id, fetched)
+            break   # 成功，離開 Loop
+
+        # Stage 2: Decision — 是否還有重試額度？
+        if attempt < _LOOP_MAX_RETRIES:
+            delay = _LOOP_RETRY_DELAYS[attempt]
+            print(
+                f"[Loop] {module_name} 第 {attempt + 1} 次失敗（{status}），"
+                f"{delay}s 後重試…"
+            )
+            await asyncio.sleep(delay)
+        else:
+            print(
+                f"[Loop] {module_name} 已達最大重試次數（{_LOOP_MAX_RETRIES}），放棄。"
+            )
 
 
 def _init_ragic_connection_jobs() -> None:
@@ -1004,7 +1117,7 @@ def _init_ragic_connection_jobs() -> None:
 
 
 async def _auto_sync():
-    """定時同步任務：Ragic → SQLite（所有硬編碼模組）"""
+    """定時同步任務：Ragic → SQLite（所有硬編碼模組，透過 Loop 自動重試）"""
     from app.services.room_maintenance_sync import sync_from_ragic as sync_rm
     from app.services.inventory_sync import sync_from_ragic as sync_inv
     from app.services.room_maintenance_detail_sync import sync_from_ragic as sync_rmd
@@ -1026,34 +1139,35 @@ async def _auto_sync():
     from app.services.hotel_daily_inspection_sync import sync_all as sync_hdi
     from app.services.hotel_meter_readings_sync import sync_all as sync_hmr
     from app.services.ihg_room_maintenance_sync import sync_from_ragic as sync_ihg_rm
-    await _run_and_log("客房保養", sync_rm())
-    await _run_and_log("倉庫庫存", sync_inv())
-    await _run_and_log("客房保養明細", sync_rmd())
-    await _run_and_log("飯店週期保養", sync_pm())
-    await _run_and_log("B4F巡檢", sync_b4f())
-    await _run_and_log("RF巡檢", sync_rf())
-    await _run_and_log("B2F巡檢", sync_b2f())
-    await _run_and_log("B1F巡檢", sync_b1f())
-    await _run_and_log("商場週期保養", sync_mall_pm())
-    await _run_and_log("全棟例行維護", sync_full_bldg_pm())
-    await _run_and_log("大直工務報修", sync_dazhi())
-    await _run_and_log("商場工務報修", sync_luqun())
-    await _run_and_log("保全巡檢", sync_security())
-    await _run_and_log("商場工務巡檢", sync_mfi())
-    await _run_and_log("飯店每日巡檢", sync_hdi())
-    await _run_and_log("每日數值登錄", sync_hmr())
-    await _run_and_log("IHG客房保養", sync_ihg_rm())
     from app.services.other_tasks_sync import sync_from_ragic as sync_other_tasks
-    await _run_and_log("主管交辦／緊急事件", sync_other_tasks())
-    # 請購單 / 請款單：立即同步時執行清單同步（Detail API 由獨立排程補全）
     from app.services.purchase_request_sync import sync_list_only as sync_purchase_list
     from app.services.claim_request_sync import sync_list_only as sync_claim_list
     from app.services.nichiyo_purchase_request_sync import sync_list_only as sync_nichiyo_purchase_list
     from app.services.nichiyo_claim_request_sync import sync_list_only as sync_nichiyo_claim_list
-    await _run_and_log("核准請購單清單", sync_purchase_list())
-    await _run_and_log("核准請款單清單", sync_claim_list())
-    await _run_and_log("日曜核准請購單清單", sync_nichiyo_purchase_list())
-    await _run_and_log("日曜核准請款單清單", sync_nichiyo_claim_list())
+    # 透過 _run_loop() 執行：失敗自動重試 + 驗證異常偵測
+    await _run_loop("客房保養",           sync_rm)
+    await _run_loop("倉庫庫存",           sync_inv)
+    await _run_loop("客房保養明細",        sync_rmd)
+    await _run_loop("飯店週期保養",        sync_pm)
+    await _run_loop("B4F巡檢",            sync_b4f)
+    await _run_loop("RF巡檢",             sync_rf)
+    await _run_loop("B2F巡檢",            sync_b2f)
+    await _run_loop("B1F巡檢",            sync_b1f)
+    await _run_loop("商場週期保養",        sync_mall_pm)
+    await _run_loop("全棟例行維護",        sync_full_bldg_pm)
+    await _run_loop("大直工務報修",        sync_dazhi)
+    await _run_loop("商場工務報修",        sync_luqun)
+    await _run_loop("保全巡檢",           sync_security)
+    await _run_loop("商場工務巡檢",        sync_mfi)
+    await _run_loop("飯店每日巡檢",        sync_hdi)
+    await _run_loop("每日數值登錄",        sync_hmr)
+    await _run_loop("IHG客房保養",        sync_ihg_rm)
+    await _run_loop("主管交辦／緊急事件",  sync_other_tasks)
+    # 請購單 / 請款單：清單同步（Detail API 由獨立排程補全）
+    await _run_loop("核准請購單清單",      sync_purchase_list)
+    await _run_loop("核准請款單清單",      sync_claim_list)
+    await _run_loop("日曜核准請購單清單",  sync_nichiyo_purchase_list)
+    await _run_loop("日曜核准請款單清單",  sync_nichiyo_claim_list)
 
 
 async def _manual_sync():
@@ -1286,6 +1400,22 @@ async def lifespan(app: FastAPI):
             print("[Portal] users: added must_change_password column.")
         _conn.commit()
     print("[Portal] users OTP migration checked.")
+
+    # module_sync_log 表：補充 Loop Engineering 欄位（2026-06-17）
+    from sqlalchemy import text as _loop_text
+    with engine.connect() as _conn:
+        _msl_cols = {row[1] for row in _conn.execute(_loop_text("PRAGMA table_info(module_sync_log)"))}
+        if "retry_count" not in _msl_cols:
+            _conn.execute(_loop_text("ALTER TABLE module_sync_log ADD COLUMN retry_count INTEGER DEFAULT 0"))
+            print("[Portal] module_sync_log: added retry_count column.")
+        if "parent_log_id" not in _msl_cols:
+            _conn.execute(_loop_text("ALTER TABLE module_sync_log ADD COLUMN parent_log_id INTEGER"))
+            print("[Portal] module_sync_log: added parent_log_id column.")
+        if "is_anomaly" not in _msl_cols:
+            _conn.execute(_loop_text("ALTER TABLE module_sync_log ADD COLUMN is_anomaly BOOLEAN DEFAULT 0"))
+            print("[Portal] module_sync_log: added is_anomaly column.")
+        _conn.commit()
+    print("[Portal] module_sync_log Loop Engineering migration checked.")
 
     # 報修未完成報表：確保預設排程設定存在（is_enabled=False，不會自動寄信）
     from app.core.database import SessionLocal as _RepairSessionLocal

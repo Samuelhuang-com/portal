@@ -14,7 +14,9 @@ import {
   Row,
   Space,
   Table,
+  Tabs,
   Tag,
+  Modal,
   Tooltip,
   Typography,
   message,
@@ -28,12 +30,20 @@ import {
   ReloadOutlined,
   SyncOutlined,
   WarningOutlined,
+  SearchOutlined,
+  LinkOutlined,
 } from '@ant-design/icons'
 import {
   getRecentSyncLogs,
   triggerAllModulesSync,
   triggerSingleModuleSync,
+  verifyDazhiRepairCount,
+  verifyLuqunRepairCount,
+  verifyDazhiRepairDiff,
+  verifyLuqunRepairDiff,
   type ModuleSyncLogOut,
+  type VerifyCountResult,
+  type VerifyDiffResult,
 } from '../../api/ragic'
 import { triggerPurchaseSync } from '../../api/purchaseReport'
 
@@ -211,6 +221,155 @@ const RagicConnections: React.FC = () => {
     loadSyncLogs()
   }, [loadSyncLogs])
 
+  // ── 資料比對 Tab 狀態 ────────────────────────────────────────────────────
+  const [verifyResults, setVerifyResults] = useState<Record<string, VerifyCountResult | null>>({
+    dazhi: null,
+    luqun: null,
+  })
+  const [verifying, setVerifying] = useState<Record<string, boolean>>({
+    dazhi: false,
+    luqun: false,
+  })
+
+  const [diffModalOpen, setDiffModalOpen] = useState(false)
+  const [diffModuleName, setDiffModuleName] = useState('')
+  const [diffResult, setDiffResult] = useState<VerifyDiffResult | null>(null)
+  const [diffLoading, setDiffLoading] = useState(false)
+
+  const handleShowDiff = async (key: 'dazhi' | 'luqun', name: string) => {
+    setDiffModuleName(name)
+    setDiffResult(null)
+    setDiffModalOpen(true)
+    setDiffLoading(true)
+    try {
+      const result = key === 'dazhi'
+        ? await verifyDazhiRepairDiff()
+        : await verifyLuqunRepairDiff()
+      setDiffResult(result)
+    } catch {
+      message.error('取得差異明細失敗')
+      setDiffModalOpen(false)
+    } finally {
+      setDiffLoading(false)
+    }
+  }
+
+  const handleVerify = async (key: 'dazhi' | 'luqun') => {
+    setVerifying(prev => ({ ...prev, [key]: true }))
+    try {
+      const result = key === 'dazhi'
+        ? await verifyDazhiRepairCount()
+        : await verifyLuqunRepairCount()
+      setVerifyResults(prev => ({ ...prev, [key]: result }))
+      if (result.match) {
+        message.success(`${result.module}：資料一致（${result.portal_count} 筆）`)
+      } else {
+        message.warning(`${result.module}：差異 ${result.diff > 0 ? '+' : ''}${result.diff} 筆`)
+      }
+    } catch {
+      message.error('比對失敗，請確認後端服務狀態')
+    } finally {
+      setVerifying(prev => ({ ...prev, [key]: false }))
+    }
+  }
+
+  const verifyModules = [
+    { key: 'dazhi' as const, name: '飯店工務報修',  desc: 'lequn-public-works/8',                             ragicUrl: 'https://ap12.ragic.com/soutlet001/lequn-public-works/8?PAGEID=fV8' },
+    { key: 'luqun' as const, name: '商場工務報修', desc: 'luqun-public-works-repair-reporting-system/6', ragicUrl: 'https://ap12.ragic.com/soutlet001/luqun-public-works-repair-reporting-system/6' },
+  ]
+
+  const VerifyTab = (
+    <div>
+      <div style={{ marginBottom: 16 }}>
+        <Tag color="blue">管理員功能</Tag>
+        <Typography.Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>
+          即時向 Ragic 查詢筆數，與本地 DB 比對。每次比對約需 10–30 秒。
+        </Typography.Text>
+      </div>
+      {verifyModules.map(({ key, name, desc, ragicUrl }) => {
+        const r = verifyResults[key]
+        const loading = verifying[key]
+        let statusTag = <Tag color="default">尚未比對</Tag>
+        if (r) {
+          if (r.match)         statusTag = <Tag color="success" icon={<CheckCircleOutlined />}>一致</Tag>
+          else if (Math.abs(r.diff) <= 5) statusTag = <Tag color="warning" icon={<WarningOutlined />}>小差異</Tag>
+          else                 statusTag = <Tag color="error"   icon={<CloseCircleOutlined />}>差異過大</Tag>
+        }
+        return (
+          <Card
+            key={key}
+            size="small"
+            style={{ marginBottom: 12, borderRadius: 8 }}
+            styles={{ body: { padding: '16px 20px' } }}
+          >
+            <Row align="middle" gutter={16}>
+              <Col flex="200px">
+                <Space direction="vertical" size={2}>
+                  <Typography.Text strong>{name}</Typography.Text>
+                  <Typography.Text type="secondary" style={{ fontSize: 11 }}>{desc}</Typography.Text>
+                </Space>
+              </Col>
+              <Col flex="1">
+                {r ? (
+                  <Row gutter={24} align="middle">
+                    <Col>
+                      <Typography.Text type="secondary" style={{ fontSize: 11 }}>Portal DB</Typography.Text>
+                      <div><Typography.Text strong style={{ fontSize: 20, color: '#1B3A5C' }}>{r.portal_count.toLocaleString()}</Typography.Text> <Typography.Text type="secondary">筆</Typography.Text></div>
+                    </Col>
+                    <Col>
+                      <Typography.Text type="secondary" style={{ fontSize: 11 }}>Ragic</Typography.Text>
+                      <div><Typography.Text strong style={{ fontSize: 20, color: '#4BA8E8' }}>{r.ragic_count.toLocaleString()}</Typography.Text> <Typography.Text type="secondary">筆</Typography.Text></div>
+                    </Col>
+                    <Col>
+                      <Typography.Text type="secondary" style={{ fontSize: 11 }}>差異</Typography.Text>
+                      <div>
+                        <Typography.Text strong style={{ fontSize: 18, color: r.diff === 0 ? '#52C41A' : r.diff > 0 ? '#FAAD14' : '#FF4D4F' }}>
+                          {r.diff > 0 ? `+${r.diff}` : r.diff}
+                        </Typography.Text>
+                      </div>
+                    </Col>
+                    <Col>{statusTag}</Col>
+                    <Col>
+                      <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                        {r.last_synced_at ? `上次同步：${r.last_synced_at.slice(5, 16).replace('T', ' ')}` : '尚無同步紀錄'}
+                      </Typography.Text>
+                    </Col>
+                  </Row>
+                ) : (
+                  <Typography.Text type="secondary">點擊「比對」取得即時數量</Typography.Text>
+                )}
+              </Col>
+              <Col>
+                <Space>
+                  <Button
+                    icon={<SearchOutlined />}
+                    loading={loading}
+                    onClick={() => handleVerify(key)}
+                  >
+                    比對
+                  </Button>
+                  {r && !r.match && (
+                    <Button
+                      size="small"
+                      onClick={() => handleShowDiff(key, name)}
+                    >
+                      查看差異
+                    </Button>
+                  )}
+                  <Tooltip title="在 Ragic 查看原始資料">
+                    <a href={ragicUrl} target="_blank" rel="noopener noreferrer">
+                      <Button icon={<LinkOutlined />} size="small" />
+                    </a>
+                  </Tooltip>
+                </Space>
+              </Col>
+            </Row>
+          </Card>
+        )
+      })}
+    </div>
+  )
+
   return (
     <div>
       <div style={{ marginBottom: 20 }}>
@@ -219,112 +378,121 @@ const RagicConnections: React.FC = () => {
           顯示 24 小時內的模組同步狀態。自動同步間隔請於 sync_tool.py 獨立工具設定。
         </Text>
       </div>
-
-      <Card
-        bordered={false}
-        style={{ borderRadius: 12, boxShadow: '0 1px 4px rgba(0,0,0,0.06)', marginBottom: 16 }}
-        title={
-          <Space>
-            <SyncOutlined style={{ color: '#4BA8E8' }} />
-            <span>模組快速同步</span>
-          </Space>
-        }
-        extra={
-          <Button
-            size="small"
-            icon={<SyncOutlined spin={triggering} />}
-            loading={triggering}
-            onClick={handleTriggerSync}
-          >
-            全部立即同步
-          </Button>
-        }
+      <Tabs
+        defaultActiveKey="sync"
+        items={[
+          { key: 'sync',   label: '同步管理', children: (
+            <div>
+              <Card
+                bordered={false}
+                style={{ borderRadius: 12, boxShadow: '0 1px 4px rgba(0,0,0,0.06)', marginBottom: 16 }}
+                title={<Space><SyncOutlined style={{ color: '#4BA8E8' }} /><span>模組快速同步</span></Space>}
+                extra={<Button size="small" icon={<SyncOutlined spin={triggering} />} loading={triggering} onClick={handleTriggerSync}>全部立即同步</Button>}
+              >
+                <Row gutter={[8, 8]}>
+                  {ALL_MODULES.map(moduleName => {
+                    const latest = latestModuleStatus[moduleName]
+                    const isSyncing = syncingModules.has(moduleName)
+                    return (
+                      <Col key={moduleName} xs={12} sm={8} md={6} lg={4}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 10px', borderRadius: 8, border: '1px solid #f0f0f0', background: '#fafafa', gap: 6 }}>
+                          <Space size={4} style={{ minWidth: 0, flex: 1, overflow: 'hidden' }}>
+                            <ModuleStatusIcon status={isSyncing ? 'running' : latest?.status} />
+                            <Tooltip title={latest ? `上次：${fmtTime(latest.started_at)}　撈取 ${latest.fetched} / 寫入 ${latest.upserted}` : '尚無同步紀錄'}>
+                              <Text style={{ fontSize: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 80, display: 'block' }}>{moduleName}</Text>
+                            </Tooltip>
+                          </Space>
+                          <Button size="small" type="text" icon={<SyncOutlined spin={isSyncing} />} loading={isSyncing} onClick={() => handleSingleModuleSync(moduleName)} style={{ padding: '0 4px', flexShrink: 0 }} title={`立刻同步 ${moduleName}`} />
+                        </div>
+                      </Col>
+                    )
+                  })}
+                </Row>
+              </Card>
+              <Card
+                bordered={false}
+                style={{ borderRadius: 12, boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}
+                title={<Space><SyncOutlined style={{ color: '#4BA8E8' }} /><span>24 小時同步紀錄</span><Tag color="default">{syncLogs.length} 筆</Tag></Space>}
+                extra={<Button size="small" icon={<ReloadOutlined />} loading={logsLoading} onClick={loadSyncLogs}>重新整理</Button>}
+              >
+                <Table<ModuleSyncLogOut>
+                  dataSource={syncLogs}
+                  columns={SYNC_LOG_COLUMNS}
+                  rowKey="id"
+                  loading={logsLoading}
+                  size="small"
+                  pagination={{ pageSize: 20, showSizeChanger: false, showTotal: t => `共 ${t} 筆` }}
+                  scroll={{ x: 700 }}
+                  locale={{ emptyText: '尚無同步紀錄（排程執行後才會顯示）' }}
+                  rowClassName={(r) => r.status === 'error' ? 'sync-log-row-error' : ''}
+                />
+              </Card>
+            </div>
+          )},
+          { key: 'verify', label: '資料比對', children: VerifyTab },
+        ]}
+      />
+      <Modal
+        open={diffModalOpen}
+        title={`${diffModuleName}｜差異明細`}
+        onCancel={() => setDiffModalOpen(false)}
+        footer={<Button onClick={() => setDiffModalOpen(false)}>關閉</Button>}
+        width={620}
       >
-        <Row gutter={[8, 8]}>
-          {ALL_MODULES.map(moduleName => {
-            const latest = latestModuleStatus[moduleName]
-            const isSyncing = syncingModules.has(moduleName)
-            return (
-              <Col key={moduleName} xs={12} sm={8} md={6} lg={4}>
-                <div style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  padding: '6px 10px',
-                  borderRadius: 8,
-                  border: '1px solid #f0f0f0',
-                  background: '#fafafa',
-                  gap: 6,
-                }}>
-                  <Space size={4} style={{ minWidth: 0, flex: 1, overflow: 'hidden' }}>
-                    <ModuleStatusIcon status={isSyncing ? 'running' : latest?.status} />
-                    <Tooltip title={latest
-                      ? `上次：${fmtTime(latest.started_at)}　撈取 ${latest.fetched} / 寫入 ${latest.upserted}`
-                      : '尚無同步紀錄'
-                    }>
-                      <Text
-                        style={{
-                          fontSize: 12,
-                          whiteSpace: 'nowrap',
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          maxWidth: 80,
-                          display: 'block',
-                        }}
-                      >
-                        {moduleName}
-                      </Text>
-                    </Tooltip>
-                  </Space>
-                  <Button
-                    size="small"
-                    type="text"
-                    icon={<SyncOutlined spin={isSyncing} />}
-                    loading={isSyncing}
-                    onClick={() => handleSingleModuleSync(moduleName)}
-                    style={{ padding: '0 4px', flexShrink: 0 }}
-                    title={`立刻同步 ${moduleName}`}
-                  />
-                </div>
-              </Col>
-            )
-          })}
-        </Row>
-      </Card>
-
-      <Card
-        bordered={false}
-        style={{ borderRadius: 12, boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}
-        title={
-          <Space>
-            <SyncOutlined style={{ color: '#4BA8E8' }} />
-            <span>24 小時同步紀錄</span>
-            <Tag color="default">{syncLogs.length} 筆</Tag>
-          </Space>
-        }
-        extra={
-          <Button
-            size="small"
-            icon={<ReloadOutlined />}
-            loading={logsLoading}
-            onClick={loadSyncLogs}
-          >
-            重新整理
-          </Button>
-        }
-      >
-        <Table<ModuleSyncLogOut>
-          dataSource={syncLogs}
-          columns={SYNC_LOG_COLUMNS}
-          rowKey="id"
-          loading={logsLoading}
-          size="small"
-          pagination={{ pageSize: 20, showSizeChanger: false, showTotal: t => `共 ${t} 筆` }}
-          scroll={{ x: 700 }}
-          locale={{ emptyText: '尚無同步紀錄（排程執行後才會顯示）' }}
-          rowClassName={(r) => r.status === 'error' ? 'sync-log-row-error' : ''}
-        />
-      </Card>
+        {diffLoading && <div style={{ textAlign: 'center', padding: 32 }}><SyncOutlined spin style={{ fontSize: 24 }} /> 正在比對，請稍候...</div>}
+        {diffResult && !diffLoading && (
+          <div>
+            {diffResult.in_ragic_not_portal.length > 0 && (
+              <div style={{ marginBottom: 20 }}>
+                <Typography.Text strong style={{ color: '#d46b08' }}>
+                  ⚠️ Ragic 有、Portal 缺少（{diffResult.in_ragic_not_portal.length} 筆）
+                </Typography.Text>
+                <Typography.Text type="secondary" style={{ fontSize: 12, marginLeft: 8 }}>這些記錄在 Ragic 存在但尚未同步到本地</Typography.Text>
+                <Table
+                  size="small"
+                  style={{ marginTop: 8 }}
+                  dataSource={diffResult.in_ragic_not_portal}
+                  rowKey="ragic_id"
+                  pagination={false}
+                  columns={[
+                    { title: 'Ragic ID', dataIndex: 'ragic_id', width: 100 },
+                    {
+                      title: '連結',
+                      render: (_, row) => row.ragic_url
+                        ? <a href={row.ragic_url} target="_blank" rel="noopener noreferrer" style={{ color: '#4BA8E8' }}>在 Ragic 查看 <LinkOutlined /></a>
+                        : '—'
+                    },
+                  ]}
+                />
+              </div>
+            )}
+            {diffResult.in_portal_not_ragic.length > 0 && (
+              <div>
+                <Typography.Text strong style={{ color: '#cf1322' }}>
+                  ❌ Portal 有、Ragic 已刪除（{diffResult.in_portal_not_ragic.length} 筆）
+                </Typography.Text>
+                <Typography.Text type="secondary" style={{ fontSize: 12, marginLeft: 8 }}>這些記錄在 Ragic 已不存在，但仍保留在本地 DB</Typography.Text>
+                <Table
+                  size="small"
+                  style={{ marginTop: 8 }}
+                  dataSource={diffResult.in_portal_not_ragic}
+                  rowKey="ragic_id"
+                  pagination={false}
+                  columns={[
+                    { title: 'Ragic ID', dataIndex: 'ragic_id', width: 100 },
+                    { title: '案號', dataIndex: 'case_no', width: 120 },
+                    { title: '標題', dataIndex: 'title', ellipsis: true },
+                    { title: '狀態', dataIndex: 'status', width: 80 },
+                  ]}
+                />
+              </div>
+            )}
+            {diffResult.in_ragic_not_portal.length === 0 && diffResult.in_portal_not_ragic.length === 0 && (
+              <Typography.Text type="secondary">無差異</Typography.Text>
+            )}
+          </div>
+        )}
+      </Modal>
     </div>
   )
 }

@@ -12,12 +12,13 @@ import { useNavigate } from 'react-router-dom'
 import {
   Row, Col, Card, Statistic, Table, Tag, Button, Space,
   Typography, Breadcrumb, Tabs, Progress, Alert,
-  message, Badge, DatePicker,
+  message, Badge, DatePicker, Tooltip,
 } from 'antd'
 import {
   HomeOutlined, ReloadOutlined,
   WarningOutlined, CheckCircleOutlined, ClockCircleOutlined,
   ExclamationCircleOutlined, SafetyOutlined, BarChartOutlined,
+  LinkOutlined,
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { NAV_GROUP, NAV_PAGE } from '@/constants/navLabels'
@@ -310,6 +311,30 @@ export default function InspectionFloorPage({ sheetKey }: InspectionFloorPagePro
         ) : (
           <Text type="secondary">—</Text>
         ),
+    },
+    {
+      title: 'Ragic',
+      key: 'ragic_link',
+      width: 60,
+      align: 'center' as const,
+      render: (_: unknown, row: BatchRow) => {
+        if (!row.id) return null
+        const baseUrl = (sheet?.ragicUrl ?? '').split('?')[0]
+        if (!baseUrl) return null
+        return (
+          <Tooltip title="在 Ragic 查看原始記錄">
+            <a
+              href={`${baseUrl}/${row.id}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ color: '#4BA8E8', fontSize: 16 }}
+              onClick={e => e.stopPropagation()}
+            >
+              <LinkOutlined />
+            </a>
+          </Tooltip>
+        )
+      },
     },
   ]
 

@@ -12,7 +12,7 @@ import {
   ArrowLeftOutlined, ReloadOutlined, SearchOutlined,
   WarningOutlined, HistoryOutlined, CheckCircleOutlined,
   CloseCircleOutlined, MinusCircleOutlined, FilterOutlined,
-  CalendarOutlined, ClockCircleOutlined,
+  CalendarOutlined, ClockCircleOutlined, LinkOutlined,
 } from '@ant-design/icons'
 import { Input, Select } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
@@ -42,12 +42,13 @@ const STATUS_TABS = [
 ]
 
 function ItemHistoryDrawer({
-  open, onClose, historyData, loading,
+  open, onClose, historyData, loading, ragicId,
 }: {
   open: boolean
   onClose: () => void
   historyData: B2FInspectionItemHistory | null
   loading: boolean
+  ragicId?: string
 }) {
   const [selectedDay, setSelectedDay] = useState<string | null>(null)
 
@@ -106,7 +107,26 @@ function ItemHistoryDrawer({
 
   return (
     <Drawer
-      title={<Space><HistoryOutlined style={{ color: '#1B3A5C' }} /><Tag color="blue" style={{ fontSize: 13 }}>{item_name || '—'}</Tag>巡檢歷史</Space>}
+      title={(
+        <Space>
+          <HistoryOutlined style={{ color: '#1B3A5C' }} />
+          <Tag color="blue" style={{ fontSize: 13 }}>{item_name || '—'}</Tag>
+          巡檢歷史
+          {ragicId && (
+            <Tooltip title="在 Ragic 查看此批次原始紀錄">
+              <a
+                href={`https://ap12.ragic.com/soutlet001/full-building-inspection/3/${ragicId}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ color: '#4BA8E8', fontSize: 18, lineHeight: 1, display: 'inline-flex', alignItems: 'center' }}
+                onClick={e => e.stopPropagation()}
+              >
+                <LinkOutlined />
+              </a>
+            </Tooltip>
+          )}
+        </Space>
+      )}
       width={640} open={open} onClose={() => { onClose(); setSelectedDay(null) }}
       loading={loading} styles={{ body: { padding: '16px 20px' } }}>
 
@@ -358,7 +378,8 @@ export default function B2FInspectionDetailPage() {
       </Card>
 
       <ItemHistoryDrawer open={historyOpen} onClose={() => setHistoryOpen(false)}
-        historyData={historyData} loading={historyLoading} />
+        historyData={historyData} loading={historyLoading}
+        ragicId={detail?.batch.ragic_id} />
     </div>
   )
 }
