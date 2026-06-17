@@ -1578,6 +1578,58 @@ async def lifespan(app: FastAPI):
         )
         print("[Portal] Contract deposit alert scheduled: daily at 10:00")
 
+        # 方案 A：每月 1 日 02:00 自動產生飯店例行維護排程
+        async def _auto_generate_hotel_routine_pm_schedule():
+            from app.core.database import SessionLocal
+            from app.routers.hotel_routine_pm import _do_generate_hotel_routine_pm
+            today = __import__("datetime").date.today()
+            db = SessionLocal()
+            try:
+                result = _do_generate_hotel_routine_pm(today.year, today.month, db)
+                print(
+                    f"[Portal] auto-generate hotel_routine_pm {today.year}/{today.month:02d}: "
+                    f"generated={result.generated}, updated={result.updated}, errors={result.errors}"
+                )
+            except Exception as exc:
+                print(f"[Portal] auto-generate hotel_routine_pm failed: {exc}")
+            finally:
+                db.close()
+
+        _scheduler.add_job(
+            _auto_generate_hotel_routine_pm_schedule,
+            trigger=_CronTrigger(day=1, hour=2, minute=0),
+            id="auto_generate_hotel_routine_pm",
+            replace_existing=True,
+            misfire_grace_time=3600,
+        )
+        print("[Portal] hotel_routine_pm auto-generate scheduled: monthly day=1 at 02:00")
+
+        # 方案 A：每月 1 日 02:10 自動產生全棟例行維護排程
+        async def _auto_generate_full_bldg_pm_schedule():
+            from app.core.database import SessionLocal
+            from app.routers.full_building_maintenance import _do_generate_full_bldg_pm
+            today = __import__("datetime").date.today()
+            db = SessionLocal()
+            try:
+                result = _do_generate_full_bldg_pm(today.year, today.month, db)
+                print(
+                    f"[Portal] auto-generate full_bldg_pm {today.year}/{today.month:02d}: "
+                    f"generated={result.generated}, updated={result.updated}, errors={result.errors}"
+                )
+            except Exception as exc:
+                print(f"[Portal] auto-generate full_bldg_pm failed: {exc}")
+            finally:
+                db.close()
+
+        _scheduler.add_job(
+            _auto_generate_full_bldg_pm_schedule,
+            trigger=_CronTrigger(day=1, hour=2, minute=10),
+            id="auto_generate_full_bldg_pm",
+            replace_existing=True,
+            misfire_grace_time=3600,
+        )
+        print("[Portal] full_bldg_pm auto-generate scheduled: monthly day=1 at 02:10")
+
         _scheduler.start()
         print("[Portal] AutoSync scheduler started (cron-aligned, default every 30 minutes).")
     else:
@@ -2024,6 +2076,5 @@ if _FRONTEND_DIST.exists():
         # 否則一律回傳 index.html 讓前端 Router 處理（SPA 模式）
         candidate = _FRONTEND_DIST / full_path
         if candidate.is_file():
-      
             return FileResponse(str(candidate))
         return FileResponse(str(_FRONTEND_DIST / "index.html"))

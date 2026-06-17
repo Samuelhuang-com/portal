@@ -2060,7 +2060,7 @@ export default function HotelRoutineMaintenancePage() {
       {!annualCellLoading && !annualCellDetail && annualDrawerCell && (
         <Alert type={annualDrawerCell.status === 'no_data' ? 'warning' : 'info'} showIcon
           message={annualDrawerCell.status === 'no_data'
-            ? '此月份應執行保養但尚未產生排程，請至「排程管理」Tab 產生排程。'
+            ? '此月份應執行保養但尚未產生排程，請至「排程明細」Tab 確認。'
             : '此月份無排程記錄。'} />
       )}
     </Drawer>
@@ -2346,7 +2346,7 @@ export default function HotelRoutineMaintenancePage() {
           },
           {
             key: 'schedule',
-            label: <span><CalendarOutlined /> 排程管理</span>,
+            label: <span><CalendarOutlined /> 排程明細</span>,
             children: ScheduleTab,
           },
           {

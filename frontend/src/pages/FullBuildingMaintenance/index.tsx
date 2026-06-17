@@ -1930,7 +1930,7 @@ export default function FullBuildingMaintenancePage() {
             },
             {
               key:      'schedule',
-              label:    <span><ScheduleOutlined /> 排程管理</span>,
+              label:    <span><ScheduleOutlined /> 排程明細</span>,
               children: ScheduleTab,
             },
             {
@@ -2146,7 +2146,7 @@ export default function FullBuildingMaintenancePage() {
           </div>
         ) : annualDrawerCell?.status === 'no_data' ? (
           <Alert type="warning" showIcon
-            message="此月份應執行保養但尚未產生排程，請至「排程管理」Tab 產生排程。"
+            message="此月份應執行保養但尚未產生排程，請至「排程明細」Tab 確認。"
           />
         ) : (
           <Alert type="info" showIcon message="此月份無排程記錄。" />

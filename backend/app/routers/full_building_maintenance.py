@@ -1639,16 +1639,19 @@ def update_full_bldg_schedule(
 
 
 # ==============================================================================
-# POST /schedule/generate
+# 排程產生核心邏輯（供 endpoint 與 scheduler / lazy auto-generate 共用）
 # ==============================================================================
 
-@router.post("/schedule/generate", summary="Generate schedules for month",
-             response_model=FullBldgPMScheduleGenerateResult)
-def generate_full_bldg_schedule(
-    year: int = Query(..., ge=2020, le=2099),
-    month: int = Query(..., ge=1, le=12),
-    db: Session = Depends(get_db),
-):
+def _do_generate_full_bldg_pm(
+    year: int, month: int, db: Session
+) -> FullBldgPMScheduleGenerateResult:
+    """
+    依最新批次頻率規則，為 year/month 產生 FullBldgPMSchedule 記錄。
+    冪等保護：
+      - is_completed=True          → 跳過
+      - portal_edited_at IS NOT NULL → 跳過
+      - 其他已存在記錄               → 更新 scheduled_date
+    """
     year_month = f"{year}/{str(month).zfill(2)}"
     all_items = _fb_get_latest_batch_items(db)
     generated = updated = skipped_completed = skipped_edited = 0
@@ -1664,18 +1667,14 @@ def generate_full_bldg_schedule(
 
         has_exec_months = bool(exec_months_list)
 
-        # 空頻率且無 exec_months → 真的無法判斷，略過
         if not freq and not has_exec_months:
             skipped_no_frequency += 1
             continue
 
-        # 有 exec_months（頻率可為空）→ 一律納入，排定日期由 exec_months 推算
-        # 無 exec_months → 依頻率公式判斷是否為執行月
         if not has_exec_months and not _fb_should_schedule_by_freq(freq, month):
             skipped_non_month += 1
             continue
 
-        # resolved_date：Ragic 填的優先，其次由 exec_months 計算，最後用當月 1 號
         ragic_date = (item.scheduled_date or "").strip()
         if ragic_date:
             resolved_date = ragic_date
@@ -1740,6 +1739,20 @@ def generate_full_bldg_schedule(
         skipped_no_frequency=skipped_no_frequency,
         errors=errors,
     )
+
+
+# ==============================================================================
+# POST /schedule/generate
+# ==============================================================================
+
+@router.post("/schedule/generate", summary="Generate schedules for month",
+             response_model=FullBldgPMScheduleGenerateResult)
+def generate_full_bldg_schedule(
+    year: int = Query(..., ge=2020, le=2099),
+    month: int = Query(..., ge=1, le=12),
+    db: Session = Depends(get_db),
+):
+    return _do_generate_full_bldg_pm(year, month, db)
 
 
 # ==============================================================================
@@ -1822,6 +1835,23 @@ def get_full_bldg_annual_matrix(
         1 for row in rows for c in row.cells
         if c.status not in ("non_month", "no_frequency")
     )
+
+    # ── 方案 B：Lazy auto-generate ────────────────────────────────────────────
+    # 當前年度：若過去或當月有 no_data 的格，代表排程記錄尚未建立，自動補產生。
+    # _do_generate_full_bldg_pm 為冪等，不會覆蓋已完成/人工調整的記錄。
+    today = date.today()
+    if year == today.year:
+        months_need_generate = {
+            c.month
+            for row in rows
+            for c in row.cells
+            if c.status == "no_data" and c.month <= today.month
+        }
+        for m in sorted(months_need_generate):
+            try:
+                _do_generate_full_bldg_pm(year, m, db)
+            except Exception as exc:
+                print(f"[full_building_maintenance] lazy auto-generate {year}/{m:02d} failed: {exc}")
 
     return FullBldgPMScheduleAnnualMatrix(
         year=year,
