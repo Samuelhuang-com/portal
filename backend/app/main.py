@@ -1630,6 +1630,32 @@ async def lifespan(app: FastAPI):
         )
         print("[Portal] full_bldg_pm auto-generate scheduled: monthly day=1 at 02:10")
 
+        # 方案 A：每月 1 日 02:20 自動產生飯店週期保養排程
+        async def _auto_generate_hotel_periodic_pm_schedule():
+            from app.core.database import SessionLocal
+            from app.routers.periodic_maintenance import _do_generate_hotel_periodic_pm
+            today = __import__("datetime").date.today()
+            db = SessionLocal()
+            try:
+                result = _do_generate_hotel_periodic_pm(today.year, today.month, db)
+                print(
+                    f"[Portal] auto-generate hotel_periodic_pm {today.year}/{today.month:02d}: "
+                    f"generated={result.generated}, updated={result.updated}, errors={result.errors}"
+                )
+            except Exception as exc:
+                print(f"[Portal] auto-generate hotel_periodic_pm failed: {exc}")
+            finally:
+                db.close()
+
+        _scheduler.add_job(
+            _auto_generate_hotel_periodic_pm_schedule,
+            trigger=_CronTrigger(day=1, hour=2, minute=20),
+            id="auto_generate_hotel_periodic_pm",
+            replace_existing=True,
+            misfire_grace_time=3600,
+        )
+        print("[Portal] hotel_periodic_pm auto-generate scheduled: monthly day=1 at 02:20")
+
         _scheduler.start()
         print("[Portal] AutoSync scheduler started (cron-aligned, default every 30 minutes).")
     else:

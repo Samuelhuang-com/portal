@@ -1537,28 +1537,21 @@ def _schedule_to_out(rec: PMSchedule) -> PMScheduleOut:
     )
 
 
-# ── POST /schedule/generate ───────────────────────────────────────────────────
+# ── 排程產生核心邏輯（供 endpoint 與 scheduler / lazy auto-generate 共用）──────
 
-@router.post("/schedule/generate", summary="產生指定月份保養排程（防重複）",
-             response_model=PMScheduleGenerateResult)
-def generate_schedule(
-    year:  int = Query(..., description="年份，如 2026"),
-    month: int = Query(..., ge=1, le=12, description="月份 1-12"),
-    db:    Session = Depends(get_db),
-):
+def _do_generate_hotel_periodic_pm(
+    year: int, month: int, db: Session
+) -> PMScheduleGenerateResult:
     """
-    依最新批次 pm_batch_item 的頻率規則，為指定 year/month 產生 pm_schedule 記錄。
-
-    保護規則：
-      - is_completed=True → 跳過（不覆蓋已完成）
-      - portal_edited_at IS NOT NULL → 跳過（不覆蓋人工調整）
-      - 其他已存在記錄 → 更新 scheduled_date / executor_name（以主檔最新值為準）
+    依最新批次頻率規則，為 year/month 產生 PMSchedule 記錄。
+    冪等保護：
+      - is_completed=True / start+end 均有  → 跳過
+      - portal_edited_at IS NOT NULL         → 跳過
+      - 其他已存在記錄                        → 更新 scheduled_date / executor_name
     """
     year_month = f"{year}/{month:02d}"
     items = _get_latest_batch_items(db)
 
-    # 若目標月份有對應批次，建立 (task_name, category, location) -> "MM/DD" lookup
-    # 優先用當月批次的排定日期，而非最新批次（最新批次可能是下個月的，沒有本月排定日）
     target_batch = (
         db.query(PeriodicMaintenanceBatch)
         .filter(PeriodicMaintenanceBatch.period_month == year_month)
@@ -1619,7 +1612,6 @@ def generate_schedule(
                 if existing.portal_edited_at is not None:
                     skipped_edited += 1
                     continue
-                # 優先用當月批次的排定日期
                 key = (item.task_name.strip(), item.category.strip(), item.location.strip())
                 resolved_date = month_sched_lookup.get(key) or item.scheduled_date or ""
                 existing.scheduled_date    = resolved_date
@@ -1664,6 +1656,18 @@ def generate_schedule(
         skipped_no_frequency  = skipped_no_frequency,
         errors                = errors,
     )
+
+
+# ── POST /schedule/generate ───────────────────────────────────────────────────
+
+@router.post("/schedule/generate", summary="產生指定月份保養排程（防重複）",
+             response_model=PMScheduleGenerateResult)
+def generate_schedule(
+    year:  int = Query(..., description="年份，如 2026"),
+    month: int = Query(..., ge=1, le=12, description="月份 1-12"),
+    db:    Session = Depends(get_db),
+):
+    return _do_generate_hotel_periodic_pm(year, month, db)
 
 
 # ── GET /schedule ─────────────────────────────────────────────────────────────
@@ -1970,6 +1974,23 @@ def get_annual_matrix(
         for c in row.cells
         if c.status not in ("non_month", "no_frequency")
     )
+
+    # ── 方案 B：Lazy auto-generate ────────────────────────────────────────────
+    # 當前年度：若過去或當月有 no_data 的格，代表排程記錄尚未建立，自動補產生。
+    # _do_generate_hotel_periodic_pm 為冪等，不會覆蓋已完成/人工調整的記錄。
+    today = date.today()
+    if year == today.year:
+        months_need_generate = {
+            c.month
+            for row in rows
+            for c in row.cells
+            if c.status == "no_data" and c.month <= today.month
+        }
+        for m in sorted(months_need_generate):
+            try:
+                _do_generate_hotel_periodic_pm(year, m, db)
+            except Exception as exc:
+                print(f"[periodic_maintenance] lazy auto-generate {year}/{m:02d} failed: {exc}")
 
     return PMScheduleAnnualMatrix(
         year  = year,
