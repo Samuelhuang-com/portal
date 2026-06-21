@@ -77,3 +77,22 @@ class OtherTask(Base):
                 "維修工時":     f"{self.work_hours:.2f}" if self.work_hours is not None else "",
             },
         }
+
+
+class OtherTaskRecord(Base):
+    """主管交辦／緊急事件 工單明細子表（維修記錄）
+    對應 Ragic other-tasks/1 的 _subtable_* 子表。
+    同步策略：每次 sync 以 parent_ragic_id 整批 delete + insert。
+    """
+    __tablename__ = "other_task_record"
+
+    id:              Mapped[int]             = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ragic_id:        Mapped[str]             = mapped_column(String(50),  default="")
+    parent_ragic_id: Mapped[str]             = mapped_column(String(50),  index=True, default="")
+    seq:             Mapped[str]             = mapped_column(String(20),  default="")   # 項次
+    status:          Mapped[str]             = mapped_column(String(50),  default="")   # 狀態（已處理等）
+    record:          Mapped[str]             = mapped_column(Text,        default="")   # 記錄／維修記錄
+    start_at:        Mapped[datetime | None] = mapped_column(DateTime,    nullable=True)  # 時間開始（含秒）
+    end_at:          Mapped[datetime | None] = mapped_column(DateTime,    nullable=True)  # 時間結束（含秒）
+    person:          Mapped[str]             = mapped_column(String(100), default="")   # 維修人員（可能空白）
+    synced_at:       Mapped[datetime]        = mapped_column(DateTime,    default=twnow)

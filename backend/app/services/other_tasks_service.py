@@ -243,7 +243,7 @@ class OtherTaskRecord:
         # ── 附圖 ────────────────────────────────────────────────────────────
         images = _parse_image_fields(raw)
 
-        return cls(
+        obj = cls(
             ragic_id    = str(ragic_id),
             task_type   = _str(_get_field(raw, RK_TASK_TYPE)),
             venue       = _str(_get_field(raw, RK_VENUE)),
@@ -257,6 +257,9 @@ class OtherTaskRecord:
             work_hours  = work_hours,
             images      = images,
         )
+        # 保留原始 Ragic raw dict，供 sync 解析子表（_subtable_*）
+        obj._raw = raw
+        return obj
 
 
 # ═════════════════════════════════════════════════════════════════════════════

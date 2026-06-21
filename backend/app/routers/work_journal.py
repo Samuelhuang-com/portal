@@ -45,7 +45,7 @@ from app.models.b2f_inspection  import B2FInspectionBatch
 from app.models.b4f_inspection  import B4FInspectionBatch
 from app.models.rf_inspection   import RFInspectionBatch
 from app.models.hotel_meter_readings import HotelMRBatch
-from app.models.other_tasks          import OtherTask
+from app.models.other_tasks          import OtherTask, OtherTaskRecord
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
 
@@ -851,42 +851,78 @@ def _fetch_hotel_mr(db: Session, year: int, month: int, day: int) -> list[dict]:
 
 
 def _fetch_other_tasks(db: Session, year: int, month: int, day: int) -> list[dict]:
-    """主管交辦／緊急事件：created_at 日期口徑"""
+    """主管交辦／緊急事件。
+    無子表（或子表全無「時間開始」）→ created_at 日期口徑（原邏輯）。
+    有子表 → 以子表「時間開始」日期歸戶，人員/工時按子表列計算（同 dazhi/luqun 模式）。
+    """
     rows = []
     target = _date(year, month, day)
+
+    # 預載子表（維修記錄）並按工單分組
+    rec_map: dict[str, list] = defaultdict(list)
+    for r in db.query(OtherTaskRecord).all():
+        rec_map[r.parent_ragic_id].append(r)
+    for recs in rec_map.values():
+        recs.sort(key=lambda r: (r.start_at is None, r.start_at or datetime.min))
+
     for rec in db.query(OtherTask).all():
-        if not rec.created_at:
-            continue
-        if rec.created_at.date() != target:
-            continue
+        case_recs  = rec_map.get(rec.ragic_id, [])
+        dated_recs = [r for r in case_recs if r.start_at is not None]
+
+        # 有子表 → 子表歸戶；無（或子表全無時間開始）→ 原邏輯
+        if dated_recs:
+            fallback_person = (rec.engineer or "").strip()
+            groups = _group_detail_rows(dated_recs, target, fallback_person)
+            if not groups:
+                continue   # 該日無子表活動 → 此工單不出現在本日日誌
+        else:
+            if not rec.created_at or rec.created_at.date() != target:
+                continue
+            groups = None
+
         wm = round(rec.work_hours * 60) if rec.work_hours and rec.work_hours > 0 else None
-        created_str = rec.created_at.strftime("%Y/%m/%d %H:%M")
-        updated_str = rec.updated_at.strftime("%Y/%m/%d %H:%M") if rec.updated_at else ""
+        created_str   = rec.created_at.strftime("%Y/%m/%d %H:%M") if rec.created_at else ""
+        updated_str   = rec.updated_at.strftime("%Y/%m/%d %H:%M") if rec.updated_at else ""
         ragic_url_val = _ragic_url(_SOURCE_PATH["other_tasks"], rec.ragic_id) if rec.ragic_id else ""
-        for person in _persons(rec.engineer):
-            rows.append(_make_row(
-                source="other_tasks",
-                category=rec.task_type or "上級交辦",
-                task=rec.description or "(無說明)",
-                person=person,
-                work_min=wm,
-                remark=rec.notes or "",
-                ragic_id=rec.ragic_id or "",
-                ragic_url=ragic_url_val,
-                venue=rec.venue or "",
-                detail={
-                    "歸屬":         rec.venue or "",
-                    "屬性":         rec.task_type or "",
-                    "交辦主管":     rec.supervisor or "",
-                    "工程人員":     rec.engineer or "",
-                    "建立日期":     created_str,
-                    "最後更新日期": updated_str,
-                    "狀態":         rec.status or "",
-                    "維修工時":     f"{rec.work_hours:.2f} hr" if rec.work_hours else "",
-                    "問題說明":     rec.description or "",
-                    "備註":         rec.notes or "",
-                },
-            ))
+        detail_recs   = _detail_records_payload(case_recs)
+
+        common = dict(
+            source="other_tasks",
+            category=rec.task_type or "上級交辦",
+            task=rec.description or "(無說明)",
+            remark=rec.notes or "",
+            ragic_id=rec.ragic_id or "",
+            ragic_url=ragic_url_val,
+            venue=rec.venue or "",
+            detail_records=detail_recs,
+            detail={
+                "歸屬":         rec.venue or "",
+                "屬性":         rec.task_type or "",
+                "交辦主管":     rec.supervisor or "",
+                "工程人員":     rec.engineer or "",
+                "建立日期":     created_str,
+                "最後更新日期": updated_str,
+                "狀態":         rec.status or "",
+                "維修工時":     f"{rec.work_hours:.2f} hr" if rec.work_hours else "",
+                "問題說明":     rec.description or "",
+                "備註":         rec.notes or "",
+            },
+        )
+
+        if groups is None:
+            # 無子表 → 原邏輯：單列、主表工時
+            for person in _persons(rec.engineer):
+                rows.append(_make_row(person=person, work_min=wm, **common))
+        else:
+            # 有子表 → 每人一列（同人多列已合併、工時加總）
+            for g in groups:
+                rows.append(_make_row(
+                    person=g["person"],
+                    start_time=g["start_time"],
+                    end_time=g["end_time"],
+                    work_min=g["work_min"],
+                    **common,
+                ))
     return rows
 
 

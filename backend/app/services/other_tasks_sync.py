@@ -11,8 +11,9 @@ import logging
 from app.core.time import twnow
 
 from app.core.database import SessionLocal
-from app.models.other_tasks import OtherTask
+from app.models.other_tasks import OtherTask, OtherTaskRecord
 from app.services.sync_dispatcher import register
+from app.services.repair_detail_utils import extract_detail_records
 
 logger = logging.getLogger(__name__)
 
@@ -88,8 +89,32 @@ async def sync_from_ragic() -> dict:
                 errors.append(f"ragic_id={rec.ragic_id}: {exc}")
                 logger.warning(f"[OtherTasks Sync] 記錄 {rec.ragic_id} 失敗：{exc}")
 
+        # ── 工單明細子表（維修記錄）：整批 delete + insert ────────────────────
+        sub_count = 0
+        try:
+            db.query(OtherTaskRecord).filter(
+                OtherTaskRecord.parent_ragic_id.in_(all_ragic_ids)
+            ).delete(synchronize_session=False)
+            for rec in records:
+                for sub in extract_detail_records(getattr(rec, "_raw", None) or {}):
+                    db.add(OtherTaskRecord(
+                        ragic_id        = sub["ragic_id"],
+                        parent_ragic_id = rec.ragic_id,
+                        seq             = sub["seq"],
+                        status          = sub["status"],
+                        record          = sub["record"],
+                        start_at        = sub["start_at"],
+                        end_at          = sub["end_at"],
+                        person          = sub["person"],
+                        synced_at       = now,
+                    ))
+                    sub_count += 1
+        except Exception as exc:
+            errors.append(f"detail records: {exc}")
+            logger.warning(f"[OtherTasks Sync] 子表同步失敗：{exc}")
+
         db.commit()
-        logger.info(f"[OtherTasks Sync] 完成：共 {upserted} 筆，錯誤 {len(errors)} 筆")
+        logger.info(f"[OtherTasks Sync] 完成：共 {upserted} 筆，子表 {sub_count} 列，錯誤 {len(errors)} 筆")
     except Exception as exc:
         db.rollback()
         logger.error(f"[OtherTasks Sync] DB 寫入失敗：{exc}")
