@@ -41,11 +41,15 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.database import get_db
+from app.core.security import decode_token
 from app.dependencies import get_current_user, require_roles
 from app.models.dazhi_repair import DazhiRepairCase
 from app.services import dazhi_repair_service as svc
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
+
+# 匯出端點不帶 router-level auth（用 query token 自行驗證，供 window.open 下載使用）
+export_router = APIRouter()
 
 
 # ── 共用 DB 讀取 helper ────────────────────────────────────────────────────────
@@ -536,7 +540,7 @@ async def get_case_images(ragic_id: str):
 
 # ── /export ───────────────────────────────────────────────────────────────────
 
-@router.get("/export", summary="匯出 Excel")
+@export_router.get("/export", summary="匯出 Excel")
 def export_excel(
     year:        Optional[int] = Query(None),
     month:       Optional[int] = Query(None),
@@ -544,9 +548,19 @@ def export_excel(
     floor:       Optional[str] = Query(None),
     status:      Optional[str] = Query(None),
     keyword:     Optional[str] = Query(None),
+    token:       Optional[str] = Query(None),
     db: Session = Depends(get_db),
 ):
-    """匯出過濾後的明細資料為 Excel 檔案（.xlsx）"""
+    """匯出過濾後的明細資料為 Excel 檔案（.xlsx）。
+    支援 ?token=<JWT> query 參數，供瀏覽器直接下載時使用（window.open 無法帶 header）。
+    """
+    # ── 驗證 token ────────────────────────────────────────────────────────────
+    if not token:
+        raise HTTPException(status_code=401, detail="未提供驗證 token")
+    payload = decode_token(token)
+    if payload is None:
+        raise HTTPException(status_code=401, detail="token 無效或已過期")
+
     try:
         import openpyxl
         from openpyxl.styles import Font, PatternFill, Alignment, Border, Side

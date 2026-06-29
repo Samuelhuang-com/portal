@@ -2029,10 +2029,22 @@ app.include_router(
     prefix=f"{API_PREFIX}/luqun-repair",
     tags=["商場工務報修"],
 )
+# export_router 單獨掛載（不帶 router-level auth，用 query token 自驗）
+app.include_router(
+    luqun_repair.export_router,
+    prefix=f"{API_PREFIX}/luqun-repair",
+    tags=["商場工務報修"],
+)
 
 # ── 新增：大直工務部 ──────────────────────────────────────────────────────────
 app.include_router(
     dazhi_repair.router,
+    prefix=f"{API_PREFIX}/dazhi-repair",
+    tags=["大直工務部"],
+)
+# export_router 單獨掛載（不帶 router-level auth，用 query token 自驗）
+app.include_router(
+    dazhi_repair.export_router,
     prefix=f"{API_PREFIX}/dazhi-repair",
     tags=["大直工務部"],
 )
