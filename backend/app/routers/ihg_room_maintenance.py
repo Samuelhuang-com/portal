@@ -872,7 +872,7 @@ async def get_calendar(
             parts = rec.maint_date.replace("-", "/").split("/")
             if len(parts) >= 3:
                 try:
-                    d = int(parts[2])
+                    d = int(parts[2].split()[0])   # 處理 "10 00:00:00" 含時間的格式
                     if 1 <= d <= 31:
                         day_str = str(d)
                 except (ValueError, IndexError):
