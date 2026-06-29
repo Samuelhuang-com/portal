@@ -54,6 +54,7 @@
  *   2026-05-19  新增 ragicFieldAudit（Ragic 欄位比對）欄位稽核工具，route /settings/ragic-field-audit
  *   2026-05-24  新增 pptExport（飯店 Dashboard PPT 匯出設定）Section Registry 架構，route /ppt-export
  *   2026-05-27  新增 contract（合約管理）Phase 1.3 Portal 集成，route /contract + /contract/vendors + /contract/settings
+ *   2026-06-29  新增 hotelCalendar（飯店行事曆）+ mallCalendar（商場行事曆），route /hotel/calendar + /mall/calendar
  */
 
 // ── 系統標題 ──────────────────────────────────────────────────────────────────
@@ -101,6 +102,8 @@ export const NAV_PAGE = {
 
   // 行事曆
   calendarMain:          '行事曆總覽',    // 超級行事曆主頁
+  hotelCalendar:         '飯店行事曆',   // ← 飯店行事曆（/hotel/calendar）
+  mallCalendar:          '商場行事曆',   // ← 商場行事曆（/mall/calendar）
 
   // 飯店管理
   hotelMgmtDashboard:     '★ 飯店管理 Dashboard',  // ← 新增：6 來源整合總覽

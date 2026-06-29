@@ -216,6 +216,7 @@ export const menuItems: MenuItem[] = [
       { key: '/hotel/daily-meter-readings',     icon: <DatabaseOutlined />, label: NAV_PAGE.hotelMeterReadings,   permissionKey: 'hotel_meter_readings_view'        },
       { key: '/hotel/other-tasks',              icon: <AlertOutlined />,   label: NAV_PAGE.otherTasks,           permissionKey: 'hotel_other_tasks_view'           },
       { key: '/hotel/routine-maintenance',      icon: <FileTextOutlined />, label: NAV_PAGE.hotelRoutineMaintenance, permissionKey: 'hotel_routine_pm_view'           },
+      { key: '/hotel/calendar',                 icon: <CalendarOutlined />, label: NAV_PAGE.hotelCalendar,           permissionKey: 'hotel_calendar_view'             },
       // { key: '/hotel/repairs',                 icon: <ToolOutlined />, label: NAV_PAGE.repairs },
     ],
   },
@@ -248,6 +249,7 @@ export const menuItems: MenuItem[] = [
       { key: '/full-building-inspection/dashboard', icon: <SafetyOutlined />, label: NAV_PAGE.fullBuildingDashboard, permissionKey: 'mall_full_building_inspection_view' },
       { key: '/mall-facility-inspection/dashboard', icon: <ToolOutlined />,    label: NAV_PAGE.mallFacilityDashboard, permissionKey: 'mall_facility_inspection_view'      },
       { key: '/mall/other-tasks',                   icon: <AlertOutlined />,   label: NAV_PAGE.otherTasks,           permissionKey: 'mall_other_tasks_view'            },
+      { key: '/mall/calendar',                      icon: <CalendarOutlined />, label: NAV_PAGE.mallCalendar,         permissionKey: 'mall_calendar_view'              },
     ],
   },
   // ── 商場工務報修（商場管理之後）──────────────────────────────────────────

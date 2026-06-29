@@ -7,10 +7,10 @@ echo  Frontend: http://127.0.0.1:4173
 echo ============================================
 echo.
 
-start "Backend PROD" cmd /k "cd /d C:\OneDrive\_Ragic\portal\backend && uvicorn app.main:app --host 127.0.0.1 --port 8000"
+start "Backend PROD" cmd /k "cd /d "%~dp0backend" && uvicorn app.main:app --host 127.0.0.1 --port 8000"
 
 echo [1/2] Building frontend...
-cd /d C:\OneDrive\_Ragic\portal\frontend
+cd /d "%~dp0frontend"
 call npm run build
 if %errorlevel% neq 0 (
     echo Build failed. Check errors above.
@@ -19,7 +19,7 @@ if %errorlevel% neq 0 (
 )
 
 echo [2/2] Starting preview server...
-start "Frontend PROD" cmd /k "cd /d C:\OneDrive\_Ragic\portal\frontend && npx vite preview --host 127.0.0.1"
+start "Frontend PROD" cmd /k "cd /d "%~dp0frontend" && npx vite preview --host 127.0.0.1"
 
 echo.
 echo Build done. Preview server started.

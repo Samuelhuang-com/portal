@@ -58,6 +58,8 @@ import MemoListPage       from '@/pages/Memos/List'
 import MemoNewPage        from '@/pages/Memos/New'
 import MemoDetailPage     from '@/pages/Memos/Detail'
 import CalendarPage       from '@/pages/Calendar'
+import HotelCalendarPage  from '@/pages/HotelCalendar'
+import MallCalendarPage   from '@/pages/MallCalendar'
 // ── 班表管理 ──────────────────────────────────────────────────────────────────
 import ScheduleOverviewPage    from '@/pages/Schedule'
 import ScheduleCalendarPage    from '@/pages/Schedule/Calendar'
@@ -373,6 +375,7 @@ export default function AppRouter() {
           <Route path="daily-inspection"        element={<HotelDailyInspectionDashboard />} />
           <Route path="daily-meter-readings"    element={<HotelMeterReadingsDashboard />} />
           <Route path="other-tasks"             element={<OtherTasksPage />} />
+          <Route path="calendar"               element={<HotelCalendarPage />} />
         </Route>
 
         {/* ── 商場管理 ──────────────────────────────────────────────── */}
@@ -393,6 +396,7 @@ export default function AppRouter() {
           <Route path="b1f-inspection/:batchId"       element={<B1FInspectionDetailPage />} />
           {/* 主管交辦／緊急事件共用同一元件（飯店/商場雙入口） */}
           <Route path="other-tasks"             element={<OtherTasksPage />} />
+          <Route path="calendar"               element={<MallCalendarPage />} />
         </Route>
 
         {/* ── 核准請購單月報表 ──────────────────────────────────────────── */}

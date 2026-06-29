@@ -21,7 +21,7 @@ import {
   BarChartOutlined, LineChartOutlined, PieChartOutlined,
   DashboardOutlined, WarningOutlined, RightOutlined,
   ReloadOutlined, QuestionCircleOutlined, FilePptOutlined, DownloadOutlined,
-  CalendarOutlined, SettingOutlined,
+  CalendarOutlined, SettingOutlined, FileTextOutlined,
 } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import {
@@ -57,6 +57,8 @@ import type { PMStats }                  from '@/types/periodicMaintenance'
 import type { IHGStats }                 from '@/types/ihgRoomMaintenance'
 import type { DashboardData, DashboardKpi } from '@/types/dazhiRepair'
 import { NAV_GROUP, NAV_PAGE }           from '@/constants/navLabels'
+import WorkJournalTab, { type WJStats }  from '@/components/WorkJournal/WorkJournalTab'
+import { CATEGORY_TAG_COLOR }            from '@/api/workJournal'
 
 const { Title, Text } = Typography
 
@@ -332,6 +334,8 @@ export default function HotelMgmtDashboardPage() {
   const [yearlyYear,       setYearlyYear]        = useState<number>(thisYear)
   const [tabYearlyLoading, setTabYearlyLoading]  = useState(false)
   const [exportLoading,    setExportLoading]     = useState(false)
+  // 工作日誌 TAB 類別統計（venue=hotel 篩選後的本月摘要）
+  const [wjStats, setWjStats] = useState<WJStats>({})
 
   // ── PPTX 匯出（repair/ppt-export dazhi → IHG 模板，報修統計格式）────────────
   const handlePptExport = useCallback(async () => {
@@ -1592,6 +1596,38 @@ export default function HotelMgmtDashboardPage() {
         <Spin spinning={tabDLoading}>
           <TabRanking />
         </Spin>
+      ),
+    },
+    {
+      key: 'work_journal',
+      label: <><FileTextOutlined /> 工作日誌</>,
+      children: (
+        <>
+          {/* 本月飯店工作日誌摘要卡（整月查詢後由 onStatsChange 更新）*/}
+          {Object.keys(wjStats).length > 0 && (
+            <Card
+              size="small"
+              style={{ marginBottom: 12, borderLeft: `3px solid ${BRAND_BLUE}` }}
+              bodyStyle={{ padding: '10px 16px' }}
+            >
+              <Space size={20} wrap>
+                <Text strong style={{ color: BRAND_BLUE }}>本月日誌摘要（飯店）</Text>
+                {(['現場報修', '上級交辦', '緊急事件', '例行維護', '每日巡檢'] as const).map(cat => {
+                  const s = wjStats[cat]
+                  if (!s) return null
+                  return (
+                    <Space key={cat} size={4} style={{ alignItems: 'baseline' }}>
+                      <Tag color={CATEGORY_TAG_COLOR[cat] ?? 'default'} style={{ margin: 0 }}>{cat}</Tag>
+                      <Text strong style={{ fontSize: 14 }}>{s.cases} 件</Text>
+                      <Text type="secondary" style={{ fontSize: 12 }}>{s.hours} HR</Text>
+                    </Space>
+                  )
+                })}
+              </Space>
+            </Card>
+          )}
+          <WorkJournalTab venue="hotel" onStatsChange={setWjStats} />
+        </>
       ),
     },
   ]

@@ -27,6 +27,7 @@ import {
   RightOutlined, DashboardOutlined, QuestionCircleOutlined,
   CalendarOutlined, SafetyOutlined, TrophyOutlined,
   TableOutlined, LineChartOutlined, TeamOutlined, FilePptOutlined,
+  FileTextOutlined,
 } from '@ant-design/icons'
 import {
   BarChart, Bar, PieChart, Pie, Cell, LineChart, Line,
@@ -72,6 +73,8 @@ import type { MallFIDashboardSummary }        from '@/api/mallFacilityInspection
 import type { DashboardData, RepairCase }     from '@/types/luqunRepair'
 
 import { NAV_GROUP, NAV_PAGE } from '@/constants/navLabels'
+import WorkJournalTab, { type WJStats }  from '@/components/WorkJournal/WorkJournalTab'
+import { CATEGORY_TAG_COLOR }            from '@/api/workJournal'
 
 const { Title, Text } = Typography
 
@@ -321,6 +324,8 @@ export default function MallMgmtDashboardPage() {
 
   // ── 匯出狀態 ──────────────────────────────────────────────────────────────
   const [exportLoading, setExportLoading] = useState(false)
+  // 工作日誌 TAB 類別統計（venue=mall 篩選後的本月摘要）
+  const [wjStats, setWjStats] = useState<WJStats>({})
 
   // ── 載入 Tab A ─────────────────────────────────────────────────────────────
   const loadMallPm = useCallback(async (y?: number, m?: number) => {
@@ -1643,6 +1648,38 @@ export default function MallMgmtDashboardPage() {
     { key: 'yearly',     label: <span style={tabLabelStyle}><CalendarOutlined />  D. 每年累計</span>,  children: <TabYearly /> },
     { key: 'person_pct', label: <span style={tabLabelStyle}><TeamOutlined />      人員工時%</span>,    children: TabPersonPct },
     { key: 'ranking',    label: <span style={tabLabelStyle}><TrophyOutlined />    人員排名</span>,     children: TabRanking },
+    {
+      key: 'work_journal',
+      label: <span style={tabLabelStyle}><FileTextOutlined /> 工作日誌</span>,
+      children: (
+        <>
+          {/* 本月商場工作日誌摘要卡（整月查詢後由 onStatsChange 更新）*/}
+          {Object.keys(wjStats).length > 0 && (
+            <Card
+              size="small"
+              style={{ marginBottom: 12, borderLeft: '3px solid #1B3A5C' }}
+              bodyStyle={{ padding: '10px 16px' }}
+            >
+              <Space size={20} wrap>
+                <Text strong style={{ color: '#1B3A5C' }}>本月日誌摘要（商場）</Text>
+                {(['現場報修', '上級交辦', '緊急事件', '例行維護', '每日巡檢'] as const).map(cat => {
+                  const s = wjStats[cat]
+                  if (!s) return null
+                  return (
+                    <Space key={cat} size={4} style={{ alignItems: 'baseline' }}>
+                      <Tag color={CATEGORY_TAG_COLOR[cat] ?? 'default'} style={{ margin: 0 }}>{cat}</Tag>
+                      <Text strong style={{ fontSize: 14 }}>{s.cases} 件</Text>
+                      <Text type="secondary" style={{ fontSize: 12 }}>{s.hours} HR</Text>
+                    </Space>
+                  )
+                })}
+              </Space>
+            </Card>
+          )}
+          <WorkJournalTab venue="mall" onStatsChange={setWjStats} />
+        </>
+      ),
+    },
   ]
 
   // ════════════════════════════════════════════════════════════════════════════
