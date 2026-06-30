@@ -2054,7 +2054,7 @@ function DetailTab({
   const [page, setPage]         = useState(1)
   const [repairType, setRepairType] = useState<string | null>(null)
   const [floor, setFloor]       = useState<string | null>(null)
-  const [status, setStatus]     = useState<string | null>(null)
+  const [status, setStatus]     = useState<string[]>([])
   const [keyword, setKeyword]   = useState('')
   const [drawerCase, setDrawerCase] = useState<RepairCase | null>(null)
 
@@ -2066,7 +2066,7 @@ function DetailTab({
         month:       month || undefined,
         repair_type: repairType || undefined,
         floor:       floor || undefined,
-        status:      status || undefined,
+        status:      status.length > 0 ? status : undefined,
         keyword:     keyword || undefined,
         page:        pg,
         page_size:   50,
@@ -2130,7 +2130,7 @@ function DetailTab({
     month:       month || undefined,
     repair_type: repairType || undefined,
     floor:       floor || undefined,
-    status:      status || undefined,
+    status:      status.length > 0 ? status : undefined,
     keyword:     keyword || undefined,
   })
 
@@ -2147,8 +2147,8 @@ function DetailTab({
             value={floor ?? undefined} onChange={v => setFloor(v ?? null)}>
             {filterOptions?.floors.map(f => <Option key={f} value={f}>{f}</Option>)}
           </Select>
-          <Select placeholder="處理狀況" allowClear style={{ width: 110 }}
-            value={status ?? undefined} onChange={v => setStatus(v ?? null)}>
+          <Select mode="multiple" placeholder="處理狀況" allowClear style={{ width: 150 }}
+            value={status} onChange={v => setStatus(v)} maxTagCount={1}>
             {filterOptions?.statuses.map(s => <Option key={s} value={s}>{s}</Option>)}
           </Select>
           <input
@@ -2159,7 +2159,7 @@ function DetailTab({
             style={{ padding: '4px 8px', border: '1px solid #d9d9d9', borderRadius: 6, width: 200, fontSize: 13 }}
           />
           <Button type="primary" icon={<SearchOutlined />} onClick={() => load(1)} loading={loading}>查詢</Button>
-          <Button onClick={() => { setRepairType(null); setFloor(null); setStatus(null); setKeyword('') }}>重設</Button>
+          <Button onClick={() => { setRepairType(null); setFloor(null); setStatus([]); setKeyword('') }}>重設</Button>
           <Button
             icon={<DownloadOutlined />}
             href={exportUrl}

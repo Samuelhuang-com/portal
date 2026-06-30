@@ -82,7 +82,7 @@ export async function fetchDetail(params: DetailQueryParams): Promise<DetailResu
   if (params.month       !== undefined) p.month       = params.month
   if (params.repair_type !== undefined) p.repair_type = params.repair_type
   if (params.floor       !== undefined) p.floor       = params.floor
-  if (params.status      !== undefined) p.status      = params.status
+  if (params.status      !== undefined && params.status.length > 0) p.status = params.status.join(',')
   if (params.keyword     !== undefined) p.keyword     = params.keyword
   if (params.page        !== undefined) p.page        = params.page
   if (params.page_size   !== undefined) p.page_size   = params.page_size
@@ -96,7 +96,7 @@ export async function fetchDetail(params: DetailQueryParams): Promise<DetailResu
 // ── 匯出 Excel ────────────────────────────────────────────────────────────────
 export function buildExportUrl(params: {
   year?: number; month?: number; repair_type?: string;
-  floor?: string; status?: string; keyword?: string;
+  floor?: string; status?: string[]; keyword?: string;
 }): string {
   const apiBase = (import.meta.env.VITE_API_BASE_URL || '/api/v1').replace(/\/$/, '')
   const query = new URLSearchParams()
@@ -104,7 +104,7 @@ export function buildExportUrl(params: {
   if (params.month       !== undefined) query.set('month',       String(params.month))
   if (params.repair_type !== undefined) query.set('repair_type', params.repair_type)
   if (params.floor       !== undefined) query.set('floor',       params.floor)
-  if (params.status      !== undefined) query.set('status',      params.status)
+  if (params.status      !== undefined && params.status.length > 0) query.set('status', params.status.join(','))
   if (params.keyword     !== undefined) query.set('keyword',     params.keyword)
 
   // attach token

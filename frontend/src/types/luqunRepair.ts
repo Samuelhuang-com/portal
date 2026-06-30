@@ -223,7 +223,7 @@ export interface DetailQueryParams {
   month?:       number
   repair_type?: string
   floor?:       string
-  status?:      string
+  status?:      string[]
   keyword?:     string
   page?:        number
   page_size?:   number

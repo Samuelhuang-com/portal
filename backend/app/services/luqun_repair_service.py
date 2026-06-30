@@ -1654,7 +1654,8 @@ def query_detail(
     if floor:
         cases = [c for c in cases if (c.floor_normalized or c.floor) == floor]
     if status:
-        cases = [c for c in cases if c.status == status]
+        _statuses = {s.strip() for s in status.split(',')}
+        cases = [c for c in cases if c.status in _statuses]
     if keyword:
         kw = keyword.lower()
         cases = [

@@ -1841,7 +1841,7 @@ function DetailTab({
   const [qMonth,  setQMonth]  = useState<number | undefined>(month ?? undefined)
   const [qType,   setQType]   = useState<string | undefined>()
   const [qFloor,  setQFloor]  = useState<string | undefined>()
-  const [qStatus, setQStatus] = useState<string | undefined>()
+  const [qStatus, setQStatus] = useState<string[]>([])
   const [qKw,     setQKw]     = useState<string>('')
   const [page,    setPage]    = useState(1)
   const pageSize = 50
@@ -1898,7 +1898,7 @@ function DetailTab({
       render: (v: number | null) => v != null ? `${fmtDec(v, 1)}天` : '-', sorter: true },
   ]
 
-  const exportUrl = buildExportUrl({ year: qYear, month: qMonth, repair_type: qType, floor: qFloor, status: qStatus, keyword: qKw || undefined })
+  const exportUrl = buildExportUrl({ year: qYear, month: qMonth, repair_type: qType, floor: qFloor, status: qStatus.length > 0 ? qStatus : undefined, keyword: qKw || undefined })
 
   return (
     <div>
@@ -1926,7 +1926,7 @@ function DetailTab({
             </Select>
           </Col>
           <Col xs={12} sm={6} md={4}>
-            <Select value={qStatus} placeholder="處理狀況" allowClear style={{ width: '100%' }} onChange={setQStatus}>
+            <Select mode="multiple" value={qStatus} placeholder="處理狀況" allowClear style={{ width: '100%' }} onChange={setQStatus} maxTagCount={1}>
               {filterOpts.statuses.map(s => <Option key={s} value={s}>{s}</Option>)}
             </Select>
           </Col>
@@ -1942,7 +1942,7 @@ function DetailTab({
           <Col xs={24} sm={6} md={4}>
             <Space>
               <Button type="primary" icon={<SearchOutlined />} onClick={() => doQuery(1)}>搜尋</Button>
-              <Button onClick={() => { setQYear(undefined); setQMonth(undefined); setQType(undefined); setQFloor(undefined); setQStatus(undefined); setQKw('') }}>清除</Button>
+              <Button onClick={() => { setQYear(undefined); setQMonth(undefined); setQType(undefined); setQFloor(undefined); setQStatus([]); setQKw('') }}>清除</Button>
             </Space>
           </Col>
         </Row>

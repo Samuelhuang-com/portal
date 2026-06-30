@@ -1289,7 +1289,8 @@ def query_detail(
     if floor:
         result = [c for c in result if floor.lower() in (c.floor + " " + c.floor_normalized).lower()]
     if status:
-        result = [c for c in result if c.status == status]
+        _statuses = {s.strip() for s in status.split(',')}
+        result = [c for c in result if c.status in _statuses]
     if keyword:
         kw = keyword.lower()
         result = [c for c in result if kw in c.case_no.lower() or kw in c.title.lower()]
