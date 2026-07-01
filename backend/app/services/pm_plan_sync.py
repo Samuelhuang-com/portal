@@ -134,15 +134,25 @@ def _ragic_url(sheet_no: int, record_id: str) -> str:
 # ── 單一 Sheet 同步 ──────────────────────────────────────────────────────────
 
 async def _sync_one_sheet(db, cfg: dict, stats: dict) -> None:
-    """同步單一主管排定 Sheet（含主表批次 + 子表格項目）"""
+    """
+    同步單一主管排定 Sheet（含主表批次 + 子表格項目）。
+
+    子表格解析與全量替換策略（2026-07-01 修正，解決行事曆重複顯示 bug）：
+      - fetch_one() 回傳需先 unwrap 外層 {"recordId": {fields...}} 包裝，
+        再用方式 A/B/C/D 判斷子表格列實際位置 —— 與飯店／商場／全棟 PM
+        同步（periodic_maintenance_sync.py 等）採用相同邏輯，避免誤將
+        整筆批次記錄或錯誤層級的數字 key 當成子表格列，導致重複/錯誤資料。
+      - 每次同步先清空該 Sheet 現有資料再全量寫入（Ragic 為單一真實來源，
+        本 Sheet 資料量小），避免舊版解析邏輯遺留的錯誤列殘留於 DB。
+    """
     sheet_no = cfg["sheet_no"]
     path     = cfg["path"]
     label    = cfg["label"]
 
     logger.info("pm_plan_sync: 開始同步 Sheet %d (%s) path=%s", sheet_no, label, path)
 
-    # 每個 Sheet 使用獨立的 adapter（sheet_path 在 constructor 設定）
-    adapter = RagicAdapter(sheet_path=path)
+    # 每個 Sheet 使用獨立的 adapter（sheet_path 在 constructor 設定，server/account 沿用預設）
+    adapter = RagicAdapter(sheet_path=path, server_url=_SERVER, account=_ACCOUNT)
 
     # ── Step 1：抓主表批次清單 ────────────────────────────────────────────────
     try:
@@ -156,6 +166,11 @@ async def _sync_one_sheet(db, cfg: dict, stats: dict) -> None:
         logger.info("pm_plan_sync: Sheet %d 無資料", sheet_no)
         return
 
+    # ── Step 1.5：全量替換前，先清空此 Sheet 現有資料 ──────────────────────────
+    deleted = db.query(PmPlanItem).filter(PmPlanItem.source_sheet == sheet_no).delete()
+    if deleted:
+        logger.info("pm_plan_sync: Sheet %d 清空舊資料 %d 筆", sheet_no, deleted)
+
     # ── Step 2：逐批次抓完整資料（含子表格項目）──────────────────────────────
     upserted = 0
     for batch_id, batch_data in batches_raw.items():
@@ -164,27 +179,106 @@ async def _sync_one_sheet(db, cfg: dict, stats: dict) -> None:
 
         # 取主表的 period_month（用於補充 MM/DD 日期格式的年份）
         period_month = _str(batch_data.get(CK_PERIOD_MONTH, ""))
+        batch_id_str = str(batch_id)
 
         # 抓完整批次資料（含子表格）
         try:
-            full = await adapter.fetch_one(batch_id)
+            full_record = await adapter.fetch_one(batch_id)
         except Exception as exc:
             logger.warning("pm_plan_sync: Sheet %d 批次 %s fetch_one 失敗: %s",
-                           sheet_no, batch_id, exc)
-            # 退而求其次：用清單資料
-            full = batch_data
+                           sheet_no, batch_id_str, exc)
+            continue
 
-        if not isinstance(full, dict):
+        if not isinstance(full_record, dict):
+            continue
+
+        # ── Unwrap fetch_one 外層包裝 {"recordId": {fields...}} ───────────────
+        if batch_id_str in full_record and len(full_record) == 1:
+            full_record = full_record[batch_id_str]
+
+        # ── 找出子表格列（方式 A/B/C/D，與飯店/商場/全棟 PM 同步相同邏輯）──────
+        sub_rows: dict[str, dict] = {}
+
+        # 方式 A：頂層數字 key
+        direct_numeric = {
+            k: v for k, v in full_record.items()
+            if k.lstrip("-").isdigit() and isinstance(v, dict)
+        }
+        if direct_numeric:
+            if len(direct_numeric) == 1:
+                container_key = next(iter(direct_numeric))
+                container_val = direct_numeric[container_key]
+                inner_numeric = {
+                    k: v for k, v in container_val.items()
+                    if k.lstrip("-").isdigit() and isinstance(v, dict)
+                }
+                if inner_numeric:
+                    sub_rows = inner_numeric
+                    logger.info("pm_plan_sync: Sheet %d 批次 %s → 方式A深層 %d 列",
+                                sheet_no, batch_id_str, len(sub_rows))
+                else:
+                    sub_rows = direct_numeric
+                    logger.info("pm_plan_sync: Sheet %d 批次 %s → 方式A %d 列",
+                                sheet_no, batch_id_str, len(sub_rows))
+            else:
+                sub_rows = direct_numeric
+                logger.info("pm_plan_sync: Sheet %d 批次 %s → 方式A %d 列",
+                            sheet_no, batch_id_str, len(sub_rows))
+
+        # 方式 B：命名 key → dict（key 為數字）
+        if not sub_rows:
+            for k, v in full_record.items():
+                if k.startswith("_"):
+                    continue
+                if isinstance(v, dict) and len(v) > 0:
+                    first_sub = next(iter(v.keys()), "")
+                    if first_sub.lstrip("-").isdigit():
+                        sub_rows = {rk: rv for rk, rv in v.items() if isinstance(rv, dict)}
+                        logger.info("pm_plan_sync: Sheet %d 批次 %s → 方式B('%s') %d 列",
+                                    sheet_no, batch_id_str, k, len(sub_rows))
+                        break
+
+        # 方式 C：命名 key → list of dicts
+        if not sub_rows:
+            for k, v in full_record.items():
+                if k.startswith("_"):
+                    continue
+                if isinstance(v, list) and len(v) > 0 and isinstance(v[0], dict):
+                    sub_rows = {str(i + 1): row for i, row in enumerate(v)}
+                    logger.info("pm_plan_sync: Sheet %d 批次 %s → 方式C('%s') %d 列",
+                                sheet_no, batch_id_str, k, len(sub_rows))
+                    break
+
+        # 方式 D：Ragic 內部 _subtable_{id} key
+        if not sub_rows:
+            for k, v in full_record.items():
+                if not k.startswith("_subtable_"):
+                    continue
+                if not isinstance(v, dict) or len(v) == 0:
+                    continue
+                inner_numeric = {
+                    rk: rv for rk, rv in v.items()
+                    if rk.lstrip("-").isdigit() and isinstance(rv, dict)
+                }
+                if inner_numeric:
+                    sub_rows = inner_numeric
+                    logger.info("pm_plan_sync: Sheet %d 批次 %s → 方式D('%s') %d 列",
+                                sheet_no, batch_id_str, k, len(sub_rows))
+                    break
+                inner_dicts = {rk: rv for rk, rv in v.items() if isinstance(rv, dict)}
+                if inner_dicts:
+                    sub_rows = inner_dicts
+                    logger.info("pm_plan_sync: Sheet %d 批次 %s → 方式D-b('%s') %d 列",
+                                sheet_no, batch_id_str, k, len(sub_rows))
+                    break
+
+        if not sub_rows:
+            logger.warning("pm_plan_sync: Sheet %d 批次 %s 無子表格，keys=%s",
+                           sheet_no, batch_id_str, list(full_record.keys()))
             continue
 
         # ── Step 3：解析子表格項目 ─────────────────────────────────────────
-        for row_key, row_data in full.items():
-            # 子表格的 key 是純數字
-            if not str(row_key).isdigit():
-                continue
-            if not isinstance(row_data, dict):
-                continue
-
+        for row_key, row_data in sub_rows.items():
             task_name = _str(row_data.get(CK_TASK_NAME, ""))
             sched_raw = _str(row_data.get(CK_SCHED_DATE, ""))
 
@@ -196,13 +290,11 @@ async def _sync_one_sheet(db, cfg: dict, stats: dict) -> None:
             if not sched_iso:
                 continue
 
-            # 組合唯一 ragic_id
-            item_id = f"{sheet_no}_{batch_id}_{row_key}"
+            # 組合唯一 ragic_id（已於 Step 1.5 全量清空，直接新增即可）
+            item_id = f"{sheet_no}_{batch_id_str}_{row_key}"
 
-            item = db.query(PmPlanItem).filter(PmPlanItem.ragic_id == item_id).first()
-            if item is None:
-                item = PmPlanItem(ragic_id=item_id)
-                db.add(item)
+            item = PmPlanItem(ragic_id=item_id)
+            db.add(item)
 
             item.source_sheet   = sheet_no
             item.source_label   = label
@@ -214,7 +306,7 @@ async def _sync_one_sheet(db, cfg: dict, stats: dict) -> None:
             item.scheduled_date = sched_iso
             item.scheduler_name = _str(row_data.get(CK_SCHEDULER, ""))
             item.note           = _str(row_data.get(CK_NOTE, ""))
-            item.ragic_url      = _ragic_url(sheet_no, batch_id)
+            item.ragic_url      = _ragic_url(sheet_no, batch_id_str)
             item.ragic_created_at = _str(batch_data.get("_ragicCreate", ""))
             item.ragic_updated_at = _str(batch_data.get("_ragicUpdate", ""))
 

@@ -385,6 +385,15 @@ async def sync_items_from_ragic() -> dict:
             logger.info(f"[MallPMSync][Items] 批次 {batch_id_str} → 解析 {len(sub_rows)} 列")
             total_fetched += len(sub_rows)
 
+            # ── 批次全量替換（2026-07-01 修正）：先清空此批次現有項目，避免
+            #    過去解析出的不同 row_key（同一任務、不同 ragic_id）長期殘留
+            #    於 DB，造成行事曆重複顯示同一保養任務 ────────────────────────
+            deleted_in_batch = db.query(MallPeriodicMaintenanceItem).filter(
+                MallPeriodicMaintenanceItem.batch_ragic_id == batch_id_str
+            ).delete()
+            if deleted_in_batch:
+                logger.info(f"[MallPMSync][Items] 批次 {batch_id_str} 清空舊項目 {deleted_in_batch} 筆")
+
             for row_key, row_raw in sub_rows.items():
                 item_id = f"{batch_id_str}_{row_key}"
                 try:

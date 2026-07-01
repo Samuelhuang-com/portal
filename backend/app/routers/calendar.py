@@ -129,6 +129,33 @@ def _should_include(event_type: str, types_filter: Optional[str]) -> bool:
     return event_type in [t.strip() for t in types_filter.split(",")]
 
 
+def _clean_title(title: str) -> str:
+    """去掉標題開頭的 [xxx] 前綴（如 "[商場保養] "、"[季保] "），取得純任務名稱。
+    用於跨事件類型比對是否為同一個保養任務（見 pm_plan 與執行類事件去重邏輯）。"""
+    return re.sub(r'^\[.*?\]\s*', '', title).strip()
+
+
+def _pm_plan_batch_id(ragic_id: str) -> int:
+    """從 pm_plan_item.ragic_id（格式 "{sheet_no}_{batch_id}_{row_key}"）解析出 batch_id，
+    用於同一任務跨批次重複時判斷哪個批次較新（batch_id 越大越新）。解析失敗回傳 0。"""
+    parts = ragic_id.split("_")
+    if len(parts) >= 2:
+        try:
+            return int(parts[1])
+        except ValueError:
+            return 0
+    return 0
+
+
+def _safe_batch_num(ragic_id: str) -> int:
+    """將批次 ragic_id 轉為整數以比較新舊（batch_id 越大越新）。解析失敗回傳 0。
+    用於 hotel_pm/mall_pm/full_pm 批次明細跨批次重複時的去重判斷。"""
+    try:
+        return int(ragic_id)
+    except (ValueError, TypeError):
+        return 0
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 各模組事件收集函式
 # ─────────────────────────────────────────────────────────────────────────────
@@ -148,7 +175,13 @@ def _collect_hotel_pm(db: Session, start: date, end: date) -> List[CalendarEvent
         PeriodicMaintenanceBatch.period_month <= end_month,
     ).all()
 
+    # ── 去重（2026-07-01 修正）─────────────────────────────────────────────────
+    # 新批次常以複製舊批次建立，若某任務「排定日期」未隨批次更新／清除，
+    # 查詢範圍跨批次月份時，舊批次與新批次會各自產生一筆相同任務同一天的事件。
+    # 以 (task_name, item_date, zone) 為 key，只保留批次 ID 較大（較新）的一筆。
+    candidates: dict = {}
     for batch in batches:
+        batch_num = _safe_batch_num(batch.ragic_id)
         items = db.query(PeriodicMaintenanceItem).filter(
             PeriodicMaintenanceItem.batch_ragic_id == batch.ragic_id,
             PeriodicMaintenanceItem.scheduled_date != "",
@@ -159,30 +192,36 @@ def _collect_hotel_pm(db: Session, start: date, end: date) -> List[CalendarEvent
             if not item_date or not (start <= item_date <= end):
                 continue
 
-            if item.is_completed:
-                status, status_label = "completed", "已完成"
-            elif item.abnormal_flag:
-                status, status_label = "abnormal", "異常"
-            else:
-                status, status_label = "pending", "待執行"
+            key = (item.task_name, item_date, "飯店")
+            existing = candidates.get(key)
+            if existing is None or batch_num > existing[0]:
+                candidates[key] = (batch_num, batch, item, item_date)
 
-            events.append(CalendarEventOut(
-                id           = f"hotel_pm_{item.ragic_id}",
-                title        = f"[飯店保養] {item.task_name}",
-                start        = _date_to_iso(item_date),
-                all_day      = True,
-                event_type   = "hotel_pm",
-                module_label = label,
-                source_id    = item.ragic_id,
-                status       = status,
-                status_label = status_label,
-                responsible  = item.executor_name or item.scheduler_name,
-                description  = f"{item.category} | {item.location}",
-                deep_link    = "/hotel/periodic-maintenance",
-                color        = color,
-                zone         = "飯店",
-                ragic_url    = f"https://ap12.ragic.com/soutlet001/periodic-maintenance/6/{batch.ragic_id}",
-            ))
+    for batch_num, batch, item, item_date in candidates.values():
+        if item.is_completed:
+            status, status_label = "completed", "已完成"
+        elif item.abnormal_flag:
+            status, status_label = "abnormal", "異常"
+        else:
+            status, status_label = "pending", "待執行"
+
+        events.append(CalendarEventOut(
+            id           = f"hotel_pm_{item.ragic_id}",
+            title        = f"[飯店保養] {item.task_name}",
+            start        = _date_to_iso(item_date),
+            all_day      = True,
+            event_type   = "hotel_pm",
+            module_label = label,
+            source_id    = item.ragic_id,
+            status       = status,
+            status_label = status_label,
+            responsible  = item.executor_name or item.scheduler_name,
+            description  = f"{item.category} | {item.location}",
+            deep_link    = "/hotel/periodic-maintenance",
+            color        = color,
+            zone         = "飯店",
+            ragic_url    = f"https://ap12.ragic.com/soutlet001/periodic-maintenance/6/{batch.ragic_id}",
+        ))
     return events
 
 
@@ -200,7 +239,10 @@ def _collect_mall_pm(db: Session, start: date, end: date) -> List[CalendarEventO
         MallPeriodicMaintenanceBatch.period_month <= end_month,
     ).all()
 
+    # ── 去重（2026-07-01 修正，理由同 _collect_hotel_pm）────────────────────────
+    candidates: dict = {}
     for batch in batches:
+        batch_num = _safe_batch_num(batch.ragic_id)
         items = db.query(MallPeriodicMaintenanceItem).filter(
             MallPeriodicMaintenanceItem.batch_ragic_id == batch.ragic_id,
             MallPeriodicMaintenanceItem.scheduled_date != "",
@@ -211,30 +253,36 @@ def _collect_mall_pm(db: Session, start: date, end: date) -> List[CalendarEventO
             if not item_date or not (start <= item_date <= end):
                 continue
 
-            if item.is_completed:
-                status, status_label = "completed", "已完成"
-            elif item.abnormal_flag:
-                status, status_label = "abnormal", "異常"
-            else:
-                status, status_label = "pending", "待執行"
+            key = (item.task_name, item_date, "商場")
+            existing = candidates.get(key)
+            if existing is None or batch_num > existing[0]:
+                candidates[key] = (batch_num, batch, item, item_date)
 
-            events.append(CalendarEventOut(
-                id           = f"mall_pm_{item.ragic_id}",
-                title        = f"[商場保養] {item.task_name}",
-                start        = _date_to_iso(item_date),
-                all_day      = True,
-                event_type   = "mall_pm",
-                module_label = label,
-                source_id    = item.ragic_id,
-                status       = status,
-                status_label = status_label,
-                responsible  = item.executor_name or item.scheduler_name,
-                description  = f"{item.category} | {item.location}",
-                deep_link    = "/mall/periodic-maintenance",
-                color        = color,
-                zone         = "商場",
-                ragic_url    = f"https://ap12.ragic.com/soutlet001/periodic-maintenance/18/{batch.ragic_id}",
-            ))
+    for batch_num, batch, item, item_date in candidates.values():
+        if item.is_completed:
+            status, status_label = "completed", "已完成"
+        elif item.abnormal_flag:
+            status, status_label = "abnormal", "異常"
+        else:
+            status, status_label = "pending", "待執行"
+
+        events.append(CalendarEventOut(
+            id           = f"mall_pm_{item.ragic_id}",
+            title        = f"[商場保養] {item.task_name}",
+            start        = _date_to_iso(item_date),
+            all_day      = True,
+            event_type   = "mall_pm",
+            module_label = label,
+            source_id    = item.ragic_id,
+            status       = status,
+            status_label = status_label,
+            responsible  = item.executor_name or item.scheduler_name,
+            description  = f"{item.category} | {item.location}",
+            deep_link    = "/mall/periodic-maintenance",
+            color        = color,
+            zone         = "商場",
+            ragic_url    = f"https://ap12.ragic.com/soutlet001/periodic-maintenance/18/{batch.ragic_id}",
+        ))
     return events
 
 
@@ -259,10 +307,23 @@ def _collect_mall_pm_schedule(db: Session, start: date, end: date) -> List[Calen
         .all()
     )
 
+    # ── 去重（2026-07-01 修正）─────────────────────────────────────────────────
+    # 「產生本月排程」對於只有「執行月份」（無明確排定日期）的項目，會在每個
+    # 月份都各自產生一筆「下次執行日」預告列（year_month 不同，但 scheduled_date
+    # 算出來是同一天），導致同一任務在行事曆同一天重複顯示多次。這裡僅在
+    # 行事曆聚合層做去重（同一 item_ragic_id + 同一計算後日期只取一筆），
+    # 不影響「本月排程」列表頁本身的資料與既有預告機制。
+    seen_keys: set = set()
+
     for rec in recs:
         item_date = _pm_item_full_date(rec.year_month, rec.scheduled_date)
         if not item_date or not (start <= item_date <= end):
             continue
+
+        dedup_key = (rec.item_ragic_id, item_date)
+        if dedup_key in seen_keys:
+            continue
+        seen_keys.add(dedup_key)
 
         if rec.is_completed or (rec.start_time and rec.end_time):
             status, status_label = "completed", "已完成"
@@ -308,10 +369,18 @@ def _collect_full_bldg_pm_schedule(db: Session, start: date, end: date) -> List[
         .all()
     )
 
+    # ── 去重（2026-07-01 修正，理由同商場 PM，見 _collect_mall_pm_schedule）──────
+    seen_keys: set = set()
+
     for rec in recs:
         item_date = _pm_item_full_date(rec.year_month, rec.scheduled_date)
         if not item_date or not (start <= item_date <= end):
             continue
+
+        dedup_key = (rec.item_ragic_id, item_date)
+        if dedup_key in seen_keys:
+            continue
+        seen_keys.add(dedup_key)
 
         if rec.is_completed or (rec.start_time and rec.end_time):
             status, status_label = "completed", "已完成"
@@ -356,7 +425,14 @@ def _collect_full_bldg_pm(db: Session, start: date, end: date) -> List[CalendarE
         FullBldgPMBatch.period_month <= end_month,
     ).all()
 
+    # ── 去重（2026-07-01 修正，理由同 _collect_hotel_pm）────────────────────────
+    # 新批次（如「棟週保202607-001」）常以複製上月批次建立，若某任務「排定日期」
+    # 未隨批次更新／清除（如同一天在 6月批次與 7月批次都存在），查詢範圍跨批次
+    # 月份時會各自產生一筆重複事件。以 (task_name, item_date, zone) 為 key，
+    # 只保留批次 ID 較大（較新）的一筆。
+    candidates: dict = {}
     for batch in batches:
+        batch_num = _safe_batch_num(batch.ragic_id)
         items = db.query(FullBldgPMItem).filter(
             FullBldgPMItem.batch_ragic_id == batch.ragic_id,
             FullBldgPMItem.scheduled_date != "",
@@ -367,30 +443,36 @@ def _collect_full_bldg_pm(db: Session, start: date, end: date) -> List[CalendarE
             if not item_date or not (start <= item_date <= end):
                 continue
 
-            if item.is_completed:
-                status, status_label = "completed", "已完成"
-            elif item.abnormal_flag:
-                status, status_label = "abnormal", "異常"
-            else:
-                status, status_label = "pending", "待執行"
+            key = (item.task_name, item_date, "公區")
+            existing = candidates.get(key)
+            if existing is None or batch_num > existing[0]:
+                candidates[key] = (batch_num, batch, item, item_date)
 
-            events.append(CalendarEventOut(
-                id           = f"full_pm_{item.ragic_id}",
-                title        = f"[全棟維護] {item.task_name}",
-                start        = _date_to_iso(item_date),
-                all_day      = True,
-                event_type   = "full_pm",
-                module_label = label,
-                source_id    = item.ragic_id,
-                status       = status,
-                status_label = status_label,
-                responsible  = item.executor_name or item.scheduler_name,
-                description  = f"{item.category} | {item.location}",
-                deep_link    = "/mall/full-building-maintenance",
-                color        = color,
-                zone         = "公區",
-                ragic_url    = f"https://ap12.ragic.com/soutlet001/periodic-maintenance/21/{batch.ragic_id}",
-            ))
+    for batch_num, batch, item, item_date in candidates.values():
+        if item.is_completed:
+            status, status_label = "completed", "已完成"
+        elif item.abnormal_flag:
+            status, status_label = "abnormal", "異常"
+        else:
+            status, status_label = "pending", "待執行"
+
+        events.append(CalendarEventOut(
+            id           = f"full_pm_{item.ragic_id}",
+            title        = f"[全棟維護] {item.task_name}",
+            start        = _date_to_iso(item_date),
+            all_day      = True,
+            event_type   = "full_pm",
+            module_label = label,
+            source_id    = item.ragic_id,
+            status       = status,
+            status_label = status_label,
+            responsible  = item.executor_name or item.scheduler_name,
+            description  = f"{item.category} | {item.location}",
+            deep_link    = "/mall/full-building-maintenance",
+            color        = color,
+            zone         = "公區",
+            ragic_url    = f"https://ap12.ragic.com/soutlet001/periodic-maintenance/21/{batch.ragic_id}",
+        ))
     return events
 
 
@@ -408,6 +490,19 @@ def _collect_pm_plan(db: Session, start: date, end: date) -> List[CalendarEventO
         PmPlanItem.scheduled_date <= end_iso,
         PmPlanItem.scheduled_date != "",
     ).all()
+
+    # ── 去重（2026-07-01 修正）─────────────────────────────────────────────────
+    # 同一張 Sheet 內，若新批次是複製舊批次建立、舊批次未清除，會造成同一任務
+    # 同一天在兩個批次各出現一次（診斷資料證實：33 組重複皆為同 Sheet 跨批次
+    # 完全重覆）。僅保留同組 (source_sheet, scheduled_date, task_name) 中
+    # batch_id 較大（較新）的一筆，避免行事曆重複顯示。
+    dedup_map: dict = {}
+    for _item in items:
+        _key = (_item.source_sheet, _item.scheduled_date, _item.task_name)
+        _existing = dedup_map.get(_key)
+        if _existing is None or _pm_plan_batch_id(_item.ragic_id) > _pm_plan_batch_id(_existing.ragic_id):
+            dedup_map[_key] = _item
+    items = list(dedup_map.values())
 
     # 頻率 → 中文顯示
     FREQ_TAG: dict = {
@@ -657,8 +752,28 @@ def get_calendar_events(
 
     all_events: List[CalendarEventOut] = []
 
+    # ── 週期預排（pm_plan）優先於執行類事件（hotel_pm/mall_pm/full_pm）────────
+    # pm_plan 來源 Sheet 7/13/20（主管排定）與執行類 Sheet 6/8、18、21（同仁執行）
+    # 追蹤的常是同一個保養任務；同一任務同一天兩邊都有記錄時，行事曆固定以
+    # pm_plan（主管排定）為準，避免同一任務重複顯示（2026-07-01 修正，飯店/商場/
+    # 全棟三個區域一併處理）。若使用者在類型篩選中關閉「週期預排」，則不進行
+    # 此去重（pm_plan_keys 會是空集合）。
+    pm_plan_events: List[CalendarEventOut] = []
+    if _should_include("pm_plan", types):
+        pm_plan_events = _collect_pm_plan(db, start_date, end_date)
+        all_events.extend(pm_plan_events)
+
+    pm_plan_keys = {
+        (_clean_title(e.title), e.start, e.zone) for e in pm_plan_events
+    }
+
     if _should_include("hotel_pm",   types):
-        all_events.extend(_collect_hotel_pm(db, start_date, end_date))
+        hotel_events = _collect_hotel_pm(db, start_date, end_date)
+        hotel_events = [
+            e for e in hotel_events
+            if (_clean_title(e.title), e.start, e.zone) not in pm_plan_keys
+        ]
+        all_events.extend(hotel_events)
     if _should_include("mall_pm",    types):
         # 合併 Ragic 批次事件 + Portal 排程事件；Portal 排程優先（相同 title+date 去重）
         batch_events  = _collect_mall_pm(db, start_date, end_date)
@@ -666,6 +781,10 @@ def get_calendar_events(
         sched_keys    = {(e.title, e.start) for e in sched_events}
         merged_mall   = [e for e in batch_events if (e.title, e.start) not in sched_keys]
         merged_mall  += sched_events
+        merged_mall   = [
+            e for e in merged_mall
+            if (_clean_title(e.title), e.start, e.zone) not in pm_plan_keys
+        ]
         all_events.extend(merged_mall)
     if _should_include("full_pm",    types):
         # 合併 Ragic 批次事件 + Portal 排程事件；Portal 排程優先（相同 title+date 去重）
@@ -674,9 +793,11 @@ def get_calendar_events(
         full_sched_keys   = {(e.title, e.start) for e in full_sched_events}
         merged_full       = [e for e in full_batch_events if (e.title, e.start) not in full_sched_keys]
         merged_full      += full_sched_events
+        merged_full       = [
+            e for e in merged_full
+            if (_clean_title(e.title), e.start, e.zone) not in pm_plan_keys
+        ]
         all_events.extend(merged_full)
-    if _should_include("pm_plan",    types):
-        all_events.extend(_collect_pm_plan(db, start_date, end_date))
     if _should_include("inspection", types):
         all_events.extend(_collect_inspection(db, start_date, end_date))
     if _should_include("approval",   types):

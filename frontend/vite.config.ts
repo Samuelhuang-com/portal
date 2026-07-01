@@ -11,7 +11,7 @@ export default defineConfig({
   },
   server: {
     host: '127.0.0.1',
-    port: 5173,
+    port: 5300,
     proxy: {
       '/api': {
         target: 'http://127.0.0.1:8000',   // 明確 IPv4，避免 Windows 11 解析成 ::1
