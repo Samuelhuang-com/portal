@@ -672,6 +672,28 @@ def _collect_memos(db: Session, start: date, end: date) -> List[CalendarEventOut
         Memo.created_at <= end_dt,
     ).all()
 
+    # ── 去重（2026-07-02 修正）───────────────────────────────────────────────
+    # 系統自動來源的公告（如合約到期提醒 source='contract_expiry'）設計上每個
+    # 來源記錄（source_id）同一天只會產生一筆，但排程若曾經歷背景 process 重複
+    # 執行（競態條件，兩邊都在對方 commit 前查到「尚無記錄」），仍可能寫入 2 筆
+    # 內容相同的 memo。僅針對「有明確 source + source_id」的系統公告，以
+    # (source, source_id, 日期) 去重，保留最早建立的一筆；使用者手動發布的公告
+    # （source 為空）不受影響，一律照常全部顯示。
+    dedup_map: dict = {}
+    plain_memos: list = []
+    for _m in memos:
+        if _m.source and _m.source_id:
+            _day_key = _m.created_at.strftime("%Y-%m-%d") if _m.created_at else ""
+            _key = (_m.source, _m.source_id, _day_key)
+            _existing = dedup_map.get(_key)
+            if _existing is None or (
+                _m.created_at and _existing.created_at and _m.created_at < _existing.created_at
+            ):
+                dedup_map[_key] = _m
+        else:
+            plain_memos.append(_m)
+    memos = list(dedup_map.values()) + plain_memos
+
     for memo in memos:
         start_iso = (
             memo.created_at.strftime("%Y-%m-%d")
