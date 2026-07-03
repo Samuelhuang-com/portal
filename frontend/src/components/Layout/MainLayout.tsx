@@ -42,6 +42,7 @@ import {
   SyncOutlined,
   SwapOutlined,
   RobotOutlined,
+  PlayCircleOutlined,
 } from '@ant-design/icons'
 import { useNavigate, useLocation, Outlet } from 'react-router-dom'
 import { useAuthStore } from '@/stores/authStore'
@@ -166,6 +167,13 @@ export const menuItems: MenuItem[] = [
     icon: <CalendarOutlined />,
     label: NAV_GROUP.calendar,
     permissionKey: 'calendar_view',
+  },
+  // ── 影音教學（本地模組，不對接 Ragic；行事曆之後、班表之前）─────────────────
+  {
+    key: '/tutorial-videos',
+    icon: <PlayCircleOutlined />,
+    label: NAV_PAGE.tutorialVideos,
+    permissionKey: 'tutorial_videos_view',
   },
   // ── 班表管理（行事曆之後、飯店管理之前）────────────────────────────────────
   {

@@ -60,6 +60,7 @@ import MemoDetailPage     from '@/pages/Memos/Detail'
 import CalendarPage       from '@/pages/Calendar'
 import HotelCalendarPage  from '@/pages/HotelCalendar'
 import MallCalendarPage   from '@/pages/MallCalendar'
+import TutorialVideosPage from '@/pages/TutorialVideos'
 // ── 班表管理 ──────────────────────────────────────────────────────────────────
 import ScheduleOverviewPage    from '@/pages/Schedule'
 import ScheduleCalendarPage    from '@/pages/Schedule/Calendar'
@@ -175,6 +176,7 @@ const PERM_DEFAULT_ROUTES: { key: string; route: string }[] = [
   { key: 'memos_view',                        route: '/memos/list' },
   { key: 'exec_dashboard_view',               route: '/exec-dashboard' },
   { key: 'work_category_analysis_view',       route: '/work-category-analysis' },
+  { key: 'tutorial_videos_view',              route: '/tutorial-videos' },
 ]
 
 function HomeRedirect() {
@@ -345,6 +347,13 @@ export default function AppRouter() {
 
         {/* ── 行事曆 ────────────────────────────────────────────────── */}
         <Route path="calendar" element={<CalendarPage />} />
+
+        {/* ── 影音教學（本地模組，不對接 Ragic）────────────────────────── */}
+        <Route path="tutorial-videos" element={
+          <PermissionGuard permissionKey="tutorial_videos_view">
+            <TutorialVideosPage />
+          </PermissionGuard>
+        } />
 
         {/* ── 班表管理（本地 SQLite 模組，不對接 Ragic）───────────────── */}
         <Route path="schedule">

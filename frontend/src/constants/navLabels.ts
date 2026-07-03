@@ -55,6 +55,7 @@
  *   2026-05-24  新增 pptExport（飯店 Dashboard PPT 匯出設定）Section Registry 架構，route /ppt-export
  *   2026-05-27  新增 contract（合約管理）Phase 1.3 Portal 集成，route /contract + /contract/vendors + /contract/settings
  *   2026-06-29  新增 hotelCalendar（飯店行事曆）+ mallCalendar（商場行事曆），route /hotel/calendar + /mall/calendar
+ *   2026-07-03  新增 tutorialVideos（影音教學）一階選單，本地模組不對接 Ragic，route /tutorial-videos
  */
 
 // ── 系統標題 ──────────────────────────────────────────────────────────────────
@@ -239,4 +240,7 @@ export const NAV_PAGE = {
 
   // AI 助理
   aiWorkorderAssistant: 'AI 工單查詢助理',               // ← route /ai-assistant
+
+  // 影音教學（本地模組，不對接 Ragic）
+  tutorialVideos:       '影音教學',                      // ← route /tutorial-videos
 } as const

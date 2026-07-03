@@ -110,6 +110,7 @@ from app.routers import (
     repair_ppt_export,
     contract,
     reference_data,
+    tutorial_videos,
 )
 
 
@@ -1360,6 +1361,8 @@ async def lifespan(app: FastAPI):
     import app.models.contract                 # noqa: F401  合約管理（含 ContractClaim + H1~H4 新表）
     import app.models.hotel_routine_pm         # noqa: F401  飯店例行維護（Sheet 11 平表，含維修工時）
     import app.models.hotel_routine_pm_schedule  # noqa: F401  飯店例行維護排程
+    import app.models.tutorial_video_module    # noqa: F401  影音教學模組主檔（本地模組，不對接 Ragic）
+    import app.models.tutorial_video           # noqa: F401  影音教學單集（本地模組，不對接 Ragic）
 
     # B4F 扁平化遷移：刪除舊 batch 表 + 檢查 item 表欄位（必須在 create_all 之前）
     _migrate_b4f_flatten()
@@ -1371,6 +1374,42 @@ async def lifespan(app: FastAPI):
     # 建立尚未存在的資料表（不影響已有表格）
     Base.metadata.create_all(bind=engine)
     print("[Portal] Database tables ensured.")
+
+    # 影音教學 Migration：舊版 tutorial_videos 直接存 category/module_name/module_route，
+    # 新版改為獨立的 tutorial_video_modules 主檔（module_id 關聯），此處把既有資料搬過去
+    from sqlalchemy import text as _tv_text
+    import uuid as _tv_uuid
+    with engine.connect() as _conn:
+        _tv_cols = {row[1] for row in _conn.execute(_tv_text("PRAGMA table_info(tutorial_videos)"))}
+        if _tv_cols and "module_id" not in _tv_cols:
+            _conn.execute(_tv_text("ALTER TABLE tutorial_videos ADD COLUMN module_id TEXT DEFAULT ''"))
+            print("[Portal] tutorial_videos: added module_id column.")
+            if "module_name" in _tv_cols:
+                legacy_rows = _conn.execute(_tv_text(
+                    "SELECT DISTINCT category, module_name, module_route FROM tutorial_videos"
+                )).fetchall()
+                order_by_category: dict = {}
+                now_str = twnow().isoformat(sep=" ")
+                for category, module_name, module_route in legacy_rows:
+                    cat = category or "hotel"
+                    order_by_category.setdefault(cat, 0)
+                    mod_id = str(_tv_uuid.uuid4())
+                    _conn.execute(_tv_text(
+                        "INSERT INTO tutorial_video_modules "
+                        "(id, category, module_name, module_route, sort_order, created_at, updated_at) "
+                        "VALUES (:id, :cat, :name, :route, :order_val, :now, :now)"
+                    ), {
+                        "id": mod_id, "cat": cat, "name": module_name or "",
+                        "route": module_route or "", "order_val": order_by_category[cat], "now": now_str,
+                    })
+                    order_by_category[cat] += 1
+                    _conn.execute(_tv_text(
+                        "UPDATE tutorial_videos SET module_id = :mid "
+                        "WHERE category = :cat AND module_name = :name AND module_route = :route"
+                    ), {"mid": mod_id, "cat": category, "name": module_name, "route": module_route})
+                _conn.commit()
+                print(f"[Portal] tutorial_videos: migrated {len(legacy_rows)} legacy module(s) to tutorial_video_modules.")
+    print("[Portal] Tutorial video module migration checked.")
 
     # PPT 匯出設定 Migration：為已存在的 ppt_export_configs 表補充新欄位
     from sqlalchemy import text as _ppt_text
@@ -2007,6 +2046,13 @@ app.include_router(
     memos.router,
     prefix=f"{API_PREFIX}/memos",
     tags=["公告系統"],
+)
+
+# ── 新增：影音教學（本地模組，不對接 Ragic）───────────────────────────────────
+app.include_router(
+    tutorial_videos.router,
+    prefix=f"{API_PREFIX}/tutorial-videos",
+    tags=["影音教學"],
 )
 
 # ── 新增：行事曆聚合系統 ──────────────────────────────────────────────────────
