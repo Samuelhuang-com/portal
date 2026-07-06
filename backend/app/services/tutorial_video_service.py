@@ -21,10 +21,24 @@ from app.schemas.tutorial_video import (
 # 檔案儲存目錄（backend 執行目錄下，與 memo_file / upload 慣例一致）
 VIDEO_ROOT = Path("uploads/tutorial_videos")
 
-ALLOWED_VIDEO_TYPES = {"video/mp4", "video/x-m4v", "video/quicktime"}
+ALLOWED_VIDEO_TYPES = {"video/mp4", "video/x-m4v", "video/quicktime", "application/octet-stream"}
+ALLOWED_VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v"}
 MAX_VIDEO_SIZE = 500 * 1024 * 1024  # 500 MB／單支影片上限，超過請改用外部影音平台
 
 VALID_CATEGORIES = {"hotel", "mall", "group"}
+
+
+def is_allowed_video_file(video_file) -> bool:
+    """
+    判斷上傳檔案是否為允許的影片格式。
+    瀏覽器回報的 content_type 不一定可靠（不同瀏覽器／作業系統對同一副檔名可能
+    回傳不同的 MIME type，甚至是 application/octet-stream），因此改以「content_type
+    命中已知影片類型」或「副檔名是 .mp4／.mov／.m4v」兩者任一成立即可通過。
+    """
+    content_type_ok = (video_file.content_type or "").lower() in ALLOWED_VIDEO_TYPES
+    suffix = Path(video_file.filename or "").suffix.lower()
+    extension_ok = suffix in ALLOWED_VIDEO_EXTENSIONS
+    return content_type_ok or extension_ok
 
 
 def _now():

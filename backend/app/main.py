@@ -1411,6 +1411,58 @@ async def lifespan(app: FastAPI):
                 print(f"[Portal] tutorial_videos: migrated {len(legacy_rows)} legacy module(s) to tutorial_video_modules.")
     print("[Portal] Tutorial video module migration checked.")
 
+    # 影音教學 Migration（第二步）：舊版 tutorial_videos 表格是在 category/module_name/
+    # module_route 仍是直接欄位（NOT NULL、無 SQL 層級 DEFAULT）時建立的。上面的搬移只
+    # 是「新增 module_id 欄位＋回填」，並不會移除這三個舊欄位——SQLite 的
+    # Base.metadata.create_all() 只建立不存在的表，不會變更既有表結構。
+    # 結果：新版程式的 INSERT 已不再提供 category/module_name/module_route 的值，
+    # 但資料表仍要求這三欄 NOT NULL，於是每次上傳都會拋出
+    # "NOT NULL constraint failed: tutorial_videos.category"。
+    # 這裡透過「建新表→搬資料→刪舊表→改名」的方式重建 tutorial_videos，改用目前
+    # ORM model 對應的正確欄位（不含三個舊欄位）。
+    with engine.connect() as _conn:
+        _tv_cols2 = {row[1] for row in _conn.execute(_tv_text("PRAGMA table_info(tutorial_videos)"))}
+        _tv_legacy_cols = {"category", "module_name", "module_route"} & _tv_cols2
+        if _tv_legacy_cols:
+            _conn.execute(_tv_text("""
+                CREATE TABLE tutorial_videos_new (
+                    id VARCHAR(36) NOT NULL PRIMARY KEY,
+                    module_id VARCHAR(36) NOT NULL,
+                    episode VARCHAR(20) NOT NULL,
+                    title VARCHAR(255) NOT NULL,
+                    description TEXT NOT NULL,
+                    video_stored_name VARCHAR(255) NOT NULL,
+                    video_orig_name VARCHAR(255) NOT NULL,
+                    video_size_bytes INTEGER NOT NULL,
+                    video_content_type VARCHAR(100) NOT NULL,
+                    script_stored_name VARCHAR(255) NOT NULL,
+                    script_orig_name VARCHAR(255) NOT NULL,
+                    sort_order INTEGER NOT NULL,
+                    uploaded_by VARCHAR(100) NOT NULL,
+                    created_at DATETIME NOT NULL,
+                    updated_at DATETIME NOT NULL
+                )
+            """))
+            _conn.execute(_tv_text("""
+                INSERT INTO tutorial_videos_new (
+                    id, module_id, episode, title, description,
+                    video_stored_name, video_orig_name, video_size_bytes, video_content_type,
+                    script_stored_name, script_orig_name, sort_order, uploaded_by,
+                    created_at, updated_at
+                )
+                SELECT
+                    id, module_id, episode, title, description,
+                    video_stored_name, video_orig_name, video_size_bytes, video_content_type,
+                    script_stored_name, script_orig_name, sort_order, uploaded_by,
+                    created_at, updated_at
+                FROM tutorial_videos
+            """))
+            _conn.execute(_tv_text("DROP TABLE tutorial_videos"))
+            _conn.execute(_tv_text("ALTER TABLE tutorial_videos_new RENAME TO tutorial_videos"))
+            _conn.commit()
+            print(f"[Portal] tutorial_videos: rebuilt table, dropped legacy columns {_tv_legacy_cols}.")
+    print("[Portal] Tutorial video legacy-column cleanup checked.")
+
     # PPT 匯出設定 Migration：為已存在的 ppt_export_configs 表補充新欄位
     from sqlalchemy import text as _ppt_text
     with engine.connect() as _conn:

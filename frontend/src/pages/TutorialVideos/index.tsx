@@ -54,6 +54,15 @@ function formatSize(bytes: number): string {
   return mb >= 1 ? `${mb.toFixed(1)} MB` : `${(bytes / 1024).toFixed(0)} KB`
 }
 
+/** 從 axios 錯誤中擷取後端實際回傳的訊息，讀不到才用預設文字（避免吞掉真正的失敗原因） */
+function extractApiError(err: any, fallback: string): string {
+  const detail = err?.response?.data?.detail
+  if (typeof detail === 'string' && detail) return detail
+  if (err?.code === 'ECONNABORTED') return `${fallback}（連線逾時，可能是檔案過大或網路不穩）`
+  if (err?.message === 'Network Error') return `${fallback}（網路連線失敗，請確認伺服器是否正常）`
+  return fallback
+}
+
 // ── 單集影片列（可拖曳） ──────────────────────────────────────────────────────
 interface VideoRowProps {
   item: TutorialVideoItem
@@ -324,7 +333,7 @@ export default function TutorialVideosPage() {
       load(activeCategory)
     } catch (err: any) {
       if (err?.errorFields) return
-      message.error('儲存模組失敗')
+      message.error(extractApiError(err, '儲存模組失敗'))
     } finally {
       setModuleSaving(false)
     }
@@ -335,8 +344,8 @@ export default function TutorialVideosPage() {
       await deleteTutorialVideoModule(m.id)
       message.success('模組已刪除')
       load(activeCategory)
-    } catch {
-      message.error('刪除模組失敗')
+    } catch (err: any) {
+      message.error(extractApiError(err, '刪除模組失敗'))
     }
   }
 
@@ -368,8 +377,8 @@ export default function TutorialVideosPage() {
       await deleteTutorialVideo(item.id)
       message.success('已刪除')
       load(activeCategory)
-    } catch {
-      message.error('刪除失敗')
+    } catch (err: any) {
+      message.error(extractApiError(err, '刪除失敗'))
     }
   }
 
@@ -395,7 +404,7 @@ export default function TutorialVideosPage() {
       load(activeCategory)
     } catch (err: any) {
       if (err?.errorFields) return
-      message.error(editingVideo ? '更新失敗' : '上傳失敗，請確認影片格式與大小')
+      message.error(extractApiError(err, editingVideo ? '更新失敗' : '上傳失敗'))
     } finally {
       setVideoSaving(false)
     }

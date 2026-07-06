@@ -5,10 +5,12 @@ Prefix: /api/v1/tutorial-videos
 觀看：所有登入使用者（get_current_user）
 模組／影片的新增、編輯、刪除、排序：需 tutorial_videos_manage 權限
 """
+import re
+from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -39,6 +41,70 @@ def _verify_query_token(token: Optional[str], db: Session) -> User:
     if not user:
         raise HTTPException(status_code=401, detail="使用者不存在或已停用")
     return user
+
+
+_RANGE_RE = re.compile(r"bytes=(\d*)-(\d*)")
+_STREAM_CHUNK_SIZE = 1024 * 1024  # 1MB
+
+
+def _range_file_response(path: Path, range_header: Optional[str], media_type: str) -> StreamingResponse:
+    """
+    支援 HTTP Range Requests 的檔案回應，讓 <video> 播放器可以拖曳進度條／快轉快退。
+
+    starlette==0.37.2（目前 fastapi==0.111.1 對應版本）的 FileResponse 不支援 Range
+    request，瀏覽器送出的 Range 請求會被忽略、永遠整檔回傳 200，導致播放器的進度條
+    拖曳、點擊跳轉、快轉快退全部失效。這裡自行解析 Range header，只讀取請求範圍內的
+    bytes，回傳 206 Partial Content（沒有 Range header 時仍回傳 200 全檔，但附上
+    Accept-Ranges: bytes 讓瀏覽器知道之後可以送 Range 請求)。
+    """
+    file_size = path.stat().st_size
+    start, end = 0, file_size - 1
+    status_code = 200
+
+    if range_header:
+        match = _RANGE_RE.match(range_header.strip())
+        if match:
+            start_str, end_str = match.groups()
+            if start_str == "" and end_str != "":
+                # 後綴範圍："bytes=-500" 表示最後 500 bytes
+                length = min(int(end_str), file_size)
+                start = max(file_size - length, 0)
+                end = file_size - 1
+            elif start_str != "":
+                start = int(start_str)
+                end = int(end_str) if end_str != "" else file_size - 1
+            status_code = 206
+
+    start = max(0, start)
+    end = min(end, file_size - 1)
+    if start > end or start >= file_size:
+        raise HTTPException(
+            status_code=416,
+            detail="Range Not Satisfiable",
+            headers={"Content-Range": f"bytes */{file_size}"},
+        )
+
+    content_length = end - start + 1
+
+    def _iter_file():
+        with open(path, "rb") as f:
+            f.seek(start)
+            remaining = content_length
+            while remaining > 0:
+                chunk = f.read(min(_STREAM_CHUNK_SIZE, remaining))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
+                yield chunk
+
+    headers = {
+        "Accept-Ranges": "bytes",
+        "Content-Length": str(content_length),
+    }
+    if status_code == 206:
+        headers["Content-Range"] = f"bytes {start}-{end}/{file_size}"
+
+    return StreamingResponse(_iter_file(), status_code=status_code, media_type=media_type, headers=headers)
 
 
 # ── 教學模組主檔 ──────────────────────────────────────────────────────────────
@@ -158,8 +224,11 @@ def create_tutorial_video(
 ):
     if not svc.get_module(module_id, db):
         raise HTTPException(status_code=404, detail="找不到指定的教學模組")
-    if video_file.content_type not in svc.ALLOWED_VIDEO_TYPES:
-        raise HTTPException(status_code=400, detail="只接受 MP4／MOV 影片格式")
+    if not svc.is_allowed_video_file(video_file):
+        raise HTTPException(
+            status_code=400,
+            detail=f"只接受 MP4／MOV 影片格式（偵測到的格式：{video_file.content_type or '未知'}，檔名：{video_file.filename}）",
+        )
 
     tv = svc.create_video(
         module_id=module_id,
@@ -214,6 +283,7 @@ def reorder_tutorial_videos(
 @router.get("/{video_id}/stream", summary="播放教學影片（MP4 串流，支援拖曳進度）")
 def stream_tutorial_video(
     video_id: str,
+    request: Request,
     token: Optional[str] = Query(None, description="供 <video> 標籤播放使用；一般 API 呼叫請改用 Authorization header"),
     db: Session = Depends(get_db),
 ):
@@ -224,7 +294,9 @@ def stream_tutorial_video(
     path = svc.get_video_file_path(tv)
     if not path:
         raise HTTPException(status_code=404, detail="影片檔案不存在")
-    return FileResponse(str(path), media_type=tv.video_content_type or "video/mp4")
+    return _range_file_response(
+        path, request.headers.get("range"), tv.video_content_type or "video/mp4",
+    )
 
 
 @router.get("/{video_id}/script", summary="下載 TTS 逐字稿")
