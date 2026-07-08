@@ -57,9 +57,9 @@ import TodayPanel  from '@/pages/Calendar/components/TodayPanel'
 const { Title, Text } = Typography
 
 // ── 事件類型：各場地適用範圍 ───────────────────────────────────────────────────
-const ALL_TYPES: CalendarEventType[]   = ['hotel_pm', 'mall_pm', 'full_pm', 'pm_plan', 'inspection', 'approval', 'memo', 'custom']
+const ALL_TYPES: CalendarEventType[]   = ['hotel_pm', 'mall_pm', 'full_pm', 'pm_plan', 'approval', 'memo', 'custom']
 const HOTEL_TYPES: CalendarEventType[] = ['hotel_pm', 'pm_plan', 'custom']
-const MALL_TYPES: CalendarEventType[]  = ['mall_pm', 'inspection', 'pm_plan', 'custom']
+const MALL_TYPES: CalendarEventType[]  = ['mall_pm', 'pm_plan', 'custom']
 
 function getAvailableTypes(fixedZone?: '飯店' | '商場'): CalendarEventType[] {
   if (fixedZone === '飯店') return HOTEL_TYPES

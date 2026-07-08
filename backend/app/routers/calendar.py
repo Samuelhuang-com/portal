@@ -14,7 +14,6 @@ Prefix: /api/v1/calendar
   hotel_pm    — 飯店週期保養（pm_batch_item.scheduled_date + pm_batch.period_month）
   mall_pm     — 商場週期保養（mall_pm_batch_item.scheduled_date + mall_pm_batch.period_month）
   pm_plan     — 週期保養預排（pm_plan_item.scheduled_date，來源 Sheet /7、/13、/20 主管排定）
-  inspection  — 工務巡檢（b1f/b2f/rf/b4f_inspection_batch.inspection_date）
   approval    — 簽核管理（approvals.submitted_at）
   memo        — 公告牆（memos.created_at）
   custom      — 自訂事件（calendar_custom_events）
@@ -40,10 +39,6 @@ from app.models.mall_pm_schedule import MallPMSchedule
 from app.models.pm_plan import PmPlanItem
 from app.models.full_building_maintenance import FullBldgPMBatch, FullBldgPMItem
 from app.models.full_bldg_pm_schedule import FullBldgPMSchedule
-from app.models.b1f_inspection import B1FInspectionBatch
-from app.models.b2f_inspection import B2FInspectionBatch
-from app.models.rf_inspection import RFInspectionBatch
-from app.models.b4f_inspection import B4FInspectionBatch
 from app.models.approval import Approval
 from app.models.memo import Memo
 from app.schemas.calendar import (
@@ -403,7 +398,7 @@ def _collect_full_bldg_pm_schedule(db: Session, start: date, end: date) -> List[
             status_label = status_label,
             responsible  = rec.executor_name or "",
             description  = f"{rec.category} | {rec.location} | {rec.frequency}",
-            deep_link    = "/full-building/periodic-maintenance",
+            deep_link    = "/mall/full-building-maintenance",
             color        = color,
             zone         = "公區",
         ))
@@ -525,7 +520,7 @@ def _collect_pm_plan(db: Session, start: date, end: date) -> List[CalendarEventO
         DEEP_LINK_MAP = {
             "飯店": "/hotel/periodic-maintenance",
             "商場": "/mall/periodic-maintenance",
-            "全棟": "/hotel/full-building-maintenance",
+            "全棟": "/mall/full-building-maintenance",
         }
         deep_link = DEEP_LINK_MAP.get(src_label, "/hotel/periodic-maintenance")
 
@@ -555,60 +550,6 @@ def _collect_pm_plan(db: Session, start: date, end: date) -> List[CalendarEventO
             ragic_url    = item.ragic_url or "",
         ))
 
-    return events
-
-
-def _collect_inspection(db: Session, start: date, end: date) -> List[CalendarEventOut]:
-    """收集工務巡檢事件（B1F / B2F / RF / B4F）"""
-    events: List[CalendarEventOut] = []
-    color = EVENT_TYPE_COLORS["inspection"]
-    label = EVENT_TYPE_LABELS["inspection"]
-
-    start_str = start.strftime("%Y/%m/%d")
-    end_str   = end.strftime("%Y/%m/%d")
-
-    INSPECTION_CONFIGS = [
-        ("b1f", "B1F 工務巡檢", B1FInspectionBatch, "/mall/b1f-inspection"),
-        ("b2f", "B2F 工務巡檢", B2FInspectionBatch, "/mall/b2f-inspection"),
-        ("rf",  "RF 工務巡檢",  RFInspectionBatch,  "/mall/rf-inspection"),
-        ("b4f", "B4F 工務巡檢", B4FInspectionBatch, "/mall/b4f-inspection"),
-    ]
-
-    for floor_key, floor_label, BatchModel, deep_link in INSPECTION_CONFIGS:
-        try:
-            batches = db.query(BatchModel).filter(
-                BatchModel.inspection_date >= start_str,
-                BatchModel.inspection_date <= end_str,
-            ).all()
-        except Exception:
-            continue
-
-        seen_dates: set = set()
-        for b in batches:
-            if b.inspection_date in seen_dates:
-                continue
-            seen_dates.add(b.inspection_date)
-
-            item_date = _slash_to_date(b.inspection_date)
-            if not item_date:
-                continue
-
-            events.append(CalendarEventOut(
-                id           = f"inspection_{floor_key}_{b.inspection_date.replace('/', '')}",
-                title        = f"[工務巡檢] {floor_label}",
-                start        = _date_to_iso(item_date),
-                all_day      = True,
-                event_type   = "inspection",
-                module_label = label,
-                source_id    = b.ragic_id,
-                status       = "completed",
-                status_label = "已巡檢",
-                responsible  = getattr(b, "inspector_name", "") or "",
-                description  = f"{floor_label}，巡檢日期：{b.inspection_date}",
-                deep_link    = deep_link,
-                color        = color,
-                zone         = "商場",
-            ))
     return events
 
 
@@ -762,7 +703,7 @@ def get_calendar_events(
     end:    str           = Query(..., description="查詢結束日期 YYYY-MM-DD"),
     types:  Optional[str] = Query(
         None,
-        description="事件類型篩選，逗號分隔：hotel_pm,mall_pm,full_pm,pm_plan,inspection,approval,memo,custom"
+        description="事件類型篩選，逗號分隔：hotel_pm,mall_pm,full_pm,pm_plan,approval,memo,custom"
     ),
     db: Session = Depends(get_db),
 ):
@@ -820,8 +761,6 @@ def get_calendar_events(
             if (_clean_title(e.title), e.start, e.zone) not in pm_plan_keys
         ]
         all_events.extend(merged_full)
-    if _should_include("inspection", types):
-        all_events.extend(_collect_inspection(db, start_date, end_date))
     if _should_include("approval",   types):
         all_events.extend(_collect_approvals(db, start_date, end_date))
     if _should_include("memo",       types):

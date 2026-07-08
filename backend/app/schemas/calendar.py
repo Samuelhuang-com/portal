@@ -28,7 +28,6 @@ EVENT_TYPE_COLORS: Dict[str, str] = {
     "mall_pm":    "#4BA8E8",   # 商場保養 — 品牌輔色（天藍）
     "full_pm":    "#006d75",   # 全棟例行維護 — 暗青
     "pm_plan":    "#52c41a",   # 週期保養預排 — 綠（主管排定）
-    "inspection": "#1677ff",   # 工務巡檢 — Ant Design 藍
     "approval":   "#fa8c16",   # 簽核管理 — 橙
     "memo":       "#722ed1",   # 公告牆   — 紫
     "custom":     "#13c2c2",   # 自訂事件 — 青
@@ -39,7 +38,6 @@ EVENT_TYPE_LABELS: Dict[str, str] = {
     "mall_pm":    "商場保養",
     "full_pm":    "全棟維護",
     "pm_plan":    "週期預排",
-    "inspection": "工務巡檢",
     "approval":   "簽核管理",
     "memo":       "公告牆",
     "custom":     "自訂事件",
@@ -53,7 +51,7 @@ class CalendarEventOut(BaseModel):
     start:        str                       # ISO date "2026-04-15"
     end:          Optional[str] = None
     all_day:      bool = True
-    event_type:   str                       # hotel_pm|mall_pm|pm_plan|inspection|approval|memo|custom
+    event_type:   str                       # hotel_pm|mall_pm|pm_plan|approval|memo|custom
     module_label: str                       # 飯店保養|商場保養|...
     source_id:    str = ""                  # 原模組記錄 ID
     status:       str = ""                  # pending|completed|abnormal|overdue

@@ -27,7 +27,6 @@ export type CalendarEventType =
   | 'mall_pm'     // 商場週期保養（執行記錄）
   | 'full_pm'     // 全棟例行維護（執行記錄，Sheet /21）
   | 'pm_plan'     // 週期保養預排（主管排定 /7 /13 /20）
-  | 'inspection'  // 工務巡檢
   | 'approval'    // 簽核管理
   | 'memo'        // 公告牆
   | 'custom'      // 自訂事件
@@ -45,7 +44,6 @@ export const EVENT_TYPE_COLORS: Record<CalendarEventType, string> = {
   mall_pm:    '#4BA8E8',  // 商場保養 — 品牌輔色（天藍）
   full_pm:    '#006d75',  // 全棟維護 — 暗青
   pm_plan:    '#52c41a',  // 週期保養預排 — 綠（主管排定）
-  inspection: '#1677ff',  // 工務巡檢 — 藍
   approval:   '#fa8c16',  // 簽核管理 — 橙
   memo:       '#722ed1',  // 公告牆   — 紫
   custom:     '#13c2c2',  // 自訂事件 — 青
@@ -56,7 +54,6 @@ export const EVENT_TYPE_LABELS: Record<CalendarEventType, string> = {
   mall_pm:    '商場保養',
   full_pm:    '全棟維護',
   pm_plan:    '週期預排',
-  inspection: '工務巡檢',
   approval:   '簽核管理',
   memo:       '公告牆',
   custom:     '自訂事件',
