@@ -4,6 +4,13 @@
 
 export type CellStatus = 'completed' | 'pending' | 'scheduled' | 'abnormal'
 
+export interface MatrixCellRecord {
+  ragic_id: string
+  date: string
+  assignee: string
+  work_minutes: number | null
+}
+
 export interface MatrixCell {
   ragic_id: string
   status: CellStatus
@@ -16,7 +23,9 @@ export interface MatrixCell {
   done_count: number
   maint_count: number
   unchecked_count: number
-  work_minutes: number | null
+  work_minutes: number | null       // 同房同月多筆時為合計分鐘
+  record_count: number              // 該房該月的記錄（工單）數
+  records: MatrixCellRecord[]       // 各筆記錄明細（依同步順序）
 }
 
 export interface MatrixRoom {
@@ -31,6 +40,7 @@ export interface MatrixResponse {
   floors: string[]
   rooms: MatrixRoom[]
   month_hours: Partial<Record<number, number>>
+  month_orders: Partial<Record<number, number>>
 }
 
 export interface IHGStats {

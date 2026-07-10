@@ -383,6 +383,7 @@ async def get_matrix(
     }
 
     month_minutes: dict[str, float] = {}     # month_key → 分鐘加總
+    month_orders:  dict[str, int]   = {}     # month_key → 工單（記錄）數加總
     for rec in all_recs:
         rno = rec.room_no or "??"
         # 只處理規範清單內的房號（非規範房號的 Ragic 資料跳過）
@@ -423,6 +424,7 @@ async def get_matrix(
             work_minutes = rec.work_minutes
         if work_minutes:
             month_minutes[month_key] = month_minutes.get(month_key, 0.0) + work_minutes
+        month_orders[month_key] = month_orders.get(month_key, 0) + 1
 
         # ── 以 check 欄位結果決定狀態（優先於日期邏輯）────────────────────
         if maint_count > 0:
@@ -437,6 +439,17 @@ async def get_matrix(
         if cell_status and cell_stat != cell_status:
             continue
 
+        # ── 同房同月多筆記錄：工時合計、records 保留各筆明細（不覆蓋）─────────
+        prev_cell = room_map[rno]["cells"].get(month_key)
+        rec_entry = {
+            "ragic_id":     rec.ragic_id,
+            "date":         rec.maint_date,
+            "assignee":     rec.assignee_name,
+            "work_minutes": int(work_minutes) if work_minutes else None,
+        }
+        records = (prev_cell["records"] if prev_cell else []) + [rec_entry]
+        total_minutes = sum(r["work_minutes"] or 0 for r in records)
+
         room_map[rno]["cells"][month_key] = {
             "ragic_id":     rec.ragic_id,
             "status":       cell_stat,
@@ -449,7 +462,9 @@ async def get_matrix(
             "done_count":      done_count,
             "maint_count":     maint_count,
             "unchecked_count": unchecked_count,
-            "work_minutes":    int(work_minutes) if work_minutes else None,
+            "work_minutes":    int(total_minutes) if total_minutes else None,
+            "record_count":    len(records),
+            "records":         records,
         }
 
     # 狀態篩選時，移除沒有任何符合 cell 的房號（空列無意義）
@@ -471,13 +486,19 @@ async def get_matrix(
         for mk, mins in month_minutes.items()
         if mk.lstrip("-").isdigit()
     }
+    month_order_counts = {
+        int(mk): cnt
+        for mk, cnt in month_orders.items()
+        if mk.lstrip("-").isdigit()
+    }
 
     return {
         "year": year,
         "months": list(range(1, 13)),
         "floors": floors,
         "rooms": sorted_rooms,
-        "month_hours": month_hours,   # {1: 12.50, 4: 10.33, ...} 只含有資料的月份
+        "month_hours": month_hours,     # {1: 12.50, 4: 10.33, ...} 只含有資料的月份
+        "month_orders": month_order_counts,  # {1: 28, 4: 30, ...} 各月工單（記錄）數
     }
 
 
@@ -752,13 +773,15 @@ async def list_records(
         try:
             d = int(day)
             day_zf = str(d).zfill(2)
-            # 支援 YYYY/MM/DD（補零）與 YYYY/MM/D（不補零）兩種格式
-            q = q.filter(
-                or_(
-                    IHGRoomMaintenanceMaster.maint_date.like(f"%/{day_zf}"),
-                    IHGRoomMaintenanceMaster.maint_date.like(f"%/{d}"),
-                )
-            )
+            # 支援格式：
+            #   分隔符 / 或 -；日補零或不補零；
+            #   日後可接時間（如 "2026/06/21 00:00:00"，與 /calendar 解析一致）
+            patterns = []
+            for sep in ("/", "-"):
+                for dd in {day_zf, str(d)}:
+                    patterns.append(IHGRoomMaintenanceMaster.maint_date.like(f"%{sep}{dd}"))
+                    patterns.append(IHGRoomMaintenanceMaster.maint_date.like(f"%{sep}{dd} %"))
+            q = q.filter(or_(*patterns))
         except (ValueError, TypeError):
             pass
     if room_no:

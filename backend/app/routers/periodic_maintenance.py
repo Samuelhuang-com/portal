@@ -613,11 +613,6 @@ def _calc_year_matrix(db: Session, year: int, frequency_type: Optional[str] = No
     # 頻率關鍵字集合，用於 pm_schedule 篩選
     freq_kws: Optional[set] = _FREQ_KEYWORDS.get(frequency_type) if frequency_type else None
 
-    # 預先從主檔計算每月「應排程件數」（不依賴是否已產生排程）
-    latest_items_all = _get_latest_batch_items(db)
-    if frequency_type:
-        latest_items_all = [it for it in latest_items_all if _freq_match(it.frequency, frequency_type)]
-
     # ── 逐月計算 ─────────────────────────────────────────────────────────────
     month_results: list[PMYearMatrixMonth] = []
     for m in range(1, 13):
@@ -665,8 +660,14 @@ def _calc_year_matrix(db: Session, year: int, frequency_type: Optional[str] = No
                 if not r.is_completed and r.result_note
             ]
         elif period_items_list:
-            # 有實際批次資料（無排程記錄）→ 從主檔推算應排件數
-            n_total = sum(1 for it in latest_items_all if _should_schedule(it, year, m))
+            # 有實際批次資料（無排程記錄）→ 直接以當月實際批次項目數為準
+            # （與 /period-stats/year-matrix/items 明細查詢邏輯一致：兩者皆讀取
+            #   period_items_list。過去改用「最新批次」的項目定義套用
+            #   _should_schedule 公式反推應排月份，但年/季頻率項目在不同月份
+            #   的批次本來就是彼此不同的項目集合，套用單一批次的 exec_months
+            #   公式去判斷「其他月份」會導致矩陣格數字與點擊明細筆數不一致
+            #   （例如 2026/04 矩陣顯示 2 筆，點擊明細卻有 4 筆）。）
+            n_total = len(period_items_list)
             n_done  = len(period_completed_list)
             notes_parts = [
                 f"{x['item'].task_name}：{x['item'].result_note}"
@@ -1543,14 +1544,22 @@ def _do_generate_hotel_periodic_pm(
     year: int, month: int, db: Session
 ) -> PMScheduleGenerateResult:
     """
-    依最新批次頻率規則，為 year/month 產生 PMSchedule 記錄。
+    為 year/month 產生 PMSchedule 記錄。
+    來源優先順序：
+      1. 該月已有實際 Ragic 批次資料（target_batch 存在）→ 直接以批次內的真實項目為準，
+         全部產生排程（不再套用 _should_schedule 頻率公式反推）。
+         原因：年/季頻率項目在不同月份的批次是彼此不同的項目集合，若仍用「最新批次」
+         的項目定義 + 頻率公式去判斷「這個月該不該排」，會漏掉批次裡實際存在、但
+         公式判斷不到的項目（例如 exec_months 落在最新批次沒有涵蓋的月份），導致
+         產生的 pm_schedule 筆數少於 Ragic 實際筆數。
+      2. 該月尚無批次資料（例如未來月份尚未同步）→ 退回用「最新批次」的項目定義
+         套用 _should_schedule 頻率公式推算（沿用原本邏輯，僅作為預先排程的估算）。
     冪等保護：
       - is_completed=True / start+end 均有  → 跳過
       - portal_edited_at IS NOT NULL         → 跳過
       - 其他已存在記錄                        → 更新 scheduled_date / executor_name
     """
     year_month = f"{year}/{month:02d}"
-    items = _get_latest_batch_items(db)
 
     target_batch = (
         db.query(PeriodicMaintenanceBatch)
@@ -1558,6 +1567,7 @@ def _do_generate_hotel_periodic_pm(
         .first()
     )
     month_sched_lookup: dict[tuple, str] = {}
+    use_actual_batch = False
     if target_batch:
         target_items = (
             db.query(PeriodicMaintenanceItem)
@@ -1575,6 +1585,11 @@ def _do_generate_hotel_periodic_pm(
             else:
                 continue
             month_sched_lookup[(ti.task_name.strip(), ti.category.strip(), ti.location.strip())] = mmdd
+        # 該月已有實際批次資料 → 以批次內的真實項目為準（取代最新批次 + 頻率公式）
+        items = target_items
+        use_actual_batch = True
+    else:
+        items = _get_latest_batch_items(db)
 
     generated             = 0
     updated               = 0
@@ -1592,7 +1607,10 @@ def _do_generate_hotel_periodic_pm(
                 skipped_no_frequency += 1
                 continue
 
-            if not _should_schedule(item, year, month):
+            # 已有該月真實批次資料時，批次內的項目即代表「本來就該在這個月執行」，
+            # 不再套用 _should_schedule 頻率公式（該公式只適用於「尚無真實資料、需要
+            # 用最新批次推算未來月份」的情境）。
+            if not use_actual_batch and not _should_schedule(item, year, month):
                 skipped_non_month += 1
                 continue
 

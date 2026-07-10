@@ -1622,6 +1622,7 @@ function FeeStatsTab({ year }: { year: number }) {
     feeLabel: string
     color: string
   } | null>(null)
+  const [drawerCase, setDrawerCase] = useState<RepairCase | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true); setError(null)
@@ -1795,6 +1796,12 @@ function FeeStatsTab({ year }: { year: number }) {
                         <strong style={{ color: drilldown.color }}>{fmtMoney(v)}</strong>
                       ),
                     },
+                    {
+                      title: '詳情', width: 60, fixed: 'right' as const,
+                      render: (_: unknown, rec: RepairCase) => (
+                        <Button size="small" type="link" onClick={() => setDrawerCase(rec)}>詳情</Button>
+                      ),
+                    },
                   ]}
                 />
               )
@@ -1802,6 +1809,9 @@ function FeeStatsTab({ year }: { year: number }) {
           </>
         )}
       </Modal>
+
+      {/* 報修詳情 Drawer（含 Ragic 連結） */}
+      <CaseDetailDrawer caseData={drawerCase} onClose={() => setDrawerCase(null)} />
 
       <div style={{ color: '#999', fontSize: 12, marginTop: 4 }}>
         💡 點擊有金額的格子可查看該月該費用類型的案件明細

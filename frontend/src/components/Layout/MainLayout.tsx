@@ -647,6 +647,53 @@ const MENU_CONFIG_CACHE_KEY = 'portal_menu_config_cache'
 
 export default function MainLayout() {
   const [collapsed, setCollapsed] = useState(false)
+
+  // ── Sider 可拖曳調整寬度（左右自由拉伸）─────────────────────────────────────
+  const SIDER_WIDTH_KEY = 'portal_sider_width'
+  const MIN_SIDER_WIDTH = 180
+  const MAX_SIDER_WIDTH = 420
+  const DEFAULT_SIDER_WIDTH = 220
+
+  const [siderWidth, setSiderWidth] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem(SIDER_WIDTH_KEY)
+      const parsed = saved ? parseInt(saved, 10) : NaN
+      if (!Number.isNaN(parsed) && parsed >= MIN_SIDER_WIDTH && parsed <= MAX_SIDER_WIDTH) return parsed
+    } catch { /* ignore */ }
+    return DEFAULT_SIDER_WIDTH
+  })
+  const [isResizingSider, setIsResizingSider] = useState(false)
+  const siderWidthRef = useRef(siderWidth)
+  useEffect(() => { siderWidthRef.current = siderWidth }, [siderWidth])
+
+  const handleSiderResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    setIsResizingSider(true)
+  }, [])
+
+  useEffect(() => {
+    if (!isResizingSider) return
+    const handleMouseMove = (e: MouseEvent) => {
+      const next = Math.min(MAX_SIDER_WIDTH, Math.max(MIN_SIDER_WIDTH, e.clientX))
+      setSiderWidth(next)
+    }
+    const handleMouseUp = () => {
+      setIsResizingSider(false)
+      try { localStorage.setItem(SIDER_WIDTH_KEY, String(siderWidthRef.current)) } catch { /* ignore */ }
+    }
+    window.addEventListener('mousemove', handleMouseMove)
+    window.addEventListener('mouseup', handleMouseUp)
+    const prevCursor = document.body.style.cursor
+    const prevUserSelect = document.body.style.userSelect
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove)
+      window.removeEventListener('mouseup', handleMouseUp)
+      document.body.style.cursor = prevCursor
+      document.body.style.userSelect = prevUserSelect
+    }
+  }, [isResizingSider])
   const navigate = useNavigate()
   const location = useLocation()
   const logout  = useAuthStore((s) => s.logout)
@@ -902,7 +949,7 @@ export default function MainLayout() {
         collapsed={collapsed}
         onCollapse={setCollapsed}
         trigger={null}
-        width={220}
+        width={siderWidth}
         style={{
           background: designToken.colorBgContainer,
           borderRight: `1px solid ${designToken.colorBorderSecondary}`,
@@ -912,6 +959,7 @@ export default function MainLayout() {
           left: 0,
           top: 0,
           bottom: 0,
+          transition: isResizingSider ? 'none' : undefined,
         }}
       >
         {/* Logo */}
@@ -965,10 +1013,35 @@ export default function MainLayout() {
             }}
           />
         )}
+
+        {/* 拖曳把手：左右自由調整 Sider 寬度（收合時不顯示）───────────────── */}
+        {!collapsed && (
+          <div
+            onMouseDown={handleSiderResizeStart}
+            title="拖曳調整選單寬度"
+            style={{
+              position: 'absolute',
+              top: 0,
+              right: -3,
+              width: 6,
+              height: '100%',
+              cursor: 'col-resize',
+              zIndex: 101,
+              background: isResizingSider ? designToken.colorPrimary : 'transparent',
+              transition: isResizingSider ? 'none' : 'background 0.15s',
+            }}
+            onMouseEnter={(e) => {
+              if (!isResizingSider) e.currentTarget.style.background = designToken.colorBorder
+            }}
+            onMouseLeave={(e) => {
+              if (!isResizingSider) e.currentTarget.style.background = 'transparent'
+            }}
+          />
+        )}
       </Sider>
 
       {/* ── Main ──────────────────────────────────────────────────────── */}
-      <Layout style={{ marginLeft: collapsed ? 80 : 220, transition: 'margin-left 0.2s' }}>
+      <Layout style={{ marginLeft: collapsed ? 80 : siderWidth, transition: isResizingSider ? 'none' : 'margin-left 0.2s' }}>
         {/* Header */}
         <Header
           style={{

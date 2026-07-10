@@ -132,6 +132,27 @@ function MatrixCellComp({
   const borderColor = isCurrentMonth ? '#1677ff' : `${cfg.text}44`
   const defaultShadow = isCurrentMonth ? '0 0 0 2px #1677ff40' : 'none'
 
+  // 同房同月多筆記錄：逐筆列出日期＋分鐘，並顯示合計
+  const isMulti = (cell.records?.length ?? 0) > 1
+  const dateLines = isMulti ? (
+    <>
+      {cell.records.map((r) => (
+        <span key={r.ragic_id} style={{ fontSize: 11, color: '#999', lineHeight: 1.4, whiteSpace: 'nowrap' }}>
+          {(r.date || '').replace(/^\d{4}\//, '')}
+          {r.work_minutes ? ` (${r.work_minutes}m)` : ''}
+        </span>
+      ))}
+      <span style={{ fontSize: 11, color: '#4BA8E8', fontWeight: 600, lineHeight: 1.4, whiteSpace: 'nowrap' }}>
+        {cell.record_count}筆 合計 {cell.work_minutes ?? 0}m
+      </span>
+    </>
+  ) : cell.date ? (
+    <span style={{ fontSize: 11, color: '#999', lineHeight: 1.4 }}>
+      {cell.date.replace(/^\d{4}\//, '')}
+      {cell.work_minutes ? ` (${cell.work_minutes}m)` : ''}
+    </span>
+  ) : null
+
   return (
     <Tooltip
       title={
@@ -143,7 +164,18 @@ function MatrixCellComp({
               維護 {cell.maint_count} ／ 未檢查 {cell.unchecked_count ?? 0}
             </div>
           )}
-          {cell.date && <div>日期：{cell.date}{cell.work_minutes ? ` (${cell.work_minutes}m)` : ''}</div>}
+          {isMulti ? (
+            <>
+              {cell.records.map((r, i) => (
+                <div key={r.ragic_id}>
+                  第{i + 1}筆：{r.date}{r.work_minutes ? ` (${r.work_minutes}m)` : ''}
+                </div>
+              ))}
+              <div>合計：{cell.record_count} 筆／{cell.work_minutes ?? 0}m</div>
+            </>
+          ) : (
+            cell.date && <div>日期：{cell.date}{cell.work_minutes ? ` (${cell.work_minutes}m)` : ''}</div>
+          )}
           {cell.assignee && <div>人員：{cell.assignee}</div>}
           {cell.completion_date && <div>完成：{cell.completion_date}</div>}
           {cell.notes && <div>備註：{cell.notes}</div>}
@@ -154,7 +186,7 @@ function MatrixCellComp({
       <div
         onClick={onClick}
         style={{
-          minWidth: 76, height: 58, background: cfg.bg,
+          minWidth: 76, minHeight: 58, background: cfg.bg,
           borderRadius: 4,
           border: `1px solid ${borderColor}`,
           cursor: 'pointer',
@@ -184,23 +216,13 @@ function MatrixCellComp({
             }}>
               維護 {cell.maint_count ?? 0} / 未 {cell.unchecked_count ?? 0}
             </span>
-            {cell.date && (
-              <span style={{ fontSize: 11, color: '#999', lineHeight: 1.4 }}>
-                {cell.date.replace(/^\d{4}\//, '')}
-                {cell.work_minutes ? ` (${cell.work_minutes}m)` : ''}
-              </span>
-            )}
+            {dateLines}
           </>
         ) : (
           // 無計數資料時，退回 icon + 日期
           <>
             <span style={{ fontSize: 15, color: cfg.text }}>{cfg.icon}</span>
-            {cell.date && (
-              <span style={{ fontSize: 11, color: '#999' }}>
-                {cell.date.replace(/^\d{4}\//, '')}
-                {cell.work_minutes ? ` (${cell.work_minutes}m)` : ''}
-              </span>
-            )}
+            {dateLines}
           </>
         )}
       </div>
@@ -1283,7 +1305,7 @@ export default function IHGRoomMaintenancePage() {
   const [statusFilter, setStatusFilter] = useState<string>('')
 
   const [stats, setStats]       = useState<IHGStats | null>(null)
-  const [matrix, setMatrix]     = useState<{ rooms: MatrixRoom[]; floors: string[]; month_hours: Partial<Record<number, number>> } | null>(null)
+  const [matrix, setMatrix]     = useState<{ rooms: MatrixRoom[]; floors: string[]; month_hours: Partial<Record<number, number>>; month_orders: Partial<Record<number, number>> } | null>(null)
   const [loading, setLoading]   = useState(false)
 
   // 月份 Drawer 狀態
@@ -1316,7 +1338,7 @@ export default function IHGRoomMaintenancePage() {
         }),
       ])
       setStats(s)
-      setMatrix({ rooms: m.rooms, floors: m.floors, month_hours: m.month_hours ?? {} })
+      setMatrix({ rooms: m.rooms, floors: m.floors, month_hours: m.month_hours ?? {}, month_orders: m.month_orders ?? {} })
     } catch {
       message.error('載入 IHG 客房保養資料失敗')
     } finally {
@@ -1519,7 +1541,8 @@ export default function IHGRoomMaintenancePage() {
     // 月份欄
     ...([1,2,3,4,5,6,7,8,9,10,11,12] as const).map((month) => ({
       title: (() => {
-        const hrs = matrix?.month_hours?.[month]
+        const hrs    = matrix?.month_hours?.[month]
+        const orders = matrix?.month_orders?.[month]
         return (
           <div style={{ textAlign: 'center', fontSize: 13 }}>
             <div style={{ color: '#999', fontSize: 11 }}>{QUARTER_MAP[month]}</div>
@@ -1527,6 +1550,11 @@ export default function IHGRoomMaintenancePage() {
             {hrs !== undefined && (
               <div style={{ fontSize: 11, color: '#4BA8E8', marginTop: 1 }}>
                 {hrs.toFixed(2)}hr
+              </div>
+            )}
+            {orders !== undefined && orders > 0 && (
+              <div style={{ fontSize: 11, color: '#8c8c8c' }}>
+                {orders} 單
               </div>
             )}
           </div>
