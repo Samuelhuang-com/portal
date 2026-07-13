@@ -166,7 +166,7 @@ export default function CpPaymentListPage() {
           />
         </Space>
 
-        <Table
+        <Table<CpPayment>
           dataSource={rows}
           rowKey="id"
           loading={loading}
@@ -256,7 +256,7 @@ export default function CpPaymentListPage() {
               <Alert type="info" showIcon message="請先選擇採購單" description="選擇採購單後會列出還沒被請款的已送出驗收單。" />
             ) : (
               <>
-                <Table
+                <Table<CpPayableReceiving>
                   dataSource={payableReceivings}
                   rowKey="receiving_id"
                   size="small"

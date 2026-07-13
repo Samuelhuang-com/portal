@@ -228,7 +228,7 @@ export default function CpSummaryPage() {
             {vendorGroups.length === 0 ? (
               <Text type="secondary">目前沒有草稿狀態的彙整列可以轉單（可能都已轉單，或這期還沒產生彙整）</Text>
             ) : (
-              <Table
+              <Table<CpVendorGroup>
                 dataSource={vendorGroups}
                 rowKey={(g) => `${g.company}|${g.vendor_id ?? 'none'}`}
                 size="small"
@@ -275,7 +275,7 @@ export default function CpSummaryPage() {
           </Card>
 
           <Card title="彙整列明細">
-            <Table
+            <Table<CpSummary>
               dataSource={rows}
               rowKey="id"
               loading={loading}

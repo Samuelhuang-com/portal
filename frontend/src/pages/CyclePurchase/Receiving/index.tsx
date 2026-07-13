@@ -128,7 +128,7 @@ export default function CpReceivingListPage() {
           />
         </Space>
 
-        <Table
+        <Table<CpReceiving>
           dataSource={rows}
           rowKey="id"
           loading={loading}
