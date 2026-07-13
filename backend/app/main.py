@@ -111,6 +111,15 @@ from app.routers import (
     contract,
     reference_data,
     tutorial_videos,
+    cycle_purchase_masters,
+    cycle_purchase_items,
+    cycle_purchase_cycles,
+    cycle_purchase_requests,
+    cycle_purchase_summary,
+    cycle_purchase_po,
+    cycle_purchase_receiving,
+    cycle_purchase_payment,
+    cycle_purchase_audit,
 )
 
 
@@ -1375,6 +1384,21 @@ async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
     print("[Portal] Database tables ensured.")
 
+    # ── 週期採購（獨立資料庫 cycle-purchase.db，2026-07-10 決策：不與 portal.db 共用）──
+    from app.core.cycle_purchase_database import CyclePurchaseBase, cycle_purchase_engine
+    import app.models.cycle_purchase_vendor      # noqa: F401
+    import app.models.cycle_purchase_reference   # noqa: F401
+    import app.models.cycle_purchase_item        # noqa: F401
+    import app.models.cycle_purchase_cycle       # noqa: F401
+    import app.models.cycle_purchase_request     # noqa: F401
+    import app.models.cycle_purchase_summary     # noqa: F401
+    import app.models.cycle_purchase_po          # noqa: F401
+    import app.models.cycle_purchase_receiving   # noqa: F401
+    import app.models.cycle_purchase_payment      # noqa: F401
+    import app.models.cycle_purchase_audit        # noqa: F401
+    CyclePurchaseBase.metadata.create_all(bind=cycle_purchase_engine)
+    print("[Portal] Cycle-purchase database tables ensured (cycle-purchase.db).")
+
     # 影音教學 Migration：舊版 tutorial_videos 直接存 category/module_name/module_route，
     # 新版改為獨立的 tutorial_video_modules 主檔（module_id 關聯），此處把既有資料搬過去
     from sqlalchemy import text as _tv_text
@@ -2299,6 +2323,53 @@ app.include_router(
     reference_data.router,
     prefix=f"{API_PREFIX}/settings",
     tags=["基礎參考資料"],
+)
+
+# ── 週期採購（獨立資料庫 cycle-purchase.db，第一期：基礎設定/料號/週期/批次）──
+app.include_router(
+    cycle_purchase_masters.router,
+    prefix=f"{API_PREFIX}/cycle-purchase/masters",
+    tags=["週期採購"],
+)
+app.include_router(
+    cycle_purchase_items.router,
+    prefix=f"{API_PREFIX}/cycle-purchase",
+    tags=["週期採購"],
+)
+app.include_router(
+    cycle_purchase_cycles.router,
+    prefix=f"{API_PREFIX}/cycle-purchase",
+    tags=["週期採購"],
+)
+app.include_router(
+    cycle_purchase_requests.router,
+    prefix=f"{API_PREFIX}/cycle-purchase",
+    tags=["週期採購"],
+)
+app.include_router(
+    cycle_purchase_summary.router,
+    prefix=f"{API_PREFIX}/cycle-purchase",
+    tags=["週期採購"],
+)
+app.include_router(
+    cycle_purchase_po.router,
+    prefix=f"{API_PREFIX}/cycle-purchase",
+    tags=["週期採購"],
+)
+app.include_router(
+    cycle_purchase_receiving.router,
+    prefix=f"{API_PREFIX}/cycle-purchase",
+    tags=["週期採購"],
+)
+app.include_router(
+    cycle_purchase_payment.router,
+    prefix=f"{API_PREFIX}/cycle-purchase",
+    tags=["週期採購"],
+)
+app.include_router(
+    cycle_purchase_audit.router,
+    prefix=f"{API_PREFIX}/cycle-purchase",
+    tags=["週期採購"],
 )
 
 # ── AI 工單查詢助理（AI_ENABLED=true 才掛載，正式環境可保持 false）────────────

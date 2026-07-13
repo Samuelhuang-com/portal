@@ -1,0 +1,95 @@
+app: cycle_purchase
+version: "1.2"
+
+roles:
+  - key: cycle_purchase_view
+    name: 週期採購-檢視
+    description: 可檢視所有週期採購相關表單（唯讀）
+    permissions:
+      - form: cycle_purchase_items
+        access: read
+      - form: cycle_purchase_cycles
+        access: read
+      - form: cycle_purchase_batches
+        access: read
+      - form: cycle_purchase_requests
+        access: read
+      - form: cycle_purchase_summary
+        access: read
+      - form: cycle_purchase_po
+        access: read
+      - form: cycle_purchase_receiving
+        access: read
+      - form: cycle_purchase_payment
+        access: read
+
+  - key: cycle_purchase_request
+    name: 週期採購-請購人員
+    description: 可填寫請購單並送出，可查看本部門請購紀錄
+    inherits: cycle_purchase_view
+    permissions:
+      - form: cycle_purchase_requests
+        access: create, edit
+        filter: own_department
+      - form: cycle_purchase_audit
+        access: create
+        filter: event_type=補填,逾期
+
+  - key: cycle_purchase_approve
+    name: 週期採購-簽核主管
+    description: 可審核請購單（核准/退回）
+    inherits: cycle_purchase_view
+    permissions:
+      - form: cycle_purchase_requests
+        access: edit
+        fields: [狀態, 簽核人, 簽核時間]
+        filter: own_department
+
+  - key: cycle_purchase_buyer
+    name: 週期採購-採購人員
+    description: 可操作批次、彙整單、採購單全流程
+    inherits: cycle_purchase_view
+    permissions:
+      - form: cycle_purchase_batches
+        access: create, edit
+      - form: cycle_purchase_summary
+        access: create, edit
+      - form: cycle_purchase_po
+        access: create, edit
+      - form: cycle_purchase_audit
+        access: create
+        filter: event_type=替代品,缺貨
+
+  - key: cycle_purchase_receive
+    name: 週期採購-驗收人員
+    description: 可建立驗收單並登錄驗收結果
+    inherits: cycle_purchase_view
+    permissions:
+      - form: cycle_purchase_receiving
+        access: create, edit
+      - form: cycle_purchase_audit
+        access: create
+        filter: event_type=驗收差異
+
+  - key: cycle_purchase_finance
+    name: 週期採購-財務人員
+    description: 可建立請款單並處理費用分攤
+    inherits: cycle_purchase_view
+    permissions:
+      - form: cycle_purchase_payment
+        access: create, edit
+      - form: cycle_purchase_audit
+        access: create
+        filter: event_type=請款差異
+
+  - key: cycle_purchase_report
+    name: 週期採購-報表查詢
+    description: 可查看所有報表（唯讀）
+    inherits: cycle_purchase_view
+
+  - key: cycle_purchase_admin
+    name: 週期採購-系統管理員
+    description: 最高權限，可設定基礎資料、Workflow 與 Portal
+    permissions:
+      - form: ALL
+        access: create, edit, delete

@@ -1,0 +1,175 @@
+active_key: cycle_purchase
+permission_key: cycle_purchase_view
+
+menu:
+  - label: 週期採購管理
+    icon: shopping-cart
+    children:
+
+      - label: 01 基礎設定
+        permission_key: cycle_purchase_admin
+        children:
+          - label: 週期採購料號主檔
+            form_key: cycle_purchase_items
+            permission_key: cycle_purchase_admin
+          - label: 週期採購料號對照表
+            form_key: cycle_purchase_item_mapping
+            permission_key: cycle_purchase_admin
+          - label: 週期採購週期設定
+            form_key: cycle_purchase_cycles
+            permission_key: cycle_purchase_admin
+          - label: 週期採購單位設定
+            form_key: unit_setting
+            permission_key: cycle_purchase_admin
+          - label: 預算／會科設定
+            form_key: budget_account_setting
+            permission_key: cycle_purchase_admin
+          - label: 供應商資料查詢
+            form_key: supplier_master
+            permission_key: cycle_purchase_view
+            read_only: true
+
+      - label: 02 請購作業
+        permission_key: cycle_purchase_request
+        children:
+          - label: 週期採購批次
+            form_key: cycle_purchase_batches
+            permission_key: cycle_purchase_buyer
+          - label: 週期採購請購單
+            form_key: cycle_purchase_requests
+            permission_key: cycle_purchase_request
+          - label: 待填請購清單
+            form_key: cycle_purchase_requests
+            permission_key: cycle_purchase_request
+            filter: "status=待填"
+          - label: 逾期未填清單
+            form_key: cycle_purchase_requests
+            permission_key: cycle_purchase_request
+            filter: "status=待填&overdue=true"
+          - label: 補填／異常申請
+            form_key: cycle_purchase_audit
+            permission_key: cycle_purchase_request
+            filter: "event_type=補填,逾期"
+
+      - label: 03 採購彙整
+        permission_key: cycle_purchase_buyer
+        children:
+          - label: 週期採購彙整單
+            form_key: cycle_purchase_summary
+            permission_key: cycle_purchase_buyer
+          - label: 採購需求明細查詢
+            form_key: cycle_purchase_summary
+            permission_key: cycle_purchase_buyer
+            read_only: true
+          - label: 採購調整紀錄
+            form_key: cycle_purchase_audit
+            permission_key: cycle_purchase_buyer
+            filter: "event_type=替代品"
+          - label: 轉採購單作業
+            form_key: cycle_purchase_summary
+            permission_key: cycle_purchase_buyer
+            filter: "status=草稿"
+
+      - label: 04 採購作業
+        permission_key: cycle_purchase_buyer
+        children:
+          - label: 週期採購採購單
+            form_key: cycle_purchase_po
+            permission_key: cycle_purchase_buyer
+          - label: 採購單明細
+            form_key: cycle_purchase_po
+            permission_key: cycle_purchase_buyer
+            view: detail
+          - label: 採購到貨登錄
+            form_key: cycle_purchase_po
+            permission_key: cycle_purchase_buyer
+            filter: "status=已發出,部分到貨"
+          - label: 採購狀態追蹤
+            form_key: cycle_purchase_po
+            permission_key: cycle_purchase_view
+            read_only: true
+
+      - label: 05 驗收作業
+        permission_key: cycle_purchase_receive
+        children:
+          - label: 週期採購驗收單
+            form_key: cycle_purchase_receiving
+            permission_key: cycle_purchase_receive
+          - label: 待驗收清單
+            form_key: cycle_purchase_receiving
+            permission_key: cycle_purchase_receive
+            filter: "status=待驗收"
+          - label: 驗收異常紀錄
+            form_key: cycle_purchase_audit
+            permission_key: cycle_purchase_receive
+            filter: "event_type=驗收差異,缺貨"
+          - label: 進貨數量報表
+            form_key: cycle_purchase_receiving
+            permission_key: cycle_purchase_report
+            read_only: true
+
+      - label: 06 請款作業
+        permission_key: cycle_purchase_finance
+        children:
+          - label: 週期採購請款單
+            form_key: cycle_purchase_payment
+            permission_key: cycle_purchase_finance
+          - label: 發票／請款明細
+            form_key: cycle_purchase_payment
+            permission_key: cycle_purchase_finance
+            view: detail
+          - label: 部門費用分攤明細
+            form_key: cycle_purchase_payment
+            permission_key: cycle_purchase_finance
+            view: alloc_detail
+          - label: 付款狀態追蹤
+            form_key: cycle_purchase_payment
+            permission_key: cycle_purchase_view
+            read_only: true
+
+      - label: 07 報表查詢
+        permission_key: cycle_purchase_report
+        children:
+          - label: 月度進貨數量報表
+            form_key: cycle_purchase_receiving
+            permission_key: cycle_purchase_report
+            filter: "period=monthly"
+          - label: 年度進貨數量報表
+            form_key: cycle_purchase_receiving
+            permission_key: cycle_purchase_report
+            filter: "period=yearly"
+          - label: 區間進貨數量報表
+            form_key: cycle_purchase_receiving
+            permission_key: cycle_purchase_report
+            filter: "period=range"
+          - label: 部門請購金額報表
+            form_key: cycle_purchase_requests
+            permission_key: cycle_purchase_report
+          - label: 供應商採購金額報表
+            form_key: cycle_purchase_po
+            permission_key: cycle_purchase_report
+          - label: 料號採購趨勢報表
+            form_key: cycle_purchase_items
+            permission_key: cycle_purchase_report
+          - label: 預算使用狀況報表
+            form_key: budget_account_setting
+            permission_key: cycle_purchase_report
+
+      - label: 08 系統管理
+        permission_key: cycle_purchase_admin
+        children:
+          - label: 權限設定
+            form_key: settings/roles
+            permission_key: cycle_purchase_admin
+          - label: 表單對應設定
+            form_key: settings/ragic-app-directory
+            permission_key: cycle_purchase_admin
+          - label: 通知提醒設定
+            form_key: notification_setting
+            permission_key: cycle_purchase_admin
+          - label: Workflow／自訂按鈕設定
+            form_key: settings/menu-config
+            permission_key: cycle_purchase_admin
+          - label: 稽核紀錄查詢
+            form_key: cycle_purchase_audit
+            permission_key: cycle_purchase_admin

@@ -1,0 +1,90 @@
+﻿**********************
+Windows PowerShell 轉譯開始
+開始時間: 20260710234725
+使用者名稱: SAMUELHUANG\sam23
+RunAs 使用者: SAMUELHUANG\sam23
+設定名稱: 
+電腦: SAMUELHUANG (Microsoft Windows NT 10.0.26200.0)
+主應用程式: C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -file  C:\OneDrive\_Ragic\portal\finalize_cycle_purchase_edits.ps1 
+處理序識別碼: 37032
+PSVersion: 5.1.26100.8737
+PSEdition: Desktop
+PSCompatibleVersions: 1.0, 2.0, 3.0, 4.0, 5.0, 5.1.26100.8737
+BuildVersion: 10.0.26100.8737
+CLRVersion: 4.0.30319.42000
+WSManStackVersion: 3.0
+PSRemotingProtocolVersion: 2.3
+SerializationVersion: 1.1.0.1
+**********************
+====================================================
+ Cycle Purchase Phase 1 - Finalize (temp -> real file)
+ Portal root: C:\OneDrive\_Ragic\portal
+ Log file:    C:\OneDrive\_Ragic\portal\_cp_finalize_log_20260710-234724.txt
+====================================================
+
+---- backend\app\core\config.py ----
+  Backed up existing file -> C:\OneDrive\_Ragic\portal\backend\app\core\config.py.bak-20260710-234724
+  Applied OK, SHA256 match.
+  Removed temp file.
+
+---- backend\.env ----
+  Backed up existing file -> C:\OneDrive\_Ragic\portal\backend\.env.bak-20260710-234724
+  Applied OK, SHA256 match.
+  Removed temp file.
+
+---- backend\.env.example ----
+  Backed up existing file -> C:\OneDrive\_Ragic\portal\backend\.env.example.bak-20260710-234724
+  Applied OK, SHA256 match.
+  Removed temp file.
+
+---- backend\app\main.py ----
+  Backed up existing file -> C:\OneDrive\_Ragic\portal\backend\app\main.py.bak-20260710-234724
+  Applied OK, SHA256 match.
+  Removed temp file.
+
+---- backend\app\routers\role_permissions.py ----
+  Backed up existing file -> C:\OneDrive\_Ragic\portal\backend\app\routers\role_permissions.py.bak-20260710-234724
+  Applied OK, SHA256 match.
+  Removed temp file.
+
+---- frontend\src\constants\navLabels.ts ----
+  Backed up existing file -> C:\OneDrive\_Ragic\portal\frontend\src\constants\navLabels.ts.bak-20260710-234724
+  Applied OK, SHA256 match.
+  Removed temp file.
+
+---- frontend\src\components\Layout\MainLayout.tsx ----
+  Backed up existing file -> C:\OneDrive\_Ragic\portal\frontend\src\components\Layout\MainLayout.tsx.bak-20260710-234724
+  Applied OK, SHA256 match.
+  Removed temp file.
+
+---- frontend\src\router\index.tsx ----
+  Backed up existing file -> C:\OneDrive\_Ragic\portal\frontend\src\router\index.tsx.bak-20260710-234724
+  Applied OK, SHA256 match.
+  Removed temp file.
+
+====================================================
+ Summary
+====================================================
+
+File                                          Status
+----                                          ------
+backend\app\core\config.py                    OK    
+backend\.env                                  OK    
+backend\.env.example                          OK    
+backend\app\main.py                           OK    
+backend\app\routers\role_permissions.py       OK    
+frontend\src\constants\navLabels.ts           OK    
+frontend\src\components\Layout\MainLayout.tsx OK    
+frontend\src\router\index.tsx                 OK
+
+Next steps:
+  1. Restart backend:  cd backend; uvicorn app.main:app --reload --port 8000
+  2. Restart frontend: cd frontend; npm run dev
+  3. Check that C:\portal_data\cycle-purchase.db was created with 5 new tables.
+  4. Go to System Settings -> Role Management -> Permissions, find the
+     Cycle Purchase permission group, grant it to your role, save, refresh.
+
+**********************
+Windows PowerShell 轉譯結束
+結束時間: 20260710234725
+**********************

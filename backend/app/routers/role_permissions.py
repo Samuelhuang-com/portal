@@ -94,6 +94,15 @@ PERMISSION_DEFINITIONS = [
     {"key": "contract_claims_view",   "label": "請款管理",       "group": "合約管理"},
     {"key": "contract_renewals_view", "label": "續約管理",       "group": "合約管理"},
     {"key": "contract_approve",       "label": "合約審核",       "group": "合約管理"},
+    # ── 週期採購（獨立資料庫 cycle-purchase.db，2026-07-10 新增）──────────────
+    {"key": "cycle_purchase_view",     "label": "週期採購管理",       "group": "週期採購"},
+    {"key": "cycle_purchase_request",  "label": "週期採購請購",       "group": "週期採購"},
+    {"key": "cycle_purchase_approve",  "label": "週期採購簽核",       "group": "週期採購"},
+    {"key": "cycle_purchase_buyer",    "label": "週期採購彙整／採購", "group": "週期採購"},
+    {"key": "cycle_purchase_receive",  "label": "週期採購驗收",       "group": "週期採購"},
+    {"key": "cycle_purchase_finance",  "label": "週期採購請款",       "group": "週期採購"},
+    {"key": "cycle_purchase_report",   "label": "週期採購報表",       "group": "週期採購"},
+    {"key": "cycle_purchase_admin",    "label": "週期採購管理設定",   "group": "週期採購"},
     # ── AI 助理 ──────────────────────────────────────────────────────────────
     # 開發期間預設不分配給任何角色（需手動在「角色管理→權限設定」中開放）
     # 注意：擁有 dazhi_repair_view 或 luqun_repair_view 的角色也可查詢對應地點

@@ -73,6 +73,10 @@ class FullBldgPMItem(Base):
     repair_hours = Column(Float,      nullable=True, comment="維修工時（小時），來源 Ragic Sheet 28")
     sheet28_id   = Column(String(50), nullable=True, comment="Sheet 28 的 Ragic record ID 快取，供下次直接比對")
 
+    # ── 附圖（2026-07-13 新增，來源 Ragic Sheet 28「圖片上傳」欄位）───────────
+    # 格式：JSON list，元素為 {"url": "...", "filename": "..."}（見 ragic_data_service.parse_images）
+    images_json = Column(Text, nullable=True, default=None, comment="附圖 JSON，來源 Ragic Sheet28「圖片上傳」欄位")
+
     # ── Portal 編輯時間戳 ──────────────────────────────────────────────────────
     portal_edited_at = Column(DateTime, nullable=True, comment="Portal 最後編輯時間（保護機制）")
 
@@ -87,5 +91,47 @@ class FullBldgPMItem(Base):
         except Exception:
             return []
 
+    def get_images(self) -> list:
+        if not self.images_json:
+            return []
+        try:
+            return json.loads(self.images_json)
+        except Exception:
+            return []
+
     def __repr__(self):
         return f"<FullBldgPMItem ragic_id={self.ragic_id} seq_no={self.seq_no} task_name={self.task_name[:20]}>"
+
+
+class FullBldgPMItemWorklog(Base):
+    """
+    全棟例行維護項目執行記錄明細（每個保養項目底下可有多筆維修記錄）
+
+    資料來源：Ragic Sheet 28（全棟週期保養日誌(同仁執行) - 子表:項目）
+              每筆記錄的巢狀子表格「維修記錄」（Ragic 內部 key 為 _subtable_<動態數字>，
+              需以 fetch_one() 逐筆項目取得，無法從 fetch_all() 列表模式取得）
+
+    2026-07-13 新增：原本只同步子表格的彙總欄位「維修工時」到 FullBldgPMItem.repair_hours，
+    未同步逐筆維修記錄明細（時間起訖、保養人員、維修記錄文字）。
+    """
+    __tablename__ = "full_bldg_pm_item_worklog"
+
+    # ── 主鍵：{item_ragic_id}_{sub_ragic_id}（sub_ragic_id 為子表格內部序號，非全域唯一）──
+    ragic_id = Column(String(50), primary_key=True, comment="格式 {item_ragic_id}_{sub_ragic_id}")
+
+    # ── 外鍵關聯 ──────────────────────────────────────────────────────────────
+    item_ragic_id = Column(String(50), nullable=False, default="", comment="關聯 full_bldg_pm_batch_item.ragic_id")
+
+    # ── Ragic 子表格欄位（同步來源，不可被 Portal 編輯覆寫）───────────────────
+    seq_no      = Column(Integer,     nullable=False, default=0,  comment="子表格項次")
+    repair_note = Column(Text,        nullable=False, default="", comment="維修記錄文字")
+    start_time  = Column(String(30),  nullable=False, default="", comment="時間開始，完整日期時間字串")
+    end_time    = Column(String(30),  nullable=False, default="", comment="時間結束，完整日期時間字串")
+    staff_name  = Column(String(100), nullable=False, default="", comment="保養人員")
+
+    # ── 同步時間 ───────────────────────────────────────────────────────────────
+    synced_at = Column(DateTime, nullable=False, server_default=func.now(),
+                       onupdate=func.now(), comment="最後同步時間")
+
+    def __repr__(self):
+        return f"<FullBldgPMItemWorklog ragic_id={self.ragic_id} item_ragic_id={self.item_ragic_id}>"

@@ -24,8 +24,9 @@ from typing import Any
 
 from app.core.config import settings
 from app.core.database import SessionLocal
-from app.models.full_building_maintenance import FullBldgPMBatch, FullBldgPMItem
+from app.models.full_building_maintenance import FullBldgPMBatch, FullBldgPMItem, FullBldgPMItemWorklog
 from app.services.ragic_adapter import RagicAdapter
+from app.services.ragic_data_service import parse_images
 from app.services.sync_dispatcher import register
 
 logger = logging.getLogger(__name__)
@@ -65,7 +66,41 @@ CK28_START_TIME   = "保養時間啟"  # 保養開始時間（補強既有欄位
 CK28_END_TIME     = "保養時間迄"  # 保養結束時間（補強既有欄位）
 CK28_TASK_NAME    = "項目"        # 保養項目名稱（配對用）
 CK28_CATEGORY     = "類別"        # 類別（配對用）
-CK28_PARENT_REF   = "保養日誌編號" # 連結回 Sheet 21 批次 ID（三層配對的主 key）
+CK28_PARENT_REF   = "保養日誌編號" # ⚠️ 2026-07-13 實測：Sheet28 實際欄位 key 是「編號」，
+                                   # 不是「保養日誌編號」，此常數與下方 sync_repair_hours_from_sheet28()
+                                   # 已確認長期失效（策略②從未命中）。保留舊常數/舊函式僅供對照，
+                                   # 新版同步請見下方 CK28L_*/CK28S_* 與 sync_items_from_sheet28()。
+
+# ── Sheet 28 列表模式（fetch_all）欄位 key（2026-07-13 實測驗證，用於新版主要同步）──
+# 實測發現：
+#   1. fetch_all() 列表模式「不含」CK28_START_TIME / CK28_END_TIME / 巢狀子表格，
+#      這兩個欄位與子表格只存在於 fetch_one() 單筆結果中。
+#   2. Sheet28 沒有獨立的「位置」欄位（與 Sheet21 子表格不同，實測確認不存在）。
+#   3. 「執行月份」「排定人員」「執行人員」在 Sheet28 回傳格式是陣列，非字串。
+#   4. 「排定日期」是完整日期「YYYY/MM/DD」，需正規化為既有系統使用的「MM/DD」格式。
+CK28L_SEQ_NO       = "項次"
+CK28L_PARENT_REF   = "編號"        # 連回 Sheet21 主表「編號」欄位（實測確認為此 key）
+CK28L_CATEGORY     = "類別"
+CK28L_EXEC_MONTHS  = "執行月份"
+CK28L_TASK_NAME    = "項目"
+CK28L_EST_MINUTES  = "預估耗時"
+CK28L_FREQUENCY    = "頻率"
+CK28L_SCHEDULER    = "排定人員"
+CK28L_SCHED_DATE   = "排定日期"
+CK28L_EXECUTOR     = "執行人員"
+CK28L_NOTE         = "備註"
+CK28L_REPAIR_HOURS = "維修工時"
+CK28L_IMAGES       = "圖片上傳"   # 2026-07-13 新增：只有 fetch_one() 全量結果才有實際檔名清單
+
+# ── Sheet 28 每筆記錄底下巢狀子表格「維修記錄」欄位 key（僅 fetch_one 才有，實測驗證）──
+# Ragic 內部子表格 key 為 _subtable_<動態數字>（本帳號實測為 _subtable_1015852，
+# 但此數字為 Ragic 內部欄位 ID，不同環境/未來欄位異動可能不同，程式以
+# 「任何以 _subtable_ 開頭的 key」通用偵測，不寫死此數字）。
+CK28S_SEQ_NO     = "項次"
+CK28S_NOTE       = "維修記錄"
+CK28S_START_TIME = "時間開始"
+CK28S_END_TIME   = "時間結束"
+CK28S_STAFF      = "保養人員"
 
 
 # ── 轉換輔助函式 ──────────────────────────────────────────────────────────────
@@ -178,7 +213,9 @@ async def sync_batches_from_ragic() -> dict:
 
     fetched  = len(raw_data)
     upserted = 0
+    orphan_removed = 0
     errors: list[str] = []
+    fetched_ids = {str(k) for k in raw_data.keys()}
 
     db = SessionLocal()
     try:
@@ -198,8 +235,42 @@ async def sync_batches_from_ragic() -> dict:
             except Exception as exc:
                 errors.append(f"batch ragic_id={ragic_id}: {exc}")
                 logger.warning(f"[FullBldgPMSync][Batch] 記錄 {ragic_id} 失敗：{exc}")
+
+        # ── 清除孤兒批次（2026-07-13 發現）───────────────────────────────────
+        # 舊版邏輯只做 upsert，Ragic 端刪除/重編過的記錄永遠不會從 Portal 清掉。
+        # 實測發現 full_bldg_pm_batch 裡有 ragic_id 在 Ragic 已經不存在的孤兒
+        # 資料（period_month 停留在刪除前的舊值，可能跟其他仍有效的批次 journal_no
+        # 撞在一起，造成 /stats 等用 period_month 查批次時选到錯誤/過期的那筆）。
+        # 這裡連同其底下的孤兒項目與維修記錄一併清除。
+        orphan_batches = db.query(FullBldgPMBatch).filter(
+            ~FullBldgPMBatch.ragic_id.in_(fetched_ids)
+        ).all() if fetched_ids else []
+        if orphan_batches:
+            orphan_ids = [b.ragic_id for b in orphan_batches]
+            logger.warning(
+                f"[FullBldgPMSync][Batch] 發現 {len(orphan_batches)} 筆孤兒批次"
+                f"（Ragic 已無對應記錄，予以刪除）：{[(b.ragic_id, b.journal_no, b.period_month) for b in orphan_batches]}"
+            )
+            orphan_item_ids = [
+                it.ragic_id for it in
+                db.query(FullBldgPMItem).filter(FullBldgPMItem.batch_ragic_id.in_(orphan_ids)).all()
+            ]
+            if orphan_item_ids:
+                db.query(FullBldgPMItemWorklog).filter(
+                    FullBldgPMItemWorklog.item_ragic_id.in_(orphan_item_ids)
+                ).delete(synchronize_session=False)
+                db.query(FullBldgPMItem).filter(
+                    FullBldgPMItem.ragic_id.in_(orphan_item_ids)
+                ).delete(synchronize_session=False)
+            for b in orphan_batches:
+                db.delete(b)
+            orphan_removed = len(orphan_batches)
+
         db.commit()
-        logger.info(f"[FullBldgPMSync][Batch] 完成：fetched={fetched}, upserted={upserted}, errors={len(errors)}")
+        logger.info(
+            f"[FullBldgPMSync][Batch] 完成：fetched={fetched}, upserted={upserted}, "
+            f"orphan_batches_removed={orphan_removed}, errors={len(errors)}"
+        )
     except Exception as exc:
         db.rollback()
         errors.append(f"DB commit error: {exc}")
@@ -207,7 +278,7 @@ async def sync_batches_from_ragic() -> dict:
     finally:
         db.close()
 
-    return {"fetched": fetched, "upserted": upserted, "errors": errors}
+    return {"fetched": fetched, "upserted": upserted, "orphan_batches_removed": orphan_removed, "errors": errors}
 
 
 async def sync_items_from_ragic() -> dict:
@@ -569,12 +640,264 @@ async def sync_repair_hours_from_sheet28() -> dict:
     return {"updated": updated, "skipped": skipped, "no_match": no_match}
 
 
+def _normalize_full_date_to_md(raw: str) -> str:
+    """
+    'YYYY/MM/DD' -> 'MM/DD'（配合既有 scheduled_date 欄位 / _calc_status() 短格式）。
+    格式不符（非三段 '/')時原樣回傳，不猜測。
+    """
+    if not raw:
+        return ""
+    parts = str(raw).strip().split("/")
+    if len(parts) == 3:
+        return f"{parts[1]}/{parts[2]}"
+    return raw
+
+
+def _find_worklog_subtable(full_record: dict[str, Any]) -> dict[str, dict]:
+    """
+    從 fetch_one() 結果中找出巢狀子表格「維修記錄」。
+    Ragic 內部 key 為 _subtable_<動態數字>，不寫死數字，取第一個非空 dict。
+    """
+    for k, v in full_record.items():
+        if not k.startswith("_subtable_"):
+            continue
+        if isinstance(v, dict) and v:
+            inner = {rk: rv for rk, rv in v.items() if isinstance(rv, dict)}
+            if inner:
+                return inner
+    return {}
+
+
+async def sync_items_from_sheet28() -> dict:
+    """
+    全棟例行維護項目明細同步 —— 2026-07-13 起改以 Ragic Sheet 28 為主要來源。
+
+    背景：Sheet 21 子表格需靠 fetch_one() 猜測子表格藏在哪個 key（A/B/C/D 四種模式），
+    且無法取得逐筆維修記錄明細（時間起訖、保養人員），只能取到彙總數字。Sheet 28
+    的每個項目本身就是一筆平鋪記錄，不需要猜格式；其巢狀子表格「維修記錄」則需逐筆
+    fetch_one() 取得（見 CK28S_* 欄位 key，2026-07-13 實測驗證）。
+
+    批次層（full_bldg_pm_batch）仍由 sync_batches_from_ragic()（Sheet 21 主表）負責
+    同步 —— 實測確認 Sheet21 主表「編號」與 Sheet28 每筆項目的「編號」欄位值完全一致，
+    因此本函式用「編號」比對回已同步的批次，batch_ragic_id 語意（Sheet21 內部數字 ID）
+    維持不變，不影響既有 Ragic 深連結組法。
+
+    找不到對應批次的項目（「編號」為空、或該批次尚未由 Sheet21 同步）一律明確跳過並
+    記錄在回傳的 unmatched_batches，不做任何猜測式配對。
+    """
+    adapter = RagicAdapter(
+        sheet_path=FULL_BLDG_PM_SHEET28_PATH,
+        server_url=FULL_BLDG_PM_SERVER_URL,
+        account=FULL_BLDG_PM_ACCOUNT,
+    )
+    logger.info("[FullBldgPMSync][Sheet28Items] 開始同步項目明細（Sheet28 為主要來源）...")
+    try:
+        raw_data = await adapter.fetch_all()
+    except Exception as exc:
+        logger.error(f"[FullBldgPMSync][Sheet28Items] 拉取失敗：{exc}")
+        return {"fetched": 0, "upserted": 0, "worklogs": 0, "errors": [str(exc)], "unmatched_batches": []}
+
+    if not raw_data:
+        logger.warning("[FullBldgPMSync][Sheet28Items] Ragic 回傳空資料")
+        return {"fetched": 0, "upserted": 0, "worklogs": 0, "errors": [], "unmatched_batches": []}
+
+    fetched  = len(raw_data)
+    upserted = 0
+    worklog_upserted = 0
+    items_with_images = 0
+    errors: list[str] = []
+    unmatched_journal_nos: set[str] = set()
+    journal_collisions: dict[str, list[str]] = {}
+    old_style: list = []
+    now = twnow()
+
+    db = SessionLocal()
+    try:
+        # ── 清除舊格式殘留項目（2026-07-13 架構調整後發現）──────────────────────
+        # 舊版 sync_items_from_ragic()（Sheet21 子表格解析）用的 ragic_id 是
+        # "{batch_id}_{row_key}" 複合格式（如 "4_225"，含底線）；新版直接採用
+        # Sheet28 項目自身的數字 ragic_id（如 "294"，不含底線）。兩種格式的
+        # primary key 不同，若不清除，舊資料會與新同步的資料同時存在，造成每個
+        # 項目重複兩筆。此清除只在資料庫仍殘留舊格式資料時才會實際刪除任何東西。
+        #
+        # ⚠️ 注意：舊格式項目上若有 Portal 標記過的 abnormal_flag/abnormal_note，
+        # 會隨這次清除一併移除（新格式項目是全新 insert，不会繼承）。若需要保留，
+        # 請在本次同步前先手動查詢並記錄。
+        old_style = db.query(FullBldgPMItem).filter(
+            FullBldgPMItem.ragic_id.contains("_")
+        ).all()
+        old_style_abnormal = [it for it in old_style if it.abnormal_flag]
+        if old_style_abnormal:
+            logger.warning(
+                f"[FullBldgPMSync][Sheet28Items] 即將清除的 {len(old_style)} 筆舊格式項目中，"
+                f"有 {len(old_style_abnormal)} 筆帶有 abnormal_flag=True，異常標記將遺失："
+                f"{[it.ragic_id for it in old_style_abnormal]}"
+            )
+        if old_style:
+            logger.info(f"[FullBldgPMSync][Sheet28Items] 清除 {len(old_style)} 筆舊格式（Sheet21子表格解析）殘留項目")
+            for it in old_style:
+                db.delete(it)
+            db.flush()
+
+        # 「編號」→ batch_ragic_id 對照表，來源為 sync_batches_from_ragic() 已同步的批次
+        # 防禦性檢查：若同一個「編號」對應到兩筆批次（理論上不該發生，2026-07-13
+        # 曾因孤兒批次殘留而撞號），記錄警告並以較新的 ragic_created_at/ragic_id 為準，
+        # 而不是靜默覆蓋。
+        all_batches = db.query(FullBldgPMBatch).all()
+        journal_to_batch: dict[str, str] = {}
+        journal_collisions: dict[str, list[str]] = {}
+        for b in all_batches:
+            if not b.journal_no:
+                continue
+            if b.journal_no in journal_to_batch and journal_to_batch[b.journal_no] != b.ragic_id:
+                journal_collisions.setdefault(b.journal_no, [journal_to_batch[b.journal_no]]).append(b.ragic_id)
+            journal_to_batch[b.journal_no] = b.ragic_id
+        if journal_collisions:
+            logger.warning(
+                f"[FullBldgPMSync][Sheet28Items] 發現「編號」撞號的批次（同一編號對應多個 batch ragic_id，"
+                f"可能有孤兒批次尚未清除，請檢查 full_bldg_pm_batch）：{journal_collisions}"
+            )
+
+        for item_ragic_id, raw in raw_data.items():
+            item_id = str(item_ragic_id)
+            try:
+                journal_no = _stringify(raw.get(CK28L_PARENT_REF, ""))
+                batch_ragic_id = journal_to_batch.get(journal_no)
+                if not batch_ragic_id:
+                    unmatched_journal_nos.add(journal_no or "(空白)")
+                    continue
+
+                exec_months_raw    = _stringify(raw.get(CK28L_EXEC_MONTHS, ""))
+                scheduled_date_md  = _normalize_full_date_to_md(_stringify(raw.get(CK28L_SCHED_DATE, "")))
+                repair_hours       = _to_float(_stringify(raw.get(CK28L_REPAIR_HOURS, "")))
+
+                # ── 逐筆項目 fetch_one() 取得巢狀「維修記錄」子表格 + 附圖 ──────────
+                # 圖片欄位「圖片上傳」只有 fetch_one() 全量結果才會回傳實際檔名清單，
+                # listing 模式（fetch_all）恆為空字串，所以跟維修記錄共用同一次 fetch_one()。
+                try:
+                    full_record = await adapter.fetch_one(item_id)
+                    if item_id in full_record and len(full_record) == 1:
+                        full_record = full_record[item_id]
+                    sub_rows = _find_worklog_subtable(full_record)
+                    images = parse_images(
+                        full_record.get(CK28L_IMAGES),
+                        server=FULL_BLDG_PM_SERVER_URL,
+                        account=FULL_BLDG_PM_ACCOUNT,
+                    )
+                except Exception as exc:
+                    sub_rows = {}
+                    images = []
+                    errors.append(f"fetch_one(item={item_id}) 維修記錄/附圖失敗：{exc}")
+                    logger.warning(f"[FullBldgPMSync][Sheet28Items] fetch_one({item_id}) 失敗：{exc}")
+
+                # 全量替換此項目的 worklog（避免舊 row_key 殘留）
+                db.query(FullBldgPMItemWorklog).filter(
+                    FullBldgPMItemWorklog.item_ragic_id == item_id
+                ).delete()
+
+                worklog_starts: list[str] = []
+                worklog_ends: list[str] = []
+                for sub_key, sub_row in sub_rows.items():
+                    wl_start = _stringify(sub_row.get(CK28S_START_TIME, ""))
+                    wl_end   = _stringify(sub_row.get(CK28S_END_TIME, ""))
+                    if wl_start:
+                        worklog_starts.append(wl_start)
+                    if wl_end:
+                        worklog_ends.append(wl_end)
+                    db.add(FullBldgPMItemWorklog(
+                        ragic_id=f"{item_id}_{sub_key}",
+                        item_ragic_id=item_id,
+                        seq_no=_to_int(sub_row.get(CK28S_SEQ_NO, 0)),
+                        repair_note=_stringify(sub_row.get(CK28S_NOTE, "")),
+                        start_time=wl_start,
+                        end_time=wl_end,
+                        staff_name=_stringify(sub_row.get(CK28S_STAFF, "")),
+                        synced_at=now,
+                    ))
+                    worklog_upserted += 1
+
+                # start_time/end_time 取巢狀子表格最早開始／最晚結束
+                # （Sheet28 頂層「保養時間啟/迄」欄位 2026-07-13 實測恆為空，不可用）
+                start_time = min(worklog_starts) if worklog_starts else ""
+                end_time   = max(worklog_ends) if worklog_ends else ""
+
+                existing = db.get(FullBldgPMItem, item_id)
+                if existing:
+                    target = existing
+                else:
+                    target = FullBldgPMItem(ragic_id=item_id)
+                    db.add(target)
+
+                target.batch_ragic_id    = batch_ragic_id
+                target.seq_no            = _to_int(raw.get(CK28L_SEQ_NO, 0))
+                target.category          = _stringify(raw.get(CK28L_CATEGORY, ""))
+                target.frequency         = _stringify(raw.get(CK28L_FREQUENCY, ""))
+                target.task_name         = _stringify(raw.get(CK28L_TASK_NAME, ""))
+                # location：Sheet28 實測無獨立「位置」欄位，不覆蓋既有值（新項目維持空字串）
+                target.estimated_minutes = _to_int(raw.get(CK28L_EST_MINUTES, 0))
+                target.scheduled_date    = scheduled_date_md
+                target.scheduler_name    = _stringify(raw.get(CK28L_SCHEDULER, ""))
+                target.result_note       = _stringify(raw.get(CK28L_NOTE, ""))
+                target.executor_name     = _stringify(raw.get(CK28L_EXECUTOR, ""))
+                target.start_time        = start_time
+                target.end_time          = end_time
+                target.is_completed      = bool(start_time and end_time)
+                target.exec_months_raw   = exec_months_raw
+                target.exec_months_json  = json.dumps(_parse_exec_months(exec_months_raw), ensure_ascii=False)
+                target.repair_hours      = repair_hours
+                target.sheet28_id        = item_id
+                target.images_json       = json.dumps(images, ensure_ascii=False)
+                target.synced_at         = now
+
+                if images:
+                    items_with_images += 1
+                upserted += 1
+            except Exception as exc:
+                errors.append(f"item {item_id}: {exc}")
+                logger.warning(f"[FullBldgPMSync][Sheet28Items] 項目 {item_id} 失敗：{exc}")
+
+        db.commit()
+        if unmatched_journal_nos:
+            logger.warning(
+                f"[FullBldgPMSync][Sheet28Items] {len(unmatched_journal_nos)} 個「編號」在 "
+                f"full_bldg_pm_batch 找不到對應批次，已跳過未同步：{sorted(unmatched_journal_nos)}"
+            )
+        logger.info(
+            f"[FullBldgPMSync][Sheet28Items] 完成：fetched={fetched}, upserted={upserted}, "
+            f"worklogs={worklog_upserted}, items_with_images={items_with_images}, "
+            f"errors={len(errors)}, unmatched_batches={len(unmatched_journal_nos)}"
+        )
+    except Exception as exc:
+        db.rollback()
+        errors.append(f"DB commit error: {exc}")
+        logger.error(f"[FullBldgPMSync][Sheet28Items] DB 寫入失敗：{exc}")
+    finally:
+        db.close()
+
+    return {
+        "fetched": fetched,
+        "upserted": upserted,
+        "worklogs": worklog_upserted,
+        "items_with_images": items_with_images,
+        "old_style_removed": len(old_style),
+        "old_style_abnormal_lost": [it.ragic_id for it in old_style_abnormal],
+        "journal_collisions": journal_collisions,
+        "errors": errors,
+        "unmatched_batches": sorted(unmatched_journal_nos),
+    }
+
+
 @register("full_building_maintenance")
 async def sync_from_ragic() -> dict:
-    """完整同步：主表 → 子表 → Sheet 28（維修工時 + 保養時間補強）。"""
-    batch_result  = await sync_batches_from_ragic()
-    items_result  = await sync_items_from_ragic()
-    sheet28_result = await sync_repair_hours_from_sheet28()
+    """
+    完整同步：主表（Sheet21）→ 項目明細（Sheet28 為主要來源，含維修記錄明細）。
+
+    2026-07-13 架構調整：項目明細主要來源由 Sheet21 子表格改為 Sheet28。
+    舊版 sync_items_from_ragic() / sync_repair_hours_from_sheet28() 仍保留在本檔案中
+    （未刪除、未呼叫），供比對驗證或回退使用。
+    """
+    batch_result = await sync_batches_from_ragic()
+    items_result = await sync_items_from_sheet28()
 
     db = SessionLocal()
     try:
@@ -583,7 +906,6 @@ async def sync_from_ragic() -> dict:
         db.close()
 
     return {
-        "batches":  batch_result,
-        "items":    items_result,
-        "sheet28":  sheet28_result,
+        "batches": batch_result,
+        "items":   items_result,
     }

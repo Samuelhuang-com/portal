@@ -1,0 +1,185 @@
+erDiagram
+%% 週期採購 ERD — Portal 原生版 v2.0（2026/07/11）
+%% 取代 v1.2（Ragic 版）。實心框線的實體＝已實作（獨立資料庫 cycle-purchase.db）；
+%% 下方獨立區塊（SUMMARY 起）＝規劃中、尚未實作，欄位延續 v1.2 原規劃、關聯待日後重新設計。
+%% 主要異動：拿掉 BATCH 實體；新增 DEPARTMENT／COST_CENTER／ACCOUNT_CODE／VENDOR 4 張主檔；
+%% ITEM_MAPPING 新增 department_id；REQUEST 直接掛 CYCLE + period_label，不再掛 BATCH。
+
+  CYCLE_PURCHASE_ITEM {
+    int id PK
+    string item_code "集團新編碼，唯一"
+    string item_name
+    string spec
+    string category
+    string unit
+    int default_qty
+    int moq
+    int max_stock
+    int min_stock
+    decimal unit_price "參考單價"
+    int default_vendor_id FK
+    boolean is_active
+    boolean is_cycle_item
+    string notes
+  }
+
+  CYCLE_PURCHASE_ITEM_MAPPING {
+    int id PK
+    int item_id FK
+    string company
+    int department_id FK "2026-07-11 新增：這個料號在這家公司屬於哪個部門"
+    string original_code
+    string original_name
+    string original_vendor_name
+    decimal original_unit_price "請購明細實際單價來源"
+    boolean is_confirmed "人工確認過才能 true"
+  }
+
+  CYCLE_PURCHASE_DEPARTMENT {
+    int id PK
+    string company
+    string dept_code "ENG/CLEAN/STA/OPS，兩公司代碼一致"
+    string dept_name
+    string owner_user_id "2026-07-11 新增，portal.db users.id 軟關聯，供待辦提醒判斷"
+    boolean is_active
+  }
+
+  CYCLE_PURCHASE_COST_CENTER {
+    int id PK
+    int department_id FK
+    string cc_code
+    string cc_name
+    boolean is_active
+  }
+
+  CYCLE_PURCHASE_ACCOUNT_CODE {
+    int id PK
+    string code UK
+    string name
+    boolean is_active
+  }
+
+  CYCLE_PURCHASE_VENDOR {
+    int id PK
+    string vendor_code UK
+    string vendor_name
+    string tax_id
+    string contact_name
+    string contact_phone
+    string payment_terms
+    boolean is_active
+  }
+
+  CYCLE_PURCHASE_CYCLE {
+    int id PK
+    string cycle_code UK
+    string cycle_name
+    string frequency "monthly/biweekly/bimonthly/custom"
+    string open_rule
+    string close_rule
+    string applicable_categories "目前未接上部門篩選，每次都建全部4部門"
+    string applicable_scope
+    boolean auto_generate
+    string reminder_rule
+    string status
+  }
+
+  CYCLE_PURCHASE_REQUEST {
+    int id PK
+    string request_no UK "PR-202607-0001"
+    int cycle_id FK "2026-07-11 起直接掛週期，不再掛批次"
+    string period_label "取代原本的批次號，如 2026-07"
+    int department_id FK
+    string company "建立時快照自部門主檔"
+    int cost_center_id FK "選填"
+    decimal total_amount
+    string status "draft/submitted/approved/rejected，rejected可再編輯重送"
+    string submitted_by_user_id
+    string submitted_by_name
+    datetime submitted_at
+    string approved_by_user_id
+    string approved_by_name
+    datetime approved_at
+    string reject_reason
+  }
+
+  CYCLE_PURCHASE_REQUEST_ITEM {
+    int id PK
+    int request_id FK
+    int item_id FK
+    int item_mapping_id FK "採用哪一筆公司料號對照的單價"
+    int account_code_id FK "填單人手動選"
+    string item_code "新增當下快照"
+    string item_name "新增當下快照"
+    string unit "新增當下快照"
+    decimal unit_price "新增當下快照"
+    int request_qty
+    decimal subtotal "單價x數量，系統維護"
+  }
+
+  CYCLE_PURCHASE_CYCLE ||--o{ CYCLE_PURCHASE_REQUEST : "掛載（取代原本經由 BATCH 的間接關聯）"
+  CYCLE_PURCHASE_DEPARTMENT ||--o{ CYCLE_PURCHASE_REQUEST : "所屬部門"
+  CYCLE_PURCHASE_DEPARTMENT ||--o{ CYCLE_PURCHASE_COST_CENTER : "轄下成本中心"
+  CYCLE_PURCHASE_COST_CENTER ||--o{ CYCLE_PURCHASE_REQUEST : "選填"
+  CYCLE_PURCHASE_DEPARTMENT ||--o{ CYCLE_PURCHASE_ITEM_MAPPING : "料號歸屬部門"
+  CYCLE_PURCHASE_REQUEST ||--o{ CYCLE_PURCHASE_REQUEST_ITEM : "contains"
+  CYCLE_PURCHASE_ITEM ||--o{ CYCLE_PURCHASE_REQUEST_ITEM : "referenced_in"
+  CYCLE_PURCHASE_ITEM ||--o{ CYCLE_PURCHASE_ITEM_MAPPING : "mapped_by（公司別+部門）"
+  CYCLE_PURCHASE_ITEM_MAPPING ||--o{ CYCLE_PURCHASE_REQUEST_ITEM : "單價來源"
+  CYCLE_PURCHASE_VENDOR ||--o{ CYCLE_PURCHASE_ITEM : "預設供應商"
+  CYCLE_PURCHASE_ACCOUNT_CODE ||--o{ CYCLE_PURCHASE_REQUEST_ITEM : "填單人手動選"
+
+%% ── 以下為規劃中、尚未實作（實體名稱加 _PLANNED 後綴以資識別；延續 v1.2 原規劃，
+%%    關聯待日後重新設計，尤其 SUMMARY 原本掛 BATCH，BATCH 已拿掉，需改設計）──
+
+  CYCLE_PURCHASE_SUMMARY_PLANNED {
+    string summary_no PK
+    string item_no FK
+    string supplier_code FK
+    number total_qty
+    number adjusted_qty
+    string adjust_reason
+    string status
+  }
+
+  CYCLE_PURCHASE_PO_PLANNED {
+    string po_no PK
+    string summary_no FK
+    string supplier_code FK
+    string buyer
+    date expected_date
+    number total_amount
+    string status
+  }
+
+  CYCLE_PURCHASE_RECEIVING_PLANNED {
+    string recv_no PK
+    string po_no FK
+    string receiver
+    date recv_date
+    string status
+  }
+
+  CYCLE_PURCHASE_PAYMENT_PLANNED {
+    string payment_no PK
+    string recv_no FK
+    string invoice_no
+    date invoice_date
+    number invoice_amount
+    string status
+  }
+
+  CYCLE_PURCHASE_AUDIT_PLANNED {
+    string audit_id PK
+    string ref_type
+    string ref_no FK
+    string event_type
+    string description
+    string operator
+    datetime created_at
+  }
+
+  CYCLE_PURCHASE_SUMMARY_PLANNED ||--o{ CYCLE_PURCHASE_PO_PLANNED : "converts_to（規劃中）"
+  CYCLE_PURCHASE_PO_PLANNED ||--o{ CYCLE_PURCHASE_RECEIVING_PLANNED : "received_by（規劃中）"
+  CYCLE_PURCHASE_RECEIVING_PLANNED ||--o{ CYCLE_PURCHASE_PAYMENT_PLANNED : "triggers（規劃中）"
+  CYCLE_PURCHASE_AUDIT_PLANNED }o--|| CYCLE_PURCHASE_REQUEST : "logs（規劃中）"

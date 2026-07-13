@@ -28,11 +28,14 @@ import { Input } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import dayjs from 'dayjs'
 
-import { fetchFullBldgPMBatchDetail, fetchFullBldgPMTaskHistory } from '@/api/fullBuildingMaintenance'
+import {
+  fetchFullBldgPMBatchDetail, fetchFullBldgPMTaskHistory,
+} from '@/api/fullBuildingMaintenance'
 import type {
   PMBatchDetail, PMItem, PMItemStatus,
   PMTaskHistory, PMItemHistorySummary,
 } from '@/types/periodicMaintenance'
+import PMItemWorklogDrawer from '@/components/PMItemWorklogDrawer'
 
 const { Title, Text } = Typography
 const { Option } = Select
@@ -294,6 +297,8 @@ export default function FullBuildingMaintenanceDetailPage() {
   const [historyLoading, setHistoryLoading]     = useState(false)
   const [historyData, setHistoryData]           = useState<PMTaskHistory | null>(null)
 
+  const [selectedPMItem, setSelectedPMItem]     = useState<PMItem | null>(null)
+
   const loadDetail = useCallback(async () => {
     if (!batchId) return
     setLoading(true)
@@ -435,10 +440,17 @@ export default function FullBuildingMaintenanceDetailPage() {
       dataIndex: 'repair_hours',
       width: 90,
       align: 'center',
-      render: (v: number | null | undefined) => (
-        v != null
-          ? <Text style={{ color: '#52C41A', fontWeight: 600 }}>{fmtHours(v)}</Text>
-          : <Text type="secondary">—</Text>
+      render: (v: number | null | undefined, rec) => (
+        <Button
+          type="link"
+          size="small"
+          style={{ padding: 0, height: 'auto', fontWeight: 600 }}
+          onClick={() => setSelectedPMItem(rec)}
+        >
+          {v != null
+            ? <Text style={{ color: '#52C41A', fontWeight: 600 }}>{fmtHours(v)}</Text>
+            : <Text type="secondary">明細</Text>}
+        </Button>
       ),
     },
     {
@@ -730,6 +742,12 @@ export default function FullBuildingMaintenanceDetailPage() {
         onClose={() => setHistoryOpen(false)}
         historyData={historyData}
         loading={historyLoading}
+      />
+
+      <PMItemWorklogDrawer
+        open={!!selectedPMItem}
+        onClose={() => setSelectedPMItem(null)}
+        item={selectedPMItem}
       />
     </div>
   )

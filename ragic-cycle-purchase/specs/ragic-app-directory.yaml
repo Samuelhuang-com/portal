@@ -1,0 +1,87 @@
+app_key: cycle_purchase
+active_key: cycle_purchase
+ragic_base_url: https://ap12.ragic.com/soutlet001
+version: "1.2"
+
+forms:
+  - name: 週期採購料號主檔
+    form_key: cycle_purchase_items
+    ragic_path: /soutlet001/cycle-purchase/items
+    sheet_id: ""
+    active_key: cycle_purchase
+    permission_key: cycle_purchase_admin
+    category: 基礎設定
+
+  - name: 週期採購料號對照表
+    form_key: cycle_purchase_item_mapping
+    ragic_path: /soutlet001/cycle-purchase/item-mapping
+    sheet_id: ""
+    active_key: cycle_purchase
+    permission_key: cycle_purchase_admin
+    category: 基礎設定
+
+  - name: 週期採購週期設定
+    form_key: cycle_purchase_cycles
+    ragic_path: /soutlet001/cycle-purchase/cycles
+    sheet_id: ""
+    active_key: cycle_purchase
+    permission_key: cycle_purchase_admin
+    category: 基礎設定
+
+  - name: 週期採購批次
+    form_key: cycle_purchase_batches
+    ragic_path: /soutlet001/cycle-purchase/batches
+    sheet_id: ""
+    active_key: cycle_purchase
+    permission_key: cycle_purchase_buyer
+    category: 請購作業
+
+  - name: 週期採購請購單
+    form_key: cycle_purchase_requests
+    ragic_path: /soutlet001/cycle-purchase/requests
+    sheet_id: ""
+    active_key: cycle_purchase
+    permission_key: cycle_purchase_request
+    category: 請購作業
+
+  - name: 週期採購彙整單
+    form_key: cycle_purchase_summary
+    ragic_path: /soutlet001/cycle-purchase/summary
+    sheet_id: ""
+    active_key: cycle_purchase
+    permission_key: cycle_purchase_buyer
+    category: 採購彙整
+
+  - name: 週期採購採購單
+    form_key: cycle_purchase_po
+    ragic_path: /soutlet001/cycle-purchase/po
+    sheet_id: ""
+    active_key: cycle_purchase
+    permission_key: cycle_purchase_buyer
+    category: 採購作業
+
+  - name: 週期採購驗收單
+    form_key: cycle_purchase_receiving
+    ragic_path: /soutlet001/cycle-purchase/receiving
+    sheet_id: ""
+    active_key: cycle_purchase
+    permission_key: cycle_purchase_receive
+    category: 驗收作業
+
+  - name: 週期採購請款單
+    form_key: cycle_purchase_payment
+    ragic_path: /soutlet001/cycle-purchase/payment
+    sheet_id: ""
+    active_key: cycle_purchase
+    permission_key: cycle_purchase_finance
+    category: 請款作業
+
+  - name: 週期採購異常紀錄
+    form_key: cycle_purchase_audit
+    ragic_path: /soutlet001/cycle-purchase/audit
+    sheet_id: ""
+    active_key: cycle_purchase
+    permission_key: cycle_purchase_admin
+    category: 系統管理
+
+# 注意：sheet_id 需在 Ragic 建立表單後填入實際值

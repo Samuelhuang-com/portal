@@ -1,0 +1,252 @@
+Ragic 集團週期採購管理系統
+功能表、資料架構、ERD 與 Codex / Claude Code 自動生成指南
+文件版本：v1.2｜文件日期：2026/06/09｜適用平台：Ragic / Ragic Portal
+一、修正重點摘要
+名稱統一：原「統購」相關表單與流程，統一改為「週期採購」。
+週期邏輯：週期採購週期設定與週期採購批次分開，支援每月、雙週、每兩個月與自訂週期。
+請購邏輯：請購明細預載固定料號，請購數量預設 0；0 代表確定不請購。
+會科與預算：請購單產生時帶入請購部門、成本中心、會計科目與部門預算控管。
+庫存範圍：第一版不做庫存消帳，只做依月、年、區間查詢的進貨數量報表。
+採購與財務稽核：補填、逾期、缺貨、替代品、驗收差異與請款差異要留異常紀錄。
+二、修改後應有的 Ragic 功能表
+週期採購管理
+├─ 01 基礎設定
+│  ├─ 週期採購料號主檔
+│  ├─ 週期採購料號對照表
+│  ├─ 週期採購週期設定
+│  ├─ 週期採購單位設定
+│  ├─ 預算／會科設定
+│  └─ 供應商資料查詢（引用既有供應商表）
+├─ 02 請購作業
+│  ├─ 週期採購批次
+│  ├─ 週期採購請購單
+│  ├─ 待填請購清單
+│  ├─ 逾期未填清單
+│  └─ 補填／異常申請
+├─ 03 採購彙整
+│  ├─ 週期採購彙整單
+│  ├─ 採購需求明細查詢
+│  ├─ 採購調整紀錄
+│  └─ 轉採購單作業
+├─ 04 採購作業
+│  ├─ 週期採購採購單
+│  ├─ 採購單明細
+│  ├─ 採購到貨登錄
+│  └─ 採購狀態追蹤
+├─ 05 驗收作業
+│  ├─ 週期採購驗收單
+│  ├─ 待驗收清單
+│  ├─ 驗收異常紀錄
+│  └─ 進貨數量報表
+├─ 06 請款作業
+│  ├─ 週期採購請款單
+│  ├─ 發票／請款明細
+│  ├─ 部門費用分攤明細
+│  └─ 付款狀態追蹤
+├─ 07 報表查詢
+│  ├─ 月度進貨數量報表
+│  ├─ 年度進貨數量報表
+│  ├─ 區間進貨數量報表
+│  ├─ 部門請購金額報表
+│  ├─ 供應商採購金額報表
+│  ├─ 料號採購趨勢報表
+│  └─ 預算使用狀況報表
+└─ 08 系統管理
+   ├─ 權限設定
+   ├─ 表單對應設定
+   ├─ 通知提醒設定
+   ├─ Workflow／自訂按鈕設定
+   └─ 稽核紀錄查詢
+三、修改後應有的 Ragic 架構
+四、核心資料流
+週期採購週期設定
+→ 產生週期採購批次
+→ 依適用單位產生週期採購請購單
+→ 預載固定料號、會科、成本中心、預設數量 0
+→ 單位填寫數量並送出
+→ 主管簽核
+→ 採購彙整
+→ 轉採購單
+→ 到貨後多單位驗收
+→ 產生進貨數量報表
+→ 依發票建立請款單
+→ 依公司／部門／會科／成本中心分攤
+五、建議 Ragic 表單清單與欄位摘要
+六、ERD 架構圖
+下圖呈現週期設定、批次、請購、彙整、採購、驗收、請款，以及料號、供應商、單位、會科與異常稽核之關聯。
+圖 1：Ragic 週期採購管理系統 ERD
+七、Ragic Portal 三項必要設定
+八、Workflow／自訂按鈕建議
+九、如何透過 Codex 或 Claude Code 自動生成 Ragic 表單
+建議不要讓 AI 直接在正式 Ragic 環境任意操作。比較穩定的方式是：先讓 Codex / Claude Code 產生「表單規格檔、匯入樣板、Workflow 程式、API 客戶端、測試資料與操作文件」，再由管理員在測試環境驗證後導入正式環境。
+9.1 建議專案資料夾結構
+ragic-cycle-purchase/
+├─ README.md
+├─ docs/
+│  ├─ RFP_週期採購_v1.2.docx
+│  ├─ ERD.mmd
+│  └─ 欄位規格.md
+├─ specs/
+│  ├─ forms.yaml
+│  ├─ menu-config.yaml
+│  ├─ roles.yaml
+│  └─ ragic-app-directory.yaml
+├─ templates/
+│  ├─ 週期採購料號主檔_import.xlsx
+│  ├─ 週期採購料號對照表_import.xlsx
+│  └─ 預算會科設定_import.xlsx
+├─ workflow/
+│  ├─ cycle_generate_batch.js
+│  ├─ batch_generate_requests.js
+│  ├─ request_validate_submit.js
+│  ├─ batch_generate_summary.js
+│  ├─ summary_to_po.js
+│  ├─ po_to_receiving.js
+│  └─ receiving_to_payment.js
+├─ scripts/
+│  ├─ ragic_client.py
+│  ├─ seed_test_data.py
+│  ├─ export_uat_report.py
+│  └─ validate_forms_spec.py
+└─ tests/
+   ├─ test_cycle_rules.py
+   ├─ test_summary_qty.py
+   ├─ test_budget_check.py
+   └─ test_payment_allocation.py
+9.2 forms.yaml 規格範例
+app: cycle_purchase
+forms:
+  - key: cycle_purchase_request
+    name: 週期採購請購單
+    ragic_path: /soutlet001/cycle-purchase/requests
+    permission_key: cycle_purchase_request
+    fields:
+      - name: 請購單號
+        type: auto_number
+        required: true
+      - name: 批次號
+        type: link
+        source_form: cycle_purchase_batch
+        required: true
+      - name: 公司別
+        type: select
+        lookup_from: ORG_UNIT.company
+      - name: 請購部門
+        type: select
+        lookup_from: ORG_UNIT.department
+      - name: 成本中心
+        type: lookup
+        source: ORG_UNIT.cost_center
+      - name: 請購總金額
+        type: formula
+        formula: SUM(請購明細.小計)
+      - name: 狀態
+        type: select
+        options: [待填, 草稿, 已送出, 簽核中, 已核准, 退回, 已彙整]
+    subtables:
+      - name: 請購明細
+        fields:
+          - name: 統購料號
+            type: link
+            source_form: cycle_purchase_item
+          - name: 品名
+            type: lookup
+          - name: 單位
+            type: lookup
+          - name: 會計科目
+            type: lookup
+          - name: 單價
+            type: number
+          - name: 請購數量
+            type: number
+            default: 0
+          - name: 小計
+            type: formula
+            formula: 單價 * 請購數量
+9.3 Codex 使用方式
+Codex 適合用來在本機資料夾中產生程式碼、規格檔、測試資料與文件。建議在 VS Code 或 PowerShell / WSL 中開啟專案資料夾後執行。
+# 建議工作流程
+cd ragic-cycle-purchase
+codex
+# 可貼給 Codex 的任務
+請依 specs/forms.yaml 產生以下內容：
+1. Ragic 表單欄位 Markdown 規格表
+2. 匯入樣板 Excel 產生器
+3. Ragic JavaScript Workflow 初稿
+4. Python ragic_client.py，用於測試環境新增／更新資料
+5. pytest 測試案例，驗證週期批次、請購數量預設0、彙整數量、預算檢核、請款分攤
+限制：
+- 不得直接連線正式 Ragic
+- 所有 API URL、API Key 需放在 .env，不可寫死
+- 先產生 dry-run 模式
+- 每支程式需有版本號與清楚 icon log
+- 先產生測試資料，不要修改正式資料
+9.4 Claude Code 使用方式
+Claude Code 適合用 SKILL.md 或 CLAUDE.md 固定專案規則，避免每次重新說明 Ragic 架構。建議建立一個專用 skill：ragic-cycle-purchase。
+.claude/
+└─ skills/
+   └─ ragic-cycle-purchase/
+      └─ SKILL.md
+9.5 Claude Code SKILL.md 範例
+---
+name: ragic-cycle-purchase
+description: 用於開發 Ragic 集團週期採購管理系統。當任務涉及週期採購、Ragic 表單、Workflow、表單欄位、採購彙整、驗收、請款、Portal 設定時使用。
+---
+# Ragic Cycle Purchase Skill
+## 專案原則
+- 系統名稱統一使用「週期採購」，不要再使用「統購開放批次」。
+- Ragic 原生功能優先，Workflow 僅用於必要商業邏輯。
+- 供應商資料引用既有 Ragic 表單，不重建供應商主檔。
+- 請購數量預設 0；0 代表不請購，空白不得送出。
+- 第一版不做庫存消帳，只做進貨數量報表。
+- 請購需帶入部門、成本中心、會計科目與部門預算。
+- 每次新增 Ragic 模組都要同步檢查：
+  1. settings/menu-config
+  2. settings/roles
+  3. settings/ragic-app-directory
+## 必要表單
+1. 週期採購料號主檔
+2. 週期採購料號對照表
+3. 週期採購週期設定
+4. 週期採購批次
+5. 週期採購請購單
+6. 週期採購彙整單
+7. 週期採購採購單
+8. 週期採購驗收單
+9. 週期採購請款單
+10. 週期採購異常紀錄
+## 產出要求
+- 所有程式需標註版本，例如 v1.0。
+- Python / JS 執行 log 使用清楚 icon。
+- 任何寫入 Ragic 的程式預設 dry-run=true。
+- 不可把 API Key 寫死在程式中。
+- 必須產出測試案例與回復／回滾方式。
+9.6 可直接使用的 Prompt 指令包
+【任務一：產生 Ragic 表單規格】
+請根據 docs/RFP_週期採購_v1.2.docx 與 specs/forms.yaml，產生每張 Ragic 表單的欄位清單、欄位型態、是否必填、來源表單、公式、預設值、權限角色與測試案例。輸出為 docs/欄位規格.md。
+【任務二：產生匯入樣板】
+請依 specs/forms.yaml 產生 Excel 匯入樣板，包含週期採購料號主檔、料號對照表、單位設定、預算會科設定。每張樣板第一列為欄位名稱，第二列為說明，第三列開始放範例資料。
+【任務三：產生 Workflow】
+請產生 Ragic JavaScript Workflow 初稿，包含：產生批次、產生請購單、送出檢查、產生彙整單、轉採購單、產生驗收單、產生請款單、寫入異常紀錄。每支檔案需含版本、輸入、輸出、前置檢查與錯誤處理。
+【任務四：產生 API 測試工具】
+請產生 Python ragic_client.py，支援 GET/POST/UPDATE，API Key 使用 .env，預設 dry-run=true。另建立 seed_test_data.py 產生測試週期、批次、請購單與驗收資料。
+【任務五：產生 UAT 測試表】
+請產生 UAT Excel，測試案例包含月度、雙週、雙月週期、請購數量預設0、逾期補填、主管退回、採購調整、部分驗收、單一發票多單位請款、權限測試。
+9.7 自動生成 Ragic 表單的實務落地層級
+十、AI 自動化開發品質檢查清單
+所有 Ragic 表單都有 form_key、Ragic URL、Sheet ID、active_key、permission_key。
+所有新增功能已同步更新 settings/menu-config、settings/roles、settings/ragic-app-directory。
+所有寫入資料的程式預設 dry-run=true，並可輸出將寫入的資料筆數。
+週期批次不可重複產生；重複時需提示並中止。
+請購數量預設 0；送出時不可出現空白數量。
+彙整單需可回溯到原公司、原部門、原請購單與請購明細。
+採購調整量與需求量不同時，調整原因必填。
+未驗收、異常驗收不得直接進入請款，除非授權放行且寫入異常紀錄。
+請款分攤明細的金額合計需等於發票金額，若有差異需有差異原因。
+正式上線前需完成 UAT、權限測試、回復方案與操作手冊。
+十一、參考來源
+使用者提供之 RFP - Ragic 集團統購管理系統 v1.1。
+Ragic JavaScript Workflow Engine：用於伺服器端複雜商業邏輯。
+Ragic Add Other Custom Buttons：可於表單設定中加入 Action Button 與 JS Workflow Button。
+OpenAI Codex CLI：可在本機終端機讀取、修改與執行專案程式。
+Claude Code / Agent Skills：可用 SKILL.md 將專案規則封裝成可重複使用的技能。

@@ -34,6 +34,12 @@ class Settings(BaseSettings):
     # ── Database ──────────────────────────────────────────────────────────────
     DATABASE_URL: str = "sqlite:///./portal.db"
 
+    # ── Database — 週期採購（獨立檔案，不與 portal.db 共用）───────────────────
+    # 2026-07-10 與 Samuel 確認：擔心 portal.db 持續變大，週期採購另開一個
+    # SQLite 檔案，避免寫入量隨週期採購資料成長而拖累主要 portal.db。
+    # 僅使用者／角色／權限沿用既有 portal.db（見 app/core/cycle_purchase_database.py）。
+    CYCLE_PURCHASE_DATABASE_URL: str = "sqlite:///./cycle-purchase.db"
+
     # ── Ragic — 連線基本設定 ──────────────────────────────────────────────────
     RAGIC_API_KEY: str = ""
 

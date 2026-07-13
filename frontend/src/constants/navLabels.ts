@@ -87,6 +87,7 @@ export const NAV_GROUP = {
   claimReport:            '請款單報表',        // ← 核准請款單月報表（財務/採購管理）
   nichiyoPurchaseReport:  '日曜請購月報表',    // ← 日曜核准請購單月報表
   nichiyoClaimReport:     '日曜請款月報表',    // ← 日曜核准請款單月報表
+  cyclePurchase:          '週採',              // ← 新增：週期採購管理（2026-07-10，獨立資料庫 cycle-purchase.db）
 } as const
 
 // ── 二級選單（頁面） ──────────────────────────────────────────────────────────
@@ -243,4 +244,20 @@ export const NAV_PAGE = {
 
   // 影音教學（本地模組，不對接 Ragic）
   tutorialVideos:       '影音教學',                      // ← route /tutorial-videos
+
+  // 週期採購（本地模組，獨立資料庫 cycle-purchase.db，不對接 Ragic）
+  cyclePurchaseDashboard:      '週採 Dashboard',      // ← route /cycle-purchase/dashboard
+  cyclePurchaseItems:          '料號主檔',            // ← route /cycle-purchase/items
+  cyclePurchaseCycles:         '週期設定',            // ← route /cycle-purchase/cycles
+  cyclePurchaseRequests:       '請購單',              // ← route /cycle-purchase/requests
+  cyclePurchaseVendors:        '供應商主檔',          // ← route /cycle-purchase/masters/vendors
+  cyclePurchaseDepartments:    '部門主檔',            // ← route /cycle-purchase/masters/departments
+  cyclePurchaseCostCenters:    '成本中心主檔',        // ← route /cycle-purchase/masters/cost-centers
+  cyclePurchaseAccountCodes:   '會計科目主檔',        // ← route /cycle-purchase/masters/account-codes
+  cyclePurchaseSummary:        '彙整單',              // ← route /cycle-purchase/summary
+  cyclePurchasePOs:            '採購單',              // ← route /cycle-purchase/pos
+  cyclePurchaseReceiving:       '驗收單',              // ← route /cycle-purchase/receiving
+  cyclePurchaseReceivingReport: '進貨數量報表',        // ← route /cycle-purchase/receiving-report
+  cyclePurchasePayments:        '請款單',              // ← route /cycle-purchase/payments
+  cyclePurchaseAuditLog:        '異常稽核紀錄',        // ← route /cycle-purchase/audit-log
 } as const

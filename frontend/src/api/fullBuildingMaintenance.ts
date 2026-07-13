@@ -1,7 +1,7 @@
 import apiClient from '@/api/client'
 import type {
   PMBatchListItem, PMBatchDetail, PMStats, PMTaskHistory,
-  PMPeriodStats, PMYearMatrix,
+  PMPeriodStats, PMYearMatrix, PMItem,
 } from '@/types/periodicMaintenance'
 
 const BASE = '/mall/full-building-maintenance'
@@ -43,6 +43,35 @@ export async function fetchFullBldgPMStats(year?: string, month?: number): Promi
 /** 手動觸發 Ragic 同步 */
 export async function syncFullBldgPMFromRagic(): Promise<{ status: string; result: unknown }> {
   const res = await apiClient.post(`${BASE}/sync`)
+  return res.data
+}
+
+// ── 維修記錄明細（Sheet28 巢狀子表格，2026-07-13 新增）───────────────────────
+export interface PMWorklogItem {
+  ragic_id:      string
+  item_ragic_id: string
+  seq_no:        number
+  repair_note:   string
+  start_time:    string
+  end_time:      string
+  staff_name:    string
+}
+
+/** 單一項目維修記錄明細 */
+export async function fetchFullBldgPMItemWorklogs(itemRagicId: string): Promise<PMWorklogItem[]> {
+  const res = await apiClient.get<PMWorklogItem[]>(`${BASE}/items/${itemRagicId}/worklogs`)
+  return res.data
+}
+
+// ── 附圖（Sheet28「圖片上傳」欄位，2026-07-13 新增，遵循全站 db-images 端點慣例）──────
+export interface PMImageItem {
+  url:      string
+  filename: string
+}
+
+/** 單一項目附圖（DB 優先，缺資料時後端會即時向 Ragic 補抓一次） */
+export async function fetchFullBldgPMItemImages(itemRagicId: string): Promise<PMImageItem[]> {
+  const res = await apiClient.get<PMImageItem[]>(`${BASE}/items/${itemRagicId}/db-images`)
   return res.data
 }
 
@@ -88,6 +117,38 @@ export async function fetchFullBldgPMCalendar(
   month: number,
 ): Promise<{ year: number; month: number; max_day: number; rows: import('@/components/MonthlyCalendarGrid').CalendarRow[] }> {
   const res = await apiClient.get(`${BASE}/calendar`, { params: { year, month } })
+  return res.data
+}
+
+// ── 每日巡檢表（依排定日期篩選當日保養項目，來源 Sheet28，2026-07-13 由整棟巡檢改版）──
+export interface PMDailyFormSummary {
+  total:           number
+  completed:       number
+  overdue:         number
+  abnormal:        number
+  planned_minutes: number
+  actual_minutes:  number
+}
+
+export type PMDailyFormView = 'day' | 'month'
+
+export interface PMDailyFormResponse {
+  view:            PMDailyFormView
+  inspection_date: string   // YYYY/MM/DD（view=month 時為該月 1 號）
+  period_month:    string   // YYYY/MM
+  batch_ragic_id:  string | null
+  rows:            PMItem[]
+  summary:         PMDailyFormSummary
+}
+
+/** 每日巡檢表：依排定日期篩選當日保養項目，或 view='month' 檢視整月 */
+export async function fetchFullBldgPMDailyForm(
+  inspectionDate?: string,
+  view: PMDailyFormView = 'day',
+): Promise<PMDailyFormResponse> {
+  const params: Record<string, string> = { view }
+  if (inspectionDate) params.inspection_date = inspectionDate
+  const res = await apiClient.get<PMDailyFormResponse>(`${BASE}/daily-form`, { params })
   return res.data
 }
 

@@ -136,6 +136,26 @@ import BudgetAccountCodesPage          from '@/pages/Budget/Masters/AccountCodes
 import BudgetItemsPage                 from '@/pages/Budget/Masters/BudgetItems'
 import BudgetMappingsPage              from '@/pages/Budget/Mappings'
 
+// ── 週期採購（獨立資料庫 cycle-purchase.db，2026-07-10 新增）────────────────
+import CpDashboardPage                 from '@/pages/CyclePurchase/Dashboard'
+import CpItemsPage                     from '@/pages/CyclePurchase/Items'
+import CpCyclesPage                    from '@/pages/CyclePurchase/Cycles'
+import CpVendorsPage                   from '@/pages/CyclePurchase/Masters/Vendors'
+import CpDepartmentsPage                from '@/pages/CyclePurchase/Masters/Departments'
+import CpCostCentersPage               from '@/pages/CyclePurchase/Masters/CostCenters'
+import CpAccountCodesPage              from '@/pages/CyclePurchase/Masters/AccountCodes'
+import CpRequestsPage                   from '@/pages/CyclePurchase/Requests'
+import CpRequestDetailPage              from '@/pages/CyclePurchase/Requests/Detail'
+import CpSummaryPage                    from '@/pages/CyclePurchase/Summary'
+import CpPOsPage                        from '@/pages/CyclePurchase/POs'
+import CpPODetailPage                   from '@/pages/CyclePurchase/POs/Detail'
+import CpReceivingListPage              from '@/pages/CyclePurchase/Receiving'
+import CpReceivingDetailPage            from '@/pages/CyclePurchase/Receiving/Detail'
+import CpReceivingReportPage            from '@/pages/CyclePurchase/Receiving/Report'
+import CpPaymentListPage                from '@/pages/CyclePurchase/Payment'
+import CpPaymentDetailPage              from '@/pages/CyclePurchase/Payment/Detail'
+import CpAuditLogPage                   from '@/pages/CyclePurchase/AuditLog'
+
 // ── 合約管理 ──────────────────────────────────────────────────────────────────
 import ContractPage            from '@/pages/Contract'
 import ContractDashboardPage   from '@/pages/Contract/Dashboard'
@@ -168,6 +188,7 @@ const PERM_DEFAULT_ROUTES: { key: string; route: string }[] = [
   { key: 'contract_claims_view',              route: '/contract/claims' },
   { key: 'contract_renewals_view',            route: '/contract/renewals' },
   { key: 'budget_view',                       route: '/budget/dashboard' },
+  { key: 'cycle_purchase_view',                route: '/cycle-purchase/dashboard' },
   { key: 'calendar_view',                     route: '/calendar' },
   { key: 'luqun_repair_view',                 route: '/luqun-repair/dashboard' },
   { key: 'dazhi_repair_view',                 route: '/dazhi-repair/dashboard' },
@@ -471,6 +492,28 @@ export default function AppRouter() {
           <Route path="masters/account-codes"    element={<BudgetAccountCodesPage />} />
           <Route path="masters/budget-items"     element={<BudgetItemsPage />} />
           <Route path="mappings"                 element={<BudgetMappingsPage />} />
+        </Route>
+
+        {/* ── 週期採購（獨立資料庫，2026-07-11 拿掉批次，改用 cycle+period_label）── */}
+        <Route path="cycle-purchase">
+          <Route path="dashboard"                element={<CpDashboardPage />} />
+          <Route path="items"                    element={<CpItemsPage />} />
+          <Route path="cycles"                   element={<CpCyclesPage />} />
+          <Route path="masters/vendors"          element={<CpVendorsPage />} />
+          <Route path="masters/departments"      element={<CpDepartmentsPage />} />
+          <Route path="masters/cost-centers"     element={<CpCostCentersPage />} />
+          <Route path="masters/account-codes"    element={<CpAccountCodesPage />} />
+          <Route path="requests"                 element={<CpRequestsPage />} />
+          <Route path="requests/:id"             element={<CpRequestDetailPage />} />
+          <Route path="summary"                  element={<CpSummaryPage />} />
+          <Route path="pos"                      element={<CpPOsPage />} />
+          <Route path="pos/:id"                  element={<CpPODetailPage />} />
+          <Route path="receiving"                 element={<CpReceivingListPage />} />
+          <Route path="receiving/:id"              element={<CpReceivingDetailPage />} />
+          <Route path="receiving-report"           element={<CpReceivingReportPage />} />
+          <Route path="payments"                      element={<CpPaymentListPage />} />
+          <Route path="payments/:id"                  element={<CpPaymentDetailPage />} />
+          <Route path="audit-log"                     element={<CpAuditLogPage />} />
         </Route>
 
         {/* ── 合約管理 ──────────────────────────────────────────────────── */}

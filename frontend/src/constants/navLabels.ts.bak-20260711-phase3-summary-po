@@ -1,0 +1,257 @@
+/**
+ * 導覽文字常數 — 唯一真相來源 (Single Source of Truth)
+ *
+ * ⚠️  修改規則
+ *   - 只改 label 值，絕對不能改 key、route、path 等路由相關欄位
+ *   - 改完後 Menu、Breadcrumb、頁面 Title 會自動同步，不需分別修改
+ *
+ * 對應說明
+ *   label  → 使用者看到的顯示文字（可自由修改）
+ *   route  → React Router path，對應 router/index.tsx（不可修改）
+ *   menuKey → Ant Design Menu key，對應 MainLayout menuItems（不可修改）
+ *
+ * 維護紀錄（請每次修改後補記）
+ *   2026-04-11  初始建立；「客房保養明細」→「保養管理」
+ *   2026-04-12  新增 periodicMaintenance（週期保養表）
+ *   2026-04-13  新增 approvals（簽核管理）
+ *   2026-04-13  新增 memos（公告牆）
+ *   2026-04-14  新增 mall（商場管理群組）+ mallPeriodicMaintenance（商場週期保養表）
+ *   2026-04-14  新增 b4fInspection（整棟工務每日巡檢 B4F）
+ *   2026-04-14  新增 rfInspection（整棟工務每日巡檢 RF）
+ *   2026-04-14  新增 b2fInspection（整棟工務每日巡檢 B2F）
+ *   2026-04-14  新增 b1fInspection（整棟工務每日巡檢 B1F）
+ *   2026-04-14  新增 mallDashboard（商場管理統計 Dashboard）
+ *   2026-04-14  新增 security（保全管理群組）+ securityDashboard + 7 張保全巡檢 Sheet
+ *   2026-04-15  新增 calendar（行事曆群組）—— 超級行事曆 Command Calendar
+ *   2026-04-15  新增 mall_facility_inspection（春大直商場工務巡檢）+ 5 個樓層巡檢頁
+ *   2026-04-15  新增 full_building_inspection（整棟巡檢）+ 4 個樓層巡檢頁（RF/B4F/B2F/B1F）
+ *   2026-04-15  新增 luqun_repair（商場工務報修）完整模組 + Dashboard
+ *   2026-04-15  新增 dazhi_repair（大直工務部）完整模組 + Dashboard
+ *   2026-04-19  新增 budget（預算管理）Phase 1：Dashboard / Plans / Transactions / Masters / Reports
+ *   2026-04-23  新增 workCategoryAnalysis（★工項類別分析）掛於 luqun_repair + dazhi_repair 下
+ *   2026-04-23  新增 execDashboard（◆ 董事長簡報 Dashboard）黑金風格獨立新功能，route /exec-dashboard
+ *   2026-04-24  新增 ihgRoomMaintenance（IHG客房保養）年度矩陣保養計畫，route /hotel/ihg-room-maintenance
+ *   2026-04-28  新增 menuConfig（選單管理）動態改名＋排序＋5筆歷史，route /settings/menu-config
+ *   2026-04-28  整合商場管理：mallDashboard 改名「商場週期保養」，將 6 個子頁面巡檢紀錄合併為 Tab
+ *   2026-04-28  整合整棟巡檢：fullBuildingDashboard 改名「整棟巡檢」，移至商場管理群組下，RF/B4F/B2F/B1F 合併為 Tab
+ *   2026-04-28  整合春大直商場工務巡檢：mallFacilityDashboard 改名「春大直工務巡檢」，移至商場管理群組下，5 個樓層巡檢紀錄合併為 Tab
+ *   2026-04-28  /exec-dashboard 與 /work-category-analysis 從 luqun-repair / dazhi-repair 子層提升為獨立一階（Dashboard 正後方）
+ *   2026-04-28  新增 fullBuildingMaintenance（全棟例行維護）Ragic Sheet 21，route /mall/full-building-maintenance
+ *   2026-04-28  新增 mallPmGroup（商場例行維護）L2 群組，整合 mallDashboard + mallPeriodicMaintenance + fullBuildingMaintenance 為三層 menu
+ *   2026-04-28  修正 applyMenuConfig 三層 merge 邏輯；DB seed 隱藏 custom_1777348120465；MenuConfig 設定頁支援三層 L3
+ *   2026-04-28  新增 mallMgmtDashboard（商場管理 Dashboard）整合 5 來源總覽，route /mall/overview
+ *   2026-04-29  新增 hotelDailyInspection（飯店每日巡檢）5 張 Sheet（RF/4F-10F/4F/2F/1F），route /hotel/daily-inspection
+ *   2026-04-30  新增 hotelMeterReadings（每日數值登錄表）4 張 Sheet（全棟電錶/商場空調箱電錶/專櫃電錶/專櫃水錶），route /hotel/daily-meter-readings
+ *   2026-04-30  整合保全巡檢：security 從群組（8 items）→ 單一入口 /security/dashboard；各 Sheet 改為頁面內外層 TAB；NAV_GROUP.security 改名「保全巡檢」
+ *   2026-04-30  新增 hotelMgmtDashboard（★飯店管理 Dashboard）整合 6 來源總覽，route /hotel/overview
+ *   2026-05-03  新增 decisionCockpit（決策駕駛艙）高階主管決策入口，整合三大模組精華，route /decision-cockpit
+ *   2026-05-03  新增 wiki（知識庫）LLM Wiki 知識庫，含員工 SOP + 開發者 Wiki + AI 問答，route /wiki
+ *   2026-05-04  新增 employeeManualExport（員工操作手冊匯出）系統設定群組，route /settings/employee-manual-export
+ *   2026-05-07  新增 execWorkDashboard（集團工務決策駕駛艙）以工務決策視角為主，route /exec-work-dashboard
+ *   2026-05-10  新增 knowledgeGraph（專案知識圖譜）graphify 整合，route /settings/knowledge-graph
+ *   2026-05-13  新增 purchaseReport（請購單報表）核准請購單月報表，route /purchase-report/monthly
+ *   2026-05-17  新增 staticPages（靜態頁面）docs/ 目錄 iframe 瀏覽器，route /settings/static-pages
+ *   2026-05-19  新增 ragicFieldAudit（Ragic 欄位比對）欄位稽核工具，route /settings/ragic-field-audit
+ *   2026-05-24  新增 pptExport（飯店 Dashboard PPT 匯出設定）Section Registry 架構，route /ppt-export
+ *   2026-05-27  新增 contract（合約管理）Phase 1.3 Portal 集成，route /contract + /contract/vendors + /contract/settings
+ *   2026-06-29  新增 hotelCalendar（飯店行事曆）+ mallCalendar（商場行事曆），route /hotel/calendar + /mall/calendar
+ *   2026-07-03  新增 tutorialVideos（影音教學）一階選單，本地模組不對接 Ragic，route /tutorial-videos
+ */
+
+// ── 系統標題 ──────────────────────────────────────────────────────────────────
+export const SITE_TITLE = '維春集團管理 Portal'
+
+// ── 一級選單（群組） ──────────────────────────────────────────────────────────
+export const NAV_GROUP = {
+  dashboard:  'Dashboard',
+  schedule:   '班表',               // ← 新增：班表管理（行事曆之後）
+  contract:   '合約管理',           // ← 新增：合約管理（班表之後、預算之前）
+  budget:     '預算管理',         // ← 新增：預算管理（在 dashboard 之後、行事曆之前）
+  calendar:   '行事曆',           // ← 新增：Command Calendar（在 dashboard 之後、hotel 之前）
+  hotel:      '飯店管理',
+  mall:                     '商場管理',
+  mallPmGroup:              '商場例行維護',   // ← L2 群組：商場例行維護 + 全棟例行維護
+  luqun_repair:             '商場工務報修',
+  dazhi_repair:             '飯店工務報修',
+  mall_facility_inspection:  '商場工務巡檢',
+  full_building_inspection:  '整棟巡檢',
+  security:                  '保全巡檢',
+  warehouse:  '倉庫管理',
+  reports:    '報表',
+  approvals:  '簽核管理',
+  memos:      '公告牆',
+  wiki:             '知識庫',
+  audit:            '稽核日誌',
+  settings:         '系統設定',
+  purchaseReport:         '請購單報表',        // ← 核准請購單月報表（財務/採購管理）
+  claimReport:            '請款單報表',        // ← 核准請款單月報表（財務/採購管理）
+  nichiyoPurchaseReport:  '日曜請購月報表',    // ← 日曜核准請購單月報表
+  nichiyoClaimReport:     '日曜請款月報表',    // ← 日曜核准請款單月報表
+  cyclePurchase:          '週採',              // ← 新增：週期採購管理（2026-07-10，獨立資料庫 cycle-purchase.db）
+} as const
+
+// ── 二級選單（頁面） ──────────────────────────────────────────────────────────
+export const NAV_PAGE = {
+  // 預算管理
+  budgetDashboard:       '預算總覽 Dashboard',
+  budgetPlans:           '預算主表',
+  budgetTransactions:    '費用交易明細',
+  budgetReport:          '預算比較報表',
+  budgetDeptMaster:      '部門主檔',
+  budgetAccountMaster:   '會計科目主檔',
+  budgetItemMaster:      '預算項目主檔',
+  budgetMappings:        '對照規則維護',
+
+  // 行事曆
+  calendarMain:          '行事曆總覽',    // 超級行事曆主頁
+  hotelCalendar:         '飯店行事曆',   // ← 飯店行事曆（/hotel/calendar）
+  mallCalendar:          '商場行事曆',   // ← 商場行事曆（/mall/calendar）
+
+  // 飯店管理
+  hotelMgmtDashboard:     '★ 飯店管理 Dashboard',  // ← 新增：6 來源整合總覽
+  hotelDailyInspection:   '飯店每日巡檢',
+  hotelMeterReadings:     '每日數值登錄表',
+  roomMaintenance:        '客房保養',
+  roomMaintenanceDetail:  '※1.1飯店客房保養管理',       // ← 原「客房保養明細」
+  periodicMaintenance:    '飯店例行維護',
+  ihgRoomMaintenance:     '2. IHG客房保養',             // ← 新增：年度矩陣保養
+  otherTasks:             '主管交辦／緊急事件',          // ← 新增：主管交辦 + 緊急事件 2 TAB
+  hotelRoutineMaintenance: '1.2 飯店例行維護',           // ← Sheet 11 平表版（含維修工時）
+  repairs:                '報修管理',
+
+  // 商場管理
+  mallMgmtDashboard:          '商場管理 Dashboard',  // ← 新增：5 來源整合總覽
+  mallDashboard:              '商場週期保養',
+  mallPeriodicMaintenance:    '商場例行維護',
+  fullBuildingMaintenance:    '全棟例行維護',   // ← 新增：Ragic Sheet 21
+  b4fInspection:           '工務巡檢 - B4F',
+  rfInspection:            '工務巡檢 - RF',
+  b2fInspection:           '工務巡檢 - B2F',
+  b1fInspection:           '工務巡檢 - B1F', //整棟工務每日巡檢
+
+  // 商場工務報修
+  luqunRepairDashboard:    '商場工務報修 Dashboard',
+
+  // 飯店工務報修
+  dazhiRepairDashboard:    '飯店工務報修 Dashboard',
+
+  // ★工項類別分析
+  workCategoryAnalysis:    '★工項類別分析',
+
+  // 決策駕駛艙（高階主管決策入口，整合三大模組精華）
+  decisionCockpit:         '決策駕駛艙',
+
+  // 高階主管 Dashboard（新功能，獨立路由）
+  execDashboard:           '高階主管 Dashboard',
+
+  // 集團工務決策駕駛艙（工務決策視角，獨立路由）
+  execWorkDashboard:       '集團決策 Dashboard',
+
+  // 商場工務巡檢
+  mallFacilityDashboard:   '商場工務巡檢',
+  mallFacility4F:          '工務巡檢 - 4F',
+  mallFacility3F:          '工務巡檢 - 3F',
+  mallFacility1F3F:        '工務巡檢 - 1F ~ 3F',
+  mallFacility1F:          '工務巡檢 - 1F',
+  mallFacilityB1FB4F:      '工務巡檢 - B1F ~ B4F',
+
+  // 整棟巡檢
+  fullBuildingDashboard:   '整棟巡檢',
+  fullBuildingRF:          '整棟巡檢 - RF',
+  fullBuildingB4F:         '整棟巡檢 - B4F',
+  fullBuildingB2F:         '整棟巡檢 - B2F',
+  fullBuildingB1F:         '整棟巡檢 - B1F',
+
+  // 保全管理
+  securityDashboard:     '保全巡檢Dashboard',
+  securityB1fB4f:        'B1F~B4F',
+  security1f3f:          '1F ~ 3F (夜間)', //保全巡檢
+  security5f10f:         '5F ~ 10F (夜間)',
+  security4f:            '4F (夜間)',
+  security1fHotel:       '1F (飯店大廳)',
+  security1fClose:       '1F 閉店巡檢',
+  security1fOpen:        '1F 開店準備',
+
+  // 倉庫管理
+  inventory:             '倉庫庫存',
+
+  // 報表
+  reportsGenerate:       '產生報表',
+  reportsHistory:        '歷史報表',
+
+  // 簽核管理
+  approvalsList:         '簽核清單',
+  approvalsNew:          '新增簽核單',
+
+  // 公告牆
+  memosList:             '公告清單',
+  memosNew:              '新增公告',
+
+  // 知識庫
+  wikiMain:              '知識庫',
+
+  // 系統設定
+  usersManage:              '使用者管理',
+  rolesManage:              '角色管理',
+  ragicConnections:         'Ragic 連線',
+  ragicAppDirectory:        'Ragic 對應表',
+  ragicFieldAudit:          'Ragic 欄位比對',  // ← 新增：Ragic 與 Portal 欄位稽核
+  menuConfig:               '選單管理',
+  employeeManualExport:     '員工操作手冊匯出',
+  knowledgeGraph:           '專案知識圖譜',
+  staticPages:              '靜態頁面',
+  repairUnfinishedReport:   '報修未完成報表',
+  usageMonitor:             '使用監控',             // ← 2026-05-23 API 存取日誌統計
+
+  // 請購單報表
+  purchaseReportMonthly:    '核准請購單月報表',  // ← 品項級月報表，route /purchase-report/monthly
+
+
+  // 請款單報表
+  claimReportMonthly:       '核准請款單月報表',  // ← 品項級月報表，route /claim-report/monthly
+
+  // 日曜請購月報表
+  nichiyoPurchaseReportMonthly: '日曜核准請購單月報表',  // ← route /nichiyo-purchase-report/monthly
+
+  // 日曜請款月報表
+  nichiyoClaimReportMonthly: '日曜核准請款單月報表',  // ← route /nichiyo-claim-report/monthly
+
+  // 班表管理（本地 SQLite 模組）
+  scheduleOverview:     '班表總覽',            // ← route /schedule
+  scheduleCalendar:     '月曆式班表',           // ← route /schedule/calendar
+  scheduleImport:       '匯入班表',             // ← route /schedule/import
+  scheduleStaff:        '人員管理',             // ← route /schedule/staff
+  scheduleShifts:       '班別管理',             // ← route /schedule/shifts
+  scheduleDepartments:  '部門管理',             // ← route /schedule/departments
+
+  // 合約管理
+  contractList:         '合約清單',             // ← route /contract
+  contractDashboard:    'Dashboard',            // ← route /contract/dashboard
+  contractImport:       '資料導入',             // ← route /contract/import
+  contractVendors:      '廠商管理',             // ← route /contract/vendors
+  contractSettings:     '合約設定',             // ← route /contract/settings
+  contractExpiring:     '到期預警',             // ← route /contract/expiring (Phase 2)
+  contractClaims:       '請款管理',             // ← route /contract/claims   (Phase 2)
+  contractRenewals:     '續約管理',             // ← route /contract/renewals (Phase 3)
+  contractCalendar:     '合約行事曆',           // ← route /contract/calendar  (G2)
+  contractCompare:      '合約比較',             // ← route /contract/compare   (K5)
+
+  // PPT 匯出設定（飯店 Dashboard，全公司共用設定，一階選單）
+  pptExport:            '飯店 Dashboard PPT 匯出設定',  // ← route /ppt-export
+
+  // AI 助理
+  aiWorkorderAssistant: 'AI 工單查詢助理',               // ← route /ai-assistant
+
+  // 影音教學（本地模組，不對接 Ragic）
+  tutorialVideos:       '影音教學',                      // ← route /tutorial-videos
+
+  // 週期採購（本地模組，獨立資料庫 cycle-purchase.db，不對接 Ragic）
+  cyclePurchaseDashboard:      '週採 Dashboard',      // ← route /cycle-purchase/dashboard
+  cyclePurchaseItems:          '料號主檔',            // ← route /cycle-purchase/items
+  cyclePurchaseCycles:         '週期設定',            // ← route /cycle-purchase/cycles
+  cyclePurchaseRequests:       '請購單',              // ← route /cycle-purchase/requests
+  cyclePurchaseVendors:        '供應商主檔',          // ← route /cycle-purchase/masters/vendors
+  cyclePurchaseDepartments:    '部門主檔',            // ← route /cycle-purchase/masters/departments
+  cyclePurchaseCostCenters:    '成本中心主檔',        // ← route /cycle-purchase/masters/cost-centers
+  cyclePurchaseAccountCodes:   '會計科目主檔',        // ← route /cycle-purchase/masters/account-codes
+} as const

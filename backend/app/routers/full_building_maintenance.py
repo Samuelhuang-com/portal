@@ -10,6 +10,7 @@ Prefix: /api/v1/mall/full-building-maintenance
   GET  /items                        — 所有項目跨批次查詢
   GET  /stats                        — 全站統計（Dashboard 資料來源）
   GET  /items/task-history           — 依項目名稱查詢近 N 個月執行歷史
+  GET  /items/{item_ragic_id}/worklogs — 單一項目維修記錄明細（Sheet28 巢狀子表格，2026-07-13 新增）
   GET  /debug/ragic-raw              — 除錯：顯示 Ragic Sheet 21 原始欄位
 """
 import json
@@ -18,11 +19,12 @@ from datetime import date, datetime, timezone
 from typing import Optional, List
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.dependencies import get_current_user, require_roles
-from app.models.full_building_maintenance import FullBldgPMBatch, FullBldgPMItem
+from app.models.full_building_maintenance import FullBldgPMBatch, FullBldgPMItem, FullBldgPMItemWorklog
 from app.models.full_bldg_pm_schedule import FullBldgPMSchedule
 from app.schemas.full_bldg_periodic_maintenance import (
     FullBldgPMScheduleAnnualMatrix, FullBldgPMScheduleMatrixRow,
@@ -263,7 +265,17 @@ def _calc_kpi(items: list[FullBldgPMItem], check_month: int) -> PMBatchKPI:
     overdue     = sum(1 for _, s in current_items if s == "overdue")
     abnormal    = sum(1 for it in items if it.abnormal_flag)
     planned     = sum(it.estimated_minutes for it, s in current_items)
-    actual      = sum(_time_diff_minutes(it.start_time, it.end_time) for it in items if it.start_time and it.end_time)
+    # 2026-07-13 修正：repair_hours（來源 Sheet28「維修工時」）是 Ragic 端逐筆維修記錄
+    # 實際工時的加總；start_time/end_time 則是 Portal 這邊從巢狀子表格「取最早開始、
+    # 最晚結束」推算出來的時間跨度。同一保養項目若有多筆不連續的維修記錄（例如
+    # 15:54-15:55 做一筆、17:00-17:04 又做一筆），時間跨度會把中間的空檔也算進去，
+    # 大幅高估實際工時。有 repair_hours 時一律以其為準，只有沒有 repair_hours
+    # （例如舊資料或極端情況）才退回時間跨度估算。
+    actual = sum(
+        (round(it.repair_hours * 60) if it.repair_hours is not None
+         else _time_diff_minutes(it.start_time, it.end_time))
+        for it in items if it.start_time and it.end_time
+    )
     rate = round(completed / total_all * 100, 1) if total_all > 0 else 0.0
 
     return PMBatchKPI(
@@ -916,6 +928,86 @@ def get_stats(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# GET /items/{item_ragic_id}/worklogs（2026-07-13 新增：Sheet28 巢狀「維修記錄」明細）
+# ══════════════════════════════════════════════════════════════════════════════
+class PMWorklogOut(BaseModel):
+    ragic_id:      str
+    item_ragic_id: str
+    seq_no:        int
+    repair_note:   str
+    start_time:    str
+    end_time:      str
+    staff_name:    str
+
+    class Config:
+        from_attributes = True
+
+
+@router.get(
+    "/items/{item_ragic_id}/worklogs",
+    response_model=List[PMWorklogOut],
+    summary="單一項目維修記錄明細（來源 Ragic Sheet28 巢狀子表格）",
+)
+def get_item_worklogs(item_ragic_id: str, db: Session = Depends(get_db)):
+    rows = (
+        db.query(FullBldgPMItemWorklog)
+        .filter(FullBldgPMItemWorklog.item_ragic_id == item_ragic_id)
+        .order_by(FullBldgPMItemWorklog.seq_no.asc())
+        .all()
+    )
+    return rows
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GET /items/{item_ragic_id}/db-images（2026-07-13 新增：Sheet28「圖片上傳」欄位，
+# 遵循全站「明細 Drawer 強制規範」的 /db-images/{ragic_id} 端點慣例）
+# ══════════════════════════════════════════════════════════════════════════════
+class PMImageOut(BaseModel):
+    url:      str
+    filename: str
+
+
+@router.get(
+    "/items/{item_ragic_id}/db-images",
+    response_model=List[PMImageOut],
+    summary="單一項目附圖（DB 優先，缺資料時即時向 Ragic 補抓一次，來源 Sheet28「圖片上傳」欄位）",
+)
+async def get_item_images(item_ragic_id: str, db: Session = Depends(get_db)):
+    item = db.get(FullBldgPMItem, item_ragic_id)
+    if item and item.images_json:
+        try:
+            cached = json.loads(item.images_json)
+            if cached:
+                return cached
+        except Exception:
+            pass
+
+    # DB 沒資料（尚未同步過此欄位，或該筆項目本來就沒附圖）→ 即時向 Ragic 補抓一次；
+    # 不寫回 DB，下次排程同步時會自然補齊。
+    from app.services.full_building_maintenance_sync import (
+        FULL_BLDG_PM_SERVER_URL, FULL_BLDG_PM_ACCOUNT, FULL_BLDG_PM_SHEET28_PATH, CK28L_IMAGES,
+    )
+    from app.services.ragic_data_service import parse_images
+
+    adapter = RagicAdapter(
+        sheet_path=FULL_BLDG_PM_SHEET28_PATH,
+        server_url=FULL_BLDG_PM_SERVER_URL,
+        account=FULL_BLDG_PM_ACCOUNT,
+    )
+    try:
+        full_record = await adapter.fetch_one(item_ragic_id)
+        if item_ragic_id in full_record and len(full_record) == 1:
+            full_record = full_record[item_ragic_id]
+        return parse_images(
+            full_record.get(CK28L_IMAGES),
+            server=FULL_BLDG_PM_SERVER_URL,
+            account=FULL_BLDG_PM_ACCOUNT,
+        )
+    except Exception:
+        return []
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # GET /items/task-history
 # ══════════════════════════════════════════════════════════════════════════════
 def _offset_month(year: int, month: int, delta: int) -> tuple[int, int]:
@@ -1153,6 +1245,98 @@ def get_calendar(
         rows_out.append({"key": cat, "label": cat, "daily": daily})
 
     return {"year": year, "month": month, "max_day": max_day, "rows": rows_out}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GET /daily-form  — 每日巡檢表
+# 2026-07-13：原本掛在此 TAB 的「整棟巡檢」（full-building-inspection/1-4，RF/B1F/B2F/B4F
+# 固定巡檢清單）從未實作本地同步、資料結構也與本模組（全棟週期保養日誌）完全無關。
+# 改版為：依「排定日期」篩選當月批次（來源 Sheet28）中排定在指定日期的保養項目，
+# 呈現「當天該做哪些保養項目」的日檢視表。
+# 2026-07-13 追加：view=month 時不篩 scheduled_date，回傳整月批次全部項目（依排定日期排序）。
+# ══════════════════════════════════════════════════════════════════════════════
+class PMDailyFormSummary(BaseModel):
+    total:           int
+    completed:       int
+    overdue:         int
+    abnormal:        int
+    planned_minutes: int
+    actual_minutes:  int
+
+
+class PMDailyFormResponse(BaseModel):
+    view:            str             # "day" | "month"
+    inspection_date: str             # YYYY/MM/DD（view=month 時為該月 1 號）
+    period_month:    str             # YYYY/MM
+    batch_ragic_id:  Optional[str] = None
+    rows:            List[PMItemOut]
+    summary:         PMDailyFormSummary
+
+
+@router.get(
+    "/daily-form",
+    summary="每日巡檢表（依排定日期篩選當日保養項目，或 view=month 檢視整月，來源 Sheet28）",
+    response_model=PMDailyFormResponse,
+)
+def get_daily_form(
+    inspection_date: Optional[str] = Query(None, description="巡檢日期 YYYY/MM/DD，不填則為今天"),
+    view: str = Query("day", description="day = 單日；month = 整月"),
+    db: Session = Depends(get_db),
+):
+    if view not in ("day", "month"):
+        raise HTTPException(status_code=400, detail="view 須為 day 或 month")
+
+    if inspection_date:
+        try:
+            y, m, d = (int(x) for x in inspection_date.strip().split("/"))
+            target = date(y, m, d)
+        except Exception:
+            raise HTTPException(status_code=400, detail="inspection_date 格式須為 YYYY/MM/DD")
+    else:
+        target = date.today()
+
+    target_str   = target.strftime("%Y/%m/%d")
+    period_month = f"{target.year}/{target.month:02d}"
+    short_date   = f"{target.month:02d}/{target.day:02d}"   # 與 _normalize_full_date_to_md() 輸出格式一致
+    check_month  = target.month
+
+    empty_summary = PMDailyFormSummary(
+        total=0, completed=0, overdue=0, abnormal=0, planned_minutes=0, actual_minutes=0,
+    )
+
+    batch = db.query(FullBldgPMBatch).filter(FullBldgPMBatch.period_month == period_month).first()
+    if not batch:
+        return PMDailyFormResponse(
+            view=view, inspection_date=target_str, period_month=period_month,
+            batch_ragic_id=None, rows=[], summary=empty_summary,
+        )
+
+    query = db.query(FullBldgPMItem).filter(FullBldgPMItem.batch_ragic_id == batch.ragic_id)
+    if view == "day":
+        query = query.filter(FullBldgPMItem.scheduled_date == short_date)
+        query = query.order_by(FullBldgPMItem.category, FullBldgPMItem.seq_no)
+    else:
+        query = query.order_by(FullBldgPMItem.scheduled_date, FullBldgPMItem.category, FullBldgPMItem.seq_no)
+    items = query.all()
+
+    rows = [_item_to_out(it, check_month) for it in items]
+    kpi  = _calc_kpi(items, check_month)
+
+    return PMDailyFormResponse(
+        view=view,
+        inspection_date=target_str,
+        period_month=period_month,
+        batch_ragic_id=batch.ragic_id,
+        rows=rows,
+        summary=PMDailyFormSummary(
+            total=len(items),
+            completed=kpi.completed,
+            overdue=kpi.overdue,
+            abnormal=kpi.abnormal,
+            planned_minutes=kpi.planned_minutes,
+            actual_minutes=kpi.actual_minutes,
+        ),
+    )
 
 
 # ══════════════════════════════════════════════════════════════════════════════

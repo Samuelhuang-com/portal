@@ -43,6 +43,9 @@ import {
   SwapOutlined,
   RobotOutlined,
   PlayCircleOutlined,
+  FileDoneOutlined,
+  ShoppingCartOutlined,
+  InboxOutlined,
 } from '@ant-design/icons'
 import { useNavigate, useLocation, Outlet } from 'react-router-dom'
 import { useAuthStore } from '@/stores/authStore'
@@ -159,6 +162,31 @@ export const menuItems: MenuItem[] = [
       { key: '/budget/masters/account-codes',    icon: <SettingOutlined />,    label: NAV_PAGE.budgetAccountMaster, permissionKey: 'budget_admin'  },
       { key: '/budget/masters/budget-items',     icon: <SettingOutlined />,    label: NAV_PAGE.budgetItemMaster,    permissionKey: 'budget_admin'  },
       { key: '/budget/mappings',                 icon: <ApiOutlined />,        label: NAV_PAGE.budgetMappings,      permissionKey: 'budget_admin'  },
+    ],
+  },
+  // ── 週期採購（獨立資料庫 cycle-purchase.db，2026-07-10 新增）───────────────
+  // 第一期範圍：基礎設定／料號主檔／週期設定／批次。
+  // 請購／彙整／採購／驗收／請款留待後續階段（見規劃報告第八節）。
+  {
+    key: 'cyclePurchase',
+    icon: <ShopOutlined />,
+    label: NAV_GROUP.cyclePurchase,
+    permissionKey: 'cycle_purchase_view',
+    children: [
+      { key: '/cycle-purchase/dashboard',            icon: <DashboardOutlined />,  label: NAV_PAGE.cyclePurchaseDashboard,    permissionKey: 'cycle_purchase_view'  },
+      { key: '/cycle-purchase/items',                icon: <DatabaseOutlined />,   label: NAV_PAGE.cyclePurchaseItems,        permissionKey: 'cycle_purchase_view'  },
+      { key: '/cycle-purchase/cycles',                icon: <CalendarOutlined />,   label: NAV_PAGE.cyclePurchaseCycles,       permissionKey: 'cycle_purchase_admin' },
+      { key: '/cycle-purchase/requests',              icon: <FileTextOutlined />,   label: NAV_PAGE.cyclePurchaseRequests,     permissionKey: 'cycle_purchase_view'  },
+      { key: '/cycle-purchase/summary',                icon: <FileDoneOutlined />,   label: NAV_PAGE.cyclePurchaseSummary,      permissionKey: 'cycle_purchase_view'  },
+      { key: '/cycle-purchase/pos',                     icon: <ShoppingCartOutlined />, label: NAV_PAGE.cyclePurchasePOs,        permissionKey: 'cycle_purchase_view'  },
+      { key: '/cycle-purchase/receiving',        icon: <InboxOutlined />,        label: NAV_PAGE.cyclePurchaseReceiving,        permissionKey: 'cycle_purchase_view'   },
+      { key: '/cycle-purchase/receiving-report', icon: <BarChartOutlined />,     label: NAV_PAGE.cyclePurchaseReceivingReport,  permissionKey: 'cycle_purchase_report' },
+      { key: '/cycle-purchase/payments',   icon: <DollarOutlined />,       label: NAV_PAGE.cyclePurchasePayments,         permissionKey: 'cycle_purchase_view'   },
+      { key: '/cycle-purchase/audit-log',  icon: <AuditOutlined />,        label: NAV_PAGE.cyclePurchaseAuditLog,         permissionKey: 'cycle_purchase_admin'  },
+      { key: '/cycle-purchase/masters/vendors',       icon: <ShopOutlined />,       label: NAV_PAGE.cyclePurchaseVendors,      permissionKey: 'cycle_purchase_admin' },
+      { key: '/cycle-purchase/masters/departments',   icon: <ApartmentOutlined />,  label: NAV_PAGE.cyclePurchaseDepartments,  permissionKey: 'cycle_purchase_admin' },
+      { key: '/cycle-purchase/masters/cost-centers',  icon: <ApartmentOutlined />,  label: NAV_PAGE.cyclePurchaseCostCenters,  permissionKey: 'cycle_purchase_admin' },
+      { key: '/cycle-purchase/masters/account-codes', icon: <SettingOutlined />,    label: NAV_PAGE.cyclePurchaseAccountCodes, permissionKey: 'cycle_purchase_admin' },
     ],
   },
   // ── 行事曆（dashboard 之後、hotel 之前）────────────────────────────────────

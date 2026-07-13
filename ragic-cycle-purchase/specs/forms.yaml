@@ -1,0 +1,391 @@
+app: cycle_purchase
+version: "1.2"
+
+forms:
+
+  - key: cycle_purchase_items
+    name: 週期採購料號主檔
+    ragic_path: /soutlet001/cycle-purchase/items
+    permission_key: cycle_purchase_admin
+    fields:
+      - name: 料號
+        type: auto_number
+        required: true
+      - name: 品名
+        type: text
+        required: true
+      - name: 規格
+        type: text
+      - name: 單位
+        type: select
+        lookup_from: UNIT_SETTING.unit_name
+        required: true
+      - name: 預設數量
+        type: number
+        default: 0
+      - name: MOQ
+        type: number
+        default: 0
+      - name: 是否啟用
+        type: checkbox
+        default: true
+      - name: 是否週期品
+        type: checkbox
+        default: true
+      - name: 供應商參考
+        type: link
+        source_form: supplier_master
+
+  - key: cycle_purchase_item_mapping
+    name: 週期採購料號對照表
+    ragic_path: /soutlet001/cycle-purchase/item-mapping
+    permission_key: cycle_purchase_admin
+    fields:
+      - name: 對照ID
+        type: auto_number
+        required: true
+      - name: 料號
+        type: link
+        source_form: cycle_purchase_items
+        required: true
+      - name: 公司別
+        type: select
+        lookup_from: ORG_UNIT.company
+        required: true
+      - name: 供應商代碼
+        type: link
+        source_form: supplier_master
+        required: true
+      - name: 供應商品號
+        type: text
+      - name: 供應商品名
+        type: text
+      - name: 單價
+        type: number
+        required: true
+
+  - key: cycle_purchase_cycles
+    name: 週期採購週期設定
+    ragic_path: /soutlet001/cycle-purchase/cycles
+    permission_key: cycle_purchase_admin
+    fields:
+      - name: 週期ID
+        type: auto_number
+        required: true
+      - name: 週期名稱
+        type: text
+        required: true
+      - name: 週期頻率
+        type: select
+        options: [每月, 雙週, 每兩個月, 自訂]
+        required: true
+      - name: 開放起始日
+        type: date
+        required: true
+      - name: 截止日
+        type: date
+        required: true
+      - name: 適用單位
+        type: multi_select
+        lookup_from: ORG_UNIT.department
+        required: true
+      - name: 狀態
+        type: select
+        options: [啟用, 停用]
+        default: 啟用
+
+  - key: cycle_purchase_batches
+    name: 週期採購批次
+    ragic_path: /soutlet001/cycle-purchase/batches
+    permission_key: cycle_purchase_buyer
+    fields:
+      - name: 批次號
+        type: auto_number
+        required: true
+      - name: 週期ID
+        type: link
+        source_form: cycle_purchase_cycles
+        required: true
+      - name: 批次名稱
+        type: text
+        required: true
+      - name: 開放日期
+        type: date
+        required: true
+      - name: 截止日期
+        type: date
+        required: true
+      - name: 是否已產生請購
+        type: checkbox
+        default: false
+      - name: 狀態
+        type: select
+        options: [開放, 關閉, 完成]
+        default: 開放
+
+  - key: cycle_purchase_requests
+    name: 週期採購請購單
+    ragic_path: /soutlet001/cycle-purchase/requests
+    permission_key: cycle_purchase_request
+    fields:
+      - name: 請購單號
+        type: auto_number
+        required: true
+      - name: 批次號
+        type: link
+        source_form: cycle_purchase_batches
+        required: true
+      - name: 公司別
+        type: select
+        lookup_from: ORG_UNIT.company
+        required: true
+      - name: 請購部門
+        type: select
+        lookup_from: ORG_UNIT.department
+        required: true
+      - name: 成本中心
+        type: lookup
+        source: ORG_UNIT.cost_center
+      - name: 會計科目
+        type: lookup
+        source: ORG_UNIT.account_code
+      - name: 請購總金額
+        type: formula
+        formula: SUM(請購明細.小計)
+      - name: 狀態
+        type: select
+        options: [待填, 草稿, 已送出, 簽核中, 已核准, 退回, 已彙整]
+        default: 待填
+      - name: 送出人
+        type: text
+      - name: 送出時間
+        type: datetime
+      - name: 簽核人
+        type: text
+      - name: 簽核時間
+        type: datetime
+    subtables:
+      - name: 請購明細
+        fields:
+          - name: 統購料號
+            type: link
+            source_form: cycle_purchase_items
+            required: true
+          - name: 品名
+            type: lookup
+            source: cycle_purchase_items.品名
+          - name: 單位
+            type: lookup
+            source: cycle_purchase_items.單位
+          - name: 會計科目
+            type: lookup
+            source: cycle_purchase_items.會計科目
+          - name: 單價
+            type: lookup
+            source: cycle_purchase_item_mapping.單價
+          - name: 請購數量
+            type: number
+            default: 0
+            required: true
+          - name: 小計
+            type: formula
+            formula: 單價 * 請購數量
+
+  - key: cycle_purchase_summary
+    name: 週期採購彙整單
+    ragic_path: /soutlet001/cycle-purchase/summary
+    permission_key: cycle_purchase_buyer
+    fields:
+      - name: 彙整單號
+        type: auto_number
+        required: true
+      - name: 批次號
+        type: link
+        source_form: cycle_purchase_batches
+        required: true
+      - name: 料號
+        type: link
+        source_form: cycle_purchase_items
+        required: true
+      - name: 供應商代碼
+        type: link
+        source_form: supplier_master
+        required: true
+      - name: 需求總量
+        type: number
+      - name: 調整量
+        type: number
+      - name: 調整原因
+        type: text
+      - name: 狀態
+        type: select
+        options: [草稿, 已轉採購單]
+        default: 草稿
+
+  - key: cycle_purchase_po
+    name: 週期採購採購單
+    ragic_path: /soutlet001/cycle-purchase/po
+    permission_key: cycle_purchase_buyer
+    fields:
+      - name: 採購單號
+        type: auto_number
+        required: true
+      - name: 彙整單號
+        type: link
+        source_form: cycle_purchase_summary
+        required: true
+      - name: 供應商代碼
+        type: link
+        source_form: supplier_master
+        required: true
+      - name: 採購人員
+        type: text
+        required: true
+      - name: 預計到貨日
+        type: date
+      - name: 採購總金額
+        type: formula
+        formula: SUM(採購明細.小計)
+      - name: 狀態
+        type: select
+        options: [草稿, 已發出, 部分到貨, 完全到貨, 取消]
+        default: 草稿
+    subtables:
+      - name: 採購明細
+        fields:
+          - name: 料號
+            type: link
+            source_form: cycle_purchase_items
+            required: true
+          - name: 訂購數量
+            type: number
+            required: true
+          - name: 單價
+            type: number
+            required: true
+          - name: 小計
+            type: formula
+            formula: 訂購數量 * 單價
+
+  - key: cycle_purchase_receiving
+    name: 週期採購驗收單
+    ragic_path: /soutlet001/cycle-purchase/receiving
+    permission_key: cycle_purchase_receive
+    fields:
+      - name: 驗收單號
+        type: auto_number
+        required: true
+      - name: 採購單號
+        type: link
+        source_form: cycle_purchase_po
+        required: true
+      - name: 驗收人員
+        type: text
+        required: true
+      - name: 驗收日期
+        type: date
+        required: true
+      - name: 狀態
+        type: select
+        options: [待驗收, 驗收完成, 驗收異常]
+        default: 待驗收
+      - name: 備註
+        type: text
+    subtables:
+      - name: 驗收明細
+        fields:
+          - name: 料號
+            type: link
+            source_form: cycle_purchase_items
+            required: true
+          - name: 驗收數量
+            type: number
+            required: true
+          - name: 發票數量
+            type: number
+          - name: 差異數量
+            type: formula
+            formula: 驗收數量 - 發票數量
+          - name: 差異原因
+            type: text
+
+  - key: cycle_purchase_payment
+    name: 週期採購請款單
+    ragic_path: /soutlet001/cycle-purchase/payment
+    permission_key: cycle_purchase_finance
+    fields:
+      - name: 請款單號
+        type: auto_number
+        required: true
+      - name: 驗收單號
+        type: link
+        source_form: cycle_purchase_receiving
+        required: true
+      - name: 發票號碼
+        type: text
+        required: true
+      - name: 發票日期
+        type: date
+        required: true
+      - name: 發票金額
+        type: number
+        required: true
+      - name: 狀態
+        type: select
+        options: [草稿, 已提交, 付款中, 已付款]
+        default: 草稿
+      - name: 財務處理人員
+        type: text
+    subtables:
+      - name: 費用分攤明細
+        fields:
+          - name: 公司別
+            type: select
+            lookup_from: ORG_UNIT.company
+            required: true
+          - name: 部門
+            type: select
+            lookup_from: ORG_UNIT.department
+            required: true
+          - name: 成本中心
+            type: text
+          - name: 會計科目
+            type: text
+          - name: 分攤金額
+            type: number
+            required: true
+          - name: 差異原因
+            type: text
+
+  - key: cycle_purchase_audit
+    name: 週期採購異常紀錄
+    ragic_path: /soutlet001/cycle-purchase/audit
+    permission_key: cycle_purchase_admin
+    fields:
+      - name: 紀錄ID
+        type: auto_number
+        required: true
+      - name: 關聯類型
+        type: select
+        options: [請購單, 採購單, 驗收單, 請款單]
+        required: true
+      - name: 關聯單號
+        type: text
+        required: true
+      - name: 事件類型
+        type: select
+        options: [補填, 逾期, 缺貨, 替代品, 驗收差異, 請款差異]
+        required: true
+      - name: 說明
+        type: text
+        required: true
+      - name: 操作人員
+        type: text
+        required: true
+      - name: 建立時間
+        type: datetime
+        required: true
+      - name: 原始值
+        type: text
+      - name: 變更後值
+        type: text
