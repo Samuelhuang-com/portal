@@ -1905,6 +1905,16 @@ def _do_generate_full_bldg_pm(
             existing.estimated_minutes = item.estimated_minutes
             existing.scheduled_date = resolved_date
             existing.schedule_source = "auto"
+            # 2026-07-13 修正（比照 mall_pm 同日修正）：帶入 Ragic 同步回來的完成狀態，原本
+            # 從未寫入，導致 Ragic 端已回填保養記錄後，「排程管理」分頁永遠不會反映。只在
+            # 目標月份＝目前最新批次自己的月份時才帶入，理由同上方 resolved_date 的處理。
+            if is_current_batch_month:
+                existing.start_time    = item.start_time
+                existing.end_time      = item.end_time
+                existing.is_completed  = item.is_completed
+                existing.result_note   = item.result_note
+                existing.abnormal_flag = item.abnormal_flag
+                existing.abnormal_note = item.abnormal_note
             updated += 1
         else:
             new_rec = FullBldgPMSchedule(
@@ -1918,6 +1928,13 @@ def _do_generate_full_bldg_pm(
                 scheduled_date=resolved_date,
                 executor_name=item.executor_name or "",
                 schedule_source="auto",
+                # 同上：新建記錄時，若為當期月份也一併帶入 item 已知的完成狀態
+                start_time=item.start_time       if is_current_batch_month else "",
+                end_time=item.end_time           if is_current_batch_month else "",
+                is_completed=item.is_completed   if is_current_batch_month else False,
+                result_note=item.result_note     if is_current_batch_month else "",
+                abnormal_flag=item.abnormal_flag if is_current_batch_month else False,
+                abnormal_note=item.abnormal_note if is_current_batch_month else "",
             )
             db.add(new_rec)
             generated += 1

@@ -1622,6 +1622,17 @@ def generate_mall_schedule(
                 existing.scheduled_date    = resolved_date
                 existing.executor_name     = item.executor_name
                 existing.estimated_minutes = item.estimated_minutes
+                # 2026-07-13 修正：帶入 Ragic 同步回來的完成狀態（原本從未寫入，見函式頂部
+                # 說明）。只在「目標月份＝目前最新批次自己的月份」時才帶入——其餘月份的
+                # item.start_time/end_time 是當期月份的實際執行時間，跟過去/未來月份的排程
+                # 無關，不應該被帶進去（理由同上方 resolved_date 只在當期月份採用 item 資料）。
+                if is_current_batch_month:
+                    existing.start_time    = item.start_time
+                    existing.end_time      = item.end_time
+                    existing.is_completed  = item.is_completed
+                    existing.result_note   = item.result_note
+                    existing.abnormal_flag = item.abnormal_flag
+                    existing.abnormal_note = item.abnormal_note
                 existing.updated_at        = datetime.now()
                 updated += 1
             else:
@@ -1636,6 +1647,13 @@ def generate_mall_schedule(
                     scheduled_date    = resolved_date,
                     executor_name     = item.executor_name,
                     schedule_source   = "auto",
+                    # 同上：新建記錄時，若為當期月份也一併帶入 item 已知的完成狀態
+                    start_time    = item.start_time    if is_current_batch_month else "",
+                    end_time      = item.end_time      if is_current_batch_month else "",
+                    is_completed  = item.is_completed  if is_current_batch_month else False,
+                    result_note   = item.result_note   if is_current_batch_month else "",
+                    abnormal_flag = item.abnormal_flag if is_current_batch_month else False,
+                    abnormal_note = item.abnormal_note if is_current_batch_month else "",
                 )
                 db.add(new_rec)
                 generated += 1
