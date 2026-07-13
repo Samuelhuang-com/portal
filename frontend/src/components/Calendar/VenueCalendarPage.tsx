@@ -59,7 +59,23 @@ const { Title, Text } = Typography
 // ── 事件類型：各場地適用範圍 ───────────────────────────────────────────────────
 const ALL_TYPES: CalendarEventType[]   = ['hotel_pm', 'mall_pm', 'full_pm', 'pm_plan', 'approval', 'memo', 'custom']
 const HOTEL_TYPES: CalendarEventType[] = ['hotel_pm', 'pm_plan', 'custom']
-const MALL_TYPES: CalendarEventType[]  = ['mall_pm', 'pm_plan', 'custom']
+// 2026-07-13 新增 full_pm：mall/full-building-maintenance（全棟例行維護）模組的
+// 排定日期原本完全沒有進到商場行事曆——後端 calendar.py 有正確收集這個模組的事件
+// （event_type='full_pm'），但商場行事曆這裡的類型清單漏了它，同時事件本身的
+// zone 標記是「公區」（與「商場」區隔，見 calendar.py 的 zone 賦值），下面的
+// zone 篩選（fcEvents / loadToday）也要一併放行「公區」，否則類型篩選過了、
+// 還是會被 zone 檢查擋掉。
+const MALL_TYPES: CalendarEventType[]  = ['mall_pm', 'full_pm', 'pm_plan', 'custom']
+
+// 商場行事曆除了 zone==='商場' 之外，還要納入 zone==='公區'（全棟例行維護／
+// 全棟主管排定預排 都標記為「公區」，因為它們同時服務飯店與商場公共區域，
+// 但路由上 mall/full-building-maintenance 掛在「商場」底下，所以商場行事曆
+// 要看得到）。飯店行事曆目前不需要比照辦理（沒有對應的全棟模組掛在飯店路由下）。
+function matchesFixedZone(zone: string, fixedZone?: '飯店' | '商場'): boolean {
+  if (!fixedZone) return true
+  if (fixedZone === '商場') return zone === '商場' || zone === '公區'
+  return zone === fixedZone
+}
 
 function getAvailableTypes(fixedZone?: '飯店' | '商場'): CalendarEventType[] {
   if (fixedZone === '飯店') return HOTEL_TYPES
@@ -146,7 +162,7 @@ export default function VenueCalendarPage({ fixedZone }: VenueCalendarPageProps)
       setSummary(sum)
       // 今日面板也依 fixedZone 篩選
       const filtered = fixedZone
-        ? todayRes.events.filter((ev) => (ev.zone || '其它') === fixedZone)
+        ? todayRes.events.filter((ev) => matchesFixedZone(ev.zone || '其它', fixedZone))
         : todayRes.events
       setTodayEvents(filtered)
     } catch {
@@ -298,7 +314,7 @@ export default function VenueCalendarPage({ fixedZone }: VenueCalendarPageProps)
   const fcEvents: EventInput[] = events
     .filter((ev) => {
       const zone = (ev.zone || '其它') as CalendarZone
-      if (fixedZone) return zone === fixedZone
+      if (fixedZone) return matchesFixedZone(zone, fixedZone)
       if (activeZones.length === 0 || activeZones.length === ZONE_VALUES.length) return true
       return activeZones.includes(zone)
     })

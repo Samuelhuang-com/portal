@@ -27,8 +27,13 @@ interface TodayPanelProps {
 }
 
 // ── 事件類型優先排序 ───────────────────────────────────────────────────────────
+// 2026-07-13 補上 full_pm / pm_plan：這兩種類型原本就會被父層（VenueCalendarPage /
+// Calendar/index.tsx）撈回來、算進上方「今日事件」總數徽章，但因為沒列在這個
+// 排序清單裡，sortedTypes 篩選會把它們整組濾掉，導致「今日重點」清單永遠不會
+// 顯示任何全棟例行維護（full_pm）或週期保養預排（pm_plan）事件——即使總數徽章
+// 有算進去，清單卻是空的，數字對不上。
 const TYPE_ORDER: CalendarEventType[] = [
-  'approval', 'hotel_pm', 'mall_pm', 'memo', 'custom',
+  'approval', 'hotel_pm', 'mall_pm', 'full_pm', 'pm_plan', 'memo', 'custom',
 ]
 
 export default function TodayPanel({ events, loading, onSelect }: TodayPanelProps) {
