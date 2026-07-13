@@ -32,6 +32,7 @@ import type {
   PMBatchDetail, PMItem, PMItemStatus,
   PMTaskHistory, PMItemHistorySummary,
 } from '@/types/periodicMaintenance'
+import MallPMItemWorklogDrawer from '@/components/MallPMItemWorklogDrawer'
 
 const { Title, Text } = Typography
 const { Option } = Select
@@ -72,6 +73,25 @@ function fmtMinutes(mins: number): string {
   if (!mins) return '—'
   if (mins < 60) return `${mins} 分`
   return `${Math.floor(mins / 60)} 時 ${mins % 60} 分`
+}
+
+function fmtHours(hours: number | null | undefined): string {
+  if (hours == null) return ''
+  const h = Math.floor(hours)
+  const m = Math.round((hours - h) * 60)
+  if (h === 0) return `${m} 分`
+  if (m === 0) return `${h} 時`
+  return `${h} 時 ${m} 分`
+}
+
+// 實際保養日期（取 start_time，缺則取 end_time 的日期部分），格式 MM/DD；尚未執行則 '—'
+// 開發規範：本模組所有含「保養時間」欄位的項目表格，一律在其前面加一欄「保養日期」（2026-07-13 指示，比照 full_bldg_pm）
+function fmtActualDate(item: PMItem): string {
+  const raw = (item.start_time || item.end_time || '').trim()
+  if (!raw) return '—'
+  const datePart = raw.split(' ')[0]
+  const parts = datePart.split('/')
+  return parts.length === 3 ? `${parts[1]}/${parts[2]}` : datePart
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -284,6 +304,9 @@ export default function MallPeriodicMaintenanceDetailPage() {
   const [historyLoading, setHistoryLoading]     = useState(false)
   const [historyData, setHistoryData]           = useState<PMTaskHistory | null>(null)
 
+  // 2026-07-13 新增：保養項目明細 Drawer（Sheet24 維修記錄 + 附圖）
+  const [selectedPMItem, setSelectedPMItem]     = useState<PMItem | null>(null)
+
   const loadDetail = useCallback(async () => {
     if (!batchId) return
     setLoading(true)
@@ -407,6 +430,24 @@ export default function MallPeriodicMaintenanceDetailPage() {
       render: (v: number) => fmtMinutes(v),
     },
     {
+      title: '維修工時',
+      dataIndex: 'repair_hours',
+      width: 90,
+      align: 'center',
+      render: (v: number | null | undefined, rec) => (
+        <Button
+          type="link"
+          size="small"
+          style={{ padding: 0, height: 'auto', fontWeight: 600 }}
+          onClick={() => setSelectedPMItem(rec)}
+        >
+          {v != null
+            ? <Text style={{ color: '#52C41A', fontWeight: 600 }}>{fmtHours(v)}</Text>
+            : <Text type="secondary">明細</Text>}
+        </Button>
+      ),
+    },
+    {
       title: '排定日期',
       dataIndex: 'scheduled_date',
       width: 90,
@@ -420,6 +461,13 @@ export default function MallPeriodicMaintenanceDetailPage() {
       render: (v: string) => v || <Text type="secondary">—</Text>,
     },
     {
+      title: '保養日期',
+      key: 'actual_date',
+      width: 80,
+      align: 'center',
+      render: (_: unknown, rec: PMItem) => <Text style={{ fontSize: 12 }}>{fmtActualDate(rec)}</Text>,
+    },
+    {
       title: '保養時間',
       key: 'times',
       width: 140,
@@ -428,10 +476,17 @@ export default function MallPeriodicMaintenanceDetailPage() {
         const et = rec.end_time   ? dayjs(rec.end_time).format('MM/DD HH:mm')   : null
         if (!st && !et) return <Text type="secondary">—</Text>
         return (
-          <Space direction="vertical" size={0}>
-            {st && <Text style={{ fontSize: 12 }}>啟：{st}</Text>}
-            {et && <Text style={{ fontSize: 12 }}>迄：{et}</Text>}
-          </Space>
+          <Button
+            type="link"
+            size="small"
+            style={{ padding: 0, height: 'auto', textAlign: 'left' }}
+            onClick={() => setSelectedPMItem(rec)}
+          >
+            <Space direction="vertical" size={0}>
+              {st && <Text style={{ fontSize: 12 }}>啟：{st}</Text>}
+              {et && <Text style={{ fontSize: 12 }}>迄：{et}</Text>}
+            </Space>
+          </Button>
         )
       },
     },
@@ -681,6 +736,12 @@ export default function MallPeriodicMaintenanceDetailPage() {
         onClose={() => setHistoryOpen(false)}
         historyData={historyData}
         loading={historyLoading}
+      />
+
+      <MallPMItemWorklogDrawer
+        open={!!selectedPMItem}
+        onClose={() => setSelectedPMItem(null)}
+        item={selectedPMItem}
       />
     </div>
   )

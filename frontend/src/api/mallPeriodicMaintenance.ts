@@ -57,6 +57,35 @@ export async function fetchMallPMTaskHistory(
   return res.data
 }
 
+// ── 維修記錄明細（Sheet24 巢狀子表格，2026-07-13 新增，比照 full_bldg_pm Sheet28）──────
+export interface PMWorklogItem {
+  ragic_id:      string
+  item_ragic_id: string
+  seq_no:        number
+  repair_note:   string
+  start_time:    string
+  end_time:      string
+  staff_name:    string
+}
+
+/** 單一項目維修記錄明細（來源 Ragic Sheet24 巢狀子表格） */
+export async function fetchMallPMItemWorklogs(itemRagicId: string): Promise<PMWorklogItem[]> {
+  const res = await apiClient.get<PMWorklogItem[]>(`${BASE}/items/${itemRagicId}/worklogs`)
+  return res.data
+}
+
+// ── 附圖（Sheet24「圖片上傳」欄位，2026-07-13 新增，遵循全站 db-images 端點慣例）──────
+export interface PMImageItem {
+  url:      string
+  filename: string
+}
+
+/** 單一項目附圖（DB 優先，缺資料時後端會即時向 Ragic 補抓一次） */
+export async function fetchMallPMItemImages(itemRagicId: string): Promise<PMImageItem[]> {
+  const res = await apiClient.get<PMImageItem[]>(`${BASE}/items/${itemRagicId}/db-images`)
+  return res.data
+}
+
 /** 週期統計（月/季/年） */
 export async function fetchMallPMPeriodStats(params: {
   period_type: 'month' | 'quarter' | 'year'

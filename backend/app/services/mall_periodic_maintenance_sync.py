@@ -24,8 +24,12 @@ from typing import Any
 
 from app.core.config import settings
 from app.core.database import SessionLocal
-from app.models.mall_periodic_maintenance import MallPeriodicMaintenanceBatch, MallPeriodicMaintenanceItem
+from app.models.mall_periodic_maintenance import (
+    MallPeriodicMaintenanceBatch, MallPeriodicMaintenanceItem, MallPMItemWorklog,
+)
+from app.models.mall_pm_schedule import MallPMSchedule
 from app.services.ragic_adapter import RagicAdapter
+from app.services.ragic_data_service import parse_images
 from app.services.sync_dispatcher import register
 
 logger = logging.getLogger(__name__)
@@ -58,16 +62,51 @@ MALL_PM_ITEMS_PATH    = getattr(settings, "RAGIC_MALL_PM_ITEMS_PATH",    "period
 # Sheet 24：商場週期保養日誌(同仁執行) - 子表: 項目（平鋪視圖，含 維修工時）
 MALL_PM_SHEET24_PATH  = getattr(settings, "RAGIC_MALL_PM_SHEET24_PATH",  "periodic-maintenance/24")
 
-# ── Sheet 24 欄位 key（待確認後可於 .env 覆寫）────────────────────────────────
-# 以下 key 需透過 /debug/ragic-sheet24-raw 端點確認 Ragic 實際回傳的欄位名稱
+# ── Sheet 24 欄位 key（舊版 sync_repair_hours_from_sheet24() 用，已停用）─────────
+# ⚠️ 2026-07-13 實測：透過瀏覽器直接讀取 Sheet24 單筆記錄 JSON API
+# （https://ap12.ragic.com/soutlet001/periodic-maintenance/24/{id}?api&v=3，共驗證 3 筆
+# 跨類別樣本：空調/照明/水電）確認 CK24_PARENT_REF 舊預設值「保養日誌編號」是錯的，
+# 實際欄位 key 是「編號」——與 full_bldg_pm 的 Sheet28 CK28_PARENT_REF 是同一種
+# 「預設猜錯」模式。本常數與下方 sync_repair_hours_from_sheet24() 保留僅供對照，
+# 新版同步請見下方 CK24L_*/CK24S_* 與 sync_items_from_sheet24()。
 CK24_REPAIR_HOURS     = getattr(settings, "RAGIC_S24_REPAIR_HOURS",  "維修工時")
 CK24_TASK_NAME        = getattr(settings, "RAGIC_S24_TASK_NAME",     "項目")
 CK24_CATEGORY         = getattr(settings, "RAGIC_S24_CATEGORY",      "類別")
 CK24_LOCATION         = getattr(settings, "RAGIC_S24_LOCATION",      "位置")
-# 父記錄關聯欄位：Sheet 24 每筆記錄指向 Sheet 18 父記錄的欄位名稱
-# 常見 Ragic 命名：「保養日誌編號」「_parent_id」或主表的 Primary Field 名稱
-# ⚠ 待確認：呼叫 GET /api/v1/mall/periodic-maintenance/debug/ragic-sheet24-raw 後填入
 CK24_PARENT_REF       = getattr(settings, "RAGIC_S24_PARENT_REF",    "保養日誌編號")
+
+# ── Sheet 24 列表模式（fetch_all）欄位 key（2026-07-13 實測驗證，用於新版主要同步）──
+# 實測發現（3 筆跨類別樣本：record 62 空調/64 照明/56 水電）：
+#   1. fetch_all() 列表模式「不含」CK24S_START_TIME / CK24S_END_TIME / 巢狀子表格，
+#      這兩個欄位與子表格只存在於 fetch_one() 單筆結果中。
+#   2. Sheet24 沒有獨立的「位置」欄位（與 Sheet18 子表格不同，3 筆樣本均確認不存在）。
+#   3. 「執行月份」「排定人員」「執行人員」在 Sheet24 回傳格式是陣列，非字串。
+#   4. 「排定日期」是完整日期「YYYY/MM/DD」，需正規化為既有系統使用的「MM/DD」格式。
+#   5. 頂層「保養時間啟」「保養時間迄」欄位恆為空，真實時間須從巢狀子表格 min/max 取得。
+#   6. 頂層「維修工時」是 Ragic 端依巢狀子表格算出的顯示值（非可編輯原始資料）。
+CK24L_SEQ_NO       = "項次"
+CK24L_PARENT_REF   = "編號"        # 連回 Sheet18 主表「編號」欄位（實測確認為此 key）
+CK24L_CATEGORY     = "類別"
+CK24L_EXEC_MONTHS  = "執行月份"
+CK24L_TASK_NAME    = "項目"
+CK24L_EST_MINUTES  = "預估耗時"
+CK24L_FREQUENCY    = "頻率"
+CK24L_SCHEDULER    = "排定人員"
+CK24L_SCHED_DATE   = "排定日期"
+CK24L_EXECUTOR     = "執行人員"
+CK24L_NOTE         = "備註"
+CK24L_REPAIR_HOURS = "維修工時"
+CK24L_IMAGES       = "圖片上傳"   # 2026-07-13 新增：只有 fetch_one() 全量結果才有實際檔名清單
+
+# ── Sheet 24 每筆記錄底下巢狀子表格「維修記錄」欄位 key（僅 fetch_one 才有，實測驗證）──
+# Ragic 內部子表格 key 為 _subtable_<動態數字>（本帳號實測為 _subtable_1015821，
+# 但此數字為 Ragic 內部欄位 ID，不同環境/未來欄位異動可能不同，程式以
+# 「任何以 _subtable_ 開頭的 key」通用偵測，不寫死此數字）。
+CK24S_SEQ_NO     = "項次"
+CK24S_NOTE       = "維修記錄"
+CK24S_START_TIME = "時間開始"
+CK24S_END_TIME   = "時間結束"
+CK24S_STAFF      = "保養人員"
 
 
 # ── 轉換輔助函式 ──────────────────────────────────────────────────────────────
@@ -615,23 +654,323 @@ async def sync_repair_hours_from_sheet24() -> dict:
     }
 
 
+def _to_float(val: Any) -> float | None:
+    """將 Ragic 值轉為 float，無法轉換時回傳 None。"""
+    try:
+        v = str(val).strip()
+        return float(v) if v not in ("", "None", "null", "-") else None
+    except (ValueError, TypeError):
+        return None
+
+
+def _normalize_full_date_to_md(raw: str) -> str:
+    """
+    'YYYY/MM/DD' -> 'MM/DD'（配合既有 scheduled_date 欄位 / _calc_status() 短格式）。
+    格式不符（非三段 '/')時原樣回傳，不猜測。
+    """
+    if not raw:
+        return ""
+    parts = str(raw).strip().split("/")
+    if len(parts) == 3:
+        return f"{parts[1]}/{parts[2]}"
+    return raw
+
+
+def _find_worklog_subtable(full_record: dict[str, Any]) -> dict[str, dict]:
+    """
+    從 fetch_one() 結果中找出巢狀子表格「維修記錄」。
+    Ragic 內部 key 為 _subtable_<動態數字>，不寫死數字，取第一個非空 dict。
+    """
+    for k, v in full_record.items():
+        if not k.startswith("_subtable_"):
+            continue
+        if isinstance(v, dict) and v:
+            inner = {rk: rv for rk, rv in v.items() if isinstance(rv, dict)}
+            if inner:
+                return inner
+    return {}
+
+
+async def sync_items_from_sheet24() -> dict:
+    """
+    商場週期保養項目明細同步 —— 2026-07-13 起改以 Ragic Sheet 24 為主要來源。
+
+    背景：Sheet 18 子表格需靠 fetch_one() 猜測子表格藏在哪個 key（A/B/C/D 四種模式），
+    且無法取得逐筆維修記錄明細（時間起訖、保養人員），只能取到彙總數字。Sheet 24
+    的每個項目本身就是一筆平鋪記錄，不需要猜格式；其巢狀子表格「維修記錄」則需逐筆
+    fetch_one() 取得（見 CK24S_* 欄位 key，2026-07-13 實測驗證，3 筆跨類別樣本）。
+
+    此改版完全比照 full_bldg_pm（全棟例行維護）Sheet28 同日改版的做法。
+
+    批次層（mall_pm_batch）仍由 sync_batches_from_ragic()（Sheet 18 主表）負責
+    同步 —— 沿用與 Sheet21/Sheet28 相同的「編號」比對關係，因此本函式用「編號」
+    比對回已同步的批次，batch_ragic_id 語意（Sheet18 內部數字 ID）維持不變，
+    不影響既有 Ragic 深連結組法。
+
+    找不到對應批次的項目（「編號」為空、或該批次尚未由 Sheet18 同步）一律明確跳過並
+    記錄在回傳的 unmatched_batches，不做任何猜測式配對。
+    """
+    adapter = RagicAdapter(
+        sheet_path=MALL_PM_SHEET24_PATH,
+        server_url=MALL_PM_SERVER_URL,
+        account=MALL_PM_ACCOUNT,
+    )
+    logger.info("[MallPMSync][Sheet24Items] 開始同步項目明細（Sheet24 為主要來源）...")
+    try:
+        raw_data = await adapter.fetch_all()
+    except Exception as exc:
+        logger.error(f"[MallPMSync][Sheet24Items] 拉取失敗：{exc}")
+        return {"fetched": 0, "upserted": 0, "worklogs": 0, "errors": [str(exc)], "unmatched_batches": []}
+
+    if not raw_data:
+        logger.warning("[MallPMSync][Sheet24Items] Ragic 回傳空資料")
+        return {"fetched": 0, "upserted": 0, "worklogs": 0, "errors": [], "unmatched_batches": []}
+
+    fetched  = len(raw_data)
+    upserted = 0
+    worklog_upserted = 0
+    items_with_images = 0
+    errors: list[str] = []
+    unmatched_journal_nos: set[str] = set()
+    journal_collisions: dict[str, list[str]] = {}
+    old_style: list = []
+    now = twnow()
+
+    db = SessionLocal()
+    try:
+        # ── 清除舊格式殘留項目（架構調整後發現，比照 full_bldg_pm 同日改版）─────
+        # 舊版 sync_items_from_ragic()（Sheet18 子表格解析）用的 ragic_id 是
+        # "{batch_id}_{row_key}" 複合格式（如 "4_225"，含底線）；新版直接採用
+        # Sheet24 項目自身的數字 ragic_id（如 "56"，不含底線）。兩種格式的
+        # primary key 不同，若不清除，舊資料會與新同步的資料同時存在，造成每個
+        # 項目重複兩筆。此清除只在資料庫仍殘留舊格式資料時才會實際刪除任何東西。
+        #
+        # ⚠️ 注意：舊格式項目上若有 Portal 標記過的 abnormal_flag/abnormal_note，
+        # 會隨這次清除一併移除（新格式項目是全新 insert，不会繼承）。若需要保留，
+        # 請在本次同步前先手動查詢並記錄。
+        old_style = db.query(MallPeriodicMaintenanceItem).filter(
+            MallPeriodicMaintenanceItem.ragic_id.contains("_")
+        ).all()
+        old_style_abnormal = [it for it in old_style if it.abnormal_flag]
+        if old_style_abnormal:
+            logger.warning(
+                f"[MallPMSync][Sheet24Items] 即將清除的 {len(old_style)} 筆舊格式項目中，"
+                f"有 {len(old_style_abnormal)} 筆帶有 abnormal_flag=True，異常標記將遺失："
+                f"{[it.ragic_id for it in old_style_abnormal]}"
+            )
+        if old_style:
+            logger.info(f"[MallPMSync][Sheet24Items] 清除 {len(old_style)} 筆舊格式（Sheet18子表格解析）殘留項目")
+            for it in old_style:
+                db.delete(it)
+            db.flush()
+
+        # ── 清除 mall_pm_schedule 舊格式殘留排程（2026-07-13 發現，比照上方 item 清除）────
+        # mall_pm_schedule（Portal 自有排程表，見 mall_pm_schedule.py）以
+        # (year_month, item_ragic_id) 判斷排程是否已存在（見 generate_mall_schedule()）。
+        # item_ragic_id 格式由 "{batch_id}_{row_key}"（如 "4_56"）改為 Sheet24 原始
+        # ragic_id（如 "56"）後，「產生本月排程」比對不到舊記錄，會另外新增一筆新格式
+        # 記錄，卻不會清掉舊記錄，導致同一項目同一天在行事曆／排程列表上重複出現兩筆
+        # （且日期可能不一致，因為舊記錄的排定日期是改版前的舊資料，不會再更新）。
+        # 此清除只在資料庫仍殘留舊格式排程時才會實際刪除任何東西。
+        #
+        # ⚠️ 注意：舊格式排程上若有人工已完成／已標記異常／人工調整過（is_completed=True、
+        # abnormal_flag=True、portal_edited_at 有值、或已填 start_time/end_time），會隨
+        # 這次清除一併移除且不會被新格式記錄繼承。若偵測到這類記錄，只記錄警告、不刪除，
+        # 避免遺失人工資料（需人工確認後手動處理）。
+        old_style_sched_all = db.query(MallPMSchedule).filter(
+            MallPMSchedule.item_ragic_id.contains("_")
+        ).all()
+        old_style_sched_risky = [
+            s for s in old_style_sched_all
+            if s.is_completed or s.abnormal_flag or s.portal_edited_at is not None
+            or s.start_time or s.end_time
+        ]
+        old_style_sched_safe = [s for s in old_style_sched_all if s not in old_style_sched_risky]
+        if old_style_sched_risky:
+            logger.warning(
+                f"[MallPMSync][Sheet24Items] {len(old_style_sched_risky)} 筆舊格式 mall_pm_schedule "
+                f"記錄帶有人工資料（已完成／異常／人工調整／已填執行時間），保留不刪除，"
+                f"請人工確認後處理：{[(s.id, s.item_ragic_id, s.task_name) for s in old_style_sched_risky]}"
+            )
+        if old_style_sched_safe:
+            logger.info(
+                f"[MallPMSync][Sheet24Items] 清除 {len(old_style_sched_safe)} 筆舊格式（item_ragic_id 含底線）"
+                f"殘留 mall_pm_schedule 排程記錄"
+            )
+            for s in old_style_sched_safe:
+                db.delete(s)
+            db.flush()
+
+        # 「編號」→ batch_ragic_id 對照表，來源為 sync_batches_from_ragic() 已同步的批次
+        all_batches = db.query(MallPeriodicMaintenanceBatch).all()
+        journal_to_batch: dict[str, str] = {}
+        for b in all_batches:
+            if not b.journal_no:
+                continue
+            if b.journal_no in journal_to_batch and journal_to_batch[b.journal_no] != b.ragic_id:
+                journal_collisions.setdefault(b.journal_no, [journal_to_batch[b.journal_no]]).append(b.ragic_id)
+            journal_to_batch[b.journal_no] = b.ragic_id
+        if journal_collisions:
+            logger.warning(
+                f"[MallPMSync][Sheet24Items] 發現「編號」撞號的批次（同一編號對應多個 batch ragic_id，"
+                f"可能有孤兒批次尚未清除，請檢查 mall_pm_batch）：{journal_collisions}"
+            )
+
+        for item_ragic_id, raw in raw_data.items():
+            item_id = str(item_ragic_id)
+            try:
+                journal_no = _stringify(raw.get(CK24L_PARENT_REF, ""))
+                batch_ragic_id = journal_to_batch.get(journal_no)
+                if not batch_ragic_id:
+                    unmatched_journal_nos.add(journal_no or "(空白)")
+                    continue
+
+                exec_months_raw    = _stringify(raw.get(CK24L_EXEC_MONTHS, ""))
+                scheduled_date_md  = _normalize_full_date_to_md(_stringify(raw.get(CK24L_SCHED_DATE, "")))
+                repair_hours       = _to_float(_stringify(raw.get(CK24L_REPAIR_HOURS, "")))
+
+                # ── 逐筆項目 fetch_one() 取得巢狀「維修記錄」子表格 + 附圖 ──────────
+                # 圖片欄位「圖片上傳」只有 fetch_one() 全量結果才會回傳實際檔名清單，
+                # listing 模式（fetch_all）恆為空字串，所以跟維修記錄共用同一次 fetch_one()。
+                try:
+                    full_record = await adapter.fetch_one(item_id)
+                    if item_id in full_record and len(full_record) == 1:
+                        full_record = full_record[item_id]
+                    sub_rows = _find_worklog_subtable(full_record)
+                    images = parse_images(
+                        full_record.get(CK24L_IMAGES),
+                        server=MALL_PM_SERVER_URL,
+                        account=MALL_PM_ACCOUNT,
+                    )
+                except Exception as exc:
+                    sub_rows = {}
+                    images = []
+                    errors.append(f"fetch_one(item={item_id}) 維修記錄/附圖失敗：{exc}")
+                    logger.warning(f"[MallPMSync][Sheet24Items] fetch_one({item_id}) 失敗：{exc}")
+
+                # 全量替換此項目的 worklog（避免舊 row_key 殘留）
+                db.query(MallPMItemWorklog).filter(
+                    MallPMItemWorklog.item_ragic_id == item_id
+                ).delete()
+
+                worklog_starts: list[str] = []
+                worklog_ends: list[str] = []
+                for sub_key, sub_row in sub_rows.items():
+                    wl_start = _stringify(sub_row.get(CK24S_START_TIME, ""))
+                    wl_end   = _stringify(sub_row.get(CK24S_END_TIME, ""))
+                    if wl_start:
+                        worklog_starts.append(wl_start)
+                    if wl_end:
+                        worklog_ends.append(wl_end)
+                    db.add(MallPMItemWorklog(
+                        ragic_id=f"{item_id}_{sub_key}",
+                        item_ragic_id=item_id,
+                        seq_no=_to_int(sub_row.get(CK24S_SEQ_NO, 0)),
+                        repair_note=_stringify(sub_row.get(CK24S_NOTE, "")),
+                        start_time=wl_start,
+                        end_time=wl_end,
+                        staff_name=_stringify(sub_row.get(CK24S_STAFF, "")),
+                        synced_at=now,
+                    ))
+                    worklog_upserted += 1
+
+                # start_time/end_time 取巢狀子表格最早開始／最晚結束
+                # （Sheet24 頂層「保養時間啟/迄」欄位 2026-07-13 實測恆為空，不可用）
+                start_time = min(worklog_starts) if worklog_starts else ""
+                end_time   = max(worklog_ends) if worklog_ends else ""
+
+                existing = db.get(MallPeriodicMaintenanceItem, item_id)
+                if existing:
+                    target = existing
+                else:
+                    target = MallPeriodicMaintenanceItem(ragic_id=item_id)
+                    db.add(target)
+
+                target.batch_ragic_id    = batch_ragic_id
+                target.seq_no            = _to_int(raw.get(CK24L_SEQ_NO, 0))
+                target.category          = _stringify(raw.get(CK24L_CATEGORY, ""))
+                target.frequency         = _stringify(raw.get(CK24L_FREQUENCY, ""))
+                target.task_name         = _stringify(raw.get(CK24L_TASK_NAME, ""))
+                # location：Sheet24 實測無獨立「位置」欄位（3 筆跨類別樣本均確認不存在），
+                # 不覆蓋既有值（新項目維持空字串）
+                target.estimated_minutes = _to_int(raw.get(CK24L_EST_MINUTES, 0))
+                target.scheduled_date    = scheduled_date_md
+                target.scheduler_name    = _stringify(raw.get(CK24L_SCHEDULER, ""))
+                target.result_note       = _stringify(raw.get(CK24L_NOTE, ""))
+                target.executor_name     = _stringify(raw.get(CK24L_EXECUTOR, ""))
+                target.start_time        = start_time
+                target.end_time          = end_time
+                target.is_completed      = bool(start_time and end_time)
+                target.exec_months_raw   = exec_months_raw
+                target.exec_months_json  = json.dumps(_parse_exec_months(exec_months_raw), ensure_ascii=False)
+                target.repair_hours      = repair_hours
+                target.sheet24_id        = item_id
+                target.images_json       = json.dumps(images, ensure_ascii=False)
+                target.synced_at         = now
+
+                if images:
+                    items_with_images += 1
+                upserted += 1
+            except Exception as exc:
+                errors.append(f"item {item_id}: {exc}")
+                logger.warning(f"[MallPMSync][Sheet24Items] 項目 {item_id} 失敗：{exc}")
+
+        db.commit()
+        if unmatched_journal_nos:
+            logger.warning(
+                f"[MallPMSync][Sheet24Items] {len(unmatched_journal_nos)} 個「編號」在 "
+                f"mall_pm_batch 找不到對應批次，已跳過未同步：{sorted(unmatched_journal_nos)}"
+            )
+        logger.info(
+            f"[MallPMSync][Sheet24Items] 完成：fetched={fetched}, upserted={upserted}, "
+            f"worklogs={worklog_upserted}, items_with_images={items_with_images}, "
+            f"errors={len(errors)}, unmatched_batches={len(unmatched_journal_nos)}"
+        )
+    except Exception as exc:
+        db.rollback()
+        errors.append(f"DB commit error: {exc}")
+        logger.error(f"[MallPMSync][Sheet24Items] DB 寫入失敗：{exc}")
+    finally:
+        db.close()
+
+    return {
+        "fetched": fetched,
+        "upserted": upserted,
+        "worklogs": worklog_upserted,
+        "items_with_images": items_with_images,
+        "old_style_removed": len(old_style),
+        "old_style_abnormal_lost": [it.ragic_id for it in old_style_abnormal],
+        "schedule_old_style_removed": len(old_style_sched_safe),
+        "schedule_old_style_kept_risky": [
+            {"id": s.id, "item_ragic_id": s.item_ragic_id, "task_name": s.task_name}
+            for s in old_style_sched_risky
+        ],
+        "journal_collisions": journal_collisions,
+        "errors": errors,
+        "unmatched_batches": sorted(unmatched_journal_nos),
+    }
+
+
 @register("mall_periodic_maintenance")
 async def sync_from_ragic() -> dict:
-    """完整同步：先同步主表，再同步附表。"""
+    """
+    完整同步：主表（Sheet18）→ 項目明細（Sheet24 為主要來源，含維修記錄明細）。
+
+    2026-07-13 架構調整：項目明細主要來源由 Sheet18 子表格改為 Sheet24，完全比照
+    full_bldg_pm（全棟例行維護）Sheet28 同日改版。舊版 sync_items_from_ragic() /
+    sync_repair_hours_from_sheet24() 仍保留在本檔案中（未刪除、未呼叫），供比對驗證
+    或回退使用。
+    """
     batch_result = await sync_batches_from_ragic()
-    items_result = await sync_items_from_ragic()
+    items_result = await sync_items_from_sheet24()
 
     db = SessionLocal()
     try:
         _fix_period_month_format(db)
-        _normalize_existing_scheduled_dates(db)
     finally:
         db.close()
 
-    sheet24_result = await sync_repair_hours_from_sheet24()
-
     return {
-        "batches":  batch_result,
-        "items":    items_result,
-        "sheet24":  sheet24_result,
+        "batches": batch_result,
+        "items":   items_result,
     }

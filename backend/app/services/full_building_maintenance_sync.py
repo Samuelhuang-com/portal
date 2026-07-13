@@ -25,6 +25,7 @@ from typing import Any
 from app.core.config import settings
 from app.core.database import SessionLocal
 from app.models.full_building_maintenance import FullBldgPMBatch, FullBldgPMItem, FullBldgPMItemWorklog
+from app.models.full_bldg_pm_schedule import FullBldgPMSchedule
 from app.services.ragic_adapter import RagicAdapter
 from app.services.ragic_data_service import parse_images
 from app.services.sync_dispatcher import register
@@ -739,6 +740,45 @@ async def sync_items_from_sheet28() -> dict:
                 db.delete(it)
             db.flush()
 
+        # ── 清除 full_bldg_pm_schedule 舊格式殘留排程（2026-07-13 發現，比照上方 item 清除、
+        # 以及 mall_pm 同日修正）────────────────────────────────────────────────────
+        # full_bldg_pm_schedule（Portal 自有排程表）以 (year_month, item_ragic_id) 判斷
+        # 排程是否已存在（見 generate_full_bldg_schedule()）。item_ragic_id 格式由
+        # "{batch_id}_{row_key}"（如 "4_225"）改為 Sheet28 原始 ragic_id（如 "294"）後，
+        # 「產生本月排程」比對不到舊記錄，會另外新增一筆新格式記錄，卻不會清掉舊記錄，
+        # 導致同一項目同一天在行事曆／排程列表上重複出現兩筆（且日期可能不一致，因為
+        # 舊記錄的排定日期是改版前的舊資料，不會再更新）。此清除只在資料庫仍殘留舊格式
+        # 排程時才會實際刪除任何東西（2026-07-13 實測本表尚無殘留，此為預防性修正）。
+        #
+        # ⚠️ 注意：舊格式排程上若有人工已完成／已標記異常／人工調整過（is_completed=True、
+        # abnormal_flag=True、portal_edited_at 有值、或已填 start_time/end_time），會隨
+        # 這次清除一併移除且不會被新格式記錄繼承。若偵測到這類記錄，只記錄警告、不刪除，
+        # 避免遺失人工資料（需人工確認後手動處理）。
+        old_style_sched_all = db.query(FullBldgPMSchedule).filter(
+            FullBldgPMSchedule.item_ragic_id.contains("_")
+        ).all()
+        old_style_sched_risky = [
+            s for s in old_style_sched_all
+            if s.is_completed or s.abnormal_flag or s.portal_edited_at is not None
+            or s.start_time or s.end_time
+        ]
+        old_style_sched_safe = [s for s in old_style_sched_all if s not in old_style_sched_risky]
+        if old_style_sched_risky:
+            logger.warning(
+                f"[FullBldgPMSync][Sheet28Items] {len(old_style_sched_risky)} 筆舊格式 "
+                f"full_bldg_pm_schedule 記錄帶有人工資料（已完成／異常／人工調整／已填執行時間），"
+                f"保留不刪除，請人工確認後處理："
+                f"{[(s.id, s.item_ragic_id, s.task_name) for s in old_style_sched_risky]}"
+            )
+        if old_style_sched_safe:
+            logger.info(
+                f"[FullBldgPMSync][Sheet28Items] 清除 {len(old_style_sched_safe)} 筆舊格式"
+                f"（item_ragic_id 含底線）殘留 full_bldg_pm_schedule 排程記錄"
+            )
+            for s in old_style_sched_safe:
+                db.delete(s)
+            db.flush()
+
         # 「編號」→ batch_ragic_id 對照表，來源為 sync_batches_from_ragic() 已同步的批次
         # 防禦性檢查：若同一個「編號」對應到兩筆批次（理論上不該發生，2026-07-13
         # 曾因孤兒批次殘留而撞號），記錄警告並以較新的 ragic_created_at/ragic_id 為準，
@@ -881,6 +921,11 @@ async def sync_items_from_sheet28() -> dict:
         "items_with_images": items_with_images,
         "old_style_removed": len(old_style),
         "old_style_abnormal_lost": [it.ragic_id for it in old_style_abnormal],
+        "schedule_old_style_removed": len(old_style_sched_safe),
+        "schedule_old_style_kept_risky": [
+            {"id": s.id, "item_ragic_id": s.item_ragic_id, "task_name": s.task_name}
+            for s in old_style_sched_risky
+        ],
         "journal_collisions": journal_collisions,
         "errors": errors,
         "unmatched_batches": sorted(unmatched_journal_nos),

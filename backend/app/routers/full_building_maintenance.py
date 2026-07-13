@@ -1835,9 +1835,24 @@ def _do_generate_full_bldg_pm(
       - is_completed=True          → 跳過
       - portal_edited_at IS NOT NULL → 跳過
       - 其他已存在記錄               → 更新 scheduled_date
+
+    2026-07-13 修正（比照 mall_pm 同日修正，見 generate_mall_schedule() 說明）：
+    item.scheduled_date 永遠是「目前最新批次」自己的值。舊版不論 year/month 是哪個月，
+    只要 item.scheduled_date 有值就直接採用，導致產生「過去月份」排程時把當期月份的
+    日期整批錯誤帶入（例如產生 05 月排程卻顯示 07 月的日期）。改為：只有目標月份＝
+    目前最新批次自己的月份時才採用 item.scheduled_date；其餘月份一律用 exec_months
+    自動推算（每月固定 01 號），不嘗試任何跨批次備填。
     """
     year_month = f"{year}/{str(month).zfill(2)}"
     all_items = _fb_get_latest_batch_items(db)
+
+    latest_batch_period_month = ""
+    if all_items:
+        latest_batch = db.get(FullBldgPMBatch, all_items[0].batch_ragic_id)
+        if latest_batch:
+            latest_batch_period_month = latest_batch.period_month
+    is_current_batch_month = bool(latest_batch_period_month) and (latest_batch_period_month == year_month)
+
     generated = updated = skipped_completed = skipped_edited = 0
     skipped_non_month = skipped_no_frequency = 0
     errors: List[str] = []
@@ -1859,7 +1874,7 @@ def _do_generate_full_bldg_pm(
             skipped_non_month += 1
             continue
 
-        ragic_date = (item.scheduled_date or "").strip()
+        ragic_date = (item.scheduled_date or "").strip() if is_current_batch_month else ""
         if ragic_date:
             resolved_date = ragic_date
         elif has_exec_months:

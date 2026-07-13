@@ -216,6 +216,19 @@ def _collect_hotel_pm(db: Session, start: date, end: date) -> List[CalendarEvent
             color        = color,
             zone         = "飯店",
             ragic_url    = f"https://ap12.ragic.com/soutlet001/periodic-maintenance/6/{batch.ragic_id}",
+            detail       = {
+                "日誌編號": item.ragic_id,
+                "保養月份": batch.period_month,
+                "類別":     item.category,
+                "頻率":     item.frequency,
+                "排定日期": item.scheduled_date,
+                "排定人員": item.scheduler_name,
+                "執行人員": item.executor_name,
+                "完成狀況": status_label,
+                "執行結果": item.result_note,
+                "異常說明": item.abnormal_note if item.abnormal_flag else "",
+            },
+            # 飯店週期保養目前尚無附圖同步管線（無 images_json / db-images 端點），故不設 image_item_id
         ))
     return events
 
@@ -277,6 +290,19 @@ def _collect_mall_pm(db: Session, start: date, end: date) -> List[CalendarEventO
             color        = color,
             zone         = "商場",
             ragic_url    = f"https://ap12.ragic.com/soutlet001/periodic-maintenance/18/{batch.ragic_id}",
+            detail       = {
+                "日誌編號": item.ragic_id,
+                "保養月份": batch.period_month,
+                "類別":     item.category,
+                "頻率":     item.frequency,
+                "排定日期": item.scheduled_date,
+                "排定人員": item.scheduler_name,
+                "執行人員": item.executor_name,
+                "完成狀況": status_label,
+                "執行結果": item.result_note,
+                "異常說明": item.abnormal_note if item.abnormal_flag else "",
+            },
+            image_item_id = item.ragic_id,
         ))
     return events
 
@@ -344,6 +370,22 @@ def _collect_mall_pm_schedule(db: Session, start: date, end: date) -> List[Calen
             deep_link    = "/mall/periodic-maintenance",
             color        = color,
             zone         = "商場",
+            ragic_url    = (
+                f"https://ap12.ragic.com/soutlet001/periodic-maintenance/24/{rec.item_ragic_id}"
+                if rec.item_ragic_id and "_" not in rec.item_ragic_id else ""
+            ),
+            detail       = {
+                "日誌編號": rec.item_ragic_id,
+                "保養月份": rec.year_month,
+                "類別":     rec.category,
+                "頻率":     rec.frequency,
+                "排定日期": rec.scheduled_date,
+                "執行人員": rec.executor_name,
+                "完成狀況": status_label,
+                "執行結果": rec.result_note,
+                "異常說明": rec.abnormal_note if rec.abnormal_flag else "",
+            },
+            image_item_id = rec.item_ragic_id,
         ))
 
     return events
@@ -401,6 +443,22 @@ def _collect_full_bldg_pm_schedule(db: Session, start: date, end: date) -> List[
             deep_link    = "/mall/full-building-maintenance",
             color        = color,
             zone         = "公區",
+            ragic_url    = (
+                f"https://ap12.ragic.com/soutlet001/periodic-maintenance/28/{rec.item_ragic_id}"
+                if rec.item_ragic_id and "_" not in rec.item_ragic_id else ""
+            ),
+            detail       = {
+                "日誌編號": rec.item_ragic_id,
+                "保養月份": rec.year_month,
+                "類別":     rec.category,
+                "頻率":     rec.frequency,
+                "排定日期": rec.scheduled_date,
+                "執行人員": rec.executor_name,
+                "完成狀況": status_label,
+                "執行結果": rec.result_note,
+                "異常說明": rec.abnormal_note if rec.abnormal_flag else "",
+            },
+            image_item_id = rec.item_ragic_id,
         ))
 
     return events
@@ -467,6 +525,19 @@ def _collect_full_bldg_pm(db: Session, start: date, end: date) -> List[CalendarE
             color        = color,
             zone         = "公區",
             ragic_url    = f"https://ap12.ragic.com/soutlet001/periodic-maintenance/21/{batch.ragic_id}",
+            detail       = {
+                "日誌編號": item.ragic_id,
+                "保養月份": batch.period_month,
+                "類別":     item.category,
+                "頻率":     item.frequency,
+                "排定日期": item.scheduled_date,
+                "排定人員": item.scheduler_name,
+                "執行人員": item.executor_name,
+                "完成狀況": status_label,
+                "執行結果": item.result_note,
+                "異常說明": item.abnormal_note if item.abnormal_flag else "",
+            },
+            image_item_id = item.ragic_id,
         ))
     return events
 
@@ -548,6 +619,16 @@ def _collect_pm_plan(db: Session, start: date, end: date) -> List[CalendarEventO
             color        = color,
             zone         = item_zone,
             ragic_url    = item.ragic_url or "",
+            detail       = {
+                "日誌編號": item.ragic_id,
+                "類別":     item.category,
+                "頻率":     item.frequency,
+                "位置":     item.location,
+                "排定日期": item.scheduled_date,
+                "排定人員": item.scheduler_name,
+                "備註":     item.note,
+            },
+            # pm_plan（主管排定）無附圖同步管線，不設 image_item_id
         ))
 
     return events

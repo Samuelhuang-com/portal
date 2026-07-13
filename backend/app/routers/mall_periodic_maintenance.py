@@ -10,6 +10,8 @@ Prefix: /api/v1/mall/periodic-maintenance
   GET  /items                        — 所有項目跨批次查詢
   GET  /stats                        — 全站統計（Dashboard 資料來源）
   GET  /items/task-history           — 依項目名稱查詢近 N 個月執行歷史
+  GET  /items/{item_ragic_id}/worklogs — 單一項目維修記錄明細（Sheet24 巢狀子表格，2026-07-13 新增）
+  GET  /items/{item_ragic_id}/db-images — 單一項目附圖（Sheet24「圖片上傳」欄位，2026-07-13 新增）
   GET  /debug/ragic-raw              — 除錯：顯示 Ragic Sheet 18 原始欄位
 """
 import json
@@ -18,11 +20,14 @@ from datetime import date, datetime, timezone
 from typing import Optional, List
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.dependencies import get_current_user, require_roles
-from app.models.mall_periodic_maintenance import MallPeriodicMaintenanceBatch, MallPeriodicMaintenanceItem
+from app.models.mall_periodic_maintenance import (
+    MallPeriodicMaintenanceBatch, MallPeriodicMaintenanceItem, MallPMItemWorklog,
+)
 from app.models.mall_pm_schedule import MallPMSchedule
 from app.schemas.periodic_maintenance import (
     PMBatchOut, PMItemOut, PMBatchKPI, PMBatchDetail,
@@ -208,6 +213,9 @@ def _should_schedule(item: MallPeriodicMaintenanceItem, year: int, month: int) -
     return _should_schedule_by_frequency(freq, month)
 
 
+_RAGIC_BASE = "https://ap12.ragic.com/soutlet001/periodic-maintenance/18"
+
+
 def _item_to_out(item: MallPeriodicMaintenanceItem, check_month: int) -> PMItemOut:
     return PMItemOut(
         ragic_id          = item.ragic_id,
@@ -232,6 +240,8 @@ def _item_to_out(item: MallPeriodicMaintenanceItem, check_month: int) -> PMItemO
         portal_edited_at  = item.portal_edited_at,
         synced_at         = item.synced_at,
         status            = _calc_status(item, check_month),
+        ragic_url         = f"{_RAGIC_BASE}/{item.batch_ragic_id}" if item.batch_ragic_id else "",
+        repair_hours      = item.repair_hours,
     )
 
 
@@ -247,7 +257,16 @@ def _calc_kpi(items: list[MallPeriodicMaintenanceItem], check_month: int) -> PMB
     overdue     = sum(1 for _, s in current_items if s == "overdue")
     abnormal    = sum(1 for it in items if it.abnormal_flag)
     planned     = sum(it.estimated_minutes for it, s in current_items)
-    actual      = sum(_time_diff_minutes(it.start_time, it.end_time) for it in items if it.start_time and it.end_time)
+    # 2026-07-13 修正（比照 full_bldg_pm 同日改版）：repair_hours（來源 Sheet24「維修工時」）
+    # 是 Ragic 端逐筆維修記錄實際工時的加總；start_time/end_time 則是 Portal 這邊從巢狀
+    # 子表格「取最早開始、最晚結束」推算出來的時間跨度。同一保養項目若有多筆不連續的
+    # 維修記錄，時間跨度會把中間的空檔也算進去，大幅高估實際工時。有 repair_hours 時
+    # 一律以其為準，只有沒有 repair_hours（例如舊資料或極端情況）才退回時間跨度估算。
+    actual = sum(
+        (round(it.repair_hours * 60) if it.repair_hours is not None
+         else _time_diff_minutes(it.start_time, it.end_time))
+        for it in items if it.start_time and it.end_time
+    )
     rate = round(completed / total_all * 100, 1) if total_all > 0 else 0.0
 
     return PMBatchKPI(
@@ -973,6 +992,86 @@ def get_item_task_history(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# GET /items/{item_ragic_id}/worklogs（2026-07-13 新增：Sheet24 巢狀「維修記錄」明細）
+# ══════════════════════════════════════════════════════════════════════════════
+class PMWorklogOut(BaseModel):
+    ragic_id:      str
+    item_ragic_id: str
+    seq_no:        int
+    repair_note:   str
+    start_time:    str
+    end_time:      str
+    staff_name:    str
+
+    class Config:
+        from_attributes = True
+
+
+@router.get(
+    "/items/{item_ragic_id}/worklogs",
+    response_model=List[PMWorklogOut],
+    summary="單一項目維修記錄明細（來源 Ragic Sheet24 巢狀子表格）",
+)
+def get_item_worklogs(item_ragic_id: str, db: Session = Depends(get_db)):
+    rows = (
+        db.query(MallPMItemWorklog)
+        .filter(MallPMItemWorklog.item_ragic_id == item_ragic_id)
+        .order_by(MallPMItemWorklog.seq_no.asc())
+        .all()
+    )
+    return rows
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GET /items/{item_ragic_id}/db-images（2026-07-13 新增：Sheet24「圖片上傳」欄位，
+# 遵循全站「明細 Drawer 強制規範」的 /db-images/{ragic_id} 端點慣例）
+# ══════════════════════════════════════════════════════════════════════════════
+class PMImageOut(BaseModel):
+    url:      str
+    filename: str
+
+
+@router.get(
+    "/items/{item_ragic_id}/db-images",
+    response_model=List[PMImageOut],
+    summary="單一項目附圖（DB 優先，缺資料時即時向 Ragic 補抓一次，來源 Sheet24「圖片上傳」欄位）",
+)
+async def get_item_images(item_ragic_id: str, db: Session = Depends(get_db)):
+    item = db.get(MallPeriodicMaintenanceItem, item_ragic_id)
+    if item and item.images_json:
+        try:
+            cached = json.loads(item.images_json)
+            if cached:
+                return cached
+        except Exception:
+            pass
+
+    # DB 沒資料（尚未同步過此欄位，或該筆項目本來就沒附圖）→ 即時向 Ragic 補抓一次；
+    # 不寫回 DB，下次排程同步時會自然補齊。
+    from app.services.mall_periodic_maintenance_sync import (
+        MALL_PM_SERVER_URL, MALL_PM_ACCOUNT, MALL_PM_SHEET24_PATH, CK24L_IMAGES,
+    )
+    from app.services.ragic_data_service import parse_images
+
+    adapter = RagicAdapter(
+        sheet_path=MALL_PM_SHEET24_PATH,
+        server_url=MALL_PM_SERVER_URL,
+        account=MALL_PM_ACCOUNT,
+    )
+    try:
+        full_record = await adapter.fetch_one(item_ragic_id)
+        if item_ragic_id in full_record and len(full_record) == 1:
+            full_record = full_record[item_ragic_id]
+        return parse_images(
+            full_record.get(CK24L_IMAGES),
+            server=MALL_PM_SERVER_URL,
+            account=MALL_PM_ACCOUNT,
+        )
+    except Exception:
+        return []
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # GET /period-stats/year-matrix  — 全年 12 個月矩陣統計
 # ⚠️ 必須定義在 /period-stats 之前，否則 FastAPI 會誤判路徑
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1444,34 +1543,28 @@ def generate_mall_schedule(
       - is_completed=True → 跳過（不覆蓋已完成）
       - portal_edited_at IS NOT NULL → 跳過（不覆蓋人工調整）
       - 其他已存在記錄 → 更新 scheduled_date / executor_name
+
+    2026-07-13 修正（取消對非當期月份的自動備填，見對話紀錄）：
+      舊版邏輯會用 (task_name, category, location) 到「目標月份自己的批次」查排定日期，
+      查不到才 fallback 用 item.scheduled_date（永遠是最新批次/當期月份的值）。
+      Sheet24 改版後 location 欄位永遠空白、且不同月份的保養目錄項目數量與組成本身
+      就不是一對一（實測：06 月批次 16 筆項目、07 月批次僅 8 筆，任務內容也不同），
+      改用 seq_no 比對一樣會錯配（07 月 seq=7 是「門扇→巡檢保養」，06 月 seq=7 卻是
+      「商場送風機x14」）。結論：非當期月份的目錄本來就無法從現在的目錄可靠地反推，
+      任何自動比對 key 都有風險，因此改為——只有「目標月份＝目前最新批次自己的月份」
+      時才直接採用 item.scheduled_date（此時來源與目標是同一批次，比對必然正確）；
+      其餘月份一律改用 exec_months 自動推算（每月固定 01 號，見 _calc_auto_scheduled_date），
+      不再嘗試任何跨批次查表備填。
     """
     year_month = f"{year}/{month:02d}"
     items = _mall_get_latest_batch_items(db)
 
-    # 建立目標月份批次的 (task_name, category, location) -> "MM/DD" lookup
-    target_batch = (
-        db.query(MallPeriodicMaintenanceBatch)
-        .filter(MallPeriodicMaintenanceBatch.period_month == year_month)
-        .first()
-    )
-    month_sched_lookup: dict[tuple, str] = {}
-    if target_batch:
-        target_items = (
-            db.query(MallPeriodicMaintenanceItem)
-            .filter(MallPeriodicMaintenanceItem.batch_ragic_id == target_batch.ragic_id)
-            .all()
-        )
-        for ti in target_items:
-            if not ti.scheduled_date:
-                continue
-            parts = ti.scheduled_date.split("/")
-            if len(parts) == 3:
-                mmdd = f"{parts[1]}/{parts[2]}"
-            elif len(parts) == 2:
-                mmdd = ti.scheduled_date
-            else:
-                continue
-            month_sched_lookup[(ti.task_name.strip(), ti.category.strip(), ti.location.strip())] = mmdd
+    latest_batch_period_month = ""
+    if items:
+        latest_batch = db.get(MallPeriodicMaintenanceBatch, items[0].batch_ragic_id)
+        if latest_batch:
+            latest_batch_period_month = latest_batch.period_month
+    is_current_batch_month = bool(latest_batch_period_month) and (latest_batch_period_month == year_month)
 
     generated             = 0
     updated               = 0
@@ -1508,13 +1601,12 @@ def generate_mall_schedule(
             )
 
             # resolved_date 優先順序：
-            #   1. 目標批次 / Ragic 已填的排定日期（month_sched_lookup 或 item.scheduled_date）
-            #   2. exec_months 自動計算（MM/01）
-            #   3. 空字串
-            key = (item.task_name.strip(), item.category.strip(), item.location.strip())
-            ragic_date = month_sched_lookup.get(key) or item.scheduled_date or ""
-            if ragic_date:
-                resolved_date = ragic_date
+            #   1. 目標月份＝目前最新批次自己的月份時，直接採用 item.scheduled_date
+            #      （來源與目標同一批次，比對必然正確；見函式頂部 2026-07-13 修正說明）
+            #   2. 其餘月份一律用 exec_months 自動計算（MM/01），不再嘗試任何跨批次查表備填
+            #   3. 都沒有 → 空字串
+            if is_current_batch_month and item.scheduled_date:
+                resolved_date = item.scheduled_date
             elif has_exec_months:
                 resolved_date = _calc_auto_scheduled_date(item.exec_months_json, month)
             else:
@@ -1757,37 +1849,11 @@ def get_mall_annual_matrix(
         except Exception:
             pass
 
-    # 載入該年各月批次的排定日期 lookup（補回 scheduled_date 為空的情況）
-    year_batches = (
-        db.query(MallPeriodicMaintenanceBatch)
-        .filter(MallPeriodicMaintenanceBatch.period_month.like(f"{year}/%"))
-        .all()
-    )
-    month_sched_lookup: dict[int, dict[tuple, str]] = {}
-    for batch in year_batches:
-        try:
-            bm = int(batch.period_month.split("/")[1])
-        except Exception:
-            continue
-        batch_items = (
-            db.query(MallPeriodicMaintenanceItem)
-            .filter(MallPeriodicMaintenanceItem.batch_ragic_id == batch.ragic_id)
-            .all()
-        )
-        lookup: dict[tuple, str] = {}
-        for bi in batch_items:
-            if not bi.scheduled_date:
-                continue
-            parts = bi.scheduled_date.split("/")
-            if len(parts) == 3:
-                mmdd = f"{parts[1]}/{parts[2]}"
-            elif len(parts) == 2:
-                mmdd = bi.scheduled_date
-            else:
-                continue
-            key = (bi.task_name.strip(), bi.category.strip(), bi.location.strip())
-            lookup[key] = mmdd
-        month_sched_lookup[bm] = lookup
+    # 2026-07-13 修正：移除「用 (task_name, category, location) 到該月批次查表補回
+    # scheduled_date」的備填邏輯。原因與 generate_mall_schedule() 同一批次修正（見該
+    # 函式頂部說明）——location 欄位 Sheet24 改版後永遠空白、不同月份的保養目錄本身
+    # 就不是一對一（同 task_name+category 常有多筆不同日期的項目），任何自動比對
+    # key 都會有錯配風險，因此不再嘗試備填，scheduled_date 為空就如實顯示為空。
 
     rows: list[MallPMScheduleMatrixRow] = []
     completed_cnt = 0
@@ -1797,12 +1863,6 @@ def get_mall_annual_matrix(
         for m in range(1, 13):
             rec = schedule_map.get((item.ragic_id, m))
             if rec:
-                if not rec.scheduled_date:
-                    lookup = month_sched_lookup.get(m, {})
-                    key = (item.task_name.strip(), item.category.strip(), item.location.strip())
-                    batch_mmdd = lookup.get(key)
-                    if batch_mmdd:
-                        rec.scheduled_date = batch_mmdd   # 僅記憶體賦值，不 commit
                 status = _mall_calc_schedule_status(rec)
                 if status == "completed":
                     completed_cnt += 1

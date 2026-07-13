@@ -77,6 +77,10 @@ export interface CalendarEvent {
   color:        string
   zone:         string           // 區域別：飯店/商場/公區/其它
   ragic_url:    string           // Ragic 原始記錄連結（空=無連結）
+
+  // ── 明細 Drawer 強制規範欄位（CLAUDE.md §7 / WORK_JOURNAL_SPEC.md §9，2026-07-13 補上）──
+  detail:         Record<string, string>  // 明細欄位區（來源模組原始欄位，中文 key）
+  image_item_id:  string                  // 附圖查詢用項目 ragic_id（空=此事件無附圖可查）
 }
 
 export interface CalendarEventsResponse {

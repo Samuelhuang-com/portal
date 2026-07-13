@@ -1,19 +1,38 @@
 /**
  * 行事曆 — 事件詳情抽屜
  *
+ * 2026-07-13 改版，補上「明細 Drawer 強制規範」（CLAUDE.md §7 / WORK_JOURNAL_SPEC.md §9）
+ * 原本缺少的項目：明細欄位區（detail dict）、附圖區（mall_pm / full_pm）、Drawer 寬度
+ * 依附圖切換 480/640px。
+ *
  * 標題列：[區域 Tag]  [module_label]：[identifier]  [🔗 在 Ragic 查看]
- * Body  ：① 基本資訊 Descriptions  ② 詳細說明 Descriptions
+ * Body  ：① 基本資訊 Descriptions（column=2） ② 明細欄位區 Descriptions（column=1，
+ *          逐渲染 detail dict） ③ 附圖區（僅 mall_pm / full_pm 且有 image_item_id 時）
  * Footer：前往原模組查看 / custom 事件：編輯、刪除
  */
-import { Drawer, Tag, Button, Space, Typography, Descriptions, Popconfirm } from 'antd'
+import { useEffect, useState } from 'react'
+import { Drawer, Tag, Button, Space, Typography, Descriptions, Popconfirm, Image, Spin, Divider } from 'antd'
 import {
   LinkOutlined, EditOutlined, DeleteOutlined, EnvironmentOutlined,
 } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import type { CalendarEvent, CalendarZone } from '@/types/calendar'
 import { EVENT_TYPE_LABELS, ZONE_COLORS } from '@/types/calendar'
+import { fetchMallPMItemImages, type PMImageItem as MallPMImageItem } from '@/api/mallPeriodicMaintenance'
+import { fetchFullBldgPMItemImages, type PMImageItem as FullBldgPMImageItem } from '@/api/fullBuildingMaintenance'
 
 const { Text } = Typography
+
+// ── 明細欄位區狀態欄渲染（比照 §9.3「狀態欄 → 彩色 Tag」規則）───────────────────
+const DETAIL_STATUS_TAG: Record<string, { color: string; label: string }> = {
+  已完成: { color: 'success',    label: '已完成' },
+  進行中: { color: 'processing', label: '進行中' },
+  已排定: { color: 'warning',    label: '已排定' },
+  未排定: { color: 'error',      label: '未排定' },
+  逾期:   { color: 'error',      label: '逾期'   },
+  非本月: { color: 'default',    label: '非本月' },
+  預排:   { color: 'processing', label: '預排'   },
+}
 
 // ── 狀態 → Ant Design Tag color ───────────────────────────────────────────────
 const STATUS_TAG: Record<string, { color: string; label: string }> = {
@@ -59,6 +78,30 @@ export default function EventDrawer({ event, open, onClose, onEdit, onDelete }: 
   const moduleLabel = event?.module_label?.replace(/（.*?）/, '') ?? ''
   const identifier  = event ? cleanTitle(event.title) : ''
   const ragicUrl    = event?.ragic_url ?? ''
+
+  // ── 附圖區（僅 mall_pm / full_pm，且事件帶有 image_item_id 時才查詢）──────────
+  // 遵循 §9.3「有附圖模組：使用 Image.PreviewGroup，禁止另開新視窗」規範。
+  const [images,        setImages]        = useState<(MallPMImageItem | FullBldgPMImageItem)[]>([])
+  const [imagesLoading, setImagesLoading]  = useState(false)
+
+  const canHaveImages = !!event?.image_item_id && (event?.event_type === 'mall_pm' || event?.event_type === 'full_pm')
+
+  useEffect(() => {
+    if (!open || !event || !canHaveImages) {
+      setImages([])
+      return
+    }
+    setImages([])
+    setImagesLoading(true)
+    const fetcher = event.event_type === 'mall_pm' ? fetchMallPMItemImages : fetchFullBldgPMItemImages
+    fetcher(event.image_item_id)
+      .then(setImages)
+      .catch(() => setImages([]))
+      .finally(() => setImagesLoading(false))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, event?.id, canHaveImages])
+
+  const hasImages = canHaveImages && (imagesLoading || images.length > 0)
 
   // ── 標題列 ──────────────────────────────────────────────────────────────────
   const drawerTitle = event ? (
@@ -121,11 +164,13 @@ export default function EventDrawer({ event, open, onClose, onEdit, onDelete }: 
     </Space>
   ) : null
 
+  const detailEntries = event ? Object.entries(event.detail || {}) : []
+
   return (
     <Drawer
       title={drawerTitle}
       placement="right"
-      width={480}
+      width={hasImages ? 640 : 480}
       open={open}
       onClose={onClose}
       footer={footer}
@@ -133,10 +178,10 @@ export default function EventDrawer({ event, open, onClose, onEdit, onDelete }: 
       {event && (
         <Space direction="vertical" style={{ width: '100%' }} size={16}>
 
-          {/* ── ① 基本資訊 ─────────────────────────────────────────────────── */}
+          {/* ── ① 基本資訊（Descriptions column=2，見 §9.3） ─────────────────── */}
           <Descriptions
             title="基本資訊"
-            column={1}
+            column={2}
             size="small"
             bordered
             labelStyle={{ width: 90, whiteSpace: 'nowrap' }}
@@ -169,19 +214,6 @@ export default function EventDrawer({ event, open, onClose, onEdit, onDelete }: 
             </Descriptions.Item>
 
             <Descriptions.Item label="負責人">{val(event.responsible)}</Descriptions.Item>
-          </Descriptions>
-
-          {/* ── ② 詳細說明 ─────────────────────────────────────────────────── */}
-          <Descriptions
-            title="詳細說明"
-            column={1}
-            size="small"
-            bordered
-            labelStyle={{ width: 90, whiteSpace: 'nowrap' }}
-          >
-            {event.description && (
-              <Descriptions.Item label="說明">{event.description}</Descriptions.Item>
-            )}
 
             {event.source_id && (
               <Descriptions.Item label="記錄 ID">
@@ -189,19 +221,80 @@ export default function EventDrawer({ event, open, onClose, onEdit, onDelete }: 
               </Descriptions.Item>
             )}
 
-            {ragicUrl && (
-              <Descriptions.Item label="Ragic 連結">
-                <a
-                  href={ragicUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  style={{ color: '#4BA8E8' }}
-                >
-                  <LinkOutlined style={{ marginRight: 4 }} />在 Ragic 查看原始記錄
-                </a>
-              </Descriptions.Item>
+            {event.description && (
+              <Descriptions.Item label="說明" span={2}>{event.description}</Descriptions.Item>
             )}
           </Descriptions>
+
+          {/* ── ② 明細欄位區（detail dict 逐一渲染，Descriptions column=1，見 §9.3） ── */}
+          {detailEntries.length > 0 && (
+            <>
+              <Divider style={{ margin: '0' }} />
+              <Descriptions
+                title="明細欄位"
+                column={1}
+                size="small"
+                bordered
+                labelStyle={{ width: 90, whiteSpace: 'nowrap' }}
+              >
+                {detailEntries.map(([k, v]) => (
+                  <Descriptions.Item key={k} label={k}>
+                    {!v
+                      ? <Text type="secondary">—</Text>
+                      : k === '完成狀況'
+                        ? <Tag color={DETAIL_STATUS_TAG[v]?.color ?? 'default'} style={{ margin: 0 }}>
+                            {DETAIL_STATUS_TAG[v]?.label ?? v}
+                          </Tag>
+                        : k === '異常說明'
+                          ? <Tag color="error" style={{ margin: 0 }}>{v}</Tag>
+                          : <Text>{v}</Text>}
+                  </Descriptions.Item>
+                ))}
+              </Descriptions>
+            </>
+          )}
+
+          {/* ── ③ 附圖區（僅 mall_pm / full_pm，見 §9.3「禁止另開新視窗」） ─────── */}
+          {hasImages && (
+            <>
+              <Divider style={{ margin: '0' }} />
+              <div style={{ fontWeight: 500, marginBottom: 4, color: '#555', fontSize: 15 }}>附圖</div>
+              {imagesLoading ? (
+                <div style={{ textAlign: 'center', padding: 16 }}><Spin size="small" /></div>
+              ) : (
+                <Image.PreviewGroup>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                    {images.map((img, i) => (
+                      <Image
+                        key={i}
+                        src={img.url}
+                        alt={img.filename || `圖片 ${i + 1}`}
+                        width={120}
+                        height={90}
+                        style={{ objectFit: 'cover', borderRadius: 4, border: '1px solid #e8e8e8', cursor: 'pointer' }}
+                        fallback="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+                      />
+                    ))}
+                  </div>
+                </Image.PreviewGroup>
+              )}
+            </>
+          )}
+
+          {/* ── Ragic 連結（標題列已放一份，此處補完整說明文字，維持既有可讀性） ── */}
+          {ragicUrl && (
+            <>
+              <Divider style={{ margin: '0' }} />
+              <a
+                href={ragicUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ color: '#4BA8E8' }}
+              >
+                <LinkOutlined style={{ marginRight: 4 }} />在 Ragic 查看原始記錄
+              </a>
+            </>
+          )}
 
         </Space>
       )}

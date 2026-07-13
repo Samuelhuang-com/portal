@@ -674,6 +674,72 @@ def _matrix_status_style():
     return _MATRIX_STATUS_STYLE
 
 
+# 狀態 → (符號, bg RGBColor, fg RGBColor) — 與 Portal 網頁「年度計劃表」Tab
+# （MallPeriodicMaintenance / FullBuildingMaintenance 的 MATRIX_CELL_CFG /
+#  ANNUAL_CELL_STYLE）完全一致的 8 種狀態樣式，僅供 luqun（商場）年度計劃表
+# 投影片使用；飯店（dazhi）投影片維持既有 _matrix_status_style()，不受影響。
+_MATRIX_STATUS_STYLE_PORTAL = None  # 延遲初始化（需 pptx 匯入）
+
+
+def _matrix_status_style_portal():
+    """回傳與 Portal 網頁年度計劃表 Tab 一致的狀態樣式對照表（8 種狀態，lazy init）。"""
+    global _MATRIX_STATUS_STYLE_PORTAL
+    if _MATRIX_STATUS_STYLE_PORTAL is not None:
+        return _MATRIX_STATUS_STYLE_PORTAL
+    from pptx.dml.color import RGBColor as _R
+
+    _MATRIX_STATUS_STYLE_PORTAL = {
+        "completed": ("✅", _R(0xF6, 0xFF, 0xED), _R(0x52, 0xC4, 0x1A)),  # 已完成
+        "overdue": ("🔴", _R(0xFF, 0xF1, 0xF0), _R(0xC0, 0x39, 0x2B)),  # 逾期
+        "in_progress": ("🔵", _R(0xE6, 0xF4, 0xFF), _R(0x18, 0x90, 0xFF)),  # 進行中
+        "scheduled": ("⭕", _R(0xFF, 0xF7, 0xE6), _R(0xFA, 0x8C, 0x16)),  # 待執行
+        "unscheduled": ("?", _R(0xFF, 0xFB, 0xE6), _R(0xFA, 0xAD, 0x14)),  # 未排定
+        "non_month": ("─", _R(0xFA, 0xFA, 0xFA), _R(0xAA, 0xAA, 0xAA)),  # 非本月
+        "no_data": ("！", _R(0xFF, 0xF0, 0xF6), _R(0xEB, 0x2F, 0x96)),  # 應做未排
+        "no_frequency": ("∅", _R(0xF5, 0xF5, 0xF5), _R(0xCC, 0xCC, 0xCC)),  # 頻率未設
+    }
+    return _MATRIX_STATUS_STYLE_PORTAL
+
+
+def _pptx_matrix_cell_portal(tbl, row, col, symbol, date_text, fg, bg, size=12):
+    """Portal 年度計劃表儲存格：狀態符號（大字）+ 排定日期（小字，選填）兩行呈現。"""
+    from pptx.util import Inches, Pt
+    from pptx.enum.text import PP_ALIGN
+
+    cell = tbl.cell(row, col)
+    if bg:
+        cell.fill.solid()
+        cell.fill.fore_color.rgb = bg
+    cell.margin_left = Inches(0.02)
+    cell.margin_right = Inches(0.02)
+    cell.margin_top = Inches(0.02)
+    cell.margin_bottom = Inches(0.02)
+    tf = cell.text_frame
+    tf.word_wrap = False
+    tf.clear()
+
+    p0 = tf.paragraphs[0]
+    p0.alignment = PP_ALIGN.CENTER
+    r0 = p0.add_run()
+    r0.text = symbol
+    r0.font.name = "微軟正黑體"
+    r0.font.size = Pt(size)
+    r0.font.bold = True
+    if fg:
+        r0.font.color.rgb = fg
+
+    if date_text:
+        p1 = tf.add_paragraph()
+        p1.alignment = PP_ALIGN.CENTER
+        r1 = p1.add_run()
+        r1.text = date_text
+        r1.font.name = "微軟正黑體"
+        r1.font.size = Pt(max(size - 4, 6))
+        r1.font.bold = False
+        if fg:
+            r1.font.color.rgb = fg
+
+
 def _get_annual_matrix_rows(module: str, year: int, db) -> list:
     """
     依模組取得年度計劃表資料，回傳統一格式的 list。
@@ -728,91 +794,52 @@ def _get_annual_matrix_rows(module: str, year: int, db) -> list:
             )
 
     else:  # luqun — 商場週期保養 + 全棟例行維護
-        # ── 商場週期保養 ───────────────────────────────────────────────────
-        from app.routers.mall_periodic_maintenance import (
-            _mall_get_latest_batch_items,
-            _mall_calc_schedule_status,
-            _should_schedule as _mall_should_schedule,
+        # 2026-07-13 修正：直接重用網頁版「年度計劃表」Tab 的真實運算邏輯
+        # （get_mall_annual_matrix / get_full_bldg_annual_matrix），確保 PPT
+        # 匯出的狀態判斷與 Portal 頁面完全一致（8 種狀態：completed/overdue/
+        # in_progress/scheduled/unscheduled/non_month/no_data/no_frequency），
+        # 不再另外維護一份會漂移的簡化邏輯（原版只判得出 4～5 種狀態，
+        # 且缺少 scheduled_date，與網頁顯示不符）。
+        from app.routers.mall_periodic_maintenance import get_mall_annual_matrix
+        from app.routers.full_building_maintenance import (
+            get_full_bldg_annual_matrix,
         )
-        from app.models.mall_pm_schedule import MallPMSchedule
 
-        mall_items = _mall_get_latest_batch_items(db)
-        mall_recs = (
-            db.query(MallPMSchedule)
-            .filter(MallPMSchedule.year_month.like(f"{year}/%"))
-            .all()
-        )
-        mall_smap = {}
-        for r in mall_recs:
-            try:
-                m = int(r.year_month.split("/")[1])
-                mall_smap[(r.item_ragic_id, m)] = r
-            except Exception:
-                pass
-        for item in mall_items:
-            cells = []
-            for m in range(1, 13):
-                rec = mall_smap.get((item.ragic_id, m))
-                if rec:
-                    cells.append(
-                        {"month": m, "status": _mall_calc_schedule_status(rec)}
-                    )
-                elif not (item.frequency or "").strip():
-                    cells.append({"month": m, "status": "no_frequency"})
-                elif _mall_should_schedule(item, year, m):
-                    cells.append({"month": m, "status": "no_data"})
-                else:
-                    cells.append({"month": m, "status": "non_month"})
+        mall_matrix = get_mall_annual_matrix(year=year, category=None, db=db)
+        for row in mall_matrix.rows:
             results.append(
                 {
                     "source": "商場週期保養",
-                    "category": item.category,
-                    "task_name": item.task_name,
-                    "frequency": item.frequency or "",
-                    "cells": cells,
+                    "category": row.category,
+                    "task_name": row.task_name,
+                    "frequency": row.frequency or "",
+                    "cells": [
+                        {
+                            "month": c.month,
+                            "status": c.status,
+                            "scheduled_date": c.scheduled_date,
+                        }
+                        for c in row.cells
+                    ],
                 }
             )
 
-        # ── 全棟例行維護 ───────────────────────────────────────────────────
-        from app.routers.full_building_maintenance import (
-            _fb_get_latest_batch_items,
-            _fb_calc_schedule_status,
-            _fb_should_schedule_by_freq,
-        )
-        from app.models.full_bldg_pm_schedule import FullBldgPMSchedule
-
-        fb_items = _fb_get_latest_batch_items(db)
-        fb_recs = (
-            db.query(FullBldgPMSchedule)
-            .filter(FullBldgPMSchedule.year_month.like(f"{year}/%"))
-            .all()
-        )
-        fb_smap = {}
-        for r in fb_recs:
-            try:
-                m = int(r.year_month.split("/")[1])
-                fb_smap[(r.item_ragic_id, m)] = r
-            except Exception:
-                pass
-        for item in fb_items:
-            cells = []
-            for m in range(1, 13):
-                rec = fb_smap.get((item.ragic_id, m))
-                if rec:
-                    cells.append({"month": m, "status": _fb_calc_schedule_status(rec)})
-                elif not (item.frequency or "").strip():
-                    cells.append({"month": m, "status": "no_frequency"})
-                elif _fb_should_schedule_by_freq(item.frequency or "", m):
-                    cells.append({"month": m, "status": "no_data"})
-                else:
-                    cells.append({"month": m, "status": "non_month"})
+        fb_matrix = get_full_bldg_annual_matrix(year=year, category=None, db=db)
+        for row in fb_matrix.rows:
             results.append(
                 {
                     "source": "全棟例行維護",
-                    "category": item.category,
-                    "task_name": item.task_name,
-                    "frequency": item.frequency or "",
-                    "cells": cells,
+                    "category": row.category,
+                    "task_name": row.task_name,
+                    "frequency": row.frequency or "",
+                    "cells": [
+                        {
+                            "month": c.month,
+                            "status": c.status,
+                            "scheduled_date": c.scheduled_date,
+                        }
+                        for c in row.cells
+                    ],
                 }
             )
 
@@ -829,11 +856,21 @@ def _add_annual_matrix_slide(
     SW: float,
     SH: float,
     title_fn=None,
+    task_col_label: str = "項目名稱",
+    cell_style: str = "legacy",
 ):
     """
     年度計劃表矩陣投影片。
-    每格依狀態顯示符號（✓/○/✗/△/?）+ 對應底色。
-    超過 ROWS_PER_SLIDE 自動分頁。
+    每格依狀態顯示符號 + 對應底色，超過 ROWS_PER_SLIDE 自動分頁。
+
+    cell_style:
+      - "legacy"    （預設，飯店 dazhi 投影片沿用）：5 種狀態、符號 ✓/○/✗/△/?，
+                      維持既有樣式不變（受保護，見 feedback_hotel_ppt_protected）。
+      - "portal_v2" （商場 luqun 投影片專用，2026-07-13 新增）：與 Portal 網頁
+                      「年度計劃表」Tab 完全一致的 8 種狀態圖示/顏色，並在符號下方
+                      附排定日期小字。
+    task_col_label 為第二欄標題（dazhi 沿用「項目名稱」；luqun 改為「保養項目」，
+    與 Portal 網頁欄位標題一致）。
     """
     from app.routers.hotel_overview import (
         _clone_template_slide,
@@ -852,7 +889,11 @@ def _add_annual_matrix_slide(
     C_WHITE = RGBColor(0xFF, 0xFF, 0xFF)
     C_ROW_ALT = RGBColor(0xF7, 0xF9, 0xFC)
     C_GRAY = RGBColor(0x88, 0x88, 0x88)
-    STYLE = _matrix_status_style()
+    STYLE = (
+        _matrix_status_style_portal()
+        if cell_style == "portal_v2"
+        else _matrix_status_style()
+    )
 
     CELL_SIZE = 12  # 字體 pt（與其他內頁一致）
     TABLE_Y = 0.95
@@ -868,7 +909,7 @@ def _add_annual_matrix_slide(
 
     columns = [
         {"key": "category", "label": "類別", "width": W_CAT, "align": "left"},
-        {"key": "task_name", "label": "項目名稱", "width": W_TASK, "align": "left"},
+        {"key": "task_name", "label": task_col_label, "width": W_TASK, "align": "left"},
         {"key": "frequency", "label": "頻率", "width": W_FREQ, "align": "center"},
     ]
     for m in range(1, 13):
@@ -958,17 +999,29 @@ def _add_annual_matrix_slide(
                     status = cell_info["status"] if cell_info else "non_month"
                     sym, s_bg, s_fg = STYLE.get(status, ("", None, C_GRAY))
                     bg = s_bg if s_bg is not None else row_bg
-                    _pptx_cell(
-                        tbl,
-                        ri,
-                        ci,
-                        sym,
-                        fg=s_fg,
-                        bg=bg,
-                        size=CELL_SIZE,
-                        align=PP_ALIGN.CENTER,
-                        bold=(status == "completed"),
-                    )
+                    if cell_style == "portal_v2":
+                        _pptx_matrix_cell_portal(
+                            tbl,
+                            ri,
+                            ci,
+                            sym,
+                            cell_info.get("scheduled_date") if cell_info else None,
+                            fg=s_fg,
+                            bg=bg,
+                            size=CELL_SIZE,
+                        )
+                    else:
+                        _pptx_cell(
+                            tbl,
+                            ri,
+                            ci,
+                            sym,
+                            fg=s_fg,
+                            bg=bg,
+                            size=CELL_SIZE,
+                            align=PP_ALIGN.CENTER,
+                            bold=(status == "completed"),
+                        )
                 else:
                     text = _sanitize(row.get(key, ""))
                     _pptx_cell(
@@ -2530,6 +2583,11 @@ def _build_repair_pptx(module: str, year: int, month: int, db: Session) -> Bytes
             else:  # luqun
                 import traceback as _luqun_tb
 
+                PORTAL_LEGEND = (
+                    "狀態：✅已完成 🔴逾期 🔵進行中 ⭕待執行 "
+                    "?未排定 ─非本月 ！應做未排 ∅頻率未設"
+                )
+
                 logger.info("[Slide I] luqun: all_matrix_rows=%d", len(all_matrix_rows))
                 src_mall = [r for r in all_matrix_rows if r["source"] == "商場週期保養"]
                 src_fb = [r for r in all_matrix_rows if r["source"] == "全棟例行維護"]
@@ -2557,11 +2615,13 @@ def _build_repair_pptx(module: str, year: int, month: int, db: Session) -> Bytes
                         prs,
                         TMPL,
                         title="商場週期保養年度計劃表",
-                        subtitle=f"{{year}}年　狀態：✓已完成 ○已排定 ✗逾期 △未排定 ?待排",
+                        subtitle=f"{year}年　{PORTAL_LEGEND}",
                         matrix_rows=src_mall,
                         now_str=now_str,
                         SW=SW,
                         SH=SH,
+                        task_col_label="保養項目",
+                        cell_style="portal_v2",
                     )
                     ia_first_slide = prs.slides[ia_first_idx]
                     logger.info("[Slide I] 商場週期保養年度計劃表 created OK")
@@ -2583,11 +2643,13 @@ def _build_repair_pptx(module: str, year: int, month: int, db: Session) -> Bytes
                         prs,
                         TMPL,
                         title="全棟例行維護年度計劃表",
-                        subtitle=f"{{year}}年　狀態：✓已完成 ○已排定 ✗逾期 △未排定 ?待排",
+                        subtitle=f"{year}年　{PORTAL_LEGEND}",
                         matrix_rows=src_fb,
                         now_str=now_str,
                         SW=SW,
                         SH=SH,
+                        task_col_label="保養項目",
+                        cell_style="portal_v2",
                     )
                     ib_first_slide = prs.slides[ib_first_idx]
                     logger.info("[Slide I] 全棟例行維護年度計劃表 created OK")
