@@ -1615,20 +1615,41 @@ def get_items_catalog(
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _get_latest_batch_items(db: Session) -> list[PeriodicMaintenanceItem]:
-    """取得最新批次的所有保養項目，作為主檔來源。"""
-    latest_batch = (
-        db.query(PeriodicMaintenanceBatch)
-        .order_by(PeriodicMaintenanceBatch.period_month.desc())
-        .first()
+    """取得最新批次的所有保養項目，作為主檔來源。
+
+    2026-07-14 修正：原本只用 `ORDER BY period_month DESC .first()` 取「最新批次」，
+    但 Sheet 6 → Sheet 11 遷移過程中，同一個 period_month 可能同時存在多筆 pm_batch
+    記錄（例如舊 Sheet6 批次與遷移後依「編號」比對到的批次併存，其中一筆是沒有任何
+    pm_batch_item 掛在底下的空殼批次）。實測發現 2026/07 同時有 batch_ragic_id=9
+    （65 筆項目，含測試記錄 477）與 batch_ragic_id=11（0 筆項目）兩筆記錄，`.first()`
+    在沒有明確 tiebreak 的情況下可能挑到空殼批次，導致整個「最新批次」變成空清單——
+    連帶讓年度計劃表、KPI、period-stats、目錄等所有依賴本函式的功能全部顯示 0 筆。
+    修正：同一個最新 period_month 若有多筆批次記錄，改為挑「實際掛有項目」的那一筆
+    （多筆都有項目時取第一筆，維持原行為）。
+    """
+    from sqlalchemy import func as sqlfunc
+
+    latest_period = (
+        db.query(sqlfunc.max(PeriodicMaintenanceBatch.period_month))
+        .scalar()
     )
-    if not latest_batch:
+    if not latest_period:
         return []
-    return (
-        db.query(PeriodicMaintenanceItem)
-        .filter(PeriodicMaintenanceItem.batch_ragic_id == latest_batch.ragic_id)
-        .order_by(PeriodicMaintenanceItem.seq_no)
+    candidate_batches = (
+        db.query(PeriodicMaintenanceBatch)
+        .filter(PeriodicMaintenanceBatch.period_month == latest_period)
         .all()
     )
+    for batch in candidate_batches:
+        items = (
+            db.query(PeriodicMaintenanceItem)
+            .filter(PeriodicMaintenanceItem.batch_ragic_id == batch.ragic_id)
+            .order_by(PeriodicMaintenanceItem.seq_no)
+            .all()
+        )
+        if items:
+            return items
+    return []
 
 
 def _calc_schedule_status(rec: PMSchedule) -> str:
