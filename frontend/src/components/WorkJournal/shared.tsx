@@ -21,7 +21,7 @@ import {
 } from '@ant-design/icons'
 
 import {
-  fetchJournalImages,
+  fetchJournalImages, IMAGE_CAPABLE_SOURCES,
   type WorkJournalDaily, type JournalRow, type CaseImageItem,
   CATEGORY_COLOR,
 } from '@/api/workJournal'
@@ -247,7 +247,7 @@ export function DayPersonCollapse({
               const r = row as JournalRow
               setSelectedRow(r)
               setDrawerImages([])
-              if (r.ragic_id && (r.source === 'dazhi' || r.source === 'luqun' || r.source === 'other_tasks')) {
+              if (r.ragic_id && IMAGE_CAPABLE_SOURCES.has(r.source)) {
                 setImgLoading(true)
                 fetchJournalImages(r.source, r.ragic_id)
                   .then(imgs => setDrawerImages(imgs))
@@ -302,7 +302,7 @@ export function DayPersonCollapse({
             )
           })()
         }
-        width={480}
+        width={selectedRow && IMAGE_CAPABLE_SOURCES.has(selectedRow.source) ? 640 : 480}
         styles={{ body: { padding: '16px 20px' } }}
       >
         {selectedRow && (
@@ -445,7 +445,7 @@ export function DayPersonCollapse({
               </>
             )}
 
-            {/* 維修圖片（dazhi / luqun / other_tasks） */}
+            {/* 維修圖片／附圖（見 IMAGE_CAPABLE_SOURCES：dazhi / luqun / other_tasks / full_bldg_pm / mall_pm） */}
             {(imgLoading || drawerImages.length > 0) && (
               <>
                 <Divider style={{ margin: '16px 0 8px' }} />

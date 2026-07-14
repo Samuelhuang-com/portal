@@ -255,7 +255,10 @@ def _calc_kpi(items: list[MallPeriodicMaintenanceItem], check_month: int) -> PMB
     scheduled   = sum(1 for _, s in current_items if s == "scheduled")
     unscheduled = sum(1 for _, s in current_items if s == "unscheduled")
     overdue     = sum(1 for _, s in current_items if s == "overdue")
-    abnormal    = sum(1 for it in items if it.abnormal_flag)
+    # 2026-07-14 修正：abnormal 原本算「整批全部項目」，跟 overdue/scheduled/
+    # unscheduled/in_progress 這幾個都只算「本月項目」（current_items）的口徑不一致；
+    # 使用者確認後改為比照這幾個欄位，只算本月項目裡標記異常的筆數。
+    abnormal    = sum(1 for it, _ in current_items if it.abnormal_flag)
     planned     = sum(it.estimated_minutes for it, s in current_items)
     # 2026-07-13 修正（比照 full_bldg_pm 同日改版）：repair_hours（來源 Sheet24「維修工時」）
     # 是 Ragic 端逐筆維修記錄實際工時的加總；start_time/end_time 則是 Portal 這邊從巢狀
@@ -900,6 +903,90 @@ def get_stats(
         category_stats      = cats,
         status_distribution = status_dist,
     )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GET /calendar  — 月曆格（類別 × 日期）
+# 2026-07-14 新增：Dashboard 原本沿用 mall_facility_inspection（商場工務巡檢，完全
+# 不同模組）的每日巡檢月曆（fetchMallFIDailyCalendar）當佔位資料，標題「...每日巡檢
+# 狀況」其實正確描述了那份資料本身，只是那份資料根本不屬於本模組（商場週期保養）。
+# 比照 full_building_maintenance.py::get_calendar()（同一批 2026-07-13 Sheet 改版
+# 模組，資料結構相同）補上本模組專屬版本，改為呈現週期保養項目的類別 × 日完成狀況。
+# ══════════════════════════════════════════════════════════════════════════════
+@router.get("/calendar", summary="商場週期保養月曆格（類別 × 日）")
+def get_mall_pm_calendar(
+    year:  int = Query(..., description="年份，如 2026"),
+    month: int = Query(..., ge=1, le=12, description="月份，如 5"),
+    db:    Session = Depends(get_db),
+):
+    """
+    回傳指定年月的類別 × 日期月曆格資料。
+    cell key = str(d)（非零填充，配合 MonthlyCalendarGrid）。
+    """
+    import calendar as cal_mod
+    max_day   = cal_mod.monthrange(year, month)[1]
+    target_ym = f"{year}/{month:02d}"
+
+    batch = db.query(MallPeriodicMaintenanceBatch).filter(
+        MallPeriodicMaintenanceBatch.period_month == target_ym
+    ).first()
+
+    # 已知類別順序（比照全棟例行維護；若商場實際類別不同，未知類別仍會依下方邏輯附加在後）
+    CATEGORY_ORDER = ["水電", "空調", "照明", "消防", "申報", "整體"]
+
+    def _empty_daily() -> dict:
+        return {
+            str(d): {"has_record": False, "completion_rate": 0, "abnormal_count": 0, "pending_count": 0}
+            for d in range(1, max_day + 1)
+        }
+
+    if not batch:
+        return {
+            "year": year, "month": month, "max_day": max_day,
+            "rows": [{"key": c, "label": c, "daily": _empty_daily()} for c in CATEGORY_ORDER],
+        }
+
+    items = db.query(MallPeriodicMaintenanceItem).filter(
+        MallPeriodicMaintenanceItem.batch_ragic_id == batch.ragic_id
+    ).all()
+
+    # 依類別 × 日分組（用 scheduled_date 的 MM/DD 推算日期）
+    from collections import defaultdict
+    cat_day: dict[str, dict[int, list]] = defaultdict(lambda: defaultdict(list))
+    for it in items:
+        fd = _reconstruct_full_date(it.scheduled_date, batch.period_month)
+        if fd is None or fd.year != year or fd.month != month:
+            continue
+        cat_day[it.category or "其他"][fd.day].append(it)
+
+    # 確保所有已知類別都出現；額外類別附加在後
+    all_cats = list(CATEGORY_ORDER)
+    for c in cat_day:
+        if c not in all_cats:
+            all_cats.append(c)
+
+    rows_out = []
+    for cat in all_cats:
+        daily: dict[str, dict] = {}
+        for d in range(1, max_day + 1):
+            day_items = cat_day[cat].get(d, [])
+            if not day_items:
+                daily[str(d)] = {"has_record": False, "completion_rate": 0, "abnormal_count": 0, "pending_count": 0}
+            else:
+                total     = len(day_items)
+                completed = sum(1 for it in day_items if it.start_time and it.end_time)
+                abnormal  = sum(1 for it in day_items if it.abnormal_flag)
+                pending   = total - completed
+                rate      = round(completed / total * 100, 1) if total > 0 else 0.0
+                daily[str(d)] = {
+                    "has_record":      True,
+                    "completion_rate": rate,
+                    "abnormal_count":  abnormal,
+                    "pending_count":   pending,
+                }
+        rows_out.append({"key": cat, "label": cat, "daily": daily})
+
+    return {"year": year, "month": month, "max_day": max_day, "rows": rows_out}
 
 
 # ══════════════════════════════════════════════════════════════════════════════

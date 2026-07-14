@@ -589,6 +589,11 @@ function YearMatrixTable({
 // ── 主元件 ────────────────────────────────────────────────────────────────────
 type FormRow = PMItem & { _catSpan: number }
 
+
+// 2026-07-14 使用者要求先隱藏 Dashboard 月曆區塊（保留程式碼與功能，只是先不顯示，
+// 之後如需重新開啟只要把這個常數改回 true 即可，不要刪除下方程式碼）。
+const SHOW_MONTHLY_CALENDAR = false
+
 export default function FullBuildingMaintenancePage() {
   const navigate = useNavigate()
   const [activeTab, setActiveTab] = useState('dashboard')
@@ -760,7 +765,9 @@ export default function FullBuildingMaintenancePage() {
           filtered = detail.items.filter((it) => it.status === 'overdue')
           break
         case 'abnormal':
-          filtered = detail.items.filter((it) => it.abnormal_flag)
+          // 2026-07-14 修正：比照 KPI 卡片數字口徑（已改為只算本月項目）同步收斂篩選條件，
+          // 避免點進來的清單筆數跟卡片數字對不起來
+          filtered = detail.items.filter((it) => it.abnormal_flag && it.status !== 'non_current_month')
           break
         default:
           filtered = detail.items
@@ -1286,6 +1293,7 @@ export default function FullBuildingMaintenancePage() {
       )}
 
       {/* 月曆格：類別 × 日期 */}
+      {SHOW_MONTHLY_CALENDAR && (
       <Card
         size="small"
         style={{ marginTop: 16 }}
@@ -1312,6 +1320,7 @@ export default function FullBuildingMaintenancePage() {
           <Text type="secondary">尚無月曆資料</Text>
         )}
       </Card>
+      )}
     </div>
   )
 

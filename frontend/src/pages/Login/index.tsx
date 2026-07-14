@@ -2,13 +2,17 @@
  * Login page
  */
 import { useState } from 'react'
-import { Form, Input, Button, Card, Typography, message, Tag, Modal, Alert } from 'antd'
+import { Form, Input, Button, Card, Typography, message, Tag, Modal, Alert, Checkbox } from 'antd'
 import { UserOutlined, LockOutlined, BankOutlined, QuestionCircleOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/stores/authStore'
 import { authApi } from '@/api/auth'
 
 const { Title, Text } = Typography
+
+// 「記住帳號」功能：只保存帳號/Email（不含密碼），存在 localStorage
+const REMEMBER_KEY = 'portal_remember_identifier'
+const savedIdentifier = localStorage.getItem(REMEMBER_KEY) || ''
 
 // 環境標示
 const ENV_TAG = import.meta.env.PROD
@@ -29,7 +33,7 @@ export default function LoginPage() {
   const [forgotError,     setForgotError]     = useState<string | null>(null)
   const [forgotForm]                          = Form.useForm()
 
-  const onFinish = async (values: { identifier: string; password: string }) => {
+  const onFinish = async (values: { identifier: string; password: string; remember?: boolean }) => {
     setSubmitting(true)
     try {
       // 後端 LoginRequest schema 使用 identifier（email 或 username 皆可）
@@ -59,6 +63,12 @@ export default function LoginPage() {
         is_active:            data.user?.is_active   ?? true,
         must_change_password: data.must_change_password ?? data.user?.must_change_password ?? false,
       })
+      // 登入成功後依「記住帳號」勾選狀態儲存或清除帳號（僅存帳號，不存密碼）
+      if (values.remember) {
+        localStorage.setItem(REMEMBER_KEY, values.identifier)
+      } else {
+        localStorage.removeItem(REMEMBER_KEY)
+      }
       // 導向 / 讓 HomeRedirect 依使用者權限決定目標頁面，避免非 admin 帳號被強制送到 /dashboard
       navigate('/')
     } catch (err: any) {
@@ -137,7 +147,12 @@ export default function LoginPage() {
         </div>
 
         {/* ── 登入表單 ── */}
-        <Form layout="vertical" onFinish={onFinish} requiredMark={false}>
+        <Form
+          layout="vertical"
+          onFinish={onFinish}
+          requiredMark={false}
+          initialValues={{ identifier: savedIdentifier, remember: !!savedIdentifier }}
+        >
           <Form.Item
             name="identifier"
             rules={[{ required: true, message: '請輸入帳號或 Email' }]}
@@ -159,6 +174,9 @@ export default function LoginPage() {
               size="large"
               autoComplete="current-password"
             />
+          </Form.Item>
+          <Form.Item name="remember" valuePropName="checked" style={{ marginBottom: 8 }}>
+            <Checkbox>記住帳號</Checkbox>
           </Form.Item>
           <Form.Item style={{ marginBottom: 8 }}>
             <Button

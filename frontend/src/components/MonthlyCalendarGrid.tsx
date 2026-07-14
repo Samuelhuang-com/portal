@@ -112,6 +112,9 @@ export interface MonthlyCalendarGridProps {
   renderCell?:     (day: number, data: CalendarCellData | undefined) => React.ReactNode
   cellStyle?:      (day: number, data: CalendarCellData | undefined) => React.CSSProperties
   legend?:         LegendItem[]                                               // 傳 [] 可隱藏圖例
+  // 2026-07-14 新增：cell 點擊回呼（僅 has_record 的 cell 會觸發），供各模組串接明細 Drawer。
+  // 選填、預設不啟用，不影響既有未傳入此 prop 的頁面。
+  onCellClick?:    (day: number, rowKey: string, data: CalendarCellData) => void
 }
 
 // ── 主元件 ────────────────────────────────────────────────────────────────────
@@ -125,6 +128,7 @@ export default function MonthlyCalendarGrid({
   renderCell     = defaultRenderCell,
   cellStyle      = defaultCellStyle,
   legend         = DEFAULT_LEGEND,
+  onCellClick,
 }: MonthlyCalendarGridProps) {
   const days        = Array.from({ length: maxDay }, (_, i) => i + 1)
   const todayYear   = dayjs().year()
@@ -187,14 +191,20 @@ export default function MonthlyCalendarGrid({
                 </td>
                 {days.map((d) => {
                   const data = row.daily[String(d)]
+                  const clickable = !!onCellClick && !!data?.has_record
                   return (
-                    <td key={d} style={{
-                      textAlign: 'center',
-                      padding:   '3px 1px',
-                      border:    '1px solid #e8e8e8',
-                      overflow:  'hidden',
-                      ...cellStyle(d, data),
-                    }}>
+                    <td
+                      key={d}
+                      onClick={clickable ? () => onCellClick!(d, row.key, data!) : undefined}
+                      style={{
+                        textAlign: 'center',
+                        padding:   '3px 1px',
+                        border:    '1px solid #e8e8e8',
+                        overflow:  'hidden',
+                        cursor:    clickable ? 'pointer' : 'default',
+                        ...cellStyle(d, data),
+                      }}
+                    >
                       {renderCell(d, data)}
                     </td>
                   )

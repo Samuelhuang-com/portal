@@ -706,6 +706,7 @@ async def sync_items_from_sheet28() -> dict:
     upserted = 0
     worklog_upserted = 0
     items_with_images = 0
+    images_fallback_used = 0   # 2026-07-14 新增：見下方欄位 key 備援偵測邏輯
     errors: list[str] = []
     unmatched_journal_nos: set[str] = set()
     journal_collisions: dict[str, list[str]] = {}
@@ -798,6 +799,9 @@ async def sync_items_from_sheet28() -> dict:
                 f"可能有孤兒批次尚未清除，請檢查 full_bldg_pm_batch）：{journal_collisions}"
             )
 
+        # 2026-07-14 新增：CK*_IMAGES 欄位 key 若猜錯，同一個錯誤 key 每筆項目都會
+        # 觸發備援邏輯，這個 set 只用來讓警告訊息在整次同步只出現一次（依 fallback_key 去重）。
+        _images_fallback_keys_seen: set[str] = set()
         for item_ragic_id, raw in raw_data.items():
             item_id = str(item_ragic_id)
             try:
@@ -819,8 +823,33 @@ async def sync_items_from_sheet28() -> dict:
                     if item_id in full_record and len(full_record) == 1:
                         full_record = full_record[item_id]
                     sub_rows = _find_worklog_subtable(full_record)
+                    raw_images_val = full_record.get(CK28L_IMAGES)
+                    if not raw_images_val:
+                        # 2026-07-14 新增：CK28L_IMAGES（中文欄位 label）當時是「新增」而非「實測驗證」
+                        # （對照同檔案其餘 CK*L_* 常數皆有明確實測驗證標記），實際欄位 key 是否正確
+                        # 從未被證實過。使用者回報 Ragic 記錄明明有圖檔，Drawer 卻始終不顯示附圖，
+                        # 懷疑是這裡的欄位 key 猜錯。加入備援：若設定的 key 抓不到值，改在 full_record
+                        # 全部 key 中尋找任何含「圖片／附件／照片／相片／image／upload」關鍵字的欄位
+                        # 當備援來源，並記錄一次警告方便從 log 找出真正的欄位 key 以便日後修正常數。
+                        fallback_key = next(
+                            (k for k in full_record.keys()
+                             if isinstance(k, str) and k != CK28L_IMAGES
+                             and any(c in k for c in ("圖片", "附件", "照片", "相片", "附圖", "拍照", "image", "upload", "photo"))
+                             and full_record.get(k)),
+                            None,
+                        )
+                        if fallback_key:
+                            raw_images_val = full_record.get(fallback_key)
+                            images_fallback_used += 1
+                            if fallback_key not in _images_fallback_keys_seen:
+                                _images_fallback_keys_seen.add(fallback_key)
+                                logger.warning(
+                                    f"[FullBldgPMSync][Sheet28Items] CK28L_IMAGES=\"{CK28L_IMAGES}\" 抓不到資料，"
+                                    f"改用偵測到的備援欄位 \"{fallback_key}\"（item={item_id} 首次觸發）；"
+                                    f"建議確認 Ragic 實際欄位名稱後更新此常數，避免長期依賴備援邏輯"
+                                )
                     images = parse_images(
-                        full_record.get(CK28L_IMAGES),
+                        raw_images_val,
                         server=FULL_BLDG_PM_SERVER_URL,
                         account=FULL_BLDG_PM_ACCOUNT,
                     )
@@ -905,6 +934,7 @@ async def sync_items_from_sheet28() -> dict:
         logger.info(
             f"[FullBldgPMSync][Sheet28Items] 完成：fetched={fetched}, upserted={upserted}, "
             f"worklogs={worklog_upserted}, items_with_images={items_with_images}, "
+            f"images_fallback_used={images_fallback_used}, "
             f"errors={len(errors)}, unmatched_batches={len(unmatched_journal_nos)}"
         )
     except Exception as exc:
@@ -919,6 +949,7 @@ async def sync_items_from_sheet28() -> dict:
         "upserted": upserted,
         "worklogs": worklog_upserted,
         "items_with_images": items_with_images,
+        "images_fallback_used": images_fallback_used,
         "old_style_removed": len(old_style),
         "old_style_abnormal_lost": [it.ragic_id for it in old_style_abnormal],
         "schedule_old_style_removed": len(old_style_sched_safe),

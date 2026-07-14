@@ -37,8 +37,8 @@ from app.models.luqun_repair            import LuqunRepairCase, LuqunRepairRecor
 from app.models.periodic_maintenance    import PeriodicMaintenanceBatch, PeriodicMaintenanceItem
 from app.models.ihg_room_maintenance    import IHGRoomMaintenanceMaster
 from app.models.hotel_daily_inspection  import HotelDIBatch
-from app.models.mall_periodic_maintenance import MallPeriodicMaintenanceBatch, MallPeriodicMaintenanceItem
-from app.models.full_building_maintenance import FullBldgPMBatch, FullBldgPMItem
+from app.models.mall_periodic_maintenance import MallPeriodicMaintenanceBatch, MallPeriodicMaintenanceItem, MallPMItemWorklog
+from app.models.full_building_maintenance import FullBldgPMBatch, FullBldgPMItem, FullBldgPMItemWorklog
 from app.models.mall_facility_inspection  import MallFIBatch
 from app.models.b1f_inspection  import B1FInspectionBatch
 from app.models.b2f_inspection  import B2FInspectionBatch
@@ -78,8 +78,14 @@ _SOURCE_PATH: dict[str, str] = {
     "luqun":        "luqun-public-works-repair-reporting-system/6",
     "hotel_pm":     "periodic-maintenance/8",
     "ihg":          "periodic-maintenance/4",
-    "mall_pm":      "periodic-maintenance/18",
-    "full_bldg_pm": "periodic-maintenance/21",
+    # mall_pm／full_bldg_pm 的項目明細來源 2026-07-13 起已改為 Sheet24／Sheet28
+    # （見 mall_periodic_maintenance_sync.py::sync_items_from_sheet24() 與
+    #  full_building_maintenance_sync.py::sync_items_from_sheet28()）。
+    # item.ragic_id 現在是 Sheet24／Sheet28 自身的記錄 ID，不再屬於舊路徑
+    # 18／21（那是主表 batch 所在的 Sheet），沿用舊路徑會組出錯誤或不存在
+    # 的 Ragic 連結。2026-07-13 修正。
+    "mall_pm":      "periodic-maintenance/24",
+    "full_bldg_pm": "periodic-maintenance/28",
     "other_tasks":  "other-tasks/1",
 }
 
@@ -249,6 +255,78 @@ def _detail_records_payload(recs: list) -> list[dict]:
         "時間開始": r.start_at.strftime("%Y/%m/%d %H:%M:%S") if r.start_at else "",
         "時間結束": r.end_at.strftime("%Y/%m/%d %H:%M:%S")   if r.end_at   else "",
         "維修人員": r.person or "",
+    } for r in recs]
+
+
+def _parse_pm_datetime(s: str) -> Optional[datetime]:
+    """解析週期保養子表（Sheet24／Sheet28 巢狀維修記錄）的 Ragic 原始日期時間字串，
+    例如 '2026/07/13 09:14:26' 或 '2026/07/13 09:14'。解析失敗（含空字串）回 None。
+    2026-07-14 新增：供 _group_pm_worklog_rows 依「時間開始」實際日期歸戶使用。"""
+    s = (s or "").strip()
+    if not s:
+        return None
+    for fmt in ("%Y/%m/%d %H:%M:%S", "%Y/%m/%d %H:%M", "%Y/%m/%d"):
+        try:
+            return datetime.strptime(s, fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def _group_pm_worklog_rows(recs: list, target: _date, fallback_person: str) -> list[dict]:
+    """
+    週期保養（mall_pm／full_bldg_pm）維修記錄子表版本的 _group_detail_rows。
+    子表 start_time/end_time 為 Ragic 原始字串（非 datetime），先以 _parse_pm_datetime 解析，
+    再篩選至「時間開始」日期 == target 後按人員（staff_name）分組合併。
+    回傳 [{person, work_min(int|None), start_time, end_time}]。
+
+    規格（2026-06-11 業主確認 _group_detail_rows，2026-07-14 推廣至週期保養類）：
+    有維修記錄（子表）時，一律以子表「時間開始」實際日期歸戶，不採用工單頭排定日期
+    （例如颱風延期：排定日期 07/10、實際維修 07/13 → 工作日誌應呈現在 07/13）。
+    """
+    groups: dict[str, dict] = {}
+    for r in recs:
+        start_dt = _parse_pm_datetime(r.start_time)
+        if not start_dt or start_dt.date() != target:
+            continue
+        end_dt = _parse_pm_datetime(r.end_time)
+        sec = 0.0
+        has_end = end_dt is not None
+        if end_dt and end_dt > start_dt:
+            sec = (end_dt - start_dt).total_seconds()
+        for person in _split_detail_persons(r.staff_name, fallback_person):
+            g = groups.setdefault(person, {
+                "sec": 0.0, "has_end": False, "min_start": None, "max_end": None,
+            })
+            g["sec"] += sec
+            g["has_end"] = g["has_end"] or has_end
+            if g["min_start"] is None or start_dt < g["min_start"]:
+                g["min_start"] = start_dt
+            if end_dt and (g["max_end"] is None or end_dt > g["max_end"]):
+                g["max_end"] = end_dt
+
+    out = []
+    for person, g in groups.items():
+        out.append({
+            "person":     person,
+            "work_min":   round(g["sec"] / 60) if g["has_end"] else None,
+            "start_time": g["min_start"].strftime("%H:%M") if g["min_start"] else "",
+            "end_time":   g["max_end"].strftime("%H:%M")   if g["max_end"]   else "",
+        })
+    return out
+
+
+def _pm_detail_records_payload(recs: list) -> list[dict]:
+    """Drawer 用：週期保養類（mall_pm／full_bldg_pm）項目底下的維修記錄子表（Sheet24／Sheet28 巢狀子表格）。
+    此子表無「狀態」欄（比照 dazhi/luqun 商場子表無狀態欄的既有規則，前端全空時會自動隱藏該欄）。
+    start_time/end_time 為 Ragic 原始字串（非 datetime），直接原樣顯示。"""
+    return [{
+        "項次":     r.seq_no or "",
+        "狀態":     "",
+        "維修記錄": r.repair_note or "",
+        "時間開始": r.start_time or "",
+        "時間結束": r.end_time or "",
+        "維修人員": r.staff_name or "",
     } for r in recs]
 
 
@@ -625,8 +703,13 @@ def _fetch_hotel_di(db: Session, year: int, month: int, day: int) -> list[dict]:
 
 
 def _fetch_mall_pm(db: Session, year: int, month: int, day: int) -> list[dict]:
-    """商場週期保養：mall_pm_batch + mall_pm_batch_item"""
+    """商場週期保養：mall_pm_batch + mall_pm_batch_item（+ mall_pm_item_worklog 維修記錄子表）
+    無維修記錄（子表無可解析「時間開始」）→ 排定日期口徑（原邏輯，人員=執行人員、工時=預估工時）。
+    有維修記錄（子表）→ 改以子表「時間開始」實際日期歸戶，忽略排定日期（見 _group_pm_worklog_rows）。
+    2026-07-14：修正排定日期與實際維修日期不一致（如颱風延期）時工作日誌顯示錯誤日期的問題。
+    """
     rows = []
+    target = _date(year, month, day)
     period_month = f"{year}/{month:02d}"
     sched_day    = f"{month:02d}/{day:02d}"
 
@@ -640,52 +723,92 @@ def _fetch_mall_pm(db: Session, year: int, month: int, day: int) -> list[dict]:
     batch_map = {b.ragic_id: b for b in batches}
     batch_ids = set(batch_map.keys())
 
+    # 不再以 scheduled_date 篩選 SQL：需取得整批項目才能判斷是否有子表活動落在 target
     items = (
         db.query(MallPeriodicMaintenanceItem)
-        .filter(
-            MallPeriodicMaintenanceItem.batch_ragic_id.in_(batch_ids),
-            MallPeriodicMaintenanceItem.scheduled_date == sched_day,
-        )
+        .filter(MallPeriodicMaintenanceItem.batch_ragic_id.in_(batch_ids))
         .all()
     )
+    if not items:
+        return rows
+
+    # 預載維修記錄子表（Sheet24 巢狀子表格），依項目分組、按子表項次排序
+    item_ids = {item.ragic_id for item in items}
+    wl_map: dict[str, list] = defaultdict(list)
+    for wl in db.query(MallPMItemWorklog).filter(MallPMItemWorklog.item_ragic_id.in_(item_ids)).all():
+        wl_map[wl.item_ragic_id].append(wl)
+    for wls in wl_map.values():
+        wls.sort(key=lambda w: w.seq_no)
+
     for item in items:
         batch = batch_map.get(item.batch_ragic_id)
         task = " ".join(filter(None, [item.task_name, item.location]))
         est  = item.estimated_minutes if item.estimated_minutes else None
-        wm   = int(item.estimated_minutes) if item.estimated_minutes and item.estimated_minutes > 0 else None
-        for person in _persons(item.executor_name):
-            rows.append(_make_row(
-                source="mall_pm",
-                category="例行維護",
-                task=task or "(無說明)",
-                person=person,
-                est_min=est,
-                start_time=item.start_time or "",
-                end_time=item.end_time or "",
-                work_min=wm,
-                remark=item.result_note or "",
-                ragic_id=item.ragic_id,
-                ragic_url=_ragic_url(_SOURCE_PATH["mall_pm"], item.ragic_id),
-                detail={
-                    "日誌編號":  (batch.journal_no if batch else "") or "",
-                    "保養月份":  (batch.period_month if batch else "") or "",
-                    "類別":      item.category or "",
-                    "頻率":      item.frequency or "",
-                    "區域":      item.location or "",
-                    "排定日期":  item.scheduled_date or "",
-                    "排定人員":  item.scheduler_name or "",
-                    "執行人員":  item.executor_name or "",
-                    "完成狀況":  "已完成" if item.is_completed else "未完成",
-                    "執行結果":  item.result_note or "",
-                    "異常說明":  item.abnormal_note if getattr(item, "abnormal_flag", False) else "",
-                },
-            ))
+        item_wls    = wl_map.get(item.ragic_id, [])
+        dated_wls   = [wl for wl in item_wls if _parse_pm_datetime(wl.start_time)]
+        detail_recs = _pm_detail_records_payload(item_wls)
+
+        common = dict(
+            source="mall_pm",
+            category="例行維護",
+            task=task or "(無說明)",
+            est_min=est,
+            remark=item.result_note or "",
+            ragic_id=item.ragic_id,
+            ragic_url=_ragic_url(_SOURCE_PATH["mall_pm"], item.ragic_id),
+            detail_records=detail_recs,
+            detail={
+                "日誌編號":  (batch.journal_no if batch else "") or "",
+                "保養月份":  (batch.period_month if batch else "") or "",
+                "類別":      item.category or "",
+                "頻率":      item.frequency or "",
+                "區域":      item.location or "",
+                "排定日期":  item.scheduled_date or "",
+                "排定人員":  item.scheduler_name or "",
+                "執行人員":  item.executor_name or "",
+                "完成狀況":  "已完成" if item.is_completed else "未完成",
+                "執行結果":  item.result_note or "",
+                "異常說明":  item.abnormal_note if getattr(item, "abnormal_flag", False) else "",
+            },
+        )
+
+        if dated_wls:
+            # 有維修記錄（子表）→ 以子表「時間開始」實際日期歸戶，忽略排定日期
+            groups = _group_pm_worklog_rows(dated_wls, target, item.executor_name or "")
+            if not groups:
+                continue   # 該日無子表活動 → 此項目不出現在本日日誌
+            for g in groups:
+                rows.append(_make_row(
+                    person=g["person"],
+                    start_time=g["start_time"],
+                    end_time=g["end_time"],
+                    work_min=g["work_min"],
+                    **common,
+                ))
+        else:
+            # 無維修記錄（或子表無可解析時間）→ 排定日期口徑（原邏輯）
+            if item.scheduled_date != sched_day:
+                continue
+            wm = int(item.estimated_minutes) if item.estimated_minutes and item.estimated_minutes > 0 else None
+            for person in _persons(item.executor_name):
+                rows.append(_make_row(
+                    person=person,
+                    start_time=item.start_time or "",
+                    end_time=item.end_time or "",
+                    work_min=wm,
+                    **common,
+                ))
     return rows
 
 
 def _fetch_full_bldg_pm(db: Session, year: int, month: int, day: int) -> list[dict]:
-    """整棟保養：full_bldg_pm_batch + full_bldg_pm_batch_item"""
+    """整棟保養：full_bldg_pm_batch + full_bldg_pm_batch_item（+ full_bldg_pm_item_worklog 維修記錄子表）
+    無維修記錄（子表無可解析「時間開始」）→ 排定日期口徑（原邏輯，人員=執行人員、工時=預估工時）。
+    有維修記錄（子表）→ 改以子表「時間開始」實際日期歸戶，忽略排定日期（見 _group_pm_worklog_rows）。
+    2026-07-14：修正排定日期與實際維修日期不一致（如颱風延期）時工作日誌顯示錯誤日期的問題。
+    """
     rows = []
+    target = _date(year, month, day)
     period_month = f"{year}/{month:02d}"
     sched_day    = f"{month:02d}/{day:02d}"
 
@@ -699,46 +822,81 @@ def _fetch_full_bldg_pm(db: Session, year: int, month: int, day: int) -> list[di
     batch_map = {b.ragic_id: b for b in batches}
     batch_ids = set(batch_map.keys())
 
+    # 不再以 scheduled_date 篩選 SQL：需取得整批項目才能判斷是否有子表活動落在 target
     items = (
         db.query(FullBldgPMItem)
-        .filter(
-            FullBldgPMItem.batch_ragic_id.in_(batch_ids),
-            FullBldgPMItem.scheduled_date == sched_day,
-        )
+        .filter(FullBldgPMItem.batch_ragic_id.in_(batch_ids))
         .all()
     )
+    if not items:
+        return rows
+
+    # 預載維修記錄子表（Sheet28 巢狀子表格），依項目分組、按子表項次排序
+    item_ids = {item.ragic_id for item in items}
+    wl_map: dict[str, list] = defaultdict(list)
+    for wl in db.query(FullBldgPMItemWorklog).filter(FullBldgPMItemWorklog.item_ragic_id.in_(item_ids)).all():
+        wl_map[wl.item_ragic_id].append(wl)
+    for wls in wl_map.values():
+        wls.sort(key=lambda w: w.seq_no)
+
     for item in items:
         batch = batch_map.get(item.batch_ragic_id)
         task = " ".join(filter(None, [item.task_name, item.location]))
         est  = item.estimated_minutes if item.estimated_minutes else None
-        wm   = int(item.estimated_minutes) if item.estimated_minutes and item.estimated_minutes > 0 else None
-        for person in _persons(item.executor_name):
-            rows.append(_make_row(
-                source="full_bldg_pm",
-                category="例行維護",
-                task=task or "(無說明)",
-                person=person,
-                est_min=est,
-                start_time=item.start_time or "",
-                end_time=item.end_time or "",
-                work_min=wm,
-                remark=item.result_note or "",
-                ragic_id=item.ragic_id,
-                ragic_url=_ragic_url(_SOURCE_PATH["full_bldg_pm"], item.ragic_id),
-                detail={
-                    "日誌編號":  (batch.journal_no if batch else "") or "",
-                    "保養月份":  (batch.period_month if batch else "") or "",
-                    "類別":      item.category or "",
-                    "頻率":      item.frequency or "",
-                    "區域":      item.location or "",
-                    "排定日期":  item.scheduled_date or "",
-                    "排定人員":  item.scheduler_name or "",
-                    "執行人員":  item.executor_name or "",
-                    "完成狀況":  "已完成" if item.is_completed else "未完成",
-                    "執行結果":  item.result_note or "",
-                    "異常說明":  item.abnormal_note if getattr(item, "abnormal_flag", False) else "",
-                },
-            ))
+        item_wls    = wl_map.get(item.ragic_id, [])
+        dated_wls   = [wl for wl in item_wls if _parse_pm_datetime(wl.start_time)]
+        detail_recs = _pm_detail_records_payload(item_wls)
+
+        common = dict(
+            source="full_bldg_pm",
+            category="例行維護",
+            task=task or "(無說明)",
+            est_min=est,
+            remark=item.result_note or "",
+            ragic_id=item.ragic_id,
+            ragic_url=_ragic_url(_SOURCE_PATH["full_bldg_pm"], item.ragic_id),
+            detail_records=detail_recs,
+            detail={
+                "日誌編號":  (batch.journal_no if batch else "") or "",
+                "保養月份":  (batch.period_month if batch else "") or "",
+                "類別":      item.category or "",
+                "頻率":      item.frequency or "",
+                "區域":      item.location or "",
+                "排定日期":  item.scheduled_date or "",
+                "排定人員":  item.scheduler_name or "",
+                "執行人員":  item.executor_name or "",
+                "完成狀況":  "已完成" if item.is_completed else "未完成",
+                "執行結果":  item.result_note or "",
+                "異常說明":  item.abnormal_note if getattr(item, "abnormal_flag", False) else "",
+            },
+        )
+
+        if dated_wls:
+            # 有維修記錄（子表）→ 以子表「時間開始」實際日期歸戶，忽略排定日期
+            groups = _group_pm_worklog_rows(dated_wls, target, item.executor_name or "")
+            if not groups:
+                continue   # 該日無子表活動 → 此項目不出現在本日日誌
+            for g in groups:
+                rows.append(_make_row(
+                    person=g["person"],
+                    start_time=g["start_time"],
+                    end_time=g["end_time"],
+                    work_min=g["work_min"],
+                    **common,
+                ))
+        else:
+            # 無維修記錄（或子表無可解析時間）→ 排定日期口徑（原邏輯）
+            if item.scheduled_date != sched_day:
+                continue
+            wm = int(item.estimated_minutes) if item.estimated_minutes and item.estimated_minutes > 0 else None
+            for person in _persons(item.executor_name):
+                rows.append(_make_row(
+                    person=person,
+                    start_time=item.start_time or "",
+                    end_time=item.end_time or "",
+                    work_min=wm,
+                    **common,
+                ))
     return rows
 
 

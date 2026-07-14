@@ -238,7 +238,10 @@ def _calc_kpi(items: list[PeriodicMaintenanceItem], check_month: int) -> PMBatch
     scheduled   = sum(1 for _, s in current_items if s == "scheduled")
     unscheduled = sum(1 for _, s in current_items if s == "unscheduled")
     overdue     = sum(1 for _, s in current_items if s == "overdue")
-    abnormal    = sum(1 for it in items if it.abnormal_flag)
+    # 2026-07-14 修正（比照 mall_periodic_maintenance.py 同日修正）：abnormal 原本算
+    # 「整批全部項目」，跟 overdue/scheduled/unscheduled/in_progress 這幾個都只算
+    # 「本月項目」（current_items）的口徑不一致，改為比照這幾個欄位只算本月項目。
+    abnormal    = sum(1 for it, _ in current_items if it.abnormal_flag)
     planned     = sum(it.estimated_minutes for it, s in current_items)
     # 優先使用 Ragic「工時計算」欄位（ragic_work_minutes）；
     # 若該欄位為 None（舊資料或 Ragic 未填），fallback 到 end_time - start_time 計算

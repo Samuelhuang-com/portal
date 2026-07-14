@@ -123,6 +123,46 @@ from app.routers import (
 )
 
 
+def _run_startup_migration(name: str, fn) -> None:
+    """
+    執行單一啟動時 migration，遇到 SQLite "database is locked" 時重試而非讓整個
+    應用程式啟動失敗。
+
+    2026-07-14 新增：使用者回報 sync_tool.py 手動觸發同步進行中時，若同時重啟
+    後端，_migrate_pm_batch_item() 的回填 UPDATE 會因 SQLite 寫入鎖定逾時
+    （已設定 60s busy_timeout，仍可能因 sync 本身是長交易而超過）直接拋出
+    OperationalError，導致 lifespan() 啟動失敗、整台後端無法啟動（見
+    "Application startup failed. Exiting."）。單一 migration 的暫時性鎖定
+    不應該讓整個服務起不來，因此所有啟動時 migration 一律透過本函式呼叫，
+    遇到鎖定就短暫等待後重試；重試多次仍失敗則記錄警告、略過本次啟動的
+    這一項 migration（皆為自我修復型 schema/回填 patch，下次啟動仍會再檢查
+    一次，並非只有一次機會）。
+    """
+    import time
+    from sqlalchemy.exc import OperationalError
+
+    retries = 5
+    delay   = 3.0
+    for attempt in range(1, retries + 1):
+        try:
+            fn()
+            return
+        except OperationalError as exc:
+            if "locked" not in str(exc).lower():
+                raise
+            if attempt >= retries:
+                print(
+                    f"[Migration] {name} 因資料庫鎖定重試 {retries} 次仍失敗，"
+                    f"略過本次啟動的這項 migration（下次啟動會再檢查一次）：{exc}"
+                )
+                return
+            print(
+                f"[Migration] {name} 遇到資料庫鎖定（可能有 sync_tool.py 或排程同步"
+                f"正在寫入），{delay}s 後重試（第 {attempt}/{retries} 次）..."
+            )
+            time.sleep(delay)
+
+
 def _migrate_b4f_flatten():
     """
     B4F 架構遷移（寬表格 Pivot 架構 v3）：
@@ -730,15 +770,19 @@ def _migrate_f7_vendor_managing_company():
 
 def _migrate_full_bldg_pm_sheet28_fields():
     """
-    輕量欄位補丁（2026-06-02）：
+    輕量欄位補丁（2026-06-02 新增 repair_hours/sheet28_id；2026-07-14 補上 2026-07-13
+    當時新增但漏掉自動遷移的 images_json，此欄位缺少時查詢/同步會噴
+    "no such column: images_json"，導致「工作日誌」等 Drawer 附圖區永遠拿不到資料）：
     為 full_bldg_pm_batch_item 加入 Sheet 28 同步欄位：
       - repair_hours  REAL nullable        — 維修工時（小時），來源 Sheet 28
       - sheet28_id    VARCHAR(50) nullable — Sheet 28 record ID，供直接比對
+      - images_json   TEXT nullable        — 附圖檔名清單（JSON array），來源 Sheet 28「圖片上傳」
     """
     from sqlalchemy import text
     new_cols = [
         ("repair_hours", "REAL"),
         ("sheet28_id",   "VARCHAR(50)"),
+        ("images_json",  "TEXT"),
     ]
     with engine.connect() as conn:
         existing = [
@@ -754,15 +798,19 @@ def _migrate_full_bldg_pm_sheet28_fields():
 
 def _migrate_mall_pm_sheet24_fields():
     """
-    輕量欄位補丁（2026-06-02）：
+    輕量欄位補丁（2026-06-02 新增 repair_hours/sheet24_id；2026-07-14 補上 2026-07-13
+    當時新增但漏掉自動遷移的 images_json，此欄位缺少時查詢/同步會噴
+    "no such column: images_json"，導致「工作日誌」等 Drawer 附圖區永遠拿不到資料）：
     為 mall_pm_batch_item 加入 Sheet 24 同步欄位：
       - repair_hours  REAL nullable     — 維修工時（小時），來源 Sheet 24
       - sheet24_id    VARCHAR(50) nullable — Sheet 24 record ID，供直接比對
+      - images_json   TEXT nullable     — 附圖檔名清單（JSON array），來源 Sheet 24「圖片上傳」
     """
     from sqlalchemy import text
     new_cols = [
         ("repair_hours", "REAL"),
         ("sheet24_id",   "VARCHAR(50)"),
+        ("images_json",  "TEXT"),
     ]
     with engine.connect() as conn:
         existing = [
@@ -1374,10 +1422,10 @@ async def lifespan(app: FastAPI):
     import app.models.tutorial_video           # noqa: F401  影音教學單集（本地模組，不對接 Ragic）
 
     # B4F 扁平化遷移：刪除舊 batch 表 + 檢查 item 表欄位（必須在 create_all 之前）
-    _migrate_b4f_flatten()
+    _run_startup_migration("_migrate_b4f_flatten", _migrate_b4f_flatten)
     print("[Portal] B4F flatten migration checked.")
 
-    _migrate_hotel_mr_reading_flat()
+    _run_startup_migration("_migrate_hotel_mr_reading_flat", _migrate_hotel_mr_reading_flat)
     print("[Portal] hotel_mr_reading flat migration checked.")
 
     # 建立尚未存在的資料表（不影響已有表格）
@@ -1562,19 +1610,19 @@ async def lifespan(app: FastAPI):
         print(f"[Portal] WAL mode setup skipped: {_e}")
 
     # 輕量欄位補丁：為現有 pm_batch_item 加入新欄位（若尚未存在）
-    _migrate_pm_batch_item()
+    _run_startup_migration("_migrate_pm_batch_item", _migrate_pm_batch_item)
     print("[Portal] PM batch_item migration checked.")
 
     # 輕量欄位補丁：為 pm_batch_item 加入 ragic_work_minutes（Ragic「工時計算」欄位）
-    _migrate_pm_work_minutes()
+    _run_startup_migration("_migrate_pm_work_minutes", _migrate_pm_work_minutes)
     print("[Portal] PM batch_item ragic_work_minutes migration checked.")
 
     # 輕量欄位補丁：為 luqun_repair_case 加入 images_json（若尚未存在）
-    _migrate_luqun_repair_images()
+    _run_startup_migration("_migrate_luqun_repair_images", _migrate_luqun_repair_images)
     print("[Portal] luqun_repair_case images_json migration checked.")
 
     # 輕量欄位補丁：為 dazhi_repair_case 加入 images_json（若尚未存在）
-    _migrate_dazhi_repair_images()
+    _run_startup_migration("_migrate_dazhi_repair_images", _migrate_dazhi_repair_images)
     print("[Portal] dazhi_repair_case images_json migration checked.")
 
     # 清除保全巡檢中的拍照欄位 item（Ragic 必填但不屬於巡檢評分項目）
@@ -1582,29 +1630,29 @@ async def lifespan(app: FastAPI):
     print("[Portal] Security patrol photo items cleanup checked.")
 
     # 保全巡檢 is_note 欄位遷移 + 回填異常說明項目
-    _migrate_security_patrol_is_note()
+    _run_startup_migration("_migrate_security_patrol_is_note", _migrate_security_patrol_is_note)
     print("[Portal] Security patrol is_note migration checked.")
 
-    _migrate_hotel_mr_batch_time_fields()
+    _run_startup_migration("_migrate_hotel_mr_batch_time_fields", _migrate_hotel_mr_batch_time_fields)
     print("[Portal] hotel_mr_batch time fields migration checked.")
 
-    _migrate_ihg_rm_time_fields()
+    _run_startup_migration("_migrate_ihg_rm_time_fields", _migrate_ihg_rm_time_fields)
     print("[Portal] ihg_rm_master time fields migration checked.")
 
     # 商場扣款專櫃欄位補丁（2026-04-24）
-    _migrate_luqun_counter_name()
+    _run_startup_migration("_migrate_luqun_counter_name", _migrate_luqun_counter_name)
     print("[Portal] Luqun deduction_counter_name migration checked.")
 
     # Menu 權限欄位補丁（2026-04-29）：menu_configs.permission_key
-    _migrate_menu_config_permission_key()
+    _run_startup_migration("_migrate_menu_config_permission_key", _migrate_menu_config_permission_key)
     print("[Portal] menu_configs permission_key migration checked.")
 
     # Ragic URL 欄位補丁（2026-05-19）：ragic_app_portal_annotations.ragic_url
-    _migrate_annotation_ragic_url()
+    _run_startup_migration("_migrate_annotation_ragic_url", _migrate_annotation_ragic_url)
     print("[Portal] ragic_app_portal_annotations ragic_url migration checked.")
 
     # 合約審核欄位補丁（2026-05-28）：contracts.approved_by / approved_at / approval_comment
-    _migrate_contract_approval_fields()
+    _run_startup_migration("_migrate_contract_approval_fields", _migrate_contract_approval_fields)
     print("[Portal] contracts approval fields migration checked.")
     # contract_attachments 資料表已由 app.models.contract import + create_all 自動建立
 
@@ -1615,27 +1663,27 @@ async def lifespan(app: FastAPI):
 
     # F3（2026-06-01）：contracts 新欄位 + contract_cost_allocations 資料表
     import app.models.contract  # noqa: F401 — ContractCostAllocation 已在其中
-    _migrate_f3_contract_fields()
+    _run_startup_migration("_migrate_f3_contract_fields", _migrate_f3_contract_fields)
     print("[Portal] F3 contract fields migration checked.")
 
     # F6（2026-06-01）：contract_claims.cost_company
-    _migrate_f6_claim_cost_company()
+    _run_startup_migration("_migrate_f6_claim_cost_company", _migrate_f6_claim_cost_company)
     print("[Portal] F6 claim cost_company migration checked.")
 
     # F7（2026-06-01）：vendors.managing_company
-    _migrate_f7_vendor_managing_company()
+    _run_startup_migration("_migrate_f7_vendor_managing_company", _migrate_f7_vendor_managing_company)
     print("[Portal] F7 vendor managing_company migration checked.")
 
     # 行事曆區域別（2026-06-02）：calendar_custom_events.zone
-    _migrate_calendar_custom_event_zone()
+    _run_startup_migration("_migrate_calendar_custom_event_zone", _migrate_calendar_custom_event_zone)
     print("[Portal] calendar_custom_events zone migration checked.")
 
     # 商場週期保養 Sheet 24 欄位（2026-06-02）：repair_hours + sheet24_id
-    _migrate_mall_pm_sheet24_fields()
+    _run_startup_migration("_migrate_mall_pm_sheet24_fields", _migrate_mall_pm_sheet24_fields)
     print("[Portal] mall_pm_batch_item Sheet24 fields migration checked.")
 
     # 全棟例行維護 Sheet 28 欄位（2026-06-02）：repair_hours + sheet28_id
-    _migrate_full_bldg_pm_sheet28_fields()
+    _run_startup_migration("_migrate_full_bldg_pm_sheet28_fields", _migrate_full_bldg_pm_sheet28_fields)
     print("[Portal] full_bldg_pm_batch_item Sheet28 fields migration checked.")
 
     # 選單設定補丁（2026-04-28）：隱藏舊 custom_1777348120465，補齊 mall-pm-group 子項 DB 記錄

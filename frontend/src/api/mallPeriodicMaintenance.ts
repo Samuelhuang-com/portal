@@ -40,6 +40,17 @@ export async function fetchMallPMStats(year?: string, month?: number): Promise<P
   return res.data
 }
 
+/** 月曆格（類別 × 日期），Dashboard 用。2026-07-14 新增：修正 Dashboard 原本誤用
+ *  mall_facility_inspection（商場工務巡檢）每日巡檢月曆頂替顯示的問題，改回真正屬於
+ *  本模組（商場週期保養）的類別 × 日完成狀況。 */
+export async function fetchMallPMCalendar(
+  year: number,
+  month: number,
+): Promise<{ year: number; month: number; max_day: number; rows: import('@/components/MonthlyCalendarGrid').CalendarRow[] }> {
+  const res = await apiClient.get(`${BASE}/calendar`, { params: { year, month } })
+  return res.data
+}
+
 /** 手動觸發 Ragic 同步 */
 export async function syncMallPMFromRagic(): Promise<{ status: string; result: unknown }> {
   const res = await apiClient.post(`${BASE}/sync`)

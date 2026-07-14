@@ -146,23 +146,36 @@ export function getJournalExcelUrl(
 export interface CaseImageItem { url: string; filename: string }
 
 /**
- * 依來源模組取案件圖片（dazhi / luqun / other_tasks 有圖片端點）
+ * 依來源模組組出附圖端點 URL。
+ * dazhi/luqun/other_tasks：/{module}/db-images/{ragicId}
+ * full_bldg_pm/mall_pm：/{module}/items/{ragicId}/db-images
+ *   （2026-07-14 新增，比照 full_building_maintenance／mall_periodic_maintenance
+ *    模組自身明細 Drawer 既有使用的 /items/{item_ragic_id}/db-images 端點）
+ */
+const IMAGE_URL_BUILDERS: Record<string, (ragicId: string) => string> = {
+  dazhi:        (id) => `/dazhi-repair/db-images/${encodeURIComponent(id)}`,
+  luqun:        (id) => `/luqun-repair/db-images/${encodeURIComponent(id)}`,
+  other_tasks:  (id) => `/other-tasks/db-images/${encodeURIComponent(id)}`,
+  full_bldg_pm: (id) => `/mall/full-building-maintenance/items/${encodeURIComponent(id)}/db-images`,
+  mall_pm:      (id) => `/mall/periodic-maintenance/items/${encodeURIComponent(id)}/db-images`,
+}
+
+/** 目前支援附圖的來源集合（Drawer 是否觸發抓圖、寬度 480/640 判斷共用同一份清單） */
+export const IMAGE_CAPABLE_SOURCES = new Set(Object.keys(IMAGE_URL_BUILDERS))
+
+/**
+ * 依來源模組取案件／項目圖片。
  */
 export async function fetchJournalImages(
   source: string,
   ragicId: string,
 ): Promise<CaseImageItem[]> {
   if (!ragicId) return []
-  const BASE_MAP: Record<string, string> = {
-    dazhi:       '/dazhi-repair',
-    luqun:       '/luqun-repair',
-    other_tasks: '/other-tasks',
-  }
-  const base = BASE_MAP[source]
-  if (!base) return []
+  const buildUrl = IMAGE_URL_BUILDERS[source]
+  if (!buildUrl) return []
   try {
     const { default: apiClient } = await import('@/api/client')
-    const res = await apiClient.get(`${base}/db-images/${encodeURIComponent(ragicId)}`)
+    const res = await apiClient.get(buildUrl(ragicId))
     return res.data?.images ?? []
   } catch {
     return []

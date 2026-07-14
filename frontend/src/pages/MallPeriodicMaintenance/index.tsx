@@ -38,6 +38,7 @@ import {
   generateMallSchedule, getMallScheduleList, getMallScheduleKpi,
   getMallOverdueSchedule, getMallAnnualMatrix, updateMallSchedule,
 } from '@/api/mallPeriodicMaintenance'
+import { fetchMallPMCalendar } from '@/api/mallPeriodicMaintenance'
 import type {
   PMMatrixMetric, MallPMMatrixItem, MallPMCatalogItem,
   MallPMScheduleItem, MallPMScheduleKPI, MallPMScheduleGenerateResult,
@@ -52,7 +53,6 @@ import { NAV_GROUP, NAV_PAGE } from '@/constants/navLabels'
 import MallDailyInspectionFormTab from './MallDailyInspectionFormTab'
 import MonthlyCalendarGrid from '@/components/MonthlyCalendarGrid'
 import type { CalendarRow } from '@/components/MonthlyCalendarGrid'
-import { fetchMallFIDailyCalendar } from '@/api/mallFacilityInspection'
 import MallPMItemWorklogDrawer from '@/components/MallPMItemWorklogDrawer'
 
 const { Title, Text } = Typography
@@ -472,6 +472,11 @@ function YearMatrixTable({
   )
 }
 
+
+// 2026-07-14 使用者要求先隱藏 Dashboard 月曆區塊（保留程式碼與功能，只是先不顯示，
+// 之後如需重新開啟只要把這個常數改回 true 即可，不要刪除下方程式碼）。
+const SHOW_MONTHLY_CALENDAR = false
+
 export default function MallPeriodicMaintenancePage() {
   const navigate = useNavigate()
   const [activeTab, setActiveTab] = useState('dashboard')
@@ -557,16 +562,12 @@ export default function MallPeriodicMaintenancePage() {
       const m = dashMonth
       const [s, calData] = await Promise.all([
         fetchMallPMStats(dashYear, dashMonth),
-        fetchMallFIDailyCalendar(y, m).catch(() => null),
+        fetchMallPMCalendar(y, m).catch(() => null),
       ])
       setStats(s)
       if (calData) {
         setCalMaxDay(calData.max_day)
-        setCalRows(calData.sheets.map((sh) => ({
-          key:   sh.key,
-          label: sh.floor,
-          daily: sh.daily,
-        })))
+        setCalRows(calData.rows)
       }
     } catch { message.error('載入統計資料失敗') }
     finally { setLoading(false) }
@@ -599,7 +600,9 @@ export default function MallPeriodicMaintenancePage() {
           filtered = detail.items.filter((it) => it.status === 'overdue')
           break
         case 'abnormal':
-          filtered = detail.items.filter((it) => it.abnormal_flag)
+          // 2026-07-14 修正：比照 KPI 卡片數字口徑改為只算本月項目，避免點進來的清單
+          // 筆數跟卡片上的數字對不起來
+          filtered = detail.items.filter((it) => it.abnormal_flag && it.status !== 'non_current_month')
           break
         default:
           filtered = detail.items
@@ -612,6 +615,32 @@ export default function MallPeriodicMaintenancePage() {
       setKpiDrawerLoading(false)
     }
   }, [stats])
+
+  // ── Dashboard 月曆格點擊 → 明細 Drawer（2026-07-14 新增，共用上方 KPI 卡片同一個
+  // Drawer state，篩選條件改為「類別 + 排定日期」，對齊月曆格本身依 scheduled_date
+  // 分組的口徑，避免點進去的清單跟格子本身顯示的統計對不起來）───────────────────
+  const openCalendarCellDrawer = useCallback(async (day: number, category: string) => {
+    if (!stats?.current_batch) {
+      message.warning('尚無批次資料，請先同步')
+      return
+    }
+    const mmdd = `${String(dashMonth).padStart(2, '0')}/${String(day).padStart(2, '0')}`
+    setKpiDrawerTitle(`${dashYear}/${mmdd} ${category}`)
+    setKpiDrawerOpen(true)
+    setKpiDrawerLoading(true)
+    try {
+      const detail = await fetchMallPMBatchDetail(stats.current_batch.ragic_id)
+      const filtered = detail.items.filter(
+        (it) => it.category === category && it.scheduled_date === mmdd,
+      )
+      setKpiDrawerItems(filtered)
+    } catch {
+      setKpiDrawerItems([])
+      message.error('讀取明細失敗')
+    } finally {
+      setKpiDrawerLoading(false)
+    }
+  }, [stats, dashYear, dashMonth])
 
   const loadBatches = useCallback(async () => {
     setLoading(true)
@@ -995,6 +1024,7 @@ export default function MallPeriodicMaintenancePage() {
         </Card>
       )}
 
+      {SHOW_MONTHLY_CALENDAR && (
       <Card
         size="small"
         style={{ marginTop: 16 }}
@@ -1002,7 +1032,7 @@ export default function MallPeriodicMaintenancePage() {
           <Space>
             <CalendarOutlined style={{ color: '#4BA8E8' }} />
             <Text strong style={{ color: '#1B3A5C' }}>
-              {dashYear}/{String(dashMonth).padStart(2, '0')} 商場工務每日巡檢狀況
+              {dashYear}/{String(dashMonth).padStart(2, '0')} 商場例行維護狀況
             </Text>
           </Space>
         }
@@ -1014,12 +1044,14 @@ export default function MallPeriodicMaintenancePage() {
             month={dashMonth}
             maxDay={calMaxDay}
             rows={calRows}
-            rowHeaderLabel="巡檢區域"
+            rowHeaderLabel="保養類別"
+            onCellClick={(day, rowKey) => openCalendarCellDrawer(day, rowKey)}
           />
         ) : (
           <Text type="secondary">尚無資料</Text>
         )}
       </Card>
+      )}
     </div>
   )
 
