@@ -41,6 +41,7 @@ import type {
   PMBatchDetail, PMItem, PMItemStatus,
   PMTaskHistory, PMItemHistorySummary,
 } from '@/types/periodicMaintenance'
+import PMItemDetailDrawer from '@/components/PMItemDetailDrawer'
 
 const { Title, Text } = Typography
 const { Option } = Select
@@ -302,6 +303,9 @@ export default function PeriodicMaintenanceDetailPage() {
   const [historyLoading, setHistoryLoading] = useState(false)
   const [historyData, setHistoryData]       = useState<PMTaskHistory | null>(null)
 
+  // ── 項目明細 Drawer（2026-07-14 新增，比照全站 MANDATORY 明細 Drawer 規範）──────
+  const [selectedPMItem, setSelectedPMItem] = useState<PMItem | null>(null)
+
   // ── 資料載入 ──────────────────────────────────────────────────────────────
   const loadDetail = useCallback(async () => {
     if (!batchId) return
@@ -443,14 +447,39 @@ export default function PeriodicMaintenanceDetailPage() {
       render: (_: unknown, rec: PMItem) => {
         const st = rec.start_time ? dayjs(rec.start_time).format('MM/DD HH:mm') : null
         const et = rec.end_time   ? dayjs(rec.end_time).format('MM/DD HH:mm')   : null
-        if (!st && !et) return <Text type="secondary">—</Text>
+        // MANDATORY：本模組任何顯示「保養時間」的表格都要能點擊開明細 Drawer
         return (
-          <Space direction="vertical" size={0}>
-            {st && <Text style={{ fontSize: 12 }}>啟：{st}</Text>}
-            {et && <Text style={{ fontSize: 12 }}>迄：{et}</Text>}
-          </Space>
+          <Button
+            type="link"
+            size="small"
+            style={{ padding: 0, height: 'auto', textAlign: 'left' }}
+            onClick={() => setSelectedPMItem(rec)}
+          >
+            {!st && !et ? <Text type="secondary">—</Text> : (
+              <Space direction="vertical" size={0}>
+                {st && <Text style={{ fontSize: 12 }}>啟：{st}</Text>}
+                {et && <Text style={{ fontSize: 12 }}>迄：{et}</Text>}
+              </Space>
+            )}
+          </Button>
         )
       },
+    },
+    {
+      title: '維修工時',
+      dataIndex: 'repair_hours',
+      width: 90,
+      align: 'center',
+      render: (v: number | null | undefined, rec: PMItem) => (
+        <Button
+          type="link"
+          size="small"
+          style={{ padding: 0, height: 'auto' }}
+          onClick={() => setSelectedPMItem(rec)}
+        >
+          {v == null ? <Text type="secondary">—</Text> : `${v} 時`}
+        </Button>
+      ),
     },
     {
       title: '完成',
@@ -706,6 +735,13 @@ export default function PeriodicMaintenanceDetailPage() {
         onClose={() => setHistoryOpen(false)}
         historyData={historyData}
         loading={historyLoading}
+      />
+
+      {/* 項目明細 Drawer（2026-07-14 新增） */}
+      <PMItemDetailDrawer
+        open={!!selectedPMItem}
+        item={selectedPMItem}
+        onClose={() => setSelectedPMItem(null)}
       />
     </div>
   )

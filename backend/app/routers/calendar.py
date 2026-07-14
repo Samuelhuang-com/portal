@@ -215,7 +215,10 @@ def _collect_hotel_pm(db: Session, start: date, end: date) -> List[CalendarEvent
             deep_link    = "/hotel/periodic-maintenance",
             color        = color,
             zone         = "飯店",
-            ragic_url    = f"https://ap12.ragic.com/soutlet001/periodic-maintenance/6/{batch.ragic_id}",
+            # 2026-07-14：hotel/periodic-maintenance 資料來源由 Sheet 6+8 遷移至 Sheet 11，
+            # 項目本身（item.ragic_id）現在就是 Sheet 11 的原生記錄 ID，比原本連到批次
+            # 所在 Sheet 6（batch.ragic_id）更準確（比照 mall_pm/full_bldg_pm 2026-07-13 的修法）
+            ragic_url    = f"https://ap12.ragic.com/soutlet001/periodic-maintenance/11/{item.ragic_id}",
             detail       = {
                 "日誌編號": item.ragic_id,
                 "保養月份": batch.period_month,

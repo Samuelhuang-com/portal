@@ -753,43 +753,30 @@ def _get_annual_matrix_rows(module: str, year: int, db) -> list:
 
     if module == "dazhi":
         # ── 飯店週期保養 ───────────────────────────────────────────────────
-        from app.routers.periodic_maintenance import (
-            _get_latest_batch_items,
-            _calc_schedule_status,
-            _should_schedule,
-        )
-        from app.models.pm_schedule import PMSchedule
+        # 2026-07-14 修正：直接重用網頁版 hotel/periodic-maintenance「年度計劃表」
+        # Tab 的真實運算邏輯（get_annual_matrix），與 luqun 分支（商場／全棟）
+        # 2026-07-13 的修正同一手法，確保 PPT 匯出的狀態判斷（8 種狀態：
+        # completed/overdue/in_progress/scheduled/unscheduled/non_month/
+        # no_data/no_frequency）與 Portal 頁面 100% 一致，不再另外維護一份
+        # 只判得出 4～5 種狀態、且缺少 scheduled_date 的簡化邏輯。
+        from app.routers.periodic_maintenance import get_annual_matrix
 
-        items = _get_latest_batch_items(db)
-        year_recs = (
-            db.query(PMSchedule).filter(PMSchedule.year_month.like(f"{year}/%")).all()
-        )
-        smap = {}
-        for r in year_recs:
-            try:
-                m = int(r.year_month.split("/")[1])
-                smap[(r.item_ragic_id, m)] = r
-            except Exception:
-                pass
-        for item in items:
-            cells = []
-            for m in range(1, 13):
-                rec = smap.get((item.ragic_id, m))
-                if rec:
-                    cells.append({"month": m, "status": _calc_schedule_status(rec)})
-                elif not (item.frequency or "").strip():
-                    cells.append({"month": m, "status": "no_frequency"})
-                elif _should_schedule(item, year, m):
-                    cells.append({"month": m, "status": "no_data"})
-                else:
-                    cells.append({"month": m, "status": "non_month"})
+        hotel_matrix = get_annual_matrix(year=year, category=None, db=db)
+        for row in hotel_matrix.rows:
             results.append(
                 {
                     "source": "飯店週期保養",
-                    "category": item.category,
-                    "task_name": item.task_name,
-                    "frequency": item.frequency or "",
-                    "cells": cells,
+                    "category": row.category,
+                    "task_name": row.task_name,
+                    "frequency": row.frequency or "",
+                    "cells": [
+                        {
+                            "month": c.month,
+                            "status": c.status,
+                            "scheduled_date": c.scheduled_date,
+                        }
+                        for c in row.cells
+                    ],
                 }
             )
 
@@ -2569,15 +2556,21 @@ def _build_repair_pptx(module: str, year: int, month: int, db: Session) -> Bytes
 
             if module == "dazhi":
                 src_rows = [r for r in all_matrix_rows if r["source"] == "飯店週期保養"]
+                _hotel_legend = (
+                    "狀態：✅已完成 🔴逾期 🔵進行中 ⭕待執行 "
+                    "?未排定 ─非本月 ！應做未排 ∅頻率未設"
+                )
                 _add_annual_matrix_slide(
                     prs,
                     TMPL,
                     title="飯店週期保養年度計劃表",
-                    subtitle=f"{{year}}年　狀態：✓已完成 ○已排定 ✗逾期 △未排定 ?待排",
+                    subtitle=f"{year}年　{_hotel_legend}",
                     matrix_rows=src_rows,
                     now_str=now_str,
                     SW=SW,
                     SH=SH,
+                    task_col_label="保養項目",
+                    cell_style="portal_v2",
                 )
 
             else:  # luqun
@@ -2850,16 +2843,22 @@ def _build_repair_pptx(module: str, year: int, month: int, db: Session) -> Bytes
             if _hdazhi2:
                 _n_before2 = len(prs.slides)
                 try:
+                    _hotel_legend2 = (
+                        "狀態：✅已完成 🔴逾期 🔵進行中 ⭕待執行 "
+                        "?未排定 ─非本月 ！應做未排 ∅頻率未設"
+                    )
                     _add_annual_matrix_slide(
                         prs,
                         TMPL,
                         title="飯店週期保養年度計劃表",
-                        subtitle=f"{year}年　狀態：✓已完成 ○已排定 ✗逾期 △未排定 ?待排",
+                        subtitle=f"{year}年　{_hotel_legend2}",
                         matrix_rows=_hdazhi2,
                         now_str=now_str,
                         SW=SW,
                         SH=SH,
                         title_fn=_title_fn,
+                        task_col_label="保養項目",
+                        cell_style="portal_v2",
                     )
                     _hmat_first_slide = prs.slides[_n_before2]
                 except Exception as _inner2:

@@ -24,7 +24,9 @@ import RoomMaintenanceDetailPage from '@/pages/RoomMaintenanceDetail'
 import InventoryPage             from '@/pages/Inventory'
 import PeriodicMaintenancePage       from '@/pages/PeriodicMaintenance'
 import PeriodicMaintenanceDetailPage from '@/pages/PeriodicMaintenance/Detail'
-import HotelRoutineMaintenancePage   from '@/pages/HotelRoutineMaintenance'
+// 2026-07-14：hotel_routine_pm 安全下線（與 hotel/periodic-maintenance 重複，使用者確認
+// 後者為正式模組）。import 保留但下方路由已停用，頁面檔案未刪，可隨時復原。
+// import HotelRoutineMaintenancePage   from '@/pages/HotelRoutineMaintenance'
 import MallMgmtDashboardPage             from '@/pages/MallMgmtDashboard'
 import MallDashboardPage                 from '@/pages/MallDashboard'
 import MallPeriodicMaintenancePage       from '@/pages/MallPeriodicMaintenance'
@@ -400,7 +402,8 @@ export default function AppRouter() {
           <Route path="room-maintenance-detail" element={<RoomMaintenanceDetailPage />} />
           <Route path="periodic-maintenance"             element={<PeriodicMaintenancePage />} />
           <Route path="periodic-maintenance/:batchId"    element={<PeriodicMaintenanceDetailPage />} />
-          <Route path="routine-maintenance"              element={<HotelRoutineMaintenancePage />} />
+          {/* 2026-07-14：hotel_routine_pm 安全下線，路由停用（頁面檔案未刪，可復原） */}
+          {/* <Route path="routine-maintenance"              element={<HotelRoutineMaintenancePage />} /> */}
           <Route path="ihg-room-maintenance"    element={<IHGRoomMaintenancePage />} />
           <Route path="daily-inspection"        element={<HotelDailyInspectionDashboard />} />
           <Route path="daily-meter-readings"    element={<HotelMeterReadingsDashboard />} />

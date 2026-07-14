@@ -251,7 +251,9 @@ export const menuItems: MenuItem[] = [
       { key: '/hotel/daily-inspection',         icon: <SafetyOutlined />,  label: NAV_PAGE.hotelDailyInspection, permissionKey: 'hotel_daily_inspection_view'      },
       { key: '/hotel/daily-meter-readings',     icon: <DatabaseOutlined />, label: NAV_PAGE.hotelMeterReadings,   permissionKey: 'hotel_meter_readings_view'        },
       { key: '/hotel/other-tasks',              icon: <AlertOutlined />,   label: NAV_PAGE.otherTasks,           permissionKey: 'hotel_other_tasks_view'           },
-      { key: '/hotel/routine-maintenance',      icon: <FileTextOutlined />, label: NAV_PAGE.hotelRoutineMaintenance, permissionKey: 'hotel_routine_pm_view'           },
+      // 2026-07-14：hotel_routine_pm 安全下線（與 hotel/periodic-maintenance 重複，
+      // 使用者確認後者為正式模組），選單項目移除，路由與後端註冊同步停用。
+      // { key: '/hotel/routine-maintenance',      icon: <FileTextOutlined />, label: NAV_PAGE.hotelRoutineMaintenance, permissionKey: 'hotel_routine_pm_view'           },
       { key: '/hotel/calendar',                 icon: <CalendarOutlined />, label: NAV_PAGE.hotelCalendar,           permissionKey: 'hotel_calendar_view'             },
       // { key: '/hotel/repairs',                 icon: <ToolOutlined />, label: NAV_PAGE.repairs },
     ],

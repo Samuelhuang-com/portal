@@ -2,6 +2,10 @@
 週期保養表 API Router
 Prefix: /api/v1/periodic-maintenance
 
+2026-07-14 起資料來源改為 Ragic Sheet 11（平表），Sheet 6/8 正式退役，
+見 app/services/periodic_maintenance_sync.py 檔頭說明與 project memory
+project_hotel_pm_sheet11_migration.md。
+
 端點：
   POST /sync                         — 手動從 Ragic 同步
   GET  /batches                      — 批次清單（年份篩選）
@@ -9,6 +13,8 @@ Prefix: /api/v1/periodic-maintenance
   GET  /batches/{batch_id}/items     — 該批次項目（含狀態篩選）
   GET  /batches/{batch_id}/kpi       — 批次 KPI 統計
   GET  /items                        — 所有項目跨批次查詢
+  GET  /items/{item_ragic_id}/worklogs  — 單一項目維修記錄明細（2026-07-14 同日追加）
+  GET  /items/{item_ragic_id}/db-images — 單一項目附圖（2026-07-14 新增）
   GET  /stats                        — 全站統計（Dashboard 資料來源）
   GET  /period-stats                 — 週期統計（月/季/年）
   PATCH /items/{item_id}             — Portal 回填（執行時間/異常等）
@@ -18,12 +24,15 @@ from calendar import monthrange
 from datetime import date, datetime, timezone
 from typing import Optional, List
 
+from pydantic import BaseModel
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.dependencies import get_current_user, require_roles
-from app.models.periodic_maintenance import PeriodicMaintenanceBatch, PeriodicMaintenanceItem
+from app.models.periodic_maintenance import (
+    PeriodicMaintenanceBatch, PeriodicMaintenanceItem, PeriodicMaintenanceItemWorklog,
+)
 from app.models.pm_schedule import PMSchedule
 from app.schemas.periodic_maintenance import (
     PMBatchOut, PMItemOut, PMBatchKPI, PMBatchDetail,
@@ -195,6 +204,9 @@ def _should_schedule(item: PeriodicMaintenanceItem, year: int, month: int) -> bo
     return _should_schedule_by_frequency(freq, month)
 
 
+_ITEM_RAGIC_BASE = "https://ap12.ragic.com/soutlet001/periodic-maintenance/11"
+
+
 def _item_to_out(item: PeriodicMaintenanceItem, check_month: int) -> PMItemOut:
     """ORM → Pydantic，注入 status 計算值。"""
     out = PMItemOut(
@@ -222,6 +234,10 @@ def _item_to_out(item: PeriodicMaintenanceItem, check_month: int) -> PMItemOut:
         portal_edited_at  = item.portal_edited_at,
         synced_at         = item.synced_at,
         status            = _calc_status(item, check_month),
+        # 2026-07-14 新增：項目改用 Sheet 11 自己的 _ragicId 直連，並帶出「維修工時」
+        # （小時，來源 Sheet11「維修工時」欄位，比照 mall_pm Sheet24 語意）
+        ragic_url      = f"{_ITEM_RAGIC_BASE}/{item.ragic_id}" if item.ragic_id else "",
+        repair_hours   = item.repair_hours,
     )
     return out
 
@@ -238,16 +254,20 @@ def _calc_kpi(items: list[PeriodicMaintenanceItem], check_month: int) -> PMBatch
     scheduled   = sum(1 for _, s in current_items if s == "scheduled")
     unscheduled = sum(1 for _, s in current_items if s == "unscheduled")
     overdue     = sum(1 for _, s in current_items if s == "overdue")
-    # 2026-07-14 修正（比照 mall_periodic_maintenance.py 同日修正）：abnormal 原本算
-    # 「整批全部項目」，跟 overdue/scheduled/unscheduled/in_progress 這幾個都只算
-    # 「本月項目」（current_items）的口徑不一致，改為比照這幾個欄位只算本月項目。
+    # 2026-07-14 修正（比照 mall_periodic_maintenance.py 同日修正，OneDrive commit
+    # 24e57b8「fix: 20260714-002」）：abnormal 原本算「整批全部項目」，跟
+    # overdue/scheduled/unscheduled/in_progress 這幾個都只算「本月項目」
+    # （current_items）的口徑不一致，改為比照這幾個欄位只算本月項目。
     abnormal    = sum(1 for it, _ in current_items if it.abnormal_flag)
     planned     = sum(it.estimated_minutes for it, s in current_items)
-    # 優先使用 Ragic「工時計算」欄位（ragic_work_minutes）；
-    # 若該欄位為 None（舊資料或 Ragic 未填），fallback 到 end_time - start_time 計算
+    # 2026-07-14 修正（比照 mall_pm/full_bldg_pm 2026-07-13 同型改版）：優先使用
+    # Sheet 11「維修工時」（repair_hours，小時）換算為分鐘；若無值（例如舊 Sheet 8
+    # 資料的 ragic_work_minutes），fallback 到舊版「工時計算」欄位；兩者皆無才用
+    # end_time - start_time 時間跨度估算。
     actual      = sum(
-        it.ragic_work_minutes if it.ragic_work_minutes is not None
-        else _time_diff_minutes(it.start_time, it.end_time)
+        (round(it.repair_hours * 60) if it.repair_hours is not None
+         else it.ragic_work_minutes if it.ragic_work_minutes is not None
+         else _time_diff_minutes(it.start_time, it.end_time))
         for it in items if it.start_time and it.end_time
     )
     # 完成率：已完成 / 全部項目（含非本月），與 KPI「已完成」定義一致
@@ -706,7 +726,7 @@ def _calc_year_matrix(db: Session, year: int, frequency_type: Optional[str] = No
 # ══════════════════════════════════════════════════════════════════════════════
 @router.post("/sync", summary="從 Ragic 同步週期保養資料（背景執行）", dependencies=[Depends(require_roles("system_admin", "module_manager"))])
 async def sync_periodic_maintenance(background_tasks: BackgroundTasks):
-    """手動觸發：Ragic Sheet 6 + Sheet 8 → SQLite，立即回傳，不阻塞畫面"""
+    """手動觸發：Ragic Sheet 11 → SQLite（2026-07-14 起，Sheet 6+8 已停用），立即回傳，不阻塞畫面"""
     background_tasks.add_task(sync_from_ragic)
     return {"status": "ok", "message": "同步已在背景啟動"}
 
@@ -735,8 +755,10 @@ def list_batches(
         check_month = _get_check_month(b.period_month)
         kpi = _calc_kpi(items, check_month)
         batch_dict = PMBatchOut.model_validate(b).model_dump()
+        # 2026-07-14 起：Sheet 6 已退役，批次沒有獨立 Ragic 記錄，「在 Ragic 查看」
+        # 改連到 Sheet 11 這個 Tab 本身（不含記錄 ID）。
         batch_dict["ragic_url"] = (
-            f"https://{ragic_server}/{ragic_account}/periodic-maintenance/6/{b.ragic_id}"
+            f"https://{ragic_server}/{ragic_account}/periodic-maintenance/11"
         )
         result.append({
             "batch": batch_dict,
@@ -1056,7 +1078,8 @@ def get_year_matrix_items(
             status_zh = "已排程"
         else:
             status_zh = "待排程"
-        ragic_link = f"https://{ragic_server}/{ragic_account}/periodic-maintenance/8/{it.batch_ragic_id}"
+        # 2026-07-14 起：項目改用 Sheet 11 自己的 _ragicId 直連（不再連回批次 Sheet 8 記錄）
+        ragic_link = f"https://{ragic_server}/{ragic_account}/periodic-maintenance/11/{it.ragic_id}"
         result.append({
             "ragic_id":            it.ragic_id,
             "batch_ragic_id":      it.batch_ragic_id,
@@ -1253,47 +1276,160 @@ def get_item_task_history(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# GET /items/{item_ragic_id}/worklogs（2026-07-14 同日追加：Sheet 11 巢狀「維修記錄」
+# 子表格明細，原始遷移評估誤判無此結構，使用者實測記錄 277/477 證實存在，比照
+# mall_periodic_maintenance 2026-07-13 同型端點）
+# ══════════════════════════════════════════════════════════════════════════════
+class PMWorklogOut(BaseModel):
+    ragic_id:      str
+    item_ragic_id: str
+    seq_no:        int
+    repair_note:   str
+    start_time:    str
+    end_time:      str
+    staff_name:    str
+
+    class Config:
+        from_attributes = True
+
+
+@router.get(
+    "/items/{item_ragic_id}/worklogs",
+    response_model=List[PMWorklogOut],
+    summary="單一項目維修記錄明細（來源 Ragic Sheet11 巢狀子表格）",
+)
+def get_item_worklogs(item_ragic_id: str, db: Session = Depends(get_db)):
+    rows = (
+        db.query(PeriodicMaintenanceItemWorklog)
+        .filter(PeriodicMaintenanceItemWorklog.item_ragic_id == item_ragic_id)
+        .order_by(PeriodicMaintenanceItemWorklog.seq_no.asc())
+        .all()
+    )
+    return rows
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GET /items/{item_ragic_id}/db-images（2026-07-14 新增：Sheet 11「圖片上傳」欄位，
+# 遵循全站「明細 Drawer 強制規範」的 /db-images/{ragic_id} 端點慣例，比照
+# mall_periodic_maintenance 2026-07-13 同型端點）
+# ══════════════════════════════════════════════════════════════════════════════
+class PMImageOut(BaseModel):
+    url:      str
+    filename: str
+
+
+@router.get(
+    "/items/{item_ragic_id}/db-images",
+    response_model=List[PMImageOut],
+    summary="單一項目附圖（DB 優先，缺資料時即時向 Ragic 補抓一次，來源 Sheet11「圖片上傳」欄位）",
+)
+async def get_item_images(item_ragic_id: str, db: Session = Depends(get_db)):
+    item = db.get(PeriodicMaintenanceItem, item_ragic_id)
+    if item and item.images_json:
+        try:
+            cached = json.loads(item.images_json)
+            if cached:
+                return cached
+        except Exception:
+            pass
+
+    # DB 沒資料（尚未同步過此欄位，或該筆項目本來就沒附圖）→ 即時向 Ragic 補抓一次；
+    # 不寫回 DB，下次排程同步時會自然補齊。
+    from app.services.periodic_maintenance_sync import (
+        PM_SERVER_URL, PM_ACCOUNT, PM_SHEET11_PATH, CK11_IMAGES,
+    )
+    from app.services.ragic_data_service import parse_images
+
+    adapter = RagicAdapter(
+        sheet_path=PM_SHEET11_PATH,
+        server_url=PM_SERVER_URL,
+        account=PM_ACCOUNT,
+    )
+    try:
+        full_record = await adapter.fetch_one(item_ragic_id)
+        if item_ragic_id in full_record and len(full_record) == 1:
+            full_record = full_record[item_ragic_id]
+        images = parse_images(
+            full_record.get(CK11_IMAGES),
+            server=PM_SERVER_URL,
+            account=PM_ACCOUNT,
+        )
+        return images
+    except Exception:
+        return []
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # GET /debug/ragic-raw  — 除錯用：直接回傳 Ragic 原始資料
 # ══════════════════════════════════════════════════════════════════════════════
-@router.get("/debug/ragic-raw", summary="[除錯] 顯示 Ragic Sheet 8 原始欄位 key", dependencies=[Depends(require_roles("system_admin", "module_manager"))])
+@router.get("/debug/ragic-raw", summary="[除錯] 顯示 Ragic Sheet 11 原始欄位 key（含舊 Sheet 6 供比對）", dependencies=[Depends(require_roles("system_admin", "module_manager"))])
 async def debug_ragic_raw():
     """
-    直接向 Ragic 拉取 Sheet 8（附表），回傳原始 dict 的欄位名稱與第一筆值。
-    用於確認 Ragic 實際回傳的 field key 是否與同步服務的常數相符。
+    直接向 Ragic 拉取 Sheet 11（2026-07-14 起主要來源），回傳原始 dict 的欄位名稱
+    與第一筆值。同時保留拉取舊 Sheet 6/8 供比對（Sheet 6/8 已停用，不再影響同步，
+    僅供除錯／確認退役後資料狀態使用）。
     """
-    from app.services.periodic_maintenance_sync import PM_SERVER_URL, PM_ACCOUNT, PM_ITEMS_PATH, PM_JOURNAL_PATH
+    from app.services.periodic_maintenance_sync import (
+        PM_SERVER_URL, PM_ACCOUNT, PM_SHEET11_PATH, PM_ITEMS_PATH, PM_JOURNAL_PATH,
+    )
 
-    adapter_items = RagicAdapter(
+    adapter_sheet11 = RagicAdapter(
+        sheet_path=PM_SHEET11_PATH,
+        server_url=PM_SERVER_URL,
+        account=PM_ACCOUNT,
+    )
+    adapter_items_legacy = RagicAdapter(
         sheet_path=PM_ITEMS_PATH,
         server_url=PM_SERVER_URL,
         account=PM_ACCOUNT,
     )
-    adapter_batch = RagicAdapter(
+    adapter_batch_legacy = RagicAdapter(
         sheet_path=PM_JOURNAL_PATH,
         server_url=PM_SERVER_URL,
         account=PM_ACCOUNT,
     )
 
     try:
-        raw_items = await adapter_items.fetch_all()
-        raw_batch = await adapter_batch.fetch_all()
+        raw_sheet11 = await adapter_sheet11.fetch_all()
     except Exception as exc:
-        return {"error": str(exc)}
+        raw_sheet11 = {}
+        sheet11_error = str(exc)
+    else:
+        sheet11_error = None
 
-    # 取第一筆記錄的所有 key（含值）
-    first_item = next(iter(raw_items.values()), {}) if raw_items else {}
-    first_batch = next(iter(raw_batch.values()), {}) if raw_batch else {}
+    try:
+        raw_items_legacy = await adapter_items_legacy.fetch_all()
+        raw_batch_legacy = await adapter_batch_legacy.fetch_all()
+    except Exception as exc:
+        return {
+            "sheet11": {"error": sheet11_error} if sheet11_error else {
+                "total_records": len(raw_sheet11),
+                "record_ids": list(raw_sheet11.keys()),
+                "first_record_fields": next(iter(raw_sheet11.values()), {}) if raw_sheet11 else {},
+            },
+            "legacy_sheet6_sheet8_error": str(exc),
+        }
+
+    first_sheet11 = next(iter(raw_sheet11.values()), {}) if raw_sheet11 else {}
+    first_item_legacy = next(iter(raw_items_legacy.values()), {}) if raw_items_legacy else {}
+    first_batch_legacy = next(iter(raw_batch_legacy.values()), {}) if raw_batch_legacy else {}
 
     return {
-        "sheet8_items": {
-            "total_records": len(raw_items),
-            "record_ids": list(raw_items.keys()),
-            "first_record_fields": first_item,
+        "sheet11": {
+            "error": sheet11_error,
+            "total_records": len(raw_sheet11),
+            "record_ids": list(raw_sheet11.keys()),
+            "first_record_fields": first_sheet11,
         },
-        "sheet6_batch": {
-            "total_records": len(raw_batch),
-            "record_ids": list(raw_batch.keys()),
-            "first_record_fields": first_batch,
+        "legacy_sheet8_items": {
+            "total_records": len(raw_items_legacy),
+            "record_ids": list(raw_items_legacy.keys()),
+            "first_record_fields": first_item_legacy,
+        },
+        "legacy_sheet6_batch": {
+            "total_records": len(raw_batch_legacy),
+            "record_ids": list(raw_batch_legacy.keys()),
+            "first_record_fields": first_batch_legacy,
         },
     }
 
@@ -1561,6 +1697,10 @@ def _do_generate_hotel_periodic_pm(
       - is_completed=True / start+end 均有  → 跳過
       - portal_edited_at IS NOT NULL         → 跳過
       - 其他已存在記錄                        → 更新 scheduled_date / executor_name
+        （use_actual_batch 時一併帶入 start_time/end_time/is_completed/result_note/
+        abnormal_flag/abnormal_note，2026-07-14 修正，比照 mall_pm 同型修正——見下方
+        迴圈內註解。原本這些欄位從未被寫回 pm_schedule，導致 Sheet11 同步後已完成的
+        項目，年度計劃表仍顯示未完成，因為矩陣格狀態只看 pm_schedule 記錄本身）
     """
     year_month = f"{year}/{month:02d}"
 
@@ -1638,6 +1778,21 @@ def _do_generate_hotel_periodic_pm(
                 existing.scheduled_date    = resolved_date
                 existing.executor_name     = item.executor_name
                 existing.estimated_minutes = item.estimated_minutes
+                # 2026-07-14 修正（比照 mall_pm 2026-07-13 同型修正，見
+                # generate_mall_schedule() 頂部說明）：帶入 Ragic 同步回來的完成狀態。
+                # 原本這裡從未寫入 start_time/end_time/is_completed，導致 Sheet11 同步
+                # 已把某筆項目標記完成後，若 pm_schedule 之前就已有該月的記錄（例如更早
+                # 已產生過排程），年度計劃表會一直顯示舊狀態（未完成/逾期），因為矩陣格
+                # 狀態只看 pm_schedule 本身，不會回頭比對 pm_batch_item 的最新完成狀態。
+                # 只在 use_actual_batch（該月已有真實 Ragic 批次資料，items 就是這個月
+                # 自己的批次項目）時才帶入，避免用「最新批次」的資料誤蓋到其他月份。
+                if use_actual_batch:
+                    existing.start_time    = item.start_time
+                    existing.end_time      = item.end_time
+                    existing.is_completed  = item.is_completed
+                    existing.result_note   = item.result_note
+                    existing.abnormal_flag = item.abnormal_flag
+                    existing.abnormal_note = item.abnormal_note
                 existing.updated_at        = datetime.now()
                 updated += 1
             else:
@@ -1654,6 +1809,13 @@ def _do_generate_hotel_periodic_pm(
                     scheduled_date    = resolved_date,
                     executor_name     = item.executor_name,
                     schedule_source   = "auto",
+                    # 同上：新建記錄時，若該月已有真實批次資料也一併帶入 item 已知的完成狀態
+                    start_time    = item.start_time    if use_actual_batch else "",
+                    end_time      = item.end_time      if use_actual_batch else "",
+                    is_completed  = item.is_completed  if use_actual_batch else False,
+                    result_note   = item.result_note   if use_actual_batch else "",
+                    abnormal_flag = item.abnormal_flag if use_actual_batch else False,
+                    abnormal_note = item.abnormal_note if use_actual_batch else "",
                 )
                 db.add(new_rec)
                 generated += 1

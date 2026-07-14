@@ -159,6 +159,37 @@ export async function fetchPMTaskHistory(
   return res.data
 }
 
+// ── 維修記錄明細（Sheet11 巢狀子表格，2026-07-14 同日追加，比照 mall_pm Sheet24）────
+// 原始遷移評估誤判 Sheet 11 無巢狀子表格，實測記錄（277/477）證實存在，欄位與
+// mall_pm 完全相同，比照補上。
+export interface PMWorklogItem {
+  ragic_id:      string
+  item_ragic_id: string
+  seq_no:        number
+  repair_note:   string
+  start_time:    string
+  end_time:      string
+  staff_name:    string
+}
+
+/** 單一項目維修記錄明細（來源 Ragic Sheet11 巢狀子表格） */
+export async function fetchPMItemWorklogs(itemRagicId: string): Promise<PMWorklogItem[]> {
+  const res = await apiClient.get<PMWorklogItem[]>(`${BASE}/items/${itemRagicId}/worklogs`)
+  return res.data
+}
+
+// ── 附圖（Sheet11「圖片上傳」欄位，2026-07-14 新增，遵循全站 db-images 端點慣例）──────
+export interface PMImageItem {
+  url:      string
+  filename: string
+}
+
+/** 單一項目附圖（DB 優先，缺資料時後端會即時向 Ragic 補抓一次） */
+export async function fetchPMItemImages(itemRagicId: string): Promise<PMImageItem[]> {
+  const res = await apiClient.get<PMImageItem[]>(`${BASE}/items/${itemRagicId}/db-images`)
+  return res.data
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // 排程管理（pm_schedule）API
 // ════════════════════════════════════════════════════════════════════════════

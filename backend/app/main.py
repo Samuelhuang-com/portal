@@ -83,6 +83,9 @@ from app.routers import (
     inventory,
     luqun_repair,
     periodic_maintenance,
+    # 2026-07-14：hotel_routine_pm 安全下線（與 hotel/periodic-maintenance 為重複模組，
+    # 使用者確認 hotel/periodic-maintenance 才是正式模組）。import 保留，僅下方
+    # include_router／排程註冊被停用，程式檔案與 DB 表格未刪除，可隨時回溯。
     hotel_routine_pm,
     ragic,
     role_permissions,
@@ -1871,31 +1874,33 @@ async def lifespan(app: FastAPI):
         )
         print("[Portal] Contract deposit alert scheduled: daily at 10:00")
 
-        # 方案 A：每月 1 日 02:00 自動產生飯店例行維護排程
-        async def _auto_generate_hotel_routine_pm_schedule():
-            from app.core.database import SessionLocal
-            from app.routers.hotel_routine_pm import _do_generate_hotel_routine_pm
-            today = __import__("datetime").date.today()
-            db = SessionLocal()
-            try:
-                result = _do_generate_hotel_routine_pm(today.year, today.month, db)
-                print(
-                    f"[Portal] auto-generate hotel_routine_pm {today.year}/{today.month:02d}: "
-                    f"generated={result.generated}, updated={result.updated}, errors={result.errors}"
-                )
-            except Exception as exc:
-                print(f"[Portal] auto-generate hotel_routine_pm failed: {exc}")
-            finally:
-                db.close()
-
-        _scheduler.add_job(
-            _auto_generate_hotel_routine_pm_schedule,
-            trigger=_CronTrigger(day=1, hour=2, minute=0),
-            id="auto_generate_hotel_routine_pm",
-            replace_existing=True,
-            misfire_grace_time=3600,
-        )
-        print("[Portal] hotel_routine_pm auto-generate scheduled: monthly day=1 at 02:00")
+        # 2026-07-14：hotel_routine_pm 排程自動產生工作已隨模組安全下線一併停用
+        # （模組與 hotel/periodic-maintenance 重複，使用者確認保留後者為正式模組）。
+        # 函式與 add_job 呼叫整段註解保留，未刪除，供日後回溯／復原。
+        # async def _auto_generate_hotel_routine_pm_schedule():
+        #     from app.core.database import SessionLocal
+        #     from app.routers.hotel_routine_pm import _do_generate_hotel_routine_pm
+        #     today = __import__("datetime").date.today()
+        #     db = SessionLocal()
+        #     try:
+        #         result = _do_generate_hotel_routine_pm(today.year, today.month, db)
+        #         print(
+        #             f"[Portal] auto-generate hotel_routine_pm {today.year}/{today.month:02d}: "
+        #             f"generated={result.generated}, updated={result.updated}, errors={result.errors}"
+        #         )
+        #     except Exception as exc:
+        #         print(f"[Portal] auto-generate hotel_routine_pm failed: {exc}")
+        #     finally:
+        #         db.close()
+        #
+        # _scheduler.add_job(
+        #     _auto_generate_hotel_routine_pm_schedule,
+        #     trigger=_CronTrigger(day=1, hour=2, minute=0),
+        #     id="auto_generate_hotel_routine_pm",
+        #     replace_existing=True,
+        #     misfire_grace_time=3600,
+        # )
+        # print("[Portal] hotel_routine_pm auto-generate scheduled: monthly day=1 at 02:00")
 
         # 方案 A：每月 1 日 02:10 自動產生全棟例行維護排程
         async def _auto_generate_full_bldg_pm_schedule():
@@ -2038,12 +2043,14 @@ app.include_router(
     tags=["週期保養表"],
 )
 
-# ── 新增：飯店例行維護（Sheet 6 主表 + Sheet 11 平表）────────────────────────
-app.include_router(
-    hotel_routine_pm.router,
-    prefix=f"{API_PREFIX}/hotel/routine-maintenance",
-    tags=["飯店例行維護"],
-)
+# 2026-07-14：hotel_routine_pm 安全下線 — 與 hotel/periodic-maintenance（Sheet 11
+# 遷移後）為重複模組，使用者確認後者才是正式模組。路由整段停用（不註冊即無法
+# 從外部存取，等同下線），router 檔案／DB 表格保留未刪，可隨時取消註解復原。
+# app.include_router(
+#     hotel_routine_pm.router,
+#     prefix=f"{API_PREFIX}/hotel/routine-maintenance",
+#     tags=["飯店例行維護"],
+# )
 
 # ── 新增：IHG 客房保養（年度矩陣保養計畫）────────────────────────────────────
 app.include_router(

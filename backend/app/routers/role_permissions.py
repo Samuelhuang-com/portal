@@ -39,7 +39,9 @@ PERMISSION_DEFINITIONS = [
     {"key": "hotel_daily_inspection_view",        "label": "飯店每日巡檢",     "group": "飯店管理"},
     {"key": "hotel_meter_readings_view",          "label": "每日數值登錄表",   "group": "飯店管理"},
     {"key": "hotel_other_tasks_view",             "label": "主管交辦／緊急事件","group": "飯店管理"},
-    {"key": "hotel_routine_pm_view",              "label": "飯店例行維護",      "group": "飯店管理"},
+    # 2026-07-14：hotel_routine_pm 安全下線（與 hotel_periodic_maintenance_view 重複，
+    # 使用者確認後者為正式模組），從權限管理清單移除，路由已同步停用。
+    # {"key": "hotel_routine_pm_view",              "label": "飯店例行維護",      "group": "飯店管理"},
     {"key": "hotel_calendar_view",                "label": "飯店行事曆",         "group": "飯店管理"},
     {"key": "mall_view",                          "label": "商場模組",          "group": "商場管理"},
     {"key": "mall_overview_view",                 "label": "商場管理 Dashboard","group": "商場管理"},

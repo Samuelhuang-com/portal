@@ -45,6 +45,7 @@ import type {
 import { NAV_GROUP, NAV_PAGE } from '@/constants/navLabels'
 import MonthlyCalendarGrid from '@/components/MonthlyCalendarGrid'
 import type { CalendarRow } from '@/components/MonthlyCalendarGrid'
+import PMItemDetailDrawer from '@/components/PMItemDetailDrawer'
 
 const { Title, Text } = Typography
 
@@ -78,6 +79,42 @@ function deriveBatchStatus(kpi: PMBatchListItem['kpi']): string {
 // ── 共用：統計數值格式化 ──────────────────────────────────────────────────────
 function fmtRate(rate: number | null): string {
   return rate === null ? 'N/A' : `${rate}%`
+}
+
+// ── Dashboard KPI 卡片明細 Drawer 用格式化（2026-07-14 新增，比照 mall_pm 同名函式）───
+function fmtItemMinutes(mins: number): string {
+  if (!mins) return '—'
+  if (mins < 60) return `${mins} 分`
+  return `${Math.floor(mins / 60)} 時 ${mins % 60} 分`
+}
+
+function fmtItemHours(hours: number | null | undefined): string {
+  if (hours == null) return '—'
+  const h = Math.floor(hours)
+  const m = Math.round((hours - h) * 60)
+  if (h === 0) return `${m} 分`
+  if (m === 0) return `${h} 時`
+  return `${h} 時 ${m} 分`
+}
+
+function fmtItemTimeRange(item: PMItem): string {
+  if (item.repair_hours != null) return fmtItemHours(item.repair_hours)
+  if (item.start_time && item.end_time) {
+    const s = item.start_time.split(' ')[1] || item.start_time
+    const e = item.end_time.split(' ')[1] || item.end_time
+    return `${s} ~ ${e}`
+  }
+  if (item.start_time) return `${item.start_time.split(' ')[1] || item.start_time} 起`
+  return '—'
+}
+
+// 實際保養日期（取 start_time，缺則取 end_time 的日期部分），格式 MM/DD；尚未執行則 '—'
+function fmtItemActualDate(item: PMItem): string {
+  const raw = (item.start_time || item.end_time || '').trim()
+  if (!raw) return '—'
+  const datePart = raw.split(' ')[0]
+  const parts = datePart.split('/')
+  return parts.length === 3 ? `${parts[1]}/${parts[2]}` : datePart
 }
 
 // ── 共用：統計卡片區（上期累計 + 本期）────────────────────────────────────────
@@ -566,6 +603,11 @@ const TD: React.CSSProperties = {
 }
 
 // ── 主元件 ────────────────────────────────────────────────────────────────────
+// 2026-07-14 使用者要求先隱藏 Dashboard 月曆區塊（保留程式碼與功能，只是先不顯示，
+// 之後如需重新開啟只要把這個常數改回 true 即可，不要刪除下方程式碼）。比照同日
+// mall_periodic_maintenance / full_building_maintenance 的 SHOW_MONTHLY_CALENDAR 同型改法。
+const SHOW_MONTHLY_CALENDAR = false
+
 export default function PeriodicMaintenancePage() {
   const navigate = useNavigate()
   const [activeTab, setActiveTab] = useState('dashboard')
@@ -574,6 +616,13 @@ export default function PeriodicMaintenancePage() {
   // Dashboard 篩選：年月（預設當月）
   const [dashYear,  setDashYear]  = useState(dayjs().format('YYYY'))
   const [dashMonth, setDashMonth] = useState(dayjs().month() + 1)   // 1-based
+  // ── Dashboard KPI 卡片明細 Drawer state（2026-07-14 新增，比照 mall_pm 同型 Drawer）──
+  const [kpiDrawerOpen,    setKpiDrawerOpen]    = useState(false)
+  const [kpiDrawerTitle,   setKpiDrawerTitle]   = useState('')
+  const [kpiDrawerItems,   setKpiDrawerItems]   = useState<PMItem[]>([])
+  const [kpiDrawerLoading, setKpiDrawerLoading] = useState(false)
+  // KPI 明細內「保養時間」次層 Drawer state（共用 PMItemDetailDrawer）
+  const [selectedPMItem, setSelectedPMItem] = useState<PMItem | null>(null)
   // 批次清單篩選：年
   const [year, setYear] = useState(dayjs().format('YYYY'))
   const [loading, setLoading] = useState(false)
@@ -750,6 +799,48 @@ export default function PeriodicMaintenancePage() {
       setLoading(false)
     }
   }, [dashYear, dashMonth])
+
+  // ── Dashboard KPI 卡片明細 Drawer（2026-07-14 新增，比照 mall_pm openKpiDrawer）───────
+  type KpiCardMetric = 'current_month_total' | 'completed' | 'overdue' | 'abnormal' | 'planned_minutes' | 'actual_minutes'
+
+  const openKpiDrawer = useCallback(async (metric: KpiCardMetric, title: string) => {
+    if (!stats?.current_batch) {
+      message.warning('尚無批次資料，請先同步')
+      return
+    }
+    setKpiDrawerTitle(title)
+    setKpiDrawerOpen(true)
+    setKpiDrawerLoading(true)
+    try {
+      const detail = await fetchPMBatchDetail(stats.current_batch.ragic_id)
+      let filtered: PMItem[]
+      switch (metric) {
+        case 'current_month_total':
+        case 'planned_minutes':
+          filtered = detail.items.filter((it) => it.status !== 'non_current_month')
+          break
+        case 'completed':
+        case 'actual_minutes':
+          filtered = detail.items.filter((it) => it.is_completed)
+          break
+        case 'overdue':
+          filtered = detail.items.filter((it) => it.status === 'overdue')
+          break
+        case 'abnormal':
+          // 比照 KPI 卡片數字口徑改為只算本月項目，避免點進來的清單筆數跟卡片數字對不起來
+          filtered = detail.items.filter((it) => it.abnormal_flag && it.status !== 'non_current_month')
+          break
+        default:
+          filtered = detail.items
+      }
+      setKpiDrawerItems(filtered)
+    } catch {
+      setKpiDrawerItems([])
+      message.error('讀取明細失敗')
+    } finally {
+      setKpiDrawerLoading(false)
+    }
+  }, [stats])
 
   const loadBatches = useCallback(async () => {
     setLoading(true)
@@ -966,6 +1057,7 @@ export default function PeriodicMaintenancePage() {
             suffix: '筆',
             icon: <ToolOutlined />,
             color: '#1B3A5C',
+            metric: 'current_month_total' as const,
           },
           {
             title: `已完成（${kpi?.completion_rate ?? 0}%）`,
@@ -973,6 +1065,7 @@ export default function PeriodicMaintenancePage() {
             suffix: '筆',
             icon: <CheckCircleOutlined />,
             color: '#52C41A',
+            metric: 'completed' as const,
           },
           {
             title: '逾期件數',
@@ -980,6 +1073,7 @@ export default function PeriodicMaintenancePage() {
             suffix: '筆',
             icon: <WarningOutlined />,
             color: '#C0392B',
+            metric: 'overdue' as const,
           },
           {
             title: '異常待追蹤',
@@ -987,10 +1081,11 @@ export default function PeriodicMaintenancePage() {
             suffix: '筆',
             icon: <ExclamationCircleOutlined />,
             color: '#722ED1',
+            metric: 'abnormal' as const,
           },
         ].map((card) => (
           <Col flex={1} style={{ minWidth: 140 }} key={card.title}>
-            <Card size="small" hoverable style={{ height: '100%' }}>
+            <Card size="small" hoverable style={{ height: '100%' }} onClick={() => openKpiDrawer(card.metric, card.title)}>
               <Statistic
                 title={card.title}
                 value={card.value}
@@ -1002,7 +1097,7 @@ export default function PeriodicMaintenancePage() {
           </Col>
         ))}
         <Col flex={1} style={{ minWidth: 140 }}>
-          <Card size="small" hoverable style={{ height: '100%' }}>
+          <Card size="small" hoverable style={{ height: '100%' }} onClick={() => openKpiDrawer('planned_minutes', '預估工時明細')}>
             <Statistic
               title="預估工時"
               value={Math.round((kpi?.planned_minutes ?? 0) / 60 * 10) / 10}
@@ -1013,7 +1108,7 @@ export default function PeriodicMaintenancePage() {
           </Card>
         </Col>
         <Col flex={1} style={{ minWidth: 140 }}>
-          <Card size="small" hoverable style={{ height: '100%' }}>
+          <Card size="small" hoverable style={{ height: '100%' }} onClick={() => openKpiDrawer('actual_minutes', '保養時間明細')}>
             <Statistic
               title="保養時間"
               value={Math.round((kpi?.actual_minutes ?? 0) / 60 * 10) / 10}
@@ -1208,7 +1303,8 @@ export default function PeriodicMaintenancePage() {
         </Card>
       )}
 
-      {/* 月曆格：類別 × 日期 */}
+      {SHOW_MONTHLY_CALENDAR && (
+      /* 月曆格：類別 × 日期 */
       <Card
         size="small"
         style={{ marginTop: 16 }}
@@ -1235,6 +1331,7 @@ export default function PeriodicMaintenancePage() {
           <Text type="secondary">尚無月曆資料</Text>
         )}
       </Card>
+      )}
     </div>
   )
 
@@ -1778,7 +1875,7 @@ export default function PeriodicMaintenancePage() {
             {schedDrawerItem.item_ragic_id && (
               <Tooltip title="在 Ragic 查看原始表單">
                 <a
-                  href={`https://ap12.ragic.com/soutlet001/periodic-maintenance/6/${schedDrawerItem.item_ragic_id.split('_')[0]}`}
+                  href={`https://ap12.ragic.com/soutlet001/periodic-maintenance/11/${schedDrawerItem.item_ragic_id}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   style={{ color: '#4BA8E8', fontSize: 16, lineHeight: 1 }}
@@ -2074,7 +2171,7 @@ export default function PeriodicMaintenancePage() {
           {annualDrawerCell.row.item_ragic_id && (
             <Tooltip title="在 Ragic 查看原始表單">
               <a
-                href={`https://ap12.ragic.com/soutlet001/periodic-maintenance/6/${annualDrawerCell.row.item_ragic_id.split('_')[0]}`}
+                href={`https://ap12.ragic.com/soutlet001/periodic-maintenance/11/${annualDrawerCell.row.item_ragic_id}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 style={{ color: '#4BA8E8', fontSize: 16, lineHeight: 1 }}
@@ -2422,6 +2519,87 @@ export default function PeriodicMaintenancePage() {
 
     {/* ── 年度計劃表儲存格 Drawer ─────────────────────────────────────── */}
     {AnnualCellDrawer}
+
+    {/* ── Dashboard KPI 卡片明細 Drawer（2026-07-14 新增，比照 mall_pm 同型 Drawer）──── */}
+    <Drawer
+      open={kpiDrawerOpen}
+      width={760}
+      onClose={() => setKpiDrawerOpen(false)}
+      title={
+        <Space>
+          <span style={{ fontWeight: 600 }}>{kpiDrawerTitle}</span>
+          {!kpiDrawerLoading && (
+            <Text type="secondary" style={{ fontSize: 12 }}>共 {kpiDrawerItems.length} 項</Text>
+          )}
+        </Space>
+      }
+    >
+      {kpiDrawerLoading ? (
+        <div style={{ textAlign: 'center', padding: 48 }}><Spin tip="載入明細中…" /></div>
+      ) : (
+        <Table<PMItem>
+          dataSource={kpiDrawerItems}
+          rowKey={(r) => r.ragic_id}
+          size="small"
+          pagination={{ pageSize: 15, showTotal: (t: number) => `共 ${t} 項`, showSizeChanger: false }}
+          scroll={{ x: 760 }}
+          columns={[
+            { title: '類別', dataIndex: 'category', width: 80 },
+            { title: '項目', dataIndex: 'task_name', width: 180 },
+            {
+              title: '排定日期', dataIndex: 'scheduled_date', width: 80, align: 'center' as const,
+              render: (v: string) => v || '—',
+            },
+            {
+              title: '狀態', dataIndex: 'status', width: 80, align: 'center' as const,
+              render: (s: string) => (
+                <Tag color={STATUS_CFG[s]?.tagColor ?? 'default'}>{STATUS_CFG[s]?.label ?? s}</Tag>
+              ),
+            },
+            {
+              title: '執行人員', dataIndex: 'executor_name', width: 90,
+              render: (v: string) => v || '—',
+            },
+            {
+              title: '預估耗時', dataIndex: 'estimated_minutes', width: 80, align: 'center' as const,
+              render: (v: number) => fmtItemMinutes(v),
+            },
+            {
+              title: '保養日期', width: 80, align: 'center' as const,
+              render: (_: unknown, rec: PMItem) => fmtItemActualDate(rec),
+            },
+            {
+              title: '保養時間', width: 130,
+              render: (_: unknown, rec: PMItem) => {
+                const label = fmtItemTimeRange(rec)
+                if (label === '—') return <Text type="secondary" style={{ fontSize: 12 }}>—</Text>
+                return (
+                  <Button
+                    type="link" size="small" style={{ padding: 0, height: 'auto', fontSize: 12 }}
+                    onClick={() => setSelectedPMItem(rec)}
+                  >
+                    {label}
+                  </Button>
+                )
+              },
+            },
+            {
+              title: '異常說明', dataIndex: 'abnormal_note',
+              render: (v: string) => v
+                ? <Text type="danger" style={{ fontSize: 11 }}>{v}</Text>
+                : <Text type="secondary" style={{ fontSize: 11 }}>—</Text>,
+            },
+          ]}
+        />
+      )}
+    </Drawer>
+
+    {/* KPI 明細內「保養時間」次層 Drawer */}
+    <PMItemDetailDrawer
+      open={!!selectedPMItem}
+      onClose={() => setSelectedPMItem(null)}
+      item={selectedPMItem}
+    />
 
     {/* ── 矩陣格明細 Modal ───────────────────────────────────────────── */}
     <MatrixDetailModal

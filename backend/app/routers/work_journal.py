@@ -76,7 +76,10 @@ _RAGIC_BASE    = "https://ap12.ragic.com/soutlet001"
 _SOURCE_PATH: dict[str, str] = {
     "dazhi":        "lequn-public-works/8",
     "luqun":        "luqun-public-works-repair-reporting-system/6",
-    "hotel_pm":     "periodic-maintenance/8",
+    # hotel_pm 的項目明細來源 2026-07-14 起已改為 Sheet 11（原 Sheet 6 主表＋Sheet 8
+    # 附表已退役，見 periodic_maintenance_sync.py::sync_from_sheet11()）。item.ragic_id
+    # 現在是 Sheet 11 自身的原生記錄 ID，沿用舊路徑 8 會組出不存在的 Ragic 連結。
+    "hotel_pm":     "periodic-maintenance/11",
     "ihg":          "periodic-maintenance/4",
     # mall_pm／full_bldg_pm 的項目明細來源 2026-07-13 起已改為 Sheet24／Sheet28
     # （見 mall_periodic_maintenance_sync.py::sync_items_from_sheet24() 與
