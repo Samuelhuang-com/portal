@@ -1003,13 +1003,16 @@ async def _run_and_log(
     """
     from app.models.module_sync_log import ModuleSyncLog
     from app.core.database import SessionLocal
+    from app.core.sync_lock import async_sync_lock
 
     started = _utcnow()
     result = None
     exc_str = None
 
     try:
-        result = await coro
+        # 2026-07-15：跨行程鎖，避免 sync_tool.py 與這裡的排程同時寫入 portal.db
+        async with async_sync_lock(module_name):
+            result = await coro
     except Exception as exc:
         exc_str = str(exc)
 

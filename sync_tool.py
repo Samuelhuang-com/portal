@@ -937,12 +937,16 @@ class SyncApp(tk.Tk):
             fetched  = upserted = err_count = 0
 
             try:
+                # 2026-07-15：跨行程鎖，避免與後端排程同時寫入 portal.db
+                from app.core.sync_lock import async_sync_lock
+
                 mod  = importlib.import_module(mod_path)
                 func = getattr(mod, func_name)
-                if inspect.iscoroutinefunction(func):
-                    result = await func()
-                else:
-                    result = await asyncio.to_thread(func)
+                async with async_sync_lock(name):
+                    if inspect.iscoroutinefunction(func):
+                        result = await func()
+                    else:
+                        result = await asyncio.to_thread(func)
 
                 duration = round((datetime.now() - t0).total_seconds(), 2)
 
@@ -1153,12 +1157,16 @@ class SyncApp(tk.Tk):
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
+            # 2026-07-15：跨行程鎖，避免與後端排程同時寫入 portal.db
+            from app.core.sync_lock import sync_lock
+
             mod  = importlib.import_module(mod_path)
             func = getattr(mod, func_name)
-            if inspect.iscoroutinefunction(func):
-                result = loop.run_until_complete(func())
-            else:
-                result = func()
+            with sync_lock(name):
+                if inspect.iscoroutinefunction(func):
+                    result = loop.run_until_complete(func())
+                else:
+                    result = func()
             duration = round((datetime.now() - t0).total_seconds(), 2)
             if isinstance(result, dict):
                 fetched   = result.get("fetched",  0)
@@ -1610,12 +1618,16 @@ class SyncApp(tk.Tk):
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
+            # 2026-07-15：跨行程鎖，避免與後端排程同時寫入 portal.db
+            from app.core.sync_lock import sync_lock
+
             mod  = importlib.import_module(mod_path)
             func = getattr(mod, func_name)
-            if inspect.iscoroutinefunction(func):
-                result = loop.run_until_complete(func())
-            else:
-                result = func()
+            with sync_lock(name):
+                if inspect.iscoroutinefunction(func):
+                    result = loop.run_until_complete(func())
+                else:
+                    result = func()
             duration = round((datetime.now() - t0).total_seconds(), 2)
             if isinstance(result, dict):
                 fetched   = result.get("fetched",  0)

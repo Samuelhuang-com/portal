@@ -8,8 +8,17 @@ import sqlite3
 from pathlib import Path
 from typing import Generator
 
-# 預算 SQLite 相對於 backend 目錄（與 portal.db 同層）
-BUDGET_DB_PATH = Path(__file__).parent.parent.parent / "budget_system_v1.sqlite"
+from app.core.config import settings
+
+# 預算 SQLite 路徑：
+#   1. .env 有設定 BUDGET_DB_PATH → 直接使用該絕對路徑
+#   2. 否則維持舊行為 → 相對於 backend 目錄（與 portal.db 同層）
+_env_budget_path = settings.BUDGET_DB_PATH.strip()
+BUDGET_DB_PATH = (
+    Path(_env_budget_path)
+    if _env_budget_path
+    else Path(__file__).parent.parent.parent / "budget_system_v1.sqlite"
+)
 
 
 def _row_to_dict(row: sqlite3.Row) -> dict:

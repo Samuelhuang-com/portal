@@ -17,6 +17,7 @@ from app.core.time import twnow
 
 from app.core.database import SessionLocal
 from app.core.crypto import decrypt
+from app.core.sync_lock import async_sync_lock
 from app.models.ragic_connection import RagicConnection
 from app.models.sync_log import SyncLog
 from app.models.data_snapshot import DataSnapshot
@@ -70,39 +71,41 @@ async def run_sync(connection_id: str, triggered_by: str = "manual") -> dict:
             account=conn.account_name,
         )
 
-        data = await adapter.fetch_all()
-        checksum = RagicAdapter.compute_checksum(data)
+        # 2026-07-15：跨行程鎖，避免 sync_tool.py 與這裡的排程同時寫入 portal.db
+        async with async_sync_lock(f"ragic_connection:{connection_id}"):
+            data = await adapter.fetch_all()
+            checksum = RagicAdapter.compute_checksum(data)
 
-        # 若資料未變更則跳過寫入 DataSnapshot
-        last = (
-            db.query(DataSnapshot)
-            .filter(DataSnapshot.connection_id == connection_id)
-            .order_by(DataSnapshot.synced_at.desc())
-            .first()
-        )
-
-        if last and last.checksum == checksum:
-            log.status = "success"
-            log.records_fetched = 0
-            log.finished_at = _now()
-            log.error_msg = "資料未變更，跳過儲存"
-        else:
-            snapshot = DataSnapshot(
-                connection_id=connection_id,
-                sync_log_id=log.id,
-                data=data,
-                record_count=len(data),
-                checksum=checksum,
-                synced_at=_now(),
+            # 若資料未變更則跳過寫入 DataSnapshot
+            last = (
+                db.query(DataSnapshot)
+                .filter(DataSnapshot.connection_id == connection_id)
+                .order_by(DataSnapshot.synced_at.desc())
+                .first()
             )
-            db.add(snapshot)
-            log.status = "success"
-            log.records_fetched = len(data)
-            log.finished_at = _now()
 
-        conn.last_synced_at = _now()
-        db.commit()
-        return {"status": "success", "records_fetched": log.records_fetched, "error": None}
+            if last and last.checksum == checksum:
+                log.status = "success"
+                log.records_fetched = 0
+                log.finished_at = _now()
+                log.error_msg = "資料未變更，跳過儲存"
+            else:
+                snapshot = DataSnapshot(
+                    connection_id=connection_id,
+                    sync_log_id=log.id,
+                    data=data,
+                    record_count=len(data),
+                    checksum=checksum,
+                    synced_at=_now(),
+                )
+                db.add(snapshot)
+                log.status = "success"
+                log.records_fetched = len(data)
+                log.finished_at = _now()
+
+            conn.last_synced_at = _now()
+            db.commit()
+            return {"status": "success", "records_fetched": log.records_fetched, "error": None}
 
     except Exception as exc:
         if log:

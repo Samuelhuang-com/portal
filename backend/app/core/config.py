@@ -40,6 +40,13 @@ class Settings(BaseSettings):
     # 僅使用者／角色／權限沿用既有 portal.db（見 app/core/cycle_purchase_database.py）。
     CYCLE_PURCHASE_DATABASE_URL: str = "sqlite:///./cycle-purchase.db"
 
+    # ── Database — 預算系統（獨立 SQLite 檔案，可透過 .env 覆寫路徑）──────────
+    # 2026-07-15：與 Samuel 確認正式區/開發機 DB 統一搬離 OneDrive 同步資料夾。
+    # 預設空字串 = 維持舊行為（相對於專案根目錄的 budget_system_v1.sqlite，
+    # 見 app/core/budget_database.py）；若設定則直接使用此絕對路徑
+    # （例如 C:/Portal_Data/budget_system_v1.sqlite）。
+    BUDGET_DB_PATH: str = ""
+
     # ── Ragic — 連線基本設定 ──────────────────────────────────────────────────
     RAGIC_API_KEY: str = ""
 
