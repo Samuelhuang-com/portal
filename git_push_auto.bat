@@ -56,6 +56,17 @@ for /f %%i in ('git status --porcelain ^| find /c /v ""') do set CHANGED=%%i
 if "%CHANGED%"=="0" (
     echo No changes detected. Nothing to commit.
     echo.
+    echo Checking for unpushed commits...
+    git push origin main
+    if errorlevel 1 (
+        echo [ERROR] Push failed! Check GitHub credentials or network.
+        pause
+        exit /b 1
+    )
+    echo.
+    echo Latest 5 commits:
+    git log --oneline -5
+    echo.
     pause
     exit /b 0
 )
