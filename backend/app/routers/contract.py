@@ -38,6 +38,7 @@ from pathlib import Path
 from datetime import date
 from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, status, Query, File, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse, FileResponse
 from sqlalchemy.orm import Session
 
@@ -1139,12 +1140,12 @@ async def upload_claim_attachment(
     from app.models.contract import ContractClaim, ContractClaimAttachment
 
     # 權限
-    user_permissions = get_user_permissions(current_user.id, db)
+    user_permissions = await run_in_threadpool(get_user_permissions, current_user.id, db)
     if "*" not in user_permissions and "contract_claims_view" not in user_permissions:
         raise HTTPException(status_code=403, detail="權限不足")
 
     # 請款存在
-    claim = db.query(ContractClaim).filter(ContractClaim.id == claim_id).first()
+    claim = await run_in_threadpool(db.query(ContractClaim).filter(ContractClaim.id == claim_id).first)
     if not claim:
         raise HTTPException(status_code=404, detail="請款記錄不存在")
 
@@ -1171,9 +1172,13 @@ async def upload_claim_attachment(
         file_size=len(content),
         uploader=current_user.username,
     )
-    db.add(att)
-    db.commit()
-    db.refresh(att)
+
+    def _save():
+        db.add(att)
+        db.commit()
+        db.refresh(att)
+
+    await run_in_threadpool(_save)
 
     return {
         "id": att.id,
@@ -1870,12 +1875,13 @@ async def upload_contract_attachment(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    user_permissions = get_user_permissions(current_user.id, db)
+    user_permissions = await run_in_threadpool(get_user_permissions, current_user.id, db)
     if "*" not in user_permissions and "contract_create_edit" not in user_permissions:
         raise HTTPException(status_code=403, detail="權限不足（需 contract_create_edit）")
 
     from app.models.contract import Contract
-    if not db.query(Contract).filter(Contract.contract_id == contract_id).first():
+    contract_exists = await run_in_threadpool(db.query(Contract).filter(Contract.contract_id == contract_id).first)
+    if not contract_exists:
         raise HTTPException(status_code=404, detail="合約不存在")
 
     content = await file.read()
@@ -1897,9 +1903,13 @@ async def upload_contract_attachment(
         file_size=len(content),
         uploader=getattr(current_user, "username", "") or "",
     )
-    db.add(att)
-    db.commit()
-    db.refresh(att)
+
+    def _save():
+        db.add(att)
+        db.commit()
+        db.refresh(att)
+
+    await run_in_threadpool(_save)
 
     return {
         "id": att.id,

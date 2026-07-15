@@ -34,6 +34,7 @@ from typing import Optional
 
 import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, HTTPException
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
@@ -452,14 +453,18 @@ async def verify_count(db: Session = Depends(get_db)):
     """
     from app.models.module_sync_log import ModuleSyncLog
     from sqlalchemy import desc as _desc
-    portal_count: int = db.query(LuqunRepairCase).count()
 
-    last_log = (
-        db.query(ModuleSyncLog)
-        .filter(ModuleSyncLog.module_name == "商場工務報修")
-        .order_by(_desc(ModuleSyncLog.started_at))
-        .first()
-    )
+    def _read_local():
+        portal_count = db.query(LuqunRepairCase).count()
+        last_log = (
+            db.query(ModuleSyncLog)
+            .filter(ModuleSyncLog.module_name == "商場工務報修")
+            .order_by(_desc(ModuleSyncLog.started_at))
+            .first()
+        )
+        return portal_count, last_log
+
+    portal_count, last_log = await run_in_threadpool(_read_local)
     last_synced_at = last_log.started_at.isoformat() if last_log else None
 
     from app.services.luqun_repair_service import _get_adapter
@@ -497,12 +502,14 @@ async def verify_diff(db: Session = Depends(get_db)):
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Ragic 連線失敗：{exc}")
 
-    portal_rows = db.query(
-        LuqunRepairCase.ragic_id,
-        LuqunRepairCase.case_no,
-        LuqunRepairCase.title,
-        LuqunRepairCase.status,
-    ).all()
+    portal_rows = await run_in_threadpool(
+        db.query(
+            LuqunRepairCase.ragic_id,
+            LuqunRepairCase.case_no,
+            LuqunRepairCase.title,
+            LuqunRepairCase.status,
+        ).all
+    )
     portal_ids: set[str] = {r.ragic_id for r in portal_rows}
     portal_map = {r.ragic_id: r for r in portal_rows}
 

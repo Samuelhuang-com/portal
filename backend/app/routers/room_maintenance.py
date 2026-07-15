@@ -77,7 +77,7 @@ async def get_options():
 
 # ── GET /stats — 統計總覽 ────────────────────────────────────────────────────
 @router.get("/stats", response_model=RoomMaintenanceStatsResponse, summary="統計總覽")
-async def get_stats(db: Session = Depends(get_db)):
+def get_stats(db: Session = Depends(get_db)):
     """回傳 KPI 數字：完成率、總筆數、未完項目數等（從本地 DB 計算）"""
     try:
         stats = svc.get_stats(db)
@@ -91,7 +91,7 @@ async def get_stats(db: Session = Depends(get_db)):
 
 # ── GET / — 列表 ─────────────────────────────────────────────────────────────
 @router.get("/", response_model=RoomMaintenanceListResponse, summary="客房保養清單")
-async def list_records(
+def list_records(
     room_no:  Optional[str] = Query(None, description="依房號篩選"),
     work_item: Optional[str] = Query(None, description="依工作項目篩選"),
     dept:     Optional[str] = Query(None, description="依報修部門篩選"),
@@ -118,7 +118,7 @@ async def list_records(
 
 # ── GET /{record_id} — 單筆 ──────────────────────────────────────────────────
 @router.get("/{record_id}", response_model=RoomMaintenanceSingleResponse, summary="單筆記錄")
-async def get_record(record_id: str, db: Session = Depends(get_db)):
+def get_record(record_id: str, db: Session = Depends(get_db)):
     """從本地 DB 讀取單筆客房保養記錄"""
     try:
         record = svc.get_record(db, record_id)

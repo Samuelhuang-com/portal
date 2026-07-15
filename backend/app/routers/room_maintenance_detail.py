@@ -85,7 +85,7 @@ async def sync_records(background_tasks: BackgroundTasks):
 
 # ── GET /summary — 總表（全房間 + 日期區間）───────────────────────────────────
 @router.get("/summary", summary="客房保養總表（全房間清單，含未保養灰底資料）")
-async def get_summary(
+def get_summary(
     date_from: Optional[str] = Query(None, description="起始日期 YYYY/MM/DD"),
     date_to:   Optional[str] = Query(None, description="結束日期 YYYY/MM/DD"),
     db: Session = Depends(get_db),
@@ -204,7 +204,7 @@ async def get_summary(
 # ── GET / — 明細列表 ───────────────────────────────────────────────────────────
 @router.get("", summary="客房保養明細清單")
 @router.get("/", summary="客房保養明細清單", include_in_schema=False)
-async def list_records(
+def list_records(
     room_no:       Optional[str] = Query(None, description="依房號篩選"),
     staff_name:    Optional[str] = Query(None, description="依保養人員篩選"),
     maintain_date: Optional[str] = Query(None, description="單日篩選 YYYY/MM/DD"),
@@ -253,7 +253,7 @@ async def list_records(
 
 # ── GET /room-history/{room_no} — 單一房間保養歷史 ───────────────────────────
 @router.get("/room-history/{room_no}", summary="單一房間保養歷史（月曆摘要 + 全記錄）")
-async def get_room_history(
+def get_room_history(
     room_no: str,
     months:  int = Query(12, ge=1, le=36, description="查詢最近幾個月（預設 12）"),
     db: Session = Depends(get_db),
@@ -380,7 +380,7 @@ def _offset_month(year: int, month: int, delta: int) -> tuple[int, int]:
 
 # ── GET /staff-hours — 人員工時月報表 ────────────────────────────────────────
 @router.get("/staff-hours", summary="人員工時月報表（近 N 個月 pivot）")
-async def get_staff_hours(
+def get_staff_hours(
     months:   int           = Query(12, ge=1, le=36, description="顯示最近幾個月（預設 12）"),
     date_from: Optional[str] = Query(None, description="起始日期 YYYY/MM/DD，若指定則覆蓋 months 計算"),
     date_to:   Optional[str] = Query(None, description="結束日期 YYYY/MM/DD"),
@@ -460,7 +460,7 @@ async def get_staff_hours(
 
 # ── GET /maintenance-stats — 保養統計分析（Phase 1+2+3）───────────────────────
 @router.get("/maintenance-stats", summary="保養統計分析（完成率趨勢、異常項目、樓層分析、高風險房間、月份對比）")
-async def get_maintenance_stats(
+def get_maintenance_stats(
     months: int           = Query(12,   ge=1,    le=36,  description="顯示最近幾個月（預設 12）"),
     year:   Optional[int] = Query(None, ge=2020, le=2030, description="統計基準年（不填則取今年）"),
     month:  Optional[int] = Query(None, ge=1,    le=12,  description="統計基準月（不填則取今月）"),
@@ -759,7 +759,7 @@ async def get_maintenance_stats(
 
 # ── GET /{record_id} — 單筆 ──────────────────────────────────────────────────
 @router.get("/{record_id}", summary="單筆客房保養明細")
-async def get_record(record_id: str, db: Session = Depends(get_db)):
+def get_record(record_id: str, db: Session = Depends(get_db)):
     rec = db.get(RoomMaintenanceDetailRecord, record_id)
     if not rec:
         raise HTTPException(

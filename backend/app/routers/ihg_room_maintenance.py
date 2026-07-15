@@ -231,7 +231,7 @@ async def sync_records(background_tasks: BackgroundTasks):
 # ── GET /stats ────────────────────────────────────────────────────────────────
 
 @router.get("/stats", summary="IHG 客房保養 KPI 統計")
-async def get_stats(
+def get_stats(
     year:  Optional[str] = Query(None, description="篩選年度，如 2026；空白=當年"),
     month: Optional[str] = Query(None, description="篩選月份（不補零，如 4）；空白=全年"),
     db: Session = Depends(get_db),
@@ -331,7 +331,7 @@ async def get_stats(
 # ── GET /matrix ───────────────────────────────────────────────────────────────
 
 @router.get("/matrix", summary="IHG 客房保養年度矩陣表")
-async def get_matrix(
+def get_matrix(
     year:    Optional[str] = Query(None, description="年度，如 2026；空白=當年"),
     room_no: Optional[str] = Query(None, description="房號篩選，支援前綴匹配"),
     floor:   Optional[str] = Query(None, description="樓層篩選，如 5F"),
@@ -505,7 +505,7 @@ async def get_matrix(
 # ── GET /export-matrix ────────────────────────────────────────────────────────
 
 @router.get("/export-matrix", summary="IHG 客房保養年度矩陣匯出 Excel")
-async def export_matrix(
+def export_matrix(
     year:    Optional[str] = Query(None, description="年度，如 2026；空白=當年"),
     room_no: Optional[str] = Query(None, description="房號篩選，支援前綴匹配"),
     floor:   Optional[str] = Query(None, description="樓層篩選，如 5F"),
@@ -527,8 +527,8 @@ async def export_matrix(
     from openpyxl.utils import get_column_letter
 
     # 複用 /matrix 與 /stats 的查詢邏輯，確保與畫面一致
-    matrix = await get_matrix(year=year, room_no=room_no, floor=floor, cell_status=cell_status, db=db)
-    stats  = await get_stats(year=matrix["year"], month=None, db=db)
+    matrix = get_matrix(year=year, room_no=room_no, floor=floor, cell_status=cell_status, db=db)
+    stats  = get_stats(year=matrix["year"], month=None, db=db)
     y = matrix["year"]
 
     # 狀態 → 顯示文字 / 色票（沿用前端年度矩陣 STATUS_CFG 色系）
@@ -640,7 +640,7 @@ CANONICAL_CATEGORIES: list[str] = [
 # ── GET /section-matrix ───────────────────────────────────────────────────────
 
 @router.get("/section-matrix", summary="客房保養區段矩陣（月份 × 類別）")
-async def section_matrix(
+def section_matrix(
     year:  str          = Query(..., description="年度，如 2026"),
     month: str          = Query(..., description="月份，如 04 或 4"),
     floor: Optional[str] = Query(None, description="樓層篩選，如 5F"),
@@ -750,7 +750,7 @@ async def section_matrix(
 # ── GET /records ──────────────────────────────────────────────────────────────
 
 @router.get("/records", summary="IHG 客房保養記錄清單（帶篩選）")
-async def list_records(
+def list_records(
     year:    Optional[str] = Query(None, description="年度"),
     month:   Optional[str] = Query(None, description="月份（不補零，如 4）"),
     day:     Optional[str] = Query(None, description="日（不補零，如 5）；篩選 maint_date 的日部分"),
@@ -836,7 +836,7 @@ async def list_records(
 # ── GET /calendar ────────────────────────────────────────────────────────────
 
 @router.get("/calendar", summary="IHG 客房保養月曆格資料（樓層 × 日）")
-async def get_calendar(
+def get_calendar(
     year:  str = Query(..., description="年度，如 2026"),
     month: str = Query(..., description="月份，如 05 或 5"),
     db: Session = Depends(get_db),
@@ -950,7 +950,7 @@ async def get_calendar(
 # ── GET /{ragic_id} ───────────────────────────────────────────────────────────
 
 @router.get("/{ragic_id}", summary="IHG 客房保養單筆明細（含子表格）")
-async def get_record(ragic_id: str, db: Session = Depends(get_db)):
+def get_record(ragic_id: str, db: Session = Depends(get_db)):
     """回傳主表單筆 + 所有子表格明細"""
     master = db.get(IHGRoomMaintenanceMaster, ragic_id)
     if not master:

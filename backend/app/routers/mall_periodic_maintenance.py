@@ -20,6 +20,7 @@ from datetime import date, datetime, timezone
 from typing import Optional, List
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -1124,7 +1125,7 @@ class PMImageOut(BaseModel):
     summary="單一項目附圖（DB 優先，缺資料時即時向 Ragic 補抓一次，來源 Sheet24「圖片上傳」欄位）",
 )
 async def get_item_images(item_ragic_id: str, db: Session = Depends(get_db)):
-    item = db.get(MallPeriodicMaintenanceItem, item_ragic_id)
+    item = await run_in_threadpool(db.get, MallPeriodicMaintenanceItem, item_ragic_id)
     if item and item.images_json:
         try:
             cached = json.loads(item.images_json)

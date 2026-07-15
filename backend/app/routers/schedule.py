@@ -21,6 +21,7 @@ from datetime import datetime, date
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query, status
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -401,7 +402,8 @@ async def import_schedule(
         raise HTTPException(status_code=400, detail="僅支援 .xlsx / .xls 格式")
 
     content = await file.read()
-    result = import_excel(
+    result = await run_in_threadpool(
+        import_excel,
         db=db,
         file_content=content,
         file_name=file.filename,
@@ -410,10 +412,13 @@ async def import_schedule(
     )
 
     if result.get("schedule_id"):
-        _audit(db, current_user, "import", "schedule", result["schedule_id"],
-               {"file": file.filename, "year": result.get("schedule_year"),
-                "month": result.get("schedule_month")})
-        db.commit()
+        def _finish():
+            _audit(db, current_user, "import", "schedule", result["schedule_id"],
+                   {"file": file.filename, "year": result.get("schedule_year"),
+                    "month": result.get("schedule_month")})
+            db.commit()
+
+        await run_in_threadpool(_finish)
 
     return result
 

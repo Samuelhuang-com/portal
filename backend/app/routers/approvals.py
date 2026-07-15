@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
@@ -102,7 +103,7 @@ def list_approvers(
 # ── 新增 ─────────────────────────────────────────────────────────────────────
 
 @router.post("", response_model=ApprovalDetail, status_code=status.HTTP_201_CREATED, summary="新增簽核單")
-async def create_approval(
+def create_approval(
     payload: ApprovalCreate,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -150,13 +151,13 @@ async def create_approval_with_files(
         publish_memo=publish_memo,
         approver_chain=chain,
     )
-    approval = svc.create_approval(payload=payload, user=current_user, db=db)
+    approval = await run_in_threadpool(svc.create_approval, payload=payload, user=current_user, db=db)
 
     valid_files = [f for f in files if f and f.filename]
     if valid_files:
         await svc.save_files_async(approval.id, current_user, valid_files, db)
 
-    return svc.get_approval(approval.id, current_user, db)
+    return await run_in_threadpool(svc.get_approval, approval.id, current_user, db)
 
 
 # ── 詳情 ─────────────────────────────────────────────────────────────────────
@@ -256,10 +257,11 @@ async def upload_file(
 ):
     from app.models.approval import Approval
 
-    a = db.query(Approval).filter(Approval.id == approval_id).first()
+    a = await run_in_threadpool(db.query(Approval).filter(Approval.id == approval_id).first)
     if not a:
         raise HTTPException(status_code=404, detail="not_found")
-    if not svc.can_view(a, current_user, db):
+    can_view = await run_in_threadpool(svc.can_view, a, current_user, db)
+    if not can_view:
         raise HTTPException(status_code=403, detail="permission_denied")
     valid = [f for f in files if f and f.filename]
     if not valid:

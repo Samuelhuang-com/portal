@@ -52,7 +52,7 @@ async def sync_records(background_tasks: BackgroundTasks):
 
 # ── GET /stats — 統計總覽 ────────────────────────────────────────────────────
 @router.get("/stats", response_model=InventoryStatsResponse, summary="統計總覽")
-async def get_stats(db: Session = Depends(get_db)):
+def get_stats(db: Session = Depends(get_db)):
     """回傳 KPI 數字：SKU 數、總庫存量、零庫存數、倉庫數"""
     try:
         stats = svc.get_stats(db)
@@ -66,7 +66,7 @@ async def get_stats(db: Session = Depends(get_db)):
 
 # ── GET / — 列表 ─────────────────────────────────────────────────────────────
 @router.get("/", response_model=InventoryListResponse, summary="倉庫庫存清單")
-async def list_records(
+def list_records(
     warehouse_code: Optional[str] = Query(None, description="依倉庫代碼篩選"),
     product_no:     Optional[str] = Query(None, description="依商品編號篩選"),
     product_name:   Optional[str] = Query(None, description="依商品名稱篩選"),
@@ -93,7 +93,7 @@ async def list_records(
 
 # ── GET /{record_id} — 單筆 ──────────────────────────────────────────────────
 @router.get("/{record_id}", response_model=InventorySingleResponse, summary="單筆庫存記錄")
-async def get_record(record_id: str, db: Session = Depends(get_db)):
+def get_record(record_id: str, db: Session = Depends(get_db)):
     """從本地 DB 讀取單筆庫存記錄"""
     try:
         record = svc.get_record(db, record_id)
