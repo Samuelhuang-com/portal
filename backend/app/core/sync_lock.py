@@ -33,6 +33,7 @@
 import asyncio
 import logging
 import re
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from typing import Optional
@@ -100,23 +101,49 @@ async def async_sync_lock(module_name: str = "", timeout: float = DEFAULT_TIMEOU
     """
     非同步版跨行程鎖。給 FastAPI 後端的 async 排程／路由使用：等待鎖的過程
     丟到 thread pool 執行，不會阻塞事件迴圈，伺服器仍可正常回應其他 HTTP 請求。
+
+    2026-07-16 修正（重要）：
+      filelock 套件預設 thread_local=True —— 鎖的內部狀態（file descriptor、
+      lock_counter）是「每一條 OS 執行緒」各自保存一份，不是共用的。
+      舊版寫法用 `loop.run_in_executor(None, lock.acquire)` 把 acquire() 丟到
+      asyncio 預設 thread pool 的某個 worker 執行緒去等待/取得鎖，但後面的
+      `lock.release()` 卻是在呼叫端（事件迴圈）那條執行緒直接呼叫——兩者是不同
+      的 OS 執行緒。於是 release() 在事件迴圈執行緒看到的是全新、從未鎖過的
+      context（is_locked 為 False），release() 內部的 `if self.is_locked:`
+      直接跳過，變成完全無害、不會拋錯也不會記 log 的 no-op。結果：worker
+      執行緒真正開啟的檔案控制代碼（lock_file_fd）永遠沒被關閉，底層 OS 鎖
+      永遠卡在「鎖定」狀態，後面所有模組都會排隊等 90 秒逾時失敗——這正是
+      「同步全部」批次執行時，第一個模組成功後、後面全部卡住逾時的根本原因
+      （單一模組同步用的是 sync_lock()，acquire/release 都在同一條執行緒內
+      直接呼叫，不會踩到這個問題，因此不受影響）。
+
+      修法：用「單一 worker 執行緒」的 ThreadPoolExecutor，強制 acquire() 與
+      release() 一定跑在同一條 OS 執行緒上，徹底避開 filelock 的 thread-local
+      陷阱（不依賴特定 filelock 版本是否支援 thread_local=False 參數）。
     """
     lock = _make_lock(timeout)
     if lock is None:
         yield
         return
     loop = asyncio.get_event_loop()
+    executor = ThreadPoolExecutor(max_workers=1)
     try:
-        await loop.run_in_executor(None, lock.acquire)
-    except Timeout:
-        logger.warning(
-            "[SyncLock] %s 等待跨行程鎖逾時（%.0fs）："
-            "可能有其他同步（sync_tool.py 或後端排程）正在進行中，本次略過",
-            module_name or "(unnamed)",
-            timeout,
-        )
-        raise
-    try:
-        yield
+        try:
+            await loop.run_in_executor(executor, lock.acquire)
+        except Timeout:
+            logger.warning(
+                "[SyncLock] %s 等待跨行程鎖逾時（%.0fs）："
+                "可能有其他同步（sync_tool.py 或後端排程）正在進行中，本次略過",
+                module_name or "(unnamed)",
+                timeout,
+            )
+            raise
+        try:
+            yield
+        finally:
+            # release 也必須丟回「同一顆」單執行緒 executor，確保跟 acquire
+            # 是同一條 OS 執行緒，這樣 filelock 的 thread-local context 才會
+            # 對得起來，鎖才會真的被釋放。
+            await loop.run_in_executor(executor, lock.release)
     finally:
-        lock.release()
+        executor.shutdown(wait=False)
