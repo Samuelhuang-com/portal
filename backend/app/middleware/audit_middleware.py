@@ -94,6 +94,39 @@ def _decode_user_from_token(request: Request) -> tuple[str | None, str | None]:
         return None, None
 
 
+def _write_log_sync(
+    user_id: str | None,
+    user_email: str | None,
+    module: str,
+    method: str,
+    path: str,
+    status_code: int,
+    response_ms: int,
+    ip_address: str | None,
+) -> None:
+    """實際落地寫入（同步 SQLAlchemy），只能在 thread pool 執行緒呼叫，不可直接在事件迴圈執行緒呼叫。"""
+    from app.core.database import SessionLocal
+    from app.models.api_access_log import ApiAccessLog
+    from app.core.time import twnow
+
+    db = SessionLocal()
+    try:
+        db.add(ApiAccessLog(
+            user_id=user_id,
+            user_email=user_email,
+            module=module,
+            method=method,
+            path=path,
+            status_code=status_code,
+            response_ms=response_ms,
+            ip_address=ip_address,
+            created_at=twnow(),
+        ))
+        db.commit()
+    finally:
+        db.close()
+
+
 async def _write_log(
     user_id: str | None,
     user_email: str | None,
@@ -104,28 +137,43 @@ async def _write_log(
     response_ms: int,
     ip_address: str | None,
 ) -> None:
-    """非同步寫入 api_access_logs，失敗僅 log 不拋例外。"""
-    try:
-        from app.core.database import SessionLocal
-        from app.models.api_access_log import ApiAccessLog
-        from app.core.time import twnow
+    """
+    非同步寫入 api_access_logs，失敗僅 log 不拋例外。
 
-        db = SessionLocal()
-        try:
-            db.add(ApiAccessLog(
-                user_id=user_id,
-                user_email=user_email,
-                module=module,
-                method=method,
-                path=path,
-                status_code=status_code,
-                response_ms=response_ms,
-                ip_address=ip_address,
-                created_at=twnow(),
-            ))
-            db.commit()
-        finally:
-            db.close()
+    2026-07-16 修正（重要）：
+      這個函式雖然是用 asyncio.create_task() 以「不阻塞當前請求」的方式觸發，
+      但它本身仍然是跑在同一條事件迴圈上的 coroutine。舊版寫法直接在這個
+      async def 裡呼叫同步的 db.commit()——這是一個會阻塞的呼叫，一旦 SQLite
+      當下被 sync_tool.py 的批次同步（或其他寫入）鎖住，db.commit() 會原地
+      等到 busy_timeout（60 秒）才回來。因為沒有透過 run_in_threadpool 丟到
+      背景執行緒，這 60 秒的等待會直接卡住整個事件迴圈，導致「當下所有」
+      使用者的所有 API 請求全部一起卡住／轉圈圈，直到這次 commit 完成為止。
+      這跟先前修過的 70 個 router 是同一類問題，只是這個檔案在 app/middleware/
+      底下，不在 app/routers/ 掃描範圍內，先前的稽核沒有涵蓋到。
+
+      這個 middleware 掛在幾乎所有 /api/v1/ 請求上，所以只要 sync_tool 正在
+      大量寫入、造成 SQLite 短暫鎖定，整個網站就會在那段時間內全面卡住——
+      這正是「sync_tool 同步全部時 Portal 網站轉圈圈、同步結束後就恢復正常」
+      的根本原因。
+
+      修法：把實際寫入（db.commit()）透過 run_in_threadpool 丟到背景執行緒，
+      就算真的卡在等待 SQLite 鎖，也只會卡住這個背景 task 自己，不會影響
+      事件迴圈、不會影響其他任何使用者的請求。
+    """
+    try:
+        from fastapi.concurrency import run_in_threadpool
+
+        await run_in_threadpool(
+            _write_log_sync,
+            user_id,
+            user_email,
+            module,
+            method,
+            path,
+            status_code,
+            response_ms,
+            ip_address,
+        )
     except Exception as exc:
         logger.debug("[AuditMiddleware] write failed: %s", exc)
 
