@@ -1435,7 +1435,9 @@ async def lifespan(app: FastAPI):
     print("[Portal] hotel_mr_reading flat migration checked.")
 
     # 建立尚未存在的資料表（不影響已有表格）
-    Base.metadata.create_all(bind=engine)
+    # 2026-07-16：套用 _run_startup_migration 重試保護（見該函式 docstring）——
+    # 避免後端啟動時剛好撞上 sync_tool.py 寫入中的 SQLite 鎖定，就讓整個服務起不來。
+    _run_startup_migration("_create_all_tables", lambda: Base.metadata.create_all(bind=engine))
     print("[Portal] Database tables ensured.")
 
     # ── 週期採購（獨立資料庫 cycle-purchase.db，2026-07-10 決策：不與 portal.db 共用）──
@@ -1450,43 +1452,54 @@ async def lifespan(app: FastAPI):
     import app.models.cycle_purchase_receiving   # noqa: F401
     import app.models.cycle_purchase_payment      # noqa: F401
     import app.models.cycle_purchase_audit        # noqa: F401
-    CyclePurchaseBase.metadata.create_all(bind=cycle_purchase_engine)
+    # 2026-07-16：同樣套用重試保護，理由同上（_create_all_tables）。
+    _run_startup_migration(
+        "_create_cycle_purchase_tables",
+        lambda: CyclePurchaseBase.metadata.create_all(bind=cycle_purchase_engine),
+    )
     print("[Portal] Cycle-purchase database tables ensured (cycle-purchase.db).")
 
     # 影音教學 Migration：舊版 tutorial_videos 直接存 category/module_name/module_route，
     # 新版改為獨立的 tutorial_video_modules 主檔（module_id 關聯），此處把既有資料搬過去
     from sqlalchemy import text as _tv_text
     import uuid as _tv_uuid
-    with engine.connect() as _conn:
-        _tv_cols = {row[1] for row in _conn.execute(_tv_text("PRAGMA table_info(tutorial_videos)"))}
-        if _tv_cols and "module_id" not in _tv_cols:
-            _conn.execute(_tv_text("ALTER TABLE tutorial_videos ADD COLUMN module_id TEXT DEFAULT ''"))
-            print("[Portal] tutorial_videos: added module_id column.")
-            if "module_name" in _tv_cols:
-                legacy_rows = _conn.execute(_tv_text(
-                    "SELECT DISTINCT category, module_name, module_route FROM tutorial_videos"
-                )).fetchall()
-                order_by_category: dict = {}
-                now_str = twnow().isoformat(sep=" ")
-                for category, module_name, module_route in legacy_rows:
-                    cat = category or "hotel"
-                    order_by_category.setdefault(cat, 0)
-                    mod_id = str(_tv_uuid.uuid4())
-                    _conn.execute(_tv_text(
-                        "INSERT INTO tutorial_video_modules "
-                        "(id, category, module_name, module_route, sort_order, created_at, updated_at) "
-                        "VALUES (:id, :cat, :name, :route, :order_val, :now, :now)"
-                    ), {
-                        "id": mod_id, "cat": cat, "name": module_name or "",
-                        "route": module_route or "", "order_val": order_by_category[cat], "now": now_str,
-                    })
-                    order_by_category[cat] += 1
-                    _conn.execute(_tv_text(
-                        "UPDATE tutorial_videos SET module_id = :mid "
-                        "WHERE category = :cat AND module_name = :name AND module_route = :route"
-                    ), {"mid": mod_id, "cat": category, "name": module_name, "route": module_route})
-                _conn.commit()
-                print(f"[Portal] tutorial_videos: migrated {len(legacy_rows)} legacy module(s) to tutorial_video_modules.")
+
+    # 2026-07-16：整段包成函式、透過 _run_startup_migration 套用重試保護。
+    # ALTER TABLE / INSERT / UPDATE 都在同一個未 commit 的交易內，中途若因鎖定
+    # 失敗會整段 rollback（SQLite DDL 也是交易式的），所以重試時從頭重做是安全的。
+    def _migrate_tutorial_video_modules():
+        with engine.connect() as _conn:
+            _tv_cols = {row[1] for row in _conn.execute(_tv_text("PRAGMA table_info(tutorial_videos)"))}
+            if _tv_cols and "module_id" not in _tv_cols:
+                _conn.execute(_tv_text("ALTER TABLE tutorial_videos ADD COLUMN module_id TEXT DEFAULT ''"))
+                print("[Portal] tutorial_videos: added module_id column.")
+                if "module_name" in _tv_cols:
+                    legacy_rows = _conn.execute(_tv_text(
+                        "SELECT DISTINCT category, module_name, module_route FROM tutorial_videos"
+                    )).fetchall()
+                    order_by_category: dict = {}
+                    now_str = twnow().isoformat(sep=" ")
+                    for category, module_name, module_route in legacy_rows:
+                        cat = category or "hotel"
+                        order_by_category.setdefault(cat, 0)
+                        mod_id = str(_tv_uuid.uuid4())
+                        _conn.execute(_tv_text(
+                            "INSERT INTO tutorial_video_modules "
+                            "(id, category, module_name, module_route, sort_order, created_at, updated_at) "
+                            "VALUES (:id, :cat, :name, :route, :order_val, :now, :now)"
+                        ), {
+                            "id": mod_id, "cat": cat, "name": module_name or "",
+                            "route": module_route or "", "order_val": order_by_category[cat], "now": now_str,
+                        })
+                        order_by_category[cat] += 1
+                        _conn.execute(_tv_text(
+                            "UPDATE tutorial_videos SET module_id = :mid "
+                            "WHERE category = :cat AND module_name = :name AND module_route = :route"
+                        ), {"mid": mod_id, "cat": category, "name": module_name, "route": module_route})
+                    _conn.commit()
+                    print(f"[Portal] tutorial_videos: migrated {len(legacy_rows)} legacy module(s) to tutorial_video_modules.")
+
+    _run_startup_migration("_migrate_tutorial_video_modules", _migrate_tutorial_video_modules)
     print("[Portal] Tutorial video module migration checked.")
 
     # 影音教學 Migration（第二步）：舊版 tutorial_videos 表格是在 category/module_name/
@@ -1498,110 +1511,129 @@ async def lifespan(app: FastAPI):
     # "NOT NULL constraint failed: tutorial_videos.category"。
     # 這裡透過「建新表→搬資料→刪舊表→改名」的方式重建 tutorial_videos，改用目前
     # ORM model 對應的正確欄位（不含三個舊欄位）。
-    with engine.connect() as _conn:
-        _tv_cols2 = {row[1] for row in _conn.execute(_tv_text("PRAGMA table_info(tutorial_videos)"))}
-        _tv_legacy_cols = {"category", "module_name", "module_route"} & _tv_cols2
-        if _tv_legacy_cols:
-            _conn.execute(_tv_text("""
-                CREATE TABLE tutorial_videos_new (
-                    id VARCHAR(36) NOT NULL PRIMARY KEY,
-                    module_id VARCHAR(36) NOT NULL,
-                    episode VARCHAR(20) NOT NULL,
-                    title VARCHAR(255) NOT NULL,
-                    description TEXT NOT NULL,
-                    video_stored_name VARCHAR(255) NOT NULL,
-                    video_orig_name VARCHAR(255) NOT NULL,
-                    video_size_bytes INTEGER NOT NULL,
-                    video_content_type VARCHAR(100) NOT NULL,
-                    script_stored_name VARCHAR(255) NOT NULL,
-                    script_orig_name VARCHAR(255) NOT NULL,
-                    sort_order INTEGER NOT NULL,
-                    uploaded_by VARCHAR(100) NOT NULL,
-                    created_at DATETIME NOT NULL,
-                    updated_at DATETIME NOT NULL
-                )
-            """))
-            _conn.execute(_tv_text("""
-                INSERT INTO tutorial_videos_new (
-                    id, module_id, episode, title, description,
-                    video_stored_name, video_orig_name, video_size_bytes, video_content_type,
-                    script_stored_name, script_orig_name, sort_order, uploaded_by,
-                    created_at, updated_at
-                )
-                SELECT
-                    id, module_id, episode, title, description,
-                    video_stored_name, video_orig_name, video_size_bytes, video_content_type,
-                    script_stored_name, script_orig_name, sort_order, uploaded_by,
-                    created_at, updated_at
-                FROM tutorial_videos
-            """))
-            _conn.execute(_tv_text("DROP TABLE tutorial_videos"))
-            _conn.execute(_tv_text("ALTER TABLE tutorial_videos_new RENAME TO tutorial_videos"))
-            _conn.commit()
-            print(f"[Portal] tutorial_videos: rebuilt table, dropped legacy columns {_tv_legacy_cols}.")
+    def _migrate_tutorial_videos_rebuild():
+        with engine.connect() as _conn:
+            _tv_cols2 = {row[1] for row in _conn.execute(_tv_text("PRAGMA table_info(tutorial_videos)"))}
+            _tv_legacy_cols = {"category", "module_name", "module_route"} & _tv_cols2
+            if _tv_legacy_cols:
+                _conn.execute(_tv_text("""
+                    CREATE TABLE tutorial_videos_new (
+                        id VARCHAR(36) NOT NULL PRIMARY KEY,
+                        module_id VARCHAR(36) NOT NULL,
+                        episode VARCHAR(20) NOT NULL,
+                        title VARCHAR(255) NOT NULL,
+                        description TEXT NOT NULL,
+                        video_stored_name VARCHAR(255) NOT NULL,
+                        video_orig_name VARCHAR(255) NOT NULL,
+                        video_size_bytes INTEGER NOT NULL,
+                        video_content_type VARCHAR(100) NOT NULL,
+                        script_stored_name VARCHAR(255) NOT NULL,
+                        script_orig_name VARCHAR(255) NOT NULL,
+                        sort_order INTEGER NOT NULL,
+                        uploaded_by VARCHAR(100) NOT NULL,
+                        created_at DATETIME NOT NULL,
+                        updated_at DATETIME NOT NULL
+                    )
+                """))
+                _conn.execute(_tv_text("""
+                    INSERT INTO tutorial_videos_new (
+                        id, module_id, episode, title, description,
+                        video_stored_name, video_orig_name, video_size_bytes, video_content_type,
+                        script_stored_name, script_orig_name, sort_order, uploaded_by,
+                        created_at, updated_at
+                    )
+                    SELECT
+                        id, module_id, episode, title, description,
+                        video_stored_name, video_orig_name, video_size_bytes, video_content_type,
+                        script_stored_name, script_orig_name, sort_order, uploaded_by,
+                        created_at, updated_at
+                    FROM tutorial_videos
+                """))
+                _conn.execute(_tv_text("DROP TABLE tutorial_videos"))
+                _conn.execute(_tv_text("ALTER TABLE tutorial_videos_new RENAME TO tutorial_videos"))
+                _conn.commit()
+                print(f"[Portal] tutorial_videos: rebuilt table, dropped legacy columns {_tv_legacy_cols}.")
+
+    _run_startup_migration("_migrate_tutorial_videos_rebuild", _migrate_tutorial_videos_rebuild)
     print("[Portal] Tutorial video legacy-column cleanup checked.")
 
     # PPT 匯出設定 Migration：為已存在的 ppt_export_configs 表補充新欄位
     from sqlalchemy import text as _ppt_text
-    with engine.connect() as _conn:
-        _ppt_cols = {row[1] for row in _conn.execute(_ppt_text("PRAGMA table_info(ppt_export_configs)"))}
-        if "user_id" not in _ppt_cols:
-            _conn.execute(_ppt_text("ALTER TABLE ppt_export_configs ADD COLUMN user_id TEXT"))
-            print("[Portal] ppt_export_configs: added user_id column.")
-        if "template_id" not in _ppt_cols:
-            _conn.execute(_ppt_text("ALTER TABLE ppt_export_configs ADD COLUMN template_id TEXT DEFAULT 'default'"))
-            print("[Portal] ppt_export_configs: added template_id column.")
-        _conn.commit()
+
+    def _migrate_ppt_export_configs():
+        with engine.connect() as _conn:
+            _ppt_cols = {row[1] for row in _conn.execute(_ppt_text("PRAGMA table_info(ppt_export_configs)"))}
+            if "user_id" not in _ppt_cols:
+                _conn.execute(_ppt_text("ALTER TABLE ppt_export_configs ADD COLUMN user_id TEXT"))
+                print("[Portal] ppt_export_configs: added user_id column.")
+            if "template_id" not in _ppt_cols:
+                _conn.execute(_ppt_text("ALTER TABLE ppt_export_configs ADD COLUMN template_id TEXT DEFAULT 'default'"))
+                print("[Portal] ppt_export_configs: added template_id column.")
+            _conn.commit()
+
+    _run_startup_migration("_migrate_ppt_export_configs", _migrate_ppt_export_configs)
     print("[Portal] PPT export config migration checked.")
 
     # users 表：補充忘記密碼 / OTP 欄位（2026-05-25）
     from sqlalchemy import text as _user_text
-    with engine.connect() as _conn:
-        _user_cols = {row[1] for row in _conn.execute(_user_text("PRAGMA table_info(users)"))}
-        if "otp_code" not in _user_cols:
-            _conn.execute(_user_text("ALTER TABLE users ADD COLUMN otp_code TEXT"))
-            print("[Portal] users: added otp_code column.")
-        if "otp_expires_at" not in _user_cols:
-            _conn.execute(_user_text("ALTER TABLE users ADD COLUMN otp_expires_at DATETIME"))
-            print("[Portal] users: added otp_expires_at column.")
-        if "must_change_password" not in _user_cols:
-            _conn.execute(_user_text("ALTER TABLE users ADD COLUMN must_change_password BOOLEAN DEFAULT 0"))
-            print("[Portal] users: added must_change_password column.")
-        _conn.commit()
+
+    def _migrate_users_otp():
+        with engine.connect() as _conn:
+            _user_cols = {row[1] for row in _conn.execute(_user_text("PRAGMA table_info(users)"))}
+            if "otp_code" not in _user_cols:
+                _conn.execute(_user_text("ALTER TABLE users ADD COLUMN otp_code TEXT"))
+                print("[Portal] users: added otp_code column.")
+            if "otp_expires_at" not in _user_cols:
+                _conn.execute(_user_text("ALTER TABLE users ADD COLUMN otp_expires_at DATETIME"))
+                print("[Portal] users: added otp_expires_at column.")
+            if "must_change_password" not in _user_cols:
+                _conn.execute(_user_text("ALTER TABLE users ADD COLUMN must_change_password BOOLEAN DEFAULT 0"))
+                print("[Portal] users: added must_change_password column.")
+            _conn.commit()
+
+    _run_startup_migration("_migrate_users_otp", _migrate_users_otp)
     print("[Portal] users OTP migration checked.")
 
     # module_sync_log 表：補充 Loop Engineering 欄位（2026-06-17）
     from sqlalchemy import text as _loop_text
-    with engine.connect() as _conn:
-        _msl_cols = {row[1] for row in _conn.execute(_loop_text("PRAGMA table_info(module_sync_log)"))}
-        if "retry_count" not in _msl_cols:
-            _conn.execute(_loop_text("ALTER TABLE module_sync_log ADD COLUMN retry_count INTEGER DEFAULT 0"))
-            print("[Portal] module_sync_log: added retry_count column.")
-        if "parent_log_id" not in _msl_cols:
-            _conn.execute(_loop_text("ALTER TABLE module_sync_log ADD COLUMN parent_log_id INTEGER"))
-            print("[Portal] module_sync_log: added parent_log_id column.")
-        if "is_anomaly" not in _msl_cols:
-            _conn.execute(_loop_text("ALTER TABLE module_sync_log ADD COLUMN is_anomaly BOOLEAN DEFAULT 0"))
-            print("[Portal] module_sync_log: added is_anomaly column.")
-        _conn.commit()
+
+    def _migrate_module_sync_log_loop_fields():
+        with engine.connect() as _conn:
+            _msl_cols = {row[1] for row in _conn.execute(_loop_text("PRAGMA table_info(module_sync_log)"))}
+            if "retry_count" not in _msl_cols:
+                _conn.execute(_loop_text("ALTER TABLE module_sync_log ADD COLUMN retry_count INTEGER DEFAULT 0"))
+                print("[Portal] module_sync_log: added retry_count column.")
+            if "parent_log_id" not in _msl_cols:
+                _conn.execute(_loop_text("ALTER TABLE module_sync_log ADD COLUMN parent_log_id INTEGER"))
+                print("[Portal] module_sync_log: added parent_log_id column.")
+            if "is_anomaly" not in _msl_cols:
+                _conn.execute(_loop_text("ALTER TABLE module_sync_log ADD COLUMN is_anomaly BOOLEAN DEFAULT 0"))
+                print("[Portal] module_sync_log: added is_anomaly column.")
+            _conn.commit()
+
+    _run_startup_migration("_migrate_module_sync_log_loop_fields", _migrate_module_sync_log_loop_fields)
     print("[Portal] module_sync_log Loop Engineering migration checked.")
 
     # 報修未完成報表：確保預設排程設定存在（is_enabled=False，不會自動寄信）
     from app.core.database import SessionLocal as _RepairSessionLocal
     from app.services.repair_report_service import ensure_default_schedule as _ensure_repair_sched
-    with _RepairSessionLocal() as _repair_db:
-        _ensure_repair_sched(_repair_db)
+
+    def _check_repair_report_schedule():
+        with _RepairSessionLocal() as _repair_db:
+            _ensure_repair_sched(_repair_db)
+
+    _run_startup_migration("_check_repair_report_schedule", _check_repair_report_schedule)
     print("[Portal] Repair report schedule settings checked.")
 
     # 內建角色 seed（system_admin / tenant_admin / module_manager / viewer）
-    _seed_builtin_roles()
+    _run_startup_migration("_seed_builtin_roles", _seed_builtin_roles)
 
     # 預設 admin 用戶 seed（email: admin, password: admin1234）
-    _seed_admin_user()
+    _run_startup_migration("_seed_admin_user", _seed_admin_user)
 
     # Ragic Sheet 設定 seed（各模組各部門的 list_path / detail_path）
     from app.services.ragic_sheet_config_service import seed_ragic_sheet_config
-    seed_ragic_sheet_config()
+    _run_startup_migration("seed_ragic_sheet_config", seed_ragic_sheet_config)
 
     # SQLite WAL 模式：讓讀取與寫入可同時進行（OneDrive 環境必要）
     from sqlalchemy import text as _sql_text
@@ -1632,7 +1664,10 @@ async def lifespan(app: FastAPI):
     print("[Portal] dazhi_repair_case images_json migration checked.")
 
     # 清除保全巡檢中的拍照欄位 item（Ragic 必填但不屬於巡檢評分項目）
-    _cleanup_security_patrol_photo_items()
+    # 2026-07-16：這是這次「Application startup failed」出包的元凶——原本沒有
+    # 套用 _run_startup_migration 重試保護，遇到 sync_tool.py 寫入中造成的
+    # database is locked 就直接讓整個後端啟動失敗。改用同樣的保護機制。
+    _run_startup_migration("_cleanup_security_patrol_photo_items", _cleanup_security_patrol_photo_items)
     print("[Portal] Security patrol photo items cleanup checked.")
 
     # 保全巡檢 is_note 欄位遷移 + 回填異常說明項目
@@ -1664,7 +1699,7 @@ async def lifespan(app: FastAPI):
 
     # F1（2026-06-01）：基礎參考資料種子（公司別 / 部門別 / 計價規格）
     import app.models.reference_data  # noqa: F401 — 確保 create_all 建立資料表
-    _seed_reference_data()
+    _run_startup_migration("_seed_reference_data", _seed_reference_data)
     print("[Portal] reference_data seed checked.")
 
     # F3（2026-06-01）：contracts 新欄位 + contract_cost_allocations 資料表
@@ -1693,29 +1728,33 @@ async def lifespan(app: FastAPI):
     print("[Portal] full_bldg_pm_batch_item Sheet28 fields migration checked.")
 
     # 選單設定補丁（2026-04-28）：隱藏舊 custom_1777348120465，補齊 mall-pm-group 子項 DB 記錄
-    _seed_menu_config_mall_pm_group()
+    _run_startup_migration("_seed_menu_config_mall_pm_group", _seed_menu_config_mall_pm_group)
 
     # 選單設定補丁（2026-05-14）：確保 nichiyo-purchase-report 選單有 DB 記錄
-    _seed_menu_config_nichiyo_purchase()
+    _run_startup_migration("_seed_menu_config_nichiyo_purchase", _seed_menu_config_nichiyo_purchase)
 
     # 選單設定補丁（2026-05-14）：確保 nichiyo-claim-report 選單有 DB 記錄
-    _seed_menu_config_nichiyo_claim()
+    _run_startup_migration("_seed_menu_config_nichiyo_claim", _seed_menu_config_nichiyo_claim)
 
     # 客房主檔 seed（若 rooms 表為空，自動填入樓層 × 房號資料）
     from app.services.room_seed import seed_rooms
 
-    seed_rooms()
+    _run_startup_migration("seed_rooms", seed_rooms)
     print("[Portal] Room seed checked.")
 
     # 知識庫範例資料植入（首次啟動時若 wiki_articles 為空）
     from app.services.wiki_seed import seed_wiki_articles
-    seed_wiki_articles()
+    _run_startup_migration("seed_wiki_articles", seed_wiki_articles)
 
     # 班表模組種子（部門 + 班別）
     from app.services.schedule_seed import run_all_seeds as _schedule_seed
     from app.core.database import SessionLocal as _SessionLocal
-    with _SessionLocal() as _seed_db:
-        _schedule_seed(_seed_db)
+
+    def _run_schedule_seed():
+        with _SessionLocal() as _seed_db:
+            _schedule_seed(_seed_db)
+
+    _run_startup_migration("_run_schedule_seed", _run_schedule_seed)
     print("[Portal] Schedule seed checked.")
 
     # ── 排程同步（可透過 .env SCHEDULER_ENABLED=False 完全關閉）────────────────
