@@ -203,6 +203,11 @@ C_TERM_FG = "#d4d4d4"
 
 FONT_NAME = "Microsoft JhengHei UI"
 
+# 2026-07-18 新增：畫面版本顯示（右下角footer）。跟 docs/CHANGELOG.md 用
+# 同一組版號，不另外發明一套編號——每次修改 portal_console.py 且有加
+# CHANGELOG 條目時，記得同步把這裡改成當次的版本號，兩邊才不會對不上。
+CONSOLE_VERSION = "1.80.62"
+
 BACKEND_PORT = 8000
 
 
@@ -403,6 +408,7 @@ class PortalConsole(tk.Tk):
         self._log_queues: dict[int, "queue.Queue[str]"] = {}
         self._log_widgets: dict[int, tk.Text] = {}
         self._sync_tool_proc: subprocess.Popen | None = None
+        self._frontend_build_proc: subprocess.Popen | None = None
 
         # 2026-07-18 新增：偵測 Backend port 是否由 NSSM 服務管理（正式區）。
         # 只做一次（啟動時，`sc qc` 一次頂多幾百毫秒），偵測不到就是 None，
@@ -415,6 +421,7 @@ class PortalConsole(tk.Tk):
 
         self._active_tab = 0
         self._build_tab_bar()
+        self._build_footer()
         self._build_content_area()
 
         self._page_service = tk.Frame(self._content, bg=C_PAGE_BG)
@@ -487,6 +494,17 @@ class PortalConsole(tk.Tk):
         self._content = tk.Frame(self, bg=C_PAGE_BG)
         self._content.pack(fill=tk.BOTH, expand=True)
 
+    # ── 底部版本列（幫忙確認目前這台機器跑的是不是最新版）───────────────────
+    def _build_footer(self):
+        footer = tk.Frame(self, bg=C_PAGE_BG, height=22)
+        footer.pack(fill=tk.X, side=tk.BOTTOM)
+        footer.pack_propagate(False)
+        tk.Frame(footer, bg=C_BORDER, height=1).pack(fill=tk.X, side=tk.TOP)
+        tk.Label(
+            footer, text=f"Portal 服務主控台　v{CONSOLE_VERSION}",
+            bg=C_PAGE_BG, fg=C_TEXT_DIM, font=(FONT_NAME, 8),
+        ).pack(side=tk.RIGHT, padx=12)
+
     # ── 分頁 1：服務控制（每個服務一張卡片：工具列 + 狀態徽章 + 內嵌終端機）────
     def _build_service_page(self, parent: tk.Frame):
         self._svc_widgets = {}
@@ -543,6 +561,9 @@ class PortalConsole(tk.Tk):
             tk.Frame(toolbar, bg=C_BORDER, width=1, height=18).pack(side=tk.LEFT, padx=8, pady=6)
             _toolbtn(toolbar, "🔄", "Refresh", lambda p=port, n=name: self._refresh_one(n, p))
             _toolbtn(toolbar, "🌐", "開啟網頁", lambda u=browser_url: webbrowser.open(u))
+            if port == FRONTEND_PORT:
+                tk.Frame(toolbar, bg=C_BORDER, width=1, height=18).pack(side=tk.LEFT, padx=8, pady=6)
+                _toolbtn(toolbar, "🔨", "重建正式區前端", lambda: self._build_frontend())
 
             tk.Label(
                 card, text="即時輸出", bg=C_CARD_BG, fg=C_TEXT_DIM,
@@ -904,6 +925,67 @@ class PortalConsole(tk.Tk):
             self._toast.show("已開啟同步工具視窗。")
         except Exception as e:
             self._toast.show(f"開啟同步工具失敗：{e}", kind="error")
+
+    # ── 重建正式區前端（npm install && npm run build）───────────────────────
+    def _build_frontend(self):
+        """執行 `npm install && npm run build`，重建 frontend/dist 靜態檔。
+
+        2026-07-18 新增背景：正式區前端不是跑 vite dev server，而是由
+        Backend 直接輸出建置好的 dist 靜態檔（見 deploy.bat／
+        prod-update.bat Step 4）；prod-update.bat 本來就有這個步驟，但要
+        連著 git pull／pip install／DB index 一起跑一整套。這裡讓
+        portal_console.py 也能單獨觸發重建（例如只改了前端程式碼、
+        不想跑整套 prod-update.bat），輸出直接接到 Frontend 卡片的內嵌
+        終端機，跟其他服務操作維持一致的體驗。
+        """
+        if self._frontend_build_proc is not None and self._frontend_build_proc.poll() is None:
+            self._toast.show("前端建置已在執行中，請稍候", kind="error")
+            return
+
+        port = FRONTEND_PORT
+        q = self._log_queues.setdefault(port, queue.Queue())
+        log_box = self._log_widgets.get(port)
+        if log_box is not None:
+            log_box.configure(state=tk.NORMAL)
+            log_box.delete("1.0", tk.END)
+            log_box.configure(state=tk.DISABLED)
+        q.put(f"[Console] 開始建置：npm install && npm run build（cwd={_FRONTEND}）")
+        self._toast.show("開始建置正式區前端…")
+
+        def work():
+            try:
+                proc = subprocess.Popen(
+                    "npm install && npm run build",
+                    cwd=str(_FRONTEND),
+                    shell=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    bufsize=1,
+                    creationflags=_CREATE_NO_WINDOW,
+                )
+            except Exception as e:
+                q.put(f"[Console] 啟動建置指令失敗：{e}")
+                return None
+            self._frontend_build_proc = proc
+            q.put(f"[Console] PID {proc.pid}")
+            for line in proc.stdout:
+                q.put(_ANSI_ESCAPE_RE.sub("", line.rstrip("\n")))
+            code = proc.poll()
+            q.put(f"[Console] 建置行程已結束（exit code {code}）")
+            return code
+
+        def done(code):
+            if code == 0:
+                self._toast.show("正式區前端建置完成（npm run build 成功）。")
+            elif code is None:
+                self._toast.show("建置未能啟動，請查看內嵌終端機訊息", kind="error")
+            else:
+                self._toast.show(f"前端建置失敗（exit code {code}），請查看內嵌終端機訊息", kind="error")
+
+        self._run_bg(work, done)
 
     # ── 分頁 2：Health Check ─────────────────────────────────────────────────
     def _build_health_page(self, parent: tk.Frame):

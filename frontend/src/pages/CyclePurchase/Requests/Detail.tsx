@@ -25,7 +25,7 @@ import {
   Popconfirm, Select, Space, Table, Tag, Typography, message,
 } from 'antd'
 import {
-  ArrowLeftOutlined, DeleteOutlined, LockOutlined, SearchOutlined, UnlockOutlined,
+  ArrowLeftOutlined, DeleteOutlined, LockOutlined, SearchOutlined, SendOutlined, UnlockOutlined,
 } from '@ant-design/icons'
 import {
   addRequestItem, closeRequests, deleteRequestItem, getAvailableItems,
@@ -223,14 +223,18 @@ export default function CpRequestDetailPage() {
     }
   }
 
+  // 2026-07-18：一般填單人（只有 cycle_purchase_request 權限、沒有 cycle_purchase_close）
+  // 看到的是「送出請購單」，買家/管理者（有 cycle_purchase_close 權限）看到的是「關閉此
+  // 請購單」——底層是同一個關閉動作（is_closed=True），只是站在填單人角度換個說法叫「送出」，
+  // 跟買家在請購單清單頁「關閉請購單」視窗的批次管理（全部關閉/選擇關閉）是同一套機制。
   const handleClose = async () => {
     setActing(true)
     try {
       await closeRequests([requestId])
-      message.success('已關閉此請購單')
+      message.success(canClose ? '已關閉此請購單' : '已送出，這張請購單暫時無法再編輯')
       await load()
     } catch (err: any) {
-      message.error(errMsg(err, '關閉失敗'))
+      message.error(errMsg(err, canClose ? '關閉失敗' : '送出失敗'))
     } finally {
       setActing(false)
     }
@@ -340,7 +344,22 @@ export default function CpRequestDetailPage() {
         </Space>
         <Space>
           {canClose && !detail.is_closed && (
-            <Button icon={<LockOutlined />} loading={acting} onClick={handleClose}>關閉此請購單</Button>
+            <Popconfirm
+              title="確定要關閉這張請購單？"
+              description="關閉後不能再新增/編輯明細，如需修改要先重新開啟"
+              onConfirm={handleClose}
+            >
+              <Button icon={<LockOutlined />} loading={acting}>關閉此請購單</Button>
+            </Popconfirm>
+          )}
+          {!canClose && canEdit && !detail.is_closed && (
+            <Popconfirm
+              title="確定要送出這張請購單？"
+              description="送出後就不能再修改，如果之後還要改，要請有權限的人重新開啟"
+              onConfirm={handleClose}
+            >
+              <Button type="primary" icon={<SendOutlined />} loading={acting}>送出請購單</Button>
+            </Popconfirm>
           )}
           {canClose && detail.is_closed && (
             <Button icon={<UnlockOutlined />} loading={acting} onClick={handleReopen}>重新開啟</Button>

@@ -127,6 +127,35 @@ def require_permission(permission_key: str):
     return checker
 
 
+def require_any_permission(*permission_keys: str):
+    """
+    FastAPI Dependency 工廠：要求使用者具備「多個 permission_key 中任一個」（OR 邏輯）。
+    system_admin 無條件通過（permissions=["*"]）。
+    用法：Depends(require_any_permission("cycle_purchase_view", "cycle_purchase_request"))
+
+    2026-07-19 新增：用於「查看範圍」比「編輯範圍」更寬的頁面 —— 例如週期採購請購單
+    清單/詳情，除了 cycle_purchase_view（可看全部模組）之外，只勾 cycle_purchase_request
+    （只能填寫/編輯自己承辦部門單子）的人也需要能叫出清單/詳情才能操作，否則連選單
+    都無法展開。
+    """
+    def checker(
+        current_user: User = Depends(get_current_user),
+        db: Session = Depends(get_db),
+    ):
+        permissions = get_user_permissions(current_user.id, db)
+        # "*" = system_admin 萬用符
+        if "*" in permissions:
+            return current_user
+        if not any(key in permissions for key in permission_keys):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"權限不足（需要 {' 或 '.join(permission_keys)} 其中之一）",
+            )
+        return current_user
+
+    return checker
+
+
 def is_system_admin(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),

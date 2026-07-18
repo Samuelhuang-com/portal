@@ -62,6 +62,10 @@ interface MenuItem {
   // 靜態預設權限：null = 公開；有值 = 需具備此 key 才顯示
   // 【新模組開發規則】開發期間設 'system_admin_only'，測試後改為正確 key
   permissionKey?: string | null
+  // 2026-07-19 新增：多個 key 符合任一個即可顯示（OR 邏輯）。
+  // 用於「查看範圍」比「編輯範圍」寬的模組（例如只勾週期採購請購權限的人
+  // 也要能展開週採選單），優先權高於 permissionKey（兩者擇一設定即可）。
+  permissionKeys?: string[]
   children?: MenuItem[]
 }
 
@@ -171,12 +175,16 @@ export const menuItems: MenuItem[] = [
     key: 'cyclePurchase',
     icon: <ShopOutlined />,
     label: NAV_GROUP.cyclePurchase,
-    permissionKey: 'cycle_purchase_view',
+    // 2026-07-19：父層改用 permissionKeys（OR），讓只勾「週期採購請購」
+    // (cycle_purchase_request) 的一般填單人也能展開週採選單，不需要額外開放
+    // 範圍較大的「週期採購管理」(cycle_purchase_view)。
+    permissionKeys: ['cycle_purchase_view', 'cycle_purchase_request'],
     children: [
       { key: '/cycle-purchase/dashboard',            icon: <DashboardOutlined />,  label: NAV_PAGE.cyclePurchaseDashboard,    permissionKey: 'cycle_purchase_view'  },
       { key: '/cycle-purchase/items',                icon: <DatabaseOutlined />,   label: NAV_PAGE.cyclePurchaseItems,        permissionKey: 'cycle_purchase_view'  },
       { key: '/cycle-purchase/cycles',                icon: <CalendarOutlined />,   label: NAV_PAGE.cyclePurchaseCycles,       permissionKey: 'cycle_purchase_admin' },
-      { key: '/cycle-purchase/requests',              icon: <FileTextOutlined />,   label: NAV_PAGE.cyclePurchaseRequests,     permissionKey: 'cycle_purchase_view'  },
+      // 2026-07-19：同上，只勾 cycle_purchase_request 的填單人也要能看到「請購單」子項目
+      { key: '/cycle-purchase/requests',              icon: <FileTextOutlined />,   label: NAV_PAGE.cyclePurchaseRequests,     permissionKeys: ['cycle_purchase_view', 'cycle_purchase_request']  },
       { key: '/cycle-purchase/summary',                icon: <FileDoneOutlined />,   label: NAV_PAGE.cyclePurchaseSummary,      permissionKey: 'cycle_purchase_view'  },
       { key: '/cycle-purchase/pos',                     icon: <ShoppingCartOutlined />, label: NAV_PAGE.cyclePurchasePOs,        permissionKey: 'cycle_purchase_view'  },
       { key: '/cycle-purchase/receiving',        icon: <InboxOutlined />,        label: NAV_PAGE.cyclePurchaseReceiving,        permissionKey: 'cycle_purchase_view'   },
@@ -626,7 +634,8 @@ export function applyMenuConfig(base: any[], configs: MenuConfigItem[]): any[] {
  * 依使用者 permissions 過濾 menu items（applyMenuConfig 之後呼叫）。
  * - item.permissionKey 為 null/undefined → 公開顯示
  * - item.permissionKey 有值 → 使用者需具備該 key（或 "*"）才顯示
- * - DB config 的 permission_key 優先於靜態預設的 permissionKey
+ * - item.permissionKeys（陣列）→ 符合其中任一 key 即顯示（OR 邏輯，2026-07-19 新增）
+ * - DB config 的 permission_key 優先於靜態預設的 permissionKey/permissionKeys
  * - 父層的所有子項都被過濾掉時，父層本身也不顯示
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -638,10 +647,11 @@ export function filterMenuByPermissions(
   dbPermMap: Map<string, string | null>
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 ): any[] {
-  const hasPermission = (key: string | null | undefined): boolean => {
-    if (!key) return true                     // 無設定 = 公開
-    if (permissions.includes('*')) return true // system_admin 萬用符
-    return permissions.includes(key)
+  const hasPermission = (key: string | string[] | null | undefined): boolean => {
+    if (!key || (Array.isArray(key) && key.length === 0)) return true // 無設定 = 公開
+    if (permissions.includes('*')) return true                        // system_admin 萬用符
+    const keys = Array.isArray(key) ? key : [key]
+    return keys.some((k) => permissions.includes(k))
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -649,8 +659,8 @@ export function filterMenuByPermissions(
     // 優先用 DB 設定的 permission_key（非 null 才算有效覆蓋），否則 fallback 到靜態預設
     // ⚠️  DB 值為 null 代表「MenuConfig 頁面未設定」，不應蓋掉程式碼的靜態 permissionKey
     const dbVal = dbPermMap.has(item.key) ? dbPermMap.get(item.key) : undefined
-    const effectiveKey: string | null | undefined =
-      dbVal != null ? dbVal : item.permissionKey
+    const effectiveKey: string | string[] | null | undefined =
+      dbVal != null ? dbVal : (item.permissionKeys ?? item.permissionKey)
 
     if (Array.isArray(item.children) && item.children.length > 0) {
       const filteredChildren = item.children
