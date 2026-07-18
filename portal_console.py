@@ -22,11 +22,19 @@ stdout/stderr log 檔案。
 
 ⚠️ 開發／測試機（沒有 NSSM 服務）沿用原本的 taskkill 方式，行為不變。
    `net start`/`net stop` 操作 Windows 服務需要系統管理員權限，若本工具
-   未以系統管理員身分執行，Start/Stop/Restart 會失敗並在 Toast 顯示原因。
+   未以系統管理員身分執行，Start/Stop/Restart 會失敗並在 Toast 顯示原因
+   （實測會噴「系統發生 5 錯誤，存取被拒」）。正式區請改用
+   `run_console_admin.bat` 啟動（見下方「執行方式」），會自動跳 UAC
+   確認視窗以系統管理員身分執行；開發／測試機沒有 NSSM 服務，用這支
+   啟動器或直接 `python portal_console.py` 皆可，行為相同。
 
 執行方式：
-  cd portal
-  python portal_console.py
+  一般（開發／測試機，或不需要控制 NSSM 服務時）：
+    cd portal
+    python portal_console.py
+
+  正式區（需要用 Start/Stop/Restart 控制 NSSM 服務 PortalBackend 時）：
+    雙擊 run_console_admin.bat（會自動判斷並跳 UAC 視窗要求系統管理員權限）
 """
 
 # ── Python 環境自動修正（必須在所有其他 import 之前）────────────────────────
