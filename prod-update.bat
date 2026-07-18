@@ -143,12 +143,12 @@ echo [5/5] Restarting production service...
 echo.
 
 REM -- try NSSM service first
-sc query portal >nul 2>&1
+sc query PortalBackend >nul 2>&1
 if not errorlevel 1 (
-    echo [NSSM] Found portal service, restarting...
-    net stop portal
-    net start portal
-    echo [OK] portal service restarted
+    echo [NSSM] Found PortalBackend service, restarting...
+    net stop PortalBackend
+    net start PortalBackend
+    echo [OK] PortalBackend service restarted
     goto done
 )
 

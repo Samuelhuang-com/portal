@@ -51,11 +51,11 @@ echo.
 echo [1/6] 停止正式區服務...
 echo.
 
-sc query portal >nul 2>&1
+sc query PortalBackend >nul 2>&1
 if not errorlevel 1 (
-    echo [NSSM] 找到 portal 服務，停止中...
-    net stop portal
-    echo [OK] portal 服務已停止
+    echo [NSSM] 找到 PortalBackend 服務，停止中...
+    net stop PortalBackend
+    echo [OK] PortalBackend 服務已停止
 ) else (
     echo [INFO] 找不到 NSSM 服務，改用 port 8000 找行程...
     for /f "tokens=5" %%p in ('netstat -ano ^| findstr ":8000 " ^| findstr "LISTENING"') do (
@@ -194,10 +194,10 @@ echo.
 echo [6/6] 重啟正式區服務...
 echo.
 
-sc query portal >nul 2>&1
+sc query PortalBackend >nul 2>&1
 if not errorlevel 1 (
-    net start portal
-    echo [OK] portal 服務已重啟
+    net start PortalBackend
+    echo [OK] PortalBackend 服務已重啟
 ) else (
     start "Portal Backend" cmd /k "cd /d %PORTAL_ROOT%\backend && py -3.12 -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1"
     echo [OK] uvicorn 已在新視窗啟動

@@ -14,9 +14,15 @@ Portal 服務主控台
   （用 CREATE_NO_WINDOW 隱藏 python.exe 的主控台視窗，只留 sync_tool.py
   自己的 tkinter 視窗；兩者是完全獨立的行程，互不影響）
 
-⚠️ 服務控制僅設計給「開發／測試機」使用（taskkill 方式）。
-   正式區（D:\\portal）目前用 NSSM Windows 服務管理，
-   本工具尚未支援 NSSM service 的 net start/stop（可能需要 UAC 權限提升）。
+2026-07-18 追加：偵測到 Backend port 由 NSSM 服務（PortalBackend）管理時，
+Start/Stop/Restart 自動改用 `net start`/`net stop`，不再對 NSSM 監控的
+行程用 taskkill —— 否則 NSSM 的 crash-recovery 會把它當成意外中止並自動
+重啟，導致按 Stop 看起來沒有反應。內嵌終端機也會改成 tail NSSM 設定的
+stdout/stderr log 檔案。
+
+⚠️ 開發／測試機（沒有 NSSM 服務）沿用原本的 taskkill 方式，行為不變。
+   `net start`/`net stop` 操作 Windows 服務需要系統管理員權限，若本工具
+   未以系統管理員身分執行，Start/Stop/Restart 會失敗並在 Toast 顯示原因。
 
 執行方式：
   cd portal
@@ -264,6 +270,46 @@ def kill_pid_tree(pid: int) -> bool:
         return False
 
 
+def detect_nssm_service(candidates: list[str]) -> str | None:
+    """偵測某個 port 對應的行程是否為 NSSM 管理的 Windows 服務。
+
+    2026-07-18 新增背景：正式區（D:\\portal）用 `nssm install PortalBackend
+    ...` 把 uvicorn 包成 Windows 服務常駐（見 deploy.bat）。若沿用開發機
+    的 taskkill 方式砍掉這個行程，NSSM 會把它視為「服務意外中止」並自動
+    重啟（NSSM 內建 crash-recovery），造成使用者點「Stop」看起來完全沒有
+    反應。這裡用 `sc qc <name>` 確認：①服務存在 ②BINARY_PATH_NAME 指向
+    nssm.exe（雙重確認是 NSSM 包出來的服務，不是隨便一個同名的一般服務）。
+
+    candidates 依序嘗試，找到第一個「存在且為 NSSM」的服務名稱就回傳；
+    在開發／測試機上這些服務通常都不存在，回傳 None，行為完全不變
+    （沿用原本的 taskkill 方式）。
+    """
+    for svc_name in candidates:
+        try:
+            r = subprocess.run(
+                ["sc", "qc", svc_name],
+                capture_output=True,
+                text=True,
+                encoding="mbcs",
+                errors="ignore",
+                creationflags=_CREATE_NO_WINDOW,
+            )
+        except Exception:
+            continue
+        if r.returncode == 0 and "nssm.exe" in r.stdout.lower():
+            return svc_name
+    return None
+
+
+# Backend 在正式區用 NSSM 包成的服務名稱（見 deploy.bat 的 `nssm install PortalBackend`）。
+# 保留 "portal" 當備用候選名稱，避免未來有人重新用舊名稱安裝服務時偵測不到。
+NSSM_BACKEND_CANDIDATES = ["PortalBackend", "portal"]
+
+# NSSM 設定的 stdout/stderr log 檔案（見 deploy.bat 的 `nssm set PortalBackend AppStdout/AppStderr`），
+# 用來讓內嵌終端機在「服務由 NSSM 管理」時仍然有真實輸出可看（tail -f 效果）。
+NSSM_BACKEND_LOG_FILES = ["portal_stdout.log", "portal_stderr.log"]
+
+
 def rounded_rect(canvas: tk.Canvas, x1, y1, x2, y2, r, **kwargs):
     """在 Canvas 上畫一個圓角矩形（tkinter 沒有原生圓角圖形，用弧形+矩形拼出來）。"""
     canvas.create_arc(x1, y1, x1 + 2 * r, y1 + 2 * r, start=90, extent=90, style=tk.PIESLICE, **kwargs)
@@ -349,6 +395,15 @@ class PortalConsole(tk.Tk):
         self._log_queues: dict[int, "queue.Queue[str]"] = {}
         self._log_widgets: dict[int, tk.Text] = {}
         self._sync_tool_proc: subprocess.Popen | None = None
+
+        # 2026-07-18 新增：偵測 Backend port 是否由 NSSM 服務管理（正式區）。
+        # 只做一次（啟動時，`sc qc` 一次頂多幾百毫秒），偵測不到就是 None，
+        # 開發／測試機行為完全不變。目前只有 Backend 有對應的 NSSM 服務
+        # （見 deploy.bat，Frontend 在正式區是由 Backend 一併輸出 dist 靜態檔，
+        # 沒有獨立服務）。
+        self._nssm_service: dict[int, str | None] = {
+            BACKEND_PORT: detect_nssm_service(NSSM_BACKEND_CANDIDATES),
+        }
 
         self._active_tab = 0
         self._build_tab_bar()
@@ -454,7 +509,7 @@ class PortalConsole(tk.Tk):
                 font=(FONT_NAME, 13, "bold"),
             ).pack(side=tk.LEFT)
             detail_lbl = tk.Label(
-                header, text=f"Port {port}", bg=C_CARD_BG, fg=C_TEXT_DIM,
+                header, text=self._detail_text(port), bg=C_CARD_BG, fg=C_TEXT_DIM,
                 font=(FONT_NAME, 9),
             )
             detail_lbl.pack(side=tk.LEFT, padx=12)
@@ -491,7 +546,14 @@ class PortalConsole(tk.Tk):
                 font=("Consolas", 9), wrap=tk.NONE, state=tk.DISABLED, borderwidth=0,
             )
             log_box.pack(fill=tk.BOTH, expand=True, padx=16, pady=(2, 6))
-            log_box.insert(tk.END, "（尚未啟動，或此服務是從本程式外部啟動，沒有輸出可顯示）\n")
+            svc_name = self._nssm_service.get(port)
+            if svc_name:
+                log_box.insert(
+                    tk.END,
+                    f"（此服務由 Windows 服務「{svc_name}」管理，以下即時顯示 NSSM log 檔案內容）\n",
+                )
+            else:
+                log_box.insert(tk.END, "（尚未啟動，或此服務是從本程式外部啟動，沒有輸出可顯示）\n")
             log_box.configure(state=tk.DISABLED)
 
             clear_row = tk.Frame(card, bg=C_CARD_BG)
@@ -506,6 +568,14 @@ class PortalConsole(tk.Tk):
             self._svc_widgets[port] = {"pill": pill, "detail": detail_lbl}
             self._log_queues[port] = queue.Queue()
             self._log_widgets[port] = log_box
+
+            if svc_name:
+                self._start_nssm_log_tail(port)
+
+    def _detail_text(self, port: int) -> str:
+        """卡片副標題文字：Port 號 + （若由 NSSM 服務管理）服務名稱標註。"""
+        svc_name = self._nssm_service.get(port)
+        return f"Port {port}" + (f"（Windows 服務：{svc_name}）" if svc_name else "")
 
     def _clear_log_box(self, widget: tk.Text):
         widget.configure(state=tk.NORMAL)
@@ -525,7 +595,50 @@ class PortalConsole(tk.Tk):
                 self.after(0, lambda: on_done(result))
         threading.Thread(target=_worker, daemon=True).start()
 
+    # ── NSSM 服務控制（net start / net stop）─────────────────────────────────
+    # 2026-07-18 新增背景：正式區 Backend 是 NSSM 包出來的 Windows 服務
+    # （PortalBackend）。若沿用 taskkill 砍掉底下的 uvicorn 行程，NSSM 會
+    # 判定成「服務意外中止」並自動重啟（crash-recovery），導致按下 Stop
+    # 看起來完全沒有效果 —— 這正是 Samuel 實際遇到的狀況。改為呼叫
+    # `net stop`/`net start`，讓 SCM（服務控制管理員）用正常流程停止／
+    # 啟動服務，NSSM 就不會誤判成當機。
+    #
+    # `net start`/`net stop` 操作 Windows 服務需要系統管理員權限；若本程式
+    # 沒有以系統管理員身分執行，這裡會失敗並回傳非 0，直接把 stdout/stderr
+    # 顯示在 Toast 裡讓使用者知道原因（例如「Access is denied」）。
+    def _nssm_net_cmd(self, action: str, svc_name: str):
+        """執行 `net start`/`net stop <svc_name>`，回傳 (成功與否, 輸出訊息)。"""
+        try:
+            r = subprocess.run(
+                ["net", action, svc_name],
+                capture_output=True,
+                text=True,
+                encoding="mbcs",
+                errors="ignore",
+                creationflags=_CREATE_NO_WINDOW,
+            )
+            msg = (r.stdout + r.stderr).strip()
+            return r.returncode == 0, msg
+        except Exception as e:
+            return False, str(e)
+
     def _start(self, name, port, cmd, cwd):
+        svc_name = self._nssm_service.get(port)
+        if svc_name:
+            def work():
+                return self._nssm_net_cmd("start", svc_name)
+
+            def done(result):
+                ok, msg = result
+                if ok:
+                    self._toast.show(f"{name}（Windows 服務 {svc_name}）已成功啟動。")
+                else:
+                    self._toast.show(f"啟動失敗，可能需要以系統管理員身分執行本工具：{msg[:100]}", kind="error")
+                    self._log_queues.setdefault(port, queue.Queue()).put(f"[Console] net start 失敗：{msg}")
+
+            self._run_bg(work, done)
+            return
+
         def work():
             return get_pid_by_port(port)
 
@@ -539,6 +652,22 @@ class PortalConsole(tk.Tk):
         self._run_bg(work, done)
 
     def _stop(self, name, port):
+        svc_name = self._nssm_service.get(port)
+        if svc_name:
+            def work():
+                return self._nssm_net_cmd("stop", svc_name)
+
+            def done(result):
+                ok, msg = result
+                if ok:
+                    self._toast.show(f"{name}（Windows 服務 {svc_name}）已成功停止。")
+                else:
+                    self._toast.show(f"停止失敗，可能需要以系統管理員身分執行本工具：{msg[:100]}", kind="error")
+                    self._log_queues.setdefault(port, queue.Queue()).put(f"[Console] net stop 失敗：{msg}")
+
+            self._run_bg(work, done)
+            return
+
         tracked = self._processes.get(port)
 
         def work():
@@ -567,6 +696,23 @@ class PortalConsole(tk.Tk):
         self._run_bg(work, done)
 
     def _restart(self, name, port, cmd, cwd):
+        svc_name = self._nssm_service.get(port)
+        if svc_name:
+            def work():
+                self._nssm_net_cmd("stop", svc_name)
+                return self._nssm_net_cmd("start", svc_name)
+
+            def done(result):
+                ok, msg = result
+                if ok:
+                    self._toast.show(f"{name}（Windows 服務 {svc_name}）已重新啟動。")
+                else:
+                    self._toast.show(f"重啟失敗，可能需要以系統管理員身分執行本工具：{msg[:100]}", kind="error")
+                    self._log_queues.setdefault(port, queue.Queue()).put(f"[Console] net stop/start 失敗：{msg}")
+
+            self._run_bg(work, done)
+            return
+
         tracked = self._processes.get(port)
 
         def work():
@@ -595,10 +741,46 @@ class PortalConsole(tk.Tk):
             running, pid = result
             widgets = self._svc_widgets[port]
             widgets["pill"].set_state(running, pid)
-            widgets["detail"].config(text=f"Port {port}")
+            widgets["detail"].config(text=self._detail_text(port))
             self._toast.show(f"{name} 狀態已重新整理。")
 
         self._run_bg(work, done)
+
+    # ── NSSM 服務 log 檔案 tail（讓內嵌終端機在正式區也有真實輸出可看）─────────
+    def _start_nssm_log_tail(self, port: int):
+        """啟動背景執行緒，持續把 NSSM 設定的 stdout/stderr log 檔案新增內容
+        （見 deploy.bat 的 `nssm set PortalBackend AppStdout/AppStderr`）
+        接進內嵌終端機，效果類似 `tail -f`。只在偵測到 NSSM 服務時呼叫。
+        """
+        for filename in NSSM_BACKEND_LOG_FILES:
+            path = _LOG_DIR / filename
+            threading.Thread(target=self._tail_file, args=(path, port), daemon=True).start()
+
+    def _tail_file(self, path: _pathlib.Path, port: int):
+        """背景執行緒：從檔尾開始，持續讀取檔案新增的內容並丟進 log 佇列。
+
+        只看「執行本程式之後新增的內容」（seek 到檔尾），避免一次把整份
+        歷史 log（可能很大）灌進畫面；檔案還不存在時（例如剛裝好服務、
+        NSSM 還沒寫過任何一行）先提示一次，之後每秒重新檢查一次。
+        """
+        q = self._log_queues.setdefault(port, queue.Queue())
+        try:
+            waited_notice = False
+            while not path.exists():
+                if not waited_notice:
+                    q.put(f"[Console] 等待 log 檔案出現：{path}")
+                    waited_notice = True
+                time.sleep(2)
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                f.seek(0, _os.SEEK_END)
+                while True:
+                    line = f.readline()
+                    if line:
+                        q.put(_ANSI_ESCAPE_RE.sub("", line.rstrip("\n")))
+                    else:
+                        time.sleep(1)
+        except Exception as e:
+            q.put(f"[Console] 讀取 log 檔案時發生錯誤（{path}）：{e}")
 
     # ── 內嵌終端機 ───────────────────────────────────────────────────────────
     def _spawn_embedded(self, port, cmd, cwd):
@@ -689,7 +871,7 @@ class PortalConsole(tk.Tk):
             for port, (running, pid) in results.items():
                 widgets = self._svc_widgets[port]
                 widgets["pill"].set_state(running, pid)
-                widgets["detail"].config(text=f"Port {port}")
+                widgets["detail"].config(text=self._detail_text(port))
             self._status_check_running = False
             self.after(3000, self._refresh_service_status)
 
