@@ -99,7 +99,9 @@ PERMISSION_DEFINITIONS = [
     # ── 週期採購（獨立資料庫 cycle-purchase.db，2026-07-10 新增）──────────────
     {"key": "cycle_purchase_view",     "label": "週期採購管理",       "group": "週期採購"},
     {"key": "cycle_purchase_request",  "label": "週期採購請購",       "group": "週期採購"},
-    {"key": "cycle_purchase_approve",  "label": "週期採購簽核",       "group": "週期採購"},
+    # 2026-07-17：拿掉送出／簽核流程，cycle_purchase_approve 停用，改成獨立的
+    # 「關閉」權限（關閉當月請購單、重新開啟已關閉的請購單）。
+    {"key": "cycle_purchase_close",    "label": "週期採購請購關閉",   "group": "週期採購"},
     {"key": "cycle_purchase_buyer",    "label": "週期採購彙整／採購", "group": "週期採購"},
     {"key": "cycle_purchase_receive",  "label": "週期採購驗收",       "group": "週期採購"},
     {"key": "cycle_purchase_finance",  "label": "週期採購請款",       "group": "週期採購"},

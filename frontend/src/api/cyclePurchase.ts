@@ -11,6 +11,8 @@ import type {
   CpCostCenter,
   CpCycle,
   CpDepartment,
+  CpDepartmentBreakdown,
+  CpEligibleRequest,
   CpItem,
   CpItemDetail,
   CpItemListResponse,
@@ -21,6 +23,7 @@ import type {
   CpPayment,
   CpPaymentAllocation,
   CpPaymentDetail,
+  CpPushToRagicResult,
   CpReceivableItem,
   CpReceiving,
   CpReceivingDetail,
@@ -147,7 +150,8 @@ export const getRequests = (params?: {
 export const getRequest = (id: number) =>
   apiClient.get<CpRequestDetail>(`${BASE}/requests/${id}`)
 
-export const generateRequestsForPeriod = (data: { cycle_id: number; period_label: string }) =>
+// 2026-07-17：period_label 不再由呼叫端指定，一律由後端在建立當下蓋章為現在的月份。
+export const generateRequestsForPeriod = (data: { cycle_id: number }) =>
   apiClient.post<CpRequest[]>(`${BASE}/requests/generate`, data)
 
 export const getTodos = () =>
@@ -156,7 +160,6 @@ export const getTodos = () =>
 export const createRequest = (data: {
   cycle_id: number
   department_id: number
-  period_label: string
   cost_center_id?: number | null
 }) => apiClient.post<CpRequest>(`${BASE}/requests`, data)
 
@@ -180,14 +183,19 @@ export const updateRequestItem = (
 export const deleteRequestItem = (requestId: number, itemRowId: number) =>
   apiClient.delete(`${BASE}/requests/${requestId}/items/${itemRowId}`)
 
-export const submitRequest = (id: number) =>
-  apiClient.post<CpRequest>(`${BASE}/requests/${id}/submit`)
+// 2026-07-17（第三次調整）：拿掉送出／簽核／退回，改成「關閉／重新開啟」。
 
-export const approveRequest = (id: number) =>
-  apiClient.post<CpRequest>(`${BASE}/requests/${id}/approve`)
+export const getOpenRequestsForClose = (params: { cycle_id: number; company?: string; year_month?: string }) =>
+  apiClient.get<CpRequest[]>(`${BASE}/requests/open-for-close`, { params })
 
-export const rejectRequest = (id: number, reason: string) =>
-  apiClient.post<CpRequest>(`${BASE}/requests/${id}/reject`, { reason })
+export const closeRequests = (request_ids: number[]) =>
+  apiClient.post<CpRequest[]>(`${BASE}/requests/close`, { request_ids })
+
+export const closeAllRequests = (data: { cycle_id: number; company?: string | null; year_month?: string | null }) =>
+  apiClient.post<CpRequest[]>(`${BASE}/requests/close-all`, data)
+
+export const reopenRequests = (request_ids: number[]) =>
+  apiClient.post<CpRequest[]>(`${BASE}/requests/reopen`, { request_ids })
 
 // ── 彙整單（第三期，2026-07-11 新增）───────────────────────────────────────────
 // 只彙總 approved 的請購明細，同一週期＋期別＋公司＋料號冪等。
@@ -198,19 +206,35 @@ export const getSummary = (params?: {
   company?: string
   vendor_id?: number
   status?: string
+  department_id?: number
 }) => apiClient.get<CpSummary[]>(`${BASE}/summary`, { params })
 
 export const getVendorGroups = (params: { cycle_id: number; period_label: string; company?: string }) =>
   apiClient.get<CpVendorGroup[]>(`${BASE}/summary/vendor-groups`, { params })
 
-export const generateSummary = (data: { cycle_id: number; period_label: string }) =>
-  apiClient.post<CpSummary[]>(`${BASE}/summary/generate`, data)
+// 2026-07-16 改版：拿掉舊版「輸入週期＋期別字串」的產生彙整方式（原本
+// generateSummary()／POST /summary/generate），改成「勾選請購單」——見
+// 後端 services/cycle_purchase_summary_service.py 開頭「第二次調整」說明。
+export const getEligibleRequests = (params: { cycle_id: number; company: string; year_month: string }) =>
+  apiClient.get<CpEligibleRequest[]>(`${BASE}/summary/eligible-requests`, { params })
+
+export const generateSummaryFromRequests = (data: { request_ids: number[] }) =>
+  apiClient.post<CpSummary[]>(`${BASE}/summary/generate-from-requests`, data)
 
 export const updateSummaryItem = (id: number, data: { adjusted_qty?: number; adjust_reason?: string | null }) =>
   apiClient.put<CpSummary>(`${BASE}/summary/${id}`, data)
 
 export const convertToPo = (data: { cycle_id: number; period_label: string; company: string; vendor_id: number }) =>
   apiClient.post<CpPODetail>(`${BASE}/summary/convert-to-po`, data)
+
+// 2026-07-16 新增：匯總請購單畫面 — 依料號分組展開部門別＋小計
+export const getDepartmentBreakdown = (params: { cycle_id: number; period_label: string; company?: string }) =>
+  apiClient.get<CpDepartmentBreakdown[]>(`${BASE}/summary/department-breakdown`, { params })
+
+// 2026-07-16 新增：拋轉到 Ragic「匯總請購單」（目前為 stub，見後端
+// cycle_purchase_ragic_push.py 開頭說明，Ragic 端表單尚未建立）
+export const pushSummaryToRagic = (data: { cycle_id: number; period_label: string; company: string }) =>
+  apiClient.post<CpPushToRagicResult>(`${BASE}/summary/push-to-ragic`, data)
 
 // ── 採購單（第三期，2026-07-11 新增）───────────────────────────────────────────
 // 一張採購單＝一個公司＋一個供應商（同一週期＋期別內），由「轉採購單」動作產生。

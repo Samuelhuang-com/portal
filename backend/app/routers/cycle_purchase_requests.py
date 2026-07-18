@@ -6,19 +6,26 @@ Prefix: /api/v1/cycle-purchase
 「產生本期請購單」（POST /requests/generate）取代原本批次開放時的自動觸發，
 隨時可呼叫，同一週期＋期別冪等（不會重複建立）。
 
+2026-07-17（第三次調整，請購單流程大改版，詳見 models/cycle_purchase_request.py
+與 services/cycle_purchase_request_service.py 開頭說明）：
+  - 拿掉送出／簽核／退回三個端點，改成「關閉／重新開啟」。
+  - period_label 不再是呼叫端傳入的欄位，一律由後端在建立當下蓋章。
+  - Dashboard 待辦提醒的「待簽核」改成「本月待關閉」，改看 cycle_purchase_close 權限。
+
 GET    /requests                              請購單清單（依週期／期別／部門／狀態篩選）
-GET    /requests/todos                        Dashboard 待辦提醒（我的待填 + 全部待簽核）
+GET    /requests/todos                        Dashboard 待辦提醒（我的待填 + 本月待關閉）
 GET    /requests/{id}                          請購單詳情（含明細）
 POST   /requests/generate                      產生本期請購單（依週期設定的 applicable_scope，一次幫所有適用部門建空白單）
 POST   /requests                               手動新增單一部門的請購單（備用路徑）
-PUT    /requests/{id}                          更新請購單（成本中心／備註，僅草稿或已退回可編輯）
+PUT    /requests/{id}                          更新請購單（成本中心／備註，僅開放中且當月可編輯）
 GET    /requests/{id}/available-items          可選料號清單（僅該公司有對照的啟用中料號）
 POST   /requests/{id}/items                    新增請購明細
 PUT    /requests/{id}/items/{item_row_id}      更新請購明細（數量／會計科目／備註）
 DELETE /requests/{id}/items/{item_row_id}      刪除請購明細
-POST   /requests/{id}/submit                   送出（draft/rejected -> submitted）
-POST   /requests/{id}/approve                  簽核核准（submitted -> approved）
-POST   /requests/{id}/reject                   簽核退回（submitted -> rejected，需填退回原因）
+GET    /requests/open-for-close                列出某週期（可選：公司／月份）目前開放中的請購單，供勾選關閉
+POST   /requests/close                         關閉勾選的請購單
+POST   /requests/close-all                     全部關閉（某週期＋公司＋月份目前開放中的全部請購單）
+POST   /requests/reopen                        重新開啟已關閉的請購單
 """
 from typing import Optional, List
 
@@ -30,9 +37,10 @@ from app.core.database import get_db
 from app.dependencies import require_permission, get_user_permissions
 from app.models.user import User
 from app.schemas.cycle_purchase_request import (
-    AvailableItemOut, GenerateRequestsPayload, RequestCreate, RequestDetail,
+    AvailableItemOut, CloseAllRequestsPayload, CloseRequestsPayload,
+    GenerateRequestsPayload, ReopenRequestsPayload, RequestCreate, RequestDetail,
     RequestItemCreate, RequestItemOut, RequestItemUpdate, RequestOut,
-    RequestRejectPayload, RequestUpdate, TodoSummary,
+    RequestUpdate, TodoSummary,
 )
 from app.services import cycle_purchase_request_service as svc
 from app.services.cycle_purchase_request_service import RequestServiceError
@@ -70,8 +78,23 @@ def get_todos(
     portal_db: Session = Depends(get_db),
 ):
     perms = get_user_permissions(current_user.id, portal_db)
-    is_approver = "*" in perms or "cycle_purchase_approve" in perms
-    return svc.get_dashboard_todos(db, current_user, is_approver)
+    is_closer = "*" in perms or "cycle_purchase_close" in perms
+    return svc.get_dashboard_todos(db, current_user, is_closer)
+
+
+@router.get(
+    "/requests/open-for-close",
+    response_model=List[RequestOut],
+    summary="列出某週期（可選：公司／月份）目前開放中的請購單，供勾選關閉",
+)
+def list_open_for_close(
+    cycle_id: int = Query(...),
+    company: Optional[str] = Query(None),
+    year_month: Optional[str] = Query(None),
+    _: User = Depends(require_permission("cycle_purchase_close")),
+    db: Session = Depends(get_cycle_purchase_db),
+):
+    return svc.list_open_requests_for_close(db, cycle_id, company, year_month)
 
 
 @router.get("/requests/{request_id}", response_model=RequestDetail, summary="請購單詳情（含明細）")
@@ -96,7 +119,7 @@ def generate_requests(
     _: User = Depends(require_permission("cycle_purchase_buyer")),
     db: Session = Depends(get_cycle_purchase_db),
 ):
-    return _handle(svc.generate_requests_for_period, db, payload.cycle_id, payload.period_label)
+    return _handle(svc.generate_requests_for_period, db, payload.cycle_id)
 
 
 @router.post("/requests", response_model=RequestOut, status_code=status.HTTP_201_CREATED, summary="手動新增單一部門的請購單")
@@ -180,29 +203,30 @@ def delete_request_item(
     return {"ok": True}
 
 
-@router.post("/requests/{request_id}/submit", response_model=RequestOut, summary="送出請購單")
-def submit_request(
-    request_id: int,
-    current_user: User = Depends(require_permission("cycle_purchase_request")),
+@router.post("/requests/close", response_model=List[RequestOut], summary="關閉勾選的請購單")
+def close_requests(
+    payload: CloseRequestsPayload,
+    current_user: User = Depends(require_permission("cycle_purchase_close")),
     db: Session = Depends(get_cycle_purchase_db),
 ):
-    return _handle(svc.submit_request, db, request_id, current_user)
+    return _handle(svc.close_requests, db, payload.request_ids, current_user)
 
 
-@router.post("/requests/{request_id}/approve", response_model=RequestOut, summary="簽核核准請購單")
-def approve_request(
-    request_id: int,
-    current_user: User = Depends(require_permission("cycle_purchase_approve")),
+@router.post("/requests/close-all", response_model=List[RequestOut], summary="全部關閉")
+def close_all_requests(
+    payload: CloseAllRequestsPayload,
+    current_user: User = Depends(require_permission("cycle_purchase_close")),
     db: Session = Depends(get_cycle_purchase_db),
 ):
-    return _handle(svc.approve_request, db, request_id, current_user)
+    return _handle(
+        svc.close_all_requests, db, payload.cycle_id, payload.company, payload.year_month, current_user,
+    )
 
 
-@router.post("/requests/{request_id}/reject", response_model=RequestOut, summary="簽核退回請購單")
-def reject_request(
-    request_id: int,
-    payload: RequestRejectPayload,
-    current_user: User = Depends(require_permission("cycle_purchase_approve")),
+@router.post("/requests/reopen", response_model=List[RequestOut], summary="重新開啟已關閉的請購單")
+def reopen_requests(
+    payload: ReopenRequestsPayload,
+    current_user: User = Depends(require_permission("cycle_purchase_close")),
     db: Session = Depends(get_cycle_purchase_db),
 ):
-    return _handle(svc.reject_request, db, request_id, current_user, payload.reason)
+    return _handle(svc.reopen_requests, db, payload.request_ids, current_user)

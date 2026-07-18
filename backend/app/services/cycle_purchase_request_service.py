@@ -8,16 +8,34 @@
     也沒有固定時間窗限制 —— 這是 Samuel 的核心訴求：週採的範圍界線是
     「料號主檔」，不是時間窗。
   - 同一週期＋同一期別＋同一部門只能有一張請購單（冪等）。
-  - 新增「待辦提醒」：get_dashboard_todos 依登入者是否為某部門的
-    owner_user_id，回傳他自己部門「待填」的請購單；若有簽核權限，
-    另外回傳全部「待簽核」的請購單。
 
 2026-07-11 與 Samuel 確認之設計（第一次，仍然有效）：
   - 請購明細單價＝該公司在 cycle_purchase_item_mappings 的
     original_unit_price（不是 item.unit_price）。
   - 會計科目由填單人在明細逐行手動選（不做自動帶入）。
-  - 簽核為單一關卡：draft -> submitted -> approved / rejected，
-    rejected 可再編輯、重新送出（不是死路）。
+
+2026-07-17（第三次調整，與 Samuel 確認，「請購單流程」大改版，詳見
+models/cycle_purchase_request.py 開頭說明）：
+  - **拿掉送出／核准**：submit_request／approve_request／reject_request 三個
+    函式已整個移除，不再保留備用路徑。請購單建立後由填單人自行編輯，不需要
+    送出給誰核准。
+  - **當期格式**：`_next_request_no()` 改成 `PR-YYYY-MM-NNN`（3 位流水號，
+    每月重新起算）；`period_label` 不再是呼叫端傳入的自由文字，改由
+    `_current_period_label()` 在建立當下自動算出建立月份的「YYYY-MM」。
+    `generate_requests_for_period()`／`create_request()` 都不再接受
+    `period_label` 參數。
+  - **編輯期限**：新增 `_check_editable(req)`，同時檢查「還沒被關閉」與
+    「現在還是這張單建立的那個月份」，取代原本檢查
+    `status in ("draft", "rejected")` 的邏輯，套用到 `update_request()`、
+    `add_request_item()`、`update_request_item()`、`delete_request_item()`。
+  - **關閉／重新開啟**：新增 `list_open_requests_for_close()`（列出某週期＋
+    公司＋月份範圍內還開放中的請購單，供勾選）、`close_requests()`（關閉
+    勾選的請購單，"全部關閉"是先撈出全部開放中的 id 再呼叫這支函式）、
+    `reopen_requests()`（重新開啟，改回可編輯）。
+  - **Dashboard 待辦提醒**：原本「待簽核」（依 cycle_purchase_approve 權限）
+    已經沒有意義（沒有簽核這個動作了），改成「本月待關閉」（依
+    cycle_purchase_close 權限，回傳這個月還開放中、尚未關閉的請購單數量與
+    清單），提醒買家記得關閉。
 """
 from datetime import datetime, date
 from decimal import Decimal
@@ -40,18 +58,36 @@ class RequestServiceError(Exception):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 請購單號
+# 請購單號 / 當期
 # ═══════════════════════════════════════════════════════════════════════════
 
 def _next_request_no(db: Session, on_date: date) -> str:
-    prefix = f"PR-{on_date.strftime('%Y%m')}-"
+    """2026-07-17 起格式為 PR-YYYY-MM-NNN（3 位流水號，每月重新起算）。"""
+    prefix = f"PR-{on_date.strftime('%Y-%m')}-"
     count = (
         db.query(func.count(CyclePurchaseRequest.id))
         .filter(CyclePurchaseRequest.request_no.like(f"{prefix}%"))
         .scalar()
         or 0
     )
-    return f"{prefix}{count + 1:04d}"
+    return f"{prefix}{count + 1:03d}"
+
+
+def _current_period_label() -> str:
+    """期別標籤一律由系統蓋章為「現在」的 YYYY-MM，使用者不能手動輸入。"""
+    today = date.today()
+    return f"{today.year:04d}-{today.month:02d}"
+
+
+def _next_close_batch_no(db: Session, year_month: str) -> str:
+    prefix = f"CPCLOSE-{year_month.replace('-', '')}-"
+    count = (
+        db.query(func.count(func.distinct(CyclePurchaseRequest.close_batch_no)))
+        .filter(CyclePurchaseRequest.close_batch_no.like(f"{prefix}%"))
+        .scalar()
+        or 0
+    )
+    return f"{prefix}{count + 1:03d}"
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -72,15 +108,14 @@ def _applicable_departments(db: Session, cycle: CyclePurchaseCycle):
     return query.filter(CyclePurchaseDepartment.company.in_(companies)).all()
 
 
-def generate_requests_for_period(db: Session, cycle_id: int, period_label: str) -> list[CyclePurchaseRequest]:
+def generate_requests_for_period(db: Session, cycle_id: int) -> list[CyclePurchaseRequest]:
     """
     「產生本期請購單」：為每個適用部門建立一張空白請購單。
     隨時可呼叫，沒有時間窗限制；同一 cycle_id+period_label 冪等
     （已經產生過的部門會直接回傳既有那張，不會重複建立）。
+    period_label 一律是「現在」的月份，不接受呼叫端指定。
     """
-    period_label = (period_label or "").strip()
-    if not period_label:
-        raise RequestServiceError("期別標籤不能是空白")
+    period_label = _current_period_label()
 
     cycle = db.query(CyclePurchaseCycle).filter(CyclePurchaseCycle.id == cycle_id).first()
     if not cycle:
@@ -181,7 +216,8 @@ def get_request(db: Session, request_id: int) -> Optional[CyclePurchaseRequest]:
 
 
 def create_request(db: Session, payload) -> CyclePurchaseRequest:
-    """手動建立單一部門的請購單（備用路徑；一般由 generate_requests_for_period 一次幫全部部門建立）。"""
+    """手動建立單一部門的請購單（備用路徑；一般由 generate_requests_for_period 一次幫全部部門建立）。
+    period_label 一律是「現在」的月份，不接受呼叫端指定。"""
     dept = db.query(CyclePurchaseDepartment).filter(CyclePurchaseDepartment.id == payload.department_id).first()
     if not dept:
         raise RequestServiceError("部門不存在")
@@ -189,9 +225,7 @@ def create_request(db: Session, payload) -> CyclePurchaseRequest:
     if not cycle:
         raise RequestServiceError("週期設定不存在")
 
-    period_label = (payload.period_label or "").strip()
-    if not period_label:
-        raise RequestServiceError("期別標籤不能是空白")
+    period_label = _current_period_label()
 
     # 防呆：cycle_purchase_requests 有 (cycle_id, period_label, department_id) 唯一鍵限制，
     # 若不先檢查，重複建立會在 flush 時丟出未攔截的 IntegrityError（500），
@@ -226,12 +260,23 @@ def create_request(db: Session, payload) -> CyclePurchaseRequest:
     return _attach_display_fields(db, req)
 
 
+def _check_editable(req: CyclePurchaseRequest) -> None:
+    """2026-07-17：編輯權限不再看 status，改看「有沒有被關閉」+「還是不是當月」。
+    兩個條件都要成立（沒關閉、還是當月）才能編輯，任一條件不成立就擋掉，
+    訊息分開講清楚是哪一種情況，方便使用者理解。"""
+    if req.is_closed:
+        raise RequestServiceError("這張請購單已經關閉，不能再編輯（如需修改請先請買家重新開啟）")
+    if req.period_label != _current_period_label():
+        raise RequestServiceError(
+            f"這張請購單屬於「{req.period_label}」，已經過了可以編輯的月份，不能再編輯"
+        )
+
+
 def update_request(db: Session, request_id: int, payload) -> Optional[CyclePurchaseRequest]:
     req = db.query(CyclePurchaseRequest).filter(CyclePurchaseRequest.id == request_id).first()
     if not req:
         return None
-    if req.status not in ("draft", "rejected"):
-        raise RequestServiceError("只有草稿或已退回狀態的請購單可以編輯")
+    _check_editable(req)
     for k, v in payload.model_dump(exclude_unset=True).items():
         setattr(req, k, v)
     db.flush()
@@ -301,8 +346,7 @@ def add_request_item(db: Session, request_id: int, payload) -> CyclePurchaseRequ
     req = db.query(CyclePurchaseRequest).filter(CyclePurchaseRequest.id == request_id).first()
     if not req:
         raise RequestServiceError("請購單不存在")
-    if req.status not in ("draft", "rejected"):
-        raise RequestServiceError("只有草稿或已退回狀態的請購單可以新增明細")
+    _check_editable(req)
 
     item = db.query(CyclePurchaseItem).filter(CyclePurchaseItem.id == payload.item_id).first()
     if not item:
@@ -358,8 +402,7 @@ def update_request_item(db: Session, request_id: int, item_row_id: int, payload)
     req = db.query(CyclePurchaseRequest).filter(CyclePurchaseRequest.id == request_id).first()
     if not req:
         return None
-    if req.status not in ("draft", "rejected"):
-        raise RequestServiceError("只有草稿或已退回狀態的請購單可以修改明細")
+    _check_editable(req)
 
     row = (
         db.query(CyclePurchaseRequestItem)
@@ -391,8 +434,7 @@ def delete_request_item(db: Session, request_id: int, item_row_id: int) -> bool:
     req = db.query(CyclePurchaseRequest).filter(CyclePurchaseRequest.id == request_id).first()
     if not req:
         return False
-    if req.status not in ("draft", "rejected"):
-        raise RequestServiceError("只有草稿或已退回狀態的請購單可以刪除明細")
+    _check_editable(req)
 
     row = (
         db.query(CyclePurchaseRequestItem)
@@ -412,80 +454,126 @@ def delete_request_item(db: Session, request_id: int, item_row_id: int) -> bool:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 送出 / 簽核 / 退回
+# 關閉 / 重新開啟
 # ═══════════════════════════════════════════════════════════════════════════
 
-def submit_request(db: Session, request_id: int, user) -> CyclePurchaseRequest:
-    req = db.query(CyclePurchaseRequest).filter(CyclePurchaseRequest.id == request_id).first()
-    if not req:
-        raise RequestServiceError("請購單不存在")
-    if req.status not in ("draft", "rejected"):
-        raise RequestServiceError("只有草稿或已退回狀態的請購單可以送出")
-
-    item_count = (
-        db.query(func.count(CyclePurchaseRequestItem.id))
-        .filter(
-            CyclePurchaseRequestItem.request_id == request_id,
-            CyclePurchaseRequestItem.request_qty > 0,
-        )
-        .scalar()
-        or 0
+def list_open_requests_for_close(
+    db: Session,
+    cycle_id: int,
+    company: Optional[str] = None,
+    year_month: Optional[str] = None,
+) -> list[CyclePurchaseRequest]:
+    """列出某週期（可選：某公司、某月份）目前還「開放中」（尚未關閉）的請購單，供勾選關閉用。
+    year_month 不給時預設當月（因為「全部關閉」通常就是要關當月）。"""
+    query = db.query(CyclePurchaseRequest).filter(
+        CyclePurchaseRequest.cycle_id == cycle_id,
+        CyclePurchaseRequest.is_closed == False,  # noqa: E712
     )
-    if item_count == 0:
-        raise RequestServiceError("請至少填寫一筆數量大於 0 的料號才能送出")
+    if company:
+        query = query.filter(CyclePurchaseRequest.company == company)
+    query = query.filter(CyclePurchaseRequest.period_label == (year_month or _current_period_label()))
+    rows = query.order_by(CyclePurchaseRequest.request_no.asc()).all()
+    for r in rows:
+        _attach_display_fields(db, r)
+    return rows
 
-    req.status = "submitted"
-    req.submitted_by_user_id = user.id
-    req.submitted_by_name = user.full_name
-    req.submitted_at = datetime.now()
-    req.reject_reason = None
+
+def close_requests(db: Session, request_ids: list[int], user) -> list[CyclePurchaseRequest]:
+    """關閉勾選的請購單。關閉後不能再新增/編輯明細，也不能再修改請購單本身
+    （見 _check_editable）。「全部關閉」是先呼叫 list_open_requests_for_close()
+    撈出全部開放中的 id，再呼叫這支函式，不是另一支獨立邏輯。"""
+    if not request_ids:
+        raise RequestServiceError("沒有選擇任何請購單")
+
+    rows = (
+        db.query(CyclePurchaseRequest)
+        .filter(CyclePurchaseRequest.id.in_(request_ids))
+        .all()
+    )
+    found_ids = {r.id for r in rows}
+    missing = set(request_ids) - found_ids
+    if missing:
+        raise RequestServiceError(f"有請購單不存在：{sorted(missing)}")
+
+    already_closed = [r.request_no for r in rows if r.is_closed]
+    if already_closed:
+        raise RequestServiceError(f"以下請購單已經是關閉狀態，不能重複關閉：{'、'.join(already_closed)}")
+
+    year_month = rows[0].period_label
+    batch_no = _next_close_batch_no(db, year_month)
+    now = datetime.now()
+    for r in rows:
+        r.is_closed = True
+        r.closed_by_user_id = user.id
+        r.closed_by_name = user.full_name
+        r.closed_at = now
+        r.close_batch_no = batch_no
     db.flush()
-    return _attach_display_fields(db, req)
+    for r in rows:
+        _attach_display_fields(db, r)
+    return rows
 
 
-def approve_request(db: Session, request_id: int, user) -> CyclePurchaseRequest:
-    req = db.query(CyclePurchaseRequest).filter(CyclePurchaseRequest.id == request_id).first()
-    if not req:
-        raise RequestServiceError("請購單不存在")
-    if req.status != "submitted":
-        raise RequestServiceError("只有已送出狀態的請購單可以簽核")
+def close_all_requests(
+    db: Session,
+    cycle_id: int,
+    company: Optional[str],
+    year_month: Optional[str],
+    user,
+) -> list[CyclePurchaseRequest]:
+    """「全部關閉」：撈出這個週期＋公司＋月份目前開放中的全部請購單，一次關閉。"""
+    open_rows = list_open_requests_for_close(db, cycle_id, company, year_month)
+    if not open_rows:
+        raise RequestServiceError("目前沒有開放中的請購單可以關閉")
+    return close_requests(db, [r.id for r in open_rows], user)
 
-    req.status = "approved"
-    req.approved_by_user_id = user.id
-    req.approved_by_name = user.full_name
-    req.approved_at = datetime.now()
-    req.reject_reason = None
+
+def reopen_requests(db: Session, request_ids: list[int], user) -> list[CyclePurchaseRequest]:
+    """重新開啟已關閉的請購單，改回可編輯。closed_* 欄位保留當作歷史紀錄不清掉，
+    另外蓋上 reopened_* 欄位記錄「最近一次是誰、什麼時候重新開啟」。"""
+    if not request_ids:
+        raise RequestServiceError("沒有選擇任何請購單")
+
+    rows = (
+        db.query(CyclePurchaseRequest)
+        .filter(CyclePurchaseRequest.id.in_(request_ids))
+        .all()
+    )
+    found_ids = {r.id for r in rows}
+    missing = set(request_ids) - found_ids
+    if missing:
+        raise RequestServiceError(f"有請購單不存在：{sorted(missing)}")
+
+    not_closed = [r.request_no for r in rows if not r.is_closed]
+    if not_closed:
+        raise RequestServiceError(f"以下請購單本來就不是關閉狀態，不能重新開啟：{'、'.join(not_closed)}")
+
+    now = datetime.now()
+    for r in rows:
+        r.is_closed = False
+        r.reopened_by_user_id = user.id
+        r.reopened_by_name = user.full_name
+        r.reopened_at = now
     db.flush()
-    return _attach_display_fields(db, req)
-
-
-def reject_request(db: Session, request_id: int, user, reason: str) -> CyclePurchaseRequest:
-    req = db.query(CyclePurchaseRequest).filter(CyclePurchaseRequest.id == request_id).first()
-    if not req:
-        raise RequestServiceError("請購單不存在")
-    if req.status != "submitted":
-        raise RequestServiceError("只有已送出狀態的請購單可以退回")
-
-    req.status = "rejected"
-    req.approved_by_user_id = user.id
-    req.approved_by_name = user.full_name
-    req.approved_at = datetime.now()
-    req.reject_reason = reason
-    db.flush()
-    return _attach_display_fields(db, req)
+    for r in rows:
+        _attach_display_fields(db, r)
+    return rows
 
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Dashboard 待辦提醒
 # ═══════════════════════════════════════════════════════════════════════════
 
-def get_dashboard_todos(db: Session, user, is_approver: bool):
+def get_dashboard_todos(db: Session, user, is_closer: bool):
     """
     待辦提醒：
-      - my_pending：登入者是 owner_user_id 的部門，狀態為 draft/rejected 的請購單
-        （這些是「我自己部門還沒填/被退回要改」的單）。
-      - pending_approval：若登入者有簽核權限，回傳全部 submitted 狀態的請購單
-        （簽核目前是全域單一關卡，不分部門，所以不用篩選 owner）。
+      - my_pending：登入者是 owner_user_id 的部門，當月（period_label 為現在月份）
+        且還沒關閉的請購單（這些是「我自己部門這個月還沒關閉、還可以填」的單，
+        取代改版前依 status in (draft, rejected) 判斷的邏輯 —— 新流程沒有送出/
+        核准狀態機了，「還沒關閉」才是真正代表「還需要我處理」的狀態）。
+      - pending_close：若登入者有 cycle_purchase_close 權限，回傳全部「當月且尚未
+        關閉」的請購單（關閉目前是全域功能，不分部門，所以不用篩選 owner），
+        提醒買家記得在月底前關閉。
     """
     my_dept_ids = [
         d.id
@@ -494,13 +582,16 @@ def get_dashboard_todos(db: Session, user, is_approver: bool):
         .all()
     ]
 
+    current_month = _current_period_label()
+
     my_pending = []
     if my_dept_ids:
         my_pending = (
             db.query(CyclePurchaseRequest)
             .filter(
                 CyclePurchaseRequest.department_id.in_(my_dept_ids),
-                CyclePurchaseRequest.status.in_(("draft", "rejected")),
+                CyclePurchaseRequest.period_label == current_month,
+                CyclePurchaseRequest.is_closed == False,  # noqa: E712
             )
             .order_by(CyclePurchaseRequest.request_no.desc())
             .all()
@@ -508,19 +599,22 @@ def get_dashboard_todos(db: Session, user, is_approver: bool):
         for r in my_pending:
             _attach_display_fields(db, r)
 
-    pending_approval = []
-    if is_approver:
-        pending_approval = (
+    pending_close = []
+    if is_closer:
+        pending_close = (
             db.query(CyclePurchaseRequest)
-            .filter(CyclePurchaseRequest.status == "submitted")
+            .filter(
+                CyclePurchaseRequest.period_label == current_month,
+                CyclePurchaseRequest.is_closed == False,  # noqa: E712
+            )
             .order_by(CyclePurchaseRequest.request_no.desc())
             .all()
         )
-        for r in pending_approval:
+        for r in pending_close:
             _attach_display_fields(db, r)
 
     return {
         "my_pending": my_pending,
-        "pending_approval_count": len(pending_approval),
-        "pending_approval": pending_approval,
+        "pending_close_count": len(pending_close),
+        "pending_close": pending_close,
     }

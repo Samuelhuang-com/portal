@@ -132,7 +132,11 @@ export interface CpCycle {
 // 「2026-07」)，取代原本的 batch_id/batch_no。「產生本期請購單」隨時可觸發，
 // 同一週期＋期別冪等，不需要先手動開批次，也沒有固定時間窗限制 —— 週採的
 // 範圍界線是「料號主檔」，不是時間窗。
-// 狀態機：draft -> submitted -> approved / rejected（rejected 可再編輯、重新送出，不是死路）。
+// 2026-07-17（第三次調整，請購單流程大改版）：拿掉送出／核准／退回，status
+// 欄位是改版前的歷史殘留（新資料一律固定寫 draft），實際可不可以編輯看的是
+// is_closed（有沒有被關閉）＋ period_label（是不是還是當月），不是 status。
+// 新增關閉／重新開啟相關欄位，見 backend models/cycle_purchase_request.py
+// 開頭「2026-07-17」說明。
 export interface CpRequestItem {
   id: number
   request_id: number
@@ -163,14 +167,26 @@ export interface CpRequest {
   cost_center_id?: number | null
   cost_center_name?: string | null
   total_amount: number
+  // 改版前的狀態機殘留欄位：新資料一律固定寫 draft，實際可不可以編輯看
+  // is_closed／period_label，不是這個欄位（見上方 2026-07-17 說明）。
   status: 'draft' | 'submitted' | 'approved' | 'rejected'
   submitted_by_user_id?: string | null
   submitted_by_name?: string | null
   submitted_at?: string | null
+  // [改版前歷史欄位，2026-07-17 起停止寫入]
   approved_by_user_id?: string | null
   approved_by_name?: string | null
   approved_at?: string | null
   reject_reason?: string | null
+  // 2026-07-17 新增：是否已關閉（關閉後不能再新增/編輯明細，也不能再修改請購單本身）。
+  is_closed: boolean
+  closed_by_user_id?: string | null
+  closed_by_name?: string | null
+  closed_at?: string | null
+  close_batch_no?: string | null
+  reopened_by_user_id?: string | null
+  reopened_by_name?: string | null
+  reopened_at?: string | null
   notes?: string | null
   created_at: string
   updated_at: string
@@ -178,6 +194,21 @@ export interface CpRequest {
 
 export interface CpRequestDetail extends CpRequest {
   items: CpRequestItem[]
+}
+
+// 2026-07-16 新增（彙整單產生方式改版）：「彙整單」頁面用，列出某週期＋公司＋
+// 期別下，已關閉且尚未被彙整過的請購單，供使用者勾選要納入這次彙整的範圍。
+// 2026-07-17：approved_by_name／approved_at 改成 closed_by_name／closed_at
+// （拿掉核准這個動作，「關閉」才是彙整的前提條件）。
+export interface CpEligibleRequest {
+  id: number
+  request_no: string
+  department_id?: number | null
+  department_name?: string | null
+  submitted_by_name?: string | null
+  closed_by_name?: string | null
+  closed_at?: string | null
+  total_amount: number
 }
 
 export interface CpAvailableItem {
@@ -198,6 +229,9 @@ export interface CpAvailableItem {
 // 人工重新整理，這是刻意的保守設計，避免自動改動已經在跑後續流程的數字。
 // 供應商一律來自料號對照表的 vendor_id（不是料號主檔的 default_vendor_id）。
 // 狀態機：draft（可調整調整量／原因）-> converted（已轉採購單，鎖定不可再改）。
+// 2026-07-16：彙整粒度改成「公司＋料號＋部門」（department_id），並新增拋轉
+// Ragic 追蹤欄位。department_id 為 null 代表 2026-07-16 之前產生的歷史列，
+// 未拆分部門（見 backend models/cycle_purchase_summary.py 開頭說明）。
 export interface CpSummary {
   id: number
   cycle_id: number
@@ -206,6 +240,8 @@ export interface CpSummary {
   company: string
   item_id: number
   item_mapping_id?: number | null
+  department_id?: number | null
+  department_name?: string | null
   vendor_id?: number | null
   vendor_name?: string | null
   item_code: string
@@ -218,6 +254,11 @@ export interface CpSummary {
   status: 'draft' | 'converted'
   po_id?: number | null
   po_no?: string | null
+  ragic_push_batch_no?: string | null
+  ragic_pushed: boolean
+  ragic_record_id?: string | null
+  ragic_pushed_at?: string | null
+  ragic_push_error?: string | null
   notes?: string | null
   created_at: string
   updated_at: string
@@ -233,6 +274,42 @@ export interface CpVendorGroup {
   item_count: number
   total_amount: number
   has_missing_vendor: boolean
+}
+
+// 2026-07-16 新增：匯總請購單畫面用，依料號分組展開部門別＋小計。
+export interface CpDepartmentBreakdownRow {
+  summary_id: number
+  department_id?: number | null
+  department_name?: string | null
+  demand_qty: number
+  adjusted_qty: number
+  subtotal: number
+  status: 'draft' | 'converted'
+}
+
+export interface CpDepartmentBreakdown {
+  company: string
+  item_id: number
+  item_code: string
+  item_name: string
+  unit?: string | null
+  vendor_id?: number | null
+  vendor_name?: string | null
+  unit_price?: number | null
+  departments: CpDepartmentBreakdownRow[]
+  total_adjusted_qty: number
+  total_amount: number
+  has_missing_vendor: boolean
+}
+
+// 2026-07-16 新增：拋轉到 Ragic「匯總請購單」的結果。Ragic 端表單尚未建立，
+// is_stub=true 代表這是模擬結果，不是真正寫入 Ragic 的記錄。
+export interface CpPushToRagicResult {
+  batch_no: string
+  pushed_count: number
+  ragic_record_id?: string | null
+  is_stub: boolean
+  message: string
 }
 
 // ── 採購單（第三期，2026-07-11 新增）──────────────────────────────────────────
@@ -448,8 +525,10 @@ export interface CpAuditLog {
 // ── Dashboard 待辦提醒 ──────────────────────────────────────────────────────────
 // 2026-07-11 新增：登入者自己部門待填（依 CpDepartment.owner_user_id 判斷）+
 // （若有簽核權限）全部待簽核。目前只做 Dashboard 卡片，不做 email 通知。
+// 2026-07-17：拿掉送出/核准狀態機，pending_approval 改名 pending_close
+// （本月還沒關閉、需要買家記得關閉的請購單，依 cycle_purchase_close 權限判斷）。
 export interface TodoSummary {
   my_pending: CpRequest[]
-  pending_approval_count: number
-  pending_approval: CpRequest[]
+  pending_close_count: number
+  pending_close: CpRequest[]
 }

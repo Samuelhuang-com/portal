@@ -44,10 +44,11 @@ class RequestCreate(BaseModel):
     """
     手動新增單一部門的請購單（備用路徑；一般情況下請購單由「產生本期請購單」
     一次幫所有適用部門建好）。2026-07-11 拿掉批次後，改成掛週期 + 期別。
+    2026-07-17 起 period_label 不再由呼叫端指定，一律由後端在建立當下蓋章為
+    現在的 YYYY-MM，因此這裡不再收 period_label 欄位。
     """
     cycle_id: int
     department_id: int
-    period_label: str
     cost_center_id: Optional[int] = None
 
 
@@ -56,15 +57,29 @@ class RequestUpdate(BaseModel):
     notes: Optional[str] = None
 
 
-class RequestRejectPayload(BaseModel):
-    reason: str
-
-
 class GenerateRequestsPayload(BaseModel):
     """「產生本期請購單」：依週期設定的 applicable_scope，一次幫所有適用公司的
-    啟用中部門建一張空白請購單（同 cycle_id+period_label 重複觸發是冪等的）。"""
+    啟用中部門建一張空白請購單（同 cycle_id+期別重複觸發是冪等的）。2026-07-17
+    起 period_label 一律是「現在」的月份，不再由呼叫端指定。"""
     cycle_id: int
-    period_label: str
+
+
+class CloseRequestsPayload(BaseModel):
+    """關閉勾選的請購單。"""
+    request_ids: List[int]
+
+
+class CloseAllRequestsPayload(BaseModel):
+    """「全部關閉」：關閉某週期＋公司＋月份目前開放中的全部請購單。
+    company／year_month 不給時分別代表「不篩公司」／「當月」。"""
+    cycle_id: int
+    company: Optional[str] = None
+    year_month: Optional[str] = None
+
+
+class ReopenRequestsPayload(BaseModel):
+    """重新開啟已關閉的請購單。"""
+    request_ids: List[int]
 
 
 class RequestOut(BaseModel):
@@ -87,6 +102,14 @@ class RequestOut(BaseModel):
     approved_by_name: Optional[str] = None
     approved_at: Optional[datetime] = None
     reject_reason: Optional[str] = None
+    is_closed: bool = False
+    closed_by_user_id: Optional[str] = None
+    closed_by_name: Optional[str] = None
+    closed_at: Optional[datetime] = None
+    close_batch_no: Optional[str] = None
+    reopened_by_user_id: Optional[str] = None
+    reopened_by_name: Optional[str] = None
+    reopened_at: Optional[datetime] = None
     notes: Optional[str] = None
     created_at: datetime
     updated_at: datetime
@@ -112,7 +135,9 @@ class AvailableItemOut(BaseModel):
 
 
 class TodoSummary(BaseModel):
-    """Dashboard 待辦提醒：登入者自己部門待填、以及（若有簽核權限）全部待簽核。"""
+    """Dashboard 待辦提醒：登入者自己部門這個月還沒關閉的、以及（若有關閉權限）
+    全部這個月還沒關閉的請購單。2026-07-17 起拿掉送出/簽核狀態機，
+    pending_approval 改名 pending_close。"""
     my_pending: List[RequestOut] = []
-    pending_approval_count: int = 0
-    pending_approval: List[RequestOut] = []
+    pending_close_count: int = 0
+    pending_close: List[RequestOut] = []

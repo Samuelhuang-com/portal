@@ -1,17 +1,18 @@
 /**
- * 週期採購 — 請購單詳情／填寫／簽核頁
+ * 週期採購 — 請購單詳情／填寫頁
  * 路由：/cycle-purchase/requests/:id
  *
- * 狀態機：draft -> submitted -> approved / rejected
- * rejected 可再編輯明細、重新送出（不是死路，2026-07-11 與 Samuel 確認的修復）。
- * 可選料號僅限「該請購單所屬公司」有料號對照的啟用中料號（available-items）。
- * 會計科目由填單人在明細逐行手動選，單價快照取自該公司的料號對照單價，
- * 不是集團參考價，因為兩家公司實際成交價可能不同。
+ * 2026-07-17（第三次調整，請購單流程大改版，與 Samuel 確認）：
+ * 拿掉送出／簽核／退回，請購單建立後由填單人自行編輯，不需要送出給誰核准。
+ * 能不能編輯改看兩個條件（都要成立）：(1) 這張單還沒被「關閉」；(2) 現在
+ * 還是這張單建立的那個月份（period_label，過了月份就自動鎖住，不需要另外
+ * 手動關閉）。關閉／重新開啟是獨立的權限（cycle_purchase_close），關閉後
+ * 這張單才會出現在「彙整單」的可勾選清單裡（見週採彙整單頁面）。
  *
- * 2026-07-11（與 Samuel 討論後的 UX 改版，拿掉「批次」的同時一併調整）：
- * 原本是「選料號 -> 加入明細」一筆一筆加。Samuel 的訴求是：一進頁面就把
- * 「週期採購 — 料號主檔」裡該公司可選的料號全部列出來，由填單人直接在
- * 每一列填數量，預設 0（本次不購買），不需要先「加入」才看得到。
+ * 2026-07-11（與 Samuel 討論後的 UX 改版，拿掉「批次」的同時一併調整，
+ * 這部分邏輯不受本次改版影響，仍然有效）：
+ * 一進頁面就把「週期採購 — 料號主檔」裡該公司可選的料號全部列出來，由填單人
+ * 直接在每一列填數量，預設 0（本次不購買），不需要先「加入」才看得到。
  * 料號依類別分組（Collapse），並提供搜尋框，因為單一公司常見料號可能有
  * 數百筆。實作上：數量從 0 改成 >0 時才即時呼叫後端「新增明細」；已存在的
  * 明細改數量（含改回 0，代表「本次不購買」但保留這筆列的紀錄）呼叫「更新
@@ -20,15 +21,15 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import {
-  Alert, Badge, Button, Card, Collapse, Descriptions, Form, Input, InputNumber,
-  Modal, Popconfirm, Select, Space, Table, Tag, Typography, message,
+  Alert, Badge, Button, Card, Collapse, Descriptions, Input, InputNumber,
+  Popconfirm, Select, Space, Table, Tag, Typography, message,
 } from 'antd'
 import {
-  ArrowLeftOutlined, CheckOutlined, CloseOutlined, DeleteOutlined, SearchOutlined, SendOutlined,
+  ArrowLeftOutlined, DeleteOutlined, LockOutlined, SearchOutlined, UnlockOutlined,
 } from '@ant-design/icons'
 import {
-  addRequestItem, approveRequest, deleteRequestItem, getAvailableItems,
-  getCostCenters, getCpAccountCodes, getRequest, rejectRequest, submitRequest,
+  addRequestItem, closeRequests, deleteRequestItem, getAvailableItems,
+  getCostCenters, getCpAccountCodes, getRequest, reopenRequests,
   updateRequest, updateRequestItem,
 } from '@/api/cyclePurchase'
 import type {
@@ -37,19 +38,16 @@ import type {
 import { useAuthStore } from '@/stores/authStore'
 
 const { Title, Text } = Typography
-const { TextArea } = Input
-
-const STATUS_TAG: Record<string, { color: string; label: string }> = {
-  draft:     { color: 'default', label: '草稿' },
-  submitted: { color: 'blue',    label: '已送出' },
-  approved:  { color: 'green',   label: '已核准' },
-  rejected:  { color: 'red',     label: '已退回' },
-}
 
 const UNCATEGORIZED = '（未分類）'
 
 function errMsg(err: any, fallback: string) {
   return err?.response?.data?.detail || fallback
+}
+
+function currentYearMonth() {
+  const now = new Date()
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
 }
 
 // 合併「可選料號」與「已在明細中的料號」成單一列表，供填單畫面一次列出全部使用。
@@ -71,7 +69,7 @@ export default function CpRequestDetailPage() {
   const navigate = useNavigate()
   const hasPermission = useAuthStore((s) => s.hasPermission)
   const canEdit = hasPermission('cycle_purchase_request')
-  const canApprove = hasPermission('cycle_purchase_approve')
+  const canClose = hasPermission('cycle_purchase_close')
 
   const [detail, setDetail] = useState<CpRequestDetail | null>(null)
   const [availableItems, setAvailableItems] = useState<CpAvailableItem[]>([])
@@ -81,13 +79,10 @@ export default function CpRequestDetailPage() {
   const [savingItemId, setSavingItemId] = useState<number | null>(null)
   const [search, setSearch] = useState('')
   const [activeKeys, setActiveKeys] = useState<string[]>([])
-
-  // 簽核退回 modal
-  const [rejectModal, setRejectModal] = useState(false)
-  const [rejectReason, setRejectReason] = useState('')
   const [acting, setActing] = useState(false)
 
-  const editable = canEdit && !!detail && (detail.status === 'draft' || detail.status === 'rejected')
+  const isCurrentMonth = !!detail && detail.period_label === currentYearMonth()
+  const editable = canEdit && !!detail && !detail.is_closed && isCurrentMonth
 
   const load = async () => {
     if (!requestId) return
@@ -228,43 +223,27 @@ export default function CpRequestDetailPage() {
     }
   }
 
-  const handleSubmit = async () => {
+  const handleClose = async () => {
     setActing(true)
     try {
-      await submitRequest(requestId)
-      message.success('已送出，等待簽核')
+      await closeRequests([requestId])
+      message.success('已關閉此請購單')
       await load()
     } catch (err: any) {
-      message.error(errMsg(err, '送出失敗'))
+      message.error(errMsg(err, '關閉失敗'))
     } finally {
       setActing(false)
     }
   }
 
-  const handleApprove = async () => {
+  const handleReopen = async () => {
     setActing(true)
     try {
-      await approveRequest(requestId)
-      message.success('已核准')
+      await reopenRequests([requestId])
+      message.success('已重新開啟，可以再編輯')
       await load()
     } catch (err: any) {
-      message.error(errMsg(err, '核准失敗'))
-    } finally {
-      setActing(false)
-    }
-  }
-
-  const handleReject = async () => {
-    if (!rejectReason.trim()) { message.warning('請填寫退回原因'); return }
-    setActing(true)
-    try {
-      await rejectRequest(requestId, rejectReason.trim())
-      message.success('已退回')
-      setRejectModal(false)
-      setRejectReason('')
-      await load()
-    } catch (err: any) {
-      message.error(errMsg(err, '退回失敗'))
+      message.error(errMsg(err, '重新開啟失敗'))
     } finally {
       setActing(false)
     }
@@ -353,30 +332,38 @@ export default function CpRequestDetailPage() {
         <Space>
           <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/cycle-purchase/requests')}>返回清單</Button>
           <Title level={4} style={{ margin: 0 }}>{detail.request_no}</Title>
-          <Tag color={STATUS_TAG[detail.status]?.color}>{STATUS_TAG[detail.status]?.label || detail.status}</Tag>
+          {detail.is_closed ? (
+            <Tag color="default" icon={<LockOutlined />}>已關閉</Tag>
+          ) : (
+            <Tag color="green">開放中</Tag>
+          )}
         </Space>
         <Space>
-          {editable && (
-            <Button type="primary" icon={<SendOutlined />} loading={acting} onClick={handleSubmit}>
-              送出請購單
-            </Button>
+          {canClose && !detail.is_closed && (
+            <Button icon={<LockOutlined />} loading={acting} onClick={handleClose}>關閉此請購單</Button>
           )}
-          {canApprove && detail.status === 'submitted' && (
-            <>
-              <Button danger icon={<CloseOutlined />} onClick={() => setRejectModal(true)}>退回</Button>
-              <Button type="primary" icon={<CheckOutlined />} loading={acting} onClick={handleApprove}>核准</Button>
-            </>
+          {canClose && detail.is_closed && (
+            <Button icon={<UnlockOutlined />} loading={acting} onClick={handleReopen}>重新開啟</Button>
           )}
         </Space>
       </Space>
 
-      {detail.status === 'rejected' && detail.reject_reason && (
+      {!editable && !detail.is_closed && !isCurrentMonth && (
         <Alert
           type="warning"
           showIcon
           style={{ marginBottom: 16 }}
-          message="已退回，請修改後重新送出"
-          description={`退回原因：${detail.reject_reason}`}
+          message="已經過了可以編輯的月份"
+          description={`這張請購單屬於「${detail.period_label}」，已經過了那個月份，不能再編輯（僅供檢視）`}
+        />
+      )}
+      {detail.is_closed && (
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message="這張請購單已經關閉"
+          description="關閉後不能再編輯，如需修改請先請有權限的人重新開啟"
         />
       )}
 
@@ -401,11 +388,11 @@ export default function CpRequestDetailPage() {
           <Descriptions.Item label="請購總金額">
             <Text strong>{Number(detail.total_amount).toLocaleString()}</Text>
           </Descriptions.Item>
-          <Descriptions.Item label="送出人">
+          <Descriptions.Item label="填寫人">
             {detail.submitted_by_name ? `${detail.submitted_by_name}（${detail.submitted_at?.slice(0, 16)}）` : '—'}
           </Descriptions.Item>
-          <Descriptions.Item label="簽核人" span={3}>
-            {detail.approved_by_name ? `${detail.approved_by_name}（${detail.approved_at?.slice(0, 16)}）` : '—'}
+          <Descriptions.Item label="關閉人" span={2}>
+            {detail.closed_by_name ? `${detail.closed_by_name}（${detail.closed_at?.slice(0, 16)}）` : '—'}
           </Descriptions.Item>
         </Descriptions>
       </Card>
@@ -457,27 +444,6 @@ export default function CpRequestDetailPage() {
           />
         )}
       </Card>
-
-      <Modal
-        title="退回請購單"
-        open={rejectModal}
-        onOk={handleReject}
-        onCancel={() => setRejectModal(false)}
-        okText="確定退回"
-        okButtonProps={{ danger: true, loading: acting }}
-        cancelText="取消"
-      >
-        <Form layout="vertical">
-          <Form.Item label="退回原因" required>
-            <TextArea
-              rows={3}
-              value={rejectReason}
-              onChange={(e) => setRejectReason(e.target.value)}
-              placeholder="請說明退回原因，填單人將依此修改後重新送出"
-            />
-          </Form.Item>
-        </Form>
-      </Modal>
     </div>
   )
 }

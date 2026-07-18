@@ -13,16 +13,42 @@
 兩公司合併料號的 default_vendor_id 只會記到單一公司，會讓彙整分不出
 另一家公司的實際供應商）。
 
-冪等規則：同一週期＋期別＋公司＋料號只會有一列（UniqueConstraint）。重複
-按「產生彙整」只會新增這次才出現、還沒彙整過的（公司＋料號）組合，已經
-存在的列（不論是否已轉採購單）不會被覆寫或刪除——如果核准的請購明細在
-彙整之後又增加，需要人工重新整理，這是刻意的保守設計，避免自動改動已經
-在跑後續流程（尤其是已轉採購單）的數字。
+2026-07-16（與 Samuel 確認，「匯總請購單」改版）：
+⚠️ 重要背景：這張表與對應的採購單／驗收單／請款單／異常稽核，其實已在
+2026-07-10～11 完整開發並掛載上線（main.py、navLabels.ts、前端頁面都已
+存在），但當時的規劃文件（週期採購_Portal規劃評估_v1.1.md、欄位規格.md）
+從未更新、CHANGELOG.md 也從未記錄，一直寫著「尚未實作」，直到本次才發現
+文件與程式碼脫節。與 Samuel 確認後，採用「改寫現有 summary」而非另建新表
+的方向，異動如下：
+
+1. **新增 department_id**：原本彙整粒度是「公司＋料號」，會把同一料號在
+   不同部門的需求量合計成一列，看不出部門別。會議討論（0715 會議記錄）
+   需要「匯總請購單」呈現各部門別＋部門小計，因此把彙整粒度改為「公司＋
+   料號＋部門」，一個部門一列，之後在 service 層依料號分組即可還原「部門
+   別＋小計」的畫面。department_id 來自請購單（CyclePurchaseRequest.
+   department_id），不是另外讓使用者填。
+   ⚠️ 舊資料相容性：既有彙整列（2026-07-16 之前產生的）department_id 一律
+   是 NULL，代表「歷史資料，未拆分部門」，不會回填（無法從已合併的
+   demand_qty 反推是哪些部門貢獻的），新產生的彙整列才會有 department_id。
+   ⚠️ UniqueConstraint 已改成含 department_id，但 SQLite 既有資料表的實體
+   UNIQUE 限制不會因為改 ORM 而自動更新（SQLite ALTER TABLE 不支援改
+   constraint，需要整張表重建才能真正生效於既有 DB）。目前的冪等性仍然是
+   靠 service 層 `generate_summary()` 明確查詢再插入（不是靠 DB constraint
+   擋重複），所以不影響功能正確性，只是 DB 層還沒有物理上的新約束把關，
+   留下來供未來考慮要不要整張表重建時參考。
+
+2. **新增 Ragic 拋轉追蹤欄位**：因為「匯總請購單」現在要能拋轉到 Ragic
+   （由 Ragic 端另外新增一張「匯總請購單」表單，不是現有比價式請購單，
+   見 cycle_purchase_ragic_push.py），需要記錄拋轉狀態。這批欄位用
+   「同一批拋轉共用一個 batch_no」的方式記在每一列上（沒有另外開一張
+   header 表），因為現有彙整單本來就是「一列＝一個工作項目」不做主表＋
+   明細設計，延續同樣的精神。
 
 狀態機：draft（可調整調整量／原因）-> converted（已轉採購單，鎖定不可再改）。
+Ragic 拋轉不影響 draft/converted 狀態機，是額外的追蹤欄位（ragic_pushed）。
 """
 from sqlalchemy import (
-    Column, Integer, String, Numeric, Text, DateTime,
+    Column, Integer, String, Numeric, Text, DateTime, Boolean,
     ForeignKey, UniqueConstraint, func,
 )
 
@@ -30,11 +56,12 @@ from app.core.cycle_purchase_database import CyclePurchaseBase
 
 
 class CyclePurchaseSummary(CyclePurchaseBase):
-    """週期採購彙整列（一列＝一個週期＋期別＋公司＋料號的彙整工作項目）"""
+    """週期採購彙整列（一列＝一個週期＋期別＋公司＋料號＋部門的彙整工作項目，
+    2026-07-16 起彙整粒度含部門；2026-07-16 之前產生的歷史列 department_id 為 NULL）"""
     __tablename__ = "cycle_purchase_summary"
     __table_args__ = (
-        UniqueConstraint("cycle_id", "period_label", "company", "item_id",
-                          name="uq_cp_summary_cycle_period_company_item"),
+        UniqueConstraint("cycle_id", "period_label", "company", "item_id", "department_id",
+                          name="uq_cp_summary_cycle_period_company_item_dept"),
     )
 
     id               = Column(Integer, primary_key=True, autoincrement=True)
@@ -45,6 +72,11 @@ class CyclePurchaseSummary(CyclePurchaseBase):
     company          = Column(String(50), nullable=False, comment="公司別")
     item_id          = Column(
         Integer, ForeignKey("cycle_purchase_items.id", ondelete="RESTRICT"), nullable=False
+    )
+    department_id    = Column(
+        Integer, ForeignKey("cycle_purchase_departments.id", ondelete="RESTRICT"), nullable=True,
+        comment="部門別（2026-07-16 新增，來自請購單的 department_id）。"
+                 "NULL 代表 2026-07-16 之前產生的歷史彙整列，未拆分部門",
     )
     item_mapping_id  = Column(
         Integer, ForeignKey("cycle_purchase_item_mappings.id", ondelete="SET NULL"), nullable=True,
@@ -72,9 +104,28 @@ class CyclePurchaseSummary(CyclePurchaseBase):
         comment="轉採購單後回填",
     )
 
+    # 2026-07-16 新增：拋轉 Ragic「匯總請購單」追蹤欄位。同一次「拋轉到 Ragic」
+    # 動作（同一 cycle+period+company 範圍）共用同一個 ragic_push_batch_no，
+    # 沒有另外開 header 表，延續本表「一列＝一個工作項目」的設計精神。
+    ragic_push_batch_no = Column(
+        String(40), nullable=True,
+        comment="拋轉批次號（同一次拋轉動作共用，如 CPSUM-202607-日曜天地-0001）",
+    )
+    ragic_pushed    = Column(Boolean, nullable=False, default=False, comment="是否已拋轉到 Ragic")
+    ragic_record_id = Column(
+        String(60), nullable=True,
+        comment="Ragic 端回填的單號／記錄 ID（目前 Ragic「匯總請購單」表單尚未建立，"
+                 "現階段為 stub 串接，此欄位可能是暫時性假值，見 cycle_purchase_ragic_push.py）",
+    )
+    ragic_pushed_at   = Column(DateTime, nullable=True, comment="拋轉成功時間")
+    ragic_push_error  = Column(Text, nullable=True, comment="拋轉失敗時的錯誤訊息")
+
     notes      = Column(Text, nullable=True)
     created_at = Column(DateTime, nullable=False, server_default=func.now())
     updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
 
     def __repr__(self):
-        return f"<CyclePurchaseSummary id={self.id} item={self.item_code} company={self.company}>"
+        return (
+            f"<CyclePurchaseSummary id={self.id} item={self.item_code} "
+            f"company={self.company} dept_id={self.department_id}>"
+        )
