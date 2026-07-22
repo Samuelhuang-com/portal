@@ -152,7 +152,12 @@ def list_contracts(
         None,
         description="續約鏈篩選：is_copy=只看複製續約產生的合約；has_copies=只看已被複製續約過的合約",
     ),
-    sort_by: str = Query("updated_at", description="排序欄位"),
+    sort_by: str = Query(
+        "updated_at",
+        description="排序欄位（contract_id/contract_name/vendor_name/contract_status/"
+                     "risk_level/start_date/end_date/total_amount_tax_included/"
+                     "created_at/updated_at）",
+    ),
     sort_order: str = Query("desc", description="排序順序"),
 ):
     try:

@@ -356,10 +356,28 @@ export default function ContractListPage() {
     })
   }
 
-  // ── 分頁變更 ────────────────────────────────────────────────────────────
-  const handleTableChange: TableProps<ContractRecord>['onChange'] = (pg) => {
-    if (pg.current && pg.pageSize) {
-      loadContracts(pg.current, pg.pageSize, filters)
+  // ── 分頁 / 排序變更（2026-07-22 新增欄位排序）────────────────────────────────
+  const handleTableChange: TableProps<ContractRecord>['onChange'] = (pg, _tableFilters, sorter) => {
+    const s = Array.isArray(sorter) ? sorter[0] : sorter
+    const field = typeof s?.field === 'string' ? s.field : undefined
+    const order = s?.order as ('ascend' | 'descend' | undefined)
+    const newSortBy = order && field ? field : undefined
+    const newSortOrder: 'asc' | 'desc' | undefined = order === 'ascend' ? 'asc' : order === 'descend' ? 'desc' : undefined
+    const sortChanged = newSortBy !== filters.sort_by || newSortOrder !== filters.sort_order
+
+    const newFilters: ContractFilters = { ...filters }
+    if (newSortBy) {
+      newFilters.sort_by = newSortBy
+      newFilters.sort_order = newSortOrder
+    } else {
+      delete newFilters.sort_by
+      delete newFilters.sort_order
+    }
+    setFilters(newFilters)
+
+    if (pg.pageSize) {
+      // 排序條件變更時回到第 1 頁；純翻頁則維持目前頁碼
+      loadContracts(sortChanged ? 1 : (pg.current || 1), pg.pageSize, newFilters)
     }
   }
 
@@ -370,6 +388,7 @@ export default function ContractListPage() {
       dataIndex: 'contract_id',
       width: 160,
       fixed: 'left',
+      sorter: true,
       render: (text, record) => (
         <Space size={4}>
           <strong>{text}</strong>
@@ -397,6 +416,7 @@ export default function ContractListPage() {
       dataIndex: 'contract_name',
       width: 200,
       ellipsis: { showTitle: false },
+      sorter: true,
       render: (text) => (
         <Tooltip title={text}>
           <span style={{ cursor: 'pointer', color: '#4BA8E8' }}>{text}</span>
@@ -408,17 +428,20 @@ export default function ContractListPage() {
       dataIndex: 'vendor_name',
       width: 150,
       ellipsis: { showTitle: false },
+      sorter: true,
     },
     {
       title: '狀態',
       dataIndex: 'contract_status',
       width: 100,
+      sorter: true,
       render: (status) => statusTag(status),
     },
     {
       title: '風險等級',
       dataIndex: 'risk_level',
       width: 90,
+      sorter: true,
       render: (level) => (
         <Tag color={RISK_LEVEL_COLOR[level] ?? 'default'}>{level || '-'}</Tag>
       ),
@@ -427,12 +450,14 @@ export default function ContractListPage() {
       title: '開始日期',
       dataIndex: 'start_date',
       width: 120,
+      sorter: true,
       render: (date) => fmtDate(date),
     },
     {
       title: '截止日期',
       dataIndex: 'end_date',
       width: 120,
+      sorter: true,
       render: (date) => fmtDate(date),
     },
     {
@@ -440,6 +465,7 @@ export default function ContractListPage() {
       dataIndex: 'total_amount_tax_included',
       width: 140,
       align: 'right' as const,
+      sorter: true,
       render: (amount) => <span style={{ fontWeight: 600 }}>{fmtMoney(amount)}</span>,
     },
     {

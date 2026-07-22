@@ -1543,6 +1543,36 @@ def _mall_get_latest_batch_items(db: Session) -> list[MallPeriodicMaintenanceIte
     )
 
 
+def _mall_get_batch_items_for_month(db: Session, year: int, month: int) -> list[MallPeriodicMaintenanceItem]:
+    """
+    2026-07-23 新增：取得指定 year/month「自己那一批」的保養項目，取代舊版
+    `_mall_get_latest_batch_items()` 在「產生排程」「年度計劃表」被誤用來代表
+    所有月份的問題（詳見對話紀錄／`docs/CHANGELOG.md`）。
+
+    若同一 period_month 有多筆批次（重複同步），比照 `_latest_batch_ids_per_month()`
+    的既有規則，只取 ragic_updated_at 最新的那筆；找不到該月批次則回傳空清單
+    （代表該月尚未同步進來，如實顯示空缺，不借用其他月份的資料冒充）。
+    """
+    valid_batch_ids = _latest_batch_ids_per_month(db)
+    target_period = f"{year}/{month:02d}"
+    batch = (
+        db.query(MallPeriodicMaintenanceBatch)
+        .filter(
+            MallPeriodicMaintenanceBatch.period_month == target_period,
+            MallPeriodicMaintenanceBatch.ragic_id.in_(valid_batch_ids),
+        )
+        .first()
+    )
+    if not batch:
+        return []
+    return (
+        db.query(MallPeriodicMaintenanceItem)
+        .filter(MallPeriodicMaintenanceItem.batch_ragic_id == batch.ragic_id)
+        .order_by(MallPeriodicMaintenanceItem.seq_no)
+        .all()
+    )
+
+
 def _mall_calc_schedule_status(rec: MallPMSchedule) -> str:
     """計算 mall_pm_schedule 記錄的狀態。"""
     if rec.is_completed or (rec.start_time and rec.end_time):
@@ -1625,34 +1655,32 @@ def generate_mall_schedule(
     db:    Session = Depends(get_db),
 ):
     """
-    依最新批次 mall_pm_batch_item 的頻率規則，為指定 year/month 產生 mall_pm_schedule 記錄。
+    依「目標 year/month 自己的批次」mall_pm_batch_item 產生 mall_pm_schedule 記錄。
 
     保護規則：
       - is_completed=True → 跳過（不覆蓋已完成）
       - portal_edited_at IS NOT NULL → 跳過（不覆蓋人工調整）
       - 其他已存在記錄 → 更新 scheduled_date / executor_name
 
-    2026-07-13 修正（取消對非當期月份的自動備填，見對話紀錄）：
-      舊版邏輯會用 (task_name, category, location) 到「目標月份自己的批次」查排定日期，
-      查不到才 fallback 用 item.scheduled_date（永遠是最新批次/當期月份的值）。
-      Sheet24 改版後 location 欄位永遠空白、且不同月份的保養目錄項目數量與組成本身
-      就不是一對一（實測：06 月批次 16 筆項目、07 月批次僅 8 筆，任務內容也不同），
-      改用 seq_no 比對一樣會錯配（07 月 seq=7 是「門扇→巡檢保養」，06 月 seq=7 卻是
-      「商場送風機x14」）。結論：非當期月份的目錄本來就無法從現在的目錄可靠地反推，
-      任何自動比對 key 都有風險，因此改為——只有「目標月份＝目前最新批次自己的月份」
-      時才直接採用 item.scheduled_date（此時來源與目標是同一批次，比對必然正確）；
-      其餘月份一律改用 exec_months 自動推算（每月固定 01 號，見 _calc_auto_scheduled_date），
-      不再嘗試任何跨批次查表備填。
+    2026-07-23 修正（見對話紀錄／docs/CHANGELOG.md）：
+      舊版無論呼叫者傳入哪個 year/month，一律用 `_mall_get_latest_batch_items()`
+      （全站目前最新一批）產生排程，只把結果的 `year_month` 欄位標成呼叫者指定的
+      月份——資料本身其實是「最新批次」的內容，卻貼著「指定月份」的標籤。這代表
+      只要 Ragic 又同步進更新一批（例如 08 月批次一到），07 月（或更早月份）先前
+      產生的排程使用的 item_ragic_id 就會跟「新的最新批次」完全對不上，年度計劃表
+      改用新批次查表時會找不到對應紀錄、整批退回公式估算——使用者重新同步、重新
+      產生排程都救不回來，因為問題不在資料，而在「用哪一批」這件事本身每次呼叫
+      都可能不同。
+      改為：直接用 `_mall_get_batch_items_for_month(db, year, month)` 抓「該月自己的
+      批次」；該月尚未同步進批次就如實回報，不再借用其他月份的資料冒充。
+      由於來源批次現在必然等於目標月份自己的批次，原本「是否為目前最新批次月份」
+      的分支判斷（is_current_batch_month）、以及對非當期月份套用頻率公式二次過濾
+      （_should_schedule）都不再需要——批次裡有的項目，就代表 Ragic 自己已經認定
+      該項目在這個月要執行，item 的 scheduled_date/is_completed/start_time/end_time
+      一律直接採用（本來就是該月自己的即時資料）。
     """
     year_month = f"{year}/{month:02d}"
-    items = _mall_get_latest_batch_items(db)
-
-    latest_batch_period_month = ""
-    if items:
-        latest_batch = db.get(MallPeriodicMaintenanceBatch, items[0].batch_ragic_id)
-        if latest_batch:
-            latest_batch_period_month = latest_batch.period_month
-    is_current_batch_month = bool(latest_batch_period_month) and (latest_batch_period_month == year_month)
+    items = _mall_get_batch_items_for_month(db, year, month)
 
     generated             = 0
     updated               = 0
@@ -1662,21 +1690,17 @@ def generate_mall_schedule(
     skipped_no_frequency  = 0
     errors: list[str]     = []
 
+    if not items:
+        errors.append(
+            f"{year_month} 尚未同步對應批次（mall_pm_batch 找不到 period_month={year_month} 的記錄），未產生任何排程"
+        )
+
     for item in items:
         try:
             freq = (item.frequency or "").strip()
 
             if not freq:
                 skipped_no_frequency += 1
-                continue
-
-            # 有 exec_months 的項目：一律納入排程，scheduled_date 由 exec_months 自動計算
-            # 無 exec_months 的項目：依頻率公式，只在執行月份才建立排程記錄
-            has_exec_months = bool(
-                item.exec_months_json and item.exec_months_json.strip() not in ("[]", "")
-            )
-            if not has_exec_months and not _should_schedule(item, year, month):
-                skipped_non_month += 1
                 continue
 
             existing = (
@@ -1688,17 +1712,8 @@ def generate_mall_schedule(
                 .first()
             )
 
-            # resolved_date 優先順序：
-            #   1. 目標月份＝目前最新批次自己的月份時，直接採用 item.scheduled_date
-            #      （來源與目標同一批次，比對必然正確；見函式頂部 2026-07-13 修正說明）
-            #   2. 其餘月份一律用 exec_months 自動計算（MM/01），不再嘗試任何跨批次查表備填
-            #   3. 都沒有 → 空字串
-            if is_current_batch_month and item.scheduled_date:
-                resolved_date = item.scheduled_date
-            elif has_exec_months:
-                resolved_date = _calc_auto_scheduled_date(item.exec_months_json, month)
-            else:
-                resolved_date = ""
+            # item 來自目標月份自己的批次，來源與目標必然一致，直接採用即可
+            resolved_date = item.scheduled_date or ""
 
             if existing:
                 if existing.is_completed or (existing.start_time and existing.end_time):
@@ -1710,17 +1725,12 @@ def generate_mall_schedule(
                 existing.scheduled_date    = resolved_date
                 existing.executor_name     = item.executor_name
                 existing.estimated_minutes = item.estimated_minutes
-                # 2026-07-13 修正：帶入 Ragic 同步回來的完成狀態（原本從未寫入，見函式頂部
-                # 說明）。只在「目標月份＝目前最新批次自己的月份」時才帶入——其餘月份的
-                # item.start_time/end_time 是當期月份的實際執行時間，跟過去/未來月份的排程
-                # 無關，不應該被帶進去（理由同上方 resolved_date 只在當期月份採用 item 資料）。
-                if is_current_batch_month:
-                    existing.start_time    = item.start_time
-                    existing.end_time      = item.end_time
-                    existing.is_completed  = item.is_completed
-                    existing.result_note   = item.result_note
-                    existing.abnormal_flag = item.abnormal_flag
-                    existing.abnormal_note = item.abnormal_note
+                existing.start_time        = item.start_time
+                existing.end_time          = item.end_time
+                existing.is_completed      = item.is_completed
+                existing.result_note       = item.result_note
+                existing.abnormal_flag     = item.abnormal_flag
+                existing.abnormal_note     = item.abnormal_note
                 existing.updated_at        = datetime.now()
                 updated += 1
             else:
@@ -1735,13 +1745,12 @@ def generate_mall_schedule(
                     scheduled_date    = resolved_date,
                     executor_name     = item.executor_name,
                     schedule_source   = "auto",
-                    # 同上：新建記錄時，若為當期月份也一併帶入 item 已知的完成狀態
-                    start_time    = item.start_time    if is_current_batch_month else "",
-                    end_time      = item.end_time      if is_current_batch_month else "",
-                    is_completed  = item.is_completed  if is_current_batch_month else False,
-                    result_note   = item.result_note   if is_current_batch_month else "",
-                    abnormal_flag = item.abnormal_flag if is_current_batch_month else False,
-                    abnormal_note = item.abnormal_note if is_current_batch_month else "",
+                    start_time    = item.start_time,
+                    end_time      = item.end_time,
+                    is_completed  = item.is_completed,
+                    result_note   = item.result_note,
+                    abnormal_flag = item.abnormal_flag,
+                    abnormal_note = item.abnormal_note,
                 )
                 db.add(new_rec)
                 generated += 1
@@ -1938,98 +1947,95 @@ def get_mall_annual_matrix(
     category: Optional[str] = Query(None),
     db:       Session = Depends(get_db),
 ):
-    all_items = _mall_get_latest_batch_items(db)
-    if category:
-        all_items = [it for it in all_items if it.category == category]
-
-    year_records = (
-        db.query(MallPMSchedule)
-        .filter(MallPMSchedule.year_month.like(f"{year}/%"))
-        .all()
-    )
-    schedule_map: dict[tuple[str, int], MallPMSchedule] = {}
-    for rec in year_records:
-        try:
-            m = int(rec.year_month.split("/")[1])
-            schedule_map[(rec.item_ragic_id, m)] = rec
-        except Exception:
-            pass
-
-    # 2026-07-13 修正：移除「用 (task_name, category, location) 到該月批次查表補回
-    # scheduled_date」的備填邏輯。原因與 generate_mall_schedule() 同一批次修正（見該
-    # 函式頂部說明）——location 欄位 Sheet24 改版後永遠空白、不同月份的保養目錄本身
-    # 就不是一對一（同 task_name+category 常有多筆不同日期的項目），任何自動比對
-    # key 都會有錯配風險，因此不再嘗試備填，scheduled_date 為空就如實顯示為空。
-
+    """
+    2026-07-23 修正（見對話紀錄／docs/CHANGELOG.md）：
+      舊版用 `_mall_get_latest_batch_items()` 抓「全站目前最新一批」當成貫穿全年
+      12 欄的主檔項目清單，其餘月份沒有真實 `mall_pm_schedule` 記錄時，改用頻率
+      公式＋該筆項目自己的 `scheduled_date` 猜一個狀態。這造成兩個問題：
+        1. 「最新批次」每次 Ragic 同步進新一批就會整批換掉，年度計劃表的列（項目
+           清單）本身就不穩定——同一份資料庫在不同時間點呼叫，看到的項目數與內容
+           會完全不同（例如 08 月批次同步進來後，項目清單瞬間從 07 月的 8 筆換成
+           08 月的 9 筆）。
+        2. 公式猜測對月頻率項目每個月都判斷「應排」，缺真實資料的月份會顯示同一
+           天期（MM/01）重複貼滿多個欄位，跟真實狀態無關。
+      改為：逐月呼叫 `_mall_get_batch_items_for_month()`，只用「那個月自己的批次」
+      決定該月欄位的真實項目與狀態。不同月份的批次項目彼此沒有穩定的跨月識別方式
+      （用名稱/類別比對有錯配風險，已在 `generate_mall_schedule()` 說明中排除），
+      因此改為「每月批次各自成一列」：同一個任務若在多個月份都有批次，會分成多筆
+      獨立的列，每列只有自己所屬月份那一欄有真實資料，其餘 11 欄一律顯示「非本月」
+      （—），不再用公式猜測其他月份的狀態。
+    """
     rows: list[MallPMScheduleMatrixRow] = []
     completed_cnt = 0
+    today = date.today()
 
-    for item in all_items:
-        cells: list[MallPMScheduleMatrixCell] = []
-        for m in range(1, 13):
-            rec = schedule_map.get((item.ragic_id, m))
-            if rec:
-                status = _mall_calc_schedule_status(rec)
+    for m in range(1, 13):
+        month_items = _mall_get_batch_items_for_month(db, year, m)
+        if category:
+            month_items = [it for it in month_items if it.category == category]
+
+        for item in month_items:
+            existing = (
+                db.query(MallPMSchedule)
+                .filter(
+                    MallPMSchedule.year_month    == f"{year}/{m:02d}",
+                    MallPMSchedule.item_ragic_id == item.ragic_id,
+                )
+                .first()
+            )
+            freq = (item.frequency or "").strip()
+
+            if existing:
+                status = _mall_calc_schedule_status(existing)
                 if status == "completed":
                     completed_cnt += 1
-                cells.append(MallPMScheduleMatrixCell(
+                home_cell = MallPMScheduleMatrixCell(
                     month          = m,
                     status         = status,
-                    schedule_id    = rec.id,
-                    scheduled_date = rec.scheduled_date or None,
-                ))
+                    schedule_id    = existing.id,
+                    scheduled_date = existing.scheduled_date or None,
+                )
+            elif not freq:
+                home_cell = MallPMScheduleMatrixCell(month=m, status="no_frequency", schedule_id=None)
             else:
-                freq = (item.frequency or "").strip()
-                if not freq:
-                    cells.append(MallPMScheduleMatrixCell(month=m, status="no_frequency", schedule_id=None))
-                elif _should_schedule(item, year, m):
-                    # ── 決定 cell_sched_date ──────────────────────────────────
-                    # 優先 1：Ragic item.scheduled_date；優先 2：MM/01（執行月預設）
-                    cell_sched_date: Optional[str] = f"{m:02d}/01"
-                    cell_status = "no_data"
-                    if item.scheduled_date:
-                        try:
-                            parts = item.scheduled_date.split("/")
-                            sched_month = int(parts[0])
-                            day = parts[-1].zfill(2)
-                            cell_sched_date = f"{m:02d}/{day}"
-                            if sched_month == m:
-                                if item.is_completed or (item.start_time and item.end_time):
-                                    cell_status = "completed"
-                                    completed_cnt += 1
-                                elif item.start_time:
-                                    cell_status = "in_progress"
-                                else:
-                                    full_sched = datetime.strptime(
-                                        f"{year}/{item.scheduled_date}", "%Y/%m/%d"
-                                    ).date()
-                                    cell_status = "overdue" if full_sched < date.today() else "scheduled"
-                        except Exception:
-                            cell_sched_date = f"{m:02d}/01"
+                # 尚未產生 mall_pm_schedule 記錄：直接依「該月自己批次」的 item 欄位
+                # 判斷真實狀態，不再套用頻率公式或跨月猜測的 scheduled_date。
+                cell_status = "no_data"
+                if item.is_completed or (item.start_time and item.end_time):
+                    cell_status = "completed"
+                    completed_cnt += 1
+                elif item.start_time:
+                    cell_status = "in_progress"
+                elif item.scheduled_date:
+                    try:
+                        full_sched = datetime.strptime(f"{year}/{item.scheduled_date}", "%Y/%m/%d").date()
+                        cell_status = "overdue" if full_sched < today else "scheduled"
+                    except Exception:
+                        pass
 
-                    # 未來月份不顯示「！」，改為「—」（但保留 scheduled_date 提示）
-                    today = date.today()
-                    if year > today.year or (year == today.year and m > today.month):
-                        cells.append(MallPMScheduleMatrixCell(
-                            month=m, status="non_month",
-                            schedule_id=None, scheduled_date=cell_sched_date,
-                        ))
-                    else:
-                        cells.append(MallPMScheduleMatrixCell(
-                            month=m, status=cell_status,
-                            schedule_id=None, scheduled_date=cell_sched_date,
-                        ))
-                else:
-                    cells.append(MallPMScheduleMatrixCell(month=m, status="non_month", schedule_id=None))
+                # 未來月份不顯示「！」，改為「—」（但保留 scheduled_date 提示）
+                if year > today.year or (year == today.year and m > today.month):
+                    cell_status = "non_month"
 
-        rows.append(MallPMScheduleMatrixRow(
-            item_ragic_id = item.ragic_id,
-            category      = item.category,
-            task_name     = item.task_name,
-            location      = item.location,
-            frequency     = item.frequency or "",
-            cells         = cells,
-        ))
+                home_cell = MallPMScheduleMatrixCell(
+                    month=m, status=cell_status, schedule_id=None,
+                    scheduled_date=item.scheduled_date or None,
+                )
+
+            cells = [
+                MallPMScheduleMatrixCell(month=mm, status="non_month", schedule_id=None)
+                for mm in range(1, 13)
+            ]
+            cells[m - 1] = home_cell
+
+            rows.append(MallPMScheduleMatrixRow(
+                item_ragic_id = item.ragic_id,
+                category      = item.category,
+                task_name     = item.task_name,
+                location      = item.location,
+                frequency     = item.frequency or "",
+                cells         = cells,
+            ))
 
     total_cells = sum(
         1 for row in rows

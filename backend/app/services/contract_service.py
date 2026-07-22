@@ -95,7 +95,9 @@ class ContractService:
                 is_copy    — 只看複製續約產生的合約（renewed_from_contract_id 非空）
                 has_copies — 只看已被複製續約過的合約（有其他合約的
                              renewed_from_contract_id 指向自己）
-            sort_by: 排序欄位（contract_id/created_at/updated_at/start_date/total_amount_tax_included）
+            sort_by: 排序欄位（contract_id/contract_name/vendor_name/contract_status/
+                     risk_level/start_date/end_date/total_amount_tax_included/
+                     created_at/updated_at）
             sort_order: 排序順序（asc/desc）
 
         Returns:
@@ -148,13 +150,23 @@ class ContractService:
         # 計算總筆數
         total = query.count()
 
-        # 排序
+        # 排序（2026-07-22：合約清單表格欄位排序，補齊表格上顯示的全部欄位）
         if sort_by == "contract_id":
             sort_col = Contract.contract_id
         elif sort_by == "created_at":
             sort_col = Contract.created_at
         elif sort_by == "start_date":
             sort_col = Contract.start_date
+        elif sort_by == "end_date":
+            sort_col = Contract.end_date
+        elif sort_by == "contract_name":
+            sort_col = Contract.contract_name
+        elif sort_by == "vendor_name":
+            sort_col = Contract.vendor_name
+        elif sort_by == "contract_status":
+            sort_col = Contract.contract_status
+        elif sort_by == "risk_level":
+            sort_col = Contract.risk_level
         elif sort_by == "total_amount_tax_included":
             sort_col = Contract.total_amount_tax_included
         else:  # updated_at
