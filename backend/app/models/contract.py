@@ -184,6 +184,14 @@ class Contract(Base):
     budget_dept     = Column(String(100), nullable=True, comment="預算使用部門名稱")
     pricing_spec    = Column(String(200), nullable=True, comment="計價規格名稱")
 
+    # ── 續約鏈（原合約複製續約，2026-07-21）─────────────────────────────────────
+    renewed_from_contract_id = Column(
+        String(50),
+        ForeignKey("contracts.contract_id", ondelete="SET NULL"),
+        nullable=True,
+        comment="續約來源合約編號（複製自哪份原合約；NULL 表示非續約產生）"
+    )
+
     # ── 附件 ────────────────────────────────────────────────────────────────────
     attachment_url = Column(String(500), nullable=True, comment="附件連結")
     remarks = Column(Text, nullable=False, default="", comment="備註")
@@ -219,11 +227,18 @@ class Contract(Base):
         Index("idx_contract_vendor", "vendor_id"),
         Index("idx_contract_dept", "responsible_dept"),
         Index("idx_budget_year", "budget_year"),
+        Index("idx_contract_renewed_from", "renewed_from_contract_id"),
     )
 
     # ── 關聯 ──────────────────────────────────────────────────────────────────
     vendor = relationship("Vendor", foreign_keys=[vendor_id], primaryjoin="Contract.vendor_id == Vendor.vendor_id", lazy="select")
     claims = relationship("ContractClaim", back_populates="contract", cascade="all, delete-orphan", lazy="select")
+    renewed_from = relationship(
+        "Contract",
+        remote_side=[contract_id],
+        foreign_keys=[renewed_from_contract_id],
+        lazy="select",
+    )
 
     def __repr__(self) -> str:
         return f"<Contract {self.contract_id} {self.contract_name}>"

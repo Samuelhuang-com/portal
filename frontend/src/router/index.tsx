@@ -164,7 +164,7 @@ import ContractDashboardPage   from '@/pages/Contract/Dashboard'
 import ContractImportPage      from '@/pages/Contract/Import'
 import ContractExpiringPage    from '@/pages/Contract/Expiring'
 import ContractClaimsPage      from '@/pages/Contract/Claims'
-import ContractRenewalsPage    from '@/pages/Contract/Renewals'
+// 2026-07-21：「續約申請」獨立頁面已隱藏（見下方路由區塊註解），檔案保留未刪，故不 import。
 import ContractCalendarPage    from '@/pages/Contract/CalendarView'
 import ContractComparePage     from '@/pages/Contract/CompareContracts'
 import VendorsPage             from '@/pages/Contract/Vendors'
@@ -188,7 +188,6 @@ const PERM_DEFAULT_ROUTES: { key: string; route: string }[] = [
   { key: 'contract_view',                     route: '/contract' },
   { key: 'contract_expiring_view',            route: '/contract/expiring' },
   { key: 'contract_claims_view',              route: '/contract/claims' },
-  { key: 'contract_renewals_view',            route: '/contract/renewals' },
   { key: 'budget_view',                       route: '/budget/dashboard' },
   { key: 'cycle_purchase_view',                route: '/cycle-purchase/dashboard' },
   { key: 'calendar_view',                     route: '/calendar' },
@@ -537,11 +536,8 @@ export default function AppRouter() {
               <ContractClaimsPage />
             </PermissionGuard>
           } />
-          <Route path="renewals" element={
-            <PermissionGuard permissionKey="contract_renewals_view">
-              <ContractRenewalsPage />
-            </PermissionGuard>
-          } />
+          {/* 2026-07-21：「續約申請」路由已隱藏（改為「原合約複製續約」，見合約明細
+              Drawer 的「上下層級」TAB）。ContractRenewalsPage 與後端端點保留未刪。 */}
           <Route path="calendar" element={
             <PermissionGuard permissionKey="contract_view">
               <ContractCalendarPage />

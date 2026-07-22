@@ -782,7 +782,10 @@ erDiagram
   <strong>批次核准：</strong><code>POST /contract/claims/batch-review</code>，支援多選請款一次核准。逾期未審核（建立超過 7 天仍為「待審核」）在前端顯示黃色警示。
 </div>
 
-<h3>6.3 續約審核</h3>
+<h3>6.3 續約審核（2026-07-21 起已隱藏，改為「原合約複製續約」）</h3>
+<div class="alert alert-info">
+  <strong>2026-07-21 更新：</strong>本節描述的簽核式續約申請流程（前端 Drawer Tab、獨立頁面 <code>/contract/renewals</code>、選單「續約管理」）已在前端隱藏，改為「原合約複製續約」：合約列表點「複製續約」，重用新增合約表單並預先帶入原合約欄位（含項目/費用分攤/付款計劃）供編輯後送出，建立一份獨立的新合約並以 <code>renewed_from_contract_id</code> 標記續約來源；合約明細 Drawer 新增「上下層級」TAB 可查完整續約鏈。以下端點與資料表在後端仍保留（未刪除，僅前端不再呼叫），供未來需要時參考或復原。
+</div>
 <ul class="rule-list">
   <li>申請：<code>POST /contract/{id}/renewals</code>，狀態為「待審核」，系統記錄申請人</li>
   <li>審核操作：<code>POST /contract/renewals/{id}/review</code>，action = approve / reject / withdraw</li>

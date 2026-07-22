@@ -29,6 +29,8 @@ from app.models.contract import (
     Vendor,
     BudgetCategory,
     ContractClaim,
+    ContractCostAllocation,
+    ContractPaymentSchedule,
 )
 from app.schemas.contract import (
     ContractCreate,
@@ -70,6 +72,7 @@ class ContractService:
         budget_year: Optional[int] = None,
         responsible_dept: Optional[str] = None,
         manager: Optional[str] = None,
+        renewal_filter: Optional[str] = None,
         sort_by: str = "updated_at",
         sort_order: str = "desc",
     ) -> tuple[List[ContractDetailResponse], int]:
@@ -86,6 +89,12 @@ class ContractService:
             risk_level: 風險等級篩選（低/中/高/關鍵）
             budget_year: 預算年度篩選
             responsible_dept: 負責部門篩選
+            renewal_filter: 續約鏈篩選（2026-07-21；只認明確的 renewed_from_contract_id
+                             關聯，2026-07-22 撤銷編號字串規律推斷，見
+                             _compute_renewal_relation_flags 說明）
+                is_copy    — 只看複製續約產生的合約（renewed_from_contract_id 非空）
+                has_copies — 只看已被複製續約過的合約（有其他合約的
+                             renewed_from_contract_id 指向自己）
             sort_by: 排序欄位（contract_id/created_at/updated_at/start_date/total_amount_tax_included）
             sort_order: 排序順序（asc/desc）
 
@@ -127,6 +136,15 @@ class ContractService:
         if manager:
             query = query.filter(Contract.manager == manager)
 
+        # 續約鏈篩選（2026-07-21）：只認明確的 renewed_from_contract_id 關聯
+        relation_flags = ContractService._compute_renewal_relation_flags(db)
+        if renewal_filter == "is_copy":
+            matching_ids = [cid for cid, f in relation_flags.items() if f["is_copy"]]
+            query = query.filter(Contract.contract_id.in_(matching_ids))
+        elif renewal_filter == "has_copies":
+            matching_ids = [cid for cid, f in relation_flags.items() if f["has_children"]]
+            query = query.filter(Contract.contract_id.in_(matching_ids))
+
         # 計算總筆數
         total = query.count()
 
@@ -153,7 +171,48 @@ class ContractService:
         # 轉換為 Response Schema
         result = [ContractService._make_contract_detail_response(c) for c in contracts]
 
+        # 標記本頁合約的續約鏈相關旗標（2026-07-21，只認明確的 FK 關聯）
+        for r in result:
+            f = relation_flags.get(r.contract_id) or {"is_copy": False, "has_children": False, "hint": None}
+            r.is_renewal_copy = f["is_copy"]
+            r.has_renewal_children = f["has_children"]
+            r.renewal_related_hint = f["hint"]
+
         return result, total
+
+    @staticmethod
+    def _compute_renewal_relation_flags(db: Session) -> Dict[str, Dict[str, Any]]:
+        """
+        計算每份合約的「相關合約」旗標（供合約清單 icon／篩選使用，2026-07-21）。
+
+        2026-07-22 撤銷編號規律推斷：Samuel 確認「續約」關聯只認手動執行「複製續約」
+        產生的明確 renewed_from_contract_id 記錄，不可用合約編號字串規律猜測（實測
+        COP006-2026-02／COP002-2025-2／COP005-2026-1／COP018-2026 等大量互不相關的
+        合約，只因編號格式相似就被誤判為相關，不正確）。本方法現在只讀取真正的 FK
+        關聯，不做任何字串比對。
+
+        Returns:
+            {contract_id: {"is_copy": bool, "has_children": bool, "hint": Optional[str]}}
+            hint 為提示用的關聯合約編號（複製來源／第一個被複製出的子合約）。
+        """
+        rows = db.query(
+            Contract.contract_id, Contract.renewed_from_contract_id
+        ).all()
+
+        flags: Dict[str, Dict[str, Any]] = {
+            cid: {"is_copy": False, "has_children": False, "hint": None} for cid, _ in rows
+        }
+
+        for cid, parent_id in rows:
+            if parent_id:
+                flags[cid]["is_copy"] = True
+                flags[cid]["hint"] = parent_id
+                if parent_id in flags:
+                    flags[parent_id]["has_children"] = True
+                    if not flags[parent_id]["hint"]:
+                        flags[parent_id]["hint"] = cid
+
+        return flags
 
     @staticmethod
     def get_contract(db: Session, contract_id: str) -> ContractDetailResponse:
@@ -288,6 +347,138 @@ class ContractService:
         db.refresh(contract)
 
         return ContractService._make_contract_detail_response(contract)
+
+    @staticmethod
+    def copy_renew_contract(
+        db: Session,
+        source_contract_id: str,
+        contract_data: ContractCreate,
+    ) -> ContractDetailResponse:
+        """
+        複製原合約建立續約新合約（「原合約複製續約」功能，2026-07-21）。
+
+        前端表單會預先帶入原合約所有欄位值供使用者編輯（含新合約編號），
+        送出時走跟「新增合約」完全相同的查重／日期／金額／廠商／預算科目驗證，
+        建立成功後：
+          1. 在新合約標記 renewed_from_contract_id = 原合約編號（用於上下層級查詢）
+          2. 複製原合約的子資料：合約項目 / 費用分攤 / 付款計劃
+
+        不複製的資料（屬於原合約自己的歷史交易記錄，非可續用的範本資料）：
+          請款紀錄、附件、變更歷程、稽核日誌、驗收記錄、保證金、SLA 指標與記錄。
+
+        Args:
+            db: 資料庫連線
+            source_contract_id: 原合約編號
+            contract_data: 新合約建立 Schema（含新合約編號，可與原合約不同）
+
+        Raises:
+            ContractNotFound: 原合約不存在
+            ContractAlreadyExists: 新合約編號已存在
+            ContractVendorNotFound / ContractBudgetCategoryNotFound /
+            InvalidContractDates / InvalidContractAmount: 同「新增合約」驗證
+        """
+        source = db.query(Contract).filter(Contract.contract_id == source_contract_id).first()
+        if not source:
+            raise ContractNotFound(source_contract_id)
+
+        # 沿用既有新增合約邏輯（查重、日期/金額驗證、廠商/預算科目檢查、建立主檔）
+        ContractService.create_contract(db, contract_data)
+
+        new_contract = db.query(Contract).filter(Contract.contract_id == contract_data.contract_id).first()
+        new_contract.renewed_from_contract_id = source_contract_id
+        db.commit()
+
+        # 複製子資料：合約項目
+        for item in db.query(ContractItem).filter(ContractItem.contract_id == source_contract_id).all():
+            db.add(ContractItem(
+                contract_id=new_contract.contract_id,
+                item_seq=item.item_seq,
+                item_name=item.item_name,
+                item_category=item.item_category,
+                unit_price_tax_excluded=item.unit_price_tax_excluded,
+                quantity=item.quantity,
+                unit=item.unit,
+                tax_rate=item.tax_rate,
+                amount_tax_excluded=item.amount_tax_excluded,
+                amount_tax_included=item.amount_tax_included,
+                is_fixed=item.is_fixed,
+                is_floating=item.is_floating,
+            ))
+
+        # 複製子資料：費用分攤
+        for alloc in db.query(ContractCostAllocation).filter(ContractCostAllocation.contract_id == source_contract_id).all():
+            db.add(ContractCostAllocation(
+                contract_id=new_contract.contract_id,
+                company_name=alloc.company_name,
+                allocation_type=alloc.allocation_type,
+                value=alloc.value,
+            ))
+
+        # 複製子資料：付款計劃（狀態重置為「待付款」，不沿用原合約的付款記錄）
+        for sched in db.query(ContractPaymentSchedule).filter(ContractPaymentSchedule.contract_id == source_contract_id).all():
+            db.add(ContractPaymentSchedule(
+                contract_id=new_contract.contract_id,
+                milestone_name=sched.milestone_name,
+                due_date=sched.due_date,
+                amount=sched.amount,
+                status="待付款",
+                notes=sched.notes,
+            ))
+
+        db.commit()
+        db.refresh(new_contract)
+
+        return ContractService._make_contract_detail_response(new_contract)
+
+    @staticmethod
+    def get_renewal_chain(db: Session, contract_id: str) -> List[Contract]:
+        """
+        查詢合約的完整續約鏈（上下層級）。
+
+        先往上溯源找到最源頭的合約（renewed_from_contract_id 為 NULL 者），
+        再從源頭開始往下展開整條鏈（含分支：同一份合約可能被複製續約多次）。
+
+        Args:
+            db: 資料庫連線
+            contract_id: 查詢起點合約編號
+
+        Returns:
+            依起日由舊到新排序的合約清單（至少含查詢起點本身一筆）
+
+        Raises:
+            ContractNotFound: 合約不存在
+        """
+        current = db.query(Contract).filter(Contract.contract_id == contract_id).first()
+        if not current:
+            raise ContractNotFound(contract_id)
+
+        # 往上溯源找最源頭的合約（防呆：避免資料異常造成無窮迴圈）
+        root = current
+        visited_up = {root.contract_id}
+        while root.renewed_from_contract_id:
+            if root.renewed_from_contract_id in visited_up:
+                break
+            parent = db.query(Contract).filter(Contract.contract_id == root.renewed_from_contract_id).first()
+            if not parent:
+                break
+            visited_up.add(parent.contract_id)
+            root = parent
+
+        # 從最源頭開始 BFS 往下展開整條鏈（含分支）
+        chain: List[Contract] = []
+        seen: set = set()
+        queue = [root]
+        while queue:
+            node = queue.pop(0)
+            if node.contract_id in seen:
+                continue
+            seen.add(node.contract_id)
+            chain.append(node)
+            children = db.query(Contract).filter(Contract.renewed_from_contract_id == node.contract_id).all()
+            queue.extend(children)
+
+        chain.sort(key=lambda c: (c.start_date, c.contract_id))
+        return chain
 
     @staticmethod
     def update_contract(

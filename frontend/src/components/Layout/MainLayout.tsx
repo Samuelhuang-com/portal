@@ -237,7 +237,8 @@ export const menuItems: MenuItem[] = [
       { key: '/contract/dashboard',  icon: <DashboardOutlined />, label: NAV_PAGE.contractDashboard, permissionKey: 'contract_view'         },
       { key: '/contract/expiring',   icon: <AlertOutlined />,     label: NAV_PAGE.contractExpiring,  permissionKey: 'contract_expiring_view' },
       { key: '/contract/claims',     icon: <DollarOutlined />,    label: NAV_PAGE.contractClaims,    permissionKey: 'contract_claims_view'    },
-      { key: '/contract/renewals',   icon: <SyncOutlined />,      label: NAV_PAGE.contractRenewals,  permissionKey: 'contract_renewals_view'  },
+      // 2026-07-21：「續約申請」（簽核式申請流程）已改為「原合約複製續約」，本選單項目隱藏
+      // （路由與權限一併移除，見 router/index.tsx、role_permissions.py；頁面檔案與後端端點保留不刪）。
       { key: '/contract/calendar',   icon: <CalendarOutlined />,  label: NAV_PAGE.contractCalendar,  permissionKey: 'contract_view'           },
       { key: '/contract/compare',    icon: <SwapOutlined />,      label: NAV_PAGE.contractCompare,   permissionKey: 'contract_view'           },
       { key: '/contract/import',     icon: <UploadOutlined />,    label: NAV_PAGE.contractImport,    permissionKey: 'contract_create_edit'    },

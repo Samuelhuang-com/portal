@@ -12,7 +12,7 @@ import {
   Typography, Breadcrumb, Drawer, Descriptions, message,
   Input, Select, Tooltip, Switch, Divider, Tabs,
   Empty, Modal, Form, InputNumber, Spin, Popconfirm, Progress,
-  Upload, Image,
+  Upload, Image, Tree,
 } from 'antd'
 import { DatePicker } from 'antd'
 import {
@@ -24,6 +24,7 @@ import {
   ClockCircleOutlined, AuditOutlined,
   ExpandOutlined, CompressOutlined,
   SafetyOutlined, CheckSquareOutlined, SolutionOutlined, DashboardOutlined,
+  CopyOutlined, BranchesOutlined,
 } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import type { ColumnsType, TableProps } from 'antd/es/table'
@@ -34,7 +35,7 @@ import {
   createContract, fetchVendorOptions, updateContract,
   fetchContractItems, createContractItem, updateContractItem, deleteContractItem,
   fetchClaims, fetchBudgetCategoryOptions, exportContractsExcel,
-  fetchRenewalsByContract, applyRenewal,
+  fetchRenewalsByContract, applyRenewal, copyRenewContract, fetchRenewalChain,
   fetchClaimAttachments, uploadClaimAttachment, deleteClaimAttachment, getAttachmentUrl,
   submitContractForReview, approveContract, rejectContract,
   fetchContractAttachments, uploadContractAttachment, deleteContractAttachment,
@@ -49,6 +50,7 @@ import type { UserOptionItem } from '@/api/users'
 import type {
   ContractRecord, ContractFilters, VendorListResponse, ContractUpdate,
   BudgetCategoryListResponse, RenewalRecord, ClaimAttachment, ContractAttachment,
+  ContractChainNode,
 } from '@/types/contract'
 import type { ContractItemRecord, ContractItemCreate, ClaimRecord } from '@/api/contract'
 import { NAV_GROUP, NAV_PAGE } from '@/constants/navLabels'
@@ -111,12 +113,13 @@ export default function ContractListPage() {
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [selectedContract, setSelectedContract] = useState<ContractRecord | null>(null)
 
-  // 新增 Modal 狀態
+  // 新增 Modal 狀態（同一個 Modal 也用於「複製續約」，copySourceId 有值時代表複製續約模式）
   const [addOpen, setAddOpen] = useState(false)
   const [addLoading, setAddLoading] = useState(false)
   const [vendorOptions, setVendorOptions] = useState<VendorListResponse[]>([])
   const [userOptions, setUserOptions] = useState<UserOptionItem[]>([])
   const [addForm] = Form.useForm()
+  const [copySourceId, setCopySourceId] = useState<string | null>(null)
 
   // F4 — 基礎參考資料下拉（新增 Modal 用）
   const [companyOptions, setCompanyOptions] = useState<CompanyOption[]>([])
@@ -145,6 +148,9 @@ export default function ContractListPage() {
   const [myContractsOnly, setMyContractsOnly] = useState<boolean>(() => {
     try { return localStorage.getItem('contract_my_only') === 'true' } catch { return false }
   })
+
+  // 續約鏈篩選（2026-07-21）：點合約編號旁的 icon 套用
+  const [renewalFilter, setRenewalFilter] = useState<'is_copy' | 'has_copies' | undefined>()
 
   // ── 載入合約清單 ──────────────────────────────────────────────────────────
   const loadContracts = useCallback(async (page: number, size: number, f: ContractFilters) => {
@@ -194,9 +200,10 @@ export default function ContractListPage() {
         }
       } catch { /* 靜默處理 */ }
     }
+    if (renewalFilter) newFilters.renewal_filter = renewalFilter
     setFilters(newFilters)
     loadContracts(1, pagination.size, newFilters)
-  }, [searchText, statusFilter, riskLevelFilter, myContractsOnly, pagination.size, loadContracts])
+  }, [searchText, statusFilter, riskLevelFilter, myContractsOnly, renewalFilter, pagination.size, loadContracts])
 
   // ── 開啟新增 Modal ────────────────────────────────────────────────────────
   const openAddModal = async () => {
@@ -233,7 +240,57 @@ export default function ContractListPage() {
     }
   }
 
-  // ── 提交新增合約 ──────────────────────────────────────────────────────────
+  // ── 開啟「複製續約」Modal（沿用新增合約 Modal，預先帶入原合約欄位值）──────────
+  const openCopyRenewModal = async (source: ContractRecord) => {
+    await openAddModal()
+    setCopySourceId(source.contract_id)
+    setSelectedBudgetYear(source.budget_year)
+    setSelectedL1(source.budget_category_l1)
+    addForm.setFieldsValue({
+      contract_id: source.contract_id,   // 使用者需自行改成新編號才能送出（查重會擋掉重複編號）
+      contract_name: source.contract_name,
+      contract_type: source.contract_type,
+      responsible_dept: source.responsible_dept,
+      vendor_id: source.vendor_id,
+      risk_level: source.risk_level,
+      start_date: source.start_date ? dayjs(source.start_date) : undefined,
+      end_date: source.end_date ? dayjs(source.end_date) : undefined,
+      total_amount_tax_included: source.total_amount_tax_included,
+      pricing_method: source.pricing_method,
+      budget_year: source.budget_year,
+      budget_category_l1: source.budget_category_l1,
+      budget_category_l2: source.budget_category_l2,
+      accounting_code: source.accounting_code,
+      currency: source.currency,
+      signing_company: source.signing_company,
+      budget_company: source.budget_company,
+      pricing_spec: source.pricing_spec,
+      remarks: source.remarks,
+    })
+    // 公司已預帶值，連動載入對應部門清單，再帶出簽約/預算部門
+    if (source.signing_company) {
+      const co = companyOptions.find(c => c.value === source.signing_company)
+      if (co) {
+        try {
+          const res = await departmentsApi.options(co.id)
+          setAddSigningDeptOpts(Array.isArray(res.data) ? res.data : [])
+          addForm.setFieldsValue({ signing_dept: source.signing_dept })
+        } catch { /* 靜默處理 */ }
+      }
+    }
+    if (source.budget_company) {
+      const co = companyOptions.find(c => c.value === source.budget_company)
+      if (co) {
+        try {
+          const res = await departmentsApi.options(co.id)
+          setAddBudgetDeptOpts(Array.isArray(res.data) ? res.data : [])
+          addForm.setFieldsValue({ budget_dept: source.budget_dept })
+        } catch { /* 靜默處理 */ }
+      }
+    }
+  }
+
+  // ── 提交新增合約 / 複製續約 ──────────────────────────────────────────────
   const handleAddOk = async () => {
     try {
       const values = await addForm.validateFields()
@@ -256,9 +313,15 @@ export default function ContractListPage() {
         reviewer: '',
         remarks: values.remarks ?? '',
       }
-      await createContract(payload)
-      message.success('合約已新增')
+      if (copySourceId) {
+        await copyRenewContract(copySourceId, payload)
+        message.success('已複製原合約建立新合約（續約）')
+      } else {
+        await createContract(payload)
+        message.success('合約已新增')
+      }
       setAddOpen(false)
+      setCopySourceId(null)
       loadContracts(1, pagination.size, filters)
       loadStats()
     } catch (err: any) {
@@ -266,7 +329,7 @@ export default function ContractListPage() {
       const detail = err?.response?.data?.detail
       const errMsg = typeof detail === 'string'
         ? detail
-        : (detail?.message ?? err?.message ?? '新增失敗')
+        : (detail?.message ?? err?.message ?? (copySourceId ? '複製續約失敗' : '新增失敗'))
       message.error(errMsg)
     } finally {
       setAddLoading(false)
@@ -305,9 +368,29 @@ export default function ContractListPage() {
     {
       title: '合約編號',
       dataIndex: 'contract_id',
-      width: 140,
+      width: 160,
       fixed: 'left',
-      render: (text) => <strong>{text}</strong>,
+      render: (text, record) => (
+        <Space size={4}>
+          <strong>{text}</strong>
+          {record.is_renewal_copy && (
+            <Tooltip title={`複製自原合約 ${record.renewed_from_contract_id}，點擊只看複製續約產生的合約`}>
+              <CopyOutlined
+                style={{ color: '#4BA8E8', cursor: 'pointer' }}
+                onClick={(e) => { e.stopPropagation(); setRenewalFilter('is_copy') }}
+              />
+            </Tooltip>
+          )}
+          {record.has_renewal_children && (
+            <Tooltip title={`已被複製續約過（例如 ${record.renewal_related_hint}），點擊只看已被複製續約過的合約`}>
+              <BranchesOutlined
+                style={{ color: '#52C41A', cursor: 'pointer' }}
+                onClick={(e) => { e.stopPropagation(); setRenewalFilter('has_copies') }}
+              />
+            </Tooltip>
+          )}
+        </Space>
+      ),
     },
     {
       title: '合約名稱',
@@ -361,7 +444,7 @@ export default function ContractListPage() {
     },
     {
       title: '操作',
-      width: 100,
+      width: 160,
       fixed: 'right',
       render: (_, record) => (
         <Space size="small">
@@ -375,6 +458,16 @@ export default function ContractListPage() {
             }}
           >
             查看
+          </Button>
+          <Button
+            type="link"
+            size="small"
+            onClick={(e) => {
+              e.stopPropagation()
+              openCopyRenewModal(record)
+            }}
+          >
+            複製續約
           </Button>
           <Button
             type="link"
@@ -429,6 +522,20 @@ export default function ContractListPage() {
             </Card>
           </Col>
         </Row>
+      )}
+
+      {/* 續約鏈篩選中提示（2026-07-21，點合約編號旁的 icon 套用）*/}
+      {renewalFilter && (
+        <div style={{ marginBottom: 12 }}>
+          <Tag
+            closable
+            onClose={() => setRenewalFilter(undefined)}
+            color={renewalFilter === 'is_copy' ? 'blue' : 'green'}
+            icon={renewalFilter === 'is_copy' ? <CopyOutlined /> : <BranchesOutlined />}
+          >
+            篩選中：{renewalFilter === 'is_copy' ? '複製續約產生的合約' : '已被複製續約過的合約'}
+          </Tag>
+        </div>
       )}
 
       {/* 搜尋和篩選 */}
@@ -590,6 +697,10 @@ export default function ContractListPage() {
           }}
           onChange={handleTableChange}
           rowKey="contract_id"
+          expandable={{
+            rowExpandable: (record) => !!record.is_renewal_copy || !!record.has_renewal_children,
+            expandedRowRender: (record) => <ContractFamilyTree contractId={record.contract_id} />,
+          }}
           onRow={(record) => ({
             onClick: () => {
               setSelectedContract(record)
@@ -615,14 +726,14 @@ export default function ContractListPage() {
         />
       )}
 
-      {/* 新增合約 Modal */}
+      {/* 新增合約 / 複製續約 Modal */}
       <Modal
-        title="新增合約"
+        title={copySourceId ? `複製續約（來源合約：${copySourceId}）` : '新增合約'}
         open={addOpen}
         onOk={handleAddOk}
-        onCancel={() => setAddOpen(false)}
+        onCancel={() => { setAddOpen(false); setCopySourceId(null) }}
         confirmLoading={addLoading}
-        okText="確認新增"
+        okText={copySourceId ? '確認建立續約合約' : '確認新增'}
         cancelText="取消"
         width={720}
         destroyOnClose
@@ -633,12 +744,13 @@ export default function ContractListPage() {
               <Form.Item
                 name="contract_id"
                 label="合約編號"
+                extra={copySourceId ? '已帶入原合約編號，請修改為新的合約編號後再送出' : '不限格式，僅需與現有合約編號不重複即可'}
                 rules={[
                   { required: true, message: '請輸入合約編號' },
-                  { pattern: /^CON-\d{4}-\d{4}$/, message: '格式：CON-YYYY-NNNN，例如 CON-2026-0001' },
+                  { max: 50, message: '合約編號長度不可超過 50 字元' },
                 ]}
               >
-                <Input placeholder="CON-2026-0001" />
+                <Input placeholder="例如 CON-2026-0001 或 COP018-2026-0001" />
               </Form.Item>
             </Col>
             <Col span={12}>
@@ -1482,9 +1594,11 @@ function ContractDetailDrawer({ contract, open, onClose, onUpdate }: ContractDet
               children: <ContractClaimsTab contractId={contract.contract_id} open={open} totalAmount={contract.total_amount_tax_included} />,
             },
             {
-              key: 'renewals',
-              label: <span><SyncOutlined /> 續約申請</span>,
-              children: <ContractRenewalsTab contractId={contract.contract_id} open={open} />,
+              // 2026-07-21：「續約申請」（簽核式申請流程）已改為「原合約複製續約」，
+              // 本 TAB 隱藏（後端端點與元件保留不刪，見 ContractRenewalsTab）。
+              key: 'renewal-chain',
+              label: <span><SyncOutlined /> 上下層級</span>,
+              children: <ContractRenewalChainTab contractId={contract.contract_id} open={open} />,
             },
             {
               key: 'attachments',
@@ -2335,6 +2449,168 @@ function ContractRenewalsTab({ contractId, open }: ContractRenewalsTabProps) {
           </Form.Item>
         </Form>
       </Modal>
+    </div>
+  )
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 上下層級（續約鏈）Tab 元件（2026-07-21）
+// ═════════════════════════════════════════════════════════════════════════════
+
+interface ContractRenewalChainTabProps {
+  contractId: string
+  open: boolean
+}
+
+function ContractRenewalChainTab({ contractId, open }: ContractRenewalChainTabProps) {
+  const [chain, setChain] = useState<ContractChainNode[]>([])
+  const [loading, setLoading] = useState(false)
+
+  const loadChain = useCallback(async () => {
+    if (!open) return
+    setLoading(true)
+    try {
+      const rows = await fetchRenewalChain(contractId)
+      setChain(rows)
+    } catch {
+      message.error('無法載入續約鏈')
+    } finally {
+      setLoading(false)
+    }
+  }, [contractId, open])
+
+  useEffect(() => { loadChain() }, [loadChain])
+
+  const columns: ColumnsType<ContractChainNode> = [
+    {
+      title: '合約編號',
+      dataIndex: 'contract_id',
+      width: 140,
+      render: (text, r) => (
+        <strong style={r.is_current ? { color: '#4BA8E8' } : undefined}>
+          {text}{r.is_current ? '（目前）' : ''}
+        </strong>
+      ),
+    },
+    { title: '合約名稱', dataIndex: 'contract_name', width: 180, ellipsis: true },
+    { title: '狀態', dataIndex: 'contract_status', width: 90, render: (s) => statusTag(s) },
+    { title: '期間', key: 'period', width: 180,
+      render: (_, r) => `${fmtDate(r.start_date)} ～ ${fmtDate(r.end_date)}` },
+    { title: '金額', dataIndex: 'total_amount_tax_included', width: 120, align: 'right' as const,
+      render: (v) => fmtMoney(v) },
+    { title: '續約來源', dataIndex: 'renewed_from_contract_id', width: 140,
+      render: (v) => v || '（原始合約）' },
+  ]
+
+  return (
+    <div style={{ padding: '8px 0' }}>
+      <div style={{ marginBottom: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <span style={{ color: '#666', fontSize: 13 }}>
+          顯示這份合約完整的續約鏈（往上溯源到最原始合約、往下所有續約版本）
+        </span>
+        <Button size="small" icon={<ReloadOutlined />} onClick={loadChain} loading={loading}>重整</Button>
+      </div>
+
+      <Table
+        size="small"
+        columns={columns}
+        dataSource={chain}
+        loading={loading}
+        rowKey="contract_id"
+        pagination={false}
+        scroll={{ x: 700 }}
+        rowClassName={(r) => r.is_current ? 'ant-table-row-selected' : ''}
+        locale={{ emptyText: <Empty description="查無續約鏈資料" /> }}
+      />
+    </div>
+  )
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 合約清單「展開樹狀結構」元件（2026-07-22）
+// 點合約清單列的展開箭頭時使用，不管展開的是原生合約還是被複製的合約，
+// 都顯示同一條完整續約鏈的樹狀結構（沿用「上下層級」TAB 同一支 API）。
+// ═════════════════════════════════════════════════════════════════════════════
+
+interface ContractFamilyTreeNode {
+  key: string
+  title: React.ReactNode
+  children?: ContractFamilyTreeNode[]
+}
+
+function buildContractFamilyTree(chain: ContractChainNode[], currentId: string): ContractFamilyTreeNode[] {
+  const byId = new Map(chain.map(n => [n.contract_id, n]))
+  const childrenOf = new Map<string, ContractChainNode[]>()
+  const roots: ContractChainNode[] = []
+
+  for (const n of chain) {
+    if (n.renewed_from_contract_id && byId.has(n.renewed_from_contract_id)) {
+      const list = childrenOf.get(n.renewed_from_contract_id) ?? []
+      list.push(n)
+      childrenOf.set(n.renewed_from_contract_id, list)
+    } else {
+      roots.push(n)
+    }
+  }
+
+  const renderTitle = (n: ContractChainNode) => (
+    <Space size={6}>
+      <strong style={n.contract_id === currentId ? { color: '#4BA8E8' } : undefined}>
+        {n.contract_id}{n.contract_id === currentId ? '（目前）' : ''}
+      </strong>
+      <span style={{ color: '#666' }}>{n.contract_name}</span>
+      {statusTag(n.contract_status)}
+      <span style={{ color: '#999', fontSize: 12 }}>
+        {fmtDate(n.start_date)} ～ {fmtDate(n.end_date)}　{fmtMoney(n.total_amount_tax_included)}
+      </span>
+    </Space>
+  )
+
+  const toNode = (n: ContractChainNode): ContractFamilyTreeNode => {
+    const kids = (childrenOf.get(n.contract_id) ?? []).sort((a, b) => a.start_date.localeCompare(b.start_date))
+    return {
+      key: n.contract_id,
+      title: renderTitle(n),
+      children: kids.length ? kids.map(toNode) : undefined,
+    }
+  }
+
+  return roots
+    .sort((a, b) => a.start_date.localeCompare(b.start_date))
+    .map(toNode)
+}
+
+function ContractFamilyTree({ contractId }: { contractId: string }) {
+  const [chain, setChain] = useState<ContractChainNode[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    fetchRenewalChain(contractId)
+      .then(rows => { if (!cancelled) setChain(rows) })
+      .catch(() => { if (!cancelled) message.error('無法載入續約鏈') })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [contractId])
+
+  if (loading) {
+    return <div style={{ padding: '12px 24px' }}><Spin size="small" /> 載入續約鏈中…</div>
+  }
+  if (chain.length <= 1) {
+    return <div style={{ padding: '12px 24px', color: '#999' }}>查無其他相關合約</div>
+  }
+
+  const treeData = buildContractFamilyTree(chain, contractId)
+
+  return (
+    <div style={{ padding: '12px 24px', background: '#fafafa' }}>
+      <Tree
+        showLine
+        selectable={false}
+        defaultExpandAll
+        treeData={treeData}
+      />
     </div>
   )
 }

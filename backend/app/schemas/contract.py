@@ -114,7 +114,10 @@ class ContractBase(BaseModel):
 
 class ContractCreate(ContractBase):
     """新增合約"""
-    contract_id: str = Field(..., pattern="^CON-\\d{4}-\\d{4}$", description="合約編號")
+    # 2026-07-21：資料庫已有大量不符 CON-YYYY-NNNN 格式的既有合約編號（如 COP018-2026-0001、
+    # CON-P018-2026-0001），改為不限制格式，唯一性交給 ContractService.create_contract()
+    # 既有的查重邏輯（contract_id 為主鍵）判斷即可。
+    contract_id: str = Field(..., min_length=1, max_length=50, description="合約編號（不限格式，需唯一）")
 
     class Config:
         json_schema_extra = {
@@ -197,6 +200,11 @@ class ContractResponse(ContractBase):
     budget_company:  Optional[str] = None
     budget_dept:     Optional[str] = None
     pricing_spec:    Optional[str] = None
+    # 續約鏈（2026-07-21；只認明確的 renewed_from_contract_id FK 關聯，不做編號字串推斷）
+    renewed_from_contract_id: Optional[str] = None   # 明確 FK 關聯（只有真正走複製續約流程才會有值）
+    is_renewal_copy: bool = False        # 是否為複製續約產生（= renewed_from_contract_id 非空）
+    has_renewal_children: bool = False   # 是否已被複製續約過（有其他合約的 renewed_from_contract_id 指向自己）
+    renewal_related_hint: Optional[str] = None   # 提示用的相關合約編號（供前端 tooltip 顯示）
 
     class Config:
         from_attributes = True
@@ -617,6 +625,20 @@ class RenewalResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# ── 原合約複製續約 + 上下層級查詢 Schema（2026-07-21）───────────────────────────
+
+class ContractChainNode(BaseModel):
+    """續約鏈上單一合約節點（往上溯源 + 往下所有代，依起日排序）"""
+    contract_id: str
+    contract_name: str
+    contract_status: str
+    start_date: date
+    end_date: date
+    total_amount_tax_included: float
+    renewed_from_contract_id: Optional[str] = None
+    is_current: bool = False
 
 
 # ── F3 費用分攤 Schema ────────────────────────────────────────────────────────

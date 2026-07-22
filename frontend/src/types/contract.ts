@@ -47,6 +47,24 @@ export interface ContractRecord {
   approved_by?: string
   approved_at?: string
   approval_comment?: string
+  // 續約鏈（2026-07-21；2026-07-22 擴充編號規律推斷）
+  renewed_from_contract_id?: string   // 明確 FK 關聯（只有走複製續約流程才會有值）
+  is_renewal_copy?: boolean           // 是否為複製續約產生（FK 關聯 或 編號規律推斷）
+  has_renewal_children?: boolean      // 是否已被複製續約過（FK 關聯 或 編號規律推斷）
+  renewal_related_hint?: string       // 提示用的相關合約編號
+}
+
+// ── 原合約複製續約 + 上下層級查詢（2026-07-21）──────────────────────────────
+
+export interface ContractChainNode {
+  contract_id: string
+  contract_name: string
+  contract_status: string
+  start_date: string
+  end_date: string
+  total_amount_tax_included: number
+  renewed_from_contract_id?: string | null
+  is_current: boolean
 }
 
 export interface VendorRecord {
@@ -151,6 +169,7 @@ export interface ContractFilters {
   budget_year?: number
   dept?: string
   manager?: string          // J5 個人化篩選
+  renewal_filter?: 'is_copy' | 'has_copies'   // 2026-07-21：續約鏈篩選
   sort_by?: string
   sort_order?: 'asc' | 'desc'
 }

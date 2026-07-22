@@ -120,6 +120,8 @@ from app.schemas.contract import (
     DepositUpdate,
     DepositResponse,
     CostSummaryResponse,
+    # 原合約複製續約 + 上下層級查詢（2026-07-21）
+    ContractChainNode,
 )
 
 router = APIRouter(tags=["合約管理"])
@@ -146,6 +148,10 @@ def list_contracts(
     budget_year: Optional[int] = Query(None, description="預算年度"),
     responsible_dept: Optional[str] = Query(None, description="負責部門"),
     manager: Optional[str] = Query(None, description="管理人帳號（J5 個人化篩選）"),
+    renewal_filter: Optional[str] = Query(
+        None,
+        description="續約鏈篩選：is_copy=只看複製續約產生的合約；has_copies=只看已被複製續約過的合約",
+    ),
     sort_by: str = Query("updated_at", description="排序欄位"),
     sort_order: str = Query("desc", description="排序順序"),
 ):
@@ -166,6 +172,7 @@ def list_contracts(
             budget_year=budget_year,
             responsible_dept=responsible_dept,
             manager=manager,
+            renewal_filter=renewal_filter,
             sort_by=sort_by,
             sort_order=sort_order,
         )
@@ -1731,6 +1738,85 @@ def review_renewal(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"審核失敗：{str(e)}")
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# 原合約複製續約 + 上下層級查詢（2026-07-21）
+# ════════════════════════════════════════════════════════════════════════════
+
+@router.post(
+    "/{contract_id}/copy-renew",
+    response_model=ContractDetailResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="複製原合約建立續約新合約",
+)
+def copy_renew_contract(
+    contract_id: str,
+    contract_data: ContractCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    以原合約（path 中的 contract_id）為來源，複製其欄位與子資料
+    （合約項目／費用分攤／付款計劃）建立一份新合約；
+    新合約標記 renewed_from_contract_id 指向原合約，供「上下層級」TAB 查詢。
+    body 為完整的新合約資料（前端表單已預先帶入原合約值，使用者可自行編輯，
+    含新的合約編號），驗證規則與「新增合約」端點相同。
+    """
+    try:
+        user_permissions = get_user_permissions(current_user.id, db)
+        if "*" not in user_permissions and "contract_create_edit" not in user_permissions:
+            raise HTTPException(status_code=403, detail="權限不足，需要 contract_create_edit")
+
+        return ContractService.copy_renew_contract(db, contract_id, contract_data)
+
+    except ContractManagementException as e:
+        raise HTTPException(status_code=e.status_code, detail={"message": e.message, "error_code": e.error_code})
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"伺服器錯誤：{str(e)}")
+
+
+@router.get(
+    "/{contract_id}/renewal-chain",
+    response_model=List[ContractChainNode],
+    summary="查詢合約上下層級續約鏈",
+)
+def get_renewal_chain(
+    contract_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    查詢合約完整續約鏈（往上溯源到最源頭合約 + 往下所有代，依起日排序）。
+    """
+    try:
+        user_permissions = get_user_permissions(current_user.id, db)
+        if "*" not in user_permissions and "contract_view" not in user_permissions:
+            raise HTTPException(status_code=403, detail="權限不足，需要 contract_view")
+
+        chain = ContractService.get_renewal_chain(db, contract_id)
+        return [
+            ContractChainNode(
+                contract_id=c.contract_id,
+                contract_name=c.contract_name,
+                contract_status=c.contract_status,
+                start_date=c.start_date,
+                end_date=c.end_date,
+                total_amount_tax_included=float(c.total_amount_tax_included),
+                renewed_from_contract_id=c.renewed_from_contract_id,
+                is_current=(c.contract_id == contract_id),
+            )
+            for c in chain
+        ]
+
+    except ContractManagementException as e:
+        raise HTTPException(status_code=e.status_code, detail={"message": e.message, "error_code": e.error_code})
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"伺服器錯誤：{str(e)}")
 
 
 # ════════════════════════════════════════════════════════════════════════════

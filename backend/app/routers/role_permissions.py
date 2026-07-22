@@ -94,7 +94,8 @@ PERMISSION_DEFINITIONS = [
     {"key": "contract_admin",         "label": "合約設定",       "group": "合約管理"},
     {"key": "contract_expiring_view", "label": "到期預警",       "group": "合約管理"},
     {"key": "contract_claims_view",   "label": "請款管理",       "group": "合約管理"},
-    {"key": "contract_renewals_view", "label": "續約管理",       "group": "合約管理"},
+    # 2026-07-21：「續約管理」（contract_renewals_view）已隨「續約申請」功能隱藏而移除，
+    # 改為「原合約複製續約」（沿用 contract_create_edit 權限，無需獨立權限）。
     {"key": "contract_approve",       "label": "合約審核",       "group": "合約管理"},
     # ── 週期採購（獨立資料庫 cycle-purchase.db，2026-07-10 新增）──────────────
     {"key": "cycle_purchase_view",     "label": "週期採購管理",       "group": "週期採購"},

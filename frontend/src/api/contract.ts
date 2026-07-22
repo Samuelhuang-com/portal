@@ -41,6 +41,7 @@ import type {
   Deposit,
   DepositCreate,
   CostSummary,
+  ContractChainNode,
 } from '@/types/contract'
 
 const BASE = '/contract'
@@ -603,6 +604,23 @@ export async function reviewRenewal(renewalId: number, payload: {
   review_comment?: string
 }): Promise<RenewalRecord> {
   const { data } = await apiClient.post<RenewalRecord>(`${BASE}/renewals/${renewalId}/review`, payload)
+  return data
+}
+
+// ── 原合約複製續約 + 上下層級查詢（2026-07-21）──────────────────────────────
+
+/** 複製原合約建立續約新合約（body 為完整新合約資料，前端表單已預先帶入原合約值） */
+export async function copyRenewContract(
+  sourceContractId: string,
+  payload: ContractCreate,
+): Promise<{ success: boolean; data: ContractRecord }> {
+  const { data } = await apiClient.post(`${BASE}/${sourceContractId}/copy-renew`, payload)
+  return data
+}
+
+/** 查詢合約上下層級續約鏈（往上溯源到最源頭 + 往下所有代，依起日排序） */
+export async function fetchRenewalChain(contractId: string): Promise<ContractChainNode[]> {
+  const { data } = await apiClient.get<ContractChainNode[]>(`${BASE}/${contractId}/renewal-chain`)
   return data
 }
 

@@ -58,6 +58,7 @@ erDiagram
         string  budget_dept             "預算使用部門（邏輯→departments）"
         string  pricing_spec            "計價規格（邏輯→pricing_specs）"
         string  remarks                 "備註"
+        string  renewed_from_contract_id FK "續約來源合約編號（自我關聯，2026-07-21）"
         datetime created_at             "建立時間"
         datetime updated_at             "更新時間"
     }
@@ -192,6 +193,7 @@ erDiagram
     contracts        ||--o{ contract_cost_allocations  : "設定 N 筆費用分攤"
     contract_claims  ||--o{ contract_claim_attachments : "上傳 N 個請款附件"
     companies        ||--o{ departments                : "旗下 N 個部門"
+    contracts        ||--o{ contracts                  : "renewed_from_contract_id 續約複製自（自我關聯，2026-07-21）"
 
 %% ════ 邏輯對應（虛線，名稱冗餘儲存） ════
 
