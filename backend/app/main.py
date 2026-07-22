@@ -123,6 +123,7 @@ from app.routers import (
     cycle_purchase_receiving,
     cycle_purchase_payment,
     cycle_purchase_audit,
+    version,
 )
 
 
@@ -2053,6 +2054,8 @@ app.include_router(auth.router, prefix=f"{API_PREFIX}/auth", tags=["認證"])
 app.include_router(users.router, prefix=f"{API_PREFIX}/users", tags=["使用者"])
 app.include_router(tenants.router, prefix=f"{API_PREFIX}/tenants", tags=["據點"])
 app.include_router(ragic.router, prefix=f"{API_PREFIX}/ragic", tags=["Ragic"])
+# 2026-07-22 新增：公開版本資訊端點，供正式區/測試區比對 git commit（唯一無需登入的端點，見 version.py 檔頭說明）
+app.include_router(version.router, prefix=f"{API_PREFIX}/version", tags=["系統資訊"])
 app.include_router(
     dashboard.router, prefix=f"{API_PREFIX}/dashboard", tags=["Dashboard"]
 )
