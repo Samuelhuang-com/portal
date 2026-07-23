@@ -55,4 +55,5 @@ backend/reset_password.py
 # 執行期自動產生（不進版控）
 sync_tool_config.json
 backend/static/knowledge_graph/graph.json
+backend/version_info.json
 

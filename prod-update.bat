@@ -75,6 +75,12 @@ echo Latest commit:
 git log --oneline -1
 echo ----------------------------------------
 echo.
+
+REM -- write version_info.json (PATH here has git; PortalBackend NSSM service PATH does not)
+cd /d D:\portal\backend
+py -3.12 write_version_file.py
+cd /d D:\portal
+
 echo [OK] Code updated. Next: install backend packages [2/5]
 echo.
 pause
