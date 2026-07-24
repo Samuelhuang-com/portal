@@ -12,7 +12,7 @@ import {
   Typography, Breadcrumb, Drawer, Descriptions, message,
   Input, Select, Tooltip, Switch, Divider, Tabs,
   Empty, Modal, Form, InputNumber, Spin, Popconfirm, Progress,
-  Upload, Image, Tree,
+  Upload, Image, Tree, Alert,
 } from 'antd'
 import { DatePicker } from 'antd'
 import {
@@ -120,6 +120,8 @@ export default function ContractListPage() {
   const [userOptions, setUserOptions] = useState<UserOptionItem[]>([])
   const [addForm] = Form.useForm()
   const [copySourceId, setCopySourceId] = useState<string | null>(null)
+  // 複製續約時，原合約廠商已不在廠商管理中 → 存放提醒文字（null 表示廠商存在，正常）
+  const [copyVendorMissing, setCopyVendorMissing] = useState<string | null>(null)
 
   // F4 — 基礎參考資料下拉（新增 Modal 用）
   const [companyOptions, setCompanyOptions] = useState<CompanyOption[]>([])
@@ -205,8 +207,8 @@ export default function ContractListPage() {
     loadContracts(1, pagination.size, newFilters)
   }, [searchText, statusFilter, riskLevelFilter, myContractsOnly, renewalFilter, pagination.size, loadContracts])
 
-  // ── 開啟新增 Modal ────────────────────────────────────────────────────────
-  const openAddModal = async () => {
+  // ── 開啟新增 Modal（回傳廠商清單，供「複製續約」立即判斷原廠商是否存在）───────
+  const openAddModal = async (): Promise<VendorListResponse[]> => {
     addForm.resetFields()
     const curYear = dayjs().year()
     addForm.setFieldsValue({
@@ -217,6 +219,7 @@ export default function ContractListPage() {
     })
     setSelectedBudgetYear(curYear)
     setSelectedL1(undefined)
+    setCopyVendorMissing(null)
     setAddOpen(true)
     try {
       const [vendors, cats, usersRes, companies, specs] = await Promise.all([
@@ -226,7 +229,8 @@ export default function ContractListPage() {
         companiesApi.options(),
         pricingSpecsApi.options(),
       ])
-      setVendorOptions(Array.isArray(vendors) ? vendors : [])
+      const vendorList = Array.isArray(vendors) ? vendors : []
+      setVendorOptions(vendorList)
       setBudgetCatOptions(Array.isArray(cats) ? cats : [])
       setUserOptions(Array.isArray(usersRes.data) ? usersRes.data : [])
       setCompanyOptions(Array.isArray(companies.data) ? companies.data : [])
@@ -234,37 +238,58 @@ export default function ContractListPage() {
       // 部門清單等選公司後才載入
       setAddSigningDeptOpts([])
       setAddBudgetDeptOpts([])
+      return vendorList
     } catch {
       setVendorOptions([])
       setBudgetCatOptions([])
+      return []
     }
   }
 
-  // ── 開啟「複製續約」Modal（沿用新增合約 Modal，預先帶入原合約欄位值）──────────
+  // ── 開啟「複製續約」Modal（沿用新增合約 Modal，預先帶入原合約「全部」欄位值）────
   const openCopyRenewModal = async (source: ContractRecord) => {
-    await openAddModal()
+    const vendors = await openAddModal()
     setCopySourceId(source.contract_id)
     setSelectedBudgetYear(source.budget_year)
     setSelectedL1(source.budget_category_l1)
+
+    // 原合約廠商若已不在廠商管理中，vendor_id 留空並顯示提醒，逼使用者重新選擇
+    const vendorExists = vendors.some(v => v.vendor_id === source.vendor_id)
+    setCopyVendorMissing(vendorExists ? null : `${source.vendor_name}（${source.vendor_id}）`)
+
     addForm.setFieldsValue({
       contract_id: source.contract_id,   // 使用者需自行改成新編號才能送出（查重會擋掉重複編號）
       contract_name: source.contract_name,
       contract_type: source.contract_type,
       responsible_dept: source.responsible_dept,
-      vendor_id: source.vendor_id,
+      using_depts: source.using_depts,
+      vendor_id: vendorExists ? source.vendor_id : undefined,
       risk_level: source.risk_level,
       start_date: source.start_date ? dayjs(source.start_date) : undefined,
       end_date: source.end_date ? dayjs(source.end_date) : undefined,
+      notification_days: source.notification_days,
+      auto_renewal: source.auto_renewal,
       total_amount_tax_included: source.total_amount_tax_included,
+      monthly_fixed_amount: source.monthly_fixed_amount ?? undefined,
       pricing_method: source.pricing_method,
+      needs_purchase_order: source.needs_purchase_order,
+      can_claim_without_po: source.can_claim_without_po,
+      needs_allocation: source.needs_allocation,
+      allocation_method: source.allocation_method ?? undefined,
       budget_year: source.budget_year,
       budget_category_l1: source.budget_category_l1,
       budget_category_l2: source.budget_category_l2,
       accounting_code: source.accounting_code,
+      budget_source: source.budget_source,
+      budget_control_method: source.budget_control_method,
+      require_acceptance: source.require_acceptance,
       currency: source.currency,
       signing_company: source.signing_company,
       budget_company: source.budget_company,
       pricing_spec: source.pricing_spec,
+      manager: source.manager,
+      reviewer: source.reviewer,
+      attachment_url: source.attachment_url,
       remarks: source.remarks,
     })
     // 公司已預帶值，連動載入對應部門清單，再帶出簽約/預算部門
@@ -295,22 +320,24 @@ export default function ContractListPage() {
     try {
       const values = await addForm.validateFields()
       setAddLoading(true)
+      // 「續約複製欄位」區塊只在複製續約模式才會渲染，新增合約模式下 values 裡不會有這些
+      // key（沿用舊行為，fallback 回原本寫死的預設值）；複製續約模式則會是原合約的實際值。
       const payload = {
         ...values,
         start_date: values.start_date?.format('YYYY-MM-DD'),
         end_date: values.end_date?.format('YYYY-MM-DD'),
         vendor_name: vendorOptions.find(v => v.vendor_id === values.vendor_id)?.vendor_name ?? '',
-        using_depts: '',
-        notification_days: 0,
-        auto_renewal: false,
-        needs_purchase_order: false,
-        can_claim_without_po: false,
-        needs_allocation: false,
-        budget_source: '年度預算',
-        budget_control_method: '提醒',
-        require_acceptance: false,
-        manager: '',
-        reviewer: '',
+        using_depts: values.using_depts ?? '',
+        notification_days: values.notification_days ?? 0,
+        auto_renewal: values.auto_renewal ?? false,
+        needs_purchase_order: values.needs_purchase_order ?? false,
+        can_claim_without_po: values.can_claim_without_po ?? false,
+        needs_allocation: values.needs_allocation ?? false,
+        budget_source: values.budget_source ?? '年度預算',
+        budget_control_method: values.budget_control_method ?? '提醒',
+        require_acceptance: values.require_acceptance ?? false,
+        manager: values.manager ?? '',
+        reviewer: values.reviewer ?? '',
         remarks: values.remarks ?? '',
       }
       if (copySourceId) {
@@ -322,6 +349,7 @@ export default function ContractListPage() {
       }
       setAddOpen(false)
       setCopySourceId(null)
+      setCopyVendorMissing(null)
       loadContracts(1, pagination.size, filters)
       loadStats()
     } catch (err: any) {
@@ -757,7 +785,7 @@ export default function ContractListPage() {
         title={copySourceId ? `複製續約（來源合約：${copySourceId}）` : '新增合約'}
         open={addOpen}
         onOk={handleAddOk}
-        onCancel={() => { setAddOpen(false); setCopySourceId(null) }}
+        onCancel={() => { setAddOpen(false); setCopySourceId(null); setCopyVendorMissing(null) }}
         confirmLoading={addLoading}
         okText={copySourceId ? '確認建立續約合約' : '確認新增'}
         cancelText="取消"
@@ -765,6 +793,15 @@ export default function ContractListPage() {
         destroyOnClose
       >
         <Form form={addForm} layout="vertical" style={{ marginTop: 16 }}>
+          {copySourceId && copyVendorMissing && (
+            <Alert
+              type="warning"
+              showIcon
+              style={{ marginBottom: 16 }}
+              message="原合約廠商已不在廠商管理中"
+              description={`原合約廠商為「${copyVendorMissing}」，廠商管理中查無此廠商，請重新選擇一個現有廠商後再送出。`}
+            />
+          )}
           <Row gutter={16}>
             <Col span={12}>
               <Form.Item
@@ -830,6 +867,8 @@ export default function ContractListPage() {
                     value: v.vendor_id,
                     label: `${v.vendor_name}（${v.vendor_id}）`,
                   }))}
+                  // 複製續約時，使用者依警示重新選好廠商後，警示就該消失（原本會卡在畫面上）
+                  onChange={() => { if (copyVendorMissing) setCopyVendorMissing(null) }}
                 />
               </Form.Item>
             </Col>
@@ -1042,6 +1081,112 @@ export default function ContractListPage() {
             </Col>
           </Row>
 
+          {copySourceId && (
+            <>
+              <Divider orientation="left" orientationMargin={0} style={{ fontSize: 13 }}>
+                續約複製欄位（沿用原合約設定，可自行調整）
+              </Divider>
+              <Row gutter={16}>
+                <Col span={12}>
+                  <Form.Item name="using_depts" label="使用部門">
+                    <Input placeholder="多個部門以；分隔" />
+                  </Form.Item>
+                </Col>
+                <Col span={12}>
+                  <Form.Item name="notification_days" label="到期前通知天數">
+                    <InputNumber style={{ width: '100%' }} min={0} addonAfter="天" />
+                  </Form.Item>
+                </Col>
+              </Row>
+              <Row gutter={16}>
+                <Col span={8}>
+                  <Form.Item name="auto_renewal" label="自動續約" valuePropName="checked">
+                    <Switch checkedChildren="是" unCheckedChildren="否" />
+                  </Form.Item>
+                </Col>
+                <Col span={8}>
+                  <Form.Item name="needs_purchase_order" label="需請購單" valuePropName="checked">
+                    <Switch checkedChildren="是" unCheckedChildren="否" />
+                  </Form.Item>
+                </Col>
+                <Col span={8}>
+                  <Form.Item name="can_claim_without_po" label="可無請購請款" valuePropName="checked">
+                    <Switch checkedChildren="是" unCheckedChildren="否" />
+                  </Form.Item>
+                </Col>
+              </Row>
+              <Row gutter={16}>
+                <Col span={8}>
+                  <Form.Item name="needs_allocation" label="需分攤" valuePropName="checked">
+                    <Switch checkedChildren="是" unCheckedChildren="否" />
+                  </Form.Item>
+                </Col>
+                <Col span={8}>
+                  <Form.Item name="allocation_method" label="分攤方式">
+                    <Select allowClear placeholder="請選擇">
+                      {['比例', '固定金額', '不分攤'].map(m => (
+                        <Option key={m} value={m}>{m}</Option>
+                      ))}
+                    </Select>
+                  </Form.Item>
+                </Col>
+                <Col span={8}>
+                  <Form.Item name="require_acceptance" label="需驗收" valuePropName="checked">
+                    <Switch checkedChildren="是" unCheckedChildren="否" />
+                  </Form.Item>
+                </Col>
+              </Row>
+              <Row gutter={16}>
+                <Col span={12}>
+                  <Form.Item name="budget_source" label="預算來源">
+                    <Select>
+                      {['年度預算', '追加預算', '專案預算'].map(s => (
+                        <Option key={s} value={s}>{s}</Option>
+                      ))}
+                    </Select>
+                  </Form.Item>
+                </Col>
+                <Col span={12}>
+                  <Form.Item name="budget_control_method" label="預算控管方式">
+                    <Select>
+                      {['提醒', '擋單', '主管覆核'].map(s => (
+                        <Option key={s} value={s}>{s}</Option>
+                      ))}
+                    </Select>
+                  </Form.Item>
+                </Col>
+              </Row>
+              <Row gutter={16}>
+                <Col span={12}>
+                  <Form.Item name="manager" label="管理人">
+                    <Select showSearch allowClear placeholder="請選擇管理人" optionFilterProp="label" options={userOptions} />
+                  </Form.Item>
+                </Col>
+                <Col span={12}>
+                  <Form.Item name="reviewer" label="覆核人">
+                    <Select showSearch allowClear placeholder="請選擇覆核人" optionFilterProp="label" options={userOptions} />
+                  </Form.Item>
+                </Col>
+              </Row>
+              <Row gutter={16}>
+                <Col span={12}>
+                  <Form.Item name="monthly_fixed_amount" label="每月固定金額">
+                    <InputNumber
+                      style={{ width: '100%' }} min={0} step={1000}
+                      formatter={(v) => v ? `$ ${v}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',') : ''}
+                      parser={(v) => (v?.replace(/\$\s?|(,*)/g, '') ?? '') as any}
+                    />
+                  </Form.Item>
+                </Col>
+                <Col span={12}>
+                  <Form.Item name="attachment_url" label="附件連結">
+                    <Input placeholder="沿用原合約附件連結，可自行更換" />
+                  </Form.Item>
+                </Col>
+              </Row>
+            </>
+          )}
+
           <Form.Item name="remarks" label="備註">
             <Input.TextArea rows={2} placeholder="選填" />
           </Form.Item>
@@ -1071,6 +1216,8 @@ function ContractDetailDrawer({ contract, open, onClose, onUpdate }: ContractDet
 
   // 人員下拉選單（Drawer 內自行管理）
   const [userOptions, setUserOptions] = useState<UserOptionItem[]>([])
+  // 廠商下拉選單（2026-07-24：編輯模式新增「廠商」欄位，修正舊資料 vendor_id 空白問題用）
+  const [vendorOptions, setVendorOptions] = useState<VendorListResponse[]>([])
   // F4 — 費用分攤
   const [costAllocations, setCostAllocations] = useState<CostAllocationRecord[]>([])
   const [editAllocations, setEditAllocations] = useState<CostAllocationItem[]>([])
@@ -1095,6 +1242,11 @@ function ContractDetailDrawer({ contract, open, onClose, onUpdate }: ContractDet
     fetchCostAllocations(contract.contract_id)
       .then(rows => setCostAllocations(rows))
       .catch(() => {})
+
+    // 廠商下拉（編輯模式的「廠商」欄位用）
+    fetchVendorOptions()
+      .then(vendors => setVendorOptions(Array.isArray(vendors) ? vendors : []))
+      .catch(() => setVendorOptions([]))
 
     // 載入公司 + 計價規格下拉
     Promise.all([
@@ -1134,6 +1286,7 @@ function ContractDetailDrawer({ contract, open, onClose, onUpdate }: ContractDet
       contract_name:             contract.contract_name,
       contract_type:             contract.contract_type,
       contract_status:           contract.contract_status,
+      vendor_id:                 contract.vendor_id || undefined,
       risk_level:                contract.risk_level,
       start_date:                contract.start_date ? dayjs(contract.start_date) : null,
       end_date:                  contract.end_date   ? dayjs(contract.end_date)   : null,
@@ -1350,6 +1503,26 @@ function ContractDetailDrawer({ contract, open, onClose, onUpdate }: ContractDet
               </Col>
             </Row>
             <Row gutter={16}>
+              <Col span={24}>
+                <Form.Item
+                  name="vendor_id"
+                  label="廠商"
+                  rules={[{ required: true, message: '請選擇廠商' }]}
+                  extra={!contract.vendor_id ? '原資料廠商代碼為空，請重新選擇正確廠商' : undefined}
+                >
+                  <Select
+                    showSearch
+                    placeholder="請選擇廠商"
+                    optionFilterProp="label"
+                    options={vendorOptions.map(v => ({
+                      value: v.vendor_id,
+                      label: `${v.vendor_name}（${v.vendor_id}）`,
+                    }))}
+                  />
+                </Form.Item>
+              </Col>
+            </Row>
+            <Row gutter={16}>
               <Col span={12}>
                 <Form.Item name="risk_level" label="風險等級">
                   <Select>
@@ -1527,7 +1700,12 @@ function ContractDetailDrawer({ contract, open, onClose, onUpdate }: ContractDet
             <Descriptions.Item label="風險等級">
               <Tag color={RISK_LEVEL_COLOR[contract.risk_level] ?? 'default'}>{contract.risk_level || '-'}</Tag>
             </Descriptions.Item>
-            <Descriptions.Item label="廠商">{contract.vendor_name}</Descriptions.Item>
+            <Descriptions.Item label="廠商">
+              {contract.vendor_name || '-'}
+              {!contract.vendor_id && (
+                <Tag color="red" style={{ marginLeft: 8 }}>廠商代碼空白，請點編輯重新選擇</Tag>
+              )}
+            </Descriptions.Item>
             <Descriptions.Item label="合約類型">{contract.contract_type || '-'}</Descriptions.Item>
             <Descriptions.Item label="管理人">{contract.manager || '-'}</Descriptions.Item>
             <Descriptions.Item label="審核人">{contract.reviewer || '-'}</Descriptions.Item>
