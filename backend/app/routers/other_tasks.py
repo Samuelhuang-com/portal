@@ -16,13 +16,19 @@ import json
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi.concurrency import run_in_threadpool
 from sqlalchemy import case, text
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db, engine
 from app.dependencies import get_current_user, require_roles
 from app.models.other_tasks import OtherTask
+from app.services.other_tasks_service import _make_adapter
+from app.services.ragic_verify_utils import (
+    read_portal_count_and_last_sync, read_portal_ragic_ids,
+    build_verify_count_response, build_verify_diff_response,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +83,35 @@ async def trigger_sync(background_tasks: BackgroundTasks):
     from app.services.other_tasks_sync import sync_from_ragic
     background_tasks.add_task(sync_from_ragic)
     return {"ok": True, "message": "主管交辦／緊急事件同步已啟動（背景執行）"}
+
+
+# ── /verify-count／/verify-diff ─────────────────────────────────────────────────
+
+@router.get("/verify-count", summary="與 Ragic 數量比對（管理員）",
+            dependencies=[Depends(require_roles("system_admin"))])
+async def verify_count(db: Session = Depends(get_db)):
+    portal_count, last_synced_at = await read_portal_count_and_last_sync(
+        db, OtherTask, "主管交辦／緊急事件"
+    )
+    adapter = _make_adapter()
+    try:
+        ragic_count = await adapter.fetch_count()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Ragic 連線失敗：{exc}")
+    return build_verify_count_response("主管交辦／緊急事件", portal_count, ragic_count, last_synced_at)
+
+
+@router.get("/verify-diff", summary="與 Ragic 明細差集比對（管理員）",
+            dependencies=[Depends(require_roles("system_admin"))])
+async def verify_diff(db: Session = Depends(get_db)):
+    adapter = _make_adapter()
+    try:
+        raw_ids = await adapter.fetch_ids()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Ragic 連線失敗：{exc}")
+    ragic_url_map = {rid: f"{adapter.base_url}/{rid}" for rid in raw_ids}
+    portal_ids = await read_portal_ragic_ids(db, OtherTask)
+    return build_verify_diff_response(ragic_url_map, portal_ids)
 
 
 # ── /years ────────────────────────────────────────────────────────────────────

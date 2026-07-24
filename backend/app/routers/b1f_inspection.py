@@ -26,8 +26,15 @@ from app.schemas.b1f_inspection import (
     B1FInspectionBatchOut, B1FInspectionItemOut, B1FInspectionBatchKPI,
     B1FInspectionBatchDetail, StatusDistItem, B1FInspectionStats,
 )
-from app.services.b1f_inspection_sync import sync_from_ragic
+from app.services.b1f_inspection_sync import (
+    sync_from_ragic, B1F_SERVER_URL, B1F_ACCOUNT, B1F_SHEET_PATH,
+)
 from app.services.ragic_adapter import RagicAdapter
+from app.services.ragic_verify_utils import (
+    read_portal_count_and_last_sync, read_portal_ragic_ids,
+    fetch_ragic_count, fetch_ragic_url_map_single,
+    build_verify_count_response, build_verify_diff_response,
+)
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
 
@@ -94,6 +101,32 @@ async def sync_b1f_inspection(background_tasks: BackgroundTasks):
     """觸發背景同步：Ragic → SQLite，立即回傳，不阻塞畫面"""
     background_tasks.add_task(sync_from_ragic)
     return {"status": "ok", "message": "同步已在背景啟動"}
+
+
+# ── /verify-count／/verify-diff ─────────────────────────────────────────────────
+
+@router.get("/verify-count", summary="與 Ragic 數量比對（管理員）",
+            dependencies=[Depends(require_roles("system_admin"))])
+async def verify_count(db: Session = Depends(get_db)):
+    portal_count, last_synced_at = await read_portal_count_and_last_sync(
+        db, B1FInspectionBatch, "B1F巡檢"
+    )
+    try:
+        ragic_count = await fetch_ragic_count(B1F_SHEET_PATH, B1F_SERVER_URL, B1F_ACCOUNT)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Ragic 連線失敗：{exc}")
+    return build_verify_count_response("B1F巡檢", portal_count, ragic_count, last_synced_at)
+
+
+@router.get("/verify-diff", summary="與 Ragic 明細差集比對（管理員）",
+            dependencies=[Depends(require_roles("system_admin"))])
+async def verify_diff(db: Session = Depends(get_db)):
+    try:
+        ragic_url_map = await fetch_ragic_url_map_single(B1F_SHEET_PATH, B1F_SERVER_URL, B1F_ACCOUNT)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Ragic 連線失敗：{exc}")
+    portal_ids = await read_portal_ragic_ids(db, B1FInspectionBatch)
+    return build_verify_diff_response(ragic_url_map, portal_ids)
 
 
 @router.get("/batches", summary="取得巡檢場次清單")

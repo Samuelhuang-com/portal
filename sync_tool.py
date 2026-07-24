@@ -294,6 +294,8 @@ class SyncApp(tk.Tk):
         self._log_filter_active = False     # True = Log 面板只顯示 WARNING+
         self._disabled_modules: set[str] = self._load_disabled()  # 暫停同步的模組名稱集合
         self._single_syncing: set[str] = set()  # 正在單獨同步中的模組名稱
+        self._module_order: list[str] = self._compute_module_order()  # 使用者自訂同步順序（可拖曳調整）
+        self._drag_data: dict = {}  # 拖曳排序暫存狀態
 
         # ── 排程執行緒狀態 ────────────────────────────────────────────────────
         self._sched_last_interval: dict[str, datetime]        = {}  # 間隔模式：上次執行時間
@@ -509,6 +511,12 @@ class SyncApp(tk.Tk):
             font=("Microsoft JhengHei UI", 9, "bold"),
         ).pack(side=tk.LEFT, padx=4)
 
+        tk.Label(
+            tbl_hdr, text="（可拖曳列調整順序，或右鍵選單上移／下移）",
+            bg=C_PANEL, fg=C_DIM,
+            font=("Microsoft JhengHei UI", 8),
+        ).pack(side=tk.LEFT, padx=(4, 0))
+
         self._btn_filter = tk.Button(
             tbl_hdr,
             text="⚠  只顯示錯誤",
@@ -572,8 +580,10 @@ class SyncApp(tk.Tk):
         self._tree.tag_configure("running",  foreground=C_ACCENT)
         self._tree.tag_configure("disabled", foreground=C_DISABLED)
 
-        # 左鍵點擊（操作欄同步按鈕）
-        self._tree.bind("<Button-1>", self._on_tree_left_click)
+        # 左鍵按下/拖曳/放開（拖曳排序 + 操作欄同步按鈕點擊）
+        self._tree.bind("<ButtonPress-1>", self._on_tree_button_press)
+        self._tree.bind("<B1-Motion>", self._on_tree_button_motion)
+        self._tree.bind("<ButtonRelease-1>", self._on_tree_button_release)
         # 滑鼠移動（游標提示）
         self._tree.bind("<Motion>", self._on_tree_motion)
         # 右鍵選單綁定
@@ -586,9 +596,9 @@ class SyncApp(tk.Tk):
         vsb.pack(side=tk.RIGHT, fill=tk.Y, padx=(0, 4))
         self._tree.pack(fill=tk.BOTH, expand=True, padx=(4, 0), pady=(0, 4))
 
-        # 初始填滿所有模組列（狀態為「—」，已暫停者標灰）
+        # 初始填滿所有模組列（依使用者自訂順序，狀態為「—」，已暫停者標灰）
         self._tree_ids: dict[str, str] = {}
-        for name, _, _ in MODULES:
+        for name in self._module_order:
             is_disabled = name in self._disabled_modules
             iid = self._tree.insert(
                 "", tk.END,
@@ -921,9 +931,13 @@ class SyncApp(tk.Tk):
 
     async def _run_all_modules(self, results: list[dict], triggered_by: str):
         logger = logging.getLogger(__name__)
-        # 只計算「有效」模組數量
-        active_modules = [(n, m, f) for n, m, f in MODULES
-                          if n not in self._disabled_modules]
+        # 依使用者自訂順序（self._module_order）排列，只計算「有效」模組數量
+        modules_map = {n: (m, f) for n, m, f in MODULES}
+        active_modules = [
+            (n, modules_map[n][0], modules_map[n][1])
+            for n in self._module_order
+            if n not in self._disabled_modules and n in modules_map
+        ]
         total = len(active_modules)
 
         for i, (name, mod_path, func_name) in enumerate(active_modules, 1):
@@ -1064,26 +1078,58 @@ class SyncApp(tk.Tk):
             )
         self._lbl_logpath.config(text=f"Log：{log_path.name}")
 
-    # ── 單一模組同步（操作欄點擊）────────────────────────────────────────────
-    def _on_tree_left_click(self, event: tk.Event):
-        """偵測是否點擊「操作」欄的「▶ 同步」，若是則觸發單一模組同步。"""
-        region = self._tree.identify_region(event.x, event.y)
-        if region != "cell":
-            return
-        col_id = self._tree.identify_column(event.x)
-        # 找出欄位名稱（col_id 形如 "#9"）
-        cols = self._tree["columns"]
-        try:
-            col_idx = int(col_id.lstrip("#")) - 1
-            col_name = cols[col_idx]
-        except (ValueError, IndexError):
-            return
-        if col_name != "操作":
-            return
+    # ── 拖曳排序 + 單一模組同步（操作欄點擊）───────────────────────────────────
+    def _on_tree_button_press(self, event: tk.Event):
+        """按下左鍵：記錄起始列與欄位，供拖曳排序 / 操作欄點擊共用判斷。"""
         iid = self._tree.identify_row(event.y)
-        if not iid:
+        col_name = None
+        if self._tree.identify_region(event.x, event.y) == "cell":
+            col_id = self._tree.identify_column(event.x)
+            cols = self._tree["columns"]
+            try:
+                col_idx = int(col_id.lstrip("#")) - 1
+                col_name = cols[col_idx]
+            except (ValueError, IndexError):
+                col_name = None
+        self._drag_data = {
+            "iid": iid or None,
+            "col": col_name,
+            "moved": False,
+            # 篩選模式下部分列被 detach，順序不完整，不允許拖曳排序
+            "draggable": not self._filter_active,
+        }
+
+    def _on_tree_button_motion(self, event: tk.Event):
+        """按住左鍵移動：即時調整列順序（篩選模式下停用）。"""
+        data = self._drag_data
+        if not data or not data.get("iid") or not data.get("draggable"):
             return
-        name = self._tree.item(iid, "values")[0]
+        iid = data["iid"]
+        target = self._tree.identify_row(event.y)
+        if not target or target == iid:
+            return
+        self._tree.move(iid, "", self._tree.index(target))
+        data["moved"] = True
+
+    def _on_tree_button_release(self, event: tk.Event):
+        """放開左鍵：若剛才是拖曳則存檔新順序，否則比照原本操作欄點擊邏輯。"""
+        data = self._drag_data
+        self._drag_data = {}
+        if not data or not data.get("iid"):
+            return
+
+        if data.get("moved"):
+            self._persist_module_order()
+            logging.getLogger(__name__).info("↕ 已調整模組同步順序")
+            return
+
+        if data.get("col") != "操作":
+            return
+        iid = data["iid"]
+        values = self._tree.item(iid, "values")
+        if not values:
+            return
+        name = values[0]
         if not name:
             return
         # 已暫停、或全體同步中、或本模組正在單同步 → 忽略
@@ -1225,8 +1271,8 @@ class SyncApp(tk.Tk):
                 text=f"✕  取消篩選（顯示全部）",
             )
         else:
-            # 按 MODULES 原始順序 reattach 所有列
-            for idx, (name, _, _) in enumerate(MODULES):
+            # 按使用者自訂順序（self._module_order）reattach 所有列
+            for idx, name in enumerate(self._module_order):
                 iid = self._tree_ids.get(name)
                 if iid:
                     # reattach 若已在樹中不會出錯（tkinter 會忽略）
@@ -1295,6 +1341,61 @@ class SyncApp(tk.Tk):
         except Exception as exc:
             logging.getLogger(__name__).warning("無法儲存暫停設定：%s", exc)
 
+    # ── 模組同步順序（可拖曳排序 / 右鍵上移下移）────────────────────────────────
+    @staticmethod
+    def _compute_module_order() -> list[str]:
+        """
+        讀取 sync_tool_config.json 的 module_order，並與目前 MODULES 清單同步：
+          - 已儲存且仍存在的模組 → 依儲存順序排列
+          - 新增到 MODULES 但尚未存在於儲存順序的模組 → 附加於清單末端
+          - 已從 MODULES 移除的模組名稱 → 自動濾除
+        """
+        try:
+            data = json.loads(_CONFIG_PATH.read_text(encoding="utf-8")) if _CONFIG_PATH.exists() else {}
+        except Exception:
+            data = {}
+        saved = data.get("module_order", [])
+        current_names = [n for n, _, _ in MODULES]
+        current_set = set(current_names)
+        order = [n for n in saved if n in current_set]
+        order_set = set(order)
+        for n in current_names:
+            if n not in order_set:
+                order.append(n)
+        return order
+
+    def _persist_module_order(self):
+        """讀取目前 Treeview 顯示順序，更新記憶體排序並寫回 config（下次同步依此順序執行）。"""
+        order = [self._tree.item(iid, "values")[0] for iid in self._tree.get_children()]
+        order = [n for n in order if n]
+        self._module_order = order
+        data = self._load_config()
+        data["module_order"] = order
+        self._save_config(data)
+
+    def _move_module(self, name: str, delta: int):
+        """右鍵選單「上移一項 / 下移一項」：調整模組同步順序並存檔。"""
+        if self._filter_active:
+            logging.getLogger(__name__).warning("篩選模式下無法調整順序，請先取消篩選")
+            return
+        try:
+            idx = self._module_order.index(name)
+        except ValueError:
+            return
+        new_idx = idx + delta
+        if new_idx < 0 or new_idx >= len(self._module_order):
+            return
+        self._module_order[idx], self._module_order[new_idx] = (
+            self._module_order[new_idx], self._module_order[idx],
+        )
+        iid = self._tree_ids.get(name)
+        if iid:
+            self._tree.move(iid, "", new_idx)
+        data = self._load_config()
+        data["module_order"] = self._module_order
+        self._save_config(data)
+        logging.getLogger(__name__).info("↕ 已調整模組順序：%s", name)
+
     def get_module_schedules(self) -> dict:
         """讀取 module_schedules 設定，回傳 dict[module_name, schedule_dict]。"""
         return self._load_config().get("module_schedules", {})
@@ -1336,6 +1437,16 @@ class SyncApp(tk.Tk):
                 label="▶  恢復全部已暫停模組",
                 command=self._enable_all_modules,
             )
+
+        menu.add_separator()
+        menu.add_command(
+            label="⬆  上移一項",
+            command=lambda: self._move_module(name, -1),
+        )
+        menu.add_command(
+            label="⬇  下移一項",
+            command=lambda: self._move_module(name, 1),
+        )
 
         menu.tk_popup(event.x_root, event.y_root)
 

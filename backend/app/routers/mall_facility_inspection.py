@@ -20,6 +20,12 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.dependencies import get_current_user, require_roles
 from app.models.mall_facility_inspection import MallFIBatch, MallFIItem
+from app.services.mall_facility_inspection_sync import MFI_SERVER_URL, MFI_ACCOUNT, SHEET_CONFIGS
+from app.services.ragic_verify_utils import (
+    read_portal_count_and_last_sync, read_portal_ragic_ids,
+    fetch_ragic_count_multi, fetch_ragic_url_map_multi,
+    build_verify_count_response, build_verify_diff_response,
+)
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
 
@@ -133,6 +139,40 @@ async def sync_all_sheets(background_tasks: BackgroundTasks):
     from app.services.mall_facility_inspection_sync import sync_all
     background_tasks.add_task(sync_all)
     return {"status": "ok", "message": "全部 5 張 Sheet 同步已在背景啟動"}
+
+
+# ── /verify-count／/verify-diff ─────────────────────────────────────────────────
+# 5 張 Sheet 都 pivot 進同一張 MallFIBatch（sheet_key 區分），做法同飯店每日巡檢。
+
+def _mfi_sheets() -> list[dict]:
+    return [
+        {"sheet_key": key, "sheet_path": cfg["path"], "server_url": MFI_SERVER_URL, "account": MFI_ACCOUNT}
+        for key, cfg in SHEET_CONFIGS.items()
+    ]
+
+
+@router.get("/verify-count", summary="與 Ragic 數量比對（管理員，5 張 Sheet 加總）",
+            dependencies=[Depends(require_roles("system_admin"))])
+async def verify_count(db: Session = Depends(get_db)):
+    portal_count, last_synced_at = await read_portal_count_and_last_sync(
+        db, MallFIBatch, "商場工務巡檢"
+    )
+    try:
+        ragic_count = await fetch_ragic_count_multi(_mfi_sheets())
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Ragic 連線失敗：{exc}")
+    return build_verify_count_response("商場工務巡檢", portal_count, ragic_count, last_synced_at)
+
+
+@router.get("/verify-diff", summary="與 Ragic 明細差集比對（管理員，5 張 Sheet 加總）",
+            dependencies=[Depends(require_roles("system_admin"))])
+async def verify_diff(db: Session = Depends(get_db)):
+    try:
+        ragic_url_map = await fetch_ragic_url_map_multi(_mfi_sheets())
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Ragic 連線失敗：{exc}")
+    portal_ids = await read_portal_ragic_ids(db, MallFIBatch)
+    return build_verify_diff_response(ragic_url_map, portal_ids)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

@@ -39,8 +39,15 @@ from app.schemas.periodic_maintenance import (
     PMPeriodStats, PMSubPeriodBreakdown, PMIncompleteItem,
     PMYearMatrix, PMYearMatrixMonth,
 )
-from app.services.full_building_maintenance_sync import sync_from_ragic
+from app.services.full_building_maintenance_sync import (
+    sync_from_ragic, FULL_BLDG_PM_SERVER_URL, FULL_BLDG_PM_ACCOUNT, FULL_BLDG_PM_JOURNAL_PATH,
+)
 from app.services.ragic_adapter import RagicAdapter
+from app.services.ragic_verify_utils import (
+    read_portal_count_and_last_sync, read_portal_ragic_ids,
+    fetch_ragic_count, fetch_ragic_url_map_single,
+    build_verify_count_response, build_verify_diff_response,
+)
 from app.core.config import settings
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
@@ -722,6 +729,38 @@ async def sync_full_building_maintenance(background_tasks: BackgroundTasks):
     """手動觸發：Ragic → SQLite，立即回傳，不阻塞畫面"""
     background_tasks.add_task(sync_from_ragic)
     return {"status": "ok", "message": "同步已在背景啟動"}
+
+
+# ── /verify-count／/verify-diff ─────────────────────────────────────────────────
+# 注意：比對對象是 FullBldgPMBatch（full_bldg_pm_batch，主表，Sheet21 一對一），
+# 不是 FullBldgPMItem（項目明細，來自 Sheet28）。
+
+@router.get("/verify-count", summary="與 Ragic 數量比對（管理員）",
+            dependencies=[Depends(require_roles("system_admin"))])
+async def verify_count(db: Session = Depends(get_db)):
+    portal_count, last_synced_at = await read_portal_count_and_last_sync(
+        db, FullBldgPMBatch, "全棟例行維護"
+    )
+    try:
+        ragic_count = await fetch_ragic_count(
+            FULL_BLDG_PM_JOURNAL_PATH, FULL_BLDG_PM_SERVER_URL, FULL_BLDG_PM_ACCOUNT
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Ragic 連線失敗：{exc}")
+    return build_verify_count_response("全棟例行維護", portal_count, ragic_count, last_synced_at)
+
+
+@router.get("/verify-diff", summary="與 Ragic 明細差集比對（管理員）",
+            dependencies=[Depends(require_roles("system_admin"))])
+async def verify_diff(db: Session = Depends(get_db)):
+    try:
+        ragic_url_map = await fetch_ragic_url_map_single(
+            FULL_BLDG_PM_JOURNAL_PATH, FULL_BLDG_PM_SERVER_URL, FULL_BLDG_PM_ACCOUNT
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Ragic 連線失敗：{exc}")
+    portal_ids = await read_portal_ragic_ids(db, FullBldgPMBatch)
+    return build_verify_diff_response(ragic_url_map, portal_ids)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

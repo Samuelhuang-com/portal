@@ -7,9 +7,12 @@ import apiClient from '@/api/client'
 export const JOURNAL_CATEGORIES = ['現場報修', '上級交辦', '緊急事件', '例行維護', '每日巡檢'] as const
 export type JournalCategory = typeof JOURNAL_CATEGORIES[number]
 
+// 注意：'security'（保全巡檢）曾列在此清單，但後端 work_journal.py 的彙整邏輯
+// 從未實作 _fetch_security()，保全巡檢資料實際上不會出現在工作日誌裡。
+// 2026-07-24 移除這個死選項，避免前端型別暗示「有資料」造成誤解。
 export const JOURNAL_SOURCES = [
   'dazhi', 'luqun', 'hotel_pm', 'ihg', 'hotel_di',
-  'security', 'mall_pm', 'full_bldg_pm', 'mall_fi', 'full_bi', 'hotel_mr',
+  'mall_pm', 'full_bldg_pm', 'mall_fi', 'full_bi', 'hotel_mr',
   'other_tasks',
 ] as const
 export type JournalSource = typeof JOURNAL_SOURCES[number]
@@ -20,7 +23,6 @@ export const SOURCE_LABEL: Record<JournalSource, string> = {
   hotel_pm:     '飯店週期保養',
   ihg:          'IHG客房保養',
   hotel_di:     '飯店每日巡檢',
-  security:     '保全巡檢',
   mall_pm:      '商場週期保養',
   full_bldg_pm: '整棟保養',
   mall_fi:      '商場設施巡檢',

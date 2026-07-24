@@ -41,8 +41,15 @@ from app.schemas.mall_periodic_maintenance import (
     MallPMScheduleUpdate, MallPMScheduleMatrixCell, MallPMScheduleMatrixRow,
     MallPMScheduleAnnualMatrix,
 )
-from app.services.mall_periodic_maintenance_sync import sync_from_ragic
+from app.services.mall_periodic_maintenance_sync import (
+    sync_from_ragic, MALL_PM_SERVER_URL, MALL_PM_ACCOUNT, MALL_PM_JOURNAL_PATH,
+)
 from app.services.ragic_adapter import RagicAdapter
+from app.services.ragic_verify_utils import (
+    read_portal_count_and_last_sync, read_portal_ragic_ids,
+    fetch_ragic_count, fetch_ragic_url_map_single,
+    build_verify_count_response, build_verify_diff_response,
+)
 from app.core.config import settings
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
@@ -693,6 +700,37 @@ async def sync_mall_periodic_maintenance(background_tasks: BackgroundTasks):
     """手動觸發：Ragic → SQLite，立即回傳，不阻塞畫面"""
     background_tasks.add_task(sync_from_ragic)
     return {"status": "ok", "message": "同步已在背景啟動"}
+
+
+# ── /verify-count／/verify-diff ─────────────────────────────────────────────────
+# 注意：比對對象是 MallPeriodicMaintenanceBatch（mall_pm_batch，主表，Sheet18 一對一），
+# 不是 MallPeriodicMaintenanceItem（項目明細，來自 Sheet24，且有 unmatched_batches
+# 跳過機制，筆數天生不會與 Sheet24 一致，不適合當健康指標）。
+
+@router.get("/verify-count", summary="與 Ragic 數量比對（管理員）",
+            dependencies=[Depends(require_roles("system_admin"))])
+async def verify_count(db: Session = Depends(get_db)):
+    portal_count, last_synced_at = await read_portal_count_and_last_sync(
+        db, MallPeriodicMaintenanceBatch, "商場週期保養"
+    )
+    try:
+        ragic_count = await fetch_ragic_count(MALL_PM_JOURNAL_PATH, MALL_PM_SERVER_URL, MALL_PM_ACCOUNT)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Ragic 連線失敗：{exc}")
+    return build_verify_count_response("商場週期保養", portal_count, ragic_count, last_synced_at)
+
+
+@router.get("/verify-diff", summary="與 Ragic 明細差集比對（管理員）",
+            dependencies=[Depends(require_roles("system_admin"))])
+async def verify_diff(db: Session = Depends(get_db)):
+    try:
+        ragic_url_map = await fetch_ragic_url_map_single(
+            MALL_PM_JOURNAL_PATH, MALL_PM_SERVER_URL, MALL_PM_ACCOUNT
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Ragic 連線失敗：{exc}")
+    portal_ids = await read_portal_ragic_ids(db, MallPeriodicMaintenanceBatch)
+    return build_verify_diff_response(ragic_url_map, portal_ids)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

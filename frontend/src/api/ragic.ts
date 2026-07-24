@@ -220,3 +220,20 @@ export async function verifyLuqunRepairDiff(): Promise<VerifyDiffResult> {
   const { data } = await apiClient.get<VerifyDiffResult>('/luqun-repair/verify-diff')
   return data
 }
+
+// ── 通用比對（其餘模組共用，依 API 前綴呼叫）───────────────────────────────────
+// 每個模組的 router 都各自實作了 /verify-count、/verify-diff（見對應 app/routers/*.py），
+// 回應格式與 dazhi-repair/luqun-repair 完全相同，故可用同一組前端函式呼叫任何模組，
+// 不需要每加一個模組就在這裡多寫一對具名函式。
+
+/** 依模組 API 前綴（例如 '/ihg-room-maintenance'）比對 Portal DB vs Ragic 筆數 */
+export async function verifyModuleCount(apiPrefix: string): Promise<VerifyCountResult> {
+  const { data } = await apiClient.get<VerifyCountResult>(`${apiPrefix}/verify-count`)
+  return data
+}
+
+/** 依模組 API 前綴比對 Portal DB vs Ragic 的 record ID 差集 */
+export async function verifyModuleDiff(apiPrefix: string): Promise<VerifyDiffResult> {
+  const { data } = await apiClient.get<VerifyDiffResult>(`${apiPrefix}/verify-diff`)
+  return data
+}

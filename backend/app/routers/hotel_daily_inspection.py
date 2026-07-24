@@ -19,8 +19,14 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, require_roles
 from app.models.hotel_daily_inspection import HotelDIBatch, HotelDIItem
+from app.services.hotel_daily_inspection_sync import HDI_SERVER_URL, HDI_ACCOUNT, SHEET_CONFIGS
+from app.services.ragic_verify_utils import (
+    read_portal_count_and_last_sync, read_portal_ragic_ids,
+    fetch_ragic_count_multi, fetch_ragic_url_map_multi,
+    build_verify_count_response, build_verify_diff_response,
+)
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
 
@@ -146,6 +152,42 @@ async def sync_all_sheets(background_tasks: BackgroundTasks):
     from app.services.hotel_daily_inspection_sync import sync_all
     background_tasks.add_task(sync_all)
     return {"status": "ok", "message": "全部 5 張 Sheet 同步已在背景啟動"}
+
+
+# ── /verify-count／/verify-diff ─────────────────────────────────────────────────
+# 5 張 Sheet 都 pivot 進同一張 HotelDIBatch（sheet_key 區分），筆數比對需把 5 張
+# Sheet 的 Ragic 筆數加總，跟這張表的 count(*) 比；ragic_id 為複合鍵
+# "{sheet_key}_{ragic_row_id}"，diff 時要用複合鍵比對。
+
+def _hdi_sheets() -> list[dict]:
+    return [
+        {"sheet_key": key, "sheet_path": cfg["path"], "server_url": HDI_SERVER_URL, "account": HDI_ACCOUNT}
+        for key, cfg in SHEET_CONFIGS.items()
+    ]
+
+
+@router.get("/verify-count", summary="與 Ragic 數量比對（管理員，5 張 Sheet 加總）",
+            dependencies=[Depends(require_roles("system_admin"))])
+async def verify_count(db: Session = Depends(get_db)):
+    portal_count, last_synced_at = await read_portal_count_and_last_sync(
+        db, HotelDIBatch, "飯店每日巡檢"
+    )
+    try:
+        ragic_count = await fetch_ragic_count_multi(_hdi_sheets())
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Ragic 連線失敗：{exc}")
+    return build_verify_count_response("飯店每日巡檢", portal_count, ragic_count, last_synced_at)
+
+
+@router.get("/verify-diff", summary="與 Ragic 明細差集比對（管理員，5 張 Sheet 加總）",
+            dependencies=[Depends(require_roles("system_admin"))])
+async def verify_diff(db: Session = Depends(get_db)):
+    try:
+        ragic_url_map = await fetch_ragic_url_map_multi(_hdi_sheets())
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Ragic 連線失敗：{exc}")
+    portal_ids = await read_portal_ragic_ids(db, HotelDIBatch)
+    return build_verify_diff_response(ragic_url_map, portal_ids)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

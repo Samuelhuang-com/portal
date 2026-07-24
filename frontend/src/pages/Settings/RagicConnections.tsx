@@ -37,10 +37,8 @@ import {
   getRecentSyncLogs,
   triggerAllModulesSync,
   triggerSingleModuleSync,
-  verifyDazhiRepairCount,
-  verifyLuqunRepairCount,
-  verifyDazhiRepairDiff,
-  verifyLuqunRepairDiff,
+  verifyModuleCount,
+  verifyModuleDiff,
   type ModuleSyncLogOut,
   type VerifyCountResult,
   type VerifyDiffResult,
@@ -222,29 +220,24 @@ const RagicConnections: React.FC = () => {
   }, [loadSyncLogs])
 
   // ── 資料比對 Tab 狀態 ────────────────────────────────────────────────────
-  const [verifyResults, setVerifyResults] = useState<Record<string, VerifyCountResult | null>>({
-    dazhi: null,
-    luqun: null,
-  })
-  const [verifying, setVerifying] = useState<Record<string, boolean>>({
-    dazhi: false,
-    luqun: false,
-  })
+  // 涵蓋範圍：大直/商場工務報修（原有）+ 工作日誌彙整用到的其餘 12 個來源模組
+  // （2026-07-24 擴充，見 work_journal.py 彙整清單）。往後其他模組要接上比對，
+  // 只需在 verifyModules 陣列加一筆設定，不需要改這個 TAB 的其他程式碼。
+  const [verifyResults, setVerifyResults] = useState<Record<string, VerifyCountResult | null>>({})
+  const [verifying, setVerifying] = useState<Record<string, boolean>>({})
 
   const [diffModalOpen, setDiffModalOpen] = useState(false)
   const [diffModuleName, setDiffModuleName] = useState('')
   const [diffResult, setDiffResult] = useState<VerifyDiffResult | null>(null)
   const [diffLoading, setDiffLoading] = useState(false)
 
-  const handleShowDiff = async (key: 'dazhi' | 'luqun', name: string) => {
+  const handleShowDiff = async (key: string, name: string, apiPrefix: string) => {
     setDiffModuleName(name)
     setDiffResult(null)
     setDiffModalOpen(true)
     setDiffLoading(true)
     try {
-      const result = key === 'dazhi'
-        ? await verifyDazhiRepairDiff()
-        : await verifyLuqunRepairDiff()
+      const result = await verifyModuleDiff(apiPrefix)
       setDiffResult(result)
     } catch {
       message.error('取得差異明細失敗')
@@ -254,12 +247,10 @@ const RagicConnections: React.FC = () => {
     }
   }
 
-  const handleVerify = async (key: 'dazhi' | 'luqun') => {
+  const handleVerify = async (key: string, apiPrefix: string) => {
     setVerifying(prev => ({ ...prev, [key]: true }))
     try {
-      const result = key === 'dazhi'
-        ? await verifyDazhiRepairCount()
-        : await verifyLuqunRepairCount()
+      const result = await verifyModuleCount(apiPrefix)
       setVerifyResults(prev => ({ ...prev, [key]: result }))
       if (result.match) {
         message.success(`${result.module}：資料一致（${result.portal_count} 筆）`)
@@ -274,8 +265,20 @@ const RagicConnections: React.FC = () => {
   }
 
   const verifyModules = [
-    { key: 'dazhi' as const, name: '飯店工務報修',  desc: 'lequn-public-works/8',                             ragicUrl: 'https://ap12.ragic.com/soutlet001/lequn-public-works/8?PAGEID=fV8' },
-    { key: 'luqun' as const, name: '商場工務報修', desc: 'luqun-public-works-repair-reporting-system/6', ragicUrl: 'https://ap12.ragic.com/soutlet001/luqun-public-works-repair-reporting-system/6' },
+    { key: 'dazhi',        name: '飯店工務報修',      desc: 'lequn-public-works/8',                          apiPrefix: '/dazhi-repair',              ragicUrl: 'https://ap12.ragic.com/soutlet001/lequn-public-works/8?PAGEID=fV8' },
+    { key: 'luqun',        name: '商場工務報修',      desc: 'luqun-public-works-repair-reporting-system/6', apiPrefix: '/luqun-repair',               ragicUrl: 'https://ap12.ragic.com/soutlet001/luqun-public-works-repair-reporting-system/6' },
+    { key: 'hotel_pm',     name: '飯店週期保養',      desc: 'periodic-maintenance/11',                      apiPrefix: '/periodic-maintenance',       ragicUrl: 'https://ap12.ragic.com/soutlet001/periodic-maintenance/11' },
+    { key: 'ihg',          name: 'IHG客房保養',       desc: 'periodic-maintenance/4',                       apiPrefix: '/ihg-room-maintenance',       ragicUrl: 'https://ap12.ragic.com/soutlet001/periodic-maintenance/4' },
+    { key: 'mall_pm',      name: '商場週期保養',      desc: 'periodic-maintenance/18',                      apiPrefix: '/mall/periodic-maintenance',  ragicUrl: 'https://ap12.ragic.com/soutlet001/periodic-maintenance/18' },
+    { key: 'full_bldg_pm', name: '全棟例行維護',      desc: 'periodic-maintenance/21',                      apiPrefix: '/mall/full-building-maintenance', ragicUrl: 'https://ap12.ragic.com/soutlet001/periodic-maintenance/21' },
+    { key: 'hotel_di',     name: '飯店每日巡檢',      desc: 'main-project-inspection/17~21（5張Sheet加總）', apiPrefix: '/hotel-daily-inspection',     ragicUrl: 'https://ap12.ragic.com/soutlet001/main-project-inspection/17' },
+    { key: 'mall_fi',      name: '商場工務巡檢',      desc: 'mall-facility-inspection/2,3,4,5,7（5張Sheet加總）', apiPrefix: '/mall-facility-inspection', ragicUrl: 'https://ap12.ragic.com/soutlet001/mall-facility-inspection/2' },
+    { key: 'hotel_mr',     name: '每日數值登錄',      desc: 'hotel-routine-inspection/11,12,14,15（4張Sheet加總）', apiPrefix: '/hotel-meter-readings', ragicUrl: 'https://ap12.ragic.com/soutlet001/hotel-routine-inspection/11' },
+    { key: 'b1f',          name: 'B1F巡檢',          desc: 'full-building-inspection/4',                   apiPrefix: '/mall/b1f-inspection',        ragicUrl: 'https://ap12.ragic.com/soutlet001/full-building-inspection/4' },
+    { key: 'b2f',          name: 'B2F巡檢',          desc: 'full-building-inspection/3',                   apiPrefix: '/mall/b2f-inspection',        ragicUrl: 'https://ap12.ragic.com/soutlet001/full-building-inspection/3' },
+    { key: 'b4f',          name: 'B4F巡檢',          desc: 'full-building-inspection/2',                   apiPrefix: '/mall/b4f-inspection',        ragicUrl: 'https://ap12.ragic.com/soutlet001/full-building-inspection/2' },
+    { key: 'rf',           name: 'RF巡檢',           desc: 'full-building-inspection/1',                   apiPrefix: '/mall/rf-inspection',         ragicUrl: 'https://ap12.ragic.com/soutlet001/full-building-inspection/1' },
+    { key: 'other_tasks',  name: '主管交辦／緊急事件', desc: 'other-tasks/1',                               apiPrefix: '/other-tasks',                ragicUrl: 'https://ap12.ragic.com/soutlet001/other-tasks/1' },
   ]
 
   const VerifyTab = (
@@ -283,12 +286,13 @@ const RagicConnections: React.FC = () => {
       <div style={{ marginBottom: 16 }}>
         <Tag color="blue">管理員功能</Tag>
         <Typography.Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>
-          即時向 Ragic 查詢筆數，與本地 DB 比對。每次比對約需 10–30 秒。
+          即時向 Ragic 查詢筆數，與本地 DB 比對。每次比對約需 10–30 秒；多張 Sheet 彙總的模組（飯店每日巡檢／商場工務巡檢／每日數值登錄）需逐張查詢，會更久一些。
+          涵蓋範圍為「工作日誌」彙整所用到的全部來源模組。
         </Typography.Text>
       </div>
-      {verifyModules.map(({ key, name, desc, ragicUrl }) => {
-        const r = verifyResults[key]
-        const loading = verifying[key]
+      {verifyModules.map(({ key, name, desc, ragicUrl, apiPrefix }) => {
+        const r = verifyResults[key] ?? null
+        const loading = verifying[key] ?? false
         let statusTag = <Tag color="default">尚未比對</Tag>
         if (r) {
           if (r.match)         statusTag = <Tag color="success" icon={<CheckCircleOutlined />}>一致</Tag>
@@ -344,14 +348,14 @@ const RagicConnections: React.FC = () => {
                   <Button
                     icon={<SearchOutlined />}
                     loading={loading}
-                    onClick={() => handleVerify(key)}
+                    onClick={() => handleVerify(key, apiPrefix)}
                   >
                     比對
                   </Button>
                   {r && !r.match && (
                     <Button
                       size="small"
-                      onClick={() => handleShowDiff(key, name)}
+                      onClick={() => handleShowDiff(key, name, apiPrefix)}
                     >
                       查看差異
                     </Button>
