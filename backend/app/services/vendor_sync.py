@@ -20,7 +20,7 @@ Ragic 廠商資料表無對應資料，同步時不覆蓋既有值。
 import logging
 import re
 
-import requests
+import httpx
 
 from app.core.config import settings
 from app.core.database import SessionLocal
@@ -70,11 +70,12 @@ async def sync_from_ragic() -> dict:
     """
     logger.info("[Vendor Sync] 開始從 Ragic 拉取廠商資料...")
     try:
-        resp = requests.get(
+        resp = httpx.get(
             RAGIC_VENDOR_URL,
             headers={"Authorization": f"Basic {settings.RAGIC_API_KEY}"},
             params={"api": "", "limit": 1000, "naming": "true"},
             timeout=30,
+            verify=settings.RAGIC_VERIFY_SSL,
         )
         resp.raise_for_status()
         raw: dict = resp.json()
