@@ -313,6 +313,7 @@ class VendorUpdate(BaseModel):
 class VendorResponse(VendorBase):
     """廠商回應"""
     vendor_id: str
+    ragic_id: Optional[str] = Field(None, description="Ragic 廠商資料表流水號（同步比對用，手動建立的廠商為 null）")
     created_at: datetime
     updated_at: datetime
 
@@ -414,6 +415,17 @@ class VendorImportResult(BaseModel):
     updated: int
     skipped: int
     errors: List[VendorImportRowError]
+
+
+# ── 廠商 Ragic 同步（POST /vendors/sync） ────────────────────────────────
+class VendorSyncResult(BaseModel):
+    """廠商 Ragic 同步結果"""
+    success: bool
+    fetched: int
+    upserted: int
+    created: int
+    updated: int
+    errors: List[str]
 
 
 # ── 預算科目分頁清單（GET /budget-categories） ───────────────────────────

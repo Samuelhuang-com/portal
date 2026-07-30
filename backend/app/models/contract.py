@@ -418,6 +418,16 @@ class Vendor(Base):
     # F7（2026-06-01）
     managing_company = Column(String(100), nullable=True, comment="管理公司名稱")
 
+    # Ragic 廠商資料表同步（2026-07-30）：nullable，手動建立的廠商為 null 不受影響。
+    # 比對優先序：ragic_id → 統一編號 → 廠商名稱（見 vendor_sync.py）。
+    ragic_id = Column(
+        String(50),
+        nullable=True,
+        unique=True,
+        index=True,
+        comment="Ragic 廠商資料表流水號（community-management-department/15，同步比對用）"
+    )
+
     # ── 系統欄位 ──────────────────────────────────────────────────────────────
     created_at = Column(
         DateTime,

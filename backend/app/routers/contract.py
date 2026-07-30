@@ -88,6 +88,7 @@ from app.schemas.contract import (
     RenewalReview,
     RenewalResponse,
     VendorImportResult,
+    VendorSyncResult,
     ContractApprovalRequest,
     CostAllocationItem,
     CostAllocationResponse,
@@ -552,6 +553,39 @@ def import_vendors(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"匯入失敗：{str(e)}")
+
+
+@router.post(
+    "/vendors/sync",
+    response_model=VendorSyncResult,
+    summary="立即同步廠商資料（Ragic → Portal）",
+)
+async def sync_vendors(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    從 Ragic 廠商資料表（community-management-department/15）即時拉取資料並 Upsert 到 vendors 表。
+    比對優先序：ragic_id → 統一編號 → 廠商名稱，詳見 app/services/vendor_sync.py。
+    """
+    user_permissions = get_user_permissions(current_user.id, db)
+    if "*" not in user_permissions and "contract_vendor_manage" not in user_permissions:
+        raise HTTPException(status_code=403, detail="權限不足")
+
+    from app.services.vendor_sync import sync_from_ragic as _sync_vendors
+
+    try:
+        result = await _sync_vendors()
+        return VendorSyncResult(
+            success=not result.get("errors"),
+            fetched=result.get("fetched", 0),
+            upserted=result.get("upserted", 0),
+            created=result.get("created", 0),
+            updated=result.get("updated", 0),
+            errors=result.get("errors", []),
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"同步失敗：{str(e)}")
 
 
 @router.get(

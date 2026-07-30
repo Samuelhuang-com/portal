@@ -18,12 +18,13 @@ import {
   HomeOutlined, PlusOutlined, DeleteOutlined,
   ReloadOutlined, SearchOutlined, LinkOutlined,
   TrophyOutlined, FileTextOutlined, UploadOutlined,
-  CheckCircleOutlined, WarningOutlined,
+  CheckCircleOutlined, WarningOutlined, SyncOutlined,
 } from '@ant-design/icons'
 import type { ColumnsType, TableProps } from 'antd/es/table'
 
 import {
   fetchVendors, deleteVendor, createVendor, fetchVendorPerformance, importVendors,
+  syncVendorsFromRagic,
 } from '@/api/contract'
 import type { VendorImportResult } from '@/api/contract'
 import type { VendorRecord, VendorPerformance } from '@/types/contract'
@@ -67,6 +68,9 @@ export default function VendorListPage() {
   const [importOpen, setImportOpen] = useState(false)
   const [importing, setImporting] = useState(false)
   const [importResult, setImportResult] = useState<VendorImportResult | null>(null)
+
+  // Ragic 同步狀態
+  const [syncLoading, setSyncLoading] = useState(false)
 
   // ── 載入廠商清單 ──────────────────────────────────────────────────────────
   const loadVendors = useCallback(async (page: number, size: number, search?: string) => {
@@ -155,6 +159,26 @@ export default function VendorListPage() {
       return false  // 阻止 antd 預設上傳行為
     },
     showUploadList: false,
+  }
+
+  // ── Ragic 同步作業 ──────────────────────────────────────────────────────
+  const handleSync = async () => {
+    setSyncLoading(true)
+    try {
+      const result = await syncVendorsFromRagic()
+      if (result.errors?.length) {
+        message.warning(
+          `同步完成，新增 ${result.created} 筆、更新 ${result.updated} 筆，${result.errors.length} 筆失敗`,
+        )
+      } else {
+        message.success(`同步完成，新增 ${result.created} 筆、更新 ${result.updated} 筆`)
+      }
+      loadVendors(pagination.page, pagination.size, searchText)
+    } catch (err: any) {
+      message.error(err?.response?.data?.detail ?? err?.message ?? '同步失敗')
+    } finally {
+      setSyncLoading(false)
+    }
   }
 
   // ── 分頁變更 ────────────────────────────────────────────────────────────
@@ -277,6 +301,13 @@ export default function VendorListPage() {
             <Space style={{ width: '100%', justifyContent: 'flex-end' }}>
               <Button icon={<ReloadOutlined />} onClick={() => loadVendors(1, pagination.size, searchText)}>
                 重新整理
+              </Button>
+              <Button
+                icon={<SyncOutlined spin={syncLoading} />}
+                loading={syncLoading}
+                onClick={handleSync}
+              >
+                Ragic 同步作業
               </Button>
               <Button
                 icon={<UploadOutlined />}

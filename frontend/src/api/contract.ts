@@ -182,6 +182,21 @@ export async function importVendors(file: File): Promise<VendorImportResult> {
   return data
 }
 
+export interface VendorSyncResult {
+  success: boolean
+  fetched: number
+  upserted: number
+  created: number
+  updated: number
+  errors: string[]
+}
+
+/** 立即同步廠商資料（Ragic → Portal） */
+export async function syncVendorsFromRagic(): Promise<VendorSyncResult> {
+  const { data } = await apiClient.post(`${BASE}/vendors/sync`)
+  return data
+}
+
 // ── 預算科目端點 ────────────────────────────────────────────────────────────────
 
 /** 取得預算科目清單 */

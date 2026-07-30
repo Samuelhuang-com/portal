@@ -772,6 +772,26 @@ def _migrate_f7_vendor_managing_company():
             print("[Migration] vendors.managing_company added")
 
 
+def _migrate_vendors_ragic_id():
+    """
+    2026-07-30 — vendors.ragic_id（nullable VARCHAR 50，UNIQUE index）。
+    廠商資料表 Ragic 同步（vendor_sync.py）比對用欄位，手動建立/Excel 匯入的既有
+    廠商此欄位維持 null，不受影響。
+    """
+    from sqlalchemy import text
+    with engine.connect() as conn:
+        result = conn.execute(text("PRAGMA table_info(vendors)"))
+        existing = {row[1] for row in result.fetchall()}
+        if "ragic_id" not in existing:
+            conn.execute(text("ALTER TABLE vendors ADD COLUMN ragic_id VARCHAR(50)"))
+            conn.commit()
+            print("[Migration] vendors.ragic_id added")
+        conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ix_vendors_ragic_id ON vendors (ragic_id)"
+        ))
+        conn.commit()
+
+
 def _migrate_full_bldg_pm_sheet28_fields():
     """
     輕量欄位補丁（2026-06-02 新增 repair_hours/sheet28_id；2026-07-14 補上 2026-07-13
@@ -1205,6 +1225,7 @@ async def _auto_sync():
     from app.services.hotel_meter_readings_sync import sync_all as sync_hmr
     from app.services.ihg_room_maintenance_sync import sync_from_ragic as sync_ihg_rm
     from app.services.other_tasks_sync import sync_from_ragic as sync_other_tasks
+    from app.services.vendor_sync import sync_from_ragic as sync_vendor
     from app.services.purchase_request_sync import sync_list_only as sync_purchase_list
     from app.services.claim_request_sync import sync_list_only as sync_claim_list
     from app.services.nichiyo_purchase_request_sync import sync_list_only as sync_nichiyo_purchase_list
@@ -1228,6 +1249,7 @@ async def _auto_sync():
     await _run_loop("每日數值登錄",        sync_hmr)
     await _run_loop("IHG客房保養",        sync_ihg_rm)
     await _run_loop("主管交辦／緊急事件",  sync_other_tasks)
+    await _run_loop("廠商資料",           sync_vendor)
     # 請購單 / 請款單：清單同步（Detail API 由獨立排程補全）
     await _run_loop("核准請購單清單",      sync_purchase_list)
     await _run_loop("核准請款單清單",      sync_claim_list)
@@ -1302,6 +1324,7 @@ _SINGLE_MODULE_MAP: dict[str, tuple[str, str]] = {
     "日曜核准請購單清單": ("app.services.nichiyo_purchase_request_sync", "sync_list_only"),
     "日曜核准請款單清單": ("app.services.nichiyo_claim_request_sync",    "sync_list_only"),
     "主管交辦／緊急事件": ("app.services.other_tasks_sync",              "sync_from_ragic"),
+    "廠商資料":          ("app.services.vendor_sync",                   "sync_from_ragic"),
 }
 
 def list_syncable_modules() -> list[str]:
@@ -1715,6 +1738,10 @@ async def lifespan(app: FastAPI):
     # F7（2026-06-01）：vendors.managing_company
     _run_startup_migration("_migrate_f7_vendor_managing_company", _migrate_f7_vendor_managing_company)
     print("[Portal] F7 vendor managing_company migration checked.")
+
+    # 2026-07-30：vendors.ragic_id（廠商資料表 Ragic 同步比對用欄位）
+    _run_startup_migration("_migrate_vendors_ragic_id", _migrate_vendors_ragic_id)
+    print("[Portal] vendors.ragic_id migration checked.")
 
     # 行事曆區域別（2026-06-02）：calendar_custom_events.zone
     _run_startup_migration("_migrate_calendar_custom_event_zone", _migrate_calendar_custom_event_zone)

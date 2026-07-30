@@ -201,6 +201,7 @@ MODULES: list[tuple[str, str, str]] = [
     ("主管交辦／緊急事件", "app.services.other_tasks_sync",             "sync_from_ragic"),
     ("週期保養預排",       "app.services.pm_plan_sync",                 "sync_from_ragic"),
     ("飯店例行維護",       "app.services.hotel_routine_pm_sync",        "sync_from_ragic"),
+    ("廠商資料",           "app.services.vendor_sync",                  "sync_from_ragic"),
 ]
 
 # ── 報修報表寄信排程 key（非同步模組，獨立處理）─────────────────────────────
@@ -722,6 +723,7 @@ class SyncApp(tk.Tk):
             import app.models.pm_plan                  # noqa
             import app.models.hotel_routine_pm         # noqa
             import app.models.hotel_routine_pm_schedule  # noqa
+            import app.models.contract                 # noqa
 
             # ── 2. hotel_mr_reading 舊版偵測 → DROP（在 create_all 之前）────
             with engine.connect() as conn:
@@ -767,6 +769,19 @@ class SyncApp(tk.Tk):
                     ))
                     conn.commit()
                     logger.info("[DB] calendar_custom_events.zone 欄位已新增")
+
+            # ── 6. vendors.ragic_id 欄位補丁（廠商資料表同步比對用，2026-07-30）─
+            with engine.connect() as conn:
+                result = conn.execute(text("PRAGMA table_info(vendors)"))
+                existing = {row[1] for row in result.fetchall()}
+                if "ragic_id" not in existing:
+                    conn.execute(text("ALTER TABLE vendors ADD COLUMN ragic_id VARCHAR(50)"))
+                    conn.commit()
+                    logger.info("[DB] vendors.ragic_id 欄位已新增")
+                conn.execute(text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS ix_vendors_ragic_id ON vendors (ragic_id)"
+                ))
+                conn.commit()
 
             logger.info("[DB] Schema 確認完成 ✓")
 
