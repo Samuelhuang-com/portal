@@ -1452,10 +1452,10 @@ export default function MallPeriodicMaintenancePage() {
           <Tag color={SCHED_STATUS_CFG[schedDrawerItem.status]?.color??'default'}>
             {SCHED_STATUS_CFG[schedDrawerItem.status]?.label??schedDrawerItem.status}
           </Tag>
-          {schedDrawerItem.item_ragic_id && (
+          {schedDrawerItem.ragic_url && (
             <Tooltip title="在 Ragic 查看原始表單">
               <a
-                href={`https://ap12.ragic.com/soutlet001/periodic-maintenance/18/${schedDrawerItem.item_ragic_id.split('_')[0]}`}
+                href={schedDrawerItem.ragic_url}
                 target="_blank"
                 rel="noopener noreferrer"
                 style={{ color: '#4BA8E8', fontSize: 16, lineHeight: 1 }}
@@ -1711,10 +1711,10 @@ export default function MallPeriodicMaintenancePage() {
           <Tag>{annualDrawerCell.row.category||'—'}</Tag>
           <span>{annualDrawerCell.row.task_name}</span>
           <Tag>{annualYear}/{String(annualDrawerCell.month).padStart(2,'0')}</Tag>
-          {annualDrawerCell.row.item_ragic_id && (
+          {annualDrawerCell.row.ragic_url && (
             <Tooltip title="在 Ragic 查看原始表單">
               <a
-                href={`https://ap12.ragic.com/soutlet001/periodic-maintenance/18/${annualDrawerCell.row.item_ragic_id.split('_')[0]}`}
+                href={annualDrawerCell.row.ragic_url}
                 target="_blank"
                 rel="noopener noreferrer"
                 style={{ color: '#4BA8E8', fontSize: 16, lineHeight: 1 }}
@@ -1768,6 +1768,11 @@ export default function MallPeriodicMaintenancePage() {
                 render: (v: string) => v || '—' },
               { title: '頻率', dataIndex: 'frequency', width: 60,
                 render: (v: string) => v || '—' },
+              { title: 'Ragic', dataIndex: 'ragic_url', width: 56, align: 'center' as const,
+                render: (v: string) => v
+                  ? <a href={v} target="_blank" rel="noopener noreferrer"
+                       style={{color:'#4BA8E8'}}><LinkOutlined /></a>
+                  : '—' },
             ]}
           />
         </>

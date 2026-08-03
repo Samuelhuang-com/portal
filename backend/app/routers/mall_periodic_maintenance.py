@@ -239,6 +239,37 @@ def _should_schedule(item: MallPeriodicMaintenanceItem, year: int, month: int) -
 
 _RAGIC_BASE = "https://ap12.ragic.com/soutlet001/periodic-maintenance/18"
 
+# ── Ragic 連結（2026-08-03 修正）──────────────────────────────────────────────
+# Sheet 18 = 每月「商場週期保養日誌」主表（一個月一筆）
+# Sheet 24 = 該日誌子表格「項目」的平鋪視圖（一個保養項目一筆），2026-07-13 起
+#            `sync_items_from_sheet24()` 直接用 Sheet 24 的 record id 當
+#            `mall_pm_batch_item.ragic_id` 的主鍵。
+#
+# 修正前前端在 index.tsx 自行硬組 `.../18/${item_ragic_id.split('_')[0]}`：
+#   1. 違反 CLAUDE.md §7（ragic_url 必須由後端組好回傳，前端只負責顯示）；
+#   2. 現行資料的 item_ragic_id 全部不含底線（實測 16 列皆為 56/57/68/71… 等
+#      Sheet 24 record id），split 完全沒作用，等於把 Sheet 24 的編號接到
+#      Sheet 18 的路徑後面 → 連到 Sheet 18 裡編號相同的另一筆不相干記錄。
+# 改為一律由後端組出 Sheet 24 連結（業主 2026-08-03 決議只留 Sheet 24 一個連結）。
+_RAGIC_SHEET18 = _RAGIC_BASE
+_RAGIC_SHEET24 = "https://ap12.ragic.com/soutlet001/periodic-maintenance/24"
+
+
+def _item_ragic_url(item_ragic_id: str, sheet24_id: Optional[str] = None) -> str:
+    """
+    組出保養項目在 Ragic 的連結，優先指向 Sheet 24 該筆項目。
+    僅在遇到舊版 Sheet 18 子表格格式（`{batch_id}_{row_key}`，Sheet 24 沒有對應
+    記錄）時，才退回 Sheet 18 的月批次表單。
+    """
+    if sheet24_id:
+        return f"{_RAGIC_SHEET24}/{sheet24_id}"
+    rid = (item_ragic_id or "").strip()
+    if not rid:
+        return ""
+    if "_" in rid:
+        return f"{_RAGIC_SHEET18}/{rid.split('_')[0]}"
+    return f"{_RAGIC_SHEET24}/{rid}"
+
 
 def _item_to_out(item: MallPeriodicMaintenanceItem, check_month: int) -> PMItemOut:
     return PMItemOut(
@@ -1670,6 +1701,7 @@ def _mall_schedule_to_out(rec: MallPMSchedule) -> MallPMScheduleOut:
         created_at       = rec.created_at,
         updated_at       = rec.updated_at,
         status           = _mall_calc_schedule_status(rec),
+        ragic_url        = _item_ragic_url(rec.item_ragic_id),
     )
 
 
@@ -2116,6 +2148,7 @@ def get_mall_annual_matrix(
                 scheduled_date = cell_sched_date,
                 category       = item.category or "",
                 frequency      = item.frequency or "",
+                ragic_url      = _item_ragic_url(item.ragic_id, item.sheet24_id),
             )
 
             grp = groups.setdefault(_norm(item.task_name), {
@@ -2175,6 +2208,7 @@ def get_mall_annual_matrix(
             category_variants  = cat_variants,
             frequency_variants = freq_variants,
             month_count        = len(grp["months"]),
+            ragic_url          = _item_ragic_url(latest_item.ragic_id, latest_item.sheet24_id),
         ))
 
     return MallPMScheduleAnnualMatrix(

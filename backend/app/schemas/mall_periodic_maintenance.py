@@ -34,6 +34,7 @@ class MallPMScheduleOut(BaseModel):
     created_at:       datetime
     updated_at:       datetime
     status:           str = "unscheduled"   # 動態計算，不存 DB
+    ragic_url:        str = ""             # 動態計算，指向 Ragic Sheet 24
 
     class Config:
         from_attributes = True
@@ -87,6 +88,7 @@ class MallPMScheduleMatrixEntry(BaseModel):
     scheduled_date: Optional[str] = None
     category:       str = ""
     frequency:      str = ""
+    ragic_url:      str = ""   # 指向 Ragic Sheet 24 該筆保養項目
 
 
 class MallPMScheduleMatrixCell(BaseModel):
@@ -113,6 +115,7 @@ class MallPMScheduleMatrixRow(BaseModel):
     category_variants:  List[str] = []
     frequency_variants: List[str] = []
     month_count:        int = 0    # 此列合併自幾個月份的批次
+    ragic_url:          str = ""   # 指向 Ragic Sheet 24（取最近月份那一筆）
 
 
 class MallPMScheduleAnnualMatrix(BaseModel):

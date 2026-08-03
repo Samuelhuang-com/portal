@@ -209,6 +209,7 @@ export interface MallPMScheduleItem {
   created_at:        string
   updated_at:        string
   status:            string
+  ragic_url:         string
 }
 
 export interface MallPMScheduleKPI {
@@ -248,6 +249,7 @@ export interface MallPMScheduleMatrixEntry {
   scheduled_date: string | null
   category:       string
   frequency:      string
+  ragic_url:      string
 }
 
 export interface MallPMScheduleMatrixCell {
@@ -269,6 +271,7 @@ export interface MallPMScheduleMatrixRow {
   category_variants:  string[]
   frequency_variants: string[]
   month_count:        number
+  ragic_url:          string
 }
 
 export interface MallPMScheduleAnnualMatrix {
