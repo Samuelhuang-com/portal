@@ -27,6 +27,7 @@ from typing import Optional, List
 from pydantic import BaseModel
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from fastapi.concurrency import run_in_threadpool
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -579,18 +580,50 @@ def _calc_sub_breakdown(
 
 
 # ── 頻率分類 mapping ─────────────────────────────────────────────────────────
-_FREQ_KEYWORDS: dict[str, set[str]] = {
-    "monthly":   {"月", "每月", "月維護", "Monthly", "monthly"},
-    "quarterly": {"季", "每季", "季維護", "Quarterly", "quarterly"},
-    "yearly":    {"年", "每年", "年維護", "Annual", "annual", "Yearly", "yearly"},
-}
+# 分類原則（2026-08-03 業主決議）：
+#   monthly   = 明確的「月」頻率
+#   yearly    = 明確的「年」頻率
+#   quarterly = 收容區 —— 除月／年以外的所有頻率（季、雙月、半年、未知值、空值）
+# 採 catch-all 寫法，未來 Ragic 若新增頻率值不會從三個統計 TAB 中整個消失。
+_FREQ_MONTHLY_KEYWORDS: set[str] = {"月", "每月", "月維護", "Monthly", "monthly"}
+_FREQ_YEARLY_KEYWORDS:  set[str] = {"年", "每年", "年維護", "Annual", "annual", "Yearly", "yearly"}
+
+
+def _classify_frequency(frequency: str) -> str:
+    """
+    將 Ragic 頻率字串分類為 monthly / quarterly / yearly。
+    月 → monthly；年 → yearly；其餘（季、雙月、半年、未知值、空值）→ quarterly。
+    """
+    freq = (frequency or "").strip()
+    if freq in _FREQ_MONTHLY_KEYWORDS:
+        return "monthly"
+    if freq in _FREQ_YEARLY_KEYWORDS:
+        return "yearly"
+    return "quarterly"
+
 
 def _freq_match(frequency: str, frequency_type: Optional[str]) -> bool:
     """回傳 True 表示該 item 的頻率符合篩選條件（None = 不篩選）"""
     if not frequency_type:
         return True
-    keywords = _FREQ_KEYWORDS.get(frequency_type, set())
-    return frequency.strip() in keywords
+    return _classify_frequency(frequency) == frequency_type
+
+
+def _freq_sql_clause(frequency_type: Optional[str], col):
+    """
+    產生 SQL 層級的頻率篩選條件，語意與 _classify_frequency 完全一致。
+    monthly / yearly → 明確關鍵字集合；quarterly → 非月非年的全部（含 NULL／空字串）。
+    frequency_type 為 None 時回傳 None（不篩選）。
+    """
+    if not frequency_type:
+        return None
+    if frequency_type == "monthly":
+        return col.in_(_FREQ_MONTHLY_KEYWORDS)
+    if frequency_type == "yearly":
+        return col.in_(_FREQ_YEARLY_KEYWORDS)
+    # quarterly = 收容區
+    known = _FREQ_MONTHLY_KEYWORDS | _FREQ_YEARLY_KEYWORDS
+    return or_(col.is_(None), col.notin_(known))
 
 
 _MONTH_LABELS_ZH = ["1月","2月","3月","4月","5月","6月",
@@ -641,8 +674,8 @@ def _calc_year_matrix(db: Session, year: int, frequency_type: Optional[str] = No
         })
 
     # ── 預載當年 pm_schedule（補充 period_total / period_completed）────────────
-    # 頻率關鍵字集合，用於 pm_schedule 篩選
-    freq_kws: Optional[set] = _FREQ_KEYWORDS.get(frequency_type) if frequency_type else None
+    # 頻率篩選條件，用於 pm_schedule 篩選（與 _classify_frequency 同語意）
+    freq_clause = _freq_sql_clause(frequency_type, PMSchedule.frequency)
 
     # ── 逐月計算 ─────────────────────────────────────────────────────────────
     month_results: list[PMYearMatrixMonth] = []
@@ -677,8 +710,8 @@ def _calc_year_matrix(db: Session, year: int, frequency_type: Optional[str] = No
         # ── 以 pm_schedule 補充本月件數（優先使用）────────────────────────────
         year_month_str = f"{year}/{m:02d}"
         sched_q = db.query(PMSchedule).filter(PMSchedule.year_month == year_month_str)
-        if freq_kws:
-            sched_q = sched_q.filter(PMSchedule.frequency.in_(freq_kws))
+        if freq_clause is not None:
+            sched_q = sched_q.filter(freq_clause)
         sched_recs = sched_q.all()
 
         if sched_recs:

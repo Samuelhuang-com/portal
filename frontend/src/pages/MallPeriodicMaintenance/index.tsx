@@ -815,6 +815,7 @@ export default function MallPeriodicMaintenancePage() {
   const [annualDrawerCell,  setAnnualDrawerCell]  = useState<{
     scheduleId: number | null; status: string; month: number
     row: MallPMScheduleAnnualMatrix['rows'][0]
+    cell?: MallPMScheduleAnnualMatrix['rows'][0]['cells'][0]
   } | null>(null)
   const [annualCellDetail,  setAnnualCellDetail]  = useState<MallPMScheduleItem | null>(null)
   const [annualCellLoading, setAnnualCellLoading] = useState(false)
@@ -840,8 +841,9 @@ export default function MallPeriodicMaintenancePage() {
     status: string,
     month: number,
     row: MallPMScheduleAnnualMatrix['rows'][0],
+    cell?: MallPMScheduleAnnualMatrix['rows'][0]['cells'][0],
   ) => {
-    setAnnualDrawerCell({ scheduleId, status, month, row })
+    setAnnualDrawerCell({ scheduleId, status, month, row, cell })
     setAnnualDrawerOpen(true)
     setAnnualCellDetail(null)
     if (scheduleId) {
@@ -1613,14 +1615,30 @@ export default function MallPeriodicMaintenancePage() {
               <tbody>
                 {filteredAnnualRows.map(row=>(
                   <tr key={row.item_ragic_id} style={{borderBottom:'1px solid #eee'}}>
-                    <td style={{...TD,whiteSpace:'nowrap'}}><Tag style={{fontSize:12}}>{row.category||'—'}</Tag></td>
                     <td style={{...TD,whiteSpace:'nowrap'}}>
-                      <Tooltip title={row.location||undefined}>
-                        <span style={{fontSize:13}}>{row.task_name}</span>
+                      <Tag style={{fontSize:12}}>{row.category||'—'}</Tag>
+                      {row.category_variants?.length>1 && (
+                        <Tooltip title={`本項目跨月出現過 ${row.category_variants.length} 種類別：${row.category_variants.join('、')}（顯示最近月份的值）`}>
+                          <span style={{color:'#FA8C16',fontSize:12,marginLeft:2,cursor:'help'}}>⚠</span>
+                        </Tooltip>
+                      )}
+                    </td>
+                    <td style={{...TD,whiteSpace:'nowrap'}}>
+                      <Tooltip title={
+                        row.month_count>1
+                          ? `本列合併自 ${row.month_count} 個月份的批次${row.location?`｜${row.location}`:''}`
+                          : (row.location||undefined)
+                      }>
+                        <span style={{fontSize:13}}>{row.task_name||'—'}</span>
                       </Tooltip>
                     </td>
                     <td style={{...TD,textAlign:'center',whiteSpace:'nowrap'}}>
                       {row.frequency?<Tag style={{fontSize:12}}>{row.frequency}</Tag>:'—'}
+                      {row.frequency_variants?.length>1 && (
+                        <Tooltip title={`本項目跨月出現過 ${row.frequency_variants.length} 種頻率：${row.frequency_variants.join('、')}（顯示最近月份的值）`}>
+                          <span style={{color:'#FA8C16',fontSize:12,marginLeft:2,cursor:'help'}}>⚠</span>
+                        </Tooltip>
+                      )}
                     </td>
                     {row.cells.map(cell=>{
                       const cfg = MATRIX_CELL_CFG[cell.status] ?? {bg:'#fff',text:'#666',label:'?'}
@@ -1628,13 +1646,28 @@ export default function MallPeriodicMaintenancePage() {
                       return (
                         <td key={cell.month} style={{...TD,textAlign:'center',background:cfg.bg,color:cfg.text,
                           cursor:clickable?'pointer':'default',fontWeight:600,padding:'4px 2px',fontSize:16}}
-                          onClick={()=>clickable&&openAnnualDrawer(cell.schedule_id,cell.status,cell.month,row)}>
-                          <Tooltip title={({completed:'已完成',overdue:'逾期',in_progress:'進行中',
-                            scheduled:'待執行',unscheduled:'未排定',non_month:'非本月',
-                            no_data:'應做未排程',no_frequency:'頻率未設定'} as Record<string,string>)[cell.status]}>
-                            <div style={{lineHeight:1.2}}>
+                          onClick={()=>clickable&&openAnnualDrawer(cell.schedule_id,cell.status,cell.month,row,cell)}>
+                          <Tooltip title={
+                            (({completed:'已完成',overdue:'逾期',in_progress:'進行中',
+                              scheduled:'待執行',unscheduled:'未排定',non_month:'非本月',
+                              no_data:'應做未排程',no_frequency:'頻率未設定'} as Record<string,string>)[cell.status])
+                            + (cell.count>1
+                                ? `｜本月共 ${cell.count} 筆（${cell.entries.map(e=>e.scheduled_date||'無日期').join('、')}），點擊看明細`
+                                : '')
+                          }>
+                            <div style={{lineHeight:1.2,position:'relative'}}>
                               {cfg.label}
-                              {cell.scheduled_date && (
+                              {cell.count>1 && (
+                                <span style={{position:'absolute',top:-2,right:2,fontSize:10,fontWeight:700,
+                                  color:'#fff',background:cfg.text,borderRadius:8,padding:'0 4px',lineHeight:'14px'}}>
+                                  ×{cell.count}
+                                </span>
+                              )}
+                              {cell.count>1 ? (
+                                <div style={{fontSize:11,fontWeight:500,color:cfg.text,opacity:0.85,marginTop:1}}>
+                                  {cell.entries.map(e=>e.scheduled_date).filter(Boolean).join('、')||'\u00A0'}
+                                </div>
+                              ) : cell.scheduled_date && (
                                 <div style={{fontSize:11,fontWeight:500,color:cfg.text,
                                   opacity:cell.status==='no_data'?1:0.85,marginTop:1}}>
                                   {cell.scheduled_date}
@@ -1659,7 +1692,10 @@ export default function MallPeriodicMaintenancePage() {
         <Row style={{marginTop:12}}>
           <Col>
             <Text type="secondary">
-              共 {annualMatrix.summary.total_items} 個保養項目，本年已完成 {annualMatrix.summary.completed_count} 筆排程記錄
+              共 {annualMatrix.summary.total_items} 個保養項目
+              {annualMatrix.summary.total_records != null &&
+                `（合併自 ${annualMatrix.summary.total_records} 筆批次記錄）`}
+              ，本年已完成 {annualMatrix.summary.completed_count} 筆
             </Text>
           </Col>
         </Row>
@@ -1709,7 +1745,35 @@ export default function MallPeriodicMaintenancePage() {
           )}
         </Descriptions>
       )}
-      {!annualCellLoading && !annualCellDetail && annualDrawerCell && (
+      {/* 同月多筆：逐筆列出，不讓任何一筆被彙總狀態蓋掉 */}
+      {!annualCellLoading && (annualDrawerCell?.cell?.count ?? 0) > 1 && (
+        <>
+          <Alert type="info" showIcon style={{marginBottom:12}}
+            message={`本月共 ${annualDrawerCell!.cell!.count} 筆記錄，格內顯示的是彙總狀態`} />
+          <Table
+            size="small"
+            rowKey="item_ragic_id"
+            pagination={false}
+            dataSource={annualDrawerCell!.cell!.entries}
+            columns={[
+              { title: '排定日期', dataIndex: 'scheduled_date', width: 90,
+                render: (v: string|null) => v || '—' },
+              { title: '狀態', dataIndex: 'status', width: 90, align: 'center' as const,
+                render: (v: string) => (
+                  <Tag color={SCHED_STATUS_CFG[v]?.color ?? 'default'}>
+                    {SCHED_STATUS_CFG[v]?.label ?? v}
+                  </Tag>
+                ) },
+              { title: '類別', dataIndex: 'category', width: 70,
+                render: (v: string) => v || '—' },
+              { title: '頻率', dataIndex: 'frequency', width: 60,
+                render: (v: string) => v || '—' },
+            ]}
+          />
+        </>
+      )}
+      {!annualCellLoading && !annualCellDetail && annualDrawerCell
+        && (annualDrawerCell.cell?.count ?? 0) <= 1 && (
         <Alert type={annualDrawerCell.status==='no_data'?'warning':'info'} showIcon
           message={annualDrawerCell.status==='no_data'
             ?'此月份應執行保養但尚未產生排程，請至「排程管理」Tab 產生排程。'

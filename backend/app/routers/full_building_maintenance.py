@@ -74,35 +74,48 @@ STATUS_LABELS = {
 }
 
 # ── 頻率分類 mapping ─────────────────────────────────────────────────────────
-_FREQ_KEYWORDS: dict[str, set[str]] = {
-    "monthly":   {"月", "每月", "月維護", "Monthly", "monthly"},
-    "quarterly": {"季", "每季", "季維護", "Quarterly", "quarterly"},
-    "yearly":    {"年", "每年", "年維護", "Annual", "annual", "Yearly", "yearly"},
-}
+# 分類原則（2026-08-03 業主決議）：
+#   monthly   = 明確的「月」頻率
+#   yearly    = 明確的「年」頻率
+#   quarterly = 收容區 —— 除月／年以外的所有頻率（季、雙月、半年、未知值、空值）
+# 採 catch-all 寫法，未來 Ragic 若新增頻率值不會從三個統計 TAB 中整個消失。
+_FREQ_MONTHLY_KEYWORDS: set[str] = {"月", "每月", "月維護", "Monthly", "monthly"}
+_FREQ_YEARLY_KEYWORDS:  set[str] = {"年", "每年", "年維護", "Annual", "annual", "Yearly", "yearly"}
+
+
+def _classify_frequency(frequency: str) -> str:
+    """
+    將 Ragic 頻率字串分類為 monthly / quarterly / yearly。
+    月 → monthly；年 → yearly；其餘（季、雙月、半年、未知值、空值）→ quarterly。
+    """
+    freq = (frequency or "").strip()
+    if freq in _FREQ_MONTHLY_KEYWORDS:
+        return "monthly"
+    if freq in _FREQ_YEARLY_KEYWORDS:
+        return "yearly"
+    return "quarterly"
+
 
 def _freq_match(frequency: str, frequency_type: Optional[str]) -> bool:
     """回傳 True 表示該 item 的頻率符合篩選條件（None = 不篩選）"""
     if not frequency_type:
         return True
-    keywords = _FREQ_KEYWORDS.get(frequency_type, set())
-    return (frequency or "").strip() in keywords
+    return _classify_frequency(frequency) == frequency_type
 
 
 def _infer_freq_type_from_exec_months(exec_months: list) -> Optional[str]:
     """
     當 frequency 欄位為空時，依 exec_months 數量推算頻率類型。
-    全棟例行維護資料的 frequency 欄位常為空，exec_months_json 是準確的。
-
-    推算規則：
-      10-12 個月 → monthly（月維護）
-      3-5  個月 → quarterly（季維護）
-      1-2  個月 → yearly（年維護）
-      6-9  個月 → None（半年/其他，不歸類）
+    推算規則與 _classify_frequency 的分類原則對齊：
+      >= 10 個月 → monthly  （等同每月）
+      == 1  個月 → yearly   （等同每年）
+      2-9   個月 → quarterly（雙月／季／半年等，一律歸收容區）
+      0     個月 → None     （無任何資訊，由呼叫端決定）
     """
     n = len(exec_months)
-    if n >= 10:       return "monthly"
-    if 3 <= n <= 5:   return "quarterly"
-    if 1 <= n <= 2:   return "yearly"
+    if n >= 10: return "monthly"
+    if n == 1:  return "yearly"
+    if n >= 2:  return "quarterly"
     return None
 
 
@@ -113,17 +126,15 @@ def _freq_match_with_fallback(
 ) -> bool:
     """
     同 _freq_match，但當 frequency 欄位為空時改用 exec_months 推算頻率類型。
-    確保 exec_months 有數據的項目也能正確篩選。
+    frequency 與 exec_months 皆空時歸入 quarterly 收容區，確保不會漏算。
     """
     if not frequency_type:
         return True
-    # 優先用 frequency 欄位
     freq = (frequency or "").strip()
     if freq:
-        keywords = _FREQ_KEYWORDS.get(frequency_type, set())
-        return freq in keywords
-    # frequency 為空 → 從 exec_months 推算
-    inferred = _infer_freq_type_from_exec_months(exec_months)
+        return _classify_frequency(freq) == frequency_type
+    # frequency 為空 → 從 exec_months 數量推算；仍推不出來就歸收容區
+    inferred = _infer_freq_type_from_exec_months(exec_months) or "quarterly"
     return inferred == frequency_type
 
 

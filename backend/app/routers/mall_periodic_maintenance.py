@@ -39,6 +39,7 @@ from app.schemas.periodic_maintenance import (
 from app.schemas.mall_periodic_maintenance import (
     MallPMScheduleOut, MallPMScheduleKPI, MallPMScheduleGenerateResult,
     MallPMScheduleUpdate, MallPMScheduleMatrixCell, MallPMScheduleMatrixRow,
+    MallPMScheduleMatrixEntry,
     MallPMScheduleAnnualMatrix,
 )
 from app.services.mall_periodic_maintenance_sync import (
@@ -55,32 +56,48 @@ from app.core.config import settings
 router = APIRouter(dependencies=[Depends(get_current_user)])
 
 # ── 頻率分類 mapping ─────────────────────────────────────────────────────────
-_FREQ_KEYWORDS: dict[str, set[str]] = {
-    "monthly":   {"月", "每月", "月維護", "Monthly", "monthly"},
-    "quarterly": {"季", "每季", "季維護", "Quarterly", "quarterly"},
-    "yearly":    {"年", "每年", "年維護", "Annual", "annual", "Yearly", "yearly"},
-}
+# 分類原則（2026-08-03 業主決議）：
+#   monthly   = 明確的「月」頻率
+#   yearly    = 明確的「年」頻率
+#   quarterly = 收容區 —— 除月／年以外的所有頻率（季、雙月、半年、未知值、空值）
+# 採 catch-all 寫法，未來 Ragic 若新增頻率值不會從三個統計 TAB 中整個消失。
+_FREQ_MONTHLY_KEYWORDS: set[str] = {"月", "每月", "月維護", "Monthly", "monthly"}
+_FREQ_YEARLY_KEYWORDS:  set[str] = {"年", "每年", "年維護", "Annual", "annual", "Yearly", "yearly"}
+
+
+def _classify_frequency(frequency: str) -> str:
+    """
+    將 Ragic 頻率字串分類為 monthly / quarterly / yearly。
+    月 → monthly；年 → yearly；其餘（季、雙月、半年、未知值、空值）→ quarterly。
+    """
+    freq = (frequency or "").strip()
+    if freq in _FREQ_MONTHLY_KEYWORDS:
+        return "monthly"
+    if freq in _FREQ_YEARLY_KEYWORDS:
+        return "yearly"
+    return "quarterly"
+
 
 def _freq_match(frequency: str, frequency_type: Optional[str]) -> bool:
     """回傳 True 表示該 item 的頻率符合篩選條件（None = 不篩選）"""
     if not frequency_type:
         return True
-    keywords = _FREQ_KEYWORDS.get(frequency_type, set())
-    return (frequency or "").strip() in keywords
+    return _classify_frequency(frequency) == frequency_type
 
 
 def _infer_freq_type_from_exec_months(exec_months: list) -> Optional[str]:
     """
-    當 frequency 欄位為空時，依 exec_months 數量推算頻率類型（規格書規定的 fallback）。
-    10-12 個月 → monthly
-    3-5  個月 → quarterly
-    1-2  個月 → yearly
-    其餘      → None（無法推算）
+    當 frequency 欄位為空時，依 exec_months 數量推算頻率類型。
+    推算規則與 _classify_frequency 的分類原則對齊：
+      >= 10 個月 → monthly  （等同每月）
+      == 1  個月 → yearly   （等同每年）
+      2-9   個月 → quarterly（雙月／季／半年等，一律歸收容區）
+      0     個月 → None     （無任何資訊，由呼叫端決定）
     """
     n = len(exec_months)
-    if n >= 10:     return "monthly"
-    if 3 <= n <= 5: return "quarterly"
-    if 1 <= n <= 2: return "yearly"
+    if n >= 10: return "monthly"
+    if n == 1:  return "yearly"
+    if n >= 2:  return "quarterly"
     return None
 
 
@@ -91,16 +108,15 @@ def _freq_match_with_fallback(
 ) -> bool:
     """
     同 _freq_match，但當 frequency 欄位為空時改用 exec_months 推算頻率類型。
-    確保 exec_months 有數據的項目也能正確篩選到對應統計 TAB。
+    frequency 與 exec_months 皆空時歸入 quarterly 收容區，確保不會漏算。
     """
     if not frequency_type:
         return True
     freq = (frequency or "").strip()
     if freq:
-        keywords = _FREQ_KEYWORDS.get(frequency_type, set())
-        return freq in keywords
-    # frequency 為空 → 從 exec_months 數量推算
-    inferred = _infer_freq_type_from_exec_months(exec_months)
+        return _classify_frequency(freq) == frequency_type
+    # frequency 為空 → 從 exec_months 數量推算；仍推不出來就歸收容區
+    inferred = _infer_freq_type_from_exec_months(exec_months) or "quarterly"
     return inferred == frequency_type
 
 
@@ -1986,26 +2002,66 @@ def get_mall_annual_matrix(
     db:       Session = Depends(get_db),
 ):
     """
-    2026-07-23 修正（見對話紀錄／docs/CHANGELOG.md）：
+    2026-07-23 修正：
       舊版用 `_mall_get_latest_batch_items()` 抓「全站目前最新一批」當成貫穿全年
       12 欄的主檔項目清單，其餘月份沒有真實 `mall_pm_schedule` 記錄時，改用頻率
       公式＋該筆項目自己的 `scheduled_date` 猜一個狀態。這造成兩個問題：
-        1. 「最新批次」每次 Ragic 同步進新一批就會整批換掉，年度計劃表的列（項目
-           清單）本身就不穩定——同一份資料庫在不同時間點呼叫，看到的項目數與內容
-           會完全不同（例如 08 月批次同步進來後，項目清單瞬間從 07 月的 8 筆換成
-           08 月的 9 筆）。
+        1. 「最新批次」每次 Ragic 同步進新一批就會整批換掉，年度計劃表的列本身
+           就不穩定。
         2. 公式猜測對月頻率項目每個月都判斷「應排」，缺真實資料的月份會顯示同一
            天期（MM/01）重複貼滿多個欄位，跟真實狀態無關。
-      改為：逐月呼叫 `_mall_get_batch_items_for_month()`，只用「那個月自己的批次」
-      決定該月欄位的真實項目與狀態。不同月份的批次項目彼此沒有穩定的跨月識別方式
-      （用名稱/類別比對有錯配風險，已在 `generate_mall_schedule()` 說明中排除），
-      因此改為「每月批次各自成一列」：同一個任務若在多個月份都有批次，會分成多筆
-      獨立的列，每列只有自己所屬月份那一欄有真實資料，其餘 11 欄一律顯示「非本月」
-      （—），不再用公式猜測其他月份的狀態。
+      改為逐月呼叫 `_mall_get_batch_items_for_month()`，只用「那個月自己的批次」
+      決定該月欄位的真實項目與狀態。
+
+    2026-08-03 修正（本次）：
+      v1.80.72 為了避免跨月錯配，採「每月批次各自成一列」——同一個保養項目在 N 個
+      月份有批次就變成 N 筆獨立的列，每列只有自己那一欄有資料、其餘 11 欄顯示
+      「非本月」。實測 2026 年商場資料共 63 列、卻只有 16 個實際保養項目，整張表
+      完全無法橫向閱讀（而橫向閱讀正是年度計劃表存在的目的）。且飯店週期保養／
+      全棟例行維護兩個模組本來就是「一個項目一列、12 欄各自查」，只有商場不一致。
+
+      改為以 `task_name`（正規化後）為鍵跨月合併成一列。合併鍵刻意不含 category
+      與 frequency：實測商場資料這兩個欄位跨月會變（「門扇→巡檢保養」在 4-6 月是
+      「其它／月」、7 月變「空調／半年」、8 月變「整體／月」），一旦納入合併鍵，
+      同一個項目反而會被拆成三列；`location` 商場模組 63 列全為空字串，納入無意義。
+
+      同一個月有多筆同名項目時（實測 2026/07「1F~3F空調→保養」有 07/22、07/23、
+      07/24 三筆），該格顯示彙總狀態＋筆數徽章，每一筆的原始資料完整保留在
+      `cell.entries` 供明細 Drawer 逐筆列出，不丟棄任何資料。
+
+      列首的「類別」「頻率」顯示最近月份的值；跨月出現過的所有值放在
+      `category_variants` / `frequency_variants`，供前端提示資料不一致，避免把
+      Ragic 上的分類錯誤靜默隱藏。
+
+      已知副作用（2026-08-03 使用者確認接受）：Ragic 上把保養項目改名會讓該項目
+      裂成兩列；真的有兩筆不同的同名項目會被併成一列。
     """
-    rows: list[MallPMScheduleMatrixRow] = []
-    completed_cnt = 0
     today = date.today()
+
+    # ── 彙總狀態的嚴重度排序（皆未完成時取最嚴重者代表該格）────────────────────
+    _SEVERITY = {
+        "overdue":      0,
+        "scheduled":    1,
+        "no_data":      2,
+        "unscheduled":  3,
+        "no_frequency": 4,
+        "non_month":    5,
+    }
+
+    def _aggregate_status(statuses: list) -> str:
+        """全部完成 → completed；部分完成／有進行中 → in_progress；皆未完成 → 最嚴重者。"""
+        if all(st == "completed" for st in statuses):
+            return "completed"
+        if any(st in ("completed", "in_progress") for st in statuses):
+            return "in_progress"
+        return min(statuses, key=lambda st: _SEVERITY.get(st, 99))
+
+    def _norm(name: str) -> str:
+        """合併鍵正規化：去頭尾空白並壓縮中間連續空白，避免純空白差異造成裂列。"""
+        return " ".join((name or "").split())
+
+    # ── 第一階段：逐月算出每一筆 item 自己的格子資料（判斷邏輯與 v1.80.72 相同）──
+    groups = {}   # key -> {"order": (月,序), "months": {月: [entry,...]}, "seen": [(月, item),...]}
 
     for m in range(1, 13):
         month_items = _mall_get_batch_items_for_month(db, year, m)
@@ -2024,24 +2080,19 @@ def get_mall_annual_matrix(
             freq = (item.frequency or "").strip()
 
             if existing:
-                status = _mall_calc_schedule_status(existing)
-                if status == "completed":
-                    completed_cnt += 1
-                home_cell = MallPMScheduleMatrixCell(
-                    month          = m,
-                    status         = status,
-                    schedule_id    = existing.id,
-                    scheduled_date = existing.scheduled_date or None,
-                )
+                cell_status     = _mall_calc_schedule_status(existing)
+                schedule_id     = existing.id
+                cell_sched_date = existing.scheduled_date or None
             elif not freq:
-                home_cell = MallPMScheduleMatrixCell(month=m, status="no_frequency", schedule_id=None)
+                cell_status     = "no_frequency"
+                schedule_id     = None
+                cell_sched_date = None
             else:
                 # 尚未產生 mall_pm_schedule 記錄：直接依「該月自己批次」的 item 欄位
-                # 判斷真實狀態，不再套用頻率公式或跨月猜測的 scheduled_date。
+                # 判斷真實狀態，不套用頻率公式或跨月猜測的 scheduled_date。
                 cell_status = "no_data"
                 if item.is_completed or (item.start_time and item.end_time):
                     cell_status = "completed"
-                    completed_cnt += 1
                 elif item.start_time:
                     cell_status = "in_progress"
                 elif item.scheduled_date:
@@ -2055,42 +2106,88 @@ def get_mall_annual_matrix(
                 if year > today.year or (year == today.year and m > today.month):
                     cell_status = "non_month"
 
-                home_cell = MallPMScheduleMatrixCell(
-                    month=m, status=cell_status, schedule_id=None,
-                    scheduled_date=item.scheduled_date or None,
-                )
+                schedule_id     = None
+                cell_sched_date = item.scheduled_date or None
 
-            cells = [
-                MallPMScheduleMatrixCell(month=mm, status="non_month", schedule_id=None)
-                for mm in range(1, 13)
-            ]
-            cells[m - 1] = home_cell
+            entry = MallPMScheduleMatrixEntry(
+                item_ragic_id  = item.ragic_id,
+                status         = cell_status,
+                schedule_id    = schedule_id,
+                scheduled_date = cell_sched_date,
+                category       = item.category or "",
+                frequency      = item.frequency or "",
+            )
 
-            rows.append(MallPMScheduleMatrixRow(
-                item_ragic_id = item.ragic_id,
-                category      = item.category,
-                task_name     = item.task_name,
-                location      = item.location,
-                frequency     = item.frequency or "",
-                cells         = cells,
+            grp = groups.setdefault(_norm(item.task_name), {
+                "order":  (m, item.seq_no or 0),
+                "months": {},
+                "seen":   [],
+            })
+            grp["months"].setdefault(m, []).append(entry)
+            grp["seen"].append((m, item))
+
+    # ── 第二階段：每個 task_name 合併成一列 ──────────────────────────────────
+    rows: list[MallPMScheduleMatrixRow] = []
+    completed_records = 0
+    total_records     = 0
+
+    for _key, grp in sorted(groups.items(), key=lambda kv: kv[1]["order"]):
+        # 顯示用欄位取「最近月份」那一筆（seen 依月份遞增 append，最後一筆即最近）
+        _latest_month, latest_item = grp["seen"][-1]
+
+        cells: list[MallPMScheduleMatrixCell] = []
+        for m in range(1, 13):
+            entries = grp["months"].get(m)
+            if not entries:
+                cells.append(MallPMScheduleMatrixCell(
+                    month=m, status="non_month", schedule_id=None, count=0, entries=[],
+                ))
+                continue
+
+            total_records     += len(entries)
+            completed_records += sum(1 for e in entries if e.status == "completed")
+
+            first = entries[0]
+            cells.append(MallPMScheduleMatrixCell(
+                month          = m,
+                status         = _aggregate_status([e.status for e in entries]),
+                # 單筆時沿用原本行為，讓既有的點格開明細 / 編輯排程路徑不受影響
+                schedule_id    = first.schedule_id    if len(entries) == 1 else None,
+                scheduled_date = first.scheduled_date if len(entries) == 1 else None,
+                count          = len(entries),
+                entries        = entries,
             ))
 
-    total_cells = sum(
-        1 for row in rows
-        for c in row.cells
-        if c.status not in ("non_month", "no_frequency")
-    )
+        cat_variants = list(dict.fromkeys(
+            (it.category or "").strip() for _m, it in grp["seen"] if (it.category or "").strip()
+        ))
+        freq_variants = list(dict.fromkeys(
+            (it.frequency or "").strip() for _m, it in grp["seen"] if (it.frequency or "").strip()
+        ))
+
+        rows.append(MallPMScheduleMatrixRow(
+            item_ragic_id      = latest_item.ragic_id,
+            category           = latest_item.category or "",
+            task_name          = latest_item.task_name or "",
+            location           = latest_item.location or "",
+            frequency          = latest_item.frequency or "",
+            cells              = cells,
+            category_variants  = cat_variants,
+            frequency_variants = freq_variants,
+            month_count        = len(grp["months"]),
+        ))
 
     return MallPMScheduleAnnualMatrix(
         year    = year,
         rows    = rows,
         summary = {
-            "total_items":     len(rows),
-            "total_cells":     total_cells,
-            "completed_count": completed_cnt,
+            "total_items":     len(rows),          # 合併後的保養項目數
+            "total_records":   total_records,      # 合併前的批次記錄總數（資料守恆檢查用）
+            "total_cells":     sum(1 for r in rows for c in r.cells if c.count > 0),
+            "completed_count": completed_records,
             "completion_rate": (
-                round(completed_cnt / total_cells * 100, 1)
-                if total_cells > 0 else 0.0
+                round(completed_records / total_records * 100, 1)
+                if total_records > 0 else 0.0
             ),
         },
     )

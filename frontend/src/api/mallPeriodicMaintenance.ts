@@ -241,11 +241,22 @@ export interface MallPMScheduleListResponse {
   items:              MallPMScheduleItem[]
 }
 
+export interface MallPMScheduleMatrixEntry {
+  item_ragic_id:  string
+  status:         string
+  schedule_id:    number | null
+  scheduled_date: string | null
+  category:       string
+  frequency:      string
+}
+
 export interface MallPMScheduleMatrixCell {
   month:          number
   status:         string
   schedule_id:    number | null
   scheduled_date: string | null
+  count:          number
+  entries:        MallPMScheduleMatrixEntry[]
 }
 
 export interface MallPMScheduleMatrixRow {
@@ -255,6 +266,9 @@ export interface MallPMScheduleMatrixRow {
   location:      string
   frequency:     string
   cells:         MallPMScheduleMatrixCell[]
+  category_variants:  string[]
+  frequency_variants: string[]
+  month_count:        number
 }
 
 export interface MallPMScheduleAnnualMatrix {
@@ -262,6 +276,7 @@ export interface MallPMScheduleAnnualMatrix {
   rows:    MallPMScheduleMatrixRow[]
   summary: {
     total_items:     number
+    total_records:   number
     total_cells:     number
     completed_count: number
     completion_rate: number

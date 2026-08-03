@@ -75,11 +75,28 @@ class MallPMScheduleUpdate(BaseModel):
 
 # ── 年度計劃矩陣 ──────────────────────────────────────────────────────────────
 
+class MallPMScheduleMatrixEntry(BaseModel):
+    """
+    2026-08-03 新增：同一保養項目在同一個月可能有多筆批次記錄
+    （實測 2026/07「1F~3F空調→保養」有 07/22、07/23、07/24 三筆），
+    合併成一格後每一筆的原始資料保留在這裡，供明細 Drawer 逐筆列出。
+    """
+    item_ragic_id:  str
+    status:         str
+    schedule_id:    Optional[int] = None
+    scheduled_date: Optional[str] = None
+    category:       str = ""
+    frequency:      str = ""
+
+
 class MallPMScheduleMatrixCell(BaseModel):
     month:          int
     status:         str    # 'completed'|'overdue'|'in_progress'|'scheduled'|'unscheduled'|'non_month'|'no_data'|'no_frequency'
     schedule_id:    Optional[int] = None
     scheduled_date: Optional[str] = None   # e.g. "05/15"，有排定日期才填
+    # ── 2026-08-03 新增（同月多筆彙總）────────────────────────────────────────
+    count:          int = 0                # 該月實際筆數；0 = 非本月／無資料
+    entries:        List[MallPMScheduleMatrixEntry] = []   # count > 1 時供 Drawer 使用
 
 
 class MallPMScheduleMatrixRow(BaseModel):
@@ -89,6 +106,13 @@ class MallPMScheduleMatrixRow(BaseModel):
     location:       str
     frequency:      str
     cells:          List[MallPMScheduleMatrixCell]   # 12 個月（index 0 = 1月）
+    # ── 2026-08-03 新增（跨月合併後的資料一致性提示）──────────────────────────
+    # 同一 task_name 跨月的類別／頻率若不一致（實測「門扇→巡檢保養」有
+    # 其它／空調／整體 三種類別），列首顯示最近月份的值，並把所有出現過的值
+    # 放在這裡供前端 Tooltip 提示，避免 Ragic 上的分類錯誤被靜默隱藏。
+    category_variants:  List[str] = []
+    frequency_variants: List[str] = []
+    month_count:        int = 0    # 此列合併自幾個月份的批次
 
 
 class MallPMScheduleAnnualMatrix(BaseModel):
