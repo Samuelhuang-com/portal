@@ -169,6 +169,13 @@ import ContractCalendarPage    from '@/pages/Contract/CalendarView'
 import ContractComparePage     from '@/pages/Contract/CompareContracts'
 import VendorsPage             from '@/pages/Contract/Vendors'
 import SettingsPage            from '@/pages/Contract/Settings'
+// ── 營運分析（OPERA，2026-08-04 新增）────────────────────────────────────────
+import OperaDashboardPage      from '@/pages/Opera/Dashboard'
+import OperaRevenuePage        from '@/pages/Opera/Revenue'
+import OperaGuestPage          from '@/pages/Opera/Guest'
+import OperaImportPage         from '@/pages/Opera/Import'
+import OperaBatchesPage        from '@/pages/Opera/Batches'
+import OperaSettingsPage       from '@/pages/Opera/Settings'
 
 // ── 首頁重定向（讀取 menu-config 設定，fallback 到第一個有權限的 menu 項目）──────
 export const HOME_PAGE_STORAGE_KEY = 'portal_home_page_route'
@@ -625,6 +632,40 @@ export default function AppRouter() {
           <Route path="list" element={<MemoListPage />} />
           <Route path="new"  element={<MemoNewPage />} />
           <Route path=":id"  element={<MemoDetailPage />} />
+        </Route>
+
+        {/* ── 營運分析（OPERA，資料來源為人工上傳的 OPERA TXT）────────────── */}
+        <Route path="opera">
+          <Route path="dashboard" element={
+            <PermissionGuard permissionKey="opera_view">
+              <OperaDashboardPage />
+            </PermissionGuard>
+          } />
+          <Route path="revenue" element={
+            <PermissionGuard permissionKey="opera_revenue_view">
+              <OperaRevenuePage />
+            </PermissionGuard>
+          } />
+          <Route path="guest" element={
+            <PermissionGuard permissionKey="opera_guest_view">
+              <OperaGuestPage />
+            </PermissionGuard>
+          } />
+          <Route path="import" element={
+            <PermissionGuard permissionKey="opera_import">
+              <OperaImportPage />
+            </PermissionGuard>
+          } />
+          <Route path="batches" element={
+            <PermissionGuard permissionKey="opera_view">
+              <OperaBatchesPage />
+            </PermissionGuard>
+          } />
+          <Route path="settings" element={
+            <PermissionGuard permissionKey="opera_admin">
+              <OperaSettingsPage />
+            </PermissionGuard>
+          } />
         </Route>
 
         {/* ── 系統設定（僅限 system_admin + 各頁細粒度 permission）────────── */}

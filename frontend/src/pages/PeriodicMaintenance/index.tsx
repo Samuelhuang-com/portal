@@ -390,15 +390,15 @@ const MATRIX_METRICS: {
   isText?: boolean
   tooltip?: string
 }[] = [
-  { key: 'prev_carry_over',         label: '截至上月底累計未結案數',
-    tooltip: '前期結轉未完成數：截至上月底，所有尚未結案的週期保養項目累計總數（含更早期遞延未完成項目）。' },
-  { key: 'prev_resolved_in_period', label: '其中本月已結案數',
-    tooltip: '本月已結案數：上列「截至上月底累計未結案數」中，在本月內完成並結案的項目數。\n完成率（累計項目完成率）＝ 已結案數 ÷ 累計未結案數 × 100%。' },
+  { key: 'prev_carry_over',         label: '截至上期底累計未結案數',
+    tooltip: '前期結轉未完成數：截至上一期別結束時，所有尚未結案的週期保養項目累計總數（含更早期遞延未完成項目）。\n本表各欄為月份，故此處「上期」即該欄的前一個月。' },
+  { key: 'prev_resolved_in_period', label: '其中本期已結案數',
+    tooltip: '本期已結案數：上列「截至上期底累計未結案數」中，於該欄位所屬期間內完成並結案的項目數。\n完成率（累計項目完成率）＝ 已結案數 ÷ 累計未結案數 × 100%。' },
   { key: 'carry_over_rate',         label: '累計項目完成率', isRate: true },
   { key: '_sep1',                   label: '' },
-  { key: 'period_total',            label: '本月週期保養項目數' },
-  { key: 'period_completed',        label: '本月週期保養完成數' },
-  { key: 'period_rate',             label: '本月週期保養完成率', isRate: true },
+  { key: 'period_total',            label: '本期週期保養項目數' },
+  { key: 'period_completed',        label: '本期週期保養完成數' },
+  { key: 'period_rate',             label: '本期週期保養完成率', isRate: true },
   { key: '_sep2',                   label: '' },
   { key: 'incomplete_notes',        label: '未完成事項說明（原因/待協助事項）', isText: true },
 ]
@@ -2626,8 +2626,8 @@ export default function PeriodicMaintenancePage() {
 
 // ── 矩陣格明細 Modal 元件 ──────────────────────────────────────────────────────
 const METRIC_LABELS: Record<string, string> = {
-  prev_carry_over:   '截至上月底累計未結案數',
-  prev_resolved:     '其中本月已結案數',
+  prev_carry_over:   '截至上期底累計未結案數',
+  prev_resolved:     '其中本期已結案數',
   period_total:      '本期應完成總數',
   period_completed:  '本期已完成',
 }

@@ -380,6 +380,24 @@ export const menuItems: MenuItem[] = [
     icon: <ReadOutlined />,
     label: NAV_GROUP.wiki,
   },
+  // ── 營運分析（OPERA）─────────────────────────────────────────────────────
+  // 2026-08-04 新增。Portal 首個「檔案上傳型」資料模組（人工上傳 OPERA TXT），
+  // 不走 Ragic 同步，故不需登錄 sync_tool.py MODULES 與 RagicConnections.tsx。
+  // 位置：業主指定放在側邊欄最下方、系統設定之前。
+  {
+    key: 'opera',
+    icon: <FundOutlined />,
+    label: NAV_GROUP.opera,
+    permissionKey: 'opera_view',
+    children: [
+      { key: '/opera/dashboard', icon: <DashboardOutlined />, label: NAV_PAGE.operaDashboard, permissionKey: 'opera_view'         },
+      { key: '/opera/revenue',   icon: <BarChartOutlined />,  label: NAV_PAGE.operaRevenue,   permissionKey: 'opera_revenue_view' },
+      { key: '/opera/guest',     icon: <TeamOutlined />,      label: NAV_PAGE.operaGuest,     permissionKey: 'opera_guest_view'   },
+      { key: '/opera/import',    icon: <UploadOutlined />,    label: NAV_PAGE.operaImport,    permissionKey: 'opera_import'       },
+      { key: '/opera/batches',   icon: <DatabaseOutlined />,  label: NAV_PAGE.operaBatches,   permissionKey: 'opera_view'         },
+      { key: '/opera/settings',  icon: <SettingOutlined />,   label: NAV_PAGE.operaSettings,  permissionKey: 'opera_admin'        },
+    ],
+  },
   {
     key: 'settings',
     icon: <SettingOutlined />,

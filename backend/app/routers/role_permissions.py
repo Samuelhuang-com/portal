@@ -112,6 +112,15 @@ PERMISSION_DEFINITIONS = [
     # 開發期間預設不分配給任何角色（需手動在「角色管理→權限設定」中開放）
     # 注意：擁有 dazhi_repair_view 或 luqun_repair_view 的角色也可查詢對應地點
     {"key": "ai_workorder_view", "label": "AI 工單查詢助理", "group": "AI 功能"},
+    # ── 營運分析（OPERA，2026-08-04 新增）──────────────────────────────────────
+    # Portal 首個「檔案上傳型」資料模組：資料來自人工上傳的 OPERA TXT，非 Ragic 同步。
+    # ⚠️ 下列 label 必須與 frontend/src/constants/navLabels.ts 的 NAV_PAGE 完全一致，
+    #    否則管理員在「權限設定」看到的名稱會與側邊欄不同（CLAUDE.md label 一致性規則）。
+    {"key": "opera_view",         "label": "★ 營運分析 Dashboard", "group": "營運分析"},
+    {"key": "opera_revenue_view", "label": "營收分析",             "group": "營運分析"},
+    {"key": "opera_guest_view",   "label": "住客與通路分析",       "group": "營運分析"},
+    {"key": "opera_import",       "label": "資料匯入",             "group": "營運分析"},
+    {"key": "opera_admin",        "label": "分析門檻設定",         "group": "營運分析"},
 ]
 
 

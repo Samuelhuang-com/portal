@@ -88,6 +88,7 @@ export const NAV_GROUP = {
   nichiyoPurchaseReport:  '日曜請購月報表',    // ← 日曜核准請購單月報表
   nichiyoClaimReport:     '日曜請款月報表',    // ← 日曜核准請款單月報表
   cyclePurchase:          '週採',              // ← 新增：週期採購管理（2026-07-10，獨立資料庫 cycle-purchase.db）
+  opera:                  '營運分析',          // ← 新增：OPERA 營運分析（2026-08-04，檔案上傳型模組，非 Ragic 同步）
 } as const
 
 // ── 二級選單（頁面） ──────────────────────────────────────────────────────────
@@ -260,4 +261,13 @@ export const NAV_PAGE = {
   cyclePurchaseReceivingReport: '進貨數量報表',        // ← route /cycle-purchase/receiving-report
   cyclePurchasePayments:        '請款單',              // ← route /cycle-purchase/payments
   cyclePurchaseAuditLog:        '異常稽核紀錄',        // ← route /cycle-purchase/audit-log
+
+  // OPERA 營運分析（2026-08-04 新增；資料來源為人工上傳的 OPERA TXT，非 Ragic 同步）
+  // ⚠️ 以下 label 必須與 role_permissions.py 的 PERMISSION_DEFINITIONS 完全一致
+  operaDashboard:  '★ 營運分析 Dashboard',  // ← route /opera/dashboard
+  operaRevenue:    '營收分析',              // ← route /opera/revenue
+  operaGuest:      '住客與通路分析',        // ← route /opera/guest
+  operaImport:     '資料匯入',              // ← route /opera/import
+  operaBatches:    '匯入紀錄',              // ← route /opera/batches（共用 opera_view 權限）
+  operaSettings:   '分析門檻設定',          // ← route /opera/settings
 } as const

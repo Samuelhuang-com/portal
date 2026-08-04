@@ -114,6 +114,9 @@ from app.routers import (
     contract,
     reference_data,
     tutorial_videos,
+    opera_import,
+    opera_revenue,
+    opera_guest,
     cycle_purchase_masters,
     cycle_purchase_items,
     cycle_purchase_cycles,
@@ -1450,6 +1453,12 @@ async def lifespan(app: FastAPI):
     import app.models.hotel_routine_pm_schedule  # noqa: F401  飯店例行維護排程
     import app.models.tutorial_video_module    # noqa: F401  影音教學模組主檔（本地模組，不對接 Ragic）
     import app.models.tutorial_video           # noqa: F401  影音教學單集（本地模組，不對接 Ragic）
+    # OPERA 營運分析（2026-08-04）：資料來自人工上傳的 OPERA TXT，非 Ragic 同步，
+    # 因此不需登錄 sync_tool.py 的 MODULES／_ensure_db_schema()。
+    # 索引另由專案根目錄的 add_opera_tables.sql 建立（create_all 不會產生複合索引）。
+    import app.models.opera_import             # noqa: F401  匯入批次與錯誤紀錄
+    import app.models.opera_departure          # noqa: F401  Departure 原始層 + 住宿事實表
+    import app.models.opera_revenue            # noqa: F401  History/Forecast 原始層 + 每日營收 + 門檻設定
 
     # B4F 扁平化遷移：刪除舊 batch 表 + 檢查 item 表欄位（必須在 create_all 之前）
     _run_startup_migration("_migrate_b4f_flatten", _migrate_b4f_flatten)
@@ -2497,6 +2506,23 @@ app.include_router(
     cycle_purchase_audit.router,
     prefix=f"{API_PREFIX}/cycle-purchase",
     tags=["週期採購"],
+)
+
+# ── 營運分析（OPERA）：檔案上傳型模組，資料來自人工上傳的 OPERA TXT ──────────
+app.include_router(
+    opera_import.router,
+    prefix=f"{API_PREFIX}/opera/import",
+    tags=["營運分析"],
+)
+app.include_router(
+    opera_revenue.router,
+    prefix=f"{API_PREFIX}/opera/revenue",
+    tags=["營運分析"],
+)
+app.include_router(
+    opera_guest.router,
+    prefix=f"{API_PREFIX}/opera/guest",
+    tags=["營運分析"],
 )
 
 # ── AI 工單查詢助理（AI_ENABLED=true 才掛載，正式環境可保持 false）────────────
