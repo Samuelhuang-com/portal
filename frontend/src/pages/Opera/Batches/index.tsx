@@ -1,8 +1,13 @@
 /**
- * 匯入紀錄（/opera/batches）
+ * 匯入紀錄
  * 規格書：docs/SPEC_opera_analytics.md §11.7
  *
  * 點擊列開啟 Drawer，顯示 footer 對帳明細與錯誤清單。
+ *
+ * ⚠️ 2026-08-04：本元件已改為嵌在「資料匯入」頁（/opera/import）的「匯入紀錄」TAB 內，
+ *    不再是獨立頁面。`/opera/batches` 路由仍保留（CLAUDE.md §5 禁止移除既有路由），
+ *    但改為導向 `/opera/import?tab=batches`。
+ *    `embedded` 為 true 時不畫外層 padding 與標題，交由承載頁負責。
  */
 import React, { useCallback, useEffect, useState } from 'react'
 import {
@@ -20,7 +25,12 @@ import {
 
 const { Title, Text } = Typography
 
-const OperaBatchesPage: React.FC = () => {
+interface Props {
+  /** true = 嵌在其他頁面的 TAB 內，不畫外層 padding 與標題 */
+  embedded?: boolean
+}
+
+const OperaBatchesPage: React.FC<Props> = ({ embedded = false }) => {
   const [loading, setLoading] = useState(false)
   const [items, setItems] = useState<ImportBatch[]>([])
   const [total, setTotal] = useState(0)
@@ -120,8 +130,8 @@ const OperaBatchesPage: React.FC = () => {
   const qualityChecks = detail?.reconcile?.quality_checks || []
 
   return (
-    <div style={{ padding: 24 }}>
-      <Title level={4} style={{ color: BRAND }}>匯入紀錄</Title>
+    <div style={{ padding: embedded ? 0 : 24 }}>
+      {!embedded && <Title level={4} style={{ color: BRAND }}>匯入紀錄</Title>}
 
       <Card size="small">
         <Space wrap style={{ marginBottom: 12 }}>

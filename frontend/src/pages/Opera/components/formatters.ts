@@ -44,7 +44,10 @@ export function fmtPct(value: number | null | undefined, digits = 1): string {
 export function fmtPpt(value: number | null | undefined, digits = 1): string {
   if (value === null || value === undefined || Number.isNaN(value)) return EMPTY
   const v = value * 100
-  return `${v >= 0 ? '+' : ''}${v.toFixed(digits)} ppt`
+  const shown = v.toFixed(digits)
+  // 避免出現「-0.0 ppt」：四捨五入後等於 0 就不帶正負號，否則看起來像 bug
+  if (Number(shown) === 0) return `${(0).toFixed(digits)} ppt`
+  return `${v > 0 ? '+' : ''}${shown} ppt`
 }
 
 /** YoY：0.083 → "+8.3%"；null → "—"（無比較期資料） */

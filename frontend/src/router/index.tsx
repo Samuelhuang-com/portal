@@ -176,6 +176,21 @@ import OperaGuestPage          from '@/pages/Opera/Guest'
 import OperaImportPage         from '@/pages/Opera/Import'
 import OperaBatchesPage        from '@/pages/Opera/Batches'
 import OperaSettingsPage       from '@/pages/Opera/Settings'
+import OperaManualPage         from '@/pages/Opera/Manual'
+// 房價預測（2026-08-05 新增）
+import OperaLookupPage         from '@/pages/Opera/Lookup'
+import OperaForecastPage       from '@/pages/Opera/Forecast'
+// 註：OperaEventsPage 已併入 Forecast 頁的 TAB，此處不再直接引用
+
+// ── 金旭分析（2026-08-05）：與 /opera/* 完全獨立的第二個檔案上傳型模組 ──────
+import JinxuDashboardPage      from '@/pages/JinXu/Dashboard'
+import JinxuReservationPage    from '@/pages/JinXu/Reservation'
+import JinxuRevenuePage        from '@/pages/JinXu/Revenue'
+import JinxuPaymentPage        from '@/pages/JinXu/Payment'
+import JinxuDepositPage        from '@/pages/JinXu/Deposit'
+import JinxuImportPage         from '@/pages/JinXu/Import'
+import JinxuSettingsPage       from '@/pages/JinXu/Settings'
+import JinxuManualPage         from '@/pages/JinXu/Manual'
 
 // ── 首頁重定向（讀取 menu-config 設定，fallback 到第一個有權限的 menu 項目）──────
 export const HOME_PAGE_STORAGE_KEY = 'portal_home_page_route'
@@ -656,14 +671,85 @@ export default function AppRouter() {
               <OperaImportPage />
             </PermissionGuard>
           } />
-          <Route path="batches" element={
+          {/* 2026-08-04：「匯入紀錄」併入「資料匯入」頁的 TAB。
+              依 CLAUDE.md §5「不可移除現有路由」，此路由保留並導向新位置，
+              舊書籤與外部連結不會壞掉。權限由目標頁的 PermissionGuard 負責。 */}
+          <Route path="batches" element={<Navigate to="/opera/import?tab=batches" replace />} />
+          {/* ── 房價預測（2026-08-05）──────────────────────────────────
+              「歷史同期查詢」共用 opera_view：純唯讀歷史事實，與 Dashboard 同性質。
+              「事件月曆」另開 opera_event_admin：權限清單是管理員唯一看得到自己在
+              授權什麼的地方，掛在「分析門檻設定」底下會授權到名不符實的頁面。 */}
+          <Route path="lookup" element={
             <PermissionGuard permissionKey="opera_view">
-              <OperaBatchesPage />
+              <OperaLookupPage />
             </PermissionGuard>
           } />
+          <Route path="forecast" element={
+            <PermissionGuard permissionKey="opera_forecast_view">
+              <OperaForecastPage />
+            </PermissionGuard>
+          } />
+          {/* 2026-08-05：「事件月曆」併入「房價預測」頁的 TAB。
+              依 CLAUDE.md §5「不可移除現有路由」，此路由保留並導向新位置，
+              舊書籤與外部連結不會壞掉。權限由目標頁的 PermissionGuard 負責，
+              頁內的新增／修改／刪除按鈕另由 opera_event_admin 控管。 */}
+          <Route path="events" element={<Navigate to="/opera/forecast?tab=events" replace />} />
           <Route path="settings" element={
             <PermissionGuard permissionKey="opera_admin">
               <OperaSettingsPage />
+            </PermissionGuard>
+          } />
+          <Route path="manual" element={
+            <PermissionGuard permissionKey="opera_view">
+              <OperaManualPage />
+            </PermissionGuard>
+          } />
+        </Route>
+
+        {/* ── 金旭分析（資料來源為人工上傳的金旭 xlsx）─────────────────────
+            路由前綴 /jinxu/*，與 /opera/* 完全獨立，不共用端點或資料表。
+            「取消與訂價落差分析」為 /jinxu/reservation 頁的 TAB，權限
+            jinxu_cancel_view 在頁面內以 TAB 層級控管，不另立路由。 */}
+        <Route path="jinxu">
+          <Route path="dashboard" element={
+            <PermissionGuard permissionKey="jinxu_view">
+              <JinxuDashboardPage />
+            </PermissionGuard>
+          } />
+          <Route path="reservation" element={
+            <PermissionGuard permissionKey="jinxu_resv_view">
+              <JinxuReservationPage />
+            </PermissionGuard>
+          } />
+          <Route path="revenue" element={
+            <PermissionGuard permissionKey="jinxu_revenue_view">
+              <JinxuRevenuePage />
+            </PermissionGuard>
+          } />
+          <Route path="payment" element={
+            <PermissionGuard permissionKey="jinxu_payment_view">
+              <JinxuPaymentPage />
+            </PermissionGuard>
+          } />
+          <Route path="deposit" element={
+            <PermissionGuard permissionKey="jinxu_deposit_view">
+              <JinxuDepositPage />
+            </PermissionGuard>
+          } />
+          <Route path="import" element={
+            <PermissionGuard permissionKey="jinxu_import">
+              <JinxuImportPage />
+            </PermissionGuard>
+          } />
+          <Route path="settings" element={
+            <PermissionGuard permissionKey="jinxu_admin">
+              <JinxuSettingsPage />
+            </PermissionGuard>
+          } />
+          {/* 使用手冊共用 jinxu_view：純唯讀說明頁，與 Dashboard 同性質 */}
+          <Route path="manual" element={
+            <PermissionGuard permissionKey="jinxu_view">
+              <JinxuManualPage />
             </PermissionGuard>
           } />
         </Route>

@@ -1,0 +1,1252 @@
+# 金旭 PMS 分析模組 開發規格書（Portal 版）
+
+**文件版本**：1.0
+**建立日期**：2026-08-05
+**適用專案**：`C:\OneDrive\_Ragic\portal`
+**參照規格**：`docs/SPEC_opera_analytics.md`（本模組為其姊妹模組，架構同源）
+**目標使用者**：財務長、業主、飯店財務／櫃檯主管、Portal 維護人員
+
+---
+
+## 目錄
+
+| 章節 | 內容 |
+|---|---|
+| [1](#1-模組定位與範圍) | 模組定位與範圍 |
+| [2](#2-與-opera-模組的關係必讀) | **與 OPERA 模組的關係（必讀）** |
+| [3](#3-實測資料剖析結果必讀) | **實測資料剖析結果（必讀）** |
+| [4](#4-系統架構) | 系統架構 |
+| [5](#5-資料庫設計) | 資料庫設計（SQLAlchemy Models） |
+| [6](#6-去重版本與覆蓋規則) | 去重、版本與覆蓋規則 |
+| [7](#7-匯入流程) | 匯入流程 |
+| [8](#8-資料品質檢查) | 資料品質檢查 |
+| [9](#9-分析公式與計算口徑) | 分析公式與計算口徑 |
+| [10](#10-後端-api-規格) | 後端 API 規格 |
+| [11](#11-前端頁面規格) | 前端頁面規格 |
+| [12](#12-模組註冊-checklist必做) | **模組註冊 Checklist（必做）** |
+| [13](#13-個資與資安) | 個資與資安 |
+| [14](#14-索引與效能) | 索引與效能 |
+| [15](#15-開發階段規劃) | 開發階段規劃 |
+| [16](#16-測試與驗收標準) | 測試與驗收標準 |
+| [17](#17-已確認事項與待確認) | **已確認事項與待確認** |
+| [附錄 A](#附錄-afcr02-欄位對照表) | FCR02 欄位對照表 |
+| [附錄 B](#附錄-b科目分類對照表) | 科目分類對照表 |
+| [附錄 C](#附錄-c關鍵設計決策) | 關鍵設計決策 |
+
+---
+
+## 1. 模組定位與範圍
+
+### 1.1 這是 Portal 第二個「非 Ragic 來源」模組
+
+繼 OPERA 之後，金旭是第二個檔案上傳型資料模組。與 OPERA 完全相同的取捨：
+
+- ❌ **不需要**加入 `sync_tool.py` → `MODULES`
+- ❌ **不需要**加入 `settings/RagicConnections.tsx` → `ALL_MODULES`
+- ❌ **不需要** `ragic_id` / `ragic_url` 欄位
+- ✅ **仍需要**加入 `role_permissions.py` → `PERMISSION_DEFINITIONS`
+- ✅ **仍需要**加入 `MainLayout.tsx` 路由 + `permissionKey`
+- ✅ **仍需要**加入 `navLabels.ts` 顯示名稱
+- ✅ **仍需要**遵守 CLAUDE.md §7 明細 Drawer 強制規範（「在 Ragic 查看」→「原始資料列」）
+
+### 1.2 匯入來源
+
+| 來源代碼 | 金旭報表 | 粒度 | 用途 | 主要日期欄位 | 實測檔案 |
+|---|---|---|---|---|---|
+| `FCR02_LEDGER` | 客帳帳目明細表 | **交易分錄**（一列 = 一筆帳目異動） | 收入結構、付款方式、預收訂金 | `日期`（營業日） | `FCR02.xlsx`（2.8 MB / 52,310 列，含 2,900 組重複表頭與小計） |
+| `RESV_DETAIL` | 訂房明細資料 | 訂房（一列 = 一張訂房單） | 通路、房型、住客、住宿晚數 | 待確認 | **尚未提供**（規格待補，見 §17.2 Q1） |
+
+> `source_type` 一開始就設計為可擴充；`RESV_DETAIL` 的欄位定義在拿到實檔前**不得臆測實作**，本規格書僅預留位置。
+
+### 1.3 本期不處理
+
+- 不直接連線金旭 PMS 資料庫或 API（維持人工匯出 xlsx）。
+- 不做 Excel／PPT 匯出（比照 OPERA，未來要做時另立規格）。
+- 不做發票開立、稅務申報相關功能（`64.預收訂金(開)` vs `64A.預收訂金(不開)` 只做統計，不做開立）。
+- 不做應收帳款催收管理（`86.外客簽帳` 只做統計）。
+- 不做多飯店隔離（欄位預留 `property_code`，實測資料為單一飯店）。
+- 不與 OPERA 模組的數字做交叉驗算（兩套 PMS 口徑不同，見 §2.3）。
+
+---
+
+## 2. 與 OPERA 模組的關係（必讀）
+
+### 2.1 資料粒度對照
+
+**FCR02 不對應 OPERA 的 Departure，也不對應 History and Forecast。** 它是第三層粒度，OPERA 側沒有對應的匯出檔。
+
+| 資料粒度 | OPERA 來源 | 金旭來源 | 一列代表 |
+|---|---|---|---|
+| 日別彙總 | `HISTORY_FORECAST` | 無（由 `FCR02_LEDGER` 彙總推導） | 一個營業日 |
+| 訂房／住客 | `DEPARTURE` | `RESV_DETAIL`（後續提供） | 一張訂房單 |
+| **交易分錄** | **無** | **`FCR02_LEDGER`** | **一筆帳目異動** |
+
+實測比例：40,706 筆分錄 ÷ 5,992 個訂房號碼 ≈ **平均一張訂房單 6.8 筆帳**。
+
+### 2.2 為何不能沿用 `opera_departure_stay` 的設計
+
+`opera_departure_stay` 的業務鍵是 `resv_name_id`（一訂房一列）。若把 FCR02 塞進去，同一個訂房號碼會撞 6.8 次，`is_current` 版本管理會把同一張訂房單的不同科目互相覆蓋。**必須另建 `jinxu_ledger_entry` 事實表，業務鍵改用分錄層級的鍵。**
+
+### 2.3 不做跨系統驗算
+
+OPERA 與金旭是兩套獨立 PMS，房型定義、營收認列時點、服務費計算方式皆可能不同。**兩模組的數字分開呈現、各自標註來源，不互相驗算**（同 OPERA 規格書 D7 決策的精神）。
+
+---
+
+## 3. 實測資料剖析結果（必讀）
+
+> 開發前必須讀完本章。FCR02 是**分組列印報表**，不是平面資料表，直接 `pd.read_excel()` 會得到 52,310 列垃圾。
+
+實測檔：`FCR02.xlsx`，單一工作表 `工作表1`，14 欄，52,310 列。
+
+### 3.1 列類型組成 —— 必須逐列判斷丟棄
+
+| 列類型 | 判斷條件 | 數量 | 處理 |
+|---|---|---:|---|
+| 報表標題 | `A欄 == '客帳帳目明細表'` | 1 | 丟棄（可抽出「印表日期」存 `footer_json`） |
+| 篩選條件列 | `A欄 == '日期'` 且 `B欄` 是日期字串 | 1 | 丟棄（可抽出報表區間存 `report_start_date` / `report_end_date`） |
+| **重複表頭** | `A欄 == '日期'` 且 `B欄 == '建檔時間'` | **2,900** | 丟棄（每個科目分組前都會重印一次） |
+| **小計列** | `A欄 == '合計'` | **2,900** | 丟棄，但**必須抽出金額做分組對帳**（見 §3.4） |
+| **總計列** | `A欄 == '總計'` | **1** | 丟棄，但**必須抽出金額做全檔對帳** |
+| 空白列 | 整列皆 `None` | 5,801 | 丟棄 |
+| 簽核列 | 含 `部門主管` / `單位主管` / `製表` | 1 | 丟棄 |
+| **有效資料列** | 以上皆非 | **40,706** | 寫入 |
+
+```python
+# ✅ 正確：逐列分類
+def _classify_row(r: tuple) -> str:
+    c0 = r[0]
+    if c0 is None and all(x is None for x in r):      return "BLANK"
+    if c0 == "客帳帳目明細表":                          return "TITLE"
+    if c0 == "日期" and r[1] == "建檔時間":              return "HEADER"
+    if c0 == "日期":                                   return "FILTER"
+    if c0 == "合計":                                   return "SUBTOTAL"
+    if c0 == "總計":                                   return "GRANDTOTAL"
+    if c0 is None:                                     return "SIGNATURE"
+    return "DATA"
+
+# ❌ 錯誤：pd.read_excel(path, header=2) 會把 2,900 組表頭與小計當成資料
+```
+
+### 3.2 `建檔時間` 是完美天然主鍵
+
+格式：`YYYYMMDD-HHMMSSNN`，例 `20260101-04113301`（日期 + 時分秒 + 2 碼同秒序號）。
+
+實測 **40,706 筆 100% 唯一、零重複**。與 OPERA Departure 需要自建 `record_key` + `row_hash` 弱鍵機制相比，金旭這邊直接用它當唯一索引即可，**不需要 `weak_key` 欄位**。
+
+### 3.3 `日期` ≠ `建檔時間` 的日期部分（46.7% 不一致）
+
+實測 **19,020 筆（46.7%）** 兩者的日期不同。原因是夜間稽核跨日：`日期` 是**營業日**（PMS 帳務歸屬日），`建檔時間` 是**系統實際寫入時戳**。
+
+```python
+# ✅ 正確：營收統計一律用 business_date（來自「日期」欄）
+GROUP BY business_date
+
+# ❌ 錯誤：created_at[:8] 會讓 46.7% 的資料歸錯日期
+GROUP BY substr(created_at, 1, 8)
+```
+
+`建檔時間` 只用於：唯一鍵、稽核追溯、班別交班分析。**絕不可用於營收歸期。**
+
+### 3.4 對帳公式已用實測資料驗證通過
+
+```text
+Σ(所有有效資料列的金額) = 總計列金額
+實測：-3,680,565 = -3,680,565  ✅
+
+Σ(某科目分組內資料列金額) = 該組小計列金額
+（分組小計共 2,900 組，逐組比對）
+```
+
+> 小計／總計列的金額欄位置是 **B欄**（不是資料列的 H欄），且型別是**字串**格式 `'-87,485.00'`（含千分位逗號與兩位小數），資料列則是 `int`。解析時不可直接 `float()`。
+
+### 3.5 欄位空值率實測
+
+| 欄位 | 空值率 | 說明 |
+|---|---:|---|
+| 日期 / 建檔時間 / 班別 / ID / 房號 / 帳單名稱 / 科目 / 金額 / 訂房號碼 | **0.0%** | 核心欄位全滿，可設 `nullable=False` |
+| 帳單別 | 0.3% | 110 筆空 |
+| 備註 | 47.7% | 選填 |
+| 轉帳 | 74.7% | 選填，有值時為轉帳單號 |
+| 應收代碼 | 79.3% | 選填，簽帳／預收時才有 |
+| 單據號碼 | 92.4% | 選填，發票／收據號 |
+
+### 3.6 `金額` 欄型別混雜
+
+- 資料列：`int`（正負整數，無小數）
+- 小計／總計列：`str`，格式 `'-87,485.00'`
+
+解析器必須先判斷列類型，再決定用哪種轉型；小計列轉型需 `float(s.replace(",", ""))`。
+
+### 3.7 科目結構：35 個，自然分兩側
+
+**收入側（正值，科目代碼 01～67）**
+
+| 科目 | 筆數 | 金額 |
+|---|---:|---:|
+| 01.房租 | 19,755 | 141,418,270 |
+| 64A.預收訂金(不開) | 835 | 23,547,671 |
+| 04.加床費 | 391 | 700,000 |
+| 13.自助洗衣費 | 9,961 | 582,050 |
+| 64.預收訂金(開) | 13 | 370,638 |
+| 01A.客房加價 | 270 | 334,658 |
+| 09.洗衣費 | 172 | 331,356 |
+| 05.車資 | 45 | 154,790 |
+| 50.可見即可售 | 90 | 149,452 |
+| 14.雜項 | 39 | 49,094 |
+| 66.代支 | 25 | 28,467 |
+| 62.弈夢紅樓 | 18 | 27,538 |
+| 02.服務費 | 34 | 2,829 |
+| 12.國際電話 | 5 | 2,100 |
+| 06.影印費 | 11 | 1,315 |
+| 46.Hannahspring | 3 | 1,320 |
+| 10.市內電話 | 161 | 960 |
+| 11.長途電話 | 72 | 714 |
+| 39.轉帳 | 204 | 0 |
+| 67.換房 | 381 | 0 |
+| 61.弈夢空間 | 2 | 0 |
+
+**抵充側（負值，科目代碼 71～95）**
+
+| 科目 | 筆數 | 金額 |
+|---|---:|---:|
+| 75.MASTER信用卡 | 3,434 | -65,808,826 |
+| 74.VISA信用卡 | 2,429 | -48,483,711 |
+| 81A.沖預收訂金(要開) | 922 | -27,204,887 |
+| 73.AE信用卡 | 389 | -11,096,093 |
+| 71B.線上授權-LINK PAY | 243 | -6,381,536 |
+| 71A.電匯 | 126 | -5,298,749 |
+| 71.現金 | 485 | -3,348,055 |
+| 86.外客簽帳(不開發票) | 87 | -1,969,874 |
+| 79.銀聯卡 | 30 | -928,699 |
+| 77.JCB信用卡 | 52 | -484,628 |
+| 81.沖預收訂金(已開) | 9 | -349,729 |
+| 95.信託禮券 | 9 | -29,000 |
+| 78.聯合信用卡 | 2 | 0 |
+| 86A.外客簽帳(開立發票) | 2 | 0 |
+
+> 分類規則以**科目代碼數字前綴**判斷，不可用中文字串比對（科目名稱可能改）。完整對照見 [附錄 B](#附錄-b科目分類對照表)。
+
+### 3.8 沖帳列特徵
+
+- 金額分布：正值 31,191 筆、負值 9,085 筆、零 430 筆
+- **收入類科目出現負值 953 筆**（收入科目正常應為正）→ 這些就是沖帳
+- 備註或帳單名稱含「沖帳」「沖帳用」字樣者 767 筆
+
+> 兩組數字不一致（953 vs 767）表示**有沖帳列沒寫備註**。因此沖帳判定**不可只靠備註字串**，須以「收入類科目 + 金額為負」為主要判準，備註字串為輔助標記。
+
+### 3.9 `帳單名稱` 結構
+
+格式 `{序號}-{標籤}`，序號代表同一訂房下的第幾張帳單（拆帳用）。標籤實測 271 種，前幾名：
+
+`AUTO`(31,433)、`DEPOSIT`(1,692)、`OA`(1,286)、空字串(800)、`洗衣費`(432)、`沖帳`(166)、`加床費`(110)、`W/P`(97)
+
+> 標籤是自由文字（含 `2/1-2/28房費`、`4月` 這類人工輸入），**不可當列舉值**。存原文即可，分析時不依賴它。
+
+### 3.10 `班別` 有 7 種，含非櫃檯班別
+
+| 班別 | 筆數 | 實測特徵 |
+|---|---:|---|
+| D | 17,477 | 夜稽（夜間自動過帳，`1-AUTO` 大量集中） |
+| X | 10,143 | 話務／自動計費（市內電話、長途電話） |
+| A | 7,762 | 早班 |
+| B | 3,166 | 中班 |
+| C | 1,787 | 晚班 |
+| N | 204 | 轉帳專用（實測全為 `39.轉帳`） |
+| Y | 167 | 洗衣（實測全為 `09.洗衣費`） |
+
+> X／Y／N **不是人工班別**，是系統或特定作業產生。做「班別交班分析」時必須排除，否則會誤判夜稽班別工作量。此推論來自實測樣本，**需向財務確認**（見 §17.2 Q3）。
+
+### 3.11 `房號` 含非客房代碼
+
+前 2 碼分布：`03`~`12` 為樓層（客房，共 39,091 筆）；另有 `H0`(1,270)、`M0`(151)、`OT`(116)、`RV`(70)、`h0`(8)。原始 160 個相異房號，正規化後 **158 個**。
+
+> `h0` 與 `H0` 是**大小寫不一致的同一個代碼**（實測 8 筆小寫）→ 正規化時必須 `.upper()`。
+> `H0` / `M0` / `OT` / `RV` 語意未知，需向財務確認（見 §17.2 Q4）。在確認前，統計時歸入「非客房」類，不可靜默丟棄。
+
+### 3.12 `ID`（操作員）欄有前導空白
+
+表頭是 `' ID'`（含一個前導空格）。實測 27 個相異值，形如 `w100149` / `W100232`——**大小寫混用的同一組帳號**。正規化（`.strip().upper()`）後只剩 **19 個**真實操作員。
+
+---
+
+## 4. 系統架構
+
+```text
+使用者瀏覽器
+   │  上傳 FCR02.xlsx（後續：訂房明細 xlsx）
+   ▼
+[前端] /jinxu/import  ──POST /api/v1/jinxu/import/validate──┐
+                      ──POST /api/v1/jinxu/import/commit  ──┤
+                                                             ▼
+                                               [後端] jinxu_import_service
+                                                             │
+                        ┌────────────────────────────────────┼──────────────────────────┐
+                        ▼                                    ▼                          ▼
+                 原始資料層                           標準化事實層                  分析檢視層
+       jinxu_fcr02_raw                        jinxu_ledger_entry           jinxu_analysis_service
+       （後續 jinxu_resv_raw）                （後續 jinxu_reservation）    （科目分類 / 淨額 / 期間）
+                        └────────────────────────────────────┴──────────────────────────┘
+                                                             │
+                                                             ▼
+                                     [前端] /jinxu/dashboard  /jinxu/revenue
+                                            /jinxu/payment    /jinxu/deposit  /jinxu/import
+```
+
+三層職責與 OPERA 相同：
+
+1. **原始資料層**：完整保存 xlsx 原始 14 欄（全部 TEXT）與來源列號，永不覆蓋，供稽核追溯。
+2. **標準化事實層**：日期／數字轉型、科目分類、沖帳標記。以 `create_seq` 為唯一鍵。
+3. **分析檢視層**：統一定義營業日、期間、淨額口徑、科目歸類。**不在 router 內寫計算邏輯**。
+
+### 4.1 檔案配置（對齊 Portal 專案結構）
+
+```text
+backend/app/
+├─ models/
+│  ├─ jinxu_import.py          # JinxuImportBatch, JinxuImportError
+│  └─ jinxu_ledger.py          # JinxuFcr02Raw, JinxuLedgerEntry, JinxuSubjectMap, JinxuAnalysisSetting
+├─ schemas/
+│  └─ jinxu.py                 # Pydantic schemas
+├─ services/
+│  ├─ jinxu_parser.py          # xlsx 解析（列分類、小計對帳、型別轉換）— 純函式，好測
+│  ├─ jinxu_import_service.py  # 匯入流程、去重、UPDATE 覆蓋、對帳
+│  └─ jinxu_analysis_service.py# 科目分類、淨額公式、期間彙總
+└─ routers/
+   ├─ jinxu_import.py          # /api/v1/jinxu/import/*
+   ├─ jinxu_revenue.py         # /api/v1/jinxu/revenue/*
+   ├─ jinxu_payment.py         # /api/v1/jinxu/payment/*
+   └─ jinxu_deposit.py         # /api/v1/jinxu/deposit/*
+
+frontend/src/
+├─ api/jinxu.ts                # axios 封裝
+├─ pages/JinXu/
+│  ├─ Dashboard/index.tsx
+│  ├─ Revenue/index.tsx
+│  ├─ Payment/index.tsx
+│  ├─ Deposit/index.tsx
+│  ├─ Import/index.tsx
+│  └─ components/
+│     └─ LedgerEntryDrawer.tsx    # CLAUDE.md §7 明細 Drawer
+└─ types/jinxu.ts
+
+（專案根目錄）add_jinxu_tables.sql   # 手動 migration（索引）
+```
+
+> **後端模式強制**：DB Session 一律 `Depends(get_db)`；**路由函式不得用 `async def` 直接呼叫同步 `db.query()`**（見 CLAUDE.md 與 `project_async_def_blocking_fix` 事故）。除必須 `await UploadFile.read()` 的兩個上傳端點外，一律 `def`，重運算用 `run_in_threadpool`。
+
+### 4.2 xlsx 讀取方式
+
+用 `openpyxl` 的 **read-only 模式**（`load_workbook(path, read_only=True, data_only=True)`）逐列 iterate。實測 2.8 MB / 52,310 列在 read-only 模式下記憶體平穩；**不可用 pandas**（會把整檔載入且欄型別推斷會破壞 `建檔時間` 這種字串鍵）。
+
+---
+
+## 5. 資料庫設計
+
+> 命名一律 `jinxu_` 前綴。全部使用同步 SQLAlchemy ORM，禁止拼接原始 SQL 字串。
+> **新表由 `create_all` 自動建立**；既有 DB 需補的索引寫入 `add_jinxu_tables.sql`。
+
+### 5.1 `jinxu_import_batch`
+
+| 欄位 | 型別 | 說明 |
+|---|---|---|
+| `id` | Integer PK | 批次編號 |
+| `session_id` | String(36) | 同一次上傳共用的 UUID |
+| `source_type` | String(20) | `FCR02_LEDGER` / `RESV_DETAIL` |
+| `property_code` | String(20) | 飯店代碼（預留，目前單一飯店） |
+| `source_file_name` | String(255) | 原始檔名 |
+| `file_sha256` | String(64) | 檔案指紋，**唯一索引** |
+| `file_size` | Integer | 位元組數 |
+| `sheet_name` | String(100) | 工作表名稱（實測 `工作表1`） |
+| `report_start_date` | String(10) | 報表區間起（ISO，取自篩選條件列） |
+| `report_end_date` | String(10) | 報表區間迄（ISO） |
+| `printed_at` | String(30) | 報表列印時間（標題列的印表日期 + 印表時間） |
+| `row_count_source` | Integer | 檔案總列數 |
+| `row_count_data` | Integer | 有效資料列數 |
+| `row_count_inserted` | Integer | 新增列數 |
+| `row_count_updated` | Integer | **更新列數（`create_seq` 撞鍵時覆蓋）** |
+| `row_count_skipped` | Integer | 內容完全相同而跳過的列數 |
+| `row_count_rejected` | Integer | 拒絕列數 |
+| `status` | String(20) | `PENDING` / `VALIDATED` / `COMMITTED` / `FAILED` / `ROLLED_BACK` |
+| `quality_result` | String(20) | `PASS` / `PASS_WITH_WARNINGS` / `FAIL` |
+| `totals_json` | Text | 小計／總計解析結果（JSON） |
+| `reconcile_json` | Text | 對帳結果（JSON，小計/總計 vs 程式彙總逐項差異） |
+| `started_at` / `completed_at` | DateTime | 起迄時間 |
+| `uploaded_by_user_id` | String(36) | 上傳者 |
+| `uploaded_by_name` | String(100) | 上傳者姓名 |
+| `program_version` | String(20) | 匯入程式版本 |
+| `error_message` | Text | 失敗摘要 |
+
+### 5.2 `jinxu_import_error`
+
+欄位定義與 `opera_import_error` 完全相同（`id` / `batch_id` / `source_row_no` / `field_name` / `raw_value` / `error_code` / `error_message` / `severity`）。
+
+### 5.3 `jinxu_fcr02_raw`
+
+14 個來源欄位一律 `Text`，原文照存不做任何正規化：
+
+`date_text`、`create_seq_text`、`shift_text`、`operator_text`、`room_no_text`、`folio_name_text`、`subject_text`、`amount_text`、`document_no_text`、`ar_code_text`、`remark_text`、`transfer_text`、`booking_no_text`、`folio_type_text`
+
+系統欄位：
+
+| 欄位 | 型別 | 說明 |
+|---|---|---|
+| `id` | Integer PK | 原始列編號 |
+| `batch_id` | Integer FK | 匯入批次 |
+| `source_row_no` | Integer | xlsx 列號（1-based，含表頭空白列） |
+| `row_hash` | String(64) | 正規化整列 SHA-256 |
+| `create_seq` | String(20) | 業務鍵，**建索引**（= `建檔時間`） |
+| `imported_at` | DateTime | 匯入時間 |
+
+### 5.4 `jinxu_ledger_entry`（交易分錄事實表）
+
+| 欄位群組 | 欄位 | 型別 | 說明 |
+|---|---|---|---|
+| 系統 | `id` | Integer PK | |
+| | `batch_id` | Integer FK | **最後一次寫入**此列的批次 |
+| | `raw_id` | Integer FK | 對應 raw 列 |
+| | `create_seq` | String(20) | **UNIQUE**，業務鍵（見 §3.2） |
+| | `row_hash` | String(64) | 整列指紋，用於判斷是否需要 UPDATE |
+| | `first_imported_at` | DateTime | 首次匯入時間 |
+| | `last_updated_at` | DateTime | 最後更新時間 |
+| 日期 | `business_date` | String(10) | **營業日（ISO）**，來自「日期」欄，統計主鍵 |
+| | `created_at_text` | String(20) | 系統寫入時戳原文（`20260101-04113301`） |
+| | `created_date` | String(10) | 由 `create_seq` 前 8 碼轉 ISO（僅供稽核，**不可用於歸期**） |
+| 作業 | `shift` | String(2) | 班別（`A`/`B`/`C`/`D`/`X`/`Y`/`N`） |
+| | `is_manual_shift` | Integer | 1 = 人工班別（A/B/C/D）；0 = 系統班別（X/Y/N），見 §3.10 |
+| | `operator_id` | String(20) | 操作員，**已 `.strip().upper()` 正規化** |
+| 帳務 | `room_no` | String(20) | 房號，**已 `.upper()` 正規化** |
+| | `room_kind` | String(10) | `GUEST`（客房，前2碼為數字）/ `OTHER`（H0/M0/OT/RV） |
+| | `folio_name` | String(100) | 帳單名稱原文 |
+| | `folio_seq` | Integer | 帳單序號（`帳單名稱` 的 `-` 前數字），無法解析存 NULL |
+| | `folio_type` | String(20) | 帳單別（`AUTO`/`一般`/`私帳`/`公帳`） |
+| 科目 | `subject_code` | String(10) | 科目代碼（`01`、`01A`、`81A`…），**分類依據** |
+| | `subject_name` | String(50) | 科目名稱（`房租`、`MASTER信用卡`…） |
+| | `subject_side` | String(10) | `REVENUE`（收入）/ `SETTLEMENT`（抵充），見 §9.1 |
+| | `subject_group` | String(20) | 分析用大類，見 附錄 B |
+| 金額 | `amount` | Numeric(14,2) | 金額（有號） |
+| | `is_reversal` | Integer | **1 = 沖帳列**（見 §9.2 判定規則） |
+| 關聯 | `booking_no` | String(20) | 訂房號碼，**建索引**（未來 join `RESV_DETAIL`） |
+| | `document_no` | String(30) | 單據號碼 |
+| | `ar_code` | String(50) | 應收代碼 |
+| | `transfer_no` | String(30) | 轉帳單號 |
+| | `remark` | String(255) | 備註 |
+| 其他 | `property_code` | String(20) | 飯店代碼（預留） |
+
+> **不設 `is_current`**。OPERA 需要它是因為同一訂房會多次匯出、需保留歷史版本；金旭這邊 `create_seq` 是分錄流水號，同一筆分錄的內容一旦產生就不會變（若變了代表是修正，直接覆蓋才對）。這是業主已確認的 **UPDATE 覆蓋**策略（見 §6.2）。
+
+### 5.5 `jinxu_subject_map`（科目分類對照表）
+
+科目代碼→分類的對應**不寫死在程式碼**，存資料庫供維護。首次啟動時以 附錄 B 的內容 seed。
+
+| 欄位 | 型別 | 說明 |
+|---|---|---|
+| `id` | Integer PK | |
+| `subject_code` | String(10) | **UNIQUE**，如 `01`、`81A` |
+| `subject_name` | String(50) | 顯示名稱 |
+| `side` | String(10) | `REVENUE` / `SETTLEMENT` |
+| `group_code` | String(20) | 分析大類（見 附錄 B） |
+| `sort_order` | Integer | 顯示排序 |
+| `is_active` | Integer | 1 = 啟用 |
+| `updated_at` | DateTime | |
+| `updated_by_user_id` | String(36) | |
+
+> **未知科目處理**：匯入時遇到 `jinxu_subject_map` 沒有的科目代碼，**不可拒絕該列**，改為：自動以 `side` 依代碼數字推斷（≥71 為 `SETTLEMENT`，否則 `REVENUE`）、`group_code` 設 `UNCLASSIFIED`、寫一筆 `WARNING` 級 `jinxu_import_error`，並在批次結果頁面提示管理員去設定頁補分類。
+
+### 5.6 `jinxu_analysis_setting`
+
+| `setting_key` | 預設值 | 說明 |
+|---|---:|---|
+| `net_amount_mode` | `NET` | 統計口徑：`NET`（淨額，業主已確認）/ `GROSS` |
+| `deposit_alert_days` | 90 | 預收訂金未沖銷天數警示門檻 |
+| `revenue_anomaly_multiplier` | 2.0 | 單日營收異常倍數（vs 期間中位數） |
+| `large_amount_threshold` | 100000 | 大額交易標記門檻 |
+
+欄位另含 `property_code`、`value_type`、`updated_at`、`updated_by_user_id`。
+
+---
+
+## 6. 去重、版本與覆蓋規則
+
+### 6.1 檔案層去重
+
+- 上傳後立即計算 SHA-256。
+- 相同 `file_sha256` 已有 `COMMITTED` 批次時，**預設阻擋**再次匯入，顯示原匯入日期、檔名、批次編號、上傳者。
+- 具 `jinxu_import` 權限者可選「僅重新驗證」（只跑品質檢查、不寫入）。
+
+### 6.2 分錄層覆蓋規則（業主 2026-08-05 確認：UPDATE）
+
+> **背景**：業主每次都是手動從金旭匯出**整段區間**（如 01/01～08/05），下次匯出 01/01～09/30 時，前 8 個月的 `create_seq` 會全部撞鍵。
+
+處理邏輯：
+
+```text
+對每一筆有效資料列：
+  依 create_seq 查 jinxu_ledger_entry
+    ├─ 不存在        → INSERT，row_count_inserted += 1
+    ├─ 存在且 row_hash 相同 → SKIP（內容沒變，不寫 DB），row_count_skipped += 1
+    └─ 存在且 row_hash 不同 → UPDATE 全欄 + last_updated_at + batch_id
+                              row_count_updated += 1
+                              並寫一筆 WARNING 級 import_error 記錄變更前後值
+```
+
+- **`jinxu_fcr02_raw` 永不覆蓋**：每個批次都完整寫入自己的 raw 列，保留完整稽核軌跡。只有事實表 `jinxu_ledger_entry` 做 UPDATE。
+- `row_hash` 相同就 SKIP 是效能關鍵。實測重複上傳 8 個月資料時，預期 99%+ 的列會走 SKIP 分支，避免 40,000 次無謂的 UPDATE。
+- **UPDATE 必須記錄**：任何 `row_hash` 變動都代表金旭端修改了已過帳的分錄，這是財務上值得警覺的事，必須留下軌跡讓財務查核。
+
+### 6.3 批次刪除
+
+- 提供「回捲批次」功能（`status` → `ROLLED_BACK`）：刪除該批次的 `jinxu_fcr02_raw` 列。
+- **事實表的 UPDATE 無法自動回捲**（舊值已被覆蓋）。回捲時必須明確警告使用者，並列出該批次曾 UPDATE 過的 `create_seq` 清單，由財務人工判斷。
+- 僅 `jinxu_import` 權限可執行，寫入 `audit_log`。
+
+---
+
+## 7. 匯入流程
+
+### 7.1 前端操作流程（`/jinxu/import`）
+
+1. 選擇來源類型（`客帳帳目明細表 FCR02` / `訂房明細資料`）與 xlsx 檔。
+2. `POST /validate` → 顯示驗證報告：列類型統計、資料列數、報表區間、對帳結果（小計/總計 vs 程式彙總）、未知科目清單、預估 新增/更新/略過 筆數、錯誤與警告清單。
+3. 驗證通過（`PASS` 或 `PASS_WITH_WARNINGS`）才啟用「確認匯入」。
+4. `POST /commit` → 顯示匯入結果與批次編號。
+5. **`FAIL` 一律不得匯入**，且不提供強制覆寫按鈕。
+
+### 7.2 後端交易順序（`jinxu_import_service.commit()`）
+
+```text
+1. 建立 batch（status=PENDING）
+2. 解析 xlsx → 分類每一列 → 收集 DATA / SUBTOTAL / GRANDTOTAL
+3. 寫入 jinxu_fcr02_raw（全部有效資料列）
+4. 逐列轉換 → 依 §6.2 邏輯 INSERT / UPDATE / SKIP jinxu_ledger_entry
+5. 執行對帳（§3.4）與品質檢查（§8）
+6. 更新 batch：status=COMMITTED、各項 row_count、totals_json、reconcile_json、quality_result
+7. 寫入 audit_log
+   ↑ 步驟 1～6 在同一個 DB transaction；任一步失敗即 rollback 並將 batch 標 FAILED
+```
+
+### 7.3 FCR02 特殊處理
+
+- 讀取用 `openpyxl` read-only 模式（§4.2）。
+- 逐列分類（§3.1），只有 `DATA` 進事實表。
+- `SUBTOTAL` / `GRANDTOTAL` 的金額抽出存 `totals_json`，供 §3.4 對帳；**絕不寫入事實表**。
+- 小計是「每個科目分組一個」，解析時需記住當前分組的科目（取分組內第一筆 `DATA` 列的科目），才能把小計對應到科目。
+- 正規化：`operator_id` → `.strip().upper()`；`room_no` → `.strip().upper()`；所有文字欄 → 去頭尾空白 + 全形轉半形。
+
+---
+
+## 8. 資料品質檢查
+
+| 檢查碼 | 層級 | 條件 | 行為 |
+|---|---|---|---|
+| `MISSING_REQUIRED` | ERROR | 9 個核心欄位（§3.5）任一為空 | 拒絕該列 |
+| `BAD_DATE` | ERROR | `日期` 非 8 碼數字或無法轉 ISO | 拒絕該列 |
+| `BAD_CREATE_SEQ` | ERROR | `建檔時間` 不符 `\d{8}-\d{10}` | 拒絕該列 |
+| `BAD_AMOUNT` | ERROR | `金額` 無法轉數字 | 拒絕該列 |
+| `DUPLICATE_KEY` | ERROR | **同一檔案內** `create_seq` 重複 | 拒絕後出現者（實測應為 0，出現即代表檔案異常） |
+| `SUBTOTAL_MISMATCH` | ERROR | 分組小計 ≠ 程式彙總 | **整批 FAIL** |
+| `GRANDTOTAL_MISMATCH` | ERROR | 總計 ≠ 程式彙總 | **整批 FAIL** |
+| `UNKNOWN_SUBJECT` | WARNING | 科目代碼不在 `jinxu_subject_map` | 接受，標 `UNCLASSIFIED`（§5.5） |
+| `ENTRY_UPDATED` | WARNING | `create_seq` 已存在且 `row_hash` 不同 | 接受並 UPDATE，記錄前後值（§6.2） |
+| `DATE_MISMATCH` | INFO | `business_date` ≠ `created_date` | 接受（正常現象，佔 46.7%），僅統計筆數 |
+| `REVENUE_NEGATIVE` | INFO | 收入類科目金額為負 | 接受，標 `is_reversal=1`（§9.2） |
+| `SETTLEMENT_POSITIVE` | WARNING | 抵充類科目金額為正（實測 87 筆） | 接受但提示（可能是退款沖銷） |
+| `UNKNOWN_ROOM_KIND` | WARNING | 房號前 2 碼非數字且不在已知清單 | 接受，`room_kind='OTHER'` |
+| `LARGE_AMOUNT` | INFO | \|金額\| > `large_amount_threshold` | 接受，供財務抽查 |
+
+**`quality_result` 判定**：任一 ERROR → `FAIL`；無 ERROR 但有 WARNING → `PASS_WITH_WARNINGS`；否則 `PASS`。
+
+> **對帳失敗即整批 FAIL** 是刻意的嚴格設定。FCR02 是財務數字，寧可擋下來讓人查，不可讓對不上的資料進 DB。
+
+---
+
+## 9. 分析公式與計算口徑
+
+### 9.1 科目分側
+
+```python
+# 依 subject_code 的數字前綴判斷，不用中文字串比對
+def _side(subject_code: str) -> str:
+    num = int(re.match(r"^(\d+)", subject_code).group(1))
+    return "SETTLEMENT" if num >= 71 else "REVENUE"
+```
+
+- `REVENUE`（01～67）：飯店對客人產生的**應收**
+- `SETTLEMENT`（71～95）：客人的**已付／沖銷**
+
+理論上 `Σ REVENUE + Σ SETTLEMENT` = 期末未結清餘額。實測 -3,680,565，代表期末抵充大於收入（含跨期預收沖銷），**這個數字本身沒有營運意義，只作為對帳用**。
+
+### 9.2 沖帳判定與淨額口徑（業主 2026-08-05 確認：淨額）
+
+```python
+# 沖帳標記（寫入時計算）
+is_reversal = 1 if (subject_side == "REVENUE" and amount < 0) else 0
+```
+
+> 判定**以「收入類科目 + 金額為負」為準**，不可只靠備註字串。實測備註含「沖帳」者 767 筆，但收入類負值有 953 筆——186 筆沖帳沒寫備註（§3.8）。
+
+**統計口徑（`net_amount_mode = NET`）**：
+
+```text
+營收統計    = Σ amount WHERE subject_side='REVENUE'        ← 正負相加，沖帳自然抵銷
+付款方式統計 = Σ ABS(amount) WHERE subject_side='SETTLEMENT'  ← 取絕對值方便呈現佔比
+```
+
+- 明細表**保留原始兩筆**，並在 Table 用彩色 `Tag` 標記沖帳列。
+- 儀表板數字一律淨額。
+- 提供「含沖帳明細／僅淨額」切換給財務查核用（`Radio.Group`）。
+
+### 9.3 營業日與期間
+
+```text
+business_date 為唯一歸期依據（§3.3）
+月份 = business_date[:7]
+年度 = business_date[:4]
+```
+
+期間狀態標籤（比照 OPERA `opera_period_service`）：
+
+| 標籤 | 條件 |
+|---|---|
+| `完整月份` | 該月最後一日 ≤ 資料涵蓋最晚日 |
+| `部分月份（MTD 至 MM-DD）` | 該月未走完 |
+| `完整年度` | 12/31 ≤ 資料涵蓋最晚日 |
+| `部分年度（YTD 至 MM-DD）` | 年度未走完 |
+
+> 同期比較（YoY）需要跨年度資料。實測檔只有 2026 年 → **首次上線時 YoY 一律顯示「資料不足」**，並在 Dashboard 顯示 `Alert` 提示補匯入前一年度。
+
+### 9.4 收入結構分析（主軸一）
+
+```text
+科目佔比      = Σ amount BY subject_code / Σ amount WHERE side='REVENUE'
+大類佔比      = Σ amount BY subject_group（房費 / 加值服務 / 通訊 / 其他，見 附錄 B）
+月趨勢        = Σ amount BY business_date[:7], subject_group
+沖帳率        = COUNT(is_reversal=1) / COUNT(*) WHERE side='REVENUE'
+沖帳金額比    = Σ ABS(amount) WHERE is_reversal=1 / Σ amount WHERE side='REVENUE' AND amount>0
+```
+
+### 9.5 付款方式分析（主軸二）
+
+```text
+付款方式佔比  = Σ ABS(amount) BY subject_code WHERE side='SETTLEMENT'
+信用卡合計    = subject_code IN ('73','74','75','77','78','79')
+電子支付合計  = subject_code IN ('71A','71B')
+現金合計      = subject_code = '71'
+簽帳合計      = subject_code IN ('86','86A')
+月趨勢        = Σ ABS(amount) BY business_date[:7], subject_group
+```
+
+> **信用卡手續費不在此檔內**，無法計算淨收。若需要，須另外提供刷卡手續費資料（見 §17.2 Q5）。
+
+### 9.6 預收訂金追蹤（主軸三）
+
+```text
+預收發生   = Σ amount WHERE subject_code IN ('64','64A')          ← 正值
+預收沖銷   = Σ ABS(amount) WHERE subject_code IN ('81','81A')      ← 負值取絕對值
+未沖餘額   = 預收發生 − 預收沖銷（累計）
+```
+
+實測：發生 23,918,309（64: 370,638 + 64A: 23,547,671），沖銷 27,554,616（81: 349,729 + 81A: 27,204,887），**淨 -3,636,307**。
+
+> 沖銷大於發生代表**沖掉的訂金有一部分是本期之前收的**。因此「未沖餘額」在只有部分期間資料時是**不可信的**，Dashboard 必須顯示警告：「未沖餘額需完整歷史資料才準確，目前資料起始於 YYYY-MM-DD」。
+>
+> 逐筆配對（哪筆 64A 對應哪筆 81A）**本期不做**——`ar_code` 有值時看似可配對（實測 81A 列的 `單據號碼` 與 `應收代碼` 相同），但覆蓋率不足，需向財務確認配對規則（見 §17.2 Q6）。
+
+### 9.7 班別與操作員（附加，非主軸）
+
+僅統計 `is_manual_shift = 1`（A/B/C/D）的列：交易筆數、金額、沖帳次數。X/Y/N 另立「系統作業」區塊分開呈現。
+
+---
+
+## 10. 後端 API 規格
+
+> 全部掛 `Depends(get_current_user)`；各端點另加 `Depends(require_permission(...))`。
+
+### 10.1 匯入（`/api/v1/jinxu/import`）
+
+| Method | Path | 權限 | 說明 |
+|---|---|---|---|
+| POST | `/validate` | `jinxu_import` | 上傳 xlsx 驗證（不寫入） |
+| POST | `/commit` | `jinxu_import` | 正式匯入 |
+| GET | `/batches` | `jinxu_import` | 匯入紀錄清單（分頁） |
+| GET | `/batches/{id}` | `jinxu_import` | 批次明細（含 reconcile_json） |
+| GET | `/batches/{id}/errors` | `jinxu_import` | 錯誤明細（分頁、可依 severity 篩選） |
+| GET | `/batches/{id}/errors.csv` | `jinxu_import` | 錯誤明細 CSV 下載 |
+| POST | `/batches/{id}/rollback` | `jinxu_import` | 回捲批次（§6.3） |
+| GET | `/status` | `jinxu_view` | 資料涵蓋範圍（起迄日、總筆數、各 source_type 狀態） |
+
+### 10.2 收入分析（`/api/v1/jinxu/revenue`）
+
+| Method | Path | 權限 | 說明 |
+|---|---|---|---|
+| GET | `/summary` | `jinxu_view` | KPI（總收入、總抵充、沖帳率、交易筆數） |
+| GET | `/by-subject` | `jinxu_revenue_view` | 科目別彙總（可帶 `group_by=code\|group`） |
+| GET | `/monthly` | `jinxu_revenue_view` | 月趨勢（依 subject_group 拆分） |
+| GET | `/daily` | `jinxu_revenue_view` | 日別彙總 |
+| GET | `/entries` | `jinxu_revenue_view` | 分錄明細（分頁、多條件篩選） |
+| GET | `/entries/{id}` | `jinxu_revenue_view` | 單筆分錄（Drawer 用，含 raw 原始列） |
+
+### 10.3 付款方式（`/api/v1/jinxu/payment`）
+
+| Method | Path | 權限 | 說明 |
+|---|---|---|---|
+| GET | `/summary` | `jinxu_payment_view` | 各付款方式金額與佔比 |
+| GET | `/monthly` | `jinxu_payment_view` | 付款方式月趨勢 |
+| GET | `/entries` | `jinxu_payment_view` | 抵充分錄明細 |
+
+### 10.4 預收訂金（`/api/v1/jinxu/deposit`）
+
+| Method | Path | 權限 | 說明 |
+|---|---|---|---|
+| GET | `/summary` | `jinxu_deposit_view` | 發生／沖銷／未沖餘額（含資料完整性警告旗標） |
+| GET | `/monthly` | `jinxu_deposit_view` | 逐月發生 vs 沖銷 |
+| GET | `/entries` | `jinxu_deposit_view` | 訂金相關分錄明細 |
+
+### 10.5 設定（`/api/v1/jinxu/settings`）
+
+| Method | Path | 權限 | 說明 |
+|---|---|---|---|
+| GET | `/subjects` | `jinxu_view` | 科目分類對照表 |
+| PUT | `/subjects/{code}` | `jinxu_admin` | 維護單一科目分類 |
+| GET | `/thresholds` | `jinxu_view` | 分析門檻 |
+| PUT | `/thresholds` | `jinxu_admin` | 更新門檻 |
+
+**共用查詢參數**（所有分析端點）：`start_date`、`end_date`、`subject_code`、`subject_group`、`shift`、`operator_id`、`folio_type`、`room_kind`、`include_reversal`（預設 `false`，即淨額）。
+
+---
+
+## 11. 前端頁面規格
+
+### 11.1 路由與 TAB 順序
+
+依 `feedback_dev_standards` 既定順序：**Dashboard → 明細表 → 統計 → 批次清單**。
+
+| 路由 | 頁面中文名 | `permissionKey` | 說明 |
+|---|---|---|---|
+| `/jinxu/dashboard` | ★ 金旭分析 Dashboard | `jinxu_view` | KPI + 三主軸摘要 |
+| `/jinxu/revenue` | 收入結構分析 | `jinxu_revenue_view` | 科目別、大類、月趨勢、分錄明細 |
+| `/jinxu/payment` | 付款方式分析 | `jinxu_payment_view` | 付款方式佔比與趨勢 |
+| `/jinxu/deposit` | 預收訂金追蹤 | `jinxu_deposit_view` | 發生 vs 沖銷、未沖餘額 |
+| `/jinxu/import` | 資料匯入 | `jinxu_import` | xlsx 上傳 ＋ **匯入紀錄 TAB**（`?tab=batches`） |
+| `/jinxu/settings` | 科目與門檻設定 | `jinxu_admin` | 科目分類維護、分析門檻 |
+
+### 11.2 `/jinxu/dashboard`
+
+- **KPI 卡片**：4 欄 `Row`、`size="small"`（CLAUDE.md 受保護版型）
+  - 期間總收入（淨額，千分位無小數）
+  - 期間總抵充（絕對值，千分位無小數）
+  - 沖帳率（百分比一位小數，附沖帳筆數）
+  - 交易筆數（千分位）
+- **期間狀態標籤**：`完整月份` / `部分月份（MTD 至 MM-DD）` 等，用 `Tag`。
+- **資料涵蓋提示**：顯示資料起迄日。**若資料未涵蓋前一年度，顯示 `Alert` 提示 YoY 不可用**。
+- **三主軸摘要區**（各一張卡，點擊跳對應頁）：
+  - 收入結構：大類佔比圓餅圖
+  - 付款方式：付款方式橫向長條圖
+  - 預收訂金：發生 vs 沖銷雙柱狀圖 + 未沖餘額（附完整性警告）
+- **月趨勢圖**：總收入折線（本年 vs 去年，資料不足時只畫本年）。
+
+### 11.3 `/jinxu/revenue`
+
+TAB：`科目別` / `大類` / `月趨勢` / `分錄明細`
+
+- 科目別 TAB：Table 顯示科目代碼、名稱、大類、筆數、淨額、佔比、沖帳筆數。
+- 大類 TAB：圓餅圖 + Table。
+- 月趨勢 TAB：堆疊長條圖（依大類）+ Table。
+- 分錄明細 TAB：Table 欄位 = 營業日、建檔時間、班別、操作員、房號、帳單名稱、科目、金額、帳單別、訂房號碼、備註。頂部 `Radio.Group` 切換「淨額（隱藏沖帳）／全部（顯示沖帳）」。沖帳列以紅色 `Tag` 標記。
+
+### 11.4 `/jinxu/payment`
+
+TAB：`付款方式佔比` / `月趨勢` / `分錄明細`
+
+付款方式佔比 TAB 需同時呈現「明細科目」與「合併大類」（信用卡合計 / 電子支付 / 現金 / 簽帳）兩層。
+
+### 11.5 `/jinxu/deposit`
+
+TAB：`概況` / `月度收沖` / `分錄明細`
+
+概況 TAB 頂部固定 `Alert`：「未沖餘額需完整歷史資料才準確，目前資料起始於 YYYY-MM-DD」（§9.6）。
+
+### 11.6 明細 Drawer（CLAUDE.md §7 強制規範）
+
+本模組資料來源非 Ragic，把「🔗 在 Ragic 查看」替換為「🔗 原始資料列」，其餘規範完全比照。
+
+**`LedgerEntryDrawer.tsx`**（各分錄 Table `onRow` click，寬度 480px）
+
+標題列格式：
+
+```text
+[科目大類 Tag]  金旭客帳分錄：[create_seq]  [🔗 原始資料列]
+```
+
+- identifier 取 `create_seq`（`建檔時間`），此為唯一鍵，必定有值。
+- 「原始資料列」點擊展開 `jinxu_fcr02_raw` 的 14 個原始欄位（`GET /revenue/entries/{id}` 已回傳），色碼 `#4BA8E8`，`LinkOutlined` icon。
+- **必須放在標題列**，不可放 Drawer body 底部。
+
+Drawer 分兩區：
+
+1. **基本欄位**（`Descriptions`）：營業日、建檔時間、班別、操作員、房號、金額、科目、帳單別
+2. **明細欄位**（`Descriptions`）：帳單名稱、帳單序號、訂房號碼、單據號碼、應收代碼、轉帳單號、備註、沖帳標記、房間類別
+
+渲染規則（強制）：
+
+- 科目／帳單別／沖帳標記 → 彩色 `Tag`
+- 金額 → `$` 前綴 + 千分位；**負值紅色**
+- 空值 → `—`
+- 金額與科目 → 粗體
+
+### 11.7 樣式（受保護，不得修改）
+
+沿用 CLAUDE.md 受保護規格：品牌主色 `#1B3A5C`、輔色 `#4BA8E8`、頁面背景 `#f0f4f8`、KPI 4 欄 `size="small"`。圖表用既有 `recharts`，**不引入新套件**。
+
+科目大類配色（新增，比照既有慣例）：
+
+| 大類 | 色碼 |
+|---|---|
+| 房費 | `#1B3A5C` |
+| 加值服務 | `#4BA8E8` |
+| 通訊 | `#95a5a6` |
+| 預收訂金 | `#f39c12` |
+| 信用卡 | `#667eea` |
+| 電子支付 | `#764ba2` |
+| 現金 | `#27ae60` |
+| 簽帳 | `#e67e22` |
+| 其他 | `#bdc3c7` |
+| 未分類 | `#e74c3c` |
+
+---
+
+## 12. 模組註冊 Checklist（必做）
+
+> 本模組不走 Ragic，故 CLAUDE.md §3 的 5 處縮減為 3 處，另有自己的註冊點。缺一不可。
+
+### ✅ 必做
+
+| # | 位置 | 動作 |
+|---|---|---|
+| 1 | `backend/app/main.py` | `app.include_router(jinxu_import.router)`、`jinxu_revenue.router`、`jinxu_payment.router`、`jinxu_deposit.router` |
+| 2 | `backend/app/routers/role_permissions.py` → `PERMISSION_DEFINITIONS` | 加入 §12.1 的 6 個 key，`group` 一律 `"金旭分析"` |
+| 3 | `frontend/src/constants/navLabels.ts` → `NAV_GROUP` + `NAV_PAGE` | 加入 `jinxu: '金旭分析'` 與 6 個頁面名稱 |
+| 4 | `frontend/src/components/Layout/MainLayout.tsx` → `menuItems` | 加入 `/jinxu` group 與 6 個子路由（含 `permissionKey`） |
+| 5 | `frontend/src/router/` | 註冊 6 個 Route |
+| 6 | `backend/app/models/` `create_all` 匯入處 | `import app.models.jinxu_import / jinxu_ledger  # noqa` |
+| 7 | `docs/RAGIC_MODULE_MAP.md` | 於「非 Ragic 來源模組」章節登錄本模組（來源＝金旭 xlsx 上傳） |
+| 8 | `docs/CHANGELOG.md` | 於最新版本下加一行 |
+| 9 | `docs/TECH_SPEC.md` | 「重要設計決策」表格加入「Portal 第二個檔案上傳型模組 / openpyxl read-only 解析」 |
+| 10 | `README.md` | 更新「最後更新」日期與「最近變更」區塊 |
+
+### ❌ 不做（非 Ragic 模組）
+
+| 位置 | 原因 |
+|---|---|
+| `sync_tool.py` → `MODULES` | 無 Ragic Sheet 可同步 |
+| `sync_tool.py` → `_ensure_db_schema()` | 同上（模型改由 `main.py` 既有 `create_all` 路徑載入，見上表 #6） |
+| `settings/RagicConnections.tsx` → `ALL_MODULES` | 同上 |
+
+### 12.1 權限 key 定義
+
+> **一致性規則（CLAUDE.md 強制）**：`label` 必須與 `navLabels.ts` 的顯示名稱**完全一致**；`MainLayout.tsx` 的每個 `permissionKey` 必須在此表有對應項目，否則該頁面永遠不會出現在「角色管理 → 權限設定」。
+
+```python
+# backend/app/routers/role_permissions.py → PERMISSION_DEFINITIONS
+{"key": "jinxu_view",         "label": "★ 金旭分析 Dashboard", "group": "金旭分析"},
+{"key": "jinxu_revenue_view", "label": "收入結構分析",         "group": "金旭分析"},
+{"key": "jinxu_payment_view", "label": "付款方式分析",         "group": "金旭分析"},
+{"key": "jinxu_deposit_view", "label": "預收訂金追蹤",         "group": "金旭分析"},
+{"key": "jinxu_import",       "label": "資料匯入",             "group": "金旭分析"},
+{"key": "jinxu_admin",        "label": "科目與門檻設定",       "group": "金旭分析"},
+```
+
+> ⚠️ `jinxu_import` 的 label「資料匯入」與 OPERA 的 `opera_import` **同名但不同 group**。`PERMISSION_DEFINITIONS` 是以 `key` 為唯一鍵、`group` 分組顯示，同名 label 在不同 group 下不衝突（比照既有多模組皆有「匯入」頁的做法）。
+
+```typescript
+// frontend/src/constants/navLabels.ts
+export const NAV_GROUP = {
+  // ...既有
+  jinxu: '金旭分析',
+}
+
+export const NAV_PAGE = {
+  // ...既有
+  jinxuDashboard: '★ 金旭分析 Dashboard',
+  jinxuRevenue:   '收入結構分析',
+  jinxuPayment:   '付款方式分析',
+  jinxuDeposit:   '預收訂金追蹤',
+  jinxuImport:    '資料匯入',
+  jinxuSettings:  '科目與門檻設定',
+}
+```
+
+### 12.2 選單位置
+
+新 group `金旭分析` **緊接在 `營運分析`（OPERA）之後**，兩個 PMS 分析模組相鄰。實際插入位置以 `MainLayout.menuItems` 陣列順序為準；選單管理頁面自動從 `MainLayout.menuItems` 派生，不需維護第二份清單。
+
+---
+
+## 13. 個資與資安
+
+### 13.1 資料落地原則
+
+**FCR02 不含個資**——無住客姓名、證號、電話、會員卡號。因此**不需要 OPERA 那套遮罩機制**（`opera_parser` 的 `guest_identity_hash` / `guest_name_masked` 在此完全不適用）。
+
+| 資料 | 是否落地 | 說明 |
+|---|---|---|
+| 住客姓名 | — | FCR02 無此欄位 |
+| 房號 | ✅ 落地 | 房號本身非個資 |
+| 訂房號碼 | ✅ 落地 | 內部單號 |
+| 操作員 ID | ✅ 落地 | 內部員工帳號，屬營運資料 |
+| 金額 | ✅ 落地 | 核心分析對象 |
+| 備註 | ⚠️ 落地但需注意 | **自由文字欄，人員可能填入客人姓名**（實測有「易遊網旅行社股份」這類公司名） |
+
+> **`備註` 欄的風險**：實測未見個人姓名，但這是自由文字欄，無法保證未來不會有。**本期照原文落地**，但列為已知風險，若日後發現含個資須另立遮罩規則（見 §17.2 Q7）。
+
+### 13.2 存取控制
+
+- 所有端點 `Depends(get_current_user)` + `Depends(require_permission(...))`。
+- 匯入與回捲僅 `jinxu_import`；科目與門檻維護僅 `jinxu_admin`。
+- **金額是財務敏感資料**：`jinxu_*_view` 權限預設**不給任何既有角色**，需管理員逐一開放。
+
+### 13.3 稽核
+
+以下動作必須寫 `audit_log`（含 IP）：
+
+- 上傳驗證 / 正式匯入 / 回捲批次
+- 科目分類變更 / 門檻變更
+- **分錄 UPDATE 覆蓋**（§6.2）：批次層級記一筆，明細寫 `jinxu_import_error`
+
+### 13.4 開發資安 Checklist（CLAUDE.md）
+
+- [x] 新端點加 `Depends(get_current_user)` 與 `require_permission`
+- [x] 不 hardcode 任何密鑰
+- [x] 使用者輸入用 Pydantic schema 驗證
+- [x] 全部 SQLAlchemy ORM，不拼接原始 SQL
+- [x] **上傳檔案驗證副檔名（`.xlsx`）與 MIME type**，並限制檔案大小上限（建議 20 MB）
+- [x] `openpyxl` 需注意 zip bomb 風險 → 檢查解壓後大小
+
+---
+
+## 14. 索引與效能
+
+寫入 `add_jinxu_tables.sql`（既有 DB 補索引用；新 DB 由 `create_all` 建立）：
+
+```sql
+-- 事實表：業務唯一鍵（覆蓋規則核心，§6.2 每列都要查）
+CREATE UNIQUE INDEX IF NOT EXISTS ix_jinxu_ledger_create_seq
+    ON jinxu_ledger_entry (create_seq);
+
+-- 事實表：最主要的查詢維度組合
+CREATE INDEX IF NOT EXISTS ix_jinxu_ledger_date_subject
+    ON jinxu_ledger_entry (business_date, subject_code);
+CREATE INDEX IF NOT EXISTS ix_jinxu_ledger_date_side
+    ON jinxu_ledger_entry (business_date, subject_side);
+CREATE INDEX IF NOT EXISTS ix_jinxu_ledger_booking
+    ON jinxu_ledger_entry (booking_no);
+CREATE INDEX IF NOT EXISTS ix_jinxu_ledger_batch
+    ON jinxu_ledger_entry (batch_id);
+CREATE INDEX IF NOT EXISTS ix_jinxu_ledger_room
+    ON jinxu_ledger_entry (room_no, business_date);
+CREATE INDEX IF NOT EXISTS ix_jinxu_ledger_operator
+    ON jinxu_ledger_entry (operator_id, business_date);
+
+-- 原始層
+CREATE INDEX IF NOT EXISTS ix_jinxu_raw_batch
+    ON jinxu_fcr02_raw (batch_id);
+CREATE INDEX IF NOT EXISTS ix_jinxu_raw_create_seq
+    ON jinxu_fcr02_raw (create_seq);
+
+-- 批次
+CREATE UNIQUE INDEX IF NOT EXISTS ix_jinxu_batch_sha256
+    ON jinxu_import_batch (file_sha256);
+CREATE INDEX IF NOT EXISTS ix_jinxu_batch_source_status
+    ON jinxu_import_batch (source_type, status);
+
+-- 錯誤
+CREATE INDEX IF NOT EXISTS ix_jinxu_error_batch
+    ON jinxu_import_error (batch_id, severity);
+
+-- 科目對照
+CREATE UNIQUE INDEX IF NOT EXISTS ix_jinxu_subject_code
+    ON jinxu_subject_map (subject_code);
+```
+
+**效能目標**（以實測 40,706 列為基準）：
+
+| 作業 | 目標 |
+|---|---|
+| 解析 + 驗證 2.8 MB xlsx | < 15 秒 |
+| 首次 commit（40,706 列全 INSERT） | < 60 秒 |
+| 重複上傳（40,706 列全 SKIP） | < 30 秒 |
+| Dashboard 各 API | < 1 秒 |
+| 分錄明細分頁查詢（每頁 50） | < 500 ms |
+
+> **重要**：匯入是重 I/O + CPU 作業。router 用同步 `def`，服務層用 `run_in_threadpool` 包裝，**絕不可在 `async def` 內直接 `db.query()`**（`project_async_def_blocking_fix` 事故）。批次寫入用 `bulk_insert_mappings`，每 1,000 列 flush 一次。
+
+---
+
+## 15. 開發階段規劃
+
+### 階段一：解析器與資料層
+
+- [ ] `jinxu_parser.py`：列分類、型別轉換、小計/總計抽取、正規化
+- [ ] `models/jinxu_import.py`、`models/jinxu_ledger.py`
+- [ ] `jinxu_subject_map` seed 資料（附錄 B）
+- [ ] `add_jinxu_tables.sql`
+- [ ] 單元測試：用實測 `FCR02.xlsx` 驗證列數與對帳
+
+**驗收**：解析實測檔得到 40,706 筆 DATA、2,900 筆 SUBTOTAL、1 筆 GRANDTOTAL，總計對帳 = -3,680,565。
+
+### 階段二：匯入流程與品質檢查
+
+- [ ] `jinxu_import_service.py`：validate / commit / rollback
+- [ ] §6.2 INSERT/UPDATE/SKIP 三分支邏輯
+- [ ] §8 品質檢查全部檢查碼
+- [ ] `routers/jinxu_import.py`
+
+**驗收**：同一檔案連續匯入兩次，第二次全部走 SKIP、`row_count_inserted = 0`。
+
+### 階段三：分析服務與 API
+
+- [ ] `jinxu_analysis_service.py`：科目分類、淨額、期間彙總
+- [ ] `routers/jinxu_revenue.py` / `jinxu_payment.py` / `jinxu_deposit.py`
+- [ ] Pydantic schemas
+
+**驗收**：`/revenue/by-subject` 的收入側合計與手算一致。
+
+### 階段四：前端頁面
+
+- [ ] `api/jinxu.ts`、`types/jinxu.ts`
+- [ ] Dashboard / Revenue / Payment / Deposit / Import / Settings
+- [ ] `LedgerEntryDrawer.tsx`（CLAUDE.md §7）
+- [ ] 模組註冊 §12 全部 10 項
+
+**驗收**：管理員能在「角色管理 → 權限設定」看到 6 個 key 並成功授權。
+
+### 階段五：訂房明細（`RESV_DETAIL`）
+
+> **拿到實檔後才開始**，本規格書不預先設計。屆時新增：`jinxu_resv_raw`、`jinxu_reservation`、對應 parser 分支、`/jinxu/reservation` 頁面，並補寫本規格書 §3 的實測剖析章節。
+
+---
+
+## 16. 測試與驗收標準
+
+### 16.1 解析器測試（`tests/test_jinxu_parser.py`）
+
+| 案例 | 預期 |
+|---|---|
+| 實測檔列類型統計 | DATA 40,706 / HEADER 2,900 / SUBTOTAL 2,900 / GRANDTOTAL 1 / BLANK 5,801 |
+| `create_seq` 唯一性 | 40,706 個相異值，零重複 |
+| 總計對帳 | Σ amount = -3,680,565 |
+| 小計對帳 | 2,900 組全數相符 |
+| `business_date` vs `created_date` | 19,020 筆不一致（46.7%），不視為錯誤 |
+| 科目數 | 35 個相異科目 |
+| 沖帳標記 | 收入類負值 953 筆 → `is_reversal = 1` |
+| 金額字串轉型 | `'-87,485.00'` → `-87485.0` |
+| 操作員正規化 | `'w100149'` 與 `' W100149'` → 同一個 `W100149` |
+| 房號正規化 | `'h0...'` 與 `'H0...'` → 同一個大寫值 |
+| 空檔案 / 只有表頭 | 不 crash，回 `FAIL` 並附明確訊息 |
+| 欄數不足的檔案 | 回 `FAIL`，不寫入任何資料 |
+
+### 16.2 匯入測試
+
+| 案例 | 預期 |
+|---|---|
+| 首次匯入 | inserted 40,706 / updated 0 / skipped 0 |
+| 同檔第二次匯入 | 檔案 SHA-256 重複 → **阻擋** |
+| 同資料不同檔名（重新匯出） | inserted 0 / updated 0 / **skipped 40,706** |
+| 部分資料被修改 | 該列 updated += 1，並產生 `ENTRY_UPDATED` WARNING |
+| 區間擴大的新檔（01-01～09-30） | 前 8 個月 skipped，新增月份 inserted |
+| 小計對不上 | `quality_result = FAIL`，DB 零寫入 |
+| commit 中途失敗 | transaction rollback，batch 標 `FAILED`，DB 零殘留 |
+
+### 16.3 數據對帳（用本次實測檔）
+
+匯入後在 Portal 上比對：
+
+| 項目 | 期望值 |
+|---|---|
+| 總筆數 | 40,706 |
+| 資料區間 | 2026-01-01 ～ 2026-08-05（217 個有資料的營業日） |
+| 全部金額合計 | -3,680,565 |
+| 收入側合計（01～67） | 167,703,222 |
+| 抵充側合計（71～95，絕對值） | 171,383,787 |
+| `01.房租` | 19,755 筆 / 141,418,270 |
+| `75.MASTER信用卡` | 3,434 筆 / -65,808,826 |
+| 相異房號（正規化後） | 158 |
+| 相異訂房號碼 | 5,992 |
+| 相異操作員（正規化後） | **19**（原始 27 個值大小寫合併後） |
+
+> 上表數字皆已用實測檔以程式驗證（2026-08-05）。注意 `收入側 + 抵充側 = -3,680,565`，與總計列吻合。
+> **正規化的影響**：原始 27 個操作員值大小寫合併後只剩 19 個、160 個房號合併後剩 158 個。驗收時若看到 27 / 160，代表正規化沒生效。
+
+### 16.4 前端驗收
+
+- 6 個頁面皆可正常載入，無 console error
+- 無權限的角色看不到「金旭分析」選單
+- 管理員在「角色管理 → 權限設定」可見全部 6 個 key
+- Drawer 標題列格式符合 CLAUDE.md §7
+- KPI 卡片為 4 欄 `size="small"`
+- 淨額／全部切換能正確改變數字與筆數
+- 沖帳列有紅色 `Tag` 標記
+
+### 16.5 資料庫驗收
+
+- `add_jinxu_tables.sql` 於既有 DB 執行後無錯誤，索引全數建立
+- `jinxu_ledger_entry.create_seq` 為 UNIQUE
+- 全新環境 `create_all` 能自動建立全部 5 張表
+
+---
+
+## 17. 已確認事項與待確認
+
+### 17.1 已確認（2026-08-05，業主決策）
+
+| # | 議題 | 決定 |
+|---|---|---|
+| J1 | 資料粒度歸屬 | FCR02 **不對應** OPERA 的 Departure 或 History_Forecast，自成「交易分錄層」；後續的「訂房明細資料」才對應 Departure（§2.1） |
+| J2 | 匯入方式 | 人工從金旭匯出 xlsx 上傳，**每次匯出整段區間**，不做自動排程 |
+| J3 | 重複鍵處理 | `create_seq` 撞鍵時 **UPDATE 覆蓋**（內容相同則 SKIP），並記錄變更軌跡（§6.2） |
+| J4 | 多來源架構 | `source_type` 一開始就設計為可擴充，預留 `RESV_DETAIL` |
+| J5 | Dashboard 主軸 | **收入結構分析**、**付款方式分析**、**預收訂金追蹤** 三軸 |
+| J6 | 沖帳處理 | **淨額計算**：統計數字正負相加自然抵銷；明細表保留原始兩筆並標記（§9.2） |
+
+### 17.2 待確認
+
+#### Q1. 「訂房明細資料」的實際格式（阻塞階段五）
+
+需要實際檔案才能定義 schema。需確認：欄位清單、是否同為 xlsx 分組報表、唯一鍵是什麼、能否用 `訂房號碼` 與 FCR02 join。
+
+#### Q2. 是否有更早年度的資料？（影響 YoY）
+
+實測檔只有 2026 年。**YoY 比較需要 2025 年資料**，否則 Dashboard 的同期比較永遠顯示「資料不足」。請確認金旭能否匯出 2025（甚至 2024）的 FCR02。
+
+#### Q3. 班別 X / Y / N 的正式定義（不阻塞，但影響班別分析）
+
+實測推論：X = 話務自動計費、Y = 洗衣、N = 轉帳作業（§3.10）。需財務確認，否則「班別交班分析」的口徑會錯。**確認前，班別分析頁面只呈現 A/B/C/D 並標註「已排除系統作業班別」。**
+
+#### Q4. 房號 `H0` / `M0` / `OT` / `RV` 的語意（不阻塞）
+
+實測共 1,607 筆（佔 3.9%）。可能是宴會廳、外賣、其他部門或虛擬房號。確認前一律歸 `room_kind = 'OTHER'`，不丟棄、不混入客房統計。
+
+#### Q5. 信用卡手續費資料來源（影響付款方式分析深度）
+
+FCR02 只有刷卡總額，無手續費。若要算「淨收」需另外提供各卡別費率或月結單。**未提供前，付款方式分析只呈現總額，不呈現淨收。**
+
+#### Q6. 預收訂金逐筆配對規則（影響主軸三深度）
+
+實測 `81A` 列的 `單據號碼` 與 `應收代碼` 值相同（如 `2608020001`），看似可回溯對應的 `64A` 列，但 `64A` 側的覆蓋率待驗證。需財務說明配對規則，才能做「逐筆未沖明細」。**未確認前只做總額層級的發生／沖銷比較。**
+
+#### Q7. `備註` 欄是否可能含個資（資安）
+
+實測未見個人姓名，但這是自由文字欄。若財務確認可能有，需另立遮罩規則。
+
+#### Q8. `39.轉帳` 與 `67.換房` 金額恆為 0 的語意（不阻塞）
+
+實測 `39.轉帳` 204 筆、`67.換房` 381 筆、`61.弈夢空間` 2 筆，金額全為 0。推測是純記錄性分錄。分析時應排除於「收入」統計外，但需確認。
+
+---
+
+## 附錄 A：FCR02 欄位對照表
+
+| # | xlsx 欄位（原文） | raw 欄位 | 事實表欄位 | 型別 | 正規化 | 說明 |
+|---:|---|---|---|---|---|---|
+| 1 | 日期 | `date_text` | `business_date` | String(10) | `YYYYMMDD` → ISO | **營業日，統計歸期唯一依據** |
+| 2 | 建檔時間 | `create_seq_text` | `create_seq` | String(20) | 原文 | **唯一鍵**，`YYYYMMDD-HHMMSSNN` |
+| — | — | — | `created_date` | String(10) | 前 8 碼 → ISO | 僅供稽核，**不可歸期** |
+| 3 | 班別 | `shift_text` | `shift` | String(2) | `.strip().upper()` | A/B/C/D/X/Y/N |
+| — | — | — | `is_manual_shift` | Integer | 推導 | A/B/C/D=1，X/Y/N=0 |
+| 4 | ` ID` | `operator_text` | `operator_id` | String(20) | `.strip().upper()` | 表頭有前導空格；值大小寫混用 |
+| 5 | 房號 | `room_no_text` | `room_no` | String(20) | `.strip().upper()` | |
+| — | — | — | `room_kind` | String(10) | 推導 | 前 2 碼為數字→`GUEST`，否則 `OTHER` |
+| 6 | 帳單名稱 | `folio_name_text` | `folio_name` | String(100) | `.strip()` | 格式 `{序號}-{標籤}` |
+| — | — | — | `folio_seq` | Integer | 推導 | `-` 前數字，無法解析存 NULL |
+| 7 | 科目 | `subject_text` | `subject_code` | String(10) | `.` 前段 | 如 `01`、`81A` |
+| — | — | — | `subject_name` | String(50) | `.` 後段 | 如 `房租` |
+| — | — | — | `subject_side` | String(10) | 查表/推導 | `REVENUE` / `SETTLEMENT` |
+| — | — | — | `subject_group` | String(20) | 查表 | 見 附錄 B |
+| 8 | 金額 | `amount_text` | `amount` | Numeric(14,2) | 資料列 int 直轉 | 有號 |
+| — | — | — | `is_reversal` | Integer | 推導 | `REVENUE` 且 `amount<0` → 1 |
+| 9 | 單據號碼 | `document_no_text` | `document_no` | String(30) | `.strip()` | 92.4% 空 |
+| 10 | 應收代碼 | `ar_code_text` | `ar_code` | String(50) | `.strip()` | 79.3% 空 |
+| 11 | 備註 | `remark_text` | `remark` | String(255) | `.strip()` | 47.7% 空；自由文字 |
+| 12 | 轉帳 | `transfer_text` | `transfer_no` | String(30) | `.strip()` | 74.7% 空 |
+| 13 | 訂房號碼 | `booking_no_text` | `booking_no` | String(20) | `.strip()` | **未來 join `RESV_DETAIL` 的鍵** |
+| 14 | 帳單別 | `folio_type_text` | `folio_type` | String(20) | `.strip()` | AUTO/一般/私帳/公帳 |
+
+---
+
+## 附錄 B：科目分類對照表
+
+`jinxu_subject_map` 的 seed 資料。**以科目代碼為準，中文名稱僅供顯示。**
+
+### 收入側（`side = REVENUE`）
+
+| `subject_code` | `subject_name` | `group_code` | 大類中文 | `sort_order` |
+|---|---|---|---|---:|
+| `01` | 房租 | `ROOM` | 房費 | 10 |
+| `01A` | 客房加價 | `ROOM` | 房費 | 11 |
+| `04` | 加床費 | `ROOM` | 房費 | 12 |
+| `67` | 換房 | `ROOM` | 房費 | 13 |
+| `02` | 服務費 | `SERVICE` | 加值服務 | 20 |
+| `05` | 車資 | `SERVICE` | 加值服務 | 21 |
+| `06` | 影印費 | `SERVICE` | 加值服務 | 22 |
+| `09` | 洗衣費 | `SERVICE` | 加值服務 | 23 |
+| `13` | 自助洗衣費 | `SERVICE` | 加值服務 | 24 |
+| `46` | Hannahspring | `SERVICE` | 加值服務 | 25 |
+| `50` | 可見即可售 | `SERVICE` | 加值服務 | 26 |
+| `61` | 弈夢空間 | `SERVICE` | 加值服務 | 27 |
+| `62` | 弈夢紅樓 | `SERVICE` | 加值服務 | 28 |
+| `10` | 市內電話 | `TELECOM` | 通訊 | 30 |
+| `11` | 長途電話 | `TELECOM` | 通訊 | 31 |
+| `12` | 國際電話 | `TELECOM` | 通訊 | 32 |
+| `64` | 預收訂金(開) | `DEPOSIT_IN` | 預收訂金 | 40 |
+| `64A` | 預收訂金(不開) | `DEPOSIT_IN` | 預收訂金 | 41 |
+| `14` | 雜項 | `OTHER_REV` | 其他 | 50 |
+| `39` | 轉帳 | `OTHER_REV` | 其他 | 51 |
+| `66` | 代支 | `OTHER_REV` | 其他 | 52 |
+
+### 抵充側（`side = SETTLEMENT`）
+
+| `subject_code` | `subject_name` | `group_code` | 大類中文 | `sort_order` |
+|---|---|---|---|---:|
+| `73` | AE信用卡 | `CARD` | 信用卡 | 60 |
+| `74` | VISA信用卡 | `CARD` | 信用卡 | 61 |
+| `75` | MASTER信用卡 | `CARD` | 信用卡 | 62 |
+| `77` | JCB信用卡 | `CARD` | 信用卡 | 63 |
+| `78` | 聯合信用卡 | `CARD` | 信用卡 | 64 |
+| `79` | 銀聯卡 | `CARD` | 信用卡 | 65 |
+| `71A` | 電匯 | `EPAY` | 電子支付 | 70 |
+| `71B` | 線上授權-LINK PAY | `EPAY` | 電子支付 | 71 |
+| `71` | 現金 | `CASH` | 現金 | 80 |
+| `81` | 沖預收訂金(已開) | `DEPOSIT_OUT` | 預收訂金 | 90 |
+| `81A` | 沖預收訂金(要開) | `DEPOSIT_OUT` | 預收訂金 | 91 |
+| `86` | 外客簽帳(不開發票) | `AR` | 簽帳 | 100 |
+| `86A` | 外客簽帳(開立發票) | `AR` | 簽帳 | 101 |
+| `95` | 信託禮券 | `OTHER_SET` | 其他 | 110 |
+
+### 特殊值
+
+| `group_code` | 用途 |
+|---|---|
+| `UNCLASSIFIED` | 匯入時遇到未登錄的科目代碼，自動歸此類並發 WARNING（§5.5） |
+
+---
+
+## 附錄 C：關鍵設計決策
+
+| # | 決策 | 理由 |
+|---|---|---|
+| C1 | FCR02 自成「交易分錄層」，不套用 `opera_departure_stay` 設計 | 粒度差 6.8 倍，套用會讓同一訂房的不同科目互相覆蓋（§2.2） |
+| C2 | `create_seq`（建檔時間）當唯一鍵，不自建 hash key | 實測 100% 唯一，比 OPERA 的 `record_key` + `weak_key` 機制簡單得多（§3.2） |
+| C3 | 不設 `is_current` 版本欄，改用 UPDATE 覆蓋 | 分錄一經產生內容不應變動；若變動代表金旭端修正，覆蓋才是正確語意（§6.2） |
+| C4 | `row_hash` 相同即 SKIP | 使用者每次匯出整段區間，99%+ 的列是重複的，避免 40,000 次無謂 UPDATE（§6.2） |
+| C5 | 用 `business_date` 歸期，不用 `create_seq` 前 8 碼 | 實測 46.7% 兩者不同（夜稽跨日），用錯會讓近半資料歸錯日（§3.3） |
+| C6 | 沖帳判定用「收入類 + 負值」，不用備註字串 | 實測 186 筆沖帳沒寫備註，只靠字串會漏（§3.8） |
+| C7 | 科目分類存 DB 不寫死 | 金旭可能新增科目，寫死會導致每次都要改程式碼重新部署（§5.5） |
+| C8 | 未知科目不拒絕該列，改發 WARNING | 財務資料寧可先進來再分類，拒絕會造成對帳失敗（§5.5） |
+| C9 | 對帳失敗整批 FAIL，不提供強制覆寫 | FCR02 是財務數字，對不上一定有問題，不可放行（§8） |
+| C10 | 用 `openpyxl` read-only，不用 pandas | pandas 的型別推斷會破壞 `建檔時間` 字串鍵，且整檔載入記憶體（§4.2） |
+| C11 | 不與 OPERA 數字交叉驗算 | 兩套 PMS 口徑不同，強行對帳只會製造假警報（§2.3） |
+| C12 | `jinxu_fcr02_raw` 永不覆蓋，只有事實表 UPDATE | 保留完整稽核軌跡，財務可回溯任一批次的原始內容（§6.2） |
+
+---
+
+**文件結束**

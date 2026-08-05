@@ -84,7 +84,8 @@ def get_stay(
 
 # ── 維度統計（雙口徑）─────────────────────────────────────────────────────────
 
-@router.get("/dimension/{dimension}", summary="維度統計（channel/room_category/rate_code/company/payment）")
+@router.get("/dimension/{dimension}",
+            summary="維度統計（channel/room_category/rate_code/company/payment/group）")
 def dimension_stats(
     dimension: str,
     start: str | None = Query(None),
@@ -92,6 +93,8 @@ def dimension_stats(
     property_code: str = Query(""),
     basis: str = Query(AS.BASIS_ROOM),
     limit: int = Query(0, ge=0, le=200, description="0 = 不限制"),
+    min_nights: int = Query(0, ge=0, le=365, description="只計住宿晚數 ≥ 此值（長住拆解用）"),
+    exclude_person: bool = Query(True, description="僅 dimension=group 有效：排除疑似個人訂房"),
     db: Session = Depends(get_db),
     _: User = Depends(require_permission("opera_guest_view")),
 ):
@@ -102,7 +105,99 @@ def dimension_stats(
             detail=f"不支援的維度：{dimension}（可用：{'、'.join(AS.DIMENSION_COLUMNS)}）",
         )
     s, e = _resolve_range(db, start, end, property_code)
-    return AS.get_dimension_stats(db, dimension, s, e, property_code, basis, limit)
+    return AS.get_dimension_stats(
+        db, dimension, s, e, property_code, basis, limit,
+        min_nights=min_nights, exclude_person=exclude_person,
+    )
+
+
+@router.get("/payment", summary="付款方式統計")
+def payment_stats(
+    start: str | None = Query(None), end: str | None = Query(None),
+    property_code: str = Query(""), basis: str = Query(AS.BASIS_ROOM),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_permission("opera_guest_view")),
+):
+    _check_basis(basis)
+    s, e = _resolve_range(db, start, end, property_code)
+    return AS.get_dimension_stats(db, "payment", s, e, property_code, basis)
+
+
+@router.get("/group", summary="團體統計（自動剝除 OTA 訂房參考號並排除個人訂房）")
+def group_stats(
+    start: str | None = Query(None), end: str | None = Query(None),
+    property_code: str = Query(""), basis: str = Query(AS.BASIS_ROOM),
+    limit: int = Query(0, ge=0, le=200),
+    exclude_person: bool = Query(True),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_permission("opera_guest_view")),
+):
+    _check_basis(basis)
+    s, e = _resolve_range(db, start, end, property_code)
+    return AS.get_dimension_stats(
+        db, "group", s, e, property_code, basis, limit, exclude_person=exclude_person,
+    )
+
+
+@router.get("/room-usage", summary="房號使用分析（含疑似停用推論）")
+def room_usage(
+    start: str | None = Query(None), end: str | None = Query(None),
+    property_code: str = Query(""), basis: str = Query(AS.BASIS_ROOM),
+    inactive_months: int = Query(3, ge=1, le=24, description="連續幾個月零銷售視為疑似停用"),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_permission("opera_guest_view")),
+):
+    _check_basis(basis)
+    s, e = _resolve_range(db, start, end, property_code)
+    return AS.get_room_usage(db, s, e, property_code, basis, inactive_months)
+
+
+@router.get("/guest-mix", summary="客群結構：每房人數分布與家庭客分析")
+def guest_mix(
+    start: str | None = Query(None), end: str | None = Query(None),
+    property_code: str = Query(""), basis: str = Query(AS.BASIS_ROOM),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_permission("opera_guest_view")),
+):
+    _check_basis(basis)
+    s, e = _resolve_range(db, start, end, property_code)
+    return AS.get_guest_mix(db, s, e, property_code, basis)
+
+
+@router.get("/checkout-time", summary="退房時間分布（櫃台／房務人力安排用）")
+def checkout_time(
+    start: str | None = Query(None), end: str | None = Query(None),
+    property_code: str = Query(""), basis: str = Query(AS.BASIS_ROOM),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_permission("opera_guest_view")),
+):
+    _check_basis(basis)
+    s, e = _resolve_range(db, start, end, property_code)
+    return AS.get_checkout_time_distribution(db, s, e, property_code, basis)
+
+
+@router.get("/weekday", summary="入退房星期分布（到店／離店事件，非在住房晚）")
+def stay_weekday(
+    start: str | None = Query(None), end: str | None = Query(None),
+    property_code: str = Query(""), basis: str = Query(AS.BASIS_ROOM),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_permission("opera_guest_view")),
+):
+    _check_basis(basis)
+    s, e = _resolve_range(db, start, end, property_code)
+    return AS.get_stay_weekday(db, s, e, property_code, basis)
+
+
+@router.get("/los-buckets", summary="住宿天數（LOS）分桶")
+def los_buckets(
+    start: str | None = Query(None), end: str | None = Query(None),
+    property_code: str = Query(""), basis: str = Query(AS.BASIS_ROOM),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_permission("opera_guest_view")),
+):
+    _check_basis(basis)
+    s, e = _resolve_range(db, start, end, property_code)
+    return AS.get_los_buckets(db, s, e, property_code, basis)
 
 
 # 為了前端可讀性另外提供具名捷徑（行為等同 /dimension/{name}）

@@ -89,6 +89,7 @@ export const NAV_GROUP = {
   nichiyoClaimReport:     '日曜請款月報表',    // ← 日曜核准請款單月報表
   cyclePurchase:          '週採',              // ← 新增：週期採購管理（2026-07-10，獨立資料庫 cycle-purchase.db）
   opera:                  '營運分析',          // ← 新增：OPERA 營運分析（2026-08-04，檔案上傳型模組，非 Ragic 同步）
+  jinxu:                  '金旭分析',          // ← 新增：金旭 PMS 分析（2026-08-05，第二個檔案上傳型模組，與 /opera 完全獨立）
 } as const
 
 // ── 二級選單（頁面） ──────────────────────────────────────────────────────────
@@ -268,6 +269,26 @@ export const NAV_PAGE = {
   operaRevenue:    '營收分析',              // ← route /opera/revenue
   operaGuest:      '住客與通路分析',        // ← route /opera/guest
   operaImport:     '資料匯入',              // ← route /opera/import
-  operaBatches:    '匯入紀錄',              // ← route /opera/batches（共用 opera_view 權限）
+  // 2026-08-04：匯入紀錄併入「資料匯入」頁的 TAB，不再是獨立選單項；
+  // 標籤保留給 TAB 標題與 /opera/batches 導向後的頁面使用。
+  operaBatches:    '匯入紀錄',              // ← /opera/import?tab=batches
+  operaLookup:     '歷史同期查詢',          // ← route /opera/lookup（2026-08-05 新增）
+  operaForecast:   '房價預測',              // ← route /opera/forecast（2026-08-05 新增）
+  // 2026-08-05：事件月曆併入房價預測頁的 TAB，選單不再有獨立項目。
+  // 標籤保留給 TAB 標題、權限清單與 /opera/events 導向後的頁面使用。
+  operaEvents:     '事件月曆',              // ← /opera/forecast?tab=events
   operaSettings:   '分析門檻設定',          // ← route /opera/settings
+  operaManual:     '使用手冊',              // ← route /opera/manual（共用 opera_view 權限）
+
+  // ── 金旭分析（2026-08-05 新增）────────────────────────────────────────────
+  // ⚠️ 下列名稱必須與 backend/app/routers/role_permissions.py 的 PERMISSION_DEFINITIONS
+  //    label 完全一致，否則管理員在「權限設定」看到的名稱會與側邊欄不同。
+  jinxuDashboard:   '★ 金旭分析 Dashboard',  // ← route /jinxu/dashboard
+  jinxuReservation: '訂房與通路分析',        // ← route /jinxu/reservation
+  jinxuRevenue:     '收入結構分析',          // ← route /jinxu/revenue
+  jinxuPayment:     '付款方式分析',          // ← route /jinxu/payment
+  jinxuDeposit:     '預收訂金追蹤',          // ← route /jinxu/deposit
+  jinxuImport:      '資料匯入',              // ← route /jinxu/import（含匯入紀錄 TAB）
+  jinxuSettings:    '科目與門檻設定',        // ← route /jinxu/settings
+  jinxuManual:      '使用手冊',              // ← route /jinxu/manual（共用 jinxu_view 權限）
 } as const

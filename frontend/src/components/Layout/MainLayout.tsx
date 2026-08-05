@@ -9,6 +9,8 @@ import { useIdleTimeout } from '@/hooks/useIdleTimeout'
 import {
   ApartmentOutlined,
   DashboardOutlined,
+  HistoryOutlined,
+  LineChartOutlined,
   CalendarOutlined,
   HomeOutlined,
   ShopOutlined,
@@ -394,8 +396,41 @@ export const menuItems: MenuItem[] = [
       { key: '/opera/revenue',   icon: <BarChartOutlined />,  label: NAV_PAGE.operaRevenue,   permissionKey: 'opera_revenue_view' },
       { key: '/opera/guest',     icon: <TeamOutlined />,      label: NAV_PAGE.operaGuest,     permissionKey: 'opera_guest_view'   },
       { key: '/opera/import',    icon: <UploadOutlined />,    label: NAV_PAGE.operaImport,    permissionKey: 'opera_import'       },
-      { key: '/opera/batches',   icon: <DatabaseOutlined />,  label: NAV_PAGE.operaBatches,   permissionKey: 'opera_view'         },
+      // 2026-08-04：「匯入紀錄」併入「資料匯入」頁的 TAB，選單不再另立一項。
+      // /opera/batches 路由仍保留（導向 /opera/import?tab=batches），舊書籤不會壞。
+      // ── 房價預測（2026-08-05）：歷史同期查詢共用 opera_view（純唯讀歷史事實）──
+      { key: '/opera/lookup',    icon: <HistoryOutlined />,   label: NAV_PAGE.operaLookup,    permissionKey: 'opera_view'          },
+      { key: '/opera/forecast',  icon: <LineChartOutlined />, label: NAV_PAGE.operaForecast,  permissionKey: 'opera_forecast_view' },
+      // 2026-08-05：「事件月曆」併入 /opera/forecast 的 TAB，故不再列於選單。
+      //   /opera/events 路由仍保留（導向 /opera/forecast?tab=events），舊書籤不會壞。
       { key: '/opera/settings',  icon: <SettingOutlined />,   label: NAV_PAGE.operaSettings,  permissionKey: 'opera_admin'        },
+      { key: '/opera/manual',    icon: <ReadOutlined />,      label: NAV_PAGE.operaManual,    permissionKey: 'opera_view'         },
+    ],
+  },
+  // ── 金旭分析 ─────────────────────────────────────────────────────────────
+  // 2026-08-05 新增。Portal 第二個「檔案上傳型」資料模組（人工上傳金旭 xlsx：
+  // FCR02 客帳帳目明細表 + 訂房狀況表），不走 Ragic 同步。
+  // 路由前綴 /jinxu/*，與 /opera/* 完全獨立、不共用任何端點或資料表（業主指定）。
+  // 位置：緊接營運分析之後，兩個 PMS 分析模組相鄰。
+  //
+  // ⚠️ 「取消與訂價落差分析」（jinxu_cancel_view）刻意不列於此——它是
+  //    /jinxu/reservation 頁的 TAB 而非獨立路由，但仍登錄於 PERMISSION_DEFINITIONS，
+  //    否則管理員無從授權。
+  {
+    key: 'jinxu',
+    icon: <FundOutlined />,
+    label: NAV_GROUP.jinxu,
+    permissionKey: 'jinxu_view',
+    children: [
+      { key: '/jinxu/dashboard',   icon: <DashboardOutlined />, label: NAV_PAGE.jinxuDashboard,   permissionKey: 'jinxu_view'         },
+      { key: '/jinxu/reservation', icon: <TeamOutlined />,      label: NAV_PAGE.jinxuReservation, permissionKey: 'jinxu_resv_view'    },
+      { key: '/jinxu/revenue',     icon: <BarChartOutlined />,  label: NAV_PAGE.jinxuRevenue,     permissionKey: 'jinxu_revenue_view' },
+      { key: '/jinxu/payment',     icon: <LineChartOutlined />, label: NAV_PAGE.jinxuPayment,     permissionKey: 'jinxu_payment_view' },
+      { key: '/jinxu/deposit',     icon: <HistoryOutlined />,   label: NAV_PAGE.jinxuDeposit,     permissionKey: 'jinxu_deposit_view' },
+      { key: '/jinxu/import',      icon: <UploadOutlined />,    label: NAV_PAGE.jinxuImport,      permissionKey: 'jinxu_import'       },
+      { key: '/jinxu/settings',    icon: <SettingOutlined />,   label: NAV_PAGE.jinxuSettings,    permissionKey: 'jinxu_admin'        },
+      // 使用手冊共用 jinxu_view：純唯讀說明頁，另開 key 只會讓權限清單變長而無實質區隔
+      { key: '/jinxu/manual',      icon: <ReadOutlined />,      label: NAV_PAGE.jinxuManual,      permissionKey: 'jinxu_view'         },
     ],
   },
   {

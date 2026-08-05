@@ -1234,11 +1234,13 @@ def compute_fee_stats(all_cases: list[RepairCase], year: int) -> dict:
     }
     fee_totals["deduction_counter"] = len(_annual_fee_stores)  # 整數，全年唯一家數
 
-    # 月份小計（僅加金額類，排除家數欄位 deduction_counter）
+    # 月份小計 = 委外費用 + 維修費用
+    # 排除 deduction_fee（扣款費用不計入小計）與 deduction_counter（家數非金額）
+    _SUBTOTAL_KEYS = ["outsource_fee", "maintenance_fee"]
     month_totals = {
-        m: round(sum(monthly_totals[m][fk] for fk in _MONEY_KEYS), 2) for m in range(1, 13)
+        m: round(sum(monthly_totals[m][fk] for fk in _SUBTOTAL_KEYS), 2) for m in range(1, 13)
     }
-    grand_total = round(sum(fee_totals[fk] for fk in _MONEY_KEYS), 2)
+    grand_total = round(sum(fee_totals[fk] for fk in _SUBTOTAL_KEYS), 2)
 
     return {
         "year": year,

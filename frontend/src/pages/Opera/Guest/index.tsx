@@ -8,8 +8,8 @@
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import {
-  Alert, Button, Card, Col, DatePicker, Empty, Input, Radio, Row, Select,
-  Space, Spin, Table, Tabs, Tag, Tooltip, Typography, message,
+  Alert, Button, Card, Col,  Empty, Input, Radio, Row, Select,
+  Space, Spin, Switch, Table, Tabs, Tag, Tooltip, Typography, message,
 } from 'antd'
 import { InfoCircleOutlined, ReloadOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
@@ -20,14 +20,17 @@ import {
 } from 'recharts'
 
 import {
-  fetchDimensionStats, fetchGuestFilterOptions, fetchLongStay,
-  fetchRepeatGuests, fetchStayDetail, fetchStays,
+  fetchCheckoutTime, fetchDimensionStats, fetchGuestFilterOptions, fetchGuestMix,
+  fetchLongStay, fetchLosBuckets, fetchRepeatGuests, fetchRoomUsage, fetchStayDetail,
+  fetchStays, fetchStayWeekday,
 } from '@/api/opera'
-import type { OperaDimension } from '@/api/opera'
+import type { DimensionParams, OperaDimension } from '@/api/opera'
 import type {
-  DimensionResult, LongStayResult, OperaBasis,
-  RepeatGuestResult, StayRow,
+  CheckoutTimeResult, DimensionResult, GuestMixResult, LongStayResult, LosBucketResult,
+  OperaBasis, RepeatGuestResult, RoomUsageResult, StayRow, StayWeekdayResult,
 } from '@/types/opera'
+import BackToTop from '../components/BackToTop'
+import StandardRangePicker from '@/components/StandardRangePicker'
 import StayDetailDrawer from '../components/StayDetailDrawer'
 import {
   ACCENT, BRAND, CHART_COLORS, EMPTY, GREEN, ORANGE, RED,
@@ -35,7 +38,6 @@ import {
 } from '../components/formatters'
 
 const { Title, Text } = Typography
-const { RangePicker } = DatePicker
 
 const SOURCE_NOTE = '資料來源：Departure All'
 const CHART_HEIGHT = 300
@@ -53,6 +55,8 @@ const BASIS_TIP = (
 const OperaGuestPage: React.FC = () => {
   const [tab, setTab] = useState('stays')
   const [range, setRange] = useState<[Dayjs, Dayjs] | null>(null)
+  // 快捷區間的錨點 = Departure 的資料最後一天（本頁資料來源是 Departure）
+  const [dataEnd, setDataEnd] = useState<string>('')
   const [basis, setBasis] = useState<OperaBasis>('room')
   const [loading, setLoading] = useState(false)
 
@@ -72,6 +76,17 @@ const OperaGuestPage: React.FC = () => {
   const [dimData, setDimData] = useState<Record<string, DimensionResult | null>>({})
   const [repeat, setRepeat] = useState<RepeatGuestResult | null>(null)
   const [longStay, setLongStay] = useState<LongStayResult | null>(null)
+  const [losBuckets, setLosBuckets] = useState<LosBucketResult | null>(null)
+  const [excludePerson, setExcludePerson] = useState(true)
+  /** 長住拆解：依 Rate Code／通路／房型 */
+  const [longStaySplit, setLongStaySplit] = useState<Record<string, DimensionResult | null>>({})
+  /** 作業排程 TAB：退房時間分布 + 入退房星期 */
+  const [checkoutTime, setCheckoutTime] = useState<CheckoutTimeResult | null>(null)
+  const [stayWeekday, setStayWeekday] = useState<StayWeekdayResult | null>(null)
+  /** 房號使用 TAB */
+  const [roomUsage, setRoomUsage] = useState<RoomUsageResult | null>(null)
+  /** 客群結構（併在房型 TAB 內） */
+  const [guestMix, setGuestMix] = useState<GuestMixResult | null>(null)
 
   const [drawerStay, setDrawerStay] = useState<StayRow | null>(null)
   const [drawerOpen, setDrawerOpen] = useState(false)
@@ -87,6 +102,7 @@ const OperaGuestPage: React.FC = () => {
       try {
         const opt = await fetchGuestFilterOptions()
         setOptions({ channel: opt.channel, room_category: opt.room_category, rate_code: opt.rate_code })
+        setDataEnd(opt.end)
         if (!range) setRange([dayjs(opt.start), dayjs(opt.end)])
       } catch {
         /* 靜默：主畫面仍可運作 */
@@ -114,14 +130,25 @@ const OperaGuestPage: React.FC = () => {
   const loadDimension = useCallback(async (dim: OperaDimension, limit = 0) => {
     setLoading(true)
     try {
-      const res = await fetchDimensionStats(dim, { ...rangeParams, basis, limit })
+      const extra: DimensionParams = { ...rangeParams, basis, limit }
+      if (dim === 'group') extra.exclude_person = excludePerson
+      const res = await fetchDimensionStats(dim, extra)
       setDimData((prev) => ({ ...prev, [dim]: res }))
+      // 房型 TAB 同時載入 LOS 分桶與客群結構（都是房型相關的判讀依據）
+      if (dim === 'room_category') {
+        const [lb, gm] = await Promise.all([
+          fetchLosBuckets({ ...rangeParams, basis }),
+          fetchGuestMix({ ...rangeParams, basis }),
+        ])
+        setLosBuckets(lb)
+        setGuestMix(gm)
+      }
     } catch (e: any) {
       message.error(e?.response?.data?.detail || '載入統計失敗')
     } finally {
       setLoading(false)
     }
-  }, [rangeParams, basis])
+  }, [rangeParams, basis, excludePerson])
 
   const loadGuestTab = useCallback(async () => {
     setLoading(true)
@@ -132,8 +159,43 @@ const OperaGuestPage: React.FC = () => {
       ])
       setRepeat(rp)
       setLongStay(ls)
+      // 長住拆解：用同一個門檻去打三個維度
+      const t = ls.threshold
+      const [byRate, byChannel, byCategory] = await Promise.all([
+        fetchDimensionStats('rate_code', { ...rangeParams, basis, min_nights: t, limit: 10 }),
+        fetchDimensionStats('channel', { ...rangeParams, basis, min_nights: t, limit: 10 }),
+        fetchDimensionStats('room_category', { ...rangeParams, basis, min_nights: t, limit: 10 }),
+      ])
+      setLongStaySplit({ rate_code: byRate, channel: byChannel, room_category: byCategory })
     } catch (e: any) {
       message.error(e?.response?.data?.detail || '載入住客統計失敗')
+    } finally {
+      setLoading(false)
+    }
+  }, [rangeParams, basis])
+
+  const loadOpsTab = useCallback(async () => {
+    setLoading(true)
+    try {
+      const [ct, sw] = await Promise.all([
+        fetchCheckoutTime({ ...rangeParams, basis }),
+        fetchStayWeekday({ ...rangeParams, basis }),
+      ])
+      setCheckoutTime(ct)
+      setStayWeekday(sw)
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail || '載入作業排程統計失敗')
+    } finally {
+      setLoading(false)
+    }
+  }, [rangeParams, basis])
+
+  const loadRoomUsage = useCallback(async () => {
+    setLoading(true)
+    try {
+      setRoomUsage(await fetchRoomUsage({ ...rangeParams, basis }))
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail || '載入房號使用分析失敗')
     } finally {
       setLoading(false)
     }
@@ -146,9 +208,13 @@ const OperaGuestPage: React.FC = () => {
     else if (tab === 'room_category') loadDimension('room_category')
     else if (tab === 'rate_code') loadDimension('rate_code', 15)
     else if (tab === 'company') loadDimension('company', 20)
+    else if (tab === 'payment') loadDimension('payment')
+    else if (tab === 'group') loadDimension('group', 30)
+    else if (tab === 'ops') loadOpsTab()
+    else if (tab === 'rooms') loadRoomUsage()
     else if (tab === 'guest') loadGuestTab()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, range, basis, page, pageSize, search, channelFilter, categoryFilter])
+  }, [tab, range, basis, page, pageSize, search, channelFilter, categoryFilter, excludePerson])
 
   const openStayDrawer = useCallback(async (row: StayRow) => {
     setDrawerStay(row)
@@ -242,18 +308,94 @@ const OperaGuestPage: React.FC = () => {
       rowKey="key"
       size="small"
       dataSource={data?.items || []}
+      scroll={{ x: 900 }}
       pagination={{ pageSize: 20, showSizeChanger: true, showTotal: (t) => `共 ${t} 項` }}
       columns={[
-        { title: data?.dimension_label || '項目', dataIndex: 'key', width: 240 },
+        { title: data?.dimension_label || '項目', dataIndex: 'key', width: 240, fixed: 'left' },
         { title: '訂房筆數', dataIndex: 'records', align: 'right', render: fmtInt, sorter: (a, b) => a.records - b.records },
         { title: '房晚', dataIndex: 'room_nights', align: 'right', render: fmtInt, sorter: (a, b) => a.room_nights - b.room_nights },
-        { title: '住宿晚數', dataIndex: 'nights', align: 'right', render: fmtInt },
+        {
+          title: (
+            <Tooltip title="平均住宿天數 = 房晚 ÷ 訂房筆數（以房數計時筆數即房數）">
+              <span>平均 LOS <InfoCircleOutlined style={{ color: ACCENT, fontSize: 11 }} /></span>
+            </Tooltip>
+          ),
+          dataIndex: 'avg_los',
+          align: 'right',
+          render: (v: number) => (v ? `${v.toFixed(2)} 晚` : EMPTY),
+          sorter: (a, b) => a.avg_los - b.avg_los,
+        },
+        {
+          title: (
+            <Tooltip title="住一晚就退房的訂房占該項目的比例；比例高代表房務翻房壓力大">
+              <span>一晚住宿占比 <InfoCircleOutlined style={{ color: ACCENT, fontSize: 11 }} /></span>
+            </Tooltip>
+          ),
+          dataIndex: 'one_night_share',
+          align: 'right',
+          render: (v: number, r) => (
+            <Tooltip title={`${fmtInt(r.one_night_records)} 筆 / ${fmtInt(r.records)} 筆`}>
+              <span>{fmtPct(v)}</span>
+            </Tooltip>
+          ),
+          sorter: (a, b) => a.one_night_share - b.one_night_share,
+        },
         { title: '成人', dataIndex: 'adults', align: 'right', render: fmtInt },
         { title: '占比', dataIndex: 'share', align: 'right', render: (v: number) => fmtPct(v) },
         { title: '累計占比', dataIndex: 'cumulative_share', align: 'right', render: (v: number) => fmtPct(v) },
       ]}
     />
   )
+
+  // ── C15：LOS 分桶（房型 TAB）────────────────────────────────────────────
+  const renderLosBuckets = () => {
+    if (!losBuckets || losBuckets.buckets.length === 0) return <Empty description="期間內無資料" />
+    return (
+      <>
+        <ResponsiveContainer width="100%" height={260}>
+          <BarChart data={losBuckets.buckets} margin={{ top: 20, right: 10, left: 0, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#eee" />
+            <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+            <YAxis tick={{ fontSize: 11 }} tickFormatter={(v: number) => v.toLocaleString('en-US')} />
+            <RcTooltip
+              formatter={(v: any, n: string) => [Number(v).toLocaleString('en-US'), n === 'records' ? '訂房筆數' : n]}
+            />
+            <Bar dataKey="records" name="訂房筆數" fill={BRAND}>
+              {losBuckets.buckets.map((b, i) => (
+                <Cell key={i} fill={b.is_long_stay ? ORANGE : BRAND} />
+              ))}
+              <LabelList
+                dataKey="records"
+                position="top"
+                formatter={(v: any) => Number(v).toLocaleString('en-US')}
+                style={{ fontSize: 11 }}
+              />
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+        <Text type="secondary" style={{ fontSize: 12 }}>
+          {`桶界依「分析門檻設定」的長住門檻 ${losBuckets.threshold} 晚推導，橘色為長住區間；`}
+          {`期間平均 LOS ${losBuckets.avg_los} 晚　${SOURCE_NOTE}`}
+        </Text>
+        <Table
+          size="small"
+          rowKey="label"
+          style={{ marginTop: 12 }}
+          pagination={false}
+          dataSource={losBuckets.buckets}
+          columns={[
+            {
+              title: '住宿天數', dataIndex: 'label', width: 120,
+              render: (v: string, r) => (r.is_long_stay ? <Tag color="orange">{v}</Tag> : v),
+            },
+            { title: '訂房筆數', dataIndex: 'records', align: 'right', render: fmtInt },
+            { title: '房晚', dataIndex: 'room_nights', align: 'right', render: fmtInt },
+            { title: '占比', dataIndex: 'share', align: 'right', render: (v: number) => fmtPct(v) },
+          ]}
+        />
+      </>
+    )
+  }
 
   // ── C10：房型圓餅 ───────────────────────────────────────────────────────
   const renderPie = (data: DimensionResult | null | undefined) => {
@@ -328,7 +470,7 @@ const OperaGuestPage: React.FC = () => {
           <Col>
             <Space wrap>
               {basisControl}
-              <RangePicker value={range} onChange={(v) => setRange(v as [Dayjs, Dayjs] | null)} allowClear={false} />
+              <StandardRangePicker value={range} anchor={dataEnd} onChange={setRange} />
               <Button icon={<ReloadOutlined />} onClick={() => setTab((t) => t)}>重新整理</Button>
             </Space>
           </Col>
@@ -425,7 +567,90 @@ const OperaGuestPage: React.FC = () => {
                   >
                     {renderPie(dimData.room_category)}
                   </Card>
-                  <Card size="small" title="房型統計">{dimensionTable(dimData.room_category)}</Card>
+                  <Card
+                    size="small"
+                    title="住宿天數（LOS）分佈"
+                    extra={<Text type="secondary" style={{ fontSize: 12 }}>{`${dimData.room_category?.basis_label || ''}　${SOURCE_NOTE}`}</Text>}
+                    style={{ marginBottom: 12 }}
+                  >
+                    {renderLosBuckets()}
+                  </Card>
+                  <Card size="small" title="房型統計" style={{ marginBottom: 12 }}>
+                    {dimensionTable(dimData.room_category)}
+                  </Card>
+
+                  {/* 客群結構：每房人數分布 + 家庭客房型偏好 —— 都是房型判讀的依據，故併在同一 TAB */}
+                  <Row gutter={[12, 12]}>
+                    <Col xs={24} lg={10}>
+                      <Card size="small" title="每房人數分布">
+                        {!guestMix || guestMix.distribution.length === 0 ? <Empty description="無資料" /> : (
+                          <>
+                            <ResponsiveContainer width="100%" height={230}>
+                              <BarChart data={guestMix.distribution} margin={{ top: 20, right: 10, left: 0, bottom: 0 }}>
+                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#eee" />
+                                <XAxis dataKey="pax" tick={{ fontSize: 11 }} />
+                                <YAxis tick={{ fontSize: 11 }} tickFormatter={(v: number) => v.toLocaleString('en-US')} />
+                                <RcTooltip
+                                  formatter={(v: any) => [Number(v).toLocaleString('en-US'), '筆數']}
+                                  labelFormatter={(l) => `${l} 人`}
+                                />
+                                <Bar dataKey="records" name="筆數" fill={BRAND}>
+                                  <LabelList dataKey="records" position="top" formatter={(v: any) => Number(v).toLocaleString('en-US')} style={{ fontSize: 10 }} />
+                                </Bar>
+                              </BarChart>
+                            </ResponsiveContainer>
+                            <Text type="secondary" style={{ fontSize: 12 }}>
+                              {`平均每房 ${guestMix.persons_per_room.toFixed(2)} 人。影響早餐備量、備品消耗與加床需求。　${SOURCE_NOTE}`}
+                            </Text>
+                          </>
+                        )}
+                      </Card>
+                    </Col>
+
+                    <Col xs={24} lg={14}>
+                      <Card
+                        size="small"
+                        title={`家庭客（帶兒童）房型偏好${guestMix ? `　${fmtInt(guestMix.family.records)} 筆／${fmtPct(guestMix.family.share)}` : ''}`}
+                      >
+                        {!guestMix || guestMix.family.records === 0 ? <Empty description="期間內無帶兒童的訂房" /> : (
+                          <>
+                            <Table
+                              rowKey="room_category"
+                              size="small"
+                              pagination={false}
+                              dataSource={guestMix.family.by_category}
+                              columns={[
+                                { title: '房型', dataIndex: 'room_category', width: 90 },
+                                { title: '家庭客筆數', dataIndex: 'family_records', align: 'right', render: fmtInt },
+                                { title: '該房型總筆數', dataIndex: 'total_records', align: 'right', render: fmtInt },
+                                { title: '家庭客占比', dataIndex: 'family_share', align: 'right', render: (v: number) => fmtPct(v) },
+                                {
+                                  title: (
+                                    <Tooltip title="該房型的家庭客占比 ÷ 全體家庭客占比。大於 1 代表家庭客特別偏好這個房型">
+                                      <span>集中度 <InfoCircleOutlined style={{ color: ACCENT, fontSize: 11 }} /></span>
+                                    </Tooltip>
+                                  ),
+                                  dataIndex: 'index',
+                                  align: 'right',
+                                  render: (v: number) => (
+                                    <Text strong style={{ color: v >= 2 ? ORANGE : v >= 1 ? GREEN : undefined }}>
+                                      {v.toFixed(2)}
+                                    </Text>
+                                  ),
+                                  sorter: (a, b) => a.index - b.index,
+                                  defaultSortOrder: 'descend',
+                                },
+                              ]}
+                            />
+                            <Text type="secondary" style={{ display: 'block', marginTop: 8, fontSize: 12 }}>
+                              {`家庭客平均住 ${guestMix.family.avg_los} 晚（全體 ${guestMix.family.overall_avg_los} 晚）、兒童共 ${fmtInt(guestMix.family.children)} 人。`}
+                              集中度高的房型可優先配置嬰兒床、加床與兒童備品。
+                            </Text>
+                          </>
+                        )}
+                      </Card>
+                    </Col>
+                  </Row>
                 </>
               ),
             },
@@ -471,6 +696,387 @@ const OperaGuestPage: React.FC = () => {
                     {renderHorizontalBar(dimData.company)}
                   </Card>
                   <Card size="small" title="公司統計">{dimensionTable(dimData.company)}</Card>
+                </>
+              ),
+            },
+
+            // ── 團體 ─────────────────────────────────────────────────────
+            {
+              key: 'group',
+              label: '團體',
+              children: (
+                <>
+                  <Alert
+                    type="info"
+                    showIcon
+                    style={{ marginBottom: 12 }}
+                    message="OPERA 的團體欄位混了兩種資料，系統已自動分離"
+                    description={
+                      <>
+                        <div style={{ lineHeight: 1.9 }}>
+                          實測 <Text strong>GROUP_NAME</Text> 欄位同時放了「真正的團體名稱」與
+                          「OTA 訂房參考號 + 訂房人姓名」。系統會先剝掉開頭的參考號
+                          （例如 <Text code>392298933 中山醫學大學</Text> → <Text code>中山醫學大學</Text>），
+                          再判斷剩下的是否為個人姓名格式。
+                        </div>
+                        {dimData.group?.person_records ? (
+                          <div style={{ marginTop: 6 }}>
+                            <Text type="secondary">
+                              {`目前排除了 ${fmtInt(dimData.group.person_records)} 筆疑似個人訂房；可用右側開關切換。`}
+                            </Text>
+                          </div>
+                        ) : null}
+                      </>
+                    }
+                    action={
+                      <Space direction="vertical" size={4}>
+                        <Switch
+                          size="small"
+                          checked={excludePerson}
+                          onChange={setExcludePerson}
+                          checkedChildren="只看團體"
+                          unCheckedChildren="全部顯示"
+                        />
+                      </Space>
+                    }
+                  />
+                  <Card
+                    size="small"
+                    title={excludePerson ? '團體貢獻（已排除個人訂房）' : '團體貢獻（含疑似個人訂房）'}
+                    extra={<Text type="secondary" style={{ fontSize: 12 }}>{`${dimData.group?.basis_label || ''}　${SOURCE_NOTE}`}</Text>}
+                    style={{ marginBottom: 12 }}
+                  >
+                    {renderHorizontalBar(dimData.group)}
+                  </Card>
+                  <Card size="small" title="團體統計">{dimensionTable(dimData.group)}</Card>
+                  <Alert
+                    type="warning"
+                    showIcon
+                    style={{ marginTop: 12 }}
+                    message="這裡的數字是 Departure 的產量，不是團體營收"
+                    description="團體 vs 散客的營收與房晚請看「★ 營運分析 Dashboard」的「散客 vs 團體」（來源是 History and Forecast，數字才是準的）。Departure 無法把房間營收精確歸到個別團體。"
+                  />
+                </>
+              ),
+            },
+
+            // ── 付款方式 ─────────────────────────────────────────────────
+            {
+              key: 'payment',
+              label: '付款方式',
+              children: (
+                <>
+                  <Card
+                    size="small"
+                    title="付款方式占比"
+                    extra={<Text type="secondary" style={{ fontSize: 12 }}>{`${dimData.payment?.basis_label || ''}　${SOURCE_NOTE}`}</Text>}
+                    style={{ marginBottom: 12 }}
+                  >
+                    {renderPie(dimData.payment)}
+                  </Card>
+                  <Card size="small" title="付款方式統計">{dimensionTable(dimData.payment)}</Card>
+                  <Alert
+                    type="warning"
+                    showIcon
+                    style={{ marginTop: 12 }}
+                    message="PAYMENT_DESC 未必等於實際交易明細"
+                    description="這個欄位可能是訂單預設或結帳方式，不代表每一筆實際金流。金流稽核請使用 OPERA 的 Payment Transaction 報表。"
+                  />
+                </>
+              ),
+            },
+
+            // ── 房號使用 ─────────────────────────────────────────────────
+            {
+              key: 'rooms',
+              label: (
+                <span>
+                  房號使用
+                  {roomUsage && roomUsage.suspected_inactive_count > 0 && (
+                    <Tag color="red" style={{ marginLeft: 6 }}>{roomUsage.suspected_inactive_count}</Tag>
+                  )}
+                </span>
+              ),
+              children: (
+                <>
+                  <Alert
+                    type="warning"
+                    showIcon
+                    style={{ marginBottom: 12 }}
+                    message="「疑似停用」是推論，不是事實"
+                    description={roomUsage?.inference_note || ''}
+                  />
+
+                  {roomUsage && (
+                    <Row gutter={[12, 12]} style={{ marginBottom: 12 }}>
+                      {[
+                        { title: '房間數', value: `${fmtInt(roomUsage.room_count)} 間`, color: BRAND },
+                        { title: '平均每間銷售', value: `${roomUsage.avg_per_room} 次`, color: ACCENT },
+                        {
+                          title: '最忙 vs 最閒',
+                          value: roomUsage.spread_ratio ? `${roomUsage.spread_ratio} 倍` : EMPTY,
+                          color: ORANGE,
+                        },
+                        {
+                          title: `疑似停用（連續 ≥ ${roomUsage.inactive_months_threshold} 個月零銷售）`,
+                          value: `${fmtInt(roomUsage.suspected_inactive_count)} 間`,
+                          color: roomUsage.suspected_inactive_count > 0 ? RED : GREEN,
+                        },
+                      ].map((it) => (
+                        <Col xs={12} lg={6} key={it.title}>
+                          <Card size="small" bodyStyle={{ padding: '12px 16px' }} style={{ borderLeft: `3px solid ${it.color}` }}>
+                            <Text type="secondary" style={{ fontSize: 12 }}>{it.title}</Text>
+                            <div><Text strong style={{ fontSize: 20, color: it.color }}>{it.value}</Text></div>
+                          </Card>
+                        </Col>
+                      ))}
+                    </Row>
+                  )}
+
+                  <Card size="small" title="樓層使用比較" style={{ marginBottom: 12 }}>
+                    {!roomUsage || roomUsage.floors.length === 0 ? <Empty description="期間內無資料" /> : (
+                      <ResponsiveContainer width="100%" height={220}>
+                        <BarChart data={roomUsage.floors} margin={{ top: 20, right: 10, left: 0, bottom: 0 }}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#eee" />
+                          <XAxis dataKey="floor" tick={{ fontSize: 12 }} tickFormatter={(v: string) => `${v} 樓`} />
+                          <YAxis tick={{ fontSize: 11 }} />
+                          <RcTooltip
+                            formatter={(v: any) => [Number(v).toLocaleString('en-US'), '平均每間銷售次數']}
+                            labelFormatter={(l) => `${l} 樓`}
+                          />
+                          <ReferenceLine
+                            y={roomUsage.avg_per_room}
+                            stroke={RED}
+                            strokeDasharray="5 4"
+                            label={{ value: `全館平均 ${roomUsage.avg_per_room}`, position: 'right', fontSize: 11, fill: RED }}
+                          />
+                          <Bar dataKey="avg_per_room" name="平均每間銷售次數" fill={BRAND}>
+                            <LabelList dataKey="avg_per_room" position="top" style={{ fontSize: 11 }} />
+                          </Bar>
+                        </BarChart>
+                      </ResponsiveContainer>
+                    )}
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      用「平均每間」比較才公平（各樓層房間數不同）。　{SOURCE_NOTE}
+                    </Text>
+                  </Card>
+
+                  <Card size="small" title="房號逐月銷售（由少到多；■ = 該月有賣出、· = 該月完全沒賣）">
+                    <Table
+                      rowKey="room_no"
+                      size="small"
+                      dataSource={roomUsage?.rooms || []}
+                      scroll={{ x: 1100 }}
+                      pagination={{ pageSize: 20, showSizeChanger: true, showTotal: (t) => `共 ${t} 間` }}
+                      rowClassName={(r) => (r.suspected_inactive ? 'opera-room-inactive' : '')}
+                      columns={[
+                        {
+                          title: '房號', dataIndex: 'room_no', width: 90, fixed: 'left',
+                          render: (v: string, r) => (
+                            r.suspected_inactive
+                              ? <Tooltip title="末次銷售後連續多月零銷售"><Tag color="red">{v}</Tag></Tooltip>
+                              : <Text strong>{v}</Text>
+                          ),
+                        },
+                        { title: '樓層', dataIndex: 'floor', width: 70, render: (v: string) => `${v} 樓` },
+                        {
+                          title: '銷售次數', dataIndex: 'records', align: 'right', width: 100,
+                          render: fmtInt, sorter: (a, b) => a.records - b.records, defaultSortOrder: 'ascend',
+                        },
+                        {
+                          title: (
+                            <Tooltip title="該房銷售次數 ÷ 全館平均。0.5 代表只有平均的一半">
+                              <span>vs 平均 <InfoCircleOutlined style={{ color: ACCENT, fontSize: 11 }} /></span>
+                            </Tooltip>
+                          ),
+                          dataIndex: 'vs_avg', align: 'right', width: 100,
+                          render: (v: number) => (
+                            <Text style={{ color: v < 0.5 ? RED : v < 0.8 ? ORANGE : undefined }}>{`${v.toFixed(2)}x`}</Text>
+                          ),
+                          sorter: (a, b) => a.vs_avg - b.vs_avg,
+                        },
+                        {
+                          title: '逐月',
+                          dataIndex: 'monthly',
+                          width: 280,
+                          render: (v: number[]) => (
+                            <Tooltip title={(roomUsage?.months || []).map((m, i) => `${m}:${v[i]}`).join('  ')}>
+                              <Text code style={{ fontSize: 11, letterSpacing: 1 }}>
+                                {v.map((n) => (n > 0 ? '■' : '·')).join('')}
+                              </Text>
+                            </Tooltip>
+                          ),
+                        },
+                        { title: '零銷售月數', dataIndex: 'zero_months', align: 'right', width: 110, render: fmtInt },
+                        {
+                          title: (
+                            <Tooltip title="末次銷售之後連續幾個月完全沒賣，是判斷停用的主要依據">
+                              <span>末次後連零 <InfoCircleOutlined style={{ color: ACCENT, fontSize: 11 }} /></span>
+                            </Tooltip>
+                          ),
+                          dataIndex: 'trailing_zero_months', align: 'right', width: 120,
+                          render: (v: number) => (v > 0 ? <Text strong style={{ color: v >= 3 ? RED : ORANGE }}>{`${v} 個月`}</Text> : EMPTY),
+                          sorter: (a, b) => a.trailing_zero_months - b.trailing_zero_months,
+                        },
+                        {
+                          title: (
+                            <Tooltip title="該房零銷售、但全館住房率仍 ≥ 60% 的月份數。次數越多越不可能是「沒需求」">
+                              <span>高住房率仍零銷售 <InfoCircleOutlined style={{ color: ACCENT, fontSize: 11 }} /></span>
+                            </Tooltip>
+                          ),
+                          dataIndex: 'suspicious_zero_months', align: 'right', width: 150,
+                          render: (v: number) => (v > 0 ? <Text style={{ color: ORANGE }}>{`${v} 個月`}</Text> : EMPTY),
+                          sorter: (a, b) => a.suspicious_zero_months - b.suspicious_zero_months,
+                        },
+                        { title: '首次', dataIndex: 'first_month', width: 90 },
+                        { title: '末次', dataIndex: 'last_month', width: 90 },
+                      ]}
+                    />
+                    <Text type="secondary" style={{ display: 'block', marginTop: 8, fontSize: 12 }}>
+                      一間房若長期低於平均，可能是景觀、噪音、設備問題，或前台排房習慣。
+                      按每間房平均銷售 {roomUsage?.avg_per_room ?? '—'} 次估算，
+                      一間長期賣不掉的房，機會成本相當可觀——建議對照工程與房務紀錄逐間確認。
+                    </Text>
+                  </Card>
+                </>
+              ),
+            },
+
+            // ── 作業排程（退房時間 + 入退房星期）──────────────────────────
+            // 這兩個分析的用途相同（櫃台、房務、行李與交通的人力安排），
+            // 合成一個 TAB 比拆成兩個更好用，也避免 TAB 列過長。
+            {
+              key: 'ops',
+              label: '作業排程',
+              children: (
+                <>
+                  <Alert
+                    type="info"
+                    showIcon
+                    style={{ marginBottom: 12 }}
+                    message="這一頁是給櫃台、房務、行李與交通排班用的"
+                    description="退房時間看單日尖峰時段；入退房星期看一週的到店／離店節奏。兩者都是「事件」統計，不是各時段的在住房數。"
+                  />
+
+                  <Row gutter={[12, 12]}>
+                    {/* 退房時間分布 */}
+                    <Col xs={24} lg={12}>
+                      <Card
+                        size="small"
+                        title="退房時間分布"
+                        extra={<Text type="secondary" style={{ fontSize: 12 }}>{`${checkoutTime?.basis_label || ''}　${SOURCE_NOTE}`}</Text>}
+                      >
+                        {!checkoutTime || checkoutTime.total_records === 0 ? (
+                          <Empty description="期間內無資料" />
+                        ) : (
+                          <>
+                            <ResponsiveContainer width="100%" height={260}>
+                              <BarChart data={checkoutTime.buckets} margin={{ top: 20, right: 10, left: 0, bottom: 0 }}>
+                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#eee" />
+                                <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+                                <YAxis tick={{ fontSize: 11 }} tickFormatter={(v: number) => v.toLocaleString('en-US')} />
+                                <RcTooltip formatter={(v: any) => [Number(v).toLocaleString('en-US'), '筆數']} />
+                                <Bar dataKey="records" name="筆數" fill={BRAND}>
+                                  {checkoutTime.buckets.map((b, i) => (
+                                    <Cell key={i} fill={b.label === '缺值' ? '#bfbfbf' : b.label === '13 點後' ? ORANGE : BRAND} />
+                                  ))}
+                                  <LabelList
+                                    dataKey="records"
+                                    position="top"
+                                    formatter={(v: any) => Number(v).toLocaleString('en-US')}
+                                    style={{ fontSize: 11 }}
+                                  />
+                                </Bar>
+                              </BarChart>
+                            </ResponsiveContainer>
+                            <Table
+                              size="small"
+                              rowKey="label"
+                              pagination={false}
+                              style={{ marginTop: 8 }}
+                              dataSource={checkoutTime.buckets}
+                              columns={[
+                                {
+                                  title: '時段', dataIndex: 'label', width: 130,
+                                  render: (v: string) => (v === '缺值' ? <Tag>{v}</Tag> : v === '13 點後' ? <Tag color="orange">{v}</Tag> : v),
+                                },
+                                { title: '筆數', dataIndex: 'records', align: 'right', render: fmtInt },
+                                { title: '占比', dataIndex: 'share', align: 'right', render: (v: number) => fmtPct(v) },
+                              ]}
+                            />
+                            {checkoutTime.missing_share > 0.05 ? (
+                              <Alert
+                                type="warning"
+                                showIcon
+                                style={{ marginTop: 8 }}
+                                message={`缺值占比 ${fmtPct(checkoutTime.missing_share)}`}
+                                description="缺值偏高時，應先改善前台輸入或報表欄位品質，再拿這張表做排班決策。"
+                              />
+                            ) : (
+                              <Text type="secondary" style={{ display: 'block', marginTop: 8, fontSize: 12 }}>
+                                {`缺值 ${fmtInt(checkoutTime.missing_records)} 筆（${fmtPct(checkoutTime.missing_share)}），資料品質良好。`}
+                                13 點後占比高可能反映 Late Check-out、會員禮遇或房務週轉壓力。
+                              </Text>
+                            )}
+                          </>
+                        )}
+                      </Card>
+                    </Col>
+
+                    {/* 入退房星期 */}
+                    <Col xs={24} lg={12}>
+                      <Card
+                        size="small"
+                        title="入退房星期分布"
+                        extra={<Text type="secondary" style={{ fontSize: 12 }}>{`${stayWeekday?.basis_label || ''}　${SOURCE_NOTE}`}</Text>}
+                      >
+                        {!stayWeekday || stayWeekday.total_arrival_rooms === 0 ? (
+                          <Empty description="期間內無資料" />
+                        ) : (
+                          <>
+                            <ResponsiveContainer width="100%" height={260}>
+                              <ComposedChart data={stayWeekday.weekdays} margin={{ top: 20, right: 10, left: 0, bottom: 0 }}>
+                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#eee" />
+                                <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+                                <YAxis tick={{ fontSize: 11 }} tickFormatter={(v: number) => v.toLocaleString('en-US')} />
+                                <RcTooltip formatter={(v: any, n: string) => [Number(v).toLocaleString('en-US'), n]} />
+                                <Legend wrapperStyle={{ fontSize: 12 }} />
+                                <Bar dataKey="arrival_rooms" name="到店房數" fill={GREEN} barSize={16} />
+                                <Bar dataKey="departure_rooms" name="離店房數" fill={ORANGE} barSize={16} />
+                                <Line type="monotone" dataKey="net_rooms" name="淨增減" stroke={BRAND} strokeWidth={2} dot={{ r: 3 }} />
+                              </ComposedChart>
+                            </ResponsiveContainer>
+                            <Table
+                              size="small"
+                              rowKey="weekday"
+                              pagination={false}
+                              style={{ marginTop: 8 }}
+                              dataSource={stayWeekday.weekdays}
+                              columns={[
+                                { title: '星期', dataIndex: 'label', width: 70 },
+                                { title: '到店', dataIndex: 'arrival_rooms', align: 'right', render: fmtInt },
+                                { title: '占比', dataIndex: 'arrival_share', align: 'right', render: (v: number) => fmtPct(v) },
+                                { title: '離店', dataIndex: 'departure_rooms', align: 'right', render: fmtInt },
+                                { title: '占比', dataIndex: 'departure_share', align: 'right', render: (v: number) => fmtPct(v) },
+                                {
+                                  title: '淨增減', dataIndex: 'net_rooms', align: 'right',
+                                  render: (v: number) => (
+                                    <Text style={{ color: v > 0 ? GREEN : v < 0 ? ORANGE : undefined }}>
+                                      {`${v > 0 ? '+' : ''}${fmtInt(v)}`}
+                                    </Text>
+                                  ),
+                                },
+                              ]}
+                            />
+                            <Text type="secondary" style={{ display: 'block', marginTop: 8, fontSize: 12 }}>
+                              到店高峰安排接待、備房與交通；離店高峰安排結帳與清掃。
+                              <Text strong> 這是按訂單的到店／離店事件統計，不是各星期的在住房晚。</Text>
+                            </Text>
+                          </>
+                        )}
+                      </Card>
+                    </Col>
+                  </Row>
                 </>
               ),
             },
@@ -552,6 +1158,57 @@ const OperaGuestPage: React.FC = () => {
                     </Col>
                   </Row>
 
+                  {/* 長住客拆解：依 Rate Code／通路／房型 */}
+                  <Card
+                    size="small"
+                    title={`長住客拆解（住宿晚數 ≥ ${longStay?.threshold ?? 7} 晚）`}
+                    extra={<Text type="secondary" style={{ fontSize: 12 }}>{`${longStay?.basis_label || ''}　${SOURCE_NOTE}`}</Text>}
+                    style={{ marginBottom: 12 }}
+                  >
+                    {!longStay || longStay.long_records === 0 ? (
+                      <Empty description="期間內無長住紀錄" />
+                    ) : (
+                      <Row gutter={[12, 12]}>
+                        {([
+                          ['rate_code', 'Rate Code'],
+                          ['channel', '通路'],
+                          ['room_category', '房型'],
+                        ] as const).map(([dim, label]) => {
+                          const d = longStaySplit[dim]
+                          return (
+                            <Col xs={24} lg={8} key={dim}>
+                              <Card size="small" type="inner" title={`依 ${label}`} bodyStyle={{ padding: 8 }}>
+                                {!d || d.items.length === 0 ? (
+                                  <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="無資料" />
+                                ) : (
+                                  <Table
+                                    rowKey="key"
+                                    size="small"
+                                    pagination={false}
+                                    dataSource={d.items.slice(0, 8)}
+                                    columns={[
+                                      { title: label, dataIndex: 'key', ellipsis: true },
+                                      { title: '筆數', dataIndex: 'records', align: 'right', width: 64, render: fmtInt },
+                                      { title: '房晚', dataIndex: 'room_nights', align: 'right', width: 70, render: fmtInt },
+                                      {
+                                        title: 'LOS', dataIndex: 'avg_los', align: 'right', width: 64,
+                                        render: (v: number) => (v ? v.toFixed(1) : EMPTY),
+                                      },
+                                    ]}
+                                  />
+                                )}
+                              </Card>
+                            </Col>
+                          )
+                        })}
+                      </Row>
+                    )}
+                    <Text type="secondary" style={{ display: 'block', marginTop: 8, fontSize: 12 }}>
+                      門檻可在「分析門檻設定」調整；跨期比較請維持一致的門檻。
+                      長住的營收與獲利需要逐訂單逐日營收資料，Departure 本身無法安全分配 History 營收。
+                    </Text>
+                  </Card>
+
                   <Card size="small" title="回訪住客（2 次以上）">
                     <Table
                       rowKey="guest_hash"
@@ -575,6 +1232,8 @@ const OperaGuestPage: React.FC = () => {
         />
 
         <StayDetailDrawer open={drawerOpen} stay={drawerStay} onClose={() => setDrawerOpen(false)} />
+
+        <BackToTop />
       </div>
     </Spin>
   )

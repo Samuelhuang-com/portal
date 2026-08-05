@@ -142,6 +142,66 @@ def revenue_anomalies(
     return AS.get_anomalies(db, s, e, property_code)
 
 
+@router.get("/operations", summary="營運指標：每房人數、翻房率、每日進出、非營收房")
+def revenue_operations(
+    start: str | None = Query(None),
+    end: str | None = Query(None),
+    property_code: str = Query(""),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_permission("opera_revenue_view")),
+):
+    s, e = _resolve_range(db, start, end, property_code)
+    return AS.get_operations_metrics(db, s, e, property_code)
+
+
+@router.get("/weekday", summary="星期營收績效（加權）")
+def revenue_weekday(
+    start: str | None = Query(None),
+    end: str | None = Query(None),
+    property_code: str = Query(""),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_permission("opera_revenue_view")),
+):
+    s, e = _resolve_range(db, start, end, property_code)
+    return AS.get_weekday_performance(db, s, e, property_code)
+
+
+@router.get("/ooo-loss", summary="OOO 營收損失估算與雙分母 RevPAR")
+def revenue_ooo_loss(
+    start: str | None = Query(None),
+    end: str | None = Query(None),
+    property_code: str = Query(""),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_permission("opera_revenue_view")),
+):
+    s, e = _resolve_range(db, start, end, property_code)
+    return AS.get_ooo_loss(db, s, e, property_code)
+
+
+@router.get("/trend", summary="月增率（MoM）與 7／28 日移動平均")
+def revenue_trend(
+    start: str | None = Query(None),
+    end: str | None = Query(None),
+    property_code: str = Query(""),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_permission("opera_revenue_view")),
+):
+    s, e = _resolve_range(db, start, end, property_code)
+    return AS.get_trend(db, s, e, property_code)
+
+
+@router.get("/opportunity", summary="高住房率低 ADR 機會（含提升金額估算）")
+def revenue_opportunity(
+    start: str | None = Query(None),
+    end: str | None = Query(None),
+    property_code: str = Query(""),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_permission("opera_revenue_view")),
+):
+    s, e = _resolve_range(db, start, end, property_code)
+    return AS.get_rate_opportunity(db, s, e, property_code)
+
+
 @router.get("/segment", summary="散客 vs 團體拆分")
 def revenue_segment(
     start: str | None = Query(None),

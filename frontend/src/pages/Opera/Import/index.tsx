@@ -4,12 +4,16 @@
  *
  * 流程：選檔 → 驗證 → （必要時勾選警示確認）→ 匯入 → 對帳摘要
  * 比照既有 /contract/import、/schedule/import 的 UI 模式。
+ *
+ * 2026-08-04：「匯入紀錄」由獨立頁面併入本頁的第二個 TAB（業主指示）。
+ * 可用 `?tab=batches` 直接開啟該 TAB，`/opera/batches` 舊路由即導向此處。
+ * 權限一律為 `opera_import`（業主決定整頁同一權限）。
  */
 import React, { useCallback, useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Alert, Button, Card, Checkbox, Col, Descriptions, Divider, Empty, Progress,
-  Result, Row, Space, Spin, Table, Tag, Typography, Upload, message,
+  Result, Row, Space, Spin, Table, Tabs, Tag, Typography, Upload, message,
 } from 'antd'
 import {
   CheckCircleOutlined, CloseCircleOutlined, DownloadOutlined,
@@ -23,6 +27,7 @@ import {
 import type {
   CommitResult, ImportStatus, OperaSourceType, ValidateResult,
 } from '@/types/opera'
+import OperaBatchesPage from '../Batches'
 import {
   ACCENT, BRAND, EMPTY, GREEN, ORANGE, QUALITY_TAG, RED,
   fmtBytes, fmtInt, fmtMoney,
@@ -68,6 +73,14 @@ const OperaImportPage: React.FC = () => {
   })
   const [status, setStatus] = useState<ImportStatus | null>(null)
   const [sessionId] = useState(() => `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`)
+
+  // ── TAB：可用 ?tab=batches 直接開啟「匯入紀錄」（/opera/batches 舊路由導向此處）──
+  const [searchParams, setSearchParams] = useSearchParams()
+  const activeTab = searchParams.get('tab') === 'batches' ? 'batches' : 'upload'
+  const handleTabChange = useCallback((key: string) => {
+    // 用 replace 避免每切一次 TAB 就多一筆瀏覽器上一頁紀錄
+    setSearchParams(key === 'batches' ? { tab: 'batches' } : {}, { replace: true })
+  }, [setSearchParams])
 
   const loadStatus = useCallback(async () => {
     try {
@@ -372,6 +385,14 @@ const OperaImportPage: React.FC = () => {
     <div style={{ padding: 24 }}>
       <Title level={4} style={{ color: BRAND }}>資料匯入</Title>
 
+      <Tabs
+        activeKey={activeTab}
+        onChange={handleTabChange}
+        items={[{
+          key: 'upload',
+          label: '資料匯入',
+          children: (
+            <>
       <Alert
         type="info"
         showIcon
@@ -515,6 +536,15 @@ const OperaImportPage: React.FC = () => {
           )
         })}
       </Row>
+            </>
+          ),
+        }, {
+          key: 'batches',
+          label: '匯入紀錄',
+          // 沿用原「匯入紀錄」頁面元件，embedded 模式不重複畫標題與外框
+          children: <OperaBatchesPage embedded />,
+        }]}
+      />
     </div>
   )
 }

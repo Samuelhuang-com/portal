@@ -117,6 +117,13 @@ from app.routers import (
     opera_import,
     opera_revenue,
     opera_guest,
+    opera_forecast,
+    jinxu_import,
+    jinxu_revenue,
+    jinxu_payment,
+    jinxu_deposit,
+    jinxu_reservation,
+    jinxu_settings,
     cycle_purchase_masters,
     cycle_purchase_items,
     cycle_purchase_cycles,
@@ -699,6 +706,23 @@ def _migrate_ihg_rm_time_fields():
                 conn.execute(text(f"ALTER TABLE ihg_rm_master ADD COLUMN {col} {typedef}"))
                 conn.commit()
                 print(f"[Migration] ihg_rm_master.{col} added")
+
+
+def _seed_jinxu():
+    """金旭 PMS 分析 — 科目分類對照表與分析門檻種子（冪等）。
+
+    規格書：docs/SPEC_jinxu_analytics.md 附錄 C、§7.9
+    """
+    from app.core.database import SessionLocal
+    from app.services.jinxu_seed import ensure_jinxu_seed
+
+    db = SessionLocal()
+    try:
+        result = ensure_jinxu_seed(db)
+        if result["subjects"] or result["settings"]:
+            print(f"[Seed] jinxu: subjects +{result['subjects']}, settings +{result['settings']}")
+    finally:
+        db.close()
 
 
 def _seed_reference_data():
@@ -1459,6 +1483,16 @@ async def lifespan(app: FastAPI):
     import app.models.opera_import             # noqa: F401  匯入批次與錯誤紀錄
     import app.models.opera_departure          # noqa: F401  Departure 原始層 + 住宿事實表
     import app.models.opera_revenue            # noqa: F401  History/Forecast 原始層 + 每日營收 + 門檻設定
+    # 房價預測（2026-08-05）：索引另由 add_opera_forecast_tables.sql 建立。
+    import app.models.opera_forecast           # noqa: F401  事件月曆 + 係數 + 預測快照
+    # 金旭 PMS 分析（2026-08-05）：Portal 第二個檔案上傳型模組，資料來自人工上傳的
+    # 金旭 xlsx（FCR02 客帳帳目明細表 + 訂房狀況表），非 Ragic 同步，因此同樣不需
+    # 登錄 sync_tool.py 的 MODULES／_ensure_db_schema()。
+    # 索引另由專案根目錄的 add_jinxu_tables.sql 建立（create_all 不會產生複合索引）。
+    import app.models.jinxu_import             # noqa: F401  匯入批次與錯誤紀錄
+    import app.models.jinxu_ledger             # noqa: F401  FCR02 原始層 + 交易分錄 + 科目對照
+    import app.models.jinxu_reservation        # noqa: F401  訂房原始層 + 訂房事實表 + 住宿明細段
+    import app.models.jinxu_setting            # noqa: F401  分析門檻設定
 
     # B4F 扁平化遷移：刪除舊 batch 表 + 檢查 item 表欄位（必須在 create_all 之前）
     _run_startup_migration("_migrate_b4f_flatten", _migrate_b4f_flatten)
@@ -1734,6 +1768,12 @@ async def lifespan(app: FastAPI):
     import app.models.reference_data  # noqa: F401 — 確保 create_all 建立資料表
     _run_startup_migration("_seed_reference_data", _seed_reference_data)
     print("[Portal] reference_data seed checked.")
+
+    # 金旭 PMS 分析（2026-08-05）：科目分類對照表 35 筆 + 分析門檻 6 筆。
+    # 冪等——已存在的 subject_code 不覆蓋（管理員可能已在設定頁調整過分類）。
+    # ⚠️ 必須在此 seed，否則首次匯入時 40,706 筆分錄會全部被歸為「未分類」。
+    _run_startup_migration("_seed_jinxu", _seed_jinxu)
+    print("[Portal] jinxu subject map & settings seed checked.")
 
     # F3（2026-06-01）：contracts 新欄位 + contract_cost_allocations 資料表
     import app.models.contract  # noqa: F401 — ContractCostAllocation 已在其中
@@ -2523,6 +2563,44 @@ app.include_router(
     opera_guest.router,
     prefix=f"{API_PREFIX}/opera/guest",
     tags=["營運分析"],
+)
+app.include_router(
+    opera_forecast.router,
+    prefix=f"{API_PREFIX}/opera/forecast",
+    tags=["營運分析"],
+)
+
+# ── 金旭 PMS 分析：檔案上傳型模組，資料來自人工上傳的金旭 xlsx ────────────────
+#    路由前綴 /jinxu/*，與 /opera/* 完全獨立，不共用任何端點或資料表。
+app.include_router(
+    jinxu_import.router,
+    prefix=f"{API_PREFIX}/jinxu/import",
+    tags=["金旭分析"],
+)
+app.include_router(
+    jinxu_revenue.router,
+    prefix=f"{API_PREFIX}/jinxu/revenue",
+    tags=["金旭分析"],
+)
+app.include_router(
+    jinxu_payment.router,
+    prefix=f"{API_PREFIX}/jinxu/payment",
+    tags=["金旭分析"],
+)
+app.include_router(
+    jinxu_deposit.router,
+    prefix=f"{API_PREFIX}/jinxu/deposit",
+    tags=["金旭分析"],
+)
+app.include_router(
+    jinxu_reservation.router,
+    prefix=f"{API_PREFIX}/jinxu/reservation",
+    tags=["金旭分析"],
+)
+app.include_router(
+    jinxu_settings.router,
+    prefix=f"{API_PREFIX}/jinxu/settings",
+    tags=["金旭分析"],
 )
 
 # ── AI 工單查詢助理（AI_ENABLED=true 才掛載，正式環境可保持 false）────────────

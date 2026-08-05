@@ -121,6 +121,35 @@ PERMISSION_DEFINITIONS = [
     {"key": "opera_guest_view",   "label": "住客與通路分析",       "group": "營運分析"},
     {"key": "opera_import",       "label": "資料匯入",             "group": "營運分析"},
     {"key": "opera_admin",        "label": "分析門檻設定",         "group": "營運分析"},
+    # ── 房價預測（2026-08-05 新增）────────────────────────────────────────────
+    # 「歷史同期查詢」刻意不另開 key，共用 opera_view：它是純查歷史事實的唯讀頁，
+    # 與 Dashboard 同性質，另開 key 只會讓權限清單變長而沒有實質區隔。
+    # 「事件月曆」則另開 key（不共用 opera_admin），因為權限清單是管理員唯一看得到
+    # 「自己在授權什麼」的地方，掛在「分析門檻設定」底下會授權到名不符實的頁面。
+    # 註：估算／覆寫模型係數仍歸 opera_admin（與門檻設定同屬模型參數維護）。
+    {"key": "opera_forecast_view", "label": "房價預測",             "group": "營運分析"},
+    # 2026-08-05 起「事件月曆」是房價預測頁的一個 TAB，不再是獨立頁面。
+    # 此 key 仍然有效，控管的是 TAB 內的新增／修改／刪除／學習係數（API 層強制），
+    # 清單本身唯讀，有 opera_forecast_view 就看得到。
+    {"key": "opera_event_admin",   "label": "事件月曆",             "group": "營運分析"},
+    # ── 金旭分析（2026-08-05 新增）────────────────────────────────────────────
+    # Portal 第二個「檔案上傳型」資料模組：資料來自人工上傳的金旭 xlsx
+    # （FCR02 客帳帳目明細表 + 訂房狀況表），非 Ragic 同步。
+    # 路由前綴 /jinxu/*，與 /opera/* 完全獨立，不共用端點或資料表（業主指定）。
+    # ⚠️ 下列 label 必須與 frontend/src/constants/navLabels.ts 的 NAV_PAGE 完全一致。
+    # ⚠️ 金額與房價屬財務敏感資料，這些 key 預設不給任何既有角色，需管理員逐一開放。
+    {"key": "jinxu_view",         "label": "★ 金旭分析 Dashboard", "group": "金旭分析"},
+    {"key": "jinxu_resv_view",    "label": "訂房與通路分析",       "group": "金旭分析"},
+    {"key": "jinxu_revenue_view", "label": "收入結構分析",         "group": "金旭分析"},
+    {"key": "jinxu_payment_view", "label": "付款方式分析",         "group": "金旭分析"},
+    {"key": "jinxu_deposit_view", "label": "預收訂金追蹤",         "group": "金旭分析"},
+    {"key": "jinxu_import",       "label": "資料匯入",             "group": "金旭分析"},
+    {"key": "jinxu_admin",        "label": "科目與門檻設定",       "group": "金旭分析"},
+    # 取消分析與訂價落差另立 key —— 這兩者暴露「業務績效」與「價格執行」資訊，
+    # 敏感度高於一般訂房統計。它對應的是 /jinxu/reservation 頁的兩個 TAB 而非獨立
+    # 路由，因此 MainLayout.tsx 不會出現這個 permissionKey，但仍必須登錄於此，
+    # 否則管理員無從授權（CLAUDE.md permissionKey 一致性規則的反向情況）。
+    {"key": "jinxu_cancel_view",  "label": "取消與訂價落差分析",   "group": "金旭分析"},
 ]
 
 

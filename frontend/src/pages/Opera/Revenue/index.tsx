@@ -7,7 +7,7 @@
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import {
-  Alert, Button, Card, Col, DatePicker, Empty, Radio, Row, Select, Space,
+  Alert, Button, Card, Col,  Descriptions, Empty, Radio, Row, Select, Space,
   Spin, Table, Tabs, Tag, Tooltip, Typography, message,
 } from 'antd'
 import { InfoCircleOutlined, ReloadOutlined } from '@ant-design/icons'
@@ -19,13 +19,17 @@ import {
 } from 'recharts'
 
 import {
-  fetchAnomalies, fetchQuadrant, fetchRevenueDaily, fetchRevenueDayDetail,
-  fetchRevenueMonthly, fetchRevenueYearly,
+  fetchAnomalies, fetchOooLoss, fetchOperations, fetchOpportunity, fetchQuadrant,
+  fetchRevenueDaily, fetchRevenueDayDetail, fetchRevenueMonthly, fetchRevenueYearly,
+  fetchTrend, fetchWeekdayPerformance,
 } from '@/api/opera'
 import type {
-  AnomalyResult, QuadrantBasis, QuadrantResult, RevenueDailyRow,
-  RevenueMonthlyResult, RevenueYearRow,
+  AnomalyResult, OooLossResult, OperationsResult, OpportunityResult, QuadrantBasis,
+  QuadrantResult, RevenueDailyRow, RevenueMonthlyResult, RevenueYearRow, TrendResult,
+  WeekdayPerformanceResult,
 } from '@/types/opera'
+import BackToTop from '../components/BackToTop'
+import StandardRangePicker from '@/components/StandardRangePicker'
 import RevenueDayDetailDrawer from '../components/RevenueDayDetailDrawer'
 import {
   ACCENT, BRAND, EMPTY, GREEN, GREY, ORANGE, RED, TRIGGER_TAG,
@@ -33,7 +37,6 @@ import {
 } from '../components/formatters'
 
 const { Title, Text } = Typography
-const { RangePicker } = DatePicker
 
 const CHART_HEIGHT = 320
 const SOURCE_NOTE = '資料來源：History and Forecast'
@@ -45,6 +48,8 @@ const QUADRANT_COLORS: Record<string, string> = {
 const OperaRevenuePage: React.FC = () => {
   const [tab, setTab] = useState('daily')
   const [range, setRange] = useState<[Dayjs, Dayjs] | null>(null)
+  // 快捷區間的錨點 = History 的資料最後一天（不用今天，OPERA 匯出會落後）
+  const [dataEnd, setDataEnd] = useState<string>('')
   const [loading, setLoading] = useState(false)
 
   const [daily, setDaily] = useState<RevenueDailyRow[]>([])
@@ -52,6 +57,11 @@ const OperaRevenuePage: React.FC = () => {
   const [yearly, setYearly] = useState<RevenueYearRow[]>([])
   const [quadrant, setQuadrant] = useState<QuadrantResult | null>(null)
   const [anomalies, setAnomalies] = useState<AnomalyResult | null>(null)
+  const [opportunity, setOpportunity] = useState<OpportunityResult | null>(null)
+  const [weekday, setWeekday] = useState<WeekdayPerformanceResult | null>(null)
+  const [oooLoss, setOooLoss] = useState<OooLossResult | null>(null)
+  const [trend, setTrend] = useState<TrendResult | null>(null)
+  const [operations, setOperations] = useState<OperationsResult | null>(null)
 
   const [year, setYear] = useState<number>(dayjs().year())
   const [quadrantBasis, setQuadrantBasis] = useState<QuadrantBasis>('common')
@@ -70,6 +80,7 @@ const OperaRevenuePage: React.FC = () => {
       if (which === 'daily') {
         const res = await fetchRevenueDaily(rangeParams)
         setDaily(res.items)
+        if (!dataEnd) setDataEnd(res.end)
         if (!range) setRange([dayjs(res.start), dayjs(res.end)])
       } else if (which === 'monthly') {
         setMonthly(await fetchRevenueMonthly(year))
@@ -83,6 +94,16 @@ const OperaRevenuePage: React.FC = () => {
         setQuadrant(await fetchQuadrant({ ...rangeParams, basis: quadrantBasis }))
       } else if (which === 'anomalies') {
         setAnomalies(await fetchAnomalies(rangeParams))
+      } else if (which === 'opportunity') {
+        setOpportunity(await fetchOpportunity(rangeParams))
+      } else if (which === 'weekday') {
+        setWeekday(await fetchWeekdayPerformance(rangeParams))
+      } else if (which === 'ooo') {
+        setOooLoss(await fetchOooLoss(rangeParams))
+      } else if (which === 'trend') {
+        setTrend(await fetchTrend(rangeParams))
+      } else if (which === 'operations') {
+        setOperations(await fetchOperations(rangeParams))
       }
     } catch (e: any) {
       message.error(e?.response?.data?.detail || '載入營收分析失敗')
@@ -169,11 +190,7 @@ const OperaRevenuePage: React.FC = () => {
           </Col>
           <Col>
             <Space wrap>
-              <RangePicker
-                value={range}
-                onChange={(v) => setRange(v as [Dayjs, Dayjs] | null)}
-                allowClear={false}
-              />
+              <StandardRangePicker value={range} anchor={dataEnd} onChange={setRange} />
               <Button icon={<ReloadOutlined />} onClick={() => load(tab)}>重新整理</Button>
             </Space>
           </Col>
@@ -380,6 +397,430 @@ const OperaRevenuePage: React.FC = () => {
               ),
             },
 
+            // ── 星期營收績效 ──────────────────────────────────────────────
+            {
+              key: 'weekday',
+              label: '星期績效',
+              children: (
+                <>
+                  {weekday?.thin_data && (
+                    <Alert
+                      type="warning"
+                      showIcon
+                      style={{ marginBottom: 12 }}
+                      message={`資料期間偏短（最少的星期別只有 ${weekday.min_days} 天）`}
+                      description="某些星期出現次數少時，平均值容易被單一活動日扭曲，建議拉長期間再判讀。"
+                    />
+                  )}
+                  <Card size="small" title="星期別加權績效" style={{ marginBottom: 12 }}>
+                    {!weekday || weekday.weekdays.every((w) => w.days === 0) ? (
+                      <Empty description="期間內無 History 資料" />
+                    ) : (
+                      <ResponsiveContainer width="100%" height={CHART_HEIGHT}>
+                        <ComposedChart data={weekday.weekdays} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#eee" />
+                          <XAxis dataKey="label" tick={{ fontSize: 12 }} />
+                          <YAxis yAxisId="left" tick={{ fontSize: 11 }} tickFormatter={(v: number) => `${Math.round(v / 10000)}萬`} />
+                          <YAxis yAxisId="right" orientation="right" domain={[0, 100]} tick={{ fontSize: 11 }} tickFormatter={(v: number) => `${v}%`} />
+                          <RcTooltip
+                            formatter={(v: any, n: string) =>
+                              [n === '住房率' ? `${v}%` : Number(v).toLocaleString('en-US'), n]}
+                          />
+                          <Legend wrapperStyle={{ fontSize: 12 }} />
+                          <ReferenceLine
+                            yAxisId="right"
+                            y={Number((weekday.baseline.occupancy * 100).toFixed(1))}
+                            stroke={RED}
+                            strokeDasharray="5 4"
+                            label={{ value: '整體住房率', position: 'right', fontSize: 11, fill: RED }}
+                          />
+                          <Bar yAxisId="left" dataKey="revenue" name="總營收" fill={BRAND} barSize={26} />
+                          <Line
+                            yAxisId="right"
+                            type="monotone"
+                            dataKey={(d: any) => Number((d.occupancy * 100).toFixed(1))}
+                            name="住房率"
+                            stroke={ORANGE}
+                            strokeWidth={2}
+                            dot={{ r: 4 }}
+                          />
+                        </ComposedChart>
+                      </ResponsiveContainer>
+                    )}
+                    <Text type="secondary" style={{ fontSize: 12 }}>{SOURCE_NOTE}</Text>
+                  </Card>
+
+                  <Card size="small" title="星期別明細（與整體基準的差距）">
+                    <Table
+                      rowKey="weekday"
+                      size="small"
+                      dataSource={weekday?.weekdays || []}
+                      pagination={false}
+                      scroll={{ x: 1000 }}
+                      columns={[
+                        { title: '星期', dataIndex: 'label', width: 80, fixed: 'left' },
+                        { title: '天數', dataIndex: 'days', align: 'right', width: 70, render: fmtInt },
+                        { title: '總營收', dataIndex: 'revenue', align: 'right', render: (v: number) => `$${fmtMoney(v)}` },
+                        { title: '平均每日營收', dataIndex: 'avg_daily_revenue', align: 'right', render: (v: number) => `$${fmtMoney(v)}` },
+                        { title: '已售房晚', dataIndex: 'sold_rooms', align: 'right', render: fmtInt },
+                        { title: 'ADR', dataIndex: 'adr', align: 'right', render: (v: number) => `$${fmtMoney(v)}` },
+                        {
+                          title: 'ADR vs 整體', dataIndex: 'adr_vs_overall', align: 'right',
+                          // 負號要自己補：fmtMoney 吃的是絕對值，直接用 v >= 0 判斷會把負號吃掉
+                          render: (v: number) => {
+                            const rounded = Math.round(v)
+                            const sign = rounded > 0 ? '+' : rounded < 0 ? '−' : ''
+                            return (
+                              <Text style={{ color: trendColor(v) }}>
+                                {`${sign}$${fmtMoney(Math.abs(v))}`}
+                              </Text>
+                            )
+                          },
+                        },
+                        { title: '住房率', dataIndex: 'occupancy', align: 'right', render: (v: number) => fmtPct(v) },
+                        {
+                          title: '住房率 vs 整體', dataIndex: 'occupancy_vs_overall', align: 'right',
+                          render: (v: number) => <Text style={{ color: trendColor(v) }}>{fmtPpt(v)}</Text>,
+                        },
+                        { title: 'RevPAR', dataIndex: 'revpar', align: 'right', render: (v: number) => `$${fmtMoney(v)}` },
+                      ]}
+                    />
+                    <Text type="secondary" style={{ display: 'block', marginTop: 8, fontSize: 12 }}>
+                      高住房率、低 ADR 的星期優先檢查提前提價、折扣與通路庫存；
+                      低住房率、低 ADR 的星期要先處理需求，只降價未必能創造需求。
+                    </Text>
+                  </Card>
+                </>
+              ),
+            },
+
+            // ── 趨勢：MoM 與移動平均 ──────────────────────────────────────
+            {
+              key: 'trend',
+              label: '趨勢',
+              children: (
+                <>
+                  <Alert
+                    type="info"
+                    showIcon
+                    style={{ marginBottom: 12 }}
+                    message="移動平均已多取 27 天暖身資料計算"
+                    description={
+                      trend
+                        ? `暖身起日 ${trend.warmup_start}。少了這步，期間開頭的移動平均會被低估。`
+                          + `月中未完整的月份 MoM 會偏低，表格已標示。`
+                        : ''
+                    }
+                  />
+
+                  <Card size="small" title="每日營收與 7／28 日移動平均" style={{ marginBottom: 12 }}>
+                    {!trend || trend.daily.length === 0 ? <Empty description="期間內無 History 資料" /> : (
+                      <ResponsiveContainer width="100%" height={CHART_HEIGHT}>
+                        <ComposedChart data={trend.daily} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#eee" />
+                          <XAxis
+                            dataKey="business_date"
+                            tick={{ fontSize: 10 }}
+                            tickFormatter={(v: string) => v.slice(5)}
+                            interval="preserveStartEnd"
+                            minTickGap={30}
+                          />
+                          <YAxis tick={{ fontSize: 11 }} tickFormatter={(v: number) => `${Math.round(v / 1000)}k`} />
+                          <RcTooltip formatter={(v: any, n: string) => [`$${Number(v).toLocaleString('en-US')}`, n]} />
+                          <Legend wrapperStyle={{ fontSize: 12 }} />
+                          <Bar dataKey="revenue" name="每日營收" fill="#dbe4ee" />
+                          <Line type="monotone" dataKey="ma7" name="7 日移動平均" stroke={ORANGE} strokeWidth={2} dot={false} />
+                          <Line type="monotone" dataKey="ma28" name="28 日移動平均" stroke={BRAND} strokeWidth={2} dot={false} />
+                        </ComposedChart>
+                      </ResponsiveContainer>
+                    )}
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      7 日線持續高於 28 日線通常表示近期動能改善；反之可能正在轉弱。　{SOURCE_NOTE}
+                    </Text>
+                  </Card>
+
+                  <Card size="small" title="月增率（MoM）">
+                    <Table
+                      rowKey="month"
+                      size="small"
+                      dataSource={trend?.monthly || []}
+                      pagination={false}
+                      scroll={{ x: 1000 }}
+                      columns={[
+                        {
+                          title: '月份', dataIndex: 'label', width: 110, fixed: 'left',
+                          render: (v: string, r) => (
+                            r.is_partial
+                              ? <Tooltip title="該月資料未完整，MoM 會被低估"><span>{v} <Tag color="orange">未完整</Tag></span></Tooltip>
+                              : v
+                          ),
+                        },
+                        { title: '營收', dataIndex: 'revenue', align: 'right', render: (v: number) => `$${fmtMoney(v)}` },
+                        {
+                          title: '營收 MoM', dataIndex: 'revenue_mom', align: 'right',
+                          render: (v: number | null) => <Text style={{ color: trendColor(v) }}>{fmtYoY(v)}</Text>,
+                        },
+                        { title: 'ADR', dataIndex: 'adr', align: 'right', render: (v: number) => `$${fmtMoney(v)}` },
+                        {
+                          title: 'ADR MoM', dataIndex: 'adr_mom', align: 'right',
+                          render: (v: number | null) => <Text style={{ color: trendColor(v) }}>{fmtYoY(v)}</Text>,
+                        },
+                        { title: '住房率', dataIndex: 'occupancy', align: 'right', render: (v: number) => fmtPct(v) },
+                        {
+                          title: '住房率 MoM', dataIndex: 'occupancy_mom_ppt', align: 'right',
+                          render: (v: number | null) => <Text style={{ color: trendColor(v) }}>{v === null ? EMPTY : fmtPpt(v)}</Text>,
+                        },
+                        { title: 'RevPAR', dataIndex: 'revpar', align: 'right', render: (v: number) => `$${fmtMoney(v)}` },
+                        {
+                          title: 'RevPAR MoM', dataIndex: 'revpar_mom', align: 'right',
+                          render: (v: number | null) => <Text style={{ color: trendColor(v) }}>{fmtYoY(v)}</Text>,
+                        },
+                      ]}
+                    />
+                    <Text type="secondary" style={{ display: 'block', marginTop: 8, fontSize: 12 }}>
+                      MoM 要同時拆解房晚與 ADR，才能判斷成長來自量還是價。
+                      跨年度、春節或大型活動期間應搭配去年同期與預算一起看。
+                    </Text>
+                  </Card>
+                </>
+              ),
+            },
+
+            // ── 營運指標（每房人數／翻房率／非營收房）──────────────────────
+            // 這些欄位 OPERA 一直都有給（NO_PERSONS、ARRIVAL_ROOMS、DEPARTURE_ROOMS、
+            // COMPLIMENTARY／HOUSE_USE／DAY_USE／NO_SHOW_ROOMS），先前完全沒拿來分析。
+            {
+              key: 'operations',
+              label: '營運指標',
+              children: (
+                <>
+                  <Alert
+                    type="info"
+                    showIcon
+                    style={{ marginBottom: 12 }}
+                    message="這一頁是給房務、餐飲備量與人力規劃用的"
+                    description={operations?.note || ''}
+                  />
+
+                  {operations && (
+                    <Row gutter={[12, 12]} style={{ marginBottom: 12 }}>
+                      {[
+                        {
+                          title: '每房人數', value: `${operations.persons_per_room.toFixed(2)} 人`,
+                          hint: `${fmtInt(operations.persons)} 人 ÷ ${fmtInt(operations.sold_rooms)} 房晚`,
+                          color: BRAND,
+                        },
+                        {
+                          title: '翻房率', value: fmtPct(operations.turnover_rate),
+                          hint: `到店 ${fmtInt(operations.arrival_rooms)} ÷ 已售 ${fmtInt(operations.sold_rooms)}`,
+                          color: ORANGE,
+                        },
+                        {
+                          title: '每日平均進出', value: `${operations.avg_daily_turnover} 房次`,
+                          hint: `到店 ${operations.avg_daily_arrival} + 離店 ${operations.avg_daily_departure}（實體房 ${operations.avg_inventory}）`,
+                          color: ACCENT,
+                        },
+                        {
+                          title: '續住房晚', value: fmtInt(operations.stayover_rooms),
+                          hint: '已售 − 到店，不需重新整理的房',
+                          color: GREEN,
+                        },
+                      ].map((it) => (
+                        <Col xs={12} lg={6} key={it.title}>
+                          <Card size="small" bodyStyle={{ padding: '12px 16px' }} style={{ borderLeft: `3px solid ${it.color}` }}>
+                            <Text type="secondary" style={{ fontSize: 12 }}>{it.title}</Text>
+                            <div><Text strong style={{ fontSize: 20, color: it.color }}>{it.value}</Text></div>
+                            <Text type="secondary" style={{ fontSize: 11 }}>{it.hint}</Text>
+                          </Card>
+                        </Col>
+                      ))}
+                    </Row>
+                  )}
+
+                  <Card size="small" title="每日進出量與每房人數" style={{ marginBottom: 12 }}>
+                    {!operations || operations.daily.length === 0 ? <Empty description="期間內無 History 資料" /> : (
+                      <ResponsiveContainer width="100%" height={CHART_HEIGHT}>
+                        <ComposedChart data={operations.daily} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#eee" />
+                          <XAxis
+                            dataKey="business_date"
+                            tick={{ fontSize: 10 }}
+                            tickFormatter={(v: string) => v.slice(5)}
+                            interval="preserveStartEnd"
+                            minTickGap={30}
+                          />
+                          <YAxis yAxisId="left" tick={{ fontSize: 11 }} />
+                          <YAxis yAxisId="right" orientation="right" domain={[0, 4]} tick={{ fontSize: 11 }} />
+                          <RcTooltip formatter={(v: any, n: string) => [Number(v).toLocaleString('en-US'), n]} />
+                          <Legend wrapperStyle={{ fontSize: 12 }} />
+                          <Bar yAxisId="left" dataKey="arrival_rooms" name="到店房數" stackId="t" fill={GREEN} />
+                          <Bar yAxisId="left" dataKey="departure_rooms" name="離店房數" stackId="t" fill={ORANGE} />
+                          <Line yAxisId="right" type="monotone" dataKey="persons_per_room" name="每房人數" stroke={BRAND} strokeWidth={2} dot={false} />
+                        </ComposedChart>
+                      </ResponsiveContainer>
+                    )}
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      堆疊高度即當日房務工作量（到店備房 + 離店清掃）。　{SOURCE_NOTE}
+                    </Text>
+                  </Card>
+
+                  <Card size="small" title="非營收房監控">
+                    {!operations ? <Empty /> : (
+                      <>
+                        <Descriptions size="small" column={{ xs: 2, md: 5 }} bordered>
+                          <Descriptions.Item label="招待房">{fmtInt(operations.non_revenue.complimentary)}</Descriptions.Item>
+                          <Descriptions.Item label="自用房">{fmtInt(operations.non_revenue.house_use)}</Descriptions.Item>
+                          <Descriptions.Item label="日用房">{fmtInt(operations.non_revenue.day_use)}</Descriptions.Item>
+                          <Descriptions.Item label="No-show">{fmtInt(operations.non_revenue.no_show)}</Descriptions.Item>
+                          <Descriptions.Item label="合計">
+                            <Text strong>{fmtInt(operations.non_revenue.total)}</Text>
+                            <Text type="secondary" style={{ fontSize: 12, marginLeft: 6 }}>
+                              {`（占已售 ${fmtPct(operations.non_revenue.share_of_sold, 2)}）`}
+                            </Text>
+                          </Descriptions.Item>
+                        </Descriptions>
+                        <Text type="secondary" style={{ display: 'block', marginTop: 8, fontSize: 12 }}>
+                          這幾項目前量都很小，屬於<Text strong>趨勢監控型</Text>指標——數字突然放大時才需要追查
+                          （招待房浮濫、Day Use 未入帳、No-show 政策未落實等）。
+                        </Text>
+                      </>
+                    )}
+                  </Card>
+                </>
+              ),
+            },
+
+            // ── OOO 營收損失 ──────────────────────────────────────────────
+            {
+              key: 'ooo',
+              label: (
+                <span>
+                  OOO 損失
+                  {oooLoss && oooLoss.total_days > 0 && (
+                    <Tag color="orange" style={{ marginLeft: 6 }}>{oooLoss.total_days}</Tag>
+                  )}
+                </span>
+              ),
+              children: (
+                <>
+                  <Alert
+                    type="warning"
+                    showIcon
+                    style={{ marginBottom: 12 }}
+                    message="估算採用當日 ADR，假設 OOO 房可以同價售出"
+                    description={oooLoss?.disclaimer || ''}
+                  />
+
+                  {oooLoss && (
+                    <Row gutter={[12, 12]} style={{ marginBottom: 12 }}>
+                      {[
+                        { title: '有 OOO 的天數', value: `${fmtInt(oooLoss.total_days)} 天`, color: BRAND },
+                        { title: 'OOO 房晚', value: fmtInt(oooLoss.total_ooo_rooms), color: ORANGE },
+                        { title: '估算損失', value: `$${fmtMoney(oooLoss.total_est_loss)}`, color: RED },
+                        { title: '占期間營收', value: fmtPct(oooLoss.loss_share, 2), color: ACCENT },
+                      ].map((it) => (
+                        <Col xs={12} lg={6} key={it.title}>
+                          <Card size="small" bodyStyle={{ padding: '12px 16px' }} style={{ borderLeft: `3px solid ${it.color}` }}>
+                            <Text type="secondary" style={{ fontSize: 12 }}>{it.title}</Text>
+                            <div><Text strong style={{ fontSize: 20, color: it.color }}>{it.value}</Text></div>
+                          </Card>
+                        </Col>
+                      ))}
+                    </Row>
+                  )}
+
+                  {oooLoss && (
+                    <Card size="small" title="兩種分母的 RevPAR 比較" style={{ marginBottom: 12 }}>
+                      <Descriptions size="small" column={{ xs: 1, md: 3 }} bordered>
+                        <Descriptions.Item label="淨可售房 RevPAR">
+                          <Text strong>{`$${fmtMoney(oooLoss.net_revpar)}`}</Text>
+                          <Text type="secondary" style={{ fontSize: 12, marginLeft: 8 }}>
+                            {`營收 ÷ 可售房晚 ${fmtInt(oooLoss.sum_available_rooms)}`}
+                          </Text>
+                        </Descriptions.Item>
+                        <Descriptions.Item label="實體房 RevPAR">
+                          <Text strong>{`$${fmtMoney(oooLoss.physical_revpar)}`}</Text>
+                          <Text type="secondary" style={{ fontSize: 12, marginLeft: 8 }}>
+                            {`營收 ÷ 實體房晚 ${fmtInt(oooLoss.sum_inventory_rooms)}`}
+                          </Text>
+                        </Descriptions.Item>
+                        <Descriptions.Item label="分母效果">
+                          <Text strong style={{ color: ORANGE }}>{`$${fmtMoney(oooLoss.denominator_effect)}`}</Text>
+                        </Descriptions.Item>
+                      </Descriptions>
+                      <Text type="secondary" style={{ display: 'block', marginTop: 8, fontSize: 12 }}>
+                        OOO 多時「可售房晚」分母變小，報表住房率與 RevPAR 會看起來較好；
+                        「實體房 RevPAR」才反映完整資產產能。兩者差距就是分母效果。
+                      </Text>
+                    </Card>
+                  )}
+
+                  <Card size="small" title="OOO 損失月分布" style={{ marginBottom: 12 }}>
+                    {!oooLoss || oooLoss.monthly_series.length === 0 ? (
+                      <Empty description="期間內沒有 OOO 房晚" />
+                    ) : (
+                      <ResponsiveContainer width="100%" height={CHART_HEIGHT}>
+                        <ComposedChart data={oooLoss.monthly_series} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#eee" />
+                          <XAxis dataKey="month" tick={{ fontSize: 11 }} />
+                          <YAxis yAxisId="left" tick={{ fontSize: 11 }} tickFormatter={(v: number) => `${Math.round(v / 1000)}k`} />
+                          <YAxis yAxisId="right" orientation="right" allowDecimals={false} tick={{ fontSize: 11 }} />
+                          <RcTooltip
+                            formatter={(v: any, n: string) =>
+                              [n === '估算損失' ? `$${Number(v).toLocaleString('en-US')}` : `${v} 房晚`, n]}
+                          />
+                          <Legend wrapperStyle={{ fontSize: 12 }} />
+                          <Bar yAxisId="left" dataKey="est_loss" name="估算損失" fill={RED} />
+                          <Line yAxisId="right" type="monotone" dataKey="ooo_rooms" name="OOO 房晚" stroke={BRAND} strokeWidth={2} dot={{ r: 3 }} />
+                        </ComposedChart>
+                      </ResponsiveContainer>
+                    )}
+                    <Text type="secondary" style={{ fontSize: 12 }}>{SOURCE_NOTE}</Text>
+                  </Card>
+
+                  <Card size="small" title="OOO 明細（依估算損失排序）">
+                    <Table
+                      rowKey="business_date"
+                      size="small"
+                      dataSource={oooLoss?.items || []}
+                      scroll={{ x: 1000 }}
+                      pagination={{ pageSize: 20, showSizeChanger: true, showTotal: (t) => `共 ${t} 天` }}
+                      columns={[
+                        { title: '營業日', dataIndex: 'business_date', width: 110, fixed: 'left' },
+                        {
+                          title: 'OOO 房晚', dataIndex: 'ooo_rooms', align: 'right',
+                          render: (v: number) => <Text strong style={{ color: ORANGE }}>{fmtInt(v)}</Text>,
+                          sorter: (a, b) => a.ooo_rooms - b.ooo_rooms,
+                        },
+                        { title: '當日 ADR', dataIndex: 'adr', align: 'right', render: (v: number) => `$${fmtMoney(v)}` },
+                        {
+                          title: '估算損失', dataIndex: 'est_loss', align: 'right', width: 130,
+                          render: (v: number, r) => (
+                            <Tooltip title={`${fmtInt(r.ooo_rooms)} 房晚 × $${fmtMoney(r.adr)}`}>
+                              <Text strong style={{ color: RED }}>{`$${fmtMoney(v)}`}</Text>
+                            </Tooltip>
+                          ),
+                          sorter: (a, b) => a.est_loss - b.est_loss,
+                          defaultSortOrder: 'descend',
+                        },
+                        { title: '住房率', dataIndex: 'occupancy', align: 'right', render: (v: number) => fmtPct(v) },
+                        { title: '淨可售房 RevPAR', dataIndex: 'net_revpar', align: 'right', render: (v: number) => `$${fmtMoney(v)}` },
+                        { title: '實體房 RevPAR', dataIndex: 'physical_revpar', align: 'right', render: (v: number) => `$${fmtMoney(v)}` },
+                        {
+                          title: '分母效果', dataIndex: 'denominator_effect', align: 'right',
+                          render: (v: number) => <Text style={{ color: ORANGE }}>{`$${fmtMoney(v)}`}</Text>,
+                        },
+                      ]}
+                    />
+                    <Text type="secondary" style={{ display: 'block', marginTop: 8, fontSize: 12 }}>
+                      優先處理高 ADR 日期的 OOO，因為每一間不可售房的潛在收入較高；
+                      把損失按月份彙總可協助維修排程避開高需求日。
+                    </Text>
+                  </Card>
+                </>
+              ),
+            },
+
             // ── 四象限 ───────────────────────────────────────────────────
             {
               key: 'quadrant',
@@ -483,6 +924,117 @@ const OperaRevenuePage: React.FC = () => {
               ),
             },
 
+            // ── 高住房率低 ADR 機會 ───────────────────────────────────────
+            {
+              key: 'opportunity',
+              label: (
+                <span>
+                  提價機會
+                  {opportunity && opportunity.total_days > 0 && (
+                    <Tag color="gold" style={{ marginLeft: 6 }}>{opportunity.total_days}</Tag>
+                  )}
+                </span>
+              ),
+              children: (
+                <>
+                  <Alert
+                    type="warning"
+                    showIcon
+                    style={{ marginBottom: 12 }}
+                    message="估算提升金額是「情境值」，不是可保證的收入，也不是會計損失"
+                    description={
+                      opportunity
+                        ? `假設這些日子的同樣房晚可以用期間加權 ADR $${fmtMoney(opportunity.baseline_adr)} 售出。`
+                          + `實務上提價可能影響需求，實際可實現金額通常低於估算值。門檻可在「分析門檻設定」調整。`
+                        : ''
+                    }
+                  />
+
+                  {opportunity && (
+                    <Row gutter={[12, 12]} style={{ marginBottom: 12 }}>
+                      {[
+                        { title: '機會日數', value: `${fmtInt(opportunity.total_days)} 天`, color: BRAND },
+                        { title: '估算提升金額', value: `$${fmtMoney(opportunity.total_uplift)}`, color: ORANGE },
+                        { title: '占期間營收', value: fmtPct(opportunity.uplift_share, 2), color: ACCENT },
+                        { title: '基準 ADR', value: `$${fmtMoney(opportunity.baseline_adr)}`, color: GREEN },
+                      ].map((it) => (
+                        <Col xs={12} lg={6} key={it.title}>
+                          <Card size="small" bodyStyle={{ padding: '12px 16px' }} style={{ borderLeft: `3px solid ${it.color}` }}>
+                            <Text type="secondary" style={{ fontSize: 12 }}>{it.title}</Text>
+                            <div><Text strong style={{ fontSize: 20, color: it.color }}>{it.value}</Text></div>
+                          </Card>
+                        </Col>
+                      ))}
+                    </Row>
+                  )}
+
+                  <Card
+                    size="small"
+                    title={`機會日分布（住房率 ≥ ${opportunity ? (opportunity.threshold * 100).toFixed(0) : 90}% 且 ADR 低於基準）`}
+                    style={{ marginBottom: 12 }}
+                  >
+                    {!opportunity || opportunity.monthly_series.length === 0 ? (
+                      <Empty description="期間內沒有符合條件的機會日" />
+                    ) : (
+                      <ResponsiveContainer width="100%" height={CHART_HEIGHT}>
+                        <ComposedChart data={opportunity.monthly_series} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#eee" />
+                          <XAxis dataKey="month" tick={{ fontSize: 11 }} />
+                          <YAxis yAxisId="left" tick={{ fontSize: 11 }} tickFormatter={(v: number) => `${Math.round(v / 1000)}k`} />
+                          <YAxis yAxisId="right" orientation="right" allowDecimals={false} tick={{ fontSize: 11 }} />
+                          <RcTooltip
+                            formatter={(v: any, n: string) =>
+                              [n === '估算提升' ? `$${Number(v).toLocaleString('en-US')}` : `${v} 天`, n]}
+                          />
+                          <Legend wrapperStyle={{ fontSize: 12 }} />
+                          <Bar yAxisId="left" dataKey="uplift" name="估算提升" fill={ORANGE} />
+                          <Line yAxisId="right" type="monotone" dataKey="days" name="機會日數" stroke={BRAND} strokeWidth={2} dot={{ r: 3 }} />
+                        </ComposedChart>
+                      </ResponsiveContainer>
+                    )}
+                    <Text type="secondary" style={{ fontSize: 12 }}>{SOURCE_NOTE}</Text>
+                  </Card>
+
+                  <Card size="small" title="機會日明細（依估算提升金額排序）">
+                    <Table
+                      rowKey="business_date"
+                      size="small"
+                      dataSource={opportunity?.items || []}
+                      scroll={{ x: 900 }}
+                      pagination={{ pageSize: 20, showSizeChanger: true, showTotal: (t) => `共 ${t} 天` }}
+                      columns={[
+                        { title: '營業日', dataIndex: 'business_date', width: 110, fixed: 'left' },
+                        {
+                          title: '住房率', dataIndex: 'occupancy', align: 'right',
+                          render: (v: number) => <Text strong style={{ color: GREEN }}>{fmtPct(v)}</Text>,
+                          sorter: (a, b) => a.occupancy - b.occupancy,
+                        },
+                        { title: '已售房晚', dataIndex: 'sold_rooms', align: 'right', render: fmtInt },
+                        { title: '當日 ADR', dataIndex: 'adr', align: 'right', render: (v: number) => `$${fmtMoney(v)}` },
+                        { title: '基準 ADR', dataIndex: 'baseline_adr', align: 'right', render: (v: number) => `$${fmtMoney(v)}` },
+                        {
+                          title: 'ADR 差距', dataIndex: 'adr_gap', align: 'right',
+                          render: (v: number) => <Text style={{ color: RED }}>{`$${fmtMoney(v)}`}</Text>,
+                          sorter: (a, b) => a.adr_gap - b.adr_gap,
+                        },
+                        {
+                          title: '估算提升金額', dataIndex: 'est_uplift', align: 'right', width: 140,
+                          render: (v: number, r) => (
+                            <Tooltip title={`$${fmtMoney(r.adr_gap)} × ${fmtInt(r.sold_rooms)} 房晚`}>
+                              <Text strong style={{ color: ORANGE }}>{`$${fmtMoney(v)}`}</Text>
+                            </Tooltip>
+                          ),
+                          sorter: (a, b) => a.est_uplift - b.est_uplift,
+                          defaultSortOrder: 'descend',
+                        },
+                        { title: '房間營收', dataIndex: 'revenue', align: 'right', render: (v: number) => `$${fmtMoney(v)}` },
+                      ]}
+                    />
+                  </Card>
+                </>
+              ),
+            },
+
             // ── 營收異常 ──────────────────────────────────────────────────
             {
               key: 'anomalies',
@@ -566,6 +1118,8 @@ const OperaRevenuePage: React.FC = () => {
           row={drawerRow}
           onClose={() => setDrawerOpen(false)}
         />
+
+        <BackToTop />
       </div>
     </Spin>
   )

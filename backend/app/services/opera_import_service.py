@@ -329,6 +329,19 @@ def commit(
     prop = _latest_property_code(db)
     result = parse_content(resolved, content, property_code=prop)
     prop = result.property_code or prop
+
+    # ⚠️ 2026-08-04 修復：History and Forecast 檔本身**沒有飯店代碼欄位**，
+    #    只能從 Departure（RESORT1）或資料庫既有批次繼承。若兩者都拿不到就會存成
+    #    空字串，而版本管理的業務鍵是 (property_code, record_type, business_date)，
+    #    導致日後用正確代碼重新匯入時**兩組資料永遠不會碰撞、同一天出現兩筆有效資料**，
+    #    營收與房晚被重複計算（ADR／住房率因分子分母同時加倍而看起來正常，極隱蔽）。
+    #    因此這裡直接擋下，要求先匯入 Departure。
+    if resolved == SOURCE_HISTORY_FORECAST and not prop:
+        raise OperaImportError_(
+            "無法判定飯店代碼：History and Forecast 檔案本身不含飯店代碼欄位，"
+            "需要從 Departure All 檔案（RESORT1 欄位）或既有匯入紀錄取得。\n"
+            "請先匯入一份 Departure All，再匯入 History and Forecast。"
+        )
     result.property_code = prop
     recon = reconcile(resolved, result)
     quality, checks = evaluate_quality(result, recon)
@@ -676,6 +689,31 @@ def get_import_status(db: Session) -> dict:
         if m.get("Departure") and not m.get(RECORD_TYPE_HISTORY)
     )
 
+    # ── 重複計算健檢（2026-08-04 新增）─────────────────────────────────────
+    # 同一個營業日若有多筆 is_current=1（通常是 property_code 不一致造成），
+    # 營收與房晚會被重複計算，而 ADR／住房率因分子分母同時放大而看起來正常，
+    # 極難從畫面上發現。因此在這裡主動檢查並回報。
+    dup_rows = db.execute(text(
+        "SELECT record_type, business_date, COUNT(*) AS n, "
+        "       GROUP_CONCAT(DISTINCT property_code) AS props "
+        "FROM opera_revenue_daily WHERE is_current = 1 "
+        "GROUP BY record_type, business_date HAVING COUNT(*) > 1 "
+        "ORDER BY business_date LIMIT 500"
+    )).all()
+    duplicate_dates = [
+        {"record_type": rt, "business_date": bd, "count": int(n),
+         "property_codes": (props or "").split(",")}
+        for rt, bd, n, props in dup_rows
+    ]
+    prop_codes = [
+        {"property_code": pc if pc else "（空白）", "rows": int(n)}
+        for pc, n in db.execute(text(
+            "SELECT property_code, COUNT(*) FROM opera_revenue_daily "
+            "WHERE is_current = 1 GROUP BY property_code ORDER BY 2 DESC"
+        )).all()
+    ]
+    blank_prop_rows = sum(p["rows"] for p in prop_codes if p["property_code"] == "（空白）")
+
     return {
         "departure": {
             "start": stay_range[0] or "", "end": stay_range[1] or "", "rows": int(stay_range[2] or 0),
@@ -690,4 +728,18 @@ def get_import_status(db: Session) -> dict:
         "missing_history_years": missing_history_years,
         "last_batch":            last_batch.to_dict() if last_batch else None,
         "has_data":              bool(stay_range[2] or hist_range[2]),
+        # 資料健檢：同一營業日多筆有效資料 = 營收與房晚被重複計算
+        "health": {
+            "duplicate_dates":       duplicate_dates[:100],
+            "duplicate_date_count":  len(duplicate_dates),
+            "property_codes":        prop_codes,
+            "blank_property_rows":   blank_prop_rows,
+            "has_issue":             bool(duplicate_dates or blank_prop_rows),
+            "hint": (
+                "同一營業日出現多筆有效資料，營收與房晚會被重複計算，"
+                "但 ADR 與住房率因分子分母同時放大而看起來正常，很難從畫面察覺。"
+                "常見原因是不同批次的飯店代碼不一致（例如首次匯入 History 時尚未匯入 Departure，"
+                "代碼存成空白）。請執行 `fix_opera_duplicate_history.py` 修復。"
+            ),
+        },
     }

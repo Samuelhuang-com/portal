@@ -1044,8 +1044,10 @@ def compute_fee_stats(all_cases: list, year: int) -> dict:
                 monthly_detail[f"{m}_{fk}"] = [c.to_dict() for c in cases_with_fee]
 
     fee_totals = {fk: round(sum(monthly_totals[m][fk] for m in range(1,13)), 2) for fk in FEE_KEYS}
-    month_totals = {m: round(sum(monthly_totals[m][fk] for fk in FEE_KEYS), 2) for m in range(1,13)}
-    grand_total = round(sum(fee_totals.values()), 2)
+    # 月份小計 = 委外費用 + 維修費用（扣款費用不計入小計）
+    _SUBTOTAL_KEYS = ["outsource_fee", "maintenance_fee"]
+    month_totals = {m: round(sum(monthly_totals[m][fk] for fk in _SUBTOTAL_KEYS), 2) for m in range(1,13)}
+    grand_total = round(sum(fee_totals[fk] for fk in _SUBTOTAL_KEYS), 2)
     return {"year": year, "monthly_totals": monthly_totals, "fee_totals": fee_totals, "month_totals": month_totals, "grand_total": grand_total, "monthly_detail": monthly_detail, "fee_labels": FEE_LABELS}
 
 
