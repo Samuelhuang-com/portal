@@ -1651,23 +1651,31 @@ function FeeStatsTab({ year }: { year: number }) {
     annual: number
   }
 
+  const feeRows: RowData[] = FEE_DEFS_DAZHI.map(fd => ({
+    key:     fd.key,
+    label:   fd.label,
+    color:   fd.color,
+    isTotal: false,
+    ...Object.fromEntries(MONTH_NUMS.map(m => [m, (data.monthly_totals[m] as unknown as Record<string, number>)?.[fd.key] ?? 0])),
+    annual: (data.fee_totals as unknown as Record<string, number>)[fd.key] ?? 0,
+  } as RowData))
+
+  const totalRow: RowData = {
+    key:     'month_total',
+    label:   '月份小計',
+    color:   '#1B3A5C',
+    isTotal: true,
+    ...Object.fromEntries(MONTH_NUMS.map(m => [m, data.month_totals[m] ?? 0])),
+    annual: data.grand_total,
+  } as RowData
+
+  // 月份小計 = 委外費用 + 維修費用，故緊接在「維修費用」下方，
+  // 扣款費用排在小計之後（不計入小計）
+  const totalInsertAt = FEE_DEFS_DAZHI.findIndex(fd => fd.key === 'maintenance_fee') + 1
   const tableData: RowData[] = [
-    ...FEE_DEFS_DAZHI.map(fd => ({
-      key:     fd.key,
-      label:   fd.label,
-      color:   fd.color,
-      isTotal: false,
-      ...Object.fromEntries(MONTH_NUMS.map(m => [m, (data.monthly_totals[m] as unknown as Record<string, number>)?.[fd.key] ?? 0])),
-      annual: (data.fee_totals as unknown as Record<string, number>)[fd.key] ?? 0,
-    } as RowData)),
-    {
-      key:     'month_total',
-      label:   '月份小計',
-      color:   '#1B3A5C',
-      isTotal: true,
-      ...Object.fromEntries(MONTH_NUMS.map(m => [m, data.month_totals[m] ?? 0])),
-      annual: data.grand_total,
-    } as RowData,
+    ...feeRows.slice(0, totalInsertAt),
+    totalRow,
+    ...feeRows.slice(totalInsertAt),
   ]
 
   const cellStyle = (val: number, color: string, clickable: boolean): React.CSSProperties => ({

@@ -65,6 +65,28 @@ logger = logging.getLogger(__name__)
 
 BULK_CHUNK = 1000
 
+# ⚠️ SQLite 的 SQLITE_MAX_VARIABLE_NUMBER：3.32 以前預設 **999**，之後才放寬到 32766。
+#    正式區實測是舊版（8,716 個 booking_no 塞進 IN(...) 就炸 "too many SQL variables"），
+#    因此任何以清單為條件的查詢都必須分批，且批次大小要壓在 999 以下。
+#    只放 500 是為了留餘裕給查詢本身其他的繫結參數。
+SQL_IN_CHUNK = 500
+
+
+def _chunked(values: list, size: int = SQL_IN_CHUNK):
+    """把清單切成不超過 SQL 變數上限的批次。"""
+    for i in range(0, len(values), size):
+        yield values[i:i + size]
+
+
+def _load_key_hash_map(db: Session, model, key_col) -> dict[str, str]:
+    """一次載入整張事實表的 {業務鍵: row_hash}。
+
+    ⚠️ 刻意**不用** `key_col.in_(本次檔案的所有鍵)`——那會產生上萬個繫結參數，
+       在舊版 SQLite 直接 OperationalError。改成掃兩個欄位，成本遠低於分批查詢，
+       而且順便避免把上萬個 ORM 物件塞進 session。
+    """
+    return {k: h for k, h in db.query(key_col, model.row_hash).all()}
+
 # 整批 FAIL 的錯誤碼（規格書 §10）—— 這些代表資料本身對不上，不可放行
 FATAL_ERROR_CODES = {
     P.ERR_SUBTOTAL_MISMATCH,
@@ -534,12 +556,21 @@ def _commit_fcr02(
     raw_ids = _bulk_insert_returning_ids(db, JinxuFcr02Raw, raw_rows, "create_seq")
 
     # 2) 事實層 INSERT / UPDATE / SKIP（§8.2）
-    existing = {
-        e.create_seq: e
-        for e in db.query(JinxuLedgerEntry)
-        .filter(JinxuLedgerEntry.create_seq.in_([r.create_seq for r in result.rows]))
-        .all()
-    } if result.rows else {}
+    #    先用「鍵 → row_hash」比對出誰要 UPDATE，再只把那幾筆撈成 ORM 物件。
+    #    正常情況（重新匯出同一份資料）需要 UPDATE 的幾乎是 0 筆。
+    hash_map = _load_key_hash_map(db, JinxuLedgerEntry, JinxuLedgerEntry.create_seq)
+    need_update_keys = [
+        r.create_seq for r in result.rows
+        if r.create_seq in hash_map and hash_map[r.create_seq] != r.row_hash
+    ]
+    existing: dict[str, JinxuLedgerEntry] = {}
+    for chunk in _chunked(need_update_keys):
+        for e in (
+            db.query(JinxuLedgerEntry)
+            .filter(JinxuLedgerEntry.create_seq.in_(chunk))
+            .all()
+        ):
+            existing[e.create_seq] = e
 
     now = twnow()
     to_insert = []
@@ -584,15 +615,16 @@ def _commit_fcr02(
             "property_code": property_code,
         }
 
-        old = existing.get(r.create_seq)
-        if old is None:
+        prev_hash = hash_map.get(r.create_seq)
+        if prev_hash is None:
             payload["first_imported_at"] = now
             payload["last_updated_at"] = now
             to_insert.append(payload)
             ins += 1
-        elif old.row_hash == r.row_hash:
+        elif prev_hash == r.row_hash:
             skip += 1
         else:
+            old = existing[r.create_seq]
             # ⚠️ 先擷取舊值再覆蓋——稽核軌跡的重點就是「變更前是什麼」
             before = f"{old.business_date} {old.subject_code} {old.amount}"
             for k, val in payload.items():
@@ -662,14 +694,20 @@ def _commit_resv(
         })
     raw_ids = _bulk_insert_returning_ids(db, JinxuResvRaw, raw_rows, "booking_no")
 
-    # 2) 事實層
-    keys = [r.booking_no for r in result.rows]
-    existing = {
-        e.booking_no: e
-        for e in db.query(JinxuReservation)
-        .filter(JinxuReservation.booking_no.in_(keys))
-        .all()
-    } if keys else {}
+    # 2) 事實層（同 FCR02：先比 hash，只把要 UPDATE 的撈成 ORM 物件）
+    hash_map = _load_key_hash_map(db, JinxuReservation, JinxuReservation.booking_no)
+    need_update_keys = [
+        r.booking_no for r in result.rows
+        if r.booking_no in hash_map and hash_map[r.booking_no] != r.row_hash
+    ]
+    existing: dict[str, JinxuReservation] = {}
+    for chunk in _chunked(need_update_keys):
+        for e in (
+            db.query(JinxuReservation)
+            .filter(JinxuReservation.booking_no.in_(chunk))
+            .all()
+        ):
+            existing[e.booking_no] = e
 
     now = twnow()
     ins = upd = skip = 0
@@ -710,17 +748,18 @@ def _commit_resv(
             "property_code": property_code,
         }
 
-        old = existing.get(r.booking_no)
-        if old is None:
+        prev_hash = hash_map.get(r.booking_no)
+        if prev_hash is None:
             obj = JinxuReservation(**payload, first_imported_at=now, last_updated_at=now)
             db.add(obj)
             db.flush()
             segments_by_booking[r.booking_no] = (obj.id, r.segments)
             ins += 1
-        elif old.row_hash == r.row_hash:
+        elif prev_hash == r.row_hash:
             # 內容沒變 → 連子表都不動（row_hash 已涵蓋「住宿資料」欄）
             skip += 1
         else:
+            old = existing[r.booking_no]
             # ⚠️ 先擷取舊值再覆蓋。訂房狀態變化（CNFM→ACTV→CXNL）正是取消分析
             #    最有價值的軌跡，覆蓋後就查不到了。
             old_status = old.status_code
@@ -747,8 +786,8 @@ def _commit_resv(
 
     # 3) 子表：UPDATE 的先整組刪除，再與 INSERT 一併重建（§8.2）
     if rebuild_ids:
-        for i in range(0, len(rebuild_ids), BULK_CHUNK):
-            chunk = rebuild_ids[i:i + BULK_CHUNK]
+        # ⚠️ 用 SQL_IN_CHUNK 而非 BULK_CHUNK——後者是 1000，已超過舊版 SQLite 的 999 上限
+        for chunk in _chunked(rebuild_ids):
             db.query(JinxuReservationStay).filter(
                 JinxuReservationStay.reservation_id.in_(chunk)
             ).delete(synchronize_session=False)

@@ -646,9 +646,12 @@ def resv_by_roomtype(db: Session, *, start_date: str = "", end_date: str = "",
     J23：**只顯示代碼**，不顯示中文名、不做分級或分群——房務尚未提供正式
     對照表（§19.2 Q17），自行推斷（如 V 前綴 = 景觀）會讓分析失真。
     """
+    # 用 scalar_subquery() 而非 subquery()——後者在 in_() 會觸發
+    # SAWarning: Coercing Subquery object into a select()，未來版本可能直接報錯。
+    # ⚠️ 這裡是**子查詢**不是參數清單，不受 SQLITE_MAX_VARIABLE_NUMBER 限制。
     sub = _resv_q(db, start_date=start_date, end_date=end_date,
                   date_basis=date_basis, include_cancelled=include_cancelled,
-                  **kw).with_entities(JinxuReservation.id).subquery()
+                  **kw).with_entities(JinxuReservation.id).scalar_subquery()
 
     rows = (
         db.query(
