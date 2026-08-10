@@ -24,7 +24,7 @@ dist/
 *.sqlite-wal
 
 # Logs / uploads
-logs/
+/logs/
 uploads/
 *.log
 
