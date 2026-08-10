@@ -75,6 +75,48 @@ def create_vendor(
         raise _conflict("供應商代碼已存在")
 
 
+@router.post("/vendors/sync", summary="自合約模組同步供應商主檔")
+def sync_vendors_from_contract(
+    _: User = Depends(require_permission("cycle_purchase_admin")),
+):
+    """
+    把合約模組的廠商主檔（portal.db `vendors`）鏡像同步到週期採購。
+
+    ⚠ 這是**同步 def**（不是 async def），FastAPI 會丟到 thread pool 執行。
+    刻意如此：sync_from_contract() 內部是一連串阻塞的 SQLAlchemy 呼叫，
+    寫成 async def 會直接卡住事件迴圈、整個 Portal 沒有回應（2026-07-15 已經
+    因為這個原因修過 12 個 router 檔）。既然已經在 thread pool 的執行緒上，
+    跨行程鎖就用同步版的 sync_lock（見 sync_lock.py 的 docstring）。
+
+    與「設定 → Ragic 連線 → 立即同步」的差別：
+      - 那邊是背景執行、不回傳結果，而且要 system_admin 權限
+      - 這裡同步等待並把 created/updated/skipped/warnings/errors 直接回給前端，
+        使用者在供應商主檔頁面按下去就能看到這次到底同步了什麼
+
+    注意：這條路徑不會寫 module_sync_log（那是 main.py 排程的內部機制），
+    所以「設定 → Ragic 連線」的同步紀錄不會出現這一筆。
+    """
+    import asyncio
+
+    from app.core.sync_lock import sync_lock
+    from app.services.cycle_purchase_vendor_sync import sync_from_contract
+
+    try:
+        with sync_lock("週期採購供應商"):
+            # sync_from_contract 是 async def（要能被 sync_dispatcher 與排程共用），
+            # 但內部沒有任何 await，在這條 worker 執行緒直接 asyncio.run 即可。
+            result = asyncio.run(sync_from_contract())
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"同步失敗：{exc}")
+
+    if result.get("errors"):
+        raise HTTPException(
+            status_code=500,
+            detail="同步過程發生錯誤：" + "；".join(str(e) for e in result["errors"][:3]),
+        )
+    return result
+
+
 @router.put("/vendors/{vendor_id}", response_model=VendorOut, summary="更新供應商")
 def update_vendor(
     vendor_id: int,

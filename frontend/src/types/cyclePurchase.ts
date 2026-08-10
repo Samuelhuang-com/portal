@@ -25,6 +25,19 @@ export interface CpVendor {
   updated_at: string
 }
 
+/** 供應商鏡像同步（合約模組 → 週期採購）的回傳統計 */
+export interface CpVendorSyncResult {
+  fetched: number      // 合約模組共有幾筆廠商
+  upserted: number     // created + updated
+  created: number      // 新建立的鏡像筆數
+  updated: number      // 內容有異動而更新的筆數
+  unchanged: number    // 比對到但內容完全沒變的筆數
+  skipped: number      // 略過（通常是來源端有重複統編）
+  orphans: number      // 週採有、合約端已無對應的筆數（只示警不處理）
+  warnings: string[]
+  errors: string[]
+}
+
 // ── 部門 / 成本中心 / 會計科目 主檔 ──────────────────────────────────────────
 export interface CpDepartment {
   id: number

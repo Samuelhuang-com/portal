@@ -18,8 +18,8 @@ import { useEffect, useState } from 'react'
 import {
   Alert, Button, Card, Form, Input, Modal, Popconfirm, Space, Switch, Table, Tag, Typography, message,
 } from 'antd'
-import { PlusOutlined, EditOutlined, StopOutlined, CheckCircleOutlined, SyncOutlined } from '@ant-design/icons'
-import { createVendor, getVendors, updateVendor } from '@/api/cyclePurchase'
+import { PlusOutlined, EditOutlined, StopOutlined, CheckCircleOutlined, SyncOutlined, CloudDownloadOutlined } from '@ant-design/icons'
+import { createVendor, getVendors, syncVendorsFromContract, updateVendor } from '@/api/cyclePurchase'
 import type { CpVendor } from '@/types/cyclePurchase'
 
 const { Title } = Typography
@@ -30,6 +30,7 @@ const isSynced = (v: CpVendor | null): boolean => !!v?.source_vendor_id
 export default function CpVendorsPage() {
   const [vendors, setVendors] = useState<CpVendor[]>([])
   const [loading, setLoading] = useState(false)
+  const [syncing, setSyncing] = useState(false)
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState<CpVendor | null>(null)
   const [form] = Form.useForm()
@@ -48,6 +49,38 @@ export default function CpVendorsPage() {
       load()
     } catch (err: any) {
       message.error(err?.response?.data?.detail || '操作失敗')
+    }
+  }
+
+  /**
+   * 自合約模組把廠商主檔同步過來。同步等待（不是背景執行），完成後直接把
+   * 這次的異動統計顯示出來——使用者按下去就知道到底同步了什麼，
+   * 不用再跑到「設定 → Ragic 連線」看紀錄。
+   */
+  const handleSync = async () => {
+    setSyncing(true)
+    try {
+      const { data } = await syncVendorsFromContract()
+      message.success(
+        `同步完成：合約模組共 ${data.fetched} 家，新增 ${data.created} 家、`
+        + `更新 ${data.updated} 家、無異動 ${data.unchanged} 家`,
+      )
+      if (data.skipped > 0) {
+        Modal.warning({
+          title: `有 ${data.skipped} 家廠商被略過`,
+          width: 560,
+          content: (
+            <div>
+              {data.warnings.map((w, i) => <p key={i} style={{ marginBottom: 8 }}>{w}</p>)}
+            </div>
+          ),
+        })
+      }
+      load()
+    } catch (err: any) {
+      message.error(err?.response?.data?.detail || '同步失敗')
+    } finally {
+      setSyncing(false)
     }
   }
 
@@ -101,7 +134,16 @@ export default function CpVendorsPage() {
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
         <Title level={4} style={{ margin: 0 }}>週期採購 — 供應商主檔</Title>
-        <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新增供應商</Button>
+        <Space>
+          <Button
+            icon={<CloudDownloadOutlined />}
+            loading={syncing}
+            onClick={handleSync}
+          >
+            自合約模組同步
+          </Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新增供應商</Button>
+        </Space>
       </div>
 
       <Alert
@@ -109,7 +151,7 @@ export default function CpVendorsPage() {
         showIcon
         style={{ marginBottom: 16 }}
         message="廠商資料來源：合約管理 → 廠商主檔（上游為 Ragic 廠商資料表）"
-        description="標示「同步」的供應商，其代碼／名稱／統編／聯絡人／電話由來源端維護，在此為唯讀；付款條件、備註、啟用狀態則屬週期採購自行維護，可直接編輯。要新增或修改廠商基本資料，請到合約管理或 Ragic 操作後執行同步。"
+        description="標示「同步」的供應商，其代碼／名稱／統編／聯絡人／電話由來源端維護，在此為唯讀；付款條件、備註、啟用狀態則屬週期採購自行維護，可直接編輯。要新增或修改廠商基本資料，請到合約管理或 Ragic 操作後，回到這裡按「自合約模組同步」。"
       />
 
       <Card>

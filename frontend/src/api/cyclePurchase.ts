@@ -44,6 +44,7 @@ import type {
   CpUnsummarizeResult,
   CpVendor,
   CpVendorGroup,
+  CpVendorSyncResult,
   TodoSummary,
 } from '@/types/cyclePurchase'
 
@@ -59,6 +60,13 @@ export const createVendor = (data: Omit<CpVendor, 'id' | 'created_at' | 'updated
 
 export const updateVendor = (id: number, data: Partial<CpVendor>) =>
   apiClient.put<CpVendor>(`${BASE}/masters/vendors/${id}`, data)
+
+/**
+ * 自合約模組（portal.db vendors，上游是 Ragic 廠商資料表）鏡像同步供應商主檔。
+ * 同步等待並回傳這次的異動統計，不是背景執行。
+ */
+export const syncVendorsFromContract = () =>
+  apiClient.post<CpVendorSyncResult>(`${BASE}/masters/vendors/sync`)
 
 // ── 部門主檔 ──────────────────────────────────────────────────────────────────
 
