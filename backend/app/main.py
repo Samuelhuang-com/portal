@@ -822,6 +822,55 @@ def _migrate_vendors_ragic_id():
         conn.commit()
 
 
+def _migrate_cycle_purchase_vendor_source():
+    """
+    2026-08-10 — cycle_purchase_vendors.source_vendor_id / synced_at
+    （供應商主檔改為鏡像合約模組 vendors，見 cycle_purchase_vendor_sync.py）。
+
+    ⚠ 這一段刻意做成「啟動時自動補」而不是只靠
+    apply_cycle_purchase_summary_migration.py：`create_all()` 只會建**缺少的資料表**，
+    不會替**既有資料表**補欄位。所以 model 加了欄位、migration 還沒跑的空窗期，
+    每一個查到 CyclePurchaseVendor 的端點都會噴
+    `no such column: cycle_purchase_vendors.source_vendor_id` → 供應商主檔、
+    採購單、驗收、付款、彙整單整片變空白，而且畫面上看起來像「資料不見了」，
+    非常容易誤判成資料庫連錯檔案。
+
+    注意這裡用的是 cycle_purchase_engine（cycle-purchase.db），不是 engine。
+
+    SQLite 的 ALTER TABLE ADD COLUMN 不支援 UNIQUE，所以唯一索引另外建；
+    SQLite 的唯一索引允許多列同時為 NULL，本地自建的供應商（source_vendor_id
+    為 NULL）不會互相衝突。
+    """
+    from sqlalchemy import text
+    from app.core.cycle_purchase_database import cycle_purchase_engine
+
+    with cycle_purchase_engine.connect() as conn:
+        existing = {row[1] for row in conn.execute(
+            text("PRAGMA table_info(cycle_purchase_vendors)")
+        ).fetchall()}
+        if not existing:
+            return  # 資料表還不存在（全新環境），create_all 會直接建成新版
+        if "source_vendor_id" not in existing:
+            conn.execute(text(
+                "ALTER TABLE cycle_purchase_vendors ADD COLUMN source_vendor_id VARCHAR(50)"
+            ))
+            conn.commit()
+            print("[Migration] cycle_purchase_vendors.source_vendor_id added")
+        if "synced_at" not in existing:
+            conn.execute(text(
+                "ALTER TABLE cycle_purchase_vendors ADD COLUMN synced_at DATETIME"
+            ))
+            conn.commit()
+            print("[Migration] cycle_purchase_vendors.synced_at added")
+        # 有重複值時建索引會失敗，讓它拋出來由 _run_startup_migration 記錄，
+        # 不要吞掉——索引沒建起來，同步的第 1 層比對就失去唯一性保證。
+        conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ix_cycle_purchase_vendors_source_vendor_id "
+            "ON cycle_purchase_vendors (source_vendor_id)"
+        ))
+        conn.commit()
+
+
 def _migrate_full_bldg_pm_sheet28_fields():
     """
     輕量欄位補丁（2026-06-02 新增 repair_hours/sheet28_id；2026-07-14 補上 2026-07-13
@@ -1256,6 +1305,9 @@ async def _auto_sync():
     from app.services.ihg_room_maintenance_sync import sync_from_ragic as sync_ihg_rm
     from app.services.other_tasks_sync import sync_from_ragic as sync_other_tasks
     from app.services.vendor_sync import sync_from_ragic as sync_vendor
+    from app.services.cycle_purchase_vendor_sync import (
+        sync_from_contract as sync_cp_vendor,
+    )
     from app.services.purchase_request_sync import sync_list_only as sync_purchase_list
     from app.services.claim_request_sync import sync_list_only as sync_claim_list
     from app.services.nichiyo_purchase_request_sync import sync_list_only as sync_nichiyo_purchase_list
@@ -1280,6 +1332,8 @@ async def _auto_sync():
     await _run_loop("IHG客房保養",        sync_ihg_rm)
     await _run_loop("主管交辦／緊急事件",  sync_other_tasks)
     await _run_loop("廠商資料",           sync_vendor)
+    # ⚠ 順序相依：來源是 portal.db vendors（上一行剛同步完），不可提前
+    await _run_loop("週期採購供應商",      sync_cp_vendor)
     # 請購單 / 請款單：清單同步（Detail API 由獨立排程補全）
     await _run_loop("核准請購單清單",      sync_purchase_list)
     await _run_loop("核准請款單清單",      sync_claim_list)
@@ -1355,6 +1409,7 @@ _SINGLE_MODULE_MAP: dict[str, tuple[str, str]] = {
     "日曜核准請款單清單": ("app.services.nichiyo_claim_request_sync",    "sync_list_only"),
     "主管交辦／緊急事件": ("app.services.other_tasks_sync",              "sync_from_ragic"),
     "廠商資料":          ("app.services.vendor_sync",                   "sync_from_ragic"),
+    "週期採購供應商":     ("app.services.cycle_purchase_vendor_sync",    "sync_from_contract"),
 }
 
 def list_syncable_modules() -> list[str]:
@@ -1547,6 +1602,14 @@ async def lifespan(app: FastAPI):
         lambda: CyclePurchaseBase.metadata.create_all(bind=cycle_purchase_engine),
     )
     print("[Portal] Cycle-purchase database tables ensured (cycle-purchase.db).")
+
+    # 2026-08-10：cycle_purchase_vendors 的 source_vendor_id / synced_at。
+    # create_all() 不會替既有資料表補欄位，缺欄位時整個週期採購模組會變空白，
+    # 所以在這裡自動補（理由詳見該函式 docstring）。
+    _run_startup_migration(
+        "_migrate_cycle_purchase_vendor_source", _migrate_cycle_purchase_vendor_source
+    )
+    print("[Portal] cycle_purchase_vendors source_vendor_id migration checked.")
 
     # 週期採購：系統自動關閉「期別已過」的請購單（2026-08-07，與 Samuel 確認）。
     # 啟動時先跑一次，之後由下方 SCHEDULER_ENABLED 區塊的每日排程接手。

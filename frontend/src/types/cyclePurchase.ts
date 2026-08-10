@@ -14,6 +14,13 @@ export interface CpVendor {
   payment_terms?: string | null
   notes?: string | null
   is_active: boolean
+  /**
+   * 2026-08-10：鏡像自合約模組 vendors 的來源鍵（VND-NNNN）。
+   * 非 null＝受同步管控，代碼／名稱／統編／聯絡人／電話唯讀；
+   * null＝週採本地自建，全部欄位可編。
+   */
+  source_vendor_id?: string | null
+  synced_at?: string | null
   created_at: string
   updated_at: string
 }

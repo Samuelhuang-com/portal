@@ -33,6 +33,11 @@ class VendorUpdate(BaseModel):
 
 class VendorOut(VendorBase):
     id: int
+    # 2026-08-10：鏡像自合約模組 vendors 的來源鍵（VND-NNNN）。
+    # 非空 = 受同步管控，前端須把 vendor_code/vendor_name/tax_id/contact_* 設唯讀；
+    # 為 None = 週採本地自建，全部欄位可編。
+    source_vendor_id: Optional[str] = None
+    synced_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
 

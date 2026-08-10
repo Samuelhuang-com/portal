@@ -202,6 +202,9 @@ MODULES: list[tuple[str, str, str]] = [
     ("週期保養預排",       "app.services.pm_plan_sync",                 "sync_from_ragic"),
     ("飯店例行維護",       "app.services.hotel_routine_pm_sync",        "sync_from_ragic"),
     ("廠商資料",           "app.services.vendor_sync",                  "sync_from_ragic"),
+    # ⚠ 必須排在「廠商資料」之後：來源是 portal.db vendors（非 Ragic），
+    #   先跑會同步到上一輪的舊資料。詳見 cycle_purchase_vendor_sync.py 檔頭。
+    ("週期採購供應商",     "app.services.cycle_purchase_vendor_sync",   "sync_from_contract"),
 ]
 
 # ── 報修報表寄信排程 key（非同步模組，獨立處理）─────────────────────────────

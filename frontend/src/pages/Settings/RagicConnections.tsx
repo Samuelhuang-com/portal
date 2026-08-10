@@ -62,6 +62,8 @@ const ALL_MODULES: string[] = [
   'IHG客房保養', '核准請購單清單', '核准請款單清單',
   '日曜核准請購單清單', '日曜核准請款單清單',
   '主管交辦／緊急事件', '週期保養預排', '飯店例行維護', '廠商資料',
+  // 來源是 portal.db vendors（非 Ragic），必須排在「廠商資料」之後執行
+  '週期採購供應商',
 ]
 
 function fmtTime(iso: string): string {

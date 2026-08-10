@@ -1,6 +1,6 @@
 """
-週期採購「彙整單／請購單／週期設定」欄位補齊 migration
-（2026-07-16／2026-07-17／2026-08-09，累計五次調整）
+週期採購「彙整單／請購單／週期設定／供應商主檔」欄位補齊 migration
+（2026-07-16／2026-07-17／2026-08-09／2026-08-10，累計六次調整）
 
 用途：
   幫 cycle-purchase.db 補上這幾次改版新增的欄位，涵蓋兩張表：
@@ -31,6 +31,19 @@
 
      全部可為 NULL，代表「這張單從來沒有被退回過」，舊資料同樣不需要任何
      一次性轉換。
+
+  6) cycle_purchase_vendors（供應商主檔改為鏡像合約模組，2026-08-10 第六次
+     調整——見 backend/app/services/cycle_purchase_vendor_sync.py 檔頭）：
+       source_vendor_id, synced_at
+
+     NULL 代表「這筆是週採本地自建的，不受同步管控」，與改版前的行為完全
+     一致，所以舊資料不需要任何一次性轉換。第一次執行
+     「週期採購供應商」同步時，會自動用統一編號／名稱把既有資料比對合併、
+     回填 source_vendor_id。
+
+     ⚠ SQLite 的 ALTER TABLE ADD COLUMN 不能直接帶 UNIQUE，所以
+     source_vendor_id 的唯一索引由本腳本的 create_vendor_source_index()
+     另外建立（CREATE UNIQUE INDEX IF NOT EXISTS）。
 
   另外，第三次調整還需要「一次性資料轉換」：改版前用 status=='approved'
   代表「這張單的內容已經定案」，改版後這個角色改由 is_closed=True 扮演，
@@ -106,6 +119,15 @@ TABLES_TO_MIGRATE = [
             ("unsummarized_by_name", "ALTER TABLE cycle_purchase_requests ADD COLUMN unsummarized_by_name VARCHAR(100)"),
             ("unsummarized_at", "ALTER TABLE cycle_purchase_requests ADD COLUMN unsummarized_at DATETIME"),
             ("unsummarize_reason", "ALTER TABLE cycle_purchase_requests ADD COLUMN unsummarize_reason TEXT"),
+        ],
+    ),
+    (
+        "cycle_purchase_vendors",
+        [
+            # 2026-08-10 第六次調整：供應商主檔改為鏡像合約模組 vendors。
+            # NULL＝週採本地自建（＝改版前的行為），不需要一次性資料轉換。
+            ("source_vendor_id", "ALTER TABLE cycle_purchase_vendors ADD COLUMN source_vendor_id VARCHAR(50)"),
+            ("synced_at", "ALTER TABLE cycle_purchase_vendors ADD COLUMN synced_at DATETIME"),
         ],
     ),
 ]
@@ -199,6 +221,48 @@ def convert_legacy_approved_to_closed(con):
     return True
 
 
+def create_vendor_source_index(con):
+    """建立 cycle_purchase_vendors.source_vendor_id 的唯一索引（第六次調整）。
+
+    SQLite 的 ALTER TABLE ADD COLUMN 不支援 UNIQUE，所以欄位補完之後要另外
+    建索引。SQLite 的唯一索引允許多列同時為 NULL，所以「本地自建」的資料
+    （source_vendor_id IS NULL）不會互相衝突，這正是我們要的行為。
+
+    用 IF NOT EXISTS，重複執行不會出錯。"""
+    print("=== cycle_purchase_vendors.source_vendor_id 唯一索引 ===")
+    try:
+        dup = con.execute(
+            """
+            SELECT source_vendor_id, COUNT(*) FROM cycle_purchase_vendors
+            WHERE source_vendor_id IS NOT NULL
+            GROUP BY source_vendor_id HAVING COUNT(*) > 1
+            """
+        ).fetchall()
+    except Exception as e:
+        print(f"[錯誤] 無法檢查重複值：{e}")
+        return False
+
+    if dup:
+        print(f"[錯誤] 有重複的 source_vendor_id，無法建立唯一索引：{dup}")
+        print("       請先在「週期採購 → 供應商主檔」處理掉重複資料後再執行一次。")
+        print()
+        return False
+
+    try:
+        con.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ix_cycle_purchase_vendors_source_vendor_id "
+            "ON cycle_purchase_vendors (source_vendor_id)"
+        )
+        con.commit()
+    except Exception as e:
+        print(f"[錯誤] 建立索引失敗：{e}")
+        return False
+
+    print("[完成] 唯一索引已存在（或剛剛建立完成）")
+    print()
+    return True
+
+
 def main():
     db_path, source = resolve_db_path(DEFAULT_DB_PATH)
     require_existing_db(db_path, source)
@@ -217,6 +281,8 @@ def main():
     # 欄位補齊之後才能做資料轉換（is_closed／close_batch_no 等欄位要先存在）。
     if all_ok:
         all_ok = convert_legacy_approved_to_closed(con) and all_ok
+        # 同理，source_vendor_id 欄位要先存在才能建索引。
+        all_ok = create_vendor_source_index(con) and all_ok
 
     con.close()
 

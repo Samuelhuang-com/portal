@@ -59,11 +59,26 @@ def create_vendor(db: Session, payload) -> CyclePurchaseVendor:
     return vendor
 
 
+# 鏡像自合約模組的供應商（source_vendor_id 非空）不可在週採端修改的欄位。
+# 這幾欄由 cycle_purchase_vendor_sync.py 每次同步覆寫，在此改了也會被蓋回去，
+# 所以直接在後端擋掉（前端 disabled 只是輔助，不能當作唯一防線）。
+VENDOR_SYNCED_READONLY_FIELDS = {
+    "vendor_code", "vendor_name", "tax_id", "contact_name", "contact_phone",
+}
+
+
 def update_vendor(db: Session, vendor_id: int, payload) -> Optional[CyclePurchaseVendor]:
     vendor = db.query(CyclePurchaseVendor).filter(CyclePurchaseVendor.id == vendor_id).first()
     if not vendor:
         return None
-    for k, v in payload.model_dump(exclude_unset=True).items():
+    data = payload.model_dump(exclude_unset=True)
+    # source_vendor_id / synced_at 只由同步服務維護，任何情況都不吃前端傳入值
+    data.pop("source_vendor_id", None)
+    data.pop("synced_at", None)
+    if vendor.source_vendor_id:
+        for field in VENDOR_SYNCED_READONLY_FIELDS:
+            data.pop(field, None)
+    for k, v in data.items():
         setattr(vendor, k, v)
     db.flush()
     return vendor

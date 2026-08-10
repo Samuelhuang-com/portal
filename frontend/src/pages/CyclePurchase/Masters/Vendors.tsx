@@ -1,16 +1,31 @@
 /**
  * 週期採購 — 供應商主檔維護
+ *
  * 2026-07-10 決策：週期採購自建獨立供應商主檔，不與合約模組的 Vendors 共用。
+ * 2026-08-10 修訂：改為「單向鏡像同步」——合約模組的廠商主檔是唯一真實來源
+ * （其上游是 Ragic 廠商資料表），本頁只是它在 cycle-purchase.db 的副本。
+ *
+ * 因此本頁的列分兩種：
+ *   - 同步（source_vendor_id 非空）：代碼／名稱／統編／聯絡人／電話唯讀，
+ *     要改請到「合約管理 → 廠商主檔」或 Ragic 改；付款條件／備註／啟用狀態
+ *     仍屬週採自維護，可以編輯。
+ *   - 本地自建（source_vendor_id 為 null）：全部欄位可編，同步不會覆蓋。
+ *
+ * 唯讀限制後端也有擋（cycle_purchase_service.update_vendor），這裡的 disabled
+ * 只是提示用途。
  */
 import { useEffect, useState } from 'react'
 import {
-  Button, Card, Form, Input, Modal, Popconfirm, Space, Switch, Table, Tag, Typography, message,
+  Alert, Button, Card, Form, Input, Modal, Popconfirm, Space, Switch, Table, Tag, Typography, message,
 } from 'antd'
-import { PlusOutlined, EditOutlined, StopOutlined, CheckCircleOutlined } from '@ant-design/icons'
+import { PlusOutlined, EditOutlined, StopOutlined, CheckCircleOutlined, SyncOutlined } from '@ant-design/icons'
 import { createVendor, getVendors, updateVendor } from '@/api/cyclePurchase'
 import type { CpVendor } from '@/types/cyclePurchase'
 
 const { Title } = Typography
+
+/** 是否為「鏡像自合約模組」的供應商 */
+const isSynced = (v: CpVendor | null): boolean => !!v?.source_vendor_id
 
 export default function CpVendorsPage() {
   const [vendors, setVendors] = useState<CpVendor[]>([])
@@ -45,6 +60,8 @@ export default function CpVendorsPage() {
 
   const openEdit = (v: CpVendor) => {
     setEditing(v)
+    // 先清空再填，避免上一次開啟殘留的欄位值被誤送出
+    form.resetFields()
     form.setFieldsValue(v)
     setModalOpen(true)
   }
@@ -52,11 +69,24 @@ export default function CpVendorsPage() {
   const handleSubmit = async () => {
     try {
       const values = await form.validateFields()
+      // validateFields() 會回傳整個 form store，而 openEdit 的 setFieldsValue(v)
+      // 連 id / created_at / source_vendor_id 都塞了進去。用白名單只挑表單欄位
+      // 送出（後端 VendorUpdate 目前會忽略多餘欄位，但不該依賴這件事）。
+      const payload = {
+        vendor_code: values.vendor_code,
+        vendor_name: values.vendor_name,
+        tax_id: values.tax_id,
+        contact_name: values.contact_name,
+        contact_phone: values.contact_phone,
+        payment_terms: values.payment_terms,
+        notes: values.notes,
+        is_active: values.is_active,
+      }
       if (editing) {
-        await updateVendor(editing.id, values)
+        await updateVendor(editing.id, payload)
         message.success('更新成功')
       } else {
-        await createVendor(values)
+        await createVendor(payload)
         message.success('新增成功')
       }
       setModalOpen(false)
@@ -74,6 +104,14 @@ export default function CpVendorsPage() {
         <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新增供應商</Button>
       </div>
 
+      <Alert
+        type="info"
+        showIcon
+        style={{ marginBottom: 16 }}
+        message="廠商資料來源：合約管理 → 廠商主檔（上游為 Ragic 廠商資料表）"
+        description="標示「同步」的供應商，其代碼／名稱／統編／聯絡人／電話由來源端維護，在此為唯讀；付款條件、備註、啟用狀態則屬週期採購自行維護，可直接編輯。要新增或修改廠商基本資料，請到合約管理或 Ragic 操作後執行同步。"
+      />
+
       <Card>
         <Table
           dataSource={vendors}
@@ -82,6 +120,14 @@ export default function CpVendorsPage() {
           size="small"
           pagination={false}
           columns={[
+            {
+              title: '來源',
+              key: 'source',
+              width: 90,
+              render: (_: unknown, r: CpVendor) => (isSynced(r)
+                ? <Tag icon={<SyncOutlined />} color="blue">同步</Tag>
+                : <Tag color="default">本地自建</Tag>),
+            },
             { title: '代碼', dataIndex: 'vendor_code', width: 100 },
             { title: '供應商名稱', dataIndex: 'vendor_name' },
             { title: '統編', dataIndex: 'tax_id', width: 110 },
@@ -127,20 +173,29 @@ export default function CpVendorsPage() {
         cancelText="取消"
       >
         <Form form={form} layout="vertical" style={{ marginTop: 16 }}>
+          {isSynced(editing) && (
+            <Alert
+              type="warning"
+              showIcon
+              style={{ marginBottom: 16 }}
+              message={`此供應商鏡像自合約模組（${editing?.source_vendor_id}）`}
+              description="上方欄位由來源端維護，在此修改無效（下次同步會被覆蓋）。僅付款條件、備註、啟用狀態可在週期採購維護。"
+            />
+          )}
           <Form.Item name="vendor_code" label="供應商代碼" rules={[{ required: true }]}>
             <Input disabled={!!editing} />
           </Form.Item>
           <Form.Item name="vendor_name" label="供應商名稱" rules={[{ required: true }]}>
-            <Input />
+            <Input disabled={isSynced(editing)} />
           </Form.Item>
           <Form.Item name="tax_id" label="統一編號">
-            <Input />
+            <Input disabled={isSynced(editing)} />
           </Form.Item>
           <Form.Item name="contact_name" label="聯絡人">
-            <Input />
+            <Input disabled={isSynced(editing)} />
           </Form.Item>
           <Form.Item name="contact_phone" label="聯絡電話">
-            <Input />
+            <Input disabled={isSynced(editing)} />
           </Form.Item>
           <Form.Item name="payment_terms" label="付款條件">
             <Input />
