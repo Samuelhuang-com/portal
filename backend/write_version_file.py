@@ -31,6 +31,8 @@ def _run_git(args: list[str]) -> str | None:
             cwd=_BACKEND_DIR,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=10,
         )
         output = result.stdout.strip()
