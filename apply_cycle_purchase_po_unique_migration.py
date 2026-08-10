@@ -47,7 +47,11 @@ import sqlite3
 import sys
 from datetime import datetime
 
-DB_PATH = r"C:\portal_data\cycle-purchase.db"
+from migration_db_path import require_existing_db, resolve_db_path
+
+# 2026-08-10：路徑不再寫死。優先序為 --db 參數 > backend/.env 的
+# CYCLE_PURCHASE_DATABASE_URL > 下面這個預設值（見 migration_db_path.py 的說明）。
+DEFAULT_DB_PATH = r"C:\portal_data\cycle-purchase.db"
 
 NEW_INDEX_NAME = "uq_cp_po_active_cycle_period_company_vendor"
 
@@ -121,15 +125,10 @@ def main():
     print("=" * 64)
     print("  週期採購 — 採購單唯一鍵改為 partial unique index（整表重建）")
     print("=" * 64)
-    print(f"資料庫：{DB_PATH}")
-    print()
+    db_path, source = resolve_db_path(DEFAULT_DB_PATH)
+    require_existing_db(db_path, source)
 
-    if not os.path.exists(DB_PATH):
-        print(f"[錯誤] 找不到資料庫檔案：{DB_PATH}")
-        print("       請確認路徑（可對照 backend/.env 的 CYCLE_PURCHASE_DATABASE_URL）。")
-        return 1
-
-    con = sqlite3.connect(DB_PATH)
+    con = sqlite3.connect(db_path)
     try:
         if index_exists(con, NEW_INDEX_NAME):
             print(f"[略過] 索引 {NEW_INDEX_NAME} 已經存在，這支腳本先前跑過了，不需要再跑一次。")
@@ -150,7 +149,7 @@ def main():
         before = con.execute("SELECT COUNT(*) FROM cycle_purchase_pos").fetchone()[0]
         print(f"[檢查] 目前採購單筆數：{before}")
 
-        backup(DB_PATH)
+        backup(db_path)
 
         # 整表重建期間必須關掉 FK 檢查，否則 DROP 舊表時會被子表
         # （cycle_purchase_po_items / receiving / payment）的外鍵擋住。

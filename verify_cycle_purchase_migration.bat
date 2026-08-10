@@ -4,7 +4,7 @@ echo ============================================================
 echo   週期採購 migration 狀態檢查（唯讀，不會改到資料）
 echo ============================================================
 echo.
-python "%~dp0verify_cycle_purchase_migration.py"
+python "%~dp0verify_cycle_purchase_migration.py" %*
 echo.
 echo ============================================================
 echo 檢查完畢，請看上面的結論。

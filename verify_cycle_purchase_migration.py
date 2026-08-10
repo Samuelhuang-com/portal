@@ -32,7 +32,11 @@ import os
 import sqlite3
 import sys
 
-DB_PATH = r"C:\portal_data\cycle-purchase.db"
+from migration_db_path import resolve_db_path
+
+# 2026-08-10：路徑不再寫死。優先序為 --db 參數 > backend/.env 的
+# CYCLE_PURCHASE_DATABASE_URL > 下面這個預設值（見 migration_db_path.py 的說明）。
+DEFAULT_DB_PATH = r"C:\portal_data\cycle-purchase.db"
 
 # 一次性資料轉換用的識別批次號，必須與 apply_cycle_purchase_summary_migration.py
 # 的 LEGACY_CONVERT_BATCH_NO 保持一致。
@@ -107,6 +111,15 @@ def open_readonly(path):
     if not os.path.exists(path):
         print(f"[錯誤] 找不到資料庫檔案：{path}")
         print("       請確認路徑是否正確（可對照 backend/.env 的 CYCLE_PURCHASE_DATABASE_URL）。")
+        print("       也可以直接指定：--db <路徑>")
+        return None
+    # 2026-08-10：0 bytes 空檔要當成錯誤，不能只是「每張表都找不到」。
+    # 空殼檔的檢查結果與「真的還沒跑 migration」長得一模一樣，正式區就是在這裡
+    # 被誤導了一輪——結論會叫人去跑 apply，而 apply 又會在同一個空檔上「成功」。
+    if os.path.getsize(path) == 0:
+        print(f"[錯誤] 這個檔案是 0 bytes 的空檔：{path}")
+        print("       多半是先前某次腳本誤建出來的空殼，不是真正的資料庫。")
+        print("       請用 --db 指定正確路徑，並把這個空檔刪掉。")
         return None
     uri = "file:{}?mode=ro".format(path.replace("\\", "/"))
     try:
@@ -259,10 +272,12 @@ def main():
     print("=" * 64)
     print("  週期採購 migration 狀態檢查（唯讀，不會修改任何資料）")
     print("=" * 64)
-    print(f"資料庫：{DB_PATH}")
+    db_path, source = resolve_db_path(DEFAULT_DB_PATH)
+    print(f"資料庫：{db_path}")
+    print(f"　來源：{source}")
     print()
 
-    con = open_readonly(DB_PATH)
+    con = open_readonly(db_path)
     if con is None:
         return 1
 

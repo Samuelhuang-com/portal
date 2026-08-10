@@ -55,7 +55,11 @@
 import sqlite3
 import sys
 
-DB_PATH = r"C:\portal_data\cycle-purchase.db"
+from migration_db_path import require_existing_db, resolve_db_path
+
+# 2026-08-10：路徑不再寫死。優先序為 --db 參數 > backend/.env 的
+# CYCLE_PURCHASE_DATABASE_URL > 下面這個預設值（見 migration_db_path.py 的說明）。
+DEFAULT_DB_PATH = r"C:\portal_data\cycle-purchase.db"
 
 # 一次性資料轉換用的識別批次號，跟正常的關閉批次號（CPCLOSE-YYYYMM-NNN）格式
 # 明顯不同，方便日後在資料庫裡分辨「這筆是舊資料轉換來的，不是使用者手動關的」。
@@ -196,9 +200,11 @@ def convert_legacy_approved_to_closed(con):
 
 
 def main():
-    print(f"連線到：{DB_PATH}")
+    db_path, source = resolve_db_path(DEFAULT_DB_PATH)
+    require_existing_db(db_path, source)
+
     try:
-        con = sqlite3.connect(DB_PATH)
+        con = sqlite3.connect(db_path)
     except Exception as e:
         print(f"[錯誤] 無法開啟資料庫檔案：{e}")
         sys.exit(1)

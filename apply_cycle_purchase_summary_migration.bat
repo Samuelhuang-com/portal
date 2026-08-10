@@ -4,7 +4,7 @@ echo ============================================================
 echo   週期採購「彙整單」欄位補齊 migration
 echo ============================================================
 echo.
-python "%~dp0apply_cycle_purchase_summary_migration.py"
+python "%~dp0apply_cycle_purchase_summary_migration.py" %*
 echo.
 echo ============================================================
 echo 執行完畢，請看上面的結果。
