@@ -17,6 +17,22 @@
  *     一張新的「匯總請購單」（目前為 stub，Ragic 端表單尚未建立，見後端
  *     cycle_purchase_ragic_push.py 開頭說明）。
  *
+ * 2026-08-09 新增「退回請購單」：已經彙整過的請購單，若這一期要取消或發現
+ * 某張單不該納入，可以一張一張退回未彙整狀態（退回原因必填）。退回後後端會
+ * 依「剩下仍為已彙整」的請購單**重算**受影響的草稿彙整列需求量（不是反向
+ * 扣減，因為彙整列沒有記錄量是哪幾張單貢獻的）。已轉採購單／已拋轉 Ragic／
+ * 請購單已重新開啟這三種情況會被擋下，清單上會直接顯示擋下原因。
+ * 見後端 services/cycle_purchase_summary_service.py 開頭「第四次調整」說明。
+ *
+ * 2026-08-09 拋轉 Ragic 兩項調整（Ragic 端表單開始建置前先補起來）：
+ *   - **擋重複拋轉**：同一個週期＋期別＋公司拋轉過就不能再推（後端回 422），
+ *     按鈕會 disable 並在 tooltip 說明原因。改版前按兩次會在 Ragic 產生兩張
+ *     內容不同的同期單據，Ragic 端無從判斷哪張才算數。
+ *   - **新增「取消拋轉」**：清掉該範圍的拋轉標記，可以重新拋轉。同時解掉一個
+ *     死結——`ragic_pushed=True` 是「退回請購單」的擋下條件之一，改版前一旦
+ *     按了拋轉，那一期的請購單就再也退不回去了（而拋轉目前還只是 stub，
+ *     等於被一個假動作鎖死）。
+ *
  * 頁面分三段：
  *   1. 上方「依供應商分組」— 給「轉採購單」用，只列 draft 狀態的列，
  *      依公司＋供應商分組統計；沒有供應商的組別不能轉單（灰掉，附提示）。
@@ -29,17 +45,19 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Alert, Button, Card, Descriptions, Form, Input, InputNumber, Modal,
-  Select, Space, Table, Tag, Typography, message,
+  Select, Space, Table, Tag, Tooltip, Typography, message,
 } from 'antd'
 import {
-  CloudUploadOutlined, ExclamationCircleOutlined, ShoppingCartOutlined, SyncOutlined,
+  CloudUploadOutlined, ExclamationCircleOutlined, LockOutlined, RollbackOutlined,
+  ShoppingCartOutlined, SyncOutlined, UndoOutlined,
 } from '@ant-design/icons'
 import {
-  convertToPo, generateSummaryFromRequests, getCycles, getDepartmentBreakdown, getEligibleRequests,
-  getRequests, getSummary, getVendorGroups, pushSummaryToRagic, updateSummaryItem,
+  cancelRagicPush, closeRequests, convertToPo, generateSummaryFromRequests, getCycles,
+  getDepartmentBreakdown, getEligibleRequests, getRequests, getSummarizedRequests, getSummary,
+  getVendorGroups, pushSummaryToRagic, unsummarizeRequest, updateSummaryItem,
 } from '@/api/cyclePurchase'
 import type {
-  CpCycle, CpDepartmentBreakdown, CpEligibleRequest, CpSummary, CpVendorGroup,
+  CpCycle, CpDepartmentBreakdown, CpEligibleRequest, CpSummarizedRequest, CpSummary, CpVendorGroup,
 } from '@/types/cyclePurchase'
 import { useAuthStore } from '@/stores/authStore'
 
@@ -79,6 +97,9 @@ export default function CpSummaryPage() {
   const navigate = useNavigate()
   const hasPermission = useAuthStore((s) => s.hasPermission)
   const canBuy = hasPermission('cycle_purchase_buyer')
+  // 「關閉並納入」會呼叫 POST /requests/close，那支要的是 cycle_purchase_close，
+  // 與彙整用的 cycle_purchase_buyer 是不同權限——買家不一定關得了單，所以要分開判斷。
+  const canClose = hasPermission('cycle_purchase_close')
 
   const [cycles, setCycles] = useState<CpCycle[]>([])
   const [cycleId, setCycleId] = useState<number | undefined>(undefined)
@@ -91,6 +112,11 @@ export default function CpSummaryPage() {
   const [breakdown, setBreakdown] = useState<CpDepartmentBreakdown[]>([])
   const [loading, setLoading] = useState(false)
   const [pushing, setPushing] = useState(false)
+  // 2026-08-09：取消拋轉。已拋轉的範圍不能重推（後端會擋），要重推得先取消；
+  // 取消同時也解開「已拋轉就不能退回請購單」的限制。
+  const [cancelPushModal, setCancelPushModal] = useState(false)
+  const [cancelPushReason, setCancelPushReason] = useState('')
+  const [cancellingPush, setCancellingPush] = useState(false)
 
   const [generateModal, setGenerateModal] = useState(false)
   const [generating, setGenerating] = useState(false)
@@ -101,6 +127,20 @@ export default function CpSummaryPage() {
   const [eligibleRequests, setEligibleRequests] = useState<CpEligibleRequest[]>([])
   const [loadingEligible, setLoadingEligible] = useState(false)
   const [selectedRequestIds, setSelectedRequestIds] = useState<number[]>([])
+  const [closingRequestId, setClosingRequestId] = useState<number | null>(null)
+
+  // 2026-08-09：退回請購單。與「產生彙整」是鏡像操作，所以視窗裡的
+  // 週期／公司／期別三個選擇器沿用同一套狀態命名習慣，但獨立一組。
+  const [unsumModal, setUnsumModal] = useState(false)
+  const [unsumCycleId, setUnsumCycleId] = useState<number | undefined>(undefined)
+  const [unsumCompany, setUnsumCompany] = useState<string | undefined>(undefined)
+  const [unsumMonth, setUnsumMonth] = useState<string>('')
+  const [unsumCompanyOptions, setUnsumCompanyOptions] = useState<string[]>([])
+  const [summarizedRequests, setSummarizedRequests] = useState<CpSummarizedRequest[]>([])
+  const [loadingSummarized, setLoadingSummarized] = useState(false)
+  const [unsumTarget, setUnsumTarget] = useState<CpSummarizedRequest | null>(null)
+  const [unsumReason, setUnsumReason] = useState('')
+  const [unsummarizing, setUnsummarizing] = useState(false)
 
   const [adjustRow, setAdjustRow] = useState<CpSummary | null>(null)
   const [adjustQty, setAdjustQty] = useState<number>(0)
@@ -146,6 +186,20 @@ export default function CpSummaryPage() {
     [rows],
   )
 
+  // 目前篩選範圍的拋轉狀態。⚠️ 只有在「有用依公司篩選指定單一公司」時才有意義——
+  // 拋轉的單位就是「週期＋期別＋公司」，沒指定公司時 rows 會混到兩家公司。
+  const pushState = useMemo(() => {
+    if (!rows.length) return { pushed: 0, total: 0, batchNo: null as string | null }
+    const pushedRows = rows.filter((r) => r.ragic_pushed)
+    return {
+      pushed: pushedRows.length,
+      total: rows.length,
+      batchNo: pushedRows.find((r) => r.ragic_push_batch_no)?.ragic_push_batch_no ?? null,
+    }
+  }, [rows])
+  const rangePicked = !!cycleId && !!periodLabel.trim() && !!company
+  const allPushed = rangePicked && pushState.total > 0 && pushState.pushed === pushState.total
+
   const handlePushToRagic = () => {
     if (!cycleId || !periodLabel.trim() || !company) {
       message.warning('請先選擇週期／期別，並用「依公司篩選」指定單一公司後再拋轉')
@@ -184,6 +238,37 @@ export default function CpSummaryPage() {
     })
   }
 
+  const handleCancelPush = async () => {
+    if (!cycleId || !periodLabel.trim() || !company) return
+    if (!cancelPushReason.trim()) {
+      message.warning('請填寫取消拋轉的原因')
+      return
+    }
+    setCancellingPush(true)
+    try {
+      const res = await cancelRagicPush({
+        cycle_id: cycleId, period_label: periodLabel.trim(), company,
+        reason: cancelPushReason.trim(),
+      })
+      message.success(res.data.message)
+      setCancelPushModal(false)
+      setCancelPushReason('')
+      if (res.data.next_step) {
+        Modal.info({
+          title: '已取消拋轉',
+          width: 560,
+          content: <div style={{ whiteSpace: 'pre-wrap' }}>{res.data.next_step}</div>,
+          okText: '知道了',
+        })
+      }
+      load()
+    } catch (err: any) {
+      message.error(errMsg(err, '取消拋轉失敗'))
+    } finally {
+      setCancellingPush(false)
+    }
+  }
+
   const openGenerate = () => {
     setGenCycleId(cycleId)
     setGenCompany(company)
@@ -202,9 +287,10 @@ export default function CpSummaryPage() {
       .catch(() => {})
   }, [generateModal, genCycleId])
 
-  // 週期＋公司＋月份都選好後，載入這個範圍內「已關閉、尚未被彙整過」的請購單，
-  // 預設全選，使用者可以手動取消勾選不想這次納入的單。
-  useEffect(() => {
+  // 週期＋公司＋月份都選好後，載入這個範圍內「尚未被彙整過」的請購單。
+  // 2026-08-09 起**未關閉的單也會列出來**（can_summarize=false），但不會被自動勾選，
+  // 也不能手動勾——只是讓使用者看得到「那張單就在那裡，只差一個關閉動作」。
+  const loadEligible = (opts?: { autoSelectIds?: number[] }) => {
     if (!generateModal || !genCycleId || !genCompany || !genMonth) {
       setEligibleRequests([])
       setSelectedRequestIds([])
@@ -214,11 +300,34 @@ export default function CpSummaryPage() {
     getEligibleRequests({ cycle_id: genCycleId, company: genCompany, year_month: genMonth })
       .then((r) => {
         setEligibleRequests(r.data)
-        setSelectedRequestIds(r.data.map((x) => x.id))
+        const selectable = r.data.filter((x) => x.can_summarize).map((x) => x.id)
+        // 剛按過「關閉並納入」的話只補勾那幾張，不要把使用者先前取消勾選的又勾回來
+        setSelectedRequestIds((prev) =>
+          opts?.autoSelectIds
+            ? Array.from(new Set([...prev, ...opts.autoSelectIds])).filter((id) => selectable.includes(id))
+            : selectable,
+        )
       })
       .catch((err) => message.error(errMsg(err, '載入可彙整清單失敗')))
       .finally(() => setLoadingEligible(false))
-  }, [generateModal, genCycleId, genCompany, genMonth])
+  }
+
+  useEffect(() => { loadEligible() }, [generateModal, genCycleId, genCompany, genMonth])
+
+  // 「關閉並納入」：關閉那張單之後重載清單並自動勾起來。規則沒有放寬——還是先關閉
+  // 才彙整，只是不用為了按一個關閉跳去請購單頁再走回來。
+  const handleCloseAndInclude = async (row: CpEligibleRequest) => {
+    setClosingRequestId(row.id)
+    try {
+      await closeRequests([row.id])
+      message.success(`已關閉 ${row.request_no}，並勾選納入這次彙整`)
+      loadEligible({ autoSelectIds: [row.id] })
+    } catch (err: any) {
+      message.error(errMsg(err, '關閉失敗'))
+    } finally {
+      setClosingRequestId(null)
+    }
+  }
 
   const handleGenerate = async () => {
     if (!selectedRequestIds.length) {
@@ -239,6 +348,87 @@ export default function CpSummaryPage() {
       message.error(errMsg(err, '產生彙整失敗'))
     } finally {
       setGenerating(false)
+    }
+  }
+
+  // ── 退回請購單（2026-08-09 新增）─────────────────────────────────────────
+  const openUnsummarize = () => {
+    setUnsumCycleId(cycleId)
+    setUnsumCompany(company)
+    setUnsumMonth(periodLabel.trim() || currentYearMonth())
+    setSummarizedRequests([])
+    setUnsumTarget(null)
+    setUnsumReason('')
+    setUnsumModal(true)
+  }
+
+  useEffect(() => {
+    if (!unsumModal || !unsumCycleId) { setUnsumCompanyOptions([]); return }
+    getRequests({ cycle_id: unsumCycleId })
+      .then((r) => setUnsumCompanyOptions(Array.from(new Set(r.data.map((x) => x.company))).sort()))
+      .catch(() => {})
+  }, [unsumModal, unsumCycleId])
+
+  const loadSummarized = () => {
+    if (!unsumModal || !unsumCycleId || !unsumCompany || !unsumMonth) {
+      setSummarizedRequests([])
+      return
+    }
+    setLoadingSummarized(true)
+    getSummarizedRequests({ cycle_id: unsumCycleId, company: unsumCompany, year_month: unsumMonth })
+      .then((r) => setSummarizedRequests(r.data))
+      .catch((err) => message.error(errMsg(err, '載入已彙整請購單失敗')))
+      .finally(() => setLoadingSummarized(false))
+  }
+
+  useEffect(() => { loadSummarized() }, [unsumModal, unsumCycleId, unsumCompany, unsumMonth])
+
+  const handleUnsummarize = async () => {
+    if (!unsumTarget) return
+    if (!unsumReason.trim()) {
+      message.warning('請填寫退回原因')
+      return
+    }
+    setUnsummarizing(true)
+    try {
+      const res = await unsummarizeRequest({ request_id: unsumTarget.id, reason: unsumReason.trim() })
+      message.success(res.data.message)
+      // 用**一個** Modal 同時交代「下一步」與「要複查的項目」。
+      // warnings 不是失敗（動作已成功），next_step 是流程指引——分成兩個 Modal 會疊在
+      // 一起，使用者只會關掉不看。2026-08-09：next_step 是因為退回後「要改內容就重新
+      // 開啟，但改完記得再關閉」這件事沒有任何地方講過，實際害人卡住過一次。
+      const { next_step: nextStep, warnings } = res.data
+      if (nextStep || warnings.length) {
+        const show = warnings.length ? Modal.warning : Modal.info
+        show({
+          title: warnings.length ? '退回完成，有需要複查的項目' : '退回完成，接下來',
+          width: 640,
+          content: (
+            <div>
+              {warnings.length > 0 && (
+                <>
+                  <div style={{ marginBottom: 4 }}>以下彙整列的調整量是人工設定過的，已保留未變動：</div>
+                  <ul style={{ paddingLeft: 18, margin: '0 0 12px' }}>
+                    {warnings.map((w, i) => <li key={i}>{w}</li>)}
+                  </ul>
+                </>
+              )}
+              {nextStep && (
+                <div style={{ whiteSpace: 'pre-wrap', color: '#666' }}>{nextStep}</div>
+              )}
+            </div>
+          ),
+          okText: '知道了',
+        })
+      }
+      setUnsumTarget(null)
+      setUnsumReason('')
+      loadSummarized()
+      load()
+    } catch (err: any) {
+      message.error(errMsg(err, '退回失敗'))
+    } finally {
+      setUnsummarizing(false)
     }
   }
 
@@ -294,14 +484,38 @@ export default function CpSummaryPage() {
         <Title level={4} style={{ margin: 0 }}>週期採購 — 彙整單／匯總請購單</Title>
         <Space>
           {canBuy && (
-            <Button
-              icon={<CloudUploadOutlined />}
-              loading={pushing}
-              onClick={handlePushToRagic}
-              disabled={!cycleId || !periodLabel.trim() || !company}
+            <Tooltip
+              title={
+                !rangePicked
+                  ? '請先選擇週期／期別，並用「依公司篩選」指定單一公司'
+                  : allPushed
+                    ? `這個範圍已經拋轉過了（批次 ${pushState.batchNo || '—'}），要重推請先按「取消拋轉」`
+                    : undefined
+              }
             >
-              拋轉 Ragic
+              <Button
+                icon={<CloudUploadOutlined />}
+                loading={pushing}
+                onClick={handlePushToRagic}
+                disabled={!rangePicked || allPushed}
+              >
+                拋轉 Ragic
+              </Button>
+            </Tooltip>
+          )}
+          {/* 2026-08-09：取消拋轉。只在該範圍確實有已拋轉的列時才出現——
+              它同時是「重推」與「解開退回請購單限制」的唯一入口。 */}
+          {canBuy && rangePicked && pushState.pushed > 0 && (
+            <Button
+              icon={<UndoOutlined />}
+              loading={cancellingPush}
+              onClick={() => { setCancelPushReason(''); setCancelPushModal(true) }}
+            >
+              取消拋轉
             </Button>
+          )}
+          {canBuy && (
+            <Button icon={<RollbackOutlined />} onClick={openUnsummarize}>退回請購單</Button>
           )}
           {canBuy && (
             <Button icon={<SyncOutlined />} onClick={openGenerate}>產生彙整</Button>
@@ -616,21 +830,57 @@ export default function CpSummaryPage() {
             loading={loadingEligible}
             pagination={false}
             scroll={{ y: 320 }}
-            locale={{ emptyText: '這個範圍內沒有已關閉、尚未被彙整過的請購單' }}
+            locale={{ emptyText: '這個範圍內沒有尚未被彙整過的請購單' }}
             rowSelection={{
               selectedRowKeys: selectedRequestIds,
               onChange: (keys) => setSelectedRequestIds(keys as number[]),
+              // 未關閉的單不能勾（規則沒放寬，只是讓它看得見）
+              getCheckboxProps: (r) => ({ disabled: !r.can_summarize }),
             }}
             columns={[
               { title: '請購單號', dataIndex: 'request_no', width: 140 },
               { title: '部門', dataIndex: 'department_name', width: 110, render: (v?: string | null) => v || '—' },
+              {
+                title: '可否彙整',
+                key: 'can_summarize',
+                width: 210,
+                render: (_: unknown, r: CpEligibleRequest) =>
+                  r.can_summarize ? (
+                    <Space size={4}>
+                      <Tag color="green" style={{ marginInlineEnd: 0 }}>可彙整</Tag>
+                      {r.unsummarized_at && (
+                        <Tooltip title={r.unsummarize_reason ? `退回原因：${r.unsummarize_reason}` : '這張單曾被退回過'}>
+                          <Tag style={{ marginInlineEnd: 0 }}>曾退回</Tag>
+                        </Tooltip>
+                      )}
+                    </Space>
+                  ) : (
+                    <Space size={4} wrap>
+                      <Tooltip title={r.block_reason || undefined}>
+                        <Tag color="warning" style={{ marginInlineEnd: 0 }}>未關閉</Tag>
+                      </Tooltip>
+                      {canClose ? (
+                        <Button
+                          size="small"
+                          icon={<LockOutlined />}
+                          loading={closingRequestId === r.id}
+                          onClick={() => handleCloseAndInclude(r)}
+                        >
+                          關閉並納入
+                        </Button>
+                      ) : (
+                        <Text type="secondary" style={{ fontSize: 12 }}>需關閉權限</Text>
+                      )}
+                    </Space>
+                  ),
+              },
               { title: '填寫人', dataIndex: 'submitted_by_name', width: 100, render: (v?: string | null) => v || '—' },
-              { title: '關閉人', dataIndex: 'closed_by_name', width: 100, render: (v?: string | null) => v || '—' },
               {
                 title: '關閉時間',
                 dataIndex: 'closed_at',
                 width: 150,
-                render: (v?: string | null) => (v ? new Date(v).toLocaleString() : '—'),
+                render: (v: string | null | undefined, r: CpEligibleRequest) =>
+                  r.can_summarize ? (v ? new Date(v).toLocaleString() : '—') : <Text type="secondary">尚未關閉</Text>,
               },
               {
                 title: '請購總額',
@@ -644,10 +894,190 @@ export default function CpSummaryPage() {
         )}
 
         <div style={{ color: '#888', fontSize: 12, marginTop: 12 }}>
-          只列出已關閉（is_closed）且還沒被彙整過的請購單；勾選後才會被納入這次彙整，
-          彙整過的請購單就不會再出現在這個清單裡，不用擔心重複彙整。期別標籤由系統依勾選的
+          列出這個範圍內<b>還沒被彙整過</b>的請購單。<b>未關閉的單也會列出來但不能勾選</b>——
+          關閉代表「這張單的數量已經定案」，開放中的單彙整完還能被改，數字會默默對不上。
+          需要的話按該列的「關閉並納入」直接關掉並勾起來，不必跳回請購單頁。
+          彙整過的請購單不會再出現在這個清單裡，不用擔心重複彙整；期別標籤由系統依勾選的
           請購單本身的期別自動判斷，不用手動輸入。
         </div>
+      </Modal>
+
+      <Modal
+        title="取消拋轉 Ragic"
+        open={cancelPushModal}
+        onOk={handleCancelPush}
+        onCancel={() => { setCancelPushModal(false); setCancelPushReason('') }}
+        okText="確定取消拋轉"
+        cancelText="返回"
+        confirmLoading={cancellingPush}
+        width={620}
+      >
+        <Descriptions column={1} size="small" bordered style={{ marginBottom: 16 }}>
+          <Descriptions.Item label="範圍">{periodLabel.trim()}／{company}</Descriptions.Item>
+          <Descriptions.Item label="原拋轉批次">{pushState.batchNo || '—'}</Descriptions.Item>
+          <Descriptions.Item label="已拋轉彙整列">{pushState.pushed} 筆</Descriptions.Item>
+        </Descriptions>
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message="會做什麼"
+          description={(
+            <ul style={{ paddingLeft: 18, margin: 0 }}>
+              <li>清掉這個範圍的<b>拋轉標記</b>，之後可以重新拋轉</li>
+              <li>連帶<b>解開「已拋轉就不能退回請購單」</b>的限制</li>
+              <li><b>不會</b>動到彙整列本身的調整量、狀態或已轉的採購單</li>
+            </ul>
+          )}
+        />
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message="Ragic 端目前是模擬的（stub）"
+          description="現在 Ragic 那邊還沒有真的記錄，所以清掉標記就結束。等 Ragic 表單建好、真的會寫入之後，取消拋轉還要另外決定 Ragic 那筆記錄怎麼處理。"
+        />
+        <Form layout="vertical">
+          <Form.Item label="取消原因" required extra="會寫進異常稽核紀錄">
+            <TextArea
+              rows={3}
+              value={cancelPushReason}
+              onChange={(e) => setCancelPushReason(e.target.value)}
+              placeholder="例如：數量要重新調整、拋轉範圍選錯、需要退回某張請購單"
+            />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title="退回請購單（把已彙整的請購單改回未彙整）"
+        open={unsumModal}
+        onCancel={() => setUnsumModal(false)}
+        footer={<Button onClick={() => setUnsumModal(false)}>關閉</Button>}
+        width={860}
+      >
+        <Space wrap style={{ marginBottom: 12 }}>
+          <Select
+            placeholder="選擇週期"
+            style={{ width: 200 }}
+            value={unsumCycleId}
+            onChange={(v) => { setUnsumCycleId(v); setUnsumCompany(undefined) }}
+            showSearch
+            optionFilterProp="label"
+            options={cycles.map((c) => ({ label: c.cycle_name, value: c.id }))}
+          />
+          <Select
+            placeholder="選擇公司"
+            style={{ width: 160 }}
+            value={unsumCompany}
+            onChange={setUnsumCompany}
+            disabled={!unsumCycleId}
+            options={unsumCompanyOptions.map((c) => ({ label: c, value: c }))}
+          />
+          <Select
+            placeholder="選擇期別"
+            style={{ width: 160 }}
+            value={unsumMonth || undefined}
+            onChange={(v) => setUnsumMonth(v || '')}
+            options={recentMonthOptions().map((m) => ({ label: m, value: m }))}
+          />
+        </Space>
+
+        {(!unsumCycleId || !unsumCompany || !unsumMonth) ? (
+          <Alert type="info" showIcon message="請先選擇週期／公司／期別，會列出這個範圍內已經被彙整過的請購單" />
+        ) : (
+          <Table<CpSummarizedRequest>
+            dataSource={summarizedRequests}
+            rowKey="id"
+            size="small"
+            loading={loadingSummarized}
+            pagination={false}
+            scroll={{ y: 320 }}
+            locale={{ emptyText: '這個範圍內沒有已彙整的請購單' }}
+            columns={[
+              { title: '請購單號', dataIndex: 'request_no', width: 130 },
+              { title: '部門', dataIndex: 'department_name', width: 110, render: (v?: string | null) => v || '—' },
+              { title: '填寫人', dataIndex: 'submitted_by_name', width: 90, render: (v?: string | null) => v || '—' },
+              { title: '彙整批次', dataIndex: 'summary_batch_no', width: 180, render: (v?: string | null) => v || '—' },
+              {
+                title: '彙整時間',
+                dataIndex: 'summarized_at',
+                width: 150,
+                render: (v?: string | null) => (v ? new Date(v).toLocaleString() : '—'),
+              },
+              {
+                title: '請購總額',
+                dataIndex: 'total_amount',
+                width: 100,
+                align: 'right' as const,
+                render: (v: number) => Number(v).toLocaleString(),
+              },
+              {
+                title: '操作',
+                key: 'actions',
+                width: 220,
+                render: (_: unknown, r: CpSummarizedRequest) =>
+                  r.can_unsummarize ? (
+                    <Button
+                      size="small"
+                      danger
+                      icon={<RollbackOutlined />}
+                      onClick={() => { setUnsumTarget(r); setUnsumReason('') }}
+                    >
+                      退回
+                    </Button>
+                  ) : (
+                    <Tag color="default" title={r.block_reason || undefined}>
+                      不能退回：{r.block_reason}
+                    </Tag>
+                  ),
+              },
+            ]}
+          />
+        )}
+
+        <div style={{ color: '#888', fontSize: 12, marginTop: 12 }}>
+          退回後這張請購單會回到「已關閉、未彙整」狀態，重新出現在「產生彙整」的可勾選清單裡；
+          彙整列的需求量會由系統依剩下仍為已彙整的請購單重新計算。已轉採購單、已拋轉 Ragic、
+          或請購單已被重新開啟的，不能退回（原因會直接顯示在該列）。退回不會改變請購單的關閉狀態。
+        </div>
+      </Modal>
+
+      <Modal
+        title={unsumTarget ? `確認退回 — ${unsumTarget.request_no}` : '確認退回'}
+        open={!!unsumTarget}
+        onOk={handleUnsummarize}
+        onCancel={() => { setUnsumTarget(null); setUnsumReason('') }}
+        okText="確定退回"
+        okButtonProps={{ danger: true }}
+        cancelText="取消"
+        confirmLoading={unsummarizing}
+      >
+        {unsumTarget && (
+          <>
+            <Descriptions column={1} size="small" bordered style={{ marginBottom: 16 }}>
+              <Descriptions.Item label="部門">{unsumTarget.department_name || '—'}</Descriptions.Item>
+              <Descriptions.Item label="彙整批次">{unsumTarget.summary_batch_no || '—'}</Descriptions.Item>
+              <Descriptions.Item label="請購總額">{Number(unsumTarget.total_amount).toLocaleString()}</Descriptions.Item>
+            </Descriptions>
+            <Alert
+              type="warning"
+              showIcon
+              style={{ marginBottom: 16 }}
+              message="退回後，這張單所涵蓋料號的草稿彙整列需求量會被重新計算；已被人工調整過的調整量會保留不變，並在退回結果中提醒你複查。"
+            />
+            <Form layout="vertical">
+              <Form.Item label="退回原因" required extra="會記錄在請購單與稽核紀錄裡">
+                <TextArea
+                  rows={3}
+                  value={unsumReason}
+                  onChange={(e) => setUnsumReason(e.target.value)}
+                  placeholder="例如：本期取消採購、該部門需求有誤需重新填寫"
+                />
+              </Form.Item>
+            </Form>
+          </>
+        )}
       </Modal>
 
       <Modal

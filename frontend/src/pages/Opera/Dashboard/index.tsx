@@ -23,14 +23,35 @@ import {
 
 import { fetchOperaDashboard } from '@/api/opera'
 import type { OperaDashboard } from '@/types/opera'
+// 即時房況面板由「即時營運」模組提供（資料來源與本頁其他區塊不同，見元件內註解）
+import LiveStatusPanel from '@/pages/Realtime/components/LiveStatusPanel'
 import {
   ACCENT, BRAND, CHART_COLORS, EMPTY, GREEN, GREY, ORANGE, RED,
   fmtInt, fmtMoney, fmtPct, fmtPpt, fmtYoY, periodTagColor, trendColor,
 } from '../components/formatters'
+import ComparisonTooltip from '../components/ComparisonTooltip'
+import type { CompareMetric } from '../components/ComparisonTooltip'
 
 const { Title, Text } = Typography
 
 const CHART_HEIGHT = 280
+
+// Tooltip 的「與去年同期增減」設定（元件說明見 components/ComparisonTooltip.tsx）
+const MONTHLY_TOOLTIP_METRICS: CompareMetric[] = [
+  { label: '營收', currentKey: '本年營收', compareKey: '去年營收', color: BRAND },
+  { label: 'ADR', currentKey: '本年ADR', compareKey: '去年ADR', color: ORANGE },
+]
+
+const OCCUPANCY_TOOLTIP_METRICS: CompareMetric[] = [
+  {
+    label: '住房率',
+    currentKey: '本年住房率',
+    compareKey: '去年住房率',
+    color: BRAND,
+    diffMode: 'ppt',
+    format: (v: number) => `${v.toFixed(1)}%`,
+  },
+]
 
 const OperaDashboardPage: React.FC = () => {
   const navigate = useNavigate()
@@ -134,6 +155,12 @@ const OperaDashboardPage: React.FC = () => {
             </Space>
           </Col>
         </Row>
+
+        {/* ── OPERA 即時房況（OHIP API，2026-08-06）─────────────────────
+            ⚠️ 這一區與底下所有區塊的資料來源與時點都不同，因此獨立成卡片並
+               自帶來源標示。它不參與本頁既有的 load()／year 篩選，
+               也不讀任何 opera_* 資料表。 */}
+        <LiveStatusPanel />
 
         {/* ── 資料涵蓋提示 ───────────────────────────────────────────── */}
         {data?.status && (
@@ -241,10 +268,7 @@ const OperaDashboardPage: React.FC = () => {
                       tick={{ fontSize: 11 }}
                       tickFormatter={(v: number) => v.toLocaleString('en-US')}
                     />
-                    <RcTooltip
-                      formatter={(value: any, name: string) =>
-                        [typeof value === 'number' ? value.toLocaleString('en-US') : EMPTY, name]}
-                    />
+                    <RcTooltip content={<ComparisonTooltip metrics={MONTHLY_TOOLTIP_METRICS} />} />
                     <Legend wrapperStyle={{ fontSize: 12 }} />
                     <Bar yAxisId="left" dataKey="本年營收" fill={BRAND} barSize={18} />
                     {hasCompare && <Bar yAxisId="left" dataKey="去年營收" fill={GREY} barSize={18} />}
@@ -331,7 +355,7 @@ const OperaDashboardPage: React.FC = () => {
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#eee" />
                     <XAxis dataKey="label" tick={{ fontSize: 12 }} />
                     <YAxis tick={{ fontSize: 11 }} tickFormatter={(v: number) => `${v}%`} domain={[0, 100]} />
-                    <RcTooltip formatter={(v: any, n: string) => [v === null ? EMPTY : `${v}%`, n]} />
+                    <RcTooltip content={<ComparisonTooltip metrics={OCCUPANCY_TOOLTIP_METRICS} />} />
                     <Legend wrapperStyle={{ fontSize: 12 }} />
                     <ReferenceLine
                       y={annualOccupancy}

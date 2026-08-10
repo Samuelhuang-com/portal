@@ -128,10 +128,31 @@ PERMISSION_DEFINITIONS = [
     # 「自己在授權什麼」的地方，掛在「分析門檻設定」底下會授權到名不符實的頁面。
     # 註：估算／覆寫模型係數仍歸 opera_admin（與門檻設定同屬模型參數維護）。
     {"key": "opera_forecast_view", "label": "房價預測",             "group": "營運分析"},
+    # 市場區隔／房型趨勢（2026-08-07）：另開 key 而不共用 opera_revenue_view，
+    # 因為這一頁的**資料來源是 OHIP API 落地**、不是 TXT 上傳，兩者口徑尚未完全對齊。
+    # 共用 key 會讓管理員以為授權的是同一份資料。
+    # ⚠️ label 必須與 navLabels.ts 的 operaSegments 完全一致（CLAUDE.md §3）。
+    {"key": "opera_segment_view",  "label": "市場區隔分析",         "group": "營運分析"},
+    # 訂房分析（2026-08-07）：另開 key 而不共用 opera_guest_view，
+    # 因為**分析母體不同** —— 這裡是所有訂房（含未來、含取消），
+    # 那裡是已離店的住客。共用會讓管理員以為授權的是同一份資料。
+    # ⚠️ label 必須與 navLabels.ts 的 operaReservations 完全一致（CLAUDE.md §3）。
+    {"key": "opera_reservation_view", "label": "訂房分析",           "group": "營運分析"},
     # 2026-08-05 起「事件月曆」是房價預測頁的一個 TAB，不再是獨立頁面。
     # 此 key 仍然有效，控管的是 TAB 內的新增／修改／刪除／學習係數（API 層強制），
     # 清單本身唯讀，有 opera_forecast_view 就看得到。
     {"key": "opera_event_admin",   "label": "事件月曆",             "group": "營運分析"},
+    # ── 即時營運（2026-08-06 新增）────────────────────────────────────────────
+    # 資料直接來自 OPERA Cloud（OHIP）REST API，**不是**上傳的 TXT。
+    # 刻意獨立成一級選單與獨立權限群組：兩者資料時點不同，共用權限會讓管理員
+    # 以為授權的是同一份資料。規格書：docs/SPEC_realtime_operations.md §10.1
+    # ⚠️ 下列 label 必須與 frontend/src/constants/navLabels.ts 的 NAV_PAGE 完全一致。
+    # ⚠️ 每次查詢都會實際呼叫 OHIP（按量計費），預設不給任何既有角色，需逐一開放。
+    {"key": "realtime_view",      "label": "即時營運看板",         "group": "即時營運"},
+    # 營收另開 key：走非同步 API，延遲高、會切段，用量比即時房況大。
+    {"key": "realtime_revenue",   "label": "營收與結構分析",       "group": "即時營運"},
+    # 比對另開 key：不走快取，每次實際呼叫兩支 API。
+    {"key": "realtime_compare",   "label": "與營運分析比對",       "group": "即時營運"},
     # ── 金旭分析（2026-08-05 新增）────────────────────────────────────────────
     # Portal 第二個「檔案上傳型」資料模組：資料來自人工上傳的金旭 xlsx
     # （FCR02 客帳帳目明細表 + 訂房狀況表），非 Ragic 同步。

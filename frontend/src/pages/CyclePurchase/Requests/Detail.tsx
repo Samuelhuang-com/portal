@@ -4,10 +4,33 @@
  *
  * 2026-07-17（第三次調整，請購單流程大改版，與 Samuel 確認）：
  * 拿掉送出／簽核／退回，請購單建立後由填單人自行編輯，不需要送出給誰核准。
- * 能不能編輯改看兩個條件（都要成立）：(1) 這張單還沒被「關閉」；(2) 現在
- * 還是這張單建立的那個月份（period_label，過了月份就自動鎖住，不需要另外
- * 手動關閉）。關閉／重新開啟是獨立的權限（cycle_purchase_close），關閉後
- * 這張單才會出現在「彙整單」的可勾選清單裡（見週採彙整單頁面）。
+ * 關閉／重新開啟是獨立的權限（cycle_purchase_close），關閉後這張單才會出現在
+ * 「彙整單」的可勾選清單裡（見週採彙整單頁面）。
+ *
+ * 2026-08-07（第四次調整，與 Samuel 確認）：
+ * ~~能不能編輯看「還沒關閉」＋「還是當月」兩個條件~~ → 改成**只看 is_closed**。
+ * 期別已過的單現在會被系統自動關閉（後端 auto_close_expired_requests），
+ * 「過月」已經由 is_closed 涵蓋，再檢查一次是重複的；而「重新開啟」的意義就是
+ * 讓過月的單能補改，若前端還卡當月，重新開啟後畫面仍唯讀，與後端行為不一致。
+ * 標題列的狀態標籤改用共用的 CloseStatusTag，區分人工關閉（灰「已關閉」）與
+ * 系統自動關閉（淺粉「關閉」）。
+ *
+ * 2026-08-07（UX 補強，Samuel 反映「只有關閉此請購單，沒有 Save 或送出」）：
+ * 這一頁**本來就是即時儲存**——改數量／會計科目／成本中心都會立刻打 API，
+ * 所以沒有 Save 按鈕是設計而不是遺漏；「送出」只顯示給沒有 cycle_purchase_close
+ * 權限的填單人（有該權限的人看到的是「關閉此請購單」，底層同一個動作）。
+ * 問題出在**畫面完全沒有回饋**，看起來就像改了沒存。因此在「請購明細」卡片
+ * 標題列加上儲存狀態（儲存中…／已自動儲存 HH:mm／改動會自動儲存的說明）。
+ * 與 Samuel 確認**維持即時儲存、不改成手動 Save**——改成手動會失去「填一半
+ * 關網頁也不會丟資料」這個好處，要改需另排一次評估。
+ * 同時在明細卡片加「全部展開／全部收合」（料號動輒數百筆、分好幾個類別）。
+ *
+ * 2026-08-08：明細卡片加「全部／只看已填」切換。料號清單是「該公司所有可選料號」，
+ * 但一張單真正有填的通常只有十幾筆，核對「這個月要買什麼」時全部列出反而難看。
+ * 與搜尋是 AND 關係。切到「只看已填」會自動全展開（篩完只剩十幾筆，收合著等於白按）；
+ * 切回「全部」不強制收合——可能有數百筆，全開反而難用，交給使用者決定。
+ * ⚠️ 在「只看已填」模式下把數量改成 0，那一列會立刻消失（它不再符合篩選條件）。
+ * 這是篩選器的正常行為，但容易被誤認成資料掉了，所以標題列有一行提醒。
  *
  * 2026-07-11（與 Samuel 討論後的 UX 改版，拿掉「批次」的同時一併調整，
  * 這部分邏輯不受本次改版影響，仍然有效）：
@@ -22,10 +45,11 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import {
   Alert, Badge, Button, Card, Collapse, Descriptions, Input, InputNumber,
-  Popconfirm, Select, Space, Table, Tag, Typography, message,
+  Popconfirm, Segmented, Select, Space, Table, Typography, message,
 } from 'antd'
 import {
-  ArrowLeftOutlined, DeleteOutlined, LockOutlined, SearchOutlined, SendOutlined, UnlockOutlined,
+  ArrowLeftOutlined, CheckCircleOutlined, DeleteOutlined, DownOutlined, LoadingOutlined,
+  LockOutlined, SearchOutlined, SendOutlined, UnlockOutlined, UpOutlined,
 } from '@ant-design/icons'
 import {
   addRequestItem, closeRequests, deleteRequestItem, getAvailableItems,
@@ -36,6 +60,7 @@ import type {
   CpAccountCode, CpAvailableItem, CpCostCenter, CpRequestDetail, CpRequestItem,
 } from '@/types/cyclePurchase'
 import { useAuthStore } from '@/stores/authStore'
+import CloseStatusTag from '../components/CloseStatusTag'
 
 const { Title, Text } = Typography
 
@@ -80,9 +105,21 @@ export default function CpRequestDetailPage() {
   const [search, setSearch] = useState('')
   const [activeKeys, setActiveKeys] = useState<string[]>([])
   const [acting, setActing] = useState(false)
+  // 2026-08-07：這一頁是「改一格存一格」的即時儲存，沒有 Save 按鈕。
+  // 但原本畫面完全沒有回饋，使用者會以為改了沒存、跑來問「Save 在哪」。
+  // 這裡記下最後一次成功寫入的時間，在明細卡片標題列顯示。
+  const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null)
+  // 2026-08-08：料號清單是「該公司所有可選料號」，動輒數百筆，但一張單真正
+  // 有填的通常只有十幾筆。要核對「這個月到底要買什麼」時，全部列出來反而難看。
+  const [filledOnly, setFilledOnly] = useState(false)
 
   const isCurrentMonth = !!detail && detail.period_label === currentYearMonth()
-  const editable = canEdit && !!detail && !detail.is_closed && isCurrentMonth
+  // 2026-08-07：可編輯條件**只看 is_closed**，不再要求當月。
+  // 過月的單現在會被系統自動關閉（is_closed=True），月份檢查已被涵蓋；
+  // 而「重新開啟」的意義就是讓過月的單能補改，若前端還卡當月，
+  // 重新開啟後畫面仍是唯讀，跟後端行為不一致。
+  const editable = canEdit && !!detail && !detail.is_closed
+  const isAutoClosed = !!detail && detail.is_closed && detail.close_kind === 'auto'
 
   const load = async () => {
     if (!requestId) return
@@ -139,13 +176,20 @@ export default function CpRequestDetailPage() {
     return rows
   }, [availableItems, detail?.items])
 
+  const isFilled = (r: MergedRow) => (r.requestItem?.request_qty || 0) > 0
+
   const filteredRows = useMemo(() => {
-    if (!search.trim()) return mergedRows
+    let rows = mergedRows
+    // 「只看已填」與搜尋是 AND 關係：兩個都設就是「已填的之中符合關鍵字的」
+    if (filledOnly) rows = rows.filter(isFilled)
     const kw = search.trim().toLowerCase()
-    return mergedRows.filter(
-      (r) => r.item_code.toLowerCase().includes(kw) || r.item_name.toLowerCase().includes(kw),
-    )
-  }, [mergedRows, search])
+    if (kw) {
+      rows = rows.filter(
+        (r) => r.item_code.toLowerCase().includes(kw) || r.item_name.toLowerCase().includes(kw),
+      )
+    }
+    return rows
+  }, [mergedRows, search, filledOnly])
 
   const groupedByCategory = useMemo(() => {
     const groups = new Map<string, MergedRow[]>()
@@ -157,7 +201,12 @@ export default function CpRequestDetailPage() {
     return Array.from(groups.entries()).sort(([a], [b]) => a.localeCompare(b))
   }, [filteredRows])
 
-  const filledCount = mergedRows.filter((r) => (r.requestItem?.request_qty || 0) > 0).length
+  const filledCount = mergedRows.filter(isFilled).length
+
+  // 「全部展開」按鈕在已經全開時要 disabled，否則按了沒反應會讓人以為壞了。
+  // 用 length 比較就夠——activeKeys 的值一定來自 groupedByCategory，不會有多餘的 key。
+  const allExpanded =
+    groupedByCategory.length > 0 && activeKeys.length === groupedByCategory.length
 
   // 搜尋時自動展開有符合結果的分類；清空搜尋則不強制收合使用者已手動展開的分類。
   useEffect(() => {
@@ -166,6 +215,16 @@ export default function CpRequestDetailPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search])
+
+  // 切到「只看已填」時自動全部展開——篩完通常只剩十幾筆，如果類別還是收合的，
+  // 使用者會看到一堆空標題，等於白按。切回「全部」不強制收合（可能有數百筆，
+  // 全開反而難用），讓使用者自己決定。
+  useEffect(() => {
+    if (filledOnly) {
+      setActiveKeys(groupedByCategory.map(([c]) => c))
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filledOnly])
 
   // ── 明細數量／會計科目變更 ──────────────────────────────────────────────────
   const handleQtyChange = async (row: MergedRow, qty: number | null) => {
@@ -183,6 +242,7 @@ export default function CpRequestDetailPage() {
         return
       }
       await load()
+      setLastSavedAt(new Date())
     } catch (err: any) {
       message.error(errMsg(err, '更新數量失敗'))
     } finally {
@@ -196,6 +256,7 @@ export default function CpRequestDetailPage() {
     try {
       await updateRequestItem(requestId, row.requestItem.id, { account_code_id: accountCodeId })
       await load()
+      setLastSavedAt(new Date())
     } catch (err: any) {
       message.error(errMsg(err, '更新會計科目失敗'))
     } finally {
@@ -209,6 +270,7 @@ export default function CpRequestDetailPage() {
       await deleteRequestItem(requestId, row.requestItem.id);
       message.success('已刪除這筆明細（可再重新填數量）')
       await load()
+      setLastSavedAt(new Date())
     } catch (err: any) {
       message.error(errMsg(err, '刪除失敗'))
     }
@@ -218,6 +280,7 @@ export default function CpRequestDetailPage() {
     try {
       await updateRequest(requestId, { cost_center_id: ccId })
       await load()
+      setLastSavedAt(new Date())
     } catch (err: any) {
       message.error(errMsg(err, '更新成本中心失敗'))
     }
@@ -336,11 +399,11 @@ export default function CpRequestDetailPage() {
         <Space>
           <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/cycle-purchase/requests')}>返回清單</Button>
           <Title level={4} style={{ margin: 0 }}>{detail.request_no}</Title>
-          {detail.is_closed ? (
-            <Tag color="default" icon={<LockOutlined />}>已關閉</Tag>
-          ) : (
-            <Tag color="green">開放中</Tag>
-          )}
+          <CloseStatusTag
+            isClosed={detail.is_closed}
+            closeKind={detail.close_kind}
+            periodLabel={detail.period_label}
+          />
         </Space>
         <Space>
           {canClose && !detail.is_closed && (
@@ -367,22 +430,37 @@ export default function CpRequestDetailPage() {
         </Space>
       </Space>
 
-      {!editable && !detail.is_closed && !isCurrentMonth && (
+      {/* 2026-08-07：三種提示分開講。系統自動關閉最需要說清楚——使用者看到
+          「關閉」但找不到是誰關的，要讓他知道那是月份過了、不是有人動了手腳。 */}
+      {isAutoClosed && (
         <Alert
           type="warning"
           showIcon
           style={{ marginBottom: 16 }}
-          message="已經過了可以編輯的月份"
-          description={`這張請購單屬於「${detail.period_label}」，已經過了那個月份，不能再編輯（僅供檢視）`}
+          message="期別已過，這張請購單已由系統自動關閉"
+          description={`這張請購單屬於「${detail.period_label}」，月份過了之後系統會自動關閉，沒有經手人。如果還需要補改，請找有「週期採購請購關閉」權限的人重新開啟——重新開啟之後就可以編輯，不受月份限制。`}
         />
       )}
-      {detail.is_closed && (
+      {detail.is_closed && !isAutoClosed && (
         <Alert
           type="info"
           showIcon
           style={{ marginBottom: 16 }}
           message="這張請購單已經關閉"
-          description="關閉後不能再編輯，如需修改請先請有權限的人重新開啟"
+          description={
+            detail.closed_by_name
+              ? `由 ${detail.closed_by_name} 關閉。關閉後不能再編輯，如需修改請先請有權限的人重新開啟。`
+              : '關閉後不能再編輯，如需修改請先請有權限的人重新開啟。'
+          }
+        />
+      )}
+      {!detail.is_closed && !isCurrentMonth && (
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message="這是過去月份的請購單，目前是開放中"
+          description={`這張請購單屬於「${detail.period_label}」。期別已過的單通常會被系統自動關閉，它還開放中，代表曾經被人重新開啟過——重新開啟的單不會再被自動關閉，需要人工關閉。`}
         />
       )}
 
@@ -418,24 +496,89 @@ export default function CpRequestDetailPage() {
 
       <Card
         title={
-          <Space>
+          <Space wrap>
             <span>請購明細</span>
             <Badge count={filledCount} showZero color="blue" overflowCount={999} title="已填數量的料號筆數" />
+            {/* 即時儲存的狀態回饋。沒有這個的話，使用者改完數量看不到任何反應，
+                會以為沒存到——「Save 按鈕在哪」就是這樣被問出來的。 */}
+            {filledOnly && editable && (
+              <Text type="warning" style={{ fontSize: 12, fontWeight: 'normal' }}>
+                （數量改成 0 的項目會立刻從這裡消失，要改回來請切換到「全部」）
+              </Text>
+            )}
+            {editable && (savingItemId !== null ? (
+              <Text type="secondary" style={{ fontSize: 12, fontWeight: 'normal' }}>
+                <LoadingOutlined /> 儲存中…
+              </Text>
+            ) : lastSavedAt ? (
+              <Text type="success" style={{ fontSize: 12, fontWeight: 'normal' }}>
+                <CheckCircleOutlined /> 已自動儲存 {lastSavedAt.toTimeString().slice(0, 5)}
+              </Text>
+            ) : (
+              <Text type="secondary" style={{ fontSize: 12, fontWeight: 'normal' }}>
+                改動會自動儲存，不需要按儲存
+              </Text>
+            ))}
           </Space>
         }
         extra={
-          <Input
-            allowClear
-            prefix={<SearchOutlined />}
-            placeholder="搜尋料號／品名"
-            style={{ width: 240 }}
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
+          <Space wrap>
+            {/* 用 Segmented 而不是 Checkbox：兩個選項都有明確的名字，
+                使用者一眼就知道現在是哪一種模式，不用推敲「打勾代表什麼」 */}
+            <Segmented
+              size="small"
+              value={filledOnly ? 'filled' : 'all'}
+              onChange={(v) => setFilledOnly(v === 'filled')}
+              options={[
+                { label: `全部（${mergedRows.length}）`, value: 'all' },
+                { label: `只看已填（${filledCount}）`, value: 'filled' },
+              ]}
+            />
+            {/* 料號動輒數百筆、分好幾個類別，一個個點開很累 */}
+            <Button
+              size="small"
+              icon={<DownOutlined />}
+              disabled={allExpanded}
+              onClick={() => setActiveKeys(groupedByCategory.map(([c]) => c))}
+            >
+              全部展開
+            </Button>
+            <Button
+              size="small"
+              icon={<UpOutlined />}
+              disabled={activeKeys.length === 0}
+              onClick={() => setActiveKeys([])}
+            >
+              全部收合
+            </Button>
+            <Input
+              allowClear
+              prefix={<SearchOutlined />}
+              placeholder="搜尋料號／品名"
+              style={{ width: 240 }}
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </Space>
         }
       >
         {mergedRows.length === 0 ? (
           <Alert type="info" showIcon message="這個公司目前沒有任何有料號對照的啟用中料號可以選" />
+        ) : groupedByCategory.length === 0 ? (
+          // 篩完沒東西時，要講清楚是哪個條件篩掉的，否則使用者會以為料號不見了
+          <Alert
+            type="info"
+            showIcon
+            message={filledOnly && search.trim()
+              ? `已填的項目裡沒有符合「${search.trim()}」的料號`
+              : filledOnly
+                ? '這張請購單目前還沒有填任何數量'
+                : `沒有符合「${search.trim()}」的料號`}
+            description={filledOnly ? '切換到「全部」就能看到所有可選料號並開始填寫。' : undefined}
+            action={filledOnly ? (
+              <Button size="small" onClick={() => setFilledOnly(false)}>切換到全部</Button>
+            ) : undefined}
+          />
         ) : (
           <Collapse
             activeKey={activeKeys}

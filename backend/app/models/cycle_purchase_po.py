@@ -23,10 +23,24 @@ received 是第四期「驗收單」串接時新增，見下方更新說明）�
   partial_received／received（那個 endpoint 只保留給人工動作 issued／cancelled）。
   received 狀態的採購單不能再建立新的驗收單（沒有東西可以再驗收）；
   cancelled／draft 狀態的採購單也不能建立驗收單（沒有正式生效的訂單）。
+
+2026-08-09（新增「退回彙整單」，與 Samuel 確認）：
+唯一鍵從 **table-level UniqueConstraint** 改成 **partial unique index**
+（`uq_cp_po_active_cycle_period_company_vendor`，條件 `WHERE status != 'cancelled'`）。
+
+原因：退回彙整單時，採購單保留為 cancelled 當軌跡，但買家調整完之後要能對
+**同一組週期＋期別＋公司＋供應商**再轉出一張新的採購單。原本的
+`UniqueConstraint(cycle_id, period_label, company, vendor_id)` 不分狀態，
+會直接擋掉（實測：`UNIQUE constraint failed: cycle_purchase_pos.cycle_id,
+period_label, company, vendor_id`）。改成 partial index 後，
+**已取消的單不參與唯一性檢查**，仍然保證「同一組同時只會有一張有效的採購單」。
+
+⚠️ SQLite 不支援 `ALTER TABLE ... DROP CONSTRAINT`，這個改動需要**整表重建**
+（建新表 → 搬資料 → 刪舊表 → 改名），見 `apply_cycle_purchase_po_unique_migration.py`。
 """
 from sqlalchemy import (
-    Column, Integer, String, Numeric, Text, DateTime, Date,
-    ForeignKey, UniqueConstraint, func,
+    Column, Index, Integer, String, Numeric, Text, DateTime, Date,
+    ForeignKey, UniqueConstraint, func, text,
 )
 from sqlalchemy.orm import relationship
 
@@ -37,8 +51,15 @@ class CyclePurchasePO(CyclePurchaseBase):
     """週期採購採購單（單一公司＋單一供應商在單一週期＋期別下的一張單）"""
     __tablename__ = "cycle_purchase_pos"
     __table_args__ = (
-        UniqueConstraint("cycle_id", "period_label", "company", "vendor_id",
-                          name="uq_cp_po_cycle_period_company_vendor"),
+        # 2026-08-09：partial unique index 取代原本的 UniqueConstraint，
+        # 已取消（cancelled）的單不參與唯一性檢查，見檔案開頭說明。
+        # 仍然保證「同一組同時只會有一張有效（未取消）的採購單」。
+        Index(
+            "uq_cp_po_active_cycle_period_company_vendor",
+            "cycle_id", "period_label", "company", "vendor_id",
+            unique=True,
+            sqlite_where=text("status != 'cancelled'"),
+        ),
     )
 
     id            = Column(Integer, primary_key=True, autoincrement=True)

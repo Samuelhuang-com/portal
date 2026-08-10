@@ -19,3 +19,6 @@ apscheduler==3.10.4
 anthropic>=0.25.0
 PyYAML>=6.0
 filelock>=3.13.0
+
+# OPERA Cloud（OHIP）API 呼叫（2026-08-06）—— 同步，配合同步 service 層
+requests>=2.31.0

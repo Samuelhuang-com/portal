@@ -15,6 +15,11 @@ Depends(get_cycle_purchase_db)（cycle-purchase.db），不是 portal.db 的 get
 2026-07-11：批次（CyclePurchaseBatch）已拿掉，相關 CRUD
 （_next_batch_no／list_batches／get_batch／create_batch／update_batch）
 一併移除，理由見 models/cycle_purchase_request.py 開頭說明。
+
+2026-08-09：新增 get_cycle_options()，供週期設定表單的「適用公司」「適用品類」
+下拉取主檔 distinct 值。這兩個欄位改版前是自由文字，要跟主檔做字串比對——
+與彙整單 2026-07-16 踩過的「期別字串打不一致 → 查到 0 筆」是同一種病灶，
+所以一律改成從主檔取選項，不讓使用者手打。
 """
 from typing import Optional
 
@@ -324,3 +329,38 @@ def update_cycle(db: Session, cycle_id: int, payload) -> Optional[CyclePurchaseC
         setattr(cycle, k, v)
     db.flush()
     return cycle
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 週期設定表單的下拉選項來源（2026-08-09 新增）
+# ═══════════════════════════════════════════════════════════════════════════
+
+def get_cycle_options(db: Session) -> dict:
+    """
+    「適用公司」取自部門主檔的 distinct company（只取啟用中部門——停用部門的
+    公司值留著只會讓人選到產不出單的設定）；
+    「適用品類」取自料號主檔的 distinct category（只取啟用中料號，排除 NULL／空字串）。
+    """
+    companies = [
+        row[0]
+        for row in db.query(CyclePurchaseDepartment.company)
+        .filter(CyclePurchaseDepartment.is_active == True)  # noqa: E712
+        .distinct()
+        .order_by(CyclePurchaseDepartment.company)
+        .all()
+        if row[0]
+    ]
+    categories = [
+        row[0]
+        for row in db.query(CyclePurchaseItem.category)
+        .filter(
+            CyclePurchaseItem.is_active == True,  # noqa: E712
+            CyclePurchaseItem.category.isnot(None),
+            CyclePurchaseItem.category != "",
+        )
+        .distinct()
+        .order_by(CyclePurchaseItem.category)
+        .all()
+        if row[0]
+    ]
+    return {"companies": companies, "categories": categories}

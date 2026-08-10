@@ -71,6 +71,37 @@ services/cycle_purchase_request_service.py 開頭說明）：
     檢查是防呆，避免呼叫端繞過清單直接傳入跨月份的 request_ids）。
   - 顯示欄位的 approved_by_name／approved_at 改成 closed_by_name／
     closed_at（沿用 submitted_by_name 顯示原始填單人）。
+
+2026-08-09（第四次調整，與 Samuel 確認，「彙整單退回請購單」）：
+起因是實務上會發生「已經彙整好了，但這一期要取消／這張單不該納入」，需要
+把已彙整的請購單退回到未彙整狀態。新增兩支：
+
+  - list_summarized_requests(cycle_id, company, year_month)：列出某週期＋
+    公司＋期別下**已經被彙整過**（is_summarized=True）的請購單，是
+    list_eligible_requests() 的鏡像清單，供退回畫面勾選。
+  - unsummarize_request(request_id, reason, user)：把單一一張請購單退回。
+
+**為什麼是「重算」不是「反向扣減」**：彙整列沒有記錄「這列的量是哪幾張
+請購單貢獻的」（沒有 lineage 表），而且 generate_summary_from_requests()
+是用累加的方式寫進去的，所以無法從彙整列反推要扣多少。退回的作法是：
+把該請購單 is_summarized 改回 False 之後，用「同一個週期＋期別＋公司＋
+部門，且仍為 is_summarized=True 的請購單」重新加總，覆寫受影響的
+draft 彙整列 demand_qty。受影響範圍只限這張請購單自己有出現過的料號
+（item_ids）＋這張請購單自己的部門，不會動到其他部門或其他料號的列。
+
+**三個擋下條件**（與 Samuel 確認，任一成立就整筆退回動作失敗，不做部分退回）：
+  1. 受影響的彙整列裡有 status != "draft" 或已回填 po_id 的 → 已轉採購單，
+     退回會讓採購單對不上帳。
+  2. 受影響的彙整列裡有 ragic_pushed=True 的 → 已拋轉 Ragic，退回會造成
+     Portal 與 Ragic 不一致（Ragic 端目前是 stub，但欄位已在用）。
+  3. 該請購單 is_closed=False（已重新開啟）→ 理論上不會發生（要先關閉才能
+     彙整），純防呆。
+
+**人工調整量的處理**（與 Samuel 確認）：重算只覆寫 demand_qty。若某列的
+adjusted_qty 曾被人工改過（≠ 重算前的 demand_qty），保留該值與 adjust_reason
+不動，只在回傳的 warnings 裡提醒買家複查；沒被改過的才跟著新的 demand_qty
+一起走。重算後 demand_qty 歸零的列，**沒有人工調整過才刪除**；有人工調整過
+的保留（demand_qty=0）並發警告，避免靜默丟掉買家已經做的決定。
 """
 from datetime import date, datetime
 from decimal import Decimal
@@ -87,6 +118,8 @@ from app.models.cycle_purchase_item import CyclePurchaseItem, CyclePurchaseItemM
 from app.models.cycle_purchase_request import CyclePurchaseRequest, CyclePurchaseRequestItem
 from app.models.cycle_purchase_reference import CyclePurchaseDepartment
 from app.services import cycle_purchase_ragic_push
+from app.models.cycle_purchase_audit import CyclePurchaseAuditLog
+from app.services.cycle_purchase_audit_service import record_audit
 
 
 class SummaryServiceError(Exception):
@@ -155,11 +188,23 @@ def _next_summary_generate_batch_no(db: Session, cycle_id: int, company: str, ye
 
 def list_eligible_requests(db: Session, cycle_id: int, company: str, year_month: str):
     """「彙整單」畫面用：列出某週期＋公司下，期別（period_label）等於 year_month
-    （YYYY-MM）、已經關閉（is_closed=True）、且還沒被彙整過（is_summarized=False）
-    的請購單，供使用者勾選要納入這次彙整的範圍。
+    （YYYY-MM）、還沒被彙整過（is_summarized=False）的請購單，供使用者勾選要納入
+    這次彙整的範圍。
     2026-07-17：判斷條件從「status == approved」改成「is_closed == True」，
     月份篩選也從「approved_at 換算年月」改成直接比對 period_label（見本檔
-    開頭第三次調整說明）。"""
+    開頭第三次調整說明）。
+
+    2026-08-09（Samuel 回報「退回後重新開啟請購單，產生彙整就看不到那張單了」）：
+    **不再直接把未關閉的單濾掉**，改成一併列出並標記 `can_summarize=False` ＋
+    `block_reason`。原本的空清單訊息（「這個範圍內沒有已關閉、尚未被彙整過的
+    請購單」）完全沒告訴使用者「那張單就在那裡，只差一個關閉動作」，症狀與
+    退回清單先前的問題一模一樣——**單子憑空消失，使用者以為系統壞了**。
+
+    ⚠️ 規則本身沒有放寬：`generate_summary_from_requests()` 仍然只接受
+    `is_closed=True` 的單。「關閉＝數量定案」是彙整的前提，若允許彙整開放中的
+    單，之後有人再去改請購數量，彙整單的數字就默默錯了而且無從察覺。
+    這裡改的只是**看不看得見**，不是能不能彙整。
+    """
     year_month = (year_month or "").strip()
     if not year_month:
         raise SummaryServiceError("月份不能是空白")
@@ -169,11 +214,11 @@ def list_eligible_requests(db: Session, cycle_id: int, company: str, year_month:
         .filter(
             CyclePurchaseRequest.cycle_id == cycle_id,
             CyclePurchaseRequest.company == company,
-            CyclePurchaseRequest.is_closed == True,  # noqa: E712
             CyclePurchaseRequest.is_summarized == False,  # noqa: E712
             CyclePurchaseRequest.period_label == year_month,
         )
-        .order_by(CyclePurchaseRequest.closed_at)
+        # 可彙整的（已關閉）排前面，未關閉的排後面；同組內依關閉時間
+        .order_by(CyclePurchaseRequest.is_closed.desc(), CyclePurchaseRequest.closed_at)
         .all()
     )
 
@@ -189,6 +234,12 @@ def list_eligible_requests(db: Session, cycle_id: int, company: str, year_month:
             "closed_by_name": r.closed_by_name,
             "closed_at": r.closed_at,
             "total_amount": r.total_amount,
+            "is_closed": bool(r.is_closed),
+            "can_summarize": bool(r.is_closed),
+            "block_reason": None if r.is_closed else "尚未關閉（關閉後數量才算定案，才能彙整）",
+            # 曾被退回過的軌跡：讓買家知道「這張是退回來的，內容可能被改過」
+            "unsummarized_at": r.unsummarized_at,
+            "unsummarize_reason": r.unsummarize_reason,
         })
     return result
 
@@ -327,6 +378,256 @@ def generate_summary_from_requests(db: Session, request_ids: list[int]) -> list[
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# 退回請購單（2026-08-09 第四次調整，見本檔開頭說明）
+# ═══════════════════════════════════════════════════════════════════════════
+
+def list_summarized_requests(db: Session, cycle_id: int, company: str, year_month: str):
+    """「退回請購單」畫面用：列出某週期＋公司下，期別（period_label）等於
+    year_month 的**已彙整**（is_summarized=True）請購單。是
+    list_eligible_requests() 的鏡像清單（那邊列 is_summarized=False）。
+
+    這裡刻意**不**先幫使用者過濾掉「已轉採購單／已拋轉 Ragic 所以退不了」的
+    單，而是每一列都回一個 `can_unsummarize` + `block_reason`，讓使用者在畫面
+    上看得到「這張為什麼退不了」，而不是單子憑空消失、以為是系統漏抓。"""
+    year_month = (year_month or "").strip()
+    if not year_month:
+        raise SummaryServiceError("月份不能是空白")
+
+    rows = (
+        db.query(CyclePurchaseRequest)
+        .filter(
+            CyclePurchaseRequest.cycle_id == cycle_id,
+            CyclePurchaseRequest.company == company,
+            CyclePurchaseRequest.is_summarized == True,  # noqa: E712
+            CyclePurchaseRequest.period_label == year_month,
+        )
+        .order_by(CyclePurchaseRequest.summarized_at)
+        .all()
+    )
+
+    result = []
+    for r in rows:
+        dept = db.query(CyclePurchaseDepartment).filter(CyclePurchaseDepartment.id == r.department_id).first()
+        block_reason = _unsummarize_block_reason(db, r)
+        result.append({
+            "id": r.id,
+            "request_no": r.request_no,
+            "department_id": r.department_id,
+            "department_name": dept.dept_name if dept else None,
+            "submitted_by_name": r.submitted_by_name,
+            "closed_by_name": r.closed_by_name,
+            "closed_at": r.closed_at,
+            "total_amount": r.total_amount,
+            "summary_batch_no": r.summary_batch_no,
+            "summarized_at": r.summarized_at,
+            "can_unsummarize": block_reason is None,
+            "block_reason": block_reason,
+        })
+    return result
+
+
+def _request_item_ids(db: Session, request_id: int) -> set[int]:
+    return {
+        i.item_id
+        for i in db.query(CyclePurchaseRequestItem)
+                   .filter(CyclePurchaseRequestItem.request_id == request_id).all()
+        if i.item_id
+    }
+
+
+def _affected_summary_rows(db: Session, req: CyclePurchaseRequest) -> list[CyclePurchaseSummary]:
+    """這張請購單的量可能落在哪些彙整列上：同一週期＋期別＋公司＋**這張單的
+    部門**，且料號出現在這張單明細裡的所有彙整列（含已鎖定的，擋下條件要看）。"""
+    item_ids = _request_item_ids(db, req.id)
+    if not item_ids:
+        return []
+    return (
+        db.query(CyclePurchaseSummary)
+        .filter(
+            CyclePurchaseSummary.cycle_id == req.cycle_id,
+            CyclePurchaseSummary.period_label == req.period_label,
+            CyclePurchaseSummary.company == req.company,
+            CyclePurchaseSummary.department_id == req.department_id,
+            CyclePurchaseSummary.item_id.in_(item_ids),
+        )
+        .all()
+    )
+
+
+def _unsummarize_block_reason(db: Session, req: CyclePurchaseRequest) -> Optional[str]:
+    """回傳這張請購單「不能退回」的原因（可以退就回 None）。三個擋下條件見
+    本檔開頭第四次調整說明。清單顯示與實際執行共用同一支，避免兩邊判斷不一致。"""
+    if not req.is_summarized:
+        return "目前不是已彙整狀態"
+    if not req.is_closed:
+        return "請購單已重新開啟（未關閉），請先重新關閉再退回"
+
+    affected = _affected_summary_rows(db, req)
+
+    locked = [r for r in affected if r.status != "draft" or r.po_id]
+    if locked:
+        po_ids = {r.po_id for r in locked if r.po_id}
+        po_nos = sorted({
+            po.po_no
+            for po in db.query(CyclePurchasePO).filter(CyclePurchasePO.id.in_(po_ids or [-1])).all()
+        })
+        codes = sorted({r.item_code for r in locked})
+        return (
+            f"已轉採購單（{'、'.join(po_nos) if po_nos else '單號未知'}），"
+            f"涉及料號：{'、'.join(codes)}"
+        )
+
+    pushed = [r for r in affected if r.ragic_pushed]
+    if pushed:
+        batches = sorted({r.ragic_push_batch_no for r in pushed if r.ragic_push_batch_no})
+        return f"彙整列已拋轉 Ragic（批次 {'、'.join(batches) or '—'}）"
+
+    # 同一個 key（料號＋部門）理論上最多只會有一列 draft（見
+    # generate_summary_from_requests 的累加邏輯），多於一列代表資料異常，
+    # 這時重算會不知道該把量寫到哪一列，直接擋下請人工處理。
+    draft_count: dict[int, int] = {}
+    for r in affected:
+        if r.status == "draft":
+            draft_count[r.item_id] = draft_count.get(r.item_id, 0) + 1
+    dup = [str(k) for k, v in draft_count.items() if v > 1]
+    if dup:
+        return f"資料異常：料號 id {'、'.join(dup)} 在本期同一部門有多筆草稿彙整列，請先人工處理"
+
+    return None
+
+
+def unsummarize_request(db: Session, request_id: int, reason: str, user) -> dict:
+    """把單一一張已彙整的請購單退回到未彙整狀態，並重算受影響的 draft 彙整列。
+    重算邏輯與擋下條件見本檔開頭第四次調整說明。整筆動作是 all-or-nothing：
+    只要有一個擋下條件成立就直接拋錯，不會做「退一半」。"""
+    reason = (reason or "").strip()
+    if not reason:
+        raise SummaryServiceError("請填寫退回原因")
+
+    req = db.query(CyclePurchaseRequest).filter(CyclePurchaseRequest.id == request_id).first()
+    if not req:
+        raise SummaryServiceError("請購單不存在")
+
+    block = _unsummarize_block_reason(db, req)
+    if block:
+        raise SummaryServiceError(f"請購單 {req.request_no} 不能退回：{block}")
+
+    affected = _affected_summary_rows(db, req)
+    item_ids = _request_item_ids(db, req.id)
+    old_batch_no = req.summary_batch_no
+
+    # 先把這張單標記為未彙整，重算才會自動把它排除在外
+    now = datetime.now()
+    req.is_summarized = False
+    req.summary_batch_no = None
+    req.summarized_at = None
+    req.unsummarized_by_user_id = getattr(user, "id", None)
+    req.unsummarized_by_name = getattr(user, "full_name", None)
+    req.unsummarized_at = now
+    req.unsummarize_reason = reason
+    db.flush()
+
+    # 重算：同一週期＋期別＋公司＋部門，仍為 is_summarized=True 的請購單，
+    # 依料號加總（這張單已經被改成 False，所以自然被排除）
+    remaining_rows = (
+        db.query(CyclePurchaseRequestItem.item_id, func.sum(CyclePurchaseRequestItem.request_qty))
+        .join(CyclePurchaseRequest, CyclePurchaseRequest.id == CyclePurchaseRequestItem.request_id)
+        .filter(
+            CyclePurchaseRequest.cycle_id == req.cycle_id,
+            CyclePurchaseRequest.period_label == req.period_label,
+            CyclePurchaseRequest.company == req.company,
+            CyclePurchaseRequest.department_id == req.department_id,
+            CyclePurchaseRequest.is_summarized == True,  # noqa: E712
+            CyclePurchaseRequestItem.item_id.in_(item_ids or [-1]),
+        )
+        .group_by(CyclePurchaseRequestItem.item_id)
+        .all()
+    )
+    remaining_by_item = {item_id: int(qty or 0) for item_id, qty in remaining_rows}
+
+    updated: list[CyclePurchaseSummary] = []
+    deleted_ids: list[int] = []
+    warnings: list[str] = []
+    changes: list[str] = []
+
+    for row in affected:
+        if row.status != "draft":   # 已被擋下條件排除，這裡純防禦
+            continue
+        old_demand = row.demand_qty or 0
+        new_demand = remaining_by_item.get(row.item_id, 0)
+        if new_demand == old_demand:
+            continue
+
+        # 「人工調整過」＝調整量不等於重算前的需求量（與 generate_summary_from_requests
+        # 判斷是否要跟著累加用的是同一個定義，兩邊保持一致）
+        manually_adjusted = (row.adjusted_qty or 0) != old_demand
+
+        if new_demand <= 0 and not manually_adjusted:
+            deleted_ids.append(row.id)
+            changes.append(f"{row.item_code} 需求量 {old_demand}→0（刪除彙整列）")
+            db.delete(row)
+            continue
+
+        row.demand_qty = new_demand
+        if manually_adjusted:
+            warnings.append(
+                f"{row.item_code} {row.item_name}：需求量已由 {old_demand} 重算為 {new_demand}，"
+                f"但調整量 {row.adjusted_qty} 是人工設定過的，已保留未變動，請確認是否仍適用"
+            )
+        else:
+            row.adjusted_qty = new_demand
+        changes.append(f"{row.item_code} 需求量 {old_demand}→{new_demand}")
+        updated.append(row)
+
+    db.flush()
+
+    record_audit(
+        db,
+        document_type="request",
+        document_id=req.id,
+        document_no=req.request_no,
+        event_type="unsummarize",
+        description=(
+            f"從彙整單退回請購單（{req.period_label}／{req.company}）：{reason}"
+            + (f"；受影響彙整列 {len(updated)} 筆更新、{len(deleted_ids)} 筆刪除" if (updated or deleted_ids)
+               else "；沒有彙整列需要調整")
+        ),
+        operator_user_id=getattr(user, "id", None),
+        operator_name=getattr(user, "full_name", None),
+        old_value=f"is_summarized=True，彙整批次 {old_batch_no or '—'}",
+        new_value="is_summarized=False；" + ("、".join(changes) if changes else "彙整列無異動"),
+    )
+    db.flush()
+
+    for r in updated:
+        _attach_summary_display_fields(db, r)
+
+    return {
+        "request_id": req.id,
+        "request_no": req.request_no,
+        "period_label": req.period_label,
+        "company": req.company,
+        "previous_summary_batch_no": old_batch_no,
+        "updated_summaries": updated,
+        "deleted_summary_ids": deleted_ids,
+        "warnings": warnings,
+        "message": (
+            f"已將請購單 {req.request_no} 退回未彙整狀態"
+            f"（彙整列更新 {len(updated)} 筆、刪除 {len(deleted_ids)} 筆）"
+        ),
+        # 2026-08-09：Samuel 退回後把請購單重新開啟去改內容，改完卻發現「產生彙整」
+        # 看不到那張單——因為開放中的單不能彙整，要先關閉。流程本身沒錯，但沒有
+        # 任何地方講過這件事，所以在退回成功的當下就把下一步講清楚。
+        "next_step": (
+            "這張單現在是「已關閉、未彙整」，可以直接在「產生彙整」重新勾選。\n"
+            "若要先修改內容，請到請購單頁面「重新開啟」——"
+            "改完記得再關閉一次，開放中的請購單不能彙整"
+            "（未關閉的單仍會出現在「產生彙整」清單裡，可以直接按該列的「關閉並納入」）。"
+        ),
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # 彙整單查詢 / 調整
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -449,6 +750,12 @@ def convert_to_po(
     if not vendor:
         raise SummaryServiceError("供應商不存在")
 
+    # 2026-08-09：重複檢查**排除 cancelled**。搭配「採購單退回彙整單」——退回後
+    # 舊採購單保留為 cancelled 當軌跡，同一組要能再轉出一張新單。DB 那層的唯一鍵
+    # 也一併改成 partial unique index（`WHERE status != 'cancelled'`），只改這裡是
+    # 不夠的（實測會撞 `UNIQUE constraint failed: cycle_purchase_pos.cycle_id,
+    # period_label, company, vendor_id`），見 models/cycle_purchase_po.py 開頭說明
+    # 與 apply_cycle_purchase_po_unique_migration.py。
     existing_po = (
         db.query(CyclePurchasePO)
         .filter(
@@ -456,6 +763,7 @@ def convert_to_po(
             CyclePurchasePO.period_label == period_label,
             CyclePurchasePO.company == company,
             CyclePurchasePO.vendor_id == vendor_id,
+            CyclePurchasePO.status != "cancelled",
         )
         .first()
     )
@@ -590,18 +898,39 @@ def list_department_breakdown(
 # ═══════════════════════════════════════════════════════════════════════════
 
 def _next_ragic_push_batch_no(db: Session, company: str, period_label: str) -> str:
+    """產生拋轉批次號。
+
+    ⚠️ 流水號**從稽核紀錄取，不是從彙整表取**（2026-08-09 修正）。
+    原本是數 `cycle_purchase_summary.ragic_push_batch_no` 的相異值，但新增
+    「取消拋轉」之後那個欄位會被清成 NULL，計數就退回 0，重推會拿到**跟上一次
+    一模一樣的批次號**——稽核上兩次拋轉的 document_no 相同，完全分不出來
+    （實測重現：CPSUM-202608-日曜天地-0001 → 取消 → 重推仍是 0001）。
+
+    稽核紀錄是 append-only、永遠不會被清掉（見 models/cycle_purchase_audit.py），
+    所以拿它當號碼來源才不會倒退。
+    """
     prefix = f"CPSUM-{period_label.replace('-', '')}-{company}-"
-    count = (
+    used = (
+        db.query(func.count(func.distinct(CyclePurchaseAuditLog.document_no)))
+        .filter(
+            CyclePurchaseAuditLog.event_type == "ragic_push",
+            CyclePurchaseAuditLog.document_no.like(f"{prefix}%"),
+        )
+        .scalar()
+        or 0
+    )
+    # 防呆：萬一稽核被清過（理論上不會），仍不可與目前彙整表上還在用的號碼相撞
+    in_use = (
         db.query(func.count(func.distinct(CyclePurchaseSummary.ragic_push_batch_no)))
         .filter(CyclePurchaseSummary.ragic_push_batch_no.like(f"{prefix}%"))
         .scalar()
         or 0
     )
-    return f"{prefix}{count + 1:04d}"
+    return f"{prefix}{max(used, in_use) + 1:04d}"
 
 
 def push_summary_to_ragic(
-    db: Session, cycle_id: int, period_label: str, company: str,
+    db: Session, cycle_id: int, period_label: str, company: str, user=None,
 ):
     """把某週期＋期別＋公司範圍內的彙整列，組成一份「匯總請購單」文件推送到 Ragic。
 
@@ -626,6 +955,18 @@ def push_summary_to_ragic(
     )
     if not rows:
         raise SummaryServiceError("這個週期＋期別＋公司範圍內沒有彙整列，沒有東西可以拋轉")
+
+    # 2026-08-09：擋重複拋轉（與 Samuel 確認）。改版前沒有這個檢查，按兩次會在
+    # Ragic 產生兩張內容不同的同期單據，而 Ragic 端無從判斷哪一張才算數。
+    # 要重推請先「取消拋轉」（cancel_ragic_push）。
+    already = [r for r in rows if r.ragic_pushed]
+    if already:
+        batches = sorted({r.ragic_push_batch_no for r in already if r.ragic_push_batch_no})
+        raise SummaryServiceError(
+            f"「{period_label}／{company}」已經拋轉過了"
+            f"（批次 {'、'.join(batches) or '—'}，共 {len(already)} 筆彙整列）。"
+            f"若要重新拋轉，請先執行「取消拋轉」。"
+        )
 
     for r in rows:
         _attach_summary_display_fields(db, r)
@@ -652,6 +993,10 @@ def push_summary_to_ragic(
         db.flush()
         raise SummaryServiceError(f"拋轉 Ragic 失敗：{e}")
 
+    # ⚠️ 這裡用的是 utcnow()，與本模組其他所有時間欄位（closed_at／summarized_at／
+    #    unsummarized_at 都用 datetime.now()）不一致，會差 8 小時。這是既有寫法，
+    #    2026-08-09 發現後回報 Samuel，未經同意不自行修改（改動會影響既有資料的
+    #    解讀方式）。修的話就是把這一行換成 datetime.now()。
     now = datetime.utcnow()
     for r in rows:
         r.ragic_push_batch_no = batch_no
@@ -661,10 +1006,118 @@ def push_summary_to_ragic(
         r.ragic_push_error = None
     db.flush()
 
+    # 2026-08-09 新增：拋轉也寫稽核。原本只有欄位標記，沒有紀錄——搭配「取消拋轉」
+    # 之後會出現 推 → 取消 → 再推 的來回，沒有紀錄就完全看不出經過。
+    record_audit(
+        db,
+        document_type="summary",
+        document_id=cycle_id,   # 彙整單沒有單一主鍵，真正的識別是 document_no（批次號）
+        document_no=batch_no,
+        event_type="ragic_push",
+        description=(
+            f"拋轉 Ragic 匯總請購單（{cycle.cycle_name}／{period_label}／{company}）："
+            f"{len(rows)} 筆彙整列"
+            + ("　⚠️ 目前是 stub，未真正寫入 Ragic" if push_result.get("is_stub", True) else "")
+        ),
+        operator_user_id=getattr(user, "id", None),
+        operator_name=getattr(user, "full_name", None),
+        old_value="未拋轉",
+        new_value=f"已拋轉，Ragic 記錄 ID {push_result.get('ragic_record_id') or '—'}",
+    )
+    db.flush()
+
     return {
         "batch_no": batch_no,
         "pushed_count": len(rows),
         "ragic_record_id": push_result.get("ragic_record_id"),
         "is_stub": push_result.get("is_stub", True),
         "message": push_result.get("message", "已拋轉"),
+    }
+
+
+def cancel_ragic_push(
+    db: Session, cycle_id: int, period_label: str, company: str, reason: str, user,
+):
+    """取消某週期＋期別＋公司範圍的 Ragic 拋轉標記，讓它可以重新拋轉。
+
+    2026-08-09 與 Samuel 確認新增。動機有兩個：
+      1. 搭配「擋重複拋轉」——擋下之後必須有路可以重來，否則等於一次定生死。
+      2. **解掉「已拋轉就永遠退不回請購單」的死結**：`ragic_pushed=True` 是
+         `unsummarize_request()` 的擋下條件之一，改版前一旦按了拋轉，那一期的
+         請購單就再也退不回去了（而拋轉目前還只是 stub，等於被一個假動作鎖死）。
+
+    做的事：把 5 個 `ragic_*` 欄位清空（`ragic_pushed=False`、批次號／記錄 ID／
+    時間／錯誤訊息都清掉），並寫一筆稽核。**不動彙整列本身的 status／po_id**——
+    取消的是「拋轉」這個標記，不是彙整結果。
+
+    ⚠️ TODO（等 Ragic 端表單建好、真的會寫入之後必須回來處理）：
+       現在是 stub，Ragic 端沒有東西，所以清掉標記就結束。真正串接之後，
+       這裡要決定「Ragic 那筆記錄怎麼辦」——刪掉、標記作廢、還是留著讓 Ragic 端
+       自己判斷。**在做出決定之前不要上線真實 API**，否則會出現 Portal 說沒拋轉、
+       Ragic 卻有一張單的不一致。
+    """
+    reason = (reason or "").strip()
+    if not reason:
+        raise SummaryServiceError("請填寫取消拋轉的原因")
+
+    cycle = db.query(CyclePurchaseCycle).filter(CyclePurchaseCycle.id == cycle_id).first()
+    if not cycle:
+        raise SummaryServiceError("週期設定不存在")
+
+    rows = (
+        db.query(CyclePurchaseSummary)
+        .filter(
+            CyclePurchaseSummary.cycle_id == cycle_id,
+            CyclePurchaseSummary.period_label == period_label,
+            CyclePurchaseSummary.company == company,
+            CyclePurchaseSummary.ragic_pushed == True,  # noqa: E712
+        )
+        .all()
+    )
+    if not rows:
+        raise SummaryServiceError(
+            f"「{period_label}／{company}」目前沒有已拋轉的彙整列，沒有東西可以取消"
+        )
+
+    batches = sorted({r.ragic_push_batch_no for r in rows if r.ragic_push_batch_no})
+    record_ids = sorted({r.ragic_record_id for r in rows if r.ragic_record_id})
+    was_stub = all((rid or "").startswith("STUB-") for rid in record_ids) if record_ids else True
+
+    for r in rows:
+        r.ragic_pushed = False
+        r.ragic_push_batch_no = None
+        r.ragic_record_id = None
+        r.ragic_pushed_at = None
+        r.ragic_push_error = None
+    db.flush()
+
+    record_audit(
+        db,
+        document_type="summary",
+        document_id=cycle_id,
+        document_no=(batches[0] if batches else f"{period_label}/{company}"),
+        event_type="ragic_push_cancel",
+        description=(
+            f"取消 Ragic 拋轉（{cycle.cycle_name}／{period_label}／{company}）：{reason}"
+            f"；清除 {len(rows)} 筆彙整列的拋轉標記"
+        ),
+        operator_user_id=getattr(user, "id", None),
+        operator_name=getattr(user, "full_name", None),
+        old_value=f"已拋轉，批次 {'、'.join(batches) or '—'}，Ragic 記錄 {'、'.join(record_ids) or '—'}",
+        new_value="未拋轉（標記已清除，可重新拋轉，也可以退回請購單）",
+    )
+    db.flush()
+
+    return {
+        "cleared_count": len(rows),
+        "previous_batch_no": batches[0] if batches else None,
+        "message": (
+            f"已取消「{period_label}／{company}」的拋轉標記（{len(rows)} 筆彙整列）"
+        ),
+        "next_step": (
+            "這個範圍現在可以重新拋轉，被擋住的「退回請購單」也解開了。"
+            + ("" if was_stub else
+               "\n⚠️ 先前那次拋轉已真正寫入 Ragic，Portal 這邊的標記清掉了但 "
+               "Ragic 那筆記錄還在，請自行到 Ragic 確認要不要作廢，避免兩邊對不起來。")
+        ),
     }

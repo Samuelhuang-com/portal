@@ -4,15 +4,18 @@
  *
  * 依月份＋公司＋供應商＋料號彙總已送出（completed／discrepancy）驗收單的
  * 驗收數量，草稿驗收單不算。獨立權限 cycle_purchase_report。
+ *
+ * 2026-08-07：日期區間改用全站標準元件 StandardRangePicker（CLAUDE.md §8），
+ * 原本是各自刻的 antd RangePicker，沒有六個標準快捷、也沒有資料基準日。
  */
 import { useEffect, useMemo, useState } from 'react'
-import { Card, DatePicker, Select, Space, Table, Typography, message } from 'antd'
+import { Card, Select, Space, Table, Typography, message } from 'antd'
 import dayjs from 'dayjs'
-import { getReceivingReport, getVendors } from '@/api/cyclePurchase'
+import StandardRangePicker, { type StandardRange } from '@/components/StandardRangePicker'
+import { getReceivingList, getReceivingReport, getVendors } from '@/api/cyclePurchase'
 import type { CpReceivingReportRow, CpVendor } from '@/types/cyclePurchase'
 
 const { Title, Text } = Typography
-const { RangePicker } = DatePicker
 
 function errMsg(err: any, fallback: string) {
   return err?.response?.data?.detail || fallback
@@ -21,13 +24,45 @@ function errMsg(err: any, fallback: string) {
 export default function CpReceivingReportPage() {
   const [rows, setRows] = useState<CpReceivingReportRow[]>([])
   const [vendors, setVendors] = useState<CpVendor[]>([])
-  const [dateRange, setDateRange] = useState<[dayjs.Dayjs, dayjs.Dayjs] | null>(null)
+  const [dateRange, setDateRange] = useState<StandardRange>(null)
   const [company, setCompany] = useState<string | undefined>(undefined)
   const [vendorId, setVendorId] = useState<number | undefined>(undefined)
   const [loading, setLoading] = useState(false)
+  // 快捷區間的基準日（CLAUDE.md §8.2：以「資料最後一天」為準，不是今天）。
+  // 本頁篩的是驗收日期，所以基準日要取最後一張驗收單的 received_date。
+  const [dataEnd, setDataEnd] = useState<string>('')
 
   useEffect(() => {
     getVendors().then((r) => setVendors(r.data)).catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    // 備援來源：報表自己的最後月份。period 是 YYYY-MM，只能推到月底，
+    // 但資料不可能晚於今天，所以取兩者較早的那一個。
+    const fallbackFromReport = async () => {
+      try {
+        const r = await getReceivingReport()
+        const periods = r.data.map((x) => x.period).filter(Boolean).sort()
+        if (periods.length === 0) return
+        const monthEnd = dayjs(`${periods[periods.length - 1]}-01`).endOf('month')
+        const today = dayjs()
+        setDataEnd((monthEnd.isAfter(today) ? today : monthEnd).format('YYYY-MM-DD'))
+      } catch {
+        /* 取不到基準日不影響查詢 */
+      }
+    }
+
+    // 主要來源：驗收單清單的最大 received_date（與本頁篩選的是同一個欄位，最精確）
+    getReceivingList()
+      .then((r) => {
+        const dates = r.data.map((x) => x.received_date).filter(Boolean).sort()
+        if (dates.length > 0) setDataEnd(dates[dates.length - 1])
+        else void fallbackFromReport()
+      })
+      // 驗收單清單要 cycle_purchase_view，只有 cycle_purchase_report 的人會拿到 403，
+      // 這時退而求其次用報表推。兩邊都取不到就不傳 anchor，元件會在下拉底部標明
+      // 「暫以今天為基準」，不會靜默用錯基準。
+      .catch(() => void fallbackFromReport())
   }, [])
 
   const load = () => {
@@ -61,10 +96,11 @@ export default function CpReceivingReportPage() {
 
       <Card>
         <Space wrap style={{ marginBottom: 12 }}>
-          <RangePicker
+          <StandardRangePicker
             value={dateRange}
-            onChange={(v) => setDateRange(v as [dayjs.Dayjs, dayjs.Dayjs] | null)}
-            placeholder={['驗收日期起', '驗收日期迄']}
+            anchor={dataEnd}
+            onChange={setDateRange}
+            footerNote="篩選的是驗收日期"
           />
           <Select
             allowClear

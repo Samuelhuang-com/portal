@@ -58,10 +58,48 @@ class RequestUpdate(BaseModel):
 
 
 class GenerateRequestsPayload(BaseModel):
-    """「產生本期請購單」：依週期設定的 applicable_scope，一次幫所有適用公司的
-    啟用中部門建一張空白請購單（同 cycle_id+期別重複觸發是冪等的）。2026-07-17
-    起 period_label 一律是「現在」的月份，不再由呼叫端指定。"""
+    """「產生本期請購單」：依週期設定的適用範圍，一次幫所有適用部門建一張空白
+    請購單（同 cycle_id+期別重複觸發是冪等的）。2026-07-17 起 period_label 一律是
+    「現在」的月份，不再由呼叫端指定。2026-08-09 起適用範圍＝適用公司 ∩ 適用部門
+    ∩「該品類下有啟用中料號」（見 models/cycle_purchase_cycle.py 開頭說明）。"""
     cycle_id: int
+
+
+# ── 2026-08-09：適用部門解析結果（產生預覽 / 產生結果共用）────────────────
+# 被排除的部門一定要帶原因回前端顯示，不可靜默跳過——靜默跳過的話買家只會
+# 看到「怎麼少了一張單」，然後以為系統壞了。
+
+class SkippedDepartmentOut(BaseModel):
+    """某個部門沒有產生請購單的原因。"""
+    department_id: int
+    department_name: str
+    company: Optional[str] = None
+    reason: str
+
+
+class ApplicableDepartmentOut(BaseModel):
+    department_id: int
+    department_name: str
+    company: str
+
+
+class GeneratePreviewResult(BaseModel):
+    """GET /requests/generate-preview：按下「產生」之前先看會產生哪些部門。"""
+    cycle_id: int
+    cycle_name: str
+    period_label: str
+    departments: List[ApplicableDepartmentOut] = []
+    skipped: List[SkippedDepartmentOut] = []
+
+
+class GenerateRequestsResult(BaseModel):
+    """POST /requests/generate 的回傳。
+
+    2026-08-09 從原本的 `List[RequestOut]` 改成物件，才放得下 skipped。
+    這是**回傳型別變更**（不是端點移除），呼叫端只有前端 Requests 頁一處，已同步調整。
+    """
+    requests: List["RequestOut"] = []
+    skipped: List[SkippedDepartmentOut] = []
 
 
 class CloseRequestsPayload(BaseModel):
@@ -107,9 +145,24 @@ class RequestOut(BaseModel):
     closed_by_name: Optional[str] = None
     closed_at: Optional[datetime] = None
     close_batch_no: Optional[str] = None
+    # 2026-08-07：'manual'（有人按關閉）／'auto'（期別已過，系統自動關閉）／
+    # None（還開放中）。衍生欄位，由 service 的 close_kind_of() 依 close_batch_no
+    # 前綴推導，不落地成資料表欄位。前端據此顯示不同樣式的標籤。
+    close_kind: Optional[str] = None
     reopened_by_user_id: Optional[str] = None
     reopened_by_name: Optional[str] = None
     reopened_at: Optional[datetime] = None
+    # 2026-08-09：彙整狀態。改版前這些欄位存在於 model 但**從來沒有回傳給前端**，
+    # 導致請購單清單分不出「已關閉且已彙整」「已關閉但還沒彙整」「彙整過又被退回」
+    # 三種狀態——三者畫面上一模一樣都只顯示「已關閉」，但處置方式完全不同。
+    # unsummarized_* 就算之後又重新彙整也不會清空（是「曾經被退回過」的歷史軌跡，
+    # 不是目前狀態；目前狀態看 is_summarized），前端據此顯示永久的「曾退回」小標記。
+    is_summarized: bool = False
+    summary_batch_no: Optional[str] = None
+    summarized_at: Optional[datetime] = None
+    unsummarized_by_name: Optional[str] = None
+    unsummarized_at: Optional[datetime] = None
+    unsummarize_reason: Optional[str] = None
     notes: Optional[str] = None
     created_at: datetime
     updated_at: datetime
@@ -141,3 +194,7 @@ class TodoSummary(BaseModel):
     my_pending: List[RequestOut] = []
     pending_close_count: int = 0
     pending_close: List[RequestOut] = []
+
+
+# GenerateRequestsResult 引用了後面才定義的 RequestOut，這裡補上前向參考解析。
+GenerateRequestsResult.model_rebuild()

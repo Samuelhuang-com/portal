@@ -36,14 +36,25 @@ class CyclePurchaseAuditLog(CyclePurchaseBase):
 
     id             = Column(Integer, primary_key=True, autoincrement=True)
     document_type  = Column(String(20), nullable=False,
-                             comment="關聯類型：request | po | receiving | payment")
-    document_id    = Column(Integer, nullable=False, comment="關聯單據 id（軟關聯，依 document_type 對應不同表）")
+                             comment="關聯類型：request | po | receiving | payment | "
+                                      "summary（2026-08-09 新增，用於彙整單的 Ragic 拋轉／取消拋轉）")
+    document_id    = Column(Integer, nullable=False,
+                             comment="關聯單據 id（軟關聯，依 document_type 對應不同表）。"
+                                      "⚠️ document_type='summary' 的例外：拋轉是對「一整個週期＋期別＋"
+                                      "公司範圍」的批次動作，沒有單一主鍵，這裡放 cycle_id，"
+                                      "真正的識別是 document_no（拋轉批次號 CPSUM-...）")
     document_no    = Column(String(30), nullable=False, comment="關聯單號快照（列表顯示用，不必額外 join）")
 
     event_type     = Column(String(30), nullable=False,
                              comment="事件類型：backfill(補填) | overdue(逾期) | shortage(缺貨) | "
                                       "substitute(替代品) | receiving_variance(驗收差異) | "
-                                      "payment_variance(請款差異)。這期只有後兩種會被系統自動觸發。")
+                                      "payment_variance(請款差異) | unsummarize(退回彙整，2026-08-09 新增，"
+                                      "由 cycle_purchase_summary_service.unsummarize_request() 觸發) | "
+                                      "revert_to_summary(採購單退回彙整單) | "
+                                      "ragic_push(拋轉 Ragic) | ragic_push_cancel(取消拋轉)。"
+                                      "前四種目前仍無觸發點。"
+                                      "⚠️ 新增值時記得同步補 frontend AuditLog 的 EVENT_TYPE_LABEL，"
+                                      "沒對應到的會直接顯示英文原字串。")
     description    = Column(Text, nullable=False, comment="事件說明")
 
     operator_user_id = Column(String(36), nullable=True, comment="操作人員（portal.db users.id，軟關聯）")

@@ -116,14 +116,78 @@ export interface CpCycle {
   frequency: 'monthly' | 'biweekly' | 'bimonthly' | 'custom'
   open_rule?: string | null
   close_rule?: string | null
+  /** 適用品類（逗號分隔，對應料號主檔 category）；空＝不限。2026-08-09 起真正生效 */
   applicable_categories?: string | null
+  /**
+   * 適用公司（逗號分隔，或 all／空＝不限）。
+   * ⚠️ 2026-08-09 語意收斂：這欄只放「公司」。改版前欄位標籤誤植為「適用公司／部門」，
+   * 但後端從來只比對公司；部門請改用 applicable_department_ids。
+   */
   applicable_scope?: string | null
+  /** 適用部門（逗號分隔的部門 id）；**空＝適用公司底下的全部啟用中部門**。2026-08-09 新增 */
+  applicable_department_ids?: string | null
   auto_generate: boolean
   reminder_rule?: string | null
   status: 'active' | 'inactive' | 'paused'
   notes?: string | null
   created_at: string
   updated_at: string
+  /** 僅 PUT ?delete_orphans=true 時後端回傳：順便刪掉了幾張孤兒空白請購單 */
+  deleted_orphan_count?: number | null
+}
+
+/** 週期設定表單的下拉選項來源（取自主檔 distinct 值，不讓使用者手打） */
+export interface CpCycleOptions {
+  companies: string[]
+  categories: string[]
+}
+
+/**
+ * 一張會因為週期範圍縮小而被刪掉的空白請購單。
+ * 判準：明細 0 筆 + 未關閉 + 未彙整，三者全部成立才會出現在這裡。
+ */
+export interface CpOrphanRequest {
+  id: number
+  request_no: string
+  period_label: string
+  company: string
+  department_id: number
+  department_name?: string | null
+}
+
+export interface CpOrphanPreview {
+  orphans: CpOrphanRequest[]
+  /** 部門雖已不適用，但因為有明細／已關閉／已彙整而保留不刪的張數 */
+  protected_count: number
+}
+
+/** 某個部門沒有產生請購單的原因（產生預覽 / 產生結果共用） */
+export interface CpSkippedDepartment {
+  department_id: number
+  department_name: string
+  company?: string | null
+  reason: string
+}
+
+export interface CpApplicableDepartment {
+  department_id: number
+  department_name: string
+  company: string
+}
+
+/** GET /requests/generate-preview */
+export interface CpGeneratePreview {
+  cycle_id: number
+  cycle_name: string
+  period_label: string
+  departments: CpApplicableDepartment[]
+  skipped: CpSkippedDepartment[]
+}
+
+/** POST /requests/generate（2026-08-09 起回傳物件，不再是陣列） */
+export interface CpGenerateResult {
+  requests: CpRequest[]
+  skipped: CpSkippedDepartment[]
 }
 
 // ── 請購單 / 請購明細 ──────────────────────────────────────────────────────────
@@ -137,6 +201,20 @@ export interface CpCycle {
 // is_closed（有沒有被關閉）＋ period_label（是不是還是當月），不是 status。
 // 新增關閉／重新開啟相關欄位，見 backend models/cycle_purchase_request.py
 // 開頭「2026-07-17」說明。
+// 2026-08-07（第四次調整）：期別已過的單由系統自動關閉，可不可以編輯**只看
+// is_closed**（不再檢查當月——過月已由自動關閉涵蓋，而重新開啟就是為了讓過月的
+// 單能補改）。新增 close_kind 區分人工／系統關閉。
+
+/** 這張請購單是怎麼關的。null＝還開放中。 */
+export type CpCloseKind = 'manual' | 'auto' | null
+
+/**
+ * 請購單清單的「狀態」篩選值（2026-08-07 新增）。
+ * undefined／不帶＝全部。
+ * ⚠️ 不要改用 CpRequest.status 做狀態篩選，那是改版前的殘留欄位（新資料一律 draft）。
+ */
+export type CpCloseState = 'open' | 'closed_manual' | 'closed_auto'
+
 export interface CpRequestItem {
   id: number
   request_id: number
@@ -180,6 +258,13 @@ export interface CpRequest {
   reject_reason?: string | null
   // 2026-07-17 新增：是否已關閉（關閉後不能再新增/編輯明細，也不能再修改請購單本身）。
   is_closed: boolean
+  // 2026-08-07 新增：這張單是「怎麼關的」。後端衍生欄位（依 close_batch_no 前綴
+  // 推導，不是資料表欄位）：
+  //   'manual' — 有人按了關閉
+  //   'auto'   — 期別已過，系統自動關閉
+  //   null     — 還開放中
+  // ⚠️ 不要改用「closed_by_name 是不是空的」去判斷是不是系統關的，那是實作細節。
+  close_kind?: CpCloseKind
   closed_by_user_id?: string | null
   closed_by_name?: string | null
   closed_at?: string | null
@@ -187,6 +272,17 @@ export interface CpRequest {
   reopened_by_user_id?: string | null
   reopened_by_name?: string | null
   reopened_at?: string | null
+  // 2026-08-09 新增：彙整狀態。這些欄位 model 早就有，但改版前**沒有回傳給前端**，
+  // 所以清單分不出「已彙整」「還沒彙整」「彙整過又被退回」三種狀態。
+  //   is_summarized      — **目前**是不是在某張彙整單裡（退回後會變回 false）
+  //   unsummarized_at    — 曾經被退回過的**歷史軌跡**，重新彙整也不會清掉
+  // ⚠️ 判斷「現在有沒有進彙整」一律看 is_summarized，不要用 unsummarized_at 反推。
+  is_summarized: boolean
+  summary_batch_no?: string | null
+  summarized_at?: string | null
+  unsummarized_by_name?: string | null
+  unsummarized_at?: string | null
+  unsummarize_reason?: string | null
   notes?: string | null
   created_at: string
   updated_at: string
@@ -200,7 +296,29 @@ export interface CpRequestDetail extends CpRequest {
 // 期別下，已關閉且尚未被彙整過的請購單，供使用者勾選要納入這次彙整的範圍。
 // 2026-07-17：approved_by_name／approved_at 改成 closed_by_name／closed_at
 // （拿掉核准這個動作，「關閉」才是彙整的前提條件）。
+// 2026-08-09：**未關閉的單也會出現在這個清單**（can_summarize=false + block_reason），
+// 不再直接濾掉——否則使用者只看到空清單，不知道那張單就在那裡只差一個關閉動作。
+// ⚠️ 規則沒放寬：後端 generate-from-requests 仍然只接受已關閉的單。
 export interface CpEligibleRequest {
+  id: number
+  request_no: string
+  is_closed: boolean
+  can_summarize: boolean
+  block_reason?: string | null
+  unsummarized_at?: string | null
+  unsummarize_reason?: string | null
+  department_id?: number | null
+  department_name?: string | null
+  submitted_by_name?: string | null
+  closed_by_name?: string | null
+  closed_at?: string | null
+  total_amount: number
+}
+
+// 2026-08-09 新增：「退回請購單」清單（CpEligibleRequest 的鏡像，列的是
+// 已彙整的請購單）。can_unsummarize=false 的列仍會出現在清單裡，用
+// block_reason 說明退不了的原因，不隱藏。
+export interface CpSummarizedRequest {
   id: number
   request_no: string
   department_id?: number | null
@@ -209,6 +327,26 @@ export interface CpEligibleRequest {
   closed_by_name?: string | null
   closed_at?: string | null
   total_amount: number
+  summary_batch_no?: string | null
+  summarized_at?: string | null
+  can_unsummarize: boolean
+  block_reason?: string | null
+}
+
+// 2026-08-09 新增：退回請購單的結果。warnings 不是錯誤（動作已成功），
+// 是「需求量重算了但調整量是人工設定過所以保留不動」之類要買家複查的提醒。
+export interface CpUnsummarizeResult {
+  request_id: number
+  request_no: string
+  period_label: string
+  company: string
+  previous_summary_batch_no?: string | null
+  updated_summaries: CpSummary[]
+  deleted_summary_ids: number[]
+  warnings: string[]
+  message: string
+  // 退回後「要改內容就重新開啟，但改完記得再關閉」的下一步指引
+  next_step?: string | null
 }
 
 export interface CpAvailableItem {
@@ -531,4 +669,27 @@ export interface TodoSummary {
   my_pending: CpRequest[]
   pending_close_count: number
   pending_close: CpRequest[]
+}
+
+// 2026-08-09：採購單「退回彙整單」的結果。
+// deleted_item_count 是被刪掉的採購明細筆數——明細不保留是因為 po_items.summary_id
+// 是 RESTRICT 外鍵，留著會擋住之後彙整列的刪除；內容已寫進稽核紀錄。
+export interface CpRevertPoResult {
+  po_id: number
+  po_no: string
+  period_label: string
+  company: string
+  vendor_id: number
+  unlocked_summary_count: number
+  deleted_item_count: number
+  message: string
+  next_step?: string | null
+}
+
+// 2026-08-09：取消拋轉的結果。清掉的是「拋轉標記」，不動彙整列的 status／po_id。
+export interface CpCancelRagicPushResult {
+  cleared_count: number
+  previous_batch_no?: string | null
+  message: string
+  next_step?: string | null
 }

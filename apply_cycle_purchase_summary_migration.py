@@ -1,5 +1,6 @@
 """
-週期採購「彙整單／請購單」欄位補齊 migration（2026-07-16／2026-07-17，累計三次調整）
+週期採購「彙整單／請購單／週期設定」欄位補齊 migration
+（2026-07-16／2026-07-17／2026-08-09，累計五次調整）
 
 用途：
   幫 cycle-purchase.db 補上這幾次改版新增的欄位，涵蓋兩張表：
@@ -16,6 +17,20 @@
      改成「關閉／重新開啟」）：
        is_closed, closed_by_user_id, closed_by_name, closed_at, close_batch_no,
        reopened_by_user_id, reopened_by_name, reopened_at
+
+  4) cycle_purchase_cycles（週期設定「部門範圍」，2026-08-09 第四次調整——
+     見 docs/SPEC_cycle_purchase_dept_scope.md）：
+       applicable_department_ids
+
+     這個欄位可為 NULL，**NULL／空字串代表「適用公司底下的全部啟用中部門」**，
+     與改版前的行為完全一致，所以舊資料不需要任何一次性轉換，補完欄位就結束。
+
+  5) cycle_purchase_requests（彙整單退回請購單，2026-08-09 第五次調整）：
+       unsummarized_by_user_id, unsummarized_by_name, unsummarized_at,
+       unsummarize_reason
+
+     全部可為 NULL，代表「這張單從來沒有被退回過」，舊資料同樣不需要任何
+     一次性轉換。
 
   另外，第三次調整還需要「一次性資料轉換」：改版前用 status=='approved'
   代表「這張單的內容已經定案」，改版後這個角色改由 is_closed=True 扮演，
@@ -60,6 +75,14 @@ TABLES_TO_MIGRATE = [
         ],
     ),
     (
+        "cycle_purchase_cycles",
+        [
+            # 2026-08-09：週期設定的「適用部門」。NULL＝該公司全部啟用中部門
+            # （＝改版前的行為），所以不需要一次性資料轉換。
+            ("applicable_department_ids", "ALTER TABLE cycle_purchase_cycles ADD COLUMN applicable_department_ids TEXT"),
+        ],
+    ),
+    (
         "cycle_purchase_requests",
         [
             ("is_summarized", "ALTER TABLE cycle_purchase_requests ADD COLUMN is_summarized BOOLEAN NOT NULL DEFAULT 0"),
@@ -73,6 +96,12 @@ TABLES_TO_MIGRATE = [
             ("reopened_by_user_id", "ALTER TABLE cycle_purchase_requests ADD COLUMN reopened_by_user_id VARCHAR(36)"),
             ("reopened_by_name", "ALTER TABLE cycle_purchase_requests ADD COLUMN reopened_by_name VARCHAR(100)"),
             ("reopened_at", "ALTER TABLE cycle_purchase_requests ADD COLUMN reopened_at DATETIME"),
+            # 2026-08-09 第五次調整：「彙整單退回請購單」。全部 nullable，
+            # 舊資料不需要一次性轉換（沒退回過就是 NULL）。
+            ("unsummarized_by_user_id", "ALTER TABLE cycle_purchase_requests ADD COLUMN unsummarized_by_user_id VARCHAR(36)"),
+            ("unsummarized_by_name", "ALTER TABLE cycle_purchase_requests ADD COLUMN unsummarized_by_name VARCHAR(100)"),
+            ("unsummarized_at", "ALTER TABLE cycle_purchase_requests ADD COLUMN unsummarized_at DATETIME"),
+            ("unsummarize_reason", "ALTER TABLE cycle_purchase_requests ADD COLUMN unsummarize_reason TEXT"),
         ],
     ),
 ]

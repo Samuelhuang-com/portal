@@ -13,9 +13,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.core.cycle_purchase_database import get_cycle_purchase_db
-from app.dependencies import require_permission
+from app.dependencies import require_any_permission, require_permission
 from app.models.user import User
-from app.schemas.cycle_purchase_po import PODetail, POOut, POStatusPayload, POUpdate
+from app.schemas.cycle_purchase_po import (
+    PODetail, POOut, POStatusPayload, POUpdate, RevertPoPayload, RevertPoResult,
+)
 from app.services import cycle_purchase_po_service as svc
 from app.services.cycle_purchase_po_service import POServiceError
 
@@ -37,7 +39,7 @@ def list_pos(
     company: Optional[str] = Query(None),
     vendor_id: Optional[int] = Query(None),
     status_: Optional[str] = Query(None, alias="status"),
-    _: User = Depends(require_permission("cycle_purchase_view")),
+    _: User = Depends(require_any_permission("cycle_purchase_view", "cycle_purchase_buyer")),
     db: Session = Depends(get_cycle_purchase_db),
 ):
     return svc.list_pos(
@@ -49,7 +51,7 @@ def list_pos(
 @router.get("/pos/{po_id}", response_model=PODetail, summary="採購單詳情（含明細）")
 def get_po(
     po_id: int,
-    _: User = Depends(require_permission("cycle_purchase_view")),
+    _: User = Depends(require_any_permission("cycle_purchase_view", "cycle_purchase_buyer")),
     db: Session = Depends(get_cycle_purchase_db),
 ):
     po = svc.get_po(db, po_id)
@@ -82,3 +84,20 @@ def set_po_status(
     if not po:
         raise HTTPException(status_code=404, detail="採購單不存在")
     return po
+
+
+@router.post(
+    "/pos/{po_id}/revert-to-summary",
+    response_model=RevertPoResult,
+    summary="退回彙整單（採購單作廢，對應的彙整列解鎖回草稿讓買家重新調整後再轉單）",
+)
+def revert_po_to_summary(
+    po_id: int,
+    payload: RevertPoPayload,
+    current_user: User = Depends(require_permission("cycle_purchase_buyer")),
+    db: Session = Depends(get_cycle_purchase_db),
+):
+    """與「取消」是兩個不同動作：取消只標 cancelled、彙整列維持鎖定；
+    退回會把彙整列放回 draft。唯一擋下條件是「已經有驗收單」，見
+    services/cycle_purchase_po_service.py 開頭說明。"""
+    return _handle(svc.revert_po_to_summary, db, po_id, payload.reason, current_user)

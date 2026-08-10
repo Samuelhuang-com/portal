@@ -173,6 +173,20 @@ class Settings(BaseSettings):
     MAIL_USE_TLS:    bool = False
     MAIL_USE_SSL:    bool = False
 
+    # ── OPERA Cloud / OHIP（2026-08-06 新增，規劃見 docs/OHIP_INTEGRATION.md）──
+    # 與既有 /opera/* 上傳型模組**並行**，不共用資料表。全部唯讀（只發 GET）。
+    # ⚠️ OHIP_ENTERPRISE_ID 是換 token 時的 header，漏帶會回 401 且訊息完全誤導。
+    OHIP_GATEWAY_URL:   str = ""
+    OHIP_APP_KEY:       str = ""
+    OHIP_CLIENT_ID:     str = ""
+    OHIP_CLIENT_SECRET: str = ""
+    OHIP_ENTERPRISE_ID: str = ""
+    OHIP_HOTEL_ID:      str = ""
+    OHIP_SCOPE:         str = "urn:opc:hgbu:ws:__myscopes__"
+    # 非同步版營收 API（revenueInventoryStatistics）路徑上的外部系統代碼。
+    # 2026-08-06 實測 "PORTAL" 可用，OPERA 端不需預先註冊。
+    OHIP_EXT_SYSTEM_CODE: str = "PORTAL"
+
     # ── 便利屬性：統一取 server prefix ───────────────────────────────────────
     @property
     def ragic_server_prefix(self) -> str:

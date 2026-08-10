@@ -22,7 +22,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.core.cycle_purchase_database import get_cycle_purchase_db
-from app.dependencies import require_permission
+from app.dependencies import require_any_permission, require_permission
 from app.models.user import User
 from app.schemas.cycle_purchase_payment import (
     AllocationUpdate, PayableReceivingOut, PaymentCreate, PaymentDetail,
@@ -47,7 +47,7 @@ def list_payments(
     po_id: Optional[int] = Query(None),
     status_: Optional[str] = Query(None, alias="status"),
     company: Optional[str] = Query(None),
-    _: User = Depends(require_permission("cycle_purchase_view")),
+    _: User = Depends(require_any_permission("cycle_purchase_view", "cycle_purchase_finance")),
     db: Session = Depends(get_cycle_purchase_db),
 ):
     return svc.list_payments(db, po_id=po_id, status=status_, company=company)
@@ -69,7 +69,7 @@ def get_payable_receivings(
 @router.get("/payments/{payment_id}", response_model=PaymentDetail, summary="請款單詳情（含分攤明細／涵蓋的驗收單）")
 def get_payment(
     payment_id: int,
-    _: User = Depends(require_permission("cycle_purchase_view")),
+    _: User = Depends(require_any_permission("cycle_purchase_view", "cycle_purchase_finance")),
     db: Session = Depends(get_cycle_purchase_db),
 ):
     payment = svc.get_payment(db, payment_id)

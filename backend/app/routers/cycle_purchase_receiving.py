@@ -22,7 +22,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.core.cycle_purchase_database import get_cycle_purchase_db
-from app.dependencies import require_permission
+from app.dependencies import require_any_permission, require_permission
 from app.models.user import User
 from app.schemas.cycle_purchase_receiving import (
     ReceivableItemOut, ReceivingCreate, ReceivingDetail, ReceivingItemOut,
@@ -47,7 +47,7 @@ def list_receiving(
     po_id: Optional[int] = Query(None),
     status_: Optional[str] = Query(None, alias="status"),
     company: Optional[str] = Query(None),
-    _: User = Depends(require_permission("cycle_purchase_view")),
+    _: User = Depends(require_any_permission("cycle_purchase_view", "cycle_purchase_receive")),
     db: Session = Depends(get_cycle_purchase_db),
 ):
     return svc.list_receiving(db, po_id=po_id, status=status_, company=company)
@@ -72,7 +72,7 @@ def get_receiving_report(
 @router.get("/receiving/{receiving_id}", response_model=ReceivingDetail, summary="驗收單詳情（含明細）")
 def get_receiving(
     receiving_id: int,
-    _: User = Depends(require_permission("cycle_purchase_view")),
+    _: User = Depends(require_any_permission("cycle_purchase_view", "cycle_purchase_receive")),
     db: Session = Depends(get_cycle_purchase_db),
 ):
     receiving = svc.get_receiving(db, receiving_id)

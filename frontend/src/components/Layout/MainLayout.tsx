@@ -30,6 +30,7 @@ import {
   DatabaseOutlined,
   DollarOutlined,
   BarChartOutlined,
+  PieChartOutlined,
   FundOutlined,
   RadarChartOutlined,
   ReadOutlined,
@@ -43,6 +44,8 @@ import {
   FilePptOutlined,
   SyncOutlined,
   SwapOutlined,
+  FileSearchOutlined,
+  ThunderboltOutlined,
   RobotOutlined,
   PlayCircleOutlined,
   FileDoneOutlined,
@@ -171,8 +174,8 @@ export const menuItems: MenuItem[] = [
     ],
   },
   // ── 週期採購（獨立資料庫 cycle-purchase.db，2026-07-10 新增）───────────────
-  // 第一期範圍：基礎設定／料號主檔／週期設定／批次。
-  // 請購／彙整／採購／驗收／請款留待後續階段（見規劃報告第八節）。
+  // 十大流程全部上線：料號主檔 → 週期設定 → 請購單 → 彙整單 → 採購單 →
+  // 驗收單 → 請款單 → 稽核 → 4 張主檔 → Dashboard。
   {
     key: 'cyclePurchase',
     icon: <ShopOutlined />,
@@ -180,23 +183,48 @@ export const menuItems: MenuItem[] = [
     // 2026-07-19：父層改用 permissionKeys（OR），讓只勾「週期採購請購」
     // (cycle_purchase_request) 的一般填單人也能展開週採選單，不需要額外開放
     // 範圍較大的「週期採購管理」(cycle_purchase_view)。
-    permissionKeys: ['cycle_purchase_view', 'cycle_purchase_request'],
+    // 2026-08-07：同一個問題其實對驗收／請款／採購人員也成立，父層改成涵蓋
+    // 全部 8 個週採權限——只要有任一週採權限就能展開選單，實際看得到哪幾個
+    // 子項目仍由各子項目自己的 key 決定。
+    permissionKeys: [
+      'cycle_purchase_view', 'cycle_purchase_request', 'cycle_purchase_close',
+      'cycle_purchase_buyer', 'cycle_purchase_receive', 'cycle_purchase_finance',
+      'cycle_purchase_report', 'cycle_purchase_admin',
+    ],
     children: [
       { key: '/cycle-purchase/dashboard',            icon: <DashboardOutlined />,  label: NAV_PAGE.cyclePurchaseDashboard,    permissionKey: 'cycle_purchase_view'  },
       { key: '/cycle-purchase/items',                icon: <DatabaseOutlined />,   label: NAV_PAGE.cyclePurchaseItems,        permissionKey: 'cycle_purchase_view'  },
       { key: '/cycle-purchase/cycles',                icon: <CalendarOutlined />,   label: NAV_PAGE.cyclePurchaseCycles,       permissionKey: 'cycle_purchase_admin' },
       // 2026-07-19：同上，只勾 cycle_purchase_request 的填單人也要能看到「請購單」子項目
       { key: '/cycle-purchase/requests',              icon: <FileTextOutlined />,   label: NAV_PAGE.cyclePurchaseRequests,     permissionKeys: ['cycle_purchase_view', 'cycle_purchase_request']  },
-      { key: '/cycle-purchase/summary',                icon: <FileDoneOutlined />,   label: NAV_PAGE.cyclePurchaseSummary,      permissionKey: 'cycle_purchase_view'  },
-      { key: '/cycle-purchase/pos',                     icon: <ShoppingCartOutlined />, label: NAV_PAGE.cyclePurchasePOs,        permissionKey: 'cycle_purchase_view'  },
-      { key: '/cycle-purchase/receiving',        icon: <InboxOutlined />,        label: NAV_PAGE.cyclePurchaseReceiving,        permissionKey: 'cycle_purchase_view'   },
+      // 2026-08-07：以下四項比照請購單改成 OR。原本都寫死 cycle_purchase_view，
+      // 造成「只勾驗收權限的驗收人員看不到驗收單選單」——頁面內的按鈕判斷用的
+      // 是 cycle_purchase_receive，選單卻要求 view，等於權限開了也進不去。
+      // 採購單與彙整單同屬採購人員的作業範圍，一併掛 cycle_purchase_buyer。
+      // 後端對應的讀取端點也已同步改用 require_any_permission()。
+      { key: '/cycle-purchase/summary',                icon: <FileDoneOutlined />,   label: NAV_PAGE.cyclePurchaseSummary,      permissionKeys: ['cycle_purchase_view', 'cycle_purchase_buyer']    },
+      { key: '/cycle-purchase/pos',                     icon: <ShoppingCartOutlined />, label: NAV_PAGE.cyclePurchasePOs,        permissionKeys: ['cycle_purchase_view', 'cycle_purchase_buyer']    },
+      { key: '/cycle-purchase/receiving',        icon: <InboxOutlined />,        label: NAV_PAGE.cyclePurchaseReceiving,        permissionKeys: ['cycle_purchase_view', 'cycle_purchase_receive']  },
       { key: '/cycle-purchase/receiving-report', icon: <BarChartOutlined />,     label: NAV_PAGE.cyclePurchaseReceivingReport,  permissionKey: 'cycle_purchase_report' },
-      { key: '/cycle-purchase/payments',   icon: <DollarOutlined />,       label: NAV_PAGE.cyclePurchasePayments,         permissionKey: 'cycle_purchase_view'   },
+      { key: '/cycle-purchase/payments',   icon: <DollarOutlined />,       label: NAV_PAGE.cyclePurchasePayments,         permissionKeys: ['cycle_purchase_view', 'cycle_purchase_finance'] },
       { key: '/cycle-purchase/audit-log',  icon: <AuditOutlined />,        label: NAV_PAGE.cyclePurchaseAuditLog,         permissionKey: 'cycle_purchase_admin'  },
       { key: '/cycle-purchase/masters/vendors',       icon: <ShopOutlined />,       label: NAV_PAGE.cyclePurchaseVendors,      permissionKey: 'cycle_purchase_admin' },
       { key: '/cycle-purchase/masters/departments',   icon: <ApartmentOutlined />,  label: NAV_PAGE.cyclePurchaseDepartments,  permissionKey: 'cycle_purchase_admin' },
       { key: '/cycle-purchase/masters/cost-centers',  icon: <ApartmentOutlined />,  label: NAV_PAGE.cyclePurchaseCostCenters,  permissionKey: 'cycle_purchase_admin' },
       { key: '/cycle-purchase/masters/account-codes', icon: <SettingOutlined />,    label: NAV_PAGE.cyclePurchaseAccountCodes, permissionKey: 'cycle_purchase_admin' },
+      // 使用手冊（2026-08-07）：與 Samuel 確認，開放給「所有週採使用者」——
+      // 手冊是教人怎麼用的，卡權限會讓最需要它的填單人看不到，所以 OR 涵蓋
+      // 全部 8 個週採權限，不另立新的 permission key。
+      {
+        key: '/cycle-purchase/manual',
+        icon: <BookOutlined />,
+        label: NAV_PAGE.cyclePurchaseManual,
+        permissionKeys: [
+          'cycle_purchase_view', 'cycle_purchase_request', 'cycle_purchase_close',
+          'cycle_purchase_buyer', 'cycle_purchase_receive', 'cycle_purchase_finance',
+          'cycle_purchase_report', 'cycle_purchase_admin',
+        ],
+      },
     ],
   },
   // ── 行事曆（dashboard 之後、hotel 之前）────────────────────────────────────
@@ -403,8 +431,37 @@ export const menuItems: MenuItem[] = [
       { key: '/opera/forecast',  icon: <LineChartOutlined />, label: NAV_PAGE.operaForecast,  permissionKey: 'opera_forecast_view' },
       // 2026-08-05：「事件月曆」併入 /opera/forecast 的 TAB，故不再列於選單。
       //   /opera/events 路由仍保留（導向 /opera/forecast?tab=events），舊書籤不會壞。
+      // ── 市場區隔分析（2026-08-07）──────────────────────────────────────
+      // ⚠️ 資料來源是 OHIP API 落地，不是本模組其他頁的 TXT 上傳。
+      //    放在營運分析是因為時間語意一致（都是落地的歷史資料），
+      //    畫面上有標示來源。permissionKey 另開，不共用 opera_revenue_view。
+      { key: '/opera/segments',  icon: <PieChartOutlined />,  label: NAV_PAGE.operaSegments,  permissionKey: 'opera_segment_view' },
+      // ── 訂房分析（2026-08-07）──────────────────────────────────────────
+      // ⚠️ 與上面的「住客與通路分析」**分析母體不同**（所有訂房 vs 已離店住客），
+      //    不是同一份資料的兩個版本。因此另開 permissionKey，不共用 opera_guest_view。
+      { key: '/opera/reservations', icon: <ScheduleOutlined />, label: NAV_PAGE.operaReservations, permissionKey: 'opera_reservation_view' },
       { key: '/opera/settings',  icon: <SettingOutlined />,   label: NAV_PAGE.operaSettings,  permissionKey: 'opera_admin'        },
       { key: '/opera/manual',    icon: <ReadOutlined />,      label: NAV_PAGE.operaManual,    permissionKey: 'opera_view'         },
+    ],
+  },
+  // ── 即時營運 ─────────────────────────────────────────────────────────────
+  // 2026-08-06 新增。資料**直接來自 OPERA Cloud（OHIP）REST API**，不是上傳的 TXT。
+  // 刻意與「營運分析」分成兩個一級選單：兩者資料時點不同（API 即時 vs 上傳落後數天），
+  // 放在同一個群組會讓使用者以為是同一份資料。
+  // 不走 Ragic 同步，故不需登錄 sync_tool.py MODULES 與 RagicConnections.tsx。
+  // ⚠️ 每次查詢都會實際呼叫 OHIP（按呼叫量計費），權限預設不給任何既有角色。
+  // 規格書：docs/SPEC_realtime_operations.md
+  {
+    key: 'realtime',
+    icon: <ThunderboltOutlined />,
+    label: NAV_GROUP.realtime,
+    permissionKey: 'realtime_view',
+    children: [
+      { key: '/realtime/dashboard', icon: <DashboardOutlined />,  label: NAV_PAGE.realtimeDashboard, permissionKey: 'realtime_view'    },
+      { key: '/realtime/revenue',   icon: <BarChartOutlined />,   label: NAV_PAGE.realtimeRevenue,   permissionKey: 'realtime_revenue' },
+      { key: '/realtime/compare',   icon: <SwapOutlined />,       label: NAV_PAGE.realtimeCompare,   permissionKey: 'realtime_compare' },
+      { key: '/realtime/logs',      icon: <FileSearchOutlined />, label: NAV_PAGE.realtimeLogs,      permissionKey: 'realtime_view'    },
+      { key: '/realtime/manual',    icon: <ReadOutlined />,      label: NAV_PAGE.realtimeManual,    permissionKey: 'realtime_view'    },
     ],
   },
   // ── 金旭分析 ─────────────────────────────────────────────────────────────

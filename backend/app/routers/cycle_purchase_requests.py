@@ -24,13 +24,33 @@ Prefix: /api/v1/cycle-purchase
     只能編輯自己承辦部門（CyclePurchaseDepartment.owner_user_id，2026-07-11
     既有欄位，原本只用在 Dashboard 待辦提醒）的請購單，避免改到別部門的單。
 
-GET    /requests                              請購單清單（依週期／期別／部門／狀態篩選）
+2026-08-07（第四次調整，與 Samuel 確認）：
+  - **已關閉的請購單需要權限才看得到**：沒有 cycle_purchase_close（也沒有
+    cycle_purchase_view / system_admin）的人，GET /requests 不回傳已關閉的單、
+    GET /requests/{id} 打已關閉的單直接 403。採**後端硬過濾**而非前端預設篩選
+    ——前端篩選只是畫面乾淨，切個下拉就看得到，不算權限控制。
+  - 判斷用 _can_see_closed()，與 get_todos 既有的 is_closer 判斷共用同一組權限。
+
+2026-08-09（第五次調整，部門範圍 + 品類接線，見 models/cycle_purchase_cycle.py）：
+  - **POST /requests/generate 的回傳型別改變**：原本 `List[RequestOut]`，改成
+    `GenerateRequestsResult`（`{requests, skipped}`）。skipped 是「某些部門為什麼
+    沒產生」的原因清單，必須顯示給使用者——否則買家只會看到「怎麼少了一張單」。
+    這是回傳型別變更，不是端點移除；呼叫端只有前端 Requests 頁一處，已同步調整。
+  - 新增 GET /requests/generate-preview：按下產生之前先看會產生哪些部門。
+  - **新增 close_state 篩選**（open／closed_manual／closed_auto）。刻意不沿用既有的
+    status 參數——那是改版前的殘留欄位（新資料一律 draft），拿它當「狀態」會篩出
+    使用者無法理解的結果。status 參數保留未動（CLAUDE.md §5）。
+    無權限者就算硬送 close_state=closed_auto 也不會外洩：可見性過濾是另一個
+    AND 條件，結果必然是空集合。
+
+GET    /requests                              請購單清單（依週期／期別／部門／close_state 篩選；已關閉的單需權限）
 GET    /requests/todos                        Dashboard 待辦提醒（我的待填 + 本月待關閉）
-GET    /requests/{id}                          請購單詳情（含明細）
-POST   /requests/generate                      產生本期請購單（依週期設定的 applicable_scope，一次幫所有適用部門建空白單）
+GET    /requests/{id}                          請購單詳情（含明細；已關閉的單需權限，否則 403）
+GET    /requests/generate-preview               產生前預覽：這個週期會產生哪些部門的單、哪些不會與原因
+POST   /requests/generate                      產生本期請購單（依週期設定的適用範圍，一次幫所有適用部門建空白單）
 POST   /requests                               手動新增單一部門的請購單（備用路徑）
-PUT    /requests/{id}                          更新請購單（成本中心／備註，僅開放中且當月可編輯）
-GET    /requests/{id}/available-items          可選料號清單（僅該公司有對照的啟用中料號）
+PUT    /requests/{id}                          更新請購單（成本中心／備註，僅「開放中」可編輯；2026-08-07 起不再限當月）
+GET    /requests/{id}/available-items          可選料號清單（該公司＋部門＋該週期品類下有對照的啟用中料號）
 POST   /requests/{id}/items                    新增請購明細
 PUT    /requests/{id}/items/{item_row_id}      更新請購明細（數量／會計科目／備註）
 DELETE /requests/{id}/items/{item_row_id}      刪除請購明細
@@ -52,12 +72,13 @@ from app.models.cycle_purchase_request import CyclePurchaseRequest
 from app.models.user import User
 from app.schemas.cycle_purchase_request import (
     AvailableItemOut, CloseAllRequestsPayload, CloseRequestsPayload,
-    GenerateRequestsPayload, ReopenRequestsPayload, RequestCreate, RequestDetail,
+    GeneratePreviewResult, GenerateRequestsPayload, GenerateRequestsResult,
+    ReopenRequestsPayload, RequestCreate, RequestDetail,
     RequestItemCreate, RequestItemOut, RequestItemUpdate, RequestOut,
     RequestUpdate, TodoSummary,
 )
 from app.services import cycle_purchase_request_service as svc
-from app.services.cycle_purchase_request_service import RequestServiceError
+from app.services.cycle_purchase_request_service import RequestForbiddenError, RequestServiceError
 
 router = APIRouter()
 
@@ -104,12 +125,37 @@ def list_requests(
     period_label: Optional[str] = Query(None),
     department_id: Optional[int] = Query(None),
     status_: Optional[str] = Query(None, alias="status"),
-    _: User = Depends(require_any_permission("cycle_purchase_view", "cycle_purchase_request")),
+    close_state: Optional[str] = Query(
+        None,
+        description="狀態篩選：open（開放中）｜closed_manual（人工關閉）｜closed_auto（系統自動關閉）；不給＝全部",
+    ),
+    current_user: User = Depends(require_any_permission("cycle_purchase_view", "cycle_purchase_request")),
     db: Session = Depends(get_cycle_purchase_db),
+    portal_db: Session = Depends(get_db),
 ):
-    return svc.list_requests(
-        db, cycle_id=cycle_id, period_label=period_label,
-        department_id=department_id, status=status_,
+    try:
+        return svc.list_requests(
+            db, cycle_id=cycle_id, period_label=period_label,
+            department_id=department_id, status=status_,
+            can_see_closed=_can_see_closed(current_user, portal_db),
+            close_state=close_state,
+        )
+    except RequestServiceError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+def _can_see_closed(current_user: User, portal_db: Session) -> bool:
+    """能不能看到已關閉（含系統自動關閉）的請購單。
+
+    2026-08-07 與 Samuel 確認採 cycle_purchase_close：能關閉／重新開啟的人才看得到
+    關閉後的結果，語意最一致。cycle_purchase_view（全模組可見）與 system_admin
+    一併放行，它們本來就是更大的範圍。
+    """
+    perms = get_user_permissions(current_user.id, portal_db)
+    return (
+        "*" in perms
+        or "cycle_purchase_close" in perms
+        or "cycle_purchase_view" in perms
     )
 
 
@@ -139,13 +185,34 @@ def list_open_for_close(
     return svc.list_open_requests_for_close(db, cycle_id, company, year_month)
 
 
+@router.get(
+    "/requests/generate-preview",
+    response_model=GeneratePreviewResult,
+    summary="產生前預覽：這個週期會產生哪些部門的單、哪些不會與原因",
+)
+def preview_generate_requests(
+    cycle_id: int = Query(..., description="週期設定 id"),
+    _: User = Depends(require_permission("cycle_purchase_buyer")),
+    db: Session = Depends(get_cycle_purchase_db),
+):
+    """⚠️ 路由順序：這支必須宣告在 /requests/{request_id} 之前，
+    否則 "generate-preview" 會被當成 request_id。"""
+    return _handle(svc.preview_applicable_departments, db, cycle_id)
+
+
 @router.get("/requests/{request_id}", response_model=RequestDetail, summary="請購單詳情（含明細）")
 def get_request(
     request_id: int,
-    _: User = Depends(require_any_permission("cycle_purchase_view", "cycle_purchase_request")),
+    current_user: User = Depends(require_any_permission("cycle_purchase_view", "cycle_purchase_request")),
     db: Session = Depends(get_cycle_purchase_db),
+    portal_db: Session = Depends(get_db),
 ):
-    req = svc.get_request(db, request_id)
+    try:
+        req = svc.get_request(
+            db, request_id, can_see_closed=_can_see_closed(current_user, portal_db)
+        )
+    except RequestForbiddenError as e:
+        raise HTTPException(status_code=403, detail=str(e))
     if not req:
         raise HTTPException(status_code=404, detail="請購單不存在")
     return req
@@ -153,7 +220,7 @@ def get_request(
 
 @router.post(
     "/requests/generate",
-    response_model=List[RequestOut],
+    response_model=GenerateRequestsResult,
     summary="產生本期請購單（一次幫所有適用部門建空白單，隨時可觸發、冪等）",
 )
 def generate_requests(
@@ -161,7 +228,8 @@ def generate_requests(
     _: User = Depends(require_permission("cycle_purchase_buyer")),
     db: Session = Depends(get_cycle_purchase_db),
 ):
-    return _handle(svc.generate_requests_for_period, db, payload.cycle_id)
+    requests, skipped = _handle(svc.generate_requests_for_period, db, payload.cycle_id)
+    return GenerateRequestsResult(requests=requests, skipped=skipped)
 
 
 @router.post("/requests", response_model=RequestOut, status_code=status.HTTP_201_CREATED, summary="手動新增單一部門的請購單")

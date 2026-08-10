@@ -8,15 +8,29 @@
  * 2026-07-11 提醒（尚未跟 Samuel 確認，先保守處理）：取消採購單目前不會
  * 自動把對應的彙整列狀態從 converted 改回 draft，避免自動改資料造成誤解。
  * 如果之後需要「取消後彙整列自動解鎖可重轉」，需要另外討論再實作。
+ *
+ * 2026-08-09（上面那件事已與 Samuel 確認，新增「退回彙整單」）：
+ * **「取消」與「退回彙整單」是兩個不同動作，不要混用：**
+ *   - **取消**：這批本期不買了。彙整列**維持鎖定**（維持原本行為，沒有改）。
+ *   - **退回彙整單**：採購單作廢，且把對應的彙整列**解鎖回 draft**、清掉 po_id，
+ *     讓買家重新調整調整量後再轉一張新的採購單（新單號，舊單保留為已取消供追溯）。
+ *
+ * ⚠️ 順帶修掉一個既有死鎖：改版前「取消」不解鎖彙整列，加上採購單原本的
+ *    UniqueConstraint 不分狀態，導致取消後既不能重新轉單、彙整列也退不回請購單
+ *    ——那批彙整列等於永久鎖死。所以 cancelled 狀態**也保留「退回彙整單」入口**，
+ *    讓既有的死鎖資料有解套路徑。
  */
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import {
-  Alert, Button, Card, DatePicker, Descriptions, Input, Popconfirm, Space, Table, Tag, Typography, message,
+  Alert, Button, Card, DatePicker, Descriptions, Form, Input, Modal, Popconfirm,
+  Space, Table, Tag, Typography, message,
 } from 'antd'
-import { ArrowLeftOutlined, CheckOutlined, CloseOutlined, SaveOutlined } from '@ant-design/icons'
+import {
+  ArrowLeftOutlined, CheckOutlined, CloseOutlined, RollbackOutlined, SaveOutlined,
+} from '@ant-design/icons'
 import dayjs from 'dayjs'
-import { getPo, setPoStatus, updatePo } from '@/api/cyclePurchase'
+import { getPo, revertPoToSummary, setPoStatus, updatePo } from '@/api/cyclePurchase'
 import type { CpPODetail } from '@/types/cyclePurchase'
 import { useAuthStore } from '@/stores/authStore'
 
@@ -46,6 +60,9 @@ export default function CpPODetailPage() {
   const [expectedDate, setExpectedDate] = useState<dayjs.Dayjs | null>(null)
   const [saving, setSaving] = useState(false)
   const [acting, setActing] = useState(false)
+  const [revertModal, setRevertModal] = useState(false)
+  const [revertReason, setRevertReason] = useState('')
+  const [reverting, setReverting] = useState(false)
 
   const editable = canBuy && detail?.status === 'draft'
 
@@ -111,6 +128,35 @@ export default function CpPODetailPage() {
     }
   }
 
+  // 2026-08-09：退回彙整單。與「取消」是兩個不同動作，差別見檔案開頭說明。
+  const handleRevert = async () => {
+    if (!detail) return
+    if (!revertReason.trim()) {
+      message.warning('請填寫退回原因')
+      return
+    }
+    setReverting(true)
+    try {
+      const res = await revertPoToSummary(detail.id, { reason: revertReason.trim() })
+      message.success(res.data.message)
+      setRevertModal(false)
+      setRevertReason('')
+      if (res.data.next_step) {
+        Modal.info({
+          title: '退回完成，接下來',
+          width: 560,
+          content: <div style={{ whiteSpace: 'pre-wrap' }}>{res.data.next_step}</div>,
+          okText: '知道了',
+        })
+      }
+      load()
+    } catch (err: any) {
+      message.error(errMsg(err, '退回失敗'))
+    } finally {
+      setReverting(false)
+    }
+  }
+
   if (!detail) {
     return (
       <div>
@@ -137,8 +183,23 @@ export default function CpPODetailPage() {
                 發出
               </Button>
             )}
+            {/* 退回彙整單：draft／issued 都能退；cancelled 也保留入口，因為改版前
+                「取消」不會解鎖彙整列，那些舊資料的彙整列還鎖著，要靠這裡解套。 */}
+            {(detail.status === 'draft' || detail.status === 'issued' || detail.status === 'cancelled') && (
+              <Button
+                icon={<RollbackOutlined />}
+                loading={reverting}
+                onClick={() => { setRevertReason(''); setRevertModal(true) }}
+              >
+                退回彙整單
+              </Button>
+            )}
             {(detail.status === 'draft' || detail.status === 'issued') && (
-              <Popconfirm title="確定取消這張採購單？" onConfirm={handleCancel}>
+              <Popconfirm
+                title="確定取消這張採購單？"
+                description="取消後彙整列仍維持鎖定。若要重新調整再轉單，請改用「退回彙整單」。"
+                onConfirm={handleCancel}
+              >
                 <Button danger icon={<CloseOutlined />} loading={acting}>取消採購單</Button>
               </Popconfirm>
             )}
@@ -190,7 +251,11 @@ export default function CpPODetailPage() {
           showIcon
           style={{ marginBottom: 16 }}
           message="這張採購單已取消"
-          description="對應的彙整列仍維持「已轉採購單」狀態，不會自動解鎖回草稿；如需重新採購，請與系統管理員確認後續處理方式。"
+          description={
+            detail.items.length === 0
+              ? '這張單已經退回彙整單：明細已清空、對應的彙整列已解鎖回草稿，可以重新調整後再轉出一張新的採購單（退回原因見上方備註）。'
+              : '「取消」不會解鎖對應的彙整列（它們仍是「已轉採購單」）。若要重新調整再轉單，請按上方的「退回彙整單」。'
+          }
         />
       )}
 
@@ -222,6 +287,51 @@ export default function CpPODetailPage() {
           ]}
         />
       </Card>
+
+      <Modal
+        title={`退回彙整單 — ${detail.po_no}`}
+        open={revertModal}
+        onOk={handleRevert}
+        onCancel={() => { setRevertModal(false); setRevertReason('') }}
+        okText="確定退回"
+        okButtonProps={{ danger: true }}
+        cancelText="取消"
+        confirmLoading={reverting}
+        width={620}
+      >
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message="這個動作會做三件事"
+          description={(
+            <ol style={{ paddingLeft: 18, margin: 0 }}>
+              <li>這張採購單標為<b>已取消</b>（單號保留供追溯）</li>
+              <li><b>刪除採購明細</b>（內容會完整記在稽核紀錄裡）</li>
+              <li>對應的彙整列<b>解鎖回草稿</b>，可以重新調整後再轉出一張<b>新</b>的採購單</li>
+            </ol>
+          )}
+        />
+        {detail.status === 'issued' && (
+          <Alert
+            type="error"
+            showIcon
+            style={{ marginBottom: 16 }}
+            message="這張採購單已經發出（issued）"
+            description="退回不會通知供應商，記得自行聯繫對方作廢。"
+          />
+        )}
+        <Form layout="vertical">
+          <Form.Item label="退回原因" required extra="會寫進採購單備註與稽核紀錄">
+            <TextArea
+              rows={3}
+              value={revertReason}
+              onChange={(e) => setRevertReason(e.target.value)}
+              placeholder="例如：數量算錯要重新調整、供應商報價變動、部門需求變更"
+            />
+          </Form.Item>
+        </Form>
+      </Modal>
     </div>
   )
 }

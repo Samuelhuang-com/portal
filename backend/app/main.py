@@ -118,6 +118,9 @@ from app.routers import (
     opera_revenue,
     opera_guest,
     opera_forecast,
+    opera_segment,
+    opera_reservation,
+    realtime,
     jinxu_import,
     jinxu_revenue,
     jinxu_payment,
@@ -1485,6 +1488,25 @@ async def lifespan(app: FastAPI):
     import app.models.opera_revenue            # noqa: F401  History/Forecast 原始層 + 每日營收 + 門檻設定
     # 房價預測（2026-08-05）：索引另由 add_opera_forecast_tables.sql 建立。
     import app.models.opera_forecast           # noqa: F401  事件月曆 + 係數 + 預測快照
+    # 市場區隔／房型別歷史營收（2026-08-07）：⚠️ 資料來源是 **OHIP API 落地**，
+    # 不是 TXT 上傳。放在 opera_* 命名下是因為頁面歸屬「營運分析」，
+    # 但**不與 `opera_revenue_daily` 共用任何欄位**（粒度、來源、口徑都不同）。
+    # 複合索引寫在 Model `__table_args__`，create_all 一併建立，不需手動跑 SQL。
+    import app.models.opera_segment           # noqa: F401  ohip_revenue_history + 同步紀錄
+    # 訂房分析（2026-08-07）：來源 OHIP rsvasync／blkasync。
+    # ⚠️ 母體與 opera_departure（TXT）**不同** —— 這裡是所有訂房（含未來、含取消），
+    #    那裡是已離店的住客。同維度數字不同是正常的，不是 bug。
+    import app.models.opera_reservation       # noqa: F401  訂房＋逐日＋團體 block
+    # 即時營運（2026-08-06）：只存 OHIP 呼叫日誌與 API 回應快取，**不存業務資料**。
+    # 2026-08-07 新增 `ohip_async_cache`：非同步端點的回應快取。Oracle 規定相同參數的
+    # async 請求最短間隔 30 分鐘，記憶體快取擋不住（重啟即失效），必須落地。
+    # 刪光這張表只會多打一次 API，不會遺失任何事實，因此不牴觸「不存業務資料」原則。
+    # 2026-08-07 再新增三張**每日快照**表（`ohip_snapshot_run` / `ohip_inventory_snapshot`
+    # / `ohip_revenue_snapshot`）。⚠️ 這三張與上面兩張性質不同：
+    # 上面兩張刪光只會多打一次 API，**這三張刪掉就是永久遺失、無法重建**，
+    # 因為 OHIP 沒有「回到過去」的參數。備份策略要涵蓋它們。
+    # 複合索引已寫在 Model 的 `__table_args__`，create_all 會一併建立，**不需要手動跑 SQL**。
+    import app.models.realtime                 # noqa: F401  OHIP 呼叫日誌 + async 快取 + 每日快照
     # 金旭 PMS 分析（2026-08-05）：Portal 第二個檔案上傳型模組，資料來自人工上傳的
     # 金旭 xlsx（FCR02 客帳帳目明細表 + 訂房狀況表），非 Ragic 同步，因此同樣不需
     # 登錄 sync_tool.py 的 MODULES／_ensure_db_schema()。
@@ -1525,6 +1547,30 @@ async def lifespan(app: FastAPI):
         lambda: CyclePurchaseBase.metadata.create_all(bind=cycle_purchase_engine),
     )
     print("[Portal] Cycle-purchase database tables ensured (cycle-purchase.db).")
+
+    # 週期採購：系統自動關閉「期別已過」的請購單（2026-08-07，與 Samuel 確認）。
+    # 啟動時先跑一次，之後由下方 SCHEDULER_ENABLED 區塊的每日排程接手。
+    # 這支是冪等的（同月份共用一個 CPAUTO 批次號、跳過已關閉與被人工重新開啟的單），
+    # 重複執行不會有副作用，所以啟動與排程各跑一次是安全的。
+    # 用 _run_startup_migration 包起來的理由與上面建表相同：SQLite 暫時性鎖定時
+    # 可以重試，不會讓整個服務起不來。
+    def _auto_close_expired_cp_requests():
+        from app.core.cycle_purchase_database import CyclePurchaseSessionLocal
+        from app.services import cycle_purchase_request_service as _cp_req_svc
+
+        db = CyclePurchaseSessionLocal()
+        try:
+            closed = _cp_req_svc.auto_close_expired_requests(db)
+            db.commit()
+            if closed:
+                print(f"[Portal] Cycle-purchase: auto-closed {len(closed)} expired request(s).")
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+
+    _run_startup_migration("_auto_close_expired_cp_requests", _auto_close_expired_cp_requests)
 
     # 影音教學 Migration：舊版 tutorial_videos 直接存 category/module_name/module_route，
     # 新版改為獨立的 tutorial_video_modules 主檔（module_id 關聯），此處把既有資料搬過去
@@ -1848,6 +1894,21 @@ async def lifespan(app: FastAPI):
             replace_existing=True,
         )
 
+        # 週期採購請購單「期別已過自動關閉」：每天 00:05（2026-08-07 新增）
+        # 為什麼是每天而不是每小時：這件事只在跨月的那一刻會有變化，
+        # 每小時跑只是白白增加 cycle-purchase.db 的寫入鎖競爭。
+        # 挑 00:05 而不是 00:00，是為了避開整點大量排程同時觸發。
+        # CronTrigger 在本檔沒有模組層 import（既有的 ppt_auto_export 也是就地
+        # import），沿用同樣寫法。
+        from apscheduler.triggers.cron import CronTrigger as _CpCloseCronTrigger
+        _scheduler.add_job(
+            _auto_close_expired_cp_requests,
+            trigger=_CpCloseCronTrigger(hour=0, minute=5),
+            id="cycle_purchase_auto_close",
+            replace_existing=True,
+            misfire_grace_time=3600,   # 服務重啟錯過了，一小時內補跑
+        )
+
         # 請購單清單同步：每 15 分鐘（:00/:15/:30/:45）
         _scheduler.add_job(
             _purchase_list_sync,
@@ -2072,6 +2133,122 @@ async def lifespan(app: FastAPI):
             misfire_grace_time=3600,
         )
         print("[Portal] hotel_periodic_pm auto-generate scheduled: monthly day=1 at 02:20")
+
+        # ═══════════════════════════════════════════════════════════════════
+        # 每日 06:00 OHIP 快照（2026-08-07）
+        # ═══════════════════════════════════════════════════════════════════
+        # ⚠️ 這裡刻意用**同步 `def`** 而不是本檔其他排程慣用的 `async def`。
+        #    APScheduler 兩者都支援，但 `async def` 裡跑同步的 `db.query()` 會卡住
+        #    event loop —— 這正是 2026-07-15 修掉 12 個 router 的那個問題
+        #    （單 worker 下整站無回應）。快照要跑約 20 秒、打 7 次 API，
+        #    用 async def 等於讓整個 Portal 卡 20 秒。其他排程沿用舊寫法未動。
+        #
+        # ⚠️ `misfire_grace_time` 只給 600 秒（10 分鐘），比本檔其他排程的 3600 短很多。
+        #    這是刻意的：pickup 曲線的 X 軸是「提前幾天」，
+        #    若某天延後一小時才跑，該點與前後點的實際間隔就不是 24 小時，曲線會失真。
+        #    **寧可跳過那一天（缺一個點看得出來），也不要補一個時間錯位的點。**
+        def _daily_ohip_snapshot():
+            from app.core.database import SessionLocal
+            from app.services.ohip_snapshot_service import run_snapshot
+            db = SessionLocal()
+            try:
+                r = run_snapshot(db, triggered_by="scheduler")
+                print(
+                    f"[Portal] OHIP snapshot {r.get('snapshot_date')}: "
+                    f"status={r.get('status')} house={r.get('house_rows')} "
+                    f"roomtype={r.get('room_type_rows')} revenue={r.get('revenue_rows')} "
+                    f"calls={r.get('api_calls')} elapsed={r.get('elapsed_ms')}ms"
+                )
+                for w in r.get("warnings") or []:
+                    print(f"[Portal] OHIP snapshot warning: {w}")
+                if r.get("error"):
+                    print(f"[Portal] OHIP snapshot error: {r['error']}")
+            except Exception as exc:
+                print(f"[Portal] OHIP snapshot failed: {exc}")
+            finally:
+                db.close()
+
+        _scheduler.add_job(
+            _daily_ohip_snapshot,
+            trigger=_CronTrigger(hour=6, minute=0),
+            id="ohip_daily_snapshot",
+            replace_existing=True,
+            misfire_grace_time=600,
+        )
+        print("[Portal] OHIP daily snapshot scheduled: daily at 06:00 "
+              "(lookback 7 days + horizon 180 days)")
+
+        # ── 每日 06:30 市場區隔歷史營收增量（2026-08-07）─────────────────────
+        # ⚠️ 排在快照（06:00）之後，兩者不會搶同一個時間點。
+        # ⚠️ 同樣刻意用同步 `def`（理由同上方快照排程）。
+        # ⚠️ grace 用 3600（與本檔多數排程一致）而**不是**快照那個 600：
+        #    這裡抓的是「已完成日期的最終結果」，晚幾小時跑數字完全一樣，
+        #    沒有快照那種「時點錯位會讓曲線失真」的問題。
+        def _daily_segment_incremental():
+            from app.core.database import SessionLocal
+            from app.services.opera_segment_sync import sync_incremental
+            db = SessionLocal()
+            try:
+                r = sync_incremental(db, triggered_by="scheduler")
+                print(
+                    f"[Portal] segment revenue incremental {r.get('date_start')}~{r.get('date_end')}: "
+                    f"status={r.get('status')} rows={r.get('rows_written')} "
+                    f"calls={r.get('api_calls')} elapsed={r.get('elapsed_ms')}ms"
+                )
+                for w in r.get("warnings") or []:
+                    print(f"[Portal] segment revenue warning: {w}")
+                if r.get("error"):
+                    print(f"[Portal] segment revenue error: {r['error']}")
+            except Exception as exc:
+                print(f"[Portal] segment revenue incremental failed: {exc}")
+            finally:
+                db.close()
+
+        _scheduler.add_job(
+            _daily_segment_incremental,
+            trigger=_CronTrigger(hour=6, minute=30),
+            id="opera_segment_incremental",
+            replace_existing=True,
+            misfire_grace_time=3600,
+        )
+        print("[Portal] segment revenue incremental scheduled: daily at 06:30 (last 14 days)")
+
+        # ── 每日 07:00 訂房與團體增量（2026-08-07）───────────────────────────
+        # ⚠️ 排在 06:30 的營收增量之後，避免同時打 OHIP。
+        # ⚠️ 同樣刻意用同步 `def`（async def 裡跑同步 DB 會卡住 event loop）。
+        # ⚠️ 增量區間**含未來 180 天** —— 在手訂房分析需要未來資料，
+        #    只抓過去會讓那一頁永遠是空的。
+        def _daily_reservation_incremental():
+            from app.core.database import SessionLocal
+            from app.services.opera_reservation_sync import sync_incremental
+            db = SessionLocal()
+            try:
+                out = sync_incremental(db, triggered_by="scheduler")
+                for name, r in out.items():
+                    print(
+                        f"[Portal] {name} incremental {r.get('date_start')}~{r.get('date_end')}: "
+                        f"status={r.get('status')} parent={r.get('parent_rows')} "
+                        f"child={r.get('child_rows')} calls={r.get('api_calls')} "
+                        f"elapsed={r.get('elapsed_ms')}ms"
+                    )
+                    for w in r.get("warnings") or []:
+                        print(f"[Portal] {name} warning: {w}")
+                    if r.get("error"):
+                        print(f"[Portal] {name} error: {r['error']}")
+            except Exception as exc:
+                print(f"[Portal] reservation incremental failed: {exc}")
+            finally:
+                db.close()
+
+        _scheduler.add_job(
+            _daily_reservation_incremental,
+            trigger=_CronTrigger(hour=7, minute=0),
+            id="opera_reservation_incremental",
+            replace_existing=True,
+            misfire_grace_time=3600,
+        )
+        print("[Portal] reservation+block incremental scheduled: daily at 07:00 "
+              "(last 14 days + next 180 days)")
 
         _scheduler.start()
         print("[Portal] AutoSync scheduler started (cron-aligned, default every 30 minutes).")
@@ -2568,6 +2745,30 @@ app.include_router(
     opera_forecast.router,
     prefix=f"{API_PREFIX}/opera/forecast",
     tags=["營運分析"],
+)
+# ⚠️ 本組端點雖然掛在 /opera/* 底下，但**資料來源是 OHIP API 落地，不是 TXT 上傳**。
+#    放這裡是因為時間語意一致（都是落地的歷史資料），主管看月報不必跨模組跳。
+#    代價是同一個模組混了兩種來源 —— 畫面上必須標示，service 的 `source.note` 已強制帶出。
+app.include_router(
+    opera_segment.router,
+    prefix=f"{API_PREFIX}/opera/segments",
+    tags=["營運分析"],
+)
+# 訂房分析（2026-08-07）：⚠️ 與 /opera/guest 分析母體不同（所有訂房 vs 已離店住客），
+#    每個回應的 source.population 都會把這句話帶到畫面上。
+app.include_router(
+    opera_reservation.router,
+    prefix=f"{API_PREFIX}/opera/reservations",
+    tags=["營運分析"],
+)
+
+# ── 即時營運：直接向 OPERA Cloud（OHIP）取數，不落地、不共用 opera_* 表 ────────
+#    唯讀＋記憶體快取；規格書 docs/SPEC_realtime_operations.md。
+#    ⚠️ 與 /opera/*（人工上傳 TXT）完全獨立：資料時點不同，不共用端點或資料表。
+app.include_router(
+    realtime.router,
+    prefix=f"{API_PREFIX}/realtime",
+    tags=["即時營運"],
 )
 
 # ── 金旭 PMS 分析：檔案上傳型模組，資料來自人工上傳的金旭 xlsx ────────────────

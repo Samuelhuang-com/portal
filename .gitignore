@@ -57,3 +57,8 @@ sync_tool_config.json
 backend/static/knowledge_graph/graph.json
 backend/version_info.json
 
+
+# OHIP 連線驗證的取樣輸出（含真實營運數字，不進版控）
+backend/ohip_inventory_stats_sample.json
+backend/ohip_revenue_async_sample.json
+backend/ohip_probe_*.json

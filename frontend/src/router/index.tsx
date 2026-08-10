@@ -157,6 +157,7 @@ import CpReceivingReportPage            from '@/pages/CyclePurchase/Receiving/Re
 import CpPaymentListPage                from '@/pages/CyclePurchase/Payment'
 import CpPaymentDetailPage              from '@/pages/CyclePurchase/Payment/Detail'
 import CpAuditLogPage                   from '@/pages/CyclePurchase/AuditLog'
+import CpManualPage                     from '@/pages/CyclePurchase/Manual'
 
 // ── 合約管理 ──────────────────────────────────────────────────────────────────
 import ContractPage            from '@/pages/Contract'
@@ -180,6 +181,18 @@ import OperaManualPage         from '@/pages/Opera/Manual'
 // 房價預測（2026-08-05 新增）
 import OperaLookupPage         from '@/pages/Opera/Lookup'
 import OperaForecastPage       from '@/pages/Opera/Forecast'
+// 市場區隔分析（2026-08-07）：⚠️ 資料來源是 OHIP API 落地，不是本模組其他頁的 TXT 上傳。
+// 放在 /opera/* 是因為時間語意一致（都是落地的歷史資料），頁面上有標示來源。
+import OperaSegmentsPage       from '@/pages/Opera/Segments'
+// 訂房分析（2026-08-07）：⚠️ 母體與 /opera/guest 不同（所有訂房 vs 已離店住客）。
+import OperaReservationsPage   from '@/pages/Opera/Reservations'
+// ── 即時營運（2026-08-06）：資料直接來自 OPERA Cloud（OHIP）REST API，
+//    與 /opera/*（人工上傳 TXT）完全獨立。規格書 docs/SPEC_realtime_operations.md
+import RealtimeDashboardPage   from '@/pages/Realtime/Dashboard'
+import RealtimeRevenuePage     from '@/pages/Realtime/Revenue'
+import RealtimeComparePage     from '@/pages/Realtime/Compare'
+import RealtimeLogsPage        from '@/pages/Realtime/Logs'
+import RealtimeManualPage     from '@/pages/Realtime/Manual'
 // 註：OperaEventsPage 已併入 Forecast 頁的 TAB，此處不再直接引用
 
 // ── 金旭分析（2026-08-05）：與 /opera/* 完全獨立的第二個檔案上傳型模組 ──────
@@ -538,6 +551,9 @@ export default function AppRouter() {
           <Route path="payments"                      element={<CpPaymentListPage />} />
           <Route path="payments/:id"                  element={<CpPaymentDetailPage />} />
           <Route path="audit-log"                     element={<CpAuditLogPage />} />
+          {/* 使用手冊為靜態內容，開放給所有週採使用者（選單用 permissionKeys OR
+              涵蓋全部 8 個週採權限）；與本區塊其他路由一致不加 PermissionGuard。 */}
+          <Route path="manual"                        element={<CpManualPage />} />
         </Route>
 
         {/* ── 合約管理 ──────────────────────────────────────────────────── */}
@@ -684,6 +700,22 @@ export default function AppRouter() {
               <OperaLookupPage />
             </PermissionGuard>
           } />
+          {/* 市場區隔分析（2026-08-07）：另開 opera_segment_view，不共用
+              opera_revenue_view —— 兩者資料來源不同（API 落地 vs TXT 上傳）、
+              口徑尚未完全對齊，共用權限會讓管理員以為授權的是同一份資料。 */}
+          <Route path="segments" element={
+            <PermissionGuard permissionKey="opera_segment_view">
+              <OperaSegmentsPage />
+            </PermissionGuard>
+          } />
+          {/* 訂房分析（2026-08-07）：另開 opera_reservation_view，不共用
+              opera_guest_view —— 兩者**分析母體不同**（所有訂房 vs 已離店住客），
+              共用權限會讓管理員以為授權的是同一份資料。 */}
+          <Route path="reservations" element={
+            <PermissionGuard permissionKey="opera_reservation_view">
+              <OperaReservationsPage />
+            </PermissionGuard>
+          } />
           <Route path="forecast" element={
             <PermissionGuard permissionKey="opera_forecast_view">
               <OperaForecastPage />
@@ -704,6 +736,54 @@ export default function AppRouter() {
               <OperaManualPage />
             </PermissionGuard>
           } />
+        </Route>
+
+        {/* ── 即時營運（2026-08-06）──────────────────────────────────────
+            資料**直接來自 OPERA Cloud（OHIP）REST API**，不是上傳的 TXT。
+            刻意與 /opera/* 分成兩個一級選單：兩者資料時點不同（API 即時 vs
+            上傳落後數天），放同一群組會讓使用者以為是同一份資料。
+            ⚠️ 每次查詢都會實際呼叫 OHIP（按量計費），權限預設不給任何既有角色。
+            規格書：docs/SPEC_realtime_operations.md */}
+        <Route path="realtime">
+          <Route path="dashboard" element={
+            <PermissionGuard permissionKey="realtime_view">
+              <RealtimeDashboardPage />
+            </PermissionGuard>
+          } />
+          {/* 營收走非同步 API（POST 啟動→輪詢→GET），單段約 3 秒且會切段，
+              用量與延遲都比即時房況高，因此另開權限 */}
+          <Route path="revenue" element={
+            <PermissionGuard permissionKey="realtime_revenue">
+              <RealtimeRevenuePage />
+            </PermissionGuard>
+          } />
+          {/* 比對不走快取，每次實際呼叫兩支 API，因此權限與看板分開 */}
+          <Route path="compare" element={
+            <PermissionGuard permissionKey="realtime_compare">
+              <RealtimeComparePage />
+            </PermissionGuard>
+          } />
+          {/* 呼叫紀錄只讀本地 ohip_call_log，不呼叫 API，共用 realtime_view */}
+          <Route path="logs" element={
+            <PermissionGuard permissionKey="realtime_view">
+              <RealtimeLogsPage />
+            </PermissionGuard>
+          } />
+          {/* 使用手冊為靜態內容，共用 realtime_view */}
+          <Route path="manual" element={
+            <PermissionGuard permissionKey="realtime_view">
+              <RealtimeManualPage />
+            </PermissionGuard>
+          } />
+        </Route>
+
+        {/* 2026-08-06：「OPERA API 串接」更名為「即時營運」，路由前綴 /opera-api → /realtime。
+            依 CLAUDE.md §5「不可移除現有路由」，舊路由保留並導向新位置，舊書籤不會壞。
+            權限由目標頁的 PermissionGuard 負責。 */}
+        <Route path="opera-api">
+          <Route path="live"    element={<Navigate to="/realtime/dashboard" replace />} />
+          <Route path="revenue" element={<Navigate to="/realtime/revenue" replace />} />
+          <Route path="compare" element={<Navigate to="/realtime/compare" replace />} />
         </Route>
 
         {/* ── 金旭分析（資料來源為人工上傳的金旭 xlsx）─────────────────────

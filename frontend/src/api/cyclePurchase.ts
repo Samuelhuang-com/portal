@@ -8,17 +8,24 @@ import type {
   CpAccountCode,
   CpAuditLog,
   CpAvailableItem,
+  CpCancelRagicPushResult,
+  CpCloseState,
   CpCostCenter,
   CpCycle,
+  CpCycleOptions,
   CpDepartment,
   CpDepartmentBreakdown,
   CpEligibleRequest,
+  CpGeneratePreview,
+  CpGenerateResult,
   CpItem,
   CpItemDetail,
   CpItemListResponse,
   CpItemMapping,
+  CpOrphanPreview,
   CpPO,
   CpPODetail,
+  CpRevertPoResult,
   CpPayableReceiving,
   CpPayment,
   CpPaymentAllocation,
@@ -32,7 +39,9 @@ import type {
   CpRequest,
   CpRequestDetail,
   CpRequestItem,
+  CpSummarizedRequest,
   CpSummary,
+  CpUnsummarizeResult,
   CpVendor,
   CpVendorGroup,
   TodoSummary,
@@ -133,8 +142,24 @@ export const getCycle = (id: number) =>
 export const createCycle = (data: Omit<CpCycle, 'id' | 'created_at' | 'updated_at'>) =>
   apiClient.post<CpCycle>(`${BASE}/cycles`, data)
 
-export const updateCycle = (id: number, data: Partial<CpCycle>) =>
-  apiClient.put<CpCycle>(`${BASE}/cycles/${id}`, data)
+/**
+ * 更新週期設定。
+ * 2026-08-09：deleteOrphans=true 會一併刪除「部門已不再適用」的孤兒空白請購單
+ * （僅明細 0 筆＋未關閉＋未彙整者）。呼叫端**必須先打 previewOrphanRequests
+ * 讓使用者確認**再帶 true —— 刪資料不做靜默執行。
+ */
+export const updateCycle = (id: number, data: Partial<CpCycle>, deleteOrphans = false) =>
+  apiClient.put<CpCycle>(`${BASE}/cycles/${id}`, data, {
+    params: deleteOrphans ? { delete_orphans: true } : undefined,
+  })
+
+/** 週期設定表單的下拉選項（適用公司／適用品類，取自主檔 distinct 值） */
+export const getCycleOptions = () =>
+  apiClient.get<CpCycleOptions>(`${BASE}/cycles/options`)
+
+/** 預覽：套用這份（尚未儲存的）設定後，會刪掉哪幾張孤兒空白請購單 */
+export const previewOrphanRequests = (id: number, data: Partial<CpCycle>) =>
+  apiClient.post<CpOrphanPreview>(`${BASE}/cycles/${id}/preview-orphan-requests`, data)
 
 // ── 請購單 ────────────────────────────────────────────────────────────────────
 // 2026-07-11：拿掉「批次」，請購單改依 cycle_id + period_label 篩選/建立。
@@ -144,15 +169,26 @@ export const getRequests = (params?: {
   cycle_id?: number
   period_label?: string
   department_id?: number
+  /** ⚠️ 改版前的殘留欄位（新資料一律 draft），要篩「狀態」請用 close_state */
   status?: string
+  /** 2026-08-07 新增的「狀態」篩選；不給＝全部 */
+  close_state?: CpCloseState
 }) => apiClient.get<CpRequest[]>(`${BASE}/requests`, { params })
 
 export const getRequest = (id: number) =>
   apiClient.get<CpRequestDetail>(`${BASE}/requests/${id}`)
 
 // 2026-07-17：period_label 不再由呼叫端指定，一律由後端在建立當下蓋章為現在的月份。
+// 2026-08-09：⚠️ 回傳型別從 CpRequest[] 改成 CpGenerateResult（{requests, skipped}），
+// skipped 是「某些部門為什麼沒產生」的原因，必須顯示給使用者。
 export const generateRequestsForPeriod = (data: { cycle_id: number }) =>
-  apiClient.post<CpRequest[]>(`${BASE}/requests/generate`, data)
+  apiClient.post<CpGenerateResult>(`${BASE}/requests/generate`, data)
+
+/** 產生前預覽：這個週期會產生哪些部門的單、哪些不會與原因 */
+export const previewGenerateRequests = (cycleId: number) =>
+  apiClient.get<CpGeneratePreview>(`${BASE}/requests/generate-preview`, {
+    params: { cycle_id: cycleId },
+  })
 
 export const getTodos = () =>
   apiClient.get<TodoSummary>(`${BASE}/requests/todos`)
@@ -221,6 +257,15 @@ export const getEligibleRequests = (params: { cycle_id: number; company: string;
 export const generateSummaryFromRequests = (data: { request_ids: number[] }) =>
   apiClient.post<CpSummary[]>(`${BASE}/summary/generate-from-requests`, data)
 
+// 2026-08-09 新增：「退回請購單」——把已彙整的請購單退回未彙整狀態，後端會
+// 依剩下仍為已彙整的請購單重算受影響的草稿彙整列（不是反向扣減，見後端
+// services/cycle_purchase_summary_service.py 開頭「第四次調整」說明）。
+export const getSummarizedRequests = (params: { cycle_id: number; company: string; year_month: string }) =>
+  apiClient.get<CpSummarizedRequest[]>(`${BASE}/summary/summarized-requests`, { params })
+
+export const unsummarizeRequest = (data: { request_id: number; reason: string }) =>
+  apiClient.post<CpUnsummarizeResult>(`${BASE}/summary/unsummarize-request`, data)
+
 export const updateSummaryItem = (id: number, data: { adjusted_qty?: number; adjust_reason?: string | null }) =>
   apiClient.put<CpSummary>(`${BASE}/summary/${id}`, data)
 
@@ -233,8 +278,15 @@ export const getDepartmentBreakdown = (params: { cycle_id: number; period_label:
 
 // 2026-07-16 新增：拋轉到 Ragic「匯總請購單」（目前為 stub，見後端
 // cycle_purchase_ragic_push.py 開頭說明，Ragic 端表單尚未建立）
+// ⚠️ 2026-08-09 起**已拋轉過的範圍會被擋下**（回 422），要重推請先 cancelRagicPush。
 export const pushSummaryToRagic = (data: { cycle_id: number; period_label: string; company: string }) =>
   apiClient.post<CpPushToRagicResult>(`${BASE}/summary/push-to-ragic`, data)
+
+// 2026-08-09 新增：取消拋轉。清掉該範圍的 Ragic 拋轉標記，可以重新拋轉，
+// 同時解開「已拋轉就不能退回請購單」的限制。
+export const cancelRagicPush = (data: {
+  cycle_id: number; period_label: string; company: string; reason: string
+}) => apiClient.post<CpCancelRagicPushResult>(`${BASE}/summary/cancel-ragic-push`, data)
 
 // ── 採購單（第三期，2026-07-11 新增）───────────────────────────────────────────
 // 一張採購單＝一個公司＋一個供應商（同一週期＋期別內），由「轉採購單」動作產生。
@@ -252,6 +304,12 @@ export const getPo = (id: number) =>
 
 export const updatePo = (id: number, data: { expected_date?: string | null; notes?: string | null }) =>
   apiClient.put<CpPO>(`${BASE}/pos/${id}`, data)
+
+// 2026-08-09：退回彙整單。與 setPoStatus(id,'cancelled') 是**兩個不同動作**——
+// 取消只把單標成 cancelled、彙整列維持鎖定；退回會把彙整列解鎖回 draft，
+// 讓買家重新調整後再轉一張新單（舊單保留為已取消供追溯）。
+export const revertPoToSummary = (id: number, data: { reason: string }) =>
+  apiClient.post<CpRevertPoResult>(`${BASE}/pos/${id}/revert-to-summary`, data)
 
 export const setPoStatus = (id: number, status: 'issued' | 'cancelled') =>
   apiClient.post<CpPO>(`${BASE}/pos/${id}/status`, { status })

@@ -89,6 +89,22 @@ services/cycle_purchase_summary_service.py 開頭說明）：
     `approved_at`／`reject_reason`／`status` 四＋一個欄位保留但停止在新資料
     上寫入（只留給改版前的歷史資料顯示用，SQLite 不支援輕易 DROP COLUMN，
     不值得為了這幾個欄位做整表重建）。
+
+2026-08-09（第四次調整，與 Samuel 確認，「彙整單退回請購單」）：
+  - 實務情境：買家已經把請購單彙整成彙整列了，但事後發現這一期要取消／某個
+    部門的單不該納入，需要把「已彙整」的狀態退回去，讓該張請購單重新回到
+    可彙整清單、彙整列的需求量也跟著扣掉。
+  - 作法：新增 `unsummarized_at`／`unsummarized_by_user_id`／
+    `unsummarized_by_name`／`unsummarize_reason` 四個 nullable 欄位，記錄
+    「最近一次被退回」的軌跡。退回時 `is_summarized` 改回 False、
+    `summary_batch_no`／`summarized_at` 清空（這兩個欄位代表「目前屬於哪個
+    彙整批次」，退回後就不屬於任何批次了；歷史軌跡改由這四個新欄位＋稽核
+    紀錄保存），`is_closed` 維持 True 不動——退回的是「彙整」這個動作，不是
+    「關閉」。
+  - 這是「一張一張退」的設計（不是整批撤銷），退回後彙整列會由後端依剩下
+    仍為 is_summarized=True 的請購單**重算**，不是反向扣減，因為彙整列沒有
+    記錄「這列的量是哪幾張請購單貢獻的」（沒有 lineage 表）。詳見
+    services/cycle_purchase_summary_service.py 的 unsummarize_request()。
 """
 from sqlalchemy import (
     Boolean, Column, Integer, String, Numeric, Text, DateTime, Date,
@@ -148,6 +164,16 @@ class CyclePurchaseRequest(CyclePurchaseBase):
     summary_batch_no = Column(String(40), nullable=True,
                                comment="納入的彙整批次號（對應這次產生彙整時系統產生的批次編號）")
     summarized_at    = Column(DateTime, nullable=True, comment="被納入彙整的時間")
+
+    # 2026-08-09 新增：見上方 class 註解「彙整單退回請購單」。退回時 is_summarized
+    # 改回 False、summary_batch_no／summarized_at 清空，歷史軌跡留在這四個欄位
+    # （只保留「最近一次」退回；完整歷史看稽核紀錄 cycle_purchase_audit_logs）。
+    unsummarized_by_user_id = Column(String(36), nullable=True, comment="退回彙整的操作人（portal.db users.id，軟關聯）")
+    unsummarized_by_name    = Column(String(100), nullable=True, comment="退回彙整的操作人姓名快照")
+    unsummarized_at         = Column(DateTime, nullable=True,
+                                      comment="最近一次從彙整單退回的時間；退回不會動 is_closed，"
+                                               "只是把 is_summarized 改回 False 讓它重新出現在可彙整清單")
+    unsummarize_reason      = Column(Text, nullable=True, comment="最近一次退回彙整的原因（退回時必填）")
 
     # 2026-07-17 新增：見上方 class 註解「請購單流程大改版」。取代送出/核准，
     # 「關閉」才是真正把數量定案、可以放心拿去彙整的判斷依據。

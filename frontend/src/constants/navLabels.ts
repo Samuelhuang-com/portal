@@ -90,6 +90,7 @@ export const NAV_GROUP = {
   cyclePurchase:          '週採',              // ← 新增：週期採購管理（2026-07-10，獨立資料庫 cycle-purchase.db）
   opera:                  '營運分析',          // ← 新增：OPERA 營運分析（2026-08-04，檔案上傳型模組，非 Ragic 同步）
   jinxu:                  '金旭分析',          // ← 新增：金旭 PMS 分析（2026-08-05，第二個檔案上傳型模組，與 /opera 完全獨立）
+  realtime:               '即時營運',          // ← 新增：OPERA Cloud API 直連（2026-08-06）。與 /opera/*（上傳 TXT）刻意分開：資料來源與時點不同
 } as const
 
 // ── 二級選單（頁面） ──────────────────────────────────────────────────────────
@@ -262,6 +263,7 @@ export const NAV_PAGE = {
   cyclePurchaseReceivingReport: '進貨數量報表',        // ← route /cycle-purchase/receiving-report
   cyclePurchasePayments:        '請款單',              // ← route /cycle-purchase/payments
   cyclePurchaseAuditLog:        '異常稽核紀錄',        // ← route /cycle-purchase/audit-log
+  cyclePurchaseManual:          '週採使用手冊',        // ← route /cycle-purchase/manual（2026-08-07 新增）
 
   // OPERA 營運分析（2026-08-04 新增；資料來源為人工上傳的 OPERA TXT，非 Ragic 同步）
   // ⚠️ 以下 label 必須與 role_permissions.py 的 PERMISSION_DEFINITIONS 完全一致
@@ -277,8 +279,26 @@ export const NAV_PAGE = {
   // 2026-08-05：事件月曆併入房價預測頁的 TAB，選單不再有獨立項目。
   // 標籤保留給 TAB 標題、權限清單與 /opera/events 導向後的頁面使用。
   operaEvents:     '事件月曆',              // ← /opera/forecast?tab=events
+  // 市場區隔／房型趨勢（2026-08-07）。⚠️ 資料來源是 OHIP API 落地，不是 TXT 上傳。
+  // ⚠️ 這個字串必須與 role_permissions.py 的 opera_segment_view label 完全一致，
+  //    否則管理員在「權限設定」看到的名稱與側邊欄不同（CLAUDE.md §3）。
+  operaSegments:   '市場區隔分析',          // ← route /opera/segments
+  // 訂房分析（2026-08-07）。⚠️ 母體與 operaGuest 不同：所有訂房 vs 已離店住客。
+  // ⚠️ 這個字串必須與 role_permissions.py 的 opera_reservation_view label 完全一致。
+  operaReservations: '訂房分析',           // ← route /opera/reservations
   operaSettings:   '分析門檻設定',          // ← route /opera/settings
   operaManual:     '使用手冊',              // ← route /opera/manual（共用 opera_view 權限）
+
+  // ── 即時營運（2026-08-06 新增）────────────────────────────────────────────
+  // 資料直接來自 OPERA Cloud（OHIP）REST API，**不是**上傳的 TXT。
+  // 刻意獨立成一級選單，避免與 /opera/* 的上傳型資料在同一處被誤讀為同一時點。
+  // 規格書：docs/SPEC_realtime_operations.md §8.1
+  // ⚠️ 下列 label 必須與 role_permissions.py 的 PERMISSION_DEFINITIONS 完全一致。
+  realtimeDashboard: '即時營運看板',        // ← route /realtime/dashboard
+  realtimeRevenue:   '營收與結構分析',      // ← route /realtime/revenue
+  realtimeCompare:   '與營運分析比對',      // ← route /realtime/compare
+  realtimeLogs:      'API 呼叫紀錄',        // ← route /realtime/logs（共用 realtime_view）
+  realtimeManual:    '使用手冊',            // ← route /realtime/manual（共用 realtime_view）
 
   // ── 金旭分析（2026-08-05 新增）────────────────────────────────────────────
   // ⚠️ 下列名稱必須與 backend/app/routers/role_permissions.py 的 PERMISSION_DEFINITIONS
