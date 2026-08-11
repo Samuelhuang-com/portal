@@ -198,6 +198,11 @@ REM ---------------------------------------------------------------------------
 echo [6/10] Fetching source code...
 if not exist "%DATA_DIR%" mkdir "%DATA_DIR%"
 
+REM  An existing but EMPTY target is fine - git clone accepts it. Only a
+REM  directory with content in it is a problem worth stopping for.
+set "TGT_NONEMPTY="
+if exist "%PORTAL_DIR%\" for /f %%z in ('dir /a /b "%PORTAL_DIR%" 2^>nul ^| find /c /v ""') do if not "%%z"=="0" set "TGT_NONEMPTY=1"
+
 if exist "%PORTAL_DIR%\.git" (
     echo   [skip] %PORTAL_DIR% is already a git repo - syncing to origin/main
     pushd "%PORTAL_DIR%"
@@ -215,12 +220,14 @@ if exist "%PORTAL_DIR%\.git" (
     )
     popd
 ) else (
-    if exist "%PORTAL_DIR%" (
-        echo [ERROR] %PORTAL_DIR% exists but is not a git repo.
+    if defined TGT_NONEMPTY (
+        echo [ERROR] %PORTAL_DIR% already has files in it and is not a git repo.
+        echo         An empty folder would have been fine - this one is not.
         echo         Move it aside first, then re-run:
         echo             move %PORTAL_DIR% %PORTAL_DIR%_old
         goto fail
     )
+    if exist "%PORTAL_DIR%\" echo   Target folder exists and is empty - cloning into it.
     git clone "%REPO_URL%" "%PORTAL_DIR%"
     if errorlevel 1 (
         echo [ERROR] git clone failed.
