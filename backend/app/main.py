@@ -89,6 +89,7 @@ from app.routers import (
     hotel_routine_pm,
     ragic,
     role_permissions,
+    site_config,
     roles,
     room_maintenance,
     room_maintenance_detail,
@@ -1488,6 +1489,7 @@ async def lifespan(app: FastAPI):
     print(f"[Portal] Starting — environment: {settings.ENV}")
 
     # 確保所有 ORM model 已被 import，讓 Base.metadata 知道所有表格
+    import app.models.system_setting  # noqa: F401  站台基本設定（key-value）
     import app.models.room_maintenance  # noqa: F401
     import app.models.inventory  # noqa: F401
     import app.models.room_maintenance_detail  # noqa: F401
@@ -2372,6 +2374,10 @@ app.include_router(tenants.router, prefix=f"{API_PREFIX}/tenants", tags=["據點
 app.include_router(ragic.router, prefix=f"{API_PREFIX}/ragic", tags=["Ragic"])
 # 2026-07-22 新增：公開版本資訊端點，供正式區/測試區比對 git commit（唯一無需登入的端點，見 version.py 檔頭說明）
 app.include_router(version.router, prefix=f"{API_PREFIX}/version", tags=["系統資訊"])
+# 2026-08-11 新增：站台基本設定（品牌名稱）。GET 為公開端點（登入頁未認證就要顯示站台名稱），
+# PUT 仍需 system_admin。必須註冊在檔案最下方的 spa_fallback catch-all 之前，
+# 否則 /api/v1/site-config 會拿到 200 + index.html（見 site_config.py 檔頭）。
+app.include_router(site_config.router, prefix=f"{API_PREFIX}/site-config", tags=["系統資訊"])
 app.include_router(
     dashboard.router, prefix=f"{API_PREFIX}/dashboard", tags=["Dashboard"]
 )

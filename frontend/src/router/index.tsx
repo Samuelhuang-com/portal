@@ -48,6 +48,7 @@ import UsersPage           from '@/pages/Settings/Users'
 import RolesPage           from '@/pages/Settings/Roles'
 import RagicConnectionsPage from '@/pages/Settings/RagicConnections'
 import RagicAppDirectoryPage from '@/pages/Settings/RagicAppDirectory'
+import BasicSettingsPage     from '@/pages/Settings/BasicSettings'
 import MenuConfigPage        from '@/pages/Settings/MenuConfig'
 import EmployeeManualExportPage from '@/pages/Settings/EmployeeManualExport'
 import KnowledgeGraphPage        from '@/pages/Settings/KnowledgeGraph'
@@ -865,6 +866,11 @@ export default function AppRouter() {
           path="settings"
           element={<SettingsGuard><Outlet /></SettingsGuard>}
         >
+          <Route path="basic" element={
+            <PermissionGuard permissionKey="system_admin_only">
+              <BasicSettingsPage />
+            </PermissionGuard>
+          } />
           <Route path="users" element={
             <PermissionGuard permissionKey="settings_users_manage">
               <UsersPage />

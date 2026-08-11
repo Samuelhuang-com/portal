@@ -56,12 +56,14 @@
  *   2026-05-27  新增 contract（合約管理）Phase 1.3 Portal 集成，route /contract + /contract/vendors + /contract/settings
  *   2026-06-29  新增 hotelCalendar（飯店行事曆）+ mallCalendar（商場行事曆），route /hotel/calendar + /mall/calendar
  *   2026-07-03  新增 tutorialVideos（影音教學）一階選單，本地模組不對接 Ragic，route /tutorial-videos
+ *   2026-08-11  新增 basicSettings（基本設定）站台名稱維護，route /settings/basic；同時移除 SITE_TITLE 常數
  */
 
 // ── 系統標題 ──────────────────────────────────────────────────────────────────
 // ⚠️ 系統標題已改為執行期設定（各 Server 品牌名稱可不同），請改用：
 //      import { getSiteTitle } from '@/config/siteConfig'
-//    設定檔位於 public/config.json 的 brand 欄位。原本的 SITE_TITLE 常數已移除。
+//    設定值存在後端 system_settings 資料表（key = site.brand），
+//    由「系統設定 → 基本設定」頁面維護。原本的 SITE_TITLE 常數已移除。
 
 // ── 一級選單（群組） ──────────────────────────────────────────────────────────
 export const NAV_GROUP = {
@@ -196,6 +198,7 @@ export const NAV_PAGE = {
   wikiMain:              '知識庫',
 
   // 系統設定
+  basicSettings:            '基本設定',        // ← 新增：站台名稱等基本設定（2026-08-11）
   usersManage:              '使用者管理',
   rolesManage:              '角色管理',
   ragicConnections:         'Ragic 連線',

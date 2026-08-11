@@ -7,7 +7,7 @@ import { UserOutlined, LockOutlined, BankOutlined, QuestionCircleOutlined } from
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/stores/authStore'
 import { authApi } from '@/api/auth'
-import { getSiteSubtitle } from '@/config/siteConfig'
+import { getLoginTitle, getLoginSubtitle } from '@/config/siteConfig'
 
 const { Title, Text } = Typography
 
@@ -139,10 +139,10 @@ export default function LoginPage() {
           </div>
           <div>
             <Title level={3} style={{ margin: 0, color: '#1B3A5C' }}>
-              集團管理 Portal{ENV_TAG}
+              {getLoginTitle()}{ENV_TAG}
             </Title>
             <Text type="secondary" style={{ fontSize: 12 }}>
-              {getSiteSubtitle()}
+              {getLoginSubtitle()}
             </Text>
           </div>
         </div>

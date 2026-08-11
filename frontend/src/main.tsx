@@ -10,7 +10,7 @@ import './index.css'
 
 dayjs.locale('zh-tw')
 
-// 先載入站台執行期設定（public/config.json）再掛載，避免品牌名稱先顯示預設值再跳動。
+// 先載入站台設定（GET /api/v1/site-config）再掛載，避免品牌名稱先顯示預設值再跳動。
 // loadSiteConfig() 內部已吞掉所有錯誤並退回預設值，故此處不需 catch。
 loadSiteConfig().then(() => {
   ReactDOM.createRoot(document.getElementById('root')!).render(

@@ -500,6 +500,7 @@ export const menuItems: MenuItem[] = [
     icon: <SettingOutlined />,
     label: NAV_GROUP.settings,
     children: [
+      { key: '/settings/basic',               icon: <SettingOutlined />,  label: NAV_PAGE.basicSettings,     permissionKey: 'system_admin_only' },
       { key: '/settings/users',               icon: <UserOutlined />,     label: NAV_PAGE.usersManage,       permissionKey: 'settings_users_manage' },
       { key: '/settings/roles',               icon: <SettingOutlined />,  label: NAV_PAGE.rolesManage,       permissionKey: 'settings_roles_manage' },
       { key: '/settings/ragic-app-directory', icon: <DatabaseOutlined />, label: NAV_PAGE.ragicAppDirectory, permissionKey: 'settings_ragic_manage' },
