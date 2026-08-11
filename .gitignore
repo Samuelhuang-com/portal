@@ -38,6 +38,10 @@ Thumbs.db
 .tmp.driveupload/
 *.tmp
 
+# Temp/ — 完全不同步（開發過程的暫存、封存工具、截圖、簡報）
+# 已追蹤的檔案光靠 .gitignore 不會生效，退出版控用：git rm -r --cached Temp
+Temp/
+
 # 文件 / 試算表（不進正式區）
 *.md
 *.xlsx
