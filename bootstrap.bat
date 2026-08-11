@@ -116,19 +116,22 @@ echo.
 REM ---------------------------------------------------------------------------
 REM  [3/10] winget availability
 REM ---------------------------------------------------------------------------
-echo [3/10] Checking winget...
+echo [3/10] Choosing an install method...
+set "USEWINGET=1"
 where winget >nul 2>&1
-if errorlevel 1 (
-    echo [ERROR] winget not found.
-    echo         winget ships with Windows 10 1809+ / Windows 11 / Server 2022+.
-    echo         On older Windows install these four manually, then re-run:
-    echo           Git         https://git-scm.com/download/win
-    echo           Python 3.12 https://www.python.org/downloads/
-    echo           Node.js LTS https://nodejs.org/
-    echo           NSSM        https://nssm.cc/download  ^(nssm.exe into System32^)
-    goto fail
+if errorlevel 1 set "USEWINGET="
+if defined USEWINGET (
+    echo [OK] winget available
+) else (
+    echo [INFO] winget not found - falling back to direct download from the
+    echo        official sites. Windows Server does not ship App Installer,
+    echo        and winget's Store endpoints are often blocked anyway.
+    echo        This machine still needs outbound HTTPS to:
+    echo          api.github.com / github.com   ^(Git^)
+    echo          www.python.org                ^(Python^)
+    echo          nodejs.org                    ^(Node.js^)
+    echo          nssm.cc                       ^(NSSM^)
 )
-echo [OK] winget available
 echo.
 
 REM ---------------------------------------------------------------------------
@@ -140,35 +143,16 @@ REM ---------------------------------------------------------------------------
 echo [4/10] Installing toolchain (already-present items are skipped)...
 
 where git >nul 2>&1
-if errorlevel 1 (
-    echo   Installing Git...
-    winget install -e --id Git.Git --scope machine --accept-source-agreements --accept-package-agreements --silent
-) else (
-    echo   [skip] Git already installed
-)
+if errorlevel 1 (call :inst_git) else (echo   [skip] Git already installed)
 
 py %PYTAG% --version >nul 2>&1
-if errorlevel 1 (
-    echo   Installing Python 3.12...
-    winget install -e --id Python.Python.3.12 --scope machine --accept-source-agreements --accept-package-agreements --silent
-) else (
-    echo   [skip] Python 3.12 already installed
-)
+if errorlevel 1 (call :inst_python) else (echo   [skip] Python 3.12 already installed)
 
 where node >nul 2>&1
-if errorlevel 1 (
-    echo   Installing Node.js LTS...
-    winget install -e --id OpenJS.NodeJS.LTS --scope machine --accept-source-agreements --accept-package-agreements --silent
-) else (
-    echo   [skip] Node.js already installed
-)
+if errorlevel 1 (call :inst_node) else (echo   [skip] Node.js already installed)
 
 where nssm >nul 2>&1
-if not errorlevel 1 (
-    echo   [skip] NSSM already installed
-) else (
-    call :install_nssm
-)
+if errorlevel 1 (call :install_nssm) else (echo   [skip] NSSM already installed)
 echo.
 
 REM ---------------------------------------------------------------------------
@@ -463,12 +447,49 @@ echo   Existing .env found - backing up to .env.bak-%STAMP%
 copy /y "%PORTAL_DIR%\backend\.env" "%PORTAL_DIR%\backend\.env.bak-%STAMP%" >nul
 exit /b 0
 
+REM ---------------------------------------------------------------------------
+REM  Toolchain installers.
+REM
+REM  Each tries winget first (when available) and otherwise downloads the
+REM  official installer. Versions are resolved AT RUNTIME rather than pinned,
+REM  so these do not rot: hard-coded installer URLs go stale within months.
+REM  All three are silent/unattended and machine-scoped - a per-user Python
+REM  is invisible to the LocalSystem account the service runs under.
+REM ---------------------------------------------------------------------------
+
+:inst_git
+echo   Installing Git...
+if defined USEWINGET winget install -e --id Git.Git --scope machine --accept-source-agreements --accept-package-agreements --silent
+where git >nul 2>&1
+if not errorlevel 1 exit /b 0
+echo   Downloading Git for Windows from github.com...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; $r=Invoke-RestMethod -Uri 'https://api.github.com/repos/git-for-windows/git/releases/latest' -Headers @{'User-Agent'='portal-bootstrap'}; $a=$r.assets | Where-Object { $_.name -like '*-64-bit.exe' } | Select-Object -First 1; if(-not $a){ throw 'no 64-bit installer in the latest release' }; $f=Join-Path $env:TEMP $a.name; Write-Host ('    ' + $a.name); Invoke-WebRequest -Uri $a.browser_download_url -OutFile $f -UseBasicParsing; Write-Host '    installing (silent)...'; Start-Process -FilePath $f -ArgumentList '/VERYSILENT','/NORESTART','/SP-' -Wait"
+exit /b 0
+
+:inst_python
+echo   Installing Python 3.12...
+if defined USEWINGET winget install -e --id Python.Python.3.12 --scope machine --accept-source-agreements --accept-package-agreements --silent
+py %PYTAG% --version >nul 2>&1
+if not errorlevel 1 exit /b 0
+echo   Downloading Python 3.12 from python.org...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; $h=(Invoke-WebRequest -Uri 'https://www.python.org/ftp/python/' -UseBasicParsing).Content; $ns=[regex]::Matches($h,'3\.12\.([0-9]+)/') | ForEach-Object { [int]$_.Groups[1].Value } | Sort-Object -Unique -Descending; if($ns.Count -eq 0){ throw 'no 3.12.x directory listed' }; $u=$null; foreach($n in $ns){ $c='https://www.python.org/ftp/python/3.12.'+$n+'/python-3.12.'+$n+'-amd64.exe'; try { Invoke-WebRequest -Uri $c -Method Head -UseBasicParsing | Out-Null; $u=$c; break } catch { } }; if(-not $u){ $u='https://www.python.org/ftp/python/3.12.'+$ns[0]+'/python-3.12.'+$ns[0]+'-amd64.exe' }; $f=Join-Path $env:TEMP 'python-3.12-amd64.exe'; Write-Host ('    ' + $u); Invoke-WebRequest -Uri $u -OutFile $f -UseBasicParsing; Write-Host '    installing (silent, all users, PATH)...'; Start-Process -FilePath $f -ArgumentList '/quiet','InstallAllUsers=1','PrependPath=1','Include_launcher=1','Include_pip=1' -Wait"
+exit /b 0
+
+:inst_node
+echo   Installing Node.js LTS...
+if defined USEWINGET winget install -e --id OpenJS.NodeJS.LTS --scope machine --accept-source-agreements --accept-package-agreements --silent
+where node >nul 2>&1
+if not errorlevel 1 exit /b 0
+echo   Downloading Node.js LTS from nodejs.org...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; $j=Invoke-RestMethod -Uri 'https://nodejs.org/dist/index.json'; $l=$j | Where-Object { $_.lts } | Select-Object -First 1; if(-not $l){ throw 'no LTS release listed' }; $u='https://nodejs.org/dist/'+$l.version+'/node-'+$l.version+'-x64.msi'; $f=Join-Path $env:TEMP 'node-lts-x64.msi'; Write-Host ('    ' + $u); Invoke-WebRequest -Uri $u -OutFile $f -UseBasicParsing; Write-Host '    installing (silent)...'; Start-Process msiexec.exe -ArgumentList '/i',$f,'/qn','/norestart' -Wait"
+exit /b 0
+
 :install_nssm
 echo   Installing NSSM...
-winget install -e --id NSSM.NSSM --accept-source-agreements --accept-package-agreements --silent >nul 2>&1
+if defined USEWINGET winget install -e --id NSSM.NSSM --accept-source-agreements --accept-package-agreements --silent >nul 2>&1
 where nssm >nul 2>&1
 if not errorlevel 1 exit /b 0
-echo   winget package unavailable, downloading from nssm.cc instead...
+echo   Downloading NSSM from nssm.cc...
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; $z=Join-Path $env:TEMP 'nssm.zip'; $d=Join-Path $env:TEMP 'nssmx'; Invoke-WebRequest -Uri 'https://nssm.cc/release/nssm-2.24.zip' -OutFile $z; Expand-Archive -Path $z -DestinationPath $d -Force; Copy-Item (Join-Path $d 'nssm-2.24\win64\nssm.exe') 'C:\Windows\System32\nssm.exe' -Force"
 exit /b 0
 
