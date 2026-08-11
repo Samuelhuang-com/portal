@@ -17,7 +17,12 @@ REM  Chinese instructions are in: docs/DEPLOY_BOOTSTRAP.md
 REM
 REM  USAGE  (right-click -> Run as administrator):
 REM      bootstrap.bat "E:\backup\.env"
+REM      bootstrap.bat "E:\backup\.env" "C:\portal"    (install elsewhere)
 REM      bootstrap.bat                 (will prompt for the .env path)
+REM
+REM  Arg 1 may be the .env file itself OR a folder containing .env or
+REM  backend\.env - the script resolves it either way.
+REM  Arg 2 overrides the install directory (default below).
 REM
 REM  IDEMPOTENT: safe to re-run. Every step detects "already done" and skips.
 REM  The source .env is validated BEFORE anything is overwritten.
@@ -40,6 +45,7 @@ REM  UnicodeEncodeError and a non-zero exit code. Do not remove this.
 set "PYTHONIOENCODING=utf-8"
 
 set "ENVSRC=%~1"
+if not "%~2"=="" set "PORTAL_DIR=%~2"
 
 echo.
 echo =========================================================
@@ -78,42 +84,33 @@ if "!ENVSRC!"=="" (
     echo         Usage: bootstrap.bat "E:\backup\.env"
     goto fail
 )
+call :resolve_env
+if errorlevel 1 goto fail
 if not exist "!ENVSRC!" (
     echo [ERROR] .env not found: !ENVSRC!
+    echo.
+    echo   Give the full path to the .env FILE, for example:
+    echo       E:\backup\.env
+    echo   A folder also works if it contains .env or backend\.env.
     goto fail
 )
 
 set "ENVCHK=!ENVSRC!"
-set "ENVBAD="
-call :needkey SECRET_KEY
-call :needkey RAGIC_API_KEY
-call :needkey DATABASE_URL
-call :needkey CYCLE_PURCHASE_DATABASE_URL
-call :needkey CORS_ORIGINS
-call :needenv
-
-if not "!ENVBAD!"=="" (
+call :validate_env
+if errorlevel 1 (
     echo.
-    echo [ERROR] Source .env has missing or empty values for:!ENVBAD!
-    echo         File: !ENVSRC!
+    echo         File checked: !ENVSRC!
     echo.
-    echo   CYCLE_PURCHASE_DATABASE_URL is the one that historically got left out.
-    echo   When it is absent the backend silently falls back to a relative path,
-    echo   the migration scripts write to a DIFFERENT file, and every symptom
-    echo   points somewhere else. See CHANGELOG [1.90.29].
+    echo   CYCLE_PURCHASE_DATABASE_URL and DATABASE_URL are the ones that get
+    echo   left out. When they are absent the backend does NOT fail - it
+    echo   silently falls back to a relative path, the migration scripts then
+    echo   write to a DIFFERENT file, and every symptom points somewhere else.
+    echo   See CHANGELOG [1.90.29].
     echo.
     echo   Fix the SOURCE file above, then re-run. Nothing has been changed yet.
     goto fail
 )
-findstr /r /c:"^ *SECRET_KEY *=.*change-me" "!ENVSRC!" >nul 2>&1
-if not errorlevel 1 (
-    echo [ERROR] SECRET_KEY in the source .env is still the placeholder value.
-    echo         Generate one:  py %PYTAG% -c "import secrets;print(secrets.token_hex(32))"
-    goto fail
-)
 echo [OK] Source .env validated: !ENVSRC!
-echo      DATABASE_URL in use:
-findstr /r /c:"^ *DATABASE_URL *=" "!ENVSRC!"
 echo.
 
 REM ---------------------------------------------------------------------------
@@ -420,23 +417,32 @@ REM ===========================================================================
 REM  Subroutines
 REM ===========================================================================
 
-REM  :needkey KEY - append KEY to ENVBAD unless %ENVCHK% has a non-empty value.
-REM  The character class is what makes this work on CRLF files: a bare "not a
-REM  space" test would accept the trailing CR of an empty "KEY=" line.
-REM  Do not put "!" in the class - delayed expansion would eat it.
-:needkey
-findstr /r /c:"^ *%~1 *=.*[0-9A-Za-z_/:.-]" "%ENVCHK%" >nul 2>&1
-if errorlevel 1 set "ENVBAD=%ENVBAD% %~1"
-exit /b 0
+REM  :validate_env - check %ENVCHK% for the keys the backend cannot run without.
+REM
+REM  This was originally a set of findstr /r tests. Do not go back to that.
+REM  On a real .env, findstr reported DATABASE_URL, CYCLE_PURCHASE_DATABASE_URL
+REM  and RAGIC_API_KEY as present when the file contained none of them - a
+REM  false PASS on exactly the keys this check exists to catch.
+REM  PowerShell parses the file properly: BOM, CRLF, tabs, spaces around "=",
+REM  quoted values and comments all behave.
+REM
+REM  Aliases handled (see backend/app/core/config.py):
+REM    SECRET_KEY  or  JWT_SECRET_KEY   (JWT_SECRET_KEY wins when both are set)
+REM    APP_ENV     or  ENV
+:validate_env
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$p='%ENVCHK%'; $h=@{}; foreach($l in (Get-Content -LiteralPath $p)){ if($l -match '^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$'){ $h[$matches[1]] = $matches[2].Trim().Trim('\"').Trim([char]39) } }; function Has($k){ return $h.ContainsKey($k) -and $h[$k] -ne '' }; $bad=@(); foreach($k in @('RAGIC_API_KEY','DATABASE_URL','CYCLE_PURCHASE_DATABASE_URL','CORS_ORIGINS')){ if(-not (Has $k)){ $bad += $k } }; if(-not ((Has 'SECRET_KEY') -or (Has 'JWT_SECRET_KEY'))){ $bad += 'SECRET_KEY or JWT_SECRET_KEY' }; if(-not ((Has 'APP_ENV') -or (Has 'ENV'))){ $bad += 'APP_ENV or ENV' }; if((Has 'SECRET_KEY') -and $h['SECRET_KEY'] -like '*change-me*'){ $bad += 'SECRET_KEY is still the placeholder' }; if($bad.Count -gt 0){ Write-Host ''; Write-Host '[ERROR] Source .env is missing or has empty values for:'; foreach($b in $bad){ Write-Host ('          - ' + $b) }; exit 1 }; Write-Host ('        DATABASE_URL                = ' + $h['DATABASE_URL']); Write-Host ('        CYCLE_PURCHASE_DATABASE_URL = ' + $h['CYCLE_PURCHASE_DATABASE_URL']); exit 0"
+exit /b %errorlevel%
 
-REM  :needenv - config.py accepts APP_ENV and ENV as aliases; either will do.
-:needenv
-findstr /r /c:"^ *APP_ENV *=.*[0-9A-Za-z_]" "%ENVCHK%" >nul 2>&1
-if not errorlevel 1 exit /b 0
-findstr /r /c:"^ *ENV *=.*[0-9A-Za-z_]" "%ENVCHK%" >nul 2>&1
-if not errorlevel 1 exit /b 0
-set "ENVBAD=%ENVBAD% APP_ENV(or ENV)"
-exit /b 0
+REM  :resolve_env - accept a folder as well as a file. People reach for the
+REM  folder they keep the backup in, not the hidden dotfile inside it.
+:resolve_env
+if not exist "%ENVSRC%\" exit /b 0
+if exist "%ENVSRC%\.env" set "ENVSRC=%ENVSRC%\.env" & exit /b 0
+if exist "%ENVSRC%\backend\.env" set "ENVSRC=%ENVSRC%\backend\.env" & exit /b 0
+echo [ERROR] That is a folder, and it contains no .env
+echo         Looked for: %ENVSRC%\.env
+echo                and: %ENVSRC%\backend\.env
+exit /b 1
 
 REM  :backup_env - timestamped backup of an existing .env.
 REM  Kept out of the main flow on purpose: a for/f whose command contains
