@@ -429,8 +429,15 @@ REM
 REM  Aliases handled (see backend/app/core/config.py):
 REM    SECRET_KEY  or  JWT_SECRET_KEY   (JWT_SECRET_KEY wins when both are set)
 REM    APP_ENV     or  ENV
+REM  -Encoding UTF8 is NOT optional. PowerShell 5.1 defaults Get-Content to the
+REM  system ANSI codepage (cp950 on a Traditional Chinese Windows). A UTF-8
+REM  .env with Chinese comments then decodes as double-byte pairs, the byte
+REM  alignment slips, and a CR/LF gets swallowed as somebody's trail byte -
+REM  so the next line's key is no longer at the start of a line and every
+REM  ^KEY= match silently fails. Observed on a real .env: three keys that were
+REM  present were all reported missing.
 :validate_env
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$p='%ENVCHK%'; $h=@{}; foreach($l in (Get-Content -LiteralPath $p)){ if($l -match '^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$'){ $h[$matches[1]] = $matches[2].Trim().Trim('\"').Trim([char]39) } }; function Has($k){ return $h.ContainsKey($k) -and $h[$k] -ne '' }; $bad=@(); foreach($k in @('RAGIC_API_KEY','DATABASE_URL','CYCLE_PURCHASE_DATABASE_URL','CORS_ORIGINS')){ if(-not (Has $k)){ $bad += $k } }; if(-not ((Has 'SECRET_KEY') -or (Has 'JWT_SECRET_KEY'))){ $bad += 'SECRET_KEY or JWT_SECRET_KEY' }; if(-not ((Has 'APP_ENV') -or (Has 'ENV'))){ $bad += 'APP_ENV or ENV' }; if((Has 'SECRET_KEY') -and $h['SECRET_KEY'] -like '*change-me*'){ $bad += 'SECRET_KEY is still the placeholder' }; if($bad.Count -gt 0){ Write-Host ''; Write-Host '[ERROR] Source .env is missing or has empty values for:'; foreach($b in $bad){ Write-Host ('          - ' + $b) }; exit 1 }; Write-Host ('        DATABASE_URL                = ' + $h['DATABASE_URL']); Write-Host ('        CYCLE_PURCHASE_DATABASE_URL = ' + $h['CYCLE_PURCHASE_DATABASE_URL']); exit 0"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$p='%ENVCHK%'; $h=@{}; foreach($l in (Get-Content -LiteralPath $p -Encoding UTF8)){ if($l -match '^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$'){ $h[$matches[1]] = $matches[2].Trim().Trim('\"').Trim([char]39) } }; function Has($k){ return $h.ContainsKey($k) -and $h[$k] -ne '' }; $bad=@(); foreach($k in @('RAGIC_API_KEY','DATABASE_URL','CYCLE_PURCHASE_DATABASE_URL','CORS_ORIGINS')){ if(-not (Has $k)){ $bad += $k } }; if(-not ((Has 'SECRET_KEY') -or (Has 'JWT_SECRET_KEY'))){ $bad += 'SECRET_KEY or JWT_SECRET_KEY' }; if(-not ((Has 'APP_ENV') -or (Has 'ENV'))){ $bad += 'APP_ENV or ENV' }; if((Has 'SECRET_KEY') -and $h['SECRET_KEY'] -like '*change-me*'){ $bad += 'SECRET_KEY is still the placeholder' }; if($bad.Count -gt 0){ Write-Host ''; Write-Host '[ERROR] Source .env is missing or has empty values for:'; foreach($b in $bad){ Write-Host ('          - ' + $b) }; exit 1 }; Write-Host ('        DATABASE_URL                = ' + $h['DATABASE_URL']); Write-Host ('        CYCLE_PURCHASE_DATABASE_URL = ' + $h['CYCLE_PURCHASE_DATABASE_URL']); exit 0"
 exit /b %errorlevel%
 
 REM  :resolve_env - accept a folder as well as a file. People reach for the
