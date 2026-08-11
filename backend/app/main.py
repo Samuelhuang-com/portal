@@ -2691,6 +2691,25 @@ app.include_router(
     tags=["角色權限設定"],
 )
 
+# ── 知識庫（LLM Wiki）────────────────────────────────────────────────────────
+# ⚠️ 2026-08-11 補回：此兩支 include_router 在 commit a4a48ae（2026-05-15 的
+#    main.py 大重整）被連同相鄰區塊一起刪除且未補回，導致 /api/v1/wiki 與
+#    /api/v1/knowledge-graph 落入最下方的 SPA catch-all，回傳 index.html（HTTP 200）。
+#    前端拿到的不是 JSON，`res.items` 為 undefined → 知識庫頁「載入失敗」且整頁崩潰。
+#    module import、models 建表、seed_wiki_articles 啟動植入一直都在，屬漏接而非下線。
+app.include_router(
+    wiki.router,
+    prefix=f"{API_PREFIX}/wiki",
+    tags=["知識庫"],
+)
+
+# ── 專案知識圖譜（graphify 整合）──────────────────────────────────────────────
+app.include_router(
+    knowledge_graph.router,
+    prefix=f"{API_PREFIX}/knowledge-graph",
+    tags=["專案知識圖譜"],
+)
+
 # ── 班表模組（本地 SQLite，不對接 Ragic）────────────────────────────────────
 app.include_router(
     schedule.router,

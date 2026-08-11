@@ -245,15 +245,22 @@ export default function WikiPage() {
     setLoading(true)
     try {
       const res = await fetchWikiArticles({ category: activeCategory, q: searchQ, per_page: 50 })
-      setArticles(res.items)
-      setTotal(res.total)
-      if (res.items.length > 0 && !selectedId) {
-        setSelectedId(res.items[0].id)
-      } else if (res.items.length === 0) {
+      // ⚠️ 防呆：後端若未註冊 /api/v1/wiki，請求會落入 SPA catch-all 拿到 index.html
+      // （HTTP 200 但不是 JSON），res.items 為 undefined。直接 setArticles(undefined)
+      // 會讓下方 articles.find() 拋錯、整個 App 白畫面（無 error boundary）。
+      const list = Array.isArray(res?.items) ? res.items : []
+      setArticles(list)
+      setTotal(typeof res?.total === 'number' ? res.total : list.length)
+      if (list.length > 0 && !selectedId) {
+        setSelectedId(list[0].id)
+      } else if (list.length === 0) {
         setSelectedId(null)
       }
-    } catch {
-      message.error('載入失敗')
+      if (!Array.isArray(res?.items)) {
+        message.error('載入失敗：API 回應格式不正確（請確認後端 /api/v1/wiki 已註冊）')
+      }
+    } catch (err: any) {
+      message.error('載入失敗：' + (err?.response?.data?.detail || err?.message || '未知錯誤'))
     } finally {
       setLoading(false)
     }

@@ -59,7 +59,9 @@
  */
 
 // ── 系統標題 ──────────────────────────────────────────────────────────────────
-export const SITE_TITLE = '維春集團管理 Portal'
+// ⚠️ 系統標題已改為執行期設定（各 Server 品牌名稱可不同），請改用：
+//      import { getSiteTitle } from '@/config/siteConfig'
+//    設定檔位於 public/config.json 的 brand 欄位。原本的 SITE_TITLE 常數已移除。
 
 // ── 一級選單（群組） ──────────────────────────────────────────────────────────
 export const NAV_GROUP = {

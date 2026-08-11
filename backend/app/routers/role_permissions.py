@@ -28,6 +28,9 @@ PERMISSION_DEFINITIONS = [
     {"key": "calendar_view",              "label": "行事曆",             "group": "一階選單"},
     {"key": "tutorial_videos_view",       "label": "影音教學：查看",      "group": "一階選單"},
     {"key": "tutorial_videos_manage",     "label": "影音教學：上傳/管理", "group": "一階選單"},
+    # 2026-08-11 新增：/wiki 原本在 MainLayout.menuItems 沒有 permissionKey，
+    # 而 filterMenuByPermissions 的規則是「沒設 = 公開」，導致知識庫對所有角色顯示。
+    {"key": "wiki_view",                  "label": "知識庫",             "group": "一階選單"},
     {"key": "settings_users_manage",    "label": "人員管理",   "group": "系統設定"},
     {"key": "settings_roles_manage",    "label": "角色管理",   "group": "系統設定"},
     {"key": "settings_menu_manage",     "label": "選單管理",   "group": "系統設定"},

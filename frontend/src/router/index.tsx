@@ -17,6 +17,8 @@ function isJwtExpired(token: string | null): boolean {
 }
 
 import MainLayout from '@/components/Layout/MainLayout'
+import { useMenuItemsContext } from '@/components/Layout/menuItemsContext'
+import { getHomePageRoute, isRouteInMenu, firstRouteInMenu } from '@/utils/homePage'
 import LoginPage           from '@/pages/Login'
 import DashboardPage       from '@/pages/Dashboard'
 import RoomMaintenancePage       from '@/pages/RoomMaintenance'
@@ -206,7 +208,9 @@ import JinxuSettingsPage       from '@/pages/JinXu/Settings'
 import JinxuManualPage         from '@/pages/JinXu/Manual'
 
 // ── 首頁重定向（讀取 menu-config 設定，fallback 到第一個有權限的 menu 項目）──────
-export const HOME_PAGE_STORAGE_KEY = 'portal_home_page_route'
+// 首頁設定的儲存與選單走訪工具已移至 @/utils/homePage（2026-08-11）
+// 這裡 re-export 舊常數名稱，維持既有 import 相容
+export { HOME_PAGE_STORAGE_KEY } from '@/utils/homePage'
 
 /**
  * 依 permission_key 優先序對應第一個可進入的路由。
@@ -236,31 +240,49 @@ const PERM_DEFAULT_ROUTES: { key: string; route: string }[] = [
   { key: 'tutorial_videos_view',              route: '/tutorial-videos' },
 ]
 
+/**
+ * 首頁判定（2026-08-11 改版）
+ *
+ * 舊行為：拿到 localStorage 的首頁設定就無條件導向，不檢查權限；且設定為
+ * 全瀏覽器共用，換帳號會沿用別人的首頁 → 角色不同時會被送到無權限的頁面。
+ *
+ * 新行為：
+ *   1. 首頁設定改為每帳號獨立（@/utils/homePage）
+ *   2. 以 MainLayout 算好的「套用 menu-config + 權限過濾後」選單驗證設定值，
+ *      該路由不在選單中即視為無效
+ *   3. 無效或未設定 → 取選單最上面第一個可進入的頁面（群組取第一個子頁、
+ *      排除系統設定群組），例如只有 OPERA 權限的帳號會進 /opera/dashboard
+ *   4. 選單完全算不出來（menu-config API 失敗且無快取）→ 才退回 PERM_DEFAULT_ROUTES
+ */
 function HomeRedirect() {
   const user = useAuthStore((s) => s.user)
   const isSystemAdmin = !!(user?.roles?.includes('system_admin'))
+  const { items: visibleMenu, loading: menuLoading } = useMenuItemsContext()
 
   // permissions 尚未從 /me 載入時等待（避免用空權限計算首頁）
   if (!isSystemAdmin && user?.permissions === undefined) {
     return null   // 等待 /me 回應，MainLayout 的 Skeleton 佔位
   }
 
-  const stored = localStorage.getItem(HOME_PAGE_STORAGE_KEY)
-
-  // system_admin：stored 或 /dashboard
-  if (isSystemAdmin) {
-    return <Navigate to={stored ?? '/dashboard'} replace />
+  // 選單尚未算完時等待，否則會拿空選單誤判成「設定無效」
+  if (menuLoading) {
+    return null
   }
 
-  // stored route：使用者在 menu-config 明確設定的首頁，直接信任並採用。
-  // 頁面層的 PermissionGuard 會處理無權限情況；登出時已清除跨帳號的殘留設定。
-  // ⚠️  不再做白名單比對——PERM_DEFAULT_ROUTES 只涵蓋預設路由，自訂路由或重新命名的
-  //     路由都可能不在清單中，導致設定完全無效。
-  if (stored) {
+  const stored = getHomePageRoute(user?.id)
+
+  // 設定值有效 = 該路由出現在使用者實際看得到的選單中
+  if (stored && isRouteInMenu(visibleMenu, stored)) {
     return <Navigate to={stored} replace />
   }
 
-  // 無首頁設定：依優先序選第一個有權限的 route
+  // 無效或未設定 → 選單最上面第一個可進入的頁面
+  const firstRoute = firstRouteInMenu(visibleMenu)
+  if (firstRoute) {
+    return <Navigate to={firstRoute} replace />
+  }
+
+  // 選單為空（API 失敗且無快取）：依優先序選第一個有權限的 route
   const perms = user?.permissions ?? []
   const hasWildcard = perms.includes('*')
   const validRoutes = PERM_DEFAULT_ROUTES
@@ -397,7 +419,11 @@ export default function AppRouter() {
         } />
 
         {/* ── 知識庫（LLM Wiki）─────────────────────────────────── */}
-        <Route path="wiki" element={<WikiPage />} />
+        <Route path="wiki" element={
+          <PermissionGuard permissionKey="wiki_view">
+            <WikiPage />
+          </PermissionGuard>
+        } />
 
         {/* ── AI 工單查詢助理 ───────────────────────────────────────── */}
         <Route path="ai-assistant" element={<AIAssistantPage />} />

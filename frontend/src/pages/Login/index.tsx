@@ -7,6 +7,7 @@ import { UserOutlined, LockOutlined, BankOutlined, QuestionCircleOutlined } from
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/stores/authStore'
 import { authApi } from '@/api/auth'
+import { getSiteSubtitle } from '@/config/siteConfig'
 
 const { Title, Text } = Typography
 
@@ -141,7 +142,7 @@ export default function LoginPage() {
               集團管理 Portal{ENV_TAG}
             </Title>
             <Text type="secondary" style={{ fontSize: 12 }}>
-              維春集團內部作業與管理平台
+              {getSiteSubtitle()}
             </Text>
           </div>
         </div>

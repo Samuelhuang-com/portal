@@ -46,7 +46,8 @@ import {
   MenuConfigHistoryItem,
 } from '@/api/menuConfig'
 import { menuItems, computeReparentedL2 } from '@/components/Layout/MainLayout'
-import { HOME_PAGE_STORAGE_KEY } from '@/router'
+import { getHomePageRoute, saveHomePageRoute } from '@/utils/homePage'
+import { useAuthStore } from '@/stores/authStore'
 import { ICON_MAP, ICON_GROUPS, resolveIcon } from '@/constants/iconMap'
 
 const { Text, Title } = Typography
@@ -821,8 +822,10 @@ export default function MenuConfigPage() {
   const [history, setHistory]           = useState<MenuConfigHistoryItem[]>([])
   const [historyLoading, setHistoryLoading] = useState(false)
   const [activeId, setActiveId]         = useState<string | null>(null)
+  // 首頁設定為「每帳號獨立」（2026-08-11），故需帶入目前登入者 id
+  const currentUserId = useAuthStore((s) => s.user?.id)
   const [homePageRoute, setHomePageRoute] = useState<string>(
-    () => localStorage.getItem(HOME_PAGE_STORAGE_KEY) || '/dashboard'
+    () => getHomePageRoute(currentUserId) || '/dashboard'
   )
 
   // 新增選單 Modal
@@ -976,10 +979,10 @@ export default function MenuConfigPage() {
 
   // ── 設定首頁 ──────────────────────────────────────────────────────────────
   const handleSetHomePage = useCallback((route: string) => {
-    localStorage.setItem(HOME_PAGE_STORAGE_KEY, route)
+    saveHomePageRoute(currentUserId, route)
     setHomePageRoute(route)
     message.success(`已設為首頁：${route}`)
-  }, [])
+  }, [currentUserId])
 
   // ── 刪除自訂項目（non-custom 子項目退回上一層）────────────────────────────
   const handleDeleteItem = useCallback((key: string) => {

@@ -54,8 +54,10 @@ import {
 } from '@ant-design/icons'
 import { useNavigate, useLocation, Outlet } from 'react-router-dom'
 import { useAuthStore } from '@/stores/authStore'
-import { SITE_TITLE, NAV_GROUP, NAV_PAGE } from '@/constants/navLabels'
+import { NAV_GROUP, NAV_PAGE } from '@/constants/navLabels'
+import { getSiteTitle } from '@/config/siteConfig'
 import { fetchMenuConfig, MenuConfigItem } from '@/api/menuConfig'
+import { MenuItemsContext } from '@/components/Layout/menuItemsContext'
 import { resolveIcon } from '@/constants/iconMap'
 import { authApi } from '@/api/auth'
 
@@ -409,6 +411,9 @@ export const menuItems: MenuItem[] = [
     key: '/wiki',
     icon: <ReadOutlined />,
     label: NAV_GROUP.wiki,
+    // 2026-08-11：原本沒有 permissionKey，而 filterMenuByPermissions 視「沒設 = 公開」，
+    // 導致知識庫對所有角色顯示。對應 role_permissions.py PERMISSION_DEFINITIONS 的 wiki_view。
+    permissionKey: 'wiki_view',
   },
   // ── 營運分析（OPERA）─────────────────────────────────────────────────────
   // 2026-08-04 新增。Portal 首個「檔案上傳型」資料模組（人工上傳 OPERA TXT），
@@ -1071,6 +1076,12 @@ export default function MainLayout() {
     ),
   ]
 
+  // 供 Outlet 子元件（HomeRedirect）判斷首頁用：與側邊欄完全同一份選單
+  const menuItemsCtxValue = useMemo(
+    () => ({ items: dynamicMenuItems, loading: menuLoading }),
+    [dynamicMenuItems, menuLoading]
+  )
+
   const userMenu = {
     items: [
       { key: 'profile', icon: <UserOutlined />, label: '個人資料' },
@@ -1128,7 +1139,7 @@ export default function MainLayout() {
           <HomeOutlined style={{ fontSize: 20, color: designToken.colorPrimary }} />
           {!collapsed && (
             <Text strong style={{ marginLeft: 10, fontSize: 15, whiteSpace: 'nowrap' }}>
-              {SITE_TITLE}
+              {getSiteTitle()}
             </Text>
           )}
         </div>
@@ -1242,7 +1253,9 @@ export default function MainLayout() {
               <div style={{ fontSize: 14, color: '#94a3b8' }}>請洽系統管理員調整角色權限設定</div>
             </div>
           ) : (
-            <Outlet />
+            <MenuItemsContext.Provider value={menuItemsCtxValue}>
+              <Outlet />
+            </MenuItemsContext.Provider>
           )}
         </Content>
       </Layout>
