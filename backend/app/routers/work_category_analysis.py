@@ -6,6 +6,10 @@ Prefix: /api/v1/work-category-analysis
   luqun    → LuqunRepairCase          (work_hours = 花費工時 HR；fallback: 工務處理天數×24)
   dazhi    → DazhiRepairCase          (work_hours = 花費工時 HR；fallback: 工務處理天數/維修天數×24)
   ihg_room → IHGRoomMaintenanceMaster (raw_json["工時計算"] 分鐘，÷60 轉小時；類別=例行維護)
+  other_tasks → OtherTask + OtherTaskRecord
+                (類別=屬性欄位 上級交辦／緊急事件；時間計算方式比照工作日誌：
+                 有子表→依子表「時間開始」日期歸戶、工時=結束−開始、每人各記一份；
+                 無子表→依 created_at 歸戶、工時=主表「維修工時」)
 
 端點：
   GET /years          — 有資料的年份清單
@@ -20,7 +24,8 @@ Prefix: /api/v1/work-category-analysis
 篩選參數（/stats）：
   year     : int           年度（必選）
   month    : int = 0       月份（0=全年）
-  sources  : str = "all"   all / luqun / dazhi / ihg_room（逗號分隔多選）
+  sources  : str = "all"   all / luqun / dazhi / ihg_room / hotel_di / mall_fi / full_bi
+                           / other_tasks（逗號分隔多選）
   category : str = "all"   all / 現場報修 / 上級交辦 / 緊急事件 / 例行維護 / 每日巡檢
   person   : str = "all"   all / <人員姓名>
 """
@@ -47,7 +52,15 @@ from app.models.b1f_inspection import B1FInspectionBatch
 from app.models.b2f_inspection import B2FInspectionBatch
 from app.models.b4f_inspection import B4FInspectionBatch
 from app.models.rf_inspection import RFInspectionBatch
+from app.models.other_tasks import OtherTask, OtherTaskRecord
 from app.services.time_utils import parse_minutes as _parse_di_minutes
+
+# 主管交辦／緊急事件的人員拆分規則刻意共用工作日誌的實作，
+# 確保兩處口徑永遠一致（改一處即同步生效）。
+from app.routers.work_journal import (
+    _persons as _wj_persons,
+    _split_detail_persons as _wj_split_persons,
+)
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
 
@@ -64,6 +77,7 @@ SOURCE_LABELS = {
     "hotel_di": "飯店每日巡檢",
     "mall_fi":  "商場設施巡檢",
     "full_bi":  "整棟巡檢",
+    "other_tasks": "主管交辦／緊急事件",
 }
 
 def _parse_minutes_to_hours(val: str) -> float:
@@ -90,6 +104,35 @@ def _parse_hotel_date(date_str: str) -> tuple[int, int, int] | None:
 # ══════════════════════════════════════════════════════════════════════════════
 # 資料載入
 # ══════════════════════════════════════════════════════════════════════════════
+
+def _group_other_task_worklogs(recs: list, fallback_person: str) -> list[dict]:
+    """
+    主管交辦／緊急事件子表（維修記錄）按「(時間開始日期, 人員)」分組合併工時。
+    回傳 [{"date": date, "person": str, "hours": float}]。
+
+    口徑刻意與工作日誌 `work_journal._group_detail_rows` 完全一致：
+      - 以子表「時間開始」的**實際日期**歸戶，不採用工單頭的建立日期
+      - 工時 = 時間結束 − 時間開始，僅計 end_at > start_at 的區段
+        （無「時間結束」的子表列 → 工作日誌顯示為無工時，此處同樣不計工時）
+      - 子表「維修人員」可多人（、，；／ 或空白分隔），逐人各記一份工時
+        （人工時口徑：三人同時處理 1 小時 ＝ 3 人工時）
+      - 子表「維修人員」空白 → 退回工單頭「工程人員」→ 「未指定」
+    差異僅在本函式一次處理全部日期（工作日誌是單日查詢），故按日期分組。
+    """
+    acc: dict[tuple, float] = defaultdict(float)
+    for r in recs:
+        if not r.start_at:
+            continue
+        if not r.end_at or r.end_at <= r.start_at:
+            continue
+        sec = (r.end_at - r.start_at).total_seconds()
+        for person in _wj_split_persons(r.person, fallback_person):
+            acc[(r.start_at.date(), person)] += sec
+    return [
+        {"date": d, "person": p, "hours": sec / 3600.0}
+        for (d, p), sec in acc.items()
+    ]
+
 
 def _stat_dt_for(c) -> Optional[datetime]:
     """
@@ -300,12 +343,66 @@ def _load_all(db: Session, sources: set[str]) -> list[dict]:
                     "case_id":    b.ragic_id,
                 })
 
+    # ── 主管交辦／緊急事件（OtherTask，類別＝屬性欄位）─────────────────────────
+    # 時間計算方式比照工作日誌 `work_journal._fetch_other_tasks`（2026-08-12 業主指示）：
+    #   有子表（維修記錄，且「時間開始」非空）→ 依子表時間開始的實際日期歸戶，
+    #                                          工時＝結束−開始，每人各記一份
+    #   無子表（或子表全無時間開始）           → 依 created_at 歸戶，工時＝主表「維修工時」，
+    #                                          工程人員多人時每人各記一份
+    # 不做 venue 過濾：本模組為集團層彙總，飯店與商場合併呈現（同 luqun/dazhi 作法）。
+    if "other_tasks" in sources:
+        ot_rec_map: dict[str, list] = defaultdict(list)
+        for r in db.query(OtherTaskRecord).all():
+            if r.start_at is not None:
+                ot_rec_map[r.parent_ragic_id].append(r)
+
+        for rec in db.query(OtherTask).all():
+            # 屬性空白 → 歸「上級交辦」（同工作日誌 `rec.task_type or "上級交辦"`）；
+            # 非五大類別的其他值本模組無處可放，跳過。
+            cat = (rec.task_type or "").strip() or "上級交辦"
+            if cat not in ("上級交辦", "緊急事件"):
+                continue
+
+            dated_recs = ot_rec_map.get(rec.ragic_id, [])
+            if dated_recs:
+                for g in _group_other_task_worklogs(
+                    dated_recs, (rec.engineer or "").strip()
+                ):
+                    if g["hours"] <= 0:
+                        continue
+                    rows.append({
+                        "year":       g["date"].year,
+                        "month":      g["date"].month,
+                        "day":        g["date"].day,
+                        "work_hours": g["hours"],
+                        "category":   cat,
+                        "person":     g["person"],
+                        "source":     "other_tasks",
+                        "case_id":    rec.ragic_id,
+                    })
+            else:
+                if not rec.created_at:
+                    continue
+                if not rec.work_hours or rec.work_hours <= 0:
+                    continue
+                for person in _wj_persons(rec.engineer or ""):
+                    rows.append({
+                        "year":       rec.created_at.year,
+                        "month":      rec.created_at.month,
+                        "day":        rec.created_at.day,
+                        "work_hours": rec.work_hours,
+                        "category":   cat,
+                        "person":     person,
+                        "source":     "other_tasks",
+                        "case_id":    rec.ragic_id,
+                    })
+
     return rows
 
 
 def _parse_sources(sources_str: str) -> set[str]:
     if sources_str.strip().lower() == "all":
-        return {"luqun", "dazhi", "ihg_room", "hotel_di", "mall_fi", "full_bi"}
+        return {"luqun", "dazhi", "ihg_room", "hotel_di", "mall_fi", "full_bi", "other_tasks"}
     return {s.strip() for s in sources_str.split(",") if s.strip()}
 
 

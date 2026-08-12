@@ -40,10 +40,11 @@ const { Option } = Select
 // ── 常數 ──────────────────────────────────────────────────────────────────────
 const MONTHS     = Array.from({ length: 12 }, (_, i) => i + 1)
 const PIE_COLORS = ['#4BA8E8', '#52C41A', '#FF4D4F', '#FA8C16', '#722ED1']
+// 由 SOURCE_LABELS 派生，不另外維護一份清單
+//（原本硬編碼只有 luqun / dazhi，後端陸續新增的來源都選不到）
 const SOURCE_OPTIONS = [
-  { value: 'all',   label: '全部來源' },
-  { value: 'luqun', label: '商場工務' },
-  { value: 'dazhi', label: '大直工務' },
+  { value: 'all', label: '全部來源' },
+  ...Object.entries(SOURCE_LABELS).map(([value, label]) => ({ value, label })),
 ]
 
 // ── 共用渲染 ───────────────────────────────────────────────────────────────────
@@ -710,7 +711,7 @@ export default function WorkCategoryAnalysisPage() {
                 {MONTHS.map(m => <Option key={m} value={m}>{m}月</Option>)}
               </Select>
               {/* 來源 */}
-              <Select value={sources} onChange={v => { setSources(v); setPerson('all') }} style={{ width: 100 }} size="small">
+              <Select value={sources} onChange={v => { setSources(v); setPerson('all') }} style={{ width: 160 }} size="small">
                 {SOURCE_OPTIONS.map(o => <Option key={o.value} value={o.value}>{o.label}</Option>)}
               </Select>
               {/* 類別 */}

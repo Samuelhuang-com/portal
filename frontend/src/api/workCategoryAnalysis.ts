@@ -11,14 +11,22 @@ const BASE = '/work-category-analysis'
 export const CATEGORIES = ['現場報修', '上級交辦', '緊急事件', '例行維護', '每日巡檢'] as const
 export type Category = typeof CATEGORIES[number]
 
-export const SOURCES = ['luqun', 'dazhi', 'hotel_room', 'hotel_di'] as const
+// ⚠️ 下列三個常數的鍵必須與後端 work_category_analysis.py 的
+//    `_parse_sources("all")` 與 `SOURCE_LABELS` 完全一致。後端新增來源時要同步補這裡，
+//    否則圖例（`Object.entries(SOURCE_LABELS)`）與來源篩選會少項目。
+export const SOURCES = [
+  'luqun', 'dazhi', 'ihg_room', 'hotel_di', 'mall_fi', 'full_bi', 'other_tasks',
+] as const
 export type Source = typeof SOURCES[number]
 
 export const SOURCE_LABELS: Record<Source | string, string> = {
-  luqun:      '商場工務',
-  dazhi:      '大直工務',
-  hotel_room: '房務保養',
-  hotel_di:   '飯店每日巡檢',
+  luqun:       '商場工務',
+  dazhi:       '大直工務',
+  ihg_room:    'IHG客房保養',
+  hotel_di:    '飯店每日巡檢',
+  mall_fi:     '商場設施巡檢',
+  full_bi:     '整棟巡檢',
+  other_tasks: '主管交辦／緊急事件',
 }
 
 export const CATEGORY_COLORS: Record<string, string> = {
@@ -38,10 +46,13 @@ export const CATEGORY_TAG_COLORS: Record<string, string> = {
 }
 
 export const SOURCE_COLORS: Record<string, string> = {
-  luqun:      '#1B3A5C',
-  dazhi:      '#4BA8E8',
-  hotel_room: '#722ED1',
-  hotel_di:   '#52C41A',
+  luqun:       '#1B3A5C',
+  dazhi:       '#4BA8E8',
+  ihg_room:    '#722ED1',
+  hotel_di:    '#52C41A',
+  mall_fi:     '#FA8C16',
+  full_bi:     '#13C2C2',
+  other_tasks: '#EB2F96',
 }
 
 // ── 型別定義 ──────────────────────────────────────────────────────────────────

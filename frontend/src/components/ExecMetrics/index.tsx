@@ -43,10 +43,15 @@ const T = {
 }
 
 // ── 來源色（與 ExecDashboard 保持一致）────────────────────────────────────────
+// 鍵須與 api/workCategoryAnalysis.ts 的 SOURCE_LABELS 一致（後端新增來源時同步補）
 export const SOURCE_PIE_COLORS: Record<string, string> = {
-  luqun:      '#1B3A5C',
-  dazhi:      '#4BA8E8',
-  hotel_room: '#722ED1',
+  luqun:       '#1B3A5C',
+  dazhi:       '#4BA8E8',
+  ihg_room:    '#722ED1',
+  hotel_di:    '#52C41A',
+  mall_fi:     '#FA8C16',
+  full_bi:     '#13C2C2',
+  other_tasks: '#EB2F96',
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
