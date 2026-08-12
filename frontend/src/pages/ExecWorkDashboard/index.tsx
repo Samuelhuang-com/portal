@@ -342,15 +342,7 @@ const HOTEL_CAT_ROUTES: Record<string, string> = {
   每日巡檢: '/hotel/daily-inspection',
 }
 
-function HotelDailyTable({
-  data,
-  supervisorTotal = 0,
-  emergencyTotal  = 0,
-}: {
-  data: HotelDailyHoursData
-  supervisorTotal?: number
-  emergencyTotal?:  number
-}) {
+function HotelDailyTable({ data }: { data: HotelDailyHoursData }) {
   const navigate = useNavigate()
   const n = data.days.length
   const zeroes = (): number[] => Array(n).fill(0)
@@ -360,19 +352,13 @@ function HotelDailyTable({
   const CATS = ['現場報修', '上級交辦', '緊急事件', '例行維護', '每日巡檢']
   const catCases: Record<string, number[]> = {
     現場報修: find('飯店工務部')?.cases ?? zeroes(),
-    上級交辦: zeroes(),   // daily breakdown not available; monthly total shown in TOTAL column
-    緊急事件: zeroes(),
+    // 上級交辦／緊急事件：/hotel/daily-hours 已提供日拆（OtherTask.created_at、venue='飯店'）
+    上級交辦: find('上級交辦')?.cases ?? zeroes(),
+    緊急事件: find('緊急事件')?.cases ?? zeroes(),
     例行維護: addH(addH(find('客房保養管理')?.cases, find('飯店週期保養')?.cases), find('IHG客房保養')?.cases),
     每日巡檢: find('飯店每日巡檢')?.cases ?? zeroes(),
   }
-  // Override monthly totals for 上級交辦 / 緊急事件
-  const catMonthlyOverrides: Record<string, number> = {
-    上級交辦: supervisorTotal,
-    緊急事件: emergencyTotal,
-  }
-  // Effective totals per category (use monthly override for 上級交辦/緊急事件)
-  const catEffectiveTotal = (cat: string) =>
-    catMonthlyOverrides[cat] !== undefined ? catMonthlyOverrides[cat] : catCases[cat].reduce((a, b) => a + b, 0)
+  const catEffectiveTotal = (cat: string) => catCases[cat].reduce((a, b) => a + b, 0)
   const grandTotal = CATS.reduce((s, c) => s + catEffectiveTotal(c), 0)
   type DRow = { key: string; category: string; cases: number[]; total: number; pct: number }
   const rows: DRow[] = CATS.map(cat => {
@@ -419,15 +405,6 @@ function HotelDailyTable({
     {
       title: '案件數', key: 'total', width: 80, align: 'right' as const,
       render: (_: unknown, row: DRow) => {
-        // 上級交辦/緊急事件 only have monthly totals (no daily breakdown)
-        if (catMonthlyOverrides[row.category] !== undefined) {
-          return (
-            <span>
-              <Text strong style={{ fontSize: 15, color: '#722ed1' }}>{row.total}</Text>
-              <Text style={{ fontSize: 10, color: '#aaa', marginLeft: 2 }}>月計</Text>
-            </span>
-          )
-        }
         if (row.category === 'TOTAL' || !HOTEL_CAT_ROUTES[row.category] || row.total === 0)
           return <Text strong style={{ fontSize: 15, color: row.category === 'TOTAL' ? '#0d6b4e' : '#333' }}>{row.total}</Text>
         return (
@@ -451,6 +428,12 @@ function HotelDailyTable({
     <>
       <Table dataSource={rows} columns={columns} pagination={false} size="small"
         scroll={{ x: 'max-content' }} rowClassName={(r) => r.category === 'TOTAL' ? 'dash-daily-total-row' : ''} />
+      <div style={{ marginTop: 6, color: '#aaa', fontSize: 12, lineHeight: 1.7 }}>
+        口徑：案件數＝<b>開單張數</b>（一張工單計 1 件）。日期依各來源模組的案件日期歸戶 —
+        現場報修＝發生日、例行維護／每日巡檢＝排定日、上級交辦／緊急事件＝建立日。<br />
+        與「工作日誌」<b>計算基準不同、數字不會相等</b> —
+        工作日誌算的是<b>人工時</b>，同一張工單多人或多次處理會分列，且以實際處理日（子表時間開始）歸戶。
+      </div>
       <style>{`.dash-daily-total-row td { background: #f5f5f5 !important; font-weight: 600; }`}</style>
     </>
   )
@@ -524,8 +507,16 @@ function MallDailyTable({ data }: { data: MallDailyHoursData }) {
     },
   ]
   return (
-    <Table dataSource={rows} columns={columns} pagination={false} size="small"
-      scroll={{ x: 'max-content' }} rowClassName={(r) => r.category === 'TOTAL' ? 'dash-daily-total-row' : ''} />
+    <>
+      <Table dataSource={rows} columns={columns} pagination={false} size="small"
+        scroll={{ x: 'max-content' }} rowClassName={(r) => r.category === 'TOTAL' ? 'dash-daily-total-row' : ''} />
+      <div style={{ marginTop: 6, color: '#aaa', fontSize: 12, lineHeight: 1.7 }}>
+        口徑：案件數＝<b>開單張數</b>（一張工單計 1 件）。日期依各來源模組的案件日期歸戶 —
+        現場報修＝已結案取結案日／未結案取發生日、例行維護／每日巡檢＝排定日、上級交辦／緊急事件＝建立日。<br />
+        與「工作日誌」<b>計算基準不同、數字不會相等</b> —
+        工作日誌算的是<b>人工時</b>，同一張工單多人或多次處理會分列，且以實際處理日（子表時間開始）歸戶。
+      </div>
+    </>
   )
 }
 
@@ -1841,11 +1832,7 @@ export default function ExecWorkDashboardPage() {
                   </Space>
                 ),
                 children: hotelDailyData
-                  ? <HotelDailyTable
-                      data={hotelDailyData}
-                      supervisorTotal={otherTasksStats?.['上級交辦']?.total ?? 0}
-                      emergencyTotal={otherTasksStats?.['緊急事件']?.total ?? 0}
-                    />
+                  ? <HotelDailyTable data={hotelDailyData} />
                   : <div style={{ color: '#aaa', padding: '12px 0', textAlign: 'center' }}>資料載入中…</div>,
               },
               {
