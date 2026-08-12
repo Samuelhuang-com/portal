@@ -57,6 +57,26 @@ def _f(v: Decimal | None) -> float | None:
     return float(v) if v is not None else None
 
 
+def source_info() -> dict[str, Any]:
+    """本模組的資料來源說明（給前端的「?」說明用）。
+
+    ⚠️ `note` 會直接顯示在畫面上。同一個模組裡混了兩種來源，
+       不標示清楚會被當成 TXT 上傳的資料看待。
+
+    ⚠️ `/segments` 與 `/sync/status` **共用這一份**。歷史資料還沒回補完時
+       `/segments` 前端根本不會呼叫（沒有 data_range 就不查），
+       說明卻恰好是那時候最需要看的，所以 `/sync/status` 也要帶。
+    """
+    return {
+        "provider": "OPERA Cloud（OHIP 非同步營收 API，已落地）",
+        "table": "ohip_revenue_history",
+        "hotel_id": settings.OHIP_HOTEL_ID,
+        "note": ("本頁資料來自 OPERA Cloud API，**不是**人工上傳的 TXT 報表。"
+                 "市場區隔（Market Code）是貴飯店在 OPERA 自行設定的分類，"
+                 "與 TXT 的「散客／團體」四類**不是同一套分類，不可互相對照**。"),
+    }
+
+
 def data_range(db: Session) -> dict[str, Any]:
     """資料實際涵蓋的起迄。
 
@@ -210,16 +230,7 @@ def analyze(db: Session, *, start: str, end: str, dimension: str = DIM_MARKET,
         "segments": segments,
         "trend": trend,
         "row_count": len(rows),
-        "source": {
-            "provider": "OPERA Cloud（OHIP 非同步營收 API，已落地）",
-            "table": "ohip_revenue_history",
-            "hotel_id": settings.OHIP_HOTEL_ID,
-            # ⚠️ 這一句會直接顯示在畫面上。同一個模組裡混了兩種來源，
-            #    不標示清楚會被當成 TXT 上傳的資料看待。
-            "note": ("本頁資料來自 OPERA Cloud API，**不是**人工上傳的 TXT 報表。"
-                     "市場區隔（Market Code）是貴飯店在 OPERA 自行設定的分類，"
-                     "與 TXT 的「散客／團體」四類**不是同一套分類，不可互相對照**。"),
-        },
+        "source": source_info(),
         "data_range": data_range(db),
     }
 

@@ -69,6 +69,9 @@ def sync_status(
         "progress": SY.backfill_progress(db),
         "recent": SY.list_syncs(db, limit=limit),
         "data_range": SS.data_range(db),
+        # 與 GET /segments 共用同一份。回補完成前前端不會呼叫 /segments，
+        # 但畫面上的「?」說明那時候就要能顯示（不在前端寫死）。
+        "source": SS.source_info(),
         "config": {
             "backfill_years": SY.BACKFILL_YEARS,
             "chunk_days": SY.CHUNK_DAYS,

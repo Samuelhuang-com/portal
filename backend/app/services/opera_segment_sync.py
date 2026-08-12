@@ -10,7 +10,8 @@
 ═══════════════════════════════════════════════════════════════════════════
 | 模式 | 何時跑 | 範圍 |
 |------|-------|------|
-| `backfill` | 手動，可重複按到補完 | 往前 2 年，**每次補一段** |
+| `backfill` | 網頁手動，可重複按到補完 | 往前 2 年，**每次補一段** |
+| `backfill`（全部） | `sync_tool.py`，補完自動 skip | 往前 2 年，**一次跑完所有待補段** |
 | `incremental` | 每日 06:30 排程 | 最近 `INCREMENTAL_DAYS` 天 |
 
 ⚠️ **為什麼回補要做成「每次補一段」而不是一次跑完**
@@ -87,23 +88,31 @@ def _all_chunks(today: date | None = None) -> list[tuple[date, date]]:
     return out
 
 
-def backfill_progress(db: Session, today: date | None = None) -> dict[str, Any]:
-    """回補進度。
+def _split_chunks(db: Session, today: date | None = None
+                  ) -> tuple[list[tuple[date, date]], list[tuple[date, date]]]:
+    """把所有段分成 (已補, 待補)。
 
     ⚠️ 判斷「這一段補過了沒」用的是**該段有沒有任何一列資料**，
        而不是同步紀錄 —— 紀錄可能被清、也可能因為當機沒寫完，
        但資料在不在是客觀事實。
     """
     hotel_id = settings.OHIP_HOTEL_ID
-    chunks = _all_chunks(today)
-    done, pending = [], []
-    for a, b in chunks:
+    done: list[tuple[date, date]] = []
+    pending: list[tuple[date, date]] = []
+    for a, b in _all_chunks(today):
         exists = (db.query(OhipRevenueHistory.id)
                     .filter(OhipRevenueHistory.hotel_id == hotel_id,
                             OhipRevenueHistory.business_date >= a.isoformat(),
                             OhipRevenueHistory.business_date <= b.isoformat())
                     .first())
         (done if exists else pending).append((a, b))
+    return done, pending
+
+
+def backfill_progress(db: Session, today: date | None = None) -> dict[str, Any]:
+    """回補進度。"""
+    chunks = _all_chunks(today)
+    done, pending = _split_chunks(db, today)
 
     return {
         "total_chunks": len(chunks),
@@ -300,6 +309,81 @@ def backfill_next_chunk(db: Session, *, triggered_by: str = "",
                          mode="backfill", triggered_by=triggered_by)
     return {"done": False, "result": result,
             "progress": backfill_progress(db, today)}
+
+
+def sync_backfill_all(*, triggered_by: str = "sync_tool",
+                      today: date | None = None) -> dict[str, Any]:
+    """把所有待補的段一次補完（給 `sync_tool.py` 用）。
+
+    ⚠️ **和網頁的「補下一段」是同一件事，只是不受 HTTP 逾時限制。**
+       切成 45 天一段的理由是 2 MB 回應上限，不是 API 的日期上限；
+       「每次只補一段」則純粹是為了讓網頁請求不逾時。sync_tool 是本機
+       GUI、跑在背景執行緒，沒有這個限制，所以可以一次跑完（約 17 段 × 3～4 秒）。
+
+    ⚠️ **補完就 skip，不打 OHIP。** sync_tool 的自動同步最短 15 分一輪，
+       每輪都重跑會白白消耗 API 配額。`pending_chunks == 0` 時只做一次
+       DB 查詢就回報「無事可做」。
+
+    ⚠️ **一次執行只走過一輪 pending 清單，不重算進度。**
+       `_split_chunks()` 判定「補過了沒」看的是該段**有沒有資料**，
+       所以飯店開業前那種本來就沒有資料的段，抓完仍然是 pending。
+       若改成「迴圈到 pending 歸零」會在那種段上無窮打 API。
+       （網頁的「補下一段」在這種情況會卡在同一段，屬既有行為，本函式不處理。）
+
+    ⚠️ **不碰增量。** 昨天的資料由 `main.py` 每日 06:30 的 `sync_incremental`
+       負責（重抓最近 14 天）。兩邊都跑只是重複打 OHIP。
+
+    回傳格式對齊 sync_tool 的期待：`fetched` / `upserted` / `errors`。
+    """
+    from app.core.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        if not ohip_client.is_configured():
+            # 未設定就跑會讓 sync_tool 每輪紅燈。這是「沒設定」不是「失敗」。
+            return {
+                "fetched": 0, "upserted": 0, "errors": 0,
+                "chunks_total": 0, "chunks_done": 0, "chunks_failed": 0,
+                "skipped": True,
+                "message": "OHIP 尚未設定完成，缺少：" + "、".join(ohip_client.missing_settings()),
+            }
+
+        _, pending = _split_chunks(db, today)
+        if not pending:
+            return {
+                "fetched": 0, "upserted": 0, "errors": 0,
+                "chunks_total": 0, "chunks_done": 0, "chunks_failed": 0,
+                "skipped": True, "message": "回補已完成，沒有待補的區段。",
+            }
+
+        written = 0
+        ok = 0
+        failed = 0
+        errors: list[str] = []
+        warnings: list[str] = []
+        for a, b in pending:
+            r = _sync_range(db, a, b, mode="backfill", triggered_by=triggered_by)
+            written += int(r.get("rows_written") or 0)
+            warnings.extend(r.get("warnings") or [])
+            if r.get("status") == STATUS_FAILED:
+                failed += 1
+                errors.append(r.get("error") or f"{a}～{b} 失敗")
+                # ⚠️ 失敗多半是連線／認證問題，後面的段大概率也會失敗。
+                #    繼續跑只是把同一個錯誤重複 17 次，直接停掉。
+                break
+            ok += 1
+
+        return {
+            "fetched": written, "upserted": written, "errors": failed,
+            "chunks_total": len(pending),
+            "chunks_done": ok,
+            "chunks_failed": failed,
+            "skipped": False,
+            "error_messages": errors,
+            "warnings": warnings,
+        }
+    finally:
+        db.close()
 
 
 def sync_incremental(db: Session, *, days: int = INCREMENTAL_DAYS,

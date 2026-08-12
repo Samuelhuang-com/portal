@@ -22,7 +22,7 @@ import {
 } from 'antd'
 import {
   ApiOutlined, ClockCircleOutlined, DatabaseOutlined, FileSearchOutlined,
-  ReloadOutlined, ThunderboltOutlined,
+  QuestionCircleOutlined, ReloadOutlined, ThunderboltOutlined,
 } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 
@@ -55,6 +55,7 @@ const LiveStatusPanel: React.FC = () => {
   const [data, setData] = useState<LiveStatusResult | null>(null)
   const [error, setError] = useState<string>('')
 
+  const [helpOpen, setHelpOpen] = useState(false)
   const [logOpen, setLogOpen] = useState(false)
   const [logLoading, setLogLoading] = useState(false)
   const [logs, setLogs] = useState<OhipCallLogRow[]>([])
@@ -203,6 +204,16 @@ const LiveStatusPanel: React.FC = () => {
           <Space wrap>
             <ThunderboltOutlined style={{ color: ACCENT }} />
             <Text strong style={{ color: BRAND }}>OPERA 即時房況</Text>
+            {/* ⚠️ 來源說明收在這裡。它對這個面板是關鍵資訊（與下方分析時點不同），
+                但常駐 Alert 會佔掉版面，且 /realtime/dashboard 頁面頂端已有一則
+                幾乎相同的說明，兩則連著出現反而沒人看。 */}
+            <Tooltip title="資料來源說明">
+              <Button
+                type="text" size="small" aria-label="資料來源說明"
+                icon={<QuestionCircleOutlined style={{ color: ACCENT, fontSize: 16 }} />}
+                onClick={() => setHelpOpen(true)}
+              />
+            </Tooltip>
             <Tag icon={<ApiOutlined />} color={ACCENT}>API 即時取數</Tag>
             {src?.fetched_at && (
               <Text type="secondary" style={{ fontSize: 12 }}>
@@ -225,20 +236,25 @@ const LiveStatusPanel: React.FC = () => {
           </Space>
         }
       >
-        <Alert
-          type="warning"
-          showIcon
-          style={{ marginBottom: 12 }}
-          message="本區塊與下方分析的資料來源不同"
-          description={
-            <span>
-              本區塊直接向 OPERA Cloud 取數，是<Text strong>此刻</Text>的房況；
-              下方營收／ADR／RevPAR 來自<Text strong>人工上傳的報表</Text>，會落後數天。
-              兩者<Text strong>時點不同，請勿混用比較</Text>。
-              另外 OPERA 這支 API <Text strong>不提供營收類資料</Text>，故本區塊沒有 ADR／RevPAR。
-            </span>
+        <Modal
+          open={helpOpen}
+          onCancel={() => setHelpOpen(false)}
+          footer={null}
+          width={520}
+          title={
+            <Space size={8}>
+              <ThunderboltOutlined style={{ color: ACCENT }} />
+              <span>本區塊與下方分析的資料來源不同</span>
+            </Space>
           }
-        />
+        >
+          <div style={{ lineHeight: 1.8 }}>
+            本區塊直接向 OPERA Cloud 取數，是<Text strong>此刻</Text>的房況；
+            下方營收／ADR／RevPAR 來自<Text strong>人工上傳的報表</Text>，會落後數天。
+            兩者<Text strong>時點不同，請勿混用比較</Text>。
+            另外 OPERA 這支 API <Text strong>不提供營收類資料</Text>，故本區塊沒有 ADR／RevPAR。
+          </div>
+        </Modal>
 
         <Spin spinning={loading}>
           {error ? (

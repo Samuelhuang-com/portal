@@ -58,12 +58,24 @@ function indexColor(v: number): string {
   return 'inherit'
 }
 
+/** 頁面層級說明的標題（承載頁把它收進 TAB 的「?」時共用同一份文字） */
+export const EVENT_HELP_TITLE = '先用人工倍數，累積夠了再改用學習值'
+/** 後端沒帶 `hint` 時的預設內文 */
+export const EVENT_HELP_FALLBACK =
+  '同名事件累積 3 次以上才能改用「資料學習」的係數；少於這個次數等於拿單一樣本當結論。'
+
 interface Props {
   /** true = 嵌在其他頁面的 TAB 內，不畫外層 padding、標題與回頂端按鈕 */
   embedded?: boolean
+  /**
+   * 有傳這個 callback 時，頁面層級的說明 Alert **不自己顯示**，
+   * 改把內文往上傳、由承載頁收進 TAB 標籤旁的「?」。
+   * ⚠️ 內文是後端帶出的 `data.hint`，所以只能等資料載入後才給得出來。
+   */
+  onHelpHint?: (hint: string) => void
 }
 
-const OperaEventsPage: React.FC<Props> = ({ embedded = false }) => {
+const OperaEventsPage: React.FC<Props> = ({ embedded = false, onHelpHint }) => {
   const canEdit = useAuthStore((s) => s.hasPermission)('opera_event_admin')
   const [loading, setLoading] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -85,6 +97,11 @@ const OperaEventsPage: React.FC<Props> = ({ embedded = false }) => {
   }, [])
 
   useEffect(() => { load() }, [load])
+
+  // 說明內文往上傳給承載頁（`data.hint` 由後端帶出，載入後才有）
+  useEffect(() => {
+    onHelpHint?.(data?.hint || EVENT_HELP_FALLBACK)
+  }, [data, onHelpHint])
 
   const openModal = (row: OperaEventItem | null) => {
     setEditing(row)
@@ -317,16 +334,16 @@ const OperaEventsPage: React.FC<Props> = ({ embedded = false }) => {
         </>
       )}
 
-      <Alert
-        type="info"
-        showIcon
-        style={{ marginBottom: 16 }}
-        message="先用人工倍數，累積夠了再改用學習值"
-        description={
-          data?.hint
-          || '同名事件累積 3 次以上才能改用「資料學習」的係數；少於這個次數等於拿單一樣本當結論。'
-        }
-      />
+      {/* 承載頁若要自己收進「?」（有傳 onHelpHint），這裡就不重複顯示 */}
+      {!onHelpHint && (
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message={EVENT_HELP_TITLE}
+          description={data?.hint || EVENT_HELP_FALLBACK}
+        />
+      )}
 
       <Card
         size="small"

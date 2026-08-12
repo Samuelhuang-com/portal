@@ -8,10 +8,12 @@
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import {
-  Alert, Button, Card, Col,  Empty, Input, Radio, Row, Select,
+  Alert, Button, Card, Col,  Empty, Input, Modal, Radio, Row, Select,
   Space, Spin, Switch, Table, Tabs, Tag, Tooltip, Typography, message,
 } from 'antd'
-import { InfoCircleOutlined, ReloadOutlined } from '@ant-design/icons'
+import {
+  InfoCircleOutlined, QuestionCircleOutlined, ReloadOutlined,
+} from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import dayjs, { Dayjs } from 'dayjs'
 import {
@@ -40,6 +42,9 @@ import {
 const { Title, Text } = Typography
 
 const SOURCE_NOTE = '資料來源：Departure All'
+/** 標題旁「?」的說明內容（原本是頁面頂端的固定 Alert，內容未變） */
+const SOURCE_HEADLINE = `${SOURCE_NOTE}　｜　本頁不含營收金額`
+const SOURCE_DETAIL = 'Departure 報表的 BALANCE 欄位在實測資料中全為 0，無法推估單筆訂房營收。營收、ADR、住房率請看「營收分析」（來源：History and Forecast）。'
 const CHART_HEIGHT = 300
 
 const BASIS_TIP = (
@@ -58,6 +63,9 @@ const OperaGuestPage: React.FC = () => {
   // 快捷區間的錨點 = Departure 的資料最後一天（本頁資料來源是 Departure）
   const [dataEnd, setDataEnd] = useState<string>('')
   const [basis, setBasis] = useState<OperaBasis>('room')
+  const [helpOpen, setHelpOpen] = useState(false)
+  /** 目前開著的是哪一個 TAB 的說明；null = 沒開 */
+  const [tabHelpKey, setTabHelpKey] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
   // 住宿明細
@@ -462,11 +470,132 @@ const OperaGuestPage: React.FC = () => {
     </Space>
   )
 
+  /**
+   * 各 TAB 的說明 —— 原本是每個 TAB 內一則固定 Alert，改收到 TAB 標籤旁的「?」。
+   * **所有說明文字一字未改**，只是換了容器。
+   *
+   * ⚠️ 這裡只收「固定口徑說明」。以下**刻意不收**：
+   *    ① 作業排程的「缺值占比 X%」—— 只在缺值偏高時才出現的資料品質警示，
+   *       收進「?」等於把警示藏起來，看不到就不會去改善前台輸入品質。
+   *    ② 團體 TAB 那顆「只看團體／全部顯示」Switch —— 是功能控制項不是說明，
+   *       已移到「團體貢獻」卡片的 extra，留在畫面上。
+   */
+  const tabHelp = (key: string): { title: string; body: React.ReactNode } | null => {
+    switch (key) {
+      case 'company':
+        return {
+          title: '公司欄位母體偏小',
+          body: '實測 Departure 資料中約 86% 的紀錄沒有填寫公司名稱，本頁統計僅涵蓋有填寫的部分。',
+        }
+      case 'group':
+        // 這個 TAB 原本有兩則 Alert，合在同一個「?」裡，兩則原文都保留
+        return {
+          title: 'OPERA 的團體欄位混了兩種資料，系統已自動分離',
+          body: (
+            <>
+              <div style={{ lineHeight: 1.9 }}>
+                實測 <Text strong>GROUP_NAME</Text> 欄位同時放了「真正的團體名稱」與
+                「OTA 訂房參考號 + 訂房人姓名」。系統會先剝掉開頭的參考號
+                （例如 <Text code>392298933 中山醫學大學</Text> → <Text code>中山醫學大學</Text>），
+                再判斷剩下的是否為個人姓名格式。
+              </div>
+              {dimData.group?.person_records ? (
+                <div style={{ marginTop: 6 }}>
+                  <Text type="secondary">
+                    {`目前排除了 ${fmtInt(dimData.group.person_records)} 筆疑似個人訂房；可用「團體貢獻」卡片右上的開關切換。`}
+                  </Text>
+                </div>
+              ) : null}
+              <div style={{ marginTop: 12 }}>
+                <Text strong>這裡的數字是 Departure 的產量，不是團體營收</Text>
+              </div>
+              <div style={{ lineHeight: 1.9 }}>
+                團體 vs 散客的營收與房晚請看「★ 營運分析 Dashboard」的「散客 vs 團體」
+                （來源是 History and Forecast，數字才是準的）。
+                Departure 無法把房間營收精確歸到個別團體。
+              </div>
+            </>
+          ),
+        }
+      case 'payment':
+        return {
+          title: 'PAYMENT_DESC 未必等於實際交易明細',
+          body: '這個欄位可能是訂單預設或結帳方式，不代表每一筆實際金流。金流稽核請使用 OPERA 的 Payment Transaction 報表。',
+        }
+      case 'rooms':
+        // ⚠️ 內文是後端帶出的 `inference_note`，不是寫死的字串
+        return {
+          title: '「疑似停用」是推論，不是事實',
+          body: roomUsage?.inference_note || '',
+        }
+      case 'ops':
+        return {
+          title: '這一頁是給櫃台、房務、行李與交通排班用的',
+          body: '退房時間看單日尖峰時段；入退房星期看一週的到店／離店節奏。兩者都是「事件」統計，不是各時段的在住房數。',
+        }
+      case 'guest':
+        // ⚠️ 標題與內文都含實際數字，沒有資料時不給「?」（見 tabLabel）
+        return repeat ? {
+          title: `本分析僅涵蓋非「已清除」住客，母體佔比 ${fmtPct(repeat.coverage.coverage)}`,
+          body: `期間共 ${fmtInt(repeat.coverage.total)} 筆住宿紀錄，其中 ${fmtInt(repeat.coverage.purged)} 筆的住客資料已被 OPERA 清除（Purged-Individual），無法識別身分，因此不納入回訪統計。`,
+        } : null
+      default:
+        return null
+    }
+  }
+
+  /**
+   * TAB 標籤 ＋ 說明「?」。
+   * ⚠️ `stopPropagation` 是必要的 —— 沒有它，點「?」會連帶切換到那個 TAB。
+   */
+  const tabLabel = (key: string, node: React.ReactNode) => {
+    if (!tabHelp(key)) return node
+    return (
+      <Space size={4} align="center">
+        {node}
+        <Tooltip title="說明">
+          <QuestionCircleOutlined
+            style={{ color: ACCENT }}
+            onClick={(e) => { e.stopPropagation(); setTabHelpKey(key) }}
+          />
+        </Tooltip>
+      </Space>
+    )
+  }
+
+  const activeTabHelp = tabHelpKey ? tabHelp(tabHelpKey) : null
+
   return (
     <Spin spinning={loading}>
       <div style={{ padding: 24 }}>
+        <Modal
+          open={!!activeTabHelp}
+          onCancel={() => setTabHelpKey(null)}
+          footer={null}
+          width={520}
+          title={
+            <Space size={8}>
+              <InfoCircleOutlined style={{ color: ACCENT }} />
+              <span>{activeTabHelp?.title}</span>
+            </Space>
+          }
+        >
+          <div style={{ lineHeight: 1.8 }}>{activeTabHelp?.body}</div>
+        </Modal>
+
         <Row justify="space-between" align="middle" style={{ marginBottom: 12 }}>
-          <Col><Title level={4} style={{ margin: 0, color: BRAND }}>住客與通路分析</Title></Col>
+          <Col>
+            <Space size={6} align="center">
+              <Title level={4} style={{ margin: 0, color: BRAND }}>住客與通路分析</Title>
+              <Tooltip title="資料來源說明">
+                <Button
+                  type="text" size="small" aria-label="資料來源說明"
+                  icon={<QuestionCircleOutlined style={{ color: ACCENT, fontSize: 16 }} />}
+                  onClick={() => setHelpOpen(true)}
+                />
+              </Tooltip>
+            </Space>
+          </Col>
           <Col>
             <Space wrap>
               {basisControl}
@@ -476,13 +605,23 @@ const OperaGuestPage: React.FC = () => {
           </Col>
         </Row>
 
-        <Alert
-          type="info"
-          showIcon
-          style={{ marginBottom: 12 }}
-          message={`${SOURCE_NOTE}　｜　本頁不含營收金額`}
-          description="Departure 報表的 BALANCE 欄位在實測資料中全為 0，無法推估單筆訂房營收。營收、ADR、住房率請看「營收分析」（來源：History and Forecast）。"
-        />
+        <Modal
+          open={helpOpen}
+          onCancel={() => setHelpOpen(false)}
+          footer={null}
+          width={520}
+          title={
+            <Space size={8}>
+              <InfoCircleOutlined style={{ color: ACCENT }} />
+              <span>資料來源說明</span>
+            </Space>
+          }
+        >
+          <div style={{ lineHeight: 1.8 }}>
+            <div>{SOURCE_HEADLINE}</div>
+            <Text type="secondary">{SOURCE_DETAIL}</Text>
+          </div>
+        </Modal>
 
         <Tabs
           activeKey={tab}
@@ -677,16 +816,10 @@ const OperaGuestPage: React.FC = () => {
             // ── 公司 ─────────────────────────────────────────────────────
             {
               key: 'company',
-              label: '公司',
+              label: tabLabel('company', '公司'),
               children: (
                 <>
-                  <Alert
-                    type="warning"
-                    showIcon
-                    style={{ marginBottom: 12 }}
-                    message="公司欄位母體偏小"
-                    description="實測 Departure 資料中約 86% 的紀錄沒有填寫公司名稱，本頁統計僅涵蓋有填寫的部分。"
-                  />
+                  {/* 說明已收進 TAB 標籤旁的「?」 */}
                   <Card
                     size="small"
                     title="公司 Top 20"
@@ -703,33 +836,16 @@ const OperaGuestPage: React.FC = () => {
             // ── 團體 ─────────────────────────────────────────────────────
             {
               key: 'group',
-              label: '團體',
+              label: tabLabel('group', '團體'),
               children: (
                 <>
-                  <Alert
-                    type="info"
-                    showIcon
-                    style={{ marginBottom: 12 }}
-                    message="OPERA 的團體欄位混了兩種資料，系統已自動分離"
-                    description={
-                      <>
-                        <div style={{ lineHeight: 1.9 }}>
-                          實測 <Text strong>GROUP_NAME</Text> 欄位同時放了「真正的團體名稱」與
-                          「OTA 訂房參考號 + 訂房人姓名」。系統會先剝掉開頭的參考號
-                          （例如 <Text code>392298933 中山醫學大學</Text> → <Text code>中山醫學大學</Text>），
-                          再判斷剩下的是否為個人姓名格式。
-                        </div>
-                        {dimData.group?.person_records ? (
-                          <div style={{ marginTop: 6 }}>
-                            <Text type="secondary">
-                              {`目前排除了 ${fmtInt(dimData.group.person_records)} 筆疑似個人訂房；可用右側開關切換。`}
-                            </Text>
-                          </div>
-                        ) : null}
-                      </>
-                    }
-                    action={
-                      <Space direction="vertical" size={4}>
+                  {/* 說明已收進 TAB 標籤旁的「?」；
+                      ⚠️ Switch 是功能控制項不是說明，移到卡片 extra 留在畫面上 */}
+                  <Card
+                    size="small"
+                    title={excludePerson ? '團體貢獻（已排除個人訂房）' : '團體貢獻（含疑似個人訂房）'}
+                    extra={
+                      <Space size={12}>
                         <Switch
                           size="small"
                           checked={excludePerson}
@@ -737,25 +853,16 @@ const OperaGuestPage: React.FC = () => {
                           checkedChildren="只看團體"
                           unCheckedChildren="全部顯示"
                         />
+                        <Text type="secondary" style={{ fontSize: 12 }}>
+                          {`${dimData.group?.basis_label || ''}　${SOURCE_NOTE}`}
+                        </Text>
                       </Space>
                     }
-                  />
-                  <Card
-                    size="small"
-                    title={excludePerson ? '團體貢獻（已排除個人訂房）' : '團體貢獻（含疑似個人訂房）'}
-                    extra={<Text type="secondary" style={{ fontSize: 12 }}>{`${dimData.group?.basis_label || ''}　${SOURCE_NOTE}`}</Text>}
                     style={{ marginBottom: 12 }}
                   >
                     {renderHorizontalBar(dimData.group)}
                   </Card>
                   <Card size="small" title="團體統計">{dimensionTable(dimData.group)}</Card>
-                  <Alert
-                    type="warning"
-                    showIcon
-                    style={{ marginTop: 12 }}
-                    message="這裡的數字是 Departure 的產量，不是團體營收"
-                    description="團體 vs 散客的營收與房晚請看「★ 營運分析 Dashboard」的「散客 vs 團體」（來源是 History and Forecast，數字才是準的）。Departure 無法把房間營收精確歸到個別團體。"
-                  />
                 </>
               ),
             },
@@ -763,7 +870,7 @@ const OperaGuestPage: React.FC = () => {
             // ── 付款方式 ─────────────────────────────────────────────────
             {
               key: 'payment',
-              label: '付款方式',
+              label: tabLabel('payment', '付款方式'),
               children: (
                 <>
                   <Card
@@ -775,13 +882,7 @@ const OperaGuestPage: React.FC = () => {
                     {renderPie(dimData.payment)}
                   </Card>
                   <Card size="small" title="付款方式統計">{dimensionTable(dimData.payment)}</Card>
-                  <Alert
-                    type="warning"
-                    showIcon
-                    style={{ marginTop: 12 }}
-                    message="PAYMENT_DESC 未必等於實際交易明細"
-                    description="這個欄位可能是訂單預設或結帳方式，不代表每一筆實際金流。金流稽核請使用 OPERA 的 Payment Transaction 報表。"
-                  />
+                  {/* 說明已收進 TAB 標籤旁的「?」 */}
                 </>
               ),
             },
@@ -789,23 +890,17 @@ const OperaGuestPage: React.FC = () => {
             // ── 房號使用 ─────────────────────────────────────────────────
             {
               key: 'rooms',
-              label: (
+              label: tabLabel('rooms', (
                 <span>
                   房號使用
                   {roomUsage && roomUsage.suspected_inactive_count > 0 && (
                     <Tag color="red" style={{ marginLeft: 6 }}>{roomUsage.suspected_inactive_count}</Tag>
                   )}
                 </span>
-              ),
+              )),
               children: (
                 <>
-                  <Alert
-                    type="warning"
-                    showIcon
-                    style={{ marginBottom: 12 }}
-                    message="「疑似停用」是推論，不是事實"
-                    description={roomUsage?.inference_note || ''}
-                  />
+                  {/* 說明已收進 TAB 標籤旁的「?」 */}
 
                   {roomUsage && (
                     <Row gutter={[12, 12]} style={{ marginBottom: 12 }}>
@@ -947,16 +1042,10 @@ const OperaGuestPage: React.FC = () => {
             // 合成一個 TAB 比拆成兩個更好用，也避免 TAB 列過長。
             {
               key: 'ops',
-              label: '作業排程',
+              label: tabLabel('ops', '作業排程'),
               children: (
                 <>
-                  <Alert
-                    type="info"
-                    showIcon
-                    style={{ marginBottom: 12 }}
-                    message="這一頁是給櫃台、房務、行李與交通排班用的"
-                    description="退房時間看單日尖峰時段；入退房星期看一週的到店／離店節奏。兩者都是「事件」統計，不是各時段的在住房數。"
-                  />
+                  {/* 說明已收進 TAB 標籤旁的「?」 */}
 
                   <Row gutter={[12, 12]}>
                     {/* 退房時間分布 */}
@@ -1084,18 +1173,10 @@ const OperaGuestPage: React.FC = () => {
             // ── 回訪與長住 ────────────────────────────────────────────────
             {
               key: 'guest',
-              label: '回訪與長住',
+              label: tabLabel('guest', '回訪與長住'),
               children: (
                 <>
-                  {repeat && (
-                    <Alert
-                      type="warning"
-                      showIcon
-                      style={{ marginBottom: 12 }}
-                      message={`本分析僅涵蓋非「已清除」住客，母體佔比 ${fmtPct(repeat.coverage.coverage)}`}
-                      description={`期間共 ${fmtInt(repeat.coverage.total)} 筆住宿紀錄，其中 ${fmtInt(repeat.coverage.purged)} 筆的住客資料已被 OPERA 清除（Purged-Individual），無法識別身分，因此不納入回訪統計。`}
-                    />
-                  )}
+                  {/* 說明已收進 TAB 標籤旁的「?」（沒有 repeat 資料時「?」不顯示） */}
 
                   <Row gutter={[12, 12]} style={{ marginBottom: 12 }}>
                     {/* C12：回訪次數分布 */}

@@ -21,7 +21,8 @@ import {
 } from 'antd'
 import {
   DeleteOutlined, ExperimentOutlined, InfoCircleOutlined, PlusOutlined,
-  ReloadOutlined, SaveOutlined, ThunderboltOutlined, UndoOutlined,
+  QuestionCircleOutlined, ReloadOutlined, SaveOutlined, ThunderboltOutlined,
+  UndoOutlined,
 } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import dayjs, { Dayjs } from 'dayjs'
@@ -41,7 +42,7 @@ import type {
 } from '@/types/opera'
 import BackToTop from '../components/BackToTop'
 import ForecastDayDrawer from '../components/ForecastDayDrawer'
-import OperaEventsPage from '../Events'
+import OperaEventsPage, { EVENT_HELP_FALLBACK, EVENT_HELP_TITLE } from '../Events'
 import {
   ACCENT, BRAND, EMPTY, GREEN, GREY, ORANGE, RED,
   fmtInt, fmtMoney, fmtPct, shortDate, trendColor,
@@ -56,6 +57,39 @@ const CHART_HEIGHT = 320
 const NAIVE_ADR_MAPE_REFERENCE = 0.146
 
 const TAB_KEYS = ['predict', 'scenario', 'events', 'coefficients', 'backtest', 'runs'] as const
+
+/**
+ * 各 TAB 的頁面層級說明 —— 原本是每個 TAB 頂端一則固定 Alert，
+ * 改收到 TAB 標籤旁的「?」。**文字未變。**
+ *
+ * ⚠️ 這裡只收「固定說明」。回測 TAB 那則 Alert 是**動態結果**
+ *    （分解模型有沒有勝過樸素基準 ＋ verdict），是分析結論不是說明，故不收。
+ * ⚠️ events 的內文由 `OperaEventsPage` 透過 `onHelpHint` 往上傳（後端 `data.hint`），
+ *    所以不在這張表裡，見 `eventHint` state。
+ */
+const TAB_HELP: Record<string, { title: string; body: string }> = {
+  predict: {
+    title: '期間預測比單日可靠',
+    body: '單日預測的隨機性很大（一團 20 間房就能讓住房率跳 29 個百分點）。'
+      + '做訂價與預算決策請看下方的期間加權值；單日數字請搭配預測區間一起看。'
+      + '點任一列可展開係數拆解。',
+  },
+  scenario: {
+    title: '假設情境不會存進事件月曆',
+    body: '在這裡填的事件只影響這一次的試算，例如「如果國際電腦展辦在這個週末會怎樣」。'
+      + '要長期套用請到「事件月曆」頁新增。倍數 1.35 代表 +35%（不是 135）。',
+  },
+  coefficients: {
+    title: '係數可以人工覆寫，重新估算時不會被蓋掉',
+    body: '覆寫後仍保留自動估算值供對照，隨時可以按「還原」改回去。'
+      + '基準值、星期、月份、年成長可改；錨點與預測區間是算出來的事實，改了會讓模型自相矛盾，故不開放。',
+  },
+  runs: {
+    title: '快照是算出真實準確度的唯一方法',
+    body: '「回測」是模型回頭重算，「快照」是當時真的預測了什麼。'
+      + '把每次預測存下來，等日期過了再按「回填實際值」，就能知道模型在真實情況下準不準。',
+  },
+}
 
 const OperaForecastPage: React.FC = () => {
   // TAB 與網址同步：可用 ?tab=events 直接開啟「事件月曆」
@@ -85,6 +119,10 @@ const OperaForecastPage: React.FC = () => {
   const [backtest, setBacktest] = useState<BacktestResult | null>(null)
   const [runs, setRuns] = useState<ForecastRun[]>([])
   const [runCompare, setRunCompare] = useState<RunCompareResult | null>(null)
+  /** 目前開著的說明是哪一個 TAB 的；null = 沒開 */
+  const [helpKey, setHelpKey] = useState<string | null>(null)
+  /** 事件月曆的說明內文（由子元件帶上來，後端 `data.hint`） */
+  const [eventHint, setEventHint] = useState('')
 
   const [drawerRow, setDrawerRow] = useState<ForecastDayRow | null>(null)
 
@@ -371,16 +409,7 @@ const OperaForecastPage: React.FC = () => {
 
     return (
       <Space direction="vertical" size={16} style={{ width: '100%' }}>
-        <Alert
-          type="info"
-          showIcon
-          message="期間預測比單日可靠"
-          description={
-            '單日預測的隨機性很大（一團 20 間房就能讓住房率跳 29 個百分點）。'
-            + '做訂價與預算決策請看下方的期間加權值；單日數字請搭配預測區間一起看。'
-            + '點任一列可展開係數拆解。'
-          }
-        />
+        {/* 說明已收進 TAB 標籤旁的「?」（TAB_HELP.predict） */}
 
         {forecast.warnings.map((w, i) => (
           <Alert key={i} type="warning" showIcon message={w} />
@@ -457,15 +486,7 @@ const OperaForecastPage: React.FC = () => {
 
   const renderScenarioTab = () => (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
-      <Alert
-        type="info"
-        showIcon
-        message="假設情境不會存進事件月曆"
-        description={
-          '在這裡填的事件只影響這一次的試算，例如「如果國際電腦展辦在這個週末會怎樣」。'
-          + '要長期套用請到「事件月曆」頁新增。倍數 1.35 代表 +35%（不是 135）。'
-        }
-      />
+      {/* 說明已收進 TAB 標籤旁的「?」（TAB_HELP.scenario） */}
 
       <Card
         size="small"
@@ -707,15 +728,7 @@ const OperaForecastPage: React.FC = () => {
 
     return (
       <Space direction="vertical" size={16} style={{ width: '100%' }}>
-        <Alert
-          type="info"
-          showIcon
-          message="係數可以人工覆寫，重新估算時不會被蓋掉"
-          description={
-            '覆寫後仍保留自動估算值供對照，隨時可以按「還原」改回去。'
-            + '基準值、星期、月份、年成長可改；錨點與預測區間是算出來的事實，改了會讓模型自相矛盾，故不開放。'
-          }
-        />
+        {/* 說明已收進 TAB 標籤旁的「?」（TAB_HELP.coefficients） */}
 
         <Row gutter={16}>
           <Col span={12}>
@@ -947,15 +960,7 @@ const OperaForecastPage: React.FC = () => {
 
   const renderRunsTab = () => (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
-      <Alert
-        type="info"
-        showIcon
-        message="快照是算出真實準確度的唯一方法"
-        description={
-          '「回測」是模型回頭重算，「快照」是當時真的預測了什麼。'
-          + '把每次預測存下來，等日期過了再按「回填實際值」，就能知道模型在真實情況下準不準。'
-        }
-      />
+      {/* 說明已收進 TAB 標籤旁的「?」（TAB_HELP.runs） */}
 
       {runCompare && (
         <Card size="small" title="已到期預測的真實誤差">
@@ -1015,8 +1020,46 @@ const OperaForecastPage: React.FC = () => {
 
   // ══════════════════════════════════════════════════════════════════════════
 
+  /**
+   * TAB 標籤 ＋ 說明「?」。
+   * ⚠️ `stopPropagation` 是必要的 —— 沒有它，點「?」會連帶切換到那個 TAB。
+   *    保留原地不動反而更好用：可以先看說明再決定要不要切過去。
+   */
+  const tabLabel = (key: string, text: string) => (
+    <Space size={4} align="center">
+      <span>{text}</span>
+      <Tooltip title="說明">
+        <QuestionCircleOutlined
+          style={{ color: ACCENT }}
+          onClick={(e) => { e.stopPropagation(); setHelpKey(key) }}
+        />
+      </Tooltip>
+    </Space>
+  )
+
+  // ⚠️ 事件月曆 TAB 沒被點開過時子元件還沒掛載，`eventHint` 會是空字串 ——
+  //    在別的 TAB 上點它的「?」不能給一個空白 Modal，退回預設文案。
+  const help = helpKey === 'events'
+    ? { title: EVENT_HELP_TITLE, body: eventHint || EVENT_HELP_FALLBACK }
+    : (helpKey ? TAB_HELP[helpKey] : null)
+
   return (
     <div style={{ padding: 24 }}>
+      <Modal
+        open={!!help}
+        onCancel={() => setHelpKey(null)}
+        footer={null}
+        width={520}
+        title={
+          <Space size={8}>
+            <InfoCircleOutlined style={{ color: ACCENT }} />
+            <span>{help?.title}</span>
+          </Space>
+        }
+      >
+        <div style={{ lineHeight: 1.8 }}>{help?.body}</div>
+      </Modal>
+
       <Title level={4} style={{ color: BRAND }}>房價預測</Title>
       <Paragraph type="secondary" style={{ marginTop: -8 }}>
         可解釋的乘法分解模型：基準 × 星期 × 月份 × 年成長 × 事件。
@@ -1047,12 +1090,16 @@ const OperaForecastPage: React.FC = () => {
             activeKey={tab}
             onChange={setTab}
             items={[
-              { key: 'predict', label: '期間預測', children: renderPredictTab() },
-              { key: 'scenario', label: '情境模擬', children: renderScenarioTab() },
-              { key: 'events', label: '事件月曆', children: <OperaEventsPage embedded /> },
-              { key: 'coefficients', label: '模型係數', children: renderCoefTab() },
+              { key: 'predict', label: tabLabel('predict', '期間預測'), children: renderPredictTab() },
+              { key: 'scenario', label: tabLabel('scenario', '情境模擬'), children: renderScenarioTab() },
+              {
+                key: 'events',
+                label: tabLabel('events', '事件月曆'),
+                children: <OperaEventsPage embedded onHelpHint={setEventHint} />,
+              },
+              { key: 'coefficients', label: tabLabel('coefficients', '模型係數'), children: renderCoefTab() },
               { key: 'backtest', label: '回測', children: renderBacktestTab() },
-              { key: 'runs', label: '預測快照', children: renderRunsTab() },
+              { key: 'runs', label: tabLabel('runs', '預測快照'), children: renderRunsTab() },
             ]}
           />
         </Spin>

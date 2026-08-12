@@ -205,6 +205,11 @@ MODULES: list[tuple[str, str, str]] = [
     # ⚠ 必須排在「廠商資料」之後：來源是 portal.db vendors（非 Ragic），
     #   先跑會同步到上一輪的舊資料。詳見 cycle_purchase_vendor_sync.py 檔頭。
     ("週期採購供應商",     "app.services.cycle_purchase_vendor_sync",   "sync_from_contract"),
+    # ⚠ 這一個不是 Ragic —— 來源是 OPERA Cloud（OHIP API）。
+    #   只跑「歷史回補」：把往前兩年還沒補的段一次補完，補完後每輪自動 skip
+    #   （只查一次 DB，不打 OHIP）。「昨天」由 main.py 每日 06:30 的
+    #   sync_incremental 負責（重抓最近 14 天），這裡刻意不重複做。
+    ("市場區隔歷史回補",   "app.services.opera_segment_sync",           "sync_backfill_all"),
 ]
 
 # ── 報修報表寄信排程 key（非同步模組，獨立處理）─────────────────────────────
@@ -727,6 +732,7 @@ class SyncApp(tk.Tk):
             import app.models.hotel_routine_pm         # noqa
             import app.models.hotel_routine_pm_schedule  # noqa
             import app.models.contract                 # noqa
+            import app.models.opera_segment            # noqa  ohip_revenue_history + 同步紀錄
 
             # ── 2. hotel_mr_reading 舊版偵測 → DROP（在 create_all 之前）────
             with engine.connect() as conn:

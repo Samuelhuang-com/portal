@@ -10,11 +10,12 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
-  Alert, Badge, Button, Card, Col, Empty, Row, Select, Space,
+  Alert, Badge, Button, Card, Col, Empty, Modal, Row, Select, Space,
   Spin, Statistic, Table, Tag, Tooltip, Typography, message,
 } from 'antd'
 import {
-  BarChartOutlined, InfoCircleOutlined, ReloadOutlined, UploadOutlined,
+  BarChartOutlined, InfoCircleOutlined, QuestionCircleOutlined,
+  ReloadOutlined, UploadOutlined,
 } from '@ant-design/icons'
 import {
   Bar, CartesianGrid, Cell, ComposedChart, Legend, Line, LineChart, Pie, PieChart,
@@ -58,6 +59,7 @@ const OperaDashboardPage: React.FC = () => {
   const [loading, setLoading] = useState(true)
   const [data, setData] = useState<OperaDashboard | null>(null)
   const [year, setYear] = useState<number | undefined>(undefined)
+  const [stayHelpOpen, setStayHelpOpen] = useState(false)
 
   const load = useCallback(async (targetYear?: number) => {
     setLoading(true)
@@ -415,7 +417,18 @@ const OperaDashboardPage: React.FC = () => {
         {data?.stay_summary && (
           <Card
             size="small"
-            title="住宿明細總覽"
+            title={
+              <Space size={6} align="center">
+                <span>住宿明細總覽</span>
+                <Tooltip title="資料來源說明">
+                  <Button
+                    type="text" size="small" aria-label="資料來源說明"
+                    icon={<QuestionCircleOutlined style={{ color: ACCENT, fontSize: 16 }} />}
+                    onClick={() => setStayHelpOpen(true)}
+                  />
+                </Tooltip>
+              </Space>
+            }
             extra={
               <Space>
                 <Text type="secondary" style={{ fontSize: 12 }}>資料來源：Departure All</Text>
@@ -425,13 +438,23 @@ const OperaDashboardPage: React.FC = () => {
               </Space>
             }
           >
-            <Alert
-              type="info"
-              showIcon
-              style={{ marginBottom: 12 }}
-              message="本區與上方營收指標來自不同報表，房晚數字不可互相驗算"
-              description="Departure 以退房日歸屬整段住宿；History and Forecast 以營業日逐日歸屬。營收一律以 History 為準，通路／房型／住客結構一律以 Departure 為準。"
-            />
+            <Modal
+              open={stayHelpOpen}
+              onCancel={() => setStayHelpOpen(false)}
+              footer={null}
+              width={520}
+              title={
+                <Space size={8}>
+                  <InfoCircleOutlined style={{ color: ACCENT }} />
+                  <span>本區與上方營收指標來自不同報表，房晚數字不可互相驗算</span>
+                </Space>
+              }
+            >
+              <div style={{ lineHeight: 1.8 }}>
+                Departure 以退房日歸屬整段住宿；History and Forecast 以營業日逐日歸屬。
+                營收一律以 History 為準，通路／房型／住客結構一律以 Departure 為準。
+              </div>
+            </Modal>
             <Row gutter={[12, 12]}>
               {(['room', 'reservation'] as const).map((basis) => {
                 const s = data.stay_summary![basis]

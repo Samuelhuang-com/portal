@@ -63,6 +63,14 @@ export interface SegmentSummary {
   yoy_occupancy?: number | null
 }
 
+export interface SegmentSource {
+  provider: string
+  table: string
+  hotel_id: string
+  /** ⚠️ 這句必須顯示在畫面上 —— 同模組混了兩種資料來源 */
+  note: string
+}
+
 export interface SegmentResult {
   range: { start: string; end: string }
   yoy_range: { start: string; end: string } | null
@@ -71,13 +79,7 @@ export interface SegmentResult {
   segments: SegmentRow[]
   trend: SegmentTrendRow[]
   row_count: number
-  source: {
-    provider: string
-    table: string
-    hotel_id: string
-    /** ⚠️ 這句必須顯示在畫面上 —— 同模組混了兩種資料來源 */
-    note: string
-  }
+  source: SegmentSource
   data_range: { start: string | null; end: string | null; has_data: boolean }
 }
 
@@ -106,6 +108,12 @@ export interface SegmentSyncStatus {
   }>
   data_range: { start: string | null; end: string | null; has_data: boolean }
   config: { backfill_years: number; chunk_days: number; incremental_days: number }
+  /**
+   * ⚠️ 與 `GET /segments` 回傳的是同一份。歷史資料回補完成前，
+   *    前端不會呼叫 `/segments`（沒有 data_range 就不查），
+   *    但畫面上的「?」說明那時候就要能顯示，所以從這裡取。
+   */
+  source: SegmentSource
 }
 
 export async function fetchSegments(params: {

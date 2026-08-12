@@ -5,7 +5,7 @@
  *
  * ⚠️ 本頁資料來源是 **OPERA Cloud API 落地**，不是本模組其他頁的 TXT 上傳。
  *    這是「營運分析」裡唯一一頁來源不同的，所以：
- *      ① 頂端固定顯示一則來源說明（後端 `source.note` 帶出，不在前端寫死）
+ *      ① 標題旁的「?」開啟說明 Modal（內容取後端 `source.note`，不在前端寫死）
  *      ② 期間選擇器的 anchor 用**本模組資料的最後一天**，不是今天（CLAUDE.md §8.2）
  *
  * ⚠️ 市場區隔（Market Code）是飯店在 OPERA 自行設定的分類，
@@ -13,10 +13,12 @@
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import {
-  Alert, Button, Card, Col, Empty, Progress, Radio, Row, Space, Spin,
+  Alert, Button, Card, Col, Empty, Modal, Progress, Radio, Row, Space, Spin,
   Statistic, Table, Tabs, Tag, Tooltip, Typography,
 } from 'antd'
-import { ApiOutlined, ReloadOutlined, SyncOutlined } from '@ant-design/icons'
+import {
+  ApiOutlined, QuestionCircleOutlined, ReloadOutlined, SyncOutlined,
+} from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import type { Dayjs } from 'dayjs'
 import dayjs from 'dayjs'
@@ -66,6 +68,7 @@ const OperaSegmentsPage: React.FC = () => {
   const [loading, setLoading] = useState(false)
   const [backfilling, setBackfilling] = useState(false)
   const [error, setError] = useState('')
+  const [helpOpen, setHelpOpen] = useState(false)
 
   const loadSync = useCallback(async () => {
     try {
@@ -85,7 +88,10 @@ const OperaSegmentsPage: React.FC = () => {
     setLoading(true)
     setError('')
     try {
-      const s = sync ?? (await loadSync())
+      // ⚠️ 每次都重抓 sync status，不要用既有的 `sync` 短路 ——
+      //    畫面上的「資料涵蓋」必須反映 DB 現況。回補一段之後 data_range 就變了，
+      //    短路會讓它一直停在頁面第一次載入時的值，只有整頁 reload 才會更新。
+      const s = await loadSync()
       const end = range ? range[1].format('YYYY-MM-DD') : (s?.data_range.end || '')
       const start = range ? range[0].format('YYYY-MM-DD') : (s?.data_range.start || '')
       if (!start || !end) {
@@ -98,9 +104,10 @@ const OperaSegmentsPage: React.FC = () => {
     } finally {
       setLoading(false)
     }
-  }, [range, dimension, sync, loadSync])
+  }, [range, dimension, loadSync])
 
-  useEffect(() => { loadSync() }, [loadSync])
+  // ⚠️ 掛載時只跑 `load()` —— 它內部已經會呼叫 `loadSync()`，
+  //    另外再放一個 loadSync 的 useEffect 會讓進頁面重複打兩次 /sync/status。
   useEffect(() => { load() }, [dimension, range])   // eslint-disable-line react-hooks/exhaustive-deps
 
   /** 補一段就重新整理進度，讓使用者看得到 pending 在減少 */
@@ -109,13 +116,16 @@ const OperaSegmentsPage: React.FC = () => {
     try {
       const r = await backfillNextChunk()
       setSync((prev) => (prev ? { ...prev, progress: r.progress } : prev))
-      if (r.done) await load()
+      // ⚠️ `r.progress` 不含 data_range，但補完一段之後資料範圍就變了。
+      //    不重抓的話「資料涵蓋」會停在補之前的值。
+      if (r.done) await load()   // load 內部會重抓 sync
+      else await loadSync()
     } catch (e: any) {
       setError(e?.response?.data?.detail || '回補失敗')
     } finally {
       setBackfilling(false)
     }
-  }, [load])
+  }, [load, loadSync])
 
   const dimLabel = dimension === 'market_code' ? '市場區隔' : '房型'
   const summary = data?.summary
@@ -173,25 +183,52 @@ const OperaSegmentsPage: React.FC = () => {
   const prog = sync?.progress
   const backfillDone = prog ? prog.pending_chunks === 0 : false
 
+  /**
+   * ⚠️ 優先取 sync status 的 source —— 歷史資料回補完成前 `data` 會是 null
+   *    （沒有 data_range 就不查 /segments），而說明恰好是那時候最需要看的。
+   */
+  const sourceNote = sync?.source?.note || data?.source?.note || ''
+
   return (
     <div style={{ padding: 24 }}>
       <Space direction="vertical" size={4} style={{ marginBottom: 16 }}>
-        <Title level={4} style={{ margin: 0, color: BRAND }}>市場區隔分析</Title>
+        <Space size={6} align="center">
+          <Title level={4} style={{ margin: 0, color: BRAND }}>市場區隔分析</Title>
+          {/* ⚠️ 這則說明是本頁的關鍵 —— 營運分析模組裡只有這一頁來源不同 */}
+          {sourceNote && (
+            <Tooltip title="資料來源說明">
+              <Button
+                type="text" size="small" aria-label="資料來源說明"
+                icon={<QuestionCircleOutlined style={{ color: ACCENT, fontSize: 16 }} />}
+                onClick={() => setHelpOpen(true)}
+              />
+            </Tooltip>
+          )}
+        </Space>
         <Text type="secondary" style={{ fontSize: 12 }}>
           依市場區隔與房型看營收結構、逐月趨勢，以及與去年同期的比較。
         </Text>
       </Space>
 
-      {/* ⚠️ 這則說明是本頁的關鍵 —— 營運分析模組裡只有這一頁來源不同 */}
-      {data?.source?.note && (
-        <Alert
-          type="warning" showIcon icon={<ApiOutlined />} style={{ marginBottom: 16 }}
-          message="這一頁的資料來源與「營運分析」其他頁不同"
-          description={<span dangerouslySetInnerHTML={{
-            __html: data.source.note.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>'),
-          }} />}
+      <Modal
+        open={helpOpen}
+        onCancel={() => setHelpOpen(false)}
+        footer={null}
+        width={520}
+        title={
+          <Space size={8}>
+            <ApiOutlined style={{ color: ACCENT }} />
+            <span>這一頁的資料來源與「營運分析」其他頁不同</span>
+          </Space>
+        }
+      >
+        <div
+          style={{ lineHeight: 1.8 }}
+          dangerouslySetInnerHTML={{
+            __html: sourceNote.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>'),
+          }}
         />
-      )}
+      </Modal>
 
       {/* 回補進度：沒補完就一直顯示，補完自動消失 */}
       {prog && !backfillDone && (
@@ -232,9 +269,11 @@ const OperaSegmentsPage: React.FC = () => {
           <Button size="small" icon={<ReloadOutlined />} loading={loading} onClick={load}>
             重新整理
           </Button>
-          {dataEnd && (
+          {/* ⚠️ 這一行直接讀 sync.data_range（DB 現況），不要用 dataEnd ——
+              dataEnd 是給 anchor 用的 state，只在有值時才覆寫，會殘留舊值 */}
+          {sync?.data_range.end && (
             <Text type="secondary" style={{ fontSize: 12 }}>
-              資料涵蓋 {sync?.data_range.start} ～ {dataEnd}
+              資料涵蓋 {sync.data_range.start} ～ {sync.data_range.end}
               　<Tooltip title="期間快捷（本月／今年…）以資料最後一天為基準，不是今天——否則會選到還沒有資料的日子">
                 <Text type="secondary" style={{ fontSize: 12, textDecoration: 'underline dotted' }}>
                   為什麼不是今天？

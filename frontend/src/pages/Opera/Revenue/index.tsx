@@ -7,10 +7,12 @@
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import {
-  Alert, Button, Card, Col,  Descriptions, Empty, Radio, Row, Select, Space,
+  Alert, Button, Card, Col,  Descriptions, Empty, Modal, Radio, Row, Select, Space,
   Spin, Table, Tabs, Tag, Tooltip, Typography, message,
 } from 'antd'
-import { InfoCircleOutlined, ReloadOutlined } from '@ant-design/icons'
+import {
+  InfoCircleOutlined, QuestionCircleOutlined, ReloadOutlined,
+} from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import dayjs, { Dayjs } from 'dayjs'
 import {
@@ -40,6 +42,9 @@ const { Title, Text } = Typography
 
 const CHART_HEIGHT = 320
 const SOURCE_NOTE = '資料來源：History and Forecast'
+/** 標題旁「?」的說明內容（原本是頁面頂端的固定 Alert，內容未變） */
+const SOURCE_HEADLINE = `${SOURCE_NOTE}　｜　可售房晚 = 實體房數 − OOO（CF_CALC_INV_ROOMS）`
+const SOURCE_DETAIL = 'ADR／住房率／RevPAR 一律用加總後的加權公式計算，不是每日數值的平均。'
 
 const QUADRANT_COLORS: Record<string, string> = {
   Q1: GREEN, Q2: ACCENT, Q3: GREY, Q4: ORANGE,
@@ -51,6 +56,7 @@ const OperaRevenuePage: React.FC = () => {
   // 快捷區間的錨點 = History 的資料最後一天（不用今天，OPERA 匯出會落後）
   const [dataEnd, setDataEnd] = useState<string>('')
   const [loading, setLoading] = useState(false)
+  const [helpOpen, setHelpOpen] = useState(false)
 
   const [daily, setDaily] = useState<RevenueDailyRow[]>([])
   const [monthly, setMonthly] = useState<RevenueMonthlyResult | null>(null)
@@ -186,7 +192,16 @@ const OperaRevenuePage: React.FC = () => {
       <div style={{ padding: 24 }}>
         <Row justify="space-between" align="middle" style={{ marginBottom: 12 }}>
           <Col>
-            <Title level={4} style={{ margin: 0, color: BRAND }}>營收分析</Title>
+            <Space size={6} align="center">
+              <Title level={4} style={{ margin: 0, color: BRAND }}>營收分析</Title>
+              <Tooltip title="資料來源說明">
+                <Button
+                  type="text" size="small" aria-label="資料來源說明"
+                  icon={<QuestionCircleOutlined style={{ color: ACCENT, fontSize: 16 }} />}
+                  onClick={() => setHelpOpen(true)}
+                />
+              </Tooltip>
+            </Space>
           </Col>
           <Col>
             <Space wrap>
@@ -196,13 +211,23 @@ const OperaRevenuePage: React.FC = () => {
           </Col>
         </Row>
 
-        <Alert
-          type="info"
-          showIcon
-          style={{ marginBottom: 12 }}
-          message={`${SOURCE_NOTE}　｜　可售房晚 = 實體房數 − OOO（CF_CALC_INV_ROOMS）`}
-          description="ADR／住房率／RevPAR 一律用加總後的加權公式計算，不是每日數值的平均。"
-        />
+        <Modal
+          open={helpOpen}
+          onCancel={() => setHelpOpen(false)}
+          footer={null}
+          width={520}
+          title={
+            <Space size={8}>
+              <InfoCircleOutlined style={{ color: ACCENT }} />
+              <span>資料來源說明</span>
+            </Space>
+          }
+        >
+          <div style={{ lineHeight: 1.8 }}>
+            <div>{SOURCE_HEADLINE}</div>
+            <Text type="secondary">{SOURCE_DETAIL}</Text>
+          </div>
+        </Modal>
 
         <Tabs
           activeKey={tab}
