@@ -280,11 +280,24 @@ export interface FullBldgPMScheduleOverdueResponse {
   items:           (FullBldgPMScheduleItem & { overdue_days: number })[]
 }
 
+/** 同一格（同月同項目）的單筆記錄，供明細 Drawer 逐筆列出（2026-08-12 新增） */
+export interface FullBldgPMScheduleMatrixEntry {
+  item_ragic_id:  string
+  status:         string
+  schedule_id:    number | null
+  scheduled_date: string | null
+  category:       string
+  frequency:      string
+  ragic_url:      string
+}
+
 export interface FullBldgPMScheduleMatrixCell {
   month:          number
   status:         string
   schedule_id:    number | null
   scheduled_date: string | null
+  count:          number
+  entries:        FullBldgPMScheduleMatrixEntry[]
 }
 
 export interface FullBldgPMScheduleMatrixRow {
@@ -294,6 +307,11 @@ export interface FullBldgPMScheduleMatrixRow {
   location:      string
   frequency:     string
   cells:         FullBldgPMScheduleMatrixCell[]
+  // 以 task_name 跨月合併成一列後的附加資訊（2026-08-12 新增）
+  category_variants:  string[]
+  frequency_variants: string[]
+  month_count:        number
+  ragic_url:          string
 }
 
 export interface FullBldgPMScheduleAnnualMatrix {
@@ -302,6 +320,7 @@ export interface FullBldgPMScheduleAnnualMatrix {
   month_batch_urls: Record<string, string>   // { "5": "https://...", "6": "https://..." }
   summary: {
     total_items:     number
+    total_records:   number
     total_cells:     number
     completed_count: number
     completion_rate: number

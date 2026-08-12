@@ -4,7 +4,14 @@ GET    /api/v1/roles                取得所有角色清單
 POST   /api/v1/roles                新增自訂角色
 DELETE /api/v1/roles/{role_id}      刪除自訂角色（內建角色受保護）
 
-僅限 system_admin 操作。
+需具備 settings_roles_manage 權限（system_admin 透過萬用符 * 自動通過）。
+
+── 2026-08-12 權限收斂改版 ───────────────────────────────────────────────────
+與 role_permissions.py 同批改動：原本四支端點都是 Depends(is_system_admin)，
+使得「能管角色」必須是 system_admin，連帶看得到 Opera／金旭／即時營運營收。
+
+刪除角色另加一道防護：不得刪除「含有呼叫者無權管理之 permission key」的角色。
+否則只要能管角色，就能把別人賴以存取營運分析的角色整個刪掉。
 """
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -13,13 +20,16 @@ from sqlalchemy.orm import Session
 from typing import Optional
 
 from app.core.database import get_db
-from app.dependencies import is_system_admin
+from app.dependencies import get_user_permissions, require_permission
 from app.models.role import Role
 from app.models.role_permission import RolePermission
 from app.models.user_role import UserRole
 from app.models.user import User
 
 router = APIRouter()
+
+# 管理角色所需的 permission key
+_MANAGE = require_permission("settings_roles_manage")
 
 # 受保護的內建角色名稱（不可修改或刪除）
 BUILT_IN_ROLES = {"system_admin", "tenant_admin", "module_manager", "viewer"}
@@ -62,7 +72,7 @@ def _list_roles_impl(db: Session) -> list[RoleOut]:
 @router.get("/", response_model=list[RoleOut])
 def list_roles_slash(
     db: Session = Depends(get_db),
-    _: User = Depends(is_system_admin),
+    _: User = Depends(_MANAGE),
 ):
     """取得所有角色清單（含 id，供前端角色管理頁面使用）"""
     return _list_roles_impl(db)
@@ -71,7 +81,7 @@ def list_roles_slash(
 @router.get("", response_model=list[RoleOut])
 def list_roles(
     db: Session = Depends(get_db),
-    _: User = Depends(is_system_admin),
+    _: User = Depends(_MANAGE),
 ):
     """取得所有角色清單（無 trailing slash 版本）"""
     return _list_roles_impl(db)
@@ -82,7 +92,7 @@ def list_roles(
 def create_role(
     payload: RoleCreateRequest,
     db: Session = Depends(get_db),
-    _: User = Depends(is_system_admin),
+    _: User = Depends(_MANAGE),
 ):
     """
     新增自訂角色。
@@ -135,11 +145,12 @@ def create_role(
 def delete_role(
     role_id: str,
     db: Session = Depends(get_db),
-    _: User = Depends(is_system_admin),
+    current_user: User = Depends(_MANAGE),
 ):
     """
     刪除自訂角色。
     - 內建角色（system_admin / tenant_admin / module_manager / viewer）受保護，不可刪除
+    - 不得刪除含有呼叫者無權管理之 permission key 的角色（見檔頭說明）
     - 自動清除 role_permissions 與 user_roles 中的關聯記錄
     """
     role = db.query(Role).filter(Role.id == role_id).first()
@@ -151,6 +162,23 @@ def delete_role(
             status_code=403,
             detail=f"'{role.name}' 是系統內建角色，不可刪除",
         )
+
+    # 不得刪除自己管不到的角色（例如含 opera_* 的營運分析角色）
+    my_perms = set(get_user_permissions(current_user.id, db))
+    if "*" not in my_perms:
+        role_perms = {
+            p[0]
+            for p in db.query(RolePermission.permission_key)
+            .filter(RolePermission.role_id == role_id)
+            .all()
+        }
+        beyond = sorted(role_perms - my_perms)
+        if beyond:
+            joined = ", ".join(beyond)
+            raise HTTPException(
+                status_code=403,
+                detail=f"無法刪除角色「{role.name}」：其中包含你未擁有的權限（{joined}）",
+            )
 
     # 1. 清除此角色的所有 permission 設定
     db.query(RolePermission).filter(RolePermission.role_id == role_id).delete()

@@ -76,11 +76,28 @@ class FullBldgPMScheduleUpdate(BaseModel):
 
 # ── 年度計劃矩陣 ──────────────────────────────────────────────────────────────
 
+class FullBldgPMScheduleMatrixEntry(BaseModel):
+    """
+    2026-08-12 新增（比照 mall_pm）：同一個月、同一個保養項目可能有多筆批次記錄
+    （例如同名項目排在 07/22、07/23 各一筆）。每一筆的原始資料放在這裡，供明細
+    Drawer 逐筆列出，不被格內的彙總狀態蓋掉。
+    """
+    item_ragic_id:  str
+    status:         str
+    schedule_id:    Optional[int] = None
+    scheduled_date: Optional[str] = None
+    category:       str = ""
+    frequency:      str = ""
+    ragic_url:      str = ""
+
+
 class FullBldgPMScheduleMatrixCell(BaseModel):
     month:          int
     status:         str    # 'completed'|'overdue'|'in_progress'|'scheduled'|'unscheduled'|'non_month'|'no_data'|'no_frequency'
     schedule_id:    Optional[int] = None
     scheduled_date: Optional[str] = None   # e.g. "05/15"，有排定日期才填
+    count:          int = 0                # 該月實際記錄筆數（0 = 該月無此項目）
+    entries:        List[FullBldgPMScheduleMatrixEntry] = []
 
 
 class FullBldgPMScheduleMatrixRow(BaseModel):
@@ -90,10 +107,15 @@ class FullBldgPMScheduleMatrixRow(BaseModel):
     location:       str
     frequency:      str
     cells:          List[FullBldgPMScheduleMatrixCell]   # 12 個月（index 0 = 1月）
+    # 2026-08-12 新增（比照 mall_pm）：以 task_name 跨月合併成一列後的附加資訊
+    category_variants:  List[str] = []   # 跨月出現過的所有類別（顯示值取最近月份）
+    frequency_variants: List[str] = []   # 跨月出現過的所有頻率（顯示值取最近月份）
+    month_count:        int = 0          # 本列合併自幾個月份的批次
+    ragic_url:          str = ""
 
 
 class FullBldgPMScheduleAnnualMatrix(BaseModel):
     year:             int
     rows:             List[FullBldgPMScheduleMatrixRow]
-    summary:          dict = {}   # { "total_items": N, "completed_count": N, ... }
+    summary:          dict = {}   # { "total_items": N, "total_records": N, "completed_count": N, ... }
     month_batch_urls: dict = {}   # { "5": "https://...", "6": "https://..." }  月份 → Ragic 批次 URL

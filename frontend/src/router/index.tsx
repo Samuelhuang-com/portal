@@ -296,13 +296,33 @@ function HomeRedirect() {
 
 // ── Route Guards ──────────────────────────────────────────────────────────────
 /**
- * 系統設定守衛 — 只有 system_admin 角色可進入 /settings/*
- * 保留此守衛作為整個 settings group 的第一道防線。
+ * 系統設定守衛 — 整個 settings group 的第一道防線。
+ *
+ * 2026-08-12 權限收斂改版：原本只認 system_admin 角色，導致「幫忙建帳號／派角色」
+ * 只能靠 system_admin，連帶把 Opera／金旭／即時營運的營收資料一併送出去。
+ * 改為「具備任一 settings_* 權限即可進入」，各頁再由自己的 PermissionGuard 細分。
+ *
+ * ⚠️ 必須等 /me 回傳 permissions 才能判斷，否則具備 settings_* 權限的使用者
+ *    會在權限載入前被誤導回 /dashboard（system_admin 的 roles 在 JWT 裡，不必等）。
  */
+const SETTINGS_PERMISSION_KEYS = [
+  'settings_users_manage',
+  'settings_roles_manage',
+  'settings_menu_manage',
+  'settings_ragic_manage',
+]
+
 function SettingsGuard({ children }: { children: React.ReactNode }) {
-  const user = useAuthStore((s) => s.user)
+  const user          = useAuthStore((s) => s.user)
+  const hasPermission = useAuthStore((s) => s.hasPermission)
   const isSystemAdmin = !!(user?.roles?.includes('system_admin'))
-  return isSystemAdmin ? <>{children}</> : <Navigate to="/dashboard" replace />
+
+  if (!isSystemAdmin && user?.permissions === undefined) {
+    return null   // 等 /me 回應，MainLayout 的 Skeleton 佔位
+  }
+
+  const canEnter = isSystemAdmin || SETTINGS_PERMISSION_KEYS.some((k) => hasPermission(k))
+  return canEnter ? <>{children}</> : <Navigate to="/dashboard" replace />
 }
 
 /**

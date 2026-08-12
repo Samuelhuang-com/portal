@@ -4,7 +4,25 @@ GET  /api/v1/role-permissions/{role_id}   取得角色的 permission_key 清單
 PUT  /api/v1/role-permissions/{role_id}   覆寫角色的 permission_key 清單
 GET  /api/v1/role-permissions/keys        取得系統所有已知的 permission_key 定義
 
-僅限 system_admin 操作。
+需具備 settings_roles_manage 權限（system_admin 透過萬用符 * 自動通過）。
+
+── 2026-08-12 權限收斂改版 ───────────────────────────────────────────────────
+原本三支端點都是 Depends(is_system_admin)（角色檢查），導致「能管角色」與
+「能看所有模組」被綁死成同一件事：要讓某人幫忙建帳號派角色，就只能給他
+system_admin，於是 Opera／金旭／即時營運的營收資料也一併送出去。
+
+改為吃 settings_roles_manage 之後，可以建立「不含營運分析權限、但能管角色」
+的角色。為了防止提權，另外加上兩條通則：
+
+  1. GET /keys 只回傳「呼叫者自己擁有的」permission key
+     → 沒有 opera_* 的人，權限設定畫面上根本不會出現「營運分析」那一組
+  2. PUT 不得授予呼叫者自己沒有的 key（不能給出自己沒有的東西）
+     → 就算直接打 API 也無法把 opera_* 勾給自己
+
+⚠️ PUT 是「完全取代」語意（先 delete 再 insert）。若呼叫者看不到某些 key，
+   那些 key 不會出現在他送上來的 payload 裡，因此必須**保留角色原有的、
+   呼叫者無權管理的 key**，否則他隨手存一次就會把那些授權洗掉，而且沒有
+   任何錯誤訊息。這是本次改動最容易踩到的坑。
 """
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
@@ -12,12 +30,28 @@ from pydantic import BaseModel
 from typing import Optional
 
 from app.core.database import get_db
-from app.dependencies import is_system_admin
+from app.dependencies import get_current_user, get_user_permissions, require_permission
 from app.models.role import Role
 from app.models.role_permission import RolePermission
 from app.models.user import User
 
 router = APIRouter()
+
+# 管理角色權限所需的 permission key
+_MANAGE = require_permission("settings_roles_manage")
+
+
+def _manageable_keys(user: User, db: Session) -> tuple[set[str], bool]:
+    """
+    回傳 (呼叫者可管理的 permission_key 集合, 是否為萬用符持有者)。
+
+    - system_admin（permissions=["*"]）→ 可管理全部
+    - 其他人 → 只能管理自己已擁有的 key（不能給出自己沒有的東西）
+    """
+    perms = set(get_user_permissions(user.id, db))
+    if "*" in perms:
+        return {d["key"] for d in PERMISSION_DEFINITIONS}, True
+    return perms & {d["key"] for d in PERMISSION_DEFINITIONS}, False
 
 
 PERMISSION_DEFINITIONS = [
@@ -202,22 +236,35 @@ class RoleOut(BaseModel):
 
 @router.get("/keys", response_model=list[PermissionKeyDef])
 def list_permission_keys(
-    _: User = Depends(is_system_admin),
+    current_user: User = Depends(_MANAGE),
+    db: Session = Depends(get_db),
 ):
-    """取得系統所有已知的 permission_key 定義（用於 Roles 頁面 checkbox 清單）"""
-    return [PermissionKeyDef(**d) for d in PERMISSION_DEFINITIONS]
+    """
+    取得可授予的 permission_key 定義（用於 Roles 頁面 checkbox 清單）。
+
+    只回傳呼叫者自己擁有的 key —— 沒有某組權限的人，畫面上不會出現那一組，
+    也就無從把它勾給任何角色（包含自己所屬的角色）。
+    """
+    allowed, _is_wildcard = _manageable_keys(current_user, db)
+    return [PermissionKeyDef(**d) for d in PERMISSION_DEFINITIONS if d["key"] in allowed]
 
 
 @router.get("/{role_id}", response_model=RolePermissionsOut)
 def get_role_permissions(
     role_id: str,
     db: Session = Depends(get_db),
-    _: User = Depends(is_system_admin),
+    current_user: User = Depends(_MANAGE),
 ):
-    """取得指定角色的 permission_key 清單"""
+    """
+    取得指定角色的 permission_key 清單。
+
+    同樣只回傳呼叫者可管理的 key；角色實際擁有、但呼叫者無權管理的 key
+    會被隱藏（存檔時由 save_role_permissions 原樣保留，不會被洗掉）。
+    """
     role = db.query(Role).filter(Role.id == role_id).first()
     if not role:
         raise HTTPException(status_code=404, detail="角色不存在")
+    allowed, _is_wildcard = _manageable_keys(current_user, db)
     perms = (
         db.query(RolePermission.permission_key)
         .filter(RolePermission.role_id == role_id)
@@ -226,7 +273,7 @@ def get_role_permissions(
     return RolePermissionsOut(
         role_id=role_id,
         role_name=role.name,
-        permissions=[p[0] for p in perms],
+        permissions=[p[0] for p in perms if p[0] in allowed],
     )
 
 
@@ -235,11 +282,15 @@ def save_role_permissions(
     role_id: str,
     payload: RolePermissionsSaveRequest,
     db: Session = Depends(get_db),
-    _: User = Depends(is_system_admin),
+    current_user: User = Depends(_MANAGE),
 ):
     """
-    覆寫指定角色的 permission_key 清單（完全取代）。
+    覆寫指定角色的 permission_key 清單（在呼叫者可管理的範圍內完全取代）。
+
     system_admin 角色固定為萬用符（*），不允許個別設定。
+
+    防提權：呼叫者不得授予自己沒有的 key。
+    防誤刪：角色原有、但呼叫者無權管理的 key 原樣保留。
     """
     role = db.query(Role).filter(Role.id == role_id).first()
     if not role:
@@ -260,8 +311,30 @@ def save_role_permissions(
             detail=f"無效的 permission_key：{joined}",
         )
 
+    # ── 防提權：不得授予自己沒有的權限 ──────────────────────────────────────
+    allowed, _is_wildcard = _manageable_keys(current_user, db)
+    escalation = sorted(set(payload.permissions) - allowed)
+    if escalation:
+        joined = ", ".join(escalation)
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"無法授予自己未擁有的權限：{joined}",
+        )
+
+    # ── 防誤刪：保留角色原有、呼叫者無權管理的 key ──────────────────────────
+    # PUT 是完全取代語意，而呼叫者看不到的 key 不會出現在 payload 裡。
+    # 若直接全刪重插，管理者隨手存一次就會靜默清掉那些授權。
+    existing = {
+        p[0]
+        for p in db.query(RolePermission.permission_key)
+        .filter(RolePermission.role_id == role_id)
+        .all()
+    }
+    preserved = existing - allowed
+    final_keys = set(payload.permissions) | preserved
+
     db.query(RolePermission).filter(RolePermission.role_id == role_id).delete()
-    for key in set(payload.permissions):
+    for key in final_keys:
         db.add(RolePermission(role_id=role_id, permission_key=key))
     db.commit()
 
@@ -273,5 +346,5 @@ def save_role_permissions(
     return RolePermissionsOut(
         role_id=role_id,
         role_name=role.name,
-        permissions=[p[0] for p in perms],
+        permissions=[p[0] for p in perms if p[0] in allowed],
     )

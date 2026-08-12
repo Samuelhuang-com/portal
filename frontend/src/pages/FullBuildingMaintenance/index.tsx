@@ -41,7 +41,7 @@ import {
 import type {
   PMMatrixMetric, FullBldgPMMatrixItem, FullBldgPMCatalogItem,
   FullBldgPMScheduleItem, FullBldgPMScheduleKpi,
-  FullBldgPMScheduleAnnualMatrix, FullBldgPMScheduleMatrixRow,
+  FullBldgPMScheduleAnnualMatrix, FullBldgPMScheduleMatrixRow, FullBldgPMScheduleMatrixCell,
   FullBldgPMScheduleUpdatePayload, FullBldgPMScheduleGenerateResult,
 } from '@/api/fullBuildingMaintenance'
 import MonthlyCalendarGrid from '@/components/MonthlyCalendarGrid'
@@ -710,6 +710,7 @@ export default function FullBuildingMaintenancePage() {
   const [annualDrawerOpen,  setAnnualDrawerOpen]  = useState(false)
   const [annualDrawerCell,  setAnnualDrawerCell]  = useState<{
     row: FullBldgPMScheduleMatrixRow; scheduleId: number | null; status: string; month: number
+    cell?: FullBldgPMScheduleMatrixCell | null
   } | null>(null)
   const [annualCellDetail,  setAnnualCellDetail]  = useState<FullBldgPMScheduleItem | null>(null)
   const [annualCellLoading, setAnnualCellLoading] = useState(false)
@@ -951,9 +952,10 @@ export default function FullBuildingMaintenancePage() {
     scheduleId: number | null,
     status: string,
     month: number,
+    cell?: FullBldgPMScheduleMatrixCell | null,
   ) => {
     if (status === 'non_month' || status === 'no_frequency') return
-    setAnnualDrawerCell({ row, scheduleId, status, month })
+    setAnnualDrawerCell({ row, scheduleId, status, month, cell })
     setAnnualCellDetail(null)
     setAnnualCellLoading(false)
     setAnnualDrawerOpen(true)
@@ -1939,27 +1941,57 @@ export default function FullBuildingMaintenancePage() {
                   <tr key={row.item_ragic_id} style={{ borderBottom:'1px solid #eee' }}>
                     <td style={{ ...ANNUAL_TD, whiteSpace:'nowrap' }}>
                       <Tag style={{ fontSize:14 }}>{row.category || '—'}</Tag>
+                      {(row.category_variants?.length ?? 0) > 1 && (
+                        <Tooltip title={`本項目跨月出現過 ${row.category_variants.length} 種類別：${row.category_variants.join('、')}（顯示最近月份的值）`}>
+                          <span style={{ color:'#FA8C16', fontSize:13, marginLeft:2, cursor:'help' }}>⚠</span>
+                        </Tooltip>
+                      )}
                     </td>
                     <td style={{ ...ANNUAL_TD, whiteSpace:'nowrap' }}>
-                      <Tooltip title={row.location || undefined}>
+                      <Tooltip title={
+                        (row.month_count ?? 0) > 1
+                          ? `本列合併自 ${row.month_count} 個月份的批次${row.location ? `｜${row.location}` : ''}`
+                          : (row.location || undefined)
+                      }>
                         <span style={{ fontSize:15 }}>{row.task_name}</span>
                       </Tooltip>
                     </td>
                     <td style={{ ...ANNUAL_TD, textAlign:'center', whiteSpace:'nowrap' }}>
                       {row.frequency ? <Tag style={{ fontSize:14 }}>{row.frequency}</Tag> : '—'}
+                      {(row.frequency_variants?.length ?? 0) > 1 && (
+                        <Tooltip title={`本項目跨月出現過 ${row.frequency_variants.length} 種頻率：${row.frequency_variants.join('、')}（顯示最近月份的值）`}>
+                          <span style={{ color:'#FA8C16', fontSize:13, marginLeft:2, cursor:'help' }}>⚠</span>
+                        </Tooltip>
+                      )}
                     </td>
                     {row.cells.map(cell => {
                       const cs = ANNUAL_CELL_STYLE[cell.status] ?? ANNUAL_CELL_STYLE['no_frequency']
                       const clickable = cell.status !== 'non_month' && cell.status !== 'no_frequency'
+                      const multi = (cell.count ?? 0) > 1
                       return (
                         <td key={cell.month}
                           style={{ ...ANNUAL_TD, textAlign:'center', background:cs.bg, color:cs.color,
                             cursor:clickable?'pointer':'default', fontWeight:600, padding:'4px 2px', fontSize:18 }}
-                          onClick={() => clickable && openAnnualCell(row, cell.schedule_id, cell.status, cell.month)}>
-                          <Tooltip title={ANNUAL_TOOLTIP_LABEL[cell.status] ?? cell.status}>
-                            <div style={{ lineHeight:1.2 }}>
+                          onClick={() => clickable && openAnnualCell(row, cell.schedule_id, cell.status, cell.month, cell)}>
+                          <Tooltip title={
+                            (ANNUAL_TOOLTIP_LABEL[cell.status] ?? cell.status)
+                            + (multi
+                                ? `｜本月共 ${cell.count} 筆（${cell.entries.map(e => e.scheduled_date || '無日期').join('、')}），點擊看明細`
+                                : '')
+                          }>
+                            <div style={{ lineHeight:1.2, position:'relative' }}>
                               {cs.icon}
-                              {cell.scheduled_date && (
+                              {multi && (
+                                <span style={{ position:'absolute', top:-2, right:2, fontSize:11, fontWeight:700,
+                                  color:'#fff', background:cs.color, borderRadius:8, padding:'0 4px', lineHeight:'15px' }}>
+                                  ×{cell.count}
+                                </span>
+                              )}
+                              {multi ? (
+                                <div style={{ fontSize:13, fontWeight:500, color:cs.color, opacity:0.85, marginTop:1 }}>
+                                  {cell.entries.map(e => e.scheduled_date).filter(Boolean).join('、') || ' '}
+                                </div>
+                              ) : cell.scheduled_date && (
                                 <div style={{ fontSize:13, fontWeight:500, color:cs.color,
                                   opacity:cell.status==='no_data'?1:0.85, marginTop:1 }}>
                                   {cell.scheduled_date}
@@ -1986,7 +2018,10 @@ export default function FullBuildingMaintenancePage() {
         <Row style={{ marginTop: 12 }}>
           <Col>
             <Text type="secondary">
-              共 {annualMatrix.summary.total_items} 個保養項目，本年已完成 {annualMatrix.summary.completed_count} 筆排程記錄
+              共 {annualMatrix.summary.total_items} 個保養項目
+              {annualMatrix.summary.total_records != null &&
+                `（合併自 ${annualMatrix.summary.total_records} 筆批次記錄）`}
+              ，本年已完成 {annualMatrix.summary.completed_count} 筆
             </Text>
           </Col>
         </Row>
@@ -2217,10 +2252,10 @@ export default function FullBuildingMaintenancePage() {
             <Tag>{annualDrawerCell.row.category || '—'}</Tag>
             <span>{annualDrawerCell.row.task_name}</span>
             <Tag>{annualYear}/{String(annualDrawerCell.month).padStart(2, '0')}</Tag>
-            {annualMatrix?.month_batch_urls?.[String(annualDrawerCell.month)] && (
+            {(annualMatrix?.month_batch_urls?.[String(annualDrawerCell.month)] || annualDrawerCell.row.ragic_url) && (
               <Tooltip title="在 Ragic 查看原始表單">
                 <a
-                  href={annualMatrix.month_batch_urls[String(annualDrawerCell.month)]}
+                  href={annualMatrix?.month_batch_urls?.[String(annualDrawerCell.month)] || annualDrawerCell.row.ragic_url}
                   target="_blank"
                   rel="noopener noreferrer"
                   style={{ color: '#4BA8E8', fontSize: 16, lineHeight: 1 }}
@@ -2256,12 +2291,48 @@ export default function FullBuildingMaintenancePage() {
               </Row>
             )}
           </div>
-        ) : annualDrawerCell?.status === 'no_data' ? (
-          <Alert type="warning" showIcon
-            message="此月份應執行保養但尚未產生排程，請至「排程明細」Tab 確認。"
+        ) : null}
+
+        {/* 同月多筆：逐筆列出，不讓任何一筆被彙總狀態蓋掉 */}
+        {!annualCellLoading && (annualDrawerCell?.cell?.count ?? 0) > 1 && (
+          <>
+            <Alert type="info" showIcon style={{ marginBottom: 12 }}
+              message={`本月共 ${annualDrawerCell!.cell!.count} 筆記錄，格內顯示的是彙總狀態`} />
+            <Table
+              size="small"
+              rowKey="item_ragic_id"
+              pagination={false}
+              dataSource={annualDrawerCell!.cell!.entries}
+              columns={[
+                { title: '排定日期', dataIndex: 'scheduled_date', width: 90,
+                  render: (v: string | null) => v || '—' },
+                { title: '狀態', dataIndex: 'status', width: 90, align: 'center' as const,
+                  render: (v: string) => (
+                    <Tag color={SCHED_STATUS_CFG[v]?.tagColor ?? 'default'}>
+                      {SCHED_STATUS_CFG[v]?.label ?? v}
+                    </Tag>
+                  ) },
+                { title: '類別', dataIndex: 'category', width: 70,
+                  render: (v: string) => v || '—' },
+                { title: '頻率', dataIndex: 'frequency', width: 60,
+                  render: (v: string) => v || '—' },
+                { title: 'Ragic', dataIndex: 'ragic_url', width: 56, align: 'center' as const,
+                  render: (v: string) => v
+                    ? <a href={v} target="_blank" rel="noopener noreferrer"
+                         style={{ color:'#4BA8E8' }}><LinkOutlined /></a>
+                    : '—' },
+              ]}
+            />
+          </>
+        )}
+
+        {!annualCellLoading && !annualCellDetail && annualDrawerCell
+          && (annualDrawerCell.cell?.count ?? 0) <= 1 && (
+          <Alert type={annualDrawerCell.status === 'no_data' ? 'warning' : 'info'} showIcon
+            message={annualDrawerCell.status === 'no_data'
+              ? '此月份應執行保養但尚未產生排程，請至「排程明細」Tab 確認。'
+              : '此月份無排程記錄。'}
           />
-        ) : (
-          <Alert type="info" showIcon message="此月份無排程記錄。" />
         )}
       </Drawer>
 

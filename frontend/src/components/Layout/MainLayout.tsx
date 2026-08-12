@@ -941,7 +941,6 @@ export default function MainLayout() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // ── 系統設定選單僅限 system_admin 可見 ────────────────────────────────────
   const isSystemAdmin = !!(user?.roles?.includes('system_admin'))
   // 取得 permissions 陣列（用於 filterMenuByPermissions）
   const userPermissions = useMemo<string[]>(
@@ -949,12 +948,18 @@ export default function MainLayout() {
     [user?.permissions, isSystemAdmin]
   )
 
-  // base items：非 system_admin 時過濾掉 settings 群組（保留舊行為 + 被 filter 再次過濾）
+  // ── base items ────────────────────────────────────────────────────────────
+  // 2026-08-12：原本這裡對非 system_admin 直接砍掉整個 settings 群組。
+  // 權限收斂改版後，「能管帳號／角色」不再等於 system_admin，硬砍會讓具備
+  // settings_users_manage / settings_roles_manage 的人看不到自己該用的頁面。
+  //
+  // 改為完全交給 filterMenuByPermissions 依 permissionKey 逐項過濾：
+  //   * settings 群組本身沒有 permissionKey → 子項全被濾掉時群組自動隱藏
+  //   * 群組內 4 頁掛 system_admin_only（基本設定／員工手冊／知識圖譜／使用監控），
+  //     非 system_admin 沒有這個 key，仍然看不到
+  // 效果等價於舊行為，但對持有 settings_* 權限的人正確開放。
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const baseItems = useMemo<any[]>(
-    () => isSystemAdmin ? menuItems : menuItems.filter((item) => item.key !== 'settings'),
-    [isSystemAdmin]
-  )
+  const baseItems = useMemo<any[]>(() => menuItems, [])
 
   // menuLoading：true  = 正在等待 API 回應（顯示 Skeleton）
   //              false = 已取得正確選單（顯示正確選單）

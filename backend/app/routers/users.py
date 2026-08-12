@@ -8,9 +8,15 @@ from datetime import timedelta
 from app.core.database import get_db
 from app.core.security import hash_password, verify_password
 from app.core.time import twnow
-from app.dependencies import get_current_user, is_system_admin, require_roles
+from app.dependencies import (
+    get_current_user,
+    get_user_permissions,
+    is_system_admin,
+    require_permission,
+)
 from app.models.user import User
 from app.models.role import Role
+from app.models.role_permission import RolePermission
 from app.models.user_role import UserRole
 from app.models.tenant import Tenant
 from app.models.audit_log import AuditLog
@@ -28,6 +34,17 @@ OTP_EXPIRES_MINUTES = 15
 router = APIRouter()
 
 
+# ── 2026-08-12 權限收斂改版 ───────────────────────────────────────────────────
+# 原本人員管理端點是 require_roles("system_admin", "tenant_admin")（角色檢查），
+# 導致「能建帳號」只能靠 system_admin，連帶把 Opera／金旭／即時營運的營收資料
+# 一起送出去。改吃 settings_users_manage 之後，可以只給建帳號能力而不給營運資料。
+#
+# ⚠️ 語意變更：持有 settings_users_manage 即可跨 tenant 管理使用者。
+#    這是必要的 —— 負責建帳號的人在「總公司」，但要管理飯店A／商場A 的使用者。
+#    原本 tenant_admin 只能看自己 tenant 的限制隨之取消（該角色目前 0 人 0 權限）。
+_USER_MANAGE = require_permission("settings_users_manage")
+
+
 def _get_roles(user_id: str, db: Session) -> list[str]:
     return [
         r[0]
@@ -36,6 +53,67 @@ def _get_roles(user_id: str, db: Session) -> list[str]:
         .filter(UserRole.user_id == user_id)
         .all()
     ]
+
+
+def _assert_can_grant_roles(
+    current_user: User, role_names: list[str], db: Session
+) -> None:
+    """
+    防提權：不得指派「含有呼叫者自己沒有的權限」的角色。
+
+    否則只要能管使用者，就能把自己（或別人）加進帶有 opera_* 的角色，
+    等於繞過 role_permissions 那邊的防提權檢查。
+
+    system_admin（permissions=["*"]）不受限。
+    """
+    my_perms = set(get_user_permissions(current_user.id, db))
+    if "*" in my_perms:
+        return
+
+    for role_name in role_names:
+        role = db.query(Role).filter(Role.name == role_name).first()
+        if not role:
+            continue
+        # 目標角色若是 system_admin，等同授予全部權限 —— 一律禁止
+        if role.name == "system_admin":
+            raise HTTPException(
+                status_code=403,
+                detail="無法指派 system_admin 角色（需要系統管理員權限）",
+            )
+        role_perms = {
+            p[0]
+            for p in db.query(RolePermission.permission_key)
+            .filter(RolePermission.role_id == role.id)
+            .all()
+        }
+        missing = sorted(role_perms - my_perms)
+        if missing:
+            joined = ", ".join(missing)
+            raise HTTPException(
+                status_code=403,
+                detail=f"無法指派角色「{role_name}」：其中包含你未擁有的權限（{joined}）",
+            )
+
+
+def _assert_can_manage_target(current_user: User, target: User, db: Session) -> None:
+    """
+    對稱規則：不得變更「持有呼叫者無法授予之角色」的使用者。
+
+    update_user 是先刪光 user_roles 再依 payload 重建，若不擋，
+    只有 settings_users_manage 的人可以把別人的 system_admin 拔掉
+    （雖然不是提權，但足以癱瘓系統管理權）。
+    """
+    my_perms = set(get_user_permissions(current_user.id, db))
+    if "*" in my_perms:
+        return
+    target_roles = _get_roles(target.id, db)
+    try:
+        _assert_can_grant_roles(current_user, target_roles, db)
+    except HTTPException:
+        raise HTTPException(
+            status_code=403,
+            detail="無法變更此使用者：對方持有你無權管理的角色",
+        )
 
 
 def _build_user_out(user: User, db: Session) -> UserOut:
@@ -65,13 +143,13 @@ def list_users(
     per_page: int = Query(20, ge=1, le=100),
     tenant_id: Optional[str] = None,
     search: Optional[str] = None,
-    current_user: User = Depends(require_roles("system_admin", "tenant_admin")),
+    current_user: User = Depends(_USER_MANAGE),
     db: Session = Depends(get_db),
 ):
     q = db.query(User)
-    if "system_admin" not in _get_roles(current_user.id, db):
-        q = q.filter(User.tenant_id == current_user.tenant_id)
-    elif tenant_id:
+    # 持有 settings_users_manage 即可跨 tenant 檢視（見檔頭 2026-08-12 註記）。
+    # 保留 tenant_id 篩選參數，讓管理者仍能主動只看某一個據點。
+    if tenant_id:
         q = q.filter(User.tenant_id == tenant_id)
     if search:
         q = q.filter(
@@ -90,9 +168,10 @@ def list_users(
 @router.post("", response_model=UserOut)
 def create_user(
     data: UserCreate,
-    current_user: User = Depends(require_roles("system_admin", "tenant_admin")),
+    current_user: User = Depends(_USER_MANAGE),
     db: Session = Depends(get_db),
 ):
+    _assert_can_grant_roles(current_user, list(data.role_names or []), db)
     email = data.email.lower().strip()
     if "@" not in email:
         email = f"{email}@portal.local"
@@ -141,12 +220,15 @@ def create_user(
 def update_user(
     user_id: str,
     data: UserUpdate,
-    current_user: User = Depends(require_roles("system_admin", "tenant_admin")),
+    current_user: User = Depends(_USER_MANAGE),
     db: Session = Depends(get_db),
 ):
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="使用者不存在")
+    _assert_can_manage_target(current_user, user, db)
+    if data.role_names is not None:
+        _assert_can_grant_roles(current_user, list(data.role_names), db)
     if data.full_name is not None:
         user.full_name = data.full_name
     if data.is_active is not None:
@@ -243,19 +325,24 @@ def change_password(
 @router.post("/{user_id}/reset-password", response_model=AdminResetPasswordResponse)
 def admin_reset_password(
     user_id: str,
-    current_user: User = Depends(require_roles("system_admin", "tenant_admin")),
+    current_user: User = Depends(_USER_MANAGE),
     db: Session = Depends(get_db),
 ):
     """
     管理員替指定使用者產生 OTP。
     OTP 明文僅回傳一次，管理員需口頭告知使用者。
     使用者以 OTP 登入後，系統強制要求設定新密碼。
+
+    ⚠️ 這支是提權破口：能重設密碼就能登入對方帳號。因此同樣套用
+       _assert_can_manage_target —— 不得重設「持有你無權管理之角色」
+       的使用者密碼，否則只要能管帳號就能借別人的帳號看營運分析資料。
     """
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="使用者不存在")
     if user_id == current_user.id:
         raise HTTPException(status_code=400, detail="不能重設自己的密碼（請使用「修改密碼」功能）")
+    _assert_can_manage_target(current_user, user, db)
 
     otp = _generate_otp()
     user.otp_code = hash_password(otp)

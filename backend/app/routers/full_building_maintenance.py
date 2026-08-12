@@ -29,7 +29,7 @@ from app.models.full_building_maintenance import FullBldgPMBatch, FullBldgPMItem
 from app.models.full_bldg_pm_schedule import FullBldgPMSchedule
 from app.schemas.full_bldg_periodic_maintenance import (
     FullBldgPMScheduleAnnualMatrix, FullBldgPMScheduleMatrixRow,
-    FullBldgPMScheduleMatrixCell,
+    FullBldgPMScheduleMatrixCell, FullBldgPMScheduleMatrixEntry,
     FullBldgPMScheduleOut, FullBldgPMScheduleKPI,
     FullBldgPMScheduleGenerateResult, FullBldgPMScheduleUpdate,
 )
@@ -1666,6 +1666,41 @@ def _fb_get_latest_batch_items(db: Session) -> list[FullBldgPMItem]:
     )
 
 
+def _fb_get_batch_items_for_month(db: Session, year: int, month: int) -> list[FullBldgPMItem]:
+    """
+    2026-08-12 新增（比照 mall_pm 2026-07-23 的 `_mall_get_batch_items_for_month()`）：
+    取得指定 year/month「自己那一批」的保養項目。
+
+    取代舊版在「產生排程」「年度計劃表」一律用 `_fb_get_latest_batch_items()`
+    （全站目前最新一批）代表所有月份的問題 —— item.ragic_id 是
+    "{batch_id}_{row_key}" 格式，只要 Ragic 同步進更新一批（例如 08 月批次一到），
+    07 月先前產生的排程使用的 item_ragic_id 就跟新的最新批次完全對不上，年度計劃表
+    用 (item_ragic_id, month) 查表整批落空，7 月的完成狀態永遠顯示不出來。
+
+    同一 period_month 有多筆批次（重複同步）時，比照 `_latest_batch_ids_per_month()`
+    只取 ragic_updated_at 最新的那筆；找不到該月批次則回傳空清單（該月尚未同步進來，
+    如實顯示空缺，不借用其他月份的資料冒充）。
+    """
+    valid_batch_ids = _latest_batch_ids_per_month(db)
+    target_period = f"{year}/{month:02d}"
+    batch = (
+        db.query(FullBldgPMBatch)
+        .filter(
+            FullBldgPMBatch.period_month == target_period,
+            FullBldgPMBatch.ragic_id.in_(valid_batch_ids),
+        )
+        .first()
+    )
+    if not batch:
+        return []
+    return (
+        db.query(FullBldgPMItem)
+        .filter(FullBldgPMItem.batch_ragic_id == batch.ragic_id)
+        .order_by(FullBldgPMItem.seq_no)
+        .all()
+    )
+
+
 def _fb_calc_schedule_status(rec: FullBldgPMSchedule) -> str:
     if rec.is_completed or (rec.start_time and rec.end_time):
         return "completed"
@@ -1884,32 +1919,40 @@ def _do_generate_full_bldg_pm(
     year: int, month: int, db: Session
 ) -> FullBldgPMScheduleGenerateResult:
     """
-    依最新批次頻率規則，為 year/month 產生 FullBldgPMSchedule 記錄。
+    依「目標 year/month 自己的批次」full_bldg_pm_batch_item 產生 FullBldgPMSchedule 記錄。
     冪等保護：
-      - is_completed=True          → 跳過
+      - is_completed=True            → 跳過
       - portal_edited_at IS NOT NULL → 跳過
-      - 其他已存在記錄               → 更新 scheduled_date
+      - 其他已存在記錄               → 更新排定日期與 Ragic 執行狀態
 
-    2026-07-13 修正（比照 mall_pm 同日修正，見 generate_mall_schedule() 說明）：
-    item.scheduled_date 永遠是「目前最新批次」自己的值。舊版不論 year/month 是哪個月，
-    只要 item.scheduled_date 有值就直接採用，導致產生「過去月份」排程時把當期月份的
-    日期整批錯誤帶入（例如產生 05 月排程卻顯示 07 月的日期）。改為：只有目標月份＝
-    目前最新批次自己的月份時才採用 item.scheduled_date；其餘月份一律用 exec_months
-    自動推算（每月固定 01 號），不嘗試任何跨批次備填。
+    2026-07-13 舊修正（已被下方 2026-08-12 修正取代）：
+    item.scheduled_date 永遠是「目前最新批次」自己的值，舊版產生過去月份排程時會把
+    當期月份的日期整批錯誤帶入，因此加上 is_current_batch_month 分支只在當期月份採用。
+
+    2026-08-12 修正（比照 mall_pm 2026-07-23 的 generate_mall_schedule()）：
+    上述分支只是把錯誤縮小，沒有解決根因 —— 來源批次仍是「全站目前最新一批」，
+    跟目標月份無關。實際症狀：08 月批次同步進來後，07 月的「每日巡檢表」（直接讀
+    07 月自己的批次項目）顯示已完成，但「年度計劃表」（讀 full_bldg_pm_schedule）
+    永遠顯示未完成，因為 07 月的排程記錄拿不到完成狀態，且 item_ragic_id
+    （"{batch_id}_{row_key}" 格式）跟新批次完全對不上，矩陣查表整批落空。
+
+    改為：直接用 `_fb_get_batch_items_for_month(db, year, month)` 抓「該月自己的批次」。
+    來源批次必然等於目標月份自己的批次，因此原本的 is_current_batch_month 分支、
+    以及對非當期月份套用頻率公式二次過濾（_fb_should_schedule_by_freq）都不再需要
+    —— 批次裡有的項目，就代表 Ragic 自己已經認定該項目在這個月要執行，item 的
+    scheduled_date / start_time / end_time / is_completed 一律直接採用。
     """
     year_month = f"{year}/{str(month).zfill(2)}"
-    all_items = _fb_get_latest_batch_items(db)
-
-    latest_batch_period_month = ""
-    if all_items:
-        latest_batch = db.get(FullBldgPMBatch, all_items[0].batch_ragic_id)
-        if latest_batch:
-            latest_batch_period_month = latest_batch.period_month
-    is_current_batch_month = bool(latest_batch_period_month) and (latest_batch_period_month == year_month)
+    all_items = _fb_get_batch_items_for_month(db, year, month)
 
     generated = updated = skipped_completed = skipped_edited = 0
     skipped_non_month = skipped_no_frequency = 0
     errors: List[str] = []
+
+    if not all_items:
+        errors.append(
+            f"{year_month} 尚未同步對應批次（full_bldg_pm_batch 找不到 period_month={year_month} 的記錄），未產生任何排程"
+        )
 
     for item in all_items:
         freq = (item.frequency or "").strip()
@@ -1924,11 +1967,9 @@ def _do_generate_full_bldg_pm(
             skipped_no_frequency += 1
             continue
 
-        if not has_exec_months and not _fb_should_schedule_by_freq(freq, month):
-            skipped_non_month += 1
-            continue
-
-        ragic_date = (item.scheduled_date or "").strip() if is_current_batch_month else ""
+        # item 來自目標月份自己的批次，來源與目標必然一致，直接採用 Ragic 的排定日期。
+        # 該月批次沒填排定日期時才退回 exec_months 推算（每月固定 01 號）。
+        ragic_date = (item.scheduled_date or "").strip()
         if ragic_date:
             resolved_date = ragic_date
         elif has_exec_months:
@@ -1946,7 +1987,7 @@ def _do_generate_full_bldg_pm(
             .first()
         )
         if existing:
-            if existing.is_completed:
+            if existing.is_completed or (existing.start_time and existing.end_time):
                 skipped_completed += 1
                 continue
             if existing.portal_edited_at:
@@ -1959,16 +2000,13 @@ def _do_generate_full_bldg_pm(
             existing.estimated_minutes = item.estimated_minutes
             existing.scheduled_date = resolved_date
             existing.schedule_source = "auto"
-            # 2026-07-13 修正（比照 mall_pm 同日修正）：帶入 Ragic 同步回來的完成狀態，原本
-            # 從未寫入，導致 Ragic 端已回填保養記錄後，「排程管理」分頁永遠不會反映。只在
-            # 目標月份＝目前最新批次自己的月份時才帶入，理由同上方 resolved_date 的處理。
-            if is_current_batch_month:
-                existing.start_time    = item.start_time
-                existing.end_time      = item.end_time
-                existing.is_completed  = item.is_completed
-                existing.result_note   = item.result_note
-                existing.abnormal_flag = item.abnormal_flag
-                existing.abnormal_note = item.abnormal_note
+            existing.executor_name  = item.executor_name or ""
+            existing.start_time     = item.start_time
+            existing.end_time       = item.end_time
+            existing.is_completed   = item.is_completed
+            existing.result_note    = item.result_note
+            existing.abnormal_flag  = item.abnormal_flag
+            existing.abnormal_note  = item.abnormal_note
             updated += 1
         else:
             new_rec = FullBldgPMSchedule(
@@ -1982,13 +2020,12 @@ def _do_generate_full_bldg_pm(
                 scheduled_date=resolved_date,
                 executor_name=item.executor_name or "",
                 schedule_source="auto",
-                # 同上：新建記錄時，若為當期月份也一併帶入 item 已知的完成狀態
-                start_time=item.start_time       if is_current_batch_month else "",
-                end_time=item.end_time           if is_current_batch_month else "",
-                is_completed=item.is_completed   if is_current_batch_month else False,
-                result_note=item.result_note     if is_current_batch_month else "",
-                abnormal_flag=item.abnormal_flag if is_current_batch_month else False,
-                abnormal_note=item.abnormal_note if is_current_batch_month else "",
+                start_time=item.start_time,
+                end_time=item.end_time,
+                is_completed=item.is_completed,
+                result_note=item.result_note,
+                abnormal_flag=item.abnormal_flag,
+                abnormal_note=item.abnormal_note,
             )
             db.add(new_rec)
             generated += 1
@@ -2041,95 +2078,217 @@ def get_full_bldg_annual_matrix(
     category: Optional[str] = Query(None),
     db: Session = Depends(get_db),
 ):
-    all_items = _fb_get_latest_batch_items(db)
-    if category:
-        all_items = [it for it in all_items if it.category == category]
+    """
+    2026-08-12 改版（比照 mall_pm 2026-07-23 + 2026-08-03 兩次修正）：
 
-    year_records = (
-        db.query(FullBldgPMSchedule)
-        .filter(FullBldgPMSchedule.year_month.like(f"{year}/%"))
-        .all()
-    )
-    schedule_map: dict = {}
-    for rec in year_records:
-        try:
-            m = int(rec.year_month.split("/")[1])
-            schedule_map[(rec.item_ragic_id, m)] = rec
-        except Exception:
-            pass
+    舊版用 `_fb_get_latest_batch_items()` 抓「全站目前最新一批」當成貫穿全年 12 欄的
+    主檔項目清單，再用 (item_ragic_id, month) 去 full_bldg_pm_schedule 查表。但
+    item.ragic_id 是 "{batch_id}_{row_key}" 格式，Ragic 一同步進新一批就整批換掉，
+    先前月份產生的排程記錄立刻對不上，整批退回公式估算 —— 使用者實測症狀：
+    2026/07「每日巡檢表」顯示已完成，「年度計劃表」7 月欄卻永遠不是已完成。
 
-    rows: list = []
-    completed_cnt = 0
+    改為逐月呼叫 `_fb_get_batch_items_for_month()`，只用「那個月自己的批次」決定該月
+    欄位的真實項目與狀態；跨月則以 `task_name`（正規化後）為鍵合併成一列，維持年度
+    計劃表橫向閱讀的用途。合併鍵刻意不含 category / frequency / location：這些欄位
+    在 Ragic 上跨月可能被改動，納入合併鍵反而會把同一個項目拆成多列；跨月出現過的
+    所有值改放 `category_variants` / `frequency_variants` 由前端提示，不靜默隱藏。
 
-    for item in all_items:
-        cells: list = []
-        for m in range(1, 13):
-            rec = schedule_map.get((item.ragic_id, m))
-            if rec:
-                status = _fb_calc_schedule_status(rec)
-                if status == "completed":
-                    completed_cnt += 1
-                # scheduled_date display: use rec.scheduled_date if available
-                cell_sched_date = None
-                if rec.scheduled_date:
-                    try:
-                        parts = rec.scheduled_date.split("/")
-                        day = parts[-1].zfill(2)
-                        cell_sched_date = f"{m:02d}/{day}"
-                    except Exception:
-                        cell_sched_date = None
-                cells.append(FullBldgPMScheduleMatrixCell(
-                    month=m, status=status,
-                    schedule_id=rec.id,
-                    scheduled_date=cell_sched_date,
-                ))
-            else:
-                freq = (item.frequency or "").strip()
-                if not freq:
-                    cells.append(FullBldgPMScheduleMatrixCell(month=m, status="no_frequency", schedule_id=None))
-                elif _fb_should_schedule_by_freq(freq, m):
-                    cells.append(FullBldgPMScheduleMatrixCell(month=m, status="no_data", schedule_id=None))
-                else:
-                    cells.append(FullBldgPMScheduleMatrixCell(month=m, status="non_month", schedule_id=None))
+    同一個月有多筆同名項目時，該格顯示彙總狀態＋筆數徽章，每一筆原始資料完整保留在
+    `cell.entries` 供明細 Drawer 逐筆列出，不丟棄任何資料。
 
-        rows.append(FullBldgPMScheduleMatrixRow(
-            item_ragic_id=item.ragic_id,
-            category=item.category,
-            task_name=item.task_name,
-            location=item.location,
-            frequency=item.frequency or "",
-            cells=cells,
-        ))
-
-    total_cells = sum(
-        1 for row in rows for c in row.cells
-        if c.status not in ("non_month", "no_frequency")
-    )
-
-    # ── 方案 B：Lazy auto-generate ────────────────────────────────────────────
-    # 當前年度：若過去或當月有 no_data 的格，代表排程記錄尚未建立，自動補產生。
-    # _do_generate_full_bldg_pm 為冪等，不會覆蓋已完成/人工調整的記錄。
+    已知副作用（比照 mall_pm 2026-08-03 使用者確認接受）：Ragic 上把保養項目改名會讓
+    該項目裂成兩列；真的有兩筆不同的同名項目會被併成一列。
+    """
     today = date.today()
+
+    # ── 彙總狀態的嚴重度排序（皆未完成時取最嚴重者代表該格）────────────────────
+    _SEVERITY = {
+        "overdue":      0,
+        "scheduled":    1,
+        "no_data":      2,
+        "unscheduled":  3,
+        "no_frequency": 4,
+        "non_month":    5,
+    }
+
+    def _aggregate_status(statuses: list) -> str:
+        """全部完成 → completed；部分完成／有進行中 → in_progress；皆未完成 → 最嚴重者。"""
+        if all(st == "completed" for st in statuses):
+            return "completed"
+        if any(st in ("completed", "in_progress") for st in statuses):
+            return "in_progress"
+        return min(statuses, key=lambda st: _SEVERITY.get(st, 99))
+
+    def _norm(name: str) -> str:
+        """合併鍵正規化：去頭尾空白並壓縮中間連續空白，避免純空白差異造成裂列。"""
+        return " ".join((name or "").split())
+
+    def _item_status(item: FullBldgPMItem) -> str:
+        """沒有 full_bldg_pm_schedule 記錄時，直接依該月自己批次的 item 欄位判斷真實狀態。"""
+        if item.is_completed or (item.start_time and item.end_time):
+            return "completed"
+        if item.start_time:
+            return "in_progress"
+        if item.scheduled_date:
+            try:
+                full_sched = datetime.strptime(f"{year}/{item.scheduled_date}", "%Y/%m/%d").date()
+                return "overdue" if full_sched < today else "scheduled"
+            except Exception:
+                pass
+        return "no_data"
+
+    # ── 第一階段：逐月抓「該月自己的批次」項目 ────────────────────────────────
+    items_by_month: dict[int, list[FullBldgPMItem]] = {}
+    for m in range(1, 13):
+        month_items = _fb_get_batch_items_for_month(db, year, m)
+        if category:
+            month_items = [it for it in month_items if it.category == category]
+        if month_items:
+            items_by_month[m] = month_items
+
+    # ── 第二階段：Lazy auto-generate ──────────────────────────────────────────
+    # 當前年度、今天（含）以前的月份，若該月批次的 item 已有執行狀態、但排程記錄
+    # 缺漏或狀態落後，就補產生一次。_do_generate_full_bldg_pm 為冪等，不會覆蓋
+    # 已完成／人工調整的記錄。放在建列之前，讓本次回應就吃得到補正後的資料。
     if year == today.year:
-        months_need_generate = {
-            c.month
-            for row in rows
-            for c in row.cells
-            if c.status == "no_data" and c.month <= today.month
-        }
-        for m in sorted(months_need_generate):
+        for m, month_items in items_by_month.items():
+            if m > today.month:
+                continue
+            ym = f"{year}/{m:02d}"
+            recs = {
+                r.item_ragic_id: r
+                for r in db.query(FullBldgPMSchedule).filter(FullBldgPMSchedule.year_month == ym).all()
+            }
+            need = any(
+                _item_status(it) in ("completed", "in_progress", "overdue", "scheduled")
+                and (
+                    it.ragic_id not in recs
+                    or _fb_calc_schedule_status(recs[it.ragic_id]) != _item_status(it)
+                )
+                for it in month_items
+            )
+            if not need:
+                continue
             try:
                 _do_generate_full_bldg_pm(year, m, db)
             except Exception as exc:
                 print(f"[full_building_maintenance] lazy auto-generate {year}/{m:02d} failed: {exc}")
 
+    # ── 第三階段：逐月算出每一筆 item 自己的格子資料 ──────────────────────────
+    groups: dict = {}   # task_name -> {"order": (月,序), "months": {月: [entry,...]}, "seen": [(月, item),...]}
+
+    for m in sorted(items_by_month.keys()):
+        ym = f"{year}/{m:02d}"
+        recs = {
+            r.item_ragic_id: r
+            for r in db.query(FullBldgPMSchedule).filter(FullBldgPMSchedule.year_month == ym).all()
+        }
+        for item in items_by_month[m]:
+            existing = recs.get(item.ragic_id)
+            freq = (item.frequency or "").strip()
+
+            if existing:
+                cell_status     = _fb_calc_schedule_status(existing)
+                schedule_id     = existing.id
+                cell_sched_date = existing.scheduled_date or None
+            elif not freq:
+                cell_status     = "no_frequency"
+                schedule_id     = None
+                cell_sched_date = None
+            else:
+                cell_status = _item_status(item)
+                # 未來月份不顯示「應做未排」，改為「非本月」（但保留 scheduled_date 提示）
+                if year > today.year or (year == today.year and m > today.month):
+                    cell_status = "non_month"
+                schedule_id     = None
+                cell_sched_date = item.scheduled_date or None
+
+            entry = FullBldgPMScheduleMatrixEntry(
+                item_ragic_id  = item.ragic_id,
+                status         = cell_status,
+                schedule_id    = schedule_id,
+                scheduled_date = cell_sched_date,
+                category       = item.category or "",
+                frequency      = item.frequency or "",
+                ragic_url      = f"{_RAGIC_BASE}/{item.batch_ragic_id}" if item.batch_ragic_id else "",
+            )
+
+            grp = groups.setdefault(_norm(item.task_name), {
+                "order":  (m, item.seq_no or 0),
+                "months": {},
+                "seen":   [],
+            })
+            grp["months"].setdefault(m, []).append(entry)
+            grp["seen"].append((m, item))
+
+    # ── 第四階段：每個 task_name 合併成一列 ───────────────────────────────────
+    rows: list = []
+    completed_cnt = 0
+    total_records = 0
+
+    for _key, grp in sorted(groups.items(), key=lambda kv: kv[1]["order"]):
+        # 顯示用欄位取「最近月份」那一筆（seen 依月份遞增 append，最後一筆即最近）
+        _latest_month, latest_item = grp["seen"][-1]
+
+        cells: list = []
+        for m in range(1, 13):
+            entries = grp["months"].get(m)
+            if not entries:
+                cells.append(FullBldgPMScheduleMatrixCell(
+                    month=m, status="non_month", schedule_id=None, count=0, entries=[],
+                ))
+                continue
+
+            total_records += len(entries)
+            completed_cnt += sum(1 for e in entries if e.status == "completed")
+
+            first = entries[0]
+            cells.append(FullBldgPMScheduleMatrixCell(
+                month          = m,
+                status         = _aggregate_status([e.status for e in entries]),
+                # 單筆時沿用原本行為，讓既有的點格開明細 / 編輯排程路徑不受影響
+                schedule_id    = first.schedule_id    if len(entries) == 1 else None,
+                scheduled_date = first.scheduled_date if len(entries) == 1 else None,
+                count          = len(entries),
+                entries        = entries,
+            ))
+
+        cat_variants = list(dict.fromkeys(
+            (it.category or "").strip() for _m, it in grp["seen"] if (it.category or "").strip()
+        ))
+        freq_variants = list(dict.fromkeys(
+            (it.frequency or "").strip() for _m, it in grp["seen"] if (it.frequency or "").strip()
+        ))
+
+        rows.append(FullBldgPMScheduleMatrixRow(
+            item_ragic_id      = latest_item.ragic_id,
+            category           = latest_item.category or "",
+            task_name          = latest_item.task_name or "",
+            location           = latest_item.location or "",
+            frequency          = latest_item.frequency or "",
+            cells              = cells,
+            category_variants  = cat_variants,
+            frequency_variants = freq_variants,
+            month_count        = len(grp["months"]),
+            ragic_url          = f"{_RAGIC_BASE}/{latest_item.batch_ragic_id}" if latest_item.batch_ragic_id else "",
+        ))
+
+    # 月份 → Ragic 批次 URL（供明細 Drawer 標題列的「在 Ragic 查看」連結）
+    month_batch_urls: dict = {}
+    for m, month_items in items_by_month.items():
+        bid = month_items[0].batch_ragic_id if month_items else ""
+        if bid:
+            month_batch_urls[str(m)] = f"{_RAGIC_BASE}/{bid}"
+
     return FullBldgPMScheduleAnnualMatrix(
         year=year,
         rows=rows,
         summary={
-            "total_items": len(rows),
-            "total_cells": total_cells,
+            "total_items":     len(rows),
+            "total_records":   total_records,
+            "total_cells":     total_records,
             "completed_count": completed_cnt,
-            "completion_rate": round(completed_cnt / total_cells * 100, 1) if total_cells > 0 else 0.0,
+            "completion_rate": round(completed_cnt / total_records * 100, 1) if total_records > 0 else 0.0,
         },
+        month_batch_urls=month_batch_urls,
     )
