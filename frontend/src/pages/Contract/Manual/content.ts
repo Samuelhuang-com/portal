@@ -50,6 +50,8 @@ export interface Section {
   id: string
   title: string
   intro?: string
+  /** 該章節代表的 Portal 頁面（目前僅作為資料註記，按鈕顯示以 SubSection.route 為準） */
+  route?: string
   subs: SubSection[]
 }
 
