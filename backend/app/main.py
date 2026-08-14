@@ -58,6 +58,7 @@ from app.routers import (
     combined_report,
     purchase_report,
     schedule,
+    mall_schedule,
     auth,
     budget,
     b4f_inspection,
@@ -121,6 +122,7 @@ from app.routers import (
     opera_forecast,
     opera_segment,
     opera_reservation,
+    opera_pace,
     realtime,
     jinxu_import,
     jinxu_revenue,
@@ -1528,7 +1530,8 @@ async def lifespan(app: FastAPI):
     import app.models.ragic_sheet_config        # noqa: F401
     import app.models.other_tasks               # noqa: F401
     import app.models.pm_plan                   # noqa: F401  週期保養預排（主管排定 Sheet /7 /13 /20）
-    import app.models.schedule                  # noqa: F401  班表模組（本地 SQLite，不對接 Ragic）
+    import app.models.schedule                  # noqa: F401  飯店班表模組（本地 SQLite，不對接 Ragic）
+    import app.models.mall_schedule             # noqa: F401  商場班表模組（本地 SQLite，不對接 Ragic）
     import app.models.api_access_log            # noqa: F401  使用監控日誌
     import app.models.ppt_export_config        # noqa: F401  PPT 匯出設定
     import app.models.ppt_export_history       # noqa: F401  PPT 匯出歷史紀錄
@@ -1934,7 +1937,7 @@ async def lifespan(app: FastAPI):
     from app.services.wiki_seed import seed_wiki_articles
     _run_startup_migration("seed_wiki_articles", seed_wiki_articles)
 
-    # 班表模組種子（部門 + 班別）
+    # 飯店班表模組種子（部門 + 班別）
     from app.services.schedule_seed import run_all_seeds as _schedule_seed
     from app.core.database import SessionLocal as _SessionLocal
 
@@ -1944,6 +1947,16 @@ async def lifespan(app: FastAPI):
 
     _run_startup_migration("_run_schedule_seed", _run_schedule_seed)
     print("[Portal] Schedule seed checked.")
+
+    # 商場班表模組種子（部門 + 班別）— 與飯店班表各自獨立的主檔
+    from app.services.mall_schedule_seed import run_all_seeds as _mall_schedule_seed
+
+    def _run_mall_schedule_seed():
+        with _SessionLocal() as _seed_db:
+            _mall_schedule_seed(_seed_db)
+
+    _run_startup_migration("_run_mall_schedule_seed", _run_mall_schedule_seed)
+    print("[Portal] Mall schedule seed checked.")
 
     # ── 排程同步（可透過 .env SCHEDULER_ENABLED=False 完全關閉）────────────────
     # DEV 模式請設 SCHEDULER_ENABLED=False，改用 sync_tool.py 手動同步。
@@ -2717,10 +2730,16 @@ app.include_router(
 )
 
 # ── 班表模組（本地 SQLite，不對接 Ragic）────────────────────────────────────
+# 飯店與商場為完全獨立的兩套：資料、班別主檔、部門主檔、人員主檔皆不互通。
 app.include_router(
     schedule.router,
     prefix=f"{API_PREFIX}/schedule",
-    tags=["班表管理"],
+    tags=["飯店班表"],
+)
+app.include_router(
+    mall_schedule.router,
+    prefix=f"{API_PREFIX}/mall/schedule",
+    tags=["商場班表"],
 )
 
 # ── 新增：報修未完成報表 ──────────────────────────────────────────────────────
@@ -2847,6 +2866,15 @@ app.include_router(
 app.include_router(
     opera_reservation.router,
     prefix=f"{API_PREFIX}/opera/reservations",
+    tags=["營運分析"],
+)
+# 訂房 Pace／Pickup（2026-08-13）：讀 ohip_reservation(_night)，**不新增資料表**。
+#    ⚠️ 歷史進度是以訂房日「回推」得出（sync 是整列覆寫、無版本），
+#       已含後續改期與取消的結果 —— source.population 會把這句話帶到畫面上。
+#    ⚠️ 與 /opera/reservations 的差別：那邊看「現在」，這邊多一個 as_of 觀察時點。
+app.include_router(
+    opera_pace.router,
+    prefix=f"{API_PREFIX}/opera/pace",
     tags=["營運分析"],
 )
 

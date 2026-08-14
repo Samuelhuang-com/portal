@@ -1,6 +1,9 @@
 /**
- * 班表模組 API 封裝
+ * 飯店班表模組 API 封裝
  * 對應後端 /api/v1/schedule/*
+ *
+ * 商場班表為完全獨立的另一套，見 api/mallSchedule.ts（/api/v1/mall/schedule/*）。
+ * 兩邊型別共用 @/types/schedule。
  */
 import apiClient from './client'
 import type {
@@ -11,6 +14,7 @@ import type {
   ScheduleDetailRow,
   ImportResult, ImportLog,
   MonthlyStats, ScheduleFilters,
+  VenueFlag,
 } from '@/types/schedule'
 
 const BASE = '/schedule'
@@ -152,13 +156,17 @@ export const fetchImportLogs = async (limit = 20): Promise<ImportLog[]> => {
   return data
 }
 
-// ── 班別區間查詢（供工作日誌整合使用）────────────────────────
+// ── 班別區間查詢（單一場域）──────────────────────────────────
+//
+// ⚠️ 工作日誌請勿使用本函數 —— 它只回飯店資料。
+//    要飯店＋商場合併結果，請用 @/api/workJournal 的 fetchMergedShiftsRange()。
 
 export interface ShiftInfo {
   shift_code:  string
   shift_name:  string
   shift_color: string
   is_working:  boolean
+  venue_flag:  VenueFlag
 }
 
 /** { "2026-05-20": { "王大明": ShiftInfo, ... }, ... } */

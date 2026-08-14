@@ -1,7 +1,7 @@
 /**
  * 人員管理頁
  * 路由：/schedule/staff
- * 權限：schedule_admin
+ * 權限：hotel_schedule_admin
  */
 import { useState, useEffect, useCallback } from 'react'
 import {
@@ -85,6 +85,12 @@ export default function StaffPage() {
   const EMP_COLOR: Record<string, string> = { 正職: 'blue', PT: 'orange', 支援人員: 'purple' }
 
   const columns: ColumnsType<StaffMember> = [
+    {
+      // 場域標記由後端依「匯入到哪個模組」自動決定，前端唯讀不可編輯。
+      // 同一人若兩邊都有班表，會在兩張人員表各存一筆，工作日誌合併時呈現雙標籤。
+      title: '場域', dataIndex: 'venue_flag', width: 64, align: 'center',
+      render: v => <Tag color="geekblue" style={{ fontWeight: 700, marginInlineEnd: 0 }}>{v || '飯'}</Tag>,
+    },
     { title: '姓名', dataIndex: 'name', width: 120 },
     { title: 'Excel 原始名稱', dataIndex: 'source_name', width: 140, render: v => v || '—' },
     {
@@ -114,7 +120,7 @@ export default function StaffPage() {
   return (
     <div style={{ padding: '24px' }}>
       <Card
-        title={<Title level={4} style={{ margin: 0 }}>人員管理</Title>}
+        title={<Title level={4} style={{ margin: 0 }}>飯店班表人員管理</Title>}
         extra={
           <Space>
             <Select

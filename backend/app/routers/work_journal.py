@@ -31,7 +31,12 @@ from app.core.database import get_db
 from app.dependencies import get_current_user
 
 # ── Models ────────────────────────────────────────────────────────────────────
-from app.models.schedule                import ScheduleDetail, ShiftType
+from app.models.schedule                import (
+    ScheduleDetail, ShiftType, VENUE_FLAG as HOTEL_VENUE_FLAG,
+)
+from app.models.mall_schedule           import (
+    MallScheduleDetail, MallShiftType, VENUE_FLAG as MALL_VENUE_FLAG,
+)
 from app.models.dazhi_repair            import DazhiRepairCase, DazhiRepairRecord
 from app.models.luqun_repair            import LuqunRepairCase, LuqunRepairRecord
 from app.models.periodic_maintenance    import PeriodicMaintenanceBatch, PeriodicMaintenanceItem
@@ -1225,6 +1230,121 @@ def get_work_journal_range(
         "days":      days,
         "total_rows": sum(d["total_rows"] for d in days),
     }
+
+
+# ─────────────────────────────────────────────────────────────
+# 班別區間查詢（飯店 ＋ 商場合併）
+# ─────────────────────────────────────────────────────────────
+
+def _collect_shifts(
+    db: Session,
+    detail_model,
+    shift_model,
+    venue_flag: str,
+    start: _date,
+    end: _date,
+    out: dict[str, dict[str, list]],
+) -> None:
+    """把單一場域的班表明細併進 out（就地修改）。
+
+    out 結構：{ "2026-08-01": { "王大明": [ {..飯..}, {..商..} ] } }
+    """
+    shift_type_map: dict[str, dict] = {
+        s.code: {"color": s.color, "work_minutes": s.work_minutes, "name": s.name}
+        for s in db.query(shift_model).filter(shift_model.is_deleted == False).all()
+    }
+
+    details = (
+        db.query(detail_model)
+        .filter(
+            detail_model.work_date >= start,
+            detail_model.work_date <= end,
+            detail_model.is_deleted == False,
+        )
+        .all()
+    )
+
+    for d in details:
+        date_str = d.work_date.isoformat()
+        per_date = out.setdefault(date_str, {})
+        entries  = per_date.setdefault(d.staff_name, [])
+
+        st = shift_type_map.get(d.shift_code)
+        if st is not None:
+            color      = st["color"]
+            is_working = st["work_minutes"] > 0
+            shift_name = st["name"]
+        else:
+            # 未知班別代碼：以明細本身的 work_minutes 判斷
+            color      = "#6b7280"
+            is_working = (d.work_minutes or 0) > 0
+            shift_name = ""
+
+        # 同一人、同一天、同一場域若有多筆（理論上不應發生），以 is_working=True 優先
+        existing = next((e for e in entries if e["venue_flag"] == venue_flag), None)
+        if existing is not None:
+            if existing["is_working"]:
+                continue
+            entries.remove(existing)
+
+        entries.append({
+            "shift_code":  d.shift_code,
+            "shift_name":  shift_name,
+            "shift_color": color,
+            "is_working":  is_working,
+            "venue_flag":  venue_flag,
+        })
+
+
+@router.get("/shifts-range", summary="班別查詢（日期區間）— 飯店＋商場合併")
+def get_merged_shifts_range(
+    date_from: str = Query(..., description="起始日期 YYYY-MM-DD"),
+    date_to:   str = Query(..., description="結束日期 YYYY-MM-DD"),
+    db: Session = Depends(get_db),
+):
+    """
+    回傳指定日期區間內每日人員班別映射，飯店與商場合併為同一份結果。
+
+    格式（值為**陣列**，與單一場域端點的物件格式不同）：
+    {
+      "2026-08-01": {
+        "王大明": [
+          {"venue_flag": "飯", "shift_code": "N1", "shift_name": "日班",
+           "shift_color": "#3b82f6", "is_working": true},
+          {"venue_flag": "商", "shift_code": "E6", "shift_name": "晚班",
+           "shift_color": "#f59e0b", "is_working": true}
+        ]
+      }
+    }
+
+    人員以「姓名字串」為 key —— 依 2026-08-14 決策，兩邊同名視為同一人，
+    在工作日誌呈現雙標籤。兩邊各自匯入、不做人員比對，所以同一人在兩張
+    人員表會各有一筆，這裡才需要合併。
+
+    區間上限 93 天，超過時截斷。
+    """
+    try:
+        start = _date.fromisoformat(date_from)
+        end   = _date.fromisoformat(date_to)
+    except ValueError:
+        return {}
+
+    if end < start:
+        start, end = end, start
+    if (end - start).days > 92:
+        end = start + timedelta(days=92)
+
+    result: dict[str, dict[str, list]] = {}
+    _collect_shifts(db, ScheduleDetail,     ShiftType,     HOTEL_VENUE_FLAG, start, end, result)
+    _collect_shifts(db, MallScheduleDetail, MallShiftType, MALL_VENUE_FLAG,  start, end, result)
+
+    # 固定排序：飯在前、商在後，避免前端標籤順序隨查詢結果跳動
+    order = {HOTEL_VENUE_FLAG: 0, MALL_VENUE_FLAG: 1}
+    for per_date in result.values():
+        for entries in per_date.values():
+            entries.sort(key=lambda e: order.get(e["venue_flag"], 9))
+
+    return result
 
 
 @router.get("/export-excel", summary="工作日誌匯出 Excel（每人一 Sheet）")

@@ -66,13 +66,22 @@ import CalendarPage       from '@/pages/Calendar'
 import HotelCalendarPage  from '@/pages/HotelCalendar'
 import MallCalendarPage   from '@/pages/MallCalendar'
 import TutorialVideosPage from '@/pages/TutorialVideos'
-// ── 班表管理 ──────────────────────────────────────────────────────────────────
+// ── 飯店班表（飯店管理 → 飯店班表，2026-08-14 由頂層 /schedule 搬入）──────────
 import ScheduleOverviewPage    from '@/pages/Schedule'
 import ScheduleCalendarPage    from '@/pages/Schedule/Calendar'
 import ScheduleImportPage      from '@/pages/Schedule/Import'
 import ScheduleStaffPage       from '@/pages/Schedule/Staff'
 import ScheduleShiftsPage      from '@/pages/Schedule/Shifts'
 import ScheduleDepartmentsPage from '@/pages/Schedule/Departments'
+import ScheduleManualPage      from '@/pages/Schedule/Manual'
+// ── 商場班表（商場管理 → 商場班表，2026-08-14 新增）──────────────────────────
+import MallScheduleOverviewPage    from '@/pages/MallSchedule'
+import MallScheduleCalendarPage    from '@/pages/MallSchedule/Calendar'
+import MallScheduleImportPage      from '@/pages/MallSchedule/Import'
+import MallScheduleStaffPage       from '@/pages/MallSchedule/Staff'
+import MallScheduleShiftsPage      from '@/pages/MallSchedule/Shifts'
+import MallScheduleDepartmentsPage from '@/pages/MallSchedule/Departments'
+import MallScheduleManualPage      from '@/pages/MallSchedule/Manual'
 import MallFacilityInspectionDashboard from '@/pages/MallFacilityInspection'
 import MallFacilityInspection4F        from '@/pages/MallFacilityInspection/4F'
 import MallFacilityInspection3F        from '@/pages/MallFacilityInspection/3F'
@@ -173,6 +182,7 @@ import ContractCalendarPage    from '@/pages/Contract/CalendarView'
 import ContractComparePage     from '@/pages/Contract/CompareContracts'
 import VendorsPage             from '@/pages/Contract/Vendors'
 import SettingsPage            from '@/pages/Contract/Settings'
+import ContractManualPage      from '@/pages/Contract/Manual'
 // ── 營運分析（OPERA，2026-08-04 新增）────────────────────────────────────────
 import OperaDashboardPage      from '@/pages/Opera/Dashboard'
 import OperaRevenuePage        from '@/pages/Opera/Revenue'
@@ -189,6 +199,9 @@ import OperaForecastPage       from '@/pages/Opera/Forecast'
 import OperaSegmentsPage       from '@/pages/Opera/Segments'
 // 訂房分析（2026-08-07）：⚠️ 母體與 /opera/guest 不同（所有訂房 vs 已離店住客）。
 import OperaReservationsPage   from '@/pages/Opera/Reservations'
+// 訂房 Pace／Pickup（2026-08-13）：⚠️ 讀同一批訂房資料，但多一個 as_of 觀察時點。
+// 歷史進度是以訂房日「回推」得出（同步是整列覆寫、無版本），畫面上有標示。
+import OperaPacePage           from '@/pages/Opera/Pace'
 // ── 即時營運（2026-08-06）：資料直接來自 OPERA Cloud（OHIP）REST API，
 //    與 /opera/*（人工上傳 TXT）完全獨立。規格書 docs/SPEC_realtime_operations.md
 import RealtimeDashboardPage   from '@/pages/Realtime/Dashboard'
@@ -459,15 +472,10 @@ export default function AppRouter() {
           </PermissionGuard>
         } />
 
-        {/* ── 班表管理（本地 SQLite 模組，不對接 Ragic）───────────────── */}
-        <Route path="schedule">
-          <Route index element={<ScheduleOverviewPage />} />
-          <Route path="calendar"    element={<ScheduleCalendarPage />} />
-          <Route path="import"      element={<ScheduleImportPage />} />
-          <Route path="staff"       element={<ScheduleStaffPage />} />
-          <Route path="shifts"      element={<ScheduleShiftsPage />} />
-          <Route path="departments" element={<ScheduleDepartmentsPage />} />
-        </Route>
+        {/* ── 舊路由相容（2026-08-14 班表拆分前的 /schedule/*）──────────
+            班表已搬到 /hotel/schedule 與 /mall/schedule，舊書籤一律導到飯店班表。
+            確認沒有人再用舊網址之後，這段可以移除。 */}
+        <Route path="schedule/*" element={<Navigate to="/hotel/schedule" replace />} />
 
         {/* ── 飯店 Dashboard PPT 匯出設定（一階，全公司共用）────────── */}
         <Route path="ppt-export" element={
@@ -490,6 +498,16 @@ export default function AppRouter() {
           <Route path="daily-meter-readings"    element={<HotelMeterReadingsDashboard />} />
           <Route path="other-tasks"             element={<OtherTasksPage />} />
           <Route path="calendar"               element={<HotelCalendarPage />} />
+          {/* ── 飯店班表（本地 SQLite 模組，不對接 Ragic）─────────────── */}
+          <Route path="schedule">
+            <Route index element={<ScheduleOverviewPage />} />
+            <Route path="calendar"    element={<ScheduleCalendarPage />} />
+            <Route path="import"      element={<ScheduleImportPage />} />
+            <Route path="staff"       element={<ScheduleStaffPage />} />
+            <Route path="shifts"      element={<ScheduleShiftsPage />} />
+            <Route path="departments" element={<ScheduleDepartmentsPage />} />
+            <Route path="manual"      element={<ScheduleManualPage />} />
+          </Route>
         </Route>
 
         {/* ── 商場管理 ──────────────────────────────────────────────── */}
@@ -511,6 +529,16 @@ export default function AppRouter() {
           {/* 主管交辦／緊急事件共用同一元件（飯店/商場雙入口） */}
           <Route path="other-tasks"             element={<OtherTasksPage />} />
           <Route path="calendar"               element={<MallCalendarPage />} />
+          {/* ── 商場班表（本地 SQLite 模組，不對接 Ragic）─────────────── */}
+          <Route path="schedule">
+            <Route index element={<MallScheduleOverviewPage />} />
+            <Route path="calendar"    element={<MallScheduleCalendarPage />} />
+            <Route path="import"      element={<MallScheduleImportPage />} />
+            <Route path="staff"       element={<MallScheduleStaffPage />} />
+            <Route path="shifts"      element={<MallScheduleShiftsPage />} />
+            <Route path="departments" element={<MallScheduleDepartmentsPage />} />
+            <Route path="manual"      element={<MallScheduleManualPage />} />
+          </Route>
         </Route>
 
         {/* ── 核准請購單月報表 ──────────────────────────────────────────── */}
@@ -640,6 +668,7 @@ export default function AppRouter() {
           } />
           <Route path="vendors" element={<VendorsPage />} />
           <Route path="settings" element={<SettingsPage />} />
+          <Route path="manual" element={<ContractManualPage />} />
         </Route>
 
         {/* ── 商場工務報修 ──────────────────────────────────────────────── */}
@@ -761,6 +790,15 @@ export default function AppRouter() {
           <Route path="reservations" element={
             <PermissionGuard permissionKey="opera_reservation_view">
               <OperaReservationsPage />
+            </PermissionGuard>
+          } />
+          {/* 訂房 Pace／Pickup（2026-08-13）：另開 opera_pace_view，不共用
+              opera_reservation_view —— 這一頁的數字是**回推**出來的（訂房同步
+              整列覆寫、無版本），已含後續改期與取消，與那邊的「現在狀態」
+              不是同一種可信度。 */}
+          <Route path="pace" element={
+            <PermissionGuard permissionKey="opera_pace_view">
+              <OperaPacePage />
             </PermissionGuard>
           } />
           <Route path="forecast" element={

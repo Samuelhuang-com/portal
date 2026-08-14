@@ -37,6 +37,7 @@ import {
   BookOutlined,
   AlertOutlined,
   ScheduleOutlined,
+  RiseOutlined,
   TeamOutlined,
   ClockCircleOutlined,
   UploadOutlined,
@@ -243,22 +244,11 @@ export const menuItems: MenuItem[] = [
     label: NAV_PAGE.tutorialVideos,
     permissionKey: 'tutorial_videos_view',
   },
-  // ── 班表管理（行事曆之後、飯店管理之前）────────────────────────────────────
-  {
-    key: 'schedule',
-    icon: <ScheduleOutlined />,
-    label: NAV_GROUP.schedule,
-    permissionKey: 'schedule_view',
-    children: [
-      { key: '/schedule',              icon: <TableOutlined />,        label: NAV_PAGE.scheduleOverview,    permissionKey: 'schedule_view'   },
-      { key: '/schedule/calendar',     icon: <CalendarOutlined />,     label: NAV_PAGE.scheduleCalendar,    permissionKey: 'schedule_view'   },
-      { key: '/schedule/import',       icon: <UploadOutlined />,       label: NAV_PAGE.scheduleImport,      permissionKey: 'schedule_manage' },
-      { key: '/schedule/staff',        icon: <TeamOutlined />,         label: NAV_PAGE.scheduleStaff,       permissionKey: 'schedule_admin'  },
-      { key: '/schedule/shifts',       icon: <ClockCircleOutlined />,  label: NAV_PAGE.scheduleShifts,      permissionKey: 'schedule_admin'  },
-      { key: '/schedule/departments',  icon: <DatabaseOutlined />,     label: NAV_PAGE.scheduleDepartments, permissionKey: 'schedule_admin'  },
-    ],
-  },
-  // ── 合約管理（班表管理之後、飯店管理之前）────────────────────────────────────
+  // ── 2026-08-14：原本的頂層「班表」群組已移除，拆為兩個 L2 群組：
+  //      飯店管理 → 飯店班表（本區塊往下找 hotel-schedule-group）
+  //      商場管理 → 商場班表（本區塊往下找 mall-schedule-group）
+  //    舊路由 /schedule/* 在 router/index.tsx 保留 redirect 到 /hotel/schedule。
+  // ── 合約管理（飯店管理之前）────────────────────────────────────
   {
     key: 'contract',
     icon: <AuditOutlined />,
@@ -276,6 +266,9 @@ export const menuItems: MenuItem[] = [
       { key: '/contract/import',     icon: <UploadOutlined />,    label: NAV_PAGE.contractImport,    permissionKey: 'contract_create_edit'    },
       { key: '/contract/vendors',    icon: <TeamOutlined />,      label: NAV_PAGE.contractVendors,   permissionKey: 'contract_vendor_manage' },
       { key: '/contract/settings',   icon: <SettingOutlined />,   label: NAV_PAGE.contractSettings,  permissionKey: 'contract_admin'        },
+      // 使用手冊（2026-08-14）：比照週採手冊的精神，開放給所有看得到合約模組的人，
+      // 不另立新的 permission key（合約模組整組已掛 contract_view，見本群組上層）。
+      { key: '/contract/manual',     icon: <BookOutlined />,      label: NAV_PAGE.contractManual,    permissionKey: 'contract_view'         },
     ],
   },
   {
@@ -297,6 +290,24 @@ export const menuItems: MenuItem[] = [
       // { key: '/hotel/routine-maintenance',      icon: <FileTextOutlined />, label: NAV_PAGE.hotelRoutineMaintenance, permissionKey: 'hotel_routine_pm_view'           },
       { key: '/hotel/calendar',                 icon: <CalendarOutlined />, label: NAV_PAGE.hotelCalendar,           permissionKey: 'hotel_calendar_view'             },
       // { key: '/hotel/repairs',                 icon: <ToolOutlined />, label: NAV_PAGE.repairs },
+      // ── 飯店班表（L2 群組）───────────────────────────────────────────
+      // 2026-08-14 由原本的頂層「班表」群組搬入。與商場班表是完全獨立的兩套資料。
+      {
+        key: 'hotel-schedule-group',
+        icon: <ScheduleOutlined />,
+        label: NAV_GROUP.hotelSchedule,
+        permissionKey: 'hotel_schedule_view',
+        children: [
+          { key: '/hotel/schedule',             icon: <TableOutlined />,       label: NAV_PAGE.hotelScheduleOverview,    permissionKey: 'hotel_schedule_view'   },
+          { key: '/hotel/schedule/calendar',    icon: <CalendarOutlined />,    label: NAV_PAGE.hotelScheduleCalendar,    permissionKey: 'hotel_schedule_view'   },
+          { key: '/hotel/schedule/import',      icon: <UploadOutlined />,      label: NAV_PAGE.hotelScheduleImport,      permissionKey: 'hotel_schedule_manage' },
+          { key: '/hotel/schedule/staff',       icon: <TeamOutlined />,        label: NAV_PAGE.hotelScheduleStaff,       permissionKey: 'hotel_schedule_admin'  },
+          { key: '/hotel/schedule/shifts',      icon: <ClockCircleOutlined />, label: NAV_PAGE.hotelScheduleShifts,      permissionKey: 'hotel_schedule_admin'  },
+          { key: '/hotel/schedule/departments', icon: <DatabaseOutlined />,    label: NAV_PAGE.hotelScheduleDepartments, permissionKey: 'hotel_schedule_admin'  },
+          // 操作手冊不另立 permission key，沿用模組的 *_view（比照合約／週採慣例）
+          { key: '/hotel/schedule/manual',      icon: <BookOutlined />,        label: NAV_PAGE.hotelScheduleManual,      permissionKey: 'hotel_schedule_view'   },
+        ],
+      },
     ],
   },
   // ── 飯店 Dashboard PPT 匯出設定（一階，全公司共用）──────────────────────────
@@ -329,6 +340,24 @@ export const menuItems: MenuItem[] = [
       { key: '/mall-facility-inspection/dashboard', icon: <ToolOutlined />,    label: NAV_PAGE.mallFacilityDashboard, permissionKey: 'mall_facility_inspection_view'      },
       { key: '/mall/other-tasks',                   icon: <AlertOutlined />,   label: NAV_PAGE.otherTasks,           permissionKey: 'mall_other_tasks_view'            },
       { key: '/mall/calendar',                      icon: <CalendarOutlined />, label: NAV_PAGE.mallCalendar,         permissionKey: 'mall_calendar_view'              },
+      // ── 商場班表（L2 群組）───────────────────────────────────────────
+      // 2026-08-14 新增。與飯店班表是完全獨立的兩套資料：班別、部門、人員主檔皆不互通，
+      // 各自匯入且不做人員比對（兩邊人員可互相支援）。
+      {
+        key: 'mall-schedule-group',
+        icon: <ScheduleOutlined />,
+        label: NAV_GROUP.mallSchedule,
+        permissionKey: 'mall_schedule_view',
+        children: [
+          { key: '/mall/schedule',             icon: <TableOutlined />,       label: NAV_PAGE.mallScheduleOverview,    permissionKey: 'mall_schedule_view'   },
+          { key: '/mall/schedule/calendar',    icon: <CalendarOutlined />,    label: NAV_PAGE.mallScheduleCalendar,    permissionKey: 'mall_schedule_view'   },
+          { key: '/mall/schedule/import',      icon: <UploadOutlined />,      label: NAV_PAGE.mallScheduleImport,      permissionKey: 'mall_schedule_manage' },
+          { key: '/mall/schedule/staff',       icon: <TeamOutlined />,        label: NAV_PAGE.mallScheduleStaff,       permissionKey: 'mall_schedule_admin'  },
+          { key: '/mall/schedule/shifts',      icon: <ClockCircleOutlined />, label: NAV_PAGE.mallScheduleShifts,      permissionKey: 'mall_schedule_admin'  },
+          { key: '/mall/schedule/departments', icon: <DatabaseOutlined />,    label: NAV_PAGE.mallScheduleDepartments, permissionKey: 'mall_schedule_admin'  },
+          { key: '/mall/schedule/manual',      icon: <BookOutlined />,        label: NAV_PAGE.mallScheduleManual,      permissionKey: 'mall_schedule_view'   },
+        ],
+      },
     ],
   },
   // ── 商場工務報修（商場管理之後）──────────────────────────────────────────
@@ -445,6 +474,12 @@ export const menuItems: MenuItem[] = [
       // ⚠️ 與上面的「住客與通路分析」**分析母體不同**（所有訂房 vs 已離店住客），
       //    不是同一份資料的兩個版本。因此另開 permissionKey，不共用 opera_guest_view。
       { key: '/opera/reservations', icon: <ScheduleOutlined />, label: NAV_PAGE.operaReservations, permissionKey: 'opera_reservation_view' },
+      // ── 訂房 Pace／Pickup（2026-08-13）──────────────────────────────────
+      // ⚠️ 與上面的「訂房分析」看的是同一批資料，但**多一個 as_of 觀察時點**：
+      //    那邊看訂單「現在」長什麼樣，這邊看「某個過去時點看到的在手訂房」。
+      //    因為數字是回推出來的（訂房同步整列覆寫、無版本），可信度與那邊不同，
+      //    所以另開 permissionKey，不共用 opera_reservation_view。
+      { key: '/opera/pace',      icon: <RiseOutlined />,      label: NAV_PAGE.operaPace,      permissionKey: 'opera_pace_view'    },
       { key: '/opera/settings',  icon: <SettingOutlined />,   label: NAV_PAGE.operaSettings,  permissionKey: 'opera_admin'        },
       { key: '/opera/manual',    icon: <ReadOutlined />,      label: NAV_PAGE.operaManual,    permissionKey: 'opera_view'         },
     ],

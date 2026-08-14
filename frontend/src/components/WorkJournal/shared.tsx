@@ -48,13 +48,17 @@ export function isHotelRow(row: JournalRow): boolean {
 // 班別 Tag 渲染輔助
 // shiftMap = undefined → 班表資料尚未載入，不顯示任何標記
 // shiftMap = {}        → 已載入但該日無班表資料，仍不顯示（避免誤報）
-// shiftMap 有資料      → 依 is_working 判斷顯示彩色代碼或紅色 ?
+// shiftMap 有資料      → 依 is_working 判斷顯示彩色代碼或警示 icon
+//
+// 2026-08-14 班表拆分後，每個人的值由「單一 ShiftInfo」改為「ShiftInfo 陣列」，
+// 因為同一人可能同時有飯店班與商場班（兩邊各自匯入、同名視為同一人）。
+// 陣列已由後端排序為「飯」在前、「商」在後。
 export function ShiftTag({
   person,
   shiftMap,
 }: {
   person:   string
-  shiftMap: Record<string, ShiftInfo> | undefined
+  shiftMap: Record<string, ShiftInfo[]> | undefined
 }) {
   // 警示 icon 共用樣式
   const warnTagStyle: React.CSSProperties = {
@@ -74,13 +78,24 @@ export function ShiftTag({
   // 班表資料未載入或整日無班表 → 不顯示
   if (!shiftMap || Object.keys(shiftMap).length === 0) return null
 
-  const info = shiftMap[person]
+  const infos = shiftMap[person] ?? []
 
-  // 有班表記錄 + 非上班班別 → MinusCircleOutlined（明確排休）
-  if (info && !info.is_working) {
-    const tipText = info.shift_name
-      ? `${info.shift_code}（${info.shift_name}）— 非上班班別`
-      : `${info.shift_code} — 非上班班別`
+  // 無班表記錄（有工單卻沒排班）→ FileUnknownOutlined（查無記錄）
+  if (infos.length === 0) return (
+    <Tooltip title="此日無班表記錄" placement="top">
+      <Tag color="warning" style={warnTagStyle}>
+        <FileUnknownOutlined />
+      </Tag>
+    </Tooltip>
+  )
+
+  // 兩邊都排休才算「明確排休」；只要任一場域有上班就顯示班別代碼。
+  if (infos.every(i => !i.is_working)) {
+    const tipText = infos
+      .map(i => i.shift_name
+        ? `${i.venue_flag}｜${i.shift_code}（${i.shift_name}）`
+        : `${i.venue_flag}｜${i.shift_code}`)
+      .join('、') + ' — 非上班班別'
     return (
       <Tooltip title={tipText} placement="top">
         <Tag color="error" style={warnTagStyle}>
@@ -90,39 +105,37 @@ export function ShiftTag({
     )
   }
 
-  // 無班表記錄（有工單卻沒排班）→ FileUnknownOutlined（查無記錄）
-  if (!info) return (
-    <Tooltip title="此日無班表記錄" placement="top">
-      <Tag color="warning" style={warnTagStyle}>
-        <FileUnknownOutlined />
-      </Tag>
-    </Tooltip>
-  )
-
-  // 正常上班班別 → 彩色班別代碼 + Tooltip 顯示班別名稱
-  const tipText = info.shift_name
-    ? `${info.shift_code}｜${info.shift_name}`
-    : info.shift_code
+  // 正常上班班別 → 每個場域各一個彩色標籤，標籤內含「飯」/「商」場域字樣
   return (
-    <Tooltip title={tipText} placement="top">
-      <Tag
-        style={{
-          backgroundColor: info.shift_color,
-          color: '#fff',
-          fontWeight: 700,
-          fontSize: 15,
-          minWidth: 26,
-          textAlign: 'center',
-          padding: '0 5px',
-          lineHeight: '20px',
-          marginRight: 4,
-          border: 'none',
-          cursor: 'default',
-        }}
-      >
-        {info.shift_code}
-      </Tag>
-    </Tooltip>
+    <>
+      {infos.filter(i => i.is_working).map(info => {
+        const tipText = info.shift_name
+          ? `${info.venue_flag}｜${info.shift_code}｜${info.shift_name}`
+          : `${info.venue_flag}｜${info.shift_code}`
+        return (
+          <Tooltip key={`${info.venue_flag}-${info.shift_code}`} title={tipText} placement="top">
+            <Tag
+              style={{
+                backgroundColor: info.shift_color,
+                color: '#fff',
+                fontWeight: 700,
+                fontSize: 15,
+                minWidth: 26,
+                textAlign: 'center',
+                padding: '0 5px',
+                lineHeight: '20px',
+                marginRight: 4,
+                border: 'none',
+                cursor: 'default',
+              }}
+            >
+              <span style={{ fontSize: 11, opacity: 0.85, marginRight: 2 }}>{info.venue_flag}</span>
+              {info.shift_code}
+            </Tag>
+          </Tooltip>
+        )
+      })}
+    </>
   )
 }
 
@@ -134,7 +147,7 @@ export function DayPersonCollapse({
 }: {
   persons:   WorkJournalDaily['persons']
   collapsed?: boolean
-  shiftMap?:  Record<string, ShiftInfo>
+  shiftMap?:  Record<string, ShiftInfo[]>
 }) {
   const [selectedRow, setSelectedRow] = useState<JournalRow | null>(null)
   const [drawerImages, setDrawerImages] = useState<CaseImageItem[]>([])

@@ -369,7 +369,7 @@ export default function ScheduleOverviewPage() {
       <Row justify="space-between" align="middle" style={{ marginBottom: 16 }}>
         <Col>
           <Title level={4} style={{ margin: 0 }}>
-            班表總覽
+            飯店班表總覽
             {currentSchedule && (
               <Tag color="blue" style={{ marginLeft: 12, fontWeight: 400, fontSize: 13 }}>
                 {currentSchedule.title}

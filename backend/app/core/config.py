@@ -173,6 +173,12 @@ class Settings(BaseSettings):
     MAIL_USE_TLS:    bool = False
     MAIL_USE_SSL:    bool = False
 
+    # ── 同步告警收件人（2026-08-13 新增）────────────────────────────────────
+    # 逗號或分號分隔的 email。**留空＝不寄告警信**（開發機的預設行為）。
+    # 起因：同步失敗、模組從未執行、回補假性完成，先前都沒有任何通知管道，
+    #       只能靠人工翻 log 才會發現。詳見 services/sync_alert_service.py 檔頭。
+    ALERT_EMAIL_TO:  str  = ""
+
     # ── OPERA Cloud / OHIP（2026-08-06 新增，規劃見 docs/OHIP_INTEGRATION.md）──
     # 與既有 /opera/* 上傳型模組**並行**，不共用資料表。全部唯讀（只發 GET）。
     # ⚠️ OHIP_ENTERPRISE_ID 是換 token 時的 header，漏帶會回 401 且訊息完全誤導。

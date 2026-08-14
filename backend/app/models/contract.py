@@ -90,6 +90,11 @@ class Contract(Base):
         nullable=True,
         comment="最晚解約通知日（自動計算：end_date - notification_days）"
     )
+    termination_date = Column(
+        Date,
+        nullable=True,
+        comment="解約日（2026-08-14 新增；提前終止合約時填寫的實際解約日，未提前解約者為 NULL）"
+    )
     auto_renewal = Column(Boolean, nullable=False, default=False, comment="是否自動續約")
 
     # ── 金額與計價 ────────────────────────────────────────────────────────────

@@ -1,7 +1,15 @@
 /**
  * 班表模組 TypeScript 型別定義
- * 對應後端 app/models/schedule.py 與 app/routers/schedule.py
+ * 對應後端 app/models/schedule.py 與 app/routers/schedule.py（飯店班表）
+ * 以及 app/models/mall_schedule.py 與 app/routers/mall_schedule.py（商場班表）
+ *
+ * 兩個場域的 DTO 結構完全相同，因此共用同一份型別定義，
+ * 不另建 types/mallSchedule.ts —— 複製只會製造漂移風險。
+ * 差異只在 API 路徑前綴（見 api/schedule.ts 與 api/mallSchedule.ts）。
  */
+
+/** 場域標記：匯入到哪個模組就帶哪個字，由後端決定，前端不可傳入 */
+export type VenueFlag = '飯' | '商'
 
 // ── 部門 ────────────────────────────────────────────────────
 export interface Department {
@@ -52,6 +60,7 @@ export interface StaffMember {
   department_id: string | null
   department_name: string
   employment_type: string   // 正職 / PT / 支援人員
+  venue_flag: VenueFlag     // 場域標記（後端決定，唯讀）
   remark: string
   is_active: boolean
 }
@@ -117,6 +126,7 @@ export interface ScheduleDetailRow {
   staff_name: string
   department_name: string
   employment_type: string
+  venue_flag: VenueFlag
   shift_code: string
   shift_name: string
   shift_color: string

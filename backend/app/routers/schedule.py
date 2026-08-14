@@ -1,20 +1,27 @@
 """
-班表模組 Router
+飯店班表模組 Router
 所有路由前綴：/api/v1/schedule
 
-端點總覽：
-  班表主檔：  GET/DELETE /                         - 列表（含年月篩選）
-             GET/DELETE /{id}                     - 單筆
+商場班表為完全獨立的另一套（app/routers/mall_schedule.py，前綴 /api/v1/mall/schedule），
+兩邊資料、班別主檔、部門主檔、人員主檔皆不互通，人員也不做跨場域比對。
+
+權限：hotel_schedule_view / hotel_schedule_manage / hotel_schedule_admin
+
+端點總覽（⚠️ 靜態路徑一律宣告在 /{schedule_id} 之前，避免被參數化路徑吃掉）：
+  部門管理：  CRUD       /departments
+  人員管理：  CRUD       /staff
+  班別管理：  CRUD       /shifts
+  Excel匯入：POST       /import                   - 上傳 Excel
+             GET        /import-logs              - 匯入紀錄列表
+  統計：      GET        /stats                    - 月統計
+  明細列表：  GET        /details/list             - 明細列表（可篩選）
+  班別區間：  GET        /shifts-range             - 供工作日誌整合使用
+  班表主檔：  GET        /                         - 列表（含年月篩選）
+             DELETE     /{id}                     - 軟刪除單筆
   班表明細：  GET        /{id}/details             - 取得表格式資料
              POST       /{id}/details             - 新增單筆明細
              PUT        /{id}/details/{detail_id} - 編輯單筆明細
              DELETE     /{id}/details/{detail_id} - 軟刪除明細
-  Excel匯入：POST       /import                   - 上傳 Excel
-             GET        /import-logs              - 匯入紀錄列表
-  統計：      GET        /stats                    - 月統計
-  部門管理：  CRUD       /departments
-  人員管理：  CRUD       /staff
-  班別管理：  CRUD       /shifts
 """
 import uuid
 from datetime import datetime, date
@@ -31,7 +38,7 @@ from app.models.user import User
 from app.models.audit_log import AuditLog
 from app.models.schedule import (
     Department, StaffMember, ShiftType,
-    Schedule, ScheduleDetail, ScheduleImportLog,
+    Schedule, ScheduleDetail, ScheduleImportLog, VENUE_FLAG,
 )
 from app.services.schedule_import_service import import_excel
 from app.services.schedule_service import get_schedule_table, get_monthly_stats
@@ -76,6 +83,7 @@ class StaffOut(BaseModel):
     department_id: str | None
     department_name: str
     employment_type: str
+    venue_flag: str
     remark: str
     is_active: bool
     class Config:
@@ -144,7 +152,7 @@ def _audit(
 @router.get("/departments", summary="部門列表")
 def list_departments(
     db: Session = Depends(get_db),
-    _: User = Depends(require_permission("schedule_view")),
+    _: User = Depends(require_permission("hotel_schedule_view")),
 ):
     rows = (
         db.query(Department)
@@ -159,7 +167,7 @@ def list_departments(
 def create_department(
     body: DeptIn,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("schedule_admin")),
+    current_user: User = Depends(require_permission("hotel_schedule_admin")),
 ):
     exist = db.query(Department).filter(
         Department.name == body.name, Department.is_deleted == False
@@ -179,7 +187,7 @@ def update_department(
     dept_id: str,
     body: DeptIn,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("schedule_admin")),
+    current_user: User = Depends(require_permission("hotel_schedule_admin")),
 ):
     dept = db.query(Department).filter(Department.id == dept_id, Department.is_deleted == False).first()
     if not dept:
@@ -195,7 +203,7 @@ def update_department(
 def delete_department(
     dept_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("schedule_admin")),
+    current_user: User = Depends(require_permission("hotel_schedule_admin")),
 ):
     dept = db.query(Department).filter(Department.id == dept_id, Department.is_deleted == False).first()
     if not dept:
@@ -216,7 +224,7 @@ def list_staff(
     employment_type: str | None = Query(None),
     is_active: bool | None = Query(None),
     db: Session = Depends(get_db),
-    _: User = Depends(require_permission("schedule_view")),
+    _: User = Depends(require_permission("hotel_schedule_view")),
 ):
     q = db.query(StaffMember).filter(StaffMember.is_deleted == False)
     if department_id:
@@ -233,7 +241,7 @@ def list_staff(
 def create_staff(
     body: StaffIn,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("schedule_admin")),
+    current_user: User = Depends(require_permission("hotel_schedule_admin")),
 ):
     # 更新 department_name 快照
     dept_name = ""
@@ -242,9 +250,10 @@ def create_staff(
         dept_name = dept.name if dept else ""
 
     staff = StaffMember(
-        **{k: v for k, v in body.model_dump().items()},
+        **{k: v for k, v in body.model_dump().items() if k != "source_name"},
         department_name=dept_name,
         source_name=body.source_name or body.name,
+        venue_flag=VENUE_FLAG,   # 場域標記由模組決定，不由前端傳入
     )
     db.add(staff)
     db.flush()
@@ -258,7 +267,7 @@ def update_staff(
     staff_id: str,
     body: StaffIn,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("schedule_admin")),
+    current_user: User = Depends(require_permission("hotel_schedule_admin")),
 ):
     staff = db.query(StaffMember).filter(StaffMember.id == staff_id, StaffMember.is_deleted == False).first()
     if not staff:
@@ -297,7 +306,7 @@ def update_staff(
 def delete_staff(
     staff_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("schedule_admin")),
+    current_user: User = Depends(require_permission("hotel_schedule_admin")),
 ):
     staff = db.query(StaffMember).filter(StaffMember.id == staff_id, StaffMember.is_deleted == False).first()
     if not staff:
@@ -316,7 +325,7 @@ def delete_staff(
 @router.get("/shifts", summary="班別列表")
 def list_shifts(
     db: Session = Depends(get_db),
-    _: User = Depends(require_permission("schedule_view")),
+    _: User = Depends(require_permission("hotel_schedule_view")),
 ):
     rows = (
         db.query(ShiftType)
@@ -331,7 +340,7 @@ def list_shifts(
 def create_shift(
     body: ShiftIn,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("schedule_admin")),
+    current_user: User = Depends(require_permission("hotel_schedule_admin")),
 ):
     exist = db.query(ShiftType).filter(
         ShiftType.code == body.code, ShiftType.is_deleted == False
@@ -351,7 +360,7 @@ def update_shift(
     shift_id: str,
     body: ShiftIn,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("schedule_admin")),
+    current_user: User = Depends(require_permission("hotel_schedule_admin")),
 ):
     shift = db.query(ShiftType).filter(ShiftType.id == shift_id, ShiftType.is_deleted == False).first()
     if not shift:
@@ -369,7 +378,7 @@ def update_shift(
 def delete_shift(
     shift_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("schedule_admin")),
+    current_user: User = Depends(require_permission("hotel_schedule_admin")),
 ):
     shift = db.query(ShiftType).filter(ShiftType.id == shift_id, ShiftType.is_deleted == False).first()
     if not shift:
@@ -391,7 +400,7 @@ async def import_schedule(
     override_year: int | None = Form(None),
     override_month: int | None = Form(None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("schedule_manage")),
+    current_user: User = Depends(require_permission("hotel_schedule_manage")),
 ):
     """
     上傳 .xlsx 班表檔案，自動解析並寫入資料庫。
@@ -427,7 +436,7 @@ async def import_schedule(
 def list_import_logs(
     limit: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
-    _: User = Depends(require_permission("schedule_manage")),
+    _: User = Depends(require_permission("hotel_schedule_manage")),
 ):
     rows = (
         db.query(ScheduleImportLog)
@@ -457,170 +466,6 @@ def list_import_logs(
 
 
 # ─────────────────────────────────────────────────────────────
-# 班表主檔
-# ─────────────────────────────────────────────────────────────
-
-@router.get("/", summary="班表列表")
-def list_schedules(
-    year: int | None = Query(None),
-    month: int | None = Query(None),
-    db: Session = Depends(get_db),
-    _: User = Depends(require_permission("schedule_view")),
-):
-    q = db.query(Schedule).filter(Schedule.is_deleted == False)
-    if year:
-        q = q.filter(Schedule.schedule_year == year)
-    if month:
-        q = q.filter(Schedule.schedule_month == month)
-    rows = q.order_by(Schedule.schedule_year.desc(), Schedule.schedule_month.desc()).all()
-    return [
-        {
-            "id": r.id,
-            "schedule_year": r.schedule_year,
-            "schedule_month": r.schedule_month,
-            "title": r.title,
-            "source_file_name": r.source_file_name,
-            "status": r.status,
-            "created_at": r.created_at.isoformat() if r.created_at else None,
-        }
-        for r in rows
-    ]
-
-
-@router.delete("/{schedule_id}", summary="刪除班表（軟刪除）")
-def delete_schedule(
-    schedule_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("schedule_admin")),
-):
-    sch = db.query(Schedule).filter(Schedule.id == schedule_id, Schedule.is_deleted == False).first()
-    if not sch:
-        raise HTTPException(status_code=404, detail="班表不存在")
-    # 同時軟刪除所有明細
-    db.query(ScheduleDetail).filter(ScheduleDetail.schedule_id == schedule_id).update(
-        {"is_deleted": True}
-    )
-    sch.is_deleted = True
-    _audit(db, current_user, "delete", "schedule", schedule_id,
-           {"year": sch.schedule_year, "month": sch.schedule_month})
-    db.commit()
-    return {"ok": True}
-
-
-# ─────────────────────────────────────────────────────────────
-# 班表明細（表格式資料）
-# ─────────────────────────────────────────────────────────────
-
-@router.get("/{schedule_id}/details", summary="取得表格式班表資料")
-def get_details(
-    schedule_id: str,
-    db: Session = Depends(get_db),
-    _: User = Depends(require_permission("schedule_view")),
-):
-    sch = db.query(Schedule).filter(Schedule.id == schedule_id, Schedule.is_deleted == False).first()
-    if not sch:
-        raise HTTPException(status_code=404, detail="班表不存在")
-    return get_schedule_table(db, sch.schedule_year, sch.schedule_month)
-
-
-@router.post("/{schedule_id}/details", summary="新增單筆班表明細", status_code=201)
-def add_detail(
-    schedule_id: str,
-    body: DetailAddIn,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("schedule_manage")),
-):
-    sch = db.query(Schedule).filter(Schedule.id == schedule_id, Schedule.is_deleted == False).first()
-    if not sch:
-        raise HTTPException(status_code=404, detail="班表不存在")
-
-    staff = db.query(StaffMember).filter(StaffMember.id == body.staff_id).first()
-    if not staff:
-        raise HTTPException(status_code=404, detail="人員不存在")
-
-    shift = db.query(ShiftType).filter(
-        ShiftType.code == body.shift_code, ShiftType.is_deleted == False
-    ).first()
-
-    detail = ScheduleDetail(
-        schedule_id=schedule_id,
-        work_date=body.work_date,
-        staff_id=body.staff_id,
-        staff_name=staff.source_name or staff.name,
-        shift_code=body.shift_code,
-        shift_type_id=shift.id if shift else None,
-        start_time=shift.start_time if shift else "",
-        end_time=shift.end_time if shift else "",
-        work_minutes=shift.work_minutes if shift else 0,
-        remark=body.remark,
-    )
-    db.add(detail)
-    db.flush()
-    _audit(db, current_user, "create", "schedule_detail", detail.id,
-           {"staff": staff.name, "date": str(body.work_date), "shift": body.shift_code})
-    db.commit()
-    return {"id": detail.id, "ok": True}
-
-
-@router.put("/{schedule_id}/details/{detail_id}", summary="編輯單筆班表明細")
-def edit_detail(
-    schedule_id: str,
-    detail_id: str,
-    body: DetailEditIn,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("schedule_manage")),
-):
-    detail = db.query(ScheduleDetail).filter(
-        ScheduleDetail.id == detail_id,
-        ScheduleDetail.schedule_id == schedule_id,
-        ScheduleDetail.is_deleted == False,
-    ).first()
-    if not detail:
-        raise HTTPException(status_code=404, detail="明細不存在")
-
-    old_shift = detail.shift_code
-    shift = db.query(ShiftType).filter(
-        ShiftType.code == body.shift_code, ShiftType.is_deleted == False
-    ).first()
-
-    detail.shift_code = body.shift_code
-    detail.shift_type_id = shift.id if shift else None
-    detail.start_time = shift.start_time if shift else ""
-    detail.end_time = shift.end_time if shift else ""
-    detail.work_minutes = shift.work_minutes if shift else 0
-    detail.remark = body.remark
-
-    _audit(db, current_user, "update", "schedule_detail", detail_id,
-           {"staff": detail.staff_name, "date": str(detail.work_date),
-            "old_shift": old_shift, "new_shift": body.shift_code})
-    db.commit()
-    return {"ok": True}
-
-
-@router.delete("/{schedule_id}/details/{detail_id}", summary="刪除單筆班表明細（軟刪除）")
-def delete_detail(
-    schedule_id: str,
-    detail_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("schedule_manage")),
-):
-    detail = db.query(ScheduleDetail).filter(
-        ScheduleDetail.id == detail_id,
-        ScheduleDetail.schedule_id == schedule_id,
-        ScheduleDetail.is_deleted == False,
-    ).first()
-    if not detail:
-        raise HTTPException(status_code=404, detail="明細不存在")
-
-    detail.is_deleted = True
-    _audit(db, current_user, "delete", "schedule_detail", detail_id,
-           {"staff": detail.staff_name, "date": str(detail.work_date),
-            "shift": detail.shift_code})
-    db.commit()
-    return {"ok": True}
-
-
-# ─────────────────────────────────────────────────────────────
 # 統計
 # ─────────────────────────────────────────────────────────────
 
@@ -629,7 +474,7 @@ def get_stats(
     year: int = Query(...),
     month: int = Query(...),
     db: Session = Depends(get_db),
-    _: User = Depends(require_permission("schedule_view")),
+    _: User = Depends(require_permission("hotel_schedule_view")),
 ):
     return get_monthly_stats(db, year, month)
 
@@ -646,7 +491,7 @@ def list_details(
     shift_code: str | None = Query(None),
     department_id: str | None = Query(None),
     db: Session = Depends(get_db),
-    _: User = Depends(require_permission("schedule_view")),
+    _: User = Depends(require_permission("hotel_schedule_view")),
 ):
     sch = db.query(Schedule).filter(
         Schedule.schedule_year == year,
@@ -672,7 +517,14 @@ def list_details(
         for s in db.query(ShiftType).filter(ShiftType.is_deleted == False).all()
     }
     staff_info: dict[str, dict] = {
-        s.id: {"dept_name": s.department_name, "employment_type": s.employment_type}
+        # dept_id 必須放進來：下方 department_id 篩選是用 sti.get("dept_id") 比對，
+        # 原本這個 key 不存在，導致帶 department_id 查詢時永遠回空陣列。
+        s.id: {
+            "dept_id": s.department_id,
+            "dept_name": s.department_name,
+            "employment_type": s.employment_type,
+            "venue_flag": s.venue_flag,
+        }
         for s in db.query(StaffMember).filter(StaffMember.is_deleted == False).all()
     }
 
@@ -693,6 +545,7 @@ def list_details(
             "staff_name": r.staff_name,
             "department_name": sti.get("dept_name", ""),
             "employment_type": sti.get("employment_type", ""),
+            "venue_flag": sti.get("venue_flag", VENUE_FLAG),
             "shift_code": r.shift_code,
             "shift_name": si.get("name", ""),
             "shift_color": si.get("color", "#6b7280"),
@@ -714,11 +567,15 @@ def get_shifts_range(
     date_from: str = Query(..., description="起始日期 YYYY-MM-DD"),
     date_to:   str = Query(..., description="結束日期 YYYY-MM-DD"),
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = Depends(require_permission("hotel_schedule_view")),
 ):
     """
-    回傳指定日期區間內每日人員班別映射。
-    格式：{ "2026-05-20": { "王大明": { "shift_code": "Y", "shift_color": "#10b981", "is_working": true } } }
+    回傳指定日期區間內每日人員班別映射（僅飯店班表）。
+    格式：{ "2026-05-20": { "王大明": { "shift_code": "Y", "shift_color": "#10b981",
+                                        "is_working": true, "venue_flag": "飯" } } }
+
+    ⚠️ 本端點只回飯店資料。工作日誌需要飯店＋商場合併結果時，
+       請改用 GET /api/v1/work-journal/shifts-range（回傳值為陣列，可含雙場域）。
 
     is_working 判斷邏輯：
       - 班別存在於 shift_types → 以 shift_types.work_minutes > 0 判斷
@@ -783,6 +640,172 @@ def get_shifts_range(
             "shift_name":  shift_name,
             "shift_color": color,
             "is_working":  is_working,
+            "venue_flag":  VENUE_FLAG,
         }
 
     return result
+
+# ─────────────────────────────────────────────────────────────
+# 班表主檔
+# ─────────────────────────────────────────────────────────────
+
+@router.get("/", summary="班表列表")
+def list_schedules(
+    year: int | None = Query(None),
+    month: int | None = Query(None),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_permission("hotel_schedule_view")),
+):
+    q = db.query(Schedule).filter(Schedule.is_deleted == False)
+    if year:
+        q = q.filter(Schedule.schedule_year == year)
+    if month:
+        q = q.filter(Schedule.schedule_month == month)
+    rows = q.order_by(Schedule.schedule_year.desc(), Schedule.schedule_month.desc()).all()
+    return [
+        {
+            "id": r.id,
+            "schedule_year": r.schedule_year,
+            "schedule_month": r.schedule_month,
+            "title": r.title,
+            "source_file_name": r.source_file_name,
+            "status": r.status,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        }
+        for r in rows
+    ]
+
+
+@router.delete("/{schedule_id}", summary="刪除班表（軟刪除）")
+def delete_schedule(
+    schedule_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("hotel_schedule_admin")),
+):
+    sch = db.query(Schedule).filter(Schedule.id == schedule_id, Schedule.is_deleted == False).first()
+    if not sch:
+        raise HTTPException(status_code=404, detail="班表不存在")
+    # 同時軟刪除所有明細
+    db.query(ScheduleDetail).filter(ScheduleDetail.schedule_id == schedule_id).update(
+        {"is_deleted": True}
+    )
+    sch.is_deleted = True
+    _audit(db, current_user, "delete", "schedule", schedule_id,
+           {"year": sch.schedule_year, "month": sch.schedule_month})
+    db.commit()
+    return {"ok": True}
+
+
+# ─────────────────────────────────────────────────────────────
+# 班表明細（表格式資料）
+# ─────────────────────────────────────────────────────────────
+
+@router.get("/{schedule_id}/details", summary="取得表格式班表資料")
+def get_details(
+    schedule_id: str,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_permission("hotel_schedule_view")),
+):
+    sch = db.query(Schedule).filter(Schedule.id == schedule_id, Schedule.is_deleted == False).first()
+    if not sch:
+        raise HTTPException(status_code=404, detail="班表不存在")
+    return get_schedule_table(db, sch.schedule_year, sch.schedule_month)
+
+
+@router.post("/{schedule_id}/details", summary="新增單筆班表明細", status_code=201)
+def add_detail(
+    schedule_id: str,
+    body: DetailAddIn,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("hotel_schedule_manage")),
+):
+    sch = db.query(Schedule).filter(Schedule.id == schedule_id, Schedule.is_deleted == False).first()
+    if not sch:
+        raise HTTPException(status_code=404, detail="班表不存在")
+
+    staff = db.query(StaffMember).filter(StaffMember.id == body.staff_id).first()
+    if not staff:
+        raise HTTPException(status_code=404, detail="人員不存在")
+
+    shift = db.query(ShiftType).filter(
+        ShiftType.code == body.shift_code, ShiftType.is_deleted == False
+    ).first()
+
+    detail = ScheduleDetail(
+        schedule_id=schedule_id,
+        work_date=body.work_date,
+        staff_id=body.staff_id,
+        staff_name=staff.source_name or staff.name,
+        shift_code=body.shift_code,
+        shift_type_id=shift.id if shift else None,
+        start_time=shift.start_time if shift else "",
+        end_time=shift.end_time if shift else "",
+        work_minutes=shift.work_minutes if shift else 0,
+        remark=body.remark,
+    )
+    db.add(detail)
+    db.flush()
+    _audit(db, current_user, "create", "schedule_detail", detail.id,
+           {"staff": staff.name, "date": str(body.work_date), "shift": body.shift_code})
+    db.commit()
+    return {"id": detail.id, "ok": True}
+
+
+@router.put("/{schedule_id}/details/{detail_id}", summary="編輯單筆班表明細")
+def edit_detail(
+    schedule_id: str,
+    detail_id: str,
+    body: DetailEditIn,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("hotel_schedule_manage")),
+):
+    detail = db.query(ScheduleDetail).filter(
+        ScheduleDetail.id == detail_id,
+        ScheduleDetail.schedule_id == schedule_id,
+        ScheduleDetail.is_deleted == False,
+    ).first()
+    if not detail:
+        raise HTTPException(status_code=404, detail="明細不存在")
+
+    old_shift = detail.shift_code
+    shift = db.query(ShiftType).filter(
+        ShiftType.code == body.shift_code, ShiftType.is_deleted == False
+    ).first()
+
+    detail.shift_code = body.shift_code
+    detail.shift_type_id = shift.id if shift else None
+    detail.start_time = shift.start_time if shift else ""
+    detail.end_time = shift.end_time if shift else ""
+    detail.work_minutes = shift.work_minutes if shift else 0
+    detail.remark = body.remark
+
+    _audit(db, current_user, "update", "schedule_detail", detail_id,
+           {"staff": detail.staff_name, "date": str(detail.work_date),
+            "old_shift": old_shift, "new_shift": body.shift_code})
+    db.commit()
+    return {"ok": True}
+
+
+@router.delete("/{schedule_id}/details/{detail_id}", summary="刪除單筆班表明細（軟刪除）")
+def delete_detail(
+    schedule_id: str,
+    detail_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("hotel_schedule_manage")),
+):
+    detail = db.query(ScheduleDetail).filter(
+        ScheduleDetail.id == detail_id,
+        ScheduleDetail.schedule_id == schedule_id,
+        ScheduleDetail.is_deleted == False,
+    ).first()
+    if not detail:
+        raise HTTPException(status_code=404, detail="明細不存在")
+
+    detail.is_deleted = True
+    _audit(db, current_user, "delete", "schedule_detail", detail_id,
+           {"staff": detail.staff_name, "date": str(detail.work_date),
+            "shift": detail.shift_code})
+    db.commit()
+    return {"ok": True}
+
+

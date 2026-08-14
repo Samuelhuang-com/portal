@@ -28,7 +28,8 @@ class ContractBase(BaseModel):
     vendor_name: Optional[str] = Field("", max_length=255, description="廠商名稱（唯讀）")
 
     start_date: date = Field(..., description="合約起日")
-    end_date: date = Field(..., description="合約迄日")
+    end_date: date = Field(..., description="合約迄日（到期日）")
+    termination_date: Optional[date] = Field(None, description="解約日（提前終止合約時填寫，未提前解約者為 null）")
     notification_days: int = Field(0, ge=0, description="到期前通知天數")
     auto_renewal: bool = Field(False, description="是否自動續約")
 
@@ -59,7 +60,7 @@ class ContractBase(BaseModel):
     attachment_url: Optional[str] = Field(None, max_length=500, description="附件連結")
     remarks: Optional[str] = Field("", description="備註")
 
-    @validator("start_date", "end_date", pre=True)
+    @validator("start_date", "end_date", "termination_date", pre=True)
     def parse_date(cls, v):
         """允許字串日期轉換"""
         if isinstance(v, str):
@@ -71,6 +72,13 @@ class ContractBase(BaseModel):
         """驗證迄日 ≥ 起日"""
         if "start_date" in values and v < values["start_date"]:
             raise ValueError("合約迄日必須晚於起日")
+        return v
+
+    @validator("termination_date")
+    def termination_date_not_after_end(cls, v, values):
+        """驗證解約日不可晚於到期日"""
+        if v is not None and "end_date" in values and v > values["end_date"]:
+            raise ValueError("解約日不可晚於到期日")
         return v
 
     @validator("budget_source")
@@ -141,6 +149,7 @@ class ContractUpdate(BaseModel):
 
     start_date: Optional[date] = None
     end_date: Optional[date] = None
+    termination_date: Optional[date] = None
     notification_days: Optional[int] = Field(None, ge=0)
     auto_renewal: Optional[bool] = None
 
@@ -178,7 +187,7 @@ class ContractUpdate(BaseModel):
     budget_dept:     Optional[str] = Field(None, max_length=100)
     pricing_spec:    Optional[str] = Field(None, max_length=200)
 
-    @validator("start_date", "end_date", pre=True)
+    @validator("start_date", "end_date", "termination_date", pre=True)
     def parse_date(cls, v):
         if isinstance(v, str):
             return date.fromisoformat(v)

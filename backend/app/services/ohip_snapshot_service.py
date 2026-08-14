@@ -439,6 +439,60 @@ def _summary(run: OhipSnapshotRun) -> dict[str, Any]:
     }
 
 
+# ── sync_tool.py 專用的零參數包裝（2026-08-13 新增）──────────────────────────
+
+def run_snapshot_job(*, triggered_by: str = "sync_tool") -> dict[str, Any]:
+    """每日快照，給 `sync_tool.py` 用（零參數、自己開 session）。
+
+    ⚠️ 背景：DEV 機器 `SCHEDULER_ENABLED=false`（改用 sync_tool.py），
+       但本模組先前沒登錄進 `sync_tool.py MODULES`，所以 main.py 每日 06:00 的
+       `ohip_daily_snapshot` **從未執行** —— 2026-08-13 實測
+       `ohip_inventory_snapshot` 是 0 筆，「快照精確版」永遠不會開始累積。
+
+    ⚠️ **一天只跑一次。** sync_tool 最短 15 分一輪，每輪都抓
+       (7 + 180) 天 × 兩條資料流會把 OHIP 配額燒光。今天已成功跑過就
+       只做一次 DB 查詢後 skip，不打 OHIP。
+
+    ⚠️ **錯過的日子補不回來** —— OPERA 不提供歷史查詢，快照只能存「當下」。
+       所以這一支寧可每天多跑一次無效檢查，也不要漏跑。
+
+    回傳格式對齊 sync_tool 的期待：`fetched` / `upserted` / `errors`。
+    """
+    from app.core.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        if not ohip_client.is_configured():
+            # 「沒設定」不是「失敗」，不能讓 sync_tool 每輪紅燈
+            return {
+                "fetched": 0, "upserted": 0, "errors": 0, "skipped": True,
+                "message": ("OHIP 尚未設定完成，缺少："
+                            + "、".join(ohip_client.missing_settings())),
+            }
+
+        today_s = date.today().isoformat()
+        done = (db.query(OhipSnapshotRun.id)
+                  .filter(OhipSnapshotRun.snapshot_date == today_s,
+                          OhipSnapshotRun.hotel_id == settings.OHIP_HOTEL_ID,
+                          OhipSnapshotRun.status != "failed")
+                  .first())
+        if done:
+            return {"fetched": 0, "upserted": 0, "errors": 0, "skipped": True,
+                    "message": f"{today_s} 的快照今天已完成。"}
+
+        out = run_snapshot(db, triggered_by=triggered_by)
+        rows = (int(out.get("house_rows") or 0)
+                + int(out.get("room_type_rows") or 0)
+                + int(out.get("revenue_rows") or 0))
+        return {
+            "fetched": rows, "upserted": rows,
+            "errors": 1 if out.get("status") == "failed" else 0,
+            "skipped": False, "detail": out,
+        }
+    finally:
+        db.close()
+
+
 # ── 查詢（給狀態頁用）────────────────────────────────────────────────────────
 
 def list_runs(db: Session, *, limit: int = 60) -> dict[str, Any]:

@@ -482,11 +482,17 @@ export default function ContractListPage() {
       render: (date) => fmtDate(date),
     },
     {
-      title: '截止日期',
+      title: '到期日',
       dataIndex: 'end_date',
       width: 120,
       sorter: true,
       render: (date) => fmtDate(date),
+    },
+    {
+      title: '解約日',
+      dataIndex: 'termination_date',
+      width: 120,
+      render: (date) => date ? <span style={{ color: '#FF4D4F' }}>{fmtDate(date)}</span> : '—',
     },
     {
       title: '合約金額',
@@ -1290,6 +1296,7 @@ function ContractDetailDrawer({ contract, open, onClose, onUpdate }: ContractDet
       risk_level:                contract.risk_level,
       start_date:                contract.start_date ? dayjs(contract.start_date) : null,
       end_date:                  contract.end_date   ? dayjs(contract.end_date)   : null,
+      termination_date:          contract.termination_date ? dayjs(contract.termination_date) : null,
       notification_days:         contract.notification_days,
       auto_renewal:              contract.auto_renewal,
       total_amount_tax_included: contract.total_amount_tax_included,
@@ -1346,6 +1353,7 @@ function ContractDetailDrawer({ contract, open, onClose, onUpdate }: ContractDet
         ...values,
         start_date: values.start_date ? values.start_date.format('YYYY-MM-DD') : undefined,
         end_date:   values.end_date   ? values.end_date.format('YYYY-MM-DD')   : undefined,
+        termination_date: values.termination_date ? values.termination_date.format('YYYY-MM-DD') : undefined,
       }
       const result = await updateContract(contract.contract_id, payload)
       // 費用分攤整批儲存
@@ -1571,8 +1579,19 @@ function ContractDetailDrawer({ contract, open, onClose, onUpdate }: ContractDet
                 </Form.Item>
               </Col>
               <Col span={12}>
-                <Form.Item name="end_date" label="截止日期">
+                <Form.Item name="end_date" label="到期日">
                   <DatePicker style={{ width: '100%' }} />
+                </Form.Item>
+              </Col>
+            </Row>
+            <Row gutter={16}>
+              <Col span={12}>
+                <Form.Item
+                  name="termination_date"
+                  label="解約日"
+                  extra="僅提前終止合約時填寫，未提前解約請留空"
+                >
+                  <DatePicker style={{ width: '100%' }} allowClear />
                 </Form.Item>
               </Col>
             </Row>
@@ -1736,7 +1755,12 @@ function ContractDetailDrawer({ contract, open, onClose, onUpdate }: ContractDet
           <Title level={5}>期限</Title>
           <Descriptions column={2} bordered size="small" style={{ marginBottom: '24px' }}>
             <Descriptions.Item label="開始日期">{fmtDate(contract.start_date)}</Descriptions.Item>
-            <Descriptions.Item label="截止日期">{fmtDate(contract.end_date)}</Descriptions.Item>
+            <Descriptions.Item label="到期日">{fmtDate(contract.end_date)}</Descriptions.Item>
+            <Descriptions.Item label="解約日">
+              {contract.termination_date
+                ? <span style={{ color: '#FF4D4F', fontWeight: 600 }}>{fmtDate(contract.termination_date)}</span>
+                : '—'}
+            </Descriptions.Item>
             <Descriptions.Item label="提前通知天數">{contract.notification_days || '-'} 天</Descriptions.Item>
             <Descriptions.Item label="自動續約">{contract.auto_renewal ? '是' : '否'}</Descriptions.Item>
           </Descriptions>

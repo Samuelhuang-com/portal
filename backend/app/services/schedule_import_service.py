@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.models.schedule import (
     Schedule, ScheduleDetail, ScheduleImportLog,
-    StaffMember, ShiftType,
+    StaffMember, ShiftType, VENUE_FLAG,
 )
 
 logger = logging.getLogger(__name__)
@@ -302,6 +302,7 @@ def import_excel(
                 source_name=raw_name_str,
                 employment_type=employment_type,
                 remark=remark,
+                venue_flag=VENUE_FLAG,   # 匯入到哪個模組就帶哪個場域標記
             )
             db.add(staff)
             db.flush()

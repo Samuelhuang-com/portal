@@ -1,7 +1,7 @@
 /**
  * 班別管理頁
  * 路由：/schedule/shifts
- * 權限：schedule_admin
+ * 權限：hotel_schedule_admin
  */
 import { useState, useEffect, useCallback } from 'react'
 import {
@@ -127,7 +127,7 @@ export default function ShiftsPage() {
   return (
     <div style={{ padding: '24px' }}>
       <Card
-        title={<Title level={4} style={{ margin: 0 }}>班別管理</Title>}
+        title={<Title level={4} style={{ margin: 0 }}>飯店班別管理</Title>}
         extra={
           <Button type="primary" icon={<PlusOutlined />} onClick={openAdd}>新增班別</Button>
         }

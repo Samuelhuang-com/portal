@@ -80,6 +80,11 @@ PERMISSION_DEFINITIONS = [
     # 使用者確認後者為正式模組），從權限管理清單移除，路由已同步停用。
     # {"key": "hotel_routine_pm_view",              "label": "飯店例行維護",      "group": "飯店管理"},
     {"key": "hotel_calendar_view",                "label": "飯店行事曆",         "group": "飯店管理"},
+    # 2026-08-14：班表拆分為飯店／商場兩套獨立模組，原 schedule_* 三個 key 已停用，
+    # 轉換腳本見 docs/migrate_schedule_permissions.py（部署前必須先執行）。
+    {"key": "hotel_schedule_view",                "label": "飯店班表",           "group": "飯店管理"},
+    {"key": "hotel_schedule_manage",              "label": "飯店班表：匯入/編輯", "group": "飯店管理"},
+    {"key": "hotel_schedule_admin",               "label": "飯店班表：人員/班別", "group": "飯店管理"},
     {"key": "mall_view",                          "label": "商場模組",          "group": "商場管理"},
     {"key": "mall_overview_view",                 "label": "商場管理 Dashboard","group": "商場管理"},
     {"key": "mall_dashboard_view",                "label": "商場例行維護統計",  "group": "商場管理"},
@@ -89,14 +94,17 @@ PERMISSION_DEFINITIONS = [
     {"key": "mall_full_building_inspection_view",  "label": "整棟巡檢",          "group": "商場管理"},
     {"key": "mall_other_tasks_view",               "label": "主管交辦／緊急事件","group": "商場管理"},
     {"key": "mall_calendar_view",                  "label": "商場行事曆",         "group": "商場管理"},
+    {"key": "mall_schedule_view",                  "label": "商場班表",           "group": "商場管理"},
+    {"key": "mall_schedule_manage",                "label": "商場班表：匯入/編輯", "group": "商場管理"},
+    {"key": "mall_schedule_admin",                 "label": "商場班表：人員/班別", "group": "商場管理"},
     {"key": "luqun_repair_view",        "label": "商場工務報修",  "group": "工務報修"},
     {"key": "dazhi_repair_view",        "label": "大直工務部",    "group": "工務報修"},
     {"key": "security_view",            "label": "保全模組",      "group": "保全管理"},
     {"key": "security_dashboard_view",  "label": "保全巡檢統計",  "group": "保全管理"},
     {"key": "security_patrol_view",     "label": "保全巡檢記錄",  "group": "保全管理"},
-    {"key": "schedule_view",            "label": "查看班表",               "group": "班表管理"},
-    {"key": "schedule_manage",          "label": "管理班表（匯入/編輯）",   "group": "班表管理"},
-    {"key": "schedule_admin",           "label": "班表管理員（人員/班別）", "group": "班表管理"},
+    # 「班表管理」group 已於 2026-08-14 移除，三個 key 拆為
+    # hotel_schedule_* （飯店管理 group）與 mall_schedule_* （商場管理 group），
+    # 定義見上方各自的 group 區塊。
     {"key": "approvals_view",           "label": "簽核查看",      "group": "協作工具"},
     {"key": "approvals_manage",         "label": "簽核新增/管理", "group": "協作工具"},
     {"key": "memos_view",               "label": "公告查看",      "group": "協作工具"},
@@ -175,6 +183,12 @@ PERMISSION_DEFINITIONS = [
     # 那裡是已離店的住客。共用會讓管理員以為授權的是同一份資料。
     # ⚠️ label 必須與 navLabels.ts 的 operaReservations 完全一致（CLAUDE.md §3）。
     {"key": "opera_reservation_view", "label": "訂房分析",           "group": "營運分析"},
+    # 訂房 Pace／Pickup（2026-08-13）：另開 key 而不共用 opera_reservation_view，
+    # 因為**這一頁的數字是回推出來的**（訂房同步是整列覆寫、無版本），
+    # 已含後續改期與取消的結果，與訂房分析的「現在狀態」不是同一種可信度。
+    # 共用會讓管理員以為授權的是同一份資料。
+    # ⚠️ label 必須與 navLabels.ts 的 operaPace 完全一致（CLAUDE.md §3）。
+    {"key": "opera_pace_view",     "label": "訂房 Pace／Pickup",    "group": "營運分析"},
     # 2026-08-05 起「事件月曆」是房價預測頁的一個 TAB，不再是獨立頁面。
     # 此 key 仍然有效，控管的是 TAB 內的新增／修改／刪除／學習係數（API 層強制），
     # 清單本身唯讀，有 opera_forecast_view 就看得到。

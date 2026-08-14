@@ -68,12 +68,15 @@
 // ── 一級選單（群組） ──────────────────────────────────────────────────────────
 export const NAV_GROUP = {
   dashboard:  'Dashboard',
-  schedule:   '班表',               // ← 新增：班表管理（行事曆之後）
-  contract:   '合約管理',           // ← 新增：合約管理（班表之後、預算之前）
+  // 2026-08-14：原本的頂層「班表」群組已移除，拆為飯店管理底下的「飯店班表」
+  // 與商場管理底下的「商場班表」兩個 L2 群組（見下方 hotelSchedule / mallSchedule）。
+  contract:   '合約管理',           // ← 新增：合約管理（預算之前）
   budget:     '預算管理',         // ← 新增：預算管理（在 dashboard 之後、行事曆之前）
   calendar:   '行事曆',           // ← 新增：Command Calendar（在 dashboard 之後、hotel 之前）
   hotel:      '飯店管理',
+  hotelSchedule:            '飯店班表',       // ← L2 群組：飯店管理底下（2026-08-14 由頂層「班表」搬入）
   mall:                     '商場管理',
+  mallSchedule:             '商場班表',       // ← L2 群組：商場管理底下（2026-08-14 新增）
   mallPmGroup:              '商場例行維護',   // ← L2 群組：商場例行維護 + 全棟例行維護
   luqun_repair:             '商場工務報修',
   dazhi_repair:             '飯店工務報修',
@@ -224,13 +227,25 @@ export const NAV_PAGE = {
   // 日曜請款月報表
   nichiyoClaimReportMonthly: '日曜核准請款單月報表',  // ← route /nichiyo-claim-report/monthly
 
-  // 班表管理（本地 SQLite 模組）
-  scheduleOverview:     '班表總覽',            // ← route /schedule
-  scheduleCalendar:     '月曆式班表',           // ← route /schedule/calendar
-  scheduleImport:       '匯入班表',             // ← route /schedule/import
-  scheduleStaff:        '人員管理',             // ← route /schedule/staff
-  scheduleShifts:       '班別管理',             // ← route /schedule/shifts
-  scheduleDepartments:  '部門管理',             // ← route /schedule/departments
+  // 飯店班表（本地 SQLite 模組，飯店管理 → 飯店班表）
+  // ⚠️ 這裡的顯示名稱必須與 role_permissions.py PERMISSION_DEFINITIONS 的 label 一致，
+  //    否則管理員在「權限設定」看到的名稱會與側邊欄不同（CLAUDE.md §3）。
+  hotelScheduleOverview:     '班表總覽',        // ← route /hotel/schedule
+  hotelScheduleCalendar:     '月曆式班表',       // ← route /hotel/schedule/calendar
+  hotelScheduleImport:       '匯入班表',         // ← route /hotel/schedule/import
+  hotelScheduleStaff:        '人員管理',         // ← route /hotel/schedule/staff
+  hotelScheduleShifts:       '班別管理',         // ← route /hotel/schedule/shifts
+  hotelScheduleDepartments:  '部門管理',         // ← route /hotel/schedule/departments
+  hotelScheduleManual:       '操作手冊',         // ← route /hotel/schedule/manual
+
+  // 商場班表（本地 SQLite 模組，商場管理 → 商場班表）
+  mallScheduleOverview:      '班表總覽',        // ← route /mall/schedule
+  mallScheduleCalendar:      '月曆式班表',       // ← route /mall/schedule/calendar
+  mallScheduleImport:        '匯入班表',         // ← route /mall/schedule/import
+  mallScheduleStaff:         '人員管理',         // ← route /mall/schedule/staff
+  mallScheduleShifts:        '班別管理',         // ← route /mall/schedule/shifts
+  mallScheduleDepartments:   '部門管理',         // ← route /mall/schedule/departments
+  mallScheduleManual:        '操作手冊',         // ← route /mall/schedule/manual
 
   // 合約管理
   contractList:         '合約清單',             // ← route /contract
@@ -243,6 +258,7 @@ export const NAV_PAGE = {
   contractRenewals:     '續約管理',             // ← route /contract/renewals (Phase 3)
   contractCalendar:     '合約行事曆',           // ← route /contract/calendar  (G2)
   contractCompare:      '合約比較',             // ← route /contract/compare   (K5)
+  contractManual:       '使用手冊',             // ← route /contract/manual（2026-08-14 新增，共用 contract_view 權限）
 
   // PPT 匯出設定（飯店 Dashboard，全公司共用設定，一階選單）
   pptExport:            '飯店 Dashboard PPT 匯出設定',  // ← route /ppt-export
@@ -291,6 +307,11 @@ export const NAV_PAGE = {
   // 訂房分析（2026-08-07）。⚠️ 母體與 operaGuest 不同：所有訂房 vs 已離店住客。
   // ⚠️ 這個字串必須與 role_permissions.py 的 opera_reservation_view label 完全一致。
   operaReservations: '訂房分析',           // ← route /opera/reservations
+  // 訂房 Pace／Pickup（2026-08-13）。⚠️ 這一頁的歷史進度是以訂房日「回推」得出，
+  //    與訂房分析的「現在狀態」可信度不同，所以另開權限 key。
+  // ⚠️ 這個字串必須與 role_permissions.py 的 opera_pace_view label 完全一致。
+  //    注意分隔號是全形「／」，不是半形 /。
+  operaPace:       '訂房 Pace／Pickup',    // ← route /opera/pace
   operaSettings:   '分析門檻設定',          // ← route /opera/settings
   operaManual:     '使用手冊',              // ← route /opera/manual（共用 opera_view 權限）
 

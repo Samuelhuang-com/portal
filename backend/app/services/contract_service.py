@@ -274,6 +274,12 @@ class ContractService:
                 str(contract_data.start_date),
                 str(contract_data.end_date),
             )
+        if contract_data.termination_date and contract_data.termination_date > contract_data.end_date:
+            raise InvalidContractDates(
+                str(contract_data.termination_date),
+                str(contract_data.end_date),
+                reason="解約日不可晚於到期日",
+            )
 
         # 驗證金額
         if contract_data.total_amount_tax_included <= 0:
@@ -327,6 +333,7 @@ class ContractService:
             vendor_name=vendor.vendor_name,
             start_date=contract_data.start_date,
             end_date=contract_data.end_date,
+            termination_date=contract_data.termination_date,
             notification_days=contract_data.notification_days or 0,
             auto_renewal=contract_data.auto_renewal or False,
             currency=contract_data.currency or "TWD",
@@ -524,6 +531,19 @@ class ContractService:
         if start_date > end_date:
             raise InvalidContractDates(str(start_date), str(end_date))
 
+        # 驗證解約日（如果提供）：不可晚於到期日
+        termination_date = (
+            contract_data.termination_date
+            if contract_data.termination_date is not None
+            else contract.termination_date
+        )
+        if termination_date and termination_date > end_date:
+            raise InvalidContractDates(
+                str(termination_date),
+                str(end_date),
+                reason="解約日不可晚於到期日",
+            )
+
         # 驗證金額（如果提供）
         amount = contract_data.total_amount_tax_included or contract.total_amount_tax_included
         if amount <= 0:
@@ -697,6 +717,7 @@ class ContractService:
             "帳號": vendor.bank_account if vendor else "—",
             "起日": str(contract_data.start_date) if hasattr(contract_data, "start_date") else "",
             "迄日": str(contract_data.end_date) if hasattr(contract_data, "end_date") else "",
+            "解約日": str(contract_data.termination_date) if getattr(contract_data, "termination_date", None) else "—",
             "總額": str(contract_data.total_amount_tax_included) if hasattr(contract_data, "total_amount_tax_included") else "0",
             "計價方式": contract_data.pricing_method if hasattr(contract_data, "pricing_method") else "",
             "預算年度": str(contract_data.budget_year) if hasattr(contract_data, "budget_year") else "",
@@ -722,6 +743,7 @@ class ContractService:
             vendor_name=contract.vendor_name,
             start_date=contract.start_date,
             end_date=contract.end_date,
+            termination_date=contract.termination_date,
             notification_days=contract.notification_days,
             auto_renewal=contract.auto_renewal,
             currency=contract.currency,

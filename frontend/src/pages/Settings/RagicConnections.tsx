@@ -64,6 +64,13 @@ const ALL_MODULES: string[] = [
   '主管交辦／緊急事件', '週期保養預排', '飯店例行維護', '廠商資料',
   // 來源是 portal.db vendors（非 Ragic），必須排在「廠商資料」之後執行
   '週期採購供應商',
+  // ── 以下不是 Ragic，來源是 OPERA Cloud（OHIP API）───────────────────────
+  // 2026-08-13 補登錄：先前只掛在 main.py 的 APScheduler，而 DEV 機器
+  // SCHEDULER_ENABLED=false，等於從未執行。三者都會自我判斷做過了沒，
+  // 做完就 skip 不打 OHIP。名稱必須與 sync_tool.py MODULES 完全一致。
+  '市場區隔歷史回補', '訂房歷史回補', '訂房增量同步', 'OHIP 每日快照',
+  // 排最後：檢查前面那些模組跑得怎麼樣，有問題才寄信（一天一次）
+  '同步告警檢查',
 ]
 
 function fmtTime(iso: string): string {

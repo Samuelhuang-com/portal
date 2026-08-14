@@ -210,6 +210,23 @@ MODULES: list[tuple[str, str, str]] = [
     #   （只查一次 DB，不打 OHIP）。「昨天」由 main.py 每日 06:30 的
     #   sync_incremental 負責（重抓最近 14 天），這裡刻意不重複做。
     ("市場區隔歷史回補",   "app.services.opera_segment_sync",           "sync_backfill_all"),
+    # ── 以下三個同樣不是 Ragic，來源是 OPERA Cloud（OHIP API）────────────────
+    # ⚠️ 2026-08-13 補登錄。DEV 機器 `SCHEDULER_ENABLED=false`（改用本工具），
+    #    但這三個先前只登錄在 main.py 的 APScheduler、沒登錄在這裡，等於
+    #    **從未執行**。實測後果：訂房回補停在 6/24 段、DB 內完全沒有今天以後的
+    #    訂房（在手訂房與 Pace 分析的未來區間永遠是空的）、
+    #    `ohip_inventory_snapshot` 0 筆（「快照精確版」永遠不會開始累積）。
+    #
+    # ⚠️ 三個都會自我判斷「今天做過了沒／還有沒有待補的段」，做完就 skip、
+    #    不打 OHIP，所以放在 15 分一輪的自動同步裡不會燒配額。
+    ("訂房歷史回補",       "app.services.opera_reservation_sync",       "sync_backfill_all"),
+    # 🎯 這一支是唯一會抓到「今天以後」訂房的路徑（回補只補到昨天）。一天跑一次。
+    ("訂房增量同步",       "app.services.opera_reservation_sync",       "sync_incremental_job"),
+    # ⚠️ 快照錯過的日子**永遠補不回來**（OPERA 不提供歷史查詢），寧可多跑。
+    ("OHIP 每日快照",      "app.services.ohip_snapshot_service",        "run_snapshot_job"),
+    # ⚠️ 必須排在最後 —— 它檢查的是「前面那些模組跑得怎麼樣」。
+    #    同一個問題一天只寄一次（Memo 去重），沒設 ALERT_EMAIL_TO 就靜默跳過。
+    ("同步告警檢查",       "app.services.sync_alert_service",           "check_and_alert"),
 ]
 
 # ── 報修報表寄信排程 key（非同步模組，獨立處理）─────────────────────────────

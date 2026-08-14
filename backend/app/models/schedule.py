@@ -9,9 +9,12 @@ import uuid
 from datetime import datetime
 from sqlalchemy import (
     Column, String, Integer, Boolean, DateTime, Date,
-    ForeignKey, Text, JSON, func
+    ForeignKey, Text, JSON, Index, func, text
 )
 from app.core.database import Base
+
+# 場域標記：本模組（飯店班表）所有人員一律標「飯」
+VENUE_FLAG = "飯"
 
 
 def _uuid() -> str:
@@ -53,6 +56,11 @@ class StaffMember(Base):
     department_name = Column(String(100), nullable=False, default="", comment="部門名稱快照")
     employment_type = Column(String(20),  nullable=False, default="正職",
                              comment="正職 / PT / 支援人員")
+    # venue_flag：場域標記，匯入時自動帶入。飯店班表固定「飯」，商場班表固定「商」。
+    # 供工作日誌顯示人員所屬場域；同一人若兩邊都有班表，會在兩張表各存一筆，
+    # 工作日誌合併時即呈現「飯」「商」雙標籤。
+    venue_flag      = Column(String(4),   nullable=False, default=VENUE_FLAG,
+                             server_default=VENUE_FLAG, comment="場域標記：飯")
     remark          = Column(String(200), nullable=False, default="", comment="備註（如福群）")
     is_active       = Column(Boolean,     nullable=False, default=True,  comment="是否啟用")
     is_deleted      = Column(Boolean,     nullable=False, default=False, comment="軟刪除")
@@ -61,7 +69,7 @@ class StaffMember(Base):
                              onupdate=func.now(), comment="更新時間")
 
     def __repr__(self) -> str:
-        return f"<StaffMember name={self.name} type={self.employment_type}>"
+        return f"<StaffMember name={self.name} type={self.employment_type} flag={self.venue_flag}>"
 
 
 # ─────────────────────────────────────────────────────────────
@@ -94,6 +102,18 @@ class ShiftType(Base):
 class Schedule(Base):
     __tablename__ = "schedules"
 
+    # ⚠️ 必須是「部分唯一索引」（只約束未刪除的列），不可用一般 UniqueConstraint。
+    # 本模組的既有流程是「先軟刪除舊班表 → 再重新匯入同年月」，軟刪除列的
+    # (year, month) 會保留，一般唯一約束會讓重新匯入直接失敗。
+    __table_args__ = (
+        Index(
+            "uq_schedules_year_month_active",
+            "schedule_year", "schedule_month",
+            unique=True,
+            sqlite_where=text("is_deleted = 0"),
+        ),
+    )
+
     id               = Column(String(36), primary_key=True, default=_uuid, comment="主鍵 UUID")
     schedule_year    = Column(Integer,     nullable=False, default=0,  comment="年（西元）")
     schedule_month   = Column(Integer,     nullable=False, default=0,  comment="月")
@@ -119,6 +139,14 @@ class Schedule(Base):
 # ─────────────────────────────────────────────────────────────
 class ScheduleDetail(Base):
     __tablename__ = "schedule_details"
+
+    # /shifts-range 以 work_date 做區間掃描、其餘查詢多以 schedule_id 過濾，
+    # 原本無索引時為全表 scan。
+    __table_args__ = (
+        Index("ix_schedule_details_work_date",   "work_date"),
+        Index("ix_schedule_details_schedule_id", "schedule_id"),
+        Index("ix_schedule_details_staff_id",    "staff_id"),
+    )
 
     id            = Column(String(36), primary_key=True, default=_uuid, comment="主鍵 UUID")
     schedule_id   = Column(String(36), ForeignKey("schedules.id"), nullable=False,

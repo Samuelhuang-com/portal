@@ -3,6 +3,7 @@
  * 對應後端 /api/v1/work-journal/*
  */
 import apiClient from '@/api/client'
+import type { ShiftInfo } from '@/api/schedule'
 
 export const JOURNAL_CATEGORIES = ['現場報修', '上級交辦', '緊急事件', '例行維護', '每日巡檢'] as const
 export type JournalCategory = typeof JOURNAL_CATEGORIES[number]
@@ -126,6 +127,28 @@ export async function fetchWorkJournalRange(
       ...(personScope ? { person_scope: personScope } : {}),
       ...(venue ? { venue } : {}),
     },
+  })
+  return res.data
+}
+
+// ── 班別區間查詢（飯店＋商場合併）──────────────────────────────
+//
+// 2026-08-14 班表拆分後新增。與單一場域的 fetchShiftsRange() 差別在於：
+//   單一場域：{ 日期: { 姓名: ShiftInfo   } }   ← 物件
+//   合併版　：{ 日期: { 姓名: ShiftInfo[] } }   ← 陣列，可同時含「飯」「商」
+//
+// 兩邊同名視為同一人（2026-08-14 決策），因此同一個姓名可能同時有飯店班與商場班，
+// 由 <ShiftTag> 渲染成兩個標籤。
+
+/** { "2026-08-01": { "王大明": [ShiftInfo(飯), ShiftInfo(商)] } } */
+export type MergedShiftsRangeData = Record<string, Record<string, ShiftInfo[]>>
+
+export async function fetchMergedShiftsRange(
+  date_from: string,
+  date_to: string,
+): Promise<MergedShiftsRangeData> {
+  const res = await apiClient.get<MergedShiftsRangeData>('/work-journal/shifts-range', {
+    params: { date_from, date_to },
   })
   return res.data
 }

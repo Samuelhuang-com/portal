@@ -143,6 +143,12 @@ export interface BackfillProgress {
   total_chunks: number; done_chunks: number; pending_chunks: number
   chunk_days: number
   range: { start: string | null; end: string | null; years: number }
+  /** ⚠️ 2026-08-13 新增。**天數才是誠實的口徑** —— 舊版「整段有沒有資料就算補過」
+   *  造成假性完成（顯示 24/24 完成，實際整月 0 筆）。段數會因缺口分散而失真，
+   *  畫面請以 missing_days 為準。 */
+  total_days: number
+  covered_days: number
+  missing_days: number
   next_chunk: { start: string; end: string } | null
   estimated_remaining_seconds: number
 }

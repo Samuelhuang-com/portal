@@ -26,7 +26,8 @@ import {
   fetchWorkJournalDaily, fetchWorkJournalRange, getJournalExcelUrl,
   type WorkJournalDaily, type WorkJournalRange, type JournalVenue,
 } from '@/api/workJournal'
-import { fetchShiftsRange, type ShiftsRangeData } from '@/api/schedule'
+// 2026-08-14 班表拆分：改用合併端點，同時取得飯店與商場班別（值為陣列）
+import { fetchMergedShiftsRange, type MergedShiftsRangeData } from '@/api/workJournal'
 import {
   CAT_COLS, DayPersonCollapse,
   isHotelRow as _isHotelRow, type JournalMode,
@@ -73,6 +74,14 @@ export function _computeWJStats(days: WorkJournalDaily[]): WJStats {
   return stats
 }
 
+// 班表查詢失敗時的降級處理。
+// 原本是 .catch(() => ({}))，錯誤被完全吞掉，畫面上與「當日沒有班表」無法區分，
+// 排查時毫無線索。改為在 console 留下警告，回傳值維持空物件以免整個頁面壞掉。
+function _warnShiftsFailed(err: unknown): MergedShiftsRangeData {
+  console.warn('[WorkJournal] 班別區間查詢失敗，班別標記將不顯示：', err)
+  return {}
+}
+
 // ── WorkJournalTab 主元件 ─────────────────────────────────────────────────────
 interface WorkJournalTabProps {
   /** 場所篩選：'all'（預設）| 'hotel' | 'mall' */
@@ -93,7 +102,7 @@ export default function WorkJournalTab({
   const [monthDate,  setMonthDate]  = useState<Dayjs | null>(dayjs())
   const [singleData,      setSingleData]      = useState<WorkJournalDaily | null>(null)
   const [rangeData,       setRangeData]       = useState<WorkJournalRange | null>(null)
-  const [shiftMapByDate,  setShiftMapByDate]  = useState<ShiftsRangeData>({})
+  const [shiftMapByDate,  setShiftMapByDate]  = useState<MergedShiftsRangeData>({})
   const [loading,         setLoading]         = useState(false)
   const [personFilter,     setPersonFilter]     = useState<string>('')
   const [personList,       setPersonList]       = useState<string[]>([])
@@ -117,7 +126,7 @@ export default function WorkJournalTab({
         const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
         const [journal, shifts] = await Promise.all([
           fetchWorkJournalDaily(year, month, day, 'named', venue),
-          fetchShiftsRange(dateStr, dateStr).catch(() => ({} as ShiftsRangeData)),
+          fetchMergedShiftsRange(dateStr, dateStr).catch(_warnShiftsFailed),
         ])
         setSingleData(journal)
         setRangeData(null)
@@ -129,7 +138,7 @@ export default function WorkJournalTab({
         const to   = rangeDates[1].format('YYYY-MM-DD')
         const [journal, shifts] = await Promise.all([
           fetchWorkJournalRange(from, to, 'named', venue),
-          fetchShiftsRange(from, to).catch(() => ({} as ShiftsRangeData)),
+          fetchMergedShiftsRange(from, to).catch(_warnShiftsFailed),
         ])
         setRangeData(journal)
         setSingleData(null)
@@ -142,7 +151,7 @@ export default function WorkJournalTab({
         const to   = monthDate.endOf('month').format('YYYY-MM-DD')
         const [journal, shifts] = await Promise.all([
           fetchWorkJournalRange(from, to, 'named', venue),
-          fetchShiftsRange(from, to).catch(() => ({} as ShiftsRangeData)),
+          fetchMergedShiftsRange(from, to).catch(_warnShiftsFailed),
         ])
         setRangeData(journal)
         setSingleData(null)
@@ -162,7 +171,7 @@ export default function WorkJournalTab({
         if (!from) return
         const [journal, shifts] = await Promise.all([
           fetchWorkJournalRange(from, to, 'named', venue),
-          fetchShiftsRange(from, to).catch(() => ({} as ShiftsRangeData)),
+          fetchMergedShiftsRange(from, to).catch(_warnShiftsFailed),
         ])
         setRangeData(journal)
         setSingleData(null)

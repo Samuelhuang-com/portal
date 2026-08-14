@@ -11,6 +11,7 @@ export interface ContractRecord {
   vendor_name: string
   start_date: string
   end_date: string
+  termination_date?: string
   notification_days: number
   auto_renewal: boolean
   currency: string
@@ -144,6 +145,7 @@ export interface ContractUpdate {
   contract_type?: string
   contract_status?: string
   total_amount_tax_included?: number
+  termination_date?: string
   [key: string]: any
 }
 

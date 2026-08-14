@@ -1,7 +1,7 @@
 /**
  * Excel 班表匯入頁
  * 路由：/schedule/import
- * 權限：schedule_manage
+ * 權限：hotel_schedule_manage
  * 功能：上傳 .xlsx，顯示匯入結果；年月辨識失敗時提供 fallback 手動設定
  */
 import { useState, useCallback } from 'react'
@@ -113,7 +113,7 @@ export default function ImportPage() {
 
   return (
     <div style={{ padding: '24px' }}>
-      <Title level={4}>Excel 班表匯入</Title>
+      <Title level={4}>飯店 Excel 班表匯入</Title>
 
       <Row gutter={24}>
         <Col span={14}>

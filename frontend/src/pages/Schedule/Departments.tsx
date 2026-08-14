@@ -1,7 +1,7 @@
 /**
  * 部門管理頁
  * 路由：/schedule/departments
- * 權限：schedule_admin
+ * 權限：hotel_schedule_admin
  */
 import { useState, useEffect, useCallback } from 'react'
 import {
@@ -92,7 +92,7 @@ export default function DepartmentsPage() {
   return (
     <div style={{ padding: '24px' }}>
       <Card
-        title={<Title level={4} style={{ margin: 0 }}>部門管理</Title>}
+        title={<Title level={4} style={{ margin: 0 }}>飯店班表部門管理</Title>}
         extra={<Button type="primary" icon={<PlusOutlined />} onClick={openAdd}>新增部門</Button>}
       >
         <Table rowKey="id" columns={columns} dataSource={data} loading={loading} pagination={false} size="small" />

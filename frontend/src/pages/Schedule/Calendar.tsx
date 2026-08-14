@@ -175,7 +175,7 @@ export default function ScheduleCalendarPage() {
     <div style={{ padding: '24px' }}>
       <Row justify="space-between" align="middle" style={{ marginBottom: 16 }}>
         <Col>
-          <Title level={4} style={{ margin: 0 }}>月曆式班表</Title>
+          <Title level={4} style={{ margin: 0 }}>飯店月曆式班表</Title>
         </Col>
         <Col>
           <Space>

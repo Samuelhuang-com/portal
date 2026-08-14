@@ -516,35 +516,124 @@ def _finish(db: Session, rec: OhipReservationSync, started: float) -> dict[str, 
 
 # ── 回補進度 ─────────────────────────────────────────────────────────────────
 
+def _days(a: date, b: date) -> list[date]:
+    out, cur = [], a
+    while cur <= b:
+        out.append(cur)
+        cur += timedelta(days=1)
+    return out
+
+
+def _synced_days(db: Session, dataset: str, lo: date, hi: date) -> set[str]:
+    """曾經**成功抓過**的日期（依同步紀錄）。
+
+    ⚠️ 這一半是必要的：某些日子本來就沒有訂房／團體（淡季、公休），
+       只看「有沒有資料」會讓那些日子永遠 pending，網頁「補下一段」
+       會卡在同一段無限打 API。
+    """
+    covered: set[str] = set()
+    recs = (db.query(OhipReservationSync.date_start, OhipReservationSync.date_end)
+              .filter(OhipReservationSync.dataset == dataset,
+                      OhipReservationSync.status != "failed")
+              .all())
+    for a_s, b_s in recs:
+        if not a_s or not b_s:
+            continue
+        try:
+            a, b = date.fromisoformat(a_s), date.fromisoformat(b_s)
+        except ValueError:
+            continue
+        a, b = max(a, lo), min(b, hi)
+        if a <= b:
+            covered.update(d.isoformat() for d in _days(a, b))
+    return covered
+
+
+def _data_days(db: Session, dataset: str, lo: date, hi: date) -> set[str]:
+    """實際**有資料**的日期。資料在不在是客觀事實，不受紀錄被清影響。"""
+    hotel_id = settings.OHIP_HOTEL_ID
+    if dataset == "reservation":
+        # ⚠️ 用逐日明細的 trx_date，不是訂房的 arrival ——
+        #    API 是依「住宿日區間」查的，一筆跨月長住訂單的 arrival 只落在一天，
+        #    用 arrival 判斷會讓它「代表」整個月都補過了（這正是舊版的 bug）。
+        rows = (db.query(OhipReservationNight.trx_date)
+                  .filter(OhipReservationNight.hotel_id == hotel_id,
+                          OhipReservationNight.trx_date >= lo.isoformat(),
+                          OhipReservationNight.trx_date <= hi.isoformat())
+                  .distinct().all())
+    else:
+        rows = (db.query(OhipBlockAllocation.allocation_date)
+                  .filter(OhipBlockAllocation.hotel_id == hotel_id,
+                          OhipBlockAllocation.allocation_date >= lo.isoformat(),
+                          OhipBlockAllocation.allocation_date <= hi.isoformat())
+                  .distinct().all())
+    return {r[0] for r in rows if r[0]}
+
+
 def backfill_progress(db: Session, dataset: str,
                       today: date | None = None) -> dict[str, Any]:
-    """⚠️ 判斷「這段補過沒」用**該段有沒有資料**，不是同步紀錄 ——
-    紀錄可能被清、也可能寫到一半當機，資料在不在是客觀事實。"""
-    hotel_id = settings.OHIP_HOTEL_ID
-    chunks = _all_chunks(dataset, today)
-    pending = []
-    for a, b in chunks:
-        if dataset == "reservation":
-            q = db.query(OhipReservation.id).filter(
-                OhipReservation.hotel_id == hotel_id,
-                OhipReservation.arrival >= a.isoformat(),
-                OhipReservation.arrival <= b.isoformat())
-        else:
-            q = db.query(OhipBlock.id).filter(
-                OhipBlock.hotel_id == hotel_id,
-                OhipBlock.start_date >= a.isoformat(),
-                OhipBlock.start_date <= b.isoformat())
-        if not q.first():
-            pending.append((a, b))
+    """回補進度 —— **逐日檢查缺口**，不是「整段有沒有資料」。
 
+    ═══════════════════════════════════════════════════════════════════════
+    ⚠️ 2026-08-13 重寫。舊版是「該段有沒有任何一筆資料」就算補過，
+       實測造成**假性完成**：進度顯示 24/24 完成，實際 2025-08、2025-11、
+       2026-02 整月 0 筆，其他月份也只有 5～17 天有資料，24 段裡只有 9 段
+       真的打過 API。
+
+       根因：訂房會跨段。一筆 arrival 落在 2025-08 的長住訂單，就讓整個
+       8 月被判定「已補完」，後面 14 個段從此再也不會被抓。
+    ═══════════════════════════════════════════════════════════════════════
+
+    現在的判定：某一天算補過 ⟺ **那天有資料** ∪ **那天落在成功的同步紀錄裡**。
+
+    - 前者處理「紀錄被清掉但資料還在」
+    - 後者處理「那天本來就沒有訂房」（否則會卡在同一段無限打 API）
+
+    缺口日期合併成連續區間後再切段，所以 `next_chunk` 一定指向真正缺的地方。
+    """
+    t = today or date.today()
+    size = RSV_CHUNK_DAYS if dataset == "reservation" else BLK_CHUNK_DAYS
+    lo, hi = backfill_start_date(t), t - timedelta(days=1)
+    if hi < lo:
+        return {"dataset": dataset, "total_chunks": 0, "pending_chunks": 0,
+                "done_chunks": 0, "chunk_days": size,
+                "range": {"start": None, "end": None, "years": BACKFILL_YEARS},
+                "total_days": 0, "covered_days": 0, "missing_days": 0,
+                "next_chunk": None, "estimated_remaining_seconds": 0}
+
+    covered = _data_days(db, dataset, lo, hi) | _synced_days(db, dataset, lo, hi)
+    all_days = _days(lo, hi)
+    missing = [d for d in all_days if d.isoformat() not in covered]
+
+    # 連續缺口合併成區間，再依 chunk 大小切段
+    pending: list[tuple[date, date]] = []
+    run_start: date | None = None
+    prev: date | None = None
+    for d in missing:
+        if run_start is None:
+            run_start = prev = d
+            continue
+        if (d - prev).days == 1:            # type: ignore[operator]
+            prev = d
+            continue
+        pending.extend(_chunks(run_start, prev, size))   # type: ignore[arg-type]
+        run_start = prev = d
+    if run_start is not None:
+        pending.extend(_chunks(run_start, prev, size))   # type: ignore[arg-type]
+
+    total_chunks = len(_chunks(lo, hi, size))
     return {
         "dataset": dataset,
-        "total_chunks": len(chunks), "pending_chunks": len(pending),
-        "done_chunks": len(chunks) - len(pending),
-        "chunk_days": RSV_CHUNK_DAYS if dataset == "reservation" else BLK_CHUNK_DAYS,
-        "range": {"start": chunks[0][0].isoformat() if chunks else None,
-                  "end": chunks[-1][1].isoformat() if chunks else None,
+        "total_chunks": total_chunks,
+        "pending_chunks": len(pending),
+        "done_chunks": max(total_chunks - len(pending), 0),
+        "chunk_days": size,
+        "range": {"start": lo.isoformat(), "end": hi.isoformat(),
                   "years": BACKFILL_YEARS},
+        # ⚠️ 天數才是誠實的口徑 —— 段數會因為缺口分散而虛高／虛低
+        "total_days": len(all_days),
+        "covered_days": len(all_days) - len(missing),
+        "missing_days": len(missing),
         "next_chunk": ({"start": pending[0][0].isoformat(),
                         "end": pending[0][1].isoformat()} if pending else None),
         "estimated_remaining_seconds": len(pending) * 15,
@@ -592,6 +681,123 @@ def sync_incremental(db: Session, *, days: int = INCREMENTAL_DAYS,
         db, "block", today - timedelta(days=max(days, 1)),
         today + timedelta(days=180), mode="incremental", triggered_by=triggered_by)
     return out
+
+
+# ── sync_tool.py 專用的零參數包裝（2026-08-13 新增）──────────────────────────
+#
+# ⚠️ 背景：DEV 機器 `SCHEDULER_ENABLED=false`（改用 sync_tool.py），但本模組
+#    先前沒有登錄進 `sync_tool.py MODULES`，導致 main.py 每日 07:00 的
+#    `opera_reservation_incremental` **從未執行**：回補停在 6/24 段、
+#    DB 內完全沒有今天以後的訂房，`/opera/pace` 與 `/opera/reservations`
+#    的「在手訂房」永遠是空的。2026-08-13 runtime 測試發現後補上。
+#
+# ⚠️ 兩支都必須是**零參數**且自己開 session —— sync_tool 用 `func()` 呼叫。
+#    回傳格式對齊 sync_tool 的期待：`fetched` / `upserted` / `errors`。
+#    樣板取自 `opera_segment_sync.sync_backfill_all()`。
+
+def _tool_result(fetched: int, upserted: int, errors: int,
+                 **extra: Any) -> dict[str, Any]:
+    return {"fetched": fetched, "upserted": upserted, "errors": errors, **extra}
+
+
+def _not_configured() -> dict[str, Any]:
+    """OHIP 未設定 —— 這是「沒設定」不是「失敗」，不能讓 sync_tool 每輪紅燈。"""
+    return _tool_result(
+        0, 0, 0, skipped=True,
+        message="OHIP 尚未設定完成，缺少：" + "、".join(ohip_client.missing_settings()))
+
+
+def sync_backfill_all(*, triggered_by: str = "sync_tool",
+                      today: date | None = None) -> dict[str, Any]:
+    """訂房＋團體歷史回補，一次把所有 pending 段補完（給 `sync_tool.py` 用）。
+
+    ⚠️ 與網頁的「補下一段」是同一件事，只是不受 HTTP 逾時限制
+       （訂房約 24 段 × 15 秒，網頁一次跑完必逾時）。
+
+    ⚠️ **補完就 skip，不打 OHIP。** sync_tool 最短 15 分一輪，
+       `pending_chunks == 0` 時只做一次 DB 查詢就回報「無事可做」。
+
+    ⚠️ **一次執行只走過一輪 pending 清單，不重算進度。**
+       `backfill_progress()` 判定「補過沒」看的是該段有沒有資料，
+       所以飯店開業前那種本來就沒資料的段，抓完仍然是 pending。
+       若改成「迴圈到 pending 歸零」會在那種段上無窮打 API。
+
+    ⚠️ **回補只到昨天，不含未來** —— 未來資料由 `sync_incremental_job()` 負責。
+    """
+    from app.core.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        if not ohip_client.is_configured():
+            return _not_configured()
+
+        written = 0
+        done = failed = 0
+        errors: list[str] = []
+        for dataset in ("reservation", "block"):
+            # 逐段補：每補一段就重算進度，補到沒有 next_chunk 為止。
+            # guard 取「進來時的 pending 段數」，確保只走過一輪（見 docstring）。
+            guard = backfill_progress(db, dataset, today)["pending_chunks"]
+            while guard > 0:
+                r = backfill_next_chunk(db, dataset, triggered_by=triggered_by,
+                                        today=today)
+                if r.get("done"):
+                    break
+                res = r.get("result") or {}
+                written += int(res.get("parent_rows") or 0)
+                if res.get("status") == "failed":
+                    failed += 1
+                    errors.append(res.get("error") or f"{dataset} 回補失敗")
+                    # 多半是連線／認證問題，後面的段大概率也失敗，直接停掉
+                    break
+                done += 1
+                guard -= 1
+
+        return _tool_result(
+            written, written, failed,
+            chunks_done=done, chunks_failed=failed,
+            skipped=(done == 0 and failed == 0),
+            error_messages=errors,
+        )
+    finally:
+        db.close()
+
+
+def sync_incremental_job(*, triggered_by: str = "sync_tool") -> dict[str, Any]:
+    """每日增量（過去 14 天 ～ 未來 180 天），給 `sync_tool.py` 用。
+
+    🎯 **這是唯一會抓到「今天以後」訂房的路徑。** 回補只補到昨天，
+       所以少了這一支，在手訂房與 Pace 分析的未來區間永遠是空的。
+
+    ⚠️ **一天只跑一次。** sync_tool 最短 15 分一輪，每輪都重抓
+       (14 + 180) 天會把 OHIP 配額燒光。已成功跑過就只做一次 DB 查詢後 skip。
+    """
+    from app.core.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        if not ohip_client.is_configured():
+            return _not_configured()
+
+        # ⚠️ 用 datetime 物件比較，不要拼字串 —— started_at 是 DateTime 欄位，
+        #    字串比較在 SQLite 碰巧會過，換 DB 就壞。
+        midnight = twnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        today_s = date.today().isoformat()
+        already = (db.query(OhipReservationSync.id)
+                     .filter(OhipReservationSync.mode == "incremental",
+                             OhipReservationSync.status != "failed",
+                             OhipReservationSync.started_at >= midnight)
+                     .first())
+        if already:
+            return _tool_result(0, 0, 0, skipped=True,
+                                message=f"{today_s} 的增量同步今天已執行過。")
+
+        out = sync_incremental(db, triggered_by=triggered_by)
+        rows = sum(int((v or {}).get("parent_rows") or 0) for v in out.values())
+        failed = sum(1 for v in out.values() if (v or {}).get("status") == "failed")
+        return _tool_result(rows, rows, failed, skipped=False, detail=out)
+    finally:
+        db.close()
 
 
 def list_syncs(db: Session, *, limit: int = 30) -> list[dict[str, Any]]:

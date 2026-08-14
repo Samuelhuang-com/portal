@@ -220,11 +220,15 @@ const OperaReservationsPage: React.FC = () => {
                 return (
                   <Space key={ds} wrap size={12} style={{ width: '100%' }}>
                     <Text style={{ width: 60 }}>{ds === 'reservation' ? '訂房' : '團體'}</Text>
+                    {/* ⚠️ 2026-08-13 改為天數口徑。舊版用段數，而「整段有沒有資料
+                        就算補過」造成假性完成 —— 顯示 24/24 完成，實際 2025-08、
+                        2025-11、2026-02 整月 0 筆。天數才看得出真實缺口。 */}
                     <Progress
-                      percent={Math.round((p.done_chunks / Math.max(p.total_chunks, 1)) * 100)}
+                      percent={Math.round((p.covered_days / Math.max(p.total_days, 1)) * 100)}
                       size="small" strokeColor={BRAND} style={{ width: 220 }} />
                     <Text type="secondary" style={{ fontSize: 12 }}>
-                      {p.done_chunks}/{p.total_chunks} 段，每段 {p.chunk_days} 天，
+                      還缺 <b>{p.missing_days}</b> 天（共 {p.total_days} 天），
+                      要補 {p.pending_chunks} 段、每段最多 {p.chunk_days} 天，
                       預估剩 {p.estimated_remaining_seconds} 秒
                     </Text>
                     <Button size="small" type="primary" icon={<SyncOutlined />}
@@ -235,6 +239,7 @@ const OperaReservationsPage: React.FC = () => {
               })}
               <Text type="secondary" style={{ fontSize: 12 }}>
                 ⚠️ 刻意不做成「一次補完兩年」—— 那會讓請求逾時。中斷了可以接著按。
+                想一次補完請用同步工具的「訂房歷史回補」（背景執行，不受逾時限制）。
               </Text>
             </Space>
           }
