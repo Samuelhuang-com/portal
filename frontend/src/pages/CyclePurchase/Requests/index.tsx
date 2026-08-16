@@ -47,14 +47,17 @@
  */
 import { useEffect, useState } from 'react'
 import { Alert, Button, Card, Modal, Select, Space, Table, Tag, Tooltip, Typography, message } from 'antd'
-import { EditOutlined, EyeOutlined, LockOutlined, PlusOutlined, ThunderboltOutlined, UnlockOutlined } from '@ant-design/icons'
+import {
+  CopyOutlined, EditOutlined, EyeOutlined, LockOutlined, PlusOutlined, ThunderboltOutlined, UnlockOutlined,
+} from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import {
-  closeAllRequests, closeRequests, createRequest, generateRequestsForPeriod, getCpDepartments,
-  getCycles, getOpenRequestsForClose, getRequests, previewGenerateRequests, reopenRequests,
+  closeAllRequests, closeRequests, copyRequest, createRequest, generateRequestsForPeriod,
+  getCopySourceCandidates, getCpDepartments, getCycles, getOpenRequestsForClose, getRequests,
+  previewGenerateRequests, reopenRequests,
 } from '@/api/cyclePurchase'
 import type {
-  CpCloseState, CpCycle, CpDepartment, CpGeneratePreview, CpRequest,
+  CpCloseState, CpCopySourceCandidate, CpCycle, CpDepartment, CpGeneratePreview, CpRequest,
 } from '@/types/cyclePurchase'
 import { useAuthStore } from '@/stores/authStore'
 import CloseStatusTag from '../components/CloseStatusTag'
@@ -145,6 +148,15 @@ export default function CpRequestsPage() {
   const [createCycleId, setCreateCycleId] = useState<number | undefined>(undefined)
   const [createDeptId, setCreateDeptId] = useState<number | undefined>(undefined)
 
+  // 2026-08-13 新增：複製上期請購單
+  const [copyModal, setCopyModal] = useState(false)
+  const [copying, setCopying] = useState(false)
+  const [copyCycleId, setCopyCycleId] = useState<number | undefined>(undefined)
+  const [copyDeptId, setCopyDeptId] = useState<number | undefined>(undefined)
+  const [copyCandidates, setCopyCandidates] = useState<CpCopySourceCandidate[]>([])
+  const [copyCandidatesLoading, setCopyCandidatesLoading] = useState(false)
+  const [copySourceId, setCopySourceId] = useState<number | undefined>(undefined)
+
   const [generateModal, setGenerateModal] = useState(false)
   const [generating, setGenerating] = useState(false)
   const [generateCycleId, setGenerateCycleId] = useState<number | undefined>(undefined)
@@ -208,6 +220,71 @@ export default function CpRequestsPage() {
       message.error(errMsg(err, '建立失敗'))
     } finally {
       setCreating(false)
+    }
+  }
+
+  const openCopy = () => {
+    setCopyCycleId(undefined)
+    setCopyDeptId(undefined)
+    setCopyCandidates([])
+    setCopySourceId(undefined)
+    setCopyModal(true)
+  }
+
+  // 選完週期＋部門就抓可複製的來源清單（依 period_label 新到舊排序，只列有
+  // 明細的單）。協理要求可以自由選任一過去期別，所以是下拉清單而不是只帶
+  // 最近一次。
+  useEffect(() => {
+    if (!copyModal || !copyCycleId || !copyDeptId) {
+      setCopyCandidates([])
+      setCopySourceId(undefined)
+      return
+    }
+    setCopyCandidatesLoading(true)
+    getCopySourceCandidates({ cycle_id: copyCycleId, department_id: copyDeptId })
+      .then((res) => {
+        setCopyCandidates(res.data)
+        setCopySourceId(res.data[0]?.id)
+      })
+      .catch((err) => message.error(errMsg(err, '載入可複製的請購單失敗')))
+      .finally(() => setCopyCandidatesLoading(false))
+  }, [copyModal, copyCycleId, copyDeptId])
+
+  const handleCopy = async () => {
+    if (!copySourceId) { message.warning('請選擇要複製的請購單'); return }
+    setCopying(true)
+    try {
+      const res = await copyRequest(copySourceId)
+      const { request, skipped_items } = res.data
+      message.success(`已複製為新請購單 ${request.request_no}`)
+      // 跳過的品項一定要講清楚，不能讓使用者以為自己複製全了
+      if (skipped_items.length) {
+        Modal.warning({
+          title: `有 ${skipped_items.length} 個品項無法複製`,
+          width: 560,
+          content: (
+            <Table
+              dataSource={skipped_items}
+              rowKey="item_code"
+              size="small"
+              pagination={false}
+              style={{ marginTop: 12 }}
+              columns={[
+                { title: '料號', dataIndex: 'item_code', width: 120 },
+                { title: '品名', dataIndex: 'item_name' },
+                { title: '原因', dataIndex: 'reason' },
+              ]}
+            />
+          ),
+        })
+      }
+      setCopyModal(false)
+      load()
+      navigate(`/cycle-purchase/requests/${request.id}`)
+    } catch (err: any) {
+      message.error(errMsg(err, '複製失敗'))
+    } finally {
+      setCopying(false)
     }
   }
 
@@ -344,6 +421,9 @@ export default function CpRequestsPage() {
           )}
           {canCreate && (
             <Button icon={<ThunderboltOutlined />} onClick={openGenerate}>產生本期請購單</Button>
+          )}
+          {canCreate && (
+            <Button icon={<CopyOutlined />} onClick={openCopy}>複製上期請購單</Button>
           )}
           {canCreate && (
             <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新增請購單</Button>
@@ -622,6 +702,66 @@ export default function CpRequestsPage() {
         <div style={{ color: '#888', fontSize: 12 }}>
           會建立本月（{currentYearMonth()}）的請購單；同一週期＋期別＋部門只能有一張，
           若「產生本期請購單」已經建過，這裡會顯示錯誤訊息。
+        </div>
+      </Modal>
+
+      <Modal
+        title="複製上期請購單"
+        open={copyModal}
+        onOk={handleCopy}
+        onCancel={() => setCopyModal(false)}
+        okText="複製"
+        cancelText="取消"
+        confirmLoading={copying}
+        okButtonProps={{ disabled: !copySourceId }}
+        width={560}
+      >
+        <div style={{ marginTop: 16, marginBottom: 8 }}>
+          <div style={{ marginBottom: 4 }}>週期</div>
+          <Select
+            style={{ width: '100%' }}
+            showSearch
+            optionFilterProp="label"
+            placeholder="選擇週期"
+            value={copyCycleId}
+            onChange={(v) => { setCopyCycleId(v); setCopyDeptId(undefined) }}
+            options={cycles.map((c) => ({ label: c.cycle_name, value: c.id }))}
+          />
+        </div>
+        <div style={{ marginBottom: 8 }}>
+          <div style={{ marginBottom: 4 }}>部門</div>
+          <Select
+            style={{ width: '100%' }}
+            showSearch
+            optionFilterProp="label"
+            placeholder="選擇部門"
+            value={copyDeptId}
+            onChange={setCopyDeptId}
+            options={departments.map((d) => ({ label: `${d.company} - ${d.dept_name}`, value: d.id }))}
+          />
+        </div>
+        {copyCycleId && copyDeptId && (
+          <div style={{ marginBottom: 8 }}>
+            <div style={{ marginBottom: 4 }}>選擇要複製的請購單（依期別新到舊排序）</div>
+            <Select
+              style={{ width: '100%' }}
+              loading={copyCandidatesLoading}
+              placeholder="選擇來源請購單"
+              value={copySourceId}
+              onChange={setCopySourceId}
+              notFoundContent={copyCandidatesLoading ? '載入中…' : '這個週期＋部門目前沒有可複製的請購單'}
+              options={copyCandidates.map((c) => ({
+                label: `${c.period_label}／${c.request_no}（${c.item_count} 項，$${c.total_amount}）${c.is_closed ? '' : '（開放中）'}`,
+                value: c.id,
+              }))}
+            />
+          </div>
+        )}
+        <div style={{ color: '#888', fontSize: 12 }}>
+          會建立一張本月（{currentYearMonth()}）的新請購單，把來源單的品項與數量整批帶過來
+          （單價會重新抓現在的價格）。就算本月已經有單也可以複製，不會受影響、也不會改到原本的單。
+          停用或已不屬於這個部門的料號會被跳過，複製完成後會列出來提醒你。
+          下拉選單只會列出「這個週期＋這個部門」過去曾經填過至少一個品項的請購單，空白單不會出現。
         </div>
       </Modal>
 

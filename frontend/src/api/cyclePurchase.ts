@@ -10,6 +10,8 @@ import type {
   CpAvailableItem,
   CpCancelRagicPushResult,
   CpCloseState,
+  CpCopyResult,
+  CpCopySourceCandidate,
   CpCostCenter,
   CpCycle,
   CpCycleOptions,
@@ -240,6 +242,13 @@ export const closeAllRequests = (data: { cycle_id: number; company?: string | nu
 
 export const reopenRequests = (request_ids: number[]) =>
   apiClient.post<CpRequest[]>(`${BASE}/requests/reopen`, { request_ids })
+
+// 2026-08-13 新增：複製上期請購單
+export const getCopySourceCandidates = (params: { cycle_id: number; department_id: number }) =>
+  apiClient.get<CpCopySourceCandidate[]>(`${BASE}/requests/copy-candidates`, { params })
+
+export const copyRequest = (sourceRequestId: number) =>
+  apiClient.post<CpCopyResult>(`${BASE}/requests/${sourceRequestId}/copy`)
 
 // ── 彙整單（第三期，2026-07-11 新增）───────────────────────────────────────────
 // 只彙總 approved 的請購明細，同一週期＋期別＋公司＋料號冪等。

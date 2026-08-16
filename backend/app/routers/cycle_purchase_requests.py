@@ -49,6 +49,8 @@ GET    /requests/{id}                          請購單詳情（含明細；已
 GET    /requests/generate-preview               產生前預覽：這個週期會產生哪些部門的單、哪些不會與原因
 POST   /requests/generate                      產生本期請購單（依週期設定的適用範圍，一次幫所有適用部門建空白單）
 POST   /requests                               手動新增單一部門的請購單（備用路徑）
+GET    /requests/copy-candidates               複製上期請購單：列出同週期＋同部門過去有填過品項的請購單供選擇
+POST   /requests/{id}/copy                     複製上期請購單：以某張過去的單為範本建立新單（2026-08-13 新增）
 PUT    /requests/{id}                          更新請購單（成本中心／備註，僅「開放中」可編輯；2026-08-07 起不再限當月）
 GET    /requests/{id}/available-items          可選料號清單（該公司＋部門＋該週期品類下有對照的啟用中料號）
 POST   /requests/{id}/items                    新增請購明細
@@ -72,6 +74,7 @@ from app.models.cycle_purchase_request import CyclePurchaseRequest
 from app.models.user import User
 from app.schemas.cycle_purchase_request import (
     AvailableItemOut, CloseAllRequestsPayload, CloseRequestsPayload,
+    CopyRequestResult, CopySkippedItemOut, CopySourceCandidateOut,
     GeneratePreviewResult, GenerateRequestsPayload, GenerateRequestsResult,
     ReopenRequestsPayload, RequestCreate, RequestDetail,
     RequestItemCreate, RequestItemOut, RequestItemUpdate, RequestOut,
@@ -200,6 +203,22 @@ def preview_generate_requests(
     return _handle(svc.preview_applicable_departments, db, cycle_id)
 
 
+@router.get(
+    "/requests/copy-candidates",
+    response_model=List[CopySourceCandidateOut],
+    summary="複製上期請購單：列出同週期＋同部門過去有填過品項的請購單供選擇",
+)
+def list_copy_source_candidates(
+    cycle_id: int = Query(...),
+    department_id: int = Query(...),
+    _: User = Depends(require_permission("cycle_purchase_buyer")),
+    db: Session = Depends(get_cycle_purchase_db),
+):
+    """⚠️ 路由順序：這支必須宣告在 /requests/{request_id} 之前，
+    否則 "copy-candidates" 會被當成 request_id。"""
+    return svc.list_copy_source_candidates(db, cycle_id, department_id)
+
+
 @router.get("/requests/{request_id}", response_model=RequestDetail, summary="請購單詳情（含明細）")
 def get_request(
     request_id: int,
@@ -239,6 +258,24 @@ def create_request(
     db: Session = Depends(get_cycle_purchase_db),
 ):
     return _handle(svc.create_request, db, payload)
+
+
+@router.post(
+    "/requests/{source_request_id}/copy",
+    response_model=CopyRequestResult,
+    status_code=status.HTTP_201_CREATED,
+    summary="複製上期請購單：以某張過去的單為範本建立新單",
+)
+def copy_request(
+    source_request_id: int,
+    current_user: User = Depends(require_permission("cycle_purchase_buyer")),
+    db: Session = Depends(get_cycle_purchase_db),
+):
+    new_req, skipped = _handle(svc.copy_request, db, source_request_id, current_user)
+    return CopyRequestResult(
+        request=new_req,
+        skipped_items=[CopySkippedItemOut(**s) for s in skipped],
+    )
 
 
 @router.put("/requests/{request_id}", response_model=RequestOut, summary="更新請購單")

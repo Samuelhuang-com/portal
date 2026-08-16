@@ -508,6 +508,150 @@ def get_request(
     return req
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# 複製上期請購單（2026-08-13 新增，見 models/cycle_purchase_request.py 開頭說明）
+# ═══════════════════════════════════════════════════════════════════════════
+
+def list_copy_source_candidates(
+    db: Session, cycle_id: int, department_id: int, limit: int = 12
+) -> list[dict]:
+    """
+    列出同一週期＋同一部門過去有填過品項的請購單，供「複製上期請購單」選擇
+    來源。協理要求可以自由選任一過去期別，不只是最近一次，所以這裡回傳一份
+    清單（依期別新到舊排序，最多 limit 張），不是只回傳一張。
+
+    只列有明細的單（複製一張空白單沒有意義）；不限是否已關閉——理論上開放中
+    的單也可能已經填了想要的品項組合，一併給選。
+    """
+    rows = (
+        db.query(CyclePurchaseRequest)
+        .filter(
+            CyclePurchaseRequest.cycle_id == cycle_id,
+            CyclePurchaseRequest.department_id == department_id,
+        )
+        .order_by(CyclePurchaseRequest.period_label.desc(), CyclePurchaseRequest.request_no.desc())
+        .limit(limit * 3)  # 抓寬一點，篩掉空單之後再截斷到 limit
+        .all()
+    )
+    candidates: list[dict] = []
+    for r in rows:
+        item_count = (
+            db.query(func.count(CyclePurchaseRequestItem.id))
+            .filter(CyclePurchaseRequestItem.request_id == r.id)
+            .scalar()
+            or 0
+        )
+        if item_count == 0:
+            continue
+        candidates.append({
+            "id": r.id,
+            "request_no": r.request_no,
+            "period_label": r.period_label,
+            "is_closed": r.is_closed,
+            "item_count": item_count,
+            "total_amount": r.total_amount,
+        })
+        if len(candidates) >= limit:
+            break
+    return candidates
+
+
+def copy_request(db: Session, source_request_id: int, user) -> tuple[CyclePurchaseRequest, list[dict]]:
+    """
+    複製上期請購單：以某張過去的請購單為範本，建立一張全新的請購單。
+
+    2026-08-13 與協理確認：一律新建，不是加註到現有單；就算本期已經有單
+    也要能複製，因此刻意**不**做 create_request() 那種「同週期同期同部門
+    已有單」的擋重檢查——這是唯一跳過那個檢查的路徑，其餘手動新增路徑
+    （create_request／generate_requests_for_period）不受影響，行為不變。
+
+    每一行明細都重新查「現在」的料號對照（公司＋部門），不是照抄來源單
+    當初的快照，理由跟 add_request_item() 一致：單價/品名以下單當下為準。
+    來源品項如果現在已經停用或不再屬於這個部門的可選清單，該行會被跳過並
+    記進 skipped_items 回傳給呼叫端顯示，不能靜默漏掉（否則使用者會以為
+    自己複製全了，實際少了幾行）。
+    """
+    source = db.query(CyclePurchaseRequest).filter(CyclePurchaseRequest.id == source_request_id).first()
+    if not source:
+        raise RequestServiceError("來源請購單不存在")
+
+    dept = db.query(CyclePurchaseDepartment).filter(CyclePurchaseDepartment.id == source.department_id).first()
+    if not dept:
+        raise RequestServiceError("來源請購單的部門已不存在，無法複製")
+
+    source_items = (
+        db.query(CyclePurchaseRequestItem)
+        .filter(CyclePurchaseRequestItem.request_id == source.id)
+        .all()
+    )
+    if not source_items:
+        raise RequestServiceError("來源請購單沒有任何明細，無法複製")
+
+    today = date.today()
+    new_req = CyclePurchaseRequest(
+        request_no=_next_request_no(db, today),
+        cycle_id=source.cycle_id,
+        period_label=_current_period_label(),
+        department_id=source.department_id,
+        company=dept.company,
+        cost_center_id=source.cost_center_id,
+        status="draft",
+        total_amount=0,
+        notes=f"複製自 {source.request_no}（{source.period_label}）",
+    )
+    db.add(new_req)
+    db.flush()
+
+    skipped: list[dict] = []
+    for src_item in source_items:
+        item = db.query(CyclePurchaseItem).filter(CyclePurchaseItem.id == src_item.item_id).first()
+        if not item or not item.is_active:
+            skipped.append({
+                "item_code": src_item.item_code, "item_name": src_item.item_name,
+                "reason": "料號已停用或不存在",
+            })
+            continue
+        mapping = (
+            db.query(CyclePurchaseItemMapping)
+            .filter(
+                CyclePurchaseItemMapping.item_id == item.id,
+                CyclePurchaseItemMapping.company == dept.company,
+                CyclePurchaseItemMapping.department_id == dept.id,
+            )
+            .first()
+        )
+        if not mapping:
+            skipped.append({
+                "item_code": src_item.item_code, "item_name": src_item.item_name,
+                "reason": f"此料號已不屬於「{dept.dept_name}」的可選清單",
+            })
+            continue
+
+        row = CyclePurchaseRequestItem(
+            request_id=new_req.id,
+            item_id=item.id,
+            item_mapping_id=mapping.id,
+            account_code_id=src_item.account_code_id,
+            item_code=item.item_code,
+            item_name=item.item_name,
+            unit=item.unit,
+            unit_price=mapping.original_unit_price,
+            request_qty=src_item.request_qty,
+            subtotal=(mapping.original_unit_price or Decimal("0")) * src_item.request_qty,
+            notes=src_item.notes,
+        )
+        db.add(row)
+
+    db.flush()
+    _recompute_total(db, new_req.id)
+    db.flush()
+    db.refresh(new_req)
+    _attach_display_fields(db, new_req)
+    for it in new_req.items:
+        _attach_item_account_label(db, it)
+    return new_req, skipped
+
+
 def create_request(db: Session, payload) -> CyclePurchaseRequest:
     """手動建立單一部門的請購單（備用路徑；一般由 generate_requests_for_period 一次幫全部部門建立）。
     period_label 一律是「現在」的月份，不接受呼叫端指定。"""

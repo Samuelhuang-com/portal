@@ -312,6 +312,34 @@ export interface CpRequestDetail extends CpRequest {
   items: CpRequestItem[]
 }
 
+// 2026-08-13 新增：複製上期請購單。協理要求可自由選任一過去期別（不只
+// 最近一次），所以是清單而非單一物件；複製一律建立新單（見
+// backend models/cycle_purchase_request.py「2026-08-13」說明），跳過的
+// 品項一定要顯示給使用者，不能靜默漏掉。
+
+/** GET /requests/copy-candidates 清單一列：同週期＋同部門過去有填過品項的請購單 */
+export interface CpCopySourceCandidate {
+  id: number
+  request_no: string
+  period_label: string
+  is_closed: boolean
+  item_count: number
+  total_amount: number
+}
+
+/** 複製時因為料號現在停用/已不屬於此部門而被跳過的品項 */
+export interface CpCopySkippedItem {
+  item_code: string
+  item_name: string
+  reason: string
+}
+
+/** POST /requests/{id}/copy 回傳 */
+export interface CpCopyResult {
+  request: CpRequestDetail
+  skipped_items: CpCopySkippedItem[]
+}
+
 // 2026-07-16 新增（彙整單產生方式改版）：「彙整單」頁面用，列出某週期＋公司＋
 // 期別下，已關閉且尚未被彙整過的請購單，供使用者勾選要納入這次彙整的範圍。
 // 2026-07-17：approved_by_name／approved_at 改成 closed_by_name／closed_at

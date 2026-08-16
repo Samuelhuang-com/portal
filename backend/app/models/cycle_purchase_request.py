@@ -105,9 +105,32 @@ services/cycle_purchase_summary_service.py 開頭說明）：
     仍為 is_summarized=True 的請購單**重算**，不是反向扣減，因為彙整列沒有
     記錄「這列的量是哪幾張請購單貢獻的」（沒有 lineage 表）。詳見
     services/cycle_purchase_summary_service.py 的 unsummarize_request()。
+
+2026-08-13（第五次調整，與 Samuel 確認，「複製上期請購單」新功能）：
+  - 背景：0812 會議協理反映使用者常常每期買的品項/數量差不多（如衛生紙
+    固定箱數），希望能挑一張過去的請購單把品項/數量整批複製過來，不用
+    逐筆重新挑料號。
+  - 拿掉 UniqueConstraint(cycle_id, period_label, department_id)，改成
+    同欄位組合的普通（非唯一）Index，查詢效能不受影響，但允許同一週期
+    ＋本期＋同一部門存在多張請購單。這是因為協理明確要求「複製一律建立
+    新單」且「就算本期已經有單也要能複製」，兩者跟原本的唯一鍵衝突
+    （原唯一鍵在 DB 層面就物理擋掉第二張）——三個方案（改成加註到既有
+    單／複製時擋掉本期已有單的情況／拿掉唯一鍵）裡協理選了這個，要多
+    張單並存。
+  - SQLite 不支援直接改 constraint，需要整表重建，遷移腳本見
+    Temp/apply_cycle_purchase_requests_unique_migration.py（比照專案既有
+    的 partial-unique-index 遷移手法，備份＋建新表＋搬資料＋改名）。
+  - 關聯邏輯確認過不受影響：close_requests()／reopen_requests()／
+    list_open_requests_for_close() 都是操作 request_id 清單或依
+    cycle+company+period 列出「所有開放中的單」，多張單只是清單變長，
+    不假設唯一性；彙整單是依 is_closed 逐筆請購明細加總（不是先取一張
+    請購單再算），多張單的明細一樣會被個別加總進去，不會漏算或誤算；
+    create_request()（手動新增單一部門的請購單）保留原本的重複檢查
+    （app 層，不是靠 DB constraint），一般手動新增路徑的擋重行為不變，
+    只有新的「複製」路徑刻意跳過這個檢查。
 """
 from sqlalchemy import (
-    Boolean, Column, Integer, String, Numeric, Text, DateTime, Date,
+    Boolean, Column, Index, Integer, String, Numeric, Text, DateTime, Date,
     ForeignKey, UniqueConstraint, func,
 )
 from sqlalchemy.orm import relationship
@@ -116,10 +139,11 @@ from app.core.cycle_purchase_database import CyclePurchaseBase
 
 
 class CyclePurchaseRequest(CyclePurchaseBase):
-    """週期採購請購單（單一部門在單一週期＋期別下的一張單）"""
+    """週期採購請購單（單一部門在單一週期＋期別下的請購單；2026-08-13 起
+    同一週期＋期別＋部門可以有多張，見上方 class docstring「複製上期請購單」）"""
     __tablename__ = "cycle_purchase_requests"
     __table_args__ = (
-        UniqueConstraint("cycle_id", "period_label", "department_id", name="uq_cp_request_cycle_period_dept"),
+        Index("ix_cp_request_cycle_period_dept", "cycle_id", "period_label", "department_id"),
     )
 
     id             = Column(Integer, primary_key=True, autoincrement=True)

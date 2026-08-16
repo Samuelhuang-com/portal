@@ -175,6 +175,32 @@ class RequestDetail(RequestOut):
     items: List[RequestItemOut] = []
 
 
+# ── 2026-08-13：複製上期請購單 ──────────────────────────────────────────
+# 協理要求可自由選任一過去期別（不只最近一次），所以是清單而非單一物件；
+# 複製一律建立新單，跳過的品項一定要回傳給前端顯示，不能靜默漏掉。
+
+class CopySourceCandidateOut(BaseModel):
+    """複製來源清單一列（同一週期＋同一部門過去有填過品項的請購單）。"""
+    id: int
+    request_no: str
+    period_label: str
+    is_closed: bool
+    item_count: int
+    total_amount: Decimal
+
+
+class CopySkippedItemOut(BaseModel):
+    """複製時因為料號現在停用/已不屬於此部門而被跳過的品項。"""
+    item_code: str
+    item_name: str
+    reason: str
+
+
+class CopyRequestResult(BaseModel):
+    request: RequestDetail
+    skipped_items: List[CopySkippedItemOut] = []
+
+
 class AvailableItemOut(BaseModel):
     """給填單頁面「選料號」用：只回傳該請購單所屬公司有對照的料號"""
     item_id: int

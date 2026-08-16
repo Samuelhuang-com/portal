@@ -53,6 +53,17 @@ const STATUS_TAG: Record<string, { color: string; label: string }> = {
   paused: { color: 'orange', label: '暫停' },
 }
 
+// 週期代碼公司字首慣例（2026-08-16 協理裁示，比照料號主檔的公司前綴邏輯）。
+// 純前端「新增時自動帶出」的輔助，不是後端強制規則 —— cycle_code 欄位本身
+// 仍是自由輸入＋全表唯一，這裡只是幫使用者少打幾個字、統一慣例。
+// 智選目前系統裡還沒有任何資料（無部門、無料號、無週期），字首先記著，
+// 等之後有資料時「適用公司」下拉才會出現智選、才會真的觸發自動帶出。
+const COMPANY_CYCLE_PREFIX: Record<string, string> = {
+  春大直: 'CH',
+  日耀: 'OU',
+  智選: 'HO',
+}
+
 // ── 逗號分隔字串 ↔ 陣列 ──────────────────────────────────────────────────────
 const csvToArr = (v?: string | null): string[] =>
   (v || '').split(',').map((s) => s.trim()).filter(Boolean)
@@ -88,6 +99,20 @@ export default function CpCyclesPage() {
 
   // 表單目前選到的公司（用來連動過濾部門選項）
   const selectedCompanies = Form.useWatch('applicable_scope', form)
+
+  // 新增週期時：只選了一間公司、且代碼欄位還是空的，就自動帶出該公司字首
+  // （如「春大直」→「CH-」），使用者接著往後打完整代碼即可；已經有內容就
+  // 不覆蓋，避免蓋掉使用者自己打的字。編輯既有週期時代碼欄位本來就鎖定，不處理。
+  useEffect(() => {
+    if (editing) return
+    const picked = selectedCompanies || []
+    if (picked.length !== 1) return
+    const prefix = COMPANY_CYCLE_PREFIX[picked[0]]
+    if (!prefix) return
+    if (!form.getFieldValue('cycle_code')) {
+      form.setFieldsValue({ cycle_code: `${prefix}-` })
+    }
+  }, [selectedCompanies, editing, form])
 
   const load = useCallback(() => {
     setLoading(true)
@@ -338,8 +363,14 @@ export default function CpCyclesPage() {
       >
         <Form form={form} layout="vertical" style={{ marginTop: 16 }}>
           <Space.Compact block>
-            <Form.Item name="cycle_code" label="週期代碼" rules={[{ required: true }]} style={{ width: '50%' }}>
-              <Input placeholder="如 GP-MONT-STATIONERY" disabled={!!editing} />
+            <Form.Item
+              name="cycle_code"
+              label="週期代碼"
+              rules={[{ required: true }]}
+              style={{ width: '50%' }}
+              extra="字首慣例：春大直 CH／日耀 OU／智選 HO；選好「適用公司」會自動帶字首"
+            >
+              <Input placeholder="如 CH-MONT-STATIONERY" disabled={!!editing} />
             </Form.Item>
             <Form.Item name="frequency" label="請購頻率" rules={[{ required: true }]} style={{ width: '50%', marginLeft: 8 }}>
               <Select options={FREQUENCY_OPTIONS} />
