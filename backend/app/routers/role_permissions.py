@@ -69,6 +69,7 @@ PERMISSION_DEFINITIONS = [
     {"key": "settings_roles_manage",    "label": "角色管理",   "group": "系統設定"},
     {"key": "settings_menu_manage",     "label": "選單管理",   "group": "系統設定"},
     {"key": "settings_ragic_manage",    "label": "Ragic 設定", "group": "系統設定"},
+    {"key": "settings_departments_manage", "label": "公司/部門管理", "group": "系統設定"},
     {"key": "hotel_view",                        "label": "飯店模組",         "group": "飯店管理"},
     {"key": "hotel_room_maintenance_view",        "label": "客房保養",         "group": "飯店管理"},
     {"key": "hotel_periodic_maintenance_view",    "label": "飯店週期保養",     "group": "飯店管理"},

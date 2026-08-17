@@ -874,6 +874,37 @@ def _migrate_cycle_purchase_vendor_source():
         conn.commit()
 
 
+def _migrate_cycle_purchase_department_source():
+    """
+    2026-08-17 — cycle_purchase_departments.source_department_id
+    （部門主檔改為鏡像系統設定「公司/部門管理」，見
+    cycle_purchase_department_sync.py）。做法完全比照上面
+    `_migrate_cycle_purchase_vendor_source`（同一種「啟動時自動補既有資料表
+    欄位」的理由，不重複贅述），也保留 Temp/apply_cycle_purchase_department_
+    source_id_migration.py 供離線/手動場景使用，兩邊冪等、互不衝突。
+    """
+    from sqlalchemy import text
+    from app.core.cycle_purchase_database import cycle_purchase_engine
+
+    with cycle_purchase_engine.connect() as conn:
+        existing = {row[1] for row in conn.execute(
+            text("PRAGMA table_info(cycle_purchase_departments)")
+        ).fetchall()}
+        if not existing:
+            return  # 資料表還不存在（全新環境），create_all 會直接建成新版
+        if "source_department_id" not in existing:
+            conn.execute(text(
+                "ALTER TABLE cycle_purchase_departments ADD COLUMN source_department_id VARCHAR(30)"
+            ))
+            conn.commit()
+            print("[Migration] cycle_purchase_departments.source_department_id added")
+        conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ix_cycle_purchase_departments_source_department_id "
+            "ON cycle_purchase_departments (source_department_id)"
+        ))
+        conn.commit()
+
+
 def _migrate_full_bldg_pm_sheet28_fields():
     """
     輕量欄位補丁（2026-06-02 新增 repair_hours/sheet28_id；2026-07-14 補上 2026-07-13
@@ -1311,6 +1342,9 @@ async def _auto_sync():
     from app.services.cycle_purchase_vendor_sync import (
         sync_from_contract as sync_cp_vendor,
     )
+    from app.services.cycle_purchase_department_sync import (
+        sync_from_reference as sync_cp_department,
+    )
     from app.services.purchase_request_sync import sync_list_only as sync_purchase_list
     from app.services.claim_request_sync import sync_list_only as sync_claim_list
     from app.services.nichiyo_purchase_request_sync import sync_list_only as sync_nichiyo_purchase_list
@@ -1337,6 +1371,9 @@ async def _auto_sync():
     await _run_loop("廠商資料",           sync_vendor)
     # ⚠ 順序相依：來源是 portal.db vendors（上一行剛同步完），不可提前
     await _run_loop("週期採購供應商",      sync_cp_vendor)
+    # 來源是 portal.db Company/RefDepartment（系統設定 → 公司/部門管理，非
+    # Ragic），跟「週期採購供應商」互不相依，同一批次即可
+    await _run_loop("週期採購部門",        sync_cp_department)
     # 請購單 / 請款單：清單同步（Detail API 由獨立排程補全）
     await _run_loop("核准請購單清單",      sync_purchase_list)
     await _run_loop("核准請款單清單",      sync_claim_list)
@@ -1413,6 +1450,7 @@ _SINGLE_MODULE_MAP: dict[str, tuple[str, str]] = {
     "主管交辦／緊急事件": ("app.services.other_tasks_sync",              "sync_from_ragic"),
     "廠商資料":          ("app.services.vendor_sync",                   "sync_from_ragic"),
     "週期採購供應商":     ("app.services.cycle_purchase_vendor_sync",    "sync_from_contract"),
+    "週期採購部門":       ("app.services.cycle_purchase_department_sync", "sync_from_reference"),
 }
 
 def list_syncable_modules() -> list[str]:
@@ -1615,6 +1653,12 @@ async def lifespan(app: FastAPI):
         "_migrate_cycle_purchase_vendor_source", _migrate_cycle_purchase_vendor_source
     )
     print("[Portal] cycle_purchase_vendors source_vendor_id migration checked.")
+
+    # 2026-08-17：cycle_purchase_departments 的 source_department_id，理由同上一段。
+    _run_startup_migration(
+        "_migrate_cycle_purchase_department_source", _migrate_cycle_purchase_department_source
+    )
+    print("[Portal] cycle_purchase_departments source_department_id migration checked.")
 
     # 週期採購：系統自動關閉「期別已過」的請購單（2026-08-07，與 Samuel 確認）。
     # 啟動時先跑一次，之後由下方 SCHEDULER_ENABLED 區塊的每日排程接手。

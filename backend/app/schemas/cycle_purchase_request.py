@@ -166,6 +166,10 @@ class RequestOut(BaseModel):
     notes: Optional[str] = None
     created_at: datetime
     updated_at: datetime
+    # 2026-08-17：手動新增請購單若同週期＋期別＋部門已有其他單，不再擋，
+    # 改成這裡帶警告文字給前端提示。衍生欄位，由 create_request() 掛上，
+    # 不落地成資料表欄位；沒有重複才建立時是 None。
+    duplicate_warning: Optional[str] = None
 
     class Config:
         from_attributes = True

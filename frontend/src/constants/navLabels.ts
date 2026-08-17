@@ -206,6 +206,7 @@ export const NAV_PAGE = {
   rolesManage:              '角色管理',
   ragicConnections:         'Ragic 連線',
   ragicAppDirectory:        'Ragic 對應表',
+  companyDepartments:       '公司/部門管理',   // ← route /settings/company-departments（2026-08-17 新增）
   ragicFieldAudit:          'Ragic 欄位比對',  // ← 新增：Ragic 與 Portal 欄位稽核
   menuConfig:               '選單管理',
   employeeManualExport:     '員工操作手冊匯出',

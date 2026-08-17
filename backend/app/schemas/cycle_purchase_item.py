@@ -93,6 +93,12 @@ class ItemOut(ItemBase):
     created_at: datetime
     updated_at: datetime
     default_vendor_name: Optional[str] = None
+    # 2026-08-17 新增：這個料號目前掛在哪幾組「公司／部門」（衍生自
+    # cycle_purchase_item_mappings，不落地成資料表欄位）。絕大多數料號只有
+    # 一組；僅少數幾筆兩公司統購共用料號（如永豐餘衛生紙）會有兩組。
+    # 目的：料號主檔列表原本要點進「料號對照」才看得到公司/部門，容易讓人
+    # 誤以為同名品類可以跨公司套用（已連續發生兩次週期設定選錯品類的事故）。
+    company_departments: List[str] = []
 
     class Config:
         from_attributes = True

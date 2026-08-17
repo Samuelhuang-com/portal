@@ -205,6 +205,10 @@ MODULES: list[tuple[str, str, str]] = [
     # ⚠ 必須排在「廠商資料」之後：來源是 portal.db vendors（非 Ragic），
     #   先跑會同步到上一輪的舊資料。詳見 cycle_purchase_vendor_sync.py 檔頭。
     ("週期採購供應商",     "app.services.cycle_purchase_vendor_sync",   "sync_from_contract"),
+    # ⚠ 來源是 portal.db Company/RefDepartment（系統設定 → 公司/部門管理，
+    #   非 Ragic）。跟「週期採購供應商」同一批次，兩者互不相依。
+    #   詳見 cycle_purchase_department_sync.py 檔頭。
+    ("週期採購部門",       "app.services.cycle_purchase_department_sync", "sync_from_reference"),
     # ⚠ 這一個不是 Ragic —— 來源是 OPERA Cloud（OHIP API）。
     #   只跑「歷史回補」：把往前兩年還沒補的段一次補完，補完後每輪自動 skip
     #   （只查一次 DB，不打 OHIP）。「昨天」由 main.py 每日 06:30 的

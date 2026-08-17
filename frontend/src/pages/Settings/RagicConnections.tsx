@@ -64,6 +64,8 @@ const ALL_MODULES: string[] = [
   '主管交辦／緊急事件', '週期保養預排', '飯店例行維護', '廠商資料',
   // 來源是 portal.db vendors（非 Ragic），必須排在「廠商資料」之後執行
   '週期採購供應商',
+  // 來源是 portal.db Company/RefDepartment（系統設定 → 公司/部門管理，非 Ragic）
+  '週期採購部門',
   // ── 以下不是 Ragic，來源是 OPERA Cloud（OHIP API）───────────────────────
   // 2026-08-13 補登錄：先前只掛在 main.py 的 APScheduler，而 DEV 機器
   // SCHEDULER_ENABLED=false，等於從未執行。三者都會自我判斷做過了沒，

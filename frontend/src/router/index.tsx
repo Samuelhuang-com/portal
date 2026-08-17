@@ -48,6 +48,7 @@ import UsersPage           from '@/pages/Settings/Users'
 import RolesPage           from '@/pages/Settings/Roles'
 import RagicConnectionsPage from '@/pages/Settings/RagicConnections'
 import RagicAppDirectoryPage from '@/pages/Settings/RagicAppDirectory'
+import CompanyDepartmentsPage from '@/pages/Settings/CompanyDepartments'
 import BasicSettingsPage     from '@/pages/Settings/BasicSettings'
 import MenuConfigPage        from '@/pages/Settings/MenuConfig'
 import EmployeeManualExportPage from '@/pages/Settings/EmployeeManualExport'
@@ -947,6 +948,11 @@ export default function AppRouter() {
           <Route path="ragic-app-directory" element={
             <PermissionGuard permissionKey="settings_ragic_manage">
               <RagicAppDirectoryPage />
+            </PermissionGuard>
+          } />
+          <Route path="company-departments" element={
+            <PermissionGuard permissionKey="settings_departments_manage">
+              <CompanyDepartmentsPage />
             </PermissionGuard>
           } />
           <Route path="menu-config" element={

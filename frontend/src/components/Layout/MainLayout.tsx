@@ -539,6 +539,7 @@ export const menuItems: MenuItem[] = [
       { key: '/settings/users',               icon: <UserOutlined />,     label: NAV_PAGE.usersManage,       permissionKey: 'settings_users_manage' },
       { key: '/settings/roles',               icon: <SettingOutlined />,  label: NAV_PAGE.rolesManage,       permissionKey: 'settings_roles_manage' },
       { key: '/settings/ragic-app-directory', icon: <DatabaseOutlined />, label: NAV_PAGE.ragicAppDirectory, permissionKey: 'settings_ragic_manage' },
+      { key: '/settings/company-departments', icon: <ApartmentOutlined />, label: NAV_PAGE.companyDepartments, permissionKey: 'settings_departments_manage' },
       { key: '/settings/ragic-connections',   icon: <ApiOutlined />,      label: NAV_PAGE.ragicConnections,  permissionKey: 'settings_ragic_manage' },
       { key: '/settings/ragic-field-audit',   icon: <AuditOutlined />,    label: NAV_PAGE.ragicFieldAudit,   permissionKey: 'ragic_field_audit_view' },
       { key: '/settings/menu-config',              icon: <MenuOutlined />,      label: NAV_PAGE.menuConfig,           permissionKey: 'settings_menu_manage' },

@@ -141,6 +141,7 @@ function CaseListModal({
               scroll={{ x: 880 }}
               pagination={{ pageSize: 20, showSizeChanger: false, showTotal: t => `共 ${t} 筆` }}
               summary={tableSummary}
+              rowClassName={(row) => row.is_ragic_deleted ? 'ragic-deleted-row' : ''}
               columns={[
                 ...CASE_LIST_COLS,
                 ...(extraColumns ?? []),

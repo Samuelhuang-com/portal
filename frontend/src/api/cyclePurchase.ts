@@ -18,6 +18,7 @@ import type {
   CpDepartment,
   CpDepartmentBreakdown,
   CpEligibleRequest,
+  CpExcludeItemCandidate,
   CpGeneratePreview,
   CpGenerateResult,
   CpItem,
@@ -163,9 +164,21 @@ export const updateCycle = (id: number, data: Partial<CpCycle>, deleteOrphans = 
     params: deleteOrphans ? { delete_orphans: true } : undefined,
   })
 
-/** 週期設定表單的下拉選項（適用公司／適用品類，取自主檔 distinct 值） */
-export const getCycleOptions = () =>
-  apiClient.get<CpCycleOptions>(`${BASE}/cycles/options`)
+/**
+ * 週期設定表單的下拉選項（適用公司／適用品類，取自主檔 distinct 值）。
+ * 2026-08-17 新增 companies 參數：帶值時「適用品類」只回傳該公司底下有
+ * 對照表資料的品類，不讓使用者選到別公司的品類（見 Cycles 頁 docstring）。
+ * 「適用公司」欄位本身不受這個參數影響，一律回傳全部公司。
+ */
+export const getCycleOptions = (params?: { companies?: string }) =>
+  apiClient.get<CpCycleOptions>(`${BASE}/cycles/options`, { params })
+
+/**
+ * 「排除料號」下拉候選清單：依表單目前選的適用公司＋適用品類現算。
+ * companies／categories 給空字串或不給＝不限。2026-08-16 新增
+ */
+export const getExcludeItemCandidates = (params: { companies?: string; categories?: string }) =>
+  apiClient.get<CpExcludeItemCandidate[]>(`${BASE}/cycles/exclude-item-candidates`, { params })
 
 /** 預覽：套用這份（尚未儲存的）設定後，會刪掉哪幾張孤兒空白請購單 */
 export const previewOrphanRequests = (id: number, data: Partial<CpCycle>) =>
@@ -211,6 +224,14 @@ export const createRequest = (data: {
 
 export const updateRequest = (id: number, data: { cost_center_id?: number | null; notes?: string | null }) =>
   apiClient.put<CpRequest>(`${BASE}/requests/${id}`, data)
+
+/**
+ * 刪除請購單（僅限明細 0 筆＋未關閉＋未彙整的空白單，後端會擋不符合條件的）。
+ * 2026-08-17 新增：手動新增放寬同部門同期擋重後，選錯週期/部門或手滑重複
+ * 建立的空白單需要有辦法清掉。
+ */
+export const deleteRequest = (id: number) =>
+  apiClient.delete<{ ok: boolean }>(`${BASE}/requests/${id}`)
 
 export const getAvailableItems = (requestId: number) =>
   apiClient.get<CpAvailableItem[]>(`${BASE}/requests/${requestId}/available-items`)

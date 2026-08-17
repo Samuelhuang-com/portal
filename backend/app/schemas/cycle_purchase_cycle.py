@@ -6,7 +6,7 @@
 """
 from __future__ import annotations
 from datetime import datetime
-from typing import List, Optional
+from typing import Dict, List, Optional
 from pydantic import BaseModel
 
 
@@ -19,6 +19,7 @@ class CycleBase(BaseModel):
     applicable_categories: Optional[str] = None
     applicable_scope: Optional[str] = None
     applicable_department_ids: Optional[str] = None
+    excluded_item_ids: Optional[str] = None
     auto_generate: bool = False
     reminder_rule: Optional[str] = None
     status: str = "active"
@@ -38,6 +39,7 @@ class CycleUpdate(BaseModel):
     applicable_categories: Optional[str] = None
     applicable_scope: Optional[str] = None
     applicable_department_ids: Optional[str] = None
+    excluded_item_ids: Optional[str] = None
     auto_generate: Optional[bool] = None
     reminder_rule: Optional[str] = None
     status: Optional[str] = None
@@ -81,3 +83,16 @@ class CycleOptionsOut(BaseModel):
     """週期設定表單的下拉選項來源（一律取自主檔 distinct 值，不讓使用者手打）。"""
     companies: List[str] = []
     categories: List[str] = []
+    # 2026-08-17 新增：品類 → 部門名稱清單，供前端在「適用品類」下拉選項標籤
+    # 附加部門名稱（如「空調備品-濾網（工務部）」），避免同公司底下不同部門
+    # 的品類混在一起難以分辨。見 cycle_purchase_service.get_cycle_options() docstring。
+    category_departments: Dict[str, List[str]] = {}
+
+
+class ExcludeItemCandidateOut(BaseModel):
+    """「排除料號」下拉選項：依目前表單上的適用公司＋適用品類現算，不是固定清單。"""
+    item_id: int
+    item_code: str
+    item_name: str
+    category: Optional[str] = None
+    companies: List[str] = []  # 這個料號目前掛在哪幾家公司底下（對照表 distinct company）

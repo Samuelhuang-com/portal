@@ -103,10 +103,23 @@ def create_department(db: Session, payload) -> CyclePurchaseDepartment:
 
 
 def update_department(db: Session, dept_id: int, payload) -> Optional[CyclePurchaseDepartment]:
+    """
+    2026-08-17：新增「同步鎖定欄位」保護。`source_department_id` 非 None
+    代表這筆部門是從 portal.db Company/RefDepartment 鏡像同步過來的（見
+    cycle_purchase_department_sync.py），`company`／`dept_name` 由同步覆蓋，
+    這裡的 API 若也放行改這兩欄，下次同步一跑就會被蓋回去——使用者會以為
+    改成功了，其實只是暫時的，過陣子又「跳回舊值」，比不能改更誤導人。
+    前端 Departments.tsx 會把這兩欄設成唯讀，但這裡才是真正擋住的地方
+    （唯讀限制必須在後端，前端唯讀只是提示，比照 CLAUDE.md §9 廠商規則 4）。
+    """
     dept = db.query(CyclePurchaseDepartment).filter(CyclePurchaseDepartment.id == dept_id).first()
     if not dept:
         return None
-    for k, v in payload.model_dump(exclude_unset=True).items():
+    updates = payload.model_dump(exclude_unset=True)
+    if dept.source_department_id:
+        updates.pop("company", None)
+        updates.pop("dept_name", None)
+    for k, v in updates.items():
         setattr(dept, k, v)
     db.flush()
     return dept
@@ -180,6 +193,26 @@ def _attach_vendor_name(db: Session, item: CyclePurchaseItem) -> CyclePurchaseIt
     return item
 
 
+def _attach_company_departments(db: Session, item: CyclePurchaseItem) -> CyclePurchaseItem:
+    """附加 company_departments（見 schemas/cycle_purchase_item.py ItemOut 說明）。
+    2026-08-17 新增：料號主檔列表原本要點進「料號對照」才看得到公司/部門，
+    容易讓人誤以為同名品類可以跨公司套用。"""
+    rows = (
+        db.query(CyclePurchaseItemMapping.company, CyclePurchaseDepartment.dept_name)
+        .outerjoin(
+            CyclePurchaseDepartment,
+            CyclePurchaseDepartment.id == CyclePurchaseItemMapping.department_id,
+        )
+        .filter(CyclePurchaseItemMapping.item_id == item.id)
+        .all()
+    )
+    item.company_departments = [
+        f"{company}／{dept_name}" if dept_name else company
+        for company, dept_name in rows
+    ]
+    return item
+
+
 def list_items(
     db: Session,
     q: str = "",
@@ -209,6 +242,7 @@ def list_items(
     )
     for r in rows:
         _attach_vendor_name(db, r)
+        _attach_company_departments(db, r)
     return rows, total
 
 
@@ -216,6 +250,7 @@ def get_item(db: Session, item_id: int) -> Optional[CyclePurchaseItem]:
     item = db.query(CyclePurchaseItem).filter(CyclePurchaseItem.id == item_id).first()
     if item:
         _attach_vendor_name(db, item)
+        _attach_company_departments(db, item)
         for m in item.mappings:
             _attach_mapping_display_fields(db, m)
     return item
@@ -350,11 +385,33 @@ def update_cycle(db: Session, cycle_id: int, payload) -> Optional[CyclePurchaseC
 # 週期設定表單的下拉選項來源（2026-08-09 新增）
 # ═══════════════════════════════════════════════════════════════════════════
 
-def get_cycle_options(db: Session) -> dict:
+def get_cycle_options(db: Session, companies_filter: Optional[list[str]] = None) -> dict:
     """
     「適用公司」取自部門主檔的 distinct company（只取啟用中部門——停用部門的
-    公司值留著只會讓人選到產不出單的設定）；
-    「適用品類」取自料號主檔的 distinct category（只取啟用中料號，排除 NULL／空字串）。
+    公司值留著只會讓人選到產不出單的設定），**一律回傳全部公司**，不受
+    `companies_filter` 影響——這欄位本身就是用來選公司的來源，不能先篩掉自己。
+
+    「適用品類」取自料號主檔的 distinct category（只取啟用中料號，排除 NULL／
+    空字串）。2026-08-17 新增 `companies_filter`：若有帶值，只回傳「該公司底下
+    有對照表資料」的品類，不再列出全部公司混在一起的 100 多個品類。
+
+    背景（與 Samuel 確認）：連續兩次同一種誤設——編輯週期設定時「適用公司」
+    選了春大直，但「適用品類」下拉列出全系統所有公司的品類，選到了實際上只
+    屬於日耀天地的品類，導致該部門篩不出任何啟用中料號、請購單永遠空白。
+    「適用部門」本來就有依「適用公司」連動過濾（見 models/cycle_purchase_cycle.py
+    2026-08-09 說明），這裡讓「適用品類」比照辦理，從源頭擋掉選錯公司品類的
+    可能性，不能只靠使用者自己看仔細。
+
+    2026-08-17 再追加 `category_departments`（品類 → 部門名稱清單）：光靠篩選
+    還是只解決「選錯公司」，同一公司底下不同部門的品類仍然混在一起列出
+    （如工務部的「空調備品-濾網」跟清潔部的「公區備品-垃圾袋」）。經查證
+    `cycle_purchase_items.category` 在現有資料下對每家公司來說是乾淨的
+    「一品類 = 一部門」（見 models/cycle_purchase_item.py 2026-07-11 docstring
+    「逐列核對兩家公司 Excel，同一公司內沒有任何料號橫跨兩個分頁/部門」），
+    所以直接把部門名稱附加在下拉選項標籤上（如「空調備品-濾網（工務部）」）
+    就足夠釐清，不需要更複雜的分組 UI。回傳型別是 list 而非 dict，
+    因為理論上 schema 沒有強制 1 品類 1 部門，極端情況下可能有多個部門，
+    要能如實反映。
     """
     companies = [
         row[0]
@@ -365,17 +422,94 @@ def get_cycle_options(db: Session) -> dict:
         .all()
         if row[0]
     ]
+
+    category_query = db.query(CyclePurchaseItem.category).filter(
+        CyclePurchaseItem.is_active == True,  # noqa: E712
+        CyclePurchaseItem.category.isnot(None),
+        CyclePurchaseItem.category != "",
+    )
+    if companies_filter:
+        category_query = category_query.join(
+            CyclePurchaseItemMapping, CyclePurchaseItemMapping.item_id == CyclePurchaseItem.id
+        ).filter(CyclePurchaseItemMapping.company.in_(companies_filter))
     categories = [
         row[0]
-        for row in db.query(CyclePurchaseItem.category)
+        for row in category_query.distinct().order_by(CyclePurchaseItem.category).all()
+        if row[0]
+    ]
+
+    # 品類 → 部門名稱清單，供前端在下拉選項標籤附加部門名稱（見上方 docstring）。
+    # 篩選條件（is_active／companies_filter）跟上面的 categories 查詢保持一致，
+    # 否則會出現「品類選項裡沒有這個公司的品類，但 category_departments 卻有」
+    # 這種兜不起來的情況。
+    dept_query = (
+        db.query(CyclePurchaseItem.category, CyclePurchaseDepartment.dept_name)
+        .join(CyclePurchaseItemMapping, CyclePurchaseItemMapping.item_id == CyclePurchaseItem.id)
+        .outerjoin(
+            CyclePurchaseDepartment,
+            CyclePurchaseDepartment.id == CyclePurchaseItemMapping.department_id,
+        )
         .filter(
             CyclePurchaseItem.is_active == True,  # noqa: E712
             CyclePurchaseItem.category.isnot(None),
             CyclePurchaseItem.category != "",
         )
-        .distinct()
-        .order_by(CyclePurchaseItem.category)
-        .all()
-        if row[0]
-    ]
-    return {"companies": companies, "categories": categories}
+    )
+    if companies_filter:
+        dept_query = dept_query.filter(CyclePurchaseItemMapping.company.in_(companies_filter))
+    category_departments: dict[str, list[str]] = {}
+    for category, dept_name in dept_query.distinct().all():
+        if not dept_name:
+            continue
+        category_departments.setdefault(category, [])
+        if dept_name not in category_departments[category]:
+            category_departments[category].append(dept_name)
+
+    return {
+        "companies": companies,
+        "categories": categories,
+        "category_departments": category_departments,
+    }
+
+
+def list_exclude_item_candidates(
+    db: Session, companies: list[str], categories: list[str]
+) -> list[dict]:
+    """
+    週期設定「排除料號」下拉的候選清單：依表單上目前選的「適用公司」＋
+    「適用品類」現算，不是固定清單——避免使用者排除了一筆料號，之後又改了
+    適用品類／適用公司，排除清單裡卻殘留一筆已經不相干的料號 id
+    （見 models/cycle_purchase_cycle.py 2026-08-16 說明）。
+
+    companies／categories 皆為空清單＝不限（回傳全部啟用中料號，數量可能較大，
+    但週期設定畫面本來就是低頻操作，不特別分頁）。
+    """
+    query = (
+        db.query(CyclePurchaseItem, CyclePurchaseItemMapping.company)
+        .join(
+            CyclePurchaseItemMapping,
+            CyclePurchaseItemMapping.item_id == CyclePurchaseItem.id,
+        )
+        .filter(CyclePurchaseItem.is_active == True)  # noqa: E712
+    )
+    if companies:
+        query = query.filter(CyclePurchaseItemMapping.company.in_(companies))
+    if categories:
+        query = query.filter(CyclePurchaseItem.category.in_(categories))
+
+    by_item: dict[int, dict] = {}
+    for item, company in query.order_by(CyclePurchaseItem.item_code).all():
+        entry = by_item.setdefault(
+            item.id,
+            {
+                "item_id": item.id,
+                "item_code": item.item_code,
+                "item_name": item.item_name,
+                "category": item.category,
+                "companies": [],
+            },
+        )
+        if company and company not in entry["companies"]:
+            entry["companies"].append(company)
+
+    return sorted(by_item.values(), key=lambda r: r["item_code"])

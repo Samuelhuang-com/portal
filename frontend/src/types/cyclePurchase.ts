@@ -50,6 +50,10 @@ export interface CpDepartment {
   owner_name?: string | null
   is_active: boolean
   created_at: string
+  // 2026-08-17 新增：非 null 代表這筆是從「系統設定 → 公司/部門管理」鏡像
+  // 同步過來的（見 cycle_purchase_department_sync.py），company／dept_name
+  // 由同步覆蓋、前端應設唯讀；null 代表本地自建，公司/部門名稱可自由編輯。
+  source_department_id?: string | null
 }
 
 export interface CpCostCenter {
@@ -90,6 +94,13 @@ export interface CpItem {
   notes?: string | null
   created_at: string
   updated_at: string
+  /**
+   * 2026-08-17 新增：這個料號目前掛在哪幾組「公司／部門」（衍生自料號對照表，
+   * 格式如 `"春大直／工務部"`）。絕大多數只有一組；僅少數兩公司統購共用料號
+   * 會有兩組。原本要點進「料號對照」才看得到，容易讓人誤以為同名品類可以
+   * 跨公司套用。
+   */
+  company_departments: string[]
 }
 
 export interface CpItemMapping {
@@ -146,6 +157,12 @@ export interface CpCycle {
   applicable_scope?: string | null
   /** 適用部門（逗號分隔的部門 id）；**空＝適用公司底下的全部啟用中部門**。2026-08-09 新增 */
   applicable_department_ids?: string | null
+  /**
+   * 從「適用品類」整包中手動排除的料號（逗號分隔的 cycle_purchase_items.id）；
+   * 空＝不排除任何料號。是例外排除清單，不是白名單——品類底下新增料號仍會
+   * 自動涵蓋，只有這裡列出的少數幾筆不算。2026-08-16 新增
+   */
+  excluded_item_ids?: string | null
   auto_generate: boolean
   reminder_rule?: string | null
   status: 'active' | 'inactive' | 'paused'
@@ -160,6 +177,18 @@ export interface CpCycle {
 export interface CpCycleOptions {
   companies: string[]
   categories: string[]
+  /** 品類 → 部門名稱清單，供下拉選項標籤附加部門名稱（如「空調備品-濾網（工務部）」），
+   * 避免同公司底下不同部門的品類混在一起難以分辨。2026-08-17 新增 */
+  category_departments: Record<string, string[]>
+}
+
+/** 「排除料號」下拉候選：依表單目前的適用公司＋適用品類現算，不是固定清單。2026-08-16 新增 */
+export interface CpExcludeItemCandidate {
+  item_id: number
+  item_code: string
+  item_name: string
+  category?: string | null
+  companies: string[]
 }
 
 /**
@@ -306,6 +335,12 @@ export interface CpRequest {
   notes?: string | null
   created_at: string
   updated_at: string
+  /**
+   * 2026-08-17 新增：手動新增請購單（POST /requests）若同週期＋期別＋部門
+   * 已有其他單，不再擋，改成這裡帶警告文字給前端提示；沒有重複時是 null。
+   * 只有建立當下的回應才會有值，清單/詳情 GET 一律是 null（衍生欄位不落地）。
+   */
+  duplicate_warning?: string | null
 }
 
 export interface CpRequestDetail extends CpRequest {

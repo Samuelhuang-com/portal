@@ -28,7 +28,7 @@ from app.models.cycle_purchase_cycle import CyclePurchaseCycle
 from app.models.user import User
 from app.schemas.cycle_purchase_cycle import (
     CycleCreate, CycleOptionsOut, CycleOut, CycleUpdate,
-    OrphanPreviewResult, OrphanRequestOut,
+    ExcludeItemCandidateOut, OrphanPreviewResult, OrphanRequestOut,
 )
 from app.services import cycle_purchase_service as svc
 from app.services import cycle_purchase_request_service as req_svc
@@ -47,12 +47,35 @@ def list_cycles(
 
 @router.get("/cycles/options", response_model=CycleOptionsOut, summary="週期設定表單下拉選項")
 def get_cycle_options(
+    companies: str = Query(
+        "", description="逗號分隔的公司清單，留空＝品類不篩公司（回傳全部）；"
+                        "帶值時品類只回傳該公司底下有對照表資料的，見 2026-08-17 說明"
+    ),
     _: User = Depends(require_permission("cycle_purchase_view")),
     db: Session = Depends(get_cycle_purchase_db),
 ):
     """⚠️ 路由順序：這支必須宣告在 /cycles/{cycle_id} 之前，
     否則 "options" 會被 FastAPI 當成 cycle_id 去 match 到詳情端點。"""
-    return svc.get_cycle_options(db)
+    company_list = [c.strip() for c in companies.split(",") if c.strip()]
+    return svc.get_cycle_options(db, companies_filter=company_list or None)
+
+
+@router.get(
+    "/cycles/exclude-item-candidates",
+    response_model=List[ExcludeItemCandidateOut],
+    summary="「排除料號」下拉候選清單：依目前選的適用公司＋適用品類現算",
+)
+def get_exclude_item_candidates(
+    companies: str = Query("", description="逗號分隔的公司清單，留空＝不限"),
+    categories: str = Query("", description="逗號分隔的品類清單，留空＝不限"),
+    _: User = Depends(require_permission("cycle_purchase_view")),
+    db: Session = Depends(get_cycle_purchase_db),
+):
+    """⚠️ 路由順序：這支必須宣告在 /cycles/{cycle_id} 之前，
+    否則 "exclude-item-candidates" 會被當成 cycle_id。"""
+    company_list = [c.strip() for c in companies.split(",") if c.strip()]
+    category_list = [c.strip() for c in categories.split(",") if c.strip()]
+    return svc.list_exclude_item_candidates(db, company_list, category_list)
 
 
 @router.get("/cycles/{cycle_id}", response_model=CycleOut, summary="週期設定詳情")

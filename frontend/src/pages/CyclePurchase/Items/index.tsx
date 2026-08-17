@@ -11,6 +11,12 @@
  * 功能性部門，同一公司內沒有任何料號橫跨兩個分頁。因此每一筆料號對照
  * 現在都必須指定「這個料號在這家公司屬於哪個部門」，請購單「可選料號」
  * 查詢會按公司＋部門篩選（見 cycle_purchase_request_service.get_available_items）。
+ *
+ * 2026-08-17 新增「公司/部門」欄：原本列表看不到公司/部門歸屬，要點進
+ * 「料號對照」才看得到，導致連續兩次有人在「週期設定」誤選了別公司/部門
+ * 的品類（見 cycle_purchase_service.get_cycle_options 與 Cycles/index.tsx
+ * 開頭說明）。現在直接在列表帶出（來自後端 ItemOut.company_departments，
+ * 衍生自料號對照表，非資料表欄位），選擇前就看得到歸屬。
  */
 import { useEffect, useMemo, useState } from 'react'
 import {
@@ -46,6 +52,12 @@ export default function CpItemsPage() {
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState<CpItem | null>(null)
   const [form] = Form.useForm()
+  // 2026-08-17 新增：編輯料號 Modal 內直接可編／新增公司+部門（見下方
+  // openEdit／handleSubmit 說明）。這兩個 state 記錄「目前這個料號有幾筆
+  // 對照」，用來決定要不要在這個 Modal 顯示可編輯欄位。
+  const [editItemMappings, setEditItemMappings] = useState<CpItemMapping[]>([])
+  const [editSingleMapping, setEditSingleMapping] = useState<CpItemMapping | null>(null)
+  const editCompany = Form.useWatch('company', form)
 
   const [mappingItem, setMappingItem] = useState<CpItemDetail | null>(null)
   const [mappingModalOpen, setMappingModalOpen] = useState(false)
@@ -62,6 +74,12 @@ export default function CpItemsPage() {
       .filter((d) => d.company === mappingCompany)
       .map((d) => ({ label: d.dept_name, value: d.id })),
     [departments, mappingCompany],
+  )
+  const editDepartmentOptions = useMemo(
+    () => departments
+      .filter((d) => d.company === editCompany)
+      .map((d) => ({ label: d.dept_name, value: d.id })),
+    [departments, editCompany],
   )
 
   const load = () => {
@@ -90,27 +108,67 @@ export default function CpItemsPage() {
 
   const openCreate = () => {
     setEditing(null)
+    setEditItemMappings([])
+    setEditSingleMapping(null)
     form.resetFields()
     form.setFieldsValue({ is_active: true, is_cycle_item: true, default_qty: 0, moq: 0 })
     setModalOpen(true)
   }
 
-  const openEdit = (item: CpItem) => {
+  // 2026-08-17：改成 async，多打一次 getItem 撈這個料號目前的對照筆數。
+  // 只有 0～1 筆時才把公司/部門欄位顯示成可編輯（見下方表單），>1 筆（少數
+  // 共用料號）不知道要編輯哪一筆，維持原本「請到料號對照管理」的路徑。
+  const openEdit = async (item: CpItem) => {
     setEditing(item)
+    form.resetFields()
     form.setFieldsValue(item)
     setModalOpen(true)
+    try {
+      const r = await getItem(item.id)
+      const mappings = r.data.mappings || []
+      setEditItemMappings(mappings)
+      if (mappings.length === 1) {
+        setEditSingleMapping(mappings[0])
+        form.setFieldsValue({ company: mappings[0].company, department_id: mappings[0].department_id })
+      } else {
+        setEditSingleMapping(null)
+      }
+    } catch {
+      setEditItemMappings([])
+      setEditSingleMapping(null)
+    }
   }
 
   const handleSubmit = async () => {
     try {
       const values = await form.validateFields()
+      // company／department_id 是這次新增的便利欄位，不屬於 ItemUpdate/ItemCreate
+      // schema，要拆開來另外走料號對照的 API；company_departments 是列表顯示用
+      // 的衍生欄位，會被 form.setFieldsValue(item) 帶進表單，送出前也要拿掉。
+      const { company, department_id, company_departments, ...itemValues } = values as any
+      let itemId: number
       if (editing) {
-        await updateItem(editing.id, values)
+        await updateItem(editing.id, itemValues)
+        itemId = editing.id
         message.success('更新成功')
       } else {
-        await createItem(values)
+        const res = await createItem(itemValues)
+        itemId = res.data.id
         message.success('新增成功')
       }
+
+      // 只有 0～1 筆對照時欄位才會出現在表單上；company/department_id 都有值
+      // 才動作，任一沒填就當作「這次不設定」，不強迫一定要填。
+      if (editItemMappings.length <= 1 && company && department_id) {
+        if (editSingleMapping) {
+          if (editSingleMapping.company !== company || editSingleMapping.department_id !== department_id) {
+            await updateItemMapping(itemId, editSingleMapping.id, { company, department_id })
+          }
+        } else {
+          await createItemMapping(itemId, { company, department_id, is_confirmed: false })
+        }
+      }
+
       setModalOpen(false)
       load()
     } catch (err: any) {
@@ -200,6 +258,15 @@ export default function CpItemsPage() {
             { title: '集團料號', dataIndex: 'item_code', width: 120 },
             { title: '品名', dataIndex: 'item_name' },
             { title: '類別', dataIndex: 'category', width: 100 },
+            {
+              title: '公司/部門',
+              dataIndex: 'company_departments',
+              width: 160,
+              render: (v: string[] | undefined) =>
+                v && v.length
+                  ? <Space size={[4, 4]} wrap>{v.map((cd) => <Tag key={cd}>{cd}</Tag>)}</Space>
+                  : <Tag color="default">未設定</Tag>,
+            },
             { title: '單位', dataIndex: 'unit', width: 70 },
             { title: '預設供應商', dataIndex: 'default_vendor_name', width: 140 },
             { title: '參考單價', dataIndex: 'unit_price', width: 90, render: (v) => v != null ? `$${v}` : '—' },
@@ -259,6 +326,76 @@ export default function CpItemsPage() {
           <Form.Item name="spec" label="規格">
             <Input />
           </Form.Item>
+
+          {/* 2026-08-17 新增：公司/部門。這個欄位其實存在「料號對照」子表，
+              一個料號可能對到多組公司/部門（少數共用料號）。只有 0～1 筆對照
+              時才在這裡直接編輯，>1 筆時不知道要編輯哪一筆，改顯示現有對照
+              清單＋跳到「料號對照」管理的按鈕。 */}
+          {editItemMappings.length <= 1 ? (
+            <Space.Compact block>
+              <Form.Item
+                name="company"
+                label="公司"
+                style={{ width: '50%' }}
+                extra={editItemMappings.length === 0 ? '留空 = 先不設定，之後可在「料號對照」新增' : undefined}
+                rules={[{
+                  validator: (_, value) =>
+                    form.getFieldValue('department_id') && !value
+                      ? Promise.reject(new Error('請選公司'))
+                      : Promise.resolve(),
+                }]}
+              >
+                <Select
+                  allowClear
+                  showSearch
+                  placeholder="選擇公司"
+                  options={companyOptions}
+                  onChange={() => form.setFieldValue('department_id', undefined)}
+                />
+              </Form.Item>
+              <Form.Item
+                name="department_id"
+                label="部門"
+                style={{ width: '50%', marginLeft: 8 }}
+                rules={[{
+                  validator: (_, value) =>
+                    form.getFieldValue('company') && !value
+                      ? Promise.reject(new Error('請選部門'))
+                      : Promise.resolve(),
+                }]}
+              >
+                <Select
+                  allowClear
+                  showSearch
+                  optionFilterProp="label"
+                  placeholder={editCompany ? '選擇部門' : '請先選公司'}
+                  disabled={!editCompany}
+                  options={editDepartmentOptions}
+                />
+              </Form.Item>
+            </Space.Compact>
+          ) : (
+            <Form.Item label="公司/部門">
+              <Space direction="vertical" style={{ width: '100%' }}>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  這個料號目前對到 {editItemMappings.length} 組公司/部門，請到「料號對照」管理，不在這裡直接編輯。
+                </Text>
+                <Space wrap>
+                  {editItemMappings.map((m) => (
+                    <Tag key={m.id}>{m.company}／{m.department_name || '未設定'}</Tag>
+                  ))}
+                </Space>
+                <Button
+                  size="small"
+                  icon={<ApartmentOutlined />}
+                  onClick={() => { setModalOpen(false); if (editing) openMappings(editing) }}
+                >
+                  前往料號對照管理
+                </Button>
+              </Space>
+            </Form.Item>
+          )}
+
           <Space.Compact block>
             <Form.Item name="unit" label="單位" style={{ width: '25%' }}>
               <Input />

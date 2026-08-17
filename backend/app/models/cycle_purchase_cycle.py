@@ -30,6 +30,21 @@ docs/SPEC_cycle_purchase_dept_scope.md）：
     2026-07-16 踩過的「期別字串打不一致 → 查到 0 筆 → 誤以為沒資料」是同一種病灶。
     因此前端一律改成從主檔 distinct 值取選項的 multi-select，**不讓使用者手打**
     （選項 API：GET /cycle-purchase/options/companies、/options/categories）。
+
+2026-08-16（新增 `excluded_item_ids`，與 Samuel 確認「品類底下要能排除個別料號」
+的三個方案 A/B/C，選了 B）：
+  - `applicable_categories` 是「整包」語意：選了一個品類＝底下全部啟用中料號都算，
+    以後這個品類新增料號會自動涵蓋，行為與改版前一致。
+  - `excluded_item_ids` 是**例外排除清單**，不是白名單：只用來手動排除品類整包
+    裡少數幾筆不想要的料號，不影響「品類新增料號自動涵蓋」這個既有行為。
+  - 三處比對邏輯（`resolve_applicable_departments()`／`_has_available_items()`／
+    `get_available_items()`）都要在品類過濾之後，再排除掉這裡列出的 item id，
+    否則「D 層判斷會不會產生空白單」跟「請購單可選料號清單」會兜不起來
+    （這條一致性要求本來就是既有規範，見 `_has_available_items()` docstring）。
+  - 前端候選清單（排除料號下拉的選項）另開端點
+    `GET /cycles/exclude-item-candidates?companies=&categories=`，依「適用公司」
+    ＋「適用品類」現算，不是固定清單——避免使用者排除了一筆料號，之後改了
+    適用品類，排除清單裡卻殘留一筆已經不相干公司/品類的料號 id。
 """
 from sqlalchemy import Column, Integer, String, Boolean, Text, DateTime, func
 
@@ -60,6 +75,11 @@ class CyclePurchaseCycle(CyclePurchaseBase):
                                         comment="適用部門（逗號分隔的 cycle_purchase_departments.id）；"
                                                  "**空值＝適用公司底下的全部啟用中部門**（舊資料自動相容）。"
                                                  "2026-08-09 新增，見上方 class 註解方案 B")
+    excluded_item_ids      = Column(Text, nullable=True,
+                                     comment="從適用品類整包中手動排除的料號（逗號分隔的 "
+                                              "cycle_purchase_items.id）；空值＝不排除任何料號。"
+                                              "2026-08-16 新增，是例外排除清單不是白名單，"
+                                              "見上方 class 註解")
     auto_generate          = Column(Boolean, nullable=False, default=False,
                                      comment="是否自動產生本期請購單（第一版預設人工按鈕觸發，日後可接排程）")
     reminder_rule          = Column(Text, nullable=True, comment="提醒規則說明")

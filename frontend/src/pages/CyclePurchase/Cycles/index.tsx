@@ -27,6 +27,30 @@
  * 5. 資料模型上這三個欄位都是「逗號分隔字串」，表單用陣列操作比較好寫，
  *    因此在 openEdit / handleSubmit 兩處做字串 ↔ 陣列轉換（csvToArr / arrToCsv）。
  *    部門是 id 陣列（數字），公司與品類是名稱陣列（字串）。
+ *
+ * 2026-08-16（新增「排除料號」，方案 B，與 Samuel 確認 A/B/C 三個方案後選定）：
+ * 「適用品類」維持整包語意不變（選了品類＝底下全部料號都算，以後新增料號
+ * 自動涵蓋）；`excluded_item_ids` 是另外加的**例外排除清單**，用來手動排除
+ * 品類整包裡少數幾筆不想要的料號，不是白名單。候選清單（下拉選項）依表單
+ * 目前選的「適用公司」＋「適用品類」向後端現算（GET /cycles/exclude-item-candidates），
+ * 不是固定清單——避免候選範圍跟表單其他欄位脫勾。
+ *
+ * 2026-08-17（「適用品類」改依「適用公司」連動過濾，與 Samuel 確認）：
+ * 改版前「適用品類」下拉是固定抓一次全系統所有品類（不分公司），跟「適用
+ * 部門」（已經會依公司連動過濾）不一致，連續兩次有人編輯週期設定時選到別
+ * 公司的品類，導致該部門在請購單畫面永遠篩不出任何料號、看起來像系統壞了。
+ * 現在 `GET /cycles/options` 多帶一個 `companies` 參數，選了公司就只回傳
+ * 該公司底下有對照表資料的品類；選公司後若已選的品類不再屬於新公司，會
+ * 自動從表單清掉（比照「排除料號」候選清單縮小時的處理方式，見上方
+ * 2026-08-16 說明），不留使用者看不到的殘留值。
+ *
+ * 2026-08-17（同一次事故的第二層修補：品類下拉選項標籤附加部門名稱）：
+ * 光靠上面的公司連動過濾還不夠 —— 同一家公司底下仍有多個部門，選項本身
+ * 「空調備品-濾網」這種名稱看不出屬於哪個部門，使用者還是可能選錯。後端
+ * `GET /cycles/options` 現在多回傳 `category_departments`（品類 → 部門名稱
+ * 清單），前端把它附加進選項標籤，顯示成「空調備品-濾網（工務部）」。
+ * 同時料號主檔列表（Items/index.tsx）也比照加上「公司/部門」欄，兩處
+ * 加起來讓使用者在挑選前就看得到歸屬，不必等到請購單空白才發現選錯。
  */
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
@@ -34,9 +58,10 @@ import {
 } from 'antd'
 import { PlusOutlined, EditOutlined, ExclamationCircleOutlined } from '@ant-design/icons'
 import {
-  createCycle, getCpDepartments, getCycleOptions, getCycles, previewOrphanRequests, updateCycle,
+  createCycle, getCpDepartments, getCycleOptions, getCycles, getExcludeItemCandidates,
+  previewOrphanRequests, updateCycle,
 } from '@/api/cyclePurchase'
-import type { CpCycle, CpDepartment, CpOrphanRequest } from '@/types/cyclePurchase'
+import type { CpCycle, CpDepartment, CpExcludeItemCandidate, CpOrphanRequest } from '@/types/cyclePurchase'
 
 const { Title, Text } = Typography
 
@@ -77,11 +102,12 @@ const arrToCsv = (v?: (string | number)[] | null): string | null =>
 // 表單內部用的型別（陣列版），送出前轉回逗號分隔字串
 type CycleFormValues = Omit<
   Partial<CpCycle>,
-  'applicable_scope' | 'applicable_categories' | 'applicable_department_ids'
+  'applicable_scope' | 'applicable_categories' | 'applicable_department_ids' | 'excluded_item_ids'
 > & {
   applicable_scope?: string[]
   applicable_categories?: string[]
   applicable_department_ids?: number[]
+  excluded_item_ids?: number[]
 }
 
 export default function CpCyclesPage() {
@@ -95,6 +121,8 @@ export default function CpCyclesPage() {
   // 下拉選項來源
   const [companies, setCompanies] = useState<string[]>([])
   const [categories, setCategories] = useState<string[]>([])
+  const [categoryDepartments, setCategoryDepartments] = useState<Record<string, string[]>>({})
+  const [categoriesLoading, setCategoriesLoading] = useState(false)
   const [departments, setDepartments] = useState<CpDepartment[]>([])
 
   // 表單目前選到的公司（用來連動過濾部門選項）
@@ -121,12 +149,34 @@ export default function CpCyclesPage() {
 
   useEffect(() => {
     load()
-    getCycleOptions().then((r) => {
-      setCompanies(r.data.companies)
-      setCategories(r.data.categories)
-    })
     getCpDepartments({ is_active: true }).then((r) => setDepartments(r.data))
   }, [load])
+
+  // 「適用品類」選項依「適用公司」連動過濾（比照「適用部門」既有的連動過濾）。
+  // 2026-08-17 新增：改版前這裡是固定一次抓全系統 100 多個品類，不管選了
+  // 哪個公司都混在一起列出，連續兩次有人在編輯週期時選到別公司的品類，
+  // 導致該部門篩不出任何啟用中料號、請購單永遠空白。現在依 `applicable_scope`
+  // 向後端現算，只列出「已選公司底下有對照表資料」的品類；沒選公司＝
+  // 不篩，回傳全部品類（維持舊行為，跟「留空 = 不限公司」的語意一致）。
+  useEffect(() => {
+    setCategoriesLoading(true)
+    getCycleOptions({ companies: (selectedCompanies || []).join(',') })
+      .then((r) => {
+        setCompanies(r.data.companies)
+        setCategories(r.data.categories)
+        setCategoryDepartments(r.data.category_departments || {})
+        // 公司範圍縮小後，把已選但已經不屬於這個公司的品類一併拿掉，
+        // 不留下使用者看不到、也選不到但其實還存在表單值裡的殘留值。
+        const validCats = new Set(r.data.categories)
+        const current: string[] = form.getFieldValue('applicable_categories') || []
+        const kept = current.filter((c) => validCats.has(c))
+        if (kept.length !== current.length) {
+          form.setFieldsValue({ applicable_categories: kept })
+        }
+      })
+      .finally(() => setCategoriesLoading(false))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedCompanies])
 
   // 部門選項依已選公司過濾；沒選公司就全部列出（等同「不限公司」）
   const departmentOptions = useMemo(() => {
@@ -140,12 +190,62 @@ export default function CpCyclesPage() {
     }))
   }, [departments, selectedCompanies])
 
+  // 「適用品類」選項標籤附加部門名稱（如「空調備品-濾網（工務部）」），
+  // 同公司底下只會有一個部門（已驗證的既有不變式），多個就用頓號並列。
+  const categoryOptions = useMemo(
+    () =>
+      categories.map((c) => {
+        const depts = categoryDepartments[c]
+        return {
+          label: depts && depts.length ? `${c}（${depts.join('、')}）` : c,
+          value: c,
+        }
+      }),
+    [categories, categoryDepartments],
+  )
+
   const deptNameOf = useCallback(
     (id: number) => {
       const d = departments.find((x) => x.id === id)
       return d ? `${d.company} / ${d.dept_name}` : `部門 #${id}`
     },
     [departments],
+  )
+
+  // ── 排除料號：候選清單依「適用公司」＋「適用品類」向後端現算 ──────────────
+  const selectedCategories = Form.useWatch('applicable_categories', form)
+  const [excludeCandidates, setExcludeCandidates] = useState<CpExcludeItemCandidate[]>([])
+  const [excludeCandidatesLoading, setExcludeCandidatesLoading] = useState(false)
+
+  useEffect(() => {
+    if (!modalOpen) return
+    setExcludeCandidatesLoading(true)
+    getExcludeItemCandidates({
+      companies: (selectedCompanies || []).join(','),
+      categories: (selectedCategories || []).join(','),
+    })
+      .then((r) => {
+        setExcludeCandidates(r.data)
+        // 候選範圍縮小後，把已選但已經不在候選清單裡的料號一併拿掉，
+        // 不留下使用者看不到、也選不到但其實還存在表單值裡的殘留 id。
+        const validIds = new Set(r.data.map((c) => c.item_id))
+        const current: number[] = form.getFieldValue('excluded_item_ids') || []
+        const kept = current.filter((id) => validIds.has(id))
+        if (kept.length !== current.length) {
+          form.setFieldsValue({ excluded_item_ids: kept })
+        }
+      })
+      .finally(() => setExcludeCandidatesLoading(false))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modalOpen, selectedCompanies, selectedCategories])
+
+  const excludeItemOptions = useMemo(
+    () =>
+      excludeCandidates.map((c) => ({
+        label: `${c.item_code}　${c.item_name}${c.category ? `（${c.category}）` : ''}`,
+        value: c.item_id,
+      })),
+    [excludeCandidates],
   )
 
   const openCreate = () => {
@@ -162,6 +262,7 @@ export default function CpCyclesPage() {
       applicable_scope: csvToArr(r.applicable_scope),
       applicable_categories: csvToArr(r.applicable_categories),
       applicable_department_ids: csvToIds(r.applicable_department_ids),
+      excluded_item_ids: csvToIds(r.excluded_item_ids),
     } as CycleFormValues)
     setModalOpen(true)
   }
@@ -172,6 +273,7 @@ export default function CpCyclesPage() {
     applicable_scope: arrToCsv(values.applicable_scope),
     applicable_categories: arrToCsv(values.applicable_categories),
     applicable_department_ids: arrToCsv(values.applicable_department_ids),
+    excluded_item_ids: arrToCsv(values.excluded_item_ids),
   })
 
   /** 真正送出（deleteOrphans 由呼叫端決定） */
@@ -428,13 +530,30 @@ export default function CpCyclesPage() {
           <Form.Item
             name="applicable_categories"
             label="適用品類"
-            extra="留空 = 不限品類；同時決定請購單「可選料號」的範圍"
+            extra="留空 = 不限品類；同時決定請購單「可選料號」的範圍；選項會依「適用公司」連動過濾，不會列出別公司的品類"
           >
             <Select
               mode="multiple"
               allowClear
               placeholder="留空 = 不限品類"
-              options={categories.map((c) => ({ label: c, value: c }))}
+              loading={categoriesLoading}
+              options={categoryOptions}
+              optionFilterProp="label"
+            />
+          </Form.Item>
+          <Form.Item
+            name="excluded_item_ids"
+            label="排除料號"
+            extra="從上面「適用品類」整包中，手動排除不要出現的少數幾筆料號；品類底下之後新增的料號仍會自動涵蓋，不受這裡影響。選項依目前的「適用公司」＋「適用品類」列出。"
+          >
+            <Select
+              mode="multiple"
+              allowClear
+              placeholder="留空 = 不排除任何料號"
+              loading={excludeCandidatesLoading}
+              options={excludeItemOptions}
+              optionFilterProp="label"
+              notFoundContent={excludeCandidatesLoading ? '載入中...' : '沒有符合的料號'}
             />
           </Form.Item>
 

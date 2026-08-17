@@ -9,7 +9,9 @@
  *
  * 「新增請購單」是備用手動路徑：正常情況請購單由「產生本期請購單」一次
  * 建好，這個按鈕給某個部門臨時需要補建一張的情境用，走後端原本就有的
- * POST /requests 備用路徑，同一週期＋期別＋部門只能有一張。
+ * POST /requests 備用路徑。2026-08-17 起同一週期＋期別＋部門允許有多張單
+ * （不再擋，只提醒，見下方 2026-08-17 說明），彙整時會自動加總同部門的
+ * 多張單，不會漏算。
  *
  * 2026-07-17（第三次調整，請購單流程大改版，與 Samuel 確認）：
  * 拿掉送出／核准／退回。期別（period_label）不再由使用者輸入，一律由後端
@@ -44,15 +46,32 @@
  *  - `generateRequestsForPeriod` 的回傳型別從 `CpRequest[]` 改成
  *    `{ requests, skipped }`。skipped 一定要顯示給使用者——買家看到「怎麼少了
  *    一張單」卻沒有任何說明的話，只會以為系統壞了。
+ *
+ * 2026-08-17（放寬手動新增的擋重，與 Samuel 確認）：「新增請購單」原本查到
+ * 同週期＋期別＋部門已有一張單就拋錯擋掉，理由是當時 DB 有對應的
+ * UniqueConstraint。該限制已於 2026-08-13（複製上期請購單功能）拿掉，DB 層
+ * 本來就允許同部門同期多張單並存，這裡的擋重只是 app 層殘留的舊規則。改成
+ * **只提醒不擋**：後端查到已有其他單會在 `createRequest` 的回傳多帶
+ * `duplicate_warning` 文字，前端改用 `message.warning` 提示，單子照樣建立
+ * 成功；彙整單那邊 `generate_summary_from_requests()` 本來就是撈同部門所有
+ * 請購單加總數量，天然支援多張單，不需要跟著改。
+ *
+ * 2026-08-17（週期下拉排除停用／暫停）：`cycles`（頁面上方的 GET /cycles，
+ * 不帶 status 篩選）保留給「篩選清單」跟「關閉請購單」用——這兩個是在
+ * 看/清理已經存在的舊資料，週期就算後來被停用，過去掛在它底下的單還是要
+ * 篩得到、關得掉。但「新增請購單」「產生本期請購單」「複製上期請購單」都是
+ * 要建立新的請購行為，改用 `activeCycles`（前端過濾 `status === 'active'`）
+ * 只給啟用中的週期選，不然選到已經停用的舊週期會建出沒人管的單。
  */
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Alert, Button, Card, Modal, Select, Space, Table, Tag, Tooltip, Typography, message } from 'antd'
 import {
-  CopyOutlined, EditOutlined, EyeOutlined, LockOutlined, PlusOutlined, ThunderboltOutlined, UnlockOutlined,
+  CopyOutlined, DeleteOutlined, EditOutlined, EyeOutlined, ExclamationCircleOutlined,
+  LockOutlined, PlusOutlined, ThunderboltOutlined, UnlockOutlined,
 } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import {
-  closeAllRequests, closeRequests, copyRequest, createRequest, generateRequestsForPeriod,
+  closeAllRequests, closeRequests, copyRequest, createRequest, deleteRequest, generateRequestsForPeriod,
   getCopySourceCandidates, getCpDepartments, getCycles, getOpenRequestsForClose, getRequests,
   previewGenerateRequests, reopenRequests,
 } from '@/api/cyclePurchase'
@@ -174,6 +193,13 @@ export default function CpRequestsPage() {
   const [loadingOpen, setLoadingOpen] = useState(false)
   const [selectedCloseIds, setSelectedCloseIds] = useState<number[]>([])
 
+  // 2026-08-17：`cycles`（全部狀態，含停用／暫停）留給「篩選清單」跟「關閉請購單」
+  // 用——這兩個是在看/清理已經存在的舊資料，就算週期後來被停用，過去掛在
+  // 它底下的單還是要篩得到、關得掉。但「新增請購單」「產生本期請購單」
+  // 「複製上期請購單」這三個都是要建立新的請購行為，停用/暫停的週期選了也
+  // 只會撞後端擋掉或建出沒人管的單，下拉選項只給啟用中的週期。
+  const activeCycles = useMemo(() => cycles.filter((c) => c.status === 'active'), [cycles])
+
   const load = () => {
     setLoading(true)
     Promise.all([
@@ -212,7 +238,14 @@ export default function CpRequestsPage() {
     try {
       setCreating(true)
       const created = await createRequest({ cycle_id: createCycleId, department_id: createDeptId })
-      message.success('已建立請購單')
+      // 2026-08-17：同部門本期已有單不再擋，只是提醒——後端查到會在
+      // duplicate_warning 帶警告文字，這裡改用 warning 而不是 error 提示，
+      // 因為單子已經建立成功了。
+      if (created.data.duplicate_warning) {
+        message.warning(created.data.duplicate_warning, 6)
+      } else {
+        message.success('已建立請購單')
+      }
       setCreateModal(false)
       load()
       navigate(`/cycle-purchase/requests/${created.data.id}`)
@@ -409,6 +442,29 @@ export default function CpRequestsPage() {
     }
   }
 
+  // 2026-08-17 新增：刪除請購單。後端只放行「明細 0 筆＋未關閉＋未彙整」的空白單，
+  // 前端不預先算 item_count（清單 API 沒帶這個欄位），有明細/已關閉/已彙整時
+  // 後端會回清楚的錯誤原因，直接顯示給使用者，不用前端另外猜。
+  const handleDelete = (row: CpRequest) => {
+    Modal.confirm({
+      title: `確定要刪除「${row.request_no}」？`,
+      icon: <ExclamationCircleOutlined />,
+      content: '只有明細 0 筆、未關閉、未彙整的空白單才能刪除；如果這張單其實有明細，會顯示原因並取消刪除。',
+      okText: '刪除',
+      okButtonProps: { danger: true },
+      cancelText: '取消',
+      onOk: async () => {
+        try {
+          await deleteRequest(row.id)
+          message.success(`已刪除 ${row.request_no}`)
+          load()
+        } catch (err: any) {
+          message.error(errMsg(err, '刪除失敗'))
+        }
+      },
+    })
+  }
+
   const companyOptions = Array.from(new Set(departments.map((d) => d.company))).map((c) => ({ label: c, value: c }))
 
   return (
@@ -567,7 +623,7 @@ export default function CpRequestsPage() {
             {
               title: '操作',
               key: 'actions',
-              width: 160,
+              width: 220,
               render: (_: unknown, r: CpRequest) => (
                 <Space size="small">
                   <Button
@@ -579,6 +635,9 @@ export default function CpRequestsPage() {
                   </Button>
                   {canClose && r.is_closed && (
                     <Button size="small" icon={<UnlockOutlined />} onClick={() => handleReopen(r)}>重新開啟</Button>
+                  )}
+                  {canEdit && !r.is_closed && !r.is_summarized && (
+                    <Button size="small" danger icon={<DeleteOutlined />} onClick={() => handleDelete(r)}>刪除</Button>
                   )}
                 </Space>
               ),
@@ -607,7 +666,7 @@ export default function CpRequestsPage() {
             placeholder="選擇週期"
             value={generateCycleId}
             onChange={handleGenerateCycleChange}
-            options={cycles.map((c) => ({ label: c.cycle_name, value: c.id }))}
+            options={activeCycles.map((c) => ({ label: c.cycle_name, value: c.id }))}
           />
         </div>
         <div style={{ color: '#888', fontSize: 12 }}>
@@ -684,7 +743,7 @@ export default function CpRequestsPage() {
             placeholder="選擇週期"
             value={createCycleId}
             onChange={setCreateCycleId}
-            options={cycles.map((c) => ({ label: c.cycle_name, value: c.id }))}
+            options={activeCycles.map((c) => ({ label: c.cycle_name, value: c.id }))}
           />
         </div>
         <div style={{ marginBottom: 8 }}>
@@ -700,8 +759,10 @@ export default function CpRequestsPage() {
           />
         </div>
         <div style={{ color: '#888', fontSize: 12 }}>
-          會建立本月（{currentYearMonth()}）的請購單；同一週期＋期別＋部門只能有一張，
-          若「產生本期請購單」已經建過，這裡會顯示錯誤訊息。
+          會建立本月（{currentYearMonth()}）的請購單。同一週期＋期別＋部門就算已經有單
+          （含「產生本期請購單」已經建過的），也可以再手動新增一張，不會被擋，
+          只會提醒你已有既有單號；彙整時同部門的多張單會自動加總，不會漏算。
+          週期下拉只列出「啟用中」的週期，停用／暫停的不會出現在這裡。
         </div>
       </Modal>
 
@@ -725,7 +786,7 @@ export default function CpRequestsPage() {
             placeholder="選擇週期"
             value={copyCycleId}
             onChange={(v) => { setCopyCycleId(v); setCopyDeptId(undefined) }}
-            options={cycles.map((c) => ({ label: c.cycle_name, value: c.id }))}
+            options={activeCycles.map((c) => ({ label: c.cycle_name, value: c.id }))}
           />
         </div>
         <div style={{ marginBottom: 8 }}>

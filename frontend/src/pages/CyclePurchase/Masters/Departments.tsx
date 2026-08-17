@@ -1,12 +1,23 @@
 /**
  * 週期採購 — 部門主檔維護
- * 2026-07-10 決策：週期採購自建獨立部門主檔，不與 Budget／Contract 模組的
- * 部門主檔關聯（三套主檔目前彼此獨立）。
+ * 2026-07-10 決策（已於 2026-08-17 反轉，見下方）：週期採購自建獨立部門
+ * 主檔，不與 Budget／Contract 模組的部門主檔關聯。
  *
  * 2026-07-11 新增「承辦人」：owner_user_id 軟關聯到 portal.db 的 users.id，
  * 供 Dashboard「待辦提醒」判斷登入者屬於哪個週採部門用（見
  * cycle_purchase_request_service.get_dashboard_todos）。承辦人清單沿用既有
  * GET /users/options（任何登入者可呼叫，回傳啟用中使用者），不需要新增後端。
+ *
+ * 2026-08-17（反轉部分決策，與 Samuel 確認跨模組整合範圍後）：公司/部門
+ * 關聯改為全站唯一真實來源「系統設定 → 公司/部門管理」（reference_data.py
+ * Company/RefDepartment），這裡的部門主檔改成鏡像同步（見
+ * cycle_purchase_department_sync.py）。`source_department_id` 非 null 的列
+ * 代表「同步」而來：公司／部門名稱由同步覆蓋，這裡設成唯讀（後端
+ * update_department 也會剔除這兩欄，前端唯讀只是提示，不是唯一防線）；
+ * 部門代碼／承辦人／啟用狀態仍是這裡自己維護，同步不會碰。null 代表這筆
+ * 是本地自建（例如尚未在系統設定建檔的部門），公司/部門名稱可自由編輯，
+ * 之後系統設定補上同名的公司/部門時，下次同步會自動比對合併（比對優先序
+ * 見 sync 檔頭），不需要手動處理。
  */
 import { useEffect, useState } from 'react'
 import {
@@ -99,6 +110,13 @@ export default function CpDepartmentsPage() {
             { title: '部門代碼', dataIndex: 'dept_code', width: 100 },
             { title: '部門名稱', dataIndex: 'dept_name' },
             {
+              title: '來源',
+              dataIndex: 'source_department_id',
+              width: 90,
+              render: (v?: string | null) =>
+                v ? <Tag color="blue">同步</Tag> : <Tag>本地自建</Tag>,
+            },
+            {
               title: '承辦人',
               dataIndex: 'owner_name',
               width: 120,
@@ -143,14 +161,20 @@ export default function CpDepartmentsPage() {
         cancelText="取消"
       >
         <Form form={form} layout="vertical" style={{ marginTop: 16 }}>
+          {editing?.source_department_id && (
+            <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 12 }}>
+              這筆部門是從「系統設定 → 公司/部門管理」同步過來的，公司別／部門名稱由同步維護，這裡設為唯讀；
+              要改名請到「系統設定 → 公司/部門管理」改，下次同步會自動帶過來。
+            </Typography.Paragraph>
+          )}
           <Form.Item name="company" label="公司別" rules={[{ required: true }]}>
-            <Input placeholder="如：日曜天地／春大直" />
+            <Input placeholder="如：日曜天地／春大直" disabled={!!editing?.source_department_id} />
           </Form.Item>
           <Form.Item name="dept_code" label="部門代碼" rules={[{ required: true }]}>
             <Input />
           </Form.Item>
           <Form.Item name="dept_name" label="部門名稱" rules={[{ required: true }]}>
-            <Input />
+            <Input disabled={!!editing?.source_department_id} />
           </Form.Item>
           <Form.Item
             name="owner_user_id"

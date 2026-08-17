@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.dependencies import get_current_user, require_roles
+from app.dependencies import get_current_user, require_permission, require_roles
 from app.models.reference_data import Company, RefDepartment, PricingSpec, SlaMetricType
 from app.models.user import User
 from app.schemas.reference_data import (
@@ -25,7 +25,21 @@ from app.schemas.reference_data import (
 router = APIRouter()
 
 # 管理員 dependency（沿用現有 require_roles，system_admin 自動放行）
+# ⚠ 2026-08-17：公司別／部門別改用下面的 _dept_admin_dep（見該處說明），
+# 這個 _admin_dep 現在只剩計價規格／SLA 指標類型在用，維持原樣不動。
 _admin_dep = require_roles("system_admin", "tenant_admin")
+
+# 2026-08-17 新增：公司別／部門別要開放給「系統設定 → 公司/部門管理」這個新頁面，
+# 也要讓週期採購鏡像同步的來源資料可以被非 system_admin 角色管理，因此改用跟
+# 全站其他模組一致的 permission_key 模型，不再沿用寫死的 require_roles。
+#
+# tenant_admin 這個角色目前資料庫裡 0 人持有（跟 2026-08-12 users.py 改用
+# settings_users_manage 時的情況完全相同，可比照辦理），改掉不影響任何真實
+# 使用者；system_admin 仍透過 permissions=["*"] 無條件通過。
+#
+# 刻意不影響 pricing-specs／sla-metric-types（維持 _admin_dep）：那兩個是合約
+# 模組的 K2 SLA 設定，跟這次「公司/部門」的整合範圍無關，不順手一起改。
+_dept_admin_dep = require_permission("settings_departments_manage")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -44,7 +58,7 @@ def company_options(
 @router.get("/companies", response_model=List[CompanyResponse], summary="公司別清單")
 def list_companies(
     db: Session = Depends(get_db),
-    current_user: User = Depends(_admin_dep),
+    current_user: User = Depends(_dept_admin_dep),
 ):
     return db.query(Company).order_by(Company.name).all()
 
@@ -53,7 +67,7 @@ def list_companies(
 def create_company(
     payload: CompanyCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(_admin_dep),
+    current_user: User = Depends(_dept_admin_dep),
 ):
     if db.query(Company).filter(Company.name == payload.name).first():
         raise HTTPException(status_code=400, detail=f"公司「{payload.name}」已存在")
@@ -69,7 +83,7 @@ def update_company(
     company_id: int,
     payload: CompanyUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(_admin_dep),
+    current_user: User = Depends(_dept_admin_dep),
 ):
     obj = db.query(Company).filter(Company.id == company_id).first()
     if not obj:
@@ -87,7 +101,7 @@ def update_company(
 def toggle_company(
     company_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(_admin_dep),
+    current_user: User = Depends(_dept_admin_dep),
 ):
     obj = db.query(Company).filter(Company.id == company_id).first()
     if not obj:
@@ -119,7 +133,7 @@ def department_options(
 def list_departments(
     company_id: Optional[int] = Query(None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(_admin_dep),
+    current_user: User = Depends(_dept_admin_dep),
 ):
     q = db.query(RefDepartment)
     if company_id is not None:
@@ -138,7 +152,7 @@ def list_departments(
 def create_department(
     payload: DepartmentCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(_admin_dep),
+    current_user: User = Depends(_dept_admin_dep),
 ):
     company = db.query(Company).filter(Company.id == payload.company_id).first()
     if not company:
@@ -163,7 +177,7 @@ def update_department(
     dept_id: int,
     payload: DepartmentUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(_admin_dep),
+    current_user: User = Depends(_dept_admin_dep),
 ):
     obj = db.query(RefDepartment).filter(RefDepartment.id == dept_id).first()
     if not obj:
@@ -193,7 +207,7 @@ def update_department(
 def toggle_department(
     dept_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(_admin_dep),
+    current_user: User = Depends(_dept_admin_dep),
 ):
     obj = db.query(RefDepartment).filter(RefDepartment.id == dept_id).first()
     if not obj:

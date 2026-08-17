@@ -43,6 +43,14 @@ Prefix: /api/v1/cycle-purchase
     無權限者就算硬送 close_state=closed_auto 也不會外洩：可見性過濾是另一個
     AND 條件，結果必然是空集合。
 
+2026-08-17（新增 DELETE /requests/{id}，與 Samuel 確認）：
+  - 手動新增在同日放寬成「同週期＋期別＋部門已有單也不擋，只提醒」（見
+    create_request()），代表使用者可能選錯週期/部門建出一張沒用的空白單，
+    原本沒有「自己刪掉重建」的入口，只能等系統在週期範圍縮小時順便清孤兒單。
+  - 判準沿用既有 find_orphan_blank_requests()／delete_orphan_blank_requests()
+    的三條件（明細 0 筆＋未關閉＋未彙整），不另外發明一套標準；權限與
+    _ensure_own_department() 都比照 PUT /requests/{id} 同一套規則。
+
 GET    /requests                              請購單清單（依週期／期別／部門／close_state 篩選；已關閉的單需權限）
 GET    /requests/todos                        Dashboard 待辦提醒（我的待填 + 本月待關閉）
 GET    /requests/{id}                          請購單詳情（含明細；已關閉的單需權限，否則 403）
@@ -52,6 +60,7 @@ POST   /requests                               手動新增單一部門的請購
 GET    /requests/copy-candidates               複製上期請購單：列出同週期＋同部門過去有填過品項的請購單供選擇
 POST   /requests/{id}/copy                     複製上期請購單：以某張過去的單為範本建立新單（2026-08-13 新增）
 PUT    /requests/{id}                          更新請購單（成本中心／備註，僅「開放中」可編輯；2026-08-07 起不再限當月）
+DELETE /requests/{id}                          刪除請購單（僅限明細 0 筆＋未關閉＋未彙整的空白單；2026-08-17 新增）
 GET    /requests/{id}/available-items          可選料號清單（該公司＋部門＋該週期品類下有對照的啟用中料號）
 POST   /requests/{id}/items                    新增請購明細
 PUT    /requests/{id}/items/{item_row_id}      更新請購明細（數量／會計科目／備註）
@@ -291,6 +300,27 @@ def update_request(
     if not req:
         raise HTTPException(status_code=404, detail="請購單不存在")
     return req
+
+
+@router.delete(
+    "/requests/{request_id}",
+    summary="刪除請購單（僅限明細 0 筆＋未關閉＋未彙整的空白單）",
+)
+def delete_request(
+    request_id: int,
+    current_user: User = Depends(require_permission("cycle_purchase_request")),
+    db: Session = Depends(get_cycle_purchase_db),
+    portal_db: Session = Depends(get_db),
+):
+    """2026-08-17 新增：判準跟既有「週期範圍縮小時自動清孤兒單」
+    （find_orphan_blank_requests／delete_orphan_blank_requests）完全一樣，
+    只是這裡是使用者主動刪單一張——手動新增放寬擋重後，選錯週期／部門、
+    或手滑重複建立的空白單需要有辦法清掉。"""
+    _ensure_own_department(request_id, current_user, db, portal_db)
+    ok = _handle(svc.delete_request, db, request_id)
+    if ok is None:
+        raise HTTPException(status_code=404, detail="請購單不存在")
+    return {"ok": True}
 
 
 @router.get(

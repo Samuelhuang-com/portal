@@ -180,6 +180,12 @@ def cycle_categories(cycle: CyclePurchaseCycle) -> set[str]:
     return _split_csv(cycle.applicable_categories)
 
 
+def cycle_excluded_item_ids(cycle: CyclePurchaseCycle) -> set[int]:
+    """這個週期從適用品類整包中手動排除的料號 id 集合；空集合代表不排除任何料號。
+    是例外排除清單，不是白名單——見 models/cycle_purchase_cycle.py 2026-08-16 說明。"""
+    return _split_csv_ids(cycle.excluded_item_ids)
+
+
 def _company_in_scope(cycle: CyclePurchaseCycle, company: str) -> bool:
     """applicable_scope 空值或 'all' 代表不限公司。"""
     scope = (cycle.applicable_scope or "").strip()
@@ -192,10 +198,15 @@ def _company_in_scope(cycle: CyclePurchaseCycle, company: str) -> bool:
 
 
 def _has_available_items(
-    db: Session, company: str, department_id: int, categories: set[str]
+    db: Session,
+    company: str,
+    department_id: int,
+    categories: set[str],
+    excluded_item_ids: set[int] = frozenset(),
 ) -> bool:
     """
-    D 層判斷：這個「公司＋部門」在指定品類下，有沒有任何啟用中料號可以請購。
+    D 層判斷：這個「公司＋部門」在指定品類下（扣掉手動排除的料號），
+    有沒有任何啟用中料號可以請購。
 
     篩選條件必須與 get_available_items() 一致，否則會產生「有單但點進去
     沒有料號可選」的狀況——那比「沒有產生單」更難跟使用者解釋。
@@ -211,6 +222,8 @@ def _has_available_items(
     )
     if categories:
         query = query.filter(CyclePurchaseItem.category.in_(categories))
+    if excluded_item_ids:
+        query = query.filter(~CyclePurchaseItem.id.in_(excluded_item_ids))
     return (query.scalar() or 0) > 0
 
 
@@ -230,6 +243,7 @@ def resolve_applicable_departments(
     （那是設定本來就想要的結果，列出來只會變成雜訊）。
     """
     categories = cycle_categories(cycle)
+    excluded_item_ids = cycle_excluded_item_ids(cycle)
     selected_ids = _split_csv_ids(cycle.applicable_department_ids)
     excluded: list[dict] = []
 
@@ -279,14 +293,14 @@ def resolve_applicable_departments(
             query = query.filter(CyclePurchaseDepartment.company.in_(companies))
         candidates = query.all()
 
-    # ── D 層：該公司＋部門在此品類下有沒有啟用中料號 ──────────────────────
+    # ── D 層：該公司＋部門在此品類下（扣掉手動排除的料號）有沒有啟用中料號 ──
     included: list[CyclePurchaseDepartment] = []
     for dept in candidates:
-        if _has_available_items(db, dept.company, dept.id, categories):
+        if _has_available_items(db, dept.company, dept.id, categories, excluded_item_ids):
             included.append(dept)
         else:
             if categories:
-                reason = f"此週期品類「{'、'.join(sorted(categories))}」下沒有啟用中料號"
+                reason = f"此週期品類「{'、'.join(sorted(categories))}」下沒有啟用中料號（或已被排除料號設定排除）"
             else:
                 reason = "此部門在這家公司底下沒有啟用中料號（此週期未限定品類）"
             excluded.append({
@@ -654,7 +668,18 @@ def copy_request(db: Session, source_request_id: int, user) -> tuple[CyclePurcha
 
 def create_request(db: Session, payload) -> CyclePurchaseRequest:
     """手動建立單一部門的請購單（備用路徑；一般由 generate_requests_for_period 一次幫全部部門建立）。
-    period_label 一律是「現在」的月份，不接受呼叫端指定。"""
+    period_label 一律是「現在」的月份，不接受呼叫端指定。
+
+    2026-08-17（與 Samuel 確認，放寬手動新增的擋重）：改版前這裡查到同週期＋
+    期別＋部門已有一張單就拋錯擋掉，理由是當時 DB 有對應的 UniqueConstraint。
+    該 UniqueConstraint 已在 2026-08-13（複製上期請購單功能）拿掉，改成普通
+    Index，DB 層面本來就允許同部門同期有多張單並存；這裡的擋重檢查因此只是
+    app 層級殘留的舊規則，不再有 DB 一致性理由要擋。改成**只提醒不擋**——
+    查到已有其他單就把警告文字掛在 `duplicate_warning`（衍生欄位，不落地）
+    讓前端提示使用者，但照樣把新單建出來。彙整單那邊 `generate_summary_from_requests()`
+    本來就是用 `.all()` 撈同部門所有請購單、依 (company, item_id, department_id)
+    加總數量，天然支援同部門多張單一起彙整，不需要跟著改。
+    """
     dept = db.query(CyclePurchaseDepartment).filter(CyclePurchaseDepartment.id == payload.department_id).first()
     if not dept:
         raise RequestServiceError("部門不存在")
@@ -664,9 +689,6 @@ def create_request(db: Session, payload) -> CyclePurchaseRequest:
 
     period_label = _current_period_label()
 
-    # 防呆：cycle_purchase_requests 有 (cycle_id, period_label, department_id) 唯一鍵限制，
-    # 若不先檢查，重複建立會在 flush 時丟出未攔截的 IntegrityError（500），
-    # 這裡改成清楚的訊息。
     existing = (
         db.query(CyclePurchaseRequest)
         .filter(
@@ -676,10 +698,12 @@ def create_request(db: Session, payload) -> CyclePurchaseRequest:
         )
         .first()
     )
+    duplicate_warning = None
     if existing:
-        raise RequestServiceError(
+        duplicate_warning = (
             f"「{cycle.cycle_name}／{period_label}」的「{dept.dept_name}」已經有一張請購單"
-            f"（{existing.request_no}），不能重複建立"
+            f"（{existing.request_no}），這是額外新增的第 2 張以上；彙整時會自動把同部門的"
+            f"多張單加總，不會漏掉"
         )
 
     req = CyclePurchaseRequest(
@@ -694,7 +718,9 @@ def create_request(db: Session, payload) -> CyclePurchaseRequest:
     )
     db.add(req)
     db.flush()
-    return _attach_display_fields(db, req)
+    req = _attach_display_fields(db, req)
+    req.duplicate_warning = duplicate_warning
+    return req
 
 
 def _check_editable(req: CyclePurchaseRequest) -> None:
@@ -725,6 +751,48 @@ def update_request(db: Session, request_id: int, payload) -> Optional[CyclePurch
         setattr(req, k, v)
     db.flush()
     return _attach_display_fields(db, req)
+
+
+def delete_request(db: Session, request_id: int) -> Optional[bool]:
+    """刪除單一請購單（2026-08-17 新增，與 Samuel 確認）。
+
+    背景：手動新增在 2026-08-17 放寬成只提醒不擋（見 create_request()），
+    代表使用者可能手滑點兩次、或像這次一樣選錯週期，建出一張完全空白、
+    沒有用的請購單，需要有地方能清掉它——原本只有「週期範圍縮小時系統
+    自動判斷孤兒單」（find_orphan_blank_requests / delete_orphan_blank_requests）
+    這一條路，沒有「使用者自己主動刪單一張」的入口。
+
+    判準刻意沿用既有孤兒單判斷的三個條件（一致，不另外發明一套）：
+    明細 0 筆 ＋ 未關閉 ＋ 未彙整，三者全部成立才能刪。**不做軟刪除**——
+    這三個條件本身就代表「這張單沒有任何人力/資料投入過」，硬刪跟既有
+    delete_orphan_blank_requests() 的行為一致，不需要留痕跡。
+
+    回傳 True＝刪除成功；None＝請購單不存在（router 轉 404）；
+    條件不成立則拋 RequestServiceError 講清楚哪個條件擋住。
+    """
+    req = db.query(CyclePurchaseRequest).filter(CyclePurchaseRequest.id == request_id).first()
+    if not req:
+        return None
+
+    item_count = (
+        db.query(func.count(CyclePurchaseRequestItem.id))
+        .filter(CyclePurchaseRequestItem.request_id == req.id)
+        .scalar()
+        or 0
+    )
+    if item_count > 0:
+        raise RequestServiceError(
+            f"「{req.request_no}」已經有 {item_count} 筆明細，不能刪除"
+            "（如果是要清掉明細重填，請逐筆刪明細，不要刪整張單）"
+        )
+    if req.is_closed:
+        raise RequestServiceError(f"「{req.request_no}」已經關閉，不能刪除（如需清除請先重新開啟）")
+    if req.is_summarized:
+        raise RequestServiceError(f"「{req.request_no}」已經在彙整單裡，不能刪除")
+
+    db.delete(req)
+    db.flush()
+    return True
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -768,6 +836,9 @@ def get_available_items(db: Session, request_id: int):
     applicable_categories 從建檔以來沒有任何程式讀過。現在依這張單所屬週期的
     applicable_categories 篩 CyclePurchaseItem.category（空值＝不限品類），
     篩選條件與 _has_available_items() 的 D 層判斷保持一致。
+
+    2026-08-16 新增排除料號篩選：品類整包之後，再扣掉這個週期
+    excluded_item_ids 裡列出的料號 id（例外排除清單，不是白名單）。
     """
     req = db.query(CyclePurchaseRequest).filter(CyclePurchaseRequest.id == request_id).first()
     if not req:
@@ -775,6 +846,7 @@ def get_available_items(db: Session, request_id: int):
 
     cycle = db.query(CyclePurchaseCycle).filter(CyclePurchaseCycle.id == req.cycle_id).first()
     categories = cycle_categories(cycle) if cycle else set()
+    excluded_item_ids = cycle_excluded_item_ids(cycle) if cycle else set()
 
     query = (
         db.query(CyclePurchaseItem, CyclePurchaseItemMapping)
@@ -790,6 +862,8 @@ def get_available_items(db: Session, request_id: int):
     )
     if categories:
         query = query.filter(CyclePurchaseItem.category.in_(categories))
+    if excluded_item_ids:
+        query = query.filter(~CyclePurchaseItem.id.in_(excluded_item_ids))
     rows = query.order_by(CyclePurchaseItem.item_code).all()
     result = []
     for item, mapping in rows:
