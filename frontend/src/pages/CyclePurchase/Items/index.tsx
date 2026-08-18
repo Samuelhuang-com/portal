@@ -269,7 +269,7 @@ export default function CpItemsPage() {
             },
             { title: '單位', dataIndex: 'unit', width: 70 },
             { title: '預設供應商', dataIndex: 'default_vendor_name', width: 140 },
-            { title: '參考單價', dataIndex: 'unit_price', width: 90, render: (v) => v != null ? `$${v}` : '—' },
+            { title: '參考單價', dataIndex: 'unit_price', width: 90, render: (v) => v != null ? `$${Number(v).toFixed(2)}` : '—' },
             {
               title: '狀態',
               dataIndex: 'is_active',
@@ -407,7 +407,7 @@ export default function CpItemsPage() {
               <InputNumber style={{ width: '100%' }} min={0} />
             </Form.Item>
             <Form.Item name="unit_price" label="參考單價" style={{ width: '25%', marginLeft: 8 }}>
-              <InputNumber style={{ width: '100%' }} min={0} />
+              <InputNumber style={{ width: '100%' }} min={0} precision={2} step={0.01} />
             </Form.Item>
           </Space.Compact>
           <Space.Compact block>

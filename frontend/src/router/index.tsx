@@ -156,6 +156,7 @@ import CpDashboardPage                 from '@/pages/CyclePurchase/Dashboard'
 import CpItemsPage                     from '@/pages/CyclePurchase/Items'
 import CpCyclesPage                    from '@/pages/CyclePurchase/Cycles'
 import CpVendorsPage                   from '@/pages/CyclePurchase/Masters/Vendors'
+import CpCategoriesPage                from '@/pages/CyclePurchase/Masters/Categories'
 import CpDepartmentsPage                from '@/pages/CyclePurchase/Masters/Departments'
 import CpCostCentersPage               from '@/pages/CyclePurchase/Masters/CostCenters'
 import CpAccountCodesPage              from '@/pages/CyclePurchase/Masters/AccountCodes'
@@ -613,6 +614,7 @@ export default function AppRouter() {
           <Route path="items"                    element={<CpItemsPage />} />
           <Route path="cycles"                   element={<CpCyclesPage />} />
           <Route path="masters/vendors"          element={<CpVendorsPage />} />
+          <Route path="masters/categories"       element={<CpCategoriesPage />} />
           <Route path="masters/departments"      element={<CpDepartmentsPage />} />
           <Route path="masters/cost-centers"     element={<CpCostCentersPage />} />
           <Route path="masters/account-codes"    element={<CpAccountCodesPage />} />

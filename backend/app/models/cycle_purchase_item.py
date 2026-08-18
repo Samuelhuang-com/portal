@@ -124,7 +124,23 @@ class CyclePurchaseItemMapping(CyclePurchaseBase):
     """
     __tablename__ = "cycle_purchase_item_mappings"
     __table_args__ = (
-        UniqueConstraint("item_id", "company", name="uq_cp_item_mapping_item_company"),
+        # 2026-08-18：唯一鍵從 (item_id, company) 擴到含 department_id。
+        # 原因：春大直的文具用品（G 系列）在《設料號明細表》裡的分頁就叫
+        # 「文具用品-所有部門需求」，各部門都會領用；請購單的「可選料號」是按
+        # 公司＋部門查 mapping（get_available_items），一個料號只能有一筆
+        # mapping 的話，文具就只會出現在其中一個部門底下，其他部門請購不到。
+        # 改成一個料號對每個需要的部門各建一筆 mapping。
+        #
+        # ⚠️ 這是**放寬**限制，不是收緊：原本合法的資料在新約束下一律仍然合法，
+        # 所以不需要先清資料。反過來要注意的是「同公司多筆 mapping」現在會
+        # 合法存在，凡是用 (item_id, company) 去 .first() 拿單筆 mapping 的
+        # 舊查詢都要補上 department_id 條件，否則會隨機拿到其中一個部門的
+        # 單價／供應商（已知並已修正的一處：
+        # cycle_purchase_summary_service.generate_summary）。
+        UniqueConstraint(
+            "item_id", "company", "department_id",
+            name="uq_cp_item_mapping_item_company_dept",
+        ),
     )
 
     id                   = Column(Integer, primary_key=True, autoincrement=True)

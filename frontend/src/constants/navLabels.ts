@@ -276,6 +276,7 @@ export const NAV_PAGE = {
   cyclePurchaseCycles:         '週期設定',            // ← route /cycle-purchase/cycles
   cyclePurchaseRequests:       '請購單',              // ← route /cycle-purchase/requests
   cyclePurchaseVendors:        '供應商主檔',          // ← route /cycle-purchase/masters/vendors
+  cyclePurchaseCategories:     '類別主檔',            // ← route /cycle-purchase/masters/categories
   cyclePurchaseDepartments:    '部門主檔',            // ← route /cycle-purchase/masters/departments
   cyclePurchaseCostCenters:    '成本中心主檔',        // ← route /cycle-purchase/masters/cost-centers
   cyclePurchaseAccountCodes:   '會計科目主檔',        // ← route /cycle-purchase/masters/account-codes

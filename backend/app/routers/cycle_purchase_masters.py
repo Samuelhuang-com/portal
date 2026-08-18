@@ -24,6 +24,9 @@ from app.schemas.cycle_purchase_reference import (
     CostCenterCreate, CostCenterOut, CostCenterUpdate,
     AccountCodeCreate, AccountCodeOut, AccountCodeUpdate,
 )
+from app.schemas.cycle_purchase_category import (
+    CategoryCreate, CategoryNextCodeOut, CategoryOut, CategoryUpdate,
+)
 from app.services import cycle_purchase_service as svc
 
 router = APIRouter()
@@ -248,3 +251,73 @@ def update_account_code(
     if not ac:
         raise HTTPException(status_code=404, detail="會計科目不存在")
     return ac
+
+
+# ── 類別主檔（2026-08-18 新增）────────────────────────────────────────────────
+# 三層編碼（大分類英文 + 中分類 2 碼 + 細分類 2 碼 + 流水 3 碼），
+# 設計理由與 department_id 可為 NULL 的語意見
+# models/cycle_purchase_category.py 檔頭。
+
+@router.get("/categories", response_model=List[CategoryOut], summary="類別主檔清單")
+def list_categories(
+    company: Optional[str] = Query(None, description="公司別"),
+    department_id: Optional[int] = Query(None, description="歸屬部門"),
+    q: str = Query("", description="關鍵字（類別／大中細分類名稱）"),
+    is_active: Optional[bool] = Query(None),
+    _: User = Depends(require_permission("cycle_purchase_view")),
+    db: Session = Depends(get_cycle_purchase_db),
+):
+    return svc.list_categories(
+        db, company=company, department_id=department_id, q=q, is_active=is_active
+    )
+
+
+@router.post(
+    "/categories",
+    response_model=CategoryOut,
+    status_code=status.HTTP_201_CREATED,
+    summary="新增類別",
+)
+def create_category(
+    payload: CategoryCreate,
+    _: User = Depends(require_permission("cycle_purchase_admin")),
+    db: Session = Depends(get_cycle_purchase_db),
+):
+    try:
+        return svc.create_category(db, payload)
+    except IntegrityError:
+        db.rollback()
+        raise _conflict("同公司底下已有相同的大／中／細分類代碼組合")
+
+
+@router.get(
+    "/categories/{category_id}/next-code",
+    response_model=CategoryNextCodeOut,
+    summary="取這個類別下一個可用料號",
+)
+def get_category_next_code(
+    category_id: int,
+    _: User = Depends(require_permission("cycle_purchase_view")),
+    db: Session = Depends(get_cycle_purchase_db),
+):
+    result = svc.get_next_item_code(db, category_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="類別不存在")
+    return result
+
+
+@router.put("/categories/{category_id}", response_model=CategoryOut, summary="更新類別")
+def update_category(
+    category_id: int,
+    payload: CategoryUpdate,
+    _: User = Depends(require_permission("cycle_purchase_admin")),
+    db: Session = Depends(get_cycle_purchase_db),
+):
+    try:
+        category = svc.update_category(db, category_id, payload)
+    except IntegrityError:
+        db.rollback()
+        raise _conflict("同公司底下已有相同的大／中／細分類代碼組合")
+    if not category:
+        raise HTTPException(status_code=404, detail="類別不存在")
+    return category

@@ -905,6 +905,118 @@ def _migrate_cycle_purchase_department_source():
         conn.commit()
 
 
+def _migrate_cycle_purchase_item_mapping_unique():
+    """
+    2026-08-18 — cycle_purchase_item_mappings 的唯一鍵由
+    (item_id, company) 放寬為 (item_id, company, department_id)
+    （原因見 models/cycle_purchase_item.py 的 __table_args__ 註解）。
+
+    ⚠️ 這條跟上面兩支「補欄位」的遷移不同，SQLite **不能** ALTER 掉一個
+    table-level UNIQUE 約束，只能整張表重建（新表 → 複製 → 換名）。因此：
+
+      - 判斷條件抓得很緊：只有在真的存在「恰好由 (item_id, company) 兩欄
+        組成的 UNIQUE 索引」時才動手，否則直接 return。全新環境由
+        create_all 建成新版，這裡什麼都不做。
+      - 全程包在單一 transaction（BEGIN…COMMIT）裡，任何一步失敗都 rollback，
+        不會留下改到一半的資料表。
+      - 重建期間 `PRAGMA legacy_alter_table` 不動、`foreign_keys` 先關掉再開，
+        避免 rename 時把其他表指過來的 FK 一起改寫成新表名。
+      - 冪等：跑第二次時舊索引已不存在，會直接 return。
+
+    這是**放寬**約束，舊資料在新約束下一律仍然合法，不需要先清資料。
+    """
+    from sqlalchemy import text
+    from app.core.cycle_purchase_database import cycle_purchase_engine
+
+    TABLE = "cycle_purchase_item_mappings"
+
+    with cycle_purchase_engine.connect() as conn:
+        cols = {row[1] for row in conn.execute(text(f"PRAGMA table_info({TABLE})")).fetchall()}
+        if not cols:
+            return  # 資料表還不存在（全新環境）
+
+        legacy_index = None
+        for row in conn.execute(text(f"PRAGMA index_list({TABLE})")).fetchall():
+            index_name, unique, origin = row[1], row[2], row[3]
+            # origin: 'u'=table-level UNIQUE 約束、'c'=CREATE UNIQUE INDEX 手動建的。
+            # 兩種都要認：只認 'u' 的話，若某台機器當初是手動建索引，這裡會靜默
+            # return、舊的兩欄約束還在，之後新增第二個部門的對照被 409 擋掉時，
+            # 看起來會像「程式根本沒改到」，很難查。
+            if not unique or origin not in ("u", "c"):
+                continue
+            index_cols = [
+                r[2] for r in conn.execute(text(f"PRAGMA index_info({index_name})")).fetchall()
+            ]
+            if index_cols == ["item_id", "company"]:
+                legacy_index = index_name
+                break
+        if legacy_index is None:
+            return  # 已經是新版（或本來就沒有這個約束）
+
+        # department_id 是 2026-07-11 才加的欄位。若還有舊列是 NULL，新表的
+        # NOT NULL 會讓 INSERT…SELECT 直接 IntegrityError；而 _run_startup_migration
+        # 只對 "locked" 重試、其餘一律 raise ⇒ 整個後端起不來。
+        # 這種情況要人工決定那些列該歸哪個部門，不是啟動時該做的事。
+        orphan = conn.execute(
+            text(f"SELECT COUNT(*) FROM {TABLE} WHERE department_id IS NULL")
+        ).scalar() or 0
+        if orphan:
+            print(
+                f"[Migration] ⚠ {TABLE} 有 {orphan} 筆 department_id 為 NULL，"
+                f"唯一鍵遷移暫緩（新結構的 department_id 為 NOT NULL）。"
+                f"請先人工補上部門後重啟，服務本身不受影響。"
+            )
+            return
+
+        conn.execute(text("PRAGMA foreign_keys=OFF"))
+        conn.execute(text("BEGIN"))
+        try:
+            conn.execute(text(f"""
+                CREATE TABLE {TABLE}__new (
+                    id                   INTEGER NOT NULL,
+                    item_id              INTEGER NOT NULL,
+                    company              VARCHAR(50) NOT NULL,
+                    department_id        INTEGER NOT NULL,
+                    original_code        VARCHAR(30),
+                    original_name        VARCHAR(300),
+                    original_vendor_name VARCHAR(200),
+                    vendor_id            INTEGER,
+                    original_unit_price  NUMERIC(12, 4),
+                    is_confirmed         BOOLEAN NOT NULL,
+                    notes                TEXT,
+                    created_at           DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                    updated_at           DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                    PRIMARY KEY (id),
+                    CONSTRAINT uq_cp_item_mapping_item_company_dept
+                        UNIQUE (item_id, company, department_id),
+                    FOREIGN KEY(item_id) REFERENCES cycle_purchase_items (id) ON DELETE CASCADE,
+                    FOREIGN KEY(department_id) REFERENCES cycle_purchase_departments (id) ON DELETE RESTRICT,
+                    FOREIGN KEY(vendor_id) REFERENCES cycle_purchase_vendors (id) ON DELETE SET NULL
+                )
+            """))
+            conn.execute(text(f"""
+                INSERT INTO {TABLE}__new (
+                    id, item_id, company, department_id, original_code, original_name,
+                    original_vendor_name, vendor_id, original_unit_price, is_confirmed,
+                    notes, created_at, updated_at
+                )
+                SELECT
+                    id, item_id, company, department_id, original_code, original_name,
+                    original_vendor_name, vendor_id, original_unit_price, is_confirmed,
+                    notes, created_at, updated_at
+                FROM {TABLE}
+            """))
+            conn.execute(text(f"DROP TABLE {TABLE}"))
+            conn.execute(text(f"ALTER TABLE {TABLE}__new RENAME TO {TABLE}"))
+            conn.execute(text("COMMIT"))
+            print(f"[Migration] {TABLE} unique key → (item_id, company, department_id)")
+        except Exception:
+            conn.execute(text("ROLLBACK"))
+            raise
+        finally:
+            conn.execute(text("PRAGMA foreign_keys=ON"))
+
+
 def _migrate_full_bldg_pm_sheet28_fields():
     """
     輕量欄位補丁（2026-06-02 新增 repair_hours/sheet28_id；2026-07-14 補上 2026-07-13
@@ -1632,6 +1744,7 @@ async def lifespan(app: FastAPI):
     import app.models.cycle_purchase_vendor      # noqa: F401
     import app.models.cycle_purchase_reference   # noqa: F401
     import app.models.cycle_purchase_item        # noqa: F401
+    import app.models.cycle_purchase_category    # noqa: F401
     import app.models.cycle_purchase_cycle       # noqa: F401
     import app.models.cycle_purchase_request     # noqa: F401
     import app.models.cycle_purchase_summary     # noqa: F401
@@ -1659,6 +1772,15 @@ async def lifespan(app: FastAPI):
         "_migrate_cycle_purchase_department_source", _migrate_cycle_purchase_department_source
     )
     print("[Portal] cycle_purchase_departments source_department_id migration checked.")
+
+    # 2026-08-18：料號對照表唯一鍵放寬成 (item_id, company, department_id)。
+    # SQLite 改不動 UNIQUE 約束，只能整張表重建，細節與安全性考量見該函式
+    # docstring。冪等，已是新版時直接 return。
+    _run_startup_migration(
+        "_migrate_cycle_purchase_item_mapping_unique",
+        _migrate_cycle_purchase_item_mapping_unique,
+    )
+    print("[Portal] cycle_purchase_item_mappings unique key migration checked.")
 
     # 週期採購：系統自動關閉「期別已過」的請購單（2026-08-07，與 Samuel 確認）。
     # 啟動時先跑一次，之後由下方 SCHEDULER_ENABLED 區塊的每日排程接手。

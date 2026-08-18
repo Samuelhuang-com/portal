@@ -9,6 +9,8 @@ import type {
   CpAuditLog,
   CpAvailableItem,
   CpCancelRagicPushResult,
+  CpCategory,
+  CpCategoryNextCode,
   CpCloseState,
   CpCopyResult,
   CpCopySourceCandidate,
@@ -70,6 +72,26 @@ export const updateVendor = (id: number, data: Partial<CpVendor>) =>
  */
 export const syncVendorsFromContract = () =>
   apiClient.post<CpVendorSyncResult>(`${BASE}/masters/vendors/sync`)
+
+// ── 類別主檔（2026-08-18 新增）────────────────────────────────────────────────
+
+export const getCpCategories = (params?: {
+  company?: string
+  department_id?: number
+  q?: string
+  is_active?: boolean
+}) => apiClient.get<CpCategory[]>(`${BASE}/masters/categories`, { params })
+
+export const createCpCategory = (
+  data: Omit<CpCategory, 'id' | 'created_at' | 'code_prefix' | 'item_count' | 'department_name'>,
+) => apiClient.post<CpCategory>(`${BASE}/masters/categories`, data)
+
+export const updateCpCategory = (id: number, data: Partial<CpCategory>) =>
+  apiClient.put<CpCategory>(`${BASE}/masters/categories/${id}`, data)
+
+/** 依編碼原則算這個類別下一個可用料號（已用流水碼以該公司的原始碼為準） */
+export const getCpCategoryNextCode = (id: number) =>
+  apiClient.get<CpCategoryNextCode>(`${BASE}/masters/categories/${id}/next-code`)
 
 // ── 部門主檔 ──────────────────────────────────────────────────────────────────
 

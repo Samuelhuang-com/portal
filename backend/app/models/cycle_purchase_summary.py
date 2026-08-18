@@ -8,10 +8,15 @@
 工作項目，不是主表+明細的單據格式），但把「批次號」欄位換成
 「cycle_id + period_label」。
 
-供應商：透過料號對照表（company + item_id 唯一）取得 vendor_id，不使用
-料號主檔的 default_vendor_id（見 cycle_purchase_item.py 開頭說明，7 筆
-兩公司合併料號的 default_vendor_id 只會記到單一公司，會讓彙整分不出
-另一家公司的實際供應商）。
+供應商：透過料號對照表取得 vendor_id，不使用料號主檔的 default_vendor_id
+（見 cycle_purchase_item.py 開頭說明，7 筆兩公司合併料號的 default_vendor_id
+只會記到單一公司，會讓彙整分不出另一家公司的實際供應商）。
+
+⚠️ 2026-08-18 更正：上一段原本寫「料號對照表（company + item_id 唯一）」，
+該前提已不成立——對照表唯一鍵已放寬為 (item_id, company, department_id)，
+同一家公司底下同一個料號可以有多筆對照（春大直文具用品各部門各一筆）。
+`generate_summary()` 取 mapping 時**必須帶 department_id**（那本來就是彙整
+key 的第三段），否則會隨機拿到其中一個部門的單價與供應商。
 
 2026-07-16（與 Samuel 確認，「匯總請購單」改版）：
 ⚠️ 重要背景：這張表與對應的採購單／驗收單／請款單／異常稽核，其實已在

@@ -23,6 +23,7 @@ Depends(get_cycle_purchase_db)（cycle-purchase.db），不是 portal.db 的 get
 """
 from typing import Optional
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.cycle_purchase_vendor import CyclePurchaseVendor
@@ -32,6 +33,7 @@ from app.models.cycle_purchase_reference import (
     CyclePurchaseAccountCode,
 )
 from app.models.cycle_purchase_item import CyclePurchaseItem, CyclePurchaseItemMapping
+from app.models.cycle_purchase_category import CyclePurchaseCategory
 from app.models.cycle_purchase_cycle import CyclePurchaseCycle
 
 
@@ -179,6 +181,177 @@ def update_account_code(db: Session, ac_id: int, payload) -> Optional[CyclePurch
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# 類別主檔（2026-08-18 新增，見 models/cycle_purchase_category.py 檔頭）
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _attach_category_display_fields(
+    db: Session,
+    category: CyclePurchaseCategory,
+    item_counts: Optional[dict[str, int]] = None,
+) -> CyclePurchaseCategory:
+    """附加 department_name／code_prefix／item_count。
+
+    `item_counts` 是呼叫端先算好的「category_name → 啟用中料號筆數」對照。
+    清單頁一次算好整批傳進來，避免每列各打一次 count query（N+1）；
+    單筆查詢不傳，就地算一次。
+    """
+    category.department_name = None
+    if category.department_id:
+        dept = db.query(CyclePurchaseDepartment).filter(
+            CyclePurchaseDepartment.id == category.department_id
+        ).first()
+        if dept:
+            category.department_name = dept.dept_name
+    # code_prefix 是 model 上的 @property，pydantic（from_attributes）會直接讀，
+    # 這裡不需要、也不能指派（property 沒有 setter）。
+
+    if item_counts is None:
+        category.item_count = (
+            db.query(func.count(CyclePurchaseItem.id))
+            .filter(
+                CyclePurchaseItem.category == category.category_name,
+                CyclePurchaseItem.is_active == True,  # noqa: E712
+            )
+            .scalar()
+            or 0
+        )
+    else:
+        category.item_count = item_counts.get(category.category_name, 0)
+    return category
+
+
+def list_categories(
+    db: Session,
+    company: Optional[str] = None,
+    department_id: Optional[int] = None,
+    q: str = "",
+    is_active: Optional[bool] = None,
+):
+    query = db.query(CyclePurchaseCategory)
+    if company:
+        query = query.filter(CyclePurchaseCategory.company == company)
+    if department_id is not None:
+        query = query.filter(CyclePurchaseCategory.department_id == department_id)
+    if is_active is not None:
+        query = query.filter(CyclePurchaseCategory.is_active == is_active)
+    if q:
+        like = f"%{q}%"
+        query = query.filter(
+            (CyclePurchaseCategory.category_name.like(like))
+            | (CyclePurchaseCategory.mid_name.like(like))
+            | (CyclePurchaseCategory.sub_name.like(like))
+            | (CyclePurchaseCategory.major_name.like(like))
+        )
+    rows = query.order_by(
+        CyclePurchaseCategory.company,
+        CyclePurchaseCategory.major_code,
+        CyclePurchaseCategory.mid_code,
+        CyclePurchaseCategory.sub_code,
+    ).all()
+
+    # 整批算 item_count（見 _attach_category_display_fields 說明）
+    item_counts = {
+        name: cnt
+        for name, cnt in db.query(
+            CyclePurchaseItem.category, func.count(CyclePurchaseItem.id)
+        )
+        .filter(
+            CyclePurchaseItem.is_active == True,  # noqa: E712
+            CyclePurchaseItem.category.isnot(None),
+        )
+        .group_by(CyclePurchaseItem.category)
+        .all()
+    }
+    for r in rows:
+        _attach_category_display_fields(db, r, item_counts)
+    return rows
+
+
+def get_category(db: Session, category_id: int) -> Optional[CyclePurchaseCategory]:
+    category = (
+        db.query(CyclePurchaseCategory)
+        .filter(CyclePurchaseCategory.id == category_id)
+        .first()
+    )
+    if category:
+        _attach_category_display_fields(db, category)
+    return category
+
+
+def create_category(db: Session, payload) -> CyclePurchaseCategory:
+    category = CyclePurchaseCategory(**payload.model_dump())
+    db.add(category)
+    db.flush()
+    return _attach_category_display_fields(db, category)
+
+
+def update_category(db: Session, category_id: int, payload) -> Optional[CyclePurchaseCategory]:
+    category = (
+        db.query(CyclePurchaseCategory)
+        .filter(CyclePurchaseCategory.id == category_id)
+        .first()
+    )
+    if not category:
+        return None
+    for k, v in payload.model_dump(exclude_unset=True).items():
+        setattr(category, k, v)
+    db.flush()
+    return _attach_category_display_fields(db, category)
+
+
+def get_next_item_code(db: Session, category_id: int) -> Optional[dict]:
+    """
+    依編碼原則算出這個類別「下一個可用的料號」。
+
+    ⚠️ 已用流水碼一律以 `cycle_purchase_item_mappings.original_code`（該公司的
+    **原始碼**）為準，不看 `cycle_purchase_items.item_code`——春大直的
+    item_code 帶了 `CH-` 公司前綴（見 models/cycle_purchase_item.py
+    2026-08-13 段落），拿 item_code 比對前綴會全部落空、每次都回 001。
+
+    回傳的 `gap_serials` 是中間的跳號（如春大直 E03 停車場照明缺 02／03／05）。
+    刻意不自動把跳號當成「下一個」——跳號多半是當初刻意留給某個品項的，
+    自動補進去會讓兩個不同東西共用一個號。要不要補由使用者自己決定。
+    """
+    category = (
+        db.query(CyclePurchaseCategory)
+        .filter(CyclePurchaseCategory.id == category_id)
+        .first()
+    )
+    if not category:
+        return None
+
+    prefix = category.code_prefix
+    width = category.serial_width or 3
+    rows = (
+        db.query(CyclePurchaseItemMapping.original_code)
+        .filter(
+            CyclePurchaseItemMapping.company == category.company,
+            CyclePurchaseItemMapping.original_code.like(f"{prefix}%"),
+        )
+        .distinct()
+        .all()
+    )
+
+    serials: list[int] = []
+    for (code,) in rows:
+        tail = (code or "")[len(prefix):]
+        if tail.isdigit():
+            serials.append(int(tail))
+    serials = sorted(set(serials))
+
+    next_serial = (max(serials) + 1) if serials else 1
+    gaps = [s for s in range(1, max(serials) + 1) if s not in serials] if serials else []
+
+    return {
+        "category_id": category.id,
+        "code_prefix": prefix,
+        "next_code": f"{prefix}{next_serial:0{width}d}",
+        "used_serials": [f"{s:0{width}d}" for s in serials],
+        "gap_serials": [f"{s:0{width}d}" for s in gaps],
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # 料號主檔 + 料號對照表
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -204,6 +377,10 @@ def _attach_company_departments(db: Session, item: CyclePurchaseItem) -> CyclePu
             CyclePurchaseDepartment.id == CyclePurchaseItemMapping.department_id,
         )
         .filter(CyclePurchaseItemMapping.item_id == item.id)
+        # 2026-08-18：加 distinct。同公司多部門對照上線後，若某筆對照的
+        # department_id 指向已刪除的部門，outerjoin 的 dept_name 會是 NULL，
+        # 多列會塌成好幾個一模一樣的「春大直」擠在同一格。
+        .distinct()
         .all()
     )
     item.company_departments = [
@@ -298,7 +475,9 @@ def list_item_mappings(db: Session, item_id: int):
     rows = (
         db.query(CyclePurchaseItemMapping)
         .filter(CyclePurchaseItemMapping.item_id == item_id)
-        .order_by(CyclePurchaseItemMapping.company)
+        # 2026-08-18：同公司可以有多筆（一部門一筆），只用 company 排序時同公司
+        # 那幾筆的先後每次刷新都可能不同，加第二排序鍵讓畫面順序穩定。
+        .order_by(CyclePurchaseItemMapping.company, CyclePurchaseItemMapping.department_id)
         .all()
     )
     for r in rows:

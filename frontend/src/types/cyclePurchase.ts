@@ -39,6 +39,43 @@ export interface CpVendorSyncResult {
 }
 
 // ── 部門 / 成本中心 / 會計科目 主檔 ──────────────────────────────────────────
+/**
+ * 週期採購類別主檔（2026-08-18 新增）
+ * 三層編碼：大分類英文 + 中分類 2 碼 + 細分類 2 碼（+ 流水 3 碼＝料號）。
+ * department_id 為 null ＝「不限部門（全公司共用）」，如春大直的文具用品。
+ * category_name 是與既有 cycle_purchase_items.category 對照用的字串，
+ * 不會因為補了 sub_name 就跟著改寫（理由見後端 model 檔頭）。
+ */
+export interface CpCategory {
+  id: number
+  company: string
+  department_id?: number | null
+  department_name?: string | null
+  major_code: string
+  major_name: string
+  mid_code: string
+  mid_name: string
+  sub_code: string
+  sub_name?: string | null
+  category_name: string
+  serial_width: number
+  is_active: boolean
+  notes?: string | null
+  created_at: string
+  code_prefix: string
+  /** 目前 category 等於 category_name 的啟用中料號筆數；0＝主檔有、但沒料號在用 */
+  item_count: number
+}
+
+export interface CpCategoryNextCode {
+  category_id: number
+  code_prefix: string
+  next_code: string
+  used_serials: string[]
+  /** 中間的跳號（如春大直 E03 停車場照明缺 02／03／05），不自動補、由使用者決定 */
+  gap_serials: string[]
+}
+
 export interface CpDepartment {
   id: number
   company: string

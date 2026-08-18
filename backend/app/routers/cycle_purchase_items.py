@@ -122,7 +122,9 @@ def create_item_mapping(
         mapping = svc.create_item_mapping(db, item_id, payload)
     except IntegrityError:
         db.rollback()
-        raise HTTPException(status_code=409, detail="此料號已有該公司的對照紀錄")
+        # 2026-08-18：唯一鍵已含 department_id，訊息跟著改。舊訊息寫「該公司」，
+        # 使用者要替第二個部門建對照時撞到既有列，會以為同公司只能有一筆而放棄。
+        raise HTTPException(status_code=409, detail="此料號已有該公司＋該部門的對照紀錄")
     if not mapping:
         raise HTTPException(status_code=404, detail="料號不存在")
     return mapping

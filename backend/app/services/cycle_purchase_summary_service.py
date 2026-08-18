@@ -334,14 +334,35 @@ def generate_summary_from_requests(db: Session, request_ids: list[int]) -> list[
         if not item_obj:
             continue
 
+        # 2026-08-18：補上 department_id 條件。料號對照表的唯一鍵已放寬成
+        # (item_id, company, department_id)（見 models/cycle_purchase_item.py），
+        # 同一家公司底下同一個料號可以有多筆 mapping（春大直文具用品各部門
+        # 各一筆）。只用 (item_id, company) 取 .first() 會隨機拿到其中一個
+        # 部門的單價與供應商，彙整單金額會無聲地錯掉。
+        # 這裡的 department_id 就是彙整 key 的第三段，本來就在手上。
         mapping = (
             db.query(CyclePurchaseItemMapping)
             .filter(
                 CyclePurchaseItemMapping.item_id == item_id,
                 CyclePurchaseItemMapping.company == company_,
+                CyclePurchaseItemMapping.department_id == department_id,
             )
             .first()
         )
+        if mapping is None:
+            # 部門對不到就退回「同公司任一筆」，維持舊行為當保底——彙整單
+            # 產不出來比單價抓錯更難處理，但這是次佳解，不是預期路徑。
+            # 一定要 order_by：沒有排序時 SQLite 的回傳順序不保證，同一張單
+            # 重跑兩次可能拿到不同部門的單價，事後對不出來源。
+            mapping = (
+                db.query(CyclePurchaseItemMapping)
+                .filter(
+                    CyclePurchaseItemMapping.item_id == item_id,
+                    CyclePurchaseItemMapping.company == company_,
+                )
+                .order_by(CyclePurchaseItemMapping.id)
+                .first()
+            )
 
         summary = CyclePurchaseSummary(
             cycle_id=cycle_id,
@@ -795,6 +816,35 @@ def convert_to_po(
     if not orderable:
         raise SummaryServiceError("此供應商本期沒有調整量大於 0 的彙整列，不需要轉採購單")
 
+    # 2026-08-18：同料號跨部門的彙整列，轉單時**合併成一行**（與 Samuel 確認）。
+    #
+    # 背景：彙整列的粒度是 (cycle, period, company, item_id, department_id)，
+    # 而 cycle_purchase_po_items 有 UNIQUE(po_id, item_id)。料號對照表唯一鍵在
+    # 同日放寬成含 department_id 之後，一支文具可以同時被四個部門請購、產生四列
+    # 同料號的彙整列，逐列插入就會撞唯一鍵 → IntegrityError → 500，症狀是
+    # 「文具的採購單永遠轉不出來」。在此之前一料號一公司只有一筆對照，
+    # 只有一個部門請購得到，所以這個唯一鍵從來沒被觸發過。
+    #
+    # 選擇合併而非分行的理由：採購單是要給廠商的，同一支文具出現四行一模一樣的
+    # 料號沒有意義（po_items 也沒有部門欄位可以區分）。部門別的拆分在彙整單的
+    # 「部門別分析」看得到；請款分攤本來就是回頭查請購單算的
+    # （見 payment_service._compute_suggested_allocation），不依賴採購明細的部門。
+    #
+    # 單價不一致時**直接擋下**，不自行挑一個：四筆對照的單價都來自同一列 Excel，
+    # 正常情況必然相同；會不同只有人工改過其中一個部門的對照單價，那時候
+    # 「系統默默挑一個」會產生一張金額對不起來的採購單，比報錯難處理得多。
+    merged: dict[int, list] = {}
+    for r in orderable:
+        merged.setdefault(r.item_id, []).append(r)
+    for item_id_, rows_ in merged.items():
+        prices = {r.unit_price for r in rows_}
+        if len(prices) > 1:
+            raise SummaryServiceError(
+                f"料號 {rows_[0].item_code}（{rows_[0].item_name}）有 {len(rows_)} 個部門的"
+                f"彙整列要合併成同一行採購明細，但單價不一致（{'、'.join(str(p) for p in prices)}）。"
+                f"請先到料號對照表把這幾個部門的單價改成一致，再轉採購單。"
+            )
+
     total_amount = sum((r.unit_price or Decimal("0")) * r.adjusted_qty for r in orderable)
 
     po = CyclePurchasePO(
@@ -811,21 +861,28 @@ def convert_to_po(
     db.add(po)
     db.flush()
 
-    for r in orderable:
+    for item_id_, rows_ in merged.items():
+        head = rows_[0]
+        qty = sum(r.adjusted_qty or 0 for r in rows_)
         po_item = CyclePurchasePOItem(
             po_id=po.id,
-            summary_id=r.id,
-            item_id=r.item_id,
-            item_code=r.item_code,
-            item_name=r.item_name,
-            unit=r.unit,
-            unit_price=r.unit_price,
-            ordered_qty=r.adjusted_qty,
-            subtotal=(r.unit_price or Decimal("0")) * r.adjusted_qty,
+            # summary_id 是 NOT NULL 單一外鍵，合併後只能記其中一筆當代表列。
+            # 目前所有讀 summary_id 的地方（請款分攤）只拿它回查
+            # cycle/period/company/item_id，不看部門，代表列足夠。
+            # 反向追溯完整清單靠 summary.po_id（退回採購單就是走這條）。
+            summary_id=head.id,
+            item_id=item_id_,
+            item_code=head.item_code,
+            item_name=head.item_name,
+            unit=head.unit,
+            unit_price=head.unit_price,
+            ordered_qty=qty,
+            subtotal=(head.unit_price or Decimal("0")) * qty,
         )
         db.add(po_item)
-        r.status = "converted"
-        r.po_id = po.id
+        for r in rows_:
+            r.status = "converted"
+            r.po_id = po.id
 
     for r in zero_rows:
         r.status = "converted"
