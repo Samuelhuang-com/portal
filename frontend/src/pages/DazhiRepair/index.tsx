@@ -1864,6 +1864,9 @@ function DetailTab({
   const [qKw,     setQKw]     = useState<string>('')
   const [page,    setPage]    = useState(1)
   const pageSize = 50
+  // 排序狀態（預設與後端 query_detail() 一致：發生時間新→舊）
+  const [sortBy,   setSortBy]   = useState<string>('occurred_at')
+  const [sortDesc, setSortDesc] = useState<boolean>(true)
 
   useEffect(() => {
     fetchFilterOptions().then(setFilterOpts).catch(() => {})
@@ -1877,12 +1880,14 @@ function DetailTab({
       repair_type: qType, floor: qFloor, status: qStatus,
       keyword: qKw || undefined,
       page: pg, page_size: pageSize,
-      sort_by: 'occurred_at', sort_desc: true,
+      // 2026-08-19：原本這兩個值是寫死的 'occurred_at' / true，
+      // 排序狀態改由 state 提供（見 Table 的 onChange）。
+      sort_by: sortBy, sort_desc: sortDesc,
     })
       .then(setResult)
       .catch(() => message.error('查詢失敗'))
       .finally(() => setLoading(false))
-  }, [qYear, qMonth, qType, qFloor, qStatus, qKw])
+  }, [qYear, qMonth, qType, qFloor, qStatus, qKw, sortBy, sortDesc])
 
   useEffect(() => { doQuery(1) }, [doQuery])
 
@@ -2003,6 +2008,20 @@ function DetailTab({
           row.is_ragic_deleted ? 'ragic-deleted-row' :
           row.is_completed ? '' : 'ant-table-row-uncompleted'
         }
+        // 2026-08-19：補上 onChange。原本「發生時間」「費用」「結案天數」三欄都宣告了
+        // sorter: true（伺服器端排序），但 Table 沒有 onChange，點欄位標題毫無反應。
+        // ⚠️ 這裡只 setState 不直接查詢：sortBy/sortDesc 已列入 doQuery 的 deps，
+        //    上方 useEffect(() => doQuery(1), [doQuery]) 會自動以第 1 頁重查，
+        //    在這裡再呼叫一次 doQuery 會變成打兩次 API。
+        onChange={(_pagination, _filters, sorter) => {
+          const s = Array.isArray(sorter) ? sorter[0] : sorter
+          const nextBy   = (s?.field as string) || 'occurred_at'
+          // 取消排序（第三次點擊）時 order 為 undefined → 回到後端預設的「發生時間新→舊」
+          const nextDesc = s?.order ? s.order === 'descend' : true
+          if (nextBy === sortBy && nextDesc === sortDesc) return
+          setSortBy(nextBy)
+          setSortDesc(nextDesc)
+        }}
       />
 
       {/* 點擊列詳情 Drawer */}

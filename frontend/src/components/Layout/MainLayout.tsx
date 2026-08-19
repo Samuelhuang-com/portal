@@ -793,6 +793,29 @@ export function applyMenuConfig(base: any[], configs: MenuConfigItem[]): any[] {
  * - DB config 的 permission_key 優先於靜態預設的 permissionKey/permissionKeys
  * - 父層的所有子項都被過濾掉時，父層本身也不顯示
  */
+/**
+ * 交給 antd <Menu> 之前，剝掉 Portal 自訂的權限欄位。
+ *
+ * `permissionKey` / `permissionKeys` 是本專案用來做選單過濾的自訂欄位，antd 不認得，
+ * 會原封不動往下傳到 DOM 的 <li>，造成每次載入都噴兩則 React 警告：
+ *   "React does not recognize the `permissionKey` prop on a DOM element"
+ * 只污染 console 不影響功能，但會蓋掉真正該被注意的錯誤。
+ * （2026-08-19 由 e2e/exec-work-dashboard.spec.ts 的 L1-3 抓到）
+ *
+ * ⚠️ 只在 <Menu items={...}> 這個邊界剝除。openKeys 計算與 MenuItemsContext
+ *    仍需要原始的 permissionKey，不可改用剝除後的版本。
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function stripPermissionProps(items: any[]): any[] {
+  return (items ?? []).map((item) => {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { permissionKey, permissionKeys, children, ...rest } = item
+    return children
+      ? { ...rest, children: stripPermissionProps(children) }
+      : rest
+  })
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function filterMenuByPermissions(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1126,6 +1149,13 @@ export default function MainLayout() {
     [dynamicMenuItems, menuLoading]
   )
 
+  // 交給 antd <Menu> 的版本：剝掉自訂的 permissionKey / permissionKeys，
+  // 避免被當成 DOM 屬性往下傳（見 stripPermissionProps 說明）。
+  const antdMenuItems = useMemo(
+    () => stripPermissionProps(dynamicMenuItems),
+    [dynamicMenuItems]
+  )
+
   const userMenu = {
     items: [
       { key: 'profile', icon: <UserOutlined />, label: '個人資料' },
@@ -1210,7 +1240,7 @@ export default function MainLayout() {
             mode="inline"
             selectedKeys={[location.pathname]}
             defaultOpenKeys={openKeys}
-            items={dynamicMenuItems}
+            items={antdMenuItems}
             style={{ border: 'none', marginTop: 8 }}
             onClick={({ key }) => {
               // 自訂選單（尚無對應模組）→ 導向「數據準備中」佔位頁

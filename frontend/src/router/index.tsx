@@ -675,9 +675,20 @@ export default function AppRouter() {
         </Route>
 
         {/* ── 商場工務報修 ──────────────────────────────────────────────── */}
+        {/* 2026-08-19：補上 PermissionGuard。原本此路由未設 guard，側邊欄雖已依
+            permissionKey 隱藏，但直接輸入網址仍可進入。guard 使用與 MainLayout
+            選單相同的 key，因此看得到選單的人存取權完全不變。 */}
         <Route path="luqun-repair">
-          <Route path="dashboard" element={<LuqunRepairPage />} />
-          <Route index            element={<LuqunRepairPage />} />
+          <Route path="dashboard" element={
+            <PermissionGuard permissionKey="luqun_repair_view">
+              <LuqunRepairPage />
+            </PermissionGuard>
+          } />
+          <Route index element={
+            <PermissionGuard permissionKey="luqun_repair_view">
+              <LuqunRepairPage />
+            </PermissionGuard>
+          } />
         </Route>
 
         {/* ── 大直工務部 ────────────────────────────────────────────────── */}

@@ -3,8 +3,12 @@ chcp 65001 >nul
 title Git Push Auto
 
 REM -- anti-close: open new window
+REM    NOTE: args are passed to the child via environment variables, not on the
+REM          command line -- quoting through start/cmd /k is fragile.
 if not "%GIT_LAUNCHED%"=="1" (
     set GIT_LAUNCHED=1
+    if /i "%~1"=="--skip-tests" set SKIP_E2E=1
+    if /i "%~1"=="-s"           set SKIP_E2E=1
     start "Git Push Auto" cmd /k ""%~f0""
     exit /b
 )
@@ -99,6 +103,82 @@ if "%STAGED%"=="0" (
     pause
     exit /b 0
 )
+
+REM ==========================================================================
+REM  E2E gate -- runs BEFORE commit, so bad code never enters the shared repo.
+REM
+REM  Rules:
+REM    * only runs when staged files include frontend/  (docs / backend / bat
+REM      changes are not slowed down)
+REM    * requires the backend on :8000  (the frontend dev server is started
+REM      automatically by playwright.config.ts -> webServer)
+REM    * failure aborts the commit; use "git_push_auto.bat --skip-tests" to
+REM      override, which prints an explicit UNVERIFIED warning
+REM ==========================================================================
+if "%SKIP_E2E%"=="1" goto :e2e_skipped
+
+REM -- count staged files under frontend/  (PowerShell, not findstr: findstr
+REM    chokes on UTF-8 filenames)
+set FE_CHANGED=
+for /f %%i in ('powershell -NoProfile -Command "(git diff --cached --name-only ^| Where-Object { $_ -like 'frontend/*' } ^| Measure-Object).Count"') do set FE_CHANGED=%%i
+REM -- if the count could not be determined, err on the side of running the tests
+if not defined FE_CHANGED set FE_CHANGED=1
+
+if "%FE_CHANGED%"=="0" (
+    echo [SKIP] No frontend/ changes staged -- E2E not needed.
+    echo.
+    goto :e2e_done
+)
+
+echo ==========================================
+echo  E2E gate: %FE_CHANGED% frontend file^(s^) staged
+echo ==========================================
+echo.
+echo Checking backend on 127.0.0.1:8000 ...
+powershell -NoProfile -Command "try { $null = Invoke-WebRequest -Uri 'http://127.0.0.1:8000/api/v1/version' -TimeoutSec 5 -UseBasicParsing; exit 0 } catch { exit 1 }"
+if errorlevel 1 (
+    echo.
+    echo [ERROR] Backend is not responding on 127.0.0.1:8000
+    echo         Start it first:  cd backend ^&^& uvicorn app.main:app --reload --port 8000
+    echo         Or skip:         git_push_auto.bat --skip-tests
+    echo.
+    echo Nothing was committed.
+    pause
+    exit /b 1
+)
+echo [OK] Backend is up.
+echo.
+echo Running Playwright E2E ^(this takes a couple of minutes^)...
+echo.
+pushd frontend
+call npm run test:e2e
+set E2E_EXIT=!errorlevel!
+popd
+
+if not "!E2E_EXIT!"=="0" (
+    echo.
+    echo ==========================================
+    echo  [ERROR] E2E FAILED -- commit aborted
+    echo ==========================================
+    echo  Files are still staged. Fix and re-run this script.
+    echo  Report:  cd frontend ^&^& npx playwright show-report
+    echo.
+    pause
+    exit /b 1
+)
+echo.
+echo [OK] E2E passed.
+echo.
+goto :e2e_done
+
+:e2e_skipped
+echo ==========================================
+echo  [WARN] --skip-tests: E2E was NOT run.
+echo         THIS PUSH IS UNVERIFIED.
+echo ==========================================
+echo.
+
+:e2e_done
 
 REM -- git commit
 git commit -m "%COMMIT_MSG%"

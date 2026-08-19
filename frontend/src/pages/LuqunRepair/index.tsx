@@ -2065,8 +2065,13 @@ function DetailTab({
   const [status, setStatus]     = useState<string[]>([])
   const [keyword, setKeyword]   = useState('')
   const [drawerCase, setDrawerCase] = useState<RepairCase | null>(null)
+  // 排序狀態（與後端 query_detail 的預設一致：發生時間新→舊）
+  const [sortBy,   setSortBy]   = useState<string>('occurred_at')
+  const [sortDesc, setSortDesc] = useState<boolean>(true)
 
-  const load = useCallback(async (pg = 1) => {
+  // sort 參數可由呼叫端覆寫：Table onChange 觸發時 state 尚未更新，
+  // 直接吃 state 會送出上一次的排序條件。
+  const load = useCallback(async (pg = 1, sort?: { by: string; desc: boolean }) => {
     setLoading(true)
     try {
       const result = await fetchDetail({
@@ -2078,6 +2083,8 @@ function DetailTab({
         keyword:     keyword || undefined,
         page:        pg,
         page_size:   50,
+        sort_by:     sort ? sort.by   : sortBy,
+        sort_desc:   sort ? sort.desc : sortDesc,
       })
       setData(result)
       setPage(pg)
@@ -2086,7 +2093,7 @@ function DetailTab({
     } finally {
       setLoading(false)
     }
-  }, [year, month, repairType, floor, status, keyword])
+  }, [year, month, repairType, floor, status, keyword, sortBy, sortDesc])
 
   useEffect(() => { load(1) }, [year, month])  // 年月變動時重新查詢
 
@@ -2196,6 +2203,20 @@ function DetailTab({
         }}
         onRow={row => ({ onClick: () => setDrawerCase(row), style: { cursor: 'pointer' } })}
         rowClassName={(row) => row.is_ragic_deleted ? 'ragic-deleted-row' : ''}
+        // 2026-08-19：補上 onChange。原本「發生時間」欄雖宣告 sorter: true（伺服器端排序）、
+        // fetchDetail() 也支援 sort_by / sort_desc，但 Table 沒有 onChange，
+        // 點欄位標題不會觸發任何查詢，排序等於是壞的。
+        // ⚠️ 只處理排序：分頁仍由 pagination.onChange 負責，兩邊都做會讓翻頁打兩次 API。
+        onChange={(_pagination, _filters, sorter) => {
+          const s = Array.isArray(sorter) ? sorter[0] : sorter
+          const nextBy   = (s?.field as string) || 'occurred_at'
+          // 取消排序（第三次點擊）時 order 為 undefined → 回到後端預設的「發生時間新→舊」
+          const nextDesc = s?.order ? s.order === 'descend' : true
+          if (nextBy === sortBy && nextDesc === sortDesc) return
+          setSortBy(nextBy)
+          setSortDesc(nextDesc)
+          load(1, { by: nextBy, desc: nextDesc })
+        }}
       />
 
       {/* 詳情 Drawer — 使用共用 CaseDetailDrawer（含附圖顯示） */}

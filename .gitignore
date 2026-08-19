@@ -14,6 +14,12 @@ node_modules/
 dist/
 .vite/
 
+# Playwright E2E（測試產出，不進版控；瀏覽器二進位在 %USERPROFILE%\AppData\Local\ms-playwright）
+test-results/
+playwright-report/
+playwright/.cache/
+blob-report/
+
 # Database / local data
 *.db
 *.sqlite

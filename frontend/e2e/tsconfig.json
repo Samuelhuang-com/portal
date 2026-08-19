@@ -1,0 +1,15 @@
+{
+  "//": "僅供編輯器與 Playwright 使用。根目錄 tsconfig.json 的 include 只有 src，npm run build 不會編到本目錄。",
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "types": ["node"],
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "esModuleInterop": true
+  },
+  "include": ["**/*.ts", "../playwright.config.ts"]
+}
