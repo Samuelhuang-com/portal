@@ -1951,6 +1951,12 @@ const METRIC_LABELS: Record<string, string> = {
   period_completed: '本期已完成',
 }
 
+// 中文狀態 → Tag 色。後端 2026-08-20 起改回傳 STATUS_LABELS 五態
+//（已完成／進行中／逾期／已排定／未排定），色碼直接沿用本模組 STATUS_CFG。
+const MATRIX_STATUS_TAG_COLOR: Record<string, string> = Object.fromEntries(
+  Object.values(STATUS_CFG).map((c) => [c.label, c.tagColor]),
+)
+
 function MatrixDetailModal({
   open, year, month, metric, frequencyType, monthLabel, onClose,
 }: {
@@ -1988,10 +1994,7 @@ function MatrixDetailModal({
       render: (v: string) => <Tag color="purple" style={{ fontSize: 11 }}>{v || '—'}</Tag> },
     { title: '排定日期', dataIndex: 'scheduled_date_full', width: 100 },
     { title: '狀態', dataIndex: 'status', width: 80,
-      render: (v: string) => {
-        const color = v === '已完成' ? 'success' : v === '進行中' ? 'processing' : 'default'
-        return <Tag color={color}>{v}</Tag>
-      } },
+      render: (v: string) => <Tag color={MATRIX_STATUS_TAG_COLOR[v] ?? 'default'}>{v || '—'}</Tag> },
     { title: '執行人員', dataIndex: 'executor_name', width: 90, ellipsis: true },
     { title: '備註', dataIndex: 'result_note', ellipsis: true,
       render: (v: string) => <Typography.Text style={{ fontSize: 11 }}>{v || '—'}</Typography.Text> },

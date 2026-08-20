@@ -1396,6 +1396,29 @@ def get_daily_form(
 # ══════════════════════════════════════════════════════════════════════════════
 # GET /period-stats/year-matrix/items  — 矩陣格點擊明細
 # ══════════════════════════════════════════════════════════════════════════════
+def _matrix_item_status_zh(item: FullBldgPMItem, period_month: str, is_done: bool) -> str:
+    """
+    矩陣格明細的中文狀態。
+
+    2026-08-20 修正：原本只回「已完成／進行中／待排程」三態，排定日期已過的項目
+    一律顯示「待排程」，看不出逾期，且「待排程」不在本模組 STATUS_LABELS 語彙內。
+    改為沿用 _calc_status() 的判定順序與 STATUS_LABELS 用字，差別有三：
+      1. 完成判定沿用呼叫端的 is_done（只看 end_time），與矩陣「本期已完成」同口徑，
+         避免明細列出的已完成筆數與矩陣格數字對不起來
+      2. 逾期比對用「批次年份 + 排定日期」重建的完整日期，不用 date.today().year，
+         查詢往年資料才不會誤判
+      3. 不判「非本月」：period_total 本來就刻意不過濾 exec_months（使用者確認）
+    """
+    if is_done:
+        return STATUS_LABELS["completed"]
+    if item.start_time and item.start_time.strip():
+        return STATUS_LABELS["in_progress"]
+    full_date = _reconstruct_full_date(item.scheduled_date, period_month)
+    if full_date is None:
+        return STATUS_LABELS["unscheduled"]
+    return STATUS_LABELS["overdue"] if full_date < date.today() else STATUS_LABELS["scheduled"]
+
+
 @router.get("/period-stats/year-matrix/items", summary="矩陣格點擊查詢明細")
 def get_year_matrix_items(
     year:           int           = Query(..., description="年份"),
@@ -1466,7 +1489,7 @@ def get_year_matrix_items(
             "frequency":           item.frequency or "",
             "scheduled_date_full": f"{batch.period_month[:4]}/{item.scheduled_date}" if item.scheduled_date else "",
             "end_time":            item.end_time or "",
-            "status":              "已完成" if is_completed else ("進行中" if item.start_time else "待排程"),
+            "status":              _matrix_item_status_zh(item, batch.period_month, is_completed),
             "executor_name":       item.executor_name or "",
             "result_note":         item.result_note or "",
             "abnormal_flag":       bool(item.abnormal_flag),

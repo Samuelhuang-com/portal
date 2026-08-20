@@ -1,0 +1,43 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# 週期採購（週採）技術文件 — Jupyter Book 設定
+# 建置：cd docs/jupyterbook/cycle-purchase && jupyter-book build .
+# 產出：_build/html/index.html
+# ─────────────────────────────────────────────────────────────────────────────
+title: 週期採購（週採）技術文件
+author: Portal 開發團隊
+copyright: "2026"
+logo: ""
+
+only_build_toc_files: true
+
+execute:
+  execute_notebooks: force
+  timeout: 300
+  allow_errors: false
+
+parse:
+  myst_enable_extensions:
+    - colon_fence
+    - deflist
+    - dollarmath
+    - linkify
+    - substitution
+    - tasklist
+
+html:
+  use_issues_button: false
+  use_repository_button: false
+  home_page_in_navbar: true
+  extra_footer: |
+    <p>本文件由專案原始碼直接盤點產生，內容基準：2026-08-20。</p>
+
+sphinx:
+  extra_extensions:
+    - sphinxcontrib.mermaid
+  config:
+    language: zh_TW
+    html_show_copyright: false
+    mermaid_version: "10.9.1"
+    myst_heading_anchors: 3
+    suppress_warnings:
+      - mystnb.unknown_mime_type

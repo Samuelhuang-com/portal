@@ -44,13 +44,26 @@ Thumbs.db
 .tmp.driveupload/
 *.tmp
 
+# FUSE 掛載殘留：檔案被覆寫但仍被開啟時產生的暫存檔（透過 WSL/容器掛載存取時會出現）
+.fuse_hidden*
+
 # Temp/ — 完全不同步（開發過程的暫存、封存工具、截圖、簡報）
 # 已追蹤的檔案光靠 .gitignore 不會生效，退出版控用：git rm -r --cached Temp
 Temp/
 
+# Jupyter Book 建置產物（每次 build 都會變，且是二進位／大量小檔，diff 會很吵）
+# 原始碼在同層的 *.md / *.ipynb / _config.yml / _toc.yml，成品用 jupyter-book build 重產
+docs/jupyterbook/**/_build/
+
 # 文件 / 試算表（不進正式區）
 *.md
 *.xlsx
+
+# 例外：Jupyter Book 的原始章節要進版控，否則另一台 server 只拿得到成品、無法重建。
+# 必須放在 *.md 之後（gitignore 是後者覆蓋前者）。
+# 注意：_build/ 是「目錄」層級的排除，被排除目錄底下的檔案無法用 ! 重新納入，
+#       因此 _build/html/_sources/*.md 仍然不會進版控 —— 這正是想要的結果。
+!docs/jupyterbook/**/*.md
 
 # Claude AI — 對話、設定、暫存（不進正式區）
 CLAUDE.md

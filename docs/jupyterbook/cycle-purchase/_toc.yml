@@ -1,0 +1,25 @@
+format: jb-book
+root: intro
+parts:
+  - caption: 一、模組總覽
+    chapters:
+      - file: 01-overview
+      - file: 02-architecture
+  - caption: 二、流程與使用手冊
+    chapters:
+      - file: 03-flow
+      - file: 04-manual
+  - caption: 三、開發者參考
+    chapters:
+      - file: 05-data-model
+      - file: 06-api
+      - file: 07-frontend
+      - file: 08-permission
+      - file: 09-integration
+  - caption: 四、資料分析
+    chapters:
+      - file: 10-analysis
+  - caption: 附錄
+    chapters:
+      - file: 90-todo
+      - file: 91-glossary

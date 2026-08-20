@@ -114,6 +114,20 @@ function failedCalls(calls: ApiCall[]): ApiCall[] {
   )
 }
 
+/**
+ * 建立「等待某支端點回應」的 waiter。
+ *
+ * ⚠️ 必須在**觸發動作之前**呼叫，之後再 await。
+ *    不要改回「點完睡固定秒數再檢查」—— 那會隨機失敗：
+ *    settle() 的 networkidle 在請求還沒發出時會立刻通過，剩下的固定等待
+ *    只要遇上機器忙碌或後端稍慢就不夠（B-2 就是這樣紅過一次）。
+ */
+function waitForEndpoint(endpoint: string) {
+  return page
+    .waitForResponse((r) => stripOrigin(r.url()).startsWith(endpoint), { timeout: 30_000 })
+    .catch(() => null)   // 逾時不直接拋，交給後面的斷言產生可讀的錯誤訊息
+}
+
 /** 從 antd Select 的下拉選單挑第 n 個選項，回傳選到的文字 */
 async function pickSelectOption(select: Locator, index = 0): Promise<string> {
   await select.click()
@@ -216,14 +230,22 @@ test(`A-4 權限 key「${PERMISSION_KEY}」存在於後端 PERMISSION_DEFINITION
 TABS.forEach((t, i) => {
   test(`B-${i + 1} Tab「${t.label}」：切換成功、${t.endpoint} 被呼叫且 2xx、內容有渲染、數值無殘骸`, async () => {
     const before = apiCalls.length
+
+    // 若該端點還沒被打過，就先掛好 waiter 再觸發動作（不能事後才等）。
+    // 已經打過的（例如 Dashboard 在首屏就載入）再切回去不會重打，掛了只會白等 30 秒。
+    const already = apiCalls.some((c) => stripOrigin(c.url).startsWith(t.endpoint))
+    const waiter = already ? null : waitForEndpoint(t.endpoint)
+
     await switchTab(t.name)
     const pane = await activePane()
 
     // 手動載入型的 Tab 要先按「查詢」才會發請求（見 TABS 註解）
     if (t.manual) {
       await pane.getByRole('button', { name: cjkButton('查詢') }).first().click()
-      await settle(page, 1500)
     }
+
+    if (waiter) await waiter
+    await settle(page, 800)
 
     // 該 Tab 的資料來源有沒有被打過（首次切換時觸發；Dashboard 在首屏就打過）
     const called = apiCalls.map((c) => stripOrigin(c.url))

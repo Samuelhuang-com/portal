@@ -1213,6 +1213,141 @@ def _make_fb_pm_stats_table(
     return cols, rows
 
 
+# ═══════════════════════════════════════════════════════
+# 週期保養「逾期明細」helpers（luqun 專用）
+# 2026-08-20 新增：接在各「年度統計」表格投影片之後
+# ═══════════════════════════════════════════════════════
+
+# source → (投影片標題前綴, router module 路徑)
+_PM_OVERDUE_SOURCES = {
+    "mall": ("商場週期保養", "app.routers.mall_periodic_maintenance"),
+    "fb": ("全棟例行維護", "app.routers.full_building_maintenance"),
+}
+
+
+def _make_pm_overdue_table(
+    db, year: int, month: int, freq_type: str, source: str
+) -> tuple[list[dict], list[dict]]:
+    """
+    週期保養逾期明細 — 欄位與網頁矩陣格 Drawer 完全一致（8 欄）。
+
+    資料源就是網頁 Drawer 打的那支端點函式 `get_year_matrix_items()`
+    （metric="period_total"），篩出 status == "逾期" 的列。狀態判定不在這裡重寫，
+    以免與網頁分歧——2026-08-20 才把該端點的狀態統一成模組 STATUS_LABELS 五態。
+
+    ⚠️ 範圍是「報告月份」而非整年（Samuel 2026-08-20 決定），與上方
+    「年度統計」表格的 12 個月不同，副標題必須寫明月份。
+
+    無逾期時回傳一列「無逾期項目」而不是空 rows：空 rows 會讓
+    `_add_table_slides()` 印出「（本期暫無資料）」，語意是「查不到資料」，
+    與「查得到、但沒有逾期」是兩回事。
+    """
+    import importlib
+
+    if source not in _PM_OVERDUE_SOURCES:
+        raise ValueError(f"未知的 source：{source}")
+    _, mod_path = _PM_OVERDUE_SOURCES[source]
+    mod = importlib.import_module(mod_path)
+
+    payload = mod.get_year_matrix_items(
+        year=year,
+        month=month,
+        metric="period_total",
+        frequency_type=freq_type,
+        db=db,
+    )
+    overdue = [it for it in payload.get("items", []) if it.get("status") == "逾期"]
+    overdue.sort(key=lambda it: (it.get("scheduled_date_full") or "", it.get("category") or ""))
+
+    # ── 欄位：與 MatrixDetailModal 的 columns 一一對應 ──────────────────────
+    cols: list[dict] = [
+        {"key": "period_month", "label": "保養月份", "width": 0.95, "align": "center"},
+        {"key": "category", "label": "類別", "width": 0.85, "align": "center"},
+        {"key": "task_name", "label": "保養項目", "width": 3.60, "align": "left"},
+        {"key": "frequency", "label": "頻率", "width": 0.70, "align": "center"},
+        {"key": "scheduled_date_full", "label": "排定日期", "width": 1.15, "align": "center"},
+        {"key": "status", "label": "狀態", "width": 0.80, "align": "center"},
+        {"key": "executor_name", "label": "執行人員", "width": 1.40, "align": "left"},
+        {"key": "result_note", "label": "備註", "align": "left"},
+    ]
+
+    if not overdue:
+        return cols, [
+            {
+                "period_month": f"{year}/{month:02d}" if 1 <= month <= 12 else f"{year} 全年",
+                "category": "—",
+                "task_name": "無逾期項目",
+                "frequency": "—",
+                "scheduled_date_full": "—",
+                "status": "—",
+                "executor_name": "—",
+                "result_note": "—",
+            }
+        ]
+
+    rows: list[dict] = []
+    for it in overdue:
+        rows.append(
+            {
+                "period_month": it.get("period_month") or "—",
+                "category": it.get("category") or "—",
+                "task_name": it.get("task_name") or "—",
+                "frequency": it.get("frequency") or "—",
+                "scheduled_date_full": it.get("scheduled_date_full") or "—",
+                "status": it.get("status") or "—",
+                "executor_name": it.get("executor_name") or "—",
+                "result_note": it.get("result_note") or "—",
+            }
+        )
+    return cols, rows
+
+
+def _add_pm_overdue_slides(
+    prs,
+    template_idx: int,
+    db,
+    source: str,
+    freq_label: str,
+    freq_type: str,
+    year: int,
+    month: int,
+    now_str: str,
+    SW: float,
+    SH: float,
+) -> None:
+    """
+    產生一組「逾期明細」投影片，接在對應的「年度統計」表格之後。
+
+    自帶 try/except：逾期明細掛掉不該連累已經產出的統計表，也不該讓外層
+    誤記成「stats slide failed」。
+    """
+    title_prefix, _ = _PM_OVERDUE_SOURCES[source]
+    # month 沒有 Pydantic 驗證，直接打 API 有可能傳 0（兩個前端呼叫端都會補成當月）。
+    # 端點對 month=0 的解讀是「全年」，副標題也要跟著改，不能印出「00月」。
+    _range_label = f"{month:02d}月" if 1 <= month <= 12 else "全年"
+    try:
+        od_cols, od_rows = _make_pm_overdue_table(db, year, month, freq_type, source)
+        _add_table_slides(
+            prs,
+            template_idx,
+            title=f"{title_prefix} — {freq_label}逾期明細",
+            subtitle=f"{year}年{_range_label}　（範圍：{_range_label}；前頁年度統計為全年 12 個月）",
+            columns=od_cols,
+            rows=od_rows,
+            now_str=now_str,
+            SW=SW,
+            SH=SH,
+        )
+    except Exception as _od_e:
+        logger.warning(
+            "PM overdue slide (%s / %s) failed (skipped): %s",
+            title_prefix,
+            freq_label,
+            _od_e,
+            exc_info=True,
+        )
+
+
 def _add_slide_hyperlink(slide, run, target_slide):
     """Add internal PPT hyperlink to run that jumps to target_slide."""
     from lxml import etree
@@ -2505,6 +2640,19 @@ def _build_repair_pptx(module: str, year: int, month: int, db: Session) -> Bytes
                     SW=SW,
                     SH=SH,
                 )
+                _add_pm_overdue_slides(
+                    prs,
+                    TMPL,
+                    db=db,
+                    source="mall",
+                    freq_label=freq_label,
+                    freq_type=freq_type,
+                    year=year,
+                    month=month,
+                    now_str=now_str,
+                    SW=SW,
+                    SH=SH,
+                )
             except Exception as _pm_e:
                 logger.warning(
                     "PM stats slide (%s) failed (skipped): %s",
@@ -2527,6 +2675,19 @@ def _build_repair_pptx(module: str, year: int, month: int, db: Session) -> Bytes
                         subtitle=f"{year}年",
                         columns=fb_cols,
                         rows=fb_rows,
+                        now_str=now_str,
+                        SW=SW,
+                        SH=SH,
+                    )
+                    _add_pm_overdue_slides(
+                        prs,
+                        TMPL,
+                        db=db,
+                        source="fb",
+                        freq_label=freq_label,
+                        freq_type=freq_type,
+                        year=year,
+                        month=month,
                         now_str=now_str,
                         SW=SW,
                         SH=SH,
