@@ -39,7 +39,17 @@
  * 料號依類別分組（Collapse），並提供搜尋框，因為單一公司常見料號可能有
  * 數百筆。實作上：數量從 0 改成 >0 時才即時呼叫後端「新增明細」；已存在的
  * 明細改數量（含改回 0，代表「本次不購買」但保留這筆列的紀錄）呼叫「更新
- * 明細」；會計科目要等這筆料號已經有明細列（數量曾經 >0 過）才能選。
+ * 明細」；~~會計科目要等這筆料號已經有明細列（數量曾經 >0 過）才能選~~
+ * → 見下方 2026-08-21。
+ *
+ * 2026-08-21（與 Samuel 確認，移除會計科目欄）：
+ * 協理提供的《設料號明細表》每一列都已標好會科代碼／名稱，科目屬於料號本身的
+ * 屬性，不該每次請購重填。科目改掛在料號主檔的「料號對照表」上（公司＋部門層級，
+ * 因為同一料號在不同部門可能記到不同科目，例：E0204002 軌道燈 工程部 621601
+ * 修繕費-維修／營業部 1142 用品盤存），由後端在建立明細時自動帶入快照。
+ * 因此**這一頁移除「會計科目」欄**，填單人只填數量。
+ * ⚠️ `request_items.account_code_id` 欄位與付款分攤邏輯完全不變，只是不再由這裡
+ * 手動指定；要改某個料號的科目請到「料號主檔 → 料號對照」。
  */
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
@@ -53,11 +63,11 @@ import {
 } from '@ant-design/icons'
 import {
   addRequestItem, closeRequests, deleteRequestItem, getAvailableItems,
-  getCostCenters, getCpAccountCodes, getRequest, reopenRequests,
+  getCostCenters, getRequest, reopenRequests,
   updateRequest, updateRequestItem,
 } from '@/api/cyclePurchase'
 import type {
-  CpAccountCode, CpAvailableItem, CpCostCenter, CpRequestDetail, CpRequestItem,
+  CpAvailableItem, CpCostCenter, CpRequestDetail, CpRequestItem,
 } from '@/types/cyclePurchase'
 import { useAuthStore } from '@/stores/authStore'
 import CloseStatusTag from '../components/CloseStatusTag'
@@ -98,7 +108,6 @@ export default function CpRequestDetailPage() {
 
   const [detail, setDetail] = useState<CpRequestDetail | null>(null)
   const [availableItems, setAvailableItems] = useState<CpAvailableItem[]>([])
-  const [accountCodes, setAccountCodes] = useState<CpAccountCode[]>([])
   const [costCenters, setCostCenters] = useState<CpCostCenter[]>([])
   const [loading, setLoading] = useState(true)
   const [savingItemId, setSavingItemId] = useState<number | null>(null)
@@ -127,13 +136,13 @@ export default function CpRequestDetailPage() {
     try {
       const d = (await getRequest(requestId)).data
       setDetail(d)
-      const [avail, codes, ccs] = await Promise.all([
+      // 2026-08-21：不再撈會計科目主檔——科目已改由料號對照表帶入，
+      // 這個畫面沒有科目欄位了（見 itemColumns 註解）。
+      const [avail, ccs] = await Promise.all([
         getAvailableItems(requestId).then((r) => r.data),
-        getCpAccountCodes({ is_active: true }).then((r) => r.data),
         getCostCenters({ department_id: d.department_id, is_active: true }).then((r) => r.data),
       ])
       setAvailableItems(avail)
-      setAccountCodes(codes)
       setCostCenters(ccs)
     } catch (err: any) {
       message.error(errMsg(err, '載入失敗'))
@@ -250,20 +259,6 @@ export default function CpRequestDetailPage() {
     }
   }
 
-  const handleAccountChange = async (row: MergedRow, accountCodeId: number | null) => {
-    if (!row.requestItem) return
-    setSavingItemId(row.item_id)
-    try {
-      await updateRequestItem(requestId, row.requestItem.id, { account_code_id: accountCodeId })
-      await load()
-      setLastSavedAt(new Date())
-    } catch (err: any) {
-      message.error(errMsg(err, '更新會計科目失敗'))
-    } finally {
-      setSavingItemId(null)
-    }
-  }
-
   const handleDeleteItem = async (row: MergedRow) => {
     if (!row.requestItem) return
     try {
@@ -353,23 +348,10 @@ export default function CpRequestDetailPage() {
           />
         ) : (row.requestItem?.request_qty ?? 0),
     },
-    {
-      title: '會計科目',
-      key: 'account_code_id',
-      width: 200,
-      render: (_: unknown, row: MergedRow) =>
-        editable ? (
-          <Select
-            allowClear
-            style={{ width: '100%' }}
-            placeholder={row.requestItem ? '選擇會計科目' : '需先填數量'}
-            disabled={!row.requestItem || savingItemId === row.item_id}
-            value={row.requestItem?.account_code_id ?? undefined}
-            onChange={(v) => handleAccountChange(row, v ?? null)}
-            options={accountCodes.map((c) => ({ label: `${c.code} ${c.name}`, value: c.id }))}
-          />
-        ) : (row.requestItem?.account_code_label || '—'),
-    },
+    // 2026-08-21（與 Samuel 確認）：移除「會計科目」欄。科目已改由料號主檔的
+    // 「料號對照表」按公司＋部門設定，後端在建立明細時自動帶入快照
+    // （cycle_purchase_request_service.add_request_item），填單人不需要、也不該
+    // 逐行手選。request_items.account_code_id 欄位與付款分攤邏輯都維持不變。
     {
       title: '小計',
       key: 'subtotal',

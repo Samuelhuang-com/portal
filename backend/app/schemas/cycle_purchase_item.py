@@ -18,6 +18,10 @@ class ItemMappingBase(BaseModel):
     # 按供應商分單用；可為 None（原始資料廠商欄位本來就空的情況）。
     vendor_id: Optional[int] = None
     original_unit_price: Optional[Decimal] = None
+    # 2026-08-21 新增：這個料號在這家公司這個部門要記到哪個會計科目。
+    # 掛在 mapping 而不是 item，因為《設料號明細表》的會科本來就是按部門欄位填的，
+    # 且確實有跨部門不同科目的案例（E0204002 軌道燈：工程部 621601／營業部 1142）。
+    account_code_id: Optional[int] = None
     is_confirmed: bool = False
     notes: Optional[str] = None
 
@@ -34,6 +38,7 @@ class ItemMappingUpdate(BaseModel):
     original_vendor_name: Optional[str] = None
     vendor_id: Optional[int] = None
     original_unit_price: Optional[Decimal] = None
+    account_code_id: Optional[int] = None
     is_confirmed: Optional[bool] = None
     notes: Optional[str] = None
 
@@ -43,6 +48,9 @@ class ItemMappingOut(ItemMappingBase):
     item_id: int
     department_name: Optional[str] = None
     vendor_name: Optional[str] = None
+    # 2026-08-21 新增：「代碼 名稱」組合字串，供列表直接顯示（與請購明細
+    # account_code_label 的格式一致）。
+    account_code_label: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
@@ -99,6 +107,11 @@ class ItemOut(ItemBase):
     # 目的：料號主檔列表原本要點進「料號對照」才看得到公司/部門，容易讓人
     # 誤以為同名品類可以跨公司套用（已連續發生兩次週期設定選錯品類的事故）。
     company_departments: List[str] = []
+    # 2026-08-21 新增：這個料號目前設了哪些會計科目（衍生自
+    # cycle_purchase_item_mappings.account_code_id，格式如 "621601 修繕費-維修"）。
+    # 科目是逐筆對照設定的，列表看得到才知道哪些料號還沒設——請購明細的科目
+    # 是從對照表自動帶入的，漏設等於該筆請購沒有科目可分攤。
+    account_code_labels: List[str] = []
 
     class Config:
         from_attributes = True

@@ -25,10 +25,12 @@ import {
 } from 'antd'
 import { PlusOutlined, EditOutlined, StopOutlined, CheckCircleOutlined, ApartmentOutlined, DeleteOutlined } from '@ant-design/icons'
 import {
-  createItem, createItemMapping, deleteItemMapping, getCpDepartments, getItem, getItems, getVendors,
-  updateItem, updateItemMapping,
+  createItem, createItemMapping, deleteItemMapping, getCpAccountCodes, getCpDepartments, getItem,
+  getItems, getVendors, updateItem, updateItemMapping,
 } from '@/api/cyclePurchase'
-import type { CpDepartment, CpItem, CpItemDetail, CpItemMapping, CpVendor } from '@/types/cyclePurchase'
+import type {
+  CpAccountCode, CpDepartment, CpItem, CpItemDetail, CpItemMapping, CpVendor,
+} from '@/types/cyclePurchase'
 
 const { Title, Text } = Typography
 
@@ -48,6 +50,8 @@ export default function CpItemsPage() {
   const [loading, setLoading] = useState(false)
   const [vendors, setVendors] = useState<CpVendor[]>([])
   const [departments, setDepartments] = useState<CpDepartment[]>([])
+  // 2026-08-21 新增：會計科目掛在料號對照表（公司＋部門），這裡撈主檔供下拉選單用。
+  const [accountCodes, setAccountCodes] = useState<CpAccountCode[]>([])
 
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState<CpItem | null>(null)
@@ -75,6 +79,10 @@ export default function CpItemsPage() {
       .map((d) => ({ label: d.dept_name, value: d.id })),
     [departments, mappingCompany],
   )
+  const accountCodeOptions = useMemo(
+    () => accountCodes.map((a) => ({ label: `${a.code} ${a.name}`, value: a.id })),
+    [accountCodes],
+  )
   const editDepartmentOptions = useMemo(
     () => departments
       .filter((d) => d.company === editCompany)
@@ -95,6 +103,7 @@ export default function CpItemsPage() {
   useEffect(() => { load() }, [page, q])
   useEffect(() => { getVendors({ is_active: true }).then((r) => setVendors(r.data)) }, [])
   useEffect(() => { getCpDepartments({ is_active: true }).then((r) => setDepartments(r.data)) }, [])
+  useEffect(() => { getCpAccountCodes({ is_active: true }).then((r) => setAccountCodes(r.data)) }, [])
 
   const toggleActive = async (item: CpItem) => {
     try {
@@ -129,7 +138,13 @@ export default function CpItemsPage() {
       setEditItemMappings(mappings)
       if (mappings.length === 1) {
         setEditSingleMapping(mappings[0])
-        form.setFieldsValue({ company: mappings[0].company, department_id: mappings[0].department_id })
+        form.setFieldsValue({
+          company: mappings[0].company,
+          department_id: mappings[0].department_id,
+          // 2026-08-21：會計科目也存在對照表上，一併帶進表單（同上，只有 0～1
+          // 筆對照時才可在這裡直接編輯）。
+          account_code_id: mappings[0].account_code_id ?? undefined,
+        })
       } else {
         setEditSingleMapping(null)
       }
@@ -142,10 +157,15 @@ export default function CpItemsPage() {
   const handleSubmit = async () => {
     try {
       const values = await form.validateFields()
-      // company／department_id 是這次新增的便利欄位，不屬於 ItemUpdate/ItemCreate
-      // schema，要拆開來另外走料號對照的 API；company_departments 是列表顯示用
-      // 的衍生欄位，會被 form.setFieldsValue(item) 帶進表單，送出前也要拿掉。
-      const { company, department_id, company_departments, ...itemValues } = values as any
+      // company／department_id／account_code_id 是這裡的便利欄位，不屬於
+      // ItemUpdate/ItemCreate schema，要拆開來另外走料號對照的 API；
+      // company_departments／account_code_labels 是列表顯示用的衍生欄位，
+      // 會被 form.setFieldsValue(item) 帶進表單，送出前也要拿掉。
+      const {
+        company, department_id, account_code_id,
+        company_departments, account_code_labels,
+        ...itemValues
+      } = values as any
       let itemId: number
       if (editing) {
         await updateItem(editing.id, itemValues)
@@ -160,12 +180,23 @@ export default function CpItemsPage() {
       // 只有 0～1 筆對照時欄位才會出現在表單上；company/department_id 都有值
       // 才動作，任一沒填就當作「這次不設定」，不強迫一定要填。
       if (editItemMappings.length <= 1 && company && department_id) {
+        // 2026-08-21：會計科目也一起送。account_code_id 清空時要送 null（不是
+        // undefined），否則後端 exclude_unset 會當成「這次沒動到」而清不掉。
+        const nextAccountCodeId = account_code_id ?? null
         if (editSingleMapping) {
-          if (editSingleMapping.company !== company || editSingleMapping.department_id !== department_id) {
-            await updateItemMapping(itemId, editSingleMapping.id, { company, department_id })
+          if (
+            editSingleMapping.company !== company
+            || editSingleMapping.department_id !== department_id
+            || (editSingleMapping.account_code_id ?? null) !== nextAccountCodeId
+          ) {
+            await updateItemMapping(itemId, editSingleMapping.id, {
+              company, department_id, account_code_id: nextAccountCodeId,
+            })
           }
         } else {
-          await createItemMapping(itemId, { company, department_id, is_confirmed: false })
+          await createItemMapping(itemId, {
+            company, department_id, account_code_id: nextAccountCodeId, is_confirmed: false,
+          })
         }
       }
 
@@ -266,6 +297,18 @@ export default function CpItemsPage() {
                 v && v.length
                   ? <Space size={[4, 4]} wrap>{v.map((cd) => <Tag key={cd}>{cd}</Tag>)}</Space>
                   : <Tag color="default">未設定</Tag>,
+            },
+            {
+              // 2026-08-21 新增：科目存在料號對照表（公司＋部門），請購明細建立時
+              // 自動帶入。這裡顯示是為了一眼看出哪些料號還沒設科目（未設定＝該筆
+              // 請購沒有科目可分攤）。
+              title: '會計科目',
+              dataIndex: 'account_code_labels',
+              width: 160,
+              render: (v: string[] | undefined) =>
+                v && v.length
+                  ? <Space size={[4, 4]} wrap>{v.map((ac) => <Tag key={ac} color="blue">{ac}</Tag>)}</Space>
+                  : <Tag color="orange">未設定</Tag>,
             },
             { title: '單位', dataIndex: 'unit', width: 70 },
             { title: '預設供應商', dataIndex: 'default_vendor_name', width: 140 },
@@ -382,7 +425,10 @@ export default function CpItemsPage() {
                 </Text>
                 <Space wrap>
                   {editItemMappings.map((m) => (
-                    <Tag key={m.id}>{m.company}／{m.department_name || '未設定'}</Tag>
+                    <Tag key={m.id}>
+                      {m.company}／{m.department_name || '未設定'}
+                      {m.account_code_label ? `／${m.account_code_label}` : ''}
+                    </Tag>
                   ))}
                 </Space>
                 <Button
@@ -393,6 +439,27 @@ export default function CpItemsPage() {
                   前往料號對照管理
                 </Button>
               </Space>
+            </Form.Item>
+          )}
+
+          {/* 2026-08-21 新增：會計科目。跟公司/部門一樣存在「料號對照」子表
+              （因為《設料號明細表》的會科是按部門欄位填的，同一料號在不同部門
+              可能記到不同科目，例：E0204002 軌道燈 工程部 621601／營業部 1142），
+              所以同樣只在 0～1 筆對照時才在這裡直接編輯。請購單建立明細時會自動
+              帶入這個科目當快照，請購單畫面不再讓填單人手選。 */}
+          {editItemMappings.length <= 1 && (
+            <Form.Item
+              name="account_code_id"
+              label="會計科目"
+              extra="請購單會自動帶入這個科目，填單人不需要再選。留空 = 尚未設定。"
+            >
+              <Select
+                allowClear
+                showSearch
+                optionFilterProp="label"
+                placeholder="選擇會計科目"
+                options={accountCodeOptions}
+              />
             </Form.Item>
           )}
 
@@ -468,6 +535,12 @@ export default function CpItemsPage() {
                 { title: '原始廠商', dataIndex: 'original_vendor_name', width: 120 },
                 { title: '原始單價', dataIndex: 'original_unit_price', width: 90 },
                 {
+                  title: '會計科目',
+                  dataIndex: 'account_code_label',
+                  width: 140,
+                  render: (v?: string | null) => v || <Tag color="orange">未設定</Tag>,
+                },
+                {
                   title: '已確認',
                   dataIndex: 'is_confirmed',
                   width: 80,
@@ -529,6 +602,21 @@ export default function CpItemsPage() {
               </Space.Compact>
               <Form.Item name="original_name" label="原始品名">
                 <Input />
+              </Form.Item>
+              {/* 2026-08-21 新增：會計科目按「公司＋部門」設定，請購單建立明細時
+                  自動帶入當快照，請購單畫面不再讓填單人手選。 */}
+              <Form.Item
+                name="account_code_id"
+                label="會計科目"
+                extra="請購單會自動帶入這個科目，填單人不需要再選。留空 = 尚未設定。"
+              >
+                <Select
+                  allowClear
+                  showSearch
+                  optionFilterProp="label"
+                  placeholder="選擇會計科目"
+                  options={accountCodeOptions}
+                />
               </Form.Item>
               <Form.Item name="is_confirmed" label="已人工確認品名／廠商／單價相符" valuePropName="checked">
                 <Switch />

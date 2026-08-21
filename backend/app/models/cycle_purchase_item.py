@@ -65,6 +65,20 @@
     只是這批資料的 item_code **內容**改變語意，純資料層面的一次性重建，
     執行腳本見 `Temp/reimport_chunda_items.py`（春大直料號清空重匯入，
     範圍與刪除順序見腳本開頭說明）。
+
+2026-08-21（與 Samuel 確認，會計科目改由主檔決定）：
+  - 原本會計科目不在料號側，由填單人在請購明細逐行手動選（見
+    models/cycle_purchase_request.py 開頭說明）。協理提供的《設料號明細表》
+    每一列都已標好會科代碼／會科名稱，因此改成**由主檔帶入、請購單不再出現
+    會計科目欄**。
+  - ⚠️ 科目掛在 **CyclePurchaseItemMapping 而不是 CyclePurchaseItem**。原因是
+    Excel 的會科本來就填在「部門欄位」底下（維修備品分頁有管理部／客服停管部／
+    營業部／工程部四組會科代碼欄），且實測確實有跨部門不同科目的案例：
+    `E0204002 公區照明-軌道燈` 在工程部是 `621601 修繕費-維修`，在營業部是
+    `1142 用品盤存`。掛在 item 上就得二選一或把料號拆成兩筆。
+  - `cycle_purchase_request_items.account_code_id` **保留不動**，改由後端在
+    新增明細時自動從 mapping 帶入快照，付款分攤（cycle_purchase_payment_service）
+    與已送出的歷史單據金額完全不受影響。
 """
 from sqlalchemy import (
     Column, Integer, String, Boolean, Numeric, Text, DateTime,
@@ -167,6 +181,12 @@ class CyclePurchaseItemMapping(CyclePurchaseBase):
                 "按供應商分單用；可為 NULL，因為原始資料有些列廠商欄位本來就是空的）",
     )
     original_unit_price  = Column(Numeric(12, 4), nullable=True, comment="公司原始單價")
+    account_code_id      = Column(
+        Integer,
+        ForeignKey("cycle_purchase_account_codes.id", ondelete="SET NULL"),
+        nullable=True,
+        comment="這個料號在這家公司這個部門要記到哪個會計科目（2026-08-21 新增）",
+    )
     is_confirmed         = Column(Boolean, nullable=False, default=False,
                                    comment="是否已由人工確認對照正確（不可自動合併帶入）")
     notes                = Column(Text, nullable=True, comment="備註（如資料清理過程說明）")

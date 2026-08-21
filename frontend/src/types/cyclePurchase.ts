@@ -138,6 +138,14 @@ export interface CpItem {
    * 跨公司套用。
    */
   company_departments: string[]
+  /**
+   * 2026-08-21 新增：這個料號目前設了哪些會計科目（衍生自料號對照表的
+   * account_code_id，格式如 `"621601 修繕費-維修"`）。科目是逐筆對照設定的，
+   * 少數料號跨部門科目不同會有多個值（如 E0204002 軌道燈：工程部 621601／
+   * 營業部 1142）。請購明細的科目從對照表自動帶入，漏設等於該筆請購沒有科目
+   * 可分攤，所以列表要看得到。
+   */
+  account_code_labels: string[]
 }
 
 export interface CpItemMapping {
@@ -159,6 +167,12 @@ export interface CpItemMapping {
   vendor_id?: number | null
   vendor_name?: string | null
   original_unit_price?: number | null
+  // 2026-08-21 新增：這個料號在這家公司這個部門要記到哪個會計科目。掛在對照表
+  // 而不是料號主檔，因為《設料號明細表》的會科本來就是按部門欄位填的，且確實
+  // 有跨部門不同科目的案例（E0204002 軌道燈：工程部 621601／營業部 1142）。
+  // 請購單建立明細時會自動帶入這個值當快照，請購單畫面不再顯示會計科目欄。
+  account_code_id?: number | null
+  account_code_label?: string | null
   is_confirmed: boolean
   notes?: string | null
   created_at: string

@@ -645,7 +645,10 @@ def copy_request(db: Session, source_request_id: int, user) -> tuple[CyclePurcha
             request_id=new_req.id,
             item_id=item.id,
             item_mapping_id=mapping.id,
-            account_code_id=src_item.account_code_id,
+            # 2026-08-21：會計科目改由料號對照表帶入（請購單不再有科目欄）。
+            # 對照表還沒填科目時（尚未回填的料號）才退回沿用來源單的值，
+            # 避免這次改版把使用者先前手選的科目洗掉。
+            account_code_id=mapping.account_code_id or src_item.account_code_id,
             item_code=item.item_code,
             item_name=item.item_name,
             unit=item.unit,
@@ -922,7 +925,10 @@ def add_request_item(db: Session, request_id: int, payload) -> CyclePurchaseRequ
         request_id=request_id,
         item_id=item.id,
         item_mapping_id=mapping.id,
-        account_code_id=payload.account_code_id,
+        # 2026-08-21：會計科目一律從料號對照表（公司＋部門）自動帶入快照，
+        # 不再由填單人手選——請購單畫面已移除科目欄，payload.account_code_id
+        # 只在對照表尚未設定科目時當備援（既有 API 呼叫者不會因此壞掉）。
+        account_code_id=mapping.account_code_id or payload.account_code_id,
         item_code=item.item_code,
         item_name=item.item_name,
         unit=item.unit,

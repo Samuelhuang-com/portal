@@ -21,6 +21,7 @@
 
 2026-07-11 與 Samuel 確認之設計（第一次，仍然有效）：
   - 會計科目：不在料號/部門主檔加欄位，由填單人在請購明細逐行手動選。
+    ⚠️ 2026-08-21 已推翻，見下方「2026-08-21」段落。
   - 簽核層級：第一版單一關卡（送出 -> 簽核 -> 核准/退回）。
   - 單價來源：請購明細的單價取自「該公司」在 cycle_purchase_item_mappings
     的 original_unit_price（不是 item.unit_price），因為兩家公司實際
@@ -28,6 +29,16 @@
   - 送出人／簽核人：比照本專案「應用層軟關聯」原則，只存 portal.db 的
     user.id（字串 UUID，不建跨檔案 FK）與當下的 full_name 快照，
     不做即時跨資料庫 join。
+
+2026-08-21 與 Samuel 確認（推翻上面「會計科目由填單人手選」）：
+  - 協理提供的《設料號明細表》每一列都已標好會科代碼／名稱，科目屬於料號本身
+    的屬性，不該每次請購重填。改成掛在 `cycle_purchase_item_mappings.account_code_id`
+    （公司＋部門層級，理由見 models/cycle_purchase_item.py 該段說明），
+    **請購單畫面移除會計科目欄**。
+  - `cycle_purchase_request_items.account_code_id` 欄位本身**保留不動**，改由
+    `add_request_item()` / `copy_request()` 在建立明細時自動帶入快照。付款分攤
+    （cycle_purchase_payment_service 的 department／cost_center／account_code
+    三維分攤）與已送出單據的歷史科目因此完全不受影響。
 
 2026-07-16（與 Samuel 確認，「彙整單產生方式」改版——見
 services/cycle_purchase_summary_service.py 開頭說明）：
@@ -249,7 +260,8 @@ class CyclePurchaseRequestItem(CyclePurchaseBase):
     )
     account_code_id = Column(
         Integer, ForeignKey("cycle_purchase_account_codes.id", ondelete="SET NULL"), nullable=True,
-        comment="會計科目（由填單人手動選）",
+        comment="會計科目快照（2026-08-21 起由 cycle_purchase_item_mappings.account_code_id "
+                "自動帶入，請購單畫面不再顯示；欄位本身保留，付款分攤仍讀這裡）",
     )
 
     # 以下為新增當下的快照，避免日後料號主檔異動影響已送出的歷史金額

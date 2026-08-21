@@ -924,6 +924,13 @@ def _migrate_cycle_purchase_item_mapping_unique():
       - 冪等：跑第二次時舊索引已不存在，會直接 return。
 
     這是**放寬**約束，舊資料在新約束下一律仍然合法，不需要先清資料。
+
+    ⚠️ 2026-08-21 補充：下方 CREATE/INSERT 的**欄位清單是寫死的**。日後
+    cycle_purchase_item_mappings 每加一個欄位，若那個欄位的遷移排在這支之前，
+    重建時會被靜默丟掉。目前的解法是把新欄位的遷移一律排在這支之後
+    （見 `_migrate_cycle_purchase_item_mapping_account_code`）；這裡刻意
+    **不**跟著補新欄位，因為這支只在「還停留在舊唯一鍵」的機器上會真的執行，
+    那種機器的資料表必定也還是舊結構、沒有新欄位可複製。
     """
     from sqlalchemy import text
     from app.core.cycle_purchase_database import cycle_purchase_engine
@@ -1015,6 +1022,42 @@ def _migrate_cycle_purchase_item_mapping_unique():
             raise
         finally:
             conn.execute(text("PRAGMA foreign_keys=ON"))
+
+
+def _migrate_cycle_purchase_item_mapping_account_code():
+    """
+    2026-08-21 — cycle_purchase_item_mappings.account_code_id
+    （會計科目改由料號對照表按「公司＋部門」設定，請購單不再逐行手選；
+    原因見 models/cycle_purchase_item.py 的 2026-08-21 段落）。
+
+    比照 `_migrate_cycle_purchase_vendor_source`：`create_all()` 只建缺少的
+    資料表、不替既有資料表補欄位，缺這一欄時每個查到 CyclePurchaseItemMapping
+    的端點都會噴 `no such column`，料號主檔／請購單／彙整單會整片變空白。
+
+    ⚠️ **必須排在 `_migrate_cycle_purchase_item_mapping_unique` 之後**。
+    那支是整張表重建（CREATE __new → INSERT…SELECT → RENAME），欄位清單是
+    寫死的，不含 account_code_id；順序顛倒的話，這裡剛加好的欄位會在重建時
+    被靜默丟掉，而且不會有任何錯誤訊息。
+
+    SQLite 的 ALTER TABLE ADD COLUMN 不支援加 FOREIGN KEY，所以這裡只加欄位
+    本身；參照完整性由 app 層（前端只給主檔裡的選項、後端只寫 payload 裡的 id）
+    維持，與既有 vendor_id 的處理一致。
+    """
+    from sqlalchemy import text
+    from app.core.cycle_purchase_database import cycle_purchase_engine
+
+    TABLE = "cycle_purchase_item_mappings"
+
+    with cycle_purchase_engine.connect() as conn:
+        existing = {row[1] for row in conn.execute(
+            text(f"PRAGMA table_info({TABLE})")
+        ).fetchall()}
+        if not existing:
+            return  # 資料表還不存在（全新環境），create_all 會直接建成新版
+        if "account_code_id" not in existing:
+            conn.execute(text(f"ALTER TABLE {TABLE} ADD COLUMN account_code_id INTEGER"))
+            conn.commit()
+            print(f"[Migration] {TABLE}.account_code_id added")
 
 
 def _migrate_full_bldg_pm_sheet28_fields():
@@ -1781,6 +1824,15 @@ async def lifespan(app: FastAPI):
         _migrate_cycle_purchase_item_mapping_unique,
     )
     print("[Portal] cycle_purchase_item_mappings unique key migration checked.")
+
+    # 2026-08-21：料號對照表新增 account_code_id（會計科目改由料號主檔帶入）。
+    # ⚠️ 一定要排在上面那支唯一鍵遷移**之後**——那支是整張表重建、欄位清單寫死，
+    # 順序顛倒會把這裡剛加的欄位靜默丟掉（詳見該函式 docstring）。
+    _run_startup_migration(
+        "_migrate_cycle_purchase_item_mapping_account_code",
+        _migrate_cycle_purchase_item_mapping_account_code,
+    )
+    print("[Portal] cycle_purchase_item_mappings account_code_id migration checked.")
 
     # 週期採購：系統自動關閉「期別已過」的請購單（2026-08-07，與 Samuel 確認）。
     # 啟動時先跑一次，之後由下方 SCHEDULER_ENABLED 區塊的每日排程接手。

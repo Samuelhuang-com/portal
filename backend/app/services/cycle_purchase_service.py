@@ -390,6 +390,25 @@ def _attach_company_departments(db: Session, item: CyclePurchaseItem) -> CyclePu
     return item
 
 
+def _attach_account_code_labels(db: Session, item: CyclePurchaseItem) -> CyclePurchaseItem:
+    """附加 account_code_labels（見 schemas/cycle_purchase_item.py ItemOut 說明）。
+    2026-08-21 新增：會計科目存在料號對照表（公司＋部門層級），列表要看得到才知道
+    哪些料號還沒設定科目——請購明細的科目是從這裡自動帶入的，漏設就等於該筆請購
+    沒有科目可分攤。少數料號跨部門科目不同時會出現多個值（如 E0204002 軌道燈）。"""
+    rows = (
+        db.query(CyclePurchaseAccountCode.code, CyclePurchaseAccountCode.name)
+        .join(
+            CyclePurchaseItemMapping,
+            CyclePurchaseItemMapping.account_code_id == CyclePurchaseAccountCode.id,
+        )
+        .filter(CyclePurchaseItemMapping.item_id == item.id)
+        .distinct()
+        .all()
+    )
+    item.account_code_labels = [f"{code} {name}" for code, name in rows]
+    return item
+
+
 def list_items(
     db: Session,
     q: str = "",
@@ -420,6 +439,7 @@ def list_items(
     for r in rows:
         _attach_vendor_name(db, r)
         _attach_company_departments(db, r)
+        _attach_account_code_labels(db, r)
     return rows, total
 
 
@@ -428,6 +448,7 @@ def get_item(db: Session, item_id: int) -> Optional[CyclePurchaseItem]:
     if item:
         _attach_vendor_name(db, item)
         _attach_company_departments(db, item)
+        _attach_account_code_labels(db, item)
         for m in item.mappings:
             _attach_mapping_display_fields(db, m)
     return item
@@ -468,6 +489,14 @@ def _attach_mapping_display_fields(db: Session, mapping: CyclePurchaseItemMappin
         ).first()
         if vendor:
             mapping.vendor_name = vendor.vendor_name
+    # 2026-08-21 新增：會計科目顯示字串（格式與請購明細 account_code_label 一致）。
+    mapping.account_code_label = None
+    if mapping.account_code_id:
+        ac = db.query(CyclePurchaseAccountCode).filter(
+            CyclePurchaseAccountCode.id == mapping.account_code_id
+        ).first()
+        if ac:
+            mapping.account_code_label = f"{ac.code} {ac.name}"
     return mapping
 
 
