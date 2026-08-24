@@ -301,6 +301,70 @@ AG_SCORE = (
 AG_OVERALL: tuple[str, ...] = ()
 AG_REVIEW_COUNT: tuple[str, ...] = ()
 
+# ══════════════════════════════════════════════════════════════════════════
+# Trip.com（攜程國際版）選擇器 — 2026-08-24 對真實存檔 DOM 實測
+# ══════════════════════════════════════════════════════════════════════════
+# ⚠️⚠️ **Trip.com 的 class 名稱一律不可信，一個都不能用。**
+#
+#    實測那頁評論區的 class 長這樣：
+#
+#        yRvZgc0SICPUbmdb2L2a   qUERH0dj6c94FltfokWY   ggsuSaFnCKG7VE8UiR9S
+#
+#    純亂碼、無語意，是打包工具每次建置重新產生的。連 Booking 的
+#    `data-testid`、Agoda 的 `data-element-name` 那種穩定掛勾都沒有
+#    （整頁 51 個 `data-test-id` **全部在訂房區**，評論區一個也沒有）。
+#    照這種 class 寫 selector，Trip.com 前端一發版就整個失效，
+#    而且會安靜地抓到 0 筆。
+#
+# 所以這裡改用**三種不會隨建置變動的錨點**：
+#
+#   1. **圖示字型 class**（`ic_roomline`／`ic_business2`／`ic_message`／
+#      `u-icon-ic_new_calendar_line`）—— 那是共用圖示庫的名稱，
+#      跟著圖示語意走，不是每次建置重算的雜湊
+#   2. **結構關係** —— 用 `:has()` 表達「內含某圖示的那一層 div」，
+#      完全不提任何 class 名稱
+#   3. **畫面上的固定文字**（「發佈」「住宿方回覆:」）
+#
+# ⚠️ 這套錨點一樣會壞，只是壞得**慢**而且**看得出來**。真正的保險是
+#    `sync_source()` 的完整度檢查：站方公布 447 則、只抓到個位數就會出警告。
+TC_REVIEW_CARD = (
+    # 「內含 房型/出遊類型/入住月份/評價數 四個圖示」的那一層 div。
+    # ⚠️ 必須用直接子代 `>`：拿掉的話會命中 25 個（外層容器也含這些圖示）。
+    "div:has(> div > ul > li > i[class*='ic_message'])",
+    "div:has(> div > ul > li > i[class*='ic_roomline'])",
+)
+# ⭐ 住宿方回覆＝飯店自己寫的公關稿，**不是客人評論**。
+#    「感謝您選擇入住…非常榮幸…期待再次為您服務」永遠是正面的，
+#    混進評論本文會讓每一則都被灌一段好話 —— 負評稀釋成中立，
+#    而且不會有任何錯誤，只會看到負評數莫名其妙變少。
+#    ⚠️ 它與評論本文在**同一張卡片內**，不能靠 card_exclude 剔除，
+#       必須在 `parse_cards()` 裡把整塊 decompose 掉（見 `_tripcom_body`）。
+TC_REPLY_MARK = "住宿方回覆"
+
+# 翻頁：`<li><a><i class="smarticon u-icon u-icon-arrowRight">`。
+# ⚠️ 不可用 `button[aria-label="Next"]` —— 那是**相片輪播**的下一張，
+#    整頁有 3 個，點下去只會換照片，評論永遠停在第 1 頁。
+TC_NEXT_BUTTONS = (
+    "li:has(> a > i[class*='u-icon-arrowRight']) > a",
+    "li:has(> a > i[class*='u-icon-next']) > a",
+)
+TC_EXPAND_BUTTONS: tuple[str, ...] = ()     # 實測本文未截斷，無「顯示更多」
+
+TC_ROOM_ICON = "ic_roomline"          # 房型
+TC_TRAVELER_ICON = "ic_business2"     # 出遊類型
+TC_STAY_ICON = "calendar"             # 「於2026 年 6 月入住」
+TC_COUNT_ICON = "ic_message"          # 「8條評價」（該用戶的總評論數，不入庫）
+
+# 「2026 年 8 月 13 日發佈」→ 抓日期本體。⚠️ 數字與「年月日」之間有空白。
+_RE_TC_DATE = re.compile(r"(\d{4}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日)\s*發佈")
+# 「於2026 年 6 月入住」→ 入住月份
+_RE_TC_STAY = re.compile(r"於\s*(\d{4}\s*年\s*\d{1,2}\s*月)")
+# 會員等級字樣，取作者時要跳過（白金會員／鑽石會員／鑽石+ 會員／黃金會員…）
+_RE_TC_MEMBER = re.compile(r"會員|会员")
+# 介面元件的文字，不是評論內容。⚠️ 比對時用「整段完全相等」，不可用 `in`
+_TC_UI_LABELS = frozenset({"顯示更多", "顯示較少", "展開", "收起", "有用", "有幫助"})
+_RE_TC_PHOTO_COUNT = re.compile(r"\d+/\d+")     # 相片輪播計數「4/5」
+
 # 「（來自 日本 ）」→ 日本
 _RE_AG_COUNTRY = re.compile(r"[（(]\s*來自\s*([^）)]+?)\s*[）)]")
 # 「評鑑日期：2026年3月20日」→ 2026年3月20日
@@ -1092,6 +1156,212 @@ class AgodaParser:
         return overall, count
 
 
+def _tripcom_li_text(card, icon_key: str) -> str:
+    """
+    取出卡片裡「帶某個圖示的那個 `<li>`」的文字。
+
+    ⚠️ 四個 `<li>`（房型／出遊類型／入住月份／評價數）**外觀完全一樣**，
+       class 也一樣，只有裡面的 `<i>` 圖示 class 不同。
+       靠順序取（第 1 個是房型…）在少填某一項的卡片上會整排錯位，
+       所以一律靠圖示認人。
+    """
+    for li in card.select("ul > li"):
+        icon = li.find("i")
+        if icon and icon_key in " ".join(icon.get("class") or []):
+            return _text(li)
+    return ""
+
+
+def _tripcom_author(card) -> str:
+    """
+    作者暱稱 —— 卡片文字的第一段。
+
+    ⚠️ 沒有任何可靠的 class 或屬性可以定位（連 `alt` 都是「瀚寓飯店 評論」
+       這種跟作者無關的字）。實測結構固定是
+       「暱稱 → 會員等級 → 房型 → …」，所以取第一段非空文字。
+
+    ⚠️ **沒有大頭貼的使用者，第一段是頭像的單字縮寫**：
+
+           ['訪', '訪客用戶', ...]     ['匿', '匿名用戶', ...]
+           ['V',  'VO THI KIEU HAN', ...]
+
+       只取第一段的話，作者會變成「訪」「匿」「V」。
+       判斷方式**不是「長度為 1 就跳過」**（真的有人暱稱一個字），
+       而是「長度為 1 **且下一段以它開頭**」—— 那才是頭像縮寫的特徵。
+
+    ⚠️ 抓不到就回空字串，由 `normalize_review()` 補「匿名旅客」——
+       不要在這裡自己編一個預設值，那會讓兩條路徑的預設不一致。
+    """
+    values = [t.strip() for t in card.stripped_strings if t.strip()]
+    if not values:
+        return ""
+
+    first = values[0]
+    if len(first) == 1 and len(values) > 1 and values[1].startswith(first):
+        first = values[1]          # 頭像縮寫 → 取後面那個真正的暱稱
+    if _RE_TC_MEMBER.search(first):
+        return ""
+    return first[:100]
+
+
+def _tripcom_body(card) -> str:
+    """
+    評論本文 —— **移除住宿方回覆之後**的內容。
+
+    ⚠️⚠️ 這是本 parser 最重要的一段。住宿方回覆與評論本文在**同一張卡片內**，
+       沒辦法像 Agoda 那樣用 `card_exclude_selectors` 剔除。
+
+       沒剔掉的後果不是報錯，是**每一則評論都被灌一段公關文**：
+       「感謝您選擇入住…非常榮幸…期待再次為您服務」。
+       負評會被稀釋成中立、清潔／服務全部誤判成正面，
+       而畫面上只會看到負評數莫名其妙變少。
+
+    ⚠️ 用 `copy.copy` 先複製再 decompose —— 直接改原 soup 會讓
+       同一份 DOM 被後面的欄位擷取讀到殘缺結構。
+
+    ⚠️ **不可以寫死「往上兩層」**（第一版就是這樣，漏了東西）：
+       回覆塊的「顯示更多」按鈕比那兩層更外面，於是本文結尾多出
+       「顯示更多」三個字。改成**一路往上找到「整段文字仍以住宿方回覆開頭」
+       的最外層**，那才是完整的回覆塊。
+    """
+    import copy
+
+    clone = copy.copy(card)
+    for node in clone.find_all(string=lambda t: t and TC_REPLY_MARK in t):
+        block = node.parent
+        if block is None:
+            continue
+        # 往上擴張到「還是回覆塊」的最外層（再上一層就會含到評論本文）
+        while (block.parent is not None
+               and block.parent.get_text(" ", strip=True).startswith(TC_REPLY_MARK)):
+            block = block.parent
+        block.decompose()
+
+    # ⚠️ 本文那一段 div 裡還混著兩種**介面元件**，它們不是評論內容：
+    #      · 「顯示更多」摺疊鈕（獨立 div，整段文字就是這三個字）
+    #      · 相片輪播的計數「4/5」（獨立 div，整段文字就是這樣）
+    #    實測 10 則裡有 2 則結尾變成「…下次才會再光顧！ 顯示更多 4/5」。
+    #    這種尾巴會一路帶進指紋計算與 AI prompt —— 不會報錯，只是讓
+    #    同一則評論在展開前後產生兩個不同指紋，去重就失效了。
+    #    ⚠️ 用「整段文字完全等於」比對，不要用 `in`：
+    #       評論裡真的可能寫「希望顯示更多房型資訊」。
+    for node in clone.find_all(["div", "span", "button"]):
+        label = node.get_text(" ", strip=True)
+        if label in _TC_UI_LABELS or _RE_TC_PHOTO_COUNT.fullmatch(label):
+            node.decompose()
+
+    # 本文＝日期那一段之後的兄弟節點（結構上固定）
+    date_node = clone.find(string=_RE_TC_DATE.search)
+    if date_node is not None:
+        holder = date_node.parent.parent if date_node.parent else None
+        if holder is not None:
+            for sib in holder.next_siblings:
+                if getattr(sib, "name", None):
+                    text = _text(sib)
+                    # 「有用」是按讚鈕，不是內容
+                    if text and text not in ("有用", "有幫助"):
+                        return text
+    return ""
+
+
+class TripComParser:
+    """
+    Trip.com（攜程國際版）評論頁。2026-08-24 對真實存檔 DOM 實測 10/10 全數抽出。
+
+    | | Trip.com |
+    |---|---|
+    | 分制 | **固定 10 分制**（`<strong>9.5</strong><span>/10</span>`） |
+    | 正負評 | **沒有分欄**，單一段落 → 全進 `comment`（同 Agoda） |
+    | 站方總分 | 走 `ld+json`（實測 `ratingValue 9.1` / `reviewCount 447`，正確） |
+    | 旅客資訊 | 房型／出遊類型／入住月份，靠**圖示 class** 認人 |
+    | 日期 | 「2026 年 8 月 13 日發佈」—— ⚠️ 數字與年月日之間**有空白** |
+
+    ⚠️ **class 名稱全是每次建置重算的亂碼**（`yRvZgc0SICPUbmdb2L2a`），
+       評論區連一個 `data-test-id` 都沒有。所有 selector 一律錨在
+       圖示字型 class、`:has()` 結構關係、畫面固定文字上 ——
+       細節與理由見上方 `TC_*` 常數區的說明。
+
+    ⚠️ **住宿方回覆在同一張卡片內**，必須在 `parse_cards()` 裡剔除
+       （見 `_tripcom_body`）。這是本 parser 最容易出事的一點。
+
+    ⚠️ Trip.com 與 **Tripadvisor 是不同公司**（攜程 vs. TripAdvisor Inc.），
+       網域比對不可混用。`ota_source_service` 已有專門的錯誤訊息。
+    """
+
+    platform = "tripcom"
+    # 實測：不執行 JS 的純 HTTP 抓取就已經拿得到前 10 則，先試 headless。
+    prefer_visible = False
+    # ⚠️ 不可設 True。靜態頁只有第 1 頁 10 則，站方公布 447 則 ——
+    #    當成全部就是「抓到 2% 卻標成功」，比失敗還糟。
+    allow_static_only = False
+    default_scale = 10
+
+    review_card_selector = TC_REVIEW_CARD[0]
+    review_card_selectors = TC_REVIEW_CARD
+    card_selectors_additive = False     # 兩個 selector 命中同一批，取第一個就好
+    card_exclude_selectors: tuple[str, ...] = ()    # 回覆在卡內，靠 parse 剔除
+
+    open_all_buttons: tuple[str, ...] = ()
+    next_buttons = TC_NEXT_BUTTONS
+    expand_buttons = TC_EXPAND_BUTTONS
+    scroll_to_load = True
+
+    @staticmethod
+    def parse_cards(html: str) -> list[RawReview]:
+        soup = _soup(html)
+        cards = _select_cards(soup, TC_REVIEW_CARD, additive=False)
+
+        reviews: list[RawReview] = []
+        for card in cards:
+            body = _tripcom_body(card)
+            if not body:
+                continue
+
+            full = _text(card)
+            date_m = _RE_TC_DATE.search(full)
+            stay_m = _RE_TC_STAY.search(_tripcom_li_text(card, TC_STAY_ICON))
+
+            # 分數：`<strong>9.5</strong>` 緊接 `<span>/10</span>`
+            score = None
+            for strong in card.find_all("strong"):
+                nxt = strong.find_next_sibling()
+                if nxt is not None and "/10" in _text(nxt):
+                    score = _number(_text(strong))
+                    break
+
+            reviews.append(RawReview(
+                # 作者是卡片最前面那段文字；取不到就留空由 normalize 補「匿名旅客」
+                author=_tripcom_author(card),
+                score_raw=score,
+                score_scale=10,             # Trip.com 固定 10 分制
+                title="",                   # 沒有標題欄位
+                positive_text="",           # ⚠️ 沒有分正負欄，全部進 comment
+                negative_text="",
+                comment=body,
+                review_date_text=date_m.group(1) if date_m else "",
+                stay_date_text=stay_m.group(1) if stay_m else "",
+                nationality="",             # 頁面上沒有國籍
+                traveler_type=_tripcom_li_text(card, TC_TRAVELER_ICON),
+                room_type=_tripcom_li_text(card, TC_ROOM_ICON),
+                nights=None,                # 只有入住月份，沒有晚數
+                raw={"source": "dom", "platform": "tripcom"},
+            ))
+        return reviews
+
+    @staticmethod
+    def parse_summary(html: str) -> tuple[float | None, int | None]:
+        """
+        ⚠️ 一律回 `(None, None)`，讓 `parse_page()` 退回 `ld+json`。
+
+        實測 ld+json 的 `aggregateRating` 是正確的站方數字
+        （`ratingValue 9.1`、`reviewCount 447`、`bestRating 10`），
+        而畫面上「9.1」那個節點的 class 是亂碼、旁邊還有一堆分項評分
+        （衛生9.3／設施8.6／位置9.5／服務9.1）—— 抓錯一個就是把
+        子項當總分，那種錯誤看起來完全正常。**寧可不抓也不要抓錯。**
+        """
+        return None, None
+
+
 # ══════════════════════════════════════════════════════════════════════════
 # Parser 註冊表
 # ══════════════════════════════════════════════════════════════════════════
@@ -1106,6 +1376,7 @@ PARSERS: dict[str, Any] = {
     "tripadvisor": TripadvisorParser,
     "expedia": ExpediaParser,
     "agoda": AgodaParser,
+    "tripcom": TripComParser,
 }
 
 

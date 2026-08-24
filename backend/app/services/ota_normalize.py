@@ -43,6 +43,10 @@ PLATFORM_SCALE: dict[str, int] = {
     "expedia": 10,
     "tripadvisor": 5,
     "google": 5,
+    # Trip.com（攜程國際版）—— 2026-08-24 加入，已有 TripComParser。
+    # ⚠️ 與 Tripadvisor **是不同公司**，代碼刻意用 tripcom 不用 trip，
+    #    避免有人把兩者的網址填錯邊。
+    "tripcom": 10,
 }
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -70,6 +74,7 @@ PLATFORM_LABEL: dict[str, str] = {
     "expedia": "Expedia",
     "tripadvisor": "Tripadvisor",
     "google": "Google",
+    "tripcom": "Trip.com",
 }
 
 VALID_PLATFORMS = set(PLATFORM_SCALE.keys())
@@ -95,6 +100,10 @@ DOMAIN_PLATFORM: dict[str, str] = {
     #    「沒有擷取器」由 `platform_options().has_parser` 與同步時的
     #    「略過而非失敗」處理（[1.90.94]），不該混進網址比對這一層。
     "google.com": "google",
+    # Trip.com（2026-08-24）。⚠️ 各國站台是**子網域**（tw./us./jp.），
+    #    比對函式取的是主網域，所以列 trip.com 就涵蓋得到。
+    "trip.com": "tripcom",
+    "ctrip.com": "tripcom",
 }
 
 # 認不出來的第三方網站 —— **不在** `PLATFORM_SCALE` 裡，配任何平台都是錯的。
@@ -105,9 +114,13 @@ DOMAIN_PLATFORM: dict[str, str] = {
 #    不是「有沒有寫 parser」。把兩件事混在一起會擋掉正確的設定
 #    （2026-08-22 實測踩到：google.com 一度被列在這裡，
 #     導致「Google 網址 + platform=google」這個完全正確的組合被拒絕）。
+#
+# ⚠️ 2026-08-24：trip.com／ctrip.com 已從這裡**移到 DOMAIN_PLATFORM**
+#    （TripComParser 上線）。留這行是因為「從不支援清單移到支援清單」
+#    正是上面那條註解在講的坑 —— 兩個清單同時列同一個網域時，
+#    `platform_from_url()` 會先命中哪一個決定了行為，很難查。
+#    **移動時務必兩邊都改，不要只加不刪。**
 KNOWN_UNSUPPORTED: dict[str, str] = {
-    "trip.com": "Trip.com（攜程）—— 與 Tripadvisor 是不同公司，不在支援的平台清單中",
-    "ctrip.com": "攜程 Ctrip —— 不在支援的平台清單中",
     "hotels.com": "Hotels.com —— 不在支援的平台清單中",
     "kkday.com": "KKday —— 不在支援的平台清單中",
     "klook.com": "Klook —— 不在支援的平台清單中",

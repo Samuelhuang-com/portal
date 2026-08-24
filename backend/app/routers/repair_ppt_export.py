@@ -2714,7 +2714,7 @@ def _build_repair_pptx(module: str, year: int, month: int, db: Session) -> Bytes
         {"key": "title", "label": "標題", "width": 3.40, "align": "left"},
         {"key": "floor", "label": "樓層", "width": 0.90, "align": "center"},
         {"key": "occurred", "label": "日期", "width": 1.50, "align": "center"},
-        {"key": "status", "label": "狀態", "width": 1.20, "align": "center"},
+        {"key": "total_fee", "label": "總費用", "width": 1.20, "align": "right"},
         {"key": "counter", "label": "扣款專櫃", "width": 2.10, "align": "left"},
         {"key": "fee", "label": "扣款費用", "align": "right"},
     ]
@@ -2737,7 +2737,7 @@ def _build_repair_pptx(module: str, year: int, month: int, db: Session) -> Bytes
                             _c.get("floor_normalized") or _c.get("floor", "")
                         ),
                         "occurred": (_sanitize(_c.get("occurred_at", "")) or "")[:16],
-                        "status": _sanitize(_c.get("status", "")),
+                        "total_fee": _fmt_money(_c.get("total_fee", 0)),
                         "counter": _sanitize(_counter),
                         "fee": _fmt_money(_c.get("deduction_fee", 0)),
                     }

@@ -193,7 +193,13 @@ INSERT OR IGNORE INTO ota_topic_rules (topic, keyword, polarity, is_builtin, cre
 ('隔音','安靜','positive',1,datetime('now','localtime')),
 ('隔音','隔音好','positive',1,datetime('now','localtime')),
 ('隔音','很好睡','positive',1,datetime('now','localtime')),
-('服務','態度','negative',1,datetime('now','localtime')),
+-- ⚠️ 2026-08-24：原本是裸詞「態度」，「服務人員態度很好」也會判成負面。
+-- 純名詞不帶褒貶，必須帶著評價詞一起收（同「很方便」的教訓）。
+('服務','態度差','negative',1,datetime('now','localtime')),
+('服務','態度不好','negative',1,datetime('now','localtime')),
+('服務','態度惡劣','negative',1,datetime('now','localtime')),
+('服務','態度好','positive',1,datetime('now','localtime')),
+('服務','態度佳','positive',1,datetime('now','localtime')),
 ('服務','冷漠','negative',1,datetime('now','localtime')),
 ('服務','不理','negative',1,datetime('now','localtime')),
 ('服務','等很久','negative',1,datetime('now','localtime')),
@@ -212,7 +218,12 @@ INSERT OR IGNORE INTO ota_topic_rules (topic, keyword, polarity, is_builtin, cre
 ('早餐','選擇多','positive',1,datetime('now','localtime')),
 ('設備','故障','negative',1,datetime('now','localtime')),
 ('設備','老舊','negative',1,datetime('now','localtime')),
-('設備','水壓','negative',1,datetime('now','localtime')),
+-- ⚠️ 2026-08-24：原本是裸詞「水壓」，「水壓很強」是稱讚卻判成負面。
+('設備','水壓小','negative',1,datetime('now','localtime')),
+('設備','水壓不足','negative',1,datetime('now','localtime')),
+('設備','水壓弱','negative',1,datetime('now','localtime')),
+('設備','水壓強','positive',1,datetime('now','localtime')),
+('設備','水壓足','positive',1,datetime('now','localtime')),
 ('設備','沒熱水','negative',1,datetime('now','localtime')),
 ('設備','冷氣不冷','negative',1,datetime('now','localtime')),
 ('設備','壞掉','negative',1,datetime('now','localtime')),
@@ -248,10 +259,30 @@ INSERT OR IGNORE INTO ota_topic_rules (topic, keyword, polarity, is_builtin, cre
 ('氣味','菸味','negative',1,datetime('now','localtime')),
 ('氣味','怪味','negative',1,datetime('now','localtime')),
 ('入住流程','排隊','negative',1,datetime('now','localtime')),
-('入住流程','押金','negative',1,datetime('now','localtime')),
+-- ⚠️ 2026-08-24：原本是裸詞「押金」，「押金退得很快」是稱讚。
+--    收押金本身不是客訴，流程才是。
+('入住流程','押金高','negative',1,datetime('now','localtime')),
+('入住流程','押金太高','negative',1,datetime('now','localtime')),
+('入住流程','押金沒退','negative',1,datetime('now','localtime')),
+('入住流程','押金退很慢','negative',1,datetime('now','localtime')),
+('入住流程','押金退得快','positive',1,datetime('now','localtime')),
 ('入住流程','入住快速','positive',1,datetime('now','localtime'));
 
 COMMIT;
+
+-- ============================================================================
+-- 既有 DB 的字典清理（2026-08-24）
+-- ============================================================================
+-- ⚠️ 上面的 INSERT 是 OR IGNORE，**不會**刪掉既有的壞規則。
+--    「態度」「水壓」「押金」三個裸詞留著就會繼續把稱讚判成負評。
+--    後端啟動時 _retire_obsolete_builtin_rules() 會自動刪，
+--    想手動執行的話跑這三行：
+--
+-- DELETE FROM ota_topic_rules WHERE is_builtin=1 AND topic='服務'     AND keyword='態度' AND polarity='negative';
+-- DELETE FROM ota_topic_rules WHERE is_builtin=1 AND topic='設備'     AND keyword='水壓' AND polarity='negative';
+-- DELETE FROM ota_topic_rules WHERE is_builtin=1 AND topic='入住流程' AND keyword='押金' AND polarity='negative';
+--
+-- ⚠️ 刪完要到 Portal 按「重新分析全部」，既有評論的 topics_json 才會更新。
 
 -- ============================================================================
 -- 既有 DB 的欄位補丁（2026-08-24）

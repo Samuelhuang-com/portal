@@ -75,7 +75,15 @@ ALERT_TOPICS = ("清潔", "服務", "設備")
 # 抱怨」都落在 40–55 字之間 —— 那不是測資寫得不夠長，是門檻本身對中文太高。
 # 一個給 9 分卻還願意寫 40 字抱怨的客人，正是「分數與文字矛盾」最典型的樣子。
 ALERT_NEGATIVE_TEXT_LEN = 100   # 警示：負評寫到這個長度，通常是真的有事
+# ⚠️ 不分正負欄的平台（Agoda）改看 comment 全文，門檻必須拉高 ——
+#    全文是好話壞話混在一起的，100 字很容易只是話多而已。
+#    另外它**必須搭配「有負面主題」**才成立，見 `compute_alert()`。
+ALERT_COMMENT_TEXT_LEN = 180
 AI_CONFLICT_NEG_LEN = 40        # A2：高分卻寫了這麼長的負評
+# A5：6～8 分的中分帶。這段是**最難判也最沒人管**的區間 ——
+# A2 只看 ≥8 分、A3 只看 <6 分，中間整段從來沒送過 AI。
+AI_MID_NEG_LEN = 40             # 有負評欄時，負評欄字數
+AI_MID_COMMENT_LEN = 120        # 沒有負評欄時，comment 全文字數
 AI_LONG_TEXT_LEN = 300          # A4：長文多議題（中文 300 字已是很長的評論）
 AI_BATCH_SIZE = 20              # 每批打包幾則送一次 API
 
@@ -89,12 +97,19 @@ BUILTIN_TOPICS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
              ("乾淨", "整潔", "一塵不染")),
     "隔音": (("吵", "噪音", "隔音差", "隔音不好", "聽得到", "施工"),
              ("安靜", "隔音好", "很好睡")),
-    "服務": (("態度", "冷漠", "不理", "等很久", "擺臉色", "沒禮貌"),
-             ("親切", "貼心", "熱情", "服務好")),
+    # ⚠️「態度」是**裸名詞，兩極通吃**，2026-08-24 移除（見下方 RETIRED_BUILTIN_RULES）。
+    #    「服務人員態度很好」「櫃檯態度親切」全都被判成 服務:neg ——
+    #    而且負面那一輪跑在正面之後會覆蓋掉，連同時命中「親切」都救不回來。
+    #    跟「很方便」是同一種病：**純名詞／純形容詞不帶褒貶，必須帶著評價詞一起收。**
+    "服務": (("態度差", "態度不好", "態度惡劣", "冷漠", "不理", "等很久",
+              "擺臉色", "沒禮貌"),
+             ("親切", "貼心", "熱情", "服務好", "態度好", "態度佳")),
     "早餐": (("早餐難吃", "選擇少", "冷掉", "種類不多"),
              ("豐盛", "早餐好吃", "選擇多")),
-    "設備": (("故障", "老舊", "水壓", "沒熱水", "冷氣不冷", "壞掉"),
-             ("設備齊全", "很新")),
+    # ⚠️「水壓」同上：「水壓很強」「水壓充足」是稱讚，卻被判成 設備:neg。
+    "設備": (("故障", "老舊", "水壓小", "水壓不足", "水壓弱", "沒熱水",
+              "冷氣不冷", "壞掉"),
+             ("設備齊全", "很新", "水壓強", "水壓足")),
     "房間": (("房間小", "很暗", "壓迫", "床硬"),
              ("寬敞", "舒適", "採光好")),
     # ⚠️「捷運近」「離捷運遠」看起來不像人話，是**故意**這樣寫的 ——
@@ -114,8 +129,33 @@ BUILTIN_TOPICS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
              ("停車方便", "停車便利", "有停車位", "有車位", "免費停車", "停車場")),
     "Wi-Fi": (("網路慢", "網速慢", "連不上", "訊號差", "信號差"), ("網速快",)),
     "氣味": (("霉味", "菸味", "煙味", "怪味"), ()),
-    "入住流程": (("排隊", "押金"), ("入住快速",)),
+    # ⚠️「押金」同上：「押金退得很快」是稱讚。收押金本身不是客訴，**流程才是**。
+    "入住流程": (("排隊", "押金高", "押金太高", "押金沒退", "押金退很慢"),
+                 ("入住快速", "押金退得快")),
 }
+
+# ══════════════════════════════════════════════════════════════════════════
+# 已淘汰的內建詞（2026-08-24）
+# ══════════════════════════════════════════════════════════════════════════
+# ⚠️ **只改 `BUILTIN_TOPICS` 是沒有用的**：`ensure_builtin_topic_rules()` 只補缺的、
+#    不刪多的，既有 DB 裡那幾筆壞規則會一直留著繼續誤判。這張表就是用來收掉它們的。
+#
+# 這三個詞的共同問題是**裸名詞，不帶褒貶**，於是稱讚也命中負面：
+#
+#     「服務人員態度很好」→ 服務:neg      「水壓很強」→ 設備:neg
+#     「櫃檯態度親切」    → 服務:neg      「押金退得很快」→ 入住流程:neg
+#
+# 而且 `classify_topics()` 的負面輪跑在正面輪之後會覆蓋，
+# 連同一句裡同時命中「親切」都救不回來。
+#
+# ⚠️ 這與 2026-08-23 移除「很方便」是**同一條教訓**：
+#    **純名詞／純形容詞不帶褒貶，一律要帶著評價詞一起收**（態度差、水壓小）。
+#    骨架進字典，變體交給 `keyword_variants()` 展開。
+RETIRED_BUILTIN_RULES: frozenset[tuple[str, str, str]] = frozenset({
+    ("服務", "態度", "negative"),
+    ("設備", "水壓", "negative"),
+    ("入住流程", "押金", "negative"),
+})
 
 # ⚠️ 上面幾個看起來重複的詞是**刻意的**，不要「順手」清掉：
 #
@@ -129,6 +169,31 @@ BUILTIN_TOPICS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
 # 必須另外收一筆進字典。
 
 
+def _retire_obsolete_builtin_rules(db: Session) -> int:
+    """
+    刪掉 `RETIRED_BUILTIN_RULES` 列出的內建詞，回傳刪了幾筆。
+
+    ⚠️ 只刪 `is_builtin=True`。使用者自己新增的同名詞是他的判斷，不要替他決定。
+    ⚠️ 刪掉之後那些評論**要重新分析才會更新**（`topics_json` 是分析當下算好存起來的），
+       所以 CHANGELOG 有請使用者按「重新分析全部」。改字典不重跑＝畫面不會變。
+    """
+    if not RETIRED_BUILTIN_RULES:
+        return 0
+
+    rows = db.execute(
+        select(OtaTopicRule).where(OtaTopicRule.is_builtin.is_(True))
+    ).scalars().all()
+
+    removed = 0
+    for row in rows:
+        if (row.topic, row.keyword, row.polarity) in RETIRED_BUILTIN_RULES:
+            db.delete(row)
+            removed += 1
+            logger.info("[OTA] 移除已淘汰的內建詞：%s / %s / %s",
+                        row.topic, row.keyword, row.polarity)
+    return removed
+
+
 def ensure_builtin_topic_rules(db: Session) -> int:
     """
     冪等補齊內建字典。回傳這次新增了幾筆。
@@ -139,7 +204,15 @@ def ensure_builtin_topic_rules(db: Session) -> int:
 
     ⚠️ 只補**缺少的**，不覆蓋既有列 —— 使用者可能已經把某個內建詞停用了
        （`is_enabled=False`），重跑不該把它復活。
+
+    ⚠️ 但「只補不刪」有個盲點（2026-08-24 踩到）：**字典改壞了之後改不回來**。
+       把 `BUILTIN_TOPICS` 裡的「態度」換成「態度差」，既有 DB 裡那筆「態度」
+       還在，照樣把「態度很好」判成負面。所以另外用
+       `RETIRED_BUILTIN_RULES` 明確刪掉淘汰的詞。
+       ⚠️ 只刪 `is_builtin=True` 的 —— 使用者自己加的同名詞是他的決定，不動。
     """
+    retired = _retire_obsolete_builtin_rules(db)
+
     existing = {
         (topic, keyword, polarity)
         for topic, keyword, polarity in db.execute(
@@ -160,8 +233,9 @@ def ensure_builtin_topic_rules(db: Session) -> int:
                                     polarity="positive", is_builtin=True))
                 added += 1
 
-    if added:
+    if added or retired:
         db.flush()
+    if added:
         logger.info("[OTA] 補齊內建主題字典 %d 筆", added)
     return added
 
@@ -263,6 +337,11 @@ def classify_sentiment(review: OtaReview) -> tuple[str, float | None]:
     情緒判定（規格書 §7.2）。回傳 `(label, score)`；label 為空字串代表判不出來。
 
     有分數時以分數為準 —— 那是客人自己給的總結，比任何文字分析都可靠。
+
+    ⚠️ **這條原則有一個例外**（2026-08-24）：中立區間（6～8 分）若命中
+       清潔／服務／設備的負面主題，會在 `analyze_by_rules()` 裡被
+       `downgrade_neutral_with_alert_topic()` 降級為 negative。
+       原因寫在那支函式，不在這裡改 —— 這裡拿不到 topics。
     """
     if review.score_10 is not None:
         value = float(review.score_10)
@@ -304,6 +383,21 @@ def should_use_ai(review: OtaReview, sentiment: str, topics: list[str]) -> tuple
     if review.score_10 is not None and float(review.score_10) < NEGATIVE_MAX \
             and not topics:
         return True, "A3 低分卻分不出主題（掉分不知原因）"
+
+    # ⭐ A5（2026-08-24）：6～8 分的中分帶 + 有份量的負面描述。
+    #
+    #    A2 只管 ≥8 分、A3 只管 <6 分 —— **中間整段從來沒有人看過**。
+    #    而那正是最難判的區間：分數說「還好」，文字說「有一件事很糟」。
+    #    使用者回報的那則（7 分 + Spa 人員擺臉色）就落在這個縫裡。
+    if review.score_10 is not None \
+            and NEGATIVE_MAX <= float(review.score_10) < POSITIVE_MIN:
+        if negative_len > AI_MID_NEG_LEN:
+            return True, "A5 中分帶卻有長負評（分數說還好、文字說有事）"
+        # 不分正負欄的平台沒有 negative_len 可用，改看全文長度
+        if not negative_len \
+                and len((review.comment or "").strip()) > AI_MID_COMMENT_LEN:
+            return True, "A5 中分帶的長篇評論（不分欄平台，需 AI 拆正負）"
+
     if body_len > AI_LONG_TEXT_LEN:
         return True, "A4 長文多議題"
     return False, ""
@@ -318,19 +412,71 @@ def compute_alert(review: OtaReview, sentiment: str, topics: list[str]) -> bool:
     """
     if review.score_10 is not None and float(review.score_10) < NEGATIVE_MAX:
         return True
-    if sentiment == "negative":
-        names = {t.split(":")[0] for t in topics if t.endswith(":neg")}
-        if names & set(ALERT_TOPICS):
-            return True
-    if len((review.negative_text or "").strip()) > ALERT_NEGATIVE_TEXT_LEN:
+
+    # ⭐⭐ 2026-08-24：這裡原本包著 `if sentiment == "negative":`，
+    #    而 `sentiment` 幾乎就是分數算出來的 —— 於是這段**把自己的用意擋掉了**：
+    #    上面 ALERT_TOPICS 的註解白紙黑字寫「即使分數沒有低到門檻也要列入警示」，
+    #    卻要先通過一個「分數夠低」的前提才進得來。
+    #
+    #    實例（使用者 2026-08-24 回報）：7 分左右的評論寫著
+    #    「Spa 工作人員態度差、多次擺臉色、嚇阻不要靠近、體驗非常差」，
+    #    字典正確判出 `服務:neg`，但因為 sentiment 是 neutral，
+    #    **整則從待處理清單上消失，而且不會有任何錯誤**。
+    #
+    #    現在：命中清潔／服務／設備的負面主題就列入警示，不看整體 sentiment。
+    #    ⚠️ 這條的前提是**字典不能有裸名詞**（「態度」會讓「態度很好」也進來）。
+    #       同日已移除態度／水壓／押金三個裸詞，見 RETIRED_BUILTIN_RULES。
+    neg_topics = {t.split(":")[0] for t in topics if t.endswith(":neg")}
+    if neg_topics & set(ALERT_TOPICS):
         return True
+
+    negative_field = (review.negative_text or "").strip()
+    if negative_field:
+        if len(negative_field) > ALERT_NEGATIVE_TEXT_LEN:
+            return True
+    else:
+        # ⚠️ Agoda 這類**不分正負欄**的平台，`negative_text` 永遠是空的 ——
+        #    上面那條門檻對它**從來沒有生效過**，等於只剩「分數 < 6」一條。
+        #    改看 comment 全文，但門檻另訂且**必須同時有負面主題**：
+        #    全文是好話壞話混在一起的，光憑長度不代表有客訴。
+        comment = (review.comment or "").strip()
+        if len(comment) > ALERT_COMMENT_TEXT_LEN and neg_topics:
+            return True
     return False
+
+
+def downgrade_neutral_with_alert_topic(
+    sentiment: str, score: float | None, topics: list[str],
+) -> tuple[str, float | None]:
+    """
+    中立 + 命中清潔／服務／設備的負面主題 → 降級為 negative（2026-08-24）。
+
+    ⚠️ **這一條刻意違反「分數最可靠」的原則**，所以理由要寫清楚：
+       6～8 分是「整體還可以」，但客人**具體指名**了一件會影響下一位房客的事
+       （髒、服務態度、設備壞）。那件事不會因為他總分給 7 分就不存在。
+
+    ⚠️ **這會改變 Dashboard 的負評數與趨勢線**，與改動前的數字不可直接比較。
+       使用者 2026-08-24 明確要求含此項；不要因為「數字跟上週對不起來」就改回去
+       —— 對不起來是預期中的，口徑變了。
+
+    ⚠️ 前提同樣是**字典不能有裸名詞**：「態度」還在的話，
+       「服務人員態度很好」會被降級成負評。同日已移除，見 RETIRED_BUILTIN_RULES。
+    """
+    if sentiment != "neutral":
+        return sentiment, score
+    neg_topics = {t.split(":")[0] for t in topics if t.endswith(":neg")}
+    if not (neg_topics & set(ALERT_TOPICS)):
+        return sentiment, score
+    # 分數壓到負區間但不誇大：這是「中立被降級」，不是本來就很低的評論
+    return "negative", min(score if score is not None else -0.2, -0.2)
 
 
 def analyze_by_rules(review: OtaReview, rules: RuleSet) -> RuleResult:
     """單則評論的規則層分析。"""
     topics = classify_topics(review, rules)
     sentiment, score = classify_sentiment(review)
+    # ⚠️ 必須在 topics 之後 —— 降級的依據就是主題（見該函式說明）
+    sentiment, score = downgrade_neutral_with_alert_topic(sentiment, score, topics)
     needs_ai, reason = should_use_ai(review, sentiment, topics)
     return RuleResult(topics=topics, sentiment=sentiment, score=score,
                       needs_ai=needs_ai, ai_reason=reason)

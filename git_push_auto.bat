@@ -105,80 +105,96 @@ if "%STAGED%"=="0" (
 )
 
 REM ==========================================================================
-REM  E2E gate -- runs BEFORE commit, so bad code never enters the shared repo.
+REM  E2E gate -- DISABLED 2026-08-25 (by request).
 REM
-REM  Rules:
-REM    * only runs when staged files include frontend/  (docs / backend / bat
-REM      changes are not slowed down)
-REM    * requires the backend on :8000  (the frontend dev server is started
-REM      automatically by playwright.config.ts -> webServer)
-REM    * failure aborts the commit; use "git_push_auto.bat --skip-tests" to
-REM      override, which prints an explicit UNVERIFIED warning
+REM  This script no longer runs Playwright. Run the tests separately with:
+REM      run_e2e.bat                 (full suite)
+REM      run_e2e.bat luqun-repair    (one spec file, or a --grep keyword)
+REM      run_e2e.bat --ui            (Playwright UI / debug mode)
+REM      run_e2e.bat --report        (open the last HTML report)
+REM
+REM  The whole original gate is kept below, commented out. To bring it back,
+REM  strip the leading "REM|" from every line between the two ---8<--- markers.
 REM ==========================================================================
-if "%SKIP_E2E%"=="1" goto :e2e_skipped
 
-REM -- count staged files under frontend/  (PowerShell, not findstr: findstr
-REM    chokes on UTF-8 filenames)
-set FE_CHANGED=
-for /f %%i in ('powershell -NoProfile -Command "(git diff --cached --name-only ^| Where-Object { $_ -like 'frontend/*' } ^| Measure-Object).Count"') do set FE_CHANGED=%%i
-REM -- if the count could not be determined, err on the side of running the tests
-if not defined FE_CHANGED set FE_CHANGED=1
+REM ---8<--- original E2E gate begins ---8<---
+REM|REM ==========================================================================
+REM|REM  E2E gate -- runs BEFORE commit, so bad code never enters the shared repo.
+REM|REM
+REM|REM  Rules:
+REM|REM    * only runs when staged files include frontend/  (docs / backend / bat
+REM|REM      changes are not slowed down)
+REM|REM    * requires the backend on :8000  (the frontend dev server is started
+REM|REM      automatically by playwright.config.ts -> webServer)
+REM|REM    * failure aborts the commit; use "git_push_auto.bat --skip-tests" to
+REM|REM      override, which prints an explicit UNVERIFIED warning
+REM|REM ==========================================================================
+REM|if "%SKIP_E2E%"=="1" goto :e2e_skipped
+REM|
+REM|REM -- count staged files under frontend/  (PowerShell, not findstr: findstr
+REM|REM    chokes on UTF-8 filenames)
+REM|set FE_CHANGED=
+REM|for /f %%i in ('powershell -NoProfile -Command "(git diff --cached --name-only ^| Where-Object { $_ -like 'frontend/*' } ^| Measure-Object).Count"') do set FE_CHANGED=%%i
+REM|REM -- if the count could not be determined, err on the side of running the tests
+REM|if not defined FE_CHANGED set FE_CHANGED=1
+REM|
+REM|if "%FE_CHANGED%"=="0" (
+REM|    echo [SKIP] No frontend/ changes staged -- E2E not needed.
+REM|    echo.
+REM|    goto :e2e_done
+REM|)
+REM|
+REM|echo ==========================================
+REM|echo  E2E gate: %FE_CHANGED% frontend file^(s^) staged
+REM|echo ==========================================
+REM|echo.
+REM|echo Checking backend on 127.0.0.1:8000 ...
+REM|powershell -NoProfile -Command "try { $null = Invoke-WebRequest -Uri 'http://127.0.0.1:8000/api/v1/version' -TimeoutSec 5 -UseBasicParsing; exit 0 } catch { exit 1 }"
+REM|if errorlevel 1 (
+REM|    echo.
+REM|    echo [ERROR] Backend is not responding on 127.0.0.1:8000
+REM|    echo         Start it first:  cd backend ^&^& uvicorn app.main:app --reload --port 8000
+REM|    echo         Or skip:         git_push_auto.bat --skip-tests
+REM|    echo.
+REM|    echo Nothing was committed.
+REM|    pause
+REM|    exit /b 1
+REM|)
+REM|echo [OK] Backend is up.
+REM|echo.
+REM|echo Running Playwright E2E ^(this takes a couple of minutes^)...
+REM|echo.
+REM|pushd frontend
+REM|call npm run test:e2e
+REM|set E2E_EXIT=!errorlevel!
+REM|popd
+REM|
+REM|if not "!E2E_EXIT!"=="0" (
+REM|    echo.
+REM|    echo ==========================================
+REM|    echo  [ERROR] E2E FAILED -- commit aborted
+REM|    echo ==========================================
+REM|    echo  Files are still staged. Fix and re-run this script.
+REM|    echo  Report:  cd frontend ^&^& npx playwright show-report
+REM|    echo.
+REM|    pause
+REM|    exit /b 1
+REM|)
+REM|echo.
+REM|echo [OK] E2E passed.
+REM|echo.
+REM|goto :e2e_done
+REM|
+REM|:e2e_skipped
+REM|echo ==========================================
+REM|echo  [WARN] --skip-tests: E2E was NOT run.
+REM|echo         THIS PUSH IS UNVERIFIED.
+REM|echo ==========================================
+REM|echo.
+REM|
+REM|:e2e_done
+REM ---8<--- original E2E gate ends ---8<---
 
-if "%FE_CHANGED%"=="0" (
-    echo [SKIP] No frontend/ changes staged -- E2E not needed.
-    echo.
-    goto :e2e_done
-)
-
-echo ==========================================
-echo  E2E gate: %FE_CHANGED% frontend file^(s^) staged
-echo ==========================================
-echo.
-echo Checking backend on 127.0.0.1:8000 ...
-powershell -NoProfile -Command "try { $null = Invoke-WebRequest -Uri 'http://127.0.0.1:8000/api/v1/version' -TimeoutSec 5 -UseBasicParsing; exit 0 } catch { exit 1 }"
-if errorlevel 1 (
-    echo.
-    echo [ERROR] Backend is not responding on 127.0.0.1:8000
-    echo         Start it first:  cd backend ^&^& uvicorn app.main:app --reload --port 8000
-    echo         Or skip:         git_push_auto.bat --skip-tests
-    echo.
-    echo Nothing was committed.
-    pause
-    exit /b 1
-)
-echo [OK] Backend is up.
-echo.
-echo Running Playwright E2E ^(this takes a couple of minutes^)...
-echo.
-pushd frontend
-call npm run test:e2e
-set E2E_EXIT=!errorlevel!
-popd
-
-if not "!E2E_EXIT!"=="0" (
-    echo.
-    echo ==========================================
-    echo  [ERROR] E2E FAILED -- commit aborted
-    echo ==========================================
-    echo  Files are still staged. Fix and re-run this script.
-    echo  Report:  cd frontend ^&^& npx playwright show-report
-    echo.
-    pause
-    exit /b 1
-)
-echo.
-echo [OK] E2E passed.
-echo.
-goto :e2e_done
-
-:e2e_skipped
-echo ==========================================
-echo  [WARN] --skip-tests: E2E was NOT run.
-echo         THIS PUSH IS UNVERIFIED.
-echo ==========================================
-echo.
-
-:e2e_done
 
 REM -- git commit
 git commit -m "%COMMIT_MSG%"
