@@ -193,6 +193,24 @@ class Settings(BaseSettings):
     # 2026-08-06 實測 "PORTAL" 可用，OPERA 端不需預先註冊。
     OHIP_EXT_SYSTEM_CODE: str = "PORTAL"
 
+    # ── OTA 口碑分析（2026-08-22）────────────────────────────────────────────
+    # 規格書：docs/SPEC_ota_reviews.md §3.3
+    #
+    # OTA_BROWSER_MODE —— 這一項就是規格書 R1 風險的開關：
+    #   "auto"    先試 headless；Booking 抓不到評論卡時自動改開可見視窗重試一次
+    #             （可見視窗在沒有互動式桌面的 Windows Service 上會失敗，
+    #              失敗訊息會直接指向 ota_scraper_cli.py 這條退路）
+    #   "headless" 一律無頭。伺服器上跑排程用這個，失敗就失敗，不做無謂重試
+    #   "visible"  一律開可見視窗。本機工作排程器（以登入使用者身分）用這個
+    OTA_BROWSER_MODE: str = "auto"
+    # 單一來源的擷取逾時（秒）。翻 20 頁 × 每頁等 3 秒，300 秒是有餘裕的上限
+    OTA_FETCH_TIMEOUT: int = 300
+    # 來源與來源之間的隨機間隔（秒）。禮貌性節流，避免被判定為攻擊流量
+    OTA_SOURCE_DELAY_MIN: int = 5
+    OTA_SOURCE_DELAY_MAX: int = 15
+    # 每日至多同步一次：當日已成功的來源，排程會直接 skip
+    OTA_ONCE_PER_DAY: bool = True
+
     # ── 便利屬性：統一取 server prefix ───────────────────────────────────────
     @property
     def ragic_server_prefix(self) -> str:

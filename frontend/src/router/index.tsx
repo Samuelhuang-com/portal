@@ -223,6 +223,16 @@ import JinxuImportPage         from '@/pages/JinXu/Import'
 import JinxuSettingsPage       from '@/pages/JinXu/Settings'
 import JinxuManualPage         from '@/pages/JinXu/Manual'
 
+// ── 口碑分析（2026-08-21）：外部網站擷取型模組（Booking／Expedia／Tripadvisor
+//    的公開評論頁），與 /opera/*、/jinxu/* 完全獨立。規格書 docs/SPEC_ota_reviews.md
+//    P1 只交付兩頁；Dashboard／負評警示／趨勢比較／主題字典為 P4～P5。
+import OtaDashboardPage        from '@/pages/OTA/Dashboard'
+import OtaTrendPage            from '@/pages/OTA/Trend'
+import OtaReviewsPage          from '@/pages/OTA/Reviews'
+import OtaAlertsPage           from '@/pages/OTA/Alerts'
+import OtaTopicRulesPage       from '@/pages/OTA/TopicRules'
+import OtaSourcesPage          from '@/pages/OTA/Sources'
+
 // ── 首頁重定向（讀取 menu-config 設定，fallback 到第一個有權限的 menu 項目）──────
 // 首頁設定的儲存與選單走訪工具已移至 @/utils/homePage（2026-08-11）
 // 這裡 re-export 舊常數名稱，維持既有 import 相容
@@ -929,6 +939,51 @@ export default function AppRouter() {
           <Route path="manual" element={
             <PermissionGuard permissionKey="jinxu_view">
               <JinxuManualPage />
+            </PermissionGuard>
+          } />
+        </Route>
+
+        {/* ── 口碑分析（2026-08-21）：Booking／Expedia／Tripadvisor 公開評論 ──
+            ⚠️ 權限另開「口碑分析」group，不共用 opera_*：
+               那組是 PMS 營收敏感權限（§11.1），評論是公開資料。
+            ⚠️ 每個 permissionKey 都必須在 role_permissions.py 的
+               PERMISSION_DEFINITIONS 有對應項目，否則管理員無從授權。 */}
+        <Route path="ota">
+          {/* ⚠️ index 導向 dashboard（P5 交付前是 reviews）—— Dashboard 是
+              整個模組的入口，權限 key 也就是最基本的 ota_view。 */}
+          <Route index element={<Navigate to="/ota/dashboard" replace />} />
+          <Route path="dashboard" element={
+            <PermissionGuard permissionKey="ota_view">
+              <OtaDashboardPage />
+            </PermissionGuard>
+          } />
+          {/* 趨勢與雙館比較（P5）：跨館資料，權限與 Dashboard 分開 */}
+          <Route path="trend" element={
+            <PermissionGuard permissionKey="ota_trend_view">
+              <OtaTrendPage />
+            </PermissionGuard>
+          } />
+          <Route path="reviews" element={
+            <PermissionGuard permissionKey="ota_reviews_view">
+              <OtaReviewsPage />
+            </PermissionGuard>
+          } />
+          <Route path="alerts" element={
+            <PermissionGuard permissionKey="ota_alerts_view">
+              <OtaAlertsPage />
+            </PermissionGuard>
+          } />
+          {/* 主題字典維護（P4）：改字典會影響所有評論的主題標籤，
+              所以與「執行分析」共用 ota_topic_admin */}
+          <Route path="topics" element={
+            <PermissionGuard permissionKey="ota_topic_admin">
+              <OtaTopicRulesPage />
+            </PermissionGuard>
+          } />
+          {/* 來源設定頁同時是資料入口（CSV／HTML 匯入），共用 ota_sources_admin */}
+          <Route path="sources" element={
+            <PermissionGuard permissionKey="ota_sources_admin">
+              <OtaSourcesPage />
             </PermissionGuard>
           } />
         </Route>

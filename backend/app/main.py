@@ -130,6 +130,11 @@ from app.routers import (
     jinxu_deposit,
     jinxu_reservation,
     jinxu_settings,
+    # OTA 口碑分析（2026-08-21）：外部網站擷取型模組，非 Ragic、非上傳型。
+    # ⚠️ 只加下方的 include_router 而漏掉這裡會直接 NameError。
+    ota_reviews,
+    ota_stats,
+    ota_admin,
     cycle_purchase_masters,
     cycle_purchase_items,
     cycle_purchase_cycles,
@@ -661,6 +666,54 @@ def _migrate_annotation_ragic_url():
             )
             conn.commit()
             print("[Migration] ragic_app_portal_annotations.ragic_url 欄位已新增")
+
+
+def _migrate_ota_synclog_worker():
+    """
+    輕量欄位補丁（2026-08-24）：`ota_sync_logs` 補 worker_host／worker_pid。
+
+    ⚠️ 這兩欄是用來修「同步永遠卡在擷取中」那個 bug 的。
+       `status='running'` 一寫進去就 commit，收尾卻只在 `except Exception` 裡 ——
+       Ctrl-C（KeyboardInterrupt 不是 Exception）、行程被砍、後端重啟都不會經過它。
+       剩下的孤兒 running 會讓 `run_sync()` 永遠回 409，整個模組同步不了。
+       有 host+pid 才能問「那個行程還在不在」，而不是靠猜逾時。
+       判定邏輯見 `app/services/ota_sync_recovery.py`。
+
+    ⚠️ 兩欄都必須 nullable／有 default（CLAUDE.md §5）：既有列補不出身分，
+       它們會退回逾時判定，那是刻意的。
+
+    ⚠️ 實作在 `ota_sync_recovery.ensure_worker_columns()`，**不在這裡** ——
+       寫 `ota_sync_logs` 的行程有三個（後端／sync_tool／ota_scraper_cli），
+       ALTER 拷貝三份必然漂移。這裡只負責在啟動時呼叫它。
+    """
+    from app.services.ota_sync_recovery import ensure_worker_columns
+
+    for col in ensure_worker_columns():
+        print(f"[Migration] ota_sync_logs.{col} 欄位已新增")
+
+
+def _reap_ota_stale_running():
+    """
+    啟動時回收孤兒 `running`（2026-08-24）。
+
+    ⚠️ **不是「把所有 running 都標成 failed」** —— 那是第一直覺，而且是錯的。
+       回補是用 `ota_scraper_cli` 跑的，那是獨立行程；後端重啟一次就會把
+       一個**正在跑**的 CLI 同步誤判成死掉。
+       `reap_stale_running()` 只收「本機 + pid 確實不在」或「超過 90 分鐘」的。
+    """
+    from app.core.database import SessionLocal
+    from app.services.ota_sync_recovery import reap_stale_running
+
+    db = SessionLocal()
+    try:
+        reaped = reap_stale_running(db)
+        if reaped:
+            db.commit()
+            for r in reaped:
+                print(f"[Portal] OTA 回收孤兒同步紀錄 #{r.log_id}"
+                      f"（來源 #{r.source_id}）：{r.reason}")
+    finally:
+        db.close()
 
 
 def _migrate_hotel_mr_reading_flat():
@@ -1769,6 +1822,14 @@ async def lifespan(app: FastAPI):
     import app.models.jinxu_reservation        # noqa: F401  訂房原始層 + 訂房事實表 + 住宿明細段
     import app.models.jinxu_setting            # noqa: F401  分析門檻設定
 
+    # OTA 口碑分析（2026-08-21）：資料來自 Booking／Expedia／Tripadvisor 的公開評論頁。
+    # 規格書 docs/SPEC_ota_reviews.md；建表 SQL docs/add_ota_tables.sql（供既有 DB 補建）。
+    # ⚠️ 本模組**有排程**（P2 起），因此與純上傳型的 opera_import／jinxu_* 不同，
+    #    必須登錄 sync_tool.py 的 MODULES 與 _ensure_db_schema()（規格書 §10.0）。
+    #    否則 SCHEDULER_ENABLED=false 的機器上等於從未執行 —— 2026-08-13 OHIP
+    #    那四個排程就是這樣停在 6/24 沒人發現的。
+    import app.models.ota_review               # noqa: F401  來源／評論／同步紀錄／主題字典／AI 快取
+
     # B4F 扁平化遷移：刪除舊 batch 表 + 檢查 item 表欄位（必須在 create_all 之前）
     _run_startup_migration("_migrate_b4f_flatten", _migrate_b4f_flatten)
     print("[Portal] B4F flatten migration checked.")
@@ -1781,6 +1842,11 @@ async def lifespan(app: FastAPI):
     # 避免後端啟動時剛好撞上 sync_tool.py 寫入中的 SQLite 鎖定，就讓整個服務起不來。
     _run_startup_migration("_create_all_tables", lambda: Base.metadata.create_all(bind=engine))
     print("[Portal] Database tables ensured.")
+
+    # OTA 同步紀錄的執行者身分（2026-08-24）：必須排在 create_all 之後 ——
+    # 首次啟動時表是 create_all 建的，那時就已經帶著新欄位，這支只補既有 DB。
+    _run_startup_migration("_migrate_ota_synclog_worker", _migrate_ota_synclog_worker)
+    _run_startup_migration("_reap_ota_stale_running", _reap_ota_stale_running)
 
     # ── 週期採購（獨立資料庫 cycle-purchase.db，2026-07-10 決策：不與 portal.db 共用）──
     from app.core.cycle_purchase_database import CyclePurchaseBase, cycle_purchase_engine
@@ -2546,6 +2612,88 @@ async def lifespan(app: FastAPI):
         print("[Portal] reservation+block incremental scheduled: daily at 07:00 "
               "(last 14 days + next 180 days)")
 
+        # ── 每日 03:05 OTA 評論擷取（2026-08-22）────────────────────────────
+        # 規格書：docs/SPEC_ota_reviews.md §11
+        #
+        # ⚠️ 為什麼是 03:05 而不是 03:00：整點是全天最擁擠的時段 ——
+        #    module_auto_sync 加上 8 支請購／請款同步共 9 支會同時觸發。
+        #    爬蟲會長時間佔用 DB 寫入，撞上去就是 database is locked。
+        #    比照 cycle_purchase_auto_close 挑 00:05 避開整點的既有作法。
+        #
+        # ⚠️ 同樣刻意用同步 `def` 而非 async def（理由同上方各排程）。
+        #
+        # ⚠️ 這條路徑**沒有外層鎖**，所以呼叫 run_scheduled_sync()（內含 sync_lock）
+        #    而不是 sync_all_enabled()（那支是給 sync_tool.py 用的，外層已加鎖，
+        #    兩邊都加會自我死鎖）。
+        #
+        # ⚠️ 本模組同時登錄於 sync_tool.py MODULES。有排程的非 Ragic 模組
+        #    只掛這裡是不夠的 —— SCHEDULER_ENABLED=false 的機器上等於從未執行
+        #    （2026-08-13 那四個 OHIP 排程就是這樣停擺的）。
+        def _daily_ota_sync():
+            from app.services.ota_scraper_service import run_scheduled_sync
+            try:
+                r = run_scheduled_sync()
+                print(
+                    f"[Portal] OTA review sync: {r.get('success')}/{r.get('attempted')} sources ok "
+                    f"(skipped={r.get('skipped')}) "
+                    f"inserted={r.get('inserted')} updated={r.get('updated')} "
+                    f"dup={r.get('marked_duplicate')}"
+                )
+                # ⚠️ warning 用 warning 印、error 用 error 印，不要混在一起。
+                #    「某幾筆略過」與「整個來源失敗」在畫面上是不同顏色。
+                for w in (r.get("warnings") or [])[:20]:
+                    print(f"[Portal] OTA review warning: {w}")
+                for e in r.get("errors") or []:
+                    print(f"[Portal] OTA review error: {e}")
+            except Exception as exc:
+                print(f"[Portal] OTA review sync failed: {exc}")
+
+        _scheduler.add_job(
+            _daily_ota_sync,
+            trigger=_CronTrigger(hour=3, minute=5),
+            id="ota_review_sync",
+            replace_existing=True,
+            misfire_grace_time=3600,
+        )
+        print("[Portal] OTA review sync scheduled: daily at 03:05 "
+              "(enabled sources, once per day)")
+
+        # ── 每日 03:40 OTA 情緒與主題分析（2026-08-22，P4）──────────────
+        # 規格書：docs/SPEC_ota_reviews.md §7、§11
+        #
+        # ⚠️ 排在擷取（03:05）之後 —— 先有資料才有東西可分析。
+        #    間隔 35 分鐘是給擷取留餘裕（四個來源 × 翻頁，最久可能 20 分鐘）。
+        #    真的撞上也不會壞：分析只挑 analyzed_at IS NULL 的，
+        #    這一輪沒分析到的下一輪會補。
+        #
+        # ⚠️ 同樣刻意用同步 def。
+        # ⚠️ 這條路徑沒有外層鎖，所以自己包 sync_lock
+        #    （run_scheduled_analyze() 內部不加，那支也給 sync_tool.py 用）。
+        def _daily_ota_analyze():
+            from app.core.sync_lock import sync_lock
+            from app.services.ota_analysis_service import run_scheduled_analyze
+            try:
+                with sync_lock("OTA 情緒分析"):
+                    r = run_scheduled_analyze()
+                print(
+                    f"[Portal] OTA analyze: total={r.get('total')} "
+                    f"rule={r.get('rule_count')} ai={r.get('ai_count')} "
+                    f"cache={r.get('cache_hit')} alert={r.get('alert_count')}"
+                )
+                for w in (r.get("warnings") or [])[:20]:
+                    print(f"[Portal] OTA analyze warning: {w}")
+            except Exception as exc:
+                print(f"[Portal] OTA analyze failed: {exc}")
+
+        _scheduler.add_job(
+            _daily_ota_analyze,
+            trigger=_CronTrigger(hour=3, minute=40),
+            id="ota_sentiment_analyze",
+            replace_existing=True,
+            misfire_grace_time=3600,
+        )
+        print("[Portal] OTA sentiment analyze scheduled: daily at 03:40")
+
         _scheduler.start()
         print("[Portal] AutoSync scheduler started (cron-aligned, default every 30 minutes).")
     else:
@@ -3094,6 +3242,28 @@ app.include_router(
     opera_pace.router,
     prefix=f"{API_PREFIX}/opera/pace",
     tags=["營運分析"],
+)
+
+# ── OTA 口碑分析（2026-08-21）：Booking／Expedia／Tripadvisor 公開評論 ──────────
+#    規格書 docs/SPEC_ota_reviews.md。
+#    ⚠️ 與 /opera/*、/jinxu/* 完全獨立：那兩個是 PMS 營收資料（權限敏感群組），
+#       本模組是公開評論，權限另開「口碑分析」group，不受 §11.1 那條紅線約束。
+#    ⚠️ 所有統計一律用 score_10（統一 10 分制）—— Booking 10 分制與 Tripadvisor
+#       5 分制混在一起平均出來的數字是錯的。
+app.include_router(
+    ota_reviews.router,
+    prefix=f"{API_PREFIX}/ota/reviews",
+    tags=["口碑分析"],
+)
+app.include_router(
+    ota_stats.router,
+    prefix=f"{API_PREFIX}/ota/stats",
+    tags=["口碑分析"],
+)
+app.include_router(
+    ota_admin.router,
+    prefix=f"{API_PREFIX}/ota/admin",
+    tags=["口碑分析"],
 )
 
 # ── 即時營運：直接向 OPERA Cloud（OHIP）取數，不落地、不共用 opera_* 表 ────────

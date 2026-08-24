@@ -46,7 +46,7 @@ class B1FInspectionItem(Base):
     item_name = Column(String(200), nullable=False, default="",  comment="設備/項目名稱（Ragic 欄位名）")
 
     result_raw    = Column(String(50), nullable=False, default="",          comment="原始值（正常/異常/待處理/空白）")
-    result_status = Column(String(20), nullable=False, default="unchecked", comment="正規化：normal/abnormal/pending/unchecked")
+    result_status = Column(String(20), nullable=False, default="unchecked", comment="正規化：normal/abnormal/pending/unchecked/measure（measure＝量測/程度型欄位的記錄值，不算異常）")
     abnormal_flag = Column(Boolean,    nullable=False, default=False,        comment="是否有異常旗標")
 
     synced_at = Column(DateTime, nullable=False, server_default=func.now(),

@@ -10,14 +10,15 @@
  *   Tab 6 B1F 巡檢     — 同上
  *
  * URL query param：?tab=summary|daily-form|rf|b4f|b2f|b1f
- * 資料來源：尚未建立本地同步，各欄位顯示空狀態，保留結構供日後擴充。
+ * 資料來源：Tab 1 Dashboard 已接通本地 DB（rf/b4f/b2f/b1f_inspection_batch|item）；
+ *           Tab 2 每日巡檢表的 Ragic 欄位名 ↔ 模板 check_content 對應尚未決定，暫維持模板結構。
  */
 import { useEffect, useState, useCallback } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
   Row, Col, Card, Statistic, Table, Tag, Button, Space,
-  Typography, Breadcrumb, Tabs, Alert, DatePicker, Badge,
-  message, Progress, Tooltip,
+  Typography, Breadcrumb, Tabs, Alert, DatePicker,
+  message, Tooltip,
 } from 'antd'
 import {
   HomeOutlined, ReloadOutlined,
@@ -37,6 +38,7 @@ import {
   type FullBuildingMonthlySheetSummary,
   type FullBuildingDailyFormRow,
 } from '@/api/fullBuildingInspection'
+import FloorInspectionList from './FloorInspectionList'
 import MonthlyCalendarGrid from '@/components/MonthlyCalendarGrid'
 import type { CalendarRow } from '@/components/MonthlyCalendarGrid'
 
@@ -44,17 +46,6 @@ const { Title, Text } = Typography
 
 // ── 型別 ─────────────────────────────────────────────────────────────────────
 // (SheetStats 已替換為 FullBuildingMonthlySheetSummary，來自 API 型別定義)
-
-interface BatchRow {
-  id:              string
-  inspection_date: string
-  inspector_name:  string
-  completion_rate: number
-  total:           number
-  checked:         number
-  abnormal:        number
-  pending:         number
-}
 
 // ── 每日巡檢表 Tab ────────────────────────────────────────────────────────────
 
@@ -197,113 +188,6 @@ function FullBuildingDailyFormTab() {
           </Space>
         </Col>
       </Row>
-    </div>
-  )
-}
-
-// ── 共用樓層巡檢紀錄 Tab ──────────────────────────────────────────────────────
-
-function FloorInspectionListTab({ sheetKey }: { sheetKey: string }) {
-  const [yearMonth, setYearMonth] = useState<string>(dayjs().format('YYYY/MM'))
-  const [loading,   setLoading]   = useState(false)
-  const [batches,   setBatches]   = useState<BatchRow[]>([])
-
-  const load = useCallback(async () => {
-    setLoading(true)
-    // TODO: 接 API → fetchFullBuildingBatches(sheetKey, { year_month: yearMonth })
-    await new Promise((r) => setTimeout(r, 100))
-    setBatches([])
-    setLoading(false)
-  }, [sheetKey, yearMonth])
-
-  useEffect(() => { load() }, [load])
-
-  const columns = [
-    {
-      title: '巡檢日期',
-      dataIndex: 'inspection_date',
-      width: 110,
-      sorter: (a: BatchRow, b: BatchRow) =>
-        a.inspection_date.localeCompare(b.inspection_date),
-      defaultSortOrder: 'descend' as const,
-    },
-    {
-      title: '巡檢人員',
-      dataIndex: 'inspector_name',
-      width: 100,
-    },
-    {
-      title: '狀態',
-      width: 90,
-      render: (_: unknown, row: BatchRow) => {
-        if (row.abnormal > 0)                          return <Tag color="#FF4D4F">有異常</Tag>
-        if (row.pending  > 0)                          return <Tag color="#FAAD14">待處理</Tag>
-        if (row.checked >= row.total && row.total > 0) return <Tag color="#52C41A">已完成</Tag>
-        return <Tag color="#4BA8E8">巡檢中</Tag>
-      },
-    },
-    {
-      title: '巡檢進度',
-      width: 200,
-      render: (_: unknown, row: BatchRow) => (
-        <div>
-          <Progress
-            percent={row.completion_rate}
-            size="small"
-            strokeColor={{ from: '#FAAD14', to: '#52C41A' }}
-            format={() => `${row.completion_rate}%`}
-          />
-          <Text type="secondary" style={{ fontSize: 11 }}>
-            {row.checked} / {row.total} 已巡檢
-          </Text>
-        </div>
-      ),
-    },
-    {
-      title: '異常',
-      dataIndex: 'abnormal',
-      width: 65,
-      align: 'center' as const,
-      render: (v: number) =>
-        v > 0 ? <Badge count={v} color="#FF4D4F" /> : <Text type="secondary">—</Text>,
-    },
-    {
-      title: '待處理',
-      dataIndex: 'pending',
-      width: 65,
-      align: 'center' as const,
-      render: (v: number) =>
-        v > 0 ? <Badge count={v} color="#FAAD14" /> : <Text type="secondary">—</Text>,
-    },
-  ]
-
-  return (
-    <div>
-      <Row gutter={8} style={{ marginBottom: 16 }} align="middle">
-        <Col>
-          <DatePicker
-            picker="month"
-            value={dayjs(yearMonth, 'YYYY/MM')}
-            format="YYYY/MM"
-            allowClear={false}
-            onChange={(d) => { if (d) setYearMonth(d.format('YYYY/MM')) }}
-          />
-        </Col>
-        <Col>
-          <Button icon={<ReloadOutlined />} onClick={load} loading={loading}>
-            重新整理
-          </Button>
-        </Col>
-      </Row>
-      <Table<BatchRow>
-        dataSource={batches}
-        rowKey="id"
-        columns={columns}
-        loading={loading}
-        size="middle"
-        pagination={{ pageSize: 30, showTotal: (t) => `共 ${t} 筆` }}
-        locale={{ emptyText: '尚無巡檢紀錄（請先執行資料同步）' }}
-      />
     </div>
   )
 }
@@ -500,16 +384,6 @@ function SummaryTabContent() {
         })}
       </Row>
 
-      {!loading && (
-        <Alert
-          style={{ marginTop: 16 }}
-          type="info"
-          message="整棟巡檢本地同步功能開發中"
-          description="目前統計資料尚未接通本地 DB，請直接至 Ragic 查看各樓層巡檢表單。接通後數據將自動顯示於此。"
-          showIcon
-        />
-      )}
-
       {/* 月曆格：各樓層 × 當月逐日巡檢狀況 */}
       <Card
         size="small"
@@ -599,22 +473,22 @@ export default function FullBuildingInspectionDashboard() {
           {
             key:      'rf',
             label:    'RF 巡檢',
-            children: openedTabs.has('rf') ? <FloorInspectionListTab sheetKey="rf" /> : null,
+            children: openedTabs.has('rf') ? <FloorInspectionList sheetKey="rf" /> : null,
           },
           {
             key:      'b4f',
             label:    'B4F 巡檢',
-            children: openedTabs.has('b4f') ? <FloorInspectionListTab sheetKey="b4f" /> : null,
+            children: openedTabs.has('b4f') ? <FloorInspectionList sheetKey="b4f" /> : null,
           },
           {
             key:      'b2f',
             label:    'B2F 巡檢',
-            children: openedTabs.has('b2f') ? <FloorInspectionListTab sheetKey="b2f" /> : null,
+            children: openedTabs.has('b2f') ? <FloorInspectionList sheetKey="b2f" /> : null,
           },
           {
             key:      'b1f',
             label:    'B1F 巡檢',
-            children: openedTabs.has('b1f') ? <FloorInspectionListTab sheetKey="b1f" /> : null,
+            children: openedTabs.has('b1f') ? <FloorInspectionList sheetKey="b1f" /> : null,
           },
         ]}
       />

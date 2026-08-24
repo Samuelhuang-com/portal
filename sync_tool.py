@@ -228,6 +228,24 @@ MODULES: list[tuple[str, str, str]] = [
     ("訂房增量同步",       "app.services.opera_reservation_sync",       "sync_incremental_job"),
     # ⚠️ 快照錯過的日子**永遠補不回來**（OPERA 不提供歷史查詢），寧可多跑。
     ("OHIP 每日快照",      "app.services.ohip_snapshot_service",        "run_snapshot_job"),
+    # ⚠️ 這一個既不是 Ragic 也不是 OHIP —— 來源是 Booking／Expedia／Tripadvisor
+    #    的**公開評論頁**（Selenium 擷取）。規格書 docs/SPEC_ota_reviews.md
+    #
+    # ⚠️ 為什麼非 Ragic 模組也要登錄在這裡：因為它**有排程**。
+    #    純檔案上傳型（opera_import／jinxu_*）不需要，但有排程的模組若只掛在
+    #    main.py 的 APScheduler，在 SCHEDULER_ENABLED=false 的機器上等於從未執行
+    #    —— 上面那四個 OHIP 模組就是 2026-08-13 才發現這件事補登錄的。
+    #
+    # ⚠️ 內建「當日已成功就 skip」（OTA_ONCE_PER_DAY），所以放在 15 分一輪的
+    #    自動同步裡不會反覆對 OTA 發請求被封 IP。
+    #
+    # ⚠️ 本工具外層已套 sync_lock（見 _run_all_modules），
+    #    sync_all_enabled() 內部刻意不再加鎖，否則會自我死鎖。
+    ("OTA 評論擷取",       "app.services.ota_scraper_service",           "sync_all_enabled"),
+    # ⚠️ 必須排在「OTA 評論擷取」之後 —— 先有資料才有東西可分析。
+    #    只挑 analyzed_at IS NULL 的，沒有新評論時幾乎不做事（一次 DB 查詢）。
+    #    AI 補判有快取與 A1–A4 白名單，放在 15 分一輪的自動同步裡不會燒 API 配額。
+    ("OTA 情緒分析",       "app.services.ota_analysis_service",          "run_scheduled_analyze"),
     # ⚠️ 必須排在最後 —— 它檢查的是「前面那些模組跑得怎麼樣」。
     #    同一個問題一天只寄一次（Memo 去重），沒設 ALERT_EMAIL_TO 就靜默跳過。
     ("同步告警檢查",       "app.services.sync_alert_service",           "check_and_alert"),
@@ -754,6 +772,7 @@ class SyncApp(tk.Tk):
             import app.models.hotel_routine_pm_schedule  # noqa
             import app.models.contract                 # noqa
             import app.models.opera_segment            # noqa  ohip_revenue_history + 同步紀錄
+            import app.models.ota_review               # noqa  OTA 口碑分析（2026-08-22）
 
             # ── 2. hotel_mr_reading 舊版偵測 → DROP（在 create_all 之前）────
             with engine.connect() as conn:
@@ -812,6 +831,20 @@ class SyncApp(tk.Tk):
                     "CREATE UNIQUE INDEX IF NOT EXISTS ix_vendors_ragic_id ON vendors (ragic_id)"
                 ))
                 conn.commit()
+
+            # ── 7. ota_sync_logs 執行者身分欄位（2026-08-24）─────────────────
+            #
+            # ⚠️ sync_tool 是獨立行程，跑 OTA 同步時會 INSERT ota_sync_logs。
+            #    ORM 已經有 worker_host／worker_pid，DB 沒有就直接
+            #    "no such column" 炸掉 —— 而且是在使用者按下同步的當下才炸。
+            #    不能假設「反正後端會先重啟過」，這台機器可能只跑 sync_tool。
+            #
+            # ⚠️ ALTER 的實作在 ota_sync_recovery.ensure_worker_columns()，
+            #    後端與 ota_scraper_cli 呼叫的是**同一支**。不要在這裡另抄一份。
+            from app.services.ota_sync_recovery import ensure_worker_columns
+
+            for _col in ensure_worker_columns():
+                logger.info("[DB] ota_sync_logs.%s 欄位已新增", _col)
 
             logger.info("[DB] Schema 確認完成 ✓")
 

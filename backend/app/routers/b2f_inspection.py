@@ -14,9 +14,10 @@ Prefix: /api/v1/mall/b2f-inspection
 """
 from collections import Counter
 from datetime import date, timedelta
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -43,12 +44,14 @@ STATUS_LABELS = {
     "abnormal":  "異常",
     "pending":   "待處理",
     "unchecked": "未填寫",
+    "measure":   "記錄值",
 }
 STATUS_COLORS = {
     "normal":    "#52C41A",
     "abnormal":  "#FF4D4F",
     "pending":   "#FAAD14",
     "unchecked": "#999999",
+    "measure":   "#4BA8E8",
 }
 
 
@@ -78,21 +81,58 @@ def _item_to_out(it: B2FInspectionItem) -> B2FInspectionItemOut:
     )
 
 
+# ── KPI 只算「真正的設備項目」（2026-08-24）────────────────────────────────────
+#
+# 動態欄位偵測會把「拍照」「拍照2」「異常說明」「建立日期」「建立年份」「月份」
+# 也收成 item，而 _normalize_result_status() 對「非空但不在對照表裡」的值一律
+# 判成 abnormal —— 檔名與日期因此被算成異常，四個樓層合計虛報 488 筆。
+#
+# 判定規則集中在 app/services/inspection_field_rules.py，四個樓層與前端共用。
+# ⚠️ 任何新增的「數異常」或「算完成率」的程式碼都必須先過這一層，
+#    否則同一個模組會出現兩套數字。
+
+def _equipment_items(items: list) -> list:
+    """濾掉附件欄位與附註/系統欄位，只留下真正的設備巡檢項目。"""
+    from app.services.inspection_field_rules import is_equipment_field
+    return [it for it in items if is_equipment_field(it.item_name, it.result_raw)]
+
+
+def _abnormal_count_for_batches(db, batches) -> int:
+    """一批場次裡「異常 + 待處理」的設備項目數。"""
+    total = 0
+    for b in batches:
+        items = db.query(B2FInspectionItem).filter(
+            B2FInspectionItem.batch_ragic_id == b.ragic_id
+        ).all()
+        total += sum(
+            1 for it in _equipment_items(items)
+            if it.result_status in ("abnormal", "pending")
+        )
+    return total
+
+
 def _calc_kpi(items: list[B2FInspectionItem]) -> B2FInspectionBatchKPI:
+    items     = _equipment_items(items)
     total     = len(items)
     normal    = sum(1 for it in items if it.result_status == "normal")
     abnormal  = sum(1 for it in items if it.result_status == "abnormal")
     pending   = sum(1 for it in items if it.result_status == "pending")
     unchecked = sum(1 for it in items if it.result_status == "unchecked")
-    checked   = normal + abnormal + pending
+    # 量測/程度型（高/中/低、電壓範圍…）：有填就是已巡檢，但不是 pass/fail 判定
+    measure   = sum(1 for it in items if it.result_status == "measure")
+    checked   = normal + abnormal + pending + measure
+    # ⚠️ normal_rate 的分母刻意**不含 measure** —— 「水位＝高」不是「合格」，
+    #    把它算進合格率會讓數字虛高且無法解釋。
+    judged    = normal + abnormal + pending
     return B2FInspectionBatchKPI(
         total           = total,
         normal          = normal,
         abnormal        = abnormal,
         pending         = pending,
         unchecked       = unchecked,
+        measure         = measure,
         completion_rate = round(checked / total * 100, 1) if total > 0 else 0.0,
-        normal_rate     = round(normal / checked * 100, 1) if checked > 0 else 0.0,
+        normal_rate     = round(normal / judged * 100, 1) if judged > 0 else 0.0,
     )
 
 
@@ -129,6 +169,63 @@ async def verify_diff(db: Session = Depends(get_db)):
     return build_verify_diff_response(ragic_url_map, portal_ids)
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# GET /db-images/{batch_ragic_id}  — 場次附圖（CLAUDE.md §7 附圖模組規範）
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Ragic 的「拍照」欄在同步時被動態欄位偵測收成一般 item，`result_raw` 存的就是
+# 檔名（如 "LMHiosXMzp@IMG_20260807_085440.jpg"）。因此這支端點**不需要打 Ragic、
+# 也不需要新增 images_json 欄位**，直接把已同步的檔名交給 parse_images 組出
+# Ragic 下載連結即可。
+#
+# ⚠️ 判定規則集中在 app/services/inspection_field_rules.py，四個樓層共用；
+#    前端 FloorInspectionList.tsx 有一份等價規則，兩邊必須一起改，
+#    否則會出現「明細列表把檔名當成異常狀態顯示成紅色 Tag」或「附圖區空白」。
+#
+# ⚠️ 不可改回寫死的欄位名清單（如 ("拍照",)）：Ragic 上的附件欄位命名沒有統一
+#    （拍照 / 拍照1 / 拍照2 / 照片 / 附件…），Sheet 新增一個「拍照3」就會靜默漏掉，
+#    而症狀只是「多一個紅色異常 Tag」，沒有人會發現。
+
+
+class InspectionImageOut(BaseModel):
+    url:      str
+    filename: str
+
+
+@router.get(
+    "/db-images/{batch_ragic_id}",
+    response_model=List[InspectionImageOut],
+    summary="取得場次附圖（由已同步的附件欄位值組出 Ragic 下載連結，不打 Ragic）",
+)
+def get_batch_db_images(batch_ragic_id: str, db: Session = Depends(get_db)):
+    from app.services.inspection_field_rules import (
+        is_image_field, split_attachment_value,
+    )
+    from app.services.ragic_data_service import parse_images
+
+    # 名稱規則之外還有值規則（副檔名），無法用 SQL 表達，故取回該場次全部 item
+    # 再在 Python 端判定。單一場次至多數十筆，成本可忽略。
+    items = (
+        db.query(B2FInspectionItem)
+        .filter(B2FInspectionItem.batch_ragic_id == batch_ragic_id)
+        .order_by(B2FInspectionItem.seq_no)
+        .all()
+    )
+
+    # ⚠️ 一個附件欄位可能同時有多張圖，sync 的 _stringify() 是用**空白**把它們
+    #    串起來的（'a@1.jpg b@2.jpg'），而 parse_images 只認換行／逗號／分號。
+    #    直接整串丟進去會組出一個含兩個檔名的壞連結 —— 兩張圖變一張破圖。
+    images: list[dict] = []
+    for it in items:
+        if not is_image_field(it.item_name, it.result_raw):
+            continue
+        for token in split_attachment_value(it.result_raw):
+            images.extend(parse_images(
+                token, server=B2F_SERVER_URL, account=B2F_ACCOUNT,
+            ))
+    return images
+
+
 @router.get("/batches", summary="取得巡檢場次清單")
 def list_batches(
     year_month: Optional[str] = Query(None),
@@ -151,7 +248,7 @@ def list_batches(
             B2FInspectionItem.batch_ragic_id == b.ragic_id
         ).all()
         result.append({
-            "batch": _batch_to_out(b, len(items)).model_dump(),
+            "batch": _batch_to_out(b, len(_equipment_items(items))).model_dump(),
             "kpi":   _calc_kpi(items).model_dump(),
         })
     return result
@@ -186,7 +283,7 @@ def get_batch_detail(
         filtered.append(_item_to_out(it))
 
     return B2FInspectionBatchDetail(
-        batch = _batch_to_out(batch, len(items)),
+        batch = _batch_to_out(batch, len(_equipment_items(items))),
         kpi   = kpi,
         items = filtered,
     )
@@ -243,10 +340,11 @@ def get_stats(db: Session = Depends(get_db)):
             B2FInspectionItem.batch_ragic_id == latest_batch.ragic_id
         ).order_by(B2FInspectionItem.seq_no).all()
 
-        latest_batch_out = _batch_to_out(latest_batch, len(items))
+        latest_batch_out = _batch_to_out(latest_batch, len(_equipment_items(items)))
         latest_kpi       = _calc_kpi(items)
 
-        status_counts = Counter(it.result_status for it in items)
+        eq_items = _equipment_items(items)
+        status_counts = Counter(it.result_status for it in eq_items)
         for s, cnt in status_counts.items():
             if cnt > 0:
                 status_dist.append(StatusDistItem(
@@ -257,11 +355,11 @@ def get_stats(db: Session = Depends(get_db)):
                 ))
 
         recent_abnormal = [
-            _item_to_out(it) for it in items
+            _item_to_out(it) for it in eq_items
             if it.result_status in ("abnormal", "pending")
         ][:10]
         recent_pending = [
-            _item_to_out(it) for it in items
+            _item_to_out(it) for it in eq_items
             if it.result_status == "pending"
         ][:10]
 
@@ -272,13 +370,7 @@ def get_stats(db: Session = Depends(get_db)):
         day_batches = db.query(B2FInspectionBatch).filter(
             B2FInspectionBatch.inspection_date == d_str
         ).all()
-        abn_count = sum(
-            db.query(B2FInspectionItem).filter(
-                B2FInspectionItem.batch_ragic_id == b.ragic_id,
-                B2FInspectionItem.result_status.in_(["abnormal", "pending"]),
-            ).count()
-            for b in day_batches
-        )
+        abn_count = _abnormal_count_for_batches(db, day_batches)
         abnormal_trend.append({
             "date":           d_str,
             "abnormal_count": abn_count,

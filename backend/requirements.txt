@@ -22,3 +22,20 @@ filelock>=3.13.0
 
 # OPERA Cloud（OHIP）API 呼叫（2026-08-06）—— 同步，配合同步 service 層
 requests>=2.31.0
+
+# ── OTA 口碑分析（2026-08-22）────────────────────────────────────────────
+# 規格書 docs/SPEC_ota_reviews.md §3.4
+# ⚠️ 這四個只有「跑爬蟲的機器」需要。app/services/ota_browser.py 與
+#    ota_parser.py 一律在函式內 import，沒裝也不影響 Portal 啟動與其他功能
+#    （CSV 匯入那條路徑完全不碰這些套件）。
+beautifulsoup4>=4.12.0          # HTML 解析
+lxml>=5.2.0                     # bs4 的高速 parser backend（沒裝會自動退回 html.parser）
+selenium>=4.21.0                # OTA 動態頁面擷取
+undetected-chromedriver>=3.5.5  # 反偵測；Booking 對無頭瀏覽器偵測較嚴
+# 註：requests 已在上方（OPERA Cloud OHIP），本模組共用不另外加。
+#     pandas / openpyxl 已在上方，Excel 匯出直接用。
+
+# OTA 口碑分析 — 簡繁字形轉換（2026-08-23）
+# ⚠️ 純 Python，不需編譯。缺了不會壞，但主題字典展不開簡繁變體，
+#    簡體中文評論會少掉約六成的主題標籤（analyze 會回 warning）。
+opencc-python-reimplemented>=0.1.7

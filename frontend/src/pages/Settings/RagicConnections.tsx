@@ -71,6 +71,13 @@ const ALL_MODULES: string[] = [
   // SCHEDULER_ENABLED=false，等於從未執行。三者都會自我判斷做過了沒，
   // 做完就 skip 不打 OHIP。名稱必須與 sync_tool.py MODULES 完全一致。
   '市場區隔歷史回補', '訂房歷史回補', '訂房增量同步', 'OHIP 每日快照',
+  // ── 不是 Ragic 也不是 OHIP：來源是 Booking／Expedia／Tripadvisor 的公開評論頁 ──
+  // 有排程的非 Ragic 模組一律要登錄（理由同上面那四個 OHIP 模組）。
+  // 名稱必須與 sync_tool.py MODULES 完全一致。
+  // 內建「當日已成功就 skip」，放在 15 分一輪的自動同步裡不會被封 IP。
+  'OTA 評論擷取',
+  // 必須排在「OTA 評論擷取」之後：先有資料才有東西可分析
+  'OTA 情緒分析',
   // 排最後：檢查前面那些模組跑得怎麼樣，有問題才寄信（一天一次）
   '同步告警檢查',
 ]

@@ -53,6 +53,10 @@ import {
   FileDoneOutlined,
   ShoppingCartOutlined,
   InboxOutlined,
+  CommentOutlined,
+  UnorderedListOutlined,
+  WarningOutlined,
+  TagsOutlined,
 } from '@ant-design/icons'
 import { useNavigate, useLocation, Outlet } from 'react-router-dom'
 import { useAuthStore } from '@/stores/authStore'
@@ -504,6 +508,37 @@ export const menuItems: MenuItem[] = [
       { key: '/realtime/compare',   icon: <SwapOutlined />,       label: NAV_PAGE.realtimeCompare,   permissionKey: 'realtime_compare' },
       { key: '/realtime/logs',      icon: <FileSearchOutlined />, label: NAV_PAGE.realtimeLogs,      permissionKey: 'realtime_view'    },
       { key: '/realtime/manual',    icon: <ReadOutlined />,      label: NAV_PAGE.realtimeManual,    permissionKey: 'realtime_view'    },
+    ],
+  },
+  // ── 口碑分析（2026-08-21 新增）────────────────────────────────────────────
+  // 資料來源：Booking／Expedia／Tripadvisor 的**公開評論頁**（外部網站擷取型）。
+  // 規格書 docs/SPEC_ota_reviews.md。
+  //
+  // ⚠️ 刻意不併入「營運分析」：opera_* 是 PMS 營收敏感權限（§11.1），只給
+  //    system_admin。評論是公開資料，要開放給客務／房務主管看，不該連帶把
+  //    營收權限一起送出去。
+  //
+  // ⚠️ 群組用 permissionKeys（陣列）而非單一 permissionKey：
+  //    只有「評論清單」權限的人也要看得到群組。若比照 opera 寫成
+  //    permissionKey: 'ota_view'，這些人會整個群組消失。
+  //
+  // 【交付進度】P4（2026-08-22）補上負評警示與主題字典。
+  //    Dashboard 與趨勢比較是 P5，頁面還不存在，先列出來只會是死連結。
+  {
+    key: 'ota',
+    icon: <CommentOutlined />,
+    label: NAV_GROUP.ota,
+    permissionKeys: [
+      'ota_view', 'ota_reviews_view', 'ota_alerts_view',
+      'ota_trend_view', 'ota_sources_admin', 'ota_topic_admin',
+    ],
+    children: [
+      { key: '/ota/dashboard', icon: <DashboardOutlined />,  label: NAV_PAGE.otaDashboard, permissionKey: 'ota_view'         },
+      { key: '/ota/reviews', icon: <UnorderedListOutlined />, label: NAV_PAGE.otaReviews, permissionKey: 'ota_reviews_view'  },
+      { key: '/ota/alerts',  icon: <WarningOutlined />,       label: NAV_PAGE.otaAlerts,  permissionKey: 'ota_alerts_view'   },
+      { key: '/ota/trend',   icon: <LineChartOutlined />,     label: NAV_PAGE.otaTrend,   permissionKey: 'ota_trend_view'    },
+      { key: '/ota/topics',  icon: <TagsOutlined />,          label: NAV_PAGE.otaTopics,  permissionKey: 'ota_topic_admin'   },
+      { key: '/ota/sources', icon: <SettingOutlined />,       label: NAV_PAGE.otaSources, permissionKey: 'ota_sources_admin' },
     ],
   },
   // ── 金旭分析 ─────────────────────────────────────────────────────────────

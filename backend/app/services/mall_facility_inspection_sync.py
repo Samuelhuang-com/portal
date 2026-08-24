@@ -11,6 +11,7 @@
   同步時自動掃描欄位，排除已知 metadata 欄位後，其餘視為巡檢點欄位。
 """
 import logging
+import re
 from datetime import datetime, timezone
 from app.core.time import twnow
 from typing import Any
@@ -107,19 +108,26 @@ def _stringify(value: Any) -> str:
     return str(value).strip()
 
 
+# 允許 2026/8/3、2026-08-03、2026/08/03 三種寫法；後面接不接時間都可以
+_DATE_RE = re.compile(r"(\d{4})[/-](\d{1,2})[/-](\d{1,2})")
+
+
 def _extract_date(raw_datetime: str) -> str:
-    """從 '2026/4/14 09:26' 或 '2026-04-14 09:26' 萃取 YYYY/MM/DD。"""
-    raw = (raw_datetime or "").strip()
-    if not raw:
+    """從 '2026/4/14 09:26'、'2026-04-14 09:26'、'2026/8/3 09:26' 萃取 YYYY/MM/DD。
+
+    ⚠️ 不可改回 raw[:10] 的切法（2026-08-24 修正）。
+       月與日**同時**是個位數又帶時間時，前 10 碼會切進時間裡：
+           '2026/8/3 09:26'[:10] == '2026/8/3 0'
+       split('/') 得到 ['2026', '8', '3 0']，int('3 0') 直接 ValueError，
+       於是原樣回傳 '2026/8/3 0' —— 這個值不會 match 任何 LIKE 'YYYY/MM%'，
+       那筆資料總筆數對得上卻永遠落不進任何月份，統計看不到它且不會報錯。
+       解析不出來一律回空字串，與「來源欄位為空」同一種表示法。
+    """
+    m = _DATE_RE.search(raw_datetime or "")
+    if not m:
         return ""
-    date_part = raw[:10].replace("-", "/")
-    parts = date_part.split("/")
-    if len(parts) == 3:
-        try:
-            return f"{parts[0]}/{int(parts[1]):02d}/{int(parts[2]):02d}"
-        except ValueError:
-            pass
-    return date_part
+    year, month, day = m.groups()
+    return f"{year}/{int(month):02d}/{int(day):02d}"
 
 
 def _normalize_result_status(raw: str) -> tuple[str, bool]:

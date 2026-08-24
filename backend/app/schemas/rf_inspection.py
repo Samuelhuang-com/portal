@@ -41,6 +41,7 @@ class RFInspectionBatchKPI(BaseModel):
     abnormal:         int   = 0
     pending:          int   = 0
     unchecked:        int   = 0
+    measure:          int   = 0     # 量測/程度型欄位（高/中/低、電壓…）已記錄，不算異常
     completion_rate:  float = 0.0   # (normal + abnormal + pending) / total × 100
     normal_rate:      float = 0.0   # normal / (total - unchecked) × 100
 

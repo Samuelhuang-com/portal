@@ -98,6 +98,7 @@ export const NAV_GROUP = {
   opera:                  '營運分析',          // ← 新增：OPERA 營運分析（2026-08-04，檔案上傳型模組，非 Ragic 同步）
   jinxu:                  '金旭分析',          // ← 新增：金旭 PMS 分析（2026-08-05，第二個檔案上傳型模組，與 /opera 完全獨立）
   realtime:               '即時營運',          // ← 新增：OPERA Cloud API 直連（2026-08-06）。與 /opera/*（上傳 TXT）刻意分開：資料來源與時點不同
+  ota:                    '口碑分析',          // ← 新增：OTA 評論分析（2026-08-21，外部網站擷取型）。刻意不併入「營運分析」：那組是 PMS 營收敏感權限，評論是公開資料
 } as const
 
 // ── 二級選單（頁面） ──────────────────────────────────────────────────────────
@@ -339,4 +340,15 @@ export const NAV_PAGE = {
   jinxuImport:      '資料匯入',              // ← route /jinxu/import（含匯入紀錄 TAB）
   jinxuSettings:    '科目與門檻設定',        // ← route /jinxu/settings
   jinxuManual:      '使用手冊',              // ← route /jinxu/manual（共用 jinxu_view 權限）
+
+  // ── 口碑分析（2026-08-21 新增）────────────────────────────────────────────
+  // 資料來源：Booking／Expedia／Tripadvisor 的公開評論頁。規格書 docs/SPEC_ota_reviews.md
+  // ⚠️ 下列字串必須與 role_permissions.py PERMISSION_DEFINITIONS 的 label 逐字相同，
+  //    否則管理員在「權限設定」看到的名稱與側邊欄不同，會以為是兩個不同的東西。
+  otaDashboard:     '★ 口碑分析 Dashboard',  // ← route /ota/dashboard（P5 交付）
+  otaReviews:       '評論清單',              // ← route /ota/reviews
+  otaAlerts:        '負評警示',              // ← route /ota/alerts（P4 交付）
+  otaTrend:         '趨勢與雙館比較',        // ← route /ota/trend（P5 交付）
+  otaSources:       'OTA 來源設定',          // ← route /ota/sources（含 CSV 匯入）
+  otaTopics:        '主題字典維護',          // ← route /ota/topics（P4 交付）
 } as const

@@ -5,13 +5,13 @@ title Git Push Auto
 REM -- anti-close: open new window
 REM    NOTE: args are passed to the child via environment variables, not on the
 REM          command line -- quoting through start/cmd /k is fragile.
-if not "%GIT_LAUNCHED%"=="1" (
-    set GIT_LAUNCHED=1
-    if /i "%~1"=="--skip-tests" set SKIP_E2E=1
-    if /i "%~1"=="-s"           set SKIP_E2E=1
-    start "Git Push Auto" cmd /k ""%~f0""
-    exit /b
-)
+REM if not "%GIT_LAUNCHED%"=="1" (
+REM    set GIT_LAUNCHED=1
+REM    if /i "%~1"=="--skip-tests" set SKIP_E2E=1
+REM    if /i "%~1"=="-s"           set SKIP_E2E=1
+REM    start "Git Push Auto" cmd /k ""%~f0""
+REM    exit /b
+REM )
 
 setlocal enabledelayedexpansion
 

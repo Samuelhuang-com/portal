@@ -223,6 +223,26 @@ PERMISSION_DEFINITIONS = [
     # 路由，因此 MainLayout.tsx 不會出現這個 permissionKey，但仍必須登錄於此，
     # 否則管理員無從授權（CLAUDE.md permissionKey 一致性規則的反向情況）。
     {"key": "jinxu_cancel_view",  "label": "取消與訂價落差分析",   "group": "金旭分析"},
+    # ── 口碑分析（2026-08-21 新增）────────────────────────────────────────────
+    # 資料來自 Booking／Expedia／Tripadvisor 的**公開評論頁**，非 Ragic、非 PMS。
+    # 規格書：docs/SPEC_ota_reviews.md §10.2
+    #
+    # ⚠️ 為什麼另開 group 而不併入「營運分析」：
+    #    §11.1 把 opera_* 那 9 個 key 列為敏感群組（PMS 營收資料），目前只給
+    #    system_admin。OTA 評論是公開資料、不含營收，不該被那條紅線綁住 ——
+    #    否則要開放給客務／房務主管看評論，就得連帶把營收權限一起送出去，
+    #    那正是 §11 當初要解掉的問題。
+    #
+    # ⚠️ 下列 label 必須與 frontend/src/constants/navLabels.ts 的 NAV_PAGE 完全一致。
+    {"key": "ota_view",           "label": "★ 口碑分析 Dashboard", "group": "口碑分析"},
+    {"key": "ota_reviews_view",   "label": "評論清單",             "group": "口碑分析"},
+    {"key": "ota_alerts_view",    "label": "負評警示",             "group": "口碑分析"},
+    {"key": "ota_trend_view",     "label": "趨勢與雙館比較",       "group": "口碑分析"},
+    {"key": "ota_sources_admin",  "label": "OTA 來源設定",         "group": "口碑分析"},
+    {"key": "ota_topic_admin",    "label": "主題字典維護",         "group": "口碑分析"},
+    # 手動觸發爬蟲（P2 上線後才有作用）。與 sources_admin 分開：
+    # 能設定來源不等於能隨時對 OTA 發請求 —— 抓太頻繁會被封 IP。
+    {"key": "ota_sync_run",       "label": "手動觸發同步",         "group": "口碑分析"},
 ]
 
 

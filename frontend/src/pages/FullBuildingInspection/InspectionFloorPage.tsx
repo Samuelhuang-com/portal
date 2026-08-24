@@ -1,26 +1,28 @@
 /**
- * 整棟巡檢 — 共用樓層巡檢頁元件
+ * 整棟巡檢 — 共用樓層巡檢頁元件（/full-building-inspection/rf|b4f|b2f|b1f 四條獨立路由）
  *
- * 對齊 portal 現有「整棟工務巡檢（B1F/B2F/RF）」的頁面規格：
- *   Tab 1「主管儀表板」：KPI 卡 + 巡檢進度 + 趨勢 + 異常/待處理清單
- *   Tab 2「巡檢紀錄」：月份篩選 + 場次清單
+ *   Tab 1「主管儀表板」：最新場次 KPI + 完成率 + 異常/待處理清單 + 近 7 日異常趨勢
+ *   Tab 2「巡檢紀錄」  ：月份篩選 + 場次清單 + 明細 Drawer（共用 FloorInspectionList）
  *
- * 資料來源：尚未建立本地同步，各欄位顯示空狀態（等待日後加入 sync service）
+ * 資料來源：GET /mall/{key}-inspection/stats
+ * ⚠️ prefix 是 /mall/ 不是 /full-building-inspection/，見 api/fullBuildingInspection.ts
+ *
+ * ⚠️ 清單與明細 Drawer 一律用 FloorInspectionList，不要在這裡重刻一份 ——
+ *    Dashboard 頁（index.tsx）的四個 Tab 用的是同一支。
  */
 import { useState, useCallback, useEffect } from 'react'
 import {
-  Row, Col, Card, Statistic, Table, Tag, Button, Space,
-  Typography, Breadcrumb, Tabs, Progress, Alert,
-  message, Badge, DatePicker,
+  Row, Col, Card, Statistic, Tag, Typography, Breadcrumb, Tabs,
+  Progress, Alert, List, Empty, Tooltip,
 } from 'antd'
 import {
-  HomeOutlined, ReloadOutlined,
-  WarningOutlined, CheckCircleOutlined, ClockCircleOutlined,
-  ExclamationCircleOutlined, SafetyOutlined, BarChartOutlined,
+  HomeOutlined, WarningOutlined, CheckCircleOutlined, ClockCircleOutlined,
+  ExclamationCircleOutlined, SafetyOutlined, BarChartOutlined, LinkOutlined,
 } from '@ant-design/icons'
-import dayjs from 'dayjs'
 import { NAV_GROUP, NAV_PAGE } from '@/constants/navLabels'
 import { FULL_BUILDING_INSPECTION_SHEETS } from '@/constants/fullBuildingInspection'
+import { fetchFloorStats, type FloorStats } from '@/api/fullBuildingInspection'
+import FloorInspectionList from './FloorInspectionList'
 
 const { Title, Text } = Typography
 
@@ -30,27 +32,14 @@ interface InspectionFloorPageProps {
   sheetKey: string
 }
 
-// ── 型別（日後接 API 時替換為正式型別）────────────────────────────────────────
-
-interface BatchRow {
-  id: string
-  inspection_date: string
-  inspector_name:  string
-  completion_rate: number
-  total:    number
-  checked:  number
-  abnormal: number
-  pending:  number
-}
-
 // ── 主元件 ────────────────────────────────────────────────────────────────────
 
 export default function InspectionFloorPage({ sheetKey }: InspectionFloorPageProps) {
-  const sheet       = FULL_BUILDING_INSPECTION_SHEETS[sheetKey]
-  const [activeTab, setActiveTab]   = useState('dashboard')
-  const [yearMonth, setYearMonth]   = useState<string>(dayjs().format('YYYY/MM'))
-  const [loading,   setLoading]     = useState(false)
-  const [batches,   setBatches]     = useState<BatchRow[]>([])
+  const sheet = FULL_BUILDING_INSPECTION_SHEETS[sheetKey]
+  const [activeTab, setActiveTab] = useState('dashboard')
+  const [loading,   setLoading]   = useState(false)
+  const [stats,     setStats]     = useState<FloorStats | null>(null)
+  const [error,     setError]     = useState<string | null>(null)
 
   // 防呆：找不到設定
   if (!sheet) {
@@ -75,59 +64,107 @@ export default function InspectionFloorPage({ sheetKey }: InspectionFloorPagePro
   const navPageKey = NAV_KEY_MAP[sheetKey]
   const pageLabel  = navPageKey ? NAV_PAGE[navPageKey] : sheet.title
 
-  // ── 資料載入（目前尚無 sync，保留結構供日後接 API）─────────────────────────
+  // ── 資料載入 ───────────────────────────────────────────────────────────────
 
-  const loadDashboard = useCallback(async () => {
+  const loadStats = useCallback(async () => {
     setLoading(true)
-    // TODO: 接 API → fetchFullBuildingStats(sheetKey)
-    await new Promise((r) => setTimeout(r, 100))
-    setLoading(false)
+    setError(null)
+    try {
+      setStats(await fetchFloorStats(sheetKey))
+    } catch (e) {
+      setStats(null)
+      setError(e instanceof Error ? e.message : '載入統計失敗')
+    } finally {
+      setLoading(false)
+    }
   }, [sheetKey])
 
-  const loadBatches = useCallback(async () => {
-    setLoading(true)
-    // TODO: 接 API → fetchFullBuildingBatches(sheetKey, { year_month: yearMonth })
-    await new Promise((r) => setTimeout(r, 100))
-    setBatches([])
-    setLoading(false)
-  }, [sheetKey, yearMonth])
+  useEffect(() => { loadStats() }, [loadStats])
 
-  useEffect(() => { loadDashboard() }, [loadDashboard])
-  useEffect(() => {
-    if (activeTab === 'list') loadBatches()
-  }, [activeTab, loadBatches])
+  // ⚠️ 該樓層一筆資料都沒有時，後端回的 latest_batch / latest_kpi 是 null，
+  //    不可直接 stats.latest_kpi.total，一律走這個有預設值的物件。
+  const kpi = stats?.latest_kpi ?? {
+    total: 0, normal: 0, abnormal: 0, pending: 0,
+    unchecked: 0, measure: 0, completion_rate: 0, normal_rate: 0,
+  }
+  const checked   = kpi.total - kpi.unchecked
+  const hasData   = !!stats?.latest_batch
+  const trend     = stats?.abnormal_trend ?? []
+  const trendMax  = Math.max(1, ...trend.map((t) => t.abnormal_count))
+
+  const ragicRecordUrl = (ragicId: string) =>
+    `${sheet.ragicUrl.split('?')[0]}/${ragicId}`
 
   // ── Tab 1：主管儀表板 ──────────────────────────────────────────────────────
 
   const DashboardTab = (
     <div>
+      {error && (
+        <Alert type="error" message={error} style={{ marginBottom: 16 }}
+               closable onClose={() => setError(null)} />
+      )}
+
+      {/* 最新場次資訊 */}
+      {hasData && stats?.latest_batch && (
+        <Card size="small" style={{ marginBottom: 16 }}>
+          <Row align="middle" gutter={16}>
+            <Col>
+              <Text type="secondary">最新場次</Text>
+            </Col>
+            <Col>
+              <Text strong style={{ fontSize: 16 }}>
+                {stats.latest_batch.inspection_date || '—'}
+              </Text>
+            </Col>
+            <Col>
+              <Text type="secondary">巡檢人員</Text>{' '}
+              <Text>{stats.latest_batch.inspector_name || '—'}</Text>
+            </Col>
+            <Col>
+              <Text type="secondary">工時</Text>{' '}
+              <Text>{stats.latest_batch.work_hours || '—'}</Text>
+            </Col>
+            <Col flex="auto" style={{ textAlign: 'right' }}>
+              <a
+                href={ragicRecordUrl(stats.latest_batch.ragic_id)}
+                target="_blank"
+                rel="noreferrer"
+                style={{ color: '#4BA8E8', fontSize: 12 }}
+              >
+                <LinkOutlined /> 在 Ragic 查看
+              </a>
+            </Col>
+          </Row>
+        </Card>
+      )}
+
       {/* KPI 卡片 */}
       <Row gutter={[16, 16]} style={{ marginBottom: 20 }}>
         {[
           {
             title: '已巡檢（本次）',
-            value: 0,
-            suffix: '/ 0 項',
+            value: checked,
+            suffix: `/ ${kpi.total} 項`,
             icon: <SafetyOutlined />,
             color: '#1B3A5C',
           },
           {
-            title: '正常（— %）',
-            value: 0,
+            title: `正常（${hasData ? kpi.normal_rate : '—'} %）`,
+            value: kpi.normal,
             suffix: '項',
             icon: <CheckCircleOutlined />,
             color: '#52C41A',
           },
           {
             title: '異常',
-            value: 0,
+            value: kpi.abnormal,
             suffix: '項',
             icon: <WarningOutlined />,
             color: '#FF4D4F',
           },
           {
             title: '待處理',
-            value: 0,
+            value: kpi.pending,
             suffix: '項',
             icon: <ExclamationCircleOutlined />,
             color: '#FAAD14',
@@ -148,18 +185,18 @@ export default function InspectionFloorPage({ sheetKey }: InspectionFloorPagePro
       </Row>
 
       {/* 巡檢完成率進度條 */}
-      <Card size="small" style={{ marginBottom: 16 }}>
+      <Card size="small" style={{ marginBottom: 16 }} loading={loading}>
         <Row align="middle" gutter={16}>
           <Col flex="100px"><Text strong>巡檢完成率</Text></Col>
           <Col flex="auto">
             <Progress
-              percent={0}
+              percent={kpi.completion_rate}
               strokeColor={{ from: '#FAAD14', to: '#52C41A' }}
-              format={() => '0%（0 / 0）'}
+              format={() => `${kpi.completion_rate}%（${checked} / ${kpi.total}）`}
             />
           </Col>
-          <Col flex="100px">
-            <Text type="secondary">近 7 日：— 次</Text>
+          <Col flex="120px" style={{ textAlign: 'right' }}>
+            <Text type="secondary">近 7 日：{stats?.total_batches_7d ?? 0} 次</Text>
           </Col>
         </Row>
       </Card>
@@ -170,134 +207,99 @@ export default function InspectionFloorPage({ sheetKey }: InspectionFloorPagePro
           <Card
             title={<><WarningOutlined style={{ color: '#FF4D4F' }} /> 本次異常項目</>}
             size="small"
+            loading={loading}
           >
-            <Alert message="本次巡檢無異常紀錄（尚未同步資料）" type="info" showIcon />
+            {stats && stats.recent_abnormal.length > 0 ? (
+              <List
+                size="small"
+                dataSource={stats.recent_abnormal}
+                renderItem={(it) => (
+                  <List.Item>
+                    <Text>{it.item_name}</Text>
+                    <Tag color={it.result_status === 'abnormal' ? '#FF4D4F' : '#FAAD14'}>
+                      {it.result_raw || (it.result_status === 'abnormal' ? '異常' : '待處理')}
+                    </Tag>
+                  </List.Item>
+                )}
+              />
+            ) : (
+              <Alert
+                message={hasData ? '本次巡檢無異常紀錄' : '尚無巡檢資料'}
+                type="info"
+                showIcon
+              />
+            )}
           </Card>
         </Col>
         <Col xs={24} lg={12}>
           <Card
             title={<><ClockCircleOutlined style={{ color: '#FAAD14' }} /> 待處理項目</>}
             size="small"
+            loading={loading}
           >
-            <Alert message="目前無待處理項目（尚未同步資料）" type="info" showIcon />
+            {stats && stats.recent_pending.length > 0 ? (
+              <List
+                size="small"
+                dataSource={stats.recent_pending}
+                renderItem={(it) => (
+                  <List.Item>
+                    <Text>{it.item_name}</Text>
+                    <Tag color="#FAAD14">{it.result_raw || '待處理'}</Tag>
+                  </List.Item>
+                )}
+              />
+            ) : (
+              <Alert
+                message={hasData ? '目前無待處理項目' : '尚無巡檢資料'}
+                type="info"
+                showIcon
+              />
+            )}
           </Card>
         </Col>
       </Row>
 
-      {/* 近 7 日趨勢（預留） */}
+      {/* 近 7 日異常趨勢 */}
       <Card
         title={<><BarChartOutlined /> 近 7 日異常趨勢</>}
         size="small"
-        style={{ marginTop: 16, height: 200 }}
-      >
-        <div style={{ textAlign: 'center', paddingTop: 50, color: '#999' }}>
-          尚無趨勢資料（請先執行資料同步）
-        </div>
-      </Card>
-    </div>
-  )
-
-  // ── Tab 2：巡檢紀錄 ────────────────────────────────────────────────────────
-
-  const batchColumns = [
-    {
-      title: '巡檢日期',
-      dataIndex: 'inspection_date',
-      width: 110,
-      sorter: (a: BatchRow, b: BatchRow) =>
-        a.inspection_date.localeCompare(b.inspection_date),
-      defaultSortOrder: 'descend' as const,
-    },
-    {
-      title: '巡檢人員',
-      dataIndex: 'inspector_name',
-      width: 100,
-    },
-    {
-      title: '狀態',
-      width: 90,
-      render: (_: unknown, row: BatchRow) => {
-        if (row.abnormal > 0) return <Tag color="#FF4D4F">有異常</Tag>
-        if (row.pending > 0)  return <Tag color="#FAAD14">待處理</Tag>
-        if (row.checked >= row.total && row.total > 0)
-          return <Tag color="#52C41A">已完成</Tag>
-        return <Tag color="#4BA8E8">巡檢中</Tag>
-      },
-    },
-    {
-      title: '巡檢進度',
-      width: 200,
-      render: (_: unknown, row: BatchRow) => (
-        <div>
-          <Progress
-            percent={row.completion_rate}
-            size="small"
-            strokeColor={{ from: '#FAAD14', to: '#52C41A' }}
-            format={() => `${row.completion_rate}%`}
-          />
-          <Text type="secondary" style={{ fontSize: 11 }}>
-            {row.checked} / {row.total} 已巡檢
-          </Text>
-        </div>
-      ),
-    },
-    {
-      title: '異常',
-      dataIndex: 'abnormal',
-      width: 65,
-      align: 'center' as const,
-      render: (v: number) =>
-        v > 0 ? (
-          <Badge count={v} color="#FF4D4F" />
-        ) : (
-          <Text type="secondary">—</Text>
-        ),
-    },
-    {
-      title: '待處理',
-      dataIndex: 'pending',
-      width: 65,
-      align: 'center' as const,
-      render: (v: number) =>
-        v > 0 ? (
-          <Badge count={v} color="#FAAD14" />
-        ) : (
-          <Text type="secondary">—</Text>
-        ),
-    },
-  ]
-
-  const ListTab = (
-    <div>
-      <Row gutter={8} style={{ marginBottom: 16 }}>
-        <Col>
-          <DatePicker
-            picker="month"
-            value={dayjs(yearMonth, 'YYYY/MM')}
-            format="YYYY/MM"
-            allowClear={false}
-            onChange={(d) => { if (d) setYearMonth(d.format('YYYY/MM')) }}
-          />
-        </Col>
-        <Col>
-          <Button
-            icon={<ReloadOutlined />}
-            onClick={loadBatches}
-            loading={loading}
-          >
-            重新整理
-          </Button>
-        </Col>
-      </Row>
-      <Table<BatchRow>
-        dataSource={batches}
-        rowKey="id"
-        columns={batchColumns}
+        style={{ marginTop: 16 }}
         loading={loading}
-        size="middle"
-        pagination={{ pageSize: 30, showTotal: (t) => `共 ${t} 筆` }}
-        locale={{ emptyText: '尚無巡檢紀錄（請先執行資料同步）' }}
-      />
+      >
+        {trend.length === 0 ? (
+          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="尚無趨勢資料" />
+        ) : (
+          <Row gutter={8} align="bottom" style={{ height: 140 }}>
+            {trend.map((t) => (
+              <Col flex="1" key={t.date} style={{ textAlign: 'center' }}>
+                <Tooltip
+                  title={`${t.date}｜${t.has_record ? `異常/待處理 ${t.abnormal_count} 項` : '未登錄'}`}
+                >
+                  <div style={{ height: 100, display: 'flex', alignItems: 'flex-end',
+                                justifyContent: 'center' }}>
+                    <div
+                      style={{
+                        width: '60%',
+                        // 沒登錄用灰色細條表示「沒資料」，與「有登錄但 0 異常」區分開
+                        height: t.has_record
+                          ? Math.max(4, (t.abnormal_count / trendMax) * 100)
+                          : 4,
+                        background: !t.has_record
+                          ? '#e8e8e8'
+                          : t.abnormal_count > 0 ? '#FF4D4F' : '#52C41A',
+                        borderRadius: 2,
+                      }}
+                    />
+                  </div>
+                </Tooltip>
+                <Text type="secondary" style={{ fontSize: 11 }}>
+                  {t.date.slice(5)}
+                </Text>
+              </Col>
+            ))}
+          </Row>
+        )}
+      </Card>
     </div>
   )
 
@@ -330,7 +332,11 @@ export default function InspectionFloorPage({ sheetKey }: InspectionFloorPagePro
         onChange={setActiveTab}
         items={[
           { key: 'dashboard', label: '主管儀表板', children: DashboardTab },
-          { key: 'list',      label: '巡檢紀錄',   children: ListTab },
+          {
+            key:      'list',
+            label:    '巡檢紀錄',
+            children: <FloorInspectionList sheetKey={sheetKey} />,
+          },
         ]}
       />
     </div>

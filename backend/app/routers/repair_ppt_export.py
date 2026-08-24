@@ -646,6 +646,134 @@ def _add_table_slides(
                         )
 
 
+# 合併頁：明細「標題」欄僅 3.40 吋，過長會換行撐高列高頂破版面 → 截斷字數
+_DC_TITLE_MAX = 20
+
+
+def _add_fee_counter_combo_slide(
+    prs,
+    template_idx: int,
+    title: str,
+    subtitle: str,
+    fee_cols: list,
+    fee_rows: list,
+    dc_caption: str,
+    dc_cols: list,
+    dc_rows: list,
+    now_str: str,
+    SW: float,
+    SH: float,
+    title_fn=None,
+):
+    """一頁兩表：上半「報修金額統計」、下半「扣款專櫃明細」。
+
+    刻意不改 `_add_table_slides`（該函式被二十餘處共用，改它風險過大）。
+    回傳「本頁放不下的明細列」，由呼叫端自行接續頁；全放得下則回傳 []。
+    """
+    from app.routers.hotel_overview import (
+        _clone_template_slide,
+        _set_slide_title,
+        _pptx_cell,
+        _pptx_header_row,
+        _pptx_txt,
+    )
+    from pptx.util import Inches, Pt
+    from pptx.dml.color import RGBColor
+    from pptx.enum.text import PP_ALIGN
+
+    _fn = title_fn or _set_slide_title
+    C_DARK = RGBColor(0x1B, 0x3A, 0x5C)
+    C_ROW_ALT = RGBColor(0xEE, 0xF5, 0xFB)
+    _ALIGN = {"right": PP_ALIGN.RIGHT, "center": PP_ALIGN.CENTER}
+
+    TOP_Y = 0.95  # 與 _add_table_slides 的 TABLE_Y 一致
+    BOTTOM_Y = SH - 0.45  # 頁尾保留高度亦同
+    TABLE_W = SW - 0.8
+    HDR_PT, ROW_PT = 34, 26
+    GAP = 0.16  # 兩表之間留白
+    CAP_H = 0.28  # 下表小標題高度
+
+    slide = _clone_template_slide(prs, template_idx)
+    _fn(slide, title, "", now_str, SW, SH)
+    if subtitle:
+        _sub_y = 0.592 if title_fn is not None else 0.52
+        _pptx_txt(
+            slide,
+            subtitle,
+            0.35,
+            _sub_y,
+            SW - 4.5,
+            0.22,
+            size=10,
+            bold=True,
+            color=RGBColor(0x00, 0x00, 0x00),
+        )
+
+    def _draw(y: float, columns: list, rows: list) -> float:
+        """在指定 y 座標畫一張表，回傳其高度（吋）。"""
+        n_cols, n_rows = len(columns), len(rows) + 1
+        h = (HDR_PT + len(rows) * ROW_PT) / 72.0
+        tbl = slide.shapes.add_table(
+            n_rows, n_cols, Inches(0.4), Inches(y), Inches(TABLE_W), Inches(h)
+        ).table
+        used = 0.0
+        for ci, col in enumerate(columns):
+            w = col.get("width", TABLE_W / n_cols)
+            if ci == n_cols - 1:
+                w = max(TABLE_W - used, 0.3)
+            tbl.columns[ci].width = Inches(w)
+            used += w
+        for ci, col in enumerate(columns):
+            _pptx_cell(tbl, 0, ci, col.get("label", col["key"]), bold=True)
+        _pptx_header_row(tbl, n_cols, size=12)
+        for ri, row in enumerate(rows, 1):
+            bg = C_ROW_ALT if ri % 2 == 0 else None
+            for ci, col in enumerate(columns):
+                _pptx_cell(
+                    tbl,
+                    ri,
+                    ci,
+                    _sanitize(row.get(col["key"], "")),
+                    fg=C_DARK,
+                    bg=bg,
+                    size=12,
+                    align=_ALIGN.get(col.get("align", "left")),
+                    bold=(ci == 0),
+                )
+        tbl.rows[0].height = Pt(HDR_PT)
+        for ri in range(1, n_rows):
+            tbl.rows[ri].height = Pt(ROW_PT)
+        return h
+
+    fee_h = _draw(TOP_Y, fee_cols, fee_rows)
+
+    # 下表可容納幾列；連一列都放不下就整批丟到續頁
+    dc_y = TOP_Y + fee_h + GAP + CAP_H
+    cap = int(((BOTTOM_Y - dc_y) * 72.0 - HDR_PT) // ROW_PT)
+    if cap < 1:
+        return list(dc_rows)
+
+    shown, rest = dc_rows[:cap], dc_rows[cap:]
+    _cap_txt = (
+        dc_caption
+        if not rest
+        else f"{dc_caption}（本頁 {len(shown)} 筆，其餘見次頁）"
+    )
+    _pptx_txt(
+        slide,
+        _cap_txt,
+        0.40,
+        TOP_Y + fee_h + GAP,
+        TABLE_W,
+        CAP_H,
+        size=11,
+        bold=True,
+        color=C_DARK,
+    )
+    _draw(dc_y, dc_cols, shown)
+    return rest
+
+
 # ═══════════════════════════════════════════════════════
 # Annual matrix helpers — 年度計劃表投影片
 # ═══════════════════════════════════════════════════════
@@ -2533,6 +2661,7 @@ def _build_repair_pptx(module: str, year: int, month: int, db: Session) -> Bytes
 
     # ══════════════════════════════════════════════════════════════════════════
     # Slide G — 報修金額統計（橫向：欄=月份1→12+全年合計，列=費用項目）
+    #   luqun 且本月有扣款專櫃時，同一頁下半部再放一張「扣款專櫃明細」表
     # ══════════════════════════════════════════════════════════════════════════
     fee_stats = svc.compute_fee_stats(all_cases, year)
     monthly_t = fee_stats.get("monthly_totals", {})
@@ -2576,19 +2705,95 @@ def _build_repair_pptx(module: str, year: int, month: int, db: Session) -> Bytes
             {"key": f"m{m}", "label": f"{m}月", "width": 0.82, "align": "right"}
         )
     fee_cols.append({"key": "total", "label": "全年合計", "align": "right"})
-    _add_table_slides(
-        prs,
-        TMPL,
-        title="報修金額統計",
-        subtitle=f"{period_str}",
-        columns=fee_cols,
-        rows=fee_rows,
-        now_str=now_str,
-        SW=SW,
-        SH=SH,
-        title_fn=_title_fn,
-    )
 
+    # ── 本月扣款專櫃明細（luqun 專用；dazhi 的 Ragic Sheet 無扣款專櫃欄位）──────
+    _dc_rows: list = []
+    _dc_stores = 0
+    _dc_cols = [
+        {"key": "case_no", "label": "報修編號", "width": 1.40, "align": "center"},
+        {"key": "title", "label": "標題", "width": 3.40, "align": "left"},
+        {"key": "floor", "label": "樓層", "width": 0.90, "align": "center"},
+        {"key": "occurred", "label": "日期", "width": 1.50, "align": "center"},
+        {"key": "status", "label": "狀態", "width": 1.20, "align": "center"},
+        {"key": "counter", "label": "扣款專櫃", "width": 2.10, "align": "left"},
+        {"key": "fee", "label": "扣款費用", "align": "right"},
+    ]
+    if module == "luqun":
+        try:
+            for _c in fee_stats.get("monthly_detail", {}).get(
+                f"{month}_deduction_counter", []
+            ):
+                # 多櫃案件 deduction_counter_name 為「多櫃」，實際店名在 counter_stores
+                _stores = [s for s in (_c.get("counter_stores") or []) if s]
+                _counter = "、".join(_stores) or _c.get("deduction_counter_name", "")
+                _t = _sanitize(_c.get("title", ""))
+                if len(_t) > _DC_TITLE_MAX:
+                    _t = _t[:_DC_TITLE_MAX] + "…"
+                _dc_rows.append(
+                    {
+                        "case_no": _sanitize(_c.get("case_no", "")),
+                        "title": _t,
+                        "floor": _sanitize(
+                            _c.get("floor_normalized") or _c.get("floor", "")
+                        ),
+                        "occurred": (_sanitize(_c.get("occurred_at", "")) or "")[:16],
+                        "status": _sanitize(_c.get("status", "")),
+                        "counter": _sanitize(_counter),
+                        "fee": _fmt_money(_c.get("deduction_fee", 0)),
+                    }
+                )
+            # 家數取後端去重結果，不可用 len(_dc_rows)（一張報修單可能扣多家）
+            _dc_stores = int(monthly_t.get(month, {}).get("deduction_counter", 0) or 0)
+        except Exception as _dc_e:
+            logger.warning("扣款專櫃明細組列失敗（略過）: %s", _dc_e, exc_info=True)
+            _dc_rows = []
+
+    if _dc_rows:
+        # 合併頁：上=報修金額統計、下=扣款專櫃明細；本頁塞不下的明細走續頁
+        _dc_rest = _add_fee_counter_combo_slide(
+            prs,
+            TMPL,
+            title="報修金額統計",
+            subtitle=f"{period_str}",
+            fee_cols=fee_cols,
+            fee_rows=fee_rows,
+            dc_caption=f"▌ 扣款專櫃明細　{month}月　共 {len(_dc_rows)} 筆　{_dc_stores} 家",
+            dc_cols=_dc_cols,
+            dc_rows=_dc_rows,
+            now_str=now_str,
+            SW=SW,
+            SH=SH,
+            title_fn=_title_fn,
+        )
+        if _dc_rest:
+            _add_table_slides(
+                prs,
+                TMPL,
+                title="扣款專櫃明細（續）",
+                subtitle=(
+                    f"{period_str}　共 {len(_dc_rows)} 筆　{_dc_stores} 家"
+                    f"（第 {len(_dc_rows) - len(_dc_rest) + 1}~{len(_dc_rows)} 筆）"
+                ),
+                columns=_dc_cols,
+                rows=_dc_rest,
+                now_str=now_str,
+                SW=SW,
+                SH=SH,
+                title_fn=_title_fn,
+            )
+    else:
+        _add_table_slides(
+            prs,
+            TMPL,
+            title="報修金額統計",
+            subtitle=f"{period_str}",
+            columns=fee_cols,
+            rows=fee_rows,
+            now_str=now_str,
+            SW=SW,
+            SH=SH,
+            title_fn=_title_fn,
+        )
     # ══════════════════════════════════════════════════════════════════════════
     # Slide HPM1~HPM4 — hotel PM stats + annual matrix (dazhi/IHG only)
     if is_ihg:
