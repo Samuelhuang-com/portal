@@ -57,6 +57,9 @@ import FullBldgDailyFormTab from './FullBldgDailyFormTab'
 
 const { Title, Text } = Typography
 
+// 「每日巡檢表」TAB 顯示開關（2026-08-25 依使用者指示隱藏；改為 true 即恢復顯示）
+const SHOW_DAILY_FORM_TAB: boolean = false
+
 // ── 狀態設定 ──────────────────────────────────────────────────────────────────
 const STATUS_CFG: Record<string, { label: string; color: string; tagColor: string }> = {
   completed:         { label: '已完成', color: '#52C41A', tagColor: 'success' },
@@ -2055,11 +2058,12 @@ export default function FullBuildingMaintenancePage() {
           onChange={setActiveTab}
           items={[
             { key: 'dashboard', label: 'Dashboard', children: DashboardTab },
-            {
+            // 2026-08-25 依使用者指示隱藏「每日巡檢表」TAB（程式碼保留，改 SHOW_DAILY_FORM_TAB = true 即可恢復）
+            ...(SHOW_DAILY_FORM_TAB ? [{
               key:      'daily-form',
               label:    <span><CalendarOutlined /> 每日巡檢表</span>,
               children: activeTab === 'daily-form' ? <FullBldgDailyFormTab /> : null,
-            },
+            }] : []),
             {
               key: 'monthly',
               label: <span><CalendarOutlined /> 每月維護</span>,

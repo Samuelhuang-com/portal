@@ -9,7 +9,7 @@
  *   Tab 5 1F 巡檢      — 同上
  *   Tab 6 B1F~B4F 巡檢 — 同上
  *
- * URL query param：?tab=summary|daily-form|4f|3f|1f-3f|1f|b1f-b4f
+ * URL query param：?tab=summary|4f|3f|1f-3f|1f|b1f-b4f
  */
 import { useEffect, useState, useCallback } from 'react'
 import { useSearchParams } from 'react-router-dom'
@@ -411,7 +411,11 @@ function SummaryTabContent() {
 
 // Main component
 
-const VALID_TABS = ['summary', 'daily-form', '4f', '3f', '1f-3f', '1f', 'b1f-b4f']
+// 「每日巡檢表」TAB 顯示開關（2026-08-25 依使用者指示隱藏；改為 true 即恢復顯示）
+const SHOW_DAILY_FORM_TAB: boolean = false
+
+// 'daily-form' 已從清單移除：舊書籤 ?tab=daily-form 會退回 summary，不會停在不存在的分頁
+const VALID_TABS = ['summary', '4f', '3f', '1f-3f', '1f', 'b1f-b4f']
 
 export default function MallFacilityInspectionDashboard() {
   const [searchParams] = useSearchParams()
@@ -458,11 +462,12 @@ export default function MallFacilityInspectionDashboard() {
             label:    'Dashboard',
             children: openedTabs.has('summary') ? <SummaryTabContent /> : null,
           },
-          {
+          // 2026-08-25 依使用者指示隱藏「每日巡檢表」TAB（程式碼保留，改 SHOW_DAILY_FORM_TAB = true 即可恢復）
+          ...(SHOW_DAILY_FORM_TAB ? [{
             key:      'daily-form',
             label:    <span><CalendarOutlined /> 每日巡檢表</span>,
             children: openedTabs.has('daily-form') ? <MallDailyInspectionFormTab /> : null,
-          },
+          }] : []),
           {
             key:      '4f',
             label:    '4F 巡檢',

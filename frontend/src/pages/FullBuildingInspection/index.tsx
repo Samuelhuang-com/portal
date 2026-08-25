@@ -3,13 +3,13 @@
  *
  * 將原本分散的 Dashboard + RF / B4F / B2F / B1F 巡檢紀錄整合為 Tabs
  *   Tab 1 Dashboard    — 今日各樓層 KPI + Sheet 完成率彙整 + 月曆格
- *   Tab 2 每日巡檢表   — 模板結構（待本地同步接通後顯示真實資料）
+ *   （每日巡檢表 Tab 已於 2026-08-25 隱藏，見 SHOW_DAILY_FORM_TAB）
  *   Tab 3 RF 巡檢      — 月份篩選 + 場次清單
  *   Tab 4 B4F 巡檢     — 同上
  *   Tab 5 B2F 巡檢     — 同上
  *   Tab 6 B1F 巡檢     — 同上
  *
- * URL query param：?tab=summary|daily-form|rf|b4f|b2f|b1f
+ * URL query param：?tab=summary|rf|b4f|b2f|b1f
  * 資料來源：Tab 1 Dashboard 已接通本地 DB（rf/b4f/b2f/b1f_inspection_batch|item）；
  *           Tab 2 每日巡檢表的 Ragic 欄位名 ↔ 模板 check_content 對應尚未決定，暫維持模板結構。
  */
@@ -417,7 +417,11 @@ function SummaryTabContent() {
 
 // ── 主元件 ────────────────────────────────────────────────────────────────────
 
-const VALID_TABS = ['summary', 'daily-form', 'rf', 'b4f', 'b2f', 'b1f']
+// 「每日巡檢表」TAB 顯示開關（2026-08-25 依使用者指示隱藏；改為 true 即恢復顯示）
+const SHOW_DAILY_FORM_TAB: boolean = false
+
+// 'daily-form' 已從清單移除：舊書籤 ?tab=daily-form 會退回 summary，不會停在不存在的分頁
+const VALID_TABS = ['summary', 'rf', 'b4f', 'b2f', 'b1f']
 
 export default function FullBuildingInspectionDashboard() {
   const [searchParams] = useSearchParams()
@@ -465,11 +469,12 @@ export default function FullBuildingInspectionDashboard() {
             label:    'Dashboard',
             children: openedTabs.has('summary') ? <SummaryTabContent /> : null,
           },
-          {
+          // 2026-08-25 依使用者指示隱藏「每日巡檢表」TAB（程式碼保留，改 SHOW_DAILY_FORM_TAB = true 即可恢復）
+          ...(SHOW_DAILY_FORM_TAB ? [{
             key:      'daily-form',
             label:    '每日巡檢表',
             children: openedTabs.has('daily-form') ? <FullBuildingDailyFormTab /> : null,
-          },
+          }] : []),
           {
             key:      'rf',
             label:    'RF 巡檢',

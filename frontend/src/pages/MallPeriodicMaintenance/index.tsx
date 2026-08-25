@@ -57,6 +57,9 @@ import MallPMItemWorklogDrawer from '@/components/MallPMItemWorklogDrawer'
 
 const { Title, Text } = Typography
 
+// 「每日巡檢表」TAB 顯示開關（2026-08-25 依使用者指示隱藏；改為 true 即恢復顯示）
+const SHOW_DAILY_FORM_TAB: boolean = false
+
 // ── 年度計劃表儲存格樣式常數 ─────────────────────────────────────────────────
 const TH: React.CSSProperties = {
   padding: '6px 8px', fontWeight: 600, border: '1px solid #e8e8e8',
@@ -1831,7 +1834,8 @@ export default function MallPeriodicMaintenancePage() {
         onChange={setActiveTab}
         items={[
           { key: 'dashboard',  label: 'Dashboard',                                        children: DashboardTab },
-          { key: 'daily-form', label: <span><FileTextOutlined /> 每日巡檢表</span>,       children: <MallDailyInspectionFormTab /> },
+          // 2026-08-25 依使用者指示隱藏「每日巡檢表」TAB（程式碼保留，改 SHOW_DAILY_FORM_TAB = true 即可恢復）
+          ...(SHOW_DAILY_FORM_TAB ? [{ key: 'daily-form', label: <span><FileTextOutlined /> 每日巡檢表</span>, children: <MallDailyInspectionFormTab /> }] : []),
           { key: 'monthly',    label: <span><CalendarOutlined /> 每月維護</span>,          children: MonthlyStatsTab },
           { key: 'quarterly',  label: <span><LineChartOutlined /> 每季維護</span>,         children: QuarterlyStatsTab },
           { key: 'yearly',     label: <span><BarChartOutlined /> 每年維護</span>,           children: YearlyStatsTab },
