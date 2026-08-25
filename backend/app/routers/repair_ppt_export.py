@@ -1476,6 +1476,31 @@ def _add_pm_overdue_slides(
         )
 
 
+def _move_slides(prs, first_idx: int, count: int, target_idx: int) -> None:
+    """把 [first_idx, first_idx+count) 這一組投影片整組搬到 target_idx 的位置，維持組內順序。
+
+    2026-08-25 新增（未完成附表要排到第 3 頁）。python-pptx 沒有搬移 API，直接操作
+    `sldIdLst`，與既有的 `hotel_ppt_export._move_slide_to_end()` 是同一種手法。
+
+    ⚠️ 必須在**所有超連結都套用完之後**才呼叫 —— Z1 索引頁是用 `prs.slides[idx]` 取
+       目標物件，先搬會取到別張投影片。超連結本身綁在 slide 的 rId 上、與位置無關，
+       搬移不會讓它失效。
+    """
+    if count <= 0 or first_idx < 0 or first_idx >= len(prs.slides):
+        return
+    sldIdLst = prs.slides._sldIdLst
+    group = list(sldIdLst)[first_idx:first_idx + count]
+    if not group:
+        return
+    for sld_id in group:
+        sldIdLst.remove(sld_id)
+    # 被搬走的元素若原本排在 target 之前，target 的實際位置要往前修正
+    shift = sum(1 for i in range(first_idx, first_idx + count) if i < target_idx)
+    insert_at = max(0, target_idx - shift)
+    for offset, sld_id in enumerate(group):
+        sldIdLst.insert(insert_at + offset, sld_id)
+
+
 def _add_slide_hyperlink(slide, run, target_slide):
     """Add internal PPT hyperlink to run that jumps to target_slide."""
     from lxml import etree
@@ -2334,6 +2359,13 @@ def _build_repair_pptx(module: str, year: int, month: int, db: Session) -> Bytes
         title_fn=_title_fn,
     )
 
+    # ── 2026-08-25：記下「未完成附表」要插入的位置（3.1 報修統計之後）──────────
+    # 附表是整份簡報最後才產生的（`_add_table_slides()` 一律 append 到尾端），所以先記
+    # 位置、函式結尾再整組搬過來。**不寫死 index**：3.1 的列數若增加而分成兩頁，寫死的
+    # 位置就會插錯地方；`len(prs.slides)` 不管 3.1 佔幾頁都指向它的後面。
+    _uf_insert_idx = len(prs.slides)
+    _uf_first_idx: Optional[int] = None   # 未完成附表第一張的 index，產生時填入
+
     # ══════════════════════════════════════════════════════════════════════════
     # Slide B — 3.2 結案時間（橫向：欄=月份1→12，列=統計項目）
     # ══════════════════════════════════════════════════════════════════════════
@@ -3060,6 +3092,7 @@ def _build_repair_pptx(module: str, year: int, month: int, db: Session) -> Bytes
             )
         # Z1 各項清單連結索引頁已於兩張年度計劃表之前建立；超連結於下方 UF 投影片建立後再套用
         uf_first_idx = len(prs.slides)
+        _uf_first_idx = uf_first_idx
         _add_table_slides(
             prs,
             TMPL,
@@ -3240,6 +3273,7 @@ def _build_repair_pptx(module: str, year: int, month: int, db: Session) -> Bytes
 
         # 未完成附表（飯店）投影片
         _h_uf_first_idx = len(prs.slides)
+        _uf_first_idx = _h_uf_first_idx
         _add_table_slides(
             prs,
             TMPL,
@@ -3312,6 +3346,26 @@ def _build_repair_pptx(module: str, year: int, month: int, db: Session) -> Bytes
                 _add_slide_hyperlink(_h_z1_slide, _h_z1_runs[1], _h_uf_slide)
         except Exception as _hlh:
             logger.warning("Hotel Z1 hyperlinks failed: %s", _hlh, exc_info=True)
+
+    # ── 2026-08-25：未完成附表搬到 3.1 報修統計之後（成品第 3 頁）──────────────
+    # 依 2026-08-25 指示調整，商場與飯店同步（兩者共用本函式，各自的附表都會搬）。
+    # 搬移前的排列：0=封面、1=ContentTemplate、(IHG 另有封底)、3.1、3.2 …… 附表在最尾端；
+    # 搬完再刪掉 ContentTemplate（IHG 另把封底移到最後），成品就是 封面 / 3.1 / 附表 / 3.2 …
+    # ⚠️ 附表可能不只一頁（`_add_table_slides()` 每 ROWS_PER_SLIDE 列切一頁），整組一起搬。
+    # ⚠️ 這段必須排在所有 Z1 超連結套用之後，理由見 `_move_slides()` 的 docstring。
+    # 搬移失敗只記 warning 不中斷 —— 順序不對還能看，簡報產不出來就什麼都沒有。
+    if _uf_first_idx is not None and len(prs.slides) > _uf_first_idx:
+        try:
+            _move_slides(
+                prs,
+                _uf_first_idx,
+                len(prs.slides) - _uf_first_idx,
+                _uf_insert_idx,
+            )
+        except Exception as _mv_e:
+            logger.warning(
+                "未完成附表搬移失敗，維持原本的最末頁位置：%s", _mv_e, exc_info=True
+            )
 
     # ── IHG 模板：刪除 ContentTemplate，封底移到最末頁 ────────────────────────
     if is_ihg:

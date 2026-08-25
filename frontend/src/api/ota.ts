@@ -10,7 +10,7 @@ import type {
   OtaReviewDetail, OtaReviewList, OtaSource, OtaSourceInput, PlatformOption,
   PlatformStat, ReviewFilters, SyncLog, SyncRunResult, SyncStatusInfo, TopicRule,
   OtaPlatformInput, OtaPlatformRow, TopicCandidate, TopicStat,
-  ForceUnlockResult,
+  ForceUnlockResult, AlertAgingResult,
 } from '@/types/ota'
 
 const REVIEWS = '/ota/reviews'
@@ -196,6 +196,20 @@ export async function runSync(sourceIds: number[] = []): Promise<SyncRunResult> 
     source_ids: sourceIds,
     force: true,
   })
+  return res.data
+}
+
+/**
+ * 待處理警示的積壓天數分桶（2026-08-25）。
+ *
+ * ⚠️ 刻意**不吃 start／end** —— 積壓是相對於「現在」的，
+ *    加期間篩選會變成另一個問題，而且很容易被誤讀。
+ */
+export async function fetchAlertAging(
+  params: { hotel_code?: string; platform?: string } = {},
+): Promise<AlertAgingResult> {
+  const res = await apiClient.get<AlertAgingResult>(`${STATS}/alert-aging`,
+    { params: toParams(params) })
   return res.data
 }
 

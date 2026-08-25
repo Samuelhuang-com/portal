@@ -207,6 +207,44 @@ class TopicStat(BaseModel):
     total_count: int = 0
 
 
+class AlertAgingBucket(BaseModel):
+    """
+    警示積壓分桶的一格（2026-08-25）。
+
+    `min_days` / `max_days` 讓前端可以把「點這根柱子」換算成日期區間去篩清單 ——
+    積壓 N 天 ⇔ `review_date` 落在 `[今天-max, 今天-min]`，
+    所以**不需要另外做一組後端篩選參數**，沿用既有的 start／end 即可。
+    `max_days` 為 `None` 代表最後一桶（沒有上限）。
+    """
+
+    key: str                    # "0_3" / "4_7" / "8_14" / "15_plus" / "unknown"
+    label: str                  # "0–3 天"
+    count: int = 0
+    min_days: Optional[int] = None
+    max_days: Optional[int] = None
+    # 這一桶要不要用警戒色（最後一桶＝放太久）
+    is_overdue: bool = False
+
+
+class AlertAgingOut(BaseModel):
+    """
+    ⚠️ `unknown_count` **必須跟著回傳**，不可以靜默丟掉。
+
+    `review_date` 解析不出來的評論（空字串）不屬於任何積壓區間 ——
+    這與 §5.4「空日期不落入任何月份」是同一條規則。
+    但如果只是把它們從分桶裡拿掉，`sum(buckets) != 待處理總數`，
+    使用者會以為圖表算錯。**畫面必須講出來有幾件無法計算。**
+    """
+
+    buckets: list[AlertAgingBucket] = []
+    total: int = 0              # 分得出桶的總數（不含 unknown）
+    unknown_count: int = 0      # 日期解析不出來、無法計算積壓的件數
+    # 起算基準日。⚠️ 這裡**刻意用今天**而不是「資料最後一天」——
+    # 積壓是相對於「現在」的，客人三週前抱怨就是積壓三週，
+    # 與我們什麼時候爬到無關（CLAUDE.md §8.2 的 anchor 規則不適用於此）。
+    as_of: str = ""
+
+
 # ══════════════════════════════════════════════════════════════════════════
 # 同步
 # ══════════════════════════════════════════════════════════════════════════

@@ -15,8 +15,9 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.dependencies import get_current_user, require_permission
 from app.models.user import User
-from app.schemas.ota_review import (DataRangeOut, MonthlyPoint, OverviewOut,
-                                    OtaReviewListOut, PlatformStat, TopicStat)
+from app.schemas.ota_review import (AlertAgingOut, DataRangeOut, MonthlyPoint,
+                                    OverviewOut, OtaReviewListOut,
+                                    PlatformStat, TopicStat)
 from app.services import ota_review_service as RS
 from app.services import ota_stats_service as SS
 
@@ -90,6 +91,27 @@ def topics(
 ):
     """P4 分析引擎上線前會回空陣列（`topics_json` 尚未填值）。"""
     return SS.get_topic_stats(db, hotel_code=hotel_code, platform=platform, start=start, end=end)
+
+
+@router.get("/alert-aging", response_model=AlertAgingOut, summary="警示積壓天數分桶")
+def alert_aging(
+    hotel_code: str = Query("", description="飯店代碼；**逗號串接可多選**（HANNS,HANNS_SUMMER）。單值格式向下相容"),
+    platform: str = Query("", description="平台代碼；**逗號串接可多選**（booking,agoda）。單值格式向下相容"),
+    db: Session = Depends(get_db),
+    _: User = Depends(_ALERT),
+):
+    """
+    待處理警示放了多久（2026-08-25）。
+
+    ⚠️ **不吃 start／end**。積壓是相對於「現在」的，硬加期間篩選會變成
+       「在某段期間留言、而且到今天還沒處理的」—— 那是另一個問題，
+       而且很容易被誤讀成「這段期間的積壓狀況」。
+
+    ⚠️ 起算日是**客人留言那天**（`review_date`），不是我們抓到的那天。
+       第一次回補歷史評論後，舊評論會全部落在最後一桶 ——
+       那是這個口徑的必然結果，不是計算錯誤（前端有註明）。
+    """
+    return SS.get_alert_aging(db, hotel_code=hotel_code, platform=platform)
 
 
 @router.get("/alerts", response_model=OtaReviewListOut, summary="負評警示清單")

@@ -23,10 +23,12 @@ import type { Dayjs } from 'dayjs'
 import StandardRangePicker from '@/components/StandardRangePicker'
 import { useUrlFilterDefaults } from '@/hooks/useUrlFilterDefaults'
 import { MultiCodeSelect, hotelOptions, toParam } from '../filterScope'
+import AlertAgingBar from '../AlertAgingBar'
 import {
-  fetchAlerts, fetchDataRange, fetchHotelOptions, fetchOverview, runAnalyze,
+  fetchAlertAging, fetchAlerts, fetchDataRange, fetchHotelOptions, fetchOverview, runAnalyze,
 } from '@/api/ota'
 import type {
+  AlertAgingResult,
   HotelOption, OtaOverview, OtaReviewRow, ReviewFilters,
 } from '@/types/ota'
 import ReviewDetailDrawer from '../components/ReviewDetailDrawer'
@@ -79,6 +81,13 @@ const OtaAlertsPage: React.FC = () => {
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(50)
 
+  // ⭐ 積壓天數分桶（2026-08-25）
+  const [aging, setAging] = useState<AlertAgingResult | null>(null)
+  const [agingLoading, setAgingLoading] = useState(false)
+  // 目前被哪一桶篩著。⚠️ 這只是視覺標記 —— 真正的篩選條件是 `range`。
+  //    使用者直接動期間選擇器時必須清掉，否則會標著一個已經不成立的桶。
+  const [agingKey, setAgingKey] = useState('')
+
   const [drawerId, setDrawerId] = useState<number | null>(null)
   const [drawerOpen, setDrawerOpen] = useState(false)
 
@@ -106,11 +115,60 @@ const OtaAlertsPage: React.FC = () => {
   }, [filters, page, pageSize, hotelCodes])
 
   useEffect(() => { load() }, [load])
+
+  /**
+   * 積壓分桶。
+   *
+   * ⚠️ **只依飯店篩選重載，不依 `range` 或 `status`**：
+   *    - 依 `range` 的話，點了一桶就會把圖本身也篩掉（只剩那一桶有值），
+   *      使用者就沒辦法比較各桶、也回不去 —— 圖表把自己吃掉了。
+   *    - 依 `status` 的話，切到「已處理」會重打一次拿到同樣的數字
+   *      （後端固定只算 open+acknowledged），純浪費。
+   */
+  const loadAging = useCallback(async () => {
+    setAgingLoading(true)
+    try {
+      setAging(await fetchAlertAging({ hotel_code: toParam(hotelCodes) }))
+    } catch {
+      // ⚠️ 這張圖是輔助資訊，載不到不要蓋掉清單的錯誤訊息或擋住整頁
+      setAging(null)
+    } finally {
+      setAgingLoading(false)
+    }
+  }, [hotelCodes])
+
+  useEffect(() => { loadAging() }, [loadAging])
+
   useEffect(() => {
     // ⚠️ anchor 取資料最後一天，不是今天（CLAUDE.md §8.2）
     fetchDataRange().then((r) => setDataEnd(r.end)).catch(() => undefined)
     fetchHotelOptions().then(setHotels).catch(() => undefined)
   }, [])
+
+  /**
+   * 點某一桶 → 換算成 review_date 區間塞進既有的期間篩選。
+   *
+   * ⚠️ 這裡**沒有新增任何後端參數** —— 積壓 N 天 ⇔ 留言日落在
+   *    `[今天-max, 今天-min]`，用既有的 start／end 就表達得完整。
+   */
+  const handlePickBucket = (r: [Dayjs, Dayjs] | null, label: string) => {
+    setRange(r)
+    setAgingKey(r ? (aging?.buckets.find((x) => x.label === label)?.key ?? '') : '')
+    setPage(1)
+  }
+
+  /**
+   * 使用者直接動期間選擇器。
+   *
+   * ⚠️ **必須清掉 `agingKey`** —— 不清的話畫面會標著「8–14 天」高亮，
+   *    但清單其實已經被別的期間篩著了。**畫面說的跟實際做的不一樣，
+   *    比沒有標示更糟。**
+   */
+  const handleRange = (r: [Dayjs, Dayjs] | null) => {
+    setRange(r)
+    setAgingKey('')
+    setPage(1)
+  }
 
   const handleAnalyze = async () => {
     setAnalyzing(true)
@@ -118,7 +176,8 @@ const OtaAlertsPage: React.FC = () => {
       const res = await runAnalyze(false)
       message.info(res.message)
       // 背景執行，給它一點時間再重載
-      window.setTimeout(() => { load(); setAnalyzing(false) }, 8000)
+      // ⚠️ 分析會產生新的警示，積壓圖也要跟著更新
+      window.setTimeout(() => { load(); loadAging(); setAnalyzing(false) }, 8000)
     } catch (err) {
       const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
       message.error(detail || '觸發分析失敗')
@@ -205,6 +264,16 @@ const OtaAlertsPage: React.FC = () => {
         </Col>
       </Row>
 
+      {/* ⭐ 積壓天數（2026-08-25）。
+          KPI 卡的「待處理 58」看不出裡面有沒有一件躺了三週 —— 這張圖回答那個。
+          ⚠️ 只在「待處理／已知悉／全部」時顯示：切到「已處理」還畫積壓沒有意義。 */}
+      {(status === 'open' || status === 'acknowledged' || status === '') && (
+        <AlertAgingBar
+          data={aging} loading={agingLoading}
+          activeKey={agingKey} onPick={handlePickBucket}
+        />
+      )}
+
       <Card size="small" style={{ marginBottom: 16 }}>
         <Row gutter={[10, 10]} align="middle">
           <Col>
@@ -224,7 +293,7 @@ const OtaAlertsPage: React.FC = () => {
             {/* ⚠️ anchor 取資料最後一天，不是今天 */}
             <StandardRangePicker
               value={range} anchor={dataEnd}
-              onChange={(v) => { setRange(v); setPage(1) }}
+              onChange={handleRange}
               footerNote="基準日為評論資料的最後一天"
             />
           </Col>

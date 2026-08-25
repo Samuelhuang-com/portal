@@ -178,6 +178,37 @@ export interface PlatformStat {
   count: number
 }
 
+/**
+ * 警示積壓分桶的一格（2026-08-25）。
+ *
+ * `min_days` / `max_days` 是用來把「點這根柱子」換算成日期區間的：
+ * 積壓 N 天 ⇔ `review_date` 落在 `[今天-max, 今天-min]`。
+ * 所以點擊篩選**沿用既有的 start／end 參數**，後端清單 API 一行都不用改。
+ */
+export interface AlertAgingBucket {
+  key: string
+  label: string
+  count: number
+  min_days: number | null
+  /** null ＝ 最後一桶，沒有上限 */
+  max_days: number | null
+  is_overdue: boolean
+}
+
+export interface AlertAgingResult {
+  buckets: AlertAgingBucket[]
+  /** 分得出桶的總數（**不含** unknown） */
+  total: number
+  /**
+   * ⚠️ 日期解析不出來、無法計算積壓的件數。
+   * **畫面上必須講出來** —— 否則 sum(buckets) 小於待處理總數，
+   * 看起來像圖表算錯。
+   */
+  unknown_count: number
+  /** 起算基準日（今天）。⚠️ 不是「資料最後一天」，理由見後端註解 */
+  as_of: string
+}
+
 export interface TopicStat {
   topic: string
   negative_count: number

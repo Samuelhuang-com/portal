@@ -14,11 +14,14 @@ OTA 口碑分析 — 統計 service
 """
 from __future__ import annotations
 
+from datetime import date
+
 from sqlalchemy import Float, case, cast, func, select
 from sqlalchemy.orm import Session
 
 from app.models.ota_review import OtaReview, OtaSource
-from app.schemas.ota_review import (DataRangeOut, MonthlyPoint, OverviewOut,
+from app.schemas.ota_review import (AlertAgingBucket, AlertAgingOut,
+                                    DataRangeOut, MonthlyPoint, OverviewOut,
                                     PlatformStat, TopicStat)
 from app.services.ota_normalize import (NEGATIVE_SCORE_MAX, PLATFORM_LABEL,
                                         split_codes)
@@ -278,3 +281,91 @@ def _hotel_names(db: Session) -> dict[str, str]:
 def hotel_options(db: Session) -> list[dict]:
     """前端篩選下拉用。"""
     return [{"value": code, "label": name} for code, name in sorted(_hotel_names(db).items())]
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 警示積壓分桶（2026-08-25）
+# ══════════════════════════════════════════════════════════════════════════
+# 這張圖回答的問題不是「有幾件待處理」（KPI 卡已經有了），
+# 而是**「有幾件放太久」** —— 工作佇列真正會出事的地方。
+#
+# ⚠️ 起算日＝**客人留言那天**（`review_date`），2026-08-25 使用者裁示。
+#    語意是「客人抱怨到現在多久沒人理」，不是「我們抓到之後多久沒處理」。
+#
+#    **已知的副作用**：第一次回補歷史評論之後，那幾百則舊評論會全部
+#    落在最後一桶。那不是 bug，是這個口徑的必然結果 ——
+#    畫面上每根柱子都必須標數字，不能只靠長度，否則其他三桶會被壓成看不見。
+#
+# ⚠️ 「積壓中」＝ `open` + `acknowledged`（使用者裁示）。
+#    「已知悉」代表有人看過但還沒處理完 —— 它仍然是未完成的工作，
+#    蔽掉的話畫面很乾淨但事情沒做完。
+ALERT_OPEN_STATUSES = ("open", "acknowledged")
+
+# (key, label, 起, 迄)　迄為 None ＝ 沒有上限
+ALERT_AGING_BUCKETS: tuple[tuple[str, str, int, int | None], ...] = (
+    ("0_3", "0–3 天", 0, 3),
+    ("4_7", "4–7 天", 4, 7),
+    ("8_14", "8–14 天", 8, 14),
+    ("15_plus", "15 天以上", 15, None),
+)
+
+
+def get_alert_aging(db: Session, hotel_code: str = "",
+                    platform: str = "") -> AlertAgingOut:
+    """
+    待處理警示的積壓天數分桶。
+
+    ⚠️ **`as_of` 用今天，不是資料最後一天。**
+       CLAUDE.md §8.2 規定期間快捷要以資料最後一天為基準，那是為了避免
+       「本月」選到還沒有資料的日子。但**積壓是相對於現在**的：
+       客人三週前抱怨就是積壓三週，跟我們什麼時候爬到無關。
+       這裡用 `date.today()` 是刻意的例外，不是漏改。
+
+    ⚠️ 日期解析不出來的評論**單獨計數回傳**，不可以靜默丟掉 ——
+       不然 `sum(buckets)` 會小於待處理總數，看起來像圖表算錯。
+    """
+    today = date.today()
+
+    stmt = _base_filters(
+        select(OtaReview.review_date, func.count(OtaReview.id))
+        .where(OtaReview.is_alert.is_(True))
+        .where(OtaReview.alert_status.in_(ALERT_OPEN_STATUSES))
+        .group_by(OtaReview.review_date),
+        hotel_code, platform,
+    )
+
+    counts = {key: 0 for key, _, _, _ in ALERT_AGING_BUCKETS}
+    unknown = 0
+    total = 0
+
+    for review_date, count in db.execute(stmt).all():
+        if not review_date:
+            unknown += count
+            continue
+        try:
+            days = (today - date.fromisoformat(review_date)).days
+        except ValueError:
+            # ⚠️ 存進來就不該是壞格式，但真的壞了要算進 unknown 而不是當成 0 天
+            unknown += count
+            continue
+        # ⚠️ 未來日期（時區或站方誤植）夾成 0，不要變成負數跑進最後一桶
+        days = max(days, 0)
+        for key, _label, lo, hi in ALERT_AGING_BUCKETS:
+            if days >= lo and (hi is None or days <= hi):
+                counts[key] += count
+                total += count
+                break
+
+    last_key = ALERT_AGING_BUCKETS[-1][0]
+    return AlertAgingOut(
+        buckets=[
+            AlertAgingBucket(
+                key=key, label=label, count=counts[key],
+                min_days=lo, max_days=hi, is_overdue=(key == last_key),
+            )
+            for key, label, lo, hi in ALERT_AGING_BUCKETS
+        ],
+        total=total,
+        unknown_count=unknown,
+        as_of=today.isoformat(),
+    )
