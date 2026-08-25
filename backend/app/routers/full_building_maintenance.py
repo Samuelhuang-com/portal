@@ -1724,15 +1724,24 @@ def _fb_get_batch_items_for_month(db: Session, year: int, month: int) -> list[Fu
     )
 
 
-def _fb_calc_schedule_status(rec: FullBldgPMSchedule) -> str:
+_FB_SCHED_DATE_UNSET = object()
+
+
+def _fb_calc_schedule_status(rec: FullBldgPMSchedule, override_date=_FB_SCHED_DATE_UNSET) -> str:
+    """2026-08-25 新增 override_date：年度計劃表已改為以 Ragic
+    （full_bldg_pm_batch_item.scheduled_date）為排定日期的單一真實來源，狀態判斷必須
+    跟同一個日期走，否則會出現「格子沒有排定日期、卻標成逾期紅點」。
+    不傳此參數時維持原行為（沿用 rec.scheduled_date），其餘呼叫端不受影響。
+    """
     if rec.is_completed or (rec.start_time and rec.end_time):
         return "completed"
     if rec.start_time:
         return "in_progress"
-    if rec.scheduled_date:
+    sched_date = rec.scheduled_date if override_date is _FB_SCHED_DATE_UNSET else override_date
+    if sched_date:
         try:
             year = int(rec.year_month.split("/")[0])
-            sched = datetime.strptime(f"{year}/{rec.scheduled_date}", "%Y/%m/%d").date()
+            sched = datetime.strptime(f"{year}/{sched_date}", "%Y/%m/%d").date()
             if sched < date.today():
                 return "overdue"
         except Exception:
@@ -1991,15 +2000,11 @@ def _do_generate_full_bldg_pm(
             continue
 
         # item 來自目標月份自己的批次，來源與目標必然一致，直接採用 Ragic 的排定日期。
-        # 該月批次沒填排定日期時才退回 exec_months 推算（每月固定 01 號）。
-        ragic_date = (item.scheduled_date or "").strip()
-        if ragic_date:
-            resolved_date = ragic_date
-        elif has_exec_months:
-            future = sorted([m for m in exec_months_list if m >= month])
-            resolved_date = f"{future[0]:02d}/01" if future else ""
-        else:
-            resolved_date = f"{month:02d}/01"
+        # 2026-08-25：移除「沒填就退回 exec_months 推算 MM/01」的預設值。該推算會把
+        # Ragic 上根本不存在的日期寫進 full_bldg_pm_schedule，年度計劃表再讀出來顯示，
+        # 使用者無從分辨哪一格是真的排定日期；且排程表沒有任何清除機制，一旦寫進去就
+        # 長期殘留。Ragic 沒填＝尚未排定，如實留空（狀態會落在 unscheduled）。
+        resolved_date = (item.scheduled_date or "").strip()
 
         existing = (
             db.query(FullBldgPMSchedule)
@@ -2211,9 +2216,19 @@ def get_full_bldg_annual_matrix(
             freq = (item.frequency or "").strip()
 
             if existing:
-                cell_status     = _fb_calc_schedule_status(existing)
+                # 2026-08-25：排定日期改以 Ragic（full_bldg_pm_batch_item.scheduled_date）
+                # 為單一真實來源。full_bldg_pm_schedule 是 Portal 端的排程副本，全站沒有
+                # 任何清除機制 —— Ragic 上把排定日期刪掉後這裡仍留著舊值（含本次之前由
+                # exec_months 公式推算出來的 MM/01），年度計劃表就會顯示 Ragic 上根本不
+                # 存在的日期與紅點。
+                # 只有 Portal 端人工調整過（portal_edited_at 有值）才視為刻意覆寫，
+                # 優先採用排程表的值。
+                if existing.portal_edited_at is not None:
+                    cell_sched_date = existing.scheduled_date or None
+                else:
+                    cell_sched_date = (item.scheduled_date or "").strip() or None
+                cell_status     = _fb_calc_schedule_status(existing, override_date=cell_sched_date)
                 schedule_id     = existing.id
-                cell_sched_date = existing.scheduled_date or None
             elif not freq:
                 cell_status     = "no_frequency"
                 schedule_id     = None

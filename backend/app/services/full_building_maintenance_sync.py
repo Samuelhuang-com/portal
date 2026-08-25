@@ -144,6 +144,32 @@ def _parse_exec_months(raw: str) -> list[int]:
     return sorted(set(months))
 
 
+def _normalize_sched_date(raw: str) -> str:
+    """
+    排定日期一律正規化為補零的 'MM/DD' 存入 DB。
+
+    2026-08-25 新增。原本本模組把 Ragic 的排定日期原封不動存進 scheduled_date，
+    Ragic 可能回傳 'YYYY/M/D'、'YYYY/MM/DD' 或 'M/D'，造成兩個實際故障：
+      1. `_calc_schedule_status()` 用 f"{year}/{scheduled_date}" 拼日期，遇到三段
+         格式會拼成 "2026/2026/2/1" 解析失敗，逾期判斷靜默失效（永遠算成待執行）。
+      2. 前端多處用字串 === 比對排定日期撈明細，'2/1' 與 '02/01' 會比不到。
+
+    "2026/05/29" → "05/29"；"2026/5/9" → "05/09"；"2/1" → "02/01"；"" → ""
+    無法解析時原樣回傳，不猜測。
+    """
+    if not raw:
+        return ""
+    parts = str(raw).strip().split("/")
+    try:
+        if len(parts) == 3:
+            return f"{int(parts[1]):02d}/{int(parts[2]):02d}"
+        if len(parts) == 2:
+            return f"{int(parts[0]):02d}/{int(parts[1]):02d}"
+    except (ValueError, IndexError):
+        return raw
+    return raw
+
+
 def _normalize_period_month(raw_date: str) -> str:
     """'2026/04/01' → '2026/04'"""
     parts = raw_date.strip().split("/")
@@ -181,7 +207,7 @@ def _ragic_item_to_model(
     rec.task_name         = _stringify(row_raw.get(CK_TASK_NAME, ""))
     rec.location          = _stringify(row_raw.get(CK_LOCATION, ""))
     rec.estimated_minutes = _to_int(row_raw.get(CK_EST_HOURS, 0))
-    rec.scheduled_date    = _stringify(row_raw.get(CK_SCHED_DATE, ""))
+    rec.scheduled_date    = _normalize_sched_date(_stringify(row_raw.get(CK_SCHED_DATE, "")))
     rec.scheduler_name    = _stringify(row_raw.get(CK_SCHEDULER, ""))
     rec.result_note       = _stringify(row_raw.get(CK_NOTE, ""))
     rec.executor_name     = _stringify(row_raw.get(CK_EXECUTOR, ""))
@@ -644,14 +670,11 @@ async def sync_repair_hours_from_sheet28() -> dict:
 def _normalize_full_date_to_md(raw: str) -> str:
     """
     'YYYY/MM/DD' -> 'MM/DD'（配合既有 scheduled_date 欄位 / _calc_status() 短格式）。
-    格式不符（非三段 '/')時原樣回傳，不猜測。
+
+    2026-08-25：改為委派 `_normalize_sched_date()`，統一補零（原本 "2026/2/1" 會存
+    成 "2/1"，與其他路徑的 "02/01" 格式不一致）。
     """
-    if not raw:
-        return ""
-    parts = str(raw).strip().split("/")
-    if len(parts) == 3:
-        return f"{parts[1]}/{parts[2]}"
-    return raw
+    return _normalize_sched_date(raw)
 
 
 def _find_worklog_subtable(full_record: dict[str, Any]) -> dict[str, dict]:

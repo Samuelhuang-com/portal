@@ -193,6 +193,32 @@ def _parse_exec_months(raw: str) -> list[int]:
     return sorted(set(months))
 
 
+def _normalize_sched_date(raw: str) -> str:
+    """
+    排定日期一律正規化為補零的 'MM/DD' 存入 DB。
+
+    2026-08-25 新增。原本本模組把 Ragic 的排定日期原封不動存進 scheduled_date，
+    Ragic 可能回傳 'YYYY/M/D'、'YYYY/MM/DD' 或 'M/D'，造成兩個實際故障：
+      1. `_calc_schedule_status()` 用 f"{year}/{scheduled_date}" 拼日期，遇到三段
+         格式會拼成 "2026/2026/2/1" 解析失敗，逾期判斷靜默失效（永遠算成待執行）。
+      2. 前端多處用字串 === 比對排定日期撈明細，'2/1' 與 '02/01' 會比不到。
+
+    "2026/05/29" → "05/29"；"2026/5/9" → "05/09"；"2/1" → "02/01"；"" → ""
+    無法解析時原樣回傳，不猜測。
+    """
+    if not raw:
+        return ""
+    parts = str(raw).strip().split("/")
+    try:
+        if len(parts) == 3:
+            return f"{int(parts[1]):02d}/{int(parts[2]):02d}"
+        if len(parts) == 2:
+            return f"{int(parts[0]):02d}/{int(parts[1]):02d}"
+    except (ValueError, IndexError):
+        return raw
+    return raw
+
+
 def _normalize_period_month(raw_date: str) -> str:
     """
     將 Ragic 日期欄正規化為 'YYYY/MM' 格式。
@@ -242,7 +268,7 @@ def _ragic_item_to_model(
     rec.task_name         = _stringify(row_raw.get(CK_TASK_NAME, ""))
     rec.location          = _stringify(row_raw.get(CK_LOCATION, ""))
     rec.estimated_minutes = _to_int(row_raw.get(CK_EST_HOURS, 0))
-    rec.scheduled_date    = _stringify(row_raw.get(CK_SCHED_DATE, ""))
+    rec.scheduled_date    = _normalize_sched_date(_stringify(row_raw.get(CK_SCHED_DATE, "")))
     rec.scheduler_name    = _stringify(row_raw.get(CK_SCHEDULER, ""))
     rec.result_note       = _stringify(row_raw.get(CK_NOTE, ""))
     rec.executor_name     = _stringify(row_raw.get(CK_EXECUTOR, ""))
@@ -804,7 +830,7 @@ async def sync_from_sheet11() -> dict:
                 # location：Sheet 11 無獨立「位置」欄位（2026-07-14 即時查證確認，
                 # 沿用 Sheet 8 時代已知限制），不覆蓋既有值（新項目維持空字串）
                 target.estimated_minutes = est_minutes
-                target.scheduled_date    = _stringify(raw.get(CK11_SCHED_DATE, ""))
+                target.scheduled_date    = _normalize_sched_date(_stringify(raw.get(CK11_SCHED_DATE, "")))
                 target.scheduler_name    = _stringify(raw.get(CK11_SCHEDULER, ""))
                 target.executor_name     = _stringify(raw.get(CK11_EXECUTOR, ""))
                 target.result_note       = note

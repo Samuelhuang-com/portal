@@ -1722,17 +1722,27 @@ def _get_latest_batch_items(db: Session) -> list[PeriodicMaintenanceItem]:
     return []
 
 
-def _calc_schedule_status(rec: PMSchedule) -> str:
-    """計算 pm_schedule 記錄的狀態。"""
+_PM_SCHED_DATE_UNSET = object()
+
+
+def _calc_schedule_status(rec: PMSchedule, override_date=_PM_SCHED_DATE_UNSET) -> str:
+    """計算 pm_schedule 記錄的狀態。
+
+    2026-08-25 新增 override_date：年度計劃表已改為以 Ragic
+    （pm_batch_item.scheduled_date）為排定日期的單一真實來源，狀態判斷必須跟同一個
+    日期走，否則會出現「格子沒有排定日期、卻標成逾期紅點」。
+    不傳此參數時維持原行為（沿用 rec.scheduled_date），其餘呼叫端不受影響。
+    """
     if rec.is_completed or (rec.start_time and rec.end_time):
         return "completed"
     if rec.start_time:
         return "in_progress"
-    if rec.scheduled_date:
+    sched_date = rec.scheduled_date if override_date is _PM_SCHED_DATE_UNSET else override_date
+    if sched_date:
         try:
             today = date.today()
             year = int(rec.year_month.split("/")[0])
-            sched = datetime.strptime(f"{year}/{rec.scheduled_date}", "%Y/%m/%d").date()
+            sched = datetime.strptime(f"{year}/{sched_date}", "%Y/%m/%d").date()
             if sched < today:
                 return "overdue"
         except Exception:
@@ -2174,17 +2184,20 @@ def get_annual_matrix(
         for m in range(1, 13):
             rec = schedule_map.get((item.ragic_id, m))
             if rec:
-                # 決定顯示用排定日期：pm_schedule > 批次 lookup > MM/01 預設
+                # 2026-08-25：排定日期改以 Ragic（該月批次的 scheduled_date）為單一真實
+                # 來源。pm_schedule 是 Portal 端的排程副本、全站沒有任何清除機制 ——
+                # Ragic 上把排定日期刪掉後這裡仍留著舊值；原本再退回「MM/01 預設」，
+                # 更是直接顯示 Ragic 上根本不存在的日期，使用者無從分辨真假。
+                # 只有 Portal 端人工調整過（portal_edited_at 有值）才視為刻意覆寫，
+                # 優先採用排程表的值。
+                # 狀態改用 override_date 傳入，不再就地改寫 rec.scheduled_date
+                # （會弄髒 ORM 物件，本端點雖為 GET 但同 session 內其他寫入會被牽連）。
                 key = (item.task_name.strip(), item.category.strip(), item.location.strip())
-                display_date: Optional[str] = rec.scheduled_date or None
-                if not display_date:
-                    batch_mmdd = month_sched_lookup.get(m, {}).get(key)
-                    if batch_mmdd:
-                        rec.scheduled_date = batch_mmdd   # 記憶體更新，供 status 計算用
-                        display_date = batch_mmdd
-                    else:
-                        display_date = f"{m:02d}/01"      # 無日期時顯示本月 1 號（status 不改）
-                status = _calc_schedule_status(rec)
+                if rec.portal_edited_at is not None:
+                    display_date: Optional[str] = rec.scheduled_date or None
+                else:
+                    display_date = month_sched_lookup.get(m, {}).get(key) or None
+                status = _calc_schedule_status(rec, override_date=display_date)
                 if status == "completed":
                     completed_cnt += 1
                 cells.append(PMScheduleMatrixCell(
@@ -2221,8 +2234,9 @@ def get_annual_matrix(
                             except Exception:
                                 cell_status = "no_data"
                     else:
-                        # 無排定日期 → 預設 MM/01，狀態仍為 no_data（應做未排）
-                        cell_sched_date = f"{m:02d}/01"
+                        # 2026-08-25：Ragic 沒填排定日期就如實留空，不再預設 MM/01
+                        # （狀態仍為 no_data＝應做未排）
+                        cell_sched_date = None
                         cell_status = "no_data"
 
                     cells.append(PMScheduleMatrixCell(

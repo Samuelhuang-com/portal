@@ -130,16 +130,23 @@ def _normalize_sched_date(raw: str) -> str:
       "2026/05/29" → "05/29"
       "2026/5/9"   → "05/09"
       "05/29"      → "05/29"（不變）
+      "2/1"        → "02/01"（2026-08-25 補：兩段格式也要補零）
       ""           → ""
+
+    2026-08-25：兩段格式原本原樣回傳，Sheet24 路徑經 _normalize_full_date_to_md()
+    轉出的 "2/1" 就這樣存進 DB，與 Sheet18 路徑的 "02/01" 並存。前端多處用字串
+    === 比對排定日期撈明細（如 index.tsx 的月曆格 Drawer），格式不一致會比不到。
     """
     if not raw:
         return ""
-    parts = raw.strip().split("/")
-    if len(parts) == 3:
-        try:
+    parts = str(raw).strip().split("/")
+    try:
+        if len(parts) == 3:
             return f"{int(parts[1]):02d}/{int(parts[2]):02d}"
-        except (ValueError, IndexError):
-            return raw
+        if len(parts) == 2:
+            return f"{int(parts[0]):02d}/{int(parts[1]):02d}"
+    except (ValueError, IndexError):
+        return raw
     return raw
 
 
@@ -666,14 +673,11 @@ def _to_float(val: Any) -> float | None:
 def _normalize_full_date_to_md(raw: str) -> str:
     """
     'YYYY/MM/DD' -> 'MM/DD'（配合既有 scheduled_date 欄位 / _calc_status() 短格式）。
-    格式不符（非三段 '/')時原樣回傳，不猜測。
+
+    2026-08-25：改為委派 `_normalize_sched_date()`，統一補零。原本自行切字串且不補
+    零，"2026/2/1" 會存成 "2/1"，與 Sheet18 路徑的 "02/01" 格式不一致。
     """
-    if not raw:
-        return ""
-    parts = str(raw).strip().split("/")
-    if len(parts) == 3:
-        return f"{parts[1]}/{parts[2]}"
-    return raw
+    return _normalize_sched_date(raw)
 
 
 def _find_worklog_subtable(full_record: dict[str, Any]) -> dict[str, dict]:

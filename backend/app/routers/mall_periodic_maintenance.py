@@ -1681,17 +1681,27 @@ def _mall_get_batch_items_for_month(db: Session, year: int, month: int) -> list[
     )
 
 
-def _mall_calc_schedule_status(rec: MallPMSchedule) -> str:
-    """計算 mall_pm_schedule 記錄的狀態。"""
+_SCHED_DATE_UNSET = object()
+
+
+def _mall_calc_schedule_status(rec: MallPMSchedule, override_date=_SCHED_DATE_UNSET) -> str:
+    """計算 mall_pm_schedule 記錄的狀態。
+
+    2026-08-25 新增 override_date：年度計劃表已改為以 Ragic
+    （mall_pm_batch_item.scheduled_date）為排定日期的單一真實來源，狀態判斷必須跟
+    同一個日期走，否則會出現「格子沒有排定日期、卻標成逾期紅點」。
+    不傳此參數時維持原行為（沿用 rec.scheduled_date），其餘呼叫端不受影響。
+    """
     if rec.is_completed or (rec.start_time and rec.end_time):
         return "completed"
     if rec.start_time:
         return "in_progress"
-    if rec.scheduled_date:
+    sched_date = rec.scheduled_date if override_date is _SCHED_DATE_UNSET else override_date
+    if sched_date:
         try:
             today = date.today()
             year = int(rec.year_month.split("/")[0])
-            sched = datetime.strptime(f"{year}/{rec.scheduled_date}", "%Y/%m/%d").date()
+            sched = datetime.strptime(f"{year}/{sched_date}", "%Y/%m/%d").date()
             if sched < today:
                 return "overdue"
         except Exception:
@@ -2135,9 +2145,19 @@ def get_mall_annual_matrix(
             freq = (item.frequency or "").strip()
 
             if existing:
-                cell_status     = _mall_calc_schedule_status(existing)
+                # 2026-08-25：排定日期改以 Ragic（mall_pm_batch_item.scheduled_date）為
+                # 單一真實來源。mall_pm_schedule 是 Portal 端的排程副本，全站沒有任何
+                # 清除機制 —— Ragic 上把排定日期刪掉後，這裡仍留著舊值（含 2026-07-23
+                # commit 7918a62 以前由 exec_months 公式推算出來的 MM/01），年度計劃表
+                # 就會顯示 Ragic 上根本不存在的日期與紅點。
+                # 只有 Portal 端人工調整過（portal_edited_at 有值）才視為刻意覆寫，
+                # 優先採用排程表的值。
+                if existing.portal_edited_at is not None:
+                    cell_sched_date = existing.scheduled_date or None
+                else:
+                    cell_sched_date = (item.scheduled_date or "").strip() or None
+                cell_status     = _mall_calc_schedule_status(existing, override_date=cell_sched_date)
                 schedule_id     = existing.id
-                cell_sched_date = existing.scheduled_date or None
             elif not freq:
                 cell_status     = "no_frequency"
                 schedule_id     = None
