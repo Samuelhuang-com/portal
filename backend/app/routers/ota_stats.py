@@ -28,7 +28,7 @@ _ALERT = require_permission("ota_alerts_view")
 
 @router.get("/data-range", response_model=DataRangeOut, summary="評論資料涵蓋範圍")
 def data_range(
-    hotel_code: str = Query(""),
+    hotel_code: str = Query("", description="飯店代碼；**逗號串接可多選**（HANNS,HANNS_SUMMER）。單值格式向下相容"),
     db: Session = Depends(get_db),
     _: User = Depends(_VIEW),
 ):
@@ -45,8 +45,8 @@ def data_range(
 
 @router.get("/overview", response_model=OverviewOut, summary="Dashboard KPI")
 def overview(
-    hotel_code: str = Query(""),
-    platform: str = Query(""),
+    hotel_code: str = Query("", description="飯店代碼；**逗號串接可多選**（HANNS,HANNS_SUMMER）。單值格式向下相容"),
+    platform: str = Query("", description="平台代碼；**逗號串接可多選**（booking,agoda）。單值格式向下相容"),
     start: str = Query(""),
     end: str = Query(""),
     db: Session = Depends(get_db),
@@ -58,8 +58,8 @@ def overview(
 
 @router.get("/monthly", response_model=list[MonthlyPoint], summary="月度分數趨勢（雙館）")
 def monthly(
-    hotel_code: str = Query(""),
-    platform: str = Query(""),
+    hotel_code: str = Query("", description="飯店代碼；**逗號串接可多選**（HANNS,HANNS_SUMMER）。單值格式向下相容"),
+    platform: str = Query("", description="平台代碼；**逗號串接可多選**（booking,agoda）。單值格式向下相容"),
     start: str = Query(""),
     end: str = Query(""),
     db: Session = Depends(get_db),
@@ -70,7 +70,7 @@ def monthly(
 
 @router.get("/platform", response_model=list[PlatformStat], summary="各 OTA 平均分對照")
 def platform_stats(
-    hotel_code: str = Query(""),
+    hotel_code: str = Query("", description="飯店代碼；**逗號串接可多選**（HANNS,HANNS_SUMMER）。單值格式向下相容"),
     start: str = Query(""),
     end: str = Query(""),
     db: Session = Depends(get_db),
@@ -81,8 +81,8 @@ def platform_stats(
 
 @router.get("/topics", response_model=list[TopicStat], summary="主題分佈（負面提及優先）")
 def topics(
-    hotel_code: str = Query(""),
-    platform: str = Query(""),
+    hotel_code: str = Query("", description="飯店代碼；**逗號串接可多選**（HANNS,HANNS_SUMMER）。單值格式向下相容"),
+    platform: str = Query("", description="平台代碼；**逗號串接可多選**（booking,agoda）。單值格式向下相容"),
     start: str = Query(""),
     end: str = Query(""),
     db: Session = Depends(get_db),
@@ -94,8 +94,8 @@ def topics(
 
 @router.get("/alerts", response_model=OtaReviewListOut, summary="負評警示清單")
 def alerts(
-    hotel_code: str = Query(""),
-    platform: str = Query(""),
+    hotel_code: str = Query("", description="飯店代碼；**逗號串接可多選**（HANNS,HANNS_SUMMER）。單值格式向下相容"),
+    platform: str = Query("", description="平台代碼；**逗號串接可多選**（booking,agoda）。單值格式向下相容"),
     start: str = Query(""),
     end: str = Query(""),
     alert_status: str = Query("", description="open / acknowledged / resolved / ignored"),

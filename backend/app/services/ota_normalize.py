@@ -79,6 +79,38 @@ PLATFORM_LABEL: dict[str, str] = {
 
 VALID_PLATFORMS = set(PLATFORM_SCALE.keys())
 
+
+# ══════════════════════════════════════════════════════════════════════════
+# 多選篩選（2026-08-25）
+# ══════════════════════════════════════════════════════════════════════════
+def split_codes(raw: str) -> list[str]:
+    """
+    把 `"HANNS,HANNS_SUMMER"` 拆成 `["HANNS", "HANNS_SUMMER"]`。
+
+    ⚠️ **選用逗號串接而不是重複參數**（`?hotel_code=A&hotel_code=B`）的理由：
+       既有的 KPI 下鑽網址（Dashboard → 評論清單）帶的是
+       `?hotel_code=HANNS` 這種單值。逗號格式**天然向下相容** ——
+       單值拆出來就是一個元素的 list，舊網址、舊書籤、舊 Excel 匯出連結
+       通通不用改。改成重複參數的話這些全部要跟著動。
+
+    ⚠️ 飯店代碼與平台代碼都限定 ASCII 英數與底線
+       （`ota_platform_service.create_platform()` 有擋），逗號不會出現在值裡面。
+
+    ⚠️ 去掉空白與空字串：`"A, ,B,"` → `["A", "B"]`。
+       前端把空選項送上來是常態，不該讓它變成一個查不到東西的條件。
+    ⚠️ 去重但**保留順序** —— 順序會影響圖表圖例的排列，用 set 會每次都不一樣。
+    """
+    if not raw:
+        return []
+    seen: set[str] = set()
+    out: list[str] = []
+    for part in raw.split(","):
+        value = part.strip()
+        if value and value not in seen:
+            seen.add(value)
+            out.append(value)
+    return out
+
 # ══════════════════════════════════════════════════════════════════════════
 # 網域 → 平台（用來擋「網址與平台對不上」）
 # ══════════════════════════════════════════════════════════════════════════

@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from app.models.ota_review import OtaReview, OtaSource
 from app.schemas.ota_review import (OtaReviewDetailOut, OtaReviewListOut,
                                     OtaReviewRow)
-from app.services.ota_normalize import PLATFORM_LABEL
+from app.services.ota_normalize import PLATFORM_LABEL, split_codes
 
 SUMMARY_LIMIT = 80
 
@@ -71,10 +71,15 @@ def _build_query(
 
     if not include_duplicate:
         stmt = stmt.where(OtaReview.is_duplicate.is_(False))
-    if hotel_code:
-        stmt = stmt.where(OtaReview.hotel_code == hotel_code)
-    if platform:
-        stmt = stmt.where(OtaReview.platform == platform)
+    # ⚠️ 2026-08-25 起可以是逗號串接的多值（`"HANNS,HANNS_SUMMER"`）。
+    #    拆解一律走 `split_codes()`，與 `ota_stats_service._base_filters()` 同一支 ——
+    #    兩邊各自解析的話，Dashboard 與清單頁的數字遲早會對不起來。
+    hotels = split_codes(hotel_code)
+    if hotels:
+        stmt = stmt.where(OtaReview.hotel_code.in_(hotels))
+    platforms = split_codes(platform)
+    if platforms:
+        stmt = stmt.where(OtaReview.platform.in_(platforms))
 
     # ⚠️ 空日期的評論不落在任何區間內。這是刻意的 ——
     #    解析不出日期的評論不該混進「某個月」的統計（§5.4）。

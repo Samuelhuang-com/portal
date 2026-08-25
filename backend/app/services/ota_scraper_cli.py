@@ -83,6 +83,15 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         help="本次執行覆寫翻頁上限（1~500），不動來源設定。"
                              "第一次回補歷史評論時用 —— 來源預設只有 20 頁"
                              "（Booking 約 200 則、Agoda 約 500 則）")
+    parser.add_argument("--lock-wait", type=int, default=30, metavar="MIN",
+                        help="等跨行程同步鎖最多幾分鐘（預設 30）。"
+                             "⚠️ 預設的 90 秒是按 Ragic 批次（約 67 秒）訂的，"
+                             "OTA 擷取一跑就是 20～40 分鐘 —— 用 90 秒等它"
+                             "保證等不到")
+    parser.add_argument("--no-lock", action="store_true",
+                        help="⚠️ 跳過跨行程同步鎖。**確定沒有其他同步在跑才用**："
+                             "兩個行程同時寫 SQLite 會 database-is-locked，"
+                             "這把鎖就是 2026-07-15 為了修那個問題才加的")
     parser.add_argument("--list", action="store_true",
                         help="只列出來源與最後同步狀態，不執行擷取")
     parser.add_argument("--diagnose", default="",
@@ -538,7 +547,9 @@ def main(argv: list[str] | None = None) -> int:
 
         # ⚠️ 這條路徑沒有外層鎖，必須自己加 —— 否則會跟後端排程／sync_tool
         #    同時寫入 portal.db（記憶 project_sync_tool_db_lock_diagnosis）
-        from app.core.sync_lock import sync_lock
+        from filelock import Timeout as LockTimeout
+
+        from app.core.sync_lock import describe_lock_owner, sync_lock
 
         # ⚠️ 上限 500 —— 再高只是讓一次執行跑到天亮。
         #    Booking 約 10 則/頁、Agoda 約 25 則/頁，500 頁足夠涵蓋數千則。
@@ -549,14 +560,51 @@ def main(argv: list[str] | None = None) -> int:
             print(f"本次翻頁上限覆寫為 {args.max_pages} 頁"
                   f"（**不寫回來源設定**，只影響這一次執行）")
 
-        with sync_lock("OTA 評論擷取（CLI）"):
-            result = sync_sources(
+        def _run():
+            return sync_sources(
                 db, ids,
                 trigger_type="manual",
                 triggered_by="cli",
                 respect_daily_limit=not args.force,
                 max_pages_override=args.max_pages or None,
             )
+
+        if args.no_lock:
+            print("⚠️  --no-lock：跳過跨行程同步鎖。")
+            print("    確定後端排程與 sync_tool.py 都沒有在同步，否則會 database-is-locked。")
+            result = _run()
+        else:
+            # ⚠️ 逾時預設拉到 30 分鐘（`--lock-wait` 可調）。
+            #    `DEFAULT_TIMEOUT = 90` 是按 Ragic 批次（約 67 秒）訂的，
+            #    而 OTA 擷取一個來源就要 20～40 分鐘 —— 用 90 秒去等一個
+            #    正在跑的 OTA 同步，**保證等不到**，那不是運氣不好是設計沒跟上。
+            wait_seconds = max(60, args.lock_wait * 60)
+
+            def _notice(waited: float, owner: str) -> None:
+                print(f"  ⏳ 等待同步鎖…已等 {waited / 60:.0f} 分鐘"
+                      f"（上限 {wait_seconds / 60:.0f} 分，可用 --lock-wait 調整）")
+                print(f"     {owner}")
+
+            try:
+                with sync_lock("OTA 評論擷取（CLI）", timeout=wait_seconds,
+                               on_wait=_notice):
+                    result = _run()
+            except LockTimeout:
+                # ⚠️ **不要讓它變成 traceback**（2026-08-25 實測踩到）。
+                #    `sync_lock` 記的 log 寫「本次略過」卻往外拋，
+                #    而沒有任何呼叫端接住 —— 使用者看到的是一段堆疊，
+                #    完全看不出「有別人在跑、等它跑完就好」。
+                print()
+                print("=" * 64)
+                print(f"⏹  等不到同步鎖（已等 {wait_seconds / 60:.0f} 分鐘），本次沒有執行。")
+                print(f"   {describe_lock_owner()}")
+                print()
+                print("   可以這樣做：")
+                print("     · 等對方跑完再重試（OTA 擷取一個來源要 20～40 分鐘）")
+                print("     · 拉長等待：--lock-wait 60")
+                print("     · 確定沒人在跑的話：--no-lock（⚠️ 同時寫入會壞資料）")
+                print("=" * 64)
+                return 3
     finally:
         db.close()
 

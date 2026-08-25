@@ -513,17 +513,63 @@ def assert_usable(html: str) -> None:
         )
 
 
-def headless_blocked_message(url: str) -> str:
-    """R1 成真時的訊息。⚠️ 必須寫明退路，不要只寫「失敗」。"""
+def headless_blocked_message(url: str, last_error: Exception | None = None,
+                             browser_started: bool = True) -> str:
+    """
+    兩種模式都失敗時的訊息。
+
+    ⚠️⚠️ **2026-08-24 大改：這則訊息原本在猜，而且會把人帶錯方向。**
+
+       舊版不管實際發生什麼，一律寫死：
+
+           「本機器多半沒有互動式桌面 session（例如以 Windows Service 執行）」
+
+       它從來沒有驗證過這件事，而且**把真正的例外整個丟掉**。
+       實測踩到：使用者就坐在桌面前、Chrome 開得好好的，
+       真正的原因是新寫的 TripComParser 少點一顆「全部 447 則評論」按鈕，
+       解析結果 0 筆 —— 然後畫面叫他去查 Windows Service。
+
+       **「瀏覽器開不起來」和「瀏覽器開了但解析不到」是兩件完全不同的事，
+       修法也完全不同。** 訊息必須先講事實（真正的例外），
+       再依「瀏覽器有沒有啟動成功」給出對的方向。
+
+    ⚠️ 這與本模組其他地方的原則一致：`assert_usable()` 也是先分辨
+       「短頁面」「有驗證字樣」「HTML 長但沒有可見文字」才報對應的錯，
+       不是統一報一句「失敗」。
+    """
+    detail = f"{type(last_error).__name__}: {last_error}" if last_error else "（沒有捕捉到例外）"
+
+    if not browser_started:
+        cause = (
+            "無頭與可見視窗**都啟動不了瀏覽器** —— 這是規格書 §3.3 的 R1。\n"
+            "常見原因：以 Windows Service／LocalSystem 執行（沒有互動式桌面 session）、\n"
+            "或 chromedriver 與已安裝的 Chrome 版本對不上。\n"
+            "\n"
+            "兩條退路（擇一）：\n"
+            "  1. 用 Windows 工作排程器「以登入使用者身分」執行：\n"
+            "     cd backend && python -m app.services.ota_scraper_cli\n"
+            "     並把 .env 的 OTA_BROWSER_MODE 設為 visible\n"
+            "  2. 改用 CSV 匯入（Portal →口碑分析 → OTA 來源設定 → CSV 匯入）"
+        )
+    else:
+        cause = (
+            "⚠️ **瀏覽器有啟動成功，是「開了頁面但解析不到評論」** ——\n"
+            "   所以這**不是** R1，跟 Windows Service／桌面 session 無關。\n"
+            "\n"
+            "依可能性排序：\n"
+            "  1. **少了一步互動**：有些站要先點「全部 N 則評論」「顯示所有評語」\n"
+            "     才會出現評論列表。詳情頁上看得到的可能是結構完全不同的摘要輪播。\n"
+            "  2. **OTA 改版**，selector 失效（定義在 ota_parser.py 頂端的常數區）\n"
+            "  3. 內容還沒渲染完（SPA 載入較慢）\n"
+            "\n"
+            "先跑診斷看是哪一種：\n"
+            "  cd backend && python -m app.services.ota_scraper_cli \\\n"
+            "      --diagnose \"<網址>\" --platform <平台代碼>"
+        )
+
     return (
-        "無頭模式抓不到評論，改開可見視窗也失敗 —— 這是規格書 §3.3 的 R1。\n"
-        "本機器多半沒有互動式桌面 session（例如以 Windows Service／LocalSystem 執行）。\n"
-        "\n"
-        "兩條退路（擇一）：\n"
-        "  1. 用 Windows 工作排程器「以登入使用者身分」執行：\n"
-        "     cd backend && python -m app.services.ota_scraper_cli\n"
-        "     並把 .env 的 OTA_BROWSER_MODE 設為 visible\n"
-        "  2. 改用 CSV 匯入（Portal →口碑分析 → OTA 來源設定 → CSV 匯入）\n"
-        "\n"
+        f"{cause}\n"
+        f"\n"
+        f"最後一次的實際錯誤：{detail}\n"
         f"來源：{url}"
     )

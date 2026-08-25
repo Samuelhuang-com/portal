@@ -53,14 +53,16 @@ OTA 同步：孤兒 `running` 紀錄回收（2026-08-24 新增）
 from __future__ import annotations
 
 import logging
-import os
-import socket
-import sys
 from dataclasses import dataclass
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+# ⚠️ `pid_alive`／`worker_identity` 2026-08-24 下午搬到 `core/proc.py` ——
+#    `core/sync_lock.py` 也要用它判斷 .sync.lock.owner 的 pid 還在不在，
+#    而 core 不可以 import services。**不要在這裡再複製一份**，
+#    那支裡面有「Windows 上 os.kill 會變成處決」的地雷，漂移的代價很大。
+from app.core.proc import pid_alive as _pid_alive, worker_identity
 from app.core.time import twnow
 from app.models.ota_review import OtaSyncLog
 
@@ -105,65 +107,6 @@ def ensure_worker_columns() -> list[str]:
         if added:
             conn.commit()
     return added
-
-
-def worker_identity() -> tuple[str, int]:
-    """目前行程的身分，寫進 `start_sync_log()`。"""
-    try:
-        host = socket.gethostname()[:60]
-    except OSError:                                     # pragma: no cover
-        host = ""
-    return host, os.getpid()
-
-
-def _pid_alive(pid: int) -> bool | None:
-    """
-    這個 pid 還活著嗎？
-
-    回傳 `True`／`False`；**探測不了就回 `None`**（不要假裝知道）——
-    `None` 會讓呼叫端退回逾時判定，而不是把一個可能還在跑的同步收掉。
-    """
-    if pid <= 0:
-        return None
-
-    if sys.platform == "win32":
-        # ⚠️ 不可用 os.kill：Windows 上 Python 會走 TerminateProcess，
-        #    「探測」會變成「處決」。
-        import ctypes
-        from ctypes import wintypes
-
-        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-        STILL_ACTIVE = 259
-
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        handle = kernel32.OpenProcess(
-            PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
-        if not handle:
-            err = ctypes.get_last_error()
-            # 87 ERROR_INVALID_PARAMETER ＝ 沒有這個 pid → 確定死了
-            if err == 87:
-                return False
-            # 5 ERROR_ACCESS_DENIED ＝ 行程存在但權限不足 → 活著
-            if err == 5:
-                return True
-            return None
-        try:
-            code = wintypes.DWORD()
-            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
-                return None
-            return code.value == STILL_ACTIVE
-        finally:
-            kernel32.CloseHandle(handle)
-
-    try:
-        os.kill(pid, 0)                 # POSIX：signal 0 只檢查，不送訊號
-        return True
-    except ProcessLookupError:
-        return False
-    except PermissionError:             # 行程存在，只是不屬於我們
-        return True
-    except OSError:                     # pragma: no cover
-        return None
 
 
 @dataclass

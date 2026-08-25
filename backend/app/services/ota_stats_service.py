@@ -20,7 +20,8 @@ from sqlalchemy.orm import Session
 from app.models.ota_review import OtaReview, OtaSource
 from app.schemas.ota_review import (DataRangeOut, MonthlyPoint, OverviewOut,
                                     PlatformStat, TopicStat)
-from app.services.ota_normalize import NEGATIVE_SCORE_MAX, PLATFORM_LABEL
+from app.services.ota_normalize import (NEGATIVE_SCORE_MAX, PLATFORM_LABEL,
+                                        split_codes)
 
 # SQLite 的 Numeric 欄位在 AVG 前需要轉 Float，否則回傳 Decimal 精度會怪
 _SCORE = cast(OtaReview.score_10, Float)
@@ -31,11 +32,21 @@ NEGATIVE_THRESHOLD = NEGATIVE_SCORE_MAX
 
 
 def _base_filters(stmt, hotel_code: str = "", platform: str = ""):
+    """
+    ⚠️ `hotel_code`／`platform` 自 2026-08-25 起**可以是逗號串接的多值**
+       （`"HANNS,HANNS_SUMMER"`）。單值仍然照舊，格式向下相容。
+
+    ⚠️ 拆解一律走 `split_codes()`，**不要在這裡自己 split** ——
+       這個函式與 `ota_review_service` 那支是同一種篩選的兩個實作，
+       只要有一邊自己解析，兩個畫面的數字遲早會對不起來。
+    """
     stmt = stmt.where(OtaReview.is_duplicate.is_(False))
-    if hotel_code:
-        stmt = stmt.where(OtaReview.hotel_code == hotel_code)
-    if platform:
-        stmt = stmt.where(OtaReview.platform == platform)
+    hotels = split_codes(hotel_code)
+    if hotels:
+        stmt = stmt.where(OtaReview.hotel_code.in_(hotels))
+    platforms = split_codes(platform)
+    if platforms:
+        stmt = stmt.where(OtaReview.platform.in_(platforms))
     return stmt
 
 

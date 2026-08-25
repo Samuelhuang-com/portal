@@ -87,8 +87,8 @@ def _filters(
 
 @router.get("", response_model=OtaReviewListOut, summary="OTA 評論清單")
 def list_reviews(
-    hotel_code: str = Query(""),
-    platform: str = Query(""),
+    hotel_code: str = Query("", description="飯店代碼；**逗號串接可多選**（HANNS,HANNS_SUMMER）。單值格式向下相容"),
+    platform: str = Query("", description="平台代碼；**逗號串接可多選**（booking,agoda）。單值格式向下相容"),
     start: str = Query("", description="評論日期起（YYYY-MM-DD）；不帶＝全部資料"),
     end: str = Query("", description="評論日期迄（YYYY-MM-DD）"),
     min_score: float | None = Query(None, description="統一 10 分制下限"),
@@ -122,8 +122,8 @@ def list_reviews(
 
 @router.get("/export", summary="匯出 Excel（沿用目前篩選條件）")
 def export_reviews(
-    hotel_code: str = Query(""),
-    platform: str = Query(""),
+    hotel_code: str = Query("", description="飯店代碼；**逗號串接可多選**（HANNS,HANNS_SUMMER）。單值格式向下相容"),
+    platform: str = Query("", description="平台代碼；**逗號串接可多選**（booking,agoda）。單值格式向下相容"),
     start: str = Query(""),
     end: str = Query(""),
     min_score: float | None = Query(None),

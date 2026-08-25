@@ -20,6 +20,8 @@ import type { Dayjs } from 'dayjs'
 
 import StandardRangePicker from '@/components/StandardRangePicker'
 import { useUrlFilterDefaults } from '@/hooks/useUrlFilterDefaults'
+import { MultiCodeSelect, hotelOptions, platformOptions, toParam }
+  from '../filterScope'
 import {
   downloadBlob, exportReviews, fetchDataRange, fetchHotelOptions,
   fetchPlatformOptions, fetchReviews,
@@ -68,8 +70,9 @@ const OtaReviewsPage: React.FC = () => {
   const [dataEnd, setDataEnd] = useState<string>('')
   const [range, setRange] = useState<[Dayjs, Dayjs] | null>(urlDefaults.range)
 
-  const [hotelCode, setHotelCode] = useState(urlDefaults.hotelCode)
-  const [platform, setPlatform] = useState(urlDefaults.platform)
+  // ⚠️ 2026-08-25 改多選：空陣列 ＝ 全部（與後端 split_codes('') 一致）
+  const [hotelCodes, setHotelCodes] = useState<string[]>(urlDefaults.hotelCodes)
+  const [platformCodes, setPlatformCodes] = useState<string[]>(urlDefaults.platforms)
   const [sentiment, setSentiment] = useState(urlDefaults.sentiment)
   // ⭐ 「分數低於 N」的篩選（2026-08-23）。門檻可輸入，不是寫死的 6.0 ——
   //    6.0 只是 Dashboard KPI 下鑽時帶進來的預設值。
@@ -88,15 +91,15 @@ const OtaReviewsPage: React.FC = () => {
 
   /** 組查詢參數：range 為 null（「全部」）時**不帶起迄**，由後端套用完整範圍 */
   const filters = useMemo<ReviewFilters>(() => ({
-    hotel_code: hotelCode,
-    platform,
+    hotel_code: toParam(hotelCodes),
+    platform: toParam(platformCodes),
     sentiment,
     keyword,
     // ⚠️ `?? undefined` 不是 `|| undefined` —— 0 是合法的門檻值
     score_below: scoreBelow ?? undefined,
     include_duplicate: includeDuplicate,
     ...(range ? { start: range[0].format('YYYY-MM-DD'), end: range[1].format('YYYY-MM-DD') } : {}),
-  }), [hotelCode, platform, sentiment, scoreBelow, keyword, includeDuplicate, range])
+  }), [hotelCodes, platformCodes, sentiment, scoreBelow, keyword, includeDuplicate, range])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -213,18 +216,15 @@ const OtaReviewsPage: React.FC = () => {
       <Card size="small" style={{ marginBottom: 16 }}>
         <Row gutter={[10, 10]} align="middle">
           <Col>
-            <Select
-              value={hotelCode} onChange={(v) => { setHotelCode(v); setPage(1) }}
-              style={{ width: 140 }} placeholder="飯店"
-              options={[{ value: '', label: '全部飯店' }, ...hotels]}
+            <MultiCodeSelect
+              value={hotelCodes} onChange={(v) => { setHotelCodes(v); setPage(1) }}
+              options={hotelOptions(hotels)} placeholder="全部飯店" width={180}
             />
           </Col>
           <Col>
-            <Select
-              value={platform} onChange={(v) => { setPlatform(v); setPage(1) }}
-              style={{ width: 140 }} placeholder="OTA"
-              options={[{ value: '', label: '全部 OTA' },
-                ...platforms.map((p) => ({ value: p.value as string, label: p.label }))]}
+            <MultiCodeSelect
+              value={platformCodes} onChange={(v) => { setPlatformCodes(v); setPage(1) }}
+              options={platformOptions(platforms)} placeholder="全部 OTA" width={180}
             />
           </Col>
           <Col>

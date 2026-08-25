@@ -38,9 +38,12 @@ from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from typing import Optional
 
+from datetime import datetime
+
 from filelock import FileLock, Timeout
 
 from app.core.config import settings
+from app.core.proc import pid_alive, worker_identity
 
 logger = logging.getLogger(__name__)
 
@@ -73,27 +76,144 @@ def _make_lock(timeout: float) -> Optional[FileLock]:
     return FileLock(str(path), timeout=timeout)
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# 鎖的持有者（2026-08-24 新增）
+# ══════════════════════════════════════════════════════════════════════════
+# ⚠️ **一把沒有主人的鎖無法除錯。**
+#
+#    `.sync.lock` 本來只是一個空檔案。逾時的時候只能告訴使用者
+#    「可能有其他同步正在進行中」—— 到底是誰、跑多久了、還是根本已經死掉，
+#    完全查不到。2026-08-25 實測就卡在這裡：使用者下 CLI，等 90 秒、
+#    噴一段 traceback，然後不知道要等什麼。
+#
+#    這與同一天早上幫 `ota_sync_logs` 加 `worker_host`/`worker_pid`
+#    是**同一條原則**：任何會擋住別人的狀態，都要留下「誰、何時、還在不在」。
+#
+# ⚠️ owner 檔是**盡力而為**：行程被硬砍時來不及刪。所以讀取端一律要
+#    用 `pid_alive()` 判斷它是不是過期資訊，不可以直接當真。
+_OWNER_SUFFIX = ".owner"
+
+
+def _owner_path() -> Optional[Path]:
+    lock_path = _lock_file_path()
+    return None if lock_path is None else lock_path.with_suffix(
+        lock_path.suffix + _OWNER_SUFFIX)
+
+
+def _write_owner(module_name: str) -> None:
+    """取得鎖之後記下自己是誰。⚠️ 寫失敗不可以影響同步本身。"""
+    path = _owner_path()
+    if path is None:
+        return
+    host, pid = worker_identity()
+    try:
+        path.write_text(
+            f"{host}\t{pid}\t{module_name or '(unnamed)'}\t"
+            f"{datetime.now().isoformat(timespec='seconds')}",
+            encoding="utf-8",
+        )
+    except OSError:                                     # pragma: no cover
+        logger.debug("[SyncLock] 寫入 owner 檔失敗（不影響同步）", exc_info=True)
+
+
+def _clear_owner() -> None:
+    path = _owner_path()
+    if path is None:
+        return
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:                                     # pragma: no cover
+        pass
+
+
+def describe_lock_owner() -> str:
+    """
+    目前是誰握著鎖？回傳一句可以直接印給使用者看的話。
+
+    ⚠️ 一定要交代**可信度**：owner 檔可能是上次硬中斷留下的過期資訊。
+       同機器就用 pid 實際確認；跨機器只能照實說「無法確認」。
+    """
+    path = _owner_path()
+    if path is None or not path.exists():
+        return "（找不到持有者資訊 —— 可能是舊版留下的鎖，或剛好已經釋放）"
+
+    try:
+        parts = path.read_text(encoding="utf-8").split("\t")
+    except OSError:                                     # pragma: no cover
+        return "（讀不到持有者資訊）"
+    if len(parts) < 4:
+        return "（持有者資訊格式不正確）"
+
+    host, pid_text, module, started = parts[0], parts[1], parts[2], parts[3]
+    try:
+        pid = int(pid_text)
+    except ValueError:
+        pid = -1
+
+    this_host, _ = worker_identity()
+    if host != this_host:
+        state = f"在另一台機器（{host}）上，本機無法確認它是否還活著"
+    else:
+        alive = pid_alive(pid)
+        state = {True: "**還在執行中**",
+                 False: "⚠️ **那個行程已經不存在了** —— 這是硬中斷留下的過期資訊，"
+                        "鎖本身應該已經釋放，可以直接重試",
+                 None: "無法確認是否還活著"}[alive]
+
+    return f"持有者：{module}（{host} pid={pid}，自 {started} 起）—— {state}"
+
+
 @contextmanager
-def sync_lock(module_name: str = "", timeout: float = DEFAULT_TIMEOUT):
+def sync_lock(module_name: str = "", timeout: float = DEFAULT_TIMEOUT,
+              on_wait=None, poll_seconds: float = 30.0):
     """
     同步版跨行程鎖。給已經在背景執行緒（threading.Thread）執行的呼叫端使用
     （例如 sync_tool.py），可以放心阻塞等待，不會卡住任何事件迴圈。
+
+    `on_wait(waited_seconds, owner_description)` 是選用的等待回報 ——
+    互動式呼叫端（CLI）可以用它每隔 `poll_seconds` 印一行進度。
+    ⚠️ **沒有傳 `on_wait` 時行為與以前完全一樣**（單次 acquire，不分段）。
+       OTA 擷取一跑就是 20–40 分鐘，讓人對著空白畫面等半小時是不行的。
+
+    ⚠️ 逾時仍然 `raise Timeout` —— **要不要略過是呼叫端的決定**，不是這裡的。
+       （舊版 log 寫「本次略過」但實際上往外拋，沒有任何呼叫端接住它，
+        於是使用者看到的是一段 traceback。訊息與行為不一致比沒訊息更糟。）
     """
     lock = _make_lock(timeout)
     if lock is None:
         yield
         return
+
+    acquired = False
     try:
-        with lock:
-            yield
+        if on_wait is None:
+            lock.acquire()
+        else:
+            waited = 0.0
+            while True:
+                try:
+                    lock.acquire(timeout=min(poll_seconds, timeout - waited))
+                    break
+                except Timeout:
+                    waited += poll_seconds
+                    if waited >= timeout:
+                        raise
+                    on_wait(waited, describe_lock_owner())
+        acquired = True
     except Timeout:
         logger.warning(
-            "[SyncLock] %s 等待跨行程鎖逾時（%.0fs）："
-            "可能有其他同步（sync_tool.py 或後端排程）正在進行中，本次略過",
-            module_name or "(unnamed)",
-            timeout,
+            "[SyncLock] %s 等待跨行程鎖逾時（%.0fs）。%s",
+            module_name or "(unnamed)", timeout, describe_lock_owner(),
         )
         raise
+
+    _write_owner(module_name)
+    try:
+        yield
+    finally:
+        _clear_owner()
+        if acquired:
+            lock.release()
 
 
 @asynccontextmanager
@@ -132,15 +252,15 @@ async def async_sync_lock(module_name: str = "", timeout: float = DEFAULT_TIMEOU
             await loop.run_in_executor(executor, lock.acquire)
         except Timeout:
             logger.warning(
-                "[SyncLock] %s 等待跨行程鎖逾時（%.0fs）："
-                "可能有其他同步（sync_tool.py 或後端排程）正在進行中，本次略過",
-                module_name or "(unnamed)",
-                timeout,
+                "[SyncLock] %s 等待跨行程鎖逾時（%.0fs）。%s",
+                module_name or "(unnamed)", timeout, describe_lock_owner(),
             )
             raise
+        _write_owner(module_name)
         try:
             yield
         finally:
+            _clear_owner()
             # release 也必須丟回「同一顆」單執行緒 executor，確保跟 acquire
             # 是同一條 OS 執行緒，這樣 filelock 的 thread-local context 才會
             # 對得起來，鎖才會真的被釋放。

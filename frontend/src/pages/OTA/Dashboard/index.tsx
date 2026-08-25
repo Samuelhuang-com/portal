@@ -34,6 +34,8 @@ import {
 import { useNavigate } from 'react-router-dom'
 
 import StandardRangePicker from '@/components/StandardRangePicker'
+import { MultiCodeSelect, ScopeText, describeCodes, hotelOptions, toParam }
+  from '../filterScope'
 import { buildFilterQuery } from '@/hooks/useUrlFilterDefaults'
 import { useAuthStore } from '@/stores/authStore'
 import {
@@ -59,7 +61,8 @@ const OtaDashboardPage: React.FC = () => {
   const hasPermission = useAuthStore((st) => st.hasPermission)
 
   const [hotels, setHotels] = useState<HotelOption[]>([])
-  const [hotelCode, setHotelCode] = useState('')
+  // ⚠️ 2026-08-25 改成多選：空陣列 ＝ 全部（與後端 split_codes('') 語意一致）
+  const [hotelCodes, setHotelCodes] = useState<string[]>([])
   const [range, setRange] = useState<[Dayjs, Dayjs] | null>(null)
   const [dataEnd, setDataEnd] = useState('')
 
@@ -70,19 +73,19 @@ const OtaDashboardPage: React.FC = () => {
   const [loading, setLoading] = useState(false)
 
   const filters = useMemo(() => ({
-    hotel_code: hotelCode || undefined,
+    hotel_code: toParam(hotelCodes),
     // ⚠️ range 為 null 代表「全部」（StandardRangePicker §8.3 的語意），
     //    這時**不帶** start/end，由後端套用完整資料範圍。
     ...(range
       ? { start: range[0].format('YYYY-MM-DD'), end: range[1].format('YYYY-MM-DD') }
       : {}),
-  }), [hotelCode, range])
+  }), [hotelCodes, range])
 
   const load = useCallback(async () => {
     setLoading(true)
     try {
       const [rangeInfo, ov, mon, plat, top] = await Promise.all([
-        fetchDataRange(hotelCode),
+        fetchDataRange(toParam(hotelCodes) || ''),
         fetchOverview(filters),
         fetchMonthly(filters),
         fetchPlatformStats(filters),
@@ -98,7 +101,7 @@ const OtaDashboardPage: React.FC = () => {
     } finally {
       setLoading(false)
     }
-  }, [hotelCode, filters])
+  }, [hotelCodes, filters])
 
   useEffect(() => { load() }, [load])
   useEffect(() => {
@@ -164,20 +167,18 @@ const OtaDashboardPage: React.FC = () => {
    *    **看懂了但看錯對象**。
    */
   const scope = useMemo(() => {
-    const hotelLabel = hotelCode
-      ? (hotels.find((h) => h.value === hotelCode)?.label || hotelCode)
-      : '全部飯店'
+    const hotelLabel = describeCodes(hotelCodes, hotelOptions(hotels), '全部飯店')
     const periodLabel = range
       ? `${range[0].format('YYYY-MM-DD')} ~ ${range[1].format('YYYY-MM-DD')}`
       : '全部期間'
     return {
       hotelLabel,
       periodLabel,
-      isFiltered: Boolean(hotelCode) || Boolean(range),
+      isFiltered: hotelCodes.length > 0 || Boolean(range),
       // 卡片標題用的短版，例如「（瀚寓）」；全部飯店時不加，免得每張卡都掛一句廢話
-      titleSuffix: hotelCode ? `（${hotelLabel}）` : '',
+      titleSuffix: hotelCodes.length ? `（${hotelLabel}）` : '',
     }
-  }, [hotelCode, hotels, range])
+  }, [hotelCodes, hotels, range])
 
 
   /**
@@ -216,7 +217,7 @@ const OtaDashboardPage: React.FC = () => {
    *    給一個點得下去卻走不通的入口，比沒有入口更惱人。
    */
   const drill = useMemo(() => {
-    const base = { hotelCode, range }
+    const base = { hotelCodes, range }
     return {
       reviews: hasPermission('ota_reviews_view')
         ? `/ota/reviews${buildFilterQuery(base)}` : '',
@@ -228,7 +229,7 @@ const OtaDashboardPage: React.FC = () => {
       alerts: hasPermission('ota_alerts_view')
         ? `/ota/alerts${buildFilterQuery({ ...base, alertStatus: 'open' })}` : '',
     }
-  }, [hotelCode, range, hasPermission])
+  }, [hotelCodes, range, hasPermission])
 
   /**
    * 可點的卡片給游標與 hover 提示；不可點的維持原樣。
@@ -270,9 +271,12 @@ const OtaDashboardPage: React.FC = () => {
       >
         <Row gutter={12} align="middle">
           <Col>
-            <Select
-              value={hotelCode} onChange={setHotelCode} style={{ width: 150 }}
-              options={[{ value: '', label: '全部飯店' }, ...hotels]}
+            {/* ⚠️ 不放「全部飯店」這個選項 —— 多選模式下它會變成
+                 「可以跟其他飯店一起被選中」的怪東西。空陣列就是全部，
+                 placeholder 講清楚即可。 */}
+            <MultiCodeSelect
+              value={hotelCodes} onChange={setHotelCodes}
+              options={hotelOptions(hotels)} placeholder="全部飯店"
             />
           </Col>
           <Col>
@@ -297,7 +301,10 @@ const OtaDashboardPage: React.FC = () => {
           <Col>
             <Space size={6} wrap>
               <Text type="secondary" style={{ fontSize: 12 }}>目前統計範圍：</Text>
-              <Tag color={hotelCode ? 'blue' : undefined}>{scope.hotelLabel}</Tag>
+              <Tag color={hotelCodes.length ? 'blue' : undefined}>
+              <ScopeText codes={hotelCodes} options={hotelOptions(hotels)}
+                         allLabel="全部飯店" />
+            </Tag>
               <Tag color={range ? 'blue' : undefined}>{scope.periodLabel}</Tag>
               <Tag>{(overview?.total ?? 0).toLocaleString()} 則</Tag>
               {scope.isFiltered && (

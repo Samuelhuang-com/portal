@@ -31,8 +31,16 @@ import { useLocation } from 'react-router-dom'
 import dayjs, { type Dayjs } from 'dayjs'
 
 export interface UrlFilterDefaults {
-  hotelCode: string
-  platform: string
+  /**
+   * ⚠️ 2026-08-25 起是**陣列**（飯店／平台改成可複選）。
+   *
+   * 網址格式仍然是逗號串接的單一參數（`?hotel_code=HANNS,HANNS_SUMMER`），
+   * **不是**重複參數 —— 舊的下鑽網址、書籤、分享出去的連結
+   * 帶的都是 `?hotel_code=HANNS` 這種單值，逗號格式拆出來就是
+   * 一個元素的陣列，通通不用改。
+   */
+  hotelCodes: string[]
+  platforms: string[]
   /** null 代表「全部期間」—— 與 StandardRangePicker 的語意一致（CLAUDE.md §8.3） */
   range: [Dayjs, Dayjs] | null
   /** 分數低於多少（null ＝ 不篩） */
@@ -50,6 +58,24 @@ export interface UrlFilterDefaults {
  *    症狀是「篩選之後一筆都沒有」，而不是明確的錯誤。
  */
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
+
+/**
+ * 逗號串接 → 陣列。與後端 `ota_normalize.split_codes()` 的語意必須一致：
+ * 去空白、丟掉空字串、**去重但保留順序**。
+ *
+ * ⚠️ 保留順序不是龜毛 —— 順序會決定趨勢圖圖例的排列，
+ *    用 Set 直接展開會讓同一組條件每次畫出來的顏色都不一樣。
+ */
+function splitCodes(raw: string | null): string[] {
+  if (!raw) return []
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const part of raw.split(',')) {
+    const value = part.trim()
+    if (value && !seen.has(value)) { seen.add(value); out.push(value) }
+  }
+  return out
+}
 
 function parseDate(raw: string | null): Dayjs | null {
   if (!raw || !DATE_RE.test(raw)) return null
@@ -79,8 +105,8 @@ export function useUrlFilterDefaults(): UrlFilterDefaults {
     const end = parseDate(params.get('end'))
 
     return {
-      hotelCode: params.get('hotel_code') || '',
-      platform: params.get('platform') || '',
+      hotelCodes: splitCodes(params.get('hotel_code')),
+      platforms: splitCodes(params.get('platform')),
       // ⚠️ 起迄**兩個都有效**才成立。只有一邊的話當成「全部期間」，
       //    硬湊一個開放區間會讓畫面上的期間顯示與實際查詢不一致。
       range: start && end ? [start, end] : null,
@@ -101,16 +127,17 @@ export function useUrlFilterDefaults(): UrlFilterDefaults {
  *    行為上等同沒帶，但看起來很像「有指定但值是空的」，很難判讀。
  */
 export function buildFilterQuery(input: {
-  hotelCode?: string
-  platform?: string
+  hotelCodes?: string[]
+  platforms?: string[]
   range?: [Dayjs, Dayjs] | null
   scoreBelow?: number | null
   alertStatus?: string
   sentiment?: string
 }): string {
   const params = new URLSearchParams()
-  if (input.hotelCode) params.set('hotel_code', input.hotelCode)
-  if (input.platform) params.set('platform', input.platform)
+  // ⚠️ 空陣列不帶（同「空字串不帶」的理由）
+  if (input.hotelCodes?.length) params.set('hotel_code', input.hotelCodes.join(','))
+  if (input.platforms?.length) params.set('platform', input.platforms.join(','))
   if (input.range) {
     params.set('start', input.range[0].format('YYYY-MM-DD'))
     params.set('end', input.range[1].format('YYYY-MM-DD'))

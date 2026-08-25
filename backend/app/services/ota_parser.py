@@ -348,6 +348,35 @@ TC_NEXT_BUTTONS = (
     "li:has(> a > i[class*='u-icon-arrowRight']) > a",
     "li:has(> a > i[class*='u-icon-next']) > a",
 )
+# ⭐⭐ **必須先點「全部 447 則評論」把評論視窗打開**（2026-08-24 實測踩到）。
+#
+#    詳情頁上看得到的是**首頁輪播**（`sceneReviewSwiper_*`，9 則），
+#    那批的 DOM 結構跟評論視窗**完全不同**，`TC_REVIEW_CARD` 一個都不命中。
+#    也就是說：不點這顆按鈕，`driver.get(url)` 之後解析結果是 **0 筆**。
+#
+#    而 0 筆會讓 headless 與 visible 兩種模式都被判定失敗，最後拋出
+#    `HeadlessBlockedError` —— 訊息寫著「本機器多半沒有互動式桌面 session」。
+#    **那是完全錯誤的方向**：瀏覽器開得好好的，問題在少點一顆按鈕。
+#
+# ⚠️ 按鈕的 class 是 `style_textLinkButton__XwrMR` 這種每次建置重算的雜湊，
+#    唯一穩定的特徵是**按鈕上的那行字**。CSS 選不到文字，所以用
+#    `xpath:` 前綴（`ota_scraper_service._find()` 支援）。
+#    數字會變（447 → 460），所以只比對「全部」與「則評論」，中間不管。
+#
+# ⚠️ **必須排除 `<script>`**（2026-08-24 實測抓到）：Trip.com 是 Next.js，
+#    頁面底部有 `self.__next_f.push([1,"...")` 的序列化 payload，
+#    裡面**原字串照抄**一份「全部 447 則評論」。不排除的話 XPath 會命中 2 個，
+#    而 `_open_review_dialog()` 取的是 `buttons[0]` ——
+#    只要哪次建置把 script 排在前面，就會去點一個 `<script>` 標籤：
+#    不會報錯、不會有任何事發生，然後解析 0 筆。
+TC_OPEN_ALL = (
+    "xpath://*[not(self::script) and not(self::style)]"
+    "[contains(text(),'全部') and contains(text(),'則評論')]",
+    "xpath://*[not(self::script) and not(self::style)]"
+    "[contains(text(),'查看全部') and contains(text(),'評論')]",
+    "xpath://*[not(self::script) and not(self::style)][contains(text(),'所有評論')]",
+)
+
 TC_EXPAND_BUTTONS: tuple[str, ...] = ()     # 實測本文未截斷，無「顯示更多」
 
 TC_ROOM_ICON = "ic_roomline"          # 房型
@@ -1301,7 +1330,9 @@ class TripComParser:
     card_selectors_additive = False     # 兩個 selector 命中同一批，取第一個就好
     card_exclude_selectors: tuple[str, ...] = ()    # 回覆在卡內，靠 parse 剔除
 
-    open_all_buttons: tuple[str, ...] = ()
+    # ⭐⭐ 必須先點「全部 N 則評論」開啟評論視窗，否則解析結果是 0 筆
+    #     （詳情頁上的是首頁輪播，DOM 結構完全不同 —— 見 TC_OPEN_ALL 的說明）
+    open_all_buttons = TC_OPEN_ALL
     next_buttons = TC_NEXT_BUTTONS
     expand_buttons = TC_EXPAND_BUTTONS
     scroll_to_load = True

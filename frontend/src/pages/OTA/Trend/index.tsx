@@ -30,6 +30,8 @@ import {
 } from 'recharts'
 
 import StandardRangePicker from '@/components/StandardRangePicker'
+import { MultiCodeSelect, ScopeText, describeCodes, hotelOptions, platformOptions, toParam }
+  from '../filterScope'
 import {
   fetchDataRange, fetchHotelOptions, fetchMonthly, fetchPlatformOptions,
   fetchPlatformStats,
@@ -60,8 +62,9 @@ interface CompareRow {
 const OtaTrendPage: React.FC = () => {
   const [hotels, setHotels] = useState<HotelOption[]>([])
   const [platforms, setPlatforms] = useState<PlatformOption[]>([])
-  const [hotelCode, setHotelCode] = useState('')
-  const [platform, setPlatform] = useState('')
+  // ⚠️ 2026-08-25 改多選：空陣列 ＝ 全部
+  const [hotelCodes, setHotelCodes] = useState<string[]>([])
+  const [platformCodes, setPlatformCodes] = useState<string[]>([])
   const [range, setRange] = useState<[Dayjs, Dayjs] | null>(null)
   const [dataEnd, setDataEnd] = useState('')
   const [mode, setMode] = useState<ChartMode>('score')
@@ -71,23 +74,23 @@ const OtaTrendPage: React.FC = () => {
   const [loading, setLoading] = useState(false)
 
   const filters = useMemo(() => ({
-    hotel_code: hotelCode || undefined,
-    platform: platform || undefined,
+    hotel_code: toParam(hotelCodes),
+    platform: toParam(platformCodes),
     // range 為 null ＝「全部」，不帶起迄由後端套完整範圍（§8.3）
     ...(range
       ? { start: range[0].format('YYYY-MM-DD'), end: range[1].format('YYYY-MM-DD') }
       : {}),
-  }), [hotelCode, platform, range])
+  }), [hotelCodes, platformCodes, range])
 
   const load = useCallback(async () => {
     setLoading(true)
     try {
       const [rangeInfo, mon, plat] = await Promise.all([
-        fetchDataRange(hotelCode),
+        fetchDataRange(toParam(hotelCodes) || ''),
         fetchMonthly(filters),
         // ⚠️ 平台對照**不帶 platform 篩選** —— 篩了就只剩一根長條，
         //    這張圖的重點就是各平台之間的落差。
-        fetchPlatformStats({ hotel_code: hotelCode || undefined,
+        fetchPlatformStats({ hotel_code: toParam(hotelCodes),
           ...(range
             ? { start: range[0].format('YYYY-MM-DD'), end: range[1].format('YYYY-MM-DD') }
             : {}) }),
@@ -100,7 +103,7 @@ const OtaTrendPage: React.FC = () => {
     } finally {
       setLoading(false)
     }
-  }, [hotelCode, filters, range])
+  }, [hotelCodes, filters, range])
 
   useEffect(() => { load() }, [load])
   useEffect(() => {
@@ -164,26 +167,23 @@ const OtaTrendPage: React.FC = () => {
 
   /** 目前的篩選條件，給 context bar 與卡片標題共用（理由同 Dashboard）。 */
   const scope = useMemo(() => {
-    const hotelLabel = hotelCode
-      ? (hotels.find((h) => h.value === hotelCode)?.label || hotelCode)
-      : '全部飯店'
-    const platformLabel = platform
-      ? (platforms.find((p) => p.value === platform)?.label || platform)
-      : '全部平台'
+    const hotelLabel = describeCodes(hotelCodes, hotelOptions(hotels), '全部飯店')
+    const platformLabel = describeCodes(
+      platformCodes, platformOptions(platforms), '全部平台')
     const periodLabel = range
       ? `${range[0].format('YYYY-MM-DD')} ~ ${range[1].format('YYYY-MM-DD')}`
       : '全部期間'
     const parts: string[] = []
-    if (hotelCode) parts.push(hotelLabel)
-    if (platform) parts.push(platformLabel)
+    if (hotelCodes.length) parts.push(hotelLabel)
+    if (platformCodes.length) parts.push(platformLabel)
     return {
       hotelLabel,
       platformLabel,
       periodLabel,
-      isFiltered: Boolean(hotelCode || platform || range),
+      isFiltered: hotelCodes.length > 0 || platformCodes.length > 0 || Boolean(range),
       titleSuffix: parts.length ? `（${parts.join('・')}）` : '',
     }
-  }, [hotelCode, platform, hotels, platforms, range])
+  }, [hotelCodes, platformCodes, hotels, platforms, range])
 
 
   /**
@@ -259,18 +259,15 @@ const OtaTrendPage: React.FC = () => {
       >
         <Row gutter={12} align="middle">
           <Col>
-            <Select
-              value={hotelCode} onChange={setHotelCode} style={{ width: 150 }}
-              options={[{ value: '', label: '全部飯店' }, ...hotels]}
+            <MultiCodeSelect
+              value={hotelCodes} onChange={setHotelCodes}
+              options={hotelOptions(hotels)} placeholder="全部飯店"
             />
           </Col>
           <Col>
-            <Select
-              value={platform} onChange={setPlatform} style={{ width: 150 }}
-              options={[
-                { value: '', label: '全部平台' },
-                ...platforms.map((p) => ({ value: p.value, label: p.label })),
-              ]}
+            <MultiCodeSelect
+              value={platformCodes} onChange={setPlatformCodes}
+              options={platformOptions(platforms)} placeholder="全部平台"
             />
           </Col>
           <Col>
@@ -321,8 +318,14 @@ const OtaTrendPage: React.FC = () => {
           <Col>
             <Space size={6} wrap>
               <Text type="secondary" style={{ fontSize: 12 }}>目前統計範圍：</Text>
-              <Tag color={hotelCode ? 'blue' : undefined}>{scope.hotelLabel}</Tag>
-              <Tag color={platform ? 'blue' : undefined}>{scope.platformLabel}</Tag>
+              <Tag color={hotelCodes.length ? 'blue' : undefined}>
+                <ScopeText codes={hotelCodes} options={hotelOptions(hotels)}
+                           allLabel="全部飯店" />
+              </Tag>
+              <Tag color={platformCodes.length ? 'blue' : undefined}>
+                <ScopeText codes={platformCodes} options={platformOptions(platforms)}
+                           allLabel="全部平台" />
+              </Tag>
               <Tag color={range ? 'blue' : undefined}>{scope.periodLabel}</Tag>
               {scope.isFiltered && (
                 <Text style={{ fontSize: 12, color: '#4BA8E8' }}>
@@ -418,7 +421,7 @@ const OtaTrendPage: React.FC = () => {
 
         <Row gutter={12}>
           <Col span={11}>
-            <Card size="small" title={`各平台平均分${hotelCode ? `（${scope.hotelLabel}）` : ''}`}
+            <Card size="small" title={`各平台平均分${hotelCodes.length ? `（${scope.hotelLabel}）` : ''}`}
               style={{ height: '100%' }}>
               {platformStats.length === 0 ? (
                 <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="沒有資料" />

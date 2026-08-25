@@ -22,6 +22,7 @@ import type { Dayjs } from 'dayjs'
 
 import StandardRangePicker from '@/components/StandardRangePicker'
 import { useUrlFilterDefaults } from '@/hooks/useUrlFilterDefaults'
+import { MultiCodeSelect, hotelOptions, toParam } from '../filterScope'
 import {
   fetchAlerts, fetchDataRange, fetchHotelOptions, fetchOverview, runAnalyze,
 } from '@/api/ota'
@@ -70,7 +71,8 @@ const OtaAlertsPage: React.FC = () => {
   //    `buildFilterQuery` 不會輸出空值，所以 URL 裡有 alert_status 就一定
   //    是明確指定的；沒有就用預設。
   const [status, setStatus] = useState<string>(urlDefaults.alertStatus || 'open')
-  const [hotelCode, setHotelCode] = useState(urlDefaults.hotelCode)
+  // ⚠️ 2026-08-25 改多選：空陣列 ＝ 全部
+  const [hotelCodes, setHotelCodes] = useState<string[]>(urlDefaults.hotelCodes)
   const [range, setRange] = useState<[Dayjs, Dayjs] | null>(urlDefaults.range)
   const [dataEnd, setDataEnd] = useState('')
   const [hotels, setHotels] = useState<HotelOption[]>([])
@@ -81,17 +83,17 @@ const OtaAlertsPage: React.FC = () => {
   const [drawerOpen, setDrawerOpen] = useState(false)
 
   const filters = useMemo<ReviewFilters>(() => ({
-    hotel_code: hotelCode,
+    hotel_code: toParam(hotelCodes),
     alert_status: status,
     ...(range ? { start: range[0].format('YYYY-MM-DD'), end: range[1].format('YYYY-MM-DD') } : {}),
-  }), [hotelCode, status, range])
+  }), [hotelCodes, status, range])
 
   const load = useCallback(async () => {
     setLoading(true)
     try {
       const [list, ov] = await Promise.all([
         fetchAlerts({ ...filters, page, page_size: pageSize }),
-        fetchOverview({ hotel_code: hotelCode }),
+        fetchOverview({ hotel_code: toParam(hotelCodes) }),
       ])
       setRows(list.rows)
       setTotal(list.total)
@@ -101,7 +103,7 @@ const OtaAlertsPage: React.FC = () => {
     } finally {
       setLoading(false)
     }
-  }, [filters, page, pageSize, hotelCode])
+  }, [filters, page, pageSize, hotelCodes])
 
   useEffect(() => { load() }, [load])
   useEffect(() => {
@@ -213,10 +215,9 @@ const OtaAlertsPage: React.FC = () => {
             />
           </Col>
           <Col>
-            <Select
-              value={hotelCode} onChange={(v) => { setHotelCode(v); setPage(1) }}
-              style={{ width: 140 }}
-              options={[{ value: '', label: '全部飯店' }, ...hotels]}
+            <MultiCodeSelect
+              value={hotelCodes} onChange={(v) => { setHotelCodes(v); setPage(1) }}
+              options={hotelOptions(hotels)} placeholder="全部飯店" width={180}
             />
           </Col>
           <Col>

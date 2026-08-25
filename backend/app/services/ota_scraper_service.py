@@ -92,6 +92,28 @@ def _click(driver, element) -> None:
     driver.execute_script("arguments[0].click()", element)
 
 
+XPATH_PREFIX = "xpath:"
+
+
+def _find(driver, selector: str) -> list:
+    """
+    找元素。`xpath:` 開頭走 XPath，其餘一律當 CSS（2026-08-24 新增）。
+
+    ⚠️ **為什麼需要 XPath**：CSS 選不到「文字是什麼」的元素。
+       Trip.com 的「全部 447 則評論」按鈕，class 是
+       `style_textLinkButton__XwrMR` 這種每次建置重算的雜湊，
+       唯一穩定的特徵就是**按鈕上的那行字**。
+       沒有這條路，就只能拿雜湊 class 去賭，下次改版就靜默失效。
+
+    ⚠️ 舊 parser 的 selector 一個都不用改 —— 沒有前綴就走原本的 CSS。
+    """
+    from selenium.webdriver.common.by import By
+
+    if selector.startswith(XPATH_PREFIX):
+        return driver.find_elements(By.XPATH, selector[len(XPATH_PREFIX):])
+    return driver.find_elements(By.CSS_SELECTOR, selector)
+
+
 def _find_cards(driver, parser):
     """
     找評論卡（用於捲動與翻頁的「數量有沒有增加」判斷）。
@@ -113,7 +135,7 @@ def _find_cards(driver, parser):
     selectors = getattr(parser, "review_card_selectors", (parser.review_card_selector,))
     if not getattr(parser, "card_selectors_additive", False):
         for selector in selectors:
-            found = driver.find_elements(By.CSS_SELECTOR, selector)
+            found = _find(driver, selector)
             if found:
                 return found
         return []
@@ -121,7 +143,7 @@ def _find_cards(driver, parser):
     collected: list = []
     seen: set = set()
     for selector in selectors:
-        for node in driver.find_elements(By.CSS_SELECTOR, selector):
+        for node in _find(driver, selector):
             key = getattr(node, "id", None) or id(node)
             if key not in seen:
                 seen.add(key)
@@ -146,7 +168,7 @@ def _open_review_dialog(driver, parser, warnings: list[str]) -> None:
         return      # 卡片已經在頁面上，不用點
 
     for selector in parser.open_all_buttons:
-        buttons = driver.find_elements(By.CSS_SELECTOR, selector)
+        buttons = _find(driver, selector)
         if not buttons:
             continue
         _click(driver, buttons[0])
@@ -220,7 +242,7 @@ def _expand_long_reviews(driver, parser, warnings: list[str]) -> None:
 
     clicked = 0
     for selector in selectors:
-        for button in driver.find_elements(By.CSS_SELECTOR, selector):
+        for button in _find(driver, selector):
             try:
                 if not button.is_displayed():
                     continue
@@ -243,7 +265,7 @@ def _goto_next_page(driver, parser) -> bool:
     from selenium.webdriver.common.by import By
 
     for selector in parser.next_buttons:
-        buttons = driver.find_elements(By.CSS_SELECTOR, selector)
+        buttons = _find(driver, selector)
         for button in buttons:
             try:
                 if not button.is_enabled() or not button.is_displayed():
@@ -400,12 +422,16 @@ def _fetch_source(source: OtaSource, warnings: list[str],
                 return reviews, overall, count, 1
 
     last_error: Exception | None = None
+    # ⚠️ 分辨「瀏覽器根本開不起來」與「開起來了但解析不到」——
+    #    兩者的修法完全不同，訊息不可以混為一談（見 headless_blocked_message）。
+    browser_started = False
     modes = BR.resolve_modes(parser.prefer_visible)
 
     for index, headless in enumerate(modes):
         mode_name = "headless" if headless else "visible"
         try:
             with BR.browser(headless) as driver:
+                browser_started = True      # 進得到這裡就代表瀏覽器起來了
                 driver.get(source.url)
                 BR.wait_ready(driver)
                 BR.assert_usable(driver.page_source)
@@ -430,7 +456,8 @@ def _fetch_source(source: OtaSource, warnings: list[str],
 
     # 走到這裡代表所有模式都失敗
     if len(modes) > 1:
-        raise BR.HeadlessBlockedError(BR.headless_blocked_message(source.url))
+        raise BR.HeadlessBlockedError(
+            BR.headless_blocked_message(source.url, last_error, browser_started))
     raise BR.ScraperError(
         f"擷取失敗：{last_error}"
         if last_error else "解析結果為空，OTA 版面可能已更新"
