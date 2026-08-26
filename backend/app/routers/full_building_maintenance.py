@@ -2104,6 +2104,11 @@ def generate_full_bldg_schedule(
 def get_full_bldg_annual_matrix(
     year: int = Query(..., description="Year e.g. 2026"),
     category: Optional[str] = Query(None),
+    rule: str = Query(
+        "legacy",
+        pattern="^(legacy|v2)$",
+        description="欄位歸屬規則：legacy=批次月份（現行行為，預設）；v2=執行月份／排定日期優先",
+    ),
     db: Session = Depends(get_db),
 ):
     """
@@ -2126,6 +2131,39 @@ def get_full_bldg_annual_matrix(
 
     已知副作用（比照 mall_pm 2026-08-03 使用者確認接受）：Ragic 上把保養項目改名會讓
     該項目裂成兩列；真的有兩筆不同的同名項目會被併成一列。
+
+    ────────────────────────────────────────────────────────────────────────────
+    2026-08-26 新增 `rule` 參數（新舊並存，供使用者比對後再決定是否切換）：
+
+    `rule=legacy`（預設，現行行為）
+        item 顯示在哪一欄 = 它屬於哪個批次（`period_month`）。`scheduled_date` 只
+        影響格子顏色，不影響欄位。呼叫端不帶參數即維持此行為，PPT 匯出
+        （`repair_ppt_export._get_annual_matrix_rows`）用具名參數呼叫，不受影響。
+
+    `rule=v2`（新規則，前端「年度計劃表(N)」TAB 使用）
+        使用者情境：Ragic 上 2026/04 批次的某個項目被改期，執行月份填「7月」、排定
+        日期填 07/23。legacy 下它仍顯示在 4 月欄，使用者要的是只出現在 7 月欄。
+
+        欄位歸屬依序判定（2026-08-26 使用者裁示，刻意保守）：
+          1. `exec_months` 解析後**恰好一個月份 M**、且 M ≠ 批次月份 B、且原始值不是
+             「每月」 → 顯示在 M 欄
+          2. `exec_months` 為空、`scheduled_date` 可解析出月份 M' 且 M' ≠ B
+             → 顯示在 M' 欄
+          3. 其餘（多值、每月、兩者皆空、解析失敗）→ 一律留在 B 欄
+
+        多值不搬家是刻意的：`exec_months` 是多值欄位（"2月 5月 8月 11月" → [2,5,8,11]、
+        "每月" → [1..12]），若一筆 item 對應多個月份，搬家等於要決定「搬去哪一個」，
+        任何猜法都會讓一筆資料長在錯的欄或同時長在多欄。維持現行行為最安全。
+
+    ⚠️ 關鍵實作約束：`full_bldg_pm_schedule.year_month` 存的是**批次月份**，v2 只改
+    「放進哪一格」，不改排程表的月份歸屬（2026-08-26 使用者裁示）。因此第三階段查
+    `FullBldgPMSchedule` 一律用 **origin_month（原批次月份）**，不可用顯示月份，否則
+    `schedule_id` 會全部對不上 → 格子點不進排程編輯 Drawer，且第二階段的 lazy
+    auto-generate 判斷會永遠成立、每次 GET 都寫一次 DB。第二階段本身也維持跑原批次
+    月份，位置刻意放在重歸屬之前。
+
+    已知口徑分歧（可接受，非 bug）：v2 下年度計劃表說 7 月，但「期間統計」「每日巡檢
+    表」「行事曆」「工作日誌」「商場總覽工時」仍按批次月份／實際執行時間計算。
     """
     today = date.today()
 
@@ -2165,6 +2203,40 @@ def get_full_bldg_annual_matrix(
                 pass
         return "no_data"
 
+    def _v2_row_months(item: FullBldgPMItem, origin_month: int) -> tuple:
+        """
+        rule=v2：算出「這一列代表哪幾個月」，回傳 (月份集合, 安全閥是否生效)。
+
+        Ragic 每個月的保養日誌會把**所有**保養項目都帶出來（實例：2026/03 的
+        `棟週保202603-003` 裡就有一個頻率＝半年、執行月份＝「1月 7月」的項目），
+        所以「item 出現在某個批次」≠「該月要做這個項目」，真正決定到期月份的是
+        「執行月份」欄位。
+        """
+        try:
+            months = {m for m in (item.get_exec_months() or []) if 1 <= m <= 12}
+        except Exception:
+            months = set()
+        if not months:
+            # 執行月份為空 → 退回排定日期的月份（補零後的 MM/DD，見 sync
+            # _normalize_sched_date），再退回批次月份
+            mm = None
+            sd = (item.scheduled_date or "").strip()
+            if sd:
+                try:
+                    v = int(sd.split("/")[0])
+                    if 1 <= v <= 12:
+                        mm = v
+                except Exception:
+                    mm = None
+            months = {mm or origin_month}
+        # 安全閥（2026-08-26 使用者裁示）：批次月份不在執行月份內、但這一列已經有
+        # 實際執行記錄 → 不可隱藏，否則已完成的工作會靜默消失且沒有任何提示。
+        valve = bool(item.is_completed or item.start_time or item.end_time) \
+            and origin_month not in months
+        if valve:
+            months = months | {origin_month}
+        return months, valve
+
     # ── 第一階段：逐月抓「該月自己的批次」項目 ────────────────────────────────
     items_by_month: dict[int, list[FullBldgPMItem]] = {}
     for m in range(1, 13):
@@ -2202,17 +2274,62 @@ def get_full_bldg_annual_matrix(
             except Exception as exc:
                 print(f"[full_building_maintenance] lazy auto-generate {year}/{m:02d} failed: {exc}")
 
+    # ── 第二.五階段：欄位重新歸屬（只有 rule=v2 會動）─────────────────────────
+    # display_items: 顯示月份 -> [(原批次月份, item, 是否為非排定月份的執行記錄), ...]
+    # 一定要把原批次月份一起帶著：排程表 full_bldg_pm_schedule 的 year_month 仍是
+    # 批次月份，第三階段查表必須用它，否則 schedule_id 全部對不上。
+    display_items: dict[int, list] = {}
+    if rule == "v2":
+        # 以 task_name 分組（與第四階段的合併鍵一致），逐項目算出「該出現的月份集合」
+        by_task: dict = {}
+        for origin_m, month_items in items_by_month.items():
+            for it in month_items:
+                by_task.setdefault(_norm(it.task_name), []).append((origin_m, it))
+
+        for _task, pairs in by_task.items():
+            rows = []          # [(origin_m, item, 月份集合, valve), ...]
+            due: set = set()
+            for origin_m, it in pairs:
+                months, valve = _v2_row_months(it, origin_m)
+                rows.append((origin_m, it, months, valve))
+                due |= months
+
+            for M in sorted(due):
+                # 只採用「批次月份 == M」且該列確實代表 M 的列。
+                # 刻意不做跨月遞補：借用別的月份的列來填這一格，等於用其他月份的
+                # 狀態與排定日期冒充，與 _fb_get_batch_items_for_month 的既有原則
+                # 「該月尚未同步進來，如實顯示空缺」相衝突。
+                for origin_m, it, months, valve in rows:
+                    if origin_m == M and M in months:
+                        display_items.setdefault(M, []).append(
+                            (origin_m, it, bool(valve))
+                        )
+
+        # 同一格內維持「原批次月份 → 項次」的穩定排序
+        for dm in display_items:
+            display_items[dm].sort(key=lambda t: (t[0], t[1].seq_no or 0))
+    else:
+        for m, month_items in items_by_month.items():
+            display_items[m] = [(m, it, False) for it in month_items]
+
     # ── 第三階段：逐月算出每一筆 item 自己的格子資料 ──────────────────────────
     groups: dict = {}   # task_name -> {"order": (月,序), "months": {月: [entry,...]}, "seen": [(月, item),...]}
 
-    for m in sorted(items_by_month.keys()):
-        ym = f"{year}/{m:02d}"
-        recs = {
-            r.item_ragic_id: r
-            for r in db.query(FullBldgPMSchedule).filter(FullBldgPMSchedule.year_month == ym).all()
-        }
-        for item in items_by_month[m]:
-            existing = recs.get(item.ragic_id)
+    # 排程記錄快取，以「原批次月份」為鍵（不是顯示月份）
+    _recs_cache: dict[int, dict] = {}
+
+    def _recs(origin_month: int) -> dict:
+        if origin_month not in _recs_cache:
+            ym = f"{year}/{origin_month:02d}"
+            _recs_cache[origin_month] = {
+                r.item_ragic_id: r
+                for r in db.query(FullBldgPMSchedule).filter(FullBldgPMSchedule.year_month == ym).all()
+            }
+        return _recs_cache[origin_month]
+
+    for m in sorted(display_items.keys()):
+        for origin_m, item, off_sched in display_items[m]:
+            existing = _recs(origin_m).get(item.ragic_id)
             freq = (item.frequency or "").strip()
 
             if existing:
@@ -2249,6 +2366,8 @@ def get_full_bldg_annual_matrix(
                 category       = item.category or "",
                 frequency      = item.frequency or "",
                 ragic_url      = f"{_RAGIC_BASE}/{item.batch_ragic_id}" if item.batch_ragic_id else "",
+                origin_month   = origin_m,
+                off_schedule   = off_sched,
             )
 
             grp = groups.setdefault(_norm(item.task_name), {
@@ -2313,8 +2432,8 @@ def get_full_bldg_annual_matrix(
 
     # 月份 → Ragic 批次 URL（供明細 Drawer 標題列的「在 Ragic 查看」連結）
     month_batch_urls: dict = {}
-    for m, month_items in items_by_month.items():
-        bid = month_items[0].batch_ragic_id if month_items else ""
+    for m, pairs in display_items.items():
+        bid = pairs[0][1].batch_ragic_id if pairs else ""   # pairs[i] = (origin_m, item, off_sched)
         if bid:
             month_batch_urls[str(m)] = f"{_RAGIC_BASE}/{bid}"
 

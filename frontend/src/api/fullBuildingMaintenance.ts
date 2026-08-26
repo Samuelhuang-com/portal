@@ -289,6 +289,10 @@ export interface FullBldgPMScheduleMatrixEntry {
   category:       string
   frequency:      string
   ragic_url:      string
+  /** 2026-08-26（rule=v2）：這筆記錄原本屬於哪個批次月份 */
+  origin_month?:  number | null
+  /** 2026-08-26（rule=v2）：批次月份不在「執行月份」內，但已有實際執行記錄，靠安全閥保留 */
+  off_schedule?:  boolean
 }
 
 export interface FullBldgPMScheduleMatrixCell {
@@ -384,13 +388,23 @@ export async function postGenerateFullBldgSchedule(
   return res.data
 }
 
-/** 年度計劃矩陣 */
+/**
+ * 年度計劃矩陣
+ *
+ * @param rule 欄位歸屬規則
+ *   - `legacy`（預設）：item 顯示在它所屬批次的月份欄（現行行為）
+ *   - `v2`：執行月份（限單一值）優先、退回排定日期，用於「年度計劃表(N)」TAB
+ *
+ * 2026-08-26 新舊並存，待使用者比對確認後移除 legacy。
+ */
 export async function getFullBldgAnnualMatrix(
   year: number,
   category?: string,
+  rule?: 'legacy' | 'v2',
 ): Promise<FullBldgPMScheduleAnnualMatrix> {
   const params: Record<string, string | number> = { year }
   if (category) params.category = category
+  if (rule) params.rule = rule
   const res = await apiClient.get<FullBldgPMScheduleAnnualMatrix>(`${BASE}/schedule/annual-matrix`, { params })
   return res.data
 }

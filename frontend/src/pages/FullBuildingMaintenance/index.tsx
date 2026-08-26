@@ -91,6 +91,22 @@ const ANNUAL_CELL_STYLE: Record<string, { icon: string; bg: string; color: strin
   no_frequency:{ icon: '∅',  bg: '#f5f5f5', color: '#ccc' },
 }
 
+// ── 年度計劃表(N) 專用樣式（2026-08-26 新增，暫時與舊版並存）──────────────────
+// 與 ANNUAL_CELL_STYLE 的唯一差別：scheduled（待執行）由橘色 ⭕ 改為綠色 🟢。
+// ⭕ 是彩色 emoji，CSS color 蓋不掉、一律渲染成紅色，使用者會誤讀成逾期。
+// 已完成維持 ✅（打勾方塊）、待執行用 🟢（實心圓），同為綠色但形狀不同不會混淆。
+// 使用者確認後，這份會取代 ANNUAL_CELL_STYLE 並推到另外三個模組與 PPT 匯出。
+const ANNUAL_CELL_STYLE_V2: Record<string, { icon: string; bg: string; color: string }> = {
+  completed:   { icon: '✅', bg: '#f6ffed', color: '#52C41A' },
+  overdue:     { icon: '🔴', bg: '#fff1f0', color: '#C0392B' },
+  in_progress: { icon: '🔵', bg: '#e6f4ff', color: '#1890FF' },
+  scheduled:   { icon: '🟢', bg: '#f0fbe3', color: '#389E0D' },
+  unscheduled: { icon: '?',  bg: '#fffbe6', color: '#FAAD14' },
+  non_month:   { icon: '─',  bg: '#fafafa', color: '#aaa' },
+  no_data:     { icon: '！', bg: '#fff0f6', color: '#eb2f96' },
+  no_frequency:{ icon: '∅',  bg: '#f5f5f5', color: '#ccc' },
+}
+
 const ANNUAL_TH: React.CSSProperties = {
   padding: '6px 8px', fontWeight: 600, border: '1px solid #e8e8e8',
   whiteSpace: 'nowrap', textAlign: 'left',
@@ -718,6 +734,20 @@ export default function FullBuildingMaintenancePage() {
   const [annualCellDetail,  setAnnualCellDetail]  = useState<FullBldgPMScheduleItem | null>(null)
   const [annualCellLoading, setAnnualCellLoading] = useState(false)
 
+  // ── 年度計劃表(N) Tab state（2026-08-26 新增，與舊版完全獨立，確認後移除舊版）──
+  const [annualV2Year,        setAnnualV2Year]        = useState(dayjs().year())
+  const [annualV2Cat,         setAnnualV2Cat]         = useState<string | undefined>(undefined)
+  const [annualV2Freq,        setAnnualV2Freq]        = useState<string | undefined>(undefined)
+  const [annualV2Matrix,      setAnnualV2Matrix]      = useState<FullBldgPMScheduleAnnualMatrix | null>(null)
+  const [annualV2Loading,     setAnnualV2Loading]     = useState(false)
+  const [annualV2DrawerOpen,  setAnnualV2DrawerOpen]  = useState(false)
+  const [annualV2DrawerCell,  setAnnualV2DrawerCell]  = useState<{
+    row: FullBldgPMScheduleMatrixRow; scheduleId: number | null; status: string; month: number
+    cell?: FullBldgPMScheduleMatrixCell | null
+  } | null>(null)
+  const [annualV2CellDetail,  setAnnualV2CellDetail]  = useState<FullBldgPMScheduleItem | null>(null)
+  const [annualV2CellLoading, setAnnualV2CellLoading] = useState(false)
+
   const loadDashboard = useCallback(async () => {
     setLoading(true)
     try {
@@ -977,6 +1007,49 @@ export default function FullBuildingMaintenancePage() {
     }
   }, [annualYear])
 
+  // ── 年度計劃表(N) handlers（2026-08-26 新增）────────────────────────────────
+  const loadAnnualMatrixV2 = useCallback(async () => {
+    setAnnualV2Loading(true)
+    try {
+      const res = await getFullBldgAnnualMatrix(annualV2Year, annualV2Cat, 'v2')
+      setAnnualV2Matrix(res)
+    } catch {
+      message.error('載入年度計劃表(N)失敗')
+    } finally {
+      setAnnualV2Loading(false)
+    }
+  }, [annualV2Year, annualV2Cat])
+
+  const openAnnualV2Cell = useCallback(async (
+    row: FullBldgPMScheduleMatrixRow,
+    scheduleId: number | null,
+    status: string,
+    month: number,
+    cell?: FullBldgPMScheduleMatrixCell | null,
+  ) => {
+    if (status === 'non_month' || status === 'no_frequency') return
+    setAnnualV2DrawerCell({ row, scheduleId, status, month, cell })
+    setAnnualV2CellDetail(null)
+    setAnnualV2CellLoading(false)
+    setAnnualV2DrawerOpen(true)
+    if (scheduleId) {
+      setAnnualV2CellLoading(true)
+      try {
+        // ⚠️ v2 的顯示月份 ≠ 批次月份。full_bldg_pm_schedule.year_month 存的是
+        // 「原批次月份」，這裡必須用 origin_month 查，否則永遠找不到排程明細。
+        const originMonth = cell?.entries?.[0]?.origin_month ?? month
+        const ym = `${annualV2Year}/${String(originMonth).padStart(2, '0')}`
+        const res = await getFullBldgScheduleList({ year_month: ym })
+        const found = res.items.find(i => i.id === scheduleId) ?? null
+        setAnnualV2CellDetail(found)
+      } catch {
+        setAnnualV2CellDetail(null)
+      } finally {
+        setAnnualV2CellLoading(false)
+      }
+    }
+  }, [annualV2Year])
+
   useEffect(() => { loadDashboard() }, [loadDashboard])
 
   useEffect(() => {
@@ -986,7 +1059,8 @@ export default function FullBuildingMaintenancePage() {
     if (activeTab === 'yearly')    { loadYearlyMatrix(); loadYearlyStats() }
     if (activeTab === 'schedule')  { loadSchedule(); loadOverdue() }
     if (activeTab === 'annual')    loadAnnualMatrix()
-  }, [activeTab, loadBatches, loadMonthlyStats, loadQuarterlyStats, loadYearlyStats, loadYearMatrix, loadQuarterlyMatrix, loadYearlyMatrix, loadSchedule, loadOverdue, loadAnnualMatrix])
+    if (activeTab === 'annual-v2') loadAnnualMatrixV2()
+  }, [activeTab, loadBatches, loadMonthlyStats, loadQuarterlyStats, loadYearlyStats, loadYearMatrix, loadQuarterlyMatrix, loadYearlyMatrix, loadSchedule, loadOverdue, loadAnnualMatrix, loadAnnualMatrixV2])
 
   useEffect(() => { if (activeTab === 'monthly')   loadYearMatrix() },      [loadYearMatrix])
   useEffect(() => { if (activeTab === 'quarterly') loadQuarterlyMatrix() }, [loadQuarterlyMatrix])
@@ -2032,6 +2106,205 @@ export default function FullBuildingMaintenancePage() {
     </div>
   )
 
+  // ── 年度計劃表(N) Tab（2026-08-26 新增）─────────────────────────────────────
+  // 與舊版「年度計劃表」的差異只有兩點：
+  //   1. 後端帶 rule=v2 → 執行月份（限單一值）／排定日期決定顯示在哪一欄
+  //   2. 待執行由橘 ⭕ 改為綠 🟢
+  // 其餘一律沿用舊版樣式與互動。待使用者比對確認後，移除舊版 AnnualTab 並把本
+  // 版改名回「年度計劃表」。
+
+  const annualV2CatOptions = annualV2Matrix
+    ? [
+        { value: '', label: '全部類別' },
+        ...Array.from(new Set(annualV2Matrix.rows.map(r => r.category).filter(Boolean)))
+          .map(c => ({ value: c, label: c })),
+      ]
+    : [{ value: '', label: '全部類別' }]
+
+  const annualV2FreqOptions = annualV2Matrix
+    ? [
+        { value: '', label: '全部頻率' },
+        ...Array.from(new Set(annualV2Matrix.rows.map(r => r.frequency).filter(Boolean)))
+          .sort().map(f => ({ value: f, label: f })),
+      ]
+    : [{ value: '', label: '全部頻率' }]
+
+  const filteredAnnualV2Rows = annualV2Matrix
+    ? annualV2Matrix.rows.filter(r => !annualV2Freq || r.frequency === annualV2Freq)
+    : []
+
+  const AnnualTabV2 = (
+    <div>
+      <Alert
+        type="info"
+        showIcon
+        style={{ marginBottom: 12 }}
+        message="新版欄位歸屬規則（試行中，與舊版「年度計劃表」並存供比對）"
+        description={
+          <div style={{ fontSize: 13, lineHeight: 1.8 }}>
+            以<b>「執行月份」</b>決定項目該出現在哪幾個月，不再看它屬於哪個批次。<br />
+            Ragic 每個月的保養日誌會把<b>所有</b>項目都帶出來（例：3 月的日誌裡也有
+            頻率＝半年、執行月份＝「1月 7月」的項目），所以「出現在某個批次」不代表
+            「該月要做」。<br />
+            ① 執行月份有值 → 只顯示在它列出的月份（多值就是多個月，如「1月 7月」）<br />
+            ② 執行月份為空 → 退回<b>排定日期</b>的月份，再退回批次月份<br />
+            ③ 批次月份不在執行月份內、但該列<b>已有實際執行記錄</b> → 仍然顯示並標
+            <Tag color="orange" style={{ marginInline: 4 }}>非排定月</Tag>，不讓已完成的工作消失<br />
+            <span style={{ color: '#888' }}>
+              ⚠️ 若某個執行月份還沒有對應的批次（例：12 月的項目、12 月日誌尚未建立），
+              該月為空白，不會借用其他月份的資料冒充。排程明細、期間統計、行事曆、
+              工作日誌仍依批次月份計算，數字與本表不同屬正常。
+            </span>
+          </div>
+        }
+      />
+
+      {/* 篩選器 */}
+      <Row gutter={8} align="middle" style={{ marginBottom: 12 }}>
+        <Col>
+          <Select value={annualV2Year} onChange={setAnnualV2Year} options={yearNumOptions} style={{ width: 90 }} />
+        </Col>
+        <Col>
+          <Select allowClear placeholder="全部類別" value={annualV2Cat}
+            onChange={setAnnualV2Cat} options={annualV2CatOptions} style={{ width: 110 }} />
+        </Col>
+        <Col>
+          <Select allowClear placeholder="全部頻率" value={annualV2Freq}
+            onChange={setAnnualV2Freq} options={annualV2FreqOptions} style={{ width: 100 }} />
+        </Col>
+        <Col>
+          <Button icon={<ReloadOutlined />} onClick={loadAnnualMatrixV2} loading={annualV2Loading}>重新整理</Button>
+        </Col>
+      </Row>
+
+      {/* 圖例 */}
+      <Row gutter={4} style={{ marginBottom: 12 }}>
+        {Object.entries(ANNUAL_CELL_STYLE_V2).map(([k, v]) => (
+          <Col key={k}>
+            <span style={{ display:'inline-flex', alignItems:'center', gap:4, padding:'2px 8px',
+              borderRadius:4, background:v.bg, border:'1px solid #eee', fontSize:12, color:v.color }}>
+              {v.icon}&nbsp;{ANNUAL_STATUS_LABEL[k]}
+            </span>
+          </Col>
+        ))}
+      </Row>
+
+      {/* 矩陣表格 */}
+      <Spin spinning={annualV2Loading}>
+        {annualV2Matrix && (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width:'100%', borderCollapse:'collapse', fontSize:15, tableLayout:'auto' }}>
+              <thead>
+                <tr style={{ background:'#f0f4f8' }}>
+                  <th style={{ ...ANNUAL_TH, fontSize:15, width:'1%' }}>類別</th>
+                  <th style={{ ...ANNUAL_TH, fontSize:15, width:'1%' }}>保養項目</th>
+                  <th style={{ ...ANNUAL_TH, fontSize:15, width:'1%' }}>頻率</th>
+                  {MONTH_LABELS.map(m => <th key={m} style={{ ...ANNUAL_TH, fontSize:15, textAlign:'center' }}>{m}</th>)}
+                </tr>
+              </thead>
+              <tbody>
+                {filteredAnnualV2Rows.map(row => (
+                  <tr key={row.item_ragic_id} style={{ borderBottom:'1px solid #eee' }}>
+                    <td style={{ ...ANNUAL_TD, whiteSpace:'nowrap' }}>
+                      <Tag style={{ fontSize:14 }}>{row.category || '—'}</Tag>
+                      {(row.category_variants?.length ?? 0) > 1 && (
+                        <Tooltip title={`本項目跨月出現過 ${row.category_variants.length} 種類別：${row.category_variants.join('、')}（顯示最近月份的值）`}>
+                          <span style={{ color:'#FA8C16', fontSize:13, marginLeft:2, cursor:'help' }}>⚠</span>
+                        </Tooltip>
+                      )}
+                    </td>
+                    <td style={{ ...ANNUAL_TD, whiteSpace:'nowrap' }}>
+                      <Tooltip title={
+                        (row.month_count ?? 0) > 1
+                          ? `本列合併自 ${row.month_count} 個月份${row.location ? `｜${row.location}` : ''}`
+                          : (row.location || undefined)
+                      }>
+                        <span style={{ fontSize:15 }}>{row.task_name}</span>
+                      </Tooltip>
+                    </td>
+                    <td style={{ ...ANNUAL_TD, textAlign:'center', whiteSpace:'nowrap' }}>
+                      {row.frequency ? <Tag style={{ fontSize:14 }}>{row.frequency}</Tag> : '—'}
+                      {(row.frequency_variants?.length ?? 0) > 1 && (
+                        <Tooltip title={`本項目跨月出現過 ${row.frequency_variants.length} 種頻率：${row.frequency_variants.join('、')}（顯示最近月份的值）`}>
+                          <span style={{ color:'#FA8C16', fontSize:13, marginLeft:2, cursor:'help' }}>⚠</span>
+                        </Tooltip>
+                      )}
+                    </td>
+                    {row.cells.map(cell => {
+                      const cs = ANNUAL_CELL_STYLE_V2[cell.status] ?? ANNUAL_CELL_STYLE_V2['no_frequency']
+                      const clickable = cell.status !== 'non_month' && cell.status !== 'no_frequency'
+                      const multi = (cell.count ?? 0) > 1
+                      // 靠安全閥保留下來的「非排定月份執行記錄」
+                      const offSched = (cell.entries ?? []).some(e => e.off_schedule)
+                      return (
+                        <td key={cell.month}
+                          style={{ ...ANNUAL_TD, textAlign:'center', background:cs.bg, color:cs.color,
+                            cursor:clickable?'pointer':'default', fontWeight:600, padding:'4px 2px', fontSize:18 }}
+                          onClick={() => clickable && openAnnualV2Cell(row, cell.schedule_id, cell.status, cell.month, cell)}>
+                          <Tooltip title={
+                            (ANNUAL_TOOLTIP_LABEL[cell.status] ?? cell.status)
+                            + (multi
+                                ? `｜本月共 ${cell.count} 筆（${cell.entries.map(e => `${e.origin_month ? `原${e.origin_month}月` : ''}${e.scheduled_date || '無日期'}`).join('、')}），點擊看明細`
+                                : '')
+                            + (offSched
+                                ? '｜本月不在「執行月份」內，因為已有實際執行記錄才顯示'
+                                : '')
+                          }>
+                            <div style={{ lineHeight:1.2, position:'relative' }}>
+                              {cs.icon}
+                              {multi && (
+                                <span style={{ position:'absolute', top:-2, right:2, fontSize:11, fontWeight:700,
+                                  color:'#fff', background:cs.color, borderRadius:8, padding:'0 4px', lineHeight:'15px' }}>
+                                  ×{cell.count}
+                                </span>
+                              )}
+                              {multi ? (
+                                <div style={{ fontSize:13, fontWeight:500, color:cs.color, opacity:0.85, marginTop:1 }}>
+                                  {cell.entries.map(e => e.scheduled_date).filter(Boolean).join('、') || ' '}
+                                </div>
+                              ) : cell.scheduled_date && (
+                                <div style={{ fontSize:13, fontWeight:500, color:cs.color,
+                                  opacity:cell.status==='no_data'?1:0.85, marginTop:1 }}>
+                                  {cell.scheduled_date}
+                                </div>
+                              )}
+                              {offSched && (
+                                <div style={{ fontSize:11, fontWeight:500, color:'#FA8C16', marginTop:1 }}>
+                                  非排定月
+                                </div>
+                              )}
+                            </div>
+                          </Tooltip>
+                        </td>
+                      )
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {!annualV2Matrix && !annualV2Loading && (
+          <Alert message="尚無資料，請先產生排程後再查看年度計劃表" type="info" showIcon />
+        )}
+      </Spin>
+
+      {/* 底部摘要 */}
+      {annualV2Matrix && (
+        <Row style={{ marginTop: 12 }}>
+          <Col>
+            <Text type="secondary">
+              共 {annualV2Matrix.summary.total_items} 個保養項目
+              {annualV2Matrix.summary.total_records != null &&
+                `（合併自 ${annualV2Matrix.summary.total_records} 筆批次記錄）`}
+              ，本年已完成 {annualV2Matrix.summary.completed_count} 筆
+            </Text>
+          </Col>
+        </Row>
+      )}
+    </div>
+  )
+
   // ── 頁面渲染 ──────────────────────────────────────────────────────────────
   return (
     <>
@@ -2088,6 +2361,13 @@ export default function FullBuildingMaintenancePage() {
               key:      'annual',
               label:    <span><TableOutlined /> 年度計劃表</span>,
               children: AnnualTab,
+            },
+            // 2026-08-26 新增：新版欄位歸屬規則，與舊版並存供比對。
+            // 使用者確認後，移除上面的 'annual' 並把本 TAB 改名回「年度計劃表」。
+            {
+              key:      'annual-v2',
+              label:    <span><TableOutlined /> 年度計劃表(N)</span>,
+              children: AnnualTabV2,
             },
             { key: 'list', label: '批次清單', children: ListTab },
           ]}
@@ -2334,6 +2614,111 @@ export default function FullBuildingMaintenancePage() {
           && (annualDrawerCell.cell?.count ?? 0) <= 1 && (
           <Alert type={annualDrawerCell.status === 'no_data' ? 'warning' : 'info'} showIcon
             message={annualDrawerCell.status === 'no_data'
+              ? '此月份應執行保養但尚未產生排程，請至「排程明細」Tab 確認。'
+              : '此月份無排程記錄。'}
+          />
+        )}
+      </Drawer>
+
+      {/* AnnualCellDrawer(N) — 2026-08-26 新增，確認後與舊版一併整併 */}
+      <Drawer
+        open={annualV2DrawerOpen}
+        width={420}
+        onClose={() => setAnnualV2DrawerOpen(false)}
+        title={annualV2DrawerCell && (
+          <Space>
+            <Tag>{annualV2DrawerCell.row.category || '—'}</Tag>
+            <span>{annualV2DrawerCell.row.task_name}</span>
+            <Tag>{annualV2Year}/{String(annualV2DrawerCell.month).padStart(2, '0')}</Tag>
+            {(annualV2Matrix?.month_batch_urls?.[String(annualV2DrawerCell.month)] || annualV2DrawerCell.row.ragic_url) && (
+              <Tooltip title="在 Ragic 查看原始表單">
+                <a
+                  href={annualV2Matrix?.month_batch_urls?.[String(annualV2DrawerCell.month)] || annualV2DrawerCell.row.ragic_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ color: '#4BA8E8', fontSize: 16, lineHeight: 1 }}
+                >
+                  <LinkOutlined />
+                </a>
+              </Tooltip>
+            )}
+          </Space>
+        )}
+      >
+        {/* v2 專屬提示：本月不在「執行月份」內，靠安全閥保留 */}
+        {(annualV2DrawerCell?.cell?.entries ?? []).some(e => e.off_schedule) && (
+          <Alert type="warning" showIcon style={{ marginBottom: 12 }}
+            message="本月不在該項目的「執行月份」內"
+            description="依新規則原本不該顯示，但這一列已經有實際執行記錄，因此保留。若是誤填，請到 Ragic 修正執行月份或執行時間。" />
+        )}
+
+        {annualV2CellLoading ? (
+          <div style={{ textAlign: 'center', padding: 48 }}><Spin tip="載入中…" /></div>
+        ) : annualV2CellDetail ? (
+          <div>
+            {[
+              { label: '狀態',    value: <Tag color={SCHED_STATUS_CFG[annualV2CellDetail.status]?.tagColor ?? 'default'}>{SCHED_STATUS_CFG[annualV2CellDetail.status]?.label ?? annualV2CellDetail.status}</Tag> },
+              { label: '排定日期', value: annualV2CellDetail.scheduled_date || '未排定' },
+              { label: '執行人員', value: annualV2CellDetail.executor_name || '—' },
+              { label: '開始時間', value: annualV2CellDetail.start_time || '—' },
+              { label: '結束時間', value: annualV2CellDetail.end_time || '—' },
+              { label: '備註',    value: annualV2CellDetail.result_note || '—' },
+            ].map(row => (
+              <Row key={row.label} style={{ marginBottom: 10 }}>
+                <Col span={8}><Text type="secondary">{row.label}</Text></Col>
+                <Col span={16}>{typeof row.value === 'string' ? <Text>{row.value}</Text> : row.value}</Col>
+              </Row>
+            ))}
+            {annualV2CellDetail.abnormal_flag && (
+              <Row style={{ marginBottom: 10 }}>
+                <Col span={8}><Text type="secondary">異常</Text></Col>
+                <Col span={16}><Tag color="error">異常：{annualV2CellDetail.abnormal_note || '（無說明）'}</Tag></Col>
+              </Row>
+            )}
+          </div>
+        ) : null}
+
+        {/* 同一格多筆：逐筆列出，並標明各自的原批次月份 */}
+        {!annualV2CellLoading && (annualV2DrawerCell?.cell?.count ?? 0) > 1 && (
+          <>
+            <Alert type="info" showIcon style={{ marginBottom: 12 }}
+              message={`本格共 ${annualV2DrawerCell!.cell!.count} 筆記錄，格內顯示的是彙總狀態`} />
+            <Table
+              size="small"
+              rowKey="item_ragic_id"
+              pagination={false}
+              dataSource={annualV2DrawerCell!.cell!.entries}
+              columns={[
+                { title: '排定', dataIndex: 'off_schedule', width: 76, align: 'center' as const,
+                  render: (v: boolean | undefined) => v
+                    ? <Tag color="orange">非排定月</Tag>
+                    : <Tag color="default">排定月</Tag> },
+                { title: '排定日期', dataIndex: 'scheduled_date', width: 90,
+                  render: (v: string | null) => v || '—' },
+                { title: '狀態', dataIndex: 'status', width: 90, align: 'center' as const,
+                  render: (v: string) => (
+                    <Tag color={SCHED_STATUS_CFG[v]?.tagColor ?? 'default'}>
+                      {SCHED_STATUS_CFG[v]?.label ?? v}
+                    </Tag>
+                  ) },
+                { title: '類別', dataIndex: 'category', width: 70,
+                  render: (v: string) => v || '—' },
+                { title: '頻率', dataIndex: 'frequency', width: 60,
+                  render: (v: string) => v || '—' },
+                { title: 'Ragic', dataIndex: 'ragic_url', width: 56, align: 'center' as const,
+                  render: (v: string) => v
+                    ? <a href={v} target="_blank" rel="noopener noreferrer"
+                         style={{ color:'#4BA8E8' }}><LinkOutlined /></a>
+                    : '—' },
+              ]}
+            />
+          </>
+        )}
+
+        {!annualV2CellLoading && !annualV2CellDetail && annualV2DrawerCell
+          && (annualV2DrawerCell.cell?.count ?? 0) <= 1 && (
+          <Alert type={annualV2DrawerCell.status === 'no_data' ? 'warning' : 'info'} showIcon
+            message={annualV2DrawerCell.status === 'no_data'
               ? '此月份應執行保養但尚未產生排程，請至「排程明細」Tab 確認。'
               : '此月份無排程記錄。'}
           />
