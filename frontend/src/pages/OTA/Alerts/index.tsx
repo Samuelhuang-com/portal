@@ -24,10 +24,12 @@ import StandardRangePicker from '@/components/StandardRangePicker'
 import { useUrlFilterDefaults } from '@/hooks/useUrlFilterDefaults'
 import { MultiCodeSelect, hotelOptions, toParam } from '../filterScope'
 import AlertAgingBar from '../AlertAgingBar'
+import AlertDailyStrip from '../AlertDailyStrip'
 import {
-  fetchAlertAging, fetchAlerts, fetchDataRange, fetchHotelOptions, fetchOverview, runAnalyze,
+  fetchAlertAging, fetchAlertDaily, fetchAlerts, fetchDataRange, fetchHotelOptions, fetchOverview, runAnalyze,
 } from '@/api/ota'
 import type {
+  AlertDailyResult,
   AlertAgingResult,
   HotelOption, OtaOverview, OtaReviewRow, ReviewFilters,
 } from '@/types/ota'
@@ -88,6 +90,13 @@ const OtaAlertsPage: React.FC = () => {
   //    使用者直接動期間選擇器時必須清掉，否則會標著一個已經不成立的桶。
   const [agingKey, setAgingKey] = useState('')
 
+  // ⭐ 每日發生量條帶（2026-08-25）
+  // ⚠️ 與積壓分桶**口徑不同**：這條算「當天發生」，那個算「還沒處理的存量」。
+  //    元件的 tooltip 有講清楚；後端註解也有。
+  const [daily, setDaily] = useState<AlertDailyResult | null>(null)
+  const [dailyLoading, setDailyLoading] = useState(false)
+  const [dailyDate, setDailyDate] = useState('')
+
   const [drawerId, setDrawerId] = useState<number | null>(null)
   const [drawerOpen, setDrawerOpen] = useState(false)
 
@@ -139,6 +148,20 @@ const OtaAlertsPage: React.FC = () => {
 
   useEffect(() => { loadAging() }, [loadAging])
 
+  /** 每日條帶。理由同 loadAging：**不依 `range`**，否則點一格就把圖自己吃掉。 */
+  const loadDaily = useCallback(async () => {
+    setDailyLoading(true)
+    try {
+      setDaily(await fetchAlertDaily({ hotel_code: toParam(hotelCodes), days: 60 }))
+    } catch {
+      setDaily(null)
+    } finally {
+      setDailyLoading(false)
+    }
+  }, [hotelCodes])
+
+  useEffect(() => { loadDaily() }, [loadDaily])
+
   useEffect(() => {
     // ⚠️ anchor 取資料最後一天，不是今天（CLAUDE.md §8.2）
     fetchDataRange().then((r) => setDataEnd(r.end)).catch(() => undefined)
@@ -154,6 +177,17 @@ const OtaAlertsPage: React.FC = () => {
   const handlePickBucket = (r: [Dayjs, Dayjs] | null, label: string) => {
     setRange(r)
     setAgingKey(r ? (aging?.buckets.find((x) => x.label === label)?.key ?? '') : '')
+    // ⚠️ 兩張圖篩的是**同一個** range —— 選了積壓桶就要清掉每日條帶的高亮，
+    //    否則畫面會同時標著兩個互相矛盾的選取狀態。
+    setDailyDate('')
+    setPage(1)
+  }
+
+  /** 點每日條帶的某一格 → 篩那一天。⚠️ 同理要清掉積壓桶的高亮。 */
+  const handlePickDay = (r: [Dayjs, Dayjs] | null, d: string) => {
+    setRange(r)
+    setDailyDate(d)
+    setAgingKey('')
     setPage(1)
   }
 
@@ -167,6 +201,7 @@ const OtaAlertsPage: React.FC = () => {
   const handleRange = (r: [Dayjs, Dayjs] | null) => {
     setRange(r)
     setAgingKey('')
+    setDailyDate('')
     setPage(1)
   }
 
@@ -273,6 +308,14 @@ const OtaAlertsPage: React.FC = () => {
           activeKey={agingKey} onPick={handlePickBucket}
         />
       )}
+
+      {/* ⭐ 每日發生量（2026-08-25）。⚠️ 這條**不依 status 隱藏** ——
+          它算的是「當天發生了幾件」，不論後來處理了沒，
+          所以看「已處理」時它一樣有意義（那幾天確實出過事）。 */}
+      <AlertDailyStrip
+        data={daily} loading={dailyLoading}
+        activeDate={dailyDate} onPick={handlePickDay}
+      />
 
       <Card size="small" style={{ marginBottom: 16 }}>
         <Row gutter={[10, 10]} align="middle">

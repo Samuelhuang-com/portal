@@ -10,7 +10,8 @@ import type {
   OtaReviewDetail, OtaReviewList, OtaSource, OtaSourceInput, PlatformOption,
   PlatformStat, ReviewFilters, SyncLog, SyncRunResult, SyncStatusInfo, TopicRule,
   OtaPlatformInput, OtaPlatformRow, TopicCandidate, TopicStat,
-  ForceUnlockResult, AlertAgingResult,
+  ForceUnlockResult, AlertAgingResult, ScoreDistributionResult,
+  AlertDailyResult,
 } from '@/types/ota'
 
 const REVIEWS = '/ota/reviews'
@@ -196,6 +197,39 @@ export async function runSync(sourceIds: number[] = []): Promise<SyncRunResult> 
     source_ids: sourceIds,
     force: true,
   })
+  return res.data
+}
+
+/**
+ * 分數分布（清單頁上方的橫條）。
+ *
+ * ⚠️ **參數必須與清單完全一致**（含 `include_duplicate`），
+ *    否則會出現「圖上寫 12、點下去只有 9 筆」。
+ * ⚠️ 但**不要傳分數篩選** —— 這張圖是給人選分數區間的，
+ *    自己先被分數篩過就只剩一根柱子。
+ */
+export async function fetchScoreDistribution(
+  params: {
+    hotel_code?: string; platform?: string
+    start?: string; end?: string; include_duplicate?: boolean
+  } = {},
+): Promise<ScoreDistributionResult> {
+  const res = await apiClient.get<ScoreDistributionResult>(
+    `${STATS}/score-distribution`, { params: toParams(params) })
+  return res.data
+}
+
+/**
+ * 最近 N 天每天發生幾件警示（2026-08-25）。
+ *
+ * ⚠️ **與 `fetchAlertAging` 口徑不同**：這支算「當天發生」，
+ *    那支算「還沒處理的存量」。兩者都對，但畫面上要講清楚。
+ */
+export async function fetchAlertDaily(
+  params: { hotel_code?: string; platform?: string; days?: number } = {},
+): Promise<AlertDailyResult> {
+  const res = await apiClient.get<AlertDailyResult>(`${STATS}/alert-daily`,
+    { params: toParams(params) })
   return res.data
 }
 

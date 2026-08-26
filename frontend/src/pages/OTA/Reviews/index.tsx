@@ -22,11 +22,16 @@ import StandardRangePicker from '@/components/StandardRangePicker'
 import { useUrlFilterDefaults } from '@/hooks/useUrlFilterDefaults'
 import { MultiCodeSelect, hotelOptions, platformOptions, toParam }
   from '../filterScope'
+import ScoreDistributionBar, { type ScoreFilterPatch }
+  from '../ScoreDistributionBar'
+import TopicDivergingBar from '../TopicDivergingBar'
 import {
   downloadBlob, exportReviews, fetchDataRange, fetchHotelOptions,
-  fetchPlatformOptions, fetchReviews,
+  fetchPlatformOptions, fetchReviews, fetchScoreDistribution, fetchTopicStats,
 } from '@/api/ota'
 import type {
+  TopicStat,
+  ScoreDistributionResult,
   HotelOption, OtaReviewRow, PlatformOption, ReviewFilters,
 } from '@/types/ota'
 import ReviewDetailDrawer from '../components/ReviewDetailDrawer'
@@ -86,6 +91,21 @@ const OtaReviewsPage: React.FC = () => {
   const [hotels, setHotels] = useState<HotelOption[]>([])
   const [platforms, setPlatforms] = useState<PlatformOption[]>([])
 
+  // ⭐ 分數分布（2026-08-25）
+  const [dist, setDist] = useState<ScoreDistributionResult | null>(null)
+  const [distLoading, setDistLoading] = useState(false)
+  // 目前被哪一格篩著。⚠️ 它與下方「低分」輸入框是**互斥**的 ——
+  //    一格是 `8 ≤ x < 9`，輸入框只表達得出 `x < 9`。
+  //    兩個同時生效的話，畫面顯示的條件與實際查詢不一致。
+  const [distKey, setDistKey] = useState('')
+  const [minScore, setMinScore] = useState<number | null>(null)
+
+  // ⭐ 主題分布（2026-08-25）。⚠️ `topic` 這個篩選參數後端一直都有，
+  //    只是畫面上沒有入口 —— 這張圖同時是圖也是那個入口。
+  const [topics, setTopics] = useState<TopicStat[]>([])
+  const [topicsLoading, setTopicsLoading] = useState(false)
+  const [topic, setTopic] = useState('')
+
   const [drawerId, setDrawerId] = useState<number | null>(null)
   const [drawerOpen, setDrawerOpen] = useState(false)
 
@@ -97,9 +117,12 @@ const OtaReviewsPage: React.FC = () => {
     keyword,
     // ⚠️ `?? undefined` 不是 `|| undefined` —— 0 是合法的門檻值
     score_below: scoreBelow ?? undefined,
+    min_score: minScore ?? undefined,
+    topic: topic || undefined,
     include_duplicate: includeDuplicate,
     ...(range ? { start: range[0].format('YYYY-MM-DD'), end: range[1].format('YYYY-MM-DD') } : {}),
-  }), [hotelCodes, platformCodes, sentiment, scoreBelow, keyword, includeDuplicate, range])
+  }), [hotelCodes, platformCodes, sentiment, scoreBelow, minScore, topic, keyword,
+       includeDuplicate, range])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -115,6 +138,97 @@ const OtaReviewsPage: React.FC = () => {
   }, [filters, page, pageSize])
 
   useEffect(() => { load() }, [load])
+
+  /**
+   * 分數分布。
+   *
+   * ⚠️ **依「除了分數以外」的條件重載，不依 `scoreBelow`／`minScore`**：
+   *    依分數的話，點了一格就只剩那一格有值，使用者比較不了也回不去 ——
+   *    圖表把自己吃掉了（同 AlertAgingBar 的教訓）。
+   *
+   * ⚠️ 但**必須依 `includeDuplicate`** —— 那個開關會改變清單的總筆數，
+   *    圖不跟著動的話會出現「圖上寫 12、點下去 9 筆」。
+   */
+  const loadDist = useCallback(async () => {
+    setDistLoading(true)
+    try {
+      setDist(await fetchScoreDistribution({
+        hotel_code: toParam(hotelCodes),
+        platform: toParam(platformCodes),
+        include_duplicate: includeDuplicate,
+        ...(range
+          ? { start: range[0].format('YYYY-MM-DD'), end: range[1].format('YYYY-MM-DD') }
+          : {}),
+      }))
+    } catch {
+      // 輔助資訊，載不到不要蓋掉清單的錯誤訊息
+      setDist(null)
+    } finally {
+      setDistLoading(false)
+    }
+  }, [hotelCodes, platformCodes, includeDuplicate, range])
+
+  useEffect(() => { loadDist() }, [loadDist])
+
+  /**
+   * 主題分布。
+   *
+   * ⚠️ **不依 `topic` 重載**（理由同 loadDist）—— 依了的話點一個主題，
+   *    圖上就只剩那一個主題有值，比較不了也回不去。
+   * ⚠️ 但**必須依 `includeDuplicate`**，那個開關會改變總筆數。
+   */
+  const loadTopics = useCallback(async () => {
+    setTopicsLoading(true)
+    try {
+      setTopics(await fetchTopicStats({
+        hotel_code: toParam(hotelCodes),
+        platform: toParam(platformCodes),
+        include_duplicate: includeDuplicate,
+        ...(range
+          ? { start: range[0].format('YYYY-MM-DD'), end: range[1].format('YYYY-MM-DD') }
+          : {}),
+      }))
+    } catch {
+      setTopics([])
+    } finally {
+      setTopicsLoading(false)
+    }
+  }, [hotelCodes, platformCodes, includeDuplicate, range])
+
+  useEffect(() => { loadTopics() }, [loadTopics])
+
+  /** 點主題（傳空字串＝清除）。 */
+  const handlePickTopic = (t: string) => {
+    setTopic(t === topic ? '' : t)   // 再點一次同一個＝取消
+    setPage(1)
+  }
+
+  /**
+   * 點分數分布的某一格。
+   *
+   * ⚠️ 會同時設定 `minScore` 與 `scoreBelow`（半開區間 `[lo, hi)`）。
+   *    因為「低分」輸入框只表達得出 `x < hi`，**兩者同時可用會讓畫面說謊**，
+   *    所以有選格子時把那個輸入框停用（見下方 `disabled`）。
+   */
+  const handlePickBucket = (patch: ScoreFilterPatch | null, key: string) => {
+    setMinScore(patch?.min_score ?? null)
+    setScoreBelow(patch?.score_below ?? null)
+    setDistKey(key)
+    setPage(1)
+  }
+
+  /**
+   * 使用者直接動「低分」輸入框。
+   *
+   * ⚠️ **必須清掉 `distKey` 與 `minScore`** —— 不清的話畫面標著「8 – 9 分」
+   *    高亮，實際查詢卻是別的條件。畫面說的跟做的不一樣，比沒有標示更糟。
+   */
+  const handleScoreBelow = (v: number | null) => {
+    setScoreBelow(v)
+    setMinScore(null)
+    setDistKey('')
+    setPage(1)
+  }
 
   useEffect(() => {
     // 基準日與下拉選項只在進頁時載入一次
@@ -213,6 +327,25 @@ const OtaReviewsPage: React.FC = () => {
 
   return (
     <div>
+      {/* ⭐ 分數分布（2026-08-25）。一眼看見分布，點哪列就篩哪一段 ——
+          在這之前要看低分評論得自己在「低分」欄打一個數字，
+          等於要求使用者先知道分布長怎樣才問得出問題。 */}
+      <Row gutter={16}>
+        <Col xs={24} lg={12}>
+          <ScoreDistributionBar
+            data={dist} loading={distLoading}
+            activeKey={distKey} onPick={handlePickBucket}
+          />
+        </Col>
+        <Col xs={24} lg={12}>
+          {/* ⭐ 主題分布（2026-08-25）。左紅＝負面提及，點左半邊篩該主題。 */}
+          <TopicDivergingBar
+            data={topics} loading={topicsLoading}
+            activeTopic={topic} onPick={handlePickTopic}
+          />
+        </Col>
+      </Row>
+
       <Card size="small" style={{ marginBottom: 16 }}>
         <Row gutter={[10, 10]} align="middle">
           <Col>
@@ -239,10 +372,15 @@ const OtaReviewsPage: React.FC = () => {
                 ⚠️ 這裡刻意不做成「情緒」下拉的一個選項 —— 兩者判定不同：
                    情緒看 sentiment_label（分析結果，未分析的是空的）、
                    這個看分數。混在同一個下拉裡會讓人以為它們是同一件事。 */}
-            <Tooltip title="只看分數低於這個值的評論（不含等於）。留白＝不篩。填 6 時與 Dashboard 的「負面評論」是同一個條件，數字會一致。">
+            <Tooltip title={distKey
+              ? '目前用上方的「分數分布」篩選中 —— 那是一個區間，這個欄位只表達得出上界。要手動輸入請先清除分數篩選。'
+              : '只看分數低於這個值的評論（不含等於）。留白＝不篩。填 6 時與 Dashboard 的「負面評論」是同一個條件，數字會一致。'}>
               <InputNumber
                 value={scoreBelow}
-                onChange={(v) => { setScoreBelow(v); setPage(1) }}
+                onChange={handleScoreBelow}
+                // ⚠️ 有選分數分布的格子時停用 —— 那是個區間（8 ≤ x < 9），
+                //    這個框只表達得出上界。兩個同時亮著會讓畫面說謊。
+                disabled={Boolean(distKey)}
                 min={0} max={10} step={0.5} precision={1}
                 style={{ width: 140 }}
                 placeholder="分數低於"

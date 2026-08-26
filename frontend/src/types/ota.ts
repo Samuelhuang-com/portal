@@ -179,6 +179,61 @@ export interface PlatformStat {
 }
 
 /**
+ * 分數分布的一格（2026-08-25）。
+ *
+ * ⚠️ 區間是**半開** `[min_score, max_score)`。點擊時換算成
+ * `min_score`（後端 `>=`）+ `score_below`（後端 `<`）兩個**既有**參數 ——
+ * 不需要新增任何篩選參數。
+ * ⚠️ **不要用 `max_score`**（那是 `<=`）：兩格會重疊，剛好等於邊界值的
+ * 評論被算兩次，兩格加起來比總數還多。
+ */
+export interface ScoreBucket {
+  key: string
+  label: string
+  count: number
+  /** null ＝ 沒有下限（最低那格） */
+  min_score: number | null
+  /** null ＝ 沒有上限（含滿分 10.0） */
+  max_score: number | null
+  /** 低於負評門檻。這一格的數字應該等於 Dashboard 的「負面評論」KPI */
+  is_negative: boolean
+}
+
+export interface ScoreDistributionResult {
+  buckets: ScoreBucket[]
+  total: number
+  /**
+   * ⚠️ 抓不到分數的評論（Expedia 有些版型偵測不出分制，normalize 刻意留白）。
+   * **畫面上必須講出來** —— 否則 sum(buckets) 小於總筆數，看起來像算錯。
+   */
+  no_score_count: number
+}
+
+export interface AlertDailyPoint {
+  date: string
+  count: number
+  /**
+   * ⚠️ 這一天**還沒有資料**（晚於評論資料的最後一天）。
+   * OTA 評論落後現實好幾天 —— 不分開標的話最近幾格會顯示「0 件」，
+   * 看起來像「這幾天很平靜」，實際上是「還沒抓到」。
+   */
+  no_data: boolean
+}
+
+/**
+ * ⚠️ **與 `AlertAgingResult` 口徑不同，同一頁上要講清楚：**
+ * - 積壓分桶 ＝ 還沒處理的**存量**（open + acknowledged）
+ * - 這張條帶 ＝ 當天**發生**了幾件（不論後來處理了沒）
+ */
+export interface AlertDailyResult {
+  days: AlertDailyPoint[]
+  max_count: number
+  total: number
+  /** 評論資料的最後一天 */
+  data_end: string
+}
+
+/**
  * 警示積壓分桶的一格（2026-08-25）。
  *
  * `min_days` / `max_days` 是用來把「點這根柱子」換算成日期區間的：

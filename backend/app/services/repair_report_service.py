@@ -70,12 +70,17 @@ def _build_ragic_url(source: str, ragic_id: str) -> str:
     )
 
 
-def _normalize(c, source: str) -> dict:
-    """將 ORM case 物件正規化為統一 dict 格式。"""
-    now = datetime.now()
+def _normalize(c, source: str, ref_dt: Optional[datetime] = None) -> dict:
+    """將 ORM case 物件正規化為統一 dict 格式。
+
+    ref_dt：等待天數的計算基準時間點（2026-08-26 新增）。
+      由 get_unfinished_cases 傳入 min(現在, 報表月底)，讓查詢歷史月份時
+      等待天數停在該月底，而不是一路累加到今天。未傳入時維持舊行為（now）。
+    """
+    ref = ref_dt or datetime.now()
     pending_days: Optional[int] = None
     if c.occurred_at:
-        delta = now - c.occurred_at
+        delta = ref - c.occurred_at
         pending_days = max(0, delta.days)
 
     is_overdue = (pending_days is not None and pending_days > OVERDUE_THRESHOLD_DAYS)
@@ -114,8 +119,17 @@ def get_unfinished_cases(
     page_size: int = 50,
 ) -> dict:
     """
-    聚合飯店 + 商場未完成案件，套用與各模組 dashboard 相同的判斷邏輯。
+    聚合飯店 + 商場未完成案件。
     過濾條件依 occurred_at（報修日期）的年月分組。
+
+    ⚠️ 口徑（2026-08-26 修正）：時點口徑，與各模組「3.1 報修統計」
+       （compute_repair_stats 的 _completed_by）完全對齊——
+       「未完成」＝ 報修日期 ≤ 報表月底，且 **截至該月底當時** 尚未結案。
+
+       舊版只看案件「目前」的 status，會讓「7 月報修、8 月才結案」的案件
+       從 7 月報表整個消失，PPT「報修未完成附表」因此永遠比 3.1 的 ③＋⑦ 少。
+       另外舊版排除「待辦驗」（那是 Dashboard KPI TAB 的三分類口徑），
+       但 3.1 報修統計並未排除待辦驗，故本函式一併取消該排除。
     """
     today = date.today()
     cases: list[dict] = []
@@ -123,40 +137,54 @@ def get_unfinished_cases(
     # 報表月底截止時間：occurred_at > 月底的案件不納入（支援查詢歷史月份）
     _last_day = calendar.monthrange(year, month)[1]
     _cutoff   = datetime(year, month, _last_day, 23, 59, 59)
+    # 等待天數基準：查歷史月份算到該月底，查當月則算到現在
+    _ref_dt   = min(datetime.now(), _cutoff)
+
+    def _completed_by_cutoff(c, is_completed_fn) -> bool:
+        """截至報表月底當時是否已結案（status 為完成 且 結案時間 ≤ 月底）。
+
+        逐行對應 compute_repair_stats 的 _completed_by（飯店/商場兩支寫法相同）：
+          ① status 不在 COMPLETED_STATUSES → 未完成
+          ② completed_at 為空 → 未完成（status 標完成但沒填結案時間也算未完成）
+          ③ 比「年/月」而不是比 datetime —— 與 _completed_by 一致，
+             避免月底 23:59:59 之後的時間戳被判成下個月。
+        """
+        if not is_completed_fn(c.status):
+            return False
+        if c.completed_at is None:
+            return False
+        cy, cm = c.completed_at.year, c.completed_at.month
+        return cy < year or (cy == year and cm <= month)
 
     # ── 飯店（大直工務部）──────────────────────────────────────────────────
     if source in ("all", "hotel"):
         for c in db.query(DazhiRepairCase).all():
             if dazhi_is_excluded(c.status):
                 continue
-            if dazhi_is_completed(c.status):
+            # 時點口徑：截至報表月底已結案者才排除（不是看今天的 status）
+            if _completed_by_cutoff(c, dazhi_is_completed):
                 continue
             if not c.occurred_at:
                 continue
             # 只納入報表月底前的案件（跨月歷史未結清一併計入）
             if c.occurred_at > _cutoff:
                 continue
-            # 待辦驗：與 dashboard 口徑一致，獨立類別，不算未完成
-            if (c.status or "").strip() == "待辦驗":
-                continue
-            cases.append(_normalize(c, "hotel"))
+            cases.append(_normalize(c, "hotel", _ref_dt))
 
     # ── 商場（商場工務報修）─────────────────────────────────────────────────
     if source in ("all", "mall"):
         for c in db.query(LuqunRepairCase).all():
             if luqun_is_excluded(c.status):
                 continue
-            if luqun_is_completed(c.status):
+            # 時點口徑：截至報表月底已結案者才排除（不是看今天的 status）
+            if _completed_by_cutoff(c, luqun_is_completed):
                 continue
             if not c.occurred_at:
                 continue
             # 只納入報表月底前的案件（跨月歷史未結清一併計入）
             if c.occurred_at > _cutoff:
                 continue
-            # 待辦驗：與 dashboard 口徑一致，獨立類別，不算未完成
-            if (c.status or "").strip() == "待辦驗":
-                continue
-            cases.append(_normalize(c, "mall"))
+            cases.append(_normalize(c, "mall", _ref_dt))
 
     # ── 額外過濾條件 ──────────────────────────────────────────────────────────
     if status_filter:

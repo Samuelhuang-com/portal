@@ -15,9 +15,10 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.dependencies import get_current_user, require_permission
 from app.models.user import User
-from app.schemas.ota_review import (AlertAgingOut, DataRangeOut, MonthlyPoint,
-                                    OverviewOut, OtaReviewListOut,
-                                    PlatformStat, TopicStat)
+from app.schemas.ota_review import (AlertAgingOut, AlertDailyOut, DataRangeOut,
+                                    MonthlyPoint, OverviewOut, OtaReviewListOut,
+                                    PlatformStat, ScoreDistributionOut,
+                                    TopicStat)
 from app.services import ota_review_service as RS
 from app.services import ota_stats_service as SS
 
@@ -86,11 +87,44 @@ def topics(
     platform: str = Query("", description="平台代碼；**逗號串接可多選**（booking,agoda）。單值格式向下相容"),
     start: str = Query(""),
     end: str = Query(""),
+    include_duplicate: bool = Query(False, description="是否含跨站重複的評論（要與清單頁一致）"),
     db: Session = Depends(get_db),
     _: User = Depends(_VIEW),
 ):
-    """P4 分析引擎上線前會回空陣列（`topics_json` 尚未填值）。"""
-    return SS.get_topic_stats(db, hotel_code=hotel_code, platform=platform, start=start, end=end)
+    """
+    P4 分析引擎上線前會回空陣列（`topics_json` 尚未填值）。
+
+    ⚠️ `include_duplicate` 必須與清單頁一致（2026-08-25）——
+       清單有「顯示重複」開關，圖不跟著動就會出現
+       「圖上寫 12、點下去只有 9 筆」。
+    """
+    return SS.get_topic_stats(db, hotel_code=hotel_code, platform=platform,
+                              start=start, end=end,
+                              include_duplicate=include_duplicate)
+
+
+@router.get("/score-distribution", response_model=ScoreDistributionOut,
+            summary="分數分布（清單頁的橫條）")
+def score_distribution(
+    hotel_code: str = Query("", description="飯店代碼；**逗號串接可多選**（HANNS,HANNS_SUMMER）。單值格式向下相容"),
+    platform: str = Query("", description="平台代碼；**逗號串接可多選**（booking,agoda）。單值格式向下相容"),
+    start: str = Query(""),
+    end: str = Query(""),
+    include_duplicate: bool = Query(False, description="是否含跨站重複的評論"),
+    db: Session = Depends(get_db),
+    _: User = Depends(_VIEW),
+):
+    """
+    ⚠️ **參數必須與清單頁完全一致**（含 `include_duplicate`），
+       否則會出現「圖上寫 12、點下去只有 9 筆」——
+       那種不一致比沒有圖更糟，因為它看起來是對的。
+
+    ⚠️ 這裡**不吃 `score_below` 之類的分數篩選**：這張圖是給人選分數區間的，
+       自己先被分數篩過就只會剩一根柱子。
+    """
+    return SS.get_score_distribution(
+        db, hotel_code=hotel_code, platform=platform,
+        start=start, end=end, include_duplicate=include_duplicate)
 
 
 @router.get("/alert-aging", response_model=AlertAgingOut, summary="警示積壓天數分桶")
@@ -112,6 +146,32 @@ def alert_aging(
        那是這個口徑的必然結果，不是計算錯誤（前端有註明）。
     """
     return SS.get_alert_aging(db, hotel_code=hotel_code, platform=platform)
+
+
+@router.get("/alert-daily", response_model=AlertDailyOut, summary="每日警示條帶")
+def alert_daily(
+    hotel_code: str = Query("", description="飯店代碼；**逗號串接可多選**（HANNS,HANNS_SUMMER）。單值格式向下相容"),
+    platform: str = Query("", description="平台代碼；**逗號串接可多選**（booking,agoda）。單值格式向下相容"),
+    days: int = Query(60, ge=1, le=180, description="回看幾天"),
+    db: Session = Depends(get_db),
+    _: User = Depends(_ALERT),
+):
+    """
+    最近 N 天每天發生幾件警示。
+
+    ⚠️⚠️ **與 `/alert-aging` 的口徑不同**：
+
+      · `/alert-aging` ＝ 還沒處理的**存量**（open + acknowledged）
+      · 這一支　　　　 ＝ 當天**發生**了幾件（不論後來處理了沒）
+
+    只算未處理的話，處理完的日子會變乾淨 —— 看起來像那幾天沒出事。
+    兩個口徑都對，但畫面上必須講清楚，否則就是「兩個數字對不起來」。
+
+    ⚠️ 回傳的 `no_data` 標記哪幾天**還沒有資料**（晚於評論資料的最後一天）。
+       OTA 評論落後現實好幾天，不分開標的話最近幾格會顯示 0，
+       看起來像「這幾天很平靜」。
+    """
+    return SS.get_alert_daily(db, hotel_code=hotel_code, platform=platform, days=days)
 
 
 @router.get("/alerts", response_model=OtaReviewListOut, summary="負評警示清單")

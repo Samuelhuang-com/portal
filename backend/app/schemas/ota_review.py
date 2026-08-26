@@ -207,6 +207,74 @@ class TopicStat(BaseModel):
     total_count: int = 0
 
 
+class ScoreBucket(BaseModel):
+    """
+    分數分布的一格（2026-08-25）。
+
+    ⚠️ 區間是**半開** `[min_score, max_score)`。前端點擊時換算成
+       `min_score` + `score_below` 兩個既有參數（後端 `min_score` 是 `>=`、
+       `score_below` 是 `<`）—— **不需要新增任何篩選參數**。
+       用 `max_score`（`<=`）的話兩格會重疊，剛好等於邊界值的評論被算兩次。
+
+    `min_score` 為 None ＝ 沒有下限（最低那格）；
+    `max_score` 為 None ＝ 沒有上限（含滿分 10.0）。
+    """
+
+    key: str
+    label: str
+    count: int = 0
+    min_score: Optional[float] = None
+    max_score: Optional[float] = None
+    # 低於負評門檻 —— 畫警戒色，且這一格的數字應該等於 Dashboard 的「負面評論」
+    is_negative: bool = False
+
+
+class ScoreDistributionOut(BaseModel):
+    """
+    ⚠️ `no_score_count` **必須跟著回傳**（同 `AlertAgingOut.unknown_count`）。
+
+    抓不到分數的評論（`score_10` 為 NULL）不屬於任何一格 ——
+    Expedia 有些版型偵測不出分制，normalize 會刻意留白。
+    只是把它們拿掉的話 `sum(buckets) < 總筆數`，看起來像圖表算錯。
+    """
+
+    buckets: list[ScoreBucket] = []
+    total: int = 0
+    no_score_count: int = 0
+
+
+class AlertDailyPoint(BaseModel):
+    """每日警示條帶的一格（2026-08-25）。"""
+
+    date: str                   # YYYY-MM-DD
+    count: int = 0
+    # ⚠️ 這一天**還沒有資料**（晚於評論資料的最後一天）。
+    #    OTA 評論落後現實好幾天 —— 客人退房後才留言、爬蟲每日才跑。
+    #    不分開標的話，最近幾天會顯示成「0 件」，
+    #    看起來像「這幾天沒出事」，實際上是「還沒抓到」。
+    #    **那是這個模組最容易誤導人的一種呈現。**
+    no_data: bool = False
+
+
+class AlertDailyOut(BaseModel):
+    """
+    ⚠️ **與 `AlertAgingOut` 的口徑不同，同一頁上要講清楚：**
+
+      · 積壓分桶（`AlertAgingOut`）＝ **還沒處理的存量**（open + acknowledged）
+      · 這張條帶　　（`AlertDailyOut`）＝ **當天發生了幾件**（不論後來處理了沒）
+
+    如果條帶也只算未處理，處理完的日子會變乾淨 ——
+    看起來像「那幾天沒出事」，但事情發生過。
+    兩個口徑都對，但混為一談就會變成「兩個數字對不起來」。
+    """
+
+    days: list[AlertDailyPoint] = []
+    max_count: int = 0
+    total: int = 0
+    # 評論資料的最後一天（用來判斷哪些格子是「還沒有資料」）
+    data_end: str = ""
+
+
 class AlertAgingBucket(BaseModel):
     """
     警示積壓分桶的一格（2026-08-25）。
