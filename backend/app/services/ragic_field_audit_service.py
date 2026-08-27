@@ -134,7 +134,7 @@ PORTAL_FIELD_CONFIG: dict[str, dict] = {
         "api_fields": [
             "ragic_id", "case_no", "title", "reporter_name", "repair_type",
             "floor", "floor_normalized", "occurred_at", "responsible_unit",
-            "work_hours", "status", "outsource_fee", "maintenance_fee", "total_fee",
+            "work_hours", "status", "record_status", "outsource_fee", "maintenance_fee", "total_fee",
             "deduction_item", "deduction_fee", "deduction_counter", "deduction_counter_name",
             "acceptor", "accept_status", "closer", "finance_note", "mgmt_response",
             "is_completed", "completed_at", "close_days", "year", "month",
@@ -144,7 +144,7 @@ PORTAL_FIELD_CONFIG: dict[str, dict] = {
         # frontend_fields = 前端 Table/Drawer/Filter 顯示的中文欄位名稱
         "frontend_fields": [
             "報修編號", "標題", "報修人姓名", "報修類型", "發生樓層",
-            "發生時間", "負責單位", "花費工時", "處理狀況", "委外費用",
+            "發生時間", "負責單位", "花費工時", "處理狀況", "狀態", "委外費用",
             "維修費用", "費用合計", "驗收者", "驗收", "結案人",
             "扣款事項", "扣款費用", "扣款專櫃", "財務備註", "管理單位回應",
             "結案時間", "結案天數",
@@ -160,6 +160,7 @@ PORTAL_FIELD_CONFIG: dict[str, dict] = {
             "responsible_unit":      "負責單位",
             "work_hours":            "花費工時",
             "status":                "處理狀況",
+            "record_status":         "狀態",
             "outsource_fee":         "委外費用",
             "maintenance_fee":       "維修費用",
             "total_fee":             "費用合計",
@@ -206,7 +207,7 @@ PORTAL_FIELD_CONFIG: dict[str, dict] = {
         "api_fields": [
             "ragic_id", "case_no", "title", "reporter_name", "repair_type",
             "floor", "floor_normalized", "occurred_at", "responsible_unit",
-            "work_hours", "status", "outsource_fee", "maintenance_fee", "total_fee",
+            "work_hours", "status", "record_status", "outsource_fee", "maintenance_fee", "total_fee",
             "deduction_item", "deduction_fee",
             "acceptor", "accept_status", "closer", "finance_note",
             "is_completed", "completed_at", "close_days", "year", "month",
@@ -215,7 +216,7 @@ PORTAL_FIELD_CONFIG: dict[str, dict] = {
         ],
         "frontend_fields": [
             "報修編號", "標題", "報修人姓名", "報修類型", "發生樓層",
-            "發生時間", "負責單位", "花費工時", "處理狀況", "委外費用",
+            "發生時間", "負責單位", "花費工時", "處理狀況", "狀態", "委外費用",
             "維修費用", "費用合計", "驗收者", "驗收", "結案人",
             "扣款事項", "扣款費用", "財務備註", "結案時間", "結案天數",
         ],
@@ -229,6 +230,7 @@ PORTAL_FIELD_CONFIG: dict[str, dict] = {
             "responsible_unit":  "負責單位",
             "work_hours":        "花費工時",
             "status":            "處理狀況",
+            "record_status":     "狀態",
             "outsource_fee":     "委外費用",
             "maintenance_fee":   "維修費用",
             "total_fee":         "費用合計",

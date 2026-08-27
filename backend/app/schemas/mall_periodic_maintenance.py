@@ -89,6 +89,12 @@ class MallPMScheduleMatrixEntry(BaseModel):
     category:       str = ""
     frequency:      str = ""
     ragic_url:      str = ""   # 指向 Ragic Sheet 24 該筆保養項目
+    # 2026-08-27 新增（年度計劃表改以執行月份歸屬）：這筆記錄「原本屬於哪個批次月份」。
+    # 顯示月份可能與批次月份不同（例：4 月批次、執行月份填 7 月 → 顯示在 7 月欄）。
+    origin_month:   Optional[int] = None
+    # 2026-08-27：批次月份不在「執行月份」內，但已有實際執行記錄，靠安全閥保留下來。
+    # 前端要標註，避免使用者以為它排錯月份。
+    off_schedule:   bool = False
 
 
 class MallPMScheduleMatrixCell(BaseModel):

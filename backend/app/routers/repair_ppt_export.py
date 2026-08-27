@@ -22,7 +22,7 @@
 
 import logging
 import os
-from datetime import datetime
+from datetime import date as _date, datetime
 from io import BytesIO
 from typing import Optional
 from urllib.parse import quote
@@ -803,30 +803,73 @@ def _matrix_status_style():
 
 
 # 狀態 → (符號, bg RGBColor, fg RGBColor) — 與 Portal 網頁「年度計劃表」Tab
-# （MallPeriodicMaintenance / FullBuildingMaintenance 的 MATRIX_CELL_CFG /
-#  ANNUAL_CELL_STYLE）完全一致的 8 種狀態樣式，僅供 luqun（商場）年度計劃表
-# 投影片使用；飯店（dazhi）投影片維持既有 _matrix_status_style()，不受影響。
+# （MallPeriodicMaintenance / PeriodicMaintenance / FullBuildingMaintenance 的
+#  MATRIX_CELL_CFG / ANNUAL_CELL_STYLE）完全一致的 9 種狀態樣式。
+# 2026-08-27：三個保養模組的年度計劃表投影片（含飯店週期保養）一律走這一套；
+# _matrix_status_style()（cell_style="legacy"）只剩非年度計劃表的舊投影片在用。
 _MATRIX_STATUS_STYLE_PORTAL = None  # 延遲初始化（需 pptx 匯入）
 
 
 def _matrix_status_style_portal():
-    """回傳與 Portal 網頁年度計劃表 Tab 一致的狀態樣式對照表（8 種狀態，lazy init）。"""
+    """回傳與 Portal 網頁年度計劃表 Tab 一致的狀態樣式對照表（9 種狀態，lazy init）。"""
     global _MATRIX_STATUS_STYLE_PORTAL
     if _MATRIX_STATUS_STYLE_PORTAL is not None:
         return _MATRIX_STATUS_STYLE_PORTAL
     from pptx.dml.color import RGBColor as _R
 
+    # 2026-08-27 會議裁示：待執行改用同心圓 ◎（U+25CE，文字符號，可自由上紅／綠）。
+    # ⭕ 是彩色 emoji、顏色寫死紅色且沒有綠色版本，不能用。逾期維持 🔴 實心圓 ——
+    # 實心 vs 同心正好對應「已經逾期」與「還沒到期」。
+    # 「未排定」與「應做未排」合併成同一個黃問號（兩個狀態仍分開）。
     _MATRIX_STATUS_STYLE_PORTAL = {
         "completed": ("✅", _R(0xF6, 0xFF, 0xED), _R(0x52, 0xC4, 0x1A)),  # 已完成
         "overdue": ("🔴", _R(0xFF, 0xF1, 0xF0), _R(0xC0, 0x39, 0x2B)),  # 逾期
         "in_progress": ("🔵", _R(0xE6, 0xF4, 0xFF), _R(0x18, 0x90, 0xFF)),  # 進行中
-        "scheduled": ("⭕", _R(0xFF, 0xF7, 0xE6), _R(0xFA, 0x8C, 0x16)),  # 待執行
-        "unscheduled": ("?", _R(0xFF, 0xFB, 0xE6), _R(0xFA, 0xAD, 0x14)),  # 未排定
-        "non_month": ("─", _R(0xFA, 0xFA, 0xFA), _R(0xAA, 0xAA, 0xAA)),  # 非本月
-        "no_data": ("！", _R(0xFF, 0xF0, 0xF6), _R(0xEB, 0x2F, 0x96)),  # 應做未排
+        "scheduled": ("◎", _R(0xFF, 0xF1, 0xF0), _R(0xC0, 0x39, 0x2B)),  # 當月待執行
+        "future_due": ("◎", _R(0xF0, 0xFB, 0xE3), _R(0x38, 0x9E, 0x0D)),  # 未來待執行
+        "unscheduled": ("?", _R(0xFF, 0xFB, 0xE6), _R(0xFA, 0xAD, 0x14)),  # 應做未排
+        "no_data": ("?", _R(0xFF, 0xFB, 0xE6), _R(0xFA, 0xAD, 0x14)),  # 應做未排
         "no_frequency": ("∅", _R(0xF5, 0xF5, 0xF5), _R(0xCC, 0xCC, 0xCC)),  # 頻率未設
+        "non_month": ("─", _R(0xFA, 0xFA, 0xFA), _R(0xAA, 0xAA, 0xAA)),  # 非本月
     }
     return _MATRIX_STATUS_STYLE_PORTAL
+
+
+# 年度計劃表圖例（2026-08-27 會議裁示）：順序固定，「非本月」排最後；
+# 「未排定」與「應做未排」共用黃問號，圖例只列一項「應做未排」。
+_ANNUAL_LEGEND_ITEMS = [
+    ("completed",    "已完成"),
+    ("overdue",      "逾期"),
+    ("in_progress",  "進行中"),
+    ("scheduled",    "當月待執行"),
+    ("future_due",   "未來待執行"),
+    ("no_data",      "應做未排"),
+    ("no_frequency", "頻率未設"),
+    ("non_month",    "非本月"),
+]
+
+
+def _pptx_runs_txt(slide, segments, x, y, w, h, size=10, bold=True):
+    """同一行文字、多個 run 各自上色（圖例用）。
+
+    segments = [(text, RGBColor 或 None), ...]。_pptx_txt 只能整段一個顏色，
+    圖例的符號必須跟格子同色（2026-08-27 會議要求），所以另外開一支。
+    """
+    from pptx.util import Inches, Pt
+
+    box = slide.shapes.add_textbox(Inches(x), Inches(y), Inches(w), Inches(h))
+    tf = box.text_frame
+    tf.word_wrap = False
+    tf.margin_left = tf.margin_right = tf.margin_top = tf.margin_bottom = 0
+    para = tf.paragraphs[0]
+    for text, color in segments:
+        run = para.add_run()
+        run.text = text
+        run.font.size = Pt(size)
+        run.font.bold = bold
+        if color is not None:
+            run.font.color.rgb = color
+    return box
 
 
 def _pptx_matrix_cell_portal(tbl, row, col, symbol, date_text, fg, bg, size=12):
@@ -973,6 +1016,7 @@ def _add_annual_matrix_slide(
     title_fn=None,
     task_col_label: str = "項目名稱",
     cell_style: str = "legacy",
+    matrix_year: int = 0,
 ):
     """
     年度計劃表矩陣投影片。
@@ -1040,13 +1084,25 @@ def _add_annual_matrix_slide(
 
     for pg_idx, pg_rows in enumerate(pages):
         slide = _clone_template_slide(prs, template_idx)
-        pg_sub = (
-            subtitle
-            if total_pages == 1
-            else f"{subtitle}　第 {pg_idx + 1} 頁／共 {total_pages} 頁"
+        _page_suffix = (
+            "" if total_pages == 1
+            else f"　第 {pg_idx + 1} 頁／共 {total_pages} 頁"
         )
+        pg_sub = f"{subtitle}{_page_suffix}"
         _fn(slide, title, "", now_str, SW, SH)
-        if pg_sub:
+        if cell_style == "portal_v2":
+            # 2026-08-27：圖例的符號必須跟格子同色（原本整串黑字，使用者反映看不出對應）
+            _sub_y2 = 0.592 if title_fn is not None else 0.52
+            _BLACK = RGBColor(0x00, 0x00, 0x00)
+            _segs = [(f"{subtitle}　狀態：", _BLACK)]
+            for _k, _label in _ANNUAL_LEGEND_ITEMS:
+                _sym, _sbg, _sfg = STYLE.get(_k, ("", None, C_GRAY))
+                _segs.append((_sym, _sfg))
+                _segs.append((f"{_label}　", _BLACK))
+            if _page_suffix:
+                _segs.append((_page_suffix, _BLACK))
+            _pptx_runs_txt(slide, _segs, 0.35, _sub_y2, SW - 4.5, 0.22, size=10)
+        elif pg_sub:
             _sub_y2 = 0.592 if title_fn is not None else 0.52
             _pptx_txt(
                 slide,
@@ -1112,6 +1168,14 @@ def _add_annual_matrix_slide(
                         (c for c in row.get("cells", []) if c["month"] == m), None
                     )
                     status = cell_info["status"] if cell_info else "non_month"
+                    # 2026-08-27：待執行的紅／綠依「格子月份是不是當月」決定 ——
+                    # 當月＝紅◎（該做了），非當月＝綠◎（排定日期還沒到）。
+                    # 排定日期已過的後端會給 overdue，不會走到這裡。
+                    if status == "scheduled" and cell_style == "portal_v2":
+                        _tdy = _date.today()
+                        _yr = matrix_year or _tdy.year
+                        if not (_yr == _tdy.year and m == _tdy.month):
+                            status = "future_due"
                     sym, s_bg, s_fg = STYLE.get(status, ("", None, C_GRAY))
                     bg = s_bg if s_bg is not None else row_bg
                     if cell_style == "portal_v2":
@@ -2954,30 +3018,22 @@ def _build_repair_pptx(module: str, year: int, month: int, db: Session) -> Bytes
 
             if module == "dazhi":
                 src_rows = [r for r in all_matrix_rows if r["source"] == "飯店週期保養"]
-                _hotel_legend = (
-                    "狀態：✅已完成 🔴逾期 🔵進行中 ⭕待執行 "
-                    "?未排定 ─非本月 ！應做未排 ∅頻率未設"
-                )
                 _add_annual_matrix_slide(
                     prs,
                     TMPL,
                     title="飯店週期保養年度計劃表",
-                    subtitle=f"{year}年　{_hotel_legend}",
+                    subtitle=f"{year}年",
                     matrix_rows=src_rows,
                     now_str=now_str,
                     SW=SW,
                     SH=SH,
                     task_col_label="保養項目",
                     cell_style="portal_v2",
+                    matrix_year=year,
                 )
 
             else:  # luqun
                 import traceback as _luqun_tb
-
-                PORTAL_LEGEND = (
-                    "狀態：✅已完成 🔴逾期 🔵進行中 ⭕待執行 "
-                    "?未排定 ─非本月 ！應做未排 ∅頻率未設"
-                )
 
                 logger.info("[Slide I] luqun: all_matrix_rows=%d", len(all_matrix_rows))
                 src_mall = [r for r in all_matrix_rows if r["source"] == "商場週期保養"]
@@ -3006,13 +3062,14 @@ def _build_repair_pptx(module: str, year: int, month: int, db: Session) -> Bytes
                         prs,
                         TMPL,
                         title="商場週期保養年度計劃表",
-                        subtitle=f"{year}年　{PORTAL_LEGEND}",
+                        subtitle=f"{year}年",
                         matrix_rows=src_mall,
                         now_str=now_str,
                         SW=SW,
                         SH=SH,
                         task_col_label="保養項目",
                         cell_style="portal_v2",
+                        matrix_year=year,
                     )
                     ia_first_slide = prs.slides[ia_first_idx]
                     logger.info("[Slide I] 商場週期保養年度計劃表 created OK")
@@ -3034,13 +3091,14 @@ def _build_repair_pptx(module: str, year: int, month: int, db: Session) -> Bytes
                         prs,
                         TMPL,
                         title="全棟例行維護年度計劃表",
-                        subtitle=f"{year}年　{PORTAL_LEGEND}",
+                        subtitle=f"{year}年",
                         matrix_rows=src_fb,
                         now_str=now_str,
                         SW=SW,
                         SH=SH,
                         task_col_label="保養項目",
                         cell_style="portal_v2",
+                        matrix_year=year,
                     )
                     ib_first_slide = prs.slides[ib_first_idx]
                     logger.info("[Slide I] 全棟例行維護年度計劃表 created OK")
@@ -3242,15 +3300,11 @@ def _build_repair_pptx(module: str, year: int, month: int, db: Session) -> Bytes
             if _hdazhi2:
                 _n_before2 = len(prs.slides)
                 try:
-                    _hotel_legend2 = (
-                        "狀態：✅已完成 🔴逾期 🔵進行中 ⭕待執行 "
-                        "?未排定 ─非本月 ！應做未排 ∅頻率未設"
-                    )
                     _add_annual_matrix_slide(
                         prs,
                         TMPL,
                         title="飯店週期保養年度計劃表",
-                        subtitle=f"{year}年　{_hotel_legend2}",
+                        subtitle=f"{year}年",
                         matrix_rows=_hdazhi2,
                         now_str=now_str,
                         SW=SW,
@@ -3258,6 +3312,7 @@ def _build_repair_pptx(module: str, year: int, month: int, db: Session) -> Bytes
                         title_fn=_title_fn,
                         task_col_label="保養項目",
                         cell_style="portal_v2",
+                        matrix_year=year,
                     )
                     _hmat_first_slide = prs.slides[_n_before2]
                 except Exception as _inner2:

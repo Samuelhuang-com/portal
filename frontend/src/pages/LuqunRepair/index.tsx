@@ -83,6 +83,15 @@ const statusTag = (status: string) => {
   return <Tag color={color}>{status || '-'}</Tag>
 }
 
+// Ragic 另有獨立的「狀態」欄（結案／待辦／作廢），與上面的「處理狀況」是兩個不同欄位。
+// 作廢只會寫在這一欄，後端據此把案件排除於所有統計之外（明細總表仍保留）。
+const RECORD_STATUS_TAG_COLOR: Record<string, string> = {
+  '結案': 'success', '待辦': 'warning', '作廢': 'default', '取消': 'default',
+}
+const recordStatusTag = (v: string) =>
+  v ? <Tag color={RECORD_STATUS_TAG_COLOR[v] ?? 'default'}>{v}</Tag>
+    : <span style={{ color: '#BFBFBF' }}>—</span>
+
 // ═════════════════════════════════════════════════════════════════════════════
 // 共用：案件清單 Modal（所有統計數字點擊後共用）
 // ═════════════════════════════════════════════════════════════════════════════
@@ -296,6 +305,7 @@ function CaseDetailDrawer({
           {caseData.work_hours > 0 ? `${fmtDec(caseData.work_hours, 2)} hr` : '-'}
         </Descriptions.Item>
         <Descriptions.Item label="處理狀況">{statusTag(caseData.status)}</Descriptions.Item>
+        <Descriptions.Item label="狀態">{recordStatusTag(caseData.record_status)}</Descriptions.Item>
         <Descriptions.Item label="委外費用">{caseData.outsource_fee > 0 ? fmtMoney(caseData.outsource_fee) : '-'}</Descriptions.Item>
         <Descriptions.Item label="維修費用">{caseData.maintenance_fee > 0 ? fmtMoney(caseData.maintenance_fee) : '-'}</Descriptions.Item>
         <Descriptions.Item label="總費用">
@@ -2063,6 +2073,7 @@ function DetailTab({
   const [repairType, setRepairType] = useState<string | null>(null)
   const [floor, setFloor]       = useState<string | null>(null)
   const [status, setStatus]     = useState<string[]>([])
+  const [recordStatus, setRecordStatus] = useState<string[]>([])
   const [keyword, setKeyword]   = useState('')
   const [drawerCase, setDrawerCase] = useState<RepairCase | null>(null)
   // 排序狀態（與後端 query_detail 的預設一致：發生時間新→舊）
@@ -2080,6 +2091,7 @@ function DetailTab({
         repair_type: repairType || undefined,
         floor:       floor || undefined,
         status:      status.length > 0 ? status : undefined,
+        record_status: recordStatus.length > 0 ? recordStatus : undefined,
         keyword:     keyword || undefined,
         page:        pg,
         page_size:   50,
@@ -2093,7 +2105,7 @@ function DetailTab({
     } finally {
       setLoading(false)
     }
-  }, [year, month, repairType, floor, status, keyword, sortBy, sortDesc])
+  }, [year, month, repairType, floor, status, recordStatus, keyword, sortBy, sortDesc])
 
   useEffect(() => { load(1) }, [year, month])  // 年月變動時重新查詢
 
@@ -2117,6 +2129,10 @@ function DetailTab({
     {
       title: '處理狀況', dataIndex: 'status', width: 90,
       render: statusTag,
+    },
+    {
+      title: '狀態', dataIndex: 'record_status', width: 80,
+      render: (v: string) => recordStatusTag(v),
     },
     {
       title: '委外費用', dataIndex: 'outsource_fee', width: 90, align: 'right',
@@ -2146,6 +2162,7 @@ function DetailTab({
     repair_type: repairType || undefined,
     floor:       floor || undefined,
     status:      status.length > 0 ? status : undefined,
+    record_status: recordStatus.length > 0 ? recordStatus : undefined,
     keyword:     keyword || undefined,
   })
 
@@ -2166,6 +2183,10 @@ function DetailTab({
             value={status} onChange={v => setStatus(v)} maxTagCount={1}>
             {filterOptions?.statuses.map(s => <Option key={s} value={s}>{s}</Option>)}
           </Select>
+          <Select mode="multiple" placeholder="狀態" allowClear style={{ width: 130 }}
+            value={recordStatus} onChange={v => setRecordStatus(v)} maxTagCount={1}>
+            {filterOptions?.record_statuses?.map(s => <Option key={s} value={s}>{s}</Option>)}
+          </Select>
           <input
             placeholder="關鍵字（編號/標題/報修人）"
             value={keyword}
@@ -2174,7 +2195,7 @@ function DetailTab({
             style={{ padding: '4px 8px', border: '1px solid #d9d9d9', borderRadius: 6, width: 200, fontSize: 13 }}
           />
           <Button type="primary" icon={<SearchOutlined />} onClick={() => load(1)} loading={loading}>查詢</Button>
-          <Button onClick={() => { setRepairType(null); setFloor(null); setStatus([]); setKeyword('') }}>重設</Button>
+          <Button onClick={() => { setRepairType(null); setFloor(null); setStatus([]); setRecordStatus([]); setKeyword('') }}>重設</Button>
           <Button
             icon={<DownloadOutlined />}
             href={exportUrl}

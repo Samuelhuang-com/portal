@@ -432,6 +432,7 @@ def get_detail(
     repair_type: Optional[str] = Query(None),
     floor:       Optional[str] = Query(None),
     status:      Optional[str] = Query(None),
+    record_status: Optional[str] = Query(None),   # Ragic「狀態」欄（結案／待辦／作廢）
     keyword:     Optional[str] = Query(None),
     page:        int            = Query(1, ge=1),
     page_size:   int            = Query(50, ge=1, le=200),
@@ -444,6 +445,7 @@ def get_detail(
         all_cases,
         year=year, month=month,
         repair_type=repair_type, floor=floor, status=status,
+        record_status=record_status,
         keyword=keyword,
         page=page, page_size=page_size,
         sort_by=sort_by, sort_desc=sort_desc,
@@ -553,6 +555,7 @@ def export_excel(
     repair_type: Optional[str] = Query(None),
     floor:       Optional[str] = Query(None),
     status:      Optional[str] = Query(None),
+    record_status: Optional[str] = Query(None),   # Ragic「狀態」欄（結案／待辦／作廢）
     keyword:     Optional[str] = Query(None),
     token:       Optional[str] = Query(None),
     db: Session = Depends(get_db),
@@ -578,6 +581,7 @@ def export_excel(
         all_cases,
         year=year, month=month,
         repair_type=repair_type, floor=floor, status=status,
+        record_status=record_status,
         keyword=keyword,
         page=1, page_size=9999,
     )

@@ -1701,14 +1701,15 @@ register_section(
 def _provide_dazhi_repair_unfinished(db: Session, params: dict) -> list[dict]:
     """所有尚未結案的大直工務部工單，按等待天數降序（最久在最前）。"""
     from app.models.dazhi_repair import DazhiRepairCase
-    from app.services.dazhi_repair_service import is_completed, is_excluded
+    from app.services.dazhi_repair_service import is_completed
 
     cases = db.query(DazhiRepairCase).all()
     now   = datetime.now()
     enriched: list = []
 
     for c in cases:
-        if is_excluded(c.status or ""):
+        # 2026-08-27：改用 is_excluded_flag（作廢寫在 record_status，不在 status）
+        if c.is_excluded_flag:
             continue
         if is_completed(c.status or ""):
             continue
@@ -1736,14 +1737,15 @@ def _provide_dazhi_repair_unfinished(db: Session, params: dict) -> list[dict]:
 def _provide_dazhi_repair_unfinished_detail(db: Session, params: dict) -> list[dict]:
     """明細附頁：附加委外費用 / 維修費用欄位（排序與主表相同）。"""
     from app.models.dazhi_repair import DazhiRepairCase
-    from app.services.dazhi_repair_service import is_completed, is_excluded
+    from app.services.dazhi_repair_service import is_completed
 
     cases = db.query(DazhiRepairCase).all()
     now   = datetime.now()
     enriched: list = []
 
     for c in cases:
-        if is_excluded(c.status or ""):
+        # 2026-08-27：改用 is_excluded_flag（作廢寫在 record_status，不在 status）
+        if c.is_excluded_flag:
             continue
         if is_completed(c.status or ""):
             continue
@@ -1803,14 +1805,15 @@ register_section(
 def _provide_dazhi_repair_closed_this_month(db: Session, params: dict) -> list[dict]:
     """本月（簾選年月）已結案工單，主表直接含委外 / 維修費用。"""
     from app.models.dazhi_repair import DazhiRepairCase
-    from app.services.dazhi_repair_service import is_completed, is_excluded
+    from app.services.dazhi_repair_service import is_completed
 
     year, month = params.get("year"), params.get("month")
     cases = db.query(DazhiRepairCase).all()
     rows: list[dict] = []
 
     for c in cases:
-        if is_excluded(c.status or ""):
+        # 2026-08-27：改用 is_excluded_flag（作廢寫在 record_status，不在 status）
+        if c.is_excluded_flag:
             continue
         if not is_completed(c.status or ""):
             continue
@@ -1834,14 +1837,15 @@ def _provide_dazhi_repair_closed_this_month(db: Session, params: dict) -> list[d
 def _provide_dazhi_repair_closed_detail(db: Session, params: dict) -> list[dict]:
     """明細附頁：附加扣款費用 / 負責人 / 備註。"""
     from app.models.dazhi_repair import DazhiRepairCase
-    from app.services.dazhi_repair_service import is_completed, is_excluded
+    from app.services.dazhi_repair_service import is_completed
 
     year, month = params.get("year"), params.get("month")
     cases = db.query(DazhiRepairCase).all()
     rows: list[dict] = []
 
     for c in cases:
-        if is_excluded(c.status or ""):
+        # 2026-08-27：改用 is_excluded_flag（作廢寫在 record_status，不在 status）
+        if c.is_excluded_flag:
             continue
         if not is_completed(c.status or ""):
             continue

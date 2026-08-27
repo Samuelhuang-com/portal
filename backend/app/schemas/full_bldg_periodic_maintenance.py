@@ -89,7 +89,7 @@ class FullBldgPMScheduleMatrixEntry(BaseModel):
     category:       str = ""
     frequency:      str = ""
     ragic_url:      str = ""
-    # 2026-08-26 新增（年度計劃表 rule=v2）：這筆記錄「原本屬於哪個批次月份」。
+    # 2026-08-26 新增（年度計劃表）：這筆記錄「原本屬於哪個批次月份」。
     # v2 規則會把批次月份與顯示月份拆開（例：4 月批次、執行月份填 7 月 → 顯示在
     # 7 月欄），此欄保留原批次月份供前端提示與比對。legacy 規則下恆等於格子月份。
     origin_month:   Optional[int] = None

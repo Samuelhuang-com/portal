@@ -43,9 +43,8 @@ from app.models.repair_report import (
 
 # ── 沿用各模組相同的完成/排除狀態判斷 ──────────────────────────────────────────
 from app.services.dazhi_repair_service import is_completed as dazhi_is_completed
-from app.services.dazhi_repair_service import is_excluded as dazhi_is_excluded
 from app.services.luqun_repair_service import is_completed as luqun_is_completed
-from app.services.luqun_repair_service import is_excluded as luqun_is_excluded
+# is_excluded 不再 import —— 排除一律走 ORM 的 is_excluded_flag（含 record_status）
 
 logger = logging.getLogger(__name__)
 
@@ -159,7 +158,9 @@ def get_unfinished_cases(
     # ── 飯店（大直工務部）──────────────────────────────────────────────────
     if source in ("all", "hotel"):
         for c in db.query(DazhiRepairCase).all():
-            if dazhi_is_excluded(c.status):
+            # 2026-08-27：改用 is_excluded_flag —— Ragic 的「作廢」寫在獨立的
+            # 「狀態」欄（record_status），只看 c.status 永遠比對不到。
+            if c.is_excluded_flag:
                 continue
             # 時點口徑：截至報表月底已結案者才排除（不是看今天的 status）
             if _completed_by_cutoff(c, dazhi_is_completed):
@@ -174,7 +175,8 @@ def get_unfinished_cases(
     # ── 商場（商場工務報修）─────────────────────────────────────────────────
     if source in ("all", "mall"):
         for c in db.query(LuqunRepairCase).all():
-            if luqun_is_excluded(c.status):
+            # 2026-08-27：同上，改用 is_excluded_flag（含 record_status）
+            if c.is_excluded_flag:
                 continue
             # 時點口徑：截至報表月底已結案者才排除（不是看今天的 status）
             if _completed_by_cutoff(c, luqun_is_completed):

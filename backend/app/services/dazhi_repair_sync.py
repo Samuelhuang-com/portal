@@ -77,6 +77,7 @@ async def sync_from_ragic() -> dict:
                     existing.responsible_unit = case.responsible_unit
                     existing.work_hours       = case.work_hours
                     existing.status           = case.status
+                    existing.record_status    = case.record_status
                     existing.outsource_fee    = case.outsource_fee
                     existing.maintenance_fee  = case.maintenance_fee
                     existing.total_fee        = case.total_fee
@@ -112,6 +113,7 @@ async def sync_from_ragic() -> dict:
                         responsible_unit  = case.responsible_unit,
                         work_hours        = case.work_hours,
                         status            = case.status,
+                        record_status     = case.record_status,
                         outsource_fee     = case.outsource_fee,
                         maintenance_fee   = case.maintenance_fee,
                         total_fee         = case.total_fee,

@@ -270,6 +270,7 @@ export type PMMatrixCellStatus =
   | 'overdue'
   | 'in_progress'
   | 'scheduled'
+  | 'future_due'   // 2026-08-27：未來到期、尚未排定（綠色同心圓，純顯示）
   | 'unscheduled'
   | 'non_month'
   | 'no_data'

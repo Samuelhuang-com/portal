@@ -852,8 +852,12 @@ export default function MallPeriodicMaintenancePage() {
     if (scheduleId) {
       setAnnualCellLoading(true)
       try {
+        // ⚠️ 2026-08-27：顯示月份 ≠ 批次月份（年度計劃表改以「執行月份」歸屬）。
+        // mall_pm_schedule.year_month 存的是原批次月份，這裡必須用 origin_month 查，
+        // 否則排程明細永遠找不到。
+        const originMonth = cell?.entries?.[0]?.origin_month ?? month
         const res = await getMallScheduleList({
-          year_month: `${annualYear}/${String(month).padStart(2, '0')}`,
+          year_month: `${annualYear}/${String(originMonth).padStart(2, '0')}`,
         })
         const found = res.items.find(i => i.id === scheduleId) ?? null
         setAnnualCellDetail(found)
@@ -1537,15 +1541,51 @@ export default function MallPeriodicMaintenancePage() {
 
   // ── 年度計劃表 Tab ────────────────────────────────────────────────────────
 
+  // 2026-08-27 統一（三個保養模組與 PPT 同一套）：待執行改用同心圓 ◎（文字符號，
+  // 可自由上紅／綠）。⭕ 是彩色 emoji、顏色寫死紅色且沒有綠色版本，不能用。
+  // 逾期維持 🔴 實心圓 —— 實心 vs 同心正好對應「已經逾期」與「還沒到期」。
   const MATRIX_CELL_CFG: Record<string, { bg: string; text: string; label: string }> = {
     completed:    { bg: '#f6ffed', text: '#52C41A', label: '✅' },
     overdue:      { bg: '#fff1f0', text: '#C0392B', label: '🔴' },
     in_progress:  { bg: '#e6f4ff', text: '#1890FF', label: '🔵' },
-    scheduled:    { bg: '#fff7e6', text: '#FA8C16', label: '⭕' },
+    scheduled:    { bg: '#fff1f0', text: '#C0392B', label: '◎' },   // 當月待執行
+    future_due:   { bg: '#f0fbe3', text: '#389E0D', label: '◎' },   // 未來待執行
+    // unscheduled 與 no_data 共用黃問號（會議裁示：兩個狀態保留，符號合併）
     unscheduled:  { bg: '#fffbe6', text: '#FAAD14', label: '?' },
-    non_month:    { bg: '#fafafa', text: '#aaa',    label: '─' },
-    no_data:      { bg: '#fff0f6', text: '#eb2f96', label: '！' },
+    no_data:      { bg: '#fffbe6', text: '#FAAD14', label: '?' },
     no_frequency: { bg: '#f5f5f5', text: '#ccc',    label: '∅' },
+    non_month:    { bg: '#fafafa', text: '#aaa',    label: '─' },
+  }
+
+  // 待執行的紅／綠依「格子月份是不是當月」決定：當月＝紅◎（該做了），
+  // 非當月＝綠◎（排定日期還沒到）。排定日期已過的後端會給 overdue。
+  const matrixCellCfg = (status: string, year: number, month: number) => {
+    const base = MATRIX_CELL_CFG[status as string] ?? MATRIX_CELL_CFG['no_frequency']
+    if (status !== 'scheduled') return base
+    const now = new Date()
+    return (year === now.getFullYear() && month === now.getMonth() + 1)
+      ? base : MATRIX_CELL_CFG['future_due']
+  }
+
+  // 圖例順序固定（2026-08-27 會議裁示）：「非本月」排最後。
+  const MATRIX_LEGEND: { key: string; label: string }[] = [
+    { key: 'completed',    label: '已完成' },
+    { key: 'overdue',      label: '逾期' },
+    { key: 'in_progress',  label: '進行中' },
+    { key: 'scheduled',    label: '當月待執行' },
+    { key: 'future_due',   label: '未來待執行' },
+    { key: 'no_data',      label: '應做未排' },
+    { key: 'no_frequency', label: '頻率未設' },
+    { key: 'non_month',    label: '非本月' },
+  ]
+
+  const MATRIX_TOOLTIP_LABEL: Record<string, string> = {
+    completed: '已完成', overdue: '逾期', in_progress: '進行中',
+    scheduled: '待執行（已排定日期，尚未到期）',
+    future_due: '未來待執行（依「執行月份」到期，尚未排定日期）',
+    unscheduled: '應做未排（已建立排程、尚未填排定日期）',
+    no_data: '應做未排程（Ragic 尚未填排定日期）',
+    no_frequency: '頻率未設定', non_month: '非本月',
   }
 
   const annualCatOptions = annualMatrix
@@ -1591,16 +1631,17 @@ export default function MallPeriodicMaintenancePage() {
       </Row>
 
       <Row gutter={4} style={{marginBottom:12}}>
-        {Object.entries(MATRIX_CELL_CFG).map(([k, v]) => (
-          <Col key={k}>
-            <span style={{display:'inline-flex',alignItems:'center',gap:4,padding:'2px 8px',
-              borderRadius:4,background:v.bg,border:'1px solid #eee',fontSize:12,color:v.text}}>
-              {v.label}&nbsp;{({completed:'已完成',overdue:'逾期',in_progress:'進行中',
-                scheduled:'待執行',unscheduled:'未排定',non_month:'非本月',
-                no_data:'應做未排',no_frequency:'頻率未設'} as Record<string,string>)[k]}
-            </span>
-          </Col>
-        ))}
+        {MATRIX_LEGEND.map(({ key, label }) => {
+          const v = MATRIX_CELL_CFG[key as keyof typeof MATRIX_CELL_CFG]
+          return (
+            <Col key={key}>
+              <span style={{ display:'inline-flex', alignItems:'center', gap:4, padding:'2px 8px',
+                borderRadius:4, background:v.bg, border:'1px solid #eee', fontSize:12, color:v.text }}>
+                {v.label}&nbsp;{label}
+              </span>
+            </Col>
+          )
+        })}
       </Row>
 
       <Spin spinning={annualLoading}>
@@ -1644,18 +1685,23 @@ export default function MallPeriodicMaintenancePage() {
                       )}
                     </td>
                     {row.cells.map(cell=>{
-                      const cfg = MATRIX_CELL_CFG[cell.status] ?? {bg:'#fff',text:'#666',label:'?'}
-                      const clickable = cell.status !== 'non_month' && cell.status !== 'no_frequency'
+                      const cfg = matrixCellCfg(cell.status, annualYear, cell.month)
+                      // 靠安全閥保留下來的「非排定月份執行記錄」
+                      const offSched = (cell.entries ?? []).some(e => e.off_schedule)
+                      // future_due 是純顯示的到期占位格，沒有批次資料可看 → 不可點
+                      const clickable = cell.status !== 'non_month'
+                        && cell.status !== 'no_frequency' && cell.status !== 'future_due'
                       return (
                         <td key={cell.month} style={{...TD,textAlign:'center',background:cfg.bg,color:cfg.text,
                           cursor:clickable?'pointer':'default',fontWeight:600,padding:'4px 2px',fontSize:16}}
                           onClick={()=>clickable&&openAnnualDrawer(cell.schedule_id,cell.status,cell.month,row,cell)}>
                           <Tooltip title={
-                            (({completed:'已完成',overdue:'逾期',in_progress:'進行中',
-                              scheduled:'待執行',unscheduled:'未排定',non_month:'非本月',
-                              no_data:'應做未排程',no_frequency:'頻率未設定'} as Record<string,string>)[cell.status])
+                            (MATRIX_TOOLTIP_LABEL[cell.status] ?? cell.status)
                             + (cell.count>1
                                 ? `｜本月共 ${cell.count} 筆（${cell.entries.map(e=>e.scheduled_date||'無日期').join('、')}），點擊看明細`
+                                : '')
+                            + (offSched
+                                ? '｜本月不在「執行月份」內，因為已有實際執行記錄才顯示'
                                 : '')
                           }>
                             <div style={{lineHeight:1.2,position:'relative'}}>
@@ -1665,6 +1711,11 @@ export default function MallPeriodicMaintenancePage() {
                                   color:'#fff',background:cfg.text,borderRadius:8,padding:'0 4px',lineHeight:'14px'}}>
                                   ×{cell.count}
                                 </span>
+                              )}
+                              {offSched && (
+                                <div style={{fontSize:10,fontWeight:500,color:'#FA8C16',marginTop:1}}>
+                                  非排定月
+                                </div>
                               )}
                               {cell.count>1 ? (
                                 <div style={{fontSize:11,fontWeight:500,color:cfg.text,opacity:0.85,marginTop:1}}>

@@ -398,7 +398,9 @@ def _fetch_dazhi(db: Session, year: int, month: int, day: int) -> list[dict]:
         recs.sort(key=lambda r: (r.start_at is None, r.start_at or datetime.min))
 
     for c in db.query(DazhiRepairCase).all():
-        if (c.status or "").strip() == "取消":
+        # 2026-08-27：原本只硬比對「取消」，漏掉「作廢」（且作廢寫在 record_status）。
+        # 改用 is_excluded_flag，與報修統計同一套排除規則。
+        if c.is_excluded_flag:
             continue
         case_recs  = rec_map.get(c.ragic_id, [])
         dated_recs = [r for r in case_recs if r.start_at is not None]
@@ -484,7 +486,8 @@ def _fetch_luqun(db: Session, year: int, month: int, day: int) -> list[dict]:
         recs.sort(key=lambda r: (r.start_at is None, r.start_at or datetime.min))
 
     for c in db.query(LuqunRepairCase).all():
-        if (c.status or "").strip() == "取消":
+        # 2026-08-27：同上，改用 is_excluded_flag
+        if c.is_excluded_flag:
             continue
         case_recs  = rec_map.get(c.ragic_id, [])
         dated_recs = [r for r in case_recs if r.start_at is not None]

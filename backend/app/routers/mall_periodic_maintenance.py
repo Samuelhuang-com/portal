@@ -209,6 +209,11 @@ _FREQ_INTERVAL: dict[str, int] = {
 }
 
 
+def _mall_is_future_month(year: int, month: int, today) -> bool:
+    """該年月是否落在今天之後（供年度計劃表判定 future_due）。"""
+    return year > today.year or (year == today.year and month > today.month)
+
+
 def _should_schedule_by_frequency(frequency: str, month: int) -> bool:
     """
     純依頻率字串與月份判斷「本月是否應產生排程」（exec_months 為空時使用）。
@@ -2109,8 +2114,9 @@ def get_mall_annual_matrix(
         "scheduled":    1,
         "no_data":      2,
         "unscheduled":  3,
-        "no_frequency": 4,
-        "non_month":    5,
+        "future_due":   4,   # 2026-08-27：未來到期，最不急
+        "no_frequency": 5,
+        "non_month":    6,
     }
 
     def _aggregate_status(statuses: list) -> str:
@@ -2125,26 +2131,105 @@ def get_mall_annual_matrix(
         """合併鍵正規化：去頭尾空白並壓縮中間連續空白，避免純空白差異造成裂列。"""
         return " ".join((name or "").split())
 
-    # ── 第一階段：逐月算出每一筆 item 自己的格子資料（判斷邏輯與 v1.80.72 相同）──
-    groups = {}   # key -> {"order": (月,序), "months": {月: [entry,...]}, "seen": [(月, item),...]}
-
+    # ── 第一階段：逐月抓「該月自己的批次」項目 ────────────────────────────────
+    items_by_month: dict = {}
     for m in range(1, 13):
         month_items = _mall_get_batch_items_for_month(db, year, m)
         if category:
             month_items = [it for it in month_items if it.category == category]
+        if month_items:
+            items_by_month[m] = month_items
 
-        for item in month_items:
-            existing = (
-                db.query(MallPMSchedule)
-                .filter(
-                    MallPMSchedule.year_month    == f"{year}/{m:02d}",
-                    MallPMSchedule.item_ragic_id == item.ragic_id,
-                )
-                .first()
-            )
+    # ── 第一.五階段：欄位重新歸屬（執行月份聯集）+ 未來到期占位格 ──────────────
+    # 2026-08-27（會議裁示，比照 full_building_maintenance）：
+    # 「item 出現在某個批次」≠「該月要做這個項目」—— Ragic 每個月的保養日誌會把
+    # **所有**項目都帶出來，真正決定到期月份的是「執行月份」欄位。
+    # display_items: 顯示月份 -> [(原批次月份, item, 安全閥, 是否為未來到期占位格), ...]
+    # 原批次月份一定要帶著：mall_pm_schedule.year_month 仍是批次月份，第二階段查表
+    # 必須用它，否則 schedule_id 全部對不上、格子點不進排程 Drawer。
+    def _row_months(item, origin_month: int) -> tuple:
+        """算出「這一列代表哪幾個月」，回傳 (月份集合, 安全閥是否生效)。"""
+        try:
+            months = {mm for mm in (item.get_exec_months() or []) if 1 <= mm <= 12}
+        except Exception:
+            months = set()
+        if not months:
+            # 執行月份為空 → 退回排定日期的月份，再退回批次月份
+            mm = None
+            sd = (item.scheduled_date or "").strip()
+            if sd:
+                try:
+                    v = int(sd.split("/")[0])
+                    if 1 <= v <= 12:
+                        mm = v
+                except Exception:
+                    mm = None
+            months = {mm or origin_month}
+        # 安全閥：批次月份不在執行月份內、但這一列已有實際執行記錄 → 不可隱藏，
+        # 否則已完成的工作會靜默消失且沒有任何提示。
+        valve = bool(item.is_completed or item.start_time or item.end_time) \
+            and origin_month not in months
+        if valve:
+            months = months | {origin_month}
+        return months, valve
+
+    display_items: dict = {}
+    by_task: dict = {}
+    for origin_m, month_items in items_by_month.items():
+        for it in month_items:
+            by_task.setdefault(_norm(it.task_name), []).append((origin_m, it))
+
+    for _task, pairs in by_task.items():
+        task_rows = []      # [(origin_m, item, 月份集合, valve), ...]
+        due: set = set()
+        for origin_m, it in pairs:
+            months, valve = _row_months(it, origin_m)
+            task_rows.append((origin_m, it, months, valve))
+            due |= months
+
+        for M in sorted(due):
+            # 只採用「批次月份 == M」且該列確實代表 M 的列。
+            # 刻意不做跨月遞補：借用別的月份的列來填這一格，等於用其他月份的狀態
+            # 與排定日期冒充，與 _mall_get_batch_items_for_month 的既有原則
+            # 「該月尚未同步進來，如實顯示空缺」相衝突。
+            matched = False
+            for origin_m, it, months, valve in task_rows:
+                if origin_m == M and M in months:
+                    display_items.setdefault(M, []).append((origin_m, it, bool(valve), False))
+                    matched = True
+
+            # 到期月份在未來、但該月的 Ragic 批次還沒建立 → 補「未來待執行」占位格。
+            # 占位格不帶狀態／日期／schedule_id，只宣告「這個月到期」，所以不算遞補。
+            if not matched and _mall_is_future_month(year, M, today):
+                _om, _it, _ms, _vv = max(task_rows, key=lambda t: t[0])
+                display_items.setdefault(M, []).append((_om, _it, False, True))
+
+    for dm in display_items:
+        display_items[dm].sort(key=lambda t: (t[0], t[1].seq_no or 0))
+
+    # ── 第一.六階段：逐格算出狀態 ─────────────────────────────────────────────
+    groups = {}   # key -> {"order": (月,序), "months": {月: [entry,...]}, "seen": [(月, item),...]}
+
+    for m in sorted(display_items.keys()):
+        for origin_m, item, off_sched, is_future_ph in display_items[m]:
             freq = (item.frequency or "").strip()
+            existing = None
+            if not is_future_ph:
+                existing = (
+                    db.query(MallPMSchedule)
+                    .filter(
+                        MallPMSchedule.year_month    == f"{year}/{origin_m:02d}",
+                        MallPMSchedule.item_ragic_id == item.ragic_id,
+                    )
+                    .first()
+                )
 
-            if existing:
+            if is_future_ph:
+                # 未來到期占位格：純顯示，不查排程、不帶日期，前端不開 Drawer
+                cell_status     = "future_due"
+                schedule_id     = None
+                cell_sched_date = None
+            elif existing:
                 # 2026-08-25：排定日期改以 Ragic（mall_pm_batch_item.scheduled_date）為
                 # 單一真實來源。mall_pm_schedule 是 Portal 端的排程副本，全站沒有任何
                 # 清除機制 —— Ragic 上把排定日期刪掉後，這裡仍留著舊值（含 2026-07-23
@@ -2177,9 +2262,11 @@ def get_mall_annual_matrix(
                     except Exception:
                         pass
 
-                # 未來月份不顯示「！」，改為「—」（但保留 scheduled_date 提示）
-                if year > today.year or (year == today.year and m > today.month):
-                    cell_status = "non_month"
+                # 2026-08-27（會議裁示）：未來月份原本一律壓成「非本月」，改為
+                # 「未來待執行」—— 本規則下未來月份的格子必定落在執行月份內，
+                # 本來就是該做的，壓成「非本月」等於把到期資訊藏起來。
+                if _mall_is_future_month(year, m, today) and cell_status in ("no_data", "unscheduled"):
+                    cell_status = "future_due"
 
                 schedule_id     = None
                 cell_sched_date = item.scheduled_date or None
@@ -2192,6 +2279,8 @@ def get_mall_annual_matrix(
                 category       = item.category or "",
                 frequency      = item.frequency or "",
                 ragic_url      = _item_ragic_url(item.ragic_id, item.sheet24_id),
+                origin_month   = origin_m,
+                off_schedule   = off_sched,
             )
 
             grp = groups.setdefault(_norm(item.task_name), {
@@ -2220,8 +2309,10 @@ def get_mall_annual_matrix(
                 ))
                 continue
 
-            total_records     += len(entries)
-            completed_records += sum(1 for e in entries if e.status == "completed")
+            # 未來到期占位格不是真實的 Ragic 記錄，不計入完成率分母
+            _real = [e for e in entries if e.status != "future_due"]
+            total_records     += len(_real)
+            completed_records += sum(1 for e in _real if e.status == "completed")
 
             first = entries[0]
             cells.append(MallPMScheduleMatrixCell(
@@ -2260,7 +2351,11 @@ def get_mall_annual_matrix(
         summary = {
             "total_items":     len(rows),          # 合併後的保養項目數
             "total_records":   total_records,      # 合併前的批次記錄總數（資料守恆檢查用）
-            "total_cells":     sum(1 for r in rows for c in r.cells if c.count > 0),
+            # 未來到期占位格不是真實記錄，與 total_records 同口徑排除
+            "total_cells":     sum(
+                1 for r in rows for c in r.cells
+                if any(e.status != "future_due" for e in c.entries)
+            ),
             "completed_count": completed_records,
             "completion_rate": (
                 round(completed_records / total_records * 100, 1)

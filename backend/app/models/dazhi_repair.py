@@ -28,6 +28,7 @@ class DazhiRepairCase(Base):
     responsible_unit: Mapped[str]   = mapped_column(String(100), default="")
     work_hours:       Mapped[float] = mapped_column(Float,       default=0.0)
     status:           Mapped[str]   = mapped_column(String(50),  default="")
+    record_status:    Mapped[str]   = mapped_column(String(50),  default="")   # Ragic「狀態」欄（結案／待辦／作廢）
     outsource_fee:    Mapped[float] = mapped_column(Float,       default=0.0)
     maintenance_fee:  Mapped[float] = mapped_column(Float,       default=0.0)
     total_fee:        Mapped[float] = mapped_column(Float,       default=0.0)
@@ -69,8 +70,14 @@ class DazhiRepairCase(Base):
 
     @property
     def is_excluded_flag(self) -> bool:
-        """RepairCase 相容屬性：排除「取消」「作廢」等不計入統計的案件"""
-        return self.status.strip() in {"取消", "作廢"}
+        """RepairCase 相容屬性：排除「取消」「作廢」等不計入統計的案件。
+
+        判定採 OR：「處理狀態」(status) 或 Ragic「狀態」欄 (record_status)
+        任一命中即排除 —— Ragic 的「作廢」只寫在「狀態」欄。
+        """
+        _EXCLUDED = {"取消", "作廢"}
+        return ((self.status or "").strip() in _EXCLUDED
+                or (self.record_status or "").strip() in _EXCLUDED)
 
     def _parse_images_json(self) -> list:
         import json
@@ -96,6 +103,7 @@ class DazhiRepairCase(Base):
             "responsible_unit": self.responsible_unit,
             "work_hours":       self.work_hours,
             "status":           self.status,
+            "record_status":    self.record_status or "",
             "outsource_fee":    self.outsource_fee,
             "maintenance_fee":  self.maintenance_fee,
             "total_fee":        self.total_fee,

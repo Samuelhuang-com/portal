@@ -250,6 +250,10 @@ export interface MallPMScheduleMatrixEntry {
   category:       string
   frequency:      string
   ragic_url:      string
+  /** 2026-08-27：這筆記錄原本屬於哪個批次月份（顯示月份可能不同） */
+  origin_month?:  number | null
+  /** 2026-08-27：批次月份不在「執行月份」內，但已有實際執行記錄，靠安全閥保留 */
+  off_schedule?:  boolean
 }
 
 export interface MallPMScheduleMatrixCell {

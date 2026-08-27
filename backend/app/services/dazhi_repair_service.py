@@ -231,6 +231,9 @@ RK_FINANCE_NOTE    = "處理說明"            # Ragic: 處理說明
 RK_COMPLETED_AT    = "維修日期"            # Ragic: 維修日期（完修時間）
 RK_CLOSE_DATE      = "驗收日期"            # Ragic: 驗收日期（備用）
 RK_ACCEPT_DATE     = "驗收日期"            # Ragic: 驗收日期
+# Ragic 清單另有獨立的「狀態」欄（結案／待辦／作廢），與「處理狀態」是兩個不同欄位。
+# 「作廢」只會寫在這一欄，因此排除判定必須一併讀取。
+RK_RECORD_STATUS   = "狀態"                # Ragic 清單「狀態」欄
 
 # 別名對應（第一個 alias = Ragic 實際欄位名，後面為備用）
 RK_ALIASES: dict[str, list[str]] = {
@@ -254,6 +257,7 @@ RK_ALIASES: dict[str, list[str]] = {
     RK_COMPLETED_AT:    ["完工時間", "維修日期", "結案時間", "完成時間"],  # 實測：完工時間優先，維修日期備用
     RK_CLOSE_DATE:      ["驗收日期", "結案日期", "完成日期"],
     RK_ACCEPT_DATE:     ["驗收日期"],
+    RK_RECORD_STATUS:   ["狀態"],
 }
 
 
@@ -395,7 +399,7 @@ class RepairCase:
     __slots__ = (
         "ragic_id", "case_no", "title", "reporter_name", "repair_type",
         "floor", "occurred_at", "responsible_unit", "work_hours",
-        "status", "outsource_fee", "maintenance_fee",
+        "status", "record_status", "outsource_fee", "maintenance_fee",
         "acceptor", "accept_status", "closer",
         "deduction_item", "deduction_fee", "finance_note",
         "total_fee", "is_completed_flag", "is_excluded_flag", "completed_at", "close_days",
@@ -432,6 +436,8 @@ class RepairCase:
             _work_hrs = _float(_get_field(raw, RK_WORK_HOURS))
         self.work_hours = _work_hrs
         self.status           = _str(_get_field(raw, RK_STATUS))
+        # Ragic「狀態」欄：與「處理狀態」並存，作廢只寫在此欄
+        self.record_status    = _str(_get_field(raw, RK_RECORD_STATUS))
         self.outsource_fee    = _float(_get_field(raw, RK_OUTSOURCE_FEE))
         self.maintenance_fee  = _float(_get_field(raw, RK_MAINTENANCE_FEE))
         self.acceptor         = _str(_get_field(raw, RK_ACCEPTOR))
@@ -447,7 +453,9 @@ class RepairCase:
 
         # 衍生欄位
         self.total_fee        = self.outsource_fee + self.maintenance_fee
-        self.is_excluded_flag = is_excluded(self.status)  # 取消等不計入統計
+        # 排除判定採 OR：「處理狀態」或 Ragic「狀態」欄任一命中即不計入統計。
+        # 不改動完成判定 —— 完成與否仍只看「處理狀態」。
+        self.is_excluded_flag = is_excluded(self.status) or is_excluded(self.record_status)
 
         # 結案時間：優先用 RK_COMPLETED_AT，再 RK_CLOSE_DATE，再 RK_ACCEPT_DATE
         completed_raw = (
@@ -522,6 +530,7 @@ class RepairCase:
             "responsible_unit": self.responsible_unit,
             "work_hours":       self.work_hours,
             "status":           self.status,
+            "record_status":    self.record_status,
             "outsource_fee":    self.outsource_fee,
             "maintenance_fee":  self.maintenance_fee,
             "total_fee":        self.total_fee,
@@ -772,7 +781,8 @@ def compute_dashboard(
         status_dist[c.status] = status_dist.get(c.status, 0) + 1
 
     # ── 未完成 Top10（status 非完成非排除，依等待天數降序）──────────────────────
-    all_uncompleted = [c for c in all_cases if not is_completed(c.status) and not is_excluded(c.status) and c.occurred_at]
+    all_uncompleted = [c for c in all_cases
+                       if not is_completed(c.status) and not c.is_excluded_flag and c.occurred_at]
     all_uncompleted.sort(
         key=lambda x: (datetime.now() - x.occurred_at).total_seconds(),
         reverse=True,
@@ -1275,6 +1285,7 @@ def query_detail(
     repair_type: Optional[str] = None,
     floor: Optional[str] = None,
     status: Optional[str] = None,
+    record_status: Optional[str] = None,
     keyword: Optional[str] = None,
     page: int = 1,
     page_size: int = 50,
@@ -1293,6 +1304,9 @@ def query_detail(
     if status:
         _statuses = {s.strip() for s in status.split(',')}
         result = [c for c in result if c.status in _statuses]
+    if record_status:
+        _rec = {s.strip() for s in record_status.split(',')}
+        result = [c for c in result if c.record_status in _rec]
     if keyword:
         kw = keyword.lower()
         result = [c for c in result if kw in c.case_no.lower() or kw in c.title.lower()]
@@ -1319,4 +1333,6 @@ def get_filter_options(all_cases: list[RepairCase]) -> dict:
         "repair_types": sorted({c.repair_type for c in all_cases if c.repair_type}),
         "floors":       sorted({(c.floor_normalized or c.floor) for c in all_cases if c.floor}),
         "statuses":     sorted({c.status for c in all_cases if c.status}),
+        # Ragic「狀態」欄（結案／待辦／作廢）— 與「處理狀態」是不同欄位
+        "record_statuses": sorted({c.record_status for c in all_cases if c.record_status}),
     }

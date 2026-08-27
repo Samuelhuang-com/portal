@@ -2239,6 +2239,15 @@ def get_annual_matrix(
                         cell_sched_date = None
                         cell_status = "no_data"
 
+                    # 2026-08-27（會議裁示）：未來月份的「應做未排」改為
+                    # 「未來待執行」（綠色同心圓）—— 還沒到期不算漏做，
+                    # 用粉紅驚嘆號會讓使用者誤以為已經出事。
+                    # 已有排定日期的（scheduled）維持原狀態，由前端依格子月份上色。
+                    if (year > date.today().year
+                            or (year == date.today().year and m > date.today().month)) \
+                            and cell_status == "no_data":
+                        cell_status = "future_due"
+
                     cells.append(PMScheduleMatrixCell(
                         month          = m,
                         status         = cell_status,

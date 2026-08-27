@@ -20,6 +20,7 @@ export interface RepairCase {
   responsible_unit: string
   work_hours:       number
   status:           string
+  record_status:    string   // Ragic「狀態」欄（結案／待辦／作廢），與 status（處理狀況）不同欄位
   outsource_fee:    number
   maintenance_fee:  number
   total_fee:        number
@@ -205,6 +206,7 @@ export interface DetailQueryParams {
   repair_type?: string
   floor?:       string
   status?:      string[]
+  record_status?: string[]
   keyword?:     string
   page?:        number
   page_size?:   number
@@ -224,6 +226,7 @@ export interface FilterOptions {
   repair_types: string[]
   floors:       string[]
   statuses:     string[]
+  record_statuses: string[]
 }
 
 // ── 金額統計 ──────────────────────────────────────────────────────────────────
