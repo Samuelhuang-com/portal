@@ -16,7 +16,7 @@
  * ⚠️ 期間篩選一律 `StandardRangePicker`，`anchor` 取**評論資料最後一天**
  *    而非 `dayjs()`（CLAUDE.md §8.2）。
  */
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Card, Col, Empty, Row, Segmented, Select, Space, Spin, Table,
   Tag, Tooltip, Typography, message,
@@ -32,12 +32,14 @@ import {
 import StandardRangePicker from '@/components/StandardRangePicker'
 import { MultiCodeSelect, ScopeText, describeCodes, hotelOptions, platformOptions, toParam }
   from '../filterScope'
+import TopicRotationHeatmap from '../TopicRotationHeatmap'
 import {
   fetchDataRange, fetchHotelOptions, fetchMonthly, fetchPlatformOptions,
-  fetchPlatformStats,
+  fetchPlatformStats, fetchTopicRotation,
 } from '@/api/ota'
 import type {
   HotelOption, MonthlyPoint, PlatformOption, PlatformStat,
+  TopicRotationBasis, TopicRotationResult,
 } from '@/types/ota'
 
 const { Text, Paragraph } = Typography
@@ -73,6 +75,17 @@ const OtaTrendPage: React.FC = () => {
   const [platformStats, setPlatformStats] = useState<PlatformStat[]>([])
   const [loading, setLoading] = useState(false)
 
+  // ⭐ 主題輪動（2026-08-27）
+  // ⚠️ 預設 `negative` —— 這張圖是拿來找問題的。切成 `all` 之後名次會被
+  //    常態被稱讚的主題（早餐、服務）洗掉，負面訊號反而看不見。
+  const [rotation, setRotation] = useState<TopicRotationResult | null>(null)
+  const [rotationBasis, setRotationBasis] = useState<TopicRotationBasis>('negative')
+  const [rotationTopN, setRotationTopN] = useState(10)
+  // ⚠️ 全螢幕放大的是**整張 Card** 而不是熱力圖本身 ——
+  //    否則 basis 與「顯示主題數」兩個控制項會留在 Card 的 extra 沒被放大，
+  //    進了全螢幕就調不到（理由見 TopicRotationHeatmap 的 `fullscreenRef`）。
+  const rotationCardRef = useRef<HTMLDivElement>(null)
+
   const filters = useMemo(() => ({
     hotel_code: toParam(hotelCodes),
     platform: toParam(platformCodes),
@@ -85,7 +98,7 @@ const OtaTrendPage: React.FC = () => {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [rangeInfo, mon, plat] = await Promise.all([
+      const [rangeInfo, mon, plat, rot] = await Promise.all([
         fetchDataRange(toParam(hotelCodes) || ''),
         fetchMonthly(filters),
         // ⚠️ 平台對照**不帶 platform 篩選** —— 篩了就只剩一根長條，
@@ -94,16 +107,20 @@ const OtaTrendPage: React.FC = () => {
           ...(range
             ? { start: range[0].format('YYYY-MM-DD'), end: range[1].format('YYYY-MM-DD') }
             : {}) }),
+        // ⚠️ 輪動圖**要**帶 platform 篩選（與平台對照相反）——
+        //    它問的是「這個範圍裡客訴重心怎麼移」，篩選就是那個範圍的定義。
+        fetchTopicRotation(filters, { basis: rotationBasis, top_n: rotationTopN }),
       ])
       setDataEnd(rangeInfo.end)
       setMonthly(mon)
       setPlatformStats(plat)
+      setRotation(rot)
     } catch {
       message.error('載入趨勢資料失敗')
     } finally {
       setLoading(false)
     }
-  }, [hotelCodes, filters, range])
+  }, [hotelCodes, filters, range, rotationBasis, rotationTopN])
 
   useEffect(() => { load() }, [load])
   useEffect(() => {
@@ -418,6 +435,63 @@ const OtaTrendPage: React.FC = () => {
             )}
           </Text>
         </Card>
+
+        {/* ⭐ 主題輪動（2026-08-27）。
+            放在月度趨勢**正下方**而不是頁尾：看到某個月分數掉下來，
+            下一個問題必然是「掉在哪一件事上」，兩張圖要在同一個視線範圍內。 */}
+        <div ref={rotationCardRef} className="ota-rotation-fs">
+        <Card
+          size="small"
+          title={`主題輪動・客訴重心怎麼移${scope.titleSuffix}`}
+          extra={
+            <Space size={12} wrap>
+              <Segmented<TopicRotationBasis>
+                value={rotationBasis} onChange={setRotationBasis} size="small"
+                options={[
+                  { value: 'negative', label: '只看負面' },
+                  { value: 'all', label: '正負都看' },
+                ]}
+              />
+              <Select
+                size="small" value={rotationTopN} onChange={setRotationTopN}
+                style={{ width: 110 }}
+                options={[
+                  { value: 5, label: '前 5 主題' },
+                  { value: 10, label: '前 10 主題' },
+                  { value: 15, label: '前 15 主題' },
+                  { value: 30, label: '全部主題' },
+                ]}
+              />
+              <Tooltip
+                placement="bottomRight"
+                title={
+                  <span>
+                    <b>這張圖看的是「重心」，不是「量」</b>
+                    <br />
+                    每一格是該主題佔那個月全部主題提及的比例。顏色由淡轉深
+                    ＝ 那個月大家講的主要就是這件事。
+                    <br />
+                    <br />
+                    ⚠️ <b>橫著看</b>才有意義：同一列的顏色從淡變深，
+                    代表這個問題正在變成主要客訴。單看一格看不出輪動。
+                    <br />
+                    <br />
+                    ⚠️ 樣本少的月份整欄會變灰 —— 那幾欄的名次容易被單一評論帶動。
+                  </span>
+                }
+              >
+                <QuestionCircleOutlined style={{ color: '#bbb', cursor: 'help' }} />
+              </Tooltip>
+            </Space>
+          }
+          style={{ marginBottom: 16 }}
+        >
+          <TopicRotationHeatmap
+            data={rotation} basis={rotationBasis}
+            fullscreenRef={rotationCardRef}
+          />
+        </Card>
+        </div>
 
         <Row gutter={12}>
           <Col span={11}>

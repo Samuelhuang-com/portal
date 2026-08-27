@@ -18,7 +18,7 @@ from app.models.user import User
 from app.schemas.ota_review import (AlertAgingOut, AlertDailyOut, DataRangeOut,
                                     MonthlyPoint, OverviewOut, OtaReviewListOut,
                                     PlatformStat, ScoreDistributionOut,
-                                    TopicStat)
+                                    TopicRotationOut, TopicStat)
 from app.services import ota_review_service as RS
 from app.services import ota_stats_service as SS
 
@@ -101,6 +101,35 @@ def topics(
     return SS.get_topic_stats(db, hotel_code=hotel_code, platform=platform,
                               start=start, end=end,
                               include_duplicate=include_duplicate)
+
+
+@router.get("/topic-rotation", response_model=TopicRotationOut,
+            summary="主題輪動（月 × 主題的佔比與名次）")
+def topic_rotation(
+    hotel_code: str = Query("", description="飯店代碼；**逗號串接可多選**（HANNS,HANNS_SUMMER）。單值格式向下相容"),
+    platform: str = Query("", description="平台代碼；**逗號串接可多選**（booking,agoda）。單值格式向下相容"),
+    start: str = Query(""),
+    end: str = Query(""),
+    include_duplicate: bool = Query(False, description="是否含跨站重複的評論（要與清單頁一致）"),
+    basis: str = Query("negative", pattern="^(negative|all)$",
+                       description="名次與佔比的計算基準：negative＝只算負面提及（預設），all＝正負都算"),
+    top_n: int = Query(10, ge=3, le=30, description="熱力圖顯示幾個主題（依 basis 總量取前 N）"),
+    db: Session = Depends(get_db),
+    _: User = Depends(_TREND),
+):
+    """
+    與 `/topics` 的差別是**時間軸**：那支回一個區間的總和，這支回逐月的格子。
+
+    ⚠️ 這張圖看的是**佔比與名次**而非絕對數。旺季評論本來就多，
+       看絕對數只會看到「什麼都在漲」，看不出客訴重心的移動。
+
+    ⚠️ `include_duplicate` 要與清單頁的「顯示重複」開關一致，
+       否則會重演 2026-08-25 那個「圖上寫 12、點下去只有 9 筆」的問題。
+    """
+    return SS.get_topic_rotation(db, hotel_code=hotel_code, platform=platform,
+                                 start=start, end=end,
+                                 include_duplicate=include_duplicate,
+                                 basis=basis, top_n=top_n)
 
 
 @router.get("/score-distribution", response_model=ScoreDistributionOut,

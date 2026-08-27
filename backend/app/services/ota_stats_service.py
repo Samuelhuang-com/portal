@@ -19,12 +19,14 @@ from datetime import date, timedelta
 from sqlalchemy import Float, case, cast, func, select
 from sqlalchemy.orm import Session
 
-from app.models.ota_review import OtaReview, OtaSource
+from app.models.ota_review import OtaReview, OtaSource, OtaTopicRule
 from app.schemas.ota_review import (AlertAgingBucket, AlertAgingOut,
                                     DataRangeOut, MonthlyPoint, OverviewOut,
                                     AlertDailyOut, AlertDailyPoint,
                                     PlatformStat, ScoreBucket,
-                                    ScoreDistributionOut, TopicStat)
+                                    ScoreDistributionOut, TopicRotationCell,
+                                    TopicRotationMonth, TopicRotationOut,
+                                    TopicRotationTopic, TopicStat)
 from app.services.ota_normalize import (NEGATIVE_SCORE_MAX, PLATFORM_LABEL,
                                         split_codes)
 
@@ -531,4 +533,202 @@ def get_alert_daily(
         max_count=max((p.count for p in points), default=0),
         total=sum(p.count for p in points),
         data_end=data_end,
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 主題輪動（月 × 主題）    2026-08-27
+# ══════════════════════════════════════════════════════════════════════════
+def _topic_dict_order(db: Session) -> dict[str, int]:
+    """
+    主題在**字典裡**的順序（`ota_topic_rules` 每個主題最小的 id）。
+
+    ═══════════════════════════════════════════════════════════════════
+    為什麼熱力圖的列序不能用「總量由多到少」
+    ═══════════════════════════════════════════════════════════════════
+    2026-08-27 使用者要求「主題固定不被移動」。原因很實際：
+
+    1. **切換 negative／all、改一次篩選，整張圖的列就重排一次。**
+       使用者要比較的是「同一列在不同月份的變化」，列自己在跳的話
+       每次都要重新找那一列在哪，等於每看一次都要重新認識這張圖。
+    2. **播放功能更不能重排。** 時間游標掃過去時若列序會動，
+       畫面上會同時有兩種動態（顏色在變、列也在跳），看不出是哪一列在變。
+
+    順序取自 `ota_topic_rules` 的 id：`ensure_builtin_topic_rules()` 是照
+    `BUILTIN_TOPICS` 的宣告順序寫進去的，AI 候選採納後自然接在後面。
+    **字典本身就是唯一真實來源**，不需要在這裡再維護第二份順序清單
+    （維護兩份的結果一定是不同步）。
+
+    ⚠️ 查不到的主題（字典裡已淘汰、但舊評論還留著標記）排在最後，
+       用主題名排序保持穩定 —— 見 `get_topic_rotation()` 的 `_FALLBACK_ORDER`。
+    """
+    rows = db.execute(
+        select(OtaTopicRule.topic, func.min(OtaTopicRule.id))
+        .group_by(OtaTopicRule.topic)
+    ).all()
+    return {topic: int(min_id) for topic, min_id in rows if topic}
+
+
+def _topic_since_months(db: Session) -> dict[str, str]:
+    """
+    非內建主題進入字典的月份。
+
+    ⚠️ **只查 `is_builtin == False`**，理由見 `TopicRotationTopic.since_month`
+       的註解：內建主題的 `created_at` 是字典初始化那一天，不是主題誕生那一天。
+       照實回報的話整張圖每個主題都會掛上「新主題」標記，等於沒有標記。
+    """
+    rows = db.execute(
+        select(OtaTopicRule.topic, func.min(OtaTopicRule.created_at))
+        .where(OtaTopicRule.is_builtin.is_(False))
+        .group_by(OtaTopicRule.topic)
+    ).all()
+    out: dict[str, str] = {}
+    for topic, created in rows:
+        if topic and created is not None:
+            out[topic] = created.strftime("%Y-%m")
+    return out
+
+
+def get_topic_rotation(
+    db: Session, *, hotel_code: str = "", platform: str = "",
+    start: str = "", end: str = "", include_duplicate: bool = False,
+    basis: str = "negative", top_n: int = 10,
+) -> TopicRotationOut:
+    """
+    「客訴重心在月份之間怎麼漂移」—— 月 × 主題的提及數、佔比與名次。
+
+    ═══════════════════════════════════════════════════════════════════
+    為什麼是**佔比與名次**，不是絕對數
+    ═══════════════════════════════════════════════════════════════════
+    OTA 評論則數本身有淡旺季，旺季每個主題都會變多。看絕對數只會看到
+    「暑假什麼都在漲」，看不出重心移動。佔比與名次把量的變化除掉，
+    留下的才是「這個月大家在抱怨什麼」。
+
+    ⚠️ `include_duplicate` 必須跟著清單頁的開關走（與 `get_topic_stats`
+       同一個理由，2026-08-25 已經踩過一次）。
+
+    ⚠️ 篩選用 `review_date`（`_date_filters`），聚合用 `review_month`。
+       兩者是寫入時一起算好的同一件事，但 `review_month` 可能是空字串
+       （日期解析失敗時），那些評論**不能進時間軸**，否則會多出一格叫 ""。
+
+    ⚠️ `basis="negative"` 是預設值：這張圖是拿來找問題的。
+       切成 `"all"` 時名次會被好評主題（早餐、服務常態性被稱讚）洗掉，
+       負面訊號反而看不見。
+    """
+    import json
+
+    use_neg_only = basis != "all"
+
+    stmt = _date_filters(
+        _base_filters(
+            select(OtaReview.review_month, OtaReview.topics_json).where(
+                OtaReview.topics_json.isnot(None),
+                OtaReview.review_month != "",
+            ),
+            hotel_code, platform, include_duplicate,
+        ),
+        start, end,
+    )
+
+    # month -> topic -> {"neg": n, "pos": n}
+    grid: dict[str, dict[str, dict[str, int]]] = {}
+    totals: dict[str, dict[str, int]] = {}
+    review_counts: dict[str, int] = {}
+
+    for review_month, topics_json in db.execute(stmt).all():
+        try:
+            tags = json.loads(topics_json)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(tags, list):
+            continue
+        # 有標記才算進樣本數 —— 空陣列代表這則評論沒有任何主題，
+        # 把它算進分母會讓每個月看起來樣本都很足
+        if not tags:
+            continue
+        review_counts[review_month] = review_counts.get(review_month, 0) + 1
+        for tag in tags:
+            name, _, polarity = str(tag).partition(":")
+            if not name:
+                continue
+            key = "pos" if polarity == "pos" else "neg"
+            grid.setdefault(review_month, {}).setdefault(
+                name, {"neg": 0, "pos": 0})[key] += 1
+            totals.setdefault(name, {"neg": 0, "pos": 0})[key] += 1
+
+    def _value(counts: dict[str, int]) -> int:
+        return counts["neg"] if use_neg_only else counts["neg"] + counts["pos"]
+
+    # ── 主題排序：先照 basis 總量，同分用主題名，讓每次回傳的順序固定 ──
+    ranked_topics = sorted(
+        totals.items(), key=lambda kv: (-_value(kv[1]), kv[0]))
+    kept = [(name, counts) for name, counts in ranked_topics if _value(counts) > 0]
+    truncated = max(len(kept) - top_n, 0)
+    kept = kept[:top_n]
+    kept_names = {name for name, _ in kept}
+
+    # ── 顯示順序：字典順序，**不是**總量順序（2026-08-27）──────────────
+    #
+    # ⚠️ `top_n` 挑「哪幾個主題」仍然照總量（否則會挑到整張圖都是空白的冷門
+    #    主題），但**排出來的順序**一律照字典。兩件事分開，理由見
+    #    `_topic_dict_order()`。
+    #
+    # ⚠️ 切換 basis 或改篩選時，被挑中的主題集合仍可能變動（總量變了），
+    #    於是列會增減。要完全不增減請把「顯示主題數」調到「全部主題」。
+    dict_order = _topic_dict_order(db)
+    _FALLBACK_ORDER = 10 ** 6   # 字典裡查不到的（已淘汰主題）排最後
+    kept.sort(key=lambda kv: (dict_order.get(kv[0], _FALLBACK_ORDER), kv[0]))
+
+    since = _topic_since_months(db)
+    months_sorted = sorted(grid.keys())
+
+    month_rows: list[TopicRotationMonth] = []
+    cells: list[TopicRotationCell] = []
+
+    for month in months_sorted:
+        by_topic = grid[month]
+        # ⚠️ 分母用**該月全部主題**而不是只有 kept ——
+        #    被 top_n 切掉的主題也是那個月的一部分，
+        #    拿 kept 當分母會讓佔比虛胖，而且切幾個主題就變一個數字。
+        mention_total = sum(_value(c) for c in by_topic.values())
+
+        # 名次只在 kept 之內算，且**沒被提到的不給名次**
+        present = sorted(
+            ((name, _value(by_topic[name])) for name in kept_names
+             if name in by_topic and _value(by_topic[name]) > 0),
+            key=lambda kv: (-kv[1], kv[0]),
+        )
+        rank_of = {name: i + 1 for i, (name, _) in enumerate(present)}
+
+        for name, value in present:
+            counts = by_topic[name]
+            cells.append(TopicRotationCell(
+                review_month=month,
+                topic=name,
+                mentions=value,
+                negative_count=counts["neg"],
+                positive_count=counts["pos"],
+                share=round(value / mention_total, 4) if mention_total else 0.0,
+                rank=rank_of[name],
+            ))
+
+        month_rows.append(TopicRotationMonth(
+            review_month=month,
+            mention_total=mention_total,
+            review_count=review_counts.get(month, 0),
+        ))
+
+    return TopicRotationOut(
+        basis="negative" if use_neg_only else "all",
+        months=month_rows,
+        topics=[
+            TopicRotationTopic(
+                topic=name,
+                total=_value(counts),
+                since_month=since.get(name, ""),
+            )
+            for name, counts in kept
+        ],
+        cells=cells,
+        truncated_topics=truncated,
     )

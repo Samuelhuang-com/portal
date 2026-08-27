@@ -207,6 +207,60 @@ class TopicStat(BaseModel):
     total_count: int = 0
 
 
+# ── 主題輪動（2026-08-27）────────────────────────────────────────────────
+#
+# ⚠️ 與 `TopicStat` 的差別是**時間軸**，不是欄位多寡。
+#    `TopicStat` 回的是一個區間的總和（快照），這組回的是「月 × 主題」的格子，
+#    用來看客訴重心在月份之間怎麼漂移。兩者不可互相取代，也不要合併 ——
+#    快照那支被 Dashboard 與清單頁共用，加上月份維度會讓它們全部要改。
+class TopicRotationMonth(BaseModel):
+    """時間軸上的一格。`review_count` 是**評論則數**，不是提及數。"""
+
+    review_month: str
+    mention_total: int = 0     # 該月所有主題的提及數總和（share 的分母）
+    review_count: int = 0      # 該月有主題標記的評論則數（樣本數警告用）
+
+
+class TopicRotationTopic(BaseModel):
+    """
+    熱力圖的一列。`total` 依 `basis` 計算，決定列的排序。
+
+    ⚠️ `since_month` **只對非內建主題有值**。
+       內建主題的 `created_at` 是「字典初始化的那一天」而不是「這個主題開始
+       存在的那一天」，評論多半比它更早（回補進來的）。若照實回報，
+       每個內建主題都會被標成「新主題」，警告就失去意義了。
+    """
+
+    topic: str
+    total: int = 0
+    since_month: str = ""
+
+
+class TopicRotationCell(BaseModel):
+    """
+    ⚠️ `rank` 為 None 代表該主題那個月**完全沒被提到**，不是「排最後」。
+       把沒出現的東西排進名次會讓熱力圖看起來每個月每個主題都有事。
+    """
+
+    review_month: str
+    topic: str
+    mentions: int = 0          # basis 對應的提及數
+    negative_count: int = 0
+    positive_count: int = 0
+    share: float = 0.0         # 佔該月 mention_total 的比例（0~1）
+    rank: Optional[int] = None
+
+
+class TopicRotationOut(BaseModel):
+    basis: Literal["negative", "all"] = "negative"
+    months: list[TopicRotationMonth] = []
+    topics: list[TopicRotationTopic] = []
+    # 只含非零的格子 —— 空白格由前端用 months × topics 補，不必傳。
+    cells: list[TopicRotationCell] = []
+    # 被 top_n 切掉的主題數，畫面上要說出來（不然使用者以為字典只有這幾個）
+    truncated_topics: int = 0
+
+
 class ScoreBucket(BaseModel):
     """
     分數分布的一格（2026-08-25）。

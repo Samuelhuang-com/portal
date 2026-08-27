@@ -74,6 +74,10 @@ def source_info() -> dict[str, Any]:
         "note": ("本頁資料來自 OPERA Cloud API，**不是**人工上傳的 TXT 報表。"
                  "市場區隔（Market Code）是貴飯店在 OPERA 自行設定的分類，"
                  "與 TXT 的「散客／團體」四類**不是同一套分類，不可互相對照**。"),
+        # ⚠️ 這句必須顯示在畫面上：市場區隔那張表的住房率分母不是「該區隔的房間數」。
+        "occupancy_note": ("依市場區隔看時，住房率與 RevPAR 的分母是**全館可售房**"
+                           "（房間本身不屬於任何一個市場區隔），因此各列的住房率"
+                           "相加才等於全館住房率。依房型看時，分母才是該房型自己的可售房。"),
     }
 
 
@@ -92,12 +96,85 @@ def data_range(db: Session) -> dict[str, Any]:
     return {"start": row[0], "end": row[1], "has_data": bool(row[1])}
 
 
-def _fetch(db: Session, start: str, end: str) -> list[OhipRevenueHistory]:
-    hotel_id = settings.OHIP_HOTEL_ID
-    return (db.query(OhipRevenueHistory)
-              .filter(OhipRevenueHistory.hotel_id == hotel_id,
-                      OhipRevenueHistory.business_date >= start,
-                      OhipRevenueHistory.business_date <= end)
+# 直接 SUM 的欄位（`available_rooms` 是 physical − OOO，另外處理）
+_SUM_FIELDS: tuple[str, ...] = (
+    "rooms_sold", "room_revenue", "total_revenue", "cancelled_rooms", "arrival_rooms",
+)
+
+
+def _grouped(db: Session, start: str, end: str, dimension: str) -> list[tuple]:
+    """依「維度 × 年月」在 SQL 端聚合後才回 Python（2026-08-27 改）。
+
+    ⚠️⚠️ **絕對不要改回 `db.query(OhipRevenueHistory)...all()` 全撈。**
+       這張表目前 19.7 萬列且以每天約 266 列成長。實測（740 天全期間）：
+         · 全撈 + Python 迴圈：4,521 ms / 常駐記憶體 500 MB
+         · 本函式（GROUP BY 下推）：159 ms / 115 KB
+       `analyze()` 開 YoY 會查兩次，全撈版的單一請求峰值接近 1 GB。
+       後端是單 worker，任何人打開這頁選「全部」就會讓整個 Portal 停住數秒。
+
+    ⚠️ 每個欄位都要包 `COALESCE(...,0)`：SQL 的 `NULL - NULL` 是 NULL 而
+       `SUM()` 會直接略過 NULL，與原本 `_d(None) == 0` 的語意不同。
+       少包一個 COALESCE，可售房就會在來源缺值時被少算而不報錯。
+
+    ⚠️ **這裡不算可售房** —— `physical_rooms` 在每個 market 列上重複，
+       直接 `SUM()` 會被放大成 market 數倍。可售房一律走 `_inventory()`。
+
+    回傳每列：`(維度值, 年月, *_SUM_FIELDS, 原始列數)`
+    """
+    H = OhipRevenueHistory
+    dim_col = getattr(H, dimension)          # dimension 已由呼叫端限定在 VALID_DIMS
+    ym_col = func.substr(func.coalesce(H.business_date, ""), 1, 7)
+    sum_cols = [func.sum(func.coalesce(getattr(H, f), 0)) for f in _SUM_FIELDS]
+
+    return (db.query(dim_col, ym_col, *sum_cols, func.count())
+              .filter(H.hotel_id == settings.OHIP_HOTEL_ID,
+                      H.business_date >= start,
+                      H.business_date <= end)
+              .group_by(dim_col, ym_col)
+              .all())
+
+
+def _inventory(db: Session, start: str, end: str) -> list[tuple]:
+    """可售房：先按 `(日期, 房型)` 去重，再加總（2026-08-27 修正）。
+
+    ⚠️⚠️ **這是本模組最容易算錯的一件事。**
+       `ohip_revenue_history` 的唯一鍵是 `(hotel_id, business_date, market_code,
+       room_type)`，而 `physical_rooms` 是**該房型的存量、原封不動重複在每個
+       market 列上**。直接 `SUM(physical_rooms - ooo_rooms)` 會乘上 market 數。
+
+       實測 2026-08-20：19 個 market 每個都顯示 69（＝全館存量），
+       加總得 1,311 ＝ 69 × 19。整段期間 OHIP 每日 1,310.2 對上 TXT 來源
+       （`/opera/revenue/kpi`）每日 68.96，比值正好 19.00 ＝ market 基數。
+       修正前畫面顯示住房率 3.8%，真實值是 72.8%。
+
+    ⚠️ 內層用 `MAX()` 而不是 `SELECT DISTINCT`：若同一 `(日期, 房型)` 的各
+       market 列之間 `physical_rooms` 不一致（來源異常），`DISTINCT` 會留下
+       多列而再次重複計算，`MAX()` 則保證每組只取一個值。
+
+    ⚠️ `rooms_sold` / 各項營收**沒有**這個問題 —— 它們本來就按
+       `(market × 房型)` 分開記錄，實測依兩個維度加總都是 67，一致。
+
+    回傳每列：`(房型, 年月, available_rooms)`
+    """
+    H = OhipRevenueHistory
+    ym_expr = func.substr(func.coalesce(H.business_date, ""), 1, 7)
+
+    # 內層：每個 (日期, 房型) 只留一組存量
+    per_day = (db.query(
+                   H.business_date.label("bd"),
+                   H.room_type.label("rt"),
+                   ym_expr.label("ym"),
+                   func.max(func.coalesce(H.physical_rooms, 0)).label("phys"),
+                   func.max(func.coalesce(H.ooo_rooms, 0)).label("ooo"))
+                 .filter(H.hotel_id == settings.OHIP_HOTEL_ID,
+                         H.business_date >= start,
+                         H.business_date <= end)
+                 .group_by(H.business_date, H.room_type)
+                 .subquery())
+
+    return (db.query(per_day.c.rt, per_day.c.ym,
+                     func.sum(per_day.c.phys - per_day.c.ooo))
+              .group_by(per_day.c.rt, per_day.c.ym)
               .all())
 
 
@@ -107,15 +184,62 @@ def _blank() -> dict[str, Decimal]:
              "cancelled_rooms", "arrival_rooms")}
 
 
-def _add(acc: dict[str, Decimal], r: OhipRevenueHistory) -> None:
-    phys = _d(r.physical_rooms)
-    ooo = _d(r.ooo_rooms)
-    acc["available_rooms"] += (phys - ooo)     # ⚠️ 可售房 = physical − OOO
-    acc["rooms_sold"] += _d(r.rooms_sold)
-    acc["room_revenue"] += _d(r.room_revenue)
-    acc["total_revenue"] += _d(r.total_revenue)
-    acc["cancelled_rooms"] += _d(r.cancelled_rooms)
-    acc["arrival_rooms"] += _d(r.arrival_rooms)
+def _add(acc: dict[str, Decimal], row: tuple) -> None:
+    """把一列 `_grouped()` 的結果累加進 `acc`（不含可售房，見 `_inventory()`）。
+
+    ⚠️ SQLite 的 `SUM()` 走 float，這裡才轉回 Decimal。實測 19.7 萬列、
+       總額 54.8 億時與「逐列 Decimal 相加」差 0.000014 元，`round(2)` 後一致。
+    """
+    for i, field in enumerate(_SUM_FIELDS, start=2):
+        acc[field] += _d(row[i])
+
+
+def _inv_maps(db: Session, start: str, end: str
+              ) -> tuple[dict[str, Decimal], dict[str, Decimal],
+                         dict[tuple[str, str], Decimal], Decimal]:
+    """把 `_inventory()` 攤成四份對照表：依房型／依月／依房型×月／總計。"""
+    by_rt: dict[str, Decimal] = defaultdict(Decimal)
+    by_month: dict[str, Decimal] = defaultdict(Decimal)
+    by_rt_month: dict[tuple[str, str], Decimal] = defaultdict(Decimal)
+    total = Decimal(0)
+    for rt_raw, ym_raw, avail in _inventory(db, start, end):
+        rt = (rt_raw or "") or UNCLASSIFIED     # 與 `_grouped()` 的正規化一致
+        ym = ym_raw or ""
+        v = _d(avail)
+        by_rt[rt] += v
+        by_month[ym] += v
+        by_rt_month[(rt, ym)] += v
+        total += v
+    return by_rt, by_month, by_rt_month, total
+
+
+def _apply_available(by_dim, by_dim_month, by_month, total,
+                     dimension: str, inv: tuple) -> None:
+    """把可售房填進四個累加器。
+
+    ⚠️ **分母的歸屬依維度而不同，這是刻意的：**
+       · `room_type`：房型**擁有**存量 → 用該房型自己的可售房。
+       · `market_code`：市場區隔**不擁有**存量（69 間房不屬於任何一個 market）
+         → 一律用**全館**可售房。因此各 market 的住房率是
+         「該 market 售出 ÷ 全館可售」，各列相加才等於全館住房率。
+         這個定義已於 2026-08-27 與使用者確認。
+    """
+    inv_by_rt, inv_by_month, inv_by_rt_month, inv_total = inv
+
+    total["available_rooms"] = inv_total
+    for m in by_month:
+        by_month[m]["available_rooms"] = inv_by_month.get(m, Decimal(0))
+
+    if dimension == DIM_ROOM_TYPE:
+        for k in by_dim:
+            by_dim[k]["available_rooms"] = inv_by_rt.get(k, Decimal(0))
+        for key in by_dim_month:
+            by_dim_month[key]["available_rooms"] = inv_by_rt_month.get(key, Decimal(0))
+    else:
+        for k in by_dim:
+            by_dim[k]["available_rooms"] = inv_total
+        for (k, m) in by_dim_month:
+            by_dim_month[(k, m)]["available_rooms"] = inv_by_month.get(m, Decimal(0))
 
 
 def _derive(acc: dict[str, Decimal]) -> dict[str, Any]:
@@ -157,7 +281,9 @@ def analyze(db: Session, *, start: str, end: str, dimension: str = DIM_MARKET,
     if dimension not in VALID_DIMS:
         dimension = DIM_MARKET
 
-    rows = _fetch(db, start, end)
+    # ⚠️ 只發一支「維度 × 年月」查詢，其餘三個累加器由這份結果往上捲。
+    #    分四支各自 GROUP BY 也可以，但那會讓四個口徑有機會各自漂移。
+    rows = _grouped(db, start, end, dimension)
 
     # ── ① 結構：依維度彙總 ──────────────────────────────────────────────────
     by_dim: dict[str, dict[str, Decimal]] = defaultdict(_blank)
@@ -165,22 +291,36 @@ def analyze(db: Session, *, start: str, end: str, dimension: str = DIM_MARKET,
     by_dim_month: dict[tuple[str, str], dict[str, Decimal]] = defaultdict(_blank)
     by_month: dict[str, dict[str, Decimal]] = defaultdict(_blank)
     total = _blank()
+    row_count = 0
 
     for r in rows:
-        key = (getattr(r, dimension) or "") or UNCLASSIFIED
-        month = (r.business_date or "")[:7]
+        # ⚠️ SQL 會把 NULL 與空字串分成兩組，這裡正規化後才合併，
+        #    與原本「全撈」版的 `(v or "") or UNCLASSIFIED` 結果一致。
+        key = (r[0] or "") or UNCLASSIFIED
+        month = r[1] or ""
         _add(by_dim[key], r)
         _add(by_dim_month[(key, month)], r)
         _add(by_month[month], r)
         _add(total, r)
+        row_count += int(r[-1] or 0)      # 原始列數，供前端顯示樣本數
+
+    # ⚠️ 可售房另外查（`physical_rooms` 在每個 market 列上重複，不能直接 SUM）
+    _apply_available(by_dim, by_dim_month, by_month, total,
+                     dimension, _inv_maps(db, start, end))
 
     prev_by_dim: dict[str, dict[str, Decimal]] = defaultdict(_blank)
     prev_total = _blank()
     if compare_yoy:
-        for r in _fetch(db, _shift_year(start), _shift_year(end)):
-            key = (getattr(r, dimension) or "") or UNCLASSIFIED
+        prev_start, prev_end = _shift_year(start), _shift_year(end)
+        prev_dummy_month: dict[str, dict[str, Decimal]] = defaultdict(_blank)
+        prev_dummy_dim_month: dict[tuple[str, str], dict[str, Decimal]] = defaultdict(_blank)
+        for r in _grouped(db, prev_start, prev_end, dimension):
+            key = (r[0] or "") or UNCLASSIFIED
             _add(prev_by_dim[key], r)
             _add(prev_total, r)
+        # 去年同期的可售房要用**去年的**存量，不能沿用今年的
+        _apply_available(prev_by_dim, prev_dummy_dim_month, prev_dummy_month,
+                         prev_total, dimension, _inv_maps(db, prev_start, prev_end))
 
     total_rev = total["room_revenue"]
 
@@ -229,7 +369,7 @@ def analyze(db: Session, *, start: str, end: str, dimension: str = DIM_MARKET,
         "summary": summary,
         "segments": segments,
         "trend": trend,
-        "row_count": len(rows),
+        "row_count": row_count,
         "source": source_info(),
         "data_range": data_range(db),
     }

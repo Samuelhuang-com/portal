@@ -271,6 +271,49 @@ export interface TopicStat {
   total_count: number
 }
 
+// ── 主題輪動（2026-08-27）─────────────────────────────────────────
+//
+// ⚠️ 與 `TopicStat` 的差別是**時間軸**。`TopicStat` 是一個區間的總和，
+//    這組是逐月的格子，用來看客訴重心怎麼漂移。
+export type TopicRotationBasis = 'negative' | 'all'
+
+export interface TopicRotationMonth {
+  review_month: string
+  /** 該月所有主題的提及數總和（share 的分母） */
+  mention_total: number
+  /** 該月**有主題標記的評論則數**，不是提及數。樣本數警告用 */
+  review_count: number
+}
+
+export interface TopicRotationTopic {
+  topic: string
+  total: number
+  /** 非內建主題進字典的月份；內建一律空字串（理由見後端註解） */
+  since_month: string
+}
+
+export interface TopicRotationCell {
+  review_month: string
+  topic: string
+  mentions: number
+  negative_count: number
+  positive_count: number
+  /** 佔該月 mention_total 的比例（0~1） */
+  share: number
+  /** ⚠️ null ＝ 該月完全沒被提到，不是「排最後」 */
+  rank: number | null
+}
+
+export interface TopicRotationResult {
+  basis: TopicRotationBasis
+  months: TopicRotationMonth[]
+  topics: TopicRotationTopic[]
+  /** 只含非零的格子，空白格由前端用 months × topics 補 */
+  cells: TopicRotationCell[]
+  /** 被 top_n 切掉的主題數 */
+  truncated_topics: number
+}
+
 // ══════════════════════════════════════════════════════════════════
 // 同步與匯入
 // ══════════════════════════════════════════════════════════════════

@@ -69,6 +69,12 @@ export interface SegmentSource {
   hotel_id: string
   /** ⚠️ 這句必須顯示在畫面上 —— 同模組混了兩種資料來源 */
   note: string
+  /**
+   * ⚠️ 住房率／RevPAR 的分母口徑（2026-08-27 v1.96.33 起提供）。
+   *    依市場區隔看時分母是**全館**可售房（房間不屬於任何一個 market），
+   *    不標示的話會被誤讀成「該區隔自己房間的住房率」。
+   */
+  occupancy_note?: string
 }
 
 export interface SegmentResult {

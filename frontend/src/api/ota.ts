@@ -11,7 +11,7 @@ import type {
   PlatformStat, ReviewFilters, SyncLog, SyncRunResult, SyncStatusInfo, TopicRule,
   OtaPlatformInput, OtaPlatformRow, TopicCandidate, TopicStat,
   ForceUnlockResult, AlertAgingResult, ScoreDistributionResult,
-  AlertDailyResult,
+  AlertDailyResult, TopicRotationBasis, TopicRotationResult,
 } from '@/types/ota'
 
 const REVIEWS = '/ota/reviews'
@@ -125,6 +125,22 @@ export async function fetchPlatformStats(filters: ReviewFilters = {}): Promise<P
 
 export async function fetchTopicStats(filters: ReviewFilters = {}): Promise<TopicStat[]> {
   const res = await apiClient.get<TopicStat[]>(`${STATS}/topics`, { params: toParams(filters) })
+  return res.data
+}
+
+/**
+ * 主題輪動（月 × 主題）。
+ *
+ * ⚠️ `basis` 預設 `negative` —— 這張圖是拿來找問題的。切成 `all` 之後
+ *    名次會被常態被稱讚的主題（早餐、服務）洗掉，負面訊號反而看不見。
+ */
+export async function fetchTopicRotation(
+  filters: ReviewFilters = {},
+  opts: { basis?: TopicRotationBasis; top_n?: number } = {},
+): Promise<TopicRotationResult> {
+  const res = await apiClient.get<TopicRotationResult>(`${STATS}/topic-rotation`, {
+    params: { ...toParams(filters), ...opts },
+  })
   return res.data
 }
 

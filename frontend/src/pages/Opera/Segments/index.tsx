@@ -13,7 +13,7 @@
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import {
-  Alert, Button, Card, Col, Empty, Modal, Progress, Radio, Row, Space, Spin,
+  Alert, Button, Card, Col, Divider, Empty, Modal, Progress, Radio, Row, Space, Spin,
   Statistic, Table, Tabs, Tag, Tooltip, Typography,
 } from 'antd'
 import {
@@ -189,6 +189,15 @@ const OperaSegmentsPage: React.FC = () => {
    */
   const sourceNote = sync?.source?.note || data?.source?.note || ''
 
+  /**
+   * 住房率／RevPAR 的分母口徑（v1.96.33）。
+   * ⚠️ 依市場區隔看時分母是**全館**可售房 —— 房間不屬於任何一個 market。
+   *    不標示的話「OTA 住房率 35.7%」會被讀成「OTA 自己房間的住房率」，
+   *    實際語意是「OTA 吃掉了全館可售房的 35.7%」，各列相加才等於全館住房率。
+   */
+  const occupancyNote = sync?.source?.occupancy_note || data?.source?.occupancy_note || ''
+  const denomLabel = dimension === 'market_code' ? '分母：全館可售房' : '分母：該房型可售房'
+
   return (
     <div style={{ padding: 24 }}>
       <Space direction="vertical" size={4} style={{ marginBottom: 16 }}>
@@ -228,6 +237,19 @@ const OperaSegmentsPage: React.FC = () => {
             __html: sourceNote.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>'),
           }}
         />
+        {/* 住房率分母口徑（v1.96.33）—— 與來源說明分開，兩者講的不是同一件事 */}
+        {occupancyNote && (
+          <>
+            <Divider style={{ margin: '16px 0 12px' }} />
+            <Text strong style={{ display: 'block', marginBottom: 6 }}>住房率與 RevPAR 的分母</Text>
+            <div
+              style={{ lineHeight: 1.8 }}
+              dangerouslySetInnerHTML={{
+                __html: occupancyNote.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>'),
+              }}
+            />
+          </>
+        )}
       </Modal>
 
       {/* 回補進度：沒補完就一直顯示，補完自動消失 */}
@@ -315,6 +337,15 @@ const OperaSegmentsPage: React.FC = () => {
                              precision={1} suffix="%"
                              valueStyle={{ color: (summary?.occupancy ?? 0) >= 0.7 ? GREEN : ORANGE }} />
                   <YoY value={summary?.yoy_occupancy} />
+                  {/* ⚠️ 分母口徑必須標在數字旁 —— 放進說明 Modal 沒人會去點 */}
+                  {occupancyNote && (
+                    <Tooltip title={occupancyNote.replace(/\*\*/g, '')}>
+                      <Text type="secondary"
+                            style={{ fontSize: 11, borderBottom: '1px dotted #bfbfbf', cursor: 'help' }}>
+                        　{denomLabel}
+                      </Text>
+                    </Tooltip>
+                  )}
                 </Col>
                 <Col xs={12} sm={8} md={4}>
                   <Statistic title={`${dimLabel}數`} value={data.segments.length}
