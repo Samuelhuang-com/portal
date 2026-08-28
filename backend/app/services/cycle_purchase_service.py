@@ -642,7 +642,7 @@ def get_cycle_options(db: Session, companies_filter: Optional[list[str]] = None)
         ).filter(CyclePurchaseItemMapping.company.in_(companies_filter))
     categories = [
         row[0]
-        for row in category_query.distinct().order_by(CyclePurchaseItem.category).all()
+        for row in category_query.distinct().order_by(CyclePurchaseItem.category.nullslast()).all()
         if row[0]
     ]
 

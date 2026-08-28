@@ -546,7 +546,7 @@ def get_module_field_detail(db: Session, portal_route: str) -> list[dict]:
     """
     existing = db.query(RagicPortalFieldMapping).filter(
         RagicPortalFieldMapping.portal_route == portal_route
-    ).order_by(RagicPortalFieldMapping.portal_db_table, RagicPortalFieldMapping.id).all()
+    ).order_by(RagicPortalFieldMapping.portal_db_table.nullslast(), RagicPortalFieldMapping.id).all()
 
     if existing:
         return [_mapping_to_dict(m) for m in existing]
@@ -616,8 +616,8 @@ def get_all_issues(db: Session, severity: Optional[str] = None, is_resolved: Opt
         q = q.filter(RagicPortalFieldMapping.is_resolved == is_resolved)
 
     rows = q.order_by(
-        RagicPortalFieldMapping.severity,
-        RagicPortalFieldMapping.module_name
+        RagicPortalFieldMapping.severity.nullslast(),
+        RagicPortalFieldMapping.module_name.nullslast()
     ).all()
 
     return [_mapping_to_dict(m) for m in rows]
@@ -973,8 +973,8 @@ def generate_excel_report(db: Session) -> bytes:
     write_header(ws2, headers2)
 
     all_mappings = db.query(RagicPortalFieldMapping).order_by(
-        RagicPortalFieldMapping.module_name,
-        RagicPortalFieldMapping.portal_db_table,
+        RagicPortalFieldMapping.module_name.nullslast(),
+        RagicPortalFieldMapping.portal_db_table.nullslast(),
         RagicPortalFieldMapping.id,
     ).all()
 
@@ -1017,7 +1017,7 @@ def generate_excel_report(db: Session) -> bytes:
 
     issues = db.query(RagicPortalFieldMapping).filter(
         RagicPortalFieldMapping.mapping_status.notin_(["normal", "unmapped"])
-    ).order_by(RagicPortalFieldMapping.severity, RagicPortalFieldMapping.module_name).all()
+    ).order_by(RagicPortalFieldMapping.severity.nullslast(), RagicPortalFieldMapping.module_name.nullslast()).all()
 
     sev_map = {"high": "高", "medium": "中", "low": "低"}
     for r, m in enumerate(issues, 2):
@@ -1043,7 +1043,7 @@ def generate_excel_report(db: Session) -> bytes:
                 "篩選條件", "計算公式", "Ragic 原始欄位", "追溯狀態", "備註"]
     write_header(ws4, headers4)
 
-    kpi_rows = db.query(RagicPortalKpiMapping).order_by(RagicPortalKpiMapping.module_name).all()
+    kpi_rows = db.query(RagicPortalKpiMapping).order_by(RagicPortalKpiMapping.module_name.nullslast()).all()
     trace_map = {"traceable": "可追溯", "partial": "部分可追溯", "untraceable": "無法追溯", "unknown": "未確認"}
     for r, k in enumerate(kpi_rows, 2):
         row_data = [

@@ -693,9 +693,17 @@ def get_import_status(db: Session) -> dict:
     # 同一個營業日若有多筆 is_current=1（通常是 property_code 不一致造成），
     # 營收與房晚會被重複計算，而 ADR／住房率因分子分母同時放大而看起來正常，
     # 極難從畫面上發現。因此在這裡主動檢查並回報。
+    # ⚠️ 字串聚合函式兩個資料庫不同名（2026-08-28 PostgreSQL 遷移）：
+    #    SQLite 是 GROUP_CONCAT、PostgreSQL 是 STRING_AGG，且 PG 的
+    #    STRING_AGG **必須指定分隔字元**（SQLite 可省略、預設逗號）。
+    #    這裡是 text() 原始 SQL，用不到 app.core.dialect_compat 的 @compiles，
+    #    所以就地判斷方言 —— 全專案僅此一處。
+    _agg = ("GROUP_CONCAT(DISTINCT property_code)"
+            if db.bind.dialect.name == "sqlite"
+            else "STRING_AGG(DISTINCT property_code, ',')")
     dup_rows = db.execute(text(
         "SELECT record_type, business_date, COUNT(*) AS n, "
-        "       GROUP_CONCAT(DISTINCT property_code) AS props "
+        f"       {_agg} AS props "
         "FROM opera_revenue_daily WHERE is_current = 1 "
         "GROUP BY record_type, business_date HAVING COUNT(*) > 1 "
         "ORDER BY business_date LIMIT 500"

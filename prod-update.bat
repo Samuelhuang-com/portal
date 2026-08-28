@@ -35,7 +35,7 @@ if exist .git\index.lock (
 echo.
 
 REM ── Step 1: Git Pull ──────────────────────────────────────────────────────────
-echo [1/5] Git Pull from GitHub...
+echo [1/6] Git Pull from GitHub...
 echo.
 
 for /f %%i in ('git rev-parse HEAD 2^>nul') do set BEFORE_HASH=%%i
@@ -81,13 +81,13 @@ cd /d D:\portal\backend
 py -3.12 write_version_file.py
 cd /d D:\portal
 
-echo [OK] Code updated. Next: install backend packages [2/5]
+echo [OK] Code updated. Next: install backend packages [2/6]
 echo.
 pause
 
 REM ── Step 2: Backend packages ──────────────────────────────────────────────────
 echo.
-echo [2/5] Installing backend packages (Python 3.12)...
+echo [2/6] Installing backend packages (Python 3.12)...
 cd /d D:\portal\backend
 py -3.12 -m pip install -r requirements.txt
 if errorlevel 1 (
@@ -95,30 +95,65 @@ if errorlevel 1 (
     pause
     exit /b 1
 )
-echo [OK] Backend packages installed. Next: DB Index [3/5]
+echo [OK] Backend packages installed. Next: DB migration [3/6]
 echo.
 pause
 
-REM ── Step 3: DB Index ──────────────────────────────────────────────────────────
+REM -- Step 3: Alembic migration ------------------------------------------------
+REM    Deliberately NOT a silent auto-upgrade: the script prints what is pending
+REM    and waits for confirmation. If this machine has never been stamped it
+REM    stops instead of running upgrade (which would try to create 163 existing
+REM    tables and fail). See backend/scripts/alembic_deploy.py
 echo.
-echo [3/5] Creating DB indexes...
+echo [3/6] Database migration (Alembic)...
+cd /d D:\portal\backend
+py -3.12 scripts\alembic_deploy.py
+set MIGRATE_RC=%errorlevel%
+if "%MIGRATE_RC%"=="0" goto migrate_ok
+if "%MIGRATE_RC%"=="2" (
+    echo.
+    echo [STOP] Migration needs manual action - see the message above.
+    echo        Most likely this machine has not been stamped yet:
+    echo            cd D:\portal\backend
+    echo            py -3.12 scripts\check_schema_drift.py
+    echo            py -3.12 scripts\alembic_stamp_baseline.py
+    echo        Then re-run this tool. Nothing has been changed.
+    echo.
+    pause
+    exit /b 1
+)
+echo.
+echo [ERROR] Migration failed. Do NOT continue - the DB may be half-updated.
+echo         Check the output above before restarting the service.
+echo.
+pause
+exit /b 1
+
+:migrate_ok
+echo [OK] Migration checked. Next: DB Index [4/6]
+echo.
+pause
+
+REM -- Step 4: DB Index ---------------------------------------------------------
+echo.
+echo [4/6] Creating DB indexes...
 cd /d D:\portal\backend
 py -3.12 create_indexes.py
 if errorlevel 1 (
     echo [WARN] create_indexes.py returned error, please verify.
 )
-echo [OK] DB indexes done. Next: build frontend [4/5]
+echo [OK] DB indexes done. Next: build frontend [5/6]
 echo.
 pause
 
-REM ── Step 4: Frontend build ────────────────────────────────────────────────────
+REM -- Step 5: Frontend build ---------------------------------------------------
 echo.
-echo [4/5] Installing frontend packages and building...
+echo [5/6] Installing frontend packages and building...
 cd /d D:\portal\frontend
 
 if not exist package.json (
     echo [SKIP] package.json not found, skipping frontend build.
-    goto step5
+    goto step6
 )
 
 npm install
@@ -141,11 +176,11 @@ echo.
 echo [OK] Frontend build successful. dist updated:
 dir D:\portal\frontend\dist\assets\*.js 2>nul | findstr /v "^$"
 
-:step5
+:step6
 
-REM ── Step 5: Restart uvicorn ───────────────────────────────────────────────────
+REM -- Step 6: Restart uvicorn --------------------------------------------------
 echo.
-echo [5/5] Restarting production service...
+echo [6/6] Restarting production service...
 echo.
 
 REM -- try NSSM service first

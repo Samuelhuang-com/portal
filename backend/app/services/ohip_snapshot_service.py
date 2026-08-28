@@ -84,6 +84,7 @@ pickup 分析要看的是「**最終**賣到幾間 vs 各前置天數的進度�
 """
 from __future__ import annotations
 
+import logging
 import time
 from datetime import date, timedelta
 from decimal import Decimal
@@ -99,6 +100,8 @@ from app.services import ohip_client
 from app.services import realtime_revenue_service as RS
 from app.services import realtime_status_service as LS
 from app.services.ohip_client import OhipError
+
+logger = logging.getLogger(__name__)
 
 # ── 設定 ─────────────────────────────────────────────────────────────────────
 HORIZON_DAYS = 180              # 今日 + 未來 179 天，共 180 天
@@ -411,12 +414,30 @@ def run_snapshot(db: Session, *, horizon_days: int = HORIZON_DAYS,
 
 
 def _save_run(db: Session, run: OhipSnapshotRun) -> None:
-    """⚠️ 執行紀錄寫入失敗不能讓主流程失敗 —— 快照資料本身已經存好了。"""
+    """⚠️ 執行紀錄寫入失敗不能讓主流程失敗 —— 快照資料本身已經存好了。
+
+    ⚠️⚠️ **但失敗必須留下痕跡**（2026-08-28 修正）。
+       原本這裡是 `except Exception: db.rollback()`，完全靜默。
+       實際發生過的後果：`lookback_days` 欄位加進 model 卻沒進 DB，
+       於是從 2026-08-07 起**每天的執行紀錄都寫入失敗而沒有任何人知道**，
+       `ohip_snapshot_run` 一直是 0 筆。連帶讓 `sync_snapshot()` 的
+       「今天已完成就跳過」判斷永遠不成立，每次觸發都重打一次會計費的 OHIP API。
+
+       這張表存在的唯一理由就是「事後回答那天為什麼沒有資料」，
+       它自己寫不進去卻不出聲，等於自廢武功。例外照樣不外拋，但要留紀錄。
+    """
     try:
         db.add(run)
         db.commit()
-    except Exception:
+    except Exception as exc:
         db.rollback()
+        logger.error(
+            "[OhipSnapshot] 執行紀錄寫入失敗（快照資料本身不受影響）："
+            "%s: %s ｜ snapshot_date=%s status=%s",
+            type(exc).__name__, exc, run.snapshot_date, run.status,
+        )
+        # 排程在背景跑、logger 可能沒接 handler，主控台再印一次確保看得到
+        print(f"[OhipSnapshot] ⚠️ 執行紀錄寫入失敗：{type(exc).__name__}: {exc}")
 
 
 def _summary(run: OhipSnapshotRun) -> dict[str, Any]:

@@ -61,7 +61,7 @@ def list_sheet_configs(
     q = db.query(RagicSheetConfig)
     if module:
         q = q.filter(RagicSheetConfig.module == module)
-    return q.order_by(RagicSheetConfig.module, RagicSheetConfig.sort_order).all()
+    return q.order_by(RagicSheetConfig.module, RagicSheetConfig.sort_order.nullslast()).all()
 
 
 @router.get("/{config_id}", response_model=SheetConfigOut)

@@ -27,6 +27,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.core.dialect_compat import group_concat, sep, year_month as ym_expr
 from app.core.database import get_db, SessionLocal
 from app.core.time import twnow
 from app.dependencies import require_permission
@@ -50,7 +51,7 @@ _COMPANY     = "日曜"
 def _build_date_filter(q, year_month=None, year_month_from=None, year_month_to=None):
     """日期三模式篩選（status=F + approved_date 符合條件）"""
     q = q.filter(NichiyoPurchaseRequest.status == "F")
-    ym_col = func.strftime("%Y-%m", NichiyoPurchaseRequest.approved_date)
+    ym_col = ym_expr(NichiyoPurchaseRequest.approved_date)
     if year_month_from and year_month_to:
         q = q.filter(ym_col >= year_month_from, ym_col <= year_month_to)
     elif year_month_from:
@@ -198,7 +199,7 @@ def get_approved_orders(
         vrows = (
             db.query(
                 NichiyoPurchaseRequestItem.order_id,
-                func.group_concat(NichiyoPurchaseRequestItem.selected_vendor, " / ").label("vendors"),
+                group_concat(NichiyoPurchaseRequestItem.selected_vendor, sep(" / ")).label("vendors"),
             )
             .filter(
                 NichiyoPurchaseRequestItem.order_id.in_(order_ids),
@@ -582,7 +583,7 @@ def get_available_months(
 ):
     rows = (
         db.query(
-            func.strftime("%Y-%m", NichiyoPurchaseRequest.approved_date).label("ym")
+            ym_expr(NichiyoPurchaseRequest.approved_date).label("ym")
         )
         .filter(
             NichiyoPurchaseRequest.status == "F",
@@ -590,7 +591,7 @@ def get_available_months(
             NichiyoPurchaseRequest.approved_date.isnot(None),
         )
         .distinct()
-        .order_by(func.strftime("%Y-%m", NichiyoPurchaseRequest.approved_date).desc())
+        .order_by(ym_expr(NichiyoPurchaseRequest.approved_date).desc())
         .all()
     )
     return [r.ym for r in rows if r.ym]
@@ -627,7 +628,7 @@ def get_account_categories(
             NichiyoPurchaseRequest.account_category != "",
         )
         .distinct()
-        .order_by(NichiyoPurchaseRequest.account_category)
+        .order_by(NichiyoPurchaseRequest.account_category.nullslast())
         .all()
     )
     return sorted([r[0] for r in rows if r[0]], key=lambda x: x or "")
@@ -863,7 +864,7 @@ def get_combined_departments(
         func.sum(NichiyoPurchaseRequest.amount_tax).label("p_tax"),
     ).filter(NichiyoPurchaseRequest.company == _COMPANY,
              NichiyoPurchaseRequest.status == "F")
-    ym_p = func.strftime("%Y-%m", NichiyoPurchaseRequest.approved_date)
+    ym_p = ym_expr(NichiyoPurchaseRequest.approved_date)
     if year_month_from and year_month_to:
         pq = pq.filter(ym_p >= year_month_from, ym_p <= year_month_to)
     elif year_month_from:
@@ -881,7 +882,7 @@ def get_combined_departments(
         func.sum(NichiyoClaimRequest.tax).label("c_tax"),
     ).filter(NichiyoClaimRequest.company == _COMPANY,
              NichiyoClaimRequest.status == "F")
-    ym_c = func.strftime("%Y-%m", NichiyoClaimRequest.approved_date)
+    ym_c = ym_expr(NichiyoClaimRequest.approved_date)
     if year_month_from and year_month_to:
         cq = cq.filter(ym_c >= year_month_from, ym_c <= year_month_to)
     elif year_month_from:

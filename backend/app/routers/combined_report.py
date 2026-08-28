@@ -17,6 +17,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.core.dialect_compat import year_month as ym_expr
 from app.core.database import get_db
 from app.dependencies import require_permission
 from app.models.purchase_request import ApprovedPurchaseRequest
@@ -36,7 +37,7 @@ def _purchase_date_filter(
     year_month_to: Optional[str] = None,
 ):
     q = q.filter(ApprovedPurchaseRequest.status == "F")
-    ym_col = func.strftime("%Y-%m", ApprovedPurchaseRequest.approved_date)
+    ym_col = ym_expr(ApprovedPurchaseRequest.approved_date)
     if year_month_from and year_month_to:
         q = q.filter(ym_col >= year_month_from, ym_col <= year_month_to)
     elif year_month_from:
@@ -53,7 +54,7 @@ def _claim_date_filter(
     year_month_to: Optional[str] = None,
 ):
     q = q.filter(ApprovedClaimRequest.status == "F")
-    ym_col = func.strftime("%Y-%m", ApprovedClaimRequest.approved_date)
+    ym_col = ym_expr(ApprovedClaimRequest.approved_date)
     if year_month_from and year_month_to:
         q = q.filter(ym_col >= year_month_from, ym_col <= year_month_to)
     elif year_month_from:

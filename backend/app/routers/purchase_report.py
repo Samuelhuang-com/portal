@@ -23,6 +23,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
+from app.core.dialect_compat import group_concat, sep, year_month as ym_expr
 from app.core.database import get_db, SessionLocal
 from app.core.time import twnow
 from app.dependencies import require_permission
@@ -113,7 +114,7 @@ def _build_date_filter(
       - year_month_from + year_month_to：YYYY-MM（閉區間）
     """
     q = q.filter(ApprovedPurchaseRequest.status == "F")
-    ym_col = func.strftime("%Y-%m", ApprovedPurchaseRequest.approved_date)
+    ym_col = ym_expr(ApprovedPurchaseRequest.approved_date)
     if year_month_from and year_month_to:
         q = q.filter(ym_col >= year_month_from, ym_col <= year_month_to)
     elif year_month_from:
@@ -313,7 +314,7 @@ def get_summary(
         .filter(
             ApprovedPurchaseRequest.company == company,
             ApprovedPurchaseRequest.status == "REJ",
-            func.strftime("%Y-%m", ApprovedPurchaseRequest.request_date) == year_month,
+            ym_expr(ApprovedPurchaseRequest.request_date) == year_month,
         )
         .scalar()
         or 0
@@ -701,7 +702,7 @@ def get_account_categories(
             ApprovedPurchaseRequest.account_category != "",
         )
         .distinct()
-        .order_by(ApprovedPurchaseRequest.account_category)
+        .order_by(ApprovedPurchaseRequest.account_category.nullslast())
         .all()
     )
     return [r[0] for r in rows if r[0]]
@@ -723,7 +724,7 @@ def get_available_months(
     """
     rows = (
         db.query(
-            func.strftime("%Y-%m", ApprovedPurchaseRequest.approved_date).label("ym")
+            ym_expr(ApprovedPurchaseRequest.approved_date).label("ym")
         )
         .filter(
             ApprovedPurchaseRequest.company == company,
@@ -732,7 +733,7 @@ def get_available_months(
         )
         .distinct()
         .order_by(
-            func.strftime("%Y-%m", ApprovedPurchaseRequest.approved_date).desc()
+            ym_expr(ApprovedPurchaseRequest.approved_date).desc()
         )
         .all()
     )
@@ -789,7 +790,7 @@ def get_approved_orders(
     _:                object         = Depends(require_permission(_PERM)),
 ):
     """請購單主單清單（不展開品項），對應 Ragic list_path 清單視圖。"""
-    ym_col = func.strftime("%Y-%m", ApprovedPurchaseRequest.approved_date)
+    ym_col = ym_expr(ApprovedPurchaseRequest.approved_date)
     q = db.query(ApprovedPurchaseRequest).filter(
         ApprovedPurchaseRequest.company == company
     )
@@ -831,7 +832,7 @@ def get_approved_orders(
         vrows = (
             db.query(
                 ApprovedPurchaseRequestItem.order_id,
-                func.group_concat(ApprovedPurchaseRequestItem.selected_vendor, " / ").label("vendors"),
+                group_concat(ApprovedPurchaseRequestItem.selected_vendor, sep(" / ")).label("vendors"),
             )
             .filter(
                 ApprovedPurchaseRequestItem.order_id.in_(order_ids),

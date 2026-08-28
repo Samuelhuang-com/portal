@@ -24,6 +24,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.core.dialect_compat import year_month as ym_expr
 from app.core.database import get_db, SessionLocal
 from app.core.time import twnow
 from app.dependencies import require_permission
@@ -50,7 +51,7 @@ def _build_date_filter(
 ):
     """WHERE status=F AND approved_date in date range."""
     q = q.filter(ApprovedClaimRequest.status == "F")
-    ym_col = func.strftime("%Y-%m", ApprovedClaimRequest.approved_date)
+    ym_col = ym_expr(ApprovedClaimRequest.approved_date)
     if year_month_from and year_month_to:
         q = q.filter(ym_col >= year_month_from, ym_col <= year_month_to)
     elif year_month_from:
@@ -192,7 +193,7 @@ def get_approved_orders(
     q = db.query(ApprovedClaimRequest).filter(ApprovedClaimRequest.company == company)
 
     if year_month or year_month_from or year_month_to:
-        ym_col = func.strftime("%Y-%m", ApprovedClaimRequest.approved_date)
+        ym_col = ym_expr(ApprovedClaimRequest.approved_date)
         if year_month_from and year_month_to:
             q = q.filter(ym_col >= year_month_from, ym_col <= year_month_to)
         elif year_month_from:
@@ -486,14 +487,14 @@ def get_available_months(
     _:       object  = Depends(require_permission(_PERM)),
 ):
     rows = (
-        db.query(func.strftime("%Y-%m", ApprovedClaimRequest.approved_date).label("ym"))
+        db.query(ym_expr(ApprovedClaimRequest.approved_date).label("ym"))
         .filter(
             ApprovedClaimRequest.company == company,
             ApprovedClaimRequest.status  == "F",
             ApprovedClaimRequest.approved_date.isnot(None),
         )
         .group_by("ym")
-        .order_by(func.strftime("%Y-%m", ApprovedClaimRequest.approved_date).desc())
+        .order_by(ym_expr(ApprovedClaimRequest.approved_date).desc())
         .all()
     )
     return [r.ym for r in rows if r.ym]
@@ -650,7 +651,7 @@ def get_payment_types(
         .filter(ApprovedClaimRequest.payment_type.isnot(None))
         .filter(ApprovedClaimRequest.payment_type != "")
         .distinct()
-        .order_by(ApprovedClaimRequest.payment_type)
+        .order_by(ApprovedClaimRequest.payment_type.nullslast())
         .all()
     )
     return [r.payment_type for r in rows]
@@ -670,7 +671,7 @@ def get_account_subjects(
             ApprovedClaimRequest.account_subject != "",
         )
         .distinct()
-        .order_by(ApprovedClaimRequest.account_subject)
+        .order_by(ApprovedClaimRequest.account_subject.nullslast())
         .all()
     )
     return [r.account_subject for r in rows]

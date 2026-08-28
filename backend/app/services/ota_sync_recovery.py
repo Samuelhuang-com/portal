@@ -87,25 +87,37 @@ def ensure_worker_columns() -> list[str]:
 
     ⚠️ 這支不放 `main.py` 而放這裡的理由：ALTER 一旦有三份拷貝就會各自漂移。
        2026-08-24 第一版就是各寫各的，`ota_scraper_cli.py` 直接漏掉。
+
+    ⚠️ 2026-08-28（PostgreSQL 遷移）：原本用 `PRAGMA table_info` 讀欄位，
+       那是 **SQLite 專屬語法**，PostgreSQL 上會直接失敗。
+       改用 SQLAlchemy 的 `inspect()`，兩個資料庫都可用。
+
+    ⚠️ **這是專案裡唯一保留的「執行時自動補欄位」**（Phase 0 已移除
+       `main.py` 的 30 個 `_migrate_*` 與 `other_tasks.py` 的兩支）。
+       保留的理由就是上面那條：`ota_scraper_cli.py` 是獨立行程，
+       既不經過後端 lifespan、也不會自己跑 `alembic upgrade head`。
+       ⚠️ 真正的長期解是讓那條 CLI 路徑也走 Alembic，屆時本函式即可移除。
     """
-    from sqlalchemy import text
+    from sqlalchemy import inspect, text
 
     from app.core.database import engine
 
     added: list[str] = []
-    with engine.connect() as conn:
-        rows = conn.execute(text("PRAGMA table_info(ota_sync_logs)")).fetchall()
-        if not rows:
-            return added                 # 表還沒建 → create_all 會直接帶上新欄位
-        existing = {row[1] for row in rows}
-        for col, typedef in (("worker_host", "VARCHAR(60) DEFAULT ''"),
-                             ("worker_pid", "INTEGER")):
-            if col not in existing:
-                conn.execute(text(
-                    f"ALTER TABLE ota_sync_logs ADD COLUMN {col} {typedef}"))
-                added.append(col)
-        if added:
+    insp = inspect(engine)
+    if "ota_sync_logs" not in insp.get_table_names():
+        return added                     # 表還沒建 → create_all 會直接帶上新欄位
+    existing = {c["name"] for c in insp.get_columns("ota_sync_logs")}
+
+    # ⚠️ 型別要兩邊都吃得下：VARCHAR(n) 與 INTEGER 是 SQL 標準，
+    #    SQLite 與 PostgreSQL 皆可（不要用 SQLite 的 TEXT 親和性寫法）。
+    for col, typedef in (("worker_host", "VARCHAR(60) DEFAULT ''"),
+                         ("worker_pid", "INTEGER")):
+        if col in existing:
+            continue
+        with engine.connect() as conn:
+            conn.execute(text(f"ALTER TABLE ota_sync_logs ADD COLUMN {col} {typedef}"))
             conn.commit()
+        added.append(col)
     return added
 
 

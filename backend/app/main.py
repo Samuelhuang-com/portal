@@ -148,13 +148,29 @@ from app.routers import (
 )
 
 
+# ⚠️⚠️ **不要再新增 `_migrate_*` 函式。**（2026-08-28 Phase 0 起）
+#    schema 變更一律走 Alembic：
+#        1. 改 app/models/*.py
+#        2. cd backend && alembic revision --autogenerate -m "說明"
+#           （週期採購庫加 -c alembic_cp.ini）
+#        3. 檢查產出的版本檔內容
+#        4. alembic upgrade head
+#    原本這裡有 30 個手寫的 `_migrate_*`（863 行、33 處 PRAGMA table_info），
+#    已於 2026-08-28 移除。它們全部是給「既有資料庫」補欄位的 patch，
+#    而那些欄位本來就宣告在 Model 裡 —— 全新資料庫用 create_all() /
+#    alembic upgrade head 直接就是正確結構。
+#    需要看舊實作：git show <commit>:backend/app/main.py
+#
+#    ⚠️ 本函式**保留**，因為 _seed_* / _cleanup_* / create_all 仍在用它。
+
+
 def _run_startup_migration(name: str, fn) -> None:
     """
     執行單一啟動時 migration，遇到 SQLite "database is locked" 時重試而非讓整個
     應用程式啟動失敗。
 
     2026-07-14 新增：使用者回報 sync_tool.py 手動觸發同步進行中時，若同時重啟
-    後端，_migrate_pm_batch_item() 的回填 UPDATE 會因 SQLite 寫入鎖定逾時
+    後端，啟動時 migration 的回填 UPDATE 會因 SQLite 寫入鎖定逾時
     （已設定 60s busy_timeout，仍可能因 sync 本身是長交易而超過）直接拋出
     OperationalError，導致 lifespan() 啟動失敗、整台後端無法啟動（見
     "Application startup failed. Exiting."）。單一 migration 的暫時性鎖定
@@ -186,130 +202,6 @@ def _run_startup_migration(name: str, fn) -> None:
                 f"正在寫入），{delay}s 後重試（第 {attempt}/{retries} 次）..."
             )
             time.sleep(delay)
-
-
-def _migrate_b4f_flatten():
-    """
-    B4F 架構遷移（寬表格 Pivot 架構 v3）：
-    1. b4f_inspection_batch：若存在但缺少 start_time 欄位（舊版格式），刪除重建
-    2. b4f_inspection_item ：若存在但有 batch_key 欄位（v2 扁平格式）或缺少 item_name
-                             （v1 子表格格式），刪除重建
-    """
-    from sqlalchemy import text
-
-    with engine.connect() as conn:
-        # ── 1. 檢查 b4f_inspection_batch ────────────────────────────────────
-        try:
-            result = conn.execute(text("PRAGMA table_info(b4f_inspection_batch)"))
-            batch_cols = {row[1] for row in result.fetchall()}
-            if batch_cols and "start_time" not in batch_cols:
-                conn.execute(text("DROP TABLE IF EXISTS b4f_inspection_batch"))
-                conn.commit()
-                print("[Migration] b4f_inspection_batch（舊版格式）已刪除，等待重建")
-        except Exception:
-            pass
-
-        # ── 2. 檢查 b4f_inspection_item ─────────────────────────────────────
-        try:
-            result = conn.execute(text("PRAGMA table_info(b4f_inspection_item)"))
-            item_cols = {row[1] for row in result.fetchall()}
-            needs_rebuild = item_cols and (
-                "batch_key" in item_cols  # v2 扁平格式
-                or "item_name" not in item_cols  # v1 子表格格式
-                or "batch_ragic_id" not in item_cols
-            )
-            if needs_rebuild:
-                conn.execute(text("DROP TABLE IF EXISTS b4f_inspection_item"))
-                conn.commit()
-                print("[Migration] b4f_inspection_item（舊版格式）已刪除，等待重建")
-        except Exception:
-            pass
-
-
-def _migrate_pm_batch_item():
-    """
-    輕量欄位補丁：
-    1. 若 is_completed 欄位不存在則 ALTER TABLE 新增
-    2. 回填現有資料：start_time AND end_time 均有值 → is_completed = 1
-       （解決 migration 後舊資料全為 0 的問題）
-    """
-    from sqlalchemy import text
-
-    with engine.connect() as conn:
-        # ── 1. 加欄位（若不存在）──────────────────────────────────────────────
-        result = conn.execute(text("PRAGMA table_info(pm_batch_item)"))
-        existing = {row[1] for row in result.fetchall()}
-        if "is_completed" not in existing:
-            conn.execute(
-                text(
-                    "ALTER TABLE pm_batch_item ADD COLUMN is_completed BOOLEAN NOT NULL DEFAULT 0"
-                )
-            )
-            conn.commit()
-            print("[Migration] pm_batch_item.is_completed 欄位已新增")
-
-        # ── 2. 回填舊資料（start_time AND end_time 均非空 → is_completed=1）──
-        backfill = conn.execute(
-            text(
-                "UPDATE pm_batch_item "
-                "SET is_completed = 1 "
-                "WHERE start_time != '' AND end_time != '' AND is_completed = 0"
-            )
-        )
-        if backfill.rowcount > 0:
-            conn.commit()
-            print(f"[Migration] is_completed 回填 {backfill.rowcount} 筆")
-
-
-def _migrate_pm_work_minutes():
-    """
-    輕量欄位補丁（2026-05-03）：
-    為 pm_batch_item 加入 ragic_work_minutes（Ragic「工時計算」欄位，分鐘，nullable INTEGER）。
-    此欄位於重新同步後由 sync service 填入；加入前歷史資料維持 NULL，
-    _calc_kpi() 會以 NULL fallback 到 _time_diff_minutes(start_time, end_time)。
-    """
-    from sqlalchemy import text
-
-    with engine.connect() as conn:
-        result = conn.execute(text("PRAGMA table_info(pm_batch_item)"))
-        existing = {row[1] for row in result.fetchall()}
-        if "ragic_work_minutes" not in existing:
-            conn.execute(
-                text("ALTER TABLE pm_batch_item ADD COLUMN ragic_work_minutes INTEGER")
-            )
-            conn.commit()
-            print("[Migration] pm_batch_item.ragic_work_minutes 欄位已新增")
-
-
-def _migrate_luqun_repair_images():
-    """
-    輕量欄位補丁：為 luqun_repair_case 加入 images_json 欄位（若尚未存在）。
-    儲存 parse_images() 結果的 JSON 序列化字串，供 Drawer 顯示圖片。
-    """
-    from sqlalchemy import text
-
-    with engine.connect() as conn:
-        result = conn.execute(text("PRAGMA table_info(luqun_repair_case)"))
-        existing = {row[1] for row in result.fetchall()}
-        if "images_json" not in existing:
-            conn.execute(text("ALTER TABLE luqun_repair_case ADD COLUMN images_json TEXT"))
-            conn.commit()
-            print("[Migration] luqun_repair_case.images_json 欄位已新增")
-
-
-def _migrate_dazhi_repair_images():
-    """
-    輕量欄位補丁：為 dazhi_repair_case 加入 images_json 欄位（若尚未存在）。
-    """
-    from sqlalchemy import text
-
-    with engine.connect() as conn:
-        result = conn.execute(text("PRAGMA table_info(dazhi_repair_case)"))
-        existing = {row[1] for row in result.fetchall()}
-        if "images_json" not in existing:
-            conn.execute(text("ALTER TABLE dazhi_repair_case ADD COLUMN images_json TEXT"))
-            conn.commit()
-            print("[Migration] dazhi_repair_case.images_json 欄位已新增")
 
 
 def _cleanup_security_patrol_photo_items():
@@ -604,94 +496,6 @@ def _seed_menu_config_nichiyo_claim():
         print("[Portal] menu_config nichiyo-claim-report seed checked.")
 
 
-def _migrate_luqun_counter_name():
-    """
-    為 luqun_repair_case 新增 deduction_counter_name 和 mgmt_response 欄位。
-    扣款專櫃欄位原本被錯誤存為 float（結果為 0），現在改存店名字串。
-    """
-    from sqlalchemy import text
-    new_cols = [
-        ("deduction_counter_name", "TEXT NOT NULL DEFAULT ''"),
-        ("mgmt_response",          "TEXT NOT NULL DEFAULT ''"),
-    ]
-    with engine.connect() as conn:
-        result = conn.execute(text("PRAGMA table_info(luqun_repair_case)"))
-        existing = {row[1] for row in result.fetchall()}
-        for col, typedef in new_cols:
-            if col not in existing:
-                conn.execute(text(f"ALTER TABLE luqun_repair_case ADD COLUMN {col} {typedef}"))
-                conn.commit()
-                print(f"[Migration] luqun_repair_case.{col} 欄位已新增")
-
-
-def _migrate_menu_config_permission_key():
-    """
-    輕量欄位補丁（2026-04-29）：
-    為 menu_configs 表新增 permission_key 欄位（nullable TEXT）。
-    NULL = 公開顯示；有值 = 需具備對應 permission_key 才顯示。
-    """
-    from sqlalchemy import text
-
-    with engine.connect() as conn:
-        result = conn.execute(text("PRAGMA table_info(menu_configs)"))
-        existing = {row[1] for row in result.fetchall()}
-        if "permission_key" not in existing:
-            conn.execute(
-                text("ALTER TABLE menu_configs ADD COLUMN permission_key TEXT")
-            )
-            conn.commit()
-            print("[Migration] menu_configs.permission_key 欄位已新增")
-        if "icon_key" not in existing:
-            conn.execute(
-                text("ALTER TABLE menu_configs ADD COLUMN icon_key TEXT")
-            )
-            conn.commit()
-            print("[Migration] menu_configs.icon_key 欄位已新增")
-
-
-def _migrate_annotation_ragic_url():
-    """
-    輕量欄位補丁（2026-05-19）：
-    為 ragic_app_portal_annotations 表新增 ragic_url 欄位（TEXT DEFAULT ''）。
-    供使用者手動設定各模組對應的 Ragic 表單 URL，持久化存儲以供欄位比對稽核同步使用。
-    """
-    from sqlalchemy import text
-
-    with engine.connect() as conn:
-        result = conn.execute(text("PRAGMA table_info(ragic_app_portal_annotations)"))
-        existing = {row[1] for row in result.fetchall()}
-        if "ragic_url" not in existing:
-            conn.execute(
-                text("ALTER TABLE ragic_app_portal_annotations ADD COLUMN ragic_url TEXT DEFAULT ''")
-            )
-            conn.commit()
-            print("[Migration] ragic_app_portal_annotations.ragic_url 欄位已新增")
-
-
-def _migrate_ota_synclog_worker():
-    """
-    輕量欄位補丁（2026-08-24）：`ota_sync_logs` 補 worker_host／worker_pid。
-
-    ⚠️ 這兩欄是用來修「同步永遠卡在擷取中」那個 bug 的。
-       `status='running'` 一寫進去就 commit，收尾卻只在 `except Exception` 裡 ——
-       Ctrl-C（KeyboardInterrupt 不是 Exception）、行程被砍、後端重啟都不會經過它。
-       剩下的孤兒 running 會讓 `run_sync()` 永遠回 409，整個模組同步不了。
-       有 host+pid 才能問「那個行程還在不在」，而不是靠猜逾時。
-       判定邏輯見 `app/services/ota_sync_recovery.py`。
-
-    ⚠️ 兩欄都必須 nullable／有 default（CLAUDE.md §5）：既有列補不出身分，
-       它們會退回逾時判定，那是刻意的。
-
-    ⚠️ 實作在 `ota_sync_recovery.ensure_worker_columns()`，**不在這裡** ——
-       寫 `ota_sync_logs` 的行程有三個（後端／sync_tool／ota_scraper_cli），
-       ALTER 拷貝三份必然漂移。這裡只負責在啟動時呼叫它。
-    """
-    from app.services.ota_sync_recovery import ensure_worker_columns
-
-    for col in ensure_worker_columns():
-        print(f"[Migration] ota_sync_logs.{col} 欄位已新增")
-
-
 def _reap_ota_stale_running():
     """
     啟動時回收孤兒 `running`（2026-08-24）。
@@ -714,57 +518,6 @@ def _reap_ota_stale_running():
                       f"（來源 #{r.source_id}）：{r.reason}")
     finally:
         db.close()
-
-
-def _migrate_hotel_mr_reading_flat():
-    """重建 hotel_mr_reading 為扁平化場次摘要表（2026-05-19）"""
-    from sqlalchemy import text
-    with engine.connect() as conn:
-        try:
-            result = conn.execute(text("PRAGMA table_info(hotel_mr_reading)"))
-            cols = {row[1] for row in result.fetchall()}
-            if cols and "meter_name" in cols:
-                conn.execute(text("DROP TABLE IF EXISTS hotel_mr_reading"))
-                conn.commit()
-                print("[Migration] hotel_mr_reading 舊版已刪除，等待重建")
-        except Exception:
-            pass
-
-
-def _migrate_hotel_mr_batch_time_fields():
-    """為 hotel_mr_batch 加入 start_time / end_time / work_hours（2026-05-19）"""
-    from sqlalchemy import text
-    new_cols = [
-        ("start_time", "TEXT NOT NULL DEFAULT ''"),
-        ("end_time",   "TEXT NOT NULL DEFAULT ''"),
-        ("work_hours", "TEXT NOT NULL DEFAULT ''"),
-    ]
-    with engine.connect() as conn:
-        result = conn.execute(text("PRAGMA table_info(hotel_mr_batch)"))
-        existing = {row[1] for row in result.fetchall()}
-        for col, typedef in new_cols:
-            if col not in existing:
-                conn.execute(text(f"ALTER TABLE hotel_mr_batch ADD COLUMN {col} {typedef}"))
-                conn.commit()
-                print(f"[Migration] hotel_mr_batch.{col} added")
-
-
-def _migrate_ihg_rm_time_fields():
-    """為 ihg_rm_master 加入 start_time / end_time / work_minutes（2026-05-19）"""
-    from sqlalchemy import text
-    new_cols = [
-        ("start_time",   "TEXT NOT NULL DEFAULT ''"),
-        ("end_time",     "TEXT NOT NULL DEFAULT ''"),
-        ("work_minutes", "REAL"),
-    ]
-    with engine.connect() as conn:
-        result = conn.execute(text("PRAGMA table_info(ihg_rm_master)"))
-        existing = {row[1] for row in result.fetchall()}
-        for col, typedef in new_cols:
-            if col not in existing:
-                conn.execute(text(f"ALTER TABLE ihg_rm_master ADD COLUMN {col} {typedef}"))
-                conn.commit()
-                print(f"[Migration] ihg_rm_master.{col} added")
 
 
 def _seed_jinxu():
@@ -844,438 +597,6 @@ def _seed_reference_data():
                     )
             conn.commit()
             print(f"[Seed] departments: inserted {len(dept_names)} × {len(companies)} records")
-
-
-def _migrate_f7_vendor_managing_company():
-    """F7 — vendors.managing_company（nullable VARCHAR 100）。"""
-    from sqlalchemy import text
-    with engine.connect() as conn:
-        result = conn.execute(text("PRAGMA table_info(vendors)"))
-        existing = {row[1] for row in result.fetchall()}
-        if "managing_company" not in existing:
-            conn.execute(text("ALTER TABLE vendors ADD COLUMN managing_company VARCHAR(100)"))
-            conn.commit()
-            print("[Migration] vendors.managing_company added")
-
-
-def _migrate_vendors_ragic_id():
-    """
-    2026-07-30 — vendors.ragic_id（nullable VARCHAR 50，UNIQUE index）。
-    廠商資料表 Ragic 同步（vendor_sync.py）比對用欄位，手動建立/Excel 匯入的既有
-    廠商此欄位維持 null，不受影響。
-    """
-    from sqlalchemy import text
-    with engine.connect() as conn:
-        result = conn.execute(text("PRAGMA table_info(vendors)"))
-        existing = {row[1] for row in result.fetchall()}
-        if "ragic_id" not in existing:
-            conn.execute(text("ALTER TABLE vendors ADD COLUMN ragic_id VARCHAR(50)"))
-            conn.commit()
-            print("[Migration] vendors.ragic_id added")
-        conn.execute(text(
-            "CREATE UNIQUE INDEX IF NOT EXISTS ix_vendors_ragic_id ON vendors (ragic_id)"
-        ))
-        conn.commit()
-
-
-def _migrate_cycle_purchase_vendor_source():
-    """
-    2026-08-10 — cycle_purchase_vendors.source_vendor_id / synced_at
-    （供應商主檔改為鏡像合約模組 vendors，見 cycle_purchase_vendor_sync.py）。
-
-    ⚠ 這一段刻意做成「啟動時自動補」而不是只靠
-    apply_cycle_purchase_summary_migration.py：`create_all()` 只會建**缺少的資料表**，
-    不會替**既有資料表**補欄位。所以 model 加了欄位、migration 還沒跑的空窗期，
-    每一個查到 CyclePurchaseVendor 的端點都會噴
-    `no such column: cycle_purchase_vendors.source_vendor_id` → 供應商主檔、
-    採購單、驗收、付款、彙整單整片變空白，而且畫面上看起來像「資料不見了」，
-    非常容易誤判成資料庫連錯檔案。
-
-    注意這裡用的是 cycle_purchase_engine（cycle-purchase.db），不是 engine。
-
-    SQLite 的 ALTER TABLE ADD COLUMN 不支援 UNIQUE，所以唯一索引另外建；
-    SQLite 的唯一索引允許多列同時為 NULL，本地自建的供應商（source_vendor_id
-    為 NULL）不會互相衝突。
-    """
-    from sqlalchemy import text
-    from app.core.cycle_purchase_database import cycle_purchase_engine
-
-    with cycle_purchase_engine.connect() as conn:
-        existing = {row[1] for row in conn.execute(
-            text("PRAGMA table_info(cycle_purchase_vendors)")
-        ).fetchall()}
-        if not existing:
-            return  # 資料表還不存在（全新環境），create_all 會直接建成新版
-        if "source_vendor_id" not in existing:
-            conn.execute(text(
-                "ALTER TABLE cycle_purchase_vendors ADD COLUMN source_vendor_id VARCHAR(50)"
-            ))
-            conn.commit()
-            print("[Migration] cycle_purchase_vendors.source_vendor_id added")
-        if "synced_at" not in existing:
-            conn.execute(text(
-                "ALTER TABLE cycle_purchase_vendors ADD COLUMN synced_at DATETIME"
-            ))
-            conn.commit()
-            print("[Migration] cycle_purchase_vendors.synced_at added")
-        # 有重複值時建索引會失敗，讓它拋出來由 _run_startup_migration 記錄，
-        # 不要吞掉——索引沒建起來，同步的第 1 層比對就失去唯一性保證。
-        conn.execute(text(
-            "CREATE UNIQUE INDEX IF NOT EXISTS ix_cycle_purchase_vendors_source_vendor_id "
-            "ON cycle_purchase_vendors (source_vendor_id)"
-        ))
-        conn.commit()
-
-
-def _migrate_cycle_purchase_department_source():
-    """
-    2026-08-17 — cycle_purchase_departments.source_department_id
-    （部門主檔改為鏡像系統設定「公司/部門管理」，見
-    cycle_purchase_department_sync.py）。做法完全比照上面
-    `_migrate_cycle_purchase_vendor_source`（同一種「啟動時自動補既有資料表
-    欄位」的理由，不重複贅述），也保留 Temp/apply_cycle_purchase_department_
-    source_id_migration.py 供離線/手動場景使用，兩邊冪等、互不衝突。
-    """
-    from sqlalchemy import text
-    from app.core.cycle_purchase_database import cycle_purchase_engine
-
-    with cycle_purchase_engine.connect() as conn:
-        existing = {row[1] for row in conn.execute(
-            text("PRAGMA table_info(cycle_purchase_departments)")
-        ).fetchall()}
-        if not existing:
-            return  # 資料表還不存在（全新環境），create_all 會直接建成新版
-        if "source_department_id" not in existing:
-            conn.execute(text(
-                "ALTER TABLE cycle_purchase_departments ADD COLUMN source_department_id VARCHAR(30)"
-            ))
-            conn.commit()
-            print("[Migration] cycle_purchase_departments.source_department_id added")
-        conn.execute(text(
-            "CREATE UNIQUE INDEX IF NOT EXISTS ix_cycle_purchase_departments_source_department_id "
-            "ON cycle_purchase_departments (source_department_id)"
-        ))
-        conn.commit()
-
-
-def _migrate_cycle_purchase_item_mapping_unique():
-    """
-    2026-08-18 — cycle_purchase_item_mappings 的唯一鍵由
-    (item_id, company) 放寬為 (item_id, company, department_id)
-    （原因見 models/cycle_purchase_item.py 的 __table_args__ 註解）。
-
-    ⚠️ 這條跟上面兩支「補欄位」的遷移不同，SQLite **不能** ALTER 掉一個
-    table-level UNIQUE 約束，只能整張表重建（新表 → 複製 → 換名）。因此：
-
-      - 判斷條件抓得很緊：只有在真的存在「恰好由 (item_id, company) 兩欄
-        組成的 UNIQUE 索引」時才動手，否則直接 return。全新環境由
-        create_all 建成新版，這裡什麼都不做。
-      - 全程包在單一 transaction（BEGIN…COMMIT）裡，任何一步失敗都 rollback，
-        不會留下改到一半的資料表。
-      - 重建期間 `PRAGMA legacy_alter_table` 不動、`foreign_keys` 先關掉再開，
-        避免 rename 時把其他表指過來的 FK 一起改寫成新表名。
-      - 冪等：跑第二次時舊索引已不存在，會直接 return。
-
-    這是**放寬**約束，舊資料在新約束下一律仍然合法，不需要先清資料。
-
-    ⚠️ 2026-08-21 補充：下方 CREATE/INSERT 的**欄位清單是寫死的**。日後
-    cycle_purchase_item_mappings 每加一個欄位，若那個欄位的遷移排在這支之前，
-    重建時會被靜默丟掉。目前的解法是把新欄位的遷移一律排在這支之後
-    （見 `_migrate_cycle_purchase_item_mapping_account_code`）；這裡刻意
-    **不**跟著補新欄位，因為這支只在「還停留在舊唯一鍵」的機器上會真的執行，
-    那種機器的資料表必定也還是舊結構、沒有新欄位可複製。
-    """
-    from sqlalchemy import text
-    from app.core.cycle_purchase_database import cycle_purchase_engine
-
-    TABLE = "cycle_purchase_item_mappings"
-
-    with cycle_purchase_engine.connect() as conn:
-        cols = {row[1] for row in conn.execute(text(f"PRAGMA table_info({TABLE})")).fetchall()}
-        if not cols:
-            return  # 資料表還不存在（全新環境）
-
-        legacy_index = None
-        for row in conn.execute(text(f"PRAGMA index_list({TABLE})")).fetchall():
-            index_name, unique, origin = row[1], row[2], row[3]
-            # origin: 'u'=table-level UNIQUE 約束、'c'=CREATE UNIQUE INDEX 手動建的。
-            # 兩種都要認：只認 'u' 的話，若某台機器當初是手動建索引，這裡會靜默
-            # return、舊的兩欄約束還在，之後新增第二個部門的對照被 409 擋掉時，
-            # 看起來會像「程式根本沒改到」，很難查。
-            if not unique or origin not in ("u", "c"):
-                continue
-            index_cols = [
-                r[2] for r in conn.execute(text(f"PRAGMA index_info({index_name})")).fetchall()
-            ]
-            if index_cols == ["item_id", "company"]:
-                legacy_index = index_name
-                break
-        if legacy_index is None:
-            return  # 已經是新版（或本來就沒有這個約束）
-
-        # department_id 是 2026-07-11 才加的欄位。若還有舊列是 NULL，新表的
-        # NOT NULL 會讓 INSERT…SELECT 直接 IntegrityError；而 _run_startup_migration
-        # 只對 "locked" 重試、其餘一律 raise ⇒ 整個後端起不來。
-        # 這種情況要人工決定那些列該歸哪個部門，不是啟動時該做的事。
-        orphan = conn.execute(
-            text(f"SELECT COUNT(*) FROM {TABLE} WHERE department_id IS NULL")
-        ).scalar() or 0
-        if orphan:
-            print(
-                f"[Migration] ⚠ {TABLE} 有 {orphan} 筆 department_id 為 NULL，"
-                f"唯一鍵遷移暫緩（新結構的 department_id 為 NOT NULL）。"
-                f"請先人工補上部門後重啟，服務本身不受影響。"
-            )
-            return
-
-        conn.execute(text("PRAGMA foreign_keys=OFF"))
-        conn.execute(text("BEGIN"))
-        try:
-            conn.execute(text(f"""
-                CREATE TABLE {TABLE}__new (
-                    id                   INTEGER NOT NULL,
-                    item_id              INTEGER NOT NULL,
-                    company              VARCHAR(50) NOT NULL,
-                    department_id        INTEGER NOT NULL,
-                    original_code        VARCHAR(30),
-                    original_name        VARCHAR(300),
-                    original_vendor_name VARCHAR(200),
-                    vendor_id            INTEGER,
-                    original_unit_price  NUMERIC(12, 4),
-                    is_confirmed         BOOLEAN NOT NULL,
-                    notes                TEXT,
-                    created_at           DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
-                    updated_at           DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
-                    PRIMARY KEY (id),
-                    CONSTRAINT uq_cp_item_mapping_item_company_dept
-                        UNIQUE (item_id, company, department_id),
-                    FOREIGN KEY(item_id) REFERENCES cycle_purchase_items (id) ON DELETE CASCADE,
-                    FOREIGN KEY(department_id) REFERENCES cycle_purchase_departments (id) ON DELETE RESTRICT,
-                    FOREIGN KEY(vendor_id) REFERENCES cycle_purchase_vendors (id) ON DELETE SET NULL
-                )
-            """))
-            conn.execute(text(f"""
-                INSERT INTO {TABLE}__new (
-                    id, item_id, company, department_id, original_code, original_name,
-                    original_vendor_name, vendor_id, original_unit_price, is_confirmed,
-                    notes, created_at, updated_at
-                )
-                SELECT
-                    id, item_id, company, department_id, original_code, original_name,
-                    original_vendor_name, vendor_id, original_unit_price, is_confirmed,
-                    notes, created_at, updated_at
-                FROM {TABLE}
-            """))
-            conn.execute(text(f"DROP TABLE {TABLE}"))
-            conn.execute(text(f"ALTER TABLE {TABLE}__new RENAME TO {TABLE}"))
-            conn.execute(text("COMMIT"))
-            print(f"[Migration] {TABLE} unique key → (item_id, company, department_id)")
-        except Exception:
-            conn.execute(text("ROLLBACK"))
-            raise
-        finally:
-            conn.execute(text("PRAGMA foreign_keys=ON"))
-
-
-def _migrate_cycle_purchase_item_mapping_account_code():
-    """
-    2026-08-21 — cycle_purchase_item_mappings.account_code_id
-    （會計科目改由料號對照表按「公司＋部門」設定，請購單不再逐行手選；
-    原因見 models/cycle_purchase_item.py 的 2026-08-21 段落）。
-
-    比照 `_migrate_cycle_purchase_vendor_source`：`create_all()` 只建缺少的
-    資料表、不替既有資料表補欄位，缺這一欄時每個查到 CyclePurchaseItemMapping
-    的端點都會噴 `no such column`，料號主檔／請購單／彙整單會整片變空白。
-
-    ⚠️ **必須排在 `_migrate_cycle_purchase_item_mapping_unique` 之後**。
-    那支是整張表重建（CREATE __new → INSERT…SELECT → RENAME），欄位清單是
-    寫死的，不含 account_code_id；順序顛倒的話，這裡剛加好的欄位會在重建時
-    被靜默丟掉，而且不會有任何錯誤訊息。
-
-    SQLite 的 ALTER TABLE ADD COLUMN 不支援加 FOREIGN KEY，所以這裡只加欄位
-    本身；參照完整性由 app 層（前端只給主檔裡的選項、後端只寫 payload 裡的 id）
-    維持，與既有 vendor_id 的處理一致。
-    """
-    from sqlalchemy import text
-    from app.core.cycle_purchase_database import cycle_purchase_engine
-
-    TABLE = "cycle_purchase_item_mappings"
-
-    with cycle_purchase_engine.connect() as conn:
-        existing = {row[1] for row in conn.execute(
-            text(f"PRAGMA table_info({TABLE})")
-        ).fetchall()}
-        if not existing:
-            return  # 資料表還不存在（全新環境），create_all 會直接建成新版
-        if "account_code_id" not in existing:
-            conn.execute(text(f"ALTER TABLE {TABLE} ADD COLUMN account_code_id INTEGER"))
-            conn.commit()
-            print(f"[Migration] {TABLE}.account_code_id added")
-
-
-def _migrate_full_bldg_pm_sheet28_fields():
-    """
-    輕量欄位補丁（2026-06-02 新增 repair_hours/sheet28_id；2026-07-14 補上 2026-07-13
-    當時新增但漏掉自動遷移的 images_json，此欄位缺少時查詢/同步會噴
-    "no such column: images_json"，導致「工作日誌」等 Drawer 附圖區永遠拿不到資料）：
-    為 full_bldg_pm_batch_item 加入 Sheet 28 同步欄位：
-      - repair_hours  REAL nullable        — 維修工時（小時），來源 Sheet 28
-      - sheet28_id    VARCHAR(50) nullable — Sheet 28 record ID，供直接比對
-      - images_json   TEXT nullable        — 附圖檔名清單（JSON array），來源 Sheet 28「圖片上傳」
-    """
-    from sqlalchemy import text
-    new_cols = [
-        ("repair_hours", "REAL"),
-        ("sheet28_id",   "VARCHAR(50)"),
-        ("images_json",  "TEXT"),
-    ]
-    with engine.connect() as conn:
-        existing = [
-            row[1]
-            for row in conn.execute(text("PRAGMA table_info(full_bldg_pm_batch_item)")).fetchall()
-        ]
-        for col, col_type in new_cols:
-            if col not in existing:
-                conn.execute(text(f"ALTER TABLE full_bldg_pm_batch_item ADD COLUMN {col} {col_type}"))
-                conn.commit()
-                print(f"[Migration] full_bldg_pm_batch_item.{col} 欄位已新增")
-
-
-def _migrate_mall_pm_sheet24_fields():
-    """
-    輕量欄位補丁（2026-06-02 新增 repair_hours/sheet24_id；2026-07-14 補上 2026-07-13
-    當時新增但漏掉自動遷移的 images_json，此欄位缺少時查詢/同步會噴
-    "no such column: images_json"，導致「工作日誌」等 Drawer 附圖區永遠拿不到資料）：
-    為 mall_pm_batch_item 加入 Sheet 24 同步欄位：
-      - repair_hours  REAL nullable     — 維修工時（小時），來源 Sheet 24
-      - sheet24_id    VARCHAR(50) nullable — Sheet 24 record ID，供直接比對
-      - images_json   TEXT nullable     — 附圖檔名清單（JSON array），來源 Sheet 24「圖片上傳」
-    """
-    from sqlalchemy import text
-    new_cols = [
-        ("repair_hours", "REAL"),
-        ("sheet24_id",   "VARCHAR(50)"),
-        ("images_json",  "TEXT"),
-    ]
-    with engine.connect() as conn:
-        existing = [
-            row[1]
-            for row in conn.execute(text("PRAGMA table_info(mall_pm_batch_item)")).fetchall()
-        ]
-        for col, col_type in new_cols:
-            if col not in existing:
-                conn.execute(text(f"ALTER TABLE mall_pm_batch_item ADD COLUMN {col} {col_type}"))
-                conn.commit()
-                print(f"[Migration] mall_pm_batch_item.{col} 欄位已新增")
-
-
-def _migrate_calendar_custom_event_zone():
-    """calendar_custom_events.zone 欄位補丁（區域別：飯店/商場/公區/其它）。"""
-    from sqlalchemy import text
-    with engine.connect() as conn:
-        result = conn.execute(text("PRAGMA table_info(calendar_custom_events)"))
-        existing = {row[1] for row in result.fetchall()}
-        if "zone" not in existing:
-            conn.execute(text(
-                "ALTER TABLE calendar_custom_events "
-                "ADD COLUMN zone TEXT NOT NULL DEFAULT '其它'"
-            ))
-            conn.commit()
-            print("[Migration] calendar_custom_events.zone 欄位已新增")
-
-
-def _migrate_f6_claim_cost_company():
-    """F6 — contract_claims.cost_company（nullable VARCHAR 100）。"""
-    from sqlalchemy import text
-    with engine.connect() as conn:
-        result = conn.execute(text("PRAGMA table_info(contract_claims)"))
-        existing = {row[1] for row in result.fetchall()}
-        if "cost_company" not in existing:
-            conn.execute(text("ALTER TABLE contract_claims ADD COLUMN cost_company VARCHAR(100)"))
-            conn.commit()
-            print("[Migration] contract_claims.cost_company added")
-
-
-def _migrate_f3_contract_fields():
-    """F3 — contracts 表新增 signing_company / signing_dept / budget_company / budget_dept / pricing_spec（nullable）。"""
-    from sqlalchemy import text
-    new_cols = [
-        ("signing_company", "VARCHAR(100)"),
-        ("signing_dept",    "VARCHAR(100)"),
-        ("budget_company",  "VARCHAR(100)"),
-        ("budget_dept",     "VARCHAR(100)"),
-        ("pricing_spec",    "VARCHAR(200)"),
-    ]
-    with engine.connect() as conn:
-        result = conn.execute(text("PRAGMA table_info(contracts)"))
-        existing = {row[1] for row in result.fetchall()}
-        for col, typedef in new_cols:
-            if col not in existing:
-                conn.execute(text(f"ALTER TABLE contracts ADD COLUMN {col} {typedef}"))
-                conn.commit()
-                print(f"[Migration] contracts.{col} added")
-
-
-def _migrate_contract_approval_fields():
-    """
-    欄位補丁（2026-05-28）：為 contracts 表加入合約審核三欄位
-      - approved_by     VARCHAR(100) 核准人
-      - approved_at     DATETIME     核准時間
-      - approval_comment TEXT        審核意見
-    皆為 nullable，不影響現有資料。
-    """
-    from sqlalchemy import text
-    new_cols = [
-        ("approved_by",      "VARCHAR(100)"),
-        ("approved_at",      "DATETIME"),
-        ("approval_comment", "TEXT"),
-    ]
-    with engine.connect() as conn:
-        result = conn.execute(text("PRAGMA table_info(contracts)"))
-        existing = {row[1] for row in result.fetchall()}
-        for col, typedef in new_cols:
-            if col not in existing:
-                conn.execute(text(f"ALTER TABLE contracts ADD COLUMN {col} {typedef}"))
-                conn.commit()
-                print(f"[Migration] contracts.{col} added")
-
-
-def _migrate_security_patrol_is_note():
-    """
-    欄位遷移 + 回填：
-    1. 若 is_note 欄位不存在，ALTER TABLE 新增（BOOLEAN DEFAULT 0）
-    2. 將 item_name 含「異常說明」的現有記錄回填為
-         is_note=1, result_status='note', abnormal_flag=0
-       使歷史資料與新 sync 邏輯一致，不需重新同步。
-    """
-    from sqlalchemy import text
-
-    with engine.connect() as conn:
-        # ── 1. 加欄位（若不存在）────────────────────────────────────────────────
-        result = conn.execute(text("PRAGMA table_info(security_patrol_item)"))
-        existing = {row[1] for row in result.fetchall()}
-        if "is_note" not in existing:
-            conn.execute(
-                text(
-                    "ALTER TABLE security_patrol_item ADD COLUMN is_note BOOLEAN NOT NULL DEFAULT 0"
-                )
-            )
-            conn.commit()
-            print("[Migration] security_patrol_item.is_note 欄位已新增")
-
-        # ── 2. 回填「異常說明」類記錄 ────────────────────────────────────────────
-        backfill = conn.execute(
-            text(
-                "UPDATE security_patrol_item "
-                "SET is_note=1, result_status='note', abnormal_flag=0 "
-                "WHERE item_name LIKE '%異常說明%' AND is_note=0"
-            )
-        )
-        if backfill.rowcount > 0:
-            conn.commit()
-            print(
-                f"[Migration] 異常說明項目已回填 is_note=True，共 {backfill.rowcount} 筆"
-            )
 
 
 def _utcnow() -> datetime:
@@ -1729,7 +1050,6 @@ async def _nichiyo_claim_full_sync():
     await _run_and_log("日曜核准請款單", sync_nichiyo_claim())
 
 
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan: startup / shutdown hooks."""
@@ -1830,12 +1150,6 @@ async def lifespan(app: FastAPI):
     #    那四個排程就是這樣停在 6/24 沒人發現的。
     import app.models.ota_review               # noqa: F401  來源／評論／同步紀錄／主題字典／AI 快取
 
-    # B4F 扁平化遷移：刪除舊 batch 表 + 檢查 item 表欄位（必須在 create_all 之前）
-    _run_startup_migration("_migrate_b4f_flatten", _migrate_b4f_flatten)
-    print("[Portal] B4F flatten migration checked.")
-
-    _run_startup_migration("_migrate_hotel_mr_reading_flat", _migrate_hotel_mr_reading_flat)
-    print("[Portal] hotel_mr_reading flat migration checked.")
 
     # 建立尚未存在的資料表（不影響已有表格）
     # 2026-07-16：套用 _run_startup_migration 重試保護（見該函式 docstring）——
@@ -1843,9 +1157,6 @@ async def lifespan(app: FastAPI):
     _run_startup_migration("_create_all_tables", lambda: Base.metadata.create_all(bind=engine))
     print("[Portal] Database tables ensured.")
 
-    # OTA 同步紀錄的執行者身分（2026-08-24）：必須排在 create_all 之後 ——
-    # 首次啟動時表是 create_all 建的，那時就已經帶著新欄位，這支只補既有 DB。
-    _run_startup_migration("_migrate_ota_synclog_worker", _migrate_ota_synclog_worker)
     _run_startup_migration("_reap_ota_stale_running", _reap_ota_stale_running)
 
     # ── 週期採購（獨立資料庫 cycle-purchase.db，2026-07-10 決策：不與 portal.db 共用）──
@@ -1868,37 +1179,6 @@ async def lifespan(app: FastAPI):
     )
     print("[Portal] Cycle-purchase database tables ensured (cycle-purchase.db).")
 
-    # 2026-08-10：cycle_purchase_vendors 的 source_vendor_id / synced_at。
-    # create_all() 不會替既有資料表補欄位，缺欄位時整個週期採購模組會變空白，
-    # 所以在這裡自動補（理由詳見該函式 docstring）。
-    _run_startup_migration(
-        "_migrate_cycle_purchase_vendor_source", _migrate_cycle_purchase_vendor_source
-    )
-    print("[Portal] cycle_purchase_vendors source_vendor_id migration checked.")
-
-    # 2026-08-17：cycle_purchase_departments 的 source_department_id，理由同上一段。
-    _run_startup_migration(
-        "_migrate_cycle_purchase_department_source", _migrate_cycle_purchase_department_source
-    )
-    print("[Portal] cycle_purchase_departments source_department_id migration checked.")
-
-    # 2026-08-18：料號對照表唯一鍵放寬成 (item_id, company, department_id)。
-    # SQLite 改不動 UNIQUE 約束，只能整張表重建，細節與安全性考量見該函式
-    # docstring。冪等，已是新版時直接 return。
-    _run_startup_migration(
-        "_migrate_cycle_purchase_item_mapping_unique",
-        _migrate_cycle_purchase_item_mapping_unique,
-    )
-    print("[Portal] cycle_purchase_item_mappings unique key migration checked.")
-
-    # 2026-08-21：料號對照表新增 account_code_id（會計科目改由料號主檔帶入）。
-    # ⚠️ 一定要排在上面那支唯一鍵遷移**之後**——那支是整張表重建、欄位清單寫死，
-    # 順序顛倒會把這裡剛加的欄位靜默丟掉（詳見該函式 docstring）。
-    _run_startup_migration(
-        "_migrate_cycle_purchase_item_mapping_account_code",
-        _migrate_cycle_purchase_item_mapping_account_code,
-    )
-    print("[Portal] cycle_purchase_item_mappings account_code_id migration checked.")
 
     # 週期採購：系統自動關閉「期別已過」的請購單（2026-08-07，與 Samuel 確認）。
     # 啟動時先跑一次，之後由下方 SCHEDULER_ENABLED 區塊的每日排程接手。
@@ -1929,155 +1209,18 @@ async def lifespan(app: FastAPI):
     from sqlalchemy import text as _tv_text
     import uuid as _tv_uuid
 
-    # 2026-07-16：整段包成函式、透過 _run_startup_migration 套用重試保護。
-    # ALTER TABLE / INSERT / UPDATE 都在同一個未 commit 的交易內，中途若因鎖定
-    # 失敗會整段 rollback（SQLite DDL 也是交易式的），所以重試時從頭重做是安全的。
-    def _migrate_tutorial_video_modules():
-        with engine.connect() as _conn:
-            _tv_cols = {row[1] for row in _conn.execute(_tv_text("PRAGMA table_info(tutorial_videos)"))}
-            if _tv_cols and "module_id" not in _tv_cols:
-                _conn.execute(_tv_text("ALTER TABLE tutorial_videos ADD COLUMN module_id TEXT DEFAULT ''"))
-                print("[Portal] tutorial_videos: added module_id column.")
-                if "module_name" in _tv_cols:
-                    legacy_rows = _conn.execute(_tv_text(
-                        "SELECT DISTINCT category, module_name, module_route FROM tutorial_videos"
-                    )).fetchall()
-                    order_by_category: dict = {}
-                    now_str = twnow().isoformat(sep=" ")
-                    for category, module_name, module_route in legacy_rows:
-                        cat = category or "hotel"
-                        order_by_category.setdefault(cat, 0)
-                        mod_id = str(_tv_uuid.uuid4())
-                        _conn.execute(_tv_text(
-                            "INSERT INTO tutorial_video_modules "
-                            "(id, category, module_name, module_route, sort_order, created_at, updated_at) "
-                            "VALUES (:id, :cat, :name, :route, :order_val, :now, :now)"
-                        ), {
-                            "id": mod_id, "cat": cat, "name": module_name or "",
-                            "route": module_route or "", "order_val": order_by_category[cat], "now": now_str,
-                        })
-                        order_by_category[cat] += 1
-                        _conn.execute(_tv_text(
-                            "UPDATE tutorial_videos SET module_id = :mid "
-                            "WHERE category = :cat AND module_name = :name AND module_route = :route"
-                        ), {"mid": mod_id, "cat": category, "name": module_name, "route": module_route})
-                    _conn.commit()
-                    print(f"[Portal] tutorial_videos: migrated {len(legacy_rows)} legacy module(s) to tutorial_video_modules.")
-
-    _run_startup_migration("_migrate_tutorial_video_modules", _migrate_tutorial_video_modules)
-    print("[Portal] Tutorial video module migration checked.")
-
-    # 影音教學 Migration（第二步）：舊版 tutorial_videos 表格是在 category/module_name/
-    # module_route 仍是直接欄位（NOT NULL、無 SQL 層級 DEFAULT）時建立的。上面的搬移只
-    # 是「新增 module_id 欄位＋回填」，並不會移除這三個舊欄位——SQLite 的
-    # Base.metadata.create_all() 只建立不存在的表，不會變更既有表結構。
-    # 結果：新版程式的 INSERT 已不再提供 category/module_name/module_route 的值，
-    # 但資料表仍要求這三欄 NOT NULL，於是每次上傳都會拋出
-    # "NOT NULL constraint failed: tutorial_videos.category"。
-    # 這裡透過「建新表→搬資料→刪舊表→改名」的方式重建 tutorial_videos，改用目前
-    # ORM model 對應的正確欄位（不含三個舊欄位）。
-    def _migrate_tutorial_videos_rebuild():
-        with engine.connect() as _conn:
-            _tv_cols2 = {row[1] for row in _conn.execute(_tv_text("PRAGMA table_info(tutorial_videos)"))}
-            _tv_legacy_cols = {"category", "module_name", "module_route"} & _tv_cols2
-            if _tv_legacy_cols:
-                _conn.execute(_tv_text("""
-                    CREATE TABLE tutorial_videos_new (
-                        id VARCHAR(36) NOT NULL PRIMARY KEY,
-                        module_id VARCHAR(36) NOT NULL,
-                        episode VARCHAR(20) NOT NULL,
-                        title VARCHAR(255) NOT NULL,
-                        description TEXT NOT NULL,
-                        video_stored_name VARCHAR(255) NOT NULL,
-                        video_orig_name VARCHAR(255) NOT NULL,
-                        video_size_bytes INTEGER NOT NULL,
-                        video_content_type VARCHAR(100) NOT NULL,
-                        script_stored_name VARCHAR(255) NOT NULL,
-                        script_orig_name VARCHAR(255) NOT NULL,
-                        sort_order INTEGER NOT NULL,
-                        uploaded_by VARCHAR(100) NOT NULL,
-                        created_at DATETIME NOT NULL,
-                        updated_at DATETIME NOT NULL
-                    )
-                """))
-                _conn.execute(_tv_text("""
-                    INSERT INTO tutorial_videos_new (
-                        id, module_id, episode, title, description,
-                        video_stored_name, video_orig_name, video_size_bytes, video_content_type,
-                        script_stored_name, script_orig_name, sort_order, uploaded_by,
-                        created_at, updated_at
-                    )
-                    SELECT
-                        id, module_id, episode, title, description,
-                        video_stored_name, video_orig_name, video_size_bytes, video_content_type,
-                        script_stored_name, script_orig_name, sort_order, uploaded_by,
-                        created_at, updated_at
-                    FROM tutorial_videos
-                """))
-                _conn.execute(_tv_text("DROP TABLE tutorial_videos"))
-                _conn.execute(_tv_text("ALTER TABLE tutorial_videos_new RENAME TO tutorial_videos"))
-                _conn.commit()
-                print(f"[Portal] tutorial_videos: rebuilt table, dropped legacy columns {_tv_legacy_cols}.")
-
-    _run_startup_migration("_migrate_tutorial_videos_rebuild", _migrate_tutorial_videos_rebuild)
-    print("[Portal] Tutorial video legacy-column cleanup checked.")
 
     # PPT 匯出設定 Migration：為已存在的 ppt_export_configs 表補充新欄位
     from sqlalchemy import text as _ppt_text
 
-    def _migrate_ppt_export_configs():
-        with engine.connect() as _conn:
-            _ppt_cols = {row[1] for row in _conn.execute(_ppt_text("PRAGMA table_info(ppt_export_configs)"))}
-            if "user_id" not in _ppt_cols:
-                _conn.execute(_ppt_text("ALTER TABLE ppt_export_configs ADD COLUMN user_id TEXT"))
-                print("[Portal] ppt_export_configs: added user_id column.")
-            if "template_id" not in _ppt_cols:
-                _conn.execute(_ppt_text("ALTER TABLE ppt_export_configs ADD COLUMN template_id TEXT DEFAULT 'default'"))
-                print("[Portal] ppt_export_configs: added template_id column.")
-            _conn.commit()
-
-    _run_startup_migration("_migrate_ppt_export_configs", _migrate_ppt_export_configs)
-    print("[Portal] PPT export config migration checked.")
 
     # users 表：補充忘記密碼 / OTP 欄位（2026-05-25）
     from sqlalchemy import text as _user_text
 
-    def _migrate_users_otp():
-        with engine.connect() as _conn:
-            _user_cols = {row[1] for row in _conn.execute(_user_text("PRAGMA table_info(users)"))}
-            if "otp_code" not in _user_cols:
-                _conn.execute(_user_text("ALTER TABLE users ADD COLUMN otp_code TEXT"))
-                print("[Portal] users: added otp_code column.")
-            if "otp_expires_at" not in _user_cols:
-                _conn.execute(_user_text("ALTER TABLE users ADD COLUMN otp_expires_at DATETIME"))
-                print("[Portal] users: added otp_expires_at column.")
-            if "must_change_password" not in _user_cols:
-                _conn.execute(_user_text("ALTER TABLE users ADD COLUMN must_change_password BOOLEAN DEFAULT 0"))
-                print("[Portal] users: added must_change_password column.")
-            _conn.commit()
-
-    _run_startup_migration("_migrate_users_otp", _migrate_users_otp)
-    print("[Portal] users OTP migration checked.")
 
     # module_sync_log 表：補充 Loop Engineering 欄位（2026-06-17）
     from sqlalchemy import text as _loop_text
 
-    def _migrate_module_sync_log_loop_fields():
-        with engine.connect() as _conn:
-            _msl_cols = {row[1] for row in _conn.execute(_loop_text("PRAGMA table_info(module_sync_log)"))}
-            if "retry_count" not in _msl_cols:
-                _conn.execute(_loop_text("ALTER TABLE module_sync_log ADD COLUMN retry_count INTEGER DEFAULT 0"))
-                print("[Portal] module_sync_log: added retry_count column.")
-            if "parent_log_id" not in _msl_cols:
-                _conn.execute(_loop_text("ALTER TABLE module_sync_log ADD COLUMN parent_log_id INTEGER"))
-                print("[Portal] module_sync_log: added parent_log_id column.")
-            if "is_anomaly" not in _msl_cols:
-                _conn.execute(_loop_text("ALTER TABLE module_sync_log ADD COLUMN is_anomaly BOOLEAN DEFAULT 0"))
-                print("[Portal] module_sync_log: added is_anomaly column.")
-            _conn.commit()
-
-    _run_startup_migration("_migrate_module_sync_log_loop_fields", _migrate_module_sync_log_loop_fields)
-    print("[Portal] module_sync_log Loop Engineering migration checked.")
 
     # 報修未完成報表：確保預設排程設定存在（is_enabled=False，不會自動寄信）
     from app.core.database import SessionLocal as _RepairSessionLocal
@@ -2112,21 +1255,6 @@ async def lifespan(app: FastAPI):
     except Exception as _e:
         print(f"[Portal] WAL mode setup skipped: {_e}")
 
-    # 輕量欄位補丁：為現有 pm_batch_item 加入新欄位（若尚未存在）
-    _run_startup_migration("_migrate_pm_batch_item", _migrate_pm_batch_item)
-    print("[Portal] PM batch_item migration checked.")
-
-    # 輕量欄位補丁：為 pm_batch_item 加入 ragic_work_minutes（Ragic「工時計算」欄位）
-    _run_startup_migration("_migrate_pm_work_minutes", _migrate_pm_work_minutes)
-    print("[Portal] PM batch_item ragic_work_minutes migration checked.")
-
-    # 輕量欄位補丁：為 luqun_repair_case 加入 images_json（若尚未存在）
-    _run_startup_migration("_migrate_luqun_repair_images", _migrate_luqun_repair_images)
-    print("[Portal] luqun_repair_case images_json migration checked.")
-
-    # 輕量欄位補丁：為 dazhi_repair_case 加入 images_json（若尚未存在）
-    _run_startup_migration("_migrate_dazhi_repair_images", _migrate_dazhi_repair_images)
-    print("[Portal] dazhi_repair_case images_json migration checked.")
 
     # 清除保全巡檢中的拍照欄位 item（Ragic 必填但不屬於巡檢評分項目）
     # 2026-07-16：這是這次「Application startup failed」出包的元凶——原本沒有
@@ -2135,31 +1263,7 @@ async def lifespan(app: FastAPI):
     _run_startup_migration("_cleanup_security_patrol_photo_items", _cleanup_security_patrol_photo_items)
     print("[Portal] Security patrol photo items cleanup checked.")
 
-    # 保全巡檢 is_note 欄位遷移 + 回填異常說明項目
-    _run_startup_migration("_migrate_security_patrol_is_note", _migrate_security_patrol_is_note)
-    print("[Portal] Security patrol is_note migration checked.")
 
-    _run_startup_migration("_migrate_hotel_mr_batch_time_fields", _migrate_hotel_mr_batch_time_fields)
-    print("[Portal] hotel_mr_batch time fields migration checked.")
-
-    _run_startup_migration("_migrate_ihg_rm_time_fields", _migrate_ihg_rm_time_fields)
-    print("[Portal] ihg_rm_master time fields migration checked.")
-
-    # 商場扣款專櫃欄位補丁（2026-04-24）
-    _run_startup_migration("_migrate_luqun_counter_name", _migrate_luqun_counter_name)
-    print("[Portal] Luqun deduction_counter_name migration checked.")
-
-    # Menu 權限欄位補丁（2026-04-29）：menu_configs.permission_key
-    _run_startup_migration("_migrate_menu_config_permission_key", _migrate_menu_config_permission_key)
-    print("[Portal] menu_configs permission_key migration checked.")
-
-    # Ragic URL 欄位補丁（2026-05-19）：ragic_app_portal_annotations.ragic_url
-    _run_startup_migration("_migrate_annotation_ragic_url", _migrate_annotation_ragic_url)
-    print("[Portal] ragic_app_portal_annotations ragic_url migration checked.")
-
-    # 合約審核欄位補丁（2026-05-28）：contracts.approved_by / approved_at / approval_comment
-    _run_startup_migration("_migrate_contract_approval_fields", _migrate_contract_approval_fields)
-    print("[Portal] contracts approval fields migration checked.")
     # contract_attachments 資料表已由 app.models.contract import + create_all 自動建立
 
     # F1（2026-06-01）：基礎參考資料種子（公司別 / 部門別 / 計價規格）
@@ -2175,32 +1279,7 @@ async def lifespan(app: FastAPI):
 
     # F3（2026-06-01）：contracts 新欄位 + contract_cost_allocations 資料表
     import app.models.contract  # noqa: F401 — ContractCostAllocation 已在其中
-    _run_startup_migration("_migrate_f3_contract_fields", _migrate_f3_contract_fields)
-    print("[Portal] F3 contract fields migration checked.")
 
-    # F6（2026-06-01）：contract_claims.cost_company
-    _run_startup_migration("_migrate_f6_claim_cost_company", _migrate_f6_claim_cost_company)
-    print("[Portal] F6 claim cost_company migration checked.")
-
-    # F7（2026-06-01）：vendors.managing_company
-    _run_startup_migration("_migrate_f7_vendor_managing_company", _migrate_f7_vendor_managing_company)
-    print("[Portal] F7 vendor managing_company migration checked.")
-
-    # 2026-07-30：vendors.ragic_id（廠商資料表 Ragic 同步比對用欄位）
-    _run_startup_migration("_migrate_vendors_ragic_id", _migrate_vendors_ragic_id)
-    print("[Portal] vendors.ragic_id migration checked.")
-
-    # 行事曆區域別（2026-06-02）：calendar_custom_events.zone
-    _run_startup_migration("_migrate_calendar_custom_event_zone", _migrate_calendar_custom_event_zone)
-    print("[Portal] calendar_custom_events zone migration checked.")
-
-    # 商場週期保養 Sheet 24 欄位（2026-06-02）：repair_hours + sheet24_id
-    _run_startup_migration("_migrate_mall_pm_sheet24_fields", _migrate_mall_pm_sheet24_fields)
-    print("[Portal] mall_pm_batch_item Sheet24 fields migration checked.")
-
-    # 全棟例行維護 Sheet 28 欄位（2026-06-02）：repair_hours + sheet28_id
-    _run_startup_migration("_migrate_full_bldg_pm_sheet28_fields", _migrate_full_bldg_pm_sheet28_fields)
-    print("[Portal] full_bldg_pm_batch_item Sheet28 fields migration checked.")
 
     # 選單設定補丁（2026-04-28）：隱藏舊 custom_1777348120465，補齊 mall-pm-group 子項 DB 記錄
     _run_startup_migration("_seed_menu_config_mall_pm_group", _seed_menu_config_mall_pm_group)

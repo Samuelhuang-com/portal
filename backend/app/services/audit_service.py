@@ -20,6 +20,7 @@ from typing import Optional
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.core.dialect_compat import year_month as ym_expr
 from app.models.purchase_request import (
     ApprovedPurchaseRequest,
     ApprovedPurchaseRequestItem,
@@ -76,7 +77,7 @@ def _purchase_base_q(
     company: Optional[str] = None,
 ):
     q = db.query(ApprovedPurchaseRequest).filter(ApprovedPurchaseRequest.status == "F")
-    ym_col = func.strftime("%Y-%m", ApprovedPurchaseRequest.approved_date)
+    ym_col = ym_expr(ApprovedPurchaseRequest.approved_date)
     if year_month_from and year_month_to:
         q = q.filter(ym_col >= year_month_from, ym_col <= year_month_to)
     elif year_month_from:
@@ -99,7 +100,7 @@ def _claim_base_q(
     company: Optional[str] = None,
 ):
     q = db.query(ApprovedClaimRequest).filter(ApprovedClaimRequest.status == "F")
-    ym_col = func.strftime("%Y-%m", ApprovedClaimRequest.approved_date)
+    ym_col = ym_expr(ApprovedClaimRequest.approved_date)
     if year_month_from and year_month_to:
         q = q.filter(ym_col >= year_month_from, ym_col <= year_month_to)
     elif year_month_from:
@@ -466,7 +467,7 @@ def _nichiyo_base_q(
 ):
     from app.models.nichiyo_purchase_request import NichiyoPurchaseRequest
     q = db.query(NichiyoPurchaseRequest).filter(NichiyoPurchaseRequest.status == "F")
-    ym_col = func.strftime("%Y-%m", NichiyoPurchaseRequest.approved_date)
+    ym_col = ym_expr(NichiyoPurchaseRequest.approved_date)
     if year_month_from and year_month_to:
         q = q.filter(ym_col >= year_month_from, ym_col <= year_month_to)
     elif year_month_from:
@@ -669,7 +670,7 @@ def _nichiyo_base_q(
 ):
     from app.models.nichiyo_purchase_request import NichiyoPurchaseRequest
     q = db.query(NichiyoPurchaseRequest).filter(NichiyoPurchaseRequest.status == "F")
-    ym_col = func.strftime("%Y-%m", NichiyoPurchaseRequest.approved_date)
+    ym_col = ym_expr(NichiyoPurchaseRequest.approved_date)
     if year_month_from and year_month_to:
         q = q.filter(ym_col >= year_month_from, ym_col <= year_month_to)
     elif year_month_from:

@@ -18,10 +18,10 @@ from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from fastapi.concurrency import run_in_threadpool
-from sqlalchemy import case, text
+from sqlalchemy import case
 from sqlalchemy.orm import Session
 
-from app.core.database import get_db, engine
+from app.core.database import get_db
 from app.dependencies import get_current_user, require_roles
 from app.models.other_tasks import OtherTask
 from app.services.other_tasks_service import _make_adapter
@@ -35,36 +35,19 @@ logger = logging.getLogger(__name__)
 router = APIRouter(dependencies=[Depends(get_current_user)])
 
 
-# ── 啟動時自動補 images_json 欄位（輕量 migration）────────────────────────────
-
-def _ensure_images_column() -> None:
-    """若 other_task 表已存在但缺少 images_json 欄位，自動 ALTER TABLE 補上。"""
-    try:
-        with engine.connect() as conn:
-            cols = [row[1] for row in conn.execute(text("PRAGMA table_info(other_task)"))]
-            if "images_json" not in cols:
-                conn.execute(text("ALTER TABLE other_task ADD COLUMN images_json TEXT"))
-                conn.commit()
-                logger.info("[OtherTasks] 已補充 images_json 欄位")
-    except Exception as exc:
-        logger.warning(f"[OtherTasks] images_json migration 跳過：{exc}")
-
-
-def _ensure_venue_column() -> None:
-    """若 other_task 表已存在但缺少 venue 欄位，自動 ALTER TABLE 補上。"""
-    try:
-        with engine.connect() as conn:
-            cols = [row[1] for row in conn.execute(text("PRAGMA table_info(other_task)"))]
-            if "venue" not in cols:
-                conn.execute(text("ALTER TABLE other_task ADD COLUMN venue TEXT DEFAULT ''"))
-                conn.commit()
-                logger.info("[OtherTasks] 已補充 venue 欄位")
-    except Exception as exc:
-        logger.warning(f"[OtherTasks] venue migration 跳過：{exc}")
-
-
-_ensure_images_column()
-_ensure_venue_column()
+# ⚠️ 2026-08-28 移除了 `_ensure_images_column()` / `_ensure_venue_column()`
+#    —— 兩支在**模組 import 時**執行 `PRAGMA table_info` + `ALTER TABLE` 的
+#    輕量 migration，與 main.py 那 30 個 `_migrate_*` 是同一個模式。
+#
+#    移除的兩個理由：
+#      ① `PRAGMA` 是 SQLite 專屬語法，PostgreSQL 上會直接失敗
+#         （原本包在 try/except 裡，所以會**靜默跳過**、然後在第一次
+#          查詢 images_json 時才炸，跟 ohip_snapshot_run 那個坑一模一樣）
+#      ② `venue` 與 `images_json` 都已宣告在 `app/models/other_tasks.py`，
+#         全新資料庫由 create_all() / alembic upgrade head 直接建成正確結構；
+#         既有資料庫則早就補過了（schema drift 檢查全綠）
+#
+#    schema 變更一律走 Alembic，見 main.py 的 `_run_startup_migration` 上方守則。
 
 
 # ── /raw-fields ───────────────────────────────────────────────────────────────
@@ -212,10 +195,14 @@ def get_detail(
         "engineer":   OtherTask.engineer,
     }.get(sort_field, OtherTask.created_at)
 
+    # ⚠️ `.nullslast()` 是必要的（2026-08-28 PostgreSQL 遷移）：
+    #    上面白名單裡的 created_at / updated_at / work_hours 三個欄位可為 NULL，
+    #    而 SQLite 的 NULL 永遠排最前、PostgreSQL 的 ASC 排最後 —— **兩邊相反**。
+    #    不指定的話，遷移後這幾列會跑到清單的另一端，而且**不會報錯**。
     if sort_order == "asc":
-        q = q.order_by(sort_col.asc())
+        q = q.order_by(sort_col.asc().nullslast())
     else:
-        q = q.order_by(sort_col.desc())
+        q = q.order_by(sort_col.desc().nullslast())
 
     offset = (page - 1) * page_size
     items = q.offset(offset).limit(page_size).all()

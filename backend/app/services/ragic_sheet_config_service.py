@@ -35,7 +35,7 @@ def get_sheet_configs(module: str) -> list[dict]:
                 RagicSheetConfig.module    == module,
                 RagicSheetConfig.is_active == True,
             )
-            .order_by(RagicSheetConfig.sort_order)
+            .order_by(RagicSheetConfig.sort_order.nullslast())
             .all()
         )
         if rows:

@@ -218,7 +218,7 @@ def list_eligible_requests(db: Session, cycle_id: int, company: str, year_month:
             CyclePurchaseRequest.period_label == year_month,
         )
         # 可彙整的（已關閉）排前面，未關閉的排後面；同組內依關閉時間
-        .order_by(CyclePurchaseRequest.is_closed.desc(), CyclePurchaseRequest.closed_at)
+        .order_by(CyclePurchaseRequest.is_closed.desc(), CyclePurchaseRequest.closed_at.nullslast())
         .all()
     )
 
@@ -422,7 +422,7 @@ def list_summarized_requests(db: Session, cycle_id: int, company: str, year_mont
             CyclePurchaseRequest.is_summarized == True,  # noqa: E712
             CyclePurchaseRequest.period_label == year_month,
         )
-        .order_by(CyclePurchaseRequest.summarized_at)
+        .order_by(CyclePurchaseRequest.summarized_at.nullslast())
         .all()
     )
 

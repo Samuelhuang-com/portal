@@ -20,6 +20,18 @@ anthropic>=0.25.0
 PyYAML>=6.0
 filelock>=3.13.0
 
+# ── Schema migration（2026-08-28 起，PostgreSQL 遷移 Phase 0）────────────────
+# ⚠️ 每台機器都要裝：prod-update.bat 的 [3/6] 會執行 `alembic upgrade head`。
+#    沒裝的話該步驟會失敗，且 schema 變更套用不到那台。
+alembic>=1.13.0
+
+# ── PostgreSQL 驅動（2026-08-28，遷移 Phase 1）───────────────────────────────
+# ⚠️ 裝了**不代表**會連 PostgreSQL —— 走哪個資料庫仍由 .env 的 DATABASE_URL 決定。
+#    Phase 1 是兩庫並存：SQLite 仍是主要來源，PG 只放試點資料。
+# ⚠️ 用 psycopg（第 3 代）不是 psycopg2：SQLAlchemy 2.x 的建議驅動，
+#    連線字串前綴是 postgresql+psycopg://（psycopg2 是 postgresql+psycopg2://）。
+psycopg[binary]>=3.1.0
+
 # OPERA Cloud（OHIP）API 呼叫（2026-08-06）—— 同步，配合同步 service 層
 requests>=2.31.0
 
