@@ -167,10 +167,23 @@ def main() -> None:
         print("     → 「建 baseline + stamp + 刪掉 25 個 _migrate_*」的前提成立。")
         print("     → 請在其餘環境（正式區 / 新 Server）也各跑一次，三邊都乾淨才動手。")
     else:
-        print("  ❌ 結論：有欄位或資料表沒跟上 Model。")
-        print("     → 代表某些 _migrate_* 沒跑成功（很可能是啟動時遇到 SQLite 鎖定被略過）。")
-        print("     → **先重啟一次後端讓它們補跑**，再跑一次本腳本；")
-        print("       若仍有缺，把上面的清單貼出來再決定怎麼補。")
+        # ⚠️ 缺表與缺欄位的處理方式完全不同，不要混在一起講
+        miss_t = sum(len(r["missing_tables"]) for r in results)
+        miss_c = sum(len(r["missing_cols"]) for r in results)
+        print("  ❌ 結論：有資料表或欄位沒跟上 Model。")
+        if miss_t:
+            print(f"\n     ▸ 缺少 {miss_t} 張**資料表** —— 通常是這台的後端"
+                  f"自從新模組上線後就沒重啟過，")
+            print("       建表是 create_all() 做的、只在啟動時跑。補法：")
+            print("           py -3.12 scripts\\create_missing_tables.py")
+            print("       （只建表、不動任何資料；不要用 init_db.py，那支還會塞種子資料）")
+        if miss_c:
+            print(f"\n     ▸ 缺少 {miss_c} 個**欄位** —— create_all() 補不了既有表的欄位。")
+            print("       這要走 Alembic：")
+            print("           alembic revision --autogenerate -m \"說明\"")
+            print("           alembic upgrade head")
+            print("       （2026-08-28 Phase 0 之後不再有 main.py 的 _migrate_* 自動補欄位）")
+        print("\n     補完再跑一次本腳本確認全綠，然後才 stamp。")
     print()
 
 
