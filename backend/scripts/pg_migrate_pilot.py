@@ -135,6 +135,12 @@ def preflight(names, Base, src) -> list[str]:
 
        前兩個會讓整批搬運**中途失敗**，所以一定要先掃再搬。
        第三個不報錯，由 `checks_for()` 的精度對齊處理。
+
+    ④ **外鍵孤兒**（2026-08-29 補）
+       SQLite **預設不執行外鍵約束**（要 `PRAGMA foreign_keys=ON` 才會，
+       而本專案沒有全面開啟），所以子表可能存在指向不存在父列的資料。
+       PostgreSQL 一律執行 → 灌資料時 `violates foreign key constraint`。
+       同樣是會中途失敗的那一類，所以放進前置檢查一起掃。
     """
     problems: list[str] = []
     have = set(inspect(src).get_table_names())
@@ -175,7 +181,41 @@ def preflight(names, Base, src) -> list[str]:
                                 f"{cnt:,} 列超出（最大 {mx}）")
                     except Exception:
                         pass
+
+        # ── ④ 外鍵孤兒 ──────────────────────────────────────────────────
+        for tbl, col, ptbl, pcol, cnt in find_orphan_fks(names, Base, src, have):
+            problems.append(f"{tbl}.{col} → {ptbl}.{pcol}："
+                            f"{cnt:,} 列的父資料不存在（SQLite 沒擋，PostgreSQL 會擋）")
     return problems
+
+
+def find_orphan_fks(names, Base, src, have=None) -> list[tuple]:
+    """找出「子表指向不存在父列」的外鍵，回 (子表, 子欄, 父表, 父欄, 筆數)。
+
+    ⚠️ 只檢查「父表也在這次搬運範圍內」的 FK。父表不在範圍時，PG 那邊根本
+       不會有這條約束（表沒建），檢查了也沒意義。
+    """
+    if have is None:
+        have = set(inspect(src).get_table_names())
+    scope = set(names) & have
+    out: list[tuple] = []
+    with src.connect() as c:
+        for n in sorted(scope):
+            for fk in Base.metadata.tables[n].foreign_keys:
+                child_col, parent_tbl = fk.parent.name, fk.column.table.name
+                parent_col = fk.column.name
+                if parent_tbl not in scope or parent_tbl == n:
+                    continue
+                try:
+                    cnt = c.execute(text(
+                        f"SELECT COUNT(*) FROM {n} ch WHERE ch.{child_col} IS NOT NULL "
+                        f"AND NOT EXISTS (SELECT 1 FROM {parent_tbl} pa "
+                        f"WHERE pa.{parent_col} = ch.{child_col})")).scalar_one()
+                    if cnt:
+                        out.append((n, child_col, parent_tbl, parent_col, cnt))
+                except Exception:
+                    pass
+    return out
 
 
 def same(a, b) -> bool:
@@ -229,11 +269,68 @@ def same(a, b) -> bool:
     return str(a) == str(b)
 
 
-def migrate_one(name, table, src, pg, limit) -> dict:
-    res = {"table": name, "rows": 0, "sec": 0.0, "ok": True, "diffs": [], "notes": []}
+def dep_order(Base, names: list[str]) -> list[str]:
+    """把表名照**外鍵相依順序**排（被參照的排前面）。
 
-    table.drop(pg, checkfirst=True)
-    table.create(pg)
+    ⚠️⚠️ 不可以用 `sorted(names)`（字母序）。2026-08-29 踩過：
+       `approval_actions` 有 FK 指向 `approvals`，字母序讓它先建 →
+       `relation "approvals" does not exist`，整批中斷在第 4 張表。
+       試點的 32 張表剛好沒有跨表 FK，所以這個坑到全庫才爆。
+
+    `sorted_tables` 會做拓樸排序；有循環相依時 SQLAlchemy 會退回字母序並發
+    warning，那種情況這裡補在最後（讓它照樣試，失敗訊息才看得到是哪張）。
+    """
+    want = set(names)
+    out = [t.name for t in Base.metadata.sorted_tables if t.name in want]
+    out += [n for n in names if n not in set(out)]
+    return out
+
+
+def drop_orphan_fks(pg, orphan_fks: list[tuple[str, str, str, str]]) -> list[str]:
+    """把「有孤兒資料」的外鍵約束從 PG 移除，讓資料先搬得過去。
+
+    ⚠️⚠️ **這是刻意留下的技術債，只能用在測試／比對用的資料庫。**
+       正式切換前這些孤兒必須先修掉、約束必須加回去 —— 否則等於把
+       PostgreSQL 幫忙抓出來的資料問題重新蓋起來，而且會繼續累積。
+
+    回傳「要加回去的 ALTER 語句」，由呼叫端印出來存查。
+    """
+    restore: list[str] = []
+    with pg.begin() as c:
+        for tbl, col, ptbl, pcol in orphan_fks:
+            rows = c.execute(text("""
+                SELECT con.conname
+                FROM pg_constraint con
+                JOIN pg_class rel   ON rel.oid = con.conrelid
+                JOIN pg_class frel  ON frel.oid = con.confrelid
+                JOIN pg_attribute a ON a.attrelid = rel.oid
+                                   AND a.attnum = ANY(con.conkey)
+                WHERE con.contype = 'f' AND rel.relname = :t
+                  AND frel.relname = :p AND a.attname = :c
+            """), {"t": tbl, "p": ptbl, "c": col}).scalars().all()
+            for name in rows:
+                c.execute(text(f'ALTER TABLE {tbl} DROP CONSTRAINT "{name}"'))
+                restore.append(
+                    f'ALTER TABLE {tbl} ADD CONSTRAINT "{name}" '
+                    f"FOREIGN KEY ({col}) REFERENCES {ptbl} ({pcol});")
+    return restore
+
+
+def prepare_schema(Base, names: list[str], pg) -> None:
+    """先把**所有**目標表建好，再灌資料。
+
+    ⚠️ 建表與灌資料必須分成兩階段：一張一張「drop→create→insert」的話，
+       drop 後面那張時會被前面已建好的 FK 擋住（或反過來 create 時對象還沒建）。
+       分兩階段就只需要「反向 drop 全部 → 正向 create 全部」。
+    """
+    tables = [Base.metadata.tables[n] for n in names]
+    Base.metadata.drop_all(pg, tables=list(reversed(tables)), checkfirst=True)
+    Base.metadata.create_all(pg, tables=tables, checkfirst=False)
+
+
+def migrate_one(name, table, src, pg, limit) -> dict:
+    """只灌資料 + 驗證；建表由 `prepare_schema()` 統一處理。"""
+    res = {"table": name, "rows": 0, "sec": 0.0, "ok": True, "diffs": [], "notes": []}
 
     cols = [c.name for c in table.columns]
     t0 = time.perf_counter()
@@ -286,6 +383,14 @@ def main() -> int:
     limit = int(args[args.index("--rows") + 1]) if "--rows" in args else None
     only = args[args.index("--only") + 1] if "--only" in args else None
     picked = args[args.index("--tables") + 1].split(",") if "--tables" in args else None
+    # ⚠️ --all：改搬主庫**全部**資料表（163 張），不只試點的 32 張。
+    #    全庫遷移前要先用這個把 PG 補齊，否則 pg_compare_reads.py 會全部
+    #    報 relation does not exist（那是缺表，不是相容性問題）。
+    take_all = "--all" in args
+    # ⚠️⚠️ --allow-orphans：容忍外鍵孤兒（把該條約束從 PG 移除後再搬）。
+    #    **這是刻意留下的技術債，只能用在測試／比對用的資料庫。**
+    #    正式切換前孤兒必須修掉、約束必須加回去。腳本會印出加回去的 SQL。
+    allow_orphans = "--allow-orphans" in args
 
     pg_url = read_env("POSTGRES_URL")
     if not pg_url:
@@ -297,14 +402,17 @@ def main() -> int:
     from app.core.database import engine as src
     src.echo = False
 
-    names = sorted(n for n in Base.metadata.tables if PILOT.match(n))
+    names = sorted(Base.metadata.tables) if take_all \
+        else sorted(n for n in Base.metadata.tables if PILOT.match(n))
     if only:
         names = [n for n in names if n.startswith(only)]
     if picked:
         names = [n for n in names if n in picked]
+    # ⚠️ 依外鍵相依排序 —— 字母序會讓 approval_actions 先於 approvals 建表而失敗
+    names = dep_order(Base, names)
 
     print("=" * 76)
-    print("  Phase 1：試點模組（OPERA / OHIP / 金旭）→ PostgreSQL")
+    print("  " + ("主庫全部資料表" if take_all else "試點模組（OPERA / OHIP / 金旭）") + " → PostgreSQL")
     print("=" * 76)
     print(f"  來源 SQLite : {src.url}")
     print(f"  目標 Postgres: {mask(pg_url)}")
@@ -324,17 +432,33 @@ def main() -> int:
     # ── 前置檢查：VARCHAR 長度 ───────────────────────────────────────────
     print("  前置檢查：掃描 SQLite 存得下、PostgreSQL 會拒絕的值…")
     over = preflight([n for n, c in plan if c], Base, src)
+
+    # ⚠️ --allow-orphans：把「有孤兒」的外鍵約束從 PG 拿掉，讓資料先搬過去。
+    #    **只給測試／比對用的資料庫**，正式切換前孤兒必須修掉、約束必須加回去。
+    orphans = find_orphan_fks([n for n, c in plan if c], Base, src) if allow_orphans else []
+    if allow_orphans and orphans:
+        keys = {f"{t}.{c} → {p}.{q}" for t, c, p, q, _ in orphans}
+        over = [x for x in over if not any(x.startswith(k) for k in keys)]
+
     if over:
         print(f"\n  ❌ 有 {len(over)} 個欄位的值 PostgreSQL 收不下，**先不要搬**：\n")
         for p in over:
             print(f"       · {p}")
         print("""
-     原因：`VARCHAR(n)` 的長度限制**只有 PostgreSQL 會執行、SQLite 忽略**，
-           所以這些值在 SQLite 存得進去，搬到 PG 會中途失敗。
+     原因：這些限制（VARCHAR 長度、Numeric 精度、外鍵）**只有 PostgreSQL 會
+           執行，SQLite 一律忽略**，所以這些值在 SQLite 存得進去，搬到 PG 會
+           中途失敗。
 
-     兩條路（要你決定，本腳本不會自作主張改資料）：
-       ① 放寬 model 的欄位長度（改 String(n) 後用 alembic 產 migration）
-       ② 先在 SQLite 端把超長的值截短或修正
+     要你決定，本腳本不會自作主張改資料：
+
+       · 長度／精度超出 → 先看實際的值再決定往哪邊改：
+             py -3.12 scripts\\pg_show_overlong.py
+         ① 值是正常內容、只是比較長  → 宣告太緊，放寬 model 再產 migration
+         ② 值根本不該出現在那個欄位  → **資料有問題，不要放寬宣告**，
+                                       查是哪條寫入路徑塞進去的
+
+       · 外鍵孤兒 → 子表指向了不存在的父列。同樣兩條路：補回父資料，
+         或刪掉／清空這些指向。**不要**為了搬得過去就把 FK 拿掉。
 """)
         return 2
     print("     ✅ 沒有問題\n")
@@ -364,13 +488,55 @@ def main() -> int:
         print(f"❌ 連不上 PostgreSQL：{type(e).__name__}: {str(e).splitlines()[0]}")
         return 2
 
+    # ── 先建好全部的表（含 FK），再逐張灌資料 ─────────────────────────────
+    todo = [n for n, c in plan if c is not None]
+    print(f"  建立 {len(todo)} 張表（依外鍵相依順序）…", end="", flush=True)
+    try:
+        prepare_schema(Base, todo, pg)
+        print(" ✅")
+    except Exception as e:
+        print(f"\n  ❌ 建表失敗：{type(e).__name__}: {str(e).splitlines()[0]}")
+        return 2
+
+    restore_sql: list[str] = []
+    if orphans:
+        restore_sql = drop_orphan_fks(pg, [(t, c, p, q) for t, c, p, q, _ in orphans])
+        print(f"\n  ⚠️⚠️  --allow-orphans：已移除 {len(restore_sql)} 條外鍵約束")
+        for t, c, p, q, n in orphans:
+            print(f"        · {t}.{c} → {p}.{q}（{n:,} 列孤兒）")
+        # ⚠️ 立刻寫檔，不等搬運結束 —— 中途失敗時這份 SQL 更需要留著
+        out = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                           "restore_dropped_fks.sql")
+        with open(out, "w", encoding="utf-8") as f:
+            f.write("-- 由 pg_migrate_pilot.py --allow-orphans 產生\n")
+            f.write("-- ⚠️ 孤兒資料修好之後，用這個把外鍵約束加回 PostgreSQL。\n")
+            f.write("-- ⚠️ 資料還沒修就執行的話，這些 ALTER 會失敗（那是對的）。\n\n")
+            for t, c, p, q, n in orphans:
+                f.write(f"-- {t}.{c} → {p}.{q}：搬運當下有 {n:,} 列孤兒\n")
+            f.write("\n" + "\n".join(restore_sql) + "\n")
+        print(f"""
+        📄 加回外鍵的 SQL 已寫到：{out}
+
+        **這個 PostgreSQL 資料庫的完整性約束不完整，只能用來比對測試，
+          不可以當成正式切換的目標。** 正式切換前必須：
+            ① 修掉孤兒資料
+            ② 執行上面那份 SQL 把約束加回去
+            ③ 重跑一次不帶 --allow-orphans 的搬運，確認前置檢查全綠""")
+    print()
+
     results = []
     t_all = time.perf_counter()
     for n, cnt in plan:
         if cnt is None:
             print(f"     {n:<32} （SQLite 無此表，略過）")
             continue
-        r = migrate_one(n, Base.metadata.tables[n], src, pg, limit)
+        # ⚠️ 單張表失敗不中斷整批：163 張表時，一次看到全部問題遠比
+        #    「修一個、重跑、再撞下一個」有效率。失敗的表照樣記進 results。
+        try:
+            r = migrate_one(n, Base.metadata.tables[n], src, pg, limit)
+        except Exception as e:
+            r = {"table": n, "rows": 0, "sec": 0.0, "ok": False, "notes": [],
+                 "diffs": [f"搬運失敗 {type(e).__name__}: {str(e).splitlines()[0][:110]}"]}
         results.append(r)
         mark = "✅" if r["ok"] else "❌"
         if r["ok"] and r["notes"]:
@@ -381,6 +547,7 @@ def main() -> int:
         for d in r["notes"]:
             print(f"        ⚠️  {d}（捨入平局，非資料問題）")
     elapsed = time.perf_counter() - t_all
+
 
     ok = [r for r in results if r["ok"]]
     bad = [r for r in results if not r["ok"]]

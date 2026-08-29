@@ -5,7 +5,7 @@
   b1f_inspection_batch  — 每次巡檢場次（對應一筆 Ragic Row）
   b1f_inspection_item   — 巡檢設備項目（每個欄位 pivot 成一列）
 """
-from sqlalchemy import Boolean, Column, DateTime, Integer, String, func, Index
+from sqlalchemy import Boolean, Column, DateTime, Integer, String, func, Index, Text
 
 from app.core.database import Base
 
@@ -45,7 +45,7 @@ class B1FInspectionItem(Base):
     seq_no    = Column(Integer,     nullable=False, default=0,   comment="項次（依欄位順序）")
     item_name = Column(String(200), nullable=False, default="",  comment="設備/項目名稱（Ragic 欄位名）")
 
-    result_raw    = Column(String(50), nullable=False, default="",          comment="原始值（正常/異常/待處理/空白）")
+    result_raw    = Column(Text,       nullable=False, default="",          comment="原始值（正常/異常/待處理/空白；附圖時是多組 檔案ID@檔名，長度無上限）")
     result_status = Column(String(20), nullable=False, default="unchecked", comment="正規化：normal/abnormal/pending/unchecked/measure（measure＝量測/程度型欄位的記錄值，不算異常）")
     abnormal_flag = Column(Boolean,    nullable=False, default=False,        comment="是否有異常旗標")
 

@@ -603,8 +603,9 @@ def pickup_dimension(db: Session, *, start: str, end: str,
     for a in agg.values():
         a["net"] = a["gross_new"] - a["cancels"]
 
+    # ⚠️ key 是次要鍵：net 平手時兩個引擎的順序會不同。
     rows = sorted(({"key": k, **v} for k, v in agg.items()),
-                  key=lambda x: x["net"], reverse=True)
+                  key=lambda x: (-x["net"], x["key"]))
     return {
         "range": {"start": start, "end": end},
         "dimension": dimension, "window": window, "from": t1, "to": t2,

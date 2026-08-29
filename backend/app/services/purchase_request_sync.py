@@ -113,6 +113,35 @@ def _pick(data: dict, candidates: list[str], default="") -> Any:
     return default
 
 
+def _person_name(val: Any, limit: int = 50) -> str | None:
+    """把 Ragic 取回的值當「人名」用之前先過濾。
+
+    ⚠️⚠️ **Ragic 的「申請人／請購人」是圖檔欄位（簽名圖），不是文字。**
+       API 回傳的是 `data:image/png;base64,iVBORw0KG...` 這種 data URI，
+       原本直接寫進 `applicant`，導致 **87 筆的申請人欄位存了 17,474 字的
+       base64**，畫面上顯示成一長串亂碼。2026-08-29 發現（PostgreSQL 遷移的
+       前置檢查抓到 `VARCHAR(50)` 超長才浮出來）。
+
+       ⚠️ 這裡刻意**回 None 而不是截斷**：截斷會留下
+       `data:image/png;base64,iVBOR…` 這種看起來像資料的垃圾，
+       比空值更難發現、也更難清。
+
+    ⚠️ 之後若 Ragic 那邊補上真正存姓名的文字欄位，把欄位名加進
+       `LIST_FIELD_CANDIDATES["applicant"]` 即可，本函式不必改。
+    """
+    s = str(val or "").strip()
+    if not s:
+        return None
+    if s.startswith("data:"):
+        return None                     # 圖檔／附件，不是人名
+    if len(s) > limit:
+        # 人名不會這麼長；截斷只會產生看似合理的垃圾，一律當作沒有
+        logger.warning("[PurchaseSync] applicant 長度 %d 超過 %d，已捨棄：%s…",
+                       len(s), limit, s[:40])
+        return None
+    return s
+
+
 def _to_int(val: Any) -> int | None:
     """將各種格式的金額字串轉為整數（去除 $、,、空白）。"""
     if val is None or str(val).strip() in ("", "-", "0"):
@@ -289,7 +318,8 @@ def _parse_list_record(
         "ragic_record_id":    str(record_id),
         "purchase_no":        str(_pick(data, LIST_FIELD_CANDIDATES["purchase_no"], "")).strip(),
         "account_category":   str(_pick(data, LIST_FIELD_CANDIDATES["account_category"], "")).strip() or None,
-        "applicant":          str(_pick(data, LIST_FIELD_CANDIDATES["applicant"], "")).strip() or None,
+        # ⚠️ 一定要走 _person_name()：Ragic 的申請人是**圖檔欄位**，直接取會存進 base64
+        "applicant":          _person_name(_pick(data, LIST_FIELD_CANDIDATES["applicant"], "")),
         "description":        str(_pick(data, LIST_FIELD_CANDIDATES["description"], "")).strip()[:500] or None,
         "amount":             _to_int(_pick(data, LIST_FIELD_CANDIDATES["amount"], "0")) or 0,
         "status":             status,

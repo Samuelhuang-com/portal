@@ -35,7 +35,8 @@ class DazhiRepairCase(Base):
     deduction_item:   Mapped[str]   = mapped_column(String(200), default="")
     deduction_fee:    Mapped[float] = mapped_column(Float,       default=0.0)
     acceptor:         Mapped[str]   = mapped_column(String(100), default="")
-    accept_status:    Mapped[str]   = mapped_column(String(200), default="")
+    # ⚠️ 驗收人員會在這裡寫長篇說明（實測 446 字），無自然上限 → Text
+    accept_status:    Mapped[str]   = mapped_column(Text, default="")
     closer:           Mapped[str]   = mapped_column(String(100), default="")
     finance_note:     Mapped[str]   = mapped_column(Text,        default="")
     is_completed:     Mapped[bool]  = mapped_column(Boolean,     default=False)

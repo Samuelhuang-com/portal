@@ -364,6 +364,9 @@ def revenue_by_room_kind(db: Session, *, start_date: str = "", end_date: str = "
                 "count": d[2], "amount": _f(d[3]),
             } for d in detail], key=lambda x: -abs(x["amount"]))[:20],
         })
+    # ⚠️ 上面的 GROUP BY 沒有 ORDER BY，順序完全由引擎決定 ——
+    #    SQLite 回「客房」在前、PostgreSQL 回「非客房」在前。這裡明確排序。
+    out["items"].sort(key=lambda x: (-abs(x["amount"]), x["room_kind"]))
     return out
 
 
@@ -429,7 +432,8 @@ def payment_summary(db: Session, *, start_date: str = "", end_date: str = "", **
     total = sum(d["amount"] for d in detail)
     for d in detail:
         d["share_pct"] = _pct(d["amount"], total)
-    detail.sort(key=lambda x: -x["amount"])
+    # ⚠️ subject_code 是次要鍵：金額相同的科目（實測 78 與 86A）在兩個引擎會互換。
+    detail.sort(key=lambda x: (-x["amount"], x["subject_code"]))
 
     macro = []
     for key, (label, codes) in PAYMENT_MACRO.items():
@@ -609,7 +613,8 @@ def _resv_group_by(db: Session, col, label_fn=None, **kw) -> dict:
             "amount_share_pct": _pct(m["quoted_amount"], total_amt),
         })
         items.append(m)
-    items.sort(key=lambda x: -x["room_nights"])
+    # ⚠️ key 是次要鍵：主鍵平手時兩個引擎的順序會不同。
+    items.sort(key=lambda x: (-x["room_nights"], x["key"]))
     return {
         "total_room_nights": total_rn,
         "total_quoted_amount": total_amt,
@@ -773,7 +778,8 @@ def _cancel_group_by(db: Session, col, **kw) -> dict:
         "cancel_rate_by_room_nights": _pct(int(r[4] or 0), int(r[3] or 0)),
         "cancelled_quoted_amount": _f(r[5]),
     } for r in rows]
-    items.sort(key=lambda x: -x["cancelled_room_nights"])
+    # ⚠️ key 是次要鍵：主鍵平手時兩個引擎的順序會不同。
+    items.sort(key=lambda x: (-x["cancelled_room_nights"], x["key"]))
     return {"items": items, "population_note": population_note(True), "note": CANCEL_NOTE}
 
 

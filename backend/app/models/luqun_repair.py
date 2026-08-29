@@ -34,7 +34,8 @@ class LuqunRepairCase(Base):
     deduction_item:         Mapped[str]   = mapped_column(String(200), default="")
     deduction_fee:          Mapped[float] = mapped_column(Float,       default=0.0)
     deduction_counter:      Mapped[float] = mapped_column(Float,       default=0.0)  # 保持 0
-    deduction_counter_name: Mapped[str]   = mapped_column(String(200), default="")   # 扣款專櫃名稱
+    # ⚠️ 一筆可能牽涉數十個櫃位、名稱串接（實測 201 字），無自然上限 → Text
+    deduction_counter_name: Mapped[str]   = mapped_column(Text, default="")   # 扣款專櫃名稱
     acceptor:               Mapped[str]   = mapped_column(String(100), default="")
     accept_status:          Mapped[str]   = mapped_column(String(200), default="")
     closer:                 Mapped[str]   = mapped_column(String(100), default="")

@@ -85,3 +85,6 @@ backend/version_info.json
 backend/ohip_inventory_stats_sample.json
 backend/ohip_revenue_async_sample.json
 backend/ohip_probe_*.json
+
+# pg_migrate_pilot.py --allow-orphans 每次執行都重新產生（可重現，不需版控）
+backend/scripts/restore_dropped_fks.sql

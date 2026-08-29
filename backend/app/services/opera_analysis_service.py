@@ -839,7 +839,8 @@ def get_room_usage(db: Session, start: str, end: str, property_code: str = "",
             # 疑似停用：末次銷售後連續 N 個月零銷售
             "suspected_inactive": trailing_zero >= inactive_months,
         })
-    rooms.sort(key=lambda x: x["records"])
+    # ⚠️ room_no 是次要鍵：records 平手時兩個引擎的順序會不同（同上）。
+    rooms.sort(key=lambda x: (x["records"], x["room_no"]))
 
     floors: dict[str, dict] = defaultdict(lambda: {"records": 0, "rooms": 0})
     for r in rooms:
@@ -1414,7 +1415,9 @@ def get_repeat_guests(db: Session, start: str, end: str, property_code: str = ""
                 "nights":      int(nights),
                 "last_departure": last_dep or "",
             })
-    top.sort(key=lambda x: (-x["visits"], -x["nights"]))
+    # ⚠️ 第三個鍵 guest_hash 是必要的（2026-08-29）：visits 與 nights 都平手時，
+    #    SQL 不保證 GROUP BY 的輸出順序，SQLite 與 PostgreSQL 會給出不同排列。
+    top.sort(key=lambda x: (-x["visits"], -x["nights"], x["guest_hash"]))
 
     total_guests = len(rows)
     repeat_guests = sum(v for k, v in buckets.items() if k != "1 次")

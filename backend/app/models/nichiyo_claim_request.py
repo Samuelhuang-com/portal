@@ -192,7 +192,7 @@ class NichiyoClaimRequestItem(Base):
     seq             = Column(Integer,      nullable=False, default=0)
     product_name    = Column(Text,         nullable=True,  comment="品項名稱／摘要")
     qty             = Column(String(30),   nullable=True,  comment="數量")
-    unit            = Column(String(20),   nullable=True,  comment="單位")
+    unit            = Column(String(50),   nullable=True,  comment="單位（實務上會填計費期間，如「年繳(2026/02/16-2027/02/15)」）")
     unit_price      = Column(Integer,      nullable=True,  comment="單價")
     amount          = Column(Integer,      nullable=True,  comment="品項金額")
     item_remark     = Column(Text,         nullable=True,  comment="品項備註")

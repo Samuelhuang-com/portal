@@ -181,7 +181,8 @@ def _stay_mix(db: Session, start: str, end: str, property_code: str,
             }
             for r in rows
         ]
-        items.sort(key=lambda x: -x["stays"])
+        # ⚠️ name 是次要鍵：stays 平手時兩個引擎的順序會不同。
+        items.sort(key=lambda x: (-x["stays"], x["name"]))
         if len(items) > top_n:
             rest = items[top_n:]
             items = items[:top_n] + [{

@@ -16,7 +16,7 @@ DB 架構：
   pending   — 待處理 / 待修
   unchecked — 空白 / 未填
 """
-from sqlalchemy import Column, String, Integer, DateTime, Boolean, func, Index
+from sqlalchemy import Column, String, Integer, DateTime, Boolean, func, Index, Text
 from app.core.database import Base
 
 
@@ -65,7 +65,7 @@ class B4FInspectionItem(Base):
     item_name = Column(String(200), nullable=False, default="",  comment="設備/項目名稱（Ragic 欄位名）")
 
     # ── 巡檢結果 ──────────────────────────────────────────────────────────────
-    result_raw    = Column(String(50), nullable=False, default="",          comment="原始值（正常/異常/待處理/空白）")
+    result_raw    = Column(Text,       nullable=False, default="",          comment="原始值（正常/異常/待處理/空白；附圖時是多組 檔案ID@檔名，長度無上限）")
     result_status = Column(String(20), nullable=False, default="unchecked", comment="正規化：normal/abnormal/pending/unchecked/measure（measure＝量測/程度型欄位的記錄值，不算異常）")
     abnormal_flag = Column(Boolean,    nullable=False, default=False,        comment="是否有異常旗標")
 
