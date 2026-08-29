@@ -24,7 +24,11 @@ class ContractBase(BaseModel):
     responsible_dept: str = Field(..., max_length=100, description="權責部門")
     using_depts: Optional[str] = Field("", description="使用部門（多個時以;分隔）")
 
-    vendor_id: str = Field(..., max_length=50, description="廠商編號")
+    # ⚠️ 可為 None：「沒有連到廠商主檔」是合法狀態（早期 Excel 匯入的合約
+    #    只有廠商名稱文字）。詳見 models/contract.py 同一欄位的說明。
+    #    ⚠️ 這裡放寬**不影響**手動建檔的必填檢查 —— 前端與
+    #    `contract_service.import_contracts()` 各自仍會擋空白廠商編號。
+    vendor_id: Optional[str] = Field(None, max_length=50, description="廠商編號（可空）")
     vendor_name: Optional[str] = Field("", max_length=255, description="廠商名稱（唯讀）")
 
     start_date: date = Field(..., description="合約起日")

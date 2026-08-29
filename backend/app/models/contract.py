@@ -67,12 +67,25 @@ class Contract(Base):
     )
 
     # ── 廠商資訊 ──────────────────────────────────────────────────────────────
+    # ⚠️⚠️ `nullable=True` 是刻意的（2026-08-29 修正）。
+    #    「這張合約沒有連到廠商主檔」**是合法的業務狀態** —— 早期用 Excel 匯入
+    #    的合約本來就只有 `vendor_name` 文字，沒有對應的廠商編號。
+    #
+    #    原本是 `nullable=False, default=""`，於是「沒填」被存成**空字串**。
+    #    ⚠️ 那等於宣稱「連到一個 vendor_id 是 '' 的廠商」，而那個廠商不存在
+    #       —— SQLite 沒開外鍵所以看不出來，PostgreSQL 一律執行、直接拒收
+    #       （`violates foreign key constraint`，實測 11 列）。
+    #
+    #    **外鍵欄位的「沒有值」就該是 NULL** —— NULL 不參與外鍵檢查，
+    #    PostgreSQL 完全接受，語意也正確。改完之後這張表的外鍵孤兒歸零，
+    #    約束可以保留（不必再用 pg_migrate_pilot.py 的 --allow-orphans）。
+    #
+    # ⚠️ 資料端的 `'' → NULL` 一次性轉換見 `scripts/fix_contract_vendor_id.py`。
     vendor_id = Column(
         String(50),
         ForeignKey("vendors.vendor_id", ondelete="RESTRICT"),
-        nullable=False,
-        default="",
-        comment="廠商編號（VND-NNNN）"
+        nullable=True,
+        comment="廠商編號（VND-NNNN）；NULL = 未連結廠商主檔（如早期 Excel 匯入）"
     )
     vendor_name = Column(String(255), nullable=False, default="", comment="廠商名稱")
 
