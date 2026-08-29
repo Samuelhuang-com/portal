@@ -90,8 +90,12 @@ backend/ohip_probe_*.json
 backend/scripts/restore_dropped_fks.sql
 
 # pg_compare_reads.py 的比對輸出（每次重跑都會產生，不需版控）
+# ⚠️ 用「比對輸出」這個廣義規則而不是逐一列檔名 —— 2026-08-29 就是因為
+#    只寫了 cmp*/cp* 而讓 final.txt 混進 commit。
 backend/cmp*.txt
 backend/cp*.txt
+backend/final*.txt
+backend/*_compare*.txt
 
 # pg_cutover.py 產生的 .env 備份與切換時間戳（含密碼，絕對不可進版控）
 backend/.env.bak-*
