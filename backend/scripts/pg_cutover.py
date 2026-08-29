@@ -114,14 +114,100 @@ def set_env_keys(updates: dict[str, str]) -> str:
     return bak
 
 
+def live_pids() -> set[int] | None:
+    """目前實際存在的 PID。取不到時回 None（呼叫端據此保守處理）。"""
+    try:
+        out = subprocess.run(["tasklist", "/FO", "CSV", "/NH"],
+                             capture_output=True, text=True, timeout=20).stdout
+    except Exception:
+        return None
+    pids: set[int] = set()
+    for ln in out.splitlines():
+        parts = [p.strip('" ') for p in ln.split('","')]
+        if len(parts) >= 2 and parts[1].isdigit():
+            pids.add(int(parts[1]))
+    return pids or None
+
+
+def live_python_pids(exclude: set[int] | None = None) -> set[int]:
+    """目前活著的 python 行程 PID（排除指定的，通常是本腳本自己）。"""
+    try:
+        out = subprocess.run(["tasklist", "/FO", "CSV", "/NH",
+                              "/FI", "IMAGENAME eq python.exe"],
+                             capture_output=True, text=True, timeout=20).stdout
+    except Exception:
+        return set()
+    ex = exclude or set()
+    pids: set[int] = set()
+    for ln in out.splitlines():
+        parts = [p.strip('" ') for p in ln.split('","')]
+        if len(parts) >= 2 and parts[1].isdigit() and int(parts[1]) not in ex:
+            pids.add(int(parts[1]))
+    return pids
+
+
 def port_busy(port: int = 8000) -> bool:
-    """8000 埠還有人在聽 ＝ 服務還跑著。"""
+    """8000 埠**還有活著的行程**在聽 ＝ 服務還跑著。
+
+    ⚠️⚠️ 只看 netstat 是不夠的（2026-08-29 正式區實際卡住的原因）。
+       uvicorn 的 multiprocess 模式由父行程建立 listening socket，再把 handle
+       傳給 worker。父行程被 taskkill 砍掉後，**netstat 仍然掛著建立者的 PID**，
+       而那個 PID 已經不存在了：
+
+           netstat  → 0.0.0.0:8000  LISTENING  12260
+           tasklist → 沒有任何符合指定準則的工作正在執行中
+
+       舊版只比對字串，於是把這種「死 PID 的殘留 socket」當成服務還在跑，
+       --rollback / --migrate 全被擋住，而且訊息叫人去 net stop 一個
+       **已經停掉的服務** —— 完全指錯方向。
+
+    ⚠️ 舊版還用 `f":{port}" in ln` 做子字串比對，`:18000`、`:58000` 都會誤中。
+       改成解析本地位址欄位、只取結尾正好是 `:port` 的。
+    """
     try:
         out = subprocess.run(["netstat", "-ano"], capture_output=True, text=True,
                              timeout=20).stdout
     except Exception:
         return False
-    return any(f":{port}" in ln and "LISTENING" in ln for ln in out.splitlines())
+
+    listening: list[int] = []
+    for ln in out.splitlines():
+        f = ln.split()
+        # 格式：Proto  Local Address  Foreign Address  State  PID
+        if len(f) >= 5 and f[3].upper() == "LISTENING" and f[1].endswith(f":{port}"):
+            if f[-1].isdigit():
+                listening.append(int(f[-1]))
+    if not listening:
+        return False
+
+    live = live_pids()
+    if live is None:
+        # 查不到行程清單就保守當成「還在跑」——寧可擋住，不要放行去搬資料
+        return True
+
+    alive = [p for p in listening if p in live]
+    if alive:
+        return True
+
+    # ⚠️⚠️ 到這裡「netstat 上的 PID 都死了」，但**還不能就此放行**。
+    #    socket 有可能是被繼承了 handle 的 **worker 子行程**扣著 ——
+    #    netstat 報的是建立者（父行程，已死），worker 卻還活著、
+    #    還連著 SQLite 在寫。放行去搬資料，那些寫入會遺失。
+    #    所以再確認一次「還有沒有別的 python 在跑」。
+    others = live_python_pids(exclude={os.getpid()})
+    if others:
+        print(f"    ⚠️ {port} 埠的 PID {listening} 已不存在（殘留 socket），")
+        print(f"       但還有其他 python 行程活著：{sorted(others)}")
+        print("       socket 可能是被繼承 handle 的 uvicorn worker 扣著，"
+              "**保守視為服務仍在跑**。")
+        print("       請確認後清掉：tasklist /FI \"IMAGENAME eq python.exe\"")
+        return True
+
+    print(f"    ⚠️ {port} 埠有殘留的 listening socket（PID {listening}），"
+          "但該行程已經不存在，也沒有其他 python 在跑。")
+    print("       這是被強制砍掉的 uvicorn 父行程留下的孤兒 socket，"
+          "**不是服務還在跑**，視為已停。")
+    return False
 
 
 def run(script: str, *args) -> int:
