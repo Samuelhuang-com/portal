@@ -306,6 +306,89 @@ def do_migrate(env: dict) -> int:
     return 0
 
 
+def verify_target(env: dict) -> bool:
+    """切換前：**真的連上目標 PostgreSQL，並逐表比對筆數**。
+
+    ⚠️⚠️ 2026-08-29 正式區出事就是缺這一段。舊版的 `--switch` 只做了一件事：
+       把 `.env` 的一行改掉。它**沒有連過目標資料庫、沒有確認驅動裝了沒、
+       也沒有看裡面有沒有資料**，然後印出「✅ 已改寫」。
+
+       實際發生的事：切到一個 psycopg 還沒裝、而且完全是空的 PostgreSQL。
+       服務因為 `ModuleNotFoundError` 每秒重啟一次；等驅動裝好之後啟動成功，
+       `create_all` 在那個空庫把 163 張表建了出來，APScheduler 開始把 Ragic
+       同步往裡面寫 —— 而使用者看到的是一個「登入得進去但什麼資料都沒有」
+       的 Portal。真資料全程安好，但沒有任何一道關卡攔下這件事。
+
+    ⚠️ 只印警告是不夠的 —— 這裡回 False 就**拒絕切換**。
+       切換之後才發現目標是空的，代價是整個服務中斷。
+    """
+    from sqlalchemy import create_engine, inspect, text
+
+    print("\n  ── 切換前確認：目標 PostgreSQL 真的可用且有資料")
+    ok = True
+    for lite_k, pg_k, label in PAIRS:
+        src_url, dst_url = env.get(lite_k, ""), env.get(pg_k, "")
+        if not dst_url:
+            continue
+        print(f"\n    {label}")
+        try:
+            dst = create_engine(dst_url)
+            with dst.connect() as c:
+                c.execute(text("SELECT 1"))
+        except ModuleNotFoundError as e:
+            print(f"      ❌ 驅動沒裝：{e}")
+            print("         → py -3.11 -m pip install \"psycopg[binary]\"")
+            print("         ⚠️ 要用**跑服務的那一套 Python**，不是 PATH 上的那個。")
+            ok = False
+            continue
+        except Exception as e:
+            print(f"      ❌ 連不上：{type(e).__name__}: "
+                  f"{str(e).splitlines()[0][:120]}")
+            ok = False
+            continue
+
+        try:
+            src = create_engine(src_url)
+            si, di = inspect(src), inspect(dst)
+            common = sorted(set(si.get_table_names()) & set(di.get_table_names())
+                            - {"alembic_version"})
+            diffs, s_tot, d_tot = [], 0, 0
+            with src.connect() as sc, dst.connect() as dc:
+                for t in common:
+                    a = sc.execute(text(f'SELECT COUNT(*) FROM "{t}"')).scalar_one()
+                    b = dc.execute(text(f'SELECT COUNT(*) FROM "{t}"')).scalar_one()
+                    s_tot += a
+                    d_tot += b
+                    if a != b:
+                        diffs.append((t, a, b))
+            src.dispose()
+            dst.dispose()
+        except Exception as e:
+            print(f"      ❌ 比對失敗：{type(e).__name__}: "
+                  f"{str(e).splitlines()[0][:120]}")
+            ok = False
+            continue
+
+        print(f"      比對 {len(common)} 張表　來源 {s_tot:,} 列 → 目標 {d_tot:,} 列")
+        if d_tot == 0:
+            print("      ❌ **目標資料庫是空的。** 表可能已經被 create_all 建好了，"
+                  "但裡面沒有資料。")
+            print("         → 先跑 --migrate 把資料搬過去，再切換。")
+            ok = False
+        elif diffs:
+            print(f"      ❌ **有 {len(diffs)} 張表筆數對不上**（--migrate 沒搬完，"
+                  "或搬完後又有人寫入）：")
+            for t, a, b in diffs[:10]:
+                print(f"          {t:<40} 來源 {a:>10,} / 目標 {b:>10,}")
+            if len(diffs) > 10:
+                print(f"          …另外 {len(diffs) - 10} 張")
+            print("         → 重跑 --migrate。")
+            ok = False
+        else:
+            print("      ✅ 每一張表的筆數都一致")
+    return ok
+
+
 def do_switch(env: dict) -> int:
     print("=" * 78)
     print("  切換：DATABASE_URL → PostgreSQL")
@@ -324,6 +407,13 @@ def do_switch(env: dict) -> int:
             updates[lite_k] = env[pg_k]
     if not updates:
         print("\n  ❌ .env 沒有可用的 *_POSTGRES_URL。\n")
+        return 2
+
+    # ⚠️⚠️ 改 .env **之前**先確認目標真的可用且有資料（見 verify_target）。
+    #    切換後才發現目標是空的，代價是整個服務中斷。
+    if not verify_target(env):
+        print("\n" + "=" * 78)
+        print("  ❌ **未切換**，.env 一個字都沒動。\n")
         return 2
 
     bak = set_env_keys(updates)

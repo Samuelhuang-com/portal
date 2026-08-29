@@ -86,6 +86,9 @@ def main() -> int:
 
     have = set(inspect(engine).get_table_names())
     found = 0
+    # ⚠️ 查不動的外鍵要單獨記著，最後跟「有孤兒」一樣算未通過 ——
+    #    這支腳本是 pg_cutover --check 的第③關，回 0 等於放行搬資料。
+    failures: list[tuple[str, str]] = []
 
     with engine.connect() as c:
         for tname in sorted(Base.metadata.tables):
@@ -100,17 +103,31 @@ def main() -> int:
                 miss = (f"FROM {tname} ch WHERE ch.{child_col} IS NOT NULL "
                         f"AND NOT EXISTS (SELECT 1 FROM {parent_tbl} pa "
                         f"WHERE pa.{parent_col} = ch.{child_col})")
+                # ⚠️⚠️ 這裡**不可以**用 `except Exception: continue`（2026-08-29 修）。
+                #    舊版把查詢失敗跟「沒有孤兒」混成同一件事：某個外鍵查爆了，
+                #    腳本照樣往下走，最後印出「✅ 沒有外鍵孤兒」。
+                #    **檢查工具最不該做的事，就是把「我沒查成功」講成「我查過沒問題」。**
+                #    正式區當天就是被三個這種假 ✅ 帶錯方向。
                 try:
                     cnt = c.execute(text(f"SELECT COUNT(*) {miss}")).scalar_one()
-                    if not cnt:
-                        continue
+                except Exception as e:
+                    failures.append((f"{tname}.{child_col} → {parent_tbl}.{parent_col}",
+                                     f"{type(e).__name__}: "
+                                     f"{str(e).splitlines()[0][:120]}"))
+                    continue
+                if not cnt:
+                    continue
+                # 這幾個只是為了把訊息講清楚，失敗不影響「有孤兒」這個結論
+                try:
                     distinct = c.execute(text(
                         f"SELECT COUNT(DISTINCT ch.{child_col}) {miss}")).scalar_one()
                     total = c.execute(text(f"SELECT COUNT(*) FROM {tname}")).scalar_one()
                     vals = c.execute(text(
                         f"SELECT DISTINCT ch.{child_col} {miss} LIMIT {n_s}")).scalars().all()
-                except Exception:
-                    continue
+                except Exception as e:
+                    print(f"  ⚠️ {tname}.{child_col} 有 {cnt:,} 列孤兒，"
+                          f"但取明細時失敗：{type(e).__name__}")
+                    distinct, total, vals = 0, cnt, []
 
                 found += 1
                 col = fk.parent
@@ -141,8 +158,43 @@ def main() -> int:
                 print()
 
     print("=" * 78)
+    if failures:
+        print(f"  ❌ 有 {len(failures)} 個外鍵**查不動**（不是「沒有孤兒」，是沒查成功）：\n")
+        for what, why in failures:
+            print(f"    {what}")
+            print(f"        {why}")
+        print("""
+  ⚠️⚠️ 在這些外鍵確認乾淨之前，**不可以視為通過**。
+     查詢失敗最常見的原因：欄位型別兩邊對不起來（例如一邊 TEXT 一邊
+     INTEGER，PostgreSQL 不做隱式轉型）、或該表根本還沒建好。
+     照著搬過去，PostgreSQL 會在寫入時才擋，那時已經搬到一半。
+""")
+        return 1
+
     if not found:
-        print("  ✅ 沒有外鍵孤兒\n")
+        # ⚠️ 空表當然沒有孤兒 —— 要講清楚「檢查了什麼」，
+        #    不然「✅ 沒有外鍵孤兒」對著一個空資料庫也會照印。
+        n_fk = sum(1 for t in Base.metadata.tables
+                   if t in have
+                   for _ in Base.metadata.tables[t].foreign_keys)
+        rows = 0
+        try:
+            with engine.connect() as c2:
+                for t in sorted(have):
+                    try:
+                        rows += c2.execute(text(f"SELECT COUNT(*) FROM {t}")).scalar_one()
+                    except Exception:
+                        pass
+        except Exception:
+            rows = -1
+        print(f"  ✅ 沒有外鍵孤兒（檢查了 {n_fk} 個外鍵 / {len(have)} 張表 / "
+              f"{rows:,} 列）")
+        if rows == 0:
+            print("\n  ⚠️⚠️ **但這個資料庫是空的（0 列）** —— 空表當然沒有孤兒。")
+            print("     這個 ✅ 不代表你的資料乾淨，只代表這裡沒有資料可查。")
+            print("     確認一下 DATABASE_URL 指的是不是你以為的那個資料庫。\n")
+            return 1
+        print()
         return 0
 
     print(f"""  共 {found} 個外鍵有孤兒。逐一判斷（不要一律設 NULL）：

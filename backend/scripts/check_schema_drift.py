@@ -143,12 +143,44 @@ def check(label: str, base, eng) -> dict:
     print(f"\n📌 alembic_version 表：{'存在，版本 ' + str(ver) if has_alembic else '不存在（從未 stamp 過）'}")
     print(f"📊 資料表數：DB {len(db_tables)} 個 / Model {len(model_tables)} 個")
 
+    # ⚠️⚠️ 這一段是 2026-08-29 正式區事故之後補的（本檔最重要的一段）。
+    #    **這支腳本比的是「結構」，不是「資料」。** 一個剛被 create_all 建出來
+    #    的**全空**資料庫，跟一個裝著 90 萬列的資料庫，在它眼裡完全一樣 ——
+    #    當天它對著空的 PostgreSQL 印出「163 個 / Model 一致 ✅ 乾淨」，
+    #    而真正的 603 MB 資料在另一個檔案裡，根本沒被看過。
+    #    結構檢查沒有錯，錯在**它的 ✅ 被當成「這個資料庫沒問題」在讀**。
+    #    所以一律把總列數印出來，空的時候大聲講。
+    from sqlalchemy import text as _text
+    total_rows = 0
+    unreadable = 0
+    with eng.connect() as conn:
+        for t in sorted(db_tables):
+            if t == "alembic_version":
+                continue
+            try:
+                total_rows += conn.execute(_text(f'SELECT COUNT(*) FROM "{t}"')).scalar_one()
+            except Exception:
+                unreadable += 1
+    print(f"📊 總資料量：{total_rows:,} 列"
+          + (f"（{unreadable} 張表讀不到）" if unreadable else ""))
+    empty = total_rows == 0 and len(db_tables) > 1
+    if empty:
+        print("""
+⚠️⚠️ **結構齊全，但這個資料庫裡一列資料都沒有。**
+   本檢查只比對結構，所以上面的 ✅ 對一個空資料庫**照樣會印出來**。
+   最常見的成因：服務啟動時 `create_all` 在一個新建的空庫把表建齊了，
+   而你以為它連的是有資料的那一個。
+   → 先確認 DATABASE_URL 指的是不是你以為的那個資料庫。""")
+
     return {
         "label": label,
         "blocking": len(missing_tables) + len(missing_cols),
         "missing_tables": missing_tables,
         "missing_cols": missing_cols,
         "alembic": ver,
+        "rows": total_rows,
+        "empty": empty,
+        "url": str(eng.url),
     }
 
 
@@ -170,9 +202,27 @@ def main() -> None:
     print("=" * 74)
     blocking = sum(r["blocking"] for r in results)
     for r in results:
-        state = "✅ 乾淨" if r["blocking"] == 0 else f"❌ {r['blocking']} 項阻擋"
+        if r["blocking"]:
+            state = f"❌ {r['blocking']} 項阻擋"
+        elif r["empty"]:
+            state = "⚠️ 結構齊全但**是空的**"
+        else:
+            state = f"✅ 乾淨（{r['rows']:,} 列）"
         print(f"  {r['label']:<34} {state}")
     print()
+
+    # ⚠️ 空資料庫要獨立成一種結論，不能混進「✅ 乾淨」。
+    if any(r["empty"] for r in results):
+        print("  ⚠️⚠️ 結論：結構一致，**但有資料庫是空的**。")
+        for r in results:
+            if r["empty"]:
+                print(f"      {r['label']} → {r['url']}")
+        print("""
+     結構檢查通過**不等於**這個資料庫可以用。先確認 DATABASE_URL
+     指的是不是你以為的那一個；空庫最常見的來源是服務啟動時的 create_all。
+""")
+        return
+
     if blocking == 0:
         print("  ✅ 結論：DB 結構與 Model 一致。")
         print("     → 「建 baseline + stamp + 刪掉 25 個 _migrate_*」的前提成立。")
