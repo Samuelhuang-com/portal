@@ -33,6 +33,17 @@ from sqlalchemy.orm import sessionmaker
 from app.core.config import settings
 from app.models.contract import ContractItem
 
+# ⚠️ 輸出強制 UTF-8（2026-08-29 踩過）
+#    Windows 主控台是 UTF-8，但**把輸出導向檔案時 Python 會改用 cp950**，
+#    腳本裡的 ⚠️ ✅ ❌ 一律編不進去 → UnicodeEncodeError 整支中斷。
+#    `> cmp.txt` 這種存檔動作很常用，不能因此掛掉。
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
+
 # ── 參數解析 ──────────────────────────────────────────────────────────────────
 parser = argparse.ArgumentParser(description="匯入合約明細項目至資料庫")
 parser.add_argument(

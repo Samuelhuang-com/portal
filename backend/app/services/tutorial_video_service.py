@@ -57,6 +57,9 @@ def list_modules(db: Session, category: Optional[str] = None) -> List[dict]:
         query = query.filter(TutorialVideoModule.category == category)
     query = query.group_by(TutorialVideoModule.id).order_by(
         TutorialVideoModule.category, TutorialVideoModule.sort_order,
+        # ⚠️ 穩定性次要鍵：同 category 同 sort_order 的先後由引擎決定，
+        #    SQLite 與 PostgreSQL 不同，切換後順序會變且不報錯（2026-08-29 補）。
+        TutorialVideoModule.id,
     )
     results = []
     for module, video_count in query.all():
@@ -140,7 +143,10 @@ def list_videos(db: Session, category: Optional[str] = None, module_id: Optional
         query = query.filter(TutorialVideo.module_id == module_id)
     if category:
         query = query.join(TutorialVideoModule).filter(TutorialVideoModule.category == category)
-    return query.order_by(TutorialVideo.sort_order, TutorialVideo.episode).all()
+    # ⚠️ 末尾的 id 是穩定性次要鍵，理由同 list_modules（2026-08-29 補）。
+    return query.order_by(
+        TutorialVideo.sort_order, TutorialVideo.episode, TutorialVideo.id
+    ).all()
 
 
 def get_video(video_id: str, db: Session) -> Optional[TutorialVideo]:

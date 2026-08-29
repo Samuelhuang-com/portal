@@ -343,9 +343,13 @@ def _all_anomalies(
         results.extend(_check_claim(db, cq))
 
     # 排序：嚴重程度 high→medium→low，然後核准日期降冪
+    # ⚠️ 第三個鍵 `doc_no` 是**穩定性次要鍵**，不是排序需求（2026-08-29 補）。
+    #    只用 (嚴重度, 日期) 的話，同一天同嚴重度的多筆先後由引擎決定 ——
+    #    SQLite 與 PostgreSQL 的實作不同，切換後這份清單的順序會變**且不報錯**。
     results.sort(key=lambda r: (
         _SEVERITY_ORDER.get(r["severity"], 9),
         -(int((r["approved_date"] or "0000-00-00").replace("-", ""))),
+        r.get("doc_no") or "",
     ))
     return results
 
@@ -557,9 +561,13 @@ def _check_nichiyo(db: Session, base_q) -> list[dict]:
             results.append(_np_rec(o, "R08",
                 f"purchase_no「{o.purchase_no}」在本期重複出現多筆"))
 
+    # ⚠️ 第三個鍵 `doc_no` 是**穩定性次要鍵**，不是排序需求（2026-08-29 補）。
+    #    只用 (嚴重度, 日期) 的話，同一天同嚴重度的多筆先後由引擎決定 ——
+    #    SQLite 與 PostgreSQL 的實作不同，切換後這份清單的順序會變**且不報錯**。
     results.sort(key=lambda r: (
         _SEVERITY_ORDER.get(r["severity"], 9),
         -(int((r["approved_date"] or "0000-00-00").replace("-", ""))),
+        r.get("doc_no") or "",
     ))
     return results
 
@@ -760,9 +768,13 @@ def _check_nichiyo(db: Session, base_q) -> list[dict]:
             results.append(_np_rec(o, "R08",
                 f"purchase_no「{o.purchase_no}」在本期重複出現多筆"))
 
+    # ⚠️ 第三個鍵 `doc_no` 是**穩定性次要鍵**，不是排序需求（2026-08-29 補）。
+    #    只用 (嚴重度, 日期) 的話，同一天同嚴重度的多筆先後由引擎決定 ——
+    #    SQLite 與 PostgreSQL 的實作不同，切換後這份清單的順序會變**且不報錯**。
     results.sort(key=lambda r: (
         _SEVERITY_ORDER.get(r["severity"], 9),
         -(int((r["approved_date"] or "0000-00-00").replace("-", ""))),
+        r.get("doc_no") or "",
     ))
     return results
 

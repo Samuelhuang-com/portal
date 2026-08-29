@@ -338,7 +338,13 @@ def analyze(db: Session, *, start: str, end: str, dimension: str = DIM_MARKET,
             # ⚠️ 去年完全沒有這個區隔 → 標記出來，不要顯示成「成長 ∞」
             d["is_new"] = key not in prev_by_dim
         segments.append(d)
-    segments.sort(key=lambda x: (x.get("room_revenue") or 0), reverse=True)
+    # ⚠️ 第二個鍵是**穩定性次要鍵**，不是排序需求（2026-08-29 補）。
+    #    只用 room_revenue 的話，營收相同的區隔（多半是一群 0 元的，
+    #    像 A/R、CMP 這些非營收科目）先後由引擎決定 —— SQLite 與 PostgreSQL
+    #    的實作不同，切換後這份清單的順序會變**且不會報錯**。
+    #    ⚠️ 改用 `-營收` 而不是 `reverse=True`：reverse 會把次要鍵也一起反轉，
+    #       維度名稱就變成倒序了。
+    segments.sort(key=lambda x: (-(x.get("room_revenue") or 0), str(x.get(dimension) or "")))
 
     months = sorted(by_month.keys())
     trend = []

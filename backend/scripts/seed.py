@@ -23,6 +23,17 @@ from app.models.user import User
 from app.models.user_role import UserRole
 from app.models import all_models  # ensure all models loaded
 
+# ⚠️ 輸出強制 UTF-8（2026-08-29 踩過）
+#    Windows 主控台是 UTF-8，但**把輸出導向檔案時 Python 會改用 cp950**，
+#    腳本裡的 ⚠️ ✅ ❌ 一律編不進去 → UnicodeEncodeError 整支中斷。
+#    `> cmp.txt` 這種存檔動作很常用，不能因此掛掉。
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
+
 TENANTS = [
     {"code": "HQ",      "name": "總公司",  "type": "headquarters"},
     {"code": "HOTEL_A", "name": "飯店 A",  "type": "hotel"},

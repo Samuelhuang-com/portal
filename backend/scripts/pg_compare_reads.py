@@ -48,6 +48,17 @@ import sys
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 
+# ⚠️ 輸出強制 UTF-8（2026-08-29 踩過）
+#    Windows 主控台是 UTF-8，但**把輸出導向檔案時 Python 會改用 cp950**，
+#    腳本裡的 ⚠️ ✅ ❌ 一律編不進去 → UnicodeEncodeError 整支中斷。
+#    `> cmp.txt` 這種存檔動作很常用，不能因此掛掉。
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
+
 logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
 
 BACKEND = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
@@ -188,6 +199,26 @@ def norm(v):
         return v.isoformat()
     if isinstance(v, Decimal):
         return float(v)
+
+    # ⚠️ ORM 實體要轉成欄位字典（2026-08-29 踩過）。
+    #    有些 service 直接回 `query.all()`，元素是 ORM 物件；預設比對會落到
+    #    `repr()`，那裡面有**記憶體位址** ——
+    #    `<OtaPlatform object at 0x0000022A8AE33260>` vs `0x...328D0`，
+    #    兩邊必然不同，報出來全是假差異，而且把真正的差異蓋掉。
+    try:
+        from sqlalchemy import inspect as _sa_inspect
+        st = _sa_inspect(v)
+        if hasattr(st, "mapper"):
+            return {a.key: norm(getattr(v, a.key)) for a in st.mapper.column_attrs}
+    except Exception:
+        pass
+
+    # ⚠️ 二進位（例如 export_xlsx 回傳的 .xlsx bytes）只比長度。
+    #    zip 容器內嵌了**產生當下的時間戳**，逐位元組比對必然不同 ——
+    #    那是格式特性，不是 SQLite vs PG 的差異。比長度至少擋得住
+    #    「有一邊根本沒產出資料」。
+    if isinstance(v, (bytes, bytearray)):
+        return f"<binary {len(v)} bytes>"
     return v
 
 
@@ -317,11 +348,16 @@ def main() -> int:
                 continue
             d = diff(ra, rb)
             if d:
-                # 全部都是 `~` 開頭 ＝ 純數值精度，跟「內容不同」分開統計
-                (numeric if all(x.startswith("~") for x in d) else diffs).append((label, d))
-                mark = "≈" if all(x.startswith("~") for x in d) else "⚠️ "
-                print(f"       {n:<34} {mark} {len(d)} 處"
-                      f"{'數值精度差異' if mark == '≈' else '差異'}")
+                # `~` 開頭 ＝ 純數值精度。⚠️ 分開「計數」而不是只看 all()：
+                #    一支函式常常是「88 處數值 + 3 處內容」，全有全無的分類
+                #    會讓那 88 處把 3 處真正的差異淹掉。
+                hard = [x for x in d if not x.startswith("~")]
+                (diffs if hard else numeric).append((label, hard or d))
+                if hard:
+                    extra = f"（另 {len(d) - len(hard)} 處僅數值精度）" if len(hard) < len(d) else ""
+                    print(f"       {n:<34} ⚠️  {len(hard)} 處內容差異{extra}")
+                else:
+                    print(f"       {n:<34} ≈  {len(d)} 處數值精度差異")
                 if verbose:
                     for x in d[:8]:
                         print(f"            {x}")
