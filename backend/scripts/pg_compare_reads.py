@@ -35,6 +35,8 @@
                                                      （PG 需先有全部 163 張表）
     py -3.12 scripts\\pg_compare_reads.py --days 180     # 縮短測試區間
                                                      （有些函式限制單次最多 366 天）
+    py -3.12 scripts\\pg_compare_reads.py --cycle-purchase
+                                                     # 改比對週採那個獨立 DB
 """
 from __future__ import annotations
 
@@ -79,8 +81,11 @@ PILOT_MODULES = [
 ]
 
 
-def discover_modules() -> list[str]:
+def discover_modules(cycle_purchase: bool = False) -> list[str]:
     """掃出 app/services 底下所有含「第一個參數是 db」的公開函式的模組。
+
+    `cycle_purchase=True` 時**只**掃 `cycle_purchase_*`（那是另一個資料庫，
+    平常被下面的 EXCLUDE 排除掉）。
 
     ⚠️ 用 `--all` 之前，PG 必須已經有主庫**全部 163 張表**：
            py -3.12 scripts\\pg_migrate_pilot.py --all
@@ -104,7 +109,13 @@ def discover_modules() -> list[str]:
                          r"^(sync_|ragic_|email_|ohip_client|ota_browser|ota_scraper)")
     out = []
     for m in pkgutil.iter_modules(pkg.__path__):
-        if EXCLUDE.search(m.name):
+        if cycle_purchase:
+            # 週採模式：只要 cycle_purchase_*，但仍排除會寫入／打外部 API 的
+            if not m.name.startswith("cycle_purchase_"):
+                continue
+            if re.search(r"(_seed|_sync|_ragic_push)$", m.name):
+                continue
+        elif EXCLUDE.search(m.name):
             continue
         try:
             mod = importlib.import_module(f"app.services.{m.name}")
@@ -270,15 +281,27 @@ def main() -> int:
     # ⚠️ --all：自動掃出所有 service 模組（不只試點的 6 個）。
     #    前提是 PG 已經有全部 163 張表，否則會被 relation does not exist 淹沒。
     scan_all = "--all" in args
+    # ⚠️ --cycle-purchase：改比對**週期採購那個獨立資料庫**的 service。
+    #    它有自己的 Base／engine／PG 目標，平常一律被 EXCLUDE 排除
+    #    （拿主庫的 session 去跑只會全部 relation does not exist）。
+    cp = "--cycle-purchase" in args
 
-    pg_url = read_env("POSTGRES_URL")
+    pg_key = "CYCLE_PURCHASE_POSTGRES_URL" if cp else "POSTGRES_URL"
+    lite_key = "CYCLE_PURCHASE_DATABASE_URL" if cp else "DATABASE_URL"
+    pg_url = read_env(pg_key)
     if not pg_url:
-        print("❌ backend/.env 找不到 POSTGRES_URL")
+        print(f"❌ backend/.env 找不到 {pg_key}")
+        if cp:
+            print("   先跑：py -3.12 scripts\\pg_migrate_pilot.py --cycle-purchase")
         return 2
-    sqlite_url = read_env("DATABASE_URL")
+    sqlite_url = read_env(lite_key)
+    if not sqlite_url:
+        print(f"❌ backend/.env 找不到 {lite_key}")
+        return 2
 
     print("=" * 78)
-    print("  查詢結果比對：SQLite vs PostgreSQL")
+    print("  查詢結果比對：SQLite vs PostgreSQL"
+          + ("（週期採購資料庫）" if cp else ""))
     print("=" * 78)
     print(f"  SQLite    : {sqlite_url}")
     print(f"  PostgreSQL: {mask(pg_url)}")
@@ -302,9 +325,14 @@ def main() -> int:
     errors: list[tuple[str, str]] = []
     skipped: list[str] = []
 
-    modules = discover_modules() if scan_all else PILOT_MODULES
-    if scan_all:
+    if cp:
+        modules = discover_modules(cycle_purchase=True)
+        print(f"  掃描模式  : 週期採購 {len(modules)} 個 service 模組\n")
+    elif scan_all:
+        modules = discover_modules()
         print(f"  掃描模式  : 全部 {len(modules)} 個 service 模組\n")
+    else:
+        modules = PILOT_MODULES
 
     for mname in modules:
         if only and mname != only:

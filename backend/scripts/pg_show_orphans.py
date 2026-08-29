@@ -20,6 +20,7 @@
     cd backend
     py -3.12 scripts\\pg_show_orphans.py
     py -3.12 scripts\\pg_show_orphans.py --samples 10
+    py -3.12 scripts\\pg_show_orphans.py --cycle-purchase   # 改看週採那個獨立 DB
 """
 from __future__ import annotations
 
@@ -49,7 +50,8 @@ from sqlalchemy import inspect, text                              # noqa: E402
 DEFAULT_SAMPLES = 5
 
 
-def load_all_models():
+def load_all_models(cycle_purchase: bool = False):
+    """⚠️ 本專案有兩個獨立資料庫，各有自己的 Base／engine（見 pg_migrate_pilot）。"""
     import importlib
     import pkgutil
     import app.models as pkg
@@ -58,6 +60,9 @@ def load_all_models():
             importlib.import_module(f"app.models.{m.name}")
         except Exception:
             pass
+    if cycle_purchase:
+        from app.core.cycle_purchase_database import CyclePurchaseBase
+        return CyclePurchaseBase
     from app.core.database import Base
     return Base
 
@@ -65,12 +70,17 @@ def load_all_models():
 def main() -> int:
     n_s = int(sys.argv[sys.argv.index("--samples") + 1]) if "--samples" in sys.argv \
         else DEFAULT_SAMPLES
-    Base = load_all_models()
-    from app.core.database import engine
+    cp = "--cycle-purchase" in sys.argv
+    Base = load_all_models(cycle_purchase=cp)
+    if cp:
+        from app.core.cycle_purchase_database import cycle_purchase_engine as engine
+    else:
+        from app.core.database import engine
     engine.echo = False
 
     print("=" * 78)
-    print("  外鍵孤兒的實際內容（唯讀）")
+    print("  外鍵孤兒的實際內容（唯讀）"
+          + ("　—　週期採購資料庫" if cp else ""))
     print("=" * 78)
     print(f"  {engine.url}\n")
 

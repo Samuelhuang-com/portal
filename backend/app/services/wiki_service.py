@@ -82,8 +82,12 @@ def list_articles(
             query = query.filter(WikiArticle.tags.ilike(f"%{tag}%"))
 
     total = query.count()
+    # ⚠️ 次要排序鍵 `id` 不可省略（2026-08-29 PG 遷移比對時發現）：
+    #    內建 SOP 是同一次批次寫入的，15 篇的 `updated_at` **完全相同**，
+    #    只靠它排序等於每一列都平手 —— 順序由引擎自己決定，
+    #    SQLite 與 PostgreSQL 給出不同結果，同一支 API 連續呼叫兩次也可能不同。
     items = (
-        query.order_by(WikiArticle.updated_at.desc())
+        query.order_by(WikiArticle.updated_at.desc(), WikiArticle.id)
         .offset((page - 1) * per_page)
         .limit(per_page)
         .all()
@@ -324,7 +328,9 @@ def build_graph(db: Session, category: str = "all") -> Dict[str, Any]:
     if category and category != "all":
         query = query.filter(WikiArticle.category == category)
 
-    articles = query.all()
+    # ⚠️ 這裡原本沒有任何 ORDER BY，順序完全由引擎決定（2026-08-29 發現）。
+    #    nodes 與 edges 都照這個順序產生，兩個引擎回傳的圖譜結構因此不同。
+    articles = query.order_by(WikiArticle.id).all()
 
     # ── nodes ──────────────────────────────────────────────────────────────
     nodes = []

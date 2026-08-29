@@ -133,7 +133,12 @@ def list_cost_centers(db: Session, department_id: Optional[int] = None, is_activ
         query = query.filter(CyclePurchaseCostCenter.department_id == department_id)
     if is_active is not None:
         query = query.filter(CyclePurchaseCostCenter.is_active == is_active)
-    rows = query.order_by(CyclePurchaseCostCenter.cc_code).all()
+    # ⚠️ `cc_code` **沒有唯一約束**（唯一的只有 id 與 department_id），
+    #    同一個代碼可能有多列 —— 少了次要鍵，同碼列的先後由引擎決定，
+    #    切換到 PostgreSQL 後順序會變且不會報錯（2026-08-29 補）。
+    rows = query.order_by(
+        CyclePurchaseCostCenter.cc_code, CyclePurchaseCostCenter.id
+    ).all()
     for r in rows:
         r.department_name = r.department.dept_name if r.department else None
     return rows
@@ -666,12 +671,23 @@ def get_cycle_options(db: Session, companies_filter: Optional[list[str]] = None)
     if companies_filter:
         dept_query = dept_query.filter(CyclePurchaseItemMapping.company.in_(companies_filter))
     category_departments: dict[str, list[str]] = {}
-    for category, dept_name in dept_query.distinct().all():
+    # ⚠️ `.order_by()` + 最後再 `sorted()` 都是**穩定性**需要，不是排序需求
+    #    （2026-08-29 補）。原本是裸的 `.distinct().all()`，回傳順序由引擎決定
+    #    —— SQLite 與 PostgreSQL 的 DISTINCT-over-JOIN 實作不同，**兩邊都不是
+    #    排序過的**，切換後這些下拉選項的部門標籤順序會變且不會報錯。
+    for category, dept_name in (
+        dept_query.distinct()
+        .order_by(CyclePurchaseItem.category, CyclePurchaseDepartment.dept_name)
+        .all()
+    ):
         if not dept_name:
             continue
         category_departments.setdefault(category, [])
         if dept_name not in category_departments[category]:
             category_departments[category].append(dept_name)
+    # 同一品類底下多個部門時，名稱固定升冪（理論上多為 1 個，見上方 docstring）
+    for names in category_departments.values():
+        names.sort()
 
     return {
         "companies": companies,

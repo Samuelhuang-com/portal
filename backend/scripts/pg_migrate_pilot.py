@@ -26,6 +26,10 @@ Phase 1：把試點模組（OPERA／OHIP／金旭）的 32 張表整批搬到 Po
     python scripts\\pg_migrate_pilot.py --only ohip_     # 只搬表名開頭符合的
     python scripts\\pg_migrate_pilot.py --tables a,b     # 指定表名
     python scripts\\pg_migrate_pilot.py --rows 5000      # 每張表只搬前 N 列（試水溫）
+    py -3.12 scripts\\pg_migrate_pilot.py --cycle-purchase
+        改搬**週採那個獨立資料庫**（19 張表）。它有自己的 Base／engine／
+        PG 目標（.env 的 CYCLE_PURCHASE_POSTGRES_URL），跟主庫完全分開。
+        ⚠️ 目標資料庫必須用 template0 + C collation 建，否則中文排序會全變。
 """
 from __future__ import annotations
 
@@ -76,7 +80,15 @@ def mask(url: str) -> str:
     return re.sub(r"://([^:/@]+):([^@]*)@", r"://\1:****@", url)
 
 
-def load_models():
+def load_models(cycle_purchase: bool = False):
+    """把所有 model import 進來，回傳要搬的那個 Base。
+
+    ⚠️ 本專案有**兩個獨立的資料庫**，各有自己的 Base 與 engine：
+         · `portal.db`         → `app.core.database.Base`（163 張表）
+         · `cycle-purchase.db` → `app.core.cycle_purchase_database.CyclePurchaseBase`（19 張表）
+       兩者之間**不能建外鍵**（跨 SQLite 檔案做不到），專案也明訂不用
+       ATTACH DATABASE，所以它們是真的分開、要各搬各的。
+    """
     import importlib
     import pkgutil
     import app.models as pkg
@@ -85,6 +97,9 @@ def load_models():
             importlib.import_module(f"app.models.{m.name}")
         except Exception:
             pass
+    if cycle_purchase:
+        from app.core.cycle_purchase_database import CyclePurchaseBase
+        return CyclePurchaseBase
     from app.core.database import Base
     return Base
 
@@ -467,17 +482,36 @@ def main() -> int:
     #    正式切換前孤兒必須修掉、約束必須加回去。腳本會印出加回去的 SQL。
     allow_orphans = "--allow-orphans" in args
 
-    pg_url = read_env("POSTGRES_URL")
+    # ⚠️ --cycle-purchase：改搬**週期採購那個獨立資料庫**（19 張表）。
+    #    它有自己的 Base／engine／PG 目標，跟主庫完全分開，要各搬各的。
+    cp = "--cycle-purchase" in args
+    env_key = "CYCLE_PURCHASE_POSTGRES_URL" if cp else "POSTGRES_URL"
+
+    pg_url = read_env(env_key)
     if not pg_url:
-        print("❌ backend/.env 找不到 POSTGRES_URL（不要動 DATABASE_URL）：")
-        print("   POSTGRES_URL=postgresql+psycopg://portal:密碼@localhost:5432/portal")
+        print(f"❌ backend/.env 找不到 {env_key}（不要動 DATABASE_URL）：")
+        if cp:
+            print("   CYCLE_PURCHASE_POSTGRES_URL="
+                  "postgresql+psycopg://portal:密碼@localhost:5432/cycle_purchase")
+            print("""
+   ⚠️ 資料庫要先建好，而且**必須用 template0 + C collation**：
+        CREATE DATABASE cycle_purchase TEMPLATE template0
+          ENCODING 'UTF8' LC_COLLATE 'C' LC_CTYPE 'C';
+      template1 已經帶著中文 collation，繼承後改不掉，中文排序會全變。""")
+        else:
+            print("   POSTGRES_URL=postgresql+psycopg://portal:密碼@localhost:5432/portal")
         return 2
 
-    Base = load_models()
-    from app.core.database import engine as src
+    Base = load_models(cycle_purchase=cp)
+    if cp:
+        from app.core.cycle_purchase_database import cycle_purchase_engine as src
+    else:
+        from app.core.database import engine as src
     src.echo = False
 
-    names = sorted(Base.metadata.tables) if take_all \
+    # ⚠️ 週採的表全都叫 cycle_purchase_*，PILOT 那組 opera_/ohip_/jinxu_ 前綴
+    #    一張都對不上 —— 所以 --cycle-purchase 一律當成搬全部。
+    names = sorted(Base.metadata.tables) if (take_all or cp) \
         else sorted(n for n in Base.metadata.tables if PILOT.match(n))
     if only:
         names = [n for n in names if n.startswith(only)]
@@ -487,7 +521,10 @@ def main() -> int:
     names = dep_order(Base, names)
 
     print("=" * 76)
-    print("  " + ("主庫全部資料表" if take_all else "試點模組（OPERA / OHIP / 金旭）") + " → PostgreSQL")
+    scope = ("週期採購資料庫（cycle-purchase.db）" if cp
+             else "主庫全部資料表" if take_all
+             else "試點模組（OPERA / OHIP / 金旭）")
+    print(f"  {scope} → PostgreSQL")
     print("=" * 76)
     print(f"  來源 SQLite : {src.url}")
     print(f"  目標 Postgres: {mask(pg_url)}")
