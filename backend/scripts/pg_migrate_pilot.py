@@ -186,7 +186,71 @@ def preflight(names, Base, src) -> list[str]:
         for tbl, col, ptbl, pcol, cnt in find_orphan_fks(names, Base, src, have):
             problems.append(f"{tbl}.{col} → {ptbl}.{pcol}："
                             f"{cnt:,} 列的父資料不存在（SQLite 沒擋，PostgreSQL 會擋）")
+
+        # ── ⑤ 唯一性重複 ────────────────────────────────────────────────
+        for tbl, cols, groups, rows, sample in find_unique_dups(names, Base, src, have):
+            problems.append(f"{tbl}({', '.join(cols)})：{groups:,} 組重複、共 {rows:,} 列"
+                            f"（例：{sample}）違反唯一約束")
     return problems
+
+
+def find_unique_dups(names, Base, src, have=None) -> list[tuple]:
+    """找出「會違反 model 宣告之唯一約束」的重複資料。
+
+    ⚠️⚠️ **為什麼 SQLite 沒擋住？** 兩種可能，都遇過：
+
+    ① **partial index 的條件只寫了一個方言**（2026-08-29 實際踩到）。
+       `Index(..., unique=True, sqlite_where=text("is_deleted = 0"))` ——
+       `sqlite_where` **只作用於 SQLite**，PostgreSQL 看的是 `postgresql_where`。
+       少了它，PG 建出來的是**沒有條件的**唯一索引，於是軟刪除的舊列也
+       參與唯一性檢查。這種是 **model 的 bug**，要補 `postgresql_where`，
+       不是去刪資料。
+
+    ② **約束是後來加進 model 的，但 SQLite 的表沒跟著改**。
+       `create_all()` 不會改既有的表，舊的 `_migrate_*` 也多半只加欄位不加索引。
+       ⚠️ `check_schema_drift.py` 目前只比對資料表／欄位／型別，**不比對
+          約束與索引**，所以這一類完全看不到。
+
+    ⚠️ NULL 不參與唯一性（SQL 標準：NULL 彼此不相等），所以任一欄位為 NULL
+       的列一律排除，否則會報出一堆假的重複。
+    """
+    from sqlalchemy import UniqueConstraint
+    if have is None:
+        have = set(inspect(src).get_table_names())
+    out: list[tuple] = []
+    with src.connect() as c:
+        for n in sorted(set(names) & have):
+            table = Base.metadata.tables[n]
+            specs: list[tuple[list[str], str | None]] = []
+            for con in table.constraints:
+                if isinstance(con, UniqueConstraint) and len(con.columns):
+                    specs.append(([x.name for x in con.columns], None))
+            for ix in table.indexes:
+                if not ix.unique:
+                    continue
+                # 查 SQLite 時要套 SQLite 的條件；PG 端的條件另外比對（見上方說明）
+                w = ix.dialect_options.get("sqlite", {}).get("where")
+                specs.append(([x.name for x in ix.columns], str(w) if w is not None else None))
+
+            for cols, where in specs:
+                key = ", ".join(cols)
+                nn = " AND ".join(f"{x} IS NOT NULL" for x in cols)
+                cond = f"WHERE {nn}" + (f" AND ({where})" if where else "")
+                try:
+                    row = c.execute(text(
+                        f"SELECT COUNT(*), COALESCE(SUM(n), 0) FROM ("
+                        f"  SELECT COUNT(*) AS n FROM {n} {cond} "
+                        f"  GROUP BY {key} HAVING COUNT(*) > 1)")).one()
+                    if not row[0]:
+                        continue
+                    ex = c.execute(text(
+                        f"SELECT {key} FROM {n} {cond} GROUP BY {key} "
+                        f"HAVING COUNT(*) > 1 LIMIT 1")).one()
+                    out.append((n, cols, row[0], row[1],
+                                ", ".join(str(v) for v in ex)))
+                except Exception:
+                    pass
+    return out
 
 
 def find_orphan_fks(names, Base, src, have=None) -> list[tuple]:
@@ -459,6 +523,13 @@ def main() -> int:
 
        · 外鍵孤兒 → 子表指向了不存在的父列。同樣兩條路：補回父資料，
          或刪掉／清空這些指向。**不要**為了搬得過去就把 FK 拿掉。
+
+       · 唯一約束重複 → **先確認是 model 的 bug 還是資料真的重複**：
+         ① partial unique index 只寫了 `sqlite_where` 沒寫 `postgresql_where`
+            → PG 會建成沒有條件的索引。這是 **model 的 bug**，補上條件即可，
+            **不要刪資料**（軟刪除的舊列本來就該被排除在唯一性之外）。
+         ② 約束是後來加進 model 的，SQLite 的表沒跟著改 → 資料真的重複，
+            要決定留哪一筆。
 """)
         return 2
     print("     ✅ 沒有問題\n")

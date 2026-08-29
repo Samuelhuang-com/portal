@@ -12,6 +12,7 @@
 分別帶 venue_flag「飯」「商」，由工作日誌合併時呈現雙標籤。
 """
 import uuid
+import sqlalchemy as sa
 from datetime import datetime
 from sqlalchemy import (
     Column, String, Integer, Boolean, DateTime, Date,
@@ -114,7 +115,11 @@ class MallSchedule(Base):
             "uq_mall_schedules_year_month_active",
             "schedule_year", "schedule_month",
             unique=True,
-            sqlite_where=text("is_deleted = 0"),
+            # ⚠️⚠️ 條件必須每個方言各給一次；`sqlite_where` 不會套用到 PostgreSQL。
+            #    且要用運算式而非 text()，布林字面值兩邊不同（0/1 vs false/true）。
+            #    詳見 `schedule.py` 同一處的完整說明（2026-08-29）。
+            sqlite_where=(sa.column("is_deleted") == False),      # noqa: E712
+            postgresql_where=(sa.column("is_deleted") == False),  # noqa: E712
         ),
     )
 

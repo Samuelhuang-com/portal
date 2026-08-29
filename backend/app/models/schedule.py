@@ -6,6 +6,7 @@
 本模組為純本地 SQLite 資料庫模組，不對接 Ragic。
 """
 import uuid
+import sqlalchemy as sa
 from datetime import datetime
 from sqlalchemy import (
     Column, String, Integer, Boolean, DateTime, Date,
@@ -110,7 +111,20 @@ class Schedule(Base):
             "uq_schedules_year_month_active",
             "schedule_year", "schedule_month",
             unique=True,
-            sqlite_where=text("is_deleted = 0"),
+            # ⚠️⚠️ 條件必須**每個方言各給一次**（2026-08-29 踩過兩次）。
+            #    SQLAlchemy 的 `sqlite_where` 只作用於 SQLite；PostgreSQL 看的是
+            #    `postgresql_where`。少了它，PG 會建成**沒有條件的**唯一索引，
+            #    軟刪除的舊班表跟著參與唯一性檢查 → 同年月重新匯入直接失敗。
+            #    這是靜默的：SQLite 上一切正常，只有搬到 PG 才會炸。
+            #
+            # ⚠️ 用 `sa.column(...) == False` 這種**運算式**而不是 `text("is_deleted = 0")`：
+            #    布林字面值兩個引擎不一樣（SQLite 是 0/1、PostgreSQL 是 false/true），
+            #    寫死 `text("is_deleted = 0")` 在 PG 會噴
+            #    `operator does not exist: boolean = integer`。
+            #    交給 SQLAlchemy 渲染，同一個運算式在兩邊各自出正確的字面值，
+            #    也不會發生「兩處條件改到不一致」。
+            sqlite_where=(sa.column("is_deleted") == False),      # noqa: E712
+            postgresql_where=(sa.column("is_deleted") == False),  # noqa: E712
         ),
     )
 

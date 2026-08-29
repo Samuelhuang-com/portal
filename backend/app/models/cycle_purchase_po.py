@@ -38,6 +38,8 @@ period_label, company, vendor_id`）。改成 partial index 後，
 ⚠️ SQLite 不支援 `ALTER TABLE ... DROP CONSTRAINT`，這個改動需要**整表重建**
 （建新表 → 搬資料 → 刪舊表 → 改名），見 `apply_cycle_purchase_po_unique_migration.py`。
 """
+import sqlalchemy as sa
+
 from sqlalchemy import (
     Column, Index, Integer, String, Numeric, Text, DateTime, Date,
     ForeignKey, UniqueConstraint, func, text,
@@ -58,7 +60,13 @@ class CyclePurchasePO(CyclePurchaseBase):
             "uq_cp_po_active_cycle_period_company_vendor",
             "cycle_id", "period_label", "company", "vendor_id",
             unique=True,
-            sqlite_where=text("status != 'cancelled'"),
+            # ⚠️⚠️ 條件必須每個方言各給一次；`sqlite_where` 不會套用到 PostgreSQL。
+            #    少了 `postgresql_where`，PG 會建成沒有條件的唯一索引，
+            #    已取消的採購單跟著參與唯一性檢查 → 重開同一組就會失敗。
+            #    （字串比較兩個引擎渲染相同，但仍用運算式保持一致寫法。）
+            #    詳見 `schedule.py` 同一處的完整說明（2026-08-29）。
+            sqlite_where=(sa.column("status") != "cancelled"),
+            postgresql_where=(sa.column("status") != "cancelled"),
         ),
     )
 
