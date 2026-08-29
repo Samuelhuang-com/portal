@@ -245,7 +245,7 @@ def _seed_builtin_roles():
                 conn.execute(
                     text(
                         "INSERT INTO roles (id, name, scope, description, created_at) "
-                        "VALUES (:id, :name, :scope, :desc, datetime('now'))"
+                        "VALUES (:id, :name, :scope, :desc, CURRENT_TIMESTAMP)"
                     ),
                     {"id": str(uuid.uuid4()), "name": name, "scope": scope, "desc": desc},
                 )
@@ -279,7 +279,7 @@ def _seed_admin_user():
             conn.execute(
                 text(
                     "INSERT INTO tenants (id, code, name, type, is_active, created_at, updated_at) "
-                    "VALUES (:id, 'default', 'Default Tenant', 'system', 1, datetime('now'), datetime('now'))"
+                    "VALUES (:id, 'default', 'Default Tenant', 'system', TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
                 ),
                 {"id": tenant_id},
             )
@@ -298,7 +298,7 @@ def _seed_admin_user():
             conn.execute(
                 text(
                     "INSERT INTO users (id, tenant_id, email, full_name, hashed_password, is_active, must_change_password, created_at, updated_at) "
-                    "VALUES (:id, :tenant_id, 'admin', 'Administrator', :hashed_pwd, 1, 0, datetime('now'), datetime('now'))"
+                    "VALUES (:id, :tenant_id, 'admin', 'Administrator', :hashed_pwd, TRUE, FALSE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
                 ),
                 {"id": user_id, "tenant_id": tenant_id, "hashed_pwd": hashed_password},
             )
@@ -320,7 +320,7 @@ def _seed_admin_user():
             conn.execute(
                 text(
                     "INSERT INTO user_roles (id, user_id, role_id, tenant_id, granted_at) "
-                    "VALUES (:id, :user_id, :role_id, :tenant_id, datetime('now'))"
+                    "VALUES (:id, :user_id, :role_id, :tenant_id, CURRENT_TIMESTAMP)"
                 ),
                 {
                     "id": str(uuid.uuid4()),
@@ -355,10 +355,17 @@ def _seed_menu_config_mall_pm_group():
 
     with engine.connect() as conn:
         # ── 1. 隱藏舊的 custom_ 群組（商場例行維護舊入口）──────────────────────
+        # ⚠️⚠️ 布林用 `IS TRUE` / `FALSE`，**不可以寫 `= 1` / `= 0`**
+        #    （2026-08-29 測試區試切 PostgreSQL 時炸在這一行）。
+        #    SQLite 沒有真正的 BOOLEAN，把布林存成 0/1 整數，所以
+        #    `is_visible = 1` 完全正常；PostgreSQL 有真正的 boolean 而且
+        #    **不做隱式轉型** → `operator does not exist: boolean = integer`。
+        #    `IS TRUE` / `FALSE` 兩個引擎都吃，不必寫方言判斷。
+        #    ⚠️ 這一族的全面掃描見 `scripts/audit_bool_literals.py`。
         conn.execute(
             text(
-                "UPDATE menu_configs SET is_visible = 0 "
-                "WHERE menu_key = 'custom_1777348120465' AND is_visible = 1"
+                "UPDATE menu_configs SET is_visible = FALSE "
+                "WHERE menu_key = 'custom_1777348120465' AND is_visible IS TRUE"
             )
         )
 
@@ -370,7 +377,7 @@ def _seed_menu_config_mall_pm_group():
             conn.execute(
                 text(
                     "INSERT INTO menu_configs (menu_key, parent_key, custom_label, sort_order, is_visible, updated_at, updated_by) "
-                    "VALUES ('mall-pm-group', 'mall', NULL, 10, 1, datetime('now'), 'system-seed')"
+                    "VALUES ('mall-pm-group', 'mall', NULL, 10, TRUE, CURRENT_TIMESTAMP, 'system-seed')"
                 )
             )
 
@@ -384,7 +391,7 @@ def _seed_menu_config_mall_pm_group():
                 conn.execute(
                     text(
                         "INSERT INTO menu_configs (menu_key, parent_key, custom_label, sort_order, is_visible, updated_at, updated_by) "
-                        "VALUES (:k, 'mall-pm-group', NULL, :o, 1, datetime('now'), 'system-seed')"
+                        "VALUES (:k, 'mall-pm-group', NULL, :o, TRUE, CURRENT_TIMESTAMP, 'system-seed')"
                     ),
                     {"k": menu_key, "o": sort_order},
                 )
@@ -425,7 +432,7 @@ def _seed_menu_config_nichiyo_purchase():
                 text(
                     "INSERT INTO menu_configs "
                     "(menu_key, parent_key, custom_label, sort_order, is_visible, permission_key, updated_at, updated_by) "
-                    "VALUES ('nichiyo-purchase-report', NULL, NULL, 80, 1, 'nichiyo_purchase.view', datetime('now'), 'system-seed')"
+                    "VALUES ('nichiyo-purchase-report', NULL, NULL, 80, TRUE, 'nichiyo_purchase.view', CURRENT_TIMESTAMP, 'system-seed')"
                 )
             )
 
@@ -440,7 +447,7 @@ def _seed_menu_config_nichiyo_purchase():
                     text(
                         "INSERT INTO menu_configs "
                         "(menu_key, parent_key, custom_label, sort_order, is_visible, permission_key, updated_at, updated_by) "
-                        "VALUES (:k, 'nichiyo-purchase-report', NULL, :o, 1, 'nichiyo_purchase.view', datetime('now'), 'system-seed')"
+                        "VALUES (:k, 'nichiyo-purchase-report', NULL, :o, TRUE, 'nichiyo_purchase.view', CURRENT_TIMESTAMP, 'system-seed')"
                     ),
                     {"k": menu_key, "o": sort_order},
                 )
@@ -472,7 +479,7 @@ def _seed_menu_config_nichiyo_claim():
                 text(
                     "INSERT INTO menu_configs "
                     "(menu_key, parent_key, custom_label, sort_order, is_visible, permission_key, updated_at, updated_by) "
-                    "VALUES ('nichiyo-claim-report', NULL, NULL, 85, 1, 'nichiyo_claim.view', datetime('now'), 'system-seed')"
+                    "VALUES ('nichiyo-claim-report', NULL, NULL, 85, TRUE, 'nichiyo_claim.view', CURRENT_TIMESTAMP, 'system-seed')"
                 )
             )
 
@@ -487,7 +494,7 @@ def _seed_menu_config_nichiyo_claim():
                     text(
                         "INSERT INTO menu_configs "
                         "(menu_key, parent_key, custom_label, sort_order, is_visible, permission_key, updated_at, updated_by) "
-                        "VALUES (:k, 'nichiyo-claim-report', NULL, :o, 1, 'nichiyo_claim.view', datetime('now'), 'system-seed')"
+                        "VALUES (:k, 'nichiyo-claim-report', NULL, :o, TRUE, 'nichiyo_claim.view', CURRENT_TIMESTAMP, 'system-seed')"
                     ),
                     {"k": menu_key, "o": sort_order},
                 )
@@ -548,7 +555,7 @@ def _seed_reference_data():
             company_names = ["大直", "樂群", "台中", "自由", "總公司"]
             for name in company_names:
                 conn.execute(
-                    text("INSERT INTO companies (name, is_active, created_at) VALUES (:name, 1, CURRENT_TIMESTAMP)"),
+                    text("INSERT INTO companies (name, is_active, created_at) VALUES (:name, TRUE, CURRENT_TIMESTAMP)"),
                     {"name": name},
                 )
             conn.commit()
@@ -568,7 +575,7 @@ def _seed_reference_data():
                 for sname, sdesc in default_types:
                     conn.execute(
                         text("INSERT INTO sla_metric_types (name, description, is_active, created_at) "
-                             "VALUES (:name, :desc, 1, CURRENT_TIMESTAMP)"),
+                             "VALUES (:name, :desc, TRUE, CURRENT_TIMESTAMP)"),
                         {"name": sname, "desc": sdesc},
                     )
                 conn.commit()
@@ -591,7 +598,7 @@ def _seed_reference_data():
                     conn.execute(
                         text(
                             "INSERT INTO departments (name, company_id, is_active, created_at) "
-                            "VALUES (:name, :cid, 1, CURRENT_TIMESTAMP)"
+                            "VALUES (:name, :cid, TRUE, CURRENT_TIMESTAMP)"
                         ),
                         {"name": dname, "cid": cid},
                     )
@@ -1244,16 +1251,23 @@ async def lifespan(app: FastAPI):
     _run_startup_migration("seed_ragic_sheet_config", seed_ragic_sheet_config)
 
     # SQLite WAL 模式：讓讀取與寫入可同時進行（OneDrive 環境必要）
-    from sqlalchemy import text as _sql_text
-    try:
-        with engine.connect() as _c:
-            _c.execute(_sql_text("PRAGMA journal_mode=WAL"))
-            _c.execute(_sql_text("PRAGMA busy_timeout=30000"))   # 30 秒等待鎖
-            _c.execute(_sql_text("PRAGMA synchronous=NORMAL"))
-            _c.commit()
-        print("[Portal] SQLite WAL mode enabled.")
-    except Exception as _e:
-        print(f"[Portal] WAL mode setup skipped: {_e}")
+    # ⚠️ 只在 SQLite 上做。原本沒有方言判斷，靠 try/except 吞掉 PostgreSQL 的
+    #    錯誤 —— 那會在啟動 log 印出一行看似有問題的 "WAL mode setup skipped"，
+    #    讓人以為切換出了狀況。用方言判斷明確跳過，訊息才誠實。
+    if engine.dialect.name == "sqlite":
+        from sqlalchemy import text as _sql_text
+        try:
+            with engine.connect() as _c:
+                _c.execute(_sql_text("PRAGMA journal_mode=WAL"))
+                _c.execute(_sql_text("PRAGMA busy_timeout=30000"))   # 30 秒等待鎖
+                _c.execute(_sql_text("PRAGMA synchronous=NORMAL"))
+                _c.commit()
+            print("[Portal] SQLite WAL mode enabled.")
+        except Exception as _e:
+            print(f"[Portal] WAL mode setup skipped: {_e}")
+    else:
+        # ⚠️ 這一行是切換是否生效的**肉眼證據** —— 看到它就代表真的連上 PG 了
+        print(f"[Portal] Dialect = {engine.dialect.name}（非 SQLite，跳過 WAL 設定）")
 
 
     # 清除保全巡檢中的拍照欄位 item（Ragic 必填但不屬於巡檢評分項目）

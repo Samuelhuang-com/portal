@@ -92,3 +92,7 @@ backend/scripts/restore_dropped_fks.sql
 # pg_compare_reads.py 的比對輸出（每次重跑都會產生，不需版控）
 backend/cmp*.txt
 backend/cp*.txt
+
+# pg_cutover.py 產生的 .env 備份與切換時間戳（含密碼，絕對不可進版控）
+backend/.env.bak-*
+backend/.pg_cutover_at

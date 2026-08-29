@@ -774,6 +774,29 @@ class SyncApp(tk.Tk):
             import app.models.opera_segment            # noqa  ohip_revenue_history + 同步紀錄
             import app.models.ota_review               # noqa  OTA 口碑分析（2026-08-22）
 
+            # ── PostgreSQL：只建表，跳過底下所有 PRAGMA 補丁 ─────────────────
+            #
+            # ⚠️⚠️ 第 2、4～7 節全部用 `PRAGMA table_info(...)`，**那是 SQLite
+            #    專屬語法**，PostgreSQL 直接 `syntax error at or near "PRAGMA"`
+            #    （2026-08-29 測試區切換後跑 sync_tool.py 就是炸在這裡）。
+            #
+            # ⚠️ 這些補丁跟 Phase 0 從 `main.py` 移除的 30 個 `_migrate_*` 是
+            #    **同一類東西** —— 手寫的「偵測欄位不存在就 ALTER TABLE」。
+            #    現在 schema 由 **Alembic** 管理（`alembic upgrade head`），
+            #    而且那四個欄位（hotel_mr_batch.start_time、
+            #    calendar_custom_events.zone、vendors.ragic_id、
+            #    ota_sync_logs.worker_host）model 都已宣告、
+            #    `check_schema_drift.py` 也回報乾淨 —— 它們現在全是空轉。
+            #
+            # ⚠️ 這裡選擇**方言判斷**而不是直接刪除：SQLite 還在時它們仍是
+            #    唯一的保險（本檔案原註解說明過：只跑 sync_tool 的機器不會經過
+            #    後端 lifespan）。等 SQLite 完全退場再一併移除。
+            if engine.dialect.name != "sqlite":
+                Base.metadata.create_all(bind=engine)
+                logger.info("[DB] 資料表確認完成（create_all，dialect=%s，"
+                            "已跳過 SQLite 專屬的 PRAGMA 補丁）", engine.dialect.name)
+                return
+
             # ── 2. hotel_mr_reading 舊版偵測 → DROP（在 create_all 之前）────
             with engine.connect() as conn:
                 try:

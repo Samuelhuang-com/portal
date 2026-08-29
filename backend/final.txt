@@ -1,0 +1,188 @@
+==============================================================================
+  查詢結果比對：SQLite vs PostgreSQL
+==============================================================================
+  SQLite    : sqlite:///C:/portal_data/portal.db
+  PostgreSQL: postgresql+psycopg://postgres:****@localhost:5432/portal
+  測試區間  : 2026-02-23 ~ 2026-08-21（--days 180）
+
+  掃描模式  : 全部 26 個 service 模組
+
+  ── audit_service（4 支）
+       get_anomalies                      ✅
+       get_audit_summary                  ✅
+       get_nichiyo_anomalies              ✅
+       get_nichiyo_audit_summary          ✅
+  ── contract_service（1 支）
+  ── inventory_service（3 支）
+       get_stats                          ✅
+       list_records                       ✅
+  ── jinxu_analysis_service（29 支）
+       cancellation_by_channel            ✅
+       cancellation_by_ratecode           ✅
+       cancellation_monthly               ✅
+       cancellation_summary               ✅
+       data_coverage                      ✅
+       deposit_monthly                    ✅
+       deposit_summary                    ✅
+       ledger_entries                     ✅
+       payment_monthly                    ✅
+       payment_summary                    ✅
+       rate_gap                           ✅
+       repeat_guests                      ✅
+       resv_by_channel                    ✅
+       resv_by_ratecode                   ✅
+       resv_by_roomtype                   ✅
+       resv_by_source                     ✅
+       resv_by_type                       ✅
+       resv_list                          ✅
+       resv_monthly                       ✅
+       resv_summary                       ✅
+       revenue_by_room_kind               ✅
+       revenue_by_subject                 ✅
+       revenue_daily                      ✅
+       revenue_monthly                    ✅
+       revenue_summary                    ✅
+       shift_summary                      ✅
+       status_breakdown                   ✅
+  ── mall_schedule_service（2 支）
+  ── ohip_async_cache（5 支）
+       purge                              ✅
+  ── ohip_snapshot_service（1 支）
+       list_runs                          ✅
+  ── opera_analysis_service（26 支）
+       get_anomalies                      ✅
+       get_checkout_time_distribution     ✅
+       get_daily                          ✅
+       get_day_detail                     ✅
+       get_guest_mix                      ✅
+       get_kpi                            ✅
+       get_long_stay                      ✅
+       get_los_buckets                    ✅
+       get_monthly                        ✅
+       get_ooo_loss                       ✅
+       get_operations_metrics             ✅
+       get_quadrant                       ✅
+       get_rate_opportunity               ✅
+       get_repeat_guests                  ✅
+       get_room_usage                     ✅
+       get_segment                        ✅
+       get_settings                       ✅
+       get_stay_summary                   ✅
+       get_stay_weekday                   ✅
+       get_stays                          ✅
+       get_trend                          ✅
+       get_weekday_performance            ✅
+       get_yearly                         ✅
+       list_settings                      ✅
+  ── opera_forecast_service（7 支）
+       compare_runs_with_actual           ✅
+       forecast_range                     ✅
+       learn_event_coefficients           ✅
+       list_coefficients                  ✅
+       load_coefficients                  ✅
+       load_excluded                      ✅
+       load_facts                         ✅
+  ── opera_lookup_service（3 支）
+       find_events                        ✅
+       get_date_lookup                    ✅
+       get_period_lookup                  ✅
+  ── opera_pace_service（7 支）
+       curve                              ✅
+       data_range                         ✅
+       day_detail                         ✅
+       otb_matrix                         ✅
+       pickup                             ✅
+       pickup_dimension                   ✅
+       readiness                          ✅
+  ── opera_period_service（3 支）
+       count_data_days                    ✅
+       default_range                      ✅
+       resolve_period                     ✅
+  ── opera_reservation_service（7 支）
+       block_pickup                       ✅
+       booking_window                     ✅
+       cancellations                      ✅
+       data_range                         ✅
+       dimension_stats                    ✅
+       los_buckets                        ✅
+       on_the_books                       ✅
+  ── opera_segment_service（3 支）
+       analyze                            ≈  68 處數值精度差異
+       data_range                         ✅
+       dimension_options                  ✅
+  ── ota_analysis_service（4 支）
+       analyze_pending                    ✅
+       ensure_builtin_topic_rules         ✅
+       load_rules                         ✅
+  ── ota_ingest_service（3 支）
+  ── ota_platform_service（3 支）
+       domain_map                         ✅
+       ensure_builtin_platforms           ✅
+       list_platforms                     ✅
+  ── ota_review_service（4 支）
+       export_rows                        ✅
+       export_xlsx                        ⚠️  1 處內容差異
+       list_reviews                       ✅
+  ── ota_source_service（4 支）
+       list_sources                       ✅
+       platform_options                   ✅
+  ── ota_stats_service（10 支）
+       get_alert_aging                    ✅
+       get_alert_daily                    ✅
+       get_data_range                     ✅
+       get_monthly                        ✅
+       get_overview                       ✅
+       get_platform_stats                 ✅
+       get_score_distribution             ✅
+       get_topic_rotation                 ✅
+       get_topic_stats                    ✅
+       hotel_options                      ✅
+  ── ota_sync_recovery（1 支）
+       reap_stale_running                 ✅
+  ── repair_report_service（5 支）
+       ensure_default_schedule            ✅
+       get_schedule_send_time             ✅
+  ── room_maintenance_service（3 支）
+       get_stats                          ✅
+       list_records                       ✅
+  ── schedule_service（2 支）
+  ── tutorial_video_service（2 支）
+       list_modules                       ✅
+       list_videos                        ✅
+  ── wiki_service（7 支）
+       auto_link_articles                 ✅
+       build_graph                        ✅
+       export_to_obsidian                 ✅
+       list_articles                      ✅
+
+==============================================================================
+  ✅ 結果相同   119 支
+  ≈  僅數值精度 1 支（已知原因，見下方說明）
+  ⚠️  內容有差異 1 支  ← 只有這一項需要逐筆判斷
+  ❌ 執行失敗   0 支
+  ⏭  跳過       28 支（必要參數猜不到，需人工補）
+
+  僅數值精度（相對差都在 1e-8 以下，畫面上看不出來）：
+     · opera_segment_service.analyze（68 處）
+         .segments[1].adr：2967.9049215763 vs 2967.904924594746（相對差 1.0e-9）
+         .segments[1].revpar：427.95050412670264 vs 427.9505045619408（相對差 1.0e-9）
+
+  內容有差異（加 --verbose 看每一處）：
+     · ota_review_service.export_xlsx（1 處）
+         ：'<binary 754576 bytes>' vs '<binary 754577 bytes>'
+
+  跳過的：contract_service.get_budget_analysis, inventory_service.get_record, jinxu_analysis_service.ledger_entry_detail, jinxu_analysis_service.resv_detail, mall_schedule_service.get_monthly_stats, mall_schedule_service.get_schedule_table, ohip_async_cache.cooldown_remaining, ohip_async_cache.get, ohip_async_cache.lookup, ohip_async_cache.put, opera_analysis_service.get_dimension_stats, opera_analysis_service.get_stay_detail …
+
+  怎麼判讀
+    · ⚠️ 內容有差異 → 筆數／順序／內容真的不同。**只有這一項需要逐筆判斷**，
+         這就是切換後使用者會看到的變化。
+    · ≈ 僅數值精度 → 已知原因，不必逐筆看：SQLite 把 Numeric 當 float 存滿
+         精度（11 位小數），PostgreSQL 依 `Numeric(p,s)` 的宣告捨入（4 位）；
+         加總順序不同也會在 float64 的表示極限造成尾差。
+         相對差都在 1e-8 量級 —— 以 ADR 1296.81 為例是小數第 7 位，
+         畫面顯示到小數 2 位，看不出來。
+    · ❌ 執行失敗 → 多半是 PG 缺表或參數猜錯，不是相容性問題：
+         `relation does not exist` → 缺表，先跑 pg_migrate_pilot.py --all
+         `單次查詢最多 366 天`     → 測試區間太長，加 --days 180
+    · ⏭ 跳過 → 必要參數猜不到（例如需要某筆 id），要的話手動補測
+
