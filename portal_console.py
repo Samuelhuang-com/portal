@@ -91,15 +91,17 @@ def _check_and_relaunch():
 _check_and_relaunch()
 # ─────────────────────────────────────────────────────────────────────────────
 
+import json
 import queue
 import re
+import shutil
 import socket
 import subprocess
 import threading
 import time
 import tkinter as tk
 import webbrowser
-from datetime import datetime
+from datetime import datetime, timedelta
 from tkinter import scrolledtext
 
 # ── 路徑設定：讓 app.* 可以被 import（供 DB / Ragic 設定讀取用）─────────────
@@ -206,7 +208,7 @@ FONT_NAME = "Microsoft JhengHei UI"
 # 2026-07-18 新增：畫面版本顯示（右下角footer）。跟 docs/CHANGELOG.md 用
 # 同一組版號，不另外發明一套編號——每次修改 portal_console.py 且有加
 # CHANGELOG 條目時，記得同步把這裡改成當次的版本號，兩邊才不會對不上。
-CONSOLE_VERSION = "1.80.62"
+CONSOLE_VERSION = "1.96.40"
 
 BACKEND_PORT = 8000
 
@@ -323,6 +325,118 @@ NSSM_BACKEND_CANDIDATES = ["PortalBackend", "portal"]
 NSSM_BACKEND_LOG_FILES = ["portal_stdout.log", "portal_stderr.log"]
 
 
+# ── 執行環境偵測（2026-08-29）─────────────────────────────────────────────────
+# 已知安裝點：D:\portal（舊正式區，見 deploy.bat／prod-update.bat）、
+#             C:\portal（新 Server，見 prod-update-newserver.bat）、
+#             OneDrive 底下（開發／測試機，也就是這個 repo 本身）。
+PROD_INSTALL_ROOTS = [r"D:\portal", r"C:\portal"]
+
+ENV_PROD = "production"
+ENV_TEST = "test"
+ENV_UNKNOWN = "unknown"
+ENV_LABEL = {ENV_PROD: "正式區", ENV_TEST: "測試／開發區", ENV_UNKNOWN: "無法判定"}
+
+
+def _read_env_file(path: _pathlib.Path) -> dict:
+    """讀 KEY=VALUE 形式的 .env。找不到或讀不開就回空 dict（呼叫端自行處理）。"""
+    out: dict[str, str] = {}
+    try:
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            out[k.strip()] = v.strip().strip('"').strip("'")
+    except Exception:
+        pass
+    return out
+
+
+def detect_environment() -> dict:
+    """用**三道互相獨立**的依據判斷這台機器是正式區還是測試區。
+
+    ⚠️⚠️ 三道不一致時**不猜**，回傳 conflict=True 讓畫面顯示紅燈要求人工確認。
+       這正是這個功能存在的理由：`APP_ENV` 是手動維護的一行字，複製一份程式
+       到正式區卻忘了改，判斷就會全錯 —— 而且不會有任何警訊。多一道路徑、
+       多一道服務，就是為了讓「忘了改」變成看得見的衝突，而不是靜默的錯誤。
+
+    三道依據：
+      ① .env 的 APP_ENV        production → 正式；development/其他 → 測試
+      ② 安裝路徑               在 PROD_INSTALL_ROOTS 底下 → 正式；
+                               路徑含 OneDrive → 測試（雲端同步資料夾不會是正式區）
+      ③ NSSM 服務是否存在      存在 → 正式
+
+    ⚠️ 第 ③ 道是**單向證據**：服務存在幾乎必然是正式區，但**服務不存在不能反推
+       成測試區** —— 新 Server（C:\\portal）的 prod-update-newserver.bat 是用
+       taskkill + uvicorn 直接跑，根本沒有裝 NSSM 服務。所以這道只投「正式」票，
+       不存在時棄權（回 None），否則新 Server 會被永遠誤判成測試區。
+
+    回傳 dict：
+        env       最終判定（ENV_PROD / ENV_TEST / ENV_UNKNOWN）
+        conflict  三道是否互相矛盾
+        signals   [(名稱, 投票結果 or None, 說明文字), ...]
+    """
+    signals = []
+
+    # ① .env 的 APP_ENV
+    env_file = _BACKEND / ".env"
+    cfg = _read_env_file(env_file)
+    app_env = (cfg.get("APP_ENV") or "").strip().lower()
+    if not app_env:
+        vote1, desc1 = None, "APP_ENV 未設定"
+    elif app_env == "production":
+        vote1, desc1 = ENV_PROD, "APP_ENV=production"
+    else:
+        vote1, desc1 = ENV_TEST, f"APP_ENV={app_env}"
+    signals.append(("設定檔（.env）", vote1, desc1))
+
+    # ② 安裝路徑
+    here = str(_HERE)
+    here_l = here.lower()
+    for root in PROD_INSTALL_ROOTS:
+        if here_l == root.lower() or here_l.startswith(root.lower() + _os.sep):
+            vote2, desc2 = ENV_PROD, f"安裝於 {here}（已知正式區路徑）"
+            break
+    else:
+        if "onedrive" in here_l:
+            vote2, desc2 = ENV_TEST, f"安裝於 {here}（OneDrive 同步資料夾）"
+        else:
+            vote2, desc2 = None, f"安裝於 {here}（不在已知清單中）"
+    signals.append(("安裝路徑", vote2, desc2))
+
+    # ③ NSSM 服務（單向證據：存在才投票，不存在棄權）
+    svc = detect_nssm_service(NSSM_BACKEND_CANDIDATES)
+    if svc:
+        vote3, desc3 = ENV_PROD, f"NSSM 服務 {svc} 存在"
+    else:
+        vote3, desc3 = None, "沒有 NSSM 服務（新 Server 用 uvicorn 直跑，故不列入判定）"
+    signals.append(("Windows 服務", vote3, desc3))
+
+    votes = {v for _, v, _ in signals if v is not None}
+    conflict = len(votes) > 1
+    if conflict:
+        env = ENV_UNKNOWN
+    elif votes:
+        env = votes.pop()
+    else:
+        env = ENV_UNKNOWN
+
+    return {"env": env, "conflict": conflict, "signals": signals}
+
+
+def suggest_backup_dir() -> str:
+    """依安裝所在磁碟建議備份目錄：`<安裝磁碟>\\portal_backup\\pg`。
+
+    ⚠️ 這只是**建議值**，不會寫進 .env（見 CLAUDE.md §5：不可自行修改 .env）。
+       實際採用的路徑一律以 .env 的 PG_BACKUP_DIR 為準；沒設定時 pg_backup.py
+       會用它自己的 DEFAULT_DIR（D:\\portal_backup\\pg）。
+    ⚠️ 這個規則會讓備份與資料庫落在**同一顆磁碟**，而 pg_backup.py 檔頭明講
+       「備份放在同一台機器上不是真備份」。所以畫面上偵測到同磁碟時要提示。
+    """
+    drive = _os.path.splitdrive(str(_HERE))[0] or "C:"
+    return _os.path.join(drive + _os.sep, "portal_backup", "pg")
+
+
 def rounded_rect(canvas: tk.Canvas, x1, y1, x2, y2, r, **kwargs):
     """在 Canvas 上畫一個圓角矩形（tkinter 沒有原生圓角圖形，用弧形+矩形拼出來）。"""
     canvas.create_arc(x1, y1, x1 + 2 * r, y1 + 2 * r, start=90, extent=90, style=tk.PIESLICE, **kwargs)
@@ -392,7 +506,13 @@ class PortalConsole(tk.Tk):
     TABS = [
         ("🌐", "服務控制"),
         ("📋", "Health Check"),
+        ("💾", "備份"),
     ]
+
+    # 備份分頁的內嵌終端機在 _log_queues / _log_widgets 裡的 key。
+    # 這兩個 dict 原本用 port（int）當 key，但迴圈只是 .get(key)，用字串沒問題，
+    # 而且刻意不用假的 port 數字——備份不是一個服務，硬塞 port 會誤導。
+    BACKUP_LOG_KEY = "backup"
 
     def __init__(self):
         super().__init__()
@@ -426,8 +546,12 @@ class PortalConsole(tk.Tk):
 
         self._page_service = tk.Frame(self._content, bg=C_PAGE_BG)
         self._page_health = tk.Frame(self._content, bg=C_PAGE_BG)
+        self._page_backup = tk.Frame(self._content, bg=C_PAGE_BG)
+        # 順序必須與 TABS 一致（_switch_tab 直接用索引取用）
+        self._pages = [self._page_service, self._page_health, self._page_backup]
         self._build_service_page(self._page_service)
         self._build_health_page(self._page_health)
+        self._build_backup_page(self._page_backup)
         self._page_service.pack(fill=tk.BOTH, expand=True)
 
         self._toast = Toast(self)
@@ -482,12 +606,11 @@ class PortalConsole(tk.Tk):
             )
             underline.config(bg=C_TAB_UNDERLINE if active else C_TAB_BG)
 
-        if idx == 0:
-            self._page_health.pack_forget()
-            self._page_service.pack(fill=tk.BOTH, expand=True)
-        else:
-            self._page_service.pack_forget()
-            self._page_health.pack(fill=tk.BOTH, expand=True)
+        for i, page in enumerate(self._pages):
+            if i == idx:
+                page.pack(fill=tk.BOTH, expand=True)
+            else:
+                page.pack_forget()
 
     # ── 內容區容器 ───────────────────────────────────────────────────────────
     def _build_content_area(self):
@@ -988,6 +1111,62 @@ class PortalConsole(tk.Tk):
         self._run_bg(work, done)
 
     # ── 分頁 2：Health Check ─────────────────────────────────────────────────
+    # 2026-08-29 擴充：原本只有 6 列（port ×2、DB 連線、Ragic、排程、手動同步），
+    # 都只回答「連得上嗎」。切到 PostgreSQL 之後，真正會咬人的問題是
+    # 「連上的是**哪一個**資料庫」與「備份還活著嗎」——見 pg_backup.py 檔頭
+    # 那段警告：切到 PG 之後，複製 .db 的舊備份會**靜默**變成備份一份凍結在
+    # 過去的資料。所以這裡把檢查項目分成四區、共 13 列。
+    HEALTH_SECTIONS = [
+        ("服務與環境", [
+            ("environment", "執行環境（正式／測試）"),
+            ("port_backend", f"Backend Port ({BACKEND_PORT})"),
+            ("port_frontend", f"Frontend Port ({FRONTEND_PORT})"),
+            ("backend_version", "後端版本（commit）"),
+            ("runtime", "Console 執行環境"),
+        ]),
+        ("資料庫", [
+            ("db", "資料庫連線"),
+            ("db_version", "資料庫版本"),
+            ("db_size", "資料庫大小 / 筆數"),
+            ("disk", "磁碟剩餘空間"),
+        ]),
+        ("同步", [
+            ("ragic", "Ragic API 連通性"),
+            ("scheduler", "自動排程狀態"),
+            ("sync_modules", "各模組最後同步"),
+            ("last_manual_sync", "最近一次手動同步"),
+        ]),
+        ("備份", [
+            ("backup", "最後備份"),
+            ("verify_restore", "最後還原驗證"),
+        ]),
+    ]
+
+    # 慢檢查（跑在背景執行緒）：key → 方法名稱。順序即畫面由上而下的更新順序。
+    _SLOW_CHECKS = [
+        ("environment", "_check_environment"),
+        ("backend_version", "_check_backend_version"),
+        ("runtime", "_check_runtime"),
+        ("db", "_check_db"),
+        ("db_version", "_check_db_version"),
+        ("db_size", "_check_db_size"),
+        ("disk", "_check_disk"),
+        ("ragic", "_check_ragic"),
+        ("scheduler", "_check_scheduler"),
+        ("sync_modules", "_check_sync_modules"),
+        ("last_manual_sync", "_check_last_manual_sync"),
+        ("backup", "_check_backup"),
+        ("verify_restore", "_check_verify_restore"),
+    ]
+
+    # 狀態 → （符號, 顏色）。"info" 是中性事實（不是好也不是壞）。
+    _HEALTH_STYLE = {
+        "ok":   ("✓ ", C_OK_TEXT),
+        "warn": ("⚠ ", C_WARN_TEXT),
+        "err":  ("✕ ", C_ERR_TEXT),
+        "info": ("",   C_TEXT_DIM),
+    }
+
     def _build_health_page(self, parent: tk.Frame):
         wrap = tk.Frame(parent, bg=C_PAGE_BG)
         wrap.pack(fill=tk.BOTH, expand=True, padx=24, pady=(18, 8))
@@ -1007,35 +1186,55 @@ class PortalConsole(tk.Tk):
         refresh_lbl.bind("<Button-1>", lambda e: self._run_health_checks())
         self._btn_check_all = refresh_lbl
 
-        card = tk.Frame(wrap, bg=C_CARD_BG, highlightbackground=C_BORDER, highlightthickness=1)
-        card.pack(fill=tk.BOTH, expand=True)
+        # 13 列在 1000x860 的視窗放不下（何況幾列會折行），所以放進可捲動容器。
+        body = tk.Frame(wrap, bg=C_PAGE_BG)
+        body.pack(fill=tk.BOTH, expand=True)
+        canvas = tk.Canvas(body, bg=C_PAGE_BG, highlightthickness=0)
+        vbar = tk.Scrollbar(body, orient=tk.VERTICAL, command=canvas.yview)
+        canvas.configure(yscrollcommand=vbar.set)
+        vbar.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        inner = tk.Frame(canvas, bg=C_PAGE_BG)
+        win = canvas.create_window((0, 0), window=inner, anchor="nw")
+        inner.bind("<Configure>",
+                   lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>",
+                    lambda e: canvas.itemconfig(win, width=e.width))
+        # 滾輪只在游標進入本頁時綁定，離開就解除，避免影響「服務控制」分頁。
+        canvas.bind("<Enter>", lambda e: canvas.bind_all(
+            "<MouseWheel>",
+            lambda ev: canvas.yview_scroll(int(-ev.delta / 120), "units")))
+        canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
 
         self._health_rows = {}
-        items = [
-            ("port_backend", f"Backend Port ({BACKEND_PORT})"),
-            ("port_frontend", f"Frontend Port ({FRONTEND_PORT})"),
-            ("db", "資料庫連線"),
-            ("ragic", "Ragic API 連通性"),
-            ("scheduler", "自動排程狀態"),
-            ("last_manual_sync", "最近一次手動同步"),
-        ]
-        for i, (key, label) in enumerate(items):
-            row = tk.Frame(card, bg=C_CARD_BG)
-            row.pack(fill=tk.X, padx=18, pady=12)
+        for sec_idx, (section, items) in enumerate(self.HEALTH_SECTIONS):
             tk.Label(
-                row, text=label, bg=C_CARD_BG, fg=C_TEXT, width=22, anchor="w",
-                font=(FONT_NAME, 10, "bold"),
-            ).pack(side=tk.LEFT)
-            status_lbl = tk.Label(
-                row, text="—", bg=C_CARD_BG, fg=C_TEXT_DIM, anchor="w",
-                font=(FONT_NAME, 10),
-            )
-            status_lbl.pack(side=tk.LEFT, fill=tk.X, expand=True)
-            self._health_rows[key] = status_lbl
-            if i < len(items) - 1:
-                tk.Frame(card, bg=C_BORDER, height=1).pack(fill=tk.X, padx=18)
+                inner, text=section, bg=C_PAGE_BG, fg=C_TEXT_DIM, anchor="w",
+                font=(FONT_NAME, 9, "bold"),
+            ).pack(fill=tk.X, pady=(0 if sec_idx == 0 else 14, 5))
 
-        # 開啟頁籤時先自動跑一次（輕量 port 檢查即時，DB/Ragic 用背景執行緒）
+            card = tk.Frame(inner, bg=C_CARD_BG,
+                            highlightbackground=C_BORDER, highlightthickness=1)
+            card.pack(fill=tk.X)
+
+            for i, (key, label) in enumerate(items):
+                row = tk.Frame(card, bg=C_CARD_BG)
+                row.pack(fill=tk.X, padx=18, pady=10)
+                tk.Label(
+                    row, text=label, bg=C_CARD_BG, fg=C_TEXT, width=22, anchor="nw",
+                    font=(FONT_NAME, 10, "bold"),
+                ).pack(side=tk.LEFT, anchor="n")
+                status_lbl = tk.Label(
+                    row, text="—", bg=C_CARD_BG, fg=C_TEXT_DIM, anchor="w",
+                    font=(FONT_NAME, 10), justify=tk.LEFT, wraplength=620,
+                )
+                status_lbl.pack(side=tk.LEFT, fill=tk.X, expand=True)
+                self._health_rows[key] = status_lbl
+                if i < len(items) - 1:
+                    tk.Frame(card, bg=C_BORDER, height=1).pack(fill=tk.X, padx=18)
+
+        # 開啟頁籤時先自動跑一次（輕量 port 檢查即時，其餘用背景執行緒）
         self._run_health_checks()
 
     def _run_health_checks(self):
@@ -1044,61 +1243,274 @@ class PortalConsole(tk.Tk):
         # Port 檢查很快，直接在主執行緒做
         for key, port in (("port_backend", BACKEND_PORT), ("port_frontend", FRONTEND_PORT)):
             ok = check_port("127.0.0.1", port)
-            lbl = self._health_rows[key]
-            lbl.config(
+            self._health_rows[key].config(
                 text="✓ 連線正常" if ok else "✕ 無法連線（服務未啟動？）",
                 fg=C_OK_TEXT if ok else C_ERR_TEXT,
             )
 
-        for key in ("db", "ragic", "scheduler", "last_manual_sync"):
+        for key, _ in self._SLOW_CHECKS:
             self._health_rows[key].config(text="檢查中…", fg=C_TEXT_DIM)
 
         threading.Thread(target=self._run_slow_health_checks, daemon=True).start()
 
     def _run_slow_health_checks(self):
-        db_ok, db_msg = self._check_db()
-        ragic_ok, ragic_msg = self._check_ragic()
-        sched_ok, sched_msg = self._check_scheduler()
-        manual_sync_msg = self._last_manual_sync_time()
+        """每一項各自檢查、各自回報，**任何一項壞掉都不影響其他項**。
 
-        def _apply():
-            self._health_rows["db"].config(
-                text=("✓ " if db_ok else "✕ ") + db_msg,
-                fg=C_OK_TEXT if db_ok else C_ERR_TEXT,
-            )
-            self._health_rows["ragic"].config(
-                text=("✓ " if ragic_ok else "✕ ") + ragic_msg,
-                fg=C_OK_TEXT if ragic_ok else C_ERR_TEXT,
-            )
-            self._health_rows["scheduler"].config(
-                text=("✓ " if sched_ok else "⚠ ") + sched_msg,
-                fg=C_OK_TEXT if sched_ok else C_WARN_TEXT,
-            )
-            self._health_rows["last_manual_sync"].config(text=manual_sync_msg, fg=C_TEXT_DIM)
-            self._btn_check_all.config(text="🔄  重新檢查全部", fg=C_TAB_BG)
+        ⚠️ 這裡的 try/except 只吞「檢查程式自己爆掉」，而且會把錯誤顯示成紅字。
+           絕不可以改成 `except: pass` ——「查不出來」不等於「查過沒問題」
+           （見記憶：正式區事故的根因就是三道檢查各自靜默跳過）。
+        """
+        for key, method in self._SLOW_CHECKS:
+            try:
+                state, msg = getattr(self, method)()
+            except Exception as e:
+                state, msg = "err", f"檢查失敗（{type(e).__name__}）：{e}"
+            self.after(0, self._apply_health, key, state, msg)
 
-        self.after(0, _apply)
+        self.after(0, lambda: self._btn_check_all.config(
+            text="🔄  重新檢查全部", fg=C_TAB_BG))
+
+    def _apply_health(self, key: str, state: str, msg: str):
+        prefix, color = self._HEALTH_STYLE.get(state, self._HEALTH_STYLE["info"])
+        self._health_rows[key].config(text=prefix + msg, fg=color)
+
+    # ── 小工具 ───────────────────────────────────────────────────────────────
+    @staticmethod
+    def _fmt_bytes(n: float) -> str:
+        for unit in ("B", "KB", "MB", "GB", "TB"):
+            if n < 1024 or unit == "TB":
+                return f"{n:,.1f} {unit}" if unit != "B" else f"{int(n)} B"
+            n /= 1024
+        return f"{n:.1f} TB"
+
+    @staticmethod
+    def _ago(ts: datetime) -> str:
+        d = datetime.now() - ts
+        if d < timedelta(0):
+            return "剛剛"
+        if d.days >= 1:
+            return f"{d.days} 天 {d.seconds // 3600} 小時前"
+        if d.seconds >= 3600:
+            return f"{d.seconds // 3600} 小時前"
+        return f"{max(d.seconds // 60, 1)} 分鐘前"
+
+    @staticmethod
+    def _read_backend_env() -> dict:
+        """直接讀 backend/.env。PG_BACKUP_DIR 這類設定沒有進 app.core.config
+        的 Settings，只能自己讀（做法與 backend/scripts/pg_backup.py 相同）。"""
+        return _read_env_file(_BACKEND / ".env")
+
+    @staticmethod
+    def _backup_root_static() -> str:
+        """備份目錄。預設值與 backend/scripts/pg_backup.py 的 DEFAULT_DIR 一致，
+        兩邊要改一起改，否則 Console 會去讀一個沒人在寫的目錄。"""
+        return PortalConsole._read_backend_env().get("PG_BACKUP_DIR") or r"D:\portal_backup\pg"
+
+    @staticmethod
+    def _backup_status_static() -> dict | None:
+        p = _os.path.join(PortalConsole._backup_root_static(), "_status.json")
+        if not _os.path.exists(p):
+            return None
+        with open(p, encoding="utf-8") as f:
+            return json.load(f)
+
+    # ── 各項檢查 ─────────────────────────────────────────────────────────────
+    @staticmethod
+    def _check_environment():
+        """三道依據交叉比對出「這台是正式區還是測試區」。矛盾就是紅燈。
+
+        ⚠️ 矛盾**不是**小問題：正式區的 .env 忘了改成 production，會讓
+           APP_ENV=production 才關閉的 /api/docs 在正式區公開，也會讓任何
+           「照環境切行為」的邏輯全部走錯分支——而這件事平常完全看不出來。
+        """
+        info = detect_environment()
+        detail = "　｜　".join(f"{name}：{desc}" for name, _, desc in info["signals"])
+        if info["conflict"]:
+            votes = "、".join(
+                f"{name}→{ENV_LABEL[v]}" for name, v, _ in info["signals"] if v)
+            return "err", (f"**三道依據互相矛盾（{votes}）**，請人工確認後修正"
+                           f"　｜　{detail}")
+        if info["env"] == ENV_UNKNOWN:
+            return "warn", f"無法判定（三道依據都沒有結論）　｜　{detail}"
+        state = "info" if info["env"] == ENV_TEST else "ok"
+        return state, f"{ENV_LABEL[info['env']]}　｜　{detail}"
 
     @staticmethod
     def _check_db():
-        try:
-            from sqlalchemy import text
-            from app.core.database import engine
+        from sqlalchemy import text
+        from app.core.database import engine
 
+        try:
             t0 = time.time()
             with engine.connect() as conn:
                 conn.execute(text("SELECT 1"))
             ms = int((time.time() - t0) * 1000)
-            return True, f"連線正常（{ms} ms）"
+            return "ok", f"連線正常（{ms} ms）"
         except Exception as e:
-            return False, f"連線失敗：{e}"
+            return "err", f"連線失敗：{e}"
+
+    @staticmethod
+    def _check_db_version():
+        """顯示**實際連上的**資料庫種類、版本與位置。
+
+        ⚠️ 連到 SQLite 一律顯示黃燈：2026-08-29 正式區與測試區都已切到
+           PostgreSQL，`portal.db` 從那一刻起就凍結不再更新。此時畫面能正常
+           開、查詢也不會報錯，只是看到的全是舊資料——這一列就是要讓那件事
+           一眼看得出來。
+        """
+        from sqlalchemy import text
+        from app.core.database import engine
+
+        url = engine.url          # ⚠️ 用 engine.url 而不是 settings，這才是真正連上的那一個
+        drv = url.drivername
+        with engine.connect() as conn:
+            if drv.startswith("postgresql"):
+                ver = conn.execute(text("SHOW server_version")).scalar()
+                where = f"{url.host}:{url.port or 5432}/{url.database}"
+                return "ok", f"PostgreSQL {ver}　｜　{where}"
+            if drv.startswith("sqlite"):
+                ver = conn.execute(text("SELECT sqlite_version()")).scalar()
+                return "warn", (f"SQLite {ver}　｜　{url.database}"
+                                "　←　正式環境應為 PostgreSQL，請確認 .env 的 DATABASE_URL")
+            ver = conn.execute(text("SELECT version()")).scalar()
+            return "info", f"{drv}　｜　{ver}"
+
+    @classmethod
+    def _check_db_size(cls):
+        from sqlalchemy import text
+        from app.core.database import engine
+
+        url = engine.url
+        with engine.connect() as conn:
+            if url.drivername.startswith("postgresql"):
+                size = conn.execute(text(
+                    "SELECT pg_size_pretty(pg_database_size(current_database()))"
+                )).scalar()
+                tables = conn.execute(text(
+                    "SELECT count(*) FROM pg_tables WHERE schemaname = 'public'"
+                )).scalar()
+                # n_live_tup 是統計值（autovacuum 更新），沒跑過 ANALYZE 會是 0，
+                # 所以標示為「約」，別讓人誤以為是精確筆數。
+                top = conn.execute(text(
+                    "SELECT relname, n_live_tup, "
+                    "       pg_size_pretty(pg_total_relation_size(relid)) "
+                    "FROM pg_stat_user_tables "
+                    "ORDER BY pg_total_relation_size(relid) DESC LIMIT 3"
+                )).all()
+                big = "、".join(f"{r[0]}（約 {r[1]:,} 列 / {r[2]}）" for r in top)
+                return "info", f"{size}　｜　{tables} 張表　｜　最大：{big}"
+
+            if url.drivername.startswith("sqlite"):
+                path = url.database or ""
+                size = cls._fmt_bytes(_os.path.getsize(path)) if _os.path.exists(path) else "檔案不存在"
+                tables = conn.execute(text(
+                    "SELECT count(*) FROM sqlite_master WHERE type = 'table'"
+                )).scalar()
+                return "info", f"{size}　｜　{tables} 張表"
+
+            return "info", "（此資料庫種類未支援大小查詢）"
+
+    @classmethod
+    def _check_disk(cls):
+        """列出「資料庫資料目錄」與「備份目錄」所在磁碟的剩餘空間。
+
+        磁碟滿了的時候，同步與備份都會失敗，而且多半是靜默失敗——這一列
+        就是要讓它在變成事故之前先變成黃燈。
+        """
+        from sqlalchemy import text
+        from app.core.database import engine
+
+        url = engine.url
+        # drive → 這顆磁碟上放了什麼（用來提示使用者「滿了會影響誰」）
+        targets: dict[str, set[str]] = {}
+
+        def _add(path: str, what: str):
+            if not path:
+                return
+            drive = _os.path.splitdrive(_os.path.abspath(path))[0] or "/"
+            targets.setdefault(drive, set()).add(what)
+
+        if url.drivername.startswith("postgresql"):
+            # 只有 PG 跑在本機時，data_directory 才是「本機的磁碟」。
+            if (url.host or "").lower() in ("localhost", "127.0.0.1", "::1", ""):
+                try:
+                    with engine.connect() as conn:
+                        _add(conn.execute(text("SHOW data_directory")).scalar(), "PG 資料")
+                except Exception:
+                    pass  # 非 superuser 讀不到 data_directory，不是錯誤
+        elif url.drivername.startswith("sqlite") and url.database:
+            _add(_os.path.dirname(_os.path.abspath(url.database)), "SQLite 檔")
+
+        _add(cls._backup_root_static(), "備份")
+        _add(str(_LOG_DIR), "log")
+
+        if not targets:
+            return "info", "（找不到可檢查的路徑）"
+
+        parts, worst = [], "ok"
+        for drive in sorted(targets):
+            try:
+                usage = shutil.disk_usage(drive + _os.sep)
+            except Exception as e:
+                parts.append(f"{drive} 讀取失敗（{type(e).__name__}）")
+                worst = "warn"
+                continue
+            pct = usage.free / usage.total * 100 if usage.total else 0
+            gb = usage.free / (1024 ** 3)
+            if gb < 10 or pct < 5:
+                worst = "err"
+            elif (gb < 30 or pct < 15) and worst != "err":
+                worst = "warn"
+            parts.append(f"{drive} 剩 {cls._fmt_bytes(usage.free)} / "
+                         f"{cls._fmt_bytes(usage.total)}（{pct:.0f}%，"
+                         f"{'／'.join(sorted(targets[drive]))}）")
+        return worst, "　｜　".join(parts)
+
+    @staticmethod
+    def _check_backend_version():
+        """打 /api/v1/version 取後端的 git commit（全站唯一免登入端點）。
+
+        正式區／測試區顯示不同時，第一個要查的就是版本落差（見記憶：
+        商場年度計劃表那次的根因就是 git pull 沒成功）。
+        """
+        import httpx
+
+        url = f"http://127.0.0.1:{BACKEND_PORT}/api/v1/version"
+        try:
+            with httpx.Client(timeout=4.0) as client:
+                data = client.get(url).json()
+        except Exception as e:
+            return "info", f"後端未啟動或無法連線（{type(e).__name__}）｜Console v{CONSOLE_VERSION}"
+
+        g = data.get("git") or {}
+        short = g.get("commit_short") or "（不明）"
+        branch = g.get("branch") or "?"
+        date = (g.get("commit_date") or "")[:19].replace("T", " ")
+        src = data.get("source") or "?"
+        state = "warn" if src == "unavailable" else "info"
+        return state, (f"{short}（{branch}）　｜　{date}　｜　來源：{src}"
+                       f"　｜　Console v{CONSOLE_VERSION}")
+
+    @staticmethod
+    def _check_runtime():
+        """顯示 Console 目前實際跑在哪個 Python 上。
+
+        正式區用 `py -3.11`，開發機常是 3.12；套件裝在 A 版、程式跑在 B 版
+        是這個專案已經踩過的坑，所以直接把版本與 site-packages 來源攤開。
+        """
+        v = _sys.version_info
+        bits = 64 if _sys.maxsize > 2 ** 32 else 32
+        src = _venv_path or "系統 Python（未注入 venv site-packages）"
+        state = "info" if _venv_path else "warn"
+        return state, (f"Python {v.major}.{v.minor}.{v.micro}（{bits}-bit）"
+                       f"　｜　{_sys.executable}　｜　套件來源：{src}")
 
     @staticmethod
     def _check_ragic():
-        try:
-            import httpx
-            from app.core.config import settings
+        import httpx
+        from app.core.config import settings
 
+        try:
             server = settings.RAGIC_SERVER_URL or f"{settings.RAGIC_SERVER}.ragic.com"
             account = settings.RAGIC_ACCOUNT_NAME or settings.RAGIC_ACCOUNT
             url = f"https://{server}/{account}/"
@@ -1110,10 +1522,10 @@ class PortalConsole(tk.Tk):
             ms = int((time.time() - t0) * 1000)
 
             if resp.status_code < 500:
-                return True, f"可連線（HTTP {resp.status_code}，{ms} ms）"
-            return False, f"伺服器回應異常（HTTP {resp.status_code}）"
+                return "ok", f"可連線（HTTP {resp.status_code}，{ms} ms）"
+            return "err", f"伺服器回應異常（HTTP {resp.status_code}）"
         except Exception as e:
-            return False, f"無法連線：{e}"
+            return "err", f"無法連線：{e}"
 
     @staticmethod
     def _check_scheduler():
@@ -1129,24 +1541,408 @@ class PortalConsole(tk.Tk):
         try:
             from app.core.config import settings
             if settings.SCHEDULER_ENABLED:
-                return True, "已啟用（整點對齊，每 30 分鐘自動同步）"
-            return False, "已停用（開發模式；需執行 sync_tool.py 或按「同步資料」手動同步）"
+                return "ok", "已啟用（整點對齊，每 30 分鐘自動同步）"
+            return "warn", "已停用（開發模式；需執行 sync_tool.py 或按「同步資料」手動同步）"
         except Exception as e:
-            return False, f"無法讀取設定：{e}"
+            return "err", f"無法讀取設定：{e}"
 
     @staticmethod
-    def _last_manual_sync_time() -> str:
+    def _check_sync_modules():
+        """從 module_sync_log 讀每個模組**最後一次**的同步結果。
+
+        ⚠️ 用 max(id) 取最後一筆，不是「取最近 N 筆再去重」——後者會讓
+           「已經很久沒同步的模組」直接從清單裡消失，而那正是最該被看見的。
+        """
+        from sqlalchemy import func
+        from app.core.database import SessionLocal
+        from app.models.module_sync_log import ModuleSyncLog
+
+        db = SessionLocal()
+        try:
+            latest = (db.query(ModuleSyncLog.module_name,
+                               func.max(ModuleSyncLog.id).label("mid"))
+                        .group_by(ModuleSyncLog.module_name).subquery())
+            rows = (db.query(ModuleSyncLog)
+                      .join(latest, ModuleSyncLog.id == latest.c.mid).all())
+        finally:
+            db.close()
+
+        if not rows:
+            return "warn", "module_sync_log 沒有任何紀錄（尚未同步過，或連到了另一個資料庫）"
+
+        stamps = [r.started_at for r in rows if r.started_at]
+        if not stamps:
+            return "warn", f"{len(rows)} 筆紀錄都沒有 started_at，無法判斷同步時間"
+        newest = max(stamps)
+        failed = [r.module_name for r in rows if r.status not in ("success", "running")]
+        anomaly = [r.module_name for r in rows if getattr(r, "is_anomaly", False)]
+        stale = [r.module_name for r in rows
+                 if r.started_at and datetime.now() - r.started_at > timedelta(hours=48)]
+
+        def _names(lst):
+            head = "、".join(lst[:3])
+            return head + (f" 等 {len(lst)} 個" if len(lst) > 3 else "")
+
+        msg = (f"最新 {newest:%Y-%m-%d %H:%M}（{PortalConsole._ago(newest)}）"
+               f"　｜　共 {len(rows)} 個模組")
+        state = "ok"
+        if failed:
+            state = "err"
+            msg += f"　｜　{len(failed)} 個未成功：{_names(failed)}"
+        if anomaly:
+            state = "err" if state == "err" else "warn"
+            msg += f"　｜　{len(anomaly)} 個標記異常：{_names(anomaly)}"
+        if stale:
+            state = "err" if state == "err" else "warn"
+            msg += f"　｜　{len(stale)} 個超過 48 小時沒同步：{_names(stale)}"
+        if state == "ok":
+            msg += "　｜　全部成功"
+        return state, msg
+
+    @staticmethod
+    def _check_last_manual_sync():
         """只看 *_manual.log（sync_tool.py「立即同步」或網頁「同步資料」按鈕才會產生），
         不採計 backend 啟動時建立的常駐 session log，避免誤判。"""
+        candidates = list(_LOG_DIR.glob("*_manual.log"))
+        if not candidates:
+            return "info", "尚未執行過手動同步（或紀錄已被清除）"
+        latest = max(candidates, key=lambda p: p.stat().st_mtime)
+        ts = datetime.fromtimestamp(latest.stat().st_mtime)
+        return "info", f"{ts:%Y-%m-%d %H:%M:%S}（{PortalConsole._ago(ts)}）"
+
+    @classmethod
+    def _check_backup(cls):
+        """讀 pg_backup.py 寫的 _status.json（跟 `--status` 同一個判定門檻）。
+
+        ⚠️⚠️ 超過 2 天沒成功備份就是**紅燈**，不是黃燈。備份排程壞掉的時候
+           不會有任何人來通知你——檔案還在、目錄還在、看起來一切正常，
+           直到需要還原的那一天（見 pg_backup.py 檔頭）。
+        """
+        root = cls._backup_root_static()
         try:
-            candidates = list(_LOG_DIR.glob("*_manual.log"))
-            if not candidates:
-                return "尚未執行過手動同步（或紀錄已被清除）"
-            latest = max(candidates, key=lambda p: p.stat().st_mtime)
-            ts = datetime.fromtimestamp(latest.stat().st_mtime)
-            return ts.strftime("%Y-%m-%d %H:%M:%S")
+            st = cls._backup_status_static()
         except Exception as e:
-            return f"（無法讀取：{e}）"
+            return "err", f"{root} 的 _status.json 讀不開：{e}"
+
+        if st is None:
+            return "err", (f"找不到 {_os.path.join(root, '_status.json')}"
+                           "　←　**從來沒有成功備份過**")
+
+        last = datetime.fromisoformat(st["last_success"])
+        age = datetime.now() - last
+        state = "err" if age > timedelta(days=2) else "ok"
+
+        extra = ""
+        try:
+            runs = sorted((d for d in _os.listdir(root)
+                           if re.fullmatch(r"\d{8}_\d{6}", d)), reverse=True)
+            if runs:
+                newest = _os.path.join(root, runs[0])
+                files = [f for f in _os.listdir(newest) if f.endswith(".dump")]
+                total = sum(_os.path.getsize(_os.path.join(newest, f)) for f in files)
+                extra = (f"　｜　最新 {cls._fmt_bytes(total)} / {len(files)} 個 dump"
+                         f"　｜　目錄保留 {len(runs)} 份")
+        except Exception:
+            extra = "　｜　（備份目錄內容讀取失敗）"
+
+        msg = f"{last:%Y-%m-%d %H:%M:%S}（{cls._ago(last)}）{extra}"
+        if state == "err":
+            msg += f"　←　已經 {age.days} 天沒有成功備份，排程可能壞了"
+        return state, msg
+
+    @classmethod
+    def _check_verify_restore(cls):
+        """上次真的把備份還原回來、逐表比對筆數是什麼時候。
+
+        ⚠️ `pg_dump` 回 0 只代表「寫出了一個檔案」。**沒有還原過的備份不算備份。**
+           這一列的資料來自 `py -3.11 scripts\\pg_backup.py --verify-restore`。
+        """
+        try:
+            st = cls._backup_status_static()
+        except Exception as e:
+            return "warn", f"_status.json 讀不開：{e}"
+
+        if st is None:
+            return "warn", "尚無備份紀錄可驗證"
+
+        vr = st.get("last_verify_restore")
+        if not vr:
+            return "warn", ("**從來沒有驗證過還原** —— pg_dump 成功不代表還原得回來。"
+                            "請跑：cd backend && py -3.11 scripts\\pg_backup.py --verify-restore")
+
+        ts = datetime.fromisoformat(vr)
+        days = (datetime.now() - ts).days
+        run = st.get("last_verify_restore_run") or ""
+        state = "warn" if days > 30 else "ok"
+        msg = f"{ts:%Y-%m-%d %H:%M:%S}（{cls._ago(ts)}）"
+        if run:
+            msg += f"　｜　驗證的備份：{run}"
+        if state == "warn":
+            msg += f"　←　已 {days} 天未驗證，建議每月至少一次"
+        return state, msg
+
+    # ── 分頁 3：備份（2026-08-29 新增）────────────────────────────────────────
+    # 這一頁只做一件事：讓人**現在就能備份**，而且看得到它真的跑了什麼。
+    #
+    # ⚠️ 備份邏輯一律呼叫 backend/scripts/pg_backup.py，Console 不自己實作一套
+    #    pg_dump。排程跑的與手動按的是同一支腳本、同一組門檻、同一個
+    #    _status.json —— 兩套邏輯遲早會分岔，而分岔的那一天你不會知道。
+    def _build_backup_page(self, parent: tk.Frame):
+        wrap = tk.Frame(parent, bg=C_PAGE_BG)
+        wrap.pack(fill=tk.BOTH, expand=True, padx=24, pady=(18, 8))
+
+        top = tk.Frame(wrap, bg=C_PAGE_BG)
+        top.pack(fill=tk.X, pady=(0, 12))
+        tk.Label(
+            top, text="備份", bg=C_PAGE_BG, fg=C_TEXT,
+            font=(FONT_NAME, 18, "bold"),
+        ).pack(side=tk.LEFT)
+        refresh = tk.Label(
+            top, text="🔄  重新整理", bg=C_PAGE_BG, fg=C_TAB_BG,
+            font=(FONT_NAME, 10, "bold"), cursor="hand2",
+        )
+        refresh.pack(side=tk.RIGHT)
+        refresh.bind("<Button-1>", lambda e: self._refresh_backup_page())
+
+        # ── 環境卡 ───────────────────────────────────────────────────────────
+        env_card = tk.Frame(wrap, bg=C_CARD_BG,
+                            highlightbackground=C_BORDER, highlightthickness=1)
+        env_card.pack(fill=tk.X, pady=(0, 12))
+        self._bk_env_title = tk.Label(
+            env_card, text="偵測中…", bg=C_CARD_BG, fg=C_TEXT, anchor="w",
+            font=(FONT_NAME, 13, "bold"),
+        )
+        self._bk_env_title.pack(fill=tk.X, padx=16, pady=(12, 2))
+        self._bk_env_detail = tk.Label(
+            env_card, text="", bg=C_CARD_BG, fg=C_TEXT_DIM, anchor="w",
+            font=(FONT_NAME, 9), justify=tk.LEFT, wraplength=880,
+        )
+        self._bk_env_detail.pack(fill=tk.X, padx=16, pady=(0, 12))
+
+        # ── 備份目錄卡 ───────────────────────────────────────────────────────
+        dir_card = tk.Frame(wrap, bg=C_CARD_BG,
+                            highlightbackground=C_BORDER, highlightthickness=1)
+        dir_card.pack(fill=tk.X, pady=(0, 12))
+        tk.Label(
+            dir_card, text="備份目錄", bg=C_CARD_BG, fg=C_TEXT, anchor="w",
+            font=(FONT_NAME, 13, "bold"),
+        ).pack(fill=tk.X, padx=16, pady=(12, 2))
+        self._bk_dir_detail = tk.Label(
+            dir_card, text="", bg=C_CARD_BG, fg=C_TEXT_DIM, anchor="w",
+            font=(FONT_NAME, 9), justify=tk.LEFT, wraplength=880,
+        )
+        self._bk_dir_detail.pack(fill=tk.X, padx=16, pady=(0, 10))
+
+        toolbar = tk.Frame(dir_card, bg=C_CARD_BG,
+                           highlightbackground=C_BORDER, highlightthickness=1)
+        toolbar.pack(fill=tk.X, padx=16, pady=(0, 12))
+
+        def _btn(icon, text, cmd):
+            lbl = tk.Label(
+                toolbar, text=f"{icon}  {text}", bg=C_CARD_BG, fg=C_BTN_TEXT,
+                font=(FONT_NAME, 10), padx=10, pady=8, cursor="hand2",
+            )
+            lbl.pack(side=tk.LEFT)
+            lbl.bind("<Button-1>", lambda e: cmd())
+            return lbl
+
+        self._bk_btn_run = _btn("💾", "立即備份", self._run_manual_backup)
+        tk.Frame(toolbar, bg=C_BORDER, width=1, height=18).pack(side=tk.LEFT, padx=8, pady=6)
+        _btn("📂", "開啟備份資料夾", self._open_backup_dir)
+
+        # ── 內嵌終端機 ───────────────────────────────────────────────────────
+        tk.Label(
+            wrap, text="pg_backup.py 即時輸出", bg=C_PAGE_BG, fg=C_TEXT_DIM,
+            font=(FONT_NAME, 9), anchor="w",
+        ).pack(fill=tk.X)
+        log_box = scrolledtext.ScrolledText(
+            wrap, height=12, bg=C_TERM_BG, fg=C_TERM_FG, insertbackground=C_TERM_FG,
+            font=("Consolas", 9), wrap=tk.NONE, state=tk.DISABLED, borderwidth=0,
+        )
+        log_box.pack(fill=tk.BOTH, expand=True, pady=(2, 6))
+        log_box.configure(state=tk.NORMAL)
+        log_box.insert(tk.END, "（尚未執行過備份。按「立即備份」開始。）\n")
+        log_box.configure(state=tk.DISABLED)
+        self._log_widgets[self.BACKUP_LOG_KEY] = log_box
+        self._log_queues.setdefault(self.BACKUP_LOG_KEY, queue.Queue())
+
+        clear_row = tk.Frame(wrap, bg=C_PAGE_BG)
+        clear_row.pack(fill=tk.X, pady=(0, 6))
+        clear_lbl = tk.Label(
+            clear_row, text="清除畫面", bg=C_PAGE_BG, fg=C_TEXT_DIM,
+            font=(FONT_NAME, 8), cursor="hand2",
+        )
+        clear_lbl.pack(side=tk.RIGHT)
+        clear_lbl.bind("<Button-1>", lambda e: self._clear_log_box(log_box))
+
+        self._backup_proc: subprocess.Popen | None = None
+        self._refresh_backup_page()
+
+    def _refresh_backup_page(self):
+        """更新環境卡與備份目錄卡（只讀，不建立任何東西）。"""
+        info = detect_environment()
+        if info["conflict"]:
+            self._bk_env_title.config(
+                text="⚠ 執行環境：無法判定（三道依據互相矛盾）", fg=C_ERR_TEXT)
+        else:
+            self._bk_env_title.config(
+                text=f"執行環境：{ENV_LABEL[info['env']]}",
+                fg=C_ERR_TEXT if info["env"] == ENV_UNKNOWN else C_TEXT)
+        lines = [f"　·　{name}：{desc}"
+                 + ("" if vote is None else f"　→　判定為 {ENV_LABEL[vote]}")
+                 for name, vote, desc in info["signals"]]
+        if info["conflict"]:
+            lines.append("　·　⚠️ 三道依據不一致時本程式不會自行猜測。請先確認"
+                         " backend/.env 的 APP_ENV 是否與這台機器相符，再執行備份。")
+        self._bk_env_detail.config(text="\n".join(lines))
+
+        env = self._read_backend_env()
+        root = self._backup_root_static()
+        configured = bool(env.get("PG_BACKUP_DIR"))
+        days = env.get("PG_BACKUP_RETENTION_DAYS") or "14（pg_backup.py 預設）"
+
+        lines = [f"　·　路徑：{root}"
+                 + ("（來自 .env 的 PG_BACKUP_DIR）" if configured
+                    else "（.env 未設定 PG_BACKUP_DIR，使用 pg_backup.py 的預設值）")]
+        if not configured:
+            lines.append(f"　·　依這台機器的安裝磁碟，建議值為 {suggest_backup_dir()}"
+                         "　—　⚠️ 本程式**不會**自動改寫 .env，要採用請自行填入")
+        if _os.path.isdir(root):
+            try:
+                runs = [d for d in _os.listdir(root)
+                        if re.fullmatch(r"\d{8}_\d{6}", d)]
+                lines.append(f"　·　狀態：目錄存在，目前保留 {len(runs)} 份備份")
+            except Exception as e:
+                lines.append(f"　·　狀態：目錄存在，但讀取失敗（{type(e).__name__}）")
+        else:
+            lines.append("　·　狀態：**目錄不存在** —— 按「立即備份」時會自動建立")
+
+        lines.append(f"　·　保留天數（PG_BACKUP_RETENTION_DAYS）：{days}")
+        if str(days).strip() in ("0", "1"):
+            lines.append("　·　⚠️ 保留天數只有 1 天：昨天的備份今天就會被刪掉，"
+                         "一旦某次備份成功但內容有問題，沒有第二份可以退回")
+
+        # ⚠️ 備份與資料庫在同一顆磁碟不是真備份（pg_backup.py 檔頭）。
+        bk_drive = _os.path.splitdrive(_os.path.abspath(root))[0].upper()
+        try:
+            from app.core.database import engine
+            db_drive = ""
+            if engine.url.drivername.startswith("sqlite") and engine.url.database:
+                db_drive = _os.path.splitdrive(
+                    _os.path.abspath(engine.url.database))[0].upper()
+            elif engine.url.drivername.startswith("postgresql") and \
+                    (engine.url.host or "").lower() in ("localhost", "127.0.0.1", "::1", ""):
+                from sqlalchemy import text as _sql_text
+                with engine.connect() as conn:
+                    dd = conn.execute(_sql_text("SHOW data_directory")).scalar()
+                db_drive = _os.path.splitdrive(_os.path.abspath(dd))[0].upper()
+            if db_drive and db_drive == bk_drive:
+                lines.append(f"　·　⚠️ 備份與資料庫都在 {bk_drive} —— 這顆硬碟壞掉會一起帶走。"
+                             "請另外排程複製到 NAS／雲端")
+        except Exception:
+            pass  # 讀不到就不提示；這只是加值資訊，不影響備份本身
+
+        self._bk_dir_detail.config(text="\n".join(lines))
+
+    def _open_backup_dir(self):
+        root = self._backup_root_static()
+        if not _os.path.isdir(root):
+            self._toast.show(f"備份目錄還不存在：{root}", kind="error")
+            return
+        try:
+            _os.startfile(root)          # noqa: S606（Windows 專用，本程式只跑在 Windows）
+        except Exception as e:
+            self._toast.show(f"無法開啟資料夾：{e}", kind="error")
+
+    def _run_manual_backup(self):
+        """手動觸發 backend/scripts/pg_backup.py，輸出即時導到內嵌終端機。
+
+        ⚠️ 環境判定矛盾時**擋下不跑**。備份是會在磁碟上留下東西的動作，
+           在「不知道自己是正式區還是測試區」的狀態下執行，等於不知道自己
+           備份的是哪一份資料 —— 那比沒有備份更危險，因為它看起來是成功的。
+        """
+        if self._backup_proc is not None and self._backup_proc.poll() is None:
+            self._toast.show("備份已在執行中，請稍候", kind="error")
+            return
+
+        info = detect_environment()
+        if info["conflict"]:
+            self._toast.show("環境判定矛盾，已擋下備份。請先確認 .env 的 APP_ENV",
+                             kind="error")
+            return
+
+        script = _BACKEND / "scripts" / "pg_backup.py"
+        if not script.exists():
+            self._toast.show(f"找不到備份腳本：{script}", kind="error")
+            return
+
+        q = self._log_queues.setdefault(self.BACKUP_LOG_KEY, queue.Queue())
+        log_box = self._log_widgets.get(self.BACKUP_LOG_KEY)
+        if log_box is not None:
+            self._clear_log_box(log_box)
+
+        root = self._backup_root_static()
+        q.put(f"[Console] 環境：{ENV_LABEL[info['env']]}")
+        q.put(f"[Console] 備份目錄：{root}")
+
+        # 「路徑不匹配就自動加上去」＝ 只自動建目錄。
+        # ⚠️ 刻意**不**自動改寫 backend/.env（CLAUDE.md §5）：.env 是正式區的
+        #    設定來源，程式在使用者沒看見的情況下改它，下一個人看到的設定
+        #    就不是他自己寫的那一份。缺 PG_BACKUP_DIR 時只在畫面上提示建議值。
+        if not _os.path.isdir(root):
+            try:
+                _os.makedirs(root, exist_ok=True)
+                q.put(f"[Console] 目錄不存在，已自動建立：{root}")
+            except Exception as e:
+                q.put(f"[Console] ❌ 無法建立備份目錄：{e}")
+                self._toast.show(f"無法建立備份目錄：{e}", kind="error")
+                return
+
+        cmd = [_sys.executable, str(script)]
+        q.put(f"[Console] 執行：{' '.join(cmd)}（cwd={_BACKEND}）")
+        self._bk_btn_run.config(text="⏳  備份中…", fg=C_TEXT_DIM)
+        self._toast.show("開始備份…")
+
+        def work():
+            try:
+                proc = subprocess.Popen(
+                    cmd,
+                    cwd=str(_BACKEND),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    bufsize=1,
+                    creationflags=_CREATE_NO_WINDOW,
+                )
+            except Exception as e:
+                q.put(f"[Console] ❌ 啟動備份腳本失敗：{e}")
+                return None
+            self._backup_proc = proc
+            q.put(f"[Console] PID {proc.pid}")
+            for line in proc.stdout:
+                q.put(_ANSI_ESCAPE_RE.sub("", line.rstrip("\n")))
+            code = proc.poll()
+            q.put(f"[Console] 備份行程結束（exit code {code}）")
+            return code
+
+        def done(code):
+            self._bk_btn_run.config(text="💾  立即備份", fg=C_BTN_TEXT)
+            # ⚠️ pg_backup.py 任何一步失敗都會 exit 非 0，而且不吞例外。
+            #    這裡照它的 exit code 判定，不自己重新解讀輸出文字。
+            if code == 0:
+                self._toast.show("備份完成（pg_backup.py exit 0）")
+            elif code is None:
+                self._toast.show("備份未能啟動，請查看下方輸出", kind="error")
+            else:
+                self._toast.show(f"備份失敗（exit code {code}），請查看下方輸出",
+                                 kind="error")
+            self._refresh_backup_page()
+            # 備份／還原驗證兩列的資料就是 _status.json，跑完立刻反映到 Health Check
+            self._run_health_checks()
+
+        self._run_bg(work, done)
 
 
 if __name__ == "__main__":

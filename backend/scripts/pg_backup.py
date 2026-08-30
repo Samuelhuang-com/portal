@@ -206,6 +206,15 @@ def show_status(root: str) -> int:
           f"{age.seconds // 3600} 小時前）")
     for k, v in s.get("targets", {}).items():
         print(f"      {k:<16}{v}")
+    vr = s.get("last_verify_restore")
+    if vr:
+        vt = dt.datetime.fromisoformat(vr)
+        vage = (dt.datetime.now() - vt).days
+        print(f"  上次還原驗證：{vt:%Y-%m-%d %H:%M:%S}（{vage} 天前）")
+        if vage > 30:
+            print("      ⚠️ 超過 30 天沒驗證過還原 —— 請跑 --verify-restore")
+    else:
+        print("  上次還原驗證：**從來沒有驗證過** —— pg_dump 回 0 不代表還原得回來")
     if age > dt.timedelta(days=2):
         print(f"\n  ⚠️⚠️ 已經 {age.days} 天沒有成功備份了。排程可能壞了 —— "
               "去看 D:\\portal\\logs\\pg_backup.log")
@@ -295,7 +304,27 @@ def verify_restore(env: dict) -> int:
                 print(f"      ⚠️ 清不掉 {scratch}，請手動 DROP DATABASE")
             eng.dispose()
         print()
-    return 1 if (bad or not psql_ok) else 0
+
+    ok = not (bad or psql_ok is False)
+    if ok:
+        # ⚠️ 把「上次真的還原驗證過」的時間寫回 _status.json，讓 portal_console.py
+        #    的 Health Check 讀得到。不寫的話，畫面上只看得到「有備份檔」，
+        #    看不出那些檔案有沒有被證明還原得回來 —— 而那才是重點。
+        #    只覆蓋這一個 key，不動 last_success／targets（備份與驗證是兩件事）。
+        p = os.path.join(root, STATUS_NAME)
+        try:
+            s = json.load(open(p, encoding="utf-8")) if os.path.exists(p) else {}
+        except Exception:
+            s = {}
+        s["last_verify_restore"] = dt.datetime.now().isoformat(timespec="seconds")
+        s["last_verify_restore_run"] = runs[0]
+        try:
+            json.dump(s, open(p, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+            print(f"  📝 已記錄還原驗證時間到 {STATUS_NAME}")
+        except Exception as e:
+            print(f"  ⚠️ 寫不進 {p}：{e}（驗證本身是成功的）")
+
+    return 0 if ok else 1
 
 
 def main() -> int:
