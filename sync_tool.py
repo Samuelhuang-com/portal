@@ -265,6 +265,11 @@ INTERVAL_OPTIONS: list[tuple[str, int]] = [
     ("8小時", 480),
 ]
 
+# ── 排程任務等待全體同步的逾時（秒）───────────────────────────────────────
+# 全體同步 30 餘個模組通常遠超過 60 秒，逾時過短會讓 daily/weekly 排程
+# 因撞上全體同步而被「等待逾時，略過」，且 dedup key 已標記，當天不會補跑。
+SCHED_WAIT_TIMEOUT_SEC = 1800   # 30 分鐘
+
 # ── 顏色常數 ──────────────────────────────────────────────────────────────────
 C_BG      = "#1e1e1e"
 C_PANEL   = "#252526"
@@ -365,6 +370,14 @@ class SyncApp(tk.Tk):
         self._update_sync_btn_label()   # 若有暫停模組，按鈕立即顯示數量
         self._check_env()
         self._ensure_db_schema()        # 確保 DB Schema 與 ORM 模型一致（migration）
+
+        # 還原上次設定的自動同步間隔（0 = 關閉；persist=False 避免重複寫檔）
+        _saved_interval = self._load_auto_interval()
+        if _saved_interval > 0:
+            self._set_interval(_saved_interval, persist=False)
+            logging.getLogger(__name__).info(
+                "已還原自動同步間隔設定：%d 分鐘", _saved_interval,
+            )
 
         # ⚠️ 必須在 _build_ui() 之後啟動，確保 _lbl_bottom 等 UI 元件已建立完成
         self._sched_thread.start()
@@ -885,7 +898,8 @@ class SyncApp(tk.Tk):
             else:
                 btn.config(bg="#2d2d3f", fg=C_TEXT, font=("Microsoft JhengHei UI", 9, "normal"))
 
-    def _set_interval(self, minutes: int):
+    def _set_interval(self, minutes: int, persist: bool = True):
+        """設定自動同步間隔。persist=False 用於啟動時還原設定（不重複寫檔）。"""
         # 取消舊計時器
         if self._auto_timer is not None:
             self._auto_timer.cancel()
@@ -907,8 +921,24 @@ class SyncApp(tk.Tk):
             )
             self._schedule_next_auto()
 
+        if persist:
+            self._save_auto_interval(minutes)
+
     def _schedule_next_auto(self):
-        """排定下一次自動同步（minutes 秒後觸發）。"""
+        """排定下一次自動同步（minutes 秒後觸發）。
+
+        ⚠️ 2026-08-30 修正：建立新 Timer 前必須先取消舊的。
+        先前手動同步結束時 _sync_thread 會再呼叫本函式，但舊 Timer 未取消，
+        每按一次手動同步就多疊一個計時器，自動同步頻率會越來越不規律。
+        """
+        # 先取消殘留的計時器與倒數 job（避免疊加）
+        if self._auto_timer is not None:
+            self._auto_timer.cancel()
+            self._auto_timer = None
+        if self._countdown_job is not None:
+            self.after_cancel(self._countdown_job)
+            self._countdown_job = None
+
         if self._auto_interval <= 0:
             return
         delay_sec = self._auto_interval * 60
@@ -1442,6 +1472,30 @@ class SyncApp(tk.Tk):
         except Exception as exc:
             logging.getLogger(__name__).warning("無法儲存暫停設定：%s", exc)
 
+    # ── 自動同步間隔（頂部工具列，存檔後重開程式沿用）────────────────────────
+    @staticmethod
+    def _load_auto_interval() -> int:
+        """從 sync_tool_config.json 讀取自動同步間隔（分鐘，0 = 關閉）。"""
+        try:
+            if _CONFIG_PATH.exists():
+                data = json.loads(_CONFIG_PATH.read_text(encoding="utf-8"))
+                val  = int(data.get("auto_interval_minutes", 0))
+                # 只接受 INTERVAL_OPTIONS 中的合法值，其餘一律視為關閉
+                if val in [v for _, v in INTERVAL_OPTIONS]:
+                    return val
+        except Exception:
+            pass
+        return 0
+
+    def _save_auto_interval(self, minutes: int):
+        """將自動同步間隔合併寫回 config（保留其他欄位）。"""
+        try:
+            data = self._load_config()
+            data["auto_interval_minutes"] = minutes
+            self._save_config(data)
+        except Exception as exc:
+            logging.getLogger(__name__).warning("無法儲存自動同步間隔設定：%s", exc)
+
     # ── 模組同步順序（可拖曳排序 / 右鍵上移下移）────────────────────────────────
     @staticmethod
     def _compute_module_order() -> list[str]:
@@ -1812,13 +1866,18 @@ class SyncApp(tk.Tk):
             logger.error("[排程] 找不到模組定義：%s", name)
             return
 
-        # 若全體同步進行中，最多等 60 秒後放棄
+        # 若全體同步進行中，先排隊等待（逾時見 SCHED_WAIT_TIMEOUT_SEC）
         wait = 0
-        while self._running and wait < 60:
+        while self._running and wait < SCHED_WAIT_TIMEOUT_SEC:
+            if wait == 0:
+                logger.info("[排程] 全體同步進行中，%s 等待中…", name)
             _time.sleep(5); wait += 5
         if self._running:
-            logger.warning("[排程] 等待逾時，略過：%s", name)
+            logger.warning("[排程] 等待全體同步逾時（%d 秒），略過：%s",
+                           SCHED_WAIT_TIMEOUT_SEC, name)
             return
+        if wait > 0:
+            logger.info("[排程] 已等待全體同步 %d 秒，開始執行：%s", wait, name)
 
         self._single_syncing.add(name)
         mod_path, func_name = entry
