@@ -92,6 +92,7 @@ _check_and_relaunch()
 # ─────────────────────────────────────────────────────────────────────────────
 
 import json
+import logging
 import queue
 import re
 import shutil
@@ -115,6 +116,13 @@ _SYNC_TOOL = _HERE / "sync_tool.py"                          # portal/sync_tool.
 #    原因與 sync_tool.py 相同：app.core.config 的 env_file=".env" 是
 #    相對於 CWD 的路徑，必須與 uvicorn 啟動位置一致。
 _os.chdir(_BACKEND)
+
+# ⚠️ 關掉 SQLAlchemy 的 engine INFO log。
+#    後端的 .env 把 echo 打開時，每一次健康檢查（`SHOW data_directory`、
+#    `SELECT version()`…）都會把完整 SQL 連同參數印進 Console 視窗，
+#    真正的訊息會被沖掉。`pg_verify_live.py` / `pg_fix_sequences.py` 都有設，
+#    只有這支漏了。設 WARNING 而不是 ERROR —— 連線警告仍要看得到。
+logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
 
 
 def _inject_site_packages():
@@ -744,7 +752,11 @@ class PortalConsole(tk.Tk):
         def _worker():
             result = work()
             if on_done is not None:
-                self.after(0, lambda: on_done(result))
+                # ⚠️ 走 _safe_after 不走 self.after：使用者按下按鈕後、work()
+                #    還沒跑完就把視窗關掉，這裡會拋
+                #    RuntimeError: main thread is not in main loop
+                #    （與 [1.96.44] 健康檢查那個是同一類，只是觸發點不同）。
+                self._safe_after(0, lambda: on_done(result))
         threading.Thread(target=_worker, daemon=True).start()
 
     # ── NSSM 服務控制（net start / net stop）─────────────────────────────────
@@ -1235,7 +1247,16 @@ class PortalConsole(tk.Tk):
                     tk.Frame(card, bg=C_BORDER, height=1).pack(fill=tk.X, padx=18)
 
         # 開啟頁籤時先自動跑一次（輕量 port 檢查即時，其餘用背景執行緒）
-        self._run_health_checks()
+        #
+        # ⚠️⚠️ 必須排進 after() 等 mainloop 起來，**不能在這裡直接呼叫**。
+        #    _build_health_page() 是在 __init__ 裡執行的，此時 mainloop 還沒開始。
+        #    背景 thread 只要搶先跑完第一項檢查就會呼叫 self.after()，而從
+        #    **背景執行緒**碰 tkinter API 時主執行緒不在 mainloop，會拋
+        #        RuntimeError: main thread is not in main loop
+        #    —— thread 當場死掉，所有 slow check 永遠停在「檢查中…」，
+        #    而且畫面上看不出是壞了還是還在跑。
+        #    2026-08-30：切到 PG 之後檢查變快，這場賽跑才穩定輸掉。
+        self.after(100, self._run_health_checks)
 
     def _run_health_checks(self):
         self._btn_check_all.config(text="檢查中…", fg=C_TEXT_DIM)
@@ -1253,6 +1274,18 @@ class PortalConsole(tk.Tk):
 
         threading.Thread(target=self._run_slow_health_checks, daemon=True).start()
 
+    def _safe_after(self, *args):
+        """背景執行緒回主執行緒專用。視窗已關閉時放棄排程，不噴 traceback。
+
+        ⚠️ 這裡吞掉的是「UI 已經不存在了」，**不是檢查結果**。
+           檢查本身失敗一律照常顯示成紅字（見 _run_slow_health_checks 的註解）——
+           「查不出來」不等於「查過沒問題」這條規則沒有因此鬆動。
+        """
+        try:
+            self.after(*args)
+        except (RuntimeError, tk.TclError):
+            pass
+
     def _run_slow_health_checks(self):
         """每一項各自檢查、各自回報，**任何一項壞掉都不影響其他項**。
 
@@ -1265,9 +1298,9 @@ class PortalConsole(tk.Tk):
                 state, msg = getattr(self, method)()
             except Exception as e:
                 state, msg = "err", f"檢查失敗（{type(e).__name__}）：{e}"
-            self.after(0, self._apply_health, key, state, msg)
+            self._safe_after(0, self._apply_health, key, state, msg)
 
-        self.after(0, lambda: self._btn_check_all.config(
+        self._safe_after(0, lambda: self._btn_check_all.config(
             text="🔄  重新檢查全部", fg=C_TAB_BG))
 
     def _apply_health(self, key: str, state: str, msg: str):
