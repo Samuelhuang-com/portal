@@ -42,7 +42,7 @@ from app.models.repair_report import (
 )
 
 # ── 沿用各模組相同的完成/排除狀態判斷 ──────────────────────────────────────────
-from app.services.dazhi_repair_service import finished_at as dazhi_finished_at
+from app.services.dazhi_repair_service import is_unfinished as dazhi_is_unfinished
 from app.services.luqun_repair_service import is_completed as luqun_is_completed
 # is_excluded 不再 import —— 排除一律走 ORM 的 is_excluded_flag（含 record_status）
 
@@ -141,12 +141,21 @@ def get_unfinished_cases(
        另外舊版排除「待辦驗」（那是 Dashboard KPI TAB 的三分類口徑），
        但 3.1 報修統計並未排除待辦驗，故本函式一併取消該排除。
 
-    ⚠️ 口徑（2026-09-02 修正，僅飯店）：「是否結案」只看處理狀態。
-       飯店 Ragic 表單沒有結案日期欄位，completed_at 取自非必填的
-       「維修日期／驗收日期」，不能當完成條件（14 筆已辦驗因此被誤判未完成）。
-       飯店未結案 ＝ 處理狀態 ∈ dazhi_repair_service.UNFINISHED_STATUSES；
-       時點回溯改由 finished_at() 提供（缺日期時退回 occurred_at）。
-       **商場維持原判定不變**（見 _luqun_finished_at）。
+    ⚠️⚠️ 口徑（2026-09-02 第二次修正，**僅飯店**）：飯店改回「今日現況」，
+       **推翻上面 2026-08-26 對飯店的時點口徑**（商場維持時點口徑不變）。
+
+       飯店未完成 ＝ 報修日期 ≤ 報表月底，且 **現在** 的處理狀態
+       ∈ dazhi_repair_service.UNFINISHED_STATUSES。等待天數算到今天。
+
+       為什麼改回來：時點口徑忠實反映的是「系統紀錄」而非「實際完工」。
+       2026-09-01 有人在 Ragic 批次補登 116 筆的維修／驗收日期（時間全部落在
+       9/1 16:34～20:05），這些案件截至 8/31 在系統上確實未結案，於是全部
+       留在 8 月附表裡，**狀態欄卻印出它們現在的值「已辦驗」**——列入與否看
+       8/31、狀態欄看今天，同一張表兩個時間基準，使用者一律當成 bug。
+       而歷史狀態沒有存，無法還原「8/31 當時是什麼狀態」，所以只能統一成今天。
+
+       ⚠️ 代價（使用者已知並接受）：飯店附表**不再等於** 3.1 報修統計的 ③＋⑦
+       （實測 2026/08：附表 52、3.1 仍是 168）。要對帳請直接看 3.1，不要用附表。
     """
     today = date.today()
     cases: list[dict] = []
@@ -154,8 +163,10 @@ def get_unfinished_cases(
     # 報表月底截止時間：occurred_at > 月底的案件不納入（支援查詢歷史月份）
     _last_day = calendar.monthrange(year, month)[1]
     _cutoff   = datetime(year, month, _last_day, 23, 59, 59)
-    # 等待天數基準：查歷史月份算到該月底，查當月則算到現在
-    _ref_dt   = min(datetime.now(), _cutoff)
+    _now      = datetime.now()
+    # 等待天數基準：飯店＝今日現況故算到今天；商場＝時點口徑故停在報表月底
+    _hotel_ref_dt = _now
+    _mall_ref_dt  = min(_now, _cutoff)
 
     def _completed_by_cutoff(c, finished_at_fn) -> bool:
         """截至報表月底當時是否已結案。
@@ -165,8 +176,7 @@ def get_unfinished_cases(
           ② 比「年/月」而不是比 datetime —— 與 _completed_by 一致，
              避免月底 23:59:59 之後的時間戳被判成下個月。
 
-        2026-09-02：完成判定改由各模組的 finished_at 決定，飯店與商場不再共用寫法
-          —— 飯店只看處理狀態（Ragic 無結案日期欄位），商場維持原本的雙條件。
+        2026-09-02：**只剩商場在用**。飯店已改為今日現況，不走時點回溯。
         """
         ft = finished_at_fn(c)
         if ft is None:
@@ -180,15 +190,16 @@ def get_unfinished_cases(
             # 「狀態」欄（record_status），只看 c.status 永遠比對不到。
             if c.is_excluded_flag:
                 continue
-            # 時點口徑：截至報表月底已結案者才排除（不是看今天的 status）
-            if _completed_by_cutoff(c, dazhi_finished_at):
+            # 2026-09-02：今日現況——只看案件「現在」的處理狀態。
+            # 不再用 finished_at 做時點回溯，理由見本函式 docstring。
+            if not dazhi_is_unfinished(c.status or ""):
                 continue
             if not c.occurred_at:
                 continue
             # 只納入報表月底前的案件（跨月歷史未結清一併計入）
             if c.occurred_at > _cutoff:
                 continue
-            cases.append(_normalize(c, "hotel", _ref_dt))
+            cases.append(_normalize(c, "hotel", _hotel_ref_dt))
 
     # ── 商場（商場工務報修）─────────────────────────────────────────────────
     if source in ("all", "mall"):
@@ -204,7 +215,7 @@ def get_unfinished_cases(
             # 只納入報表月底前的案件（跨月歷史未結清一併計入）
             if c.occurred_at > _cutoff:
                 continue
-            cases.append(_normalize(c, "mall", _ref_dt))
+            cases.append(_normalize(c, "mall", _mall_ref_dt))
 
     # ── 額外過濾條件 ──────────────────────────────────────────────────────────
     if status_filter:
