@@ -37,16 +37,31 @@ logger = logging.getLogger(__name__)
 # 1. 可集中配置的常數
 # ═════════════════════════════════════════════════════════════════════════════
 
-# ── 1-A. 完成狀態集合（視為「已完成」的狀態值）───────────────────────────────
+# ── 1-A. 未結案狀態白名單（2026-09-02 改為判定的單一依據）─────────────────────
+# 來源：Ragic 飯店報修表「處理狀態」欄的「未結案」清單篩選條件
+#   https://ap12.ragic.com/soutlet001/lequn-public-works/8
+# 業主確認（2026-09-02）在該 5 項之外，另把「辦驗未通過」也視為未結案
+#   —— 驗收沒過代表還要重做，語意上尚未完成。
+#
+# ⚠️ 為什麼改成「未結案白名單」而不是原本的「完成白名單」：
+#   舊寫法是 status ∈ COMPLETED_STATUSES **且** completed_at 非空。
+#   但 completed_at 取自 Ragic 的「維修日期／驗收日期」，這兩欄**非必填、
+#   也不代表結案**（2026-09-02 業主確認），飯店表單本來就沒有「結案日期」。
+#   於是 14 筆「已辦驗」因為沒填日期被判成未完成，Portal 與 PPT 附表都算進去。
+#   現在完成與否**只看處理狀態**，completed_at 退回只負責「何時完成」（見 finished_at）。
+UNFINISHED_STATUSES: set[str] = {
+    "待修中", "待料中", "委外處理", "進行中", "待辦驗",
+    "辦驗未通過",   # 2026-09-02 業主指示：驗收未通過仍屬未結案
+}
+
+# 完成狀態集合 —— 保留作為文件與相容用途，**判定已不使用**（改用 UNFINISHED_STATUSES）
 COMPLETED_STATUSES: set[str] = {
     # 大直工務部 Ragic 實際出現的狀態（2026-04-21 確認）
     "結案",
-    "已辦驗",   # 已辦理驗收，視為完成（500 筆，21.5%）
+    "已辦驗",   # 已辦理驗收，視為完成
     # 通用完成狀態（保留相容）
     "已驗收", "已結案", "完修", "已完成", "完成",
 }
-# 注意：以下視為未完成（程式用 not in COMPLETED_STATUSES 判定）
-# "待修中", "待料中", "委外處理", "待辦驗", "辦驗未通過", "進行中", "待確認"
 
 # ── 1-A-2. 排除狀態集合（不計入任何統計，明細總表仍可查閱）──────────────────
 # 設計原因：「取消」案件既非「完成」也非「待辦」。
@@ -59,14 +74,42 @@ EXCLUDED_STATUSES: set[str] = {
 }
 
 
+def is_unfinished(status: str) -> bool:
+    """判斷案件是否尚未結案（集中配置，改此處即全部生效）"""
+    return status.strip() in UNFINISHED_STATUSES
+
+
 def is_completed(status: str) -> bool:
-    """判斷案件是否已完成（集中配置，改此處即全部生效）"""
-    return status.strip() in COMPLETED_STATUSES
+    """判斷案件是否已完成（集中配置，改此處即全部生效）。
+
+    2026-09-02 起改為「非排除、且不在未結案白名單內」——
+    與 Ragic 清單篩選同語意（未勾選的狀態就不算未結案）。
+    處理狀態空白者依此規則歸為已結案（飯店現有 2 筆）。
+    """
+    s = status.strip()
+    return s not in EXCLUDED_STATUSES and s not in UNFINISHED_STATUSES
 
 
 def is_excluded(status: str) -> bool:
     """判斷案件是否排除於統計之外（取消等）"""
     return status.strip() in EXCLUDED_STATUSES
+
+
+def finished_at(c):
+    """『何時不再是未結案』的時間近似值；仍未結案或已排除則回傳 None。
+
+    ⚠️ completed_at 取自 Ragic「維修日期／驗收日期」，非必填、不等於結案日期，
+       因此**不能**拿來判斷「有沒有完成」，只能拿來判斷「什麼時候完成」。
+       缺值時退回 occurred_at（保守假設報修當月即處理完），
+       否則無日期的已結案案件會永遠留在歷史月份的未結案清單裡。
+
+    close_days 不受影響 —— 仍只在 completed_at 真的有值時才計算，
+    所以 4.2 結案時間統計不會被 occurred_at 代理值污染。
+    """
+    status = getattr(c, "status", "") or ""
+    if is_excluded(status) or is_unfinished(status):
+        return None
+    return getattr(c, "completed_at", None) or getattr(c, "occurred_at", None)
 
 
 # ── 1-B. 報修類型標準化 mapping ───────────────────────────────────────────────
@@ -904,22 +947,23 @@ def _month_offset(year: int, month: int, offset: int) -> tuple[int, int]:
 # ═════════════════════════════════════════════════════════════════════════════
 
 def _completed_by(c: RepairCase, y: int, m: int) -> bool:
-    """status 為完成 且 completed_at 截至 (y, m) 月底（含）之前"""
-    if not is_completed(c.status):
+    """已結案 且 完成時間截至 (y, m) 月底（含）之前。
+
+    2026-09-02：完成時間改用 finished_at()（completed_at 缺值時退回 occurred_at），
+    完成與否只看處理狀態 —— 時點回溯能力不變。
+    """
+    ft = finished_at(c)
+    if ft is None:
         return False
-    if not c.completed_at:
-        return False
-    cy, cm = c.completed_at.year, c.completed_at.month
-    return cy < y or (cy == y and cm <= m)
+    return ft.year < y or (ft.year == y and ft.month <= m)
 
 
 def _completed_in(c: RepairCase, y: int, m: int) -> bool:
-    """status 為完成 且 completed_at 恰好落在 (y, m) 月"""
-    if not is_completed(c.status):
+    """已結案 且 完成時間恰好落在 (y, m) 月（時間來源同 _completed_by）"""
+    ft = finished_at(c)
+    if ft is None:
         return False
-    if not c.completed_at:
-        return False
-    return c.completed_at.year == y and c.completed_at.month == m
+    return ft.year == y and ft.month == m
 
 
 def compute_repair_stats(
@@ -937,7 +981,9 @@ def compute_repair_stats(
     5. 本月報修項目完成數
     6. 本月報修項目完成率
 
-    時間規則：「完成」= status in COMPLETED_STATUSES AND completed_at 落在指定年/月內。
+    時間規則（2026-09-02 修正）：
+      「是否完成」＝ 處理狀態不在 UNFINISHED_STATUSES 內（不再要求 completed_at 非空）
+      「何時完成」＝ finished_at()：completed_at 優先，缺值退回 occurred_at
     """
     # 排除「取消」等不計入統計的案件（明細總表仍完整保留）
     all_cases = [c for c in all_cases if not c.is_excluded_flag]
