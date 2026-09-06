@@ -104,6 +104,20 @@ export const createCpDepartment = (data: Omit<CpDepartment, 'id' | 'created_at'>
 export const updateCpDepartment = (id: number, data: Partial<CpDepartment>) =>
   apiClient.put<CpDepartment>(`${BASE}/masters/departments/${id}`, data)
 
+// ── 手動連結主檔部門（2026-09-01，company 改自行輸入後名稱比對只剩部門名唯一命中）──
+export interface CpDepartmentLinkOption {
+  source_department_id: string
+  company: string      // 主檔的公司名稱（與週採自行輸入的 company 可能不同，正常）
+  dept_name: string
+  linked_to?: string | null  // 已被哪個週採部門連結；null＝可選
+}
+
+export const getCpDepartmentLinkOptions = () =>
+  apiClient.get<CpDepartmentLinkOption[]>(`${BASE}/masters/departments/link-options`)
+
+export const linkCpDepartment = (id: number, source_department_id: string | null) =>
+  apiClient.put<CpDepartment>(`${BASE}/masters/departments/${id}/link`, { source_department_id })
+
 // ── 成本中心主檔 ──────────────────────────────────────────────────────────────
 
 export const getCostCenters = (params?: { department_id?: number; is_active?: boolean }) =>

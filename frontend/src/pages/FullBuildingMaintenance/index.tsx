@@ -24,6 +24,7 @@ import {
   ExclamationCircleOutlined, RightOutlined, BarChartOutlined,
   ShopOutlined, CalendarOutlined, LineChartOutlined, LinkOutlined,
   ScheduleOutlined, TableOutlined,
+  FileExcelOutlined,
 } from '@ant-design/icons'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RcTooltip,
@@ -44,6 +45,7 @@ import type {
   FullBldgPMScheduleAnnualMatrix, FullBldgPMScheduleMatrixRow, FullBldgPMScheduleMatrixCell,
   FullBldgPMScheduleUpdatePayload, FullBldgPMScheduleGenerateResult,
 } from '@/api/fullBuildingMaintenance'
+import { exportRowsToExcel } from '@/utils/exportExcel'
 import MonthlyCalendarGrid from '@/components/MonthlyCalendarGrid'
 import type { CalendarRow } from '@/components/MonthlyCalendarGrid'
 import PMItemWorklogDrawer from '@/components/PMItemWorklogDrawer'
@@ -2531,6 +2533,33 @@ function MatrixDetailModal({
   const metricLabel = METRIC_LABELS[metric] || metric
   const monthDisplay = month === 0 ? '全年' : monthLabel
 
+  // ── 匯出 Excel（2026-09-06 新增，比照 mall/periodic-maintenance）────────────
+  // 資料就是本 Modal 已載入的 items，不另打後端；匯出全部筆數（分頁只影響顯示）。
+  const [exporting, setExporting] = useState(false)
+
+  const handleExport = useCallback(async () => {
+    setExporting(true)
+    const periodTag = month === 0 ? `${year}-全年` : `${year}-${String(month).padStart(2, '0')}`
+    await exportRowsToExcel(
+      items.map((r) => ({
+        '保養月份': r.period_month,
+        '類別':     r.category,
+        '保養項目': r.task_name,
+        '頻率':     r.frequency,
+        '排定日期': r.scheduled_date_full,
+        '狀態':     r.status,
+        '執行人員': r.executor_name,
+        '備註':     r.result_note,
+      })),
+      {
+        filename:  `全棟例行維護_${freqLabel}_${metricLabel}_${periodTag}.xlsx`,
+        sheetName: metricLabel,
+        colWidths: [10, 8, 40, 6, 12, 8, 14, 30],
+      },
+    )
+    setExporting(false)
+  }, [items, metricLabel, freqLabel, year, month])
+
   const columns: ColumnsType<FullBldgPMMatrixItem> = [
     { title: '保養月份', dataIndex: 'period_month', width: 90 },
     { title: '類別', dataIndex: 'category', width: 80,
@@ -2549,11 +2578,19 @@ function MatrixDetailModal({
   return (
     <Modal open={open} onCancel={onClose} footer={null} width={1000}
       title={
-        <Space>
-          <BarChartOutlined style={{ color: '#1677ff' }} />
-          <span style={{ fontWeight: 600 }}>{year} 年 {monthDisplay}｜{freqLabel}｜{metricLabel}</span>
-          {!loading && <Typography.Text type="secondary" style={{ fontSize: 12 }}>共 {total} 筆</Typography.Text>}
-        </Space>
+        // marginRight 32 讓出 Modal 右上角關閉鈕的位置
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginRight: 32 }}>
+          <Space>
+            <BarChartOutlined style={{ color: '#1677ff' }} />
+            <span style={{ fontWeight: 600 }}>{year} 年 {monthDisplay}｜{freqLabel}｜{metricLabel}</span>
+            {!loading && <Typography.Text type="secondary" style={{ fontSize: 12 }}>共 {total} 筆</Typography.Text>}
+          </Space>
+          <Button size="small" icon={<FileExcelOutlined />}
+            loading={exporting} disabled={loading || items.length === 0}
+            onClick={handleExport}>
+            匯出 Excel
+          </Button>
+        </div>
       }
     >
       {loading ? (

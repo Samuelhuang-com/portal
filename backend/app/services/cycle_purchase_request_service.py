@@ -1163,23 +1163,71 @@ def reopen_requests(db: Session, request_ids: list[int], user) -> list[CyclePurc
 # Dashboard 待辦提醒
 # ═══════════════════════════════════════════════════════════════════════════
 
-def get_dashboard_todos(db: Session, user, is_closer: bool):
+def get_user_cp_department_ids(db: Session, portal_db, user_id: str) -> list[int]:
+    """
+    登入者可操作的週採部門 id 清單（2026-09-01 使用者裁示：同部門的人都能操作
+    該部門的請購單）。兩條通道取聯集：
+
+      ① 部門成員（主要通道）：portal.db user_departments（使用者↔RefDepartment
+         多對多）→ 經 cycle_purchase_departments.source_department_id 對照回
+         週採部門。
+      ② 承辦人（備援通道，保留）：CyclePurchaseDepartment.owner_user_id ——
+         **本地自建**（source_department_id IS NULL）的週採部門走不了①，
+         只能靠這條；拿掉會讓那些部門的請購單瞬間沒人能編。
+
+    ⚠️ 跨庫：user_departments 在 portal.db、週採部門在 cycle-purchase.db，
+       不能 join，只能兩段查詢；source_department_id 存的是字串（既有慣例）。
+    """
+    owner_ids = {
+        d.id
+        for d in db.query(CyclePurchaseDepartment.id)
+        .filter(CyclePurchaseDepartment.owner_user_id == user_id)
+        .all()
+    }
+
+    from app.models.user_department import UserDepartment  # portal.db model
+    src_ids = [
+        str(r.department_id)
+        for r in portal_db.query(UserDepartment.department_id)
+        .filter(UserDepartment.user_id == user_id)
+        .all()
+    ]
+    member_ids = set()
+    if src_ids:
+        member_ids = {
+            d.id
+            for d in db.query(CyclePurchaseDepartment.id)
+            .filter(CyclePurchaseDepartment.source_department_id.in_(src_ids))
+            .all()
+        }
+
+    return sorted(owner_ids | member_ids)
+
+
+def get_dashboard_todos(db: Session, user, is_closer: bool, portal_db=None):
     """
     待辦提醒：
-      - my_pending：登入者是 owner_user_id 的部門，當月（period_label 為現在月份）
-        且還沒關閉的請購單（這些是「我自己部門這個月還沒關閉、還可以填」的單，
-        取代改版前依 status in (draft, rejected) 判斷的邏輯 —— 新流程沒有送出/
-        核准狀態機了，「還沒關閉」才是真正代表「還需要我處理」的狀態）。
+      - my_pending：登入者可操作的部門（部門成員 OR 承辦人，見
+        get_user_cp_department_ids）當月（period_label 為現在月份）且還沒關閉的
+        請購單（「還沒關閉」才是真正代表「還需要我處理」的狀態）。
+        2026-09-01 前只認 owner_user_id（一部門一人）；使用者裁示改為
+        同部門的人都收到。
       - pending_close：若登入者有 cycle_purchase_close 權限，回傳全部「當月且尚未
         關閉」的請購單（關閉目前是全域功能，不分部門，所以不用篩選 owner），
         提醒買家記得在月底前關閉。
+
+    portal_db 為 None 時退回只認承辦人（防禦：舊呼叫端沒傳就維持原行為，
+    不會炸也不會靜默擴權）。
     """
-    my_dept_ids = [
-        d.id
-        for d in db.query(CyclePurchaseDepartment.id)
-        .filter(CyclePurchaseDepartment.owner_user_id == user.id)
-        .all()
-    ]
+    if portal_db is not None:
+        my_dept_ids = get_user_cp_department_ids(db, portal_db, user.id)
+    else:
+        my_dept_ids = [
+            d.id
+            for d in db.query(CyclePurchaseDepartment.id)
+            .filter(CyclePurchaseDepartment.owner_user_id == user.id)
+            .all()
+        ]
 
     current_month = _current_period_label()
 

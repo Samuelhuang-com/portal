@@ -14,7 +14,11 @@ from app.models.user_role import UserRole
 from app.models.role import Role
 from app.models.tenant import Tenant
 from app.models.audit_log import AuditLog
-from app.schemas.auth import LoginRequest, TokenResponse, UserInfo, ForgotPasswordRequest
+from app.models.user_department import UserDepartment
+from app.models.reference_data import Company, RefDepartment
+from app.schemas.auth import (
+    LoginRequest, TokenResponse, UserInfo, UserDepartmentInfo, ForgotPasswordRequest,
+)
 
 OTP_EXPIRES_MINUTES = 15
 _FAKE_EMAIL_SUFFIX  = "@portal.local"
@@ -120,6 +124,22 @@ def _get_user_roles(user_id: str, db: Session) -> list[str]:
     return [r[0] for r in rows]
 
 
+def _get_user_departments(user_id: str, db: Session) -> list[UserDepartmentInfo]:
+    """登入者所屬部門（2026-09-01 多公司多部門，見 models/user_department.py）。"""
+    rows = (
+        db.query(RefDepartment, Company)
+        .join(UserDepartment, UserDepartment.department_id == RefDepartment.id)
+        .join(Company, RefDepartment.company_id == Company.id)
+        .filter(UserDepartment.user_id == user_id)
+        .order_by(Company.name, RefDepartment.name)
+        .all()
+    )
+    return [
+        UserDepartmentInfo(id=dept.id, name=dept.name, company=company.name)
+        for dept, company in rows
+    ]
+
+
 def _build_user_info(user: User, db: Session) -> UserInfo:
     tenant = db.query(Tenant).filter(Tenant.id == user.tenant_id).first()
     return UserInfo(
@@ -130,6 +150,7 @@ def _build_user_info(user: User, db: Session) -> UserInfo:
         tenant_name=tenant.name if tenant else "",
         roles=_get_user_roles(user.id, db),
         permissions=get_user_permissions(user.id, db),
+        departments=_get_user_departments(user.id, db),
         is_active=user.is_active,
         must_change_password=user.must_change_password or False,
     )

@@ -330,8 +330,14 @@ def sync_backfill_all(*, triggered_by: str = "sync_tool",
        若改成「迴圈到 pending 歸零」會在那種段上無窮打 API。
        （網頁的「補下一段」在這種情況會卡在同一段，屬既有行為，本函式不處理。）
 
-    ⚠️ **不碰增量。** 昨天的資料由 `main.py` 每日 06:30 的 `sync_incremental`
-       負責（重抓最近 14 天）。兩邊都跑只是重複打 OHIP。
+    ⚠️ **不碰增量。** 昨天的資料由 `sync_incremental_job()` 負責
+       （重抓最近 14 天）。兩邊都跑只是重複打 OHIP。
+
+    ⚠️ 2026-08-30 更正：本段原本寫「由 `main.py` 每日 06:30 的 `sync_incremental`
+       負責」。那個假設在 `SCHEDULER_ENABLED=false` 的機器上不成立 —— 正式區
+       與 DEV 都是 false，那支 job **從未執行**，於是市場區隔永遠只有回補補到的
+       資料，昨天的 EOD 帳務修正進不來。已補 `sync_incremental_job()` 並登錄到
+       `sync_tool.py` 的 MODULES。
 
     回傳格式對齊 sync_tool 的期待：`fetched` / `upserted` / `errors`。
     """
@@ -392,6 +398,72 @@ def sync_incremental(db: Session, *, days: int = INCREMENTAL_DAYS,
     end = date.today() - timedelta(days=1)      # 今天還沒過完
     start = end - timedelta(days=max(days, 1) - 1)
     return _sync_range(db, start, end, mode="incremental", triggered_by=triggered_by)
+
+
+def sync_incremental_job(*, triggered_by: str = "sync_tool",
+                         days: int = INCREMENTAL_DAYS,
+                         force: bool = False) -> dict[str, Any]:
+    """每日增量的無參數包裝（給 `sync_tool.py` 用）。
+
+    ⚠️ 2026-08-30 新增。增量先前只掛在 `main.py` 的 APScheduler
+       （每日 06:30 的 `opera_segment_incremental`），而正式區與 DEV 都是
+       `SCHEDULER_ENABLED=false` —— **等於從未執行**。這與 2026-08-13 補登錄
+       那四個 OHIP 模組是同一個坑，當時只補了一半、沒有回頭掃整份清單。
+
+    ⚠️⚠️ **當日已成功跑過就 skip，這個 guard 不能拿掉。**
+       `sync_incremental()` 每次都重抓最近 14 天，不像 `sync_backfill_all()`
+       有 pending 清單可以判斷「沒事可做」。OHIP 是**計費** API，放進 15 分
+       一輪的自動同步若不擋，一天會打 96 次。
+
+    ⚠️ guard 查的是 **DB 裡今天有沒有成功紀錄**，不是記憶體旗標 ——
+       sync_tool 重開就失效的 guard 等於沒有 guard。
+       （`ohip_snapshot_run` 那次就是紀錄表寫入失敗、guard 從未生效，
+         每次觸發都重打計費 API，三週後才發現。）
+
+    ⚠️ 只有 `STATUS_OK` 算「今天做過了」；`partial` 允許重試，
+       因為它代表有段落沒寫進去。
+
+    回傳格式對齊 sync_tool 的期待：`fetched` / `upserted` / `errors`。
+    """
+    from sqlalchemy import func
+
+    from app.core.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        if not ohip_client.is_configured():
+            # 未設定就跑會讓 sync_tool 每輪紅燈。這是「沒設定」不是「失敗」。
+            return {
+                "fetched": 0, "upserted": 0, "errors": 0, "skipped": True,
+                "message": "OHIP 尚未設定完成，缺少：" + "、".join(ohip_client.missing_settings()),
+            }
+
+        if not force:
+            done = (db.query(OhipRevenueHistorySync)
+                      .filter(OhipRevenueHistorySync.mode == "incremental",
+                              OhipRevenueHistorySync.status == STATUS_OK,
+                              func.date(OhipRevenueHistorySync.started_at) == date.today())
+                      .first())
+            if done:
+                # started_at 理論上不會是 None，但格式化 None 會 TypeError，
+                # 而那會讓 guard 變成「例外」而不是「略過」—— 反而去打 API。
+                when = f"{done.started_at:%H:%M}" if done.started_at else "稍早"
+                return {
+                    "fetched": 0, "upserted": 0, "errors": 0, "skipped": True,
+                    "message": f"今日增量已於 {when} 完成，略過（不重打 OHIP）。",
+                }
+
+        r = sync_incremental(db, days=days, triggered_by=triggered_by)
+        written = int(r.get("rows_written") or 0)
+        failed = 1 if r.get("status") == STATUS_FAILED else 0
+        return {
+            "fetched": written, "upserted": written, "errors": failed,
+            "skipped": False,
+            "error_messages": [r["error"]] if r.get("error") else [],
+            "warnings": r.get("warnings") or [],
+        }
+    finally:
+        db.close()
 
 
 def list_syncs(db: Session, *, limit: int = 30) -> list[dict[str, Any]]:

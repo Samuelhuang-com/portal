@@ -14,6 +14,8 @@ export interface CreateUserPayload {
   password: string;
   tenant_id: string;
   role_names: string[];
+  /** 所屬部門（RefDepartment.id 陣列），2026-09-01 多公司多部門 */
+  department_ids?: number[];
 }
 
 export interface UpdateUserPayload {
@@ -22,6 +24,9 @@ export interface UpdateUserPayload {
   role_names?: string[];
   email?: string;        // 僅 system_admin / tenant_admin 可更新
   new_password?: string; // 管理員直接設定新密碼（選填，留空不改）
+  tenant_id?: string;    // 主要公司別（＝公司/部門管理的公司），2026-09-01 起可在編輯時變更
+  /** 所屬部門整批取代（undefined＝不動、[]＝清空），2026-09-01 多公司多部門 */
+  department_ids?: number[];
 }
 
 export interface AdminResetPasswordResponse {

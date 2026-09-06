@@ -19,6 +19,7 @@ import {
   DashboardOutlined, FileTextOutlined, DownloadOutlined, FilePptOutlined,
   WarningOutlined, DollarOutlined, SearchOutlined, BuildOutlined, ApiOutlined, QuestionCircleOutlined, PictureOutlined, AuditOutlined,
   LinkOutlined,
+  FileExcelOutlined,
 } from '@ant-design/icons'
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
@@ -43,6 +44,7 @@ import type {
   FeeStatsData,
 } from '@/types/dazhiRepair'
 import { NAV_GROUP } from '@/constants/navLabels'
+import { exportRowsToExcel, rowsFromAntdColumns, exportTimestamp } from '@/utils/exportExcel'
 import UnassignedJournalTab from '@/components/WorkJournal/UnassignedJournalTab'
 import { DAZHI_KPI_DESC } from '@/constants/kpiDesc/dazhiRepair'
 
@@ -119,6 +121,7 @@ function CaseListModal({
   title, cases, open, onClose, extra,
   extraColumns,
   tableSummary,
+  exportName,
 }: {
   title: React.ReactNode
   cases: RepairCase[]
@@ -127,12 +130,45 @@ function CaseListModal({
   extra?: React.ReactNode
   extraColumns?: import('antd/es/table').ColumnsType<RepairCase>
   tableSummary?: (pageData: readonly RepairCase[]) => React.ReactNode
+  /**
+   * 2026-09-06 新增：匯出 Excel 的檔名語意段。
+   * title 是 ReactNode（多數呼叫端夾帶 icon JSX），抽不出可靠的檔名，故各呼叫端另傳。
+   * 未傳時退回「案件清單」，功能仍可用。
+   */
+  exportName?: string
 }) {
   const [drawerCase, setDrawerCase] = useState<RepairCase | null>(null)
+
+  // ── 匯出 Excel（2026-09-06 新增）─────────────────────────────────────────
+  // 匯出欄位直接從實際渲染的 columns 推導，所以各呼叫端傳的 extraColumns
+  // （完工時間、花費工時等）會自動包含進去；「詳情」按鈕欄因無 dataIndex 自動排除。
+  const [exporting, setExporting] = useState(false)
+  const exportCols = [...CASE_LIST_COLS, ...(extraColumns ?? [])]
+
+  const handleExport = useCallback(async () => {
+    setExporting(true)
+    await exportRowsToExcel(
+      rowsFromAntdColumns(cases, exportCols),
+      { filename: `大直報修_${exportName || '案件清單'}_${exportTimestamp()}.xlsx`,
+        sheetName: exportName || '案件清單' },
+    )
+    setExporting(false)
+  }, [cases, extraColumns, exportName])
+
   return (
     <>
       <Modal
-        title={title}
+        title={
+          // marginRight 32 讓出 Modal 右上角關閉鈕的位置
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginRight: 32 }}>
+            <span>{title}</span>
+            <Button size="small" icon={<FileExcelOutlined />}
+              loading={exporting} disabled={cases.length === 0}
+              onClick={handleExport}>
+              匯出 Excel
+            </Button>
+          </div>
+        }
         open={open}
         onCancel={onClose}
         footer={<Button onClick={onClose}>關閉</Button>}
@@ -432,10 +468,10 @@ function DashboardTab({
 
       {/* KPI 明細 Modals */}
       <CaseListModal title={<><ToolOutlined style={{ color: '#1B3A5C', marginRight: 8 }} />本月相關案件</>}
-        cases={kpi_total_detail ?? []} open={kpiModal === 'total'} onClose={() => setKpiModal(null)}
+        exportName="本月相關案件" cases={kpi_total_detail ?? []} open={kpiModal === 'total'} onClose={() => setKpiModal(null)}
         extra={<Space><Tag color="blue">共 {kpi.total} 筆</Tag><Tag color="default" style={{ fontSize: 11 }}>上期未結 + 本期報修件數</Tag></Space>} />
       <CaseListModal title={<><CheckCircleOutlined style={{ color: '#52C41A', marginRight: 8 }} />已完成案件</>}
-        cases={kpi_completed_detail ?? []} open={kpiModal === 'completed'} onClose={() => setKpiModal(null)}
+        exportName="已完成案件" cases={kpi_completed_detail ?? []} open={kpiModal === 'completed'} onClose={() => setKpiModal(null)}
         extra={<Space><Tag color="success">已完成 {kpi.completed} 筆</Tag><Tag color="default" style={{ fontSize: 11 }}>累計已完成 + 本期已完成（已驗收為標準）</Tag></Space>}
         extraColumns={[{
           title: '完工時間', dataIndex: 'completed_at', width: 110, align: 'center' as const,
@@ -445,19 +481,19 @@ function DashboardTab({
         }]}
       />
       <CaseListModal title={<><AuditOutlined style={{ color: '#FAAD14', marginRight: 8 }} />待辦驗案件</>}
-        cases={kpi_pending_verify_detail ?? []} open={kpiModal === 'pending_verify'} onClose={() => setKpiModal(null)}
+        exportName="待辦驗案件" cases={kpi_pending_verify_detail ?? []} open={kpiModal === 'pending_verify'} onClose={() => setKpiModal(null)}
         extra={<Space><Tag color="warning">待辦驗 {kpi.pending_verify} 筆</Tag><Tag color="default" style={{ fontSize: 11 }}>處理狀況欄位 = 待辦驗</Tag></Space>} />
       <CaseListModal title={<><ExclamationCircleOutlined style={{ color: '#FF4D4F', marginRight: 8 }} />未完成案件</>}
-        cases={kpi_uncompleted_detail ?? []} open={kpiModal === 'uncompleted'} onClose={() => setKpiModal(null)}
+        exportName="未完成案件" cases={kpi_uncompleted_detail ?? []} open={kpiModal === 'uncompleted'} onClose={() => setKpiModal(null)}
         extra={<Space><Tag color="error">未完成 {kpi.uncompleted} 筆</Tag><Tag color="default" style={{ fontSize: 11 }}>累計未完成 + 本期未完成（非當月驗收）</Tag></Space>} />
       <CaseListModal title={<><ClockCircleOutlined style={{ color: '#4BA8E8', marginRight: 8 }} />結案天數明細（已完成）</>}
-        cases={kpi_close_days_detail ?? []} open={kpiModal === 'close_days'} onClose={() => setKpiModal(null)}
+        exportName="結案天數明細" cases={kpi_close_days_detail ?? []} open={kpiModal === 'close_days'} onClose={() => setKpiModal(null)}
         extra={<Space><Tag color="blue">平均 {kpi.avg_close_days != null ? fmtDec(kpi.avg_close_days, 1) : '-'} 天</Tag><Tag color="default" style={{ fontSize: 11 }}>完工時間 − 報修日期</Tag></Space>} />
       <CaseListModal title={<><ClockCircleOutlined style={{ color: '#13C2C2', marginRight: 8 }} />工時明細</>}
-        cases={kpi_hours_detail ?? []} open={kpiModal === 'hours'} onClose={() => setKpiModal(null)}
+        exportName="工時明細" cases={kpi_hours_detail ?? []} open={kpiModal === 'hours'} onClose={() => setKpiModal(null)}
         extra={<Space><Tag color="cyan">維修天數合計 {fmtDec(kpi.total_work_hours, 2)} hr</Tag><Tag color="blue">{fmtDec(kpi.total_work_hours / 24, 2)} 天（÷24）</Tag></Space>} />
       <CaseListModal title={<><HomeOutlined style={{ color: '#FA8C16', marginRight: 8 }} />客房報修案件</>}
-        cases={kpi_room_detail ?? []} open={kpiModal === 'room'} onClose={() => setKpiModal(null)}
+        exportName="客房報修案件" cases={kpi_room_detail ?? []} open={kpiModal === 'room'} onClose={() => setKpiModal(null)}
         extra={<Tag color="orange">共 {kpi.room_cases} 筆</Tag>} />
 
       {/* 費用 KPI（累計至選定月）+ 當月金額 — 3 張一排 */}
@@ -972,7 +1008,7 @@ function RepairStatsTab({ year, focusMonth }: { year: number; focusMonth: number
         </div>
       </Card>
 
-      <CaseListModal title={modal?.title ?? ''} cases={modal?.cases ?? []}
+      <CaseListModal title={modal?.title ?? ''} exportName={modal?.title} cases={modal?.cases ?? []}
         open={!!modal} onClose={() => setModal(null)}
         extra={<Tag color="blue">共 {modal?.cases.length ?? 0} 筆</Tag>} />
     </div>
@@ -1455,7 +1491,7 @@ function RepairTypeTab({ year, month }: { year: number; month: number | null }) 
         </table>
       </div>
 
-      <CaseListModal title={modal?.title ?? ''} cases={modal?.cases ?? []}
+      <CaseListModal title={modal?.title ?? ''} exportName={modal?.title} cases={modal?.cases ?? []}
         open={!!modal} onClose={() => setModal(null)}
         extra={<Tag color="blue">共 {modal?.cases.length ?? 0} 筆</Tag>} />
     </div>

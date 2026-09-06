@@ -1,12 +1,21 @@
+/** 使用者所屬部門（user_departments，2026-09-01 多公司多部門） */
+export interface UserDepartment {
+  id: number;        // RefDepartment.id
+  name: string;
+  company: string;   // 公司名稱
+}
+
 export interface User {
   id: string;
   email: string;
   full_name: string;
-  tenant_id: string;
+  tenant_id: string;      // 主要公司別（顯示與稽核歸屬）
   tenant_name: string;
   roles: string[];
   // 使用者所有 permission_key；system_admin 為 ["*"]
   permissions?: string[];
+  // 2026-09-01：實際的公司/部門歸屬看這裡（可屬多公司多部門）
+  departments?: UserDepartment[];
   is_active: boolean;
   last_login?: string;
   created_at?: string;
@@ -20,6 +29,8 @@ export interface Tenant {
   type: string;
   is_active: boolean;
   created_at: string;
+  /** null ＝ 本地自建的舊據點；有值 ＝ 鏡像自「系統設定 → 公司/部門管理」的 Company.id */
+  source_company_id?: string | null;
 }
 
 export interface RagicConnection {

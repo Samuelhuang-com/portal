@@ -32,6 +32,10 @@ export interface DepartmentRecord {
 export interface DepartmentOption {
   value: string
   label: string
+  /** RefDepartment.id — 2026-09-01 起提供，人員管理「部門多選」用 */
+  id?: number
+  /** 公司名稱 — 供按公司分組 */
+  company?: string
 }
 
 export interface PricingSpecRecord {

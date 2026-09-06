@@ -198,6 +198,22 @@ MODULES: list[tuple[str, str, str]] = [
     ("核准請款單清單", "app.services.claim_request_sync",               "sync_list_only"),
     ("日曜請購單清單", "app.services.nichiyo_purchase_request_sync",    "sync_list_only"),
     ("日曜請款單清單", "app.services.nichiyo_claim_request_sync",       "sync_list_only"),
+    # ── 四個「完整同步」（清單 + Detail API 品項補全）─────────────────────────
+    # ⚠️ 2026-08-30 補登錄。這四個先前只掛在 main.py 的 APScheduler
+    #    （`purchase_full_sync` 等，每 45 分一次），而正式區與 DEV 都是
+    #    `SCHEDULER_ENABLED=false` —— **等於從未執行**。後果是請購／請款
+    #    只同步了「清單」，品項明細從來沒有補進來。
+    #    這與 2026-08-13 補登錄那四個 OHIP 模組是同一個坑，當時只補了一半。
+    #
+    # ⚠️ 必須排在對應的「清單」之後：full 是 list 的超集（清單 + Detail API），
+    #    順序顛倒會讓明細補完又被清單覆寫。
+    #
+    # ⚠️ full 比 list 重很多（要逐筆打 Detail API），原設計是 list 每 15 分、
+    #    full 每 45 分。建議在「排程設定」裡給它們較長的間隔，不要跟 list 同頻。
+    ("核准請購單", "app.services.purchase_request_sync",            "sync_from_ragic"),
+    ("核准請款單", "app.services.claim_request_sync",               "sync_from_ragic"),
+    ("日曜核准請購單", "app.services.nichiyo_purchase_request_sync",    "sync_all"),
+    ("日曜核准請款單", "app.services.nichiyo_claim_request_sync",       "sync_all"),
     ("主管交辦／緊急事件", "app.services.other_tasks_sync",             "sync_from_ragic"),
     ("週期保養預排",       "app.services.pm_plan_sync",                 "sync_from_ragic"),
     ("飯店例行維護",       "app.services.hotel_routine_pm_sync",        "sync_from_ragic"),
@@ -209,11 +225,24 @@ MODULES: list[tuple[str, str, str]] = [
     #   非 Ragic）。跟「週期採購供應商」同一批次，兩者互不相依。
     #   詳見 cycle_purchase_department_sync.py 檔頭。
     ("週期採購部門",       "app.services.cycle_purchase_department_sync", "sync_from_reference"),
+    # ⚠ 來源同上（portal.db Company，系統設定 → 公司/部門管理，非 Ragic）。
+    #   跟「週期採購部門」同一批次，兩者互不相依。
+    #   目的：人員管理「所屬據點」下拉＝公司名稱清單。
+    #   詳見 tenant_company_sync.py 檔頭。
+    ("使用者據點",         "app.services.tenant_company_sync",           "sync_from_reference"),
     # ⚠ 這一個不是 Ragic —— 來源是 OPERA Cloud（OHIP API）。
     #   只跑「歷史回補」：把往前兩年還沒補的段一次補完，補完後每輪自動 skip
     #   （只查一次 DB，不打 OHIP）。「昨天」由 main.py 每日 06:30 的
     #   sync_incremental 負責（重抓最近 14 天），這裡刻意不重複做。
     ("市場區隔歷史回補",   "app.services.opera_segment_sync",           "sync_backfill_all"),
+    # ⚠️ 2026-08-30 補登錄，與上面那四個 full sync 同一批。增量先前只掛在
+    #    main.py 每日 06:30 的 `opera_segment_incremental`，從未執行 ——
+    #    於是市場區隔只有回補補到的資料，昨天的 EOD 帳務修正永遠進不來。
+    # ⚠️ 必須排在「市場區隔歷史回補」之後：回補負責「以前沒有資料的段」，
+    #    增量負責「最近 14 天重抓覆蓋」，先回補再覆蓋才是正確的先後。
+    # ⚠️ 內建「當日已成功就 skip」（查 DB 不是記憶體旗標），所以放在 15 分
+    #    一輪的自動同步裡不會重複打 OHIP 計費 API。
+    ("市場區隔增量同步",   "app.services.opera_segment_sync",           "sync_incremental_job"),
     # ── 以下三個同樣不是 Ragic，來源是 OPERA Cloud（OHIP API）────────────────
     # ⚠️ 2026-08-13 補登錄。DEV 機器 `SCHEDULER_ENABLED=false`（改用本工具），
     #    但這三個先前只登錄在 main.py 的 APScheduler、沒登錄在這裡，等於
@@ -254,15 +283,21 @@ MODULES: list[tuple[str, str, str]] = [
 # ── 報修報表寄信排程 key（非同步模組，獨立處理）─────────────────────────────
 MAIL_KEY = "📧 報修未完成報表寄信"
 
-# ── 自動同步間隔選項（分鐘，0 = 關閉）─────────────────────────────────────
-INTERVAL_OPTIONS: list[tuple[str, int]] = [
-    ("關閉",   0),
-    ("15分",  15),
-    ("30分",  30),
-    ("1小時", 60),
-    ("2小時", 120),
-    ("4小時", 240),
-    ("8小時", 480),
+# ── 右鍵快捷可選的間隔（分鐘）─────────────────────────────────────────────
+# ⚠️ 2026-08-30：原本是頂部工具列「自動同步間隔」按鈕用的常數，該功能已移除。
+#    移除理由：它的語意等同「把所有模組都設成 interval 模式」，本來就是
+#    「排程設定」的一個特例，卻被做成另一顆獨立旋鈕擺在旁邊 —— 兩個控制
+#    同一件事的旋鈕並排，按哪個都對也都不完全對。而且排程在畫面上沒有任何
+#    可見狀態，只有間隔有倒數，於是使用者只會去按看得見的那個，然後兩套
+#    機制打架（interval 模組撞上全體同步會**整輪跳過**、排程模組被重複同步）。
+#    現在所有自動執行都只在「排程設定」裡，主畫面只剩手動。
+QUICK_INTERVALS: list[tuple[str, int]] = [
+    ("每 15 分",  15),
+    ("每 30 分",  30),
+    ("每 1 小時", 60),
+    ("每 2 小時", 120),
+    ("每 4 小時", 240),
+    ("每 8 小時", 480),
 ]
 
 # ── 排程任務等待全體同步的逾時（秒）───────────────────────────────────────
@@ -335,10 +370,8 @@ class SyncApp(tk.Tk):
         self.configure(bg=C_BG)
 
         self._running          = False
-        self._auto_interval    = 0          # 0 = 關閉
-        self._auto_timer: threading.Timer | None = None
-        self._countdown_job    = None       # after() job id
-        self._next_sync_at: datetime | None = None
+        self._sched_refresh_job = None      # 「排程」欄定期刷新的 after() job id
+        self._sched_text_cache: dict[str, str] = {}   # 模組 → 「排程」欄顯示文字
         self._startup_fh: logging.FileHandler | None = None
         self._gui_handler: _GuiLogHandler | None     = None
         self._filter_active    = False      # True = 只顯示錯誤列
@@ -351,7 +384,8 @@ class SyncApp(tk.Tk):
         self._drag_data: dict = {}  # 拖曳排序暫存狀態
 
         # ── 排程執行緒狀態 ────────────────────────────────────────────────────
-        self._sched_last_interval: dict[str, datetime]        = {}  # 間隔模式：上次執行時間
+        # 間隔模式：上次執行時間（從 config 還原，見 _load_sched_last_run 的說明）
+        self._sched_last_interval: dict[str, datetime] = self._load_sched_last_run()
         self._sched_daily_done:    dict[str, tuple[date, str]] = {}  # 每日模式：(已觸發日期, 設定時間)
         self._sched_thread_running = True
 
@@ -371,13 +405,8 @@ class SyncApp(tk.Tk):
         self._check_env()
         self._ensure_db_schema()        # 確保 DB Schema 與 ORM 模型一致（migration）
 
-        # 還原上次設定的自動同步間隔（0 = 關閉；persist=False 避免重複寫檔）
-        _saved_interval = self._load_auto_interval()
-        if _saved_interval > 0:
-            self._set_interval(_saved_interval, persist=False)
-            logging.getLogger(__name__).info(
-                "已還原自動同步間隔設定：%d 分鐘", _saved_interval,
-            )
+        # 「排程」欄首次填值 + 啟動定期刷新（排到 mainloop 之後才動 tkinter）
+        self.after(100, self._refresh_schedule_column)
 
         # ⚠️ 必須在 _build_ui() 之後啟動，確保 _lbl_bottom 等 UI 元件已建立完成
         self._sched_thread.start()
@@ -475,40 +504,38 @@ class SyncApp(tk.Tk):
         )
         self._lbl_module.pack(side=tk.LEFT)
 
-        # ── 自動同步間隔列 ────────────────────────────────────────────────
-        interval_outer = tk.Frame(self, bg="#1a1a2e", pady=6)
-        interval_outer.pack(fill=tk.X)
+        # ── 排程總覽列（原本是「自動同步間隔」按鈕列，2026-08-30 改）──────────
+        # 這一列現在是**唯讀的狀態顯示**，不是控制項。所有自動執行的設定都在
+        # 「⚙ 排程設定」對話框或表格右鍵，主畫面只留手動的「立即同步所有模組」。
+        sched_outer = tk.Frame(self, bg="#1a1a2e", pady=6)
+        sched_outer.pack(fill=tk.X)
 
         tk.Label(
-            interval_outer, text="⏱  自動同步間隔：",
+            sched_outer, text="🕐  排程：",
             bg="#1a1a2e", fg=C_DIM,
             font=("Microsoft JhengHei UI", 10),
         ).pack(side=tk.LEFT, padx=(14, 4))
 
-        self._interval_btns: dict[int, tk.Button] = {}
-        for label, minutes in INTERVAL_OPTIONS:
-            btn = tk.Button(
-                interval_outer,
-                text=label,
-                bg="#2d2d3f", fg=C_TEXT,
-                activebackground=C_ACCENT,
-                font=("Microsoft JhengHei UI", 9),
-                relief=tk.FLAT, padx=10, pady=3,
-                cursor="hand2",
-                command=lambda m=minutes: self._set_interval(m),
-            )
-            btn.pack(side=tk.LEFT, padx=2)
-            self._interval_btns[minutes] = btn
+        self._lbl_sched_summary = tk.Label(
+            sched_outer, text="讀取中…",
+            bg="#1a1a2e", fg=C_TEXT,
+            font=("Microsoft JhengHei UI", 9),
+        )
+        self._lbl_sched_summary.pack(side=tk.LEFT, padx=(0, 12))
 
-        self._lbl_countdown = tk.Label(
-            interval_outer, text="",
+        tk.Label(
+            sched_outer,
+            text="（每個模組各自設定頻率：右鍵表格任一列，或按上方「⚙ 排程設定」）",
+            bg="#1a1a2e", fg=C_DIM,
+            font=("Microsoft JhengHei UI", 8),
+        ).pack(side=tk.LEFT)
+
+        self._lbl_sched_next = tk.Label(
+            sched_outer, text="",
             bg="#1a1a2e", fg=C_WARN,
             font=("Consolas", 10),
         )
-        self._lbl_countdown.pack(side=tk.LEFT, padx=(14, 4))
-
-        # 初始高亮「關閉」
-        self._highlight_interval_btn(0)
+        self._lbl_sched_next.pack(side=tk.RIGHT, padx=(4, 14))
 
         # ── 主區域（左：Log，右：結果表）────────────────────────────────────
         paned = tk.PanedWindow(
@@ -591,7 +618,10 @@ class SyncApp(tk.Tk):
         self._btn_filter.pack(side=tk.RIGHT, padx=4)
 
         # Treeview 表格
-        cols = ("模組", "狀態", "開始時間", "耗時(秒)", "撈取", "寫入", "錯誤", "觸發", "操作")
+        # ⚠️ 「排程」緊跟在「模組」後面：使用者最需要一眼掃出「哪些有排、下次幾點」。
+        #    點擊判斷用的是**欄位名稱**（見 _on_tree_button_press），不是硬編索引，
+        #    所以插欄不會弄壞「操作」欄的點擊。
+        cols = ("模組", "排程", "狀態", "開始時間", "耗時(秒)", "撈取", "寫入", "錯誤", "觸發", "操作")
         self._tree = ttk.Treeview(
             tbl_frame,
             columns=cols,
@@ -602,6 +632,7 @@ class SyncApp(tk.Tk):
         # 欄寬 & 標題
         col_cfg = {
             "模組":    (110, tk.W),
+            "排程":    (118, tk.W),
             "狀態":    ( 58, tk.CENTER),
             "開始時間": ( 75, tk.CENTER),
             "耗時(秒)": ( 68, tk.E),
@@ -663,7 +694,8 @@ class SyncApp(tk.Tk):
             is_disabled = name in self._disabled_modules
             iid = self._tree.insert(
                 "", tk.END,
-                values=(name, "⏸ 暫停" if is_disabled else "—",
+                values=(name, "—",
+                        "⏸ 暫停" if is_disabled else "—",
                         "—", "—", "—", "—", "—", "—",
                         "" if is_disabled else "▶ 同步"),
                 tags=("disabled" if is_disabled else "pending",),
@@ -742,6 +774,15 @@ class SyncApp(tk.Tk):
           4. hotel_mr_batch 時間欄位補丁（ALTER TABLE，必須在 create_all 之後）
         """
         logger = logging.getLogger(__name__)
+
+        # ⚠️ create_all 會對**每一張表**查一次 pg_catalog.pg_class，39 張表就是
+        #    數百行 SQL，在 GUI 的 Log 面板上會把真正的啟動訊息整片沖掉
+        #    （使用者一開程式看到的全是 pg_class 查詢）。
+        # ⚠️ 只壓這一段。同步期間的 SQL log 是刻意開著的（見 _sync_thread 的
+        #    sa_logger.setLevel(INFO)），那是查同步問題的依據，不能一起關掉。
+        _sa_logger = logging.getLogger("sqlalchemy.engine")
+        _sa_prev_level = _sa_logger.level
+        _sa_logger.setLevel(logging.WARNING)
         try:
             from app.core.database import Base, engine
             from sqlalchemy import text
@@ -786,6 +827,9 @@ class SyncApp(tk.Tk):
             import app.models.contract                 # noqa
             import app.models.opera_segment            # noqa  ohip_revenue_history + 同步紀錄
             import app.models.ota_review               # noqa  OTA 口碑分析（2026-08-22）
+            import app.models.reference_data           # noqa  Company/RefDepartment（據點鏡像來源）
+            import app.models.tenant                   # noqa  據點主檔（Company 鏡像，2026-09-01）
+            import app.models.user_department          # noqa  使用者↔部門多對多（2026-09-01）
 
             # ── PostgreSQL：只建表，跳過底下所有 PRAGMA 補丁 ─────────────────
             #
@@ -887,86 +931,9 @@ class SyncApp(tk.Tk):
         except Exception as exc:
             logger.error("[DB] Schema 確認失敗：%s", exc, exc_info=True)
             self._lbl_bottom.config(text=f"⚠ DB Schema 確認失敗：{exc}")
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # 自動同步間隔
-    # ─────────────────────────────────────────────────────────────────────────
-    def _highlight_interval_btn(self, active_minutes: int):
-        for m, btn in self._interval_btns.items():
-            if m == active_minutes:
-                btn.config(bg=C_ACCENT, fg="white", font=("Microsoft JhengHei UI", 9, "bold"))
-            else:
-                btn.config(bg="#2d2d3f", fg=C_TEXT, font=("Microsoft JhengHei UI", 9, "normal"))
-
-    def _set_interval(self, minutes: int, persist: bool = True):
-        """設定自動同步間隔。persist=False 用於啟動時還原設定（不重複寫檔）。"""
-        # 取消舊計時器
-        if self._auto_timer is not None:
-            self._auto_timer.cancel()
-            self._auto_timer = None
-        if self._countdown_job is not None:
-            self.after_cancel(self._countdown_job)
-            self._countdown_job = None
-
-        self._auto_interval = minutes
-        self._highlight_interval_btn(minutes)
-
-        if minutes == 0:
-            self._next_sync_at = None
-            self._lbl_countdown.config(text="")
-            logging.getLogger(__name__).info("自動同步已關閉")
-        else:
-            logging.getLogger(__name__).info(
-                f"自動同步間隔設定為 {minutes} 分鐘"
-            )
-            self._schedule_next_auto()
-
-        if persist:
-            self._save_auto_interval(minutes)
-
-    def _schedule_next_auto(self):
-        """排定下一次自動同步（minutes 秒後觸發）。
-
-        ⚠️ 2026-08-30 修正：建立新 Timer 前必須先取消舊的。
-        先前手動同步結束時 _sync_thread 會再呼叫本函式，但舊 Timer 未取消，
-        每按一次手動同步就多疊一個計時器，自動同步頻率會越來越不規律。
-        """
-        # 先取消殘留的計時器與倒數 job（避免疊加）
-        if self._auto_timer is not None:
-            self._auto_timer.cancel()
-            self._auto_timer = None
-        if self._countdown_job is not None:
-            self.after_cancel(self._countdown_job)
-            self._countdown_job = None
-
-        if self._auto_interval <= 0:
-            return
-        delay_sec = self._auto_interval * 60
-        import time as _time
-        from datetime import timedelta
-        self._next_sync_at = datetime.now() + timedelta(seconds=delay_sec)
-        self._auto_timer = threading.Timer(delay_sec, self._auto_sync_fire)
-        self._auto_timer.daemon = True
-        self._auto_timer.start()
-        self._update_countdown()
-
-    def _update_countdown(self):
-        if self._next_sync_at is None or self._auto_interval == 0:
-            return
-        remaining = (self._next_sync_at - datetime.now()).total_seconds()
-        if remaining > 0:
-            m, s = divmod(int(remaining), 60)
-            self._lbl_countdown.config(
-                text=f"下次自動同步：{m:02d}:{s:02d}"
-            )
-            self._countdown_job = self.after(1000, self._update_countdown)
-        else:
-            self._lbl_countdown.config(text="自動同步啟動中…")
-
-    def _auto_sync_fire(self):
-        """timer callback（在背景執行緒呼叫）。"""
-        logging.getLogger(__name__).info("⏱  自動同步觸發")
-        self.after(0, self._trigger_sync, "排程")
+        finally:
+            # 一定要還原：後續同步階段仰賴 INFO 級別的 SQL log
+            _sa_logger.setLevel(_sa_prev_level)
 
     # ─────────────────────────────────────────────────────────────────────────
     # 同步控制
@@ -993,13 +960,15 @@ class SyncApp(tk.Tk):
             if name in self._disabled_modules:
                 self._tree.item(
                     self._tree_ids[name],
-                    values=(name, "⏸ 暫停", "—", "—", "—", "—", "—", "—", ""),
+                    values=(name, self._sched_cell(name), "⏸ 暫停",
+                            "—", "—", "—", "—", "—", "—", ""),
                     tags=("disabled",),
                 )
             else:
                 self._tree.item(
                     self._tree_ids[name],
-                    values=(name, "⟳", "—", "—", "—", "—", "—", triggered_by, "⟳"),
+                    values=(name, self._sched_cell(name), "⟳",
+                            "—", "—", "—", "—", "—", triggered_by, "⟳"),
                     tags=("running",),
                 )
         threading.Thread(
@@ -1056,9 +1025,11 @@ class SyncApp(tk.Tk):
 
         self.after(0, self._on_sync_done, ok, partial, err, log_path, results)
 
-        # 若自動同步開啟，排定下一次
-        if self._auto_interval > 0:
-            self.after(0, self._schedule_next_auto)
+        # 全體同步剛把所有模組都跑過一遍了，把 interval 模式模組的計時歸零，
+        # 否則 14:00 手動全跑、14:05 排程又把同一個模組再跑一次。
+        # ⚠️ daily / weekly **不能碰**：它的語意是「每天的這個時間」而不是
+        #    「距上次多久」，手動跑過不該讓今天的排程消失。
+        self.after(0, self._reset_interval_timers_after_full_sync)
 
     async def _run_all_modules(self, results: list[dict], triggered_by: str):
         logger = logging.getLogger(__name__)
@@ -1145,7 +1116,7 @@ class SyncApp(tk.Tk):
             err_disp = str(err_count) if err_count else "0"
             self._tree.item(
                 iid,
-                values=(name, status_txt, start_str, dur,
+                values=(name, self._sched_cell(name), status_txt, start_str, dur,
                         fetched, upserted, err_disp, triggered_by, sync_btn),
                 tags=(tag,),
             )
@@ -1472,29 +1443,50 @@ class SyncApp(tk.Tk):
         except Exception as exc:
             logging.getLogger(__name__).warning("無法儲存暫停設定：%s", exc)
 
-    # ── 自動同步間隔（頂部工具列，存檔後重開程式沿用）────────────────────────
+    # ── 排程 last_run 持久化 ─────────────────────────────────────────────────
+    # ⚠️ 為什麼要存檔：interval 模式的「上次執行時間」原本只在記憶體，於是
+    #    ① 畫面上算不出「下次什麼時候跑」（使用者看不到排程活著，就會去按
+    #       自動同步間隔，兩套機制打架）
+    #    ② 程式一開，所有 interval 模組的 elapsed 都是無限大 → **全部立刻
+    #       一起觸發**，而且每次重開都來一次
+    #    ③ 各模組的計時被迫在開機時同步化，本來自然錯開的變成擠在同一分鐘
     @staticmethod
-    def _load_auto_interval() -> int:
-        """從 sync_tool_config.json 讀取自動同步間隔（分鐘，0 = 關閉）。"""
+    def _load_sched_last_run() -> dict[str, datetime]:
+        """從 config 讀取各模組的上次排程執行時間。"""
+        out: dict[str, datetime] = {}
         try:
             if _CONFIG_PATH.exists():
                 data = json.loads(_CONFIG_PATH.read_text(encoding="utf-8"))
-                val  = int(data.get("auto_interval_minutes", 0))
-                # 只接受 INTERVAL_OPTIONS 中的合法值，其餘一律視為關閉
-                if val in [v for _, v in INTERVAL_OPTIONS]:
-                    return val
+                for name, iso in (data.get("sched_last_run") or {}).items():
+                    try:
+                        out[name] = datetime.fromisoformat(iso)
+                    except (ValueError, TypeError):
+                        # 單一筆壞掉不影響其他筆；當成「沒跑過」處理
+                        continue
         except Exception:
             pass
-        return 0
+        return out
 
-    def _save_auto_interval(self, minutes: int):
-        """將自動同步間隔合併寫回 config（保留其他欄位）。"""
+    def _save_sched_last_run(self, name: str | list[str], when: datetime):
+        """把上次排程執行時間合併寫回 config（保留其他欄位）。
+
+        name 可以是單一模組，也可以是一串 —— 全體同步結束後要一次更新
+        數十個模組，逐一寫檔會開關檔案數十次。
+        """
+        names = [name] if isinstance(name, str) else list(name)
+        if not names:
+            return
         try:
             data = self._load_config()
-            data["auto_interval_minutes"] = minutes
+            runs = data.get("sched_last_run") or {}
+            for n in names:
+                runs[n] = when.isoformat(timespec="seconds")
+            # 已從 MODULES 移除的模組不必永久留著
+            valid = {n for n, _, _ in MODULES} | {MAIL_KEY}
+            data["sched_last_run"] = {k: v for k, v in runs.items() if k in valid}
             self._save_config(data)
         except Exception as exc:
-            logging.getLogger(__name__).warning("無法儲存自動同步間隔設定：%s", exc)
+            logging.getLogger(__name__).warning("無法儲存排程執行時間：%s", exc)
 
     # ── 模組同步順序（可拖曳排序 / 右鍵上移下移）────────────────────────────────
     @staticmethod
@@ -1593,6 +1585,41 @@ class SyncApp(tk.Tk):
                 command=self._enable_all_modules,
             )
 
+        # ── 排程快捷（單模組，不必開整批對話框）──────────────────────────
+        menu.add_separator()
+        cur      = (self.get_module_schedules().get(name) or {})
+        cur_mode = cur.get("mode", "off")
+        cur_ivl  = cur.get("interval_minutes")
+
+        sched_menu = tk.Menu(menu, tearoff=0,
+                             bg=C_PANEL, fg=C_TEXT,
+                             activebackground="#094771", activeforeground="white",
+                             relief=tk.FLAT, bd=1)
+        sched_menu.add_command(
+            label=("●  " if cur_mode == "off" else "    ") + "關閉（僅手動）",
+            command=lambda: self._quick_set_schedule(name, "off"),
+        )
+        sched_menu.add_separator()
+        for _lbl, _mins in QUICK_INTERVALS:
+            _mark = "●  " if (cur_mode == "interval" and cur_ivl == _mins) else "    "
+            sched_menu.add_command(
+                label=_mark + _lbl,
+                command=lambda m=_mins: self._quick_set_schedule(
+                    name, "interval", interval_minutes=m),
+            )
+        sched_menu.add_separator()
+        sched_menu.add_command(
+            label=("●  " if cur_mode == "daily" else "    ") + "每日指定時間…",
+            command=lambda: self._quick_set_daily(name),
+        )
+        if cur_mode == "weekly":
+            sched_menu.add_command(
+                label="●  每週（請用「⚙ 排程設定」調整）", state=tk.DISABLED,
+            )
+        menu.add_cascade(
+            label=f"🕐  排程：{self._sched_cell(name)}", menu=sched_menu,
+        )
+
         menu.add_separator()
         menu.add_command(
             label="⬆  上移一項",
@@ -1615,7 +1642,8 @@ class SyncApp(tk.Tk):
             self._disabled_modules.add(name)
             self._tree.item(
                 iid,
-                values=(name, "⏸ 暫停", "—", "—", "—", "—", "—", "—", ""),
+                values=(name, self._sched_cell(name), "⏸ 暫停",
+                        "—", "—", "—", "—", "—", "—", ""),
                 tags=("disabled",),
             )
             logging.getLogger(__name__).info("⏸  已暫停模組：%s", name)
@@ -1623,13 +1651,66 @@ class SyncApp(tk.Tk):
             self._disabled_modules.discard(name)
             self._tree.item(
                 iid,
-                values=(name, "—", "—", "—", "—", "—", "—", "—", "▶ 同步"),
+                values=(name, self._sched_cell(name), "—",
+                        "—", "—", "—", "—", "—", "—", "▶ 同步"),
                 tags=("pending",),
             )
             logging.getLogger(__name__).info("▶  已恢復模組：%s", name)
 
         self._save_disabled()
         self._update_sync_btn_label()
+
+    # ── 排程快捷設定（右鍵）──────────────────────────────────────────────────
+    def _quick_set_schedule(self, name: str, mode: str, **kw):
+        """從右鍵選單直接設定單一模組的排程，寫檔後立即刷新「排程」欄。"""
+        schedules = self.get_module_schedules()
+        if mode == "off":
+            schedules[name] = {"mode": "off"}
+        elif mode == "interval":
+            schedules[name] = {"mode": "interval",
+                               "interval_minutes": int(kw["interval_minutes"])}
+        elif mode == "daily":
+            schedules[name] = {"mode": "daily", "time": kw["time"]}
+        else:
+            return
+        self.save_module_schedules(schedules)
+
+        # ⚠️ 改成 interval 時把計時歸零，否則若上次執行時間是很久以前，
+        #    下一次 tick（最多 30 秒後）會立刻觸發 —— 使用者剛按完設定
+        #    就看到它開始同步，會以為是自己按錯了。
+        if mode == "interval":
+            now = datetime.now()
+            self._sched_last_interval[name] = now
+            self._save_sched_last_run(name, now)
+
+        logging.getLogger(__name__).info(
+            "[排程] 已設定 %s → %s", name, schedules[name],
+        )
+        self._refresh_schedule_column()
+        self._lbl_bottom.config(text=f"[排程] {name}：{self._sched_cell(name)}")
+
+    def _quick_set_daily(self, name: str):
+        """右鍵 →「每日指定時間…」：問一個 HH:MM 就好。"""
+        import re as _re
+        from tkinter import messagebox, simpledialog
+
+        cur = (self.get_module_schedules().get(name) or {}).get("time", "08:00")
+        val = simpledialog.askstring(
+            "每日排程",
+            f"{name}\n\n每天幾點執行？（24 小時制 HH:MM）",
+            initialvalue=cur, parent=self,
+        )
+        if val is None:
+            return
+        val = val.strip()
+        if not _re.match(r"^\d{1,2}:\d{2}$", val):
+            messagebox.showerror("格式錯誤", "請輸入 HH:MM，例如 08:00", parent=self)
+            return
+        h, m = (int(x) for x in val.split(":"))
+        if not (0 <= h <= 23 and 0 <= m <= 59):
+            messagebox.showerror("時間超出範圍", "小時 0–23、分鐘 0–59", parent=self)
+            return
+        self._quick_set_schedule(name, "daily", time=f"{h:02d}:{m:02d}")
 
     def _enable_all_modules(self):
         """恢復全部已暫停模組。"""
@@ -1721,6 +1802,138 @@ class SyncApp(tk.Tk):
             self._lbl_bottom.config(text=f"⚠ 報修未完成報表寄送失敗，請查看 Log  {ts}")
         self._btn_send_repair.config(state=tk.NORMAL, text="📧 寄送報修未完成報表")
 
+    # ── 「排程」欄顯示 ───────────────────────────────────────────────────────
+    def _schedule_text(self, name: str, schedules: dict | None = None) -> str:
+        """該模組的排程摘要，例如「每60分 · 14:30」「每日 08:00 · 明天」。
+
+        ⚠️ 這一欄是整個改版的重點。原本排程設定完關掉對話框，主畫面上一點
+           痕跡都沒有，只有「自動同步間隔」有倒數在跑 —— **看得見的那個就贏了**，
+           使用者只會去按它，然後兩套機制打架。
+        """
+        from datetime import timedelta
+
+        if schedules is None:
+            schedules = self.get_module_schedules()
+        cfg  = schedules.get(name) or {}
+        mode = cfg.get("mode", "off")
+        now  = datetime.now()
+
+        if mode == "interval":
+            ivl = int(cfg.get("interval_minutes") or 0)
+            if ivl <= 0:
+                return "—"
+            last = self._sched_last_interval.get(name)
+            if last is None:
+                return f"每{ivl}分 · 待命"
+            nxt = last + timedelta(minutes=ivl)
+            if nxt <= now:
+                return f"每{ivl}分 · 即將"
+            if nxt.date() != now.date():
+                return f"每{ivl}分 · {nxt:%m/%d %H:%M}"
+            return f"每{ivl}分 · {nxt:%H:%M}"
+
+        if mode == "daily":
+            t = cfg.get("time") or "--:--"
+            done = self._sched_daily_done.get(name)
+            # dedup key 與 _scheduler_tick 的寫法一致：(日期, 設定時間)
+            if done and done[0] == now.date() and done[1] == t:
+                return f"每日 {t} · 明天"
+            return f"每日 {t} · 今天"
+
+        if mode == "weekly":
+            t  = cfg.get("time") or "--:--"
+            wd = int(cfg.get("weekday") or 0)
+            names_wd = ["週一", "週二", "週三", "週四", "週五", "週六", "週日"]
+            wd_name = names_wd[wd] if 0 <= wd <= 6 else "?"
+            return f"每{wd_name} {t}"
+
+        return "—"
+
+    def _sched_cell(self, name: str) -> str:
+        """給各處組 values 用的快取讀取（避免每列都去讀一次設定檔）。"""
+        return self._sched_text_cache.get(name, "—")
+
+    def _refresh_schedule_column(self):
+        """更新所有列的「排程」欄與頂部總覽（每 30 秒一次，設定變更後也會呼叫）。
+
+        ⚠️ 只讀一次設定檔，再套用到 39 列 —— 逐列讀檔等於一次刷新開關檔案 39 次。
+        """
+        # ⚠️ 先取消既有的排程刷新 job。本函式除了自己每 30 秒排一次，還會被
+        #    設定變更、同步完成等處呼叫 —— 不取消就會愈疊愈多，跟 [1.96.41]
+        #    修掉的 _schedule_next_auto 計時器疊加是同一個坑。
+        if self._sched_refresh_job is not None:
+            try:
+                self.after_cancel(self._sched_refresh_job)
+            except Exception:
+                pass
+            self._sched_refresh_job = None
+
+        try:
+            schedules = self.get_module_schedules()
+        except Exception:
+            schedules = {}
+
+        enabled = 0
+        for name, iid in list(self._tree_ids.items()):
+            txt = self._schedule_text(name, schedules)
+            self._sched_text_cache[name] = txt
+            if txt != "—":
+                enabled += 1
+            try:
+                vals = list(self._tree.item(iid, "values"))
+                if len(vals) >= 2 and vals[1] != txt:
+                    vals[1] = txt
+                    self._tree.item(iid, values=tuple(vals))
+            except tk.TclError:
+                continue   # 列已被 detach（篩選模式）或視窗關閉中
+
+        # 報修寄信不在表格裡，但要算進總覽
+        mail_txt = self._schedule_text(MAIL_KEY, schedules)
+        self._sched_text_cache[MAIL_KEY] = mail_txt
+        if mail_txt != "—":
+            enabled += 1
+
+        try:
+            total = len(MODULES) + 1        # +1 = 報修報表寄信
+            if enabled == 0:
+                self._lbl_sched_summary.config(
+                    text=f"未設定任何排程（{total} 個項目全部只能手動執行）",
+                    fg=C_WARN,
+                )
+            else:
+                self._lbl_sched_summary.config(
+                    text=f"{enabled} / {total} 個項目已排程", fg=C_TEXT,
+                )
+            qsize = self._task_queue.qsize()
+            self._lbl_sched_next.config(
+                text=f"佇列 {qsize} 項待執行" if qsize else ""
+            )
+        except tk.TclError:
+            return
+
+        self._sched_refresh_job = self.after(30_000, self._refresh_schedule_column)
+
+    def _reset_interval_timers_after_full_sync(self):
+        """全體同步結束後，把 interval 模式模組的計時歸零。
+
+        ⚠️ 否則 14:00 手動全跑、14:05 排程又把同一個模組再跑一次。
+        ⚠️ **daily / weekly 不能碰**：它的語意是「每天的這個時間」而不是
+           「距上次多久」，手動跑過不該讓今天的排程消失。
+        """
+        now = datetime.now()
+        names = [
+            n for n, cfg in self.get_module_schedules().items()
+            if cfg.get("mode") == "interval" and n not in self._disabled_modules
+        ]
+        if names:
+            for n in names:
+                self._sched_last_interval[n] = now
+            self._save_sched_last_run(names, now)   # 一次寫檔
+            logging.getLogger(__name__).info(
+                "[排程] 全體同步完成，%d 個間隔模組的計時已歸零", len(names)
+            )
+        self._refresh_schedule_column()
+
     # ── 排程執行緒 ───────────────────────────────────────────────────────────
     def _scheduler_loop(self):
         """
@@ -1768,6 +1981,7 @@ class SyncApp(tk.Tk):
                 elapsed = (now - last).total_seconds() if last else float("inf")
                 if elapsed >= ivl * 60:
                     self._sched_last_interval[module_name] = now
+                    self._save_sched_last_run(module_name, now)
                     logger.info("[排程] ⏱ 間隔觸發：%s（%d 分鐘）", module_name, ivl)
                     self.after(0, self._lbl_bottom.config,
                                {"text": f"[排程] ⏱ 觸發：{module_name}"})
@@ -2195,6 +2409,7 @@ class SyncApp(tk.Tk):
             )
             canvas.unbind_all("<MouseWheel>")
             dlg.destroy()
+            self._refresh_schedule_column()   # 存檔後「排程」欄立即反映
 
         def _on_cancel():
             canvas.unbind_all("<MouseWheel>")
@@ -2244,10 +2459,11 @@ class SyncApp(tk.Tk):
     # ── 關閉時清理 ───────────────────────────────────────────────────────────
     def destroy(self):
         self._sched_thread_running = False   # 通知排程 thread 結束
-        if self._auto_timer:
-            self._auto_timer.cancel()
-        if self._countdown_job:
-            self.after_cancel(self._countdown_job)
+        if self._sched_refresh_job:
+            try:
+                self.after_cancel(self._sched_refresh_job)
+            except Exception:
+                pass
         root = logging.getLogger()
         if self._gui_handler:
             root.removeHandler(self._gui_handler)

@@ -9,6 +9,7 @@ import {
 } from '@ant-design/icons';
 import { usersApi, type CreateUserPayload, type UpdateUserPayload, type AdminResetPasswordResponse } from '../../api/users';
 import { tenantsApi } from '../../api/tenants';
+import { departmentsApi, type DepartmentOption } from '@/api/referenceData';
 import type { User, Tenant } from '../../types';
 import { ROLE_LABELS } from '../../types';
 import { useAuthStore } from '../../stores/authStore';
@@ -31,6 +32,8 @@ const UserManagement: React.FC = () => {
 
   const [users, setUsers]     = useState<User[]>([]);
   const [tenants, setTenants] = useState<Tenant[]>([]);
+  // 部門選項（含 id／公司），供「部門（多選）」按公司分組（2026-09-01）
+  const [deptOptions, setDeptOptions] = useState<DepartmentOption[]>([]);
   const [allRoles, setAllRoles] = useState<RoleData[]>([]);
   const [total, setTotal]     = useState(0);
   const [loading, setLoading] = useState(false);
@@ -64,7 +67,20 @@ const UserManagement: React.FC = () => {
   useEffect(() => {
     tenantsApi.list().then(r => setTenants(r.data)).catch(() => {});
     fetchRoles().then(setAllRoles).catch(() => {});
+    departmentsApi.options().then(r => setDeptOptions(r.data)).catch(() => {});
   }, []);
+
+  // 部門多選：按公司分組（AntD Select 的 options 支援群組格式）
+  const deptGroupOptions = React.useMemo(() => {
+    const groups = new Map<string, { label: string; options: { value: number; label: string }[] }>();
+    for (const d of deptOptions) {
+      if (d.id == null) continue;               // 舊版後端沒帶 id 就跳過
+      const company = d.company || '（未分類）';
+      if (!groups.has(company)) groups.set(company, { label: company, options: [] });
+      groups.get(company)!.options.push({ value: d.id, label: d.label });
+    }
+    return Array.from(groups.values());
+  }, [deptOptions]);
 
   const openCreate = () => {
     setEditUser(null);
@@ -76,11 +92,12 @@ const UserManagement: React.FC = () => {
   const openEdit = (user: User) => {
     setEditUser(user);
     form.setFieldsValue({
-      full_name:  user.full_name,
-      is_active:  user.is_active,
-      role_names: user.roles,
-      tenant_id:  user.tenant_id,
-      email:      user.email,
+      full_name:      user.full_name,
+      is_active:      user.is_active,
+      role_names:     user.roles,
+      tenant_id:      user.tenant_id,
+      email:          user.email,
+      department_ids: (user.departments ?? []).map(d => d.id),
     });
     setModalOpen(true);
   };
@@ -117,6 +134,10 @@ const UserManagement: React.FC = () => {
           role_names:   values.role_names,
           email:        values.email !== editUser.email ? values.email : undefined,
           new_password: values.new_password || undefined, // 留空則不傳
+          // 沒變就不傳：後端只在值不同時才動 user_roles 的 tenant_id，
+          // 少送一個欄位就少一次沒必要的搬移。
+          tenant_id:    values.tenant_id !== editUser.tenant_id ? values.tenant_id : undefined,
+          department_ids: values.department_ids ?? [],
         };
         await usersApi.update(editUser.id, payload);
         message.success('使用者已更新');
@@ -128,6 +149,7 @@ const UserManagement: React.FC = () => {
           password: values.password,
           tenant_id: values.tenant_id,
           role_names: values.role_names,
+          department_ids: values.department_ids ?? [],
         };
         await usersApi.create(payload);
         message.success('使用者已建立');
@@ -181,9 +203,25 @@ const UserManagement: React.FC = () => {
       ),
     },
     {
-      title: '據點',
+      // 2026-09-01 起這一欄的值來自「系統設定 → 公司/部門管理」的公司名稱，
+      // 欄名改用「公司別」與該頁一致（原本叫「據點」）。
+      title: '主要公司別',
       dataIndex: 'tenant_name',
       render: (v: string) => <Tag>{v}</Tag>,
+    },
+    {
+      // 2026-09-01：多公司多部門（user_departments）。顯示「公司／部門」。
+      title: '部門',
+      dataIndex: 'departments',
+      render: (depts: User['departments']) => (
+        <Space size={4} wrap>
+          {(depts ?? []).length
+            ? (depts ?? []).map(d => (
+                <Tag key={d.id} color="blue" style={{ fontSize: 12 }}>{d.company}／{d.name}</Tag>
+              ))
+            : <Text type="secondary" style={{ fontSize: 12 }}>—</Text>}
+        </Space>
+      ),
     },
     {
       title: '角色',
@@ -249,7 +287,7 @@ const UserManagement: React.FC = () => {
       <div style={{ marginBottom: 20, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div>
           <Title level={4} style={{ margin: 0 }}>人員管理</Title>
-          <Text style={{ color: '#64748b' }}>管理所有據點的使用者帳號與權限</Text>
+          <Text style={{ color: '#64748b' }}>管理所有公司別的使用者帳號與權限</Text>
         </div>
         <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}
           style={{ background: '#1B3A5C', borderColor: '#1B3A5C' }}>
@@ -317,12 +355,59 @@ const UserManagement: React.FC = () => {
             rules={[{ required: true, message: '請輸入姓名' }]}>
             <Input placeholder="真實姓名" />
           </Form.Item>
-          {!editUser && (
-            <Form.Item name="tenant_id" label="所屬據點"
-              rules={[{ required: true, message: '請選擇據點' }]}>
-              <Select placeholder="選擇據點" options={tenants.map(t => ({ value: t.id, label: `${t.name}（${t.code}）` }))} />
-            </Form.Item>
-          )}
+          {/*
+            2026-09-01 起「公司別」的選項＝「系統設定 → 公司/部門管理」的
+            公司名稱（由 backend/app/services/tenant_company_sync.py 單向鏡像
+            到 tenants，GET /tenants 只回 is_active 的列）。
+
+            ⚠️ 欄位名稱原本是「所屬據點」，2026-09-01 改為「公司別」與公司/部門
+            管理頁面一致。**只改顯示文字**：`name="tenant_id"`、API 欄位、資料表
+            名稱一律不動（那是 tenants 表，語意上仍是據點，只是現在的內容來自
+            公司主檔）。
+
+            label 刻意只顯示 t.name、不再帶「（t.code）」：鏡像新增的據點 code
+            是自動產生的 CMP-{公司id} 佔位值，顯示出來只是雜訊，也會讓下拉
+            看起來跟公司/部門管理的清單對不起來。
+
+            ⚠️ 2026-09-01：這個欄位原本包在 `{!editUser && (...)}` 裡，只有
+            「新增」看得到 —— 於是同仁調公司時只能砍帳號重建。改成建立與編輯
+            都顯示（後端 UserUpdate.tenant_id 同步開放）。
+          */}
+          <Form.Item name="tenant_id" label="主要公司別"
+            extra="顯示與稽核歸屬用；實際的公司/部門權限看下方「部門」"
+            rules={[{ required: true, message: '請選擇公司別' }]}>
+            <Select
+              placeholder="選擇公司"
+              showSearch
+              optionFilterProp="label"
+              options={[
+                // ⚠️ 若這個人目前掛在已停用的舊據點上，該筆不在 `GET /tenants`
+                //    的回傳裡，Select 會找不到對應選項而直接顯示原始 UUID。
+                //    補一筆唯讀用的選項讓它顯示得出名稱。沒改就不會送出
+                //    tenant_id（見 handleSubmit），所以不會被後端的「停用據點
+                //    不可指派」擋下來。
+                ...(editUser && !tenants.some(t => t.id === editUser.tenant_id)
+                  ? [{ value: editUser.tenant_id, label: `${editUser.tenant_name}（已停用）` }]
+                  : []),
+                ...tenants.map(t => ({ value: t.id, label: t.name })),
+              ]}
+            />
+          </Form.Item>
+          {/*
+            部門（多選，按公司分組）— 2026-09-01 多公司多部門。
+            存 RefDepartment.id 進 user_departments；週採「同部門可操作請購單」
+            的權限判斷走這裡（見 cycle_purchase_requests._ensure_own_department）。
+          */}
+          <Form.Item name="department_ids" label="部門"
+            extra="可跨公司多選；週期採購等模組以此判斷可操作的部門">
+            <Select
+              mode="multiple"
+              placeholder="選擇部門（可多選）"
+              showSearch
+              optionFilterProp="label"
+              options={deptGroupOptions}
+            />
+          </Form.Item>
           <Form.Item name="role_names" label="角色"
             rules={[{ required: true, message: '請選擇至少一個角色' }]}>
             <Select

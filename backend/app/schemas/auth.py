@@ -7,6 +7,13 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class UserDepartmentInfo(BaseModel):
+    """登入者所屬部門（user_departments，2026-09-01 多公司多部門）"""
+    id: int              # RefDepartment.id
+    name: str
+    company: str
+
+
 class UserInfo(BaseModel):
     id: str
     email: str
@@ -16,6 +23,9 @@ class UserInfo(BaseModel):
     roles: List[str]
     # 使用者所有 permission_key 清單；system_admin 為 ["*"]
     permissions: List[str] = []
+    # 2026-09-01：login 即知公司別＋部門。公司由部門推導（company 欄位），
+    # tenant_id/tenant_name 是「主要公司別」（顯示與稽核歸屬）。
+    departments: List[UserDepartmentInfo] = []
     is_active: bool
     must_change_password: bool = False
 

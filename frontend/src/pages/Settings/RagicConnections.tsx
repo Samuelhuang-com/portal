@@ -60,17 +60,34 @@ const ALL_MODULES: string[] = [
   '商場週期保養', '全棟例行維護', '大直工務報修', '商場工務報修',
   '保全巡檢', '商場工務巡檢', '飯店每日巡檢', '每日數值登錄',
   'IHG客房保養', '核准請購單清單', '核准請款單清單',
-  '日曜核准請購單清單', '日曜核准請款單清單',
+  // ⚠️ 2026-08-30 更名：原本寫「日曜核准請購單清單」，那是對齊 main.py 的
+  //    _run_and_log 名稱，但 module_sync_log 裡實際只有 sync_tool.py 寫的紀錄
+  //    （正式區與 DEV 都是 SCHEDULER_ENABLED=false，main.py 的 job 從未執行），
+  //    而 sync_tool.py MODULES 用的是不含「核准」的名稱。名稱對不上時
+  //    latestModuleStatus[moduleName] 永遠查無資料 —— 這兩張卡片一直是灰的。
+  '日曜請購單清單', '日曜請款單清單',
+  // ── 四個「完整同步」（清單 + Detail API 品項補全）─────────────────────────
+  // 2026-08-30 補登錄：先前只掛在 main.py 的 APScheduler（每 45 分），
+  // SCHEDULER_ENABLED=false 等於從未執行，品項明細從來沒補進來。
+  // 名稱必須與 sync_tool.py MODULES 完全一致。
+  '核准請購單', '核准請款單', '日曜核准請購單', '日曜核准請款單',
   '主管交辦／緊急事件', '週期保養預排', '飯店例行維護', '廠商資料',
   // 來源是 portal.db vendors（非 Ragic），必須排在「廠商資料」之後執行
   '週期採購供應商',
   // 來源是 portal.db Company/RefDepartment（系統設定 → 公司/部門管理，非 Ragic）
   '週期採購部門',
+  // 來源同上（portal.db Company）。人員管理「所屬據點」下拉＝公司名稱清單。
+  '使用者據點',
   // ── 以下不是 Ragic，來源是 OPERA Cloud（OHIP API）───────────────────────
   // 2026-08-13 補登錄：先前只掛在 main.py 的 APScheduler，而 DEV 機器
   // SCHEDULER_ENABLED=false，等於從未執行。三者都會自我判斷做過了沒，
   // 做完就 skip 不打 OHIP。名稱必須與 sync_tool.py MODULES 完全一致。
-  '市場區隔歷史回補', '訂房歷史回補', '訂房增量同步', 'OHIP 每日快照',
+  '市場區隔歷史回補',
+  // 2026-08-30 補登錄：增量先前只掛在 main.py 每日 06:30，從未執行，
+  // 於是市場區隔永遠只有回補的資料，昨天的 EOD 帳務修正進不來。
+  // 必須排在「市場區隔歷史回補」之後（先補舊段，再用增量覆蓋最近 14 天）。
+  '市場區隔增量同步',
+  '訂房歷史回補', '訂房增量同步', 'OHIP 每日快照',
   // ── 不是 Ragic 也不是 OHIP：來源是 Booking／Expedia／Tripadvisor 的公開評論頁 ──
   // 有排程的非 Ragic 模組一律要登錄（理由同上面那四個 OHIP 模組）。
   // 名稱必須與 sync_tool.py MODULES 完全一致。

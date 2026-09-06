@@ -11,20 +11,28 @@
  * 2026-08-17（反轉部分決策，與 Samuel 確認跨模組整合範圍後）：公司/部門
  * 關聯改為全站唯一真實來源「系統設定 → 公司/部門管理」（reference_data.py
  * Company/RefDepartment），這裡的部門主檔改成鏡像同步（見
- * cycle_purchase_department_sync.py）。`source_department_id` 非 null 的列
- * 代表「同步」而來：公司／部門名稱由同步覆蓋，這裡設成唯讀（後端
- * update_department 也會剔除這兩欄，前端唯讀只是提示，不是唯一防線）；
- * 部門代碼／承辦人／啟用狀態仍是這裡自己維護，同步不會碰。null 代表這筆
- * 是本地自建（例如尚未在系統設定建檔的部門），公司/部門名稱可自由編輯，
- * 之後系統設定補上同名的公司/部門時，下次同步會自動比對合併（比對優先序
- * 見 sync 檔頭），不需要手動處理。
+ * cycle_purchase_department_sync.py）。
+ *
+ * 2026-09-01（Samuel 裁示）：**公司別（company）改回自行輸入**——公司對
+ * 「公司名稱」並不統一，週採要用的公司字串不一定等於主檔的 Company.name。
+ * 因此：
+ *   - company：週採自維護（同步只在新增鏡像列時帶初始值，之後不碰），
+ *     鏡像列也可編輯。
+ *   - dept_name：仍由同步維護，鏡像列唯讀（後端 update_department 也會剔除，
+ *     前端唯讀只是提示，不是唯一防線）。
+ *   - 名稱自動比對只剩「部門名稱在週採未連結列中唯一命中」；重名部門
+ *     不自動連結，用本頁編輯 Modal 的「連結主檔部門」下拉手動連結。
+ *     **連上主檔，「同部門成員可編輯請購單」的權限鏈才會生效。**
  */
 import { useEffect, useState } from 'react'
 import {
   Button, Card, Form, Input, Modal, Popconfirm, Select, Space, Switch, Table, Tag, Typography, message,
 } from 'antd'
 import { PlusOutlined, EditOutlined, StopOutlined, CheckCircleOutlined } from '@ant-design/icons'
-import { createCpDepartment, getCpDepartments, updateCpDepartment } from '@/api/cyclePurchase'
+import {
+  createCpDepartment, getCpDepartments, updateCpDepartment,
+  getCpDepartmentLinkOptions, linkCpDepartment, type CpDepartmentLinkOption,
+} from '@/api/cyclePurchase'
 import { usersApi, type UserOptionItem } from '@/api/users'
 import type { CpDepartment } from '@/types/cyclePurchase'
 
@@ -33,6 +41,7 @@ const { Title } = Typography
 export default function CpDepartmentsPage() {
   const [depts, setDepts] = useState<CpDepartment[]>([])
   const [userOptions, setUserOptions] = useState<UserOptionItem[]>([])
+  const [linkOptions, setLinkOptions] = useState<CpDepartmentLinkOption[]>([])
   const [loading, setLoading] = useState(false)
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState<CpDepartment | null>(null)
@@ -40,10 +49,17 @@ export default function CpDepartmentsPage() {
 
   const load = () => {
     setLoading(true)
-    Promise.all([getCpDepartments(), usersApi.options()])
-      .then(([dRes, uRes]) => {
+    Promise.all([getCpDepartments(), usersApi.options(), getCpDepartmentLinkOptions()])
+      .then(([dRes, uRes, lRes]) => {
         setDepts(dRes.data)
         setUserOptions(uRes.data)
+        setLinkOptions(lRes.data)
+      })
+      // link-options 需要 cycle_purchase_admin；沒有權限時整組 Promise.all 會
+      // 失敗，所以個別容錯：清單照載，連結下拉留空（編輯 Modal 也只有 admin 開得了）
+      .catch(() => {
+        getCpDepartments().then(r => setDepts(r.data)).catch(() => {})
+        usersApi.options().then(r => setUserOptions(r.data)).catch(() => {})
       })
       .finally(() => setLoading(false))
   }
@@ -69,18 +85,25 @@ export default function CpDepartmentsPage() {
 
   const openEdit = (d: CpDepartment) => {
     setEditing(d)
-    form.setFieldsValue(d)
+    form.setFieldsValue({ ...d, source_department_id: d.source_department_id ?? null })
     setModalOpen(true)
   }
 
   const handleSubmit = async () => {
     try {
       const values = await form.validateFields()
+      const { source_department_id, ...rest } = values
       if (editing) {
-        await updateCpDepartment(editing.id, values)
+        await updateCpDepartment(editing.id, rest)
+        // 連結有變才打 link 端點（含解除：清空下拉 → null）
+        const before = editing.source_department_id ?? null
+        const after = source_department_id ?? null
+        if (before !== after) {
+          await linkCpDepartment(editing.id, after)
+        }
         message.success('更新成功')
       } else {
-        await createCpDepartment(values)
+        await createCpDepartment(rest)
         message.success('新增成功')
       }
       setModalOpen(false)
@@ -163,12 +186,13 @@ export default function CpDepartmentsPage() {
         <Form form={form} layout="vertical" style={{ marginTop: 16 }}>
           {editing?.source_department_id && (
             <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 12 }}>
-              這筆部門是從「系統設定 → 公司/部門管理」同步過來的，公司別／部門名稱由同步維護，這裡設為唯讀；
-              要改名請到「系統設定 → 公司/部門管理」改，下次同步會自動帶過來。
+              這筆部門已連結「系統設定 → 公司/部門管理」的主檔部門：部門名稱由同步維護（要改名請到該頁改）；
+              公司別為週採自行輸入（2026-09-01 起），與主檔的公司名稱不必相同。
             </Typography.Paragraph>
           )}
-          <Form.Item name="company" label="公司別" rules={[{ required: true }]}>
-            <Input placeholder="如：日曜天地／春大直" disabled={!!editing?.source_department_id} />
+          <Form.Item name="company" label="公司別" rules={[{ required: true }]}
+            extra="週採自行輸入，不必與公司/部門管理的公司名稱一致">
+            <Input placeholder="如：日曜天地／春大直" />
           </Form.Item>
           <Form.Item name="dept_code" label="部門代碼" rules={[{ required: true }]}>
             <Input />
@@ -176,6 +200,43 @@ export default function CpDepartmentsPage() {
           <Form.Item name="dept_name" label="部門名稱" rules={[{ required: true }]}>
             <Input disabled={!!editing?.source_department_id} />
           </Form.Item>
+          {/*
+            連結主檔部門（2026-09-01）：company 改自行輸入後，同步的自動比對
+            只剩「部門名稱唯一命中」，重名部門靠這裡手動連結。
+            連上主檔，「同部門成員可編輯請購單」權限鏈才會生效。
+            只在編輯時顯示（新增的本地部門，下次同步若名稱唯一會自動連結）。
+          */}
+          {editing && (
+            <Form.Item
+              name="source_department_id"
+              label="連結主檔部門"
+              extra="連結後「同部門成員可編輯請購單」才會生效；清空＝解除連結（退回僅承辦人可編）"
+            >
+              <Select
+                allowClear
+                showSearch
+                optionFilterProp="label"
+                placeholder="選擇公司/部門管理的部門（選填）"
+                options={linkOptions.map(o => ({
+                  value: o.source_department_id,
+                  label: `${o.company}／${o.dept_name}`,
+                  // 已被其他週採部門連結的不能再選（自己這筆除外）
+                  disabled: !!o.linked_to && o.source_department_id !== (editing?.source_department_id ?? ''),
+                }))}
+                optionRender={(opt) => {
+                  const o = linkOptions.find(x => x.source_department_id === opt.value)
+                  return (
+                    <span>
+                      {opt.label}
+                      {o?.linked_to && o.source_department_id !== (editing?.source_department_id ?? '') && (
+                        <span style={{ fontSize: 11, color: '#94a3b8' }}>（已連結：{o.linked_to}）</span>
+                      )}
+                    </span>
+                  )
+                }}
+              />
+            </Form.Item>
+          )}
           <Form.Item
             name="owner_user_id"
             label="承辦人"

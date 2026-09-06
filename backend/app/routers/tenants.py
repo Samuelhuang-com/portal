@@ -14,7 +14,11 @@ def list_tenants(
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    return db.query(Tenant).filter(Tenant.is_active == True).all()
+    # 2026-09-01：加上 order_by(name)。本表已改為「公司/部門管理」Company 的
+    # 鏡像（見 services/tenant_company_sync.py），而公司清單是
+    # `order_by(Company.name)`；這裡不排序的話，人員管理下拉的順序會跟
+    # 公司/部門管理頁面對不起來（PG 不保證回傳順序）。
+    return db.query(Tenant).filter(Tenant.is_active == True).order_by(Tenant.name).all()
 
 
 @router.post("", response_model=TenantOut)

@@ -21,8 +21,12 @@ Prefix: /api/v1/cycle-purchase
   - 編輯類端點（PUT /requests/{id}、可選料號、新增/更新/刪除明細）維持要求
     cycle_purchase_request，但新增 _ensure_own_department() 檢查：若使用者
     只有 cycle_purchase_request（沒有 cycle_purchase_view 或 system_admin），
-    只能編輯自己承辦部門（CyclePurchaseDepartment.owner_user_id，2026-07-11
-    既有欄位，原本只用在 Dashboard 待辦提醒）的請購單，避免改到別部門的單。
+    只能編輯自己部門的請購單，避免改到別部門的單。
+    ⚠️ 2026-09-01 使用者裁示改版：「自己部門」從一部門一位承辦人
+    （owner_user_id）改為「部門成員 OR 承辦人」——成員資格來自 portal.db
+    user_departments（使用者↔部門多對多）經 source_department_id 對照，
+    詳見 svc.get_user_cp_department_ids()。清單可見範圍維持不分部門（同日
+    再次確認維持現狀）。
 
 2026-08-07（第四次調整，與 Samuel 確認）：
   - **已關閉的請購單需要權限才看得到**：沒有 cycle_purchase_close（也沒有
@@ -111,9 +115,13 @@ def _ensure_own_department(
 ) -> None:
     """
     2026-07-19 新增：只有 cycle_purchase_request（沒有 cycle_purchase_view／
-    system_admin）的一般填單人，只能編輯「自己承辦部門」的請購單。
-    承辦部門依 CyclePurchaseDepartment.owner_user_id 判斷（2026-07-11 既有欄位，
-    原本只用在 Dashboard 待辦提醒，這裡是第二個使用場景）。
+    system_admin）的一般填單人，只能編輯「自己部門」的請購單。
+
+    2026-09-01 使用者裁示改版：從「一部門一位承辦人」（owner_user_id）改為
+    「同部門的人都能操作」—— 判斷改走 svc.get_user_cp_department_ids()：
+    部門成員（portal.db user_departments 經 source_department_id 對照）**OR**
+    承辦人（owner_user_id，備援通道保留，本地自建部門仍靠它運作）。
+
     找不到請購單時直接放行，讓呼叫端接續的查詢/更新邏輯回 404，不在這裡搶著處理。
     """
     perms = get_user_permissions(current_user.id, portal_db)
@@ -122,13 +130,8 @@ def _ensure_own_department(
     req = db.query(CyclePurchaseRequest).filter(CyclePurchaseRequest.id == request_id).first()
     if not req:
         return
-    dept = (
-        db.query(CyclePurchaseDepartment)
-        .filter(CyclePurchaseDepartment.id == req.department_id)
-        .first()
-    )
-    if not dept or dept.owner_user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="只能編輯自己承辦部門的請購單")
+    if req.department_id not in svc.get_user_cp_department_ids(db, portal_db, current_user.id):
+        raise HTTPException(status_code=403, detail="只能編輯自己部門的請購單")
 
 
 @router.get("/requests", response_model=List[RequestOut], summary="週期採購請購單清單")
@@ -179,7 +182,8 @@ def get_todos(
 ):
     perms = get_user_permissions(current_user.id, portal_db)
     is_closer = "*" in perms or "cycle_purchase_close" in perms
-    return svc.get_dashboard_todos(db, current_user, is_closer)
+    # 2026-09-01：傳 portal_db 讓 my_pending 認「部門成員 OR 承辦人」
+    return svc.get_dashboard_todos(db, current_user, is_closer, portal_db=portal_db)
 
 
 @router.get(

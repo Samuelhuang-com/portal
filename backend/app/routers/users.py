@@ -20,10 +20,13 @@ from app.models.role_permission import RolePermission
 from app.models.user_role import UserRole
 from app.models.tenant import Tenant
 from app.models.audit_log import AuditLog
+from app.models.user_department import UserDepartment
+from app.models.reference_data import Company, RefDepartment
 from app.schemas.user import (
     UserCreate,
     UserUpdate,
     UserOut,
+    UserDepartmentOut,
     UserListResponse,
     ChangePasswordRequest,
     AdminResetPasswordResponse,
@@ -116,6 +119,48 @@ def _assert_can_manage_target(current_user: User, target: User, db: Session) -> 
         )
 
 
+def _get_departments(user_id: str, db: Session) -> list[UserDepartmentOut]:
+    """使用者所屬部門（user_departments ↔ RefDepartment ↔ Company，2026-09-01）。"""
+    rows = (
+        db.query(RefDepartment, Company)
+        .join(UserDepartment, UserDepartment.department_id == RefDepartment.id)
+        .join(Company, RefDepartment.company_id == Company.id)
+        .filter(UserDepartment.user_id == user_id)
+        .order_by(Company.name, RefDepartment.name)
+        .all()
+    )
+    return [
+        UserDepartmentOut(id=dept.id, name=dept.name, company=company.name)
+        for dept, company in rows
+    ]
+
+
+def _set_departments(user_id: str, department_ids: list[int], db: Session) -> None:
+    """整批取代使用者的部門關聯（語意比照 role_names：payload 就是完整清單）。
+
+    ⚠️ 部門 id 必須存在且啟用中才收；無效 id 直接 422 而不是靜默丟棄——
+       靜默丟棄會讓管理員以為設好了，實際上少一個部門（本專案最常出事的
+       錯誤類型：沒有訊息的資料缺漏）。
+    """
+    ids = list(dict.fromkeys(department_ids))  # 去重、保序
+    if ids:
+        found = {
+            d.id
+            for d in db.query(RefDepartment)
+            .filter(RefDepartment.id.in_(ids), RefDepartment.is_active == True)  # noqa: E712
+            .all()
+        }
+        bad = [i for i in ids if i not in found]
+        if bad:
+            raise HTTPException(
+                status_code=422,
+                detail=f"部門不存在或已停用：id={bad}（請重新整理公司/部門清單）",
+            )
+    db.query(UserDepartment).filter(UserDepartment.user_id == user_id).delete()
+    for dept_id in ids:
+        db.add(UserDepartment(user_id=user_id, department_id=dept_id))
+
+
 def _build_user_out(user: User, db: Session) -> UserOut:
     tenant = db.query(Tenant).filter(Tenant.id == user.tenant_id).first()
     return UserOut(
@@ -126,6 +171,7 @@ def _build_user_out(user: User, db: Session) -> UserOut:
         tenant_name=tenant.name if tenant else "",
         is_active=user.is_active,
         roles=_get_roles(user.id, db),
+        departments=_get_departments(user.id, db),
         last_login=user.last_login,
         created_at=user.created_at,
         must_change_password=user.must_change_password or False,
@@ -179,7 +225,9 @@ def create_user(
         raise HTTPException(status_code=400, detail="Email 已存在")
     tenant = db.query(Tenant).filter(Tenant.id == data.tenant_id).first()
     if not tenant:
-        raise HTTPException(status_code=404, detail="據點不存在")
+        # 訊息用「公司別」：這個值現在來自「系統設定 → 公司/部門管理」，
+        # 前端欄位名稱也已改成公司別（2026-09-01）。DB 端仍是 tenants 表。
+        raise HTTPException(status_code=404, detail="公司別不存在")
 
     user = User(
         email=email,
@@ -189,6 +237,9 @@ def create_user(
     )
     db.add(user)
     db.flush()
+
+    # 使用者 ↔ 部門（2026-09-01，多公司多部門）
+    _set_departments(user.id, data.department_ids, db)
 
     for role_name in data.role_names:
         role = db.query(Role).filter(Role.name == role_name).first()
@@ -233,6 +284,55 @@ def update_user(
         user.full_name = data.full_name
     if data.is_active is not None:
         user.is_active = data.is_active
+
+    # ── 所屬據點（＝公司/部門管理的公司）─────────────────────────────────────
+    # ⚠️ 必須在下面的 role_names 區塊**之前**處理：那一段重建 UserRole 時是用
+    #    `tenant_id=user.tenant_id`，先改好 user.tenant_id 才會帶到新的據點。
+    if data.tenant_id is not None and data.tenant_id != user.tenant_id:
+        new_tenant = db.query(Tenant).filter(Tenant.id == data.tenant_id).first()
+        if not new_tenant:
+            raise HTTPException(status_code=404, detail="公司別不存在")
+        # ⚠️ 停用的據點不能選：`GET /tenants` 只回 is_active，前端下拉根本看不到它，
+        #    能被送上來就代表是舊快取或直接打 API。允許的話這個使用者的據點會變成
+        #    畫面上選不回來的值。
+        if not new_tenant.is_active:
+            raise HTTPException(status_code=400, detail="該公司別已停用，無法指派")
+
+        old_tenant_id = user.tenant_id
+        user.tenant_id = data.tenant_id
+
+        # 既有的 user_roles 也要跟著搬，否則角色會留在舊據點底下。
+        # ⚠️ role_names 有帶時下面那段會整批刪除重建，這裡就不用搬（搬了也會被刪）。
+        # ⚠️ UserRole 有 UniqueConstraint(user_id, role_id, tenant_id)：目標據點下
+        #    若已經有同一組 (user_id, role_id) 就會撞鍵，先刪重複再改，並且要
+        #    flush 讓刪除先落地。
+        if data.role_names is None:
+            existing = {
+                r.role_id
+                for r in db.query(UserRole)
+                .filter(UserRole.user_id == user_id, UserRole.tenant_id == data.tenant_id)
+                .all()
+            }
+            moving = (
+                db.query(UserRole)
+                .filter(UserRole.user_id == user_id, UserRole.tenant_id == old_tenant_id)
+                .all()
+            )
+            keep = []
+            for r in moving:
+                if r.role_id in existing:
+                    db.delete(r)
+                else:
+                    existing.add(r.role_id)
+                    keep.append(r)
+            db.flush()
+            for r in keep:
+                r.tenant_id = data.tenant_id
+
+    # 使用者 ↔ 部門（2026-09-01）：None＝不動、[]＝清空（比照 role_names）
+    if data.department_ids is not None:
+        _set_departments(user_id, data.department_ids, db)
+
     if data.role_names is not None:
         db.query(UserRole).filter(UserRole.user_id == user_id).delete()
         for role_name in data.role_names:

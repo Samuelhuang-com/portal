@@ -70,9 +70,15 @@ class DepartmentResponse(BaseModel):
 
 
 class DepartmentOption(BaseModel):
-    """供下拉使用（僅啟用中）"""
+    """供下拉使用（僅啟用中）
+
+    2026-09-01 加 id／company（選填，既有呼叫端不受影響）：人員管理的
+    「部門多選」需要以 RefDepartment.id 存進 user_departments，並按公司分組。
+    """
     value: str   # name
     label: str   # name
+    id: Optional[int] = None       # RefDepartment.id
+    company: str = ""              # 公司名稱（Company.name）
 
     class Config:
         from_attributes = True

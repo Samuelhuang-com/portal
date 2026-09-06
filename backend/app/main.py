@@ -881,6 +881,9 @@ async def _auto_sync():
     from app.services.cycle_purchase_department_sync import (
         sync_from_reference as sync_cp_department,
     )
+    from app.services.tenant_company_sync import (
+        sync_from_reference as sync_tenant_company,
+    )
     from app.services.purchase_request_sync import sync_list_only as sync_purchase_list
     from app.services.claim_request_sync import sync_list_only as sync_claim_list
     from app.services.nichiyo_purchase_request_sync import sync_list_only as sync_nichiyo_purchase_list
@@ -910,6 +913,9 @@ async def _auto_sync():
     # 來源是 portal.db Company/RefDepartment（系統設定 → 公司/部門管理，非
     # Ragic），跟「週期採購供應商」互不相依，同一批次即可
     await _run_loop("週期採購部門",        sync_cp_department)
+    # 來源同上（portal.db Company）。人員管理「所屬據點」下拉＝公司名稱清單，
+    # 見 tenant_company_sync.py 檔頭。與「週期採購部門」互不相依。
+    await _run_loop("使用者據點",          sync_tenant_company)
     # 請購單 / 請款單：清單同步（Detail API 由獨立排程補全）
     await _run_loop("核准請購單清單",      sync_purchase_list)
     await _run_loop("核准請款單清單",      sync_claim_list)
@@ -987,6 +993,7 @@ _SINGLE_MODULE_MAP: dict[str, tuple[str, str]] = {
     "廠商資料":          ("app.services.vendor_sync",                   "sync_from_ragic"),
     "週期採購供應商":     ("app.services.cycle_purchase_vendor_sync",    "sync_from_contract"),
     "週期採購部門":       ("app.services.cycle_purchase_department_sync", "sync_from_reference"),
+    "使用者據點":         ("app.services.tenant_company_sync",            "sync_from_reference"),
 }
 
 def list_syncable_modules() -> list[str]:
@@ -1065,6 +1072,7 @@ async def lifespan(app: FastAPI):
 
     # 確保所有 ORM model 已被 import，讓 Base.metadata 知道所有表格
     import app.models.system_setting  # noqa: F401  站台基本設定（key-value）
+    import app.models.user_department  # noqa: F401  使用者↔部門多對多（2026-09-01）
     import app.models.room_maintenance  # noqa: F401
     import app.models.inventory  # noqa: F401
     import app.models.room_maintenance_detail  # noqa: F401
@@ -1337,7 +1345,40 @@ async def lifespan(app: FastAPI):
 
     # ── 排程同步（可透過 .env SCHEDULER_ENABLED=False 完全關閉）────────────────
     # DEV 模式請設 SCHEDULER_ENABLED=False，改用 sync_tool.py 手動同步。
-    # PROD 模式（NSSM 服務）維持 True，排程對齊整點自動執行。
+    #
+    # ⚠️⚠️ 2026-08-30 更正：本段原本寫「PROD 模式（NSSM 服務）維持 True」。
+    #    **那不是現況** —— 正式區與 DEV 的 .env 都是 SCHEDULER_ENABLED=false，
+    #    也就是底下這一整批 job **目前一個都不會執行**。實際的同步由
+    #    sync_tool.py（本機 GUI，需要視窗開著）負責。
+    #
+    #    已在 sync_tool.py 的 MODULES 有對應、因此實際會跑的：
+    #        module_auto_sync、purchase_*、claim_*、nichiyo_*、
+    #        opera_segment_*、opera_reservation_incremental、
+    #        ohip_daily_snapshot、ota_review_sync、ota_sentiment_analyze
+    #
+    #    ❌ **沒有對應、目前完全不會執行的**（2026-08-30 逐項比對）：
+    #        cycle_purchase_auto_close        每日 00:05  逾期請購單自動關閉
+    #        contract_expiry_notify           每日 09:00  合約到期通知（寄信）
+    #        contract_budget_alert            每日 09:00  預算警示（寄信）
+    #        contract_auto_close              每日 01:00  合約自動關閉
+    #        contract_payment_alert           每日 09:00  付款提醒（寄信）
+    #        contract_deposit_alert           每日 10:00  保證金提醒（寄信）
+    #        auto_generate_full_bldg_pm       每日 02:00  全棟例行維護排程產生
+    #        auto_generate_hotel_periodic_pm  每日 02:00  飯店週期保養排程產生
+    #        ppt_auto_export                  設定值      PPT 自動匯出
+    #
+    # ⚠️ 這些**刻意不移除**：移除是不可逆的，而且尚未確認是否還需要。
+    #    但必須知道 —— 只要有人把 SCHEDULER_ENABLED 打開，它們會立刻全部
+    #    開始執行，其中**五個會寄信**（合約那組），使用者會突然收到一批
+    #    積壓的通知。
+    #
+    # ⚠️⚠️ 新 Server 特別危險：`.env.example` 裡**沒有 SCHEDULER_ENABLED 這一行**，
+    #    照它建檔會走 config.py 的預設值 **True**，等於把上面整批 job 全部打開，
+    #    而且同時 sync_tool.py 也在跑 —— 兩套排程同時同步同一批模組。
+    #
+    # 📌 2026-08-13 與 2026-08-30 兩次補登錄的教訓：任何**只**掛在這裡的排程，
+    #    在 SCHEDULER_ENABLED=false 的機器上等於從未執行。新增排程時必須同時
+    #    決定「sync_tool.py 要不要有對應項」，不能只加在這裡就當作完成。
     if settings.SCHEDULER_ENABLED:
         # 排程對齊整點自動同步（預設 30 分鐘 → :00/:30）；啟動時不再立即同步，
         # 以確保伺服器能立即接受請求並從本地 DB 回傳資料。

@@ -11,6 +11,7 @@ cycle-purchase.db（見 app/core/cycle_purchase_database.py 說明）。
 from typing import Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -174,6 +175,89 @@ def update_department(
     dept = svc.update_department(db, dept_id, payload)
     if not dept:
         raise HTTPException(status_code=404, detail="部門不存在")
+    _attach_owner_names(portal_db, dept)
+    return dept
+
+
+class DepartmentLinkPayload(BaseModel):
+    """手動連結主檔部門（2026-09-01）。source_department_id=None＝解除連結。"""
+    source_department_id: Optional[str] = None
+
+
+@router.get(
+    "/departments/link-options",
+    summary="可連結的主檔部門清單（含已被占用標記）",
+)
+def department_link_options(
+    _: User = Depends(require_permission("cycle_purchase_admin")),
+    db: Session = Depends(get_cycle_purchase_db),
+    portal_db: Session = Depends(get_db),
+):
+    """
+    給「連結主檔部門」下拉用：列出 settings/company-departments 的啟用部門
+    （公司／部門名稱／主檔 id），並標記哪些已被其他週採部門連結。
+
+    ⚠️ 週採的 company 是自行輸入（2026-09-01 裁示），這裡顯示的是**主檔**的
+    公司名稱，兩者字串本來就可能不同——這正是需要手動連結的原因。
+    """
+    from app.models.reference_data import Company, RefDepartment
+    from app.models.cycle_purchase_reference import CyclePurchaseDepartment
+
+    taken = {
+        d.source_department_id: f"{d.company}／{d.dept_name}"
+        for d in db.query(CyclePurchaseDepartment)
+        .filter(CyclePurchaseDepartment.source_department_id.isnot(None))
+        .all()
+    }
+    rows = (
+        portal_db.query(RefDepartment, Company)
+        .join(Company, RefDepartment.company_id == Company.id)
+        .filter(RefDepartment.is_active == True)  # noqa: E712
+        .order_by(Company.name, RefDepartment.name)
+        .all()
+    )
+    return [
+        {
+            "source_department_id": str(d.id),
+            "company": c.name,
+            "dept_name": d.name,
+            "linked_to": taken.get(str(d.id)),   # None＝還沒被任何週採部門連結
+        }
+        for d, c in rows
+    ]
+
+
+@router.put(
+    "/departments/{dept_id}/link",
+    response_model=DepartmentOut,
+    summary="連結／解除主檔部門",
+)
+def link_department(
+    dept_id: int,
+    payload: DepartmentLinkPayload,
+    _: User = Depends(require_permission("cycle_purchase_admin")),
+    db: Session = Depends(get_cycle_purchase_db),
+    portal_db: Session = Depends(get_db),
+):
+    """
+    2026-09-01：company 改自行輸入後，同步的名稱比對只剩「部門名稱唯一命中」，
+    重名部門要靠這個端點手動連結，權限鏈（部門成員可編輯請購單）才會生效。
+    """
+    # 主檔部門存在性驗證在這裡做（service 拿不到 portal session）
+    if payload.source_department_id is not None:
+        from app.models.reference_data import RefDepartment
+        try:
+            src_pk = int(payload.source_department_id)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="source_department_id 必須是主檔部門 id")
+        if not portal_db.query(RefDepartment).filter(RefDepartment.id == src_pk).first():
+            raise HTTPException(status_code=404, detail="主檔部門不存在（請重新整理清單）")
+
+    dept, err = svc.link_department_to_source(db, dept_id, payload.source_department_id)
+    if dept is None:
+        raise HTTPException(status_code=404, detail="部門不存在")
+    if err:
+        raise HTTPException(status_code=409, detail=err)
     _attach_owner_names(portal_db, dept)
     return dept
 

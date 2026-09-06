@@ -60,6 +60,7 @@ from app.services.time_utils import parse_minutes as _parse_di_minutes
 from app.routers.work_journal import (
     _persons as _wj_persons,
     _split_detail_persons as _wj_split_persons,
+    _HOTEL_VENUE_SOURCES as _WJ_HOTEL_VENUE_SOURCES,
 )
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
@@ -379,6 +380,7 @@ def _load_all(db: Session, sources: set[str]) -> list[dict]:
                         "person":     g["person"],
                         "source":     "other_tasks",
                         "case_id":    rec.ragic_id,
+                        "venue":      (rec.venue or "").strip(),
                     })
             else:
                 if not rec.created_at:
@@ -395,6 +397,7 @@ def _load_all(db: Session, sources: set[str]) -> list[dict]:
                         "person":     person,
                         "source":     "other_tasks",
                         "case_id":    rec.ragic_id,
+                        "venue":      (rec.venue or "").strip(),
                     })
 
     return rows
@@ -633,8 +636,33 @@ def _build_source_breakdown(rows: list[dict]) -> list[dict]:
     return result
 
 
+# 本模組的來源代碼與工作日誌略有出入（本模組 ihg_room ↔ 工作日誌 ihg），
+# 對照後即可套用工作日誌那份業主確認過的歸屬規則，不另立第二套口徑。
+_VENUE_SOURCE_ALIAS = {"ihg_room": "ihg"}
+
+
+def _row_venue(r: dict) -> str:
+    """回傳一筆資料的單位歸屬：'hotel'（飯店）或 'mall'（商場）。
+
+    口徑沿用 work_journal._row_venue（2026-06-11 業主確認）：
+      飯店 = dazhi / ihg_room / hotel_di；other_tasks 依 Ragic「歸屬」欄位；
+      其餘來源（luqun / mall_fi / full_bi）一律歸商場。
+    """
+    if r["source"] == "other_tasks":
+        return "hotel" if (r.get("venue") or "") == "飯店" else "mall"
+    src = _VENUE_SOURCE_ALIAS.get(r["source"], r["source"])
+    return "hotel" if src in _WJ_HOTEL_VENUE_SOURCES else "mall"
+
+
 def _build_category_source_matrix(rows: list[dict]) -> list[dict]:
-    """G. 工項類別 × 來源（飯店/商場）交叉矩陣。"""
+    """G. 工項類別 × 單位（飯店/商場）交叉矩陣。
+
+    ⚠️ 2026-09-01 修正：原實作只認 source=="dazhi"/"luqun" 兩個來源，
+    但 luqun/dazhi 的類別固定是「現場報修」，因此其餘四個類別
+    （上級交辦／緊急事件／例行維護／每日巡檢）的資料來源
+    （other_tasks / ihg_room / hotel_di / mall_fi / full_bi）全被丟掉，
+    矩陣五列中有四列結構性恆為 0。改以 _row_venue 判定單位，全來源納入。
+    """
     data: dict[str, dict] = {
         c: {
             "dazhi_hours": 0.0, "luqun_hours": 0.0,
@@ -644,13 +672,14 @@ def _build_category_source_matrix(rows: list[dict]) -> list[dict]:
     }
     for r in rows:
         cat = r["category"]
-        src = r["source"]
-        if src == "dazhi":
-            data[cat]["dazhi_hours"] += r["work_hours"]
-            data[cat]["dazhi_cases"].add(r["case_id"])
-        elif src == "luqun":
-            data[cat]["luqun_hours"] += r["work_hours"]
-            data[cat]["luqun_cases"].add(r["case_id"])
+        if cat not in data:
+            continue
+        # dazhi_* = 飯店、luqun_* = 商場（欄位名沿用既有 API 契約，前端不需改）
+        key = "dazhi" if _row_venue(r) == "hotel" else "luqun"
+        data[cat][f"{key}_hours"] += r["work_hours"]
+        # 同一格現在可能混入多個來源（例：商場的「每日巡檢」＝ mall_fi ＋ full_bi），
+        # 各來源的 ragic_id 是各自編號、會互撞，故以 (source, case_id) 去重。
+        data[cat][f"{key}_cases"].add((r["source"], r["case_id"]))
 
     total_h = sum(
         data[c]["dazhi_hours"] + data[c]["luqun_hours"] for c in CATEGORIES

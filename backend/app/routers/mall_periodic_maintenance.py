@@ -1343,7 +1343,7 @@ def _matrix_item_status_zh(
 def get_year_matrix_items(
     year:           int           = Query(...),
     month:          int           = Query(..., description="0 = 全年合計"),
-    metric:         str           = Query(..., description="prev_carry_over | prev_resolved | period_total | period_completed"),
+    metric:         str           = Query(..., description="prev_carry_over | prev_resolved | period_total | period_completed | period_incomplete"),
     frequency_type: Optional[str] = Query(None),
     db:             Session       = Depends(get_db),
 ):
@@ -1357,6 +1357,7 @@ def get_year_matrix_items(
       - prev_resolved ：full_date ≤ 上月底 且 end_date 落在本期內的項目
       - period_total  ：full_date 落在本月的所有項目
       - period_completed：period_total 中 end_time 有值的項目
+      - period_incomplete：period_total 中 end_time 為空的項目（＝ period_total − period_completed）
     """
     valid_batch_ids = _latest_batch_ids_per_month(db)
     rows = (
@@ -1447,6 +1448,12 @@ def get_year_matrix_items(
             if not (p_start <= full_date <= p_end and is_done):
                 continue
 
+        elif metric == 'period_incomplete':
+            # 2026-09-06 新增：本月應完成但尚未完成（end_time 為空）
+            # 與 period_completed 互補，兩者相加 = period_total
+            if not (p_start <= full_date <= p_end and not is_done):
+                continue
+
         # ── 組裝 scheduled_date_full ──────────────────────────────────────────
         sched_full = ""
         if item.scheduled_date:
@@ -1463,6 +1470,11 @@ def get_year_matrix_items(
             "scheduled_date_full": sched_full,
             "end_time":            item.end_time or "",
             "status":              _matrix_item_status_zh(item, batch.period_month, is_done),
+            # 2026-09-06 新增兩欄（明細 Modal 用）
+            #   scheduler_name：Ragic Sheet24「排定人員」，與「執行人員」是不同的人
+            #   exec_date     ：end_time（保養結束時間）的日期部分，未完成則為空字串
+            "scheduler_name":      item.scheduler_name or "",
+            "exec_date":           end_date.strftime("%Y/%m/%d") if end_date else "",
             "executor_name":       item.executor_name or "",
             "result_note":         item.result_note or "",
             "abnormal_flag":       bool(item.abnormal_flag),

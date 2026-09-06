@@ -22,19 +22,26 @@ cycle_purchase_department_sync.py — 部門主檔鏡像同步：系統設定（
    風險過高。→ 保留 id 與 FK 完全不動，只加 source_department_id 當跨庫
    對照鍵（比照 cycle_purchase_vendor_sync.py 的 source_vendor_id 模式）。
 
-── 比對優先序（比照 cycle_purchase_vendor_sync.py 的既有慣例）────────────────
+── 比對優先序（2026-09-01 改版，見下方「欄位權責」的背景）─────────────────
   1. source_department_id 已連結 → 直接比對到該筆
-  2. 公司＋部門名稱完全相同 → 視為同一筆，回填 source_department_id
-     （這一層負責把週採原本手動建的部門一次性合併進來）
+  2. **部門名稱**在週採未連結列中**唯一命中** → 視為同一筆，回填
+     source_department_id（同名部門跨公司存在時不自動連結，記 warning，
+     請在部門主檔頁面手動「連結主檔部門」）
   3. 都比對不到 → 新增
 
-── 欄位權責 ──────────────────────────────────────────────────────────────────
-  同步覆蓋：company（← Company.name）／dept_name（← RefDepartment.name）
-  絕不覆蓋：dept_code／owner_user_id／is_active（週採自維護，前端仍可編輯）
+  ⚠ 2026-09-01 前第 2 層是「公司＋部門名稱」比對。改版原因：company 改為
+    週採自行輸入（見下），公司字串刻意與主檔不同，舊比對永遠對不上。
 
-  ⚠ 來源端的 Company.name／RefDepartment.name 兩者都是 NOT NULL，不像
-  vendor_sync 那樣需要處理「來源端沒填就別洗掉」的情況——這兩個欄位一律
-  無條件覆蓋，因為來源一定有值。
+── 欄位權責（2026-09-01 Samuel 裁示改版）────────────────────────────────────
+  同步覆蓋：dept_name（← RefDepartment.name）
+  絕不覆蓋：company／dept_code／owner_user_id／is_active（週採自維護）
+
+  ⚠ **company 從「同步覆蓋」改為「週採自維護」**：公司對「公司名稱」並不
+    統一，週採要用的公司字串不一定等於主檔的 Company.name（company 是
+    週採多處業務流程的字串鍵：彙整單「週期+公司+核准月份」、週期設定的
+    公司篩選、請購單快照）。新增鏡像列時帶 Company.name 當**初始值**，
+    之後同步絕不再碰。後端 update_department 同日起放行編輯 company
+    （鏡像列亦可），dept_name 仍鎖定。
 
   dept_code 沒有天然的來源可以沿用（RefDepartment 沒有代碼欄位），新增時
   自動帶 `DEPT-{來源RefDepartment.id}` 佔位，同步之後不再去動它，使用者
@@ -108,7 +115,30 @@ async def sync_from_reference() -> dict:
     try:
         all_rows = db.query(CyclePurchaseDepartment).all()
         by_source = {r.source_department_id: r for r in all_rows if r.source_department_id}
-        by_name = {(r.company, r.dept_name): r for r in all_rows}
+        # ⚠️ 2026-09-01 使用者裁示：週採的 company 改為**自行輸入**（公司對名稱
+        #    本來就不統一，主檔的公司名不一定是週採要用的字串），因此：
+        #    ① company 從「同步覆蓋」改為「週採自維護」——只在新增鏡像列時帶
+        #       Company.name 當初始值，之後同步**絕不再碰**。
+        #    ② 第二層名稱比對不能再用 (company, dept_name)（公司字串刻意不同，
+        #       永遠對不上），改為 **dept_name 單獨比對、且全表唯一命中才收編**；
+        #       同名部門跨公司存在時跳過並記 warning（重名的請在
+        #       cycle-purchase/masters/departments 用「連結主檔部門」手動連結）。
+        #    「唯一命中」是**兩邊都要唯一**：週採未連結端同名（不知道收編哪筆）
+        #    或主檔端同名（兩家公司都有「工程部」，收給誰都是用猜的）都不自動連。
+        _unlinked = [r for r in all_rows if not r.source_department_id]
+        by_dept_name: dict = {}
+        _dup_names = set()
+        for r in _unlinked:
+            if r.dept_name in by_dept_name:
+                _dup_names.add(r.dept_name)
+            by_dept_name[r.dept_name] = r
+        _src_name_count: dict = {}
+        for s in sources:
+            if s["dept_name"]:
+                _src_name_count[s["dept_name"]] = _src_name_count.get(s["dept_name"], 0) + 1
+        _dup_names |= {n for n, c in _src_name_count.items() if c > 1}
+        for n in _dup_names:
+            by_dept_name.pop(n, None)   # 重名 → 不自動連結，只能手動
 
         for src in sources:
             source_id = src["source_department_id"]
@@ -120,44 +150,48 @@ async def sync_from_reference() -> dict:
                 continue  # 來源端理論上不該有空值（NOT NULL），防呆略過
 
             try:
-                # ── 比對優先序：source_department_id → 公司+部門名稱 ──────
+                # ── 比對優先序：source_department_id → 部門名稱唯一命中 ──
                 row = by_source.get(source_id)
+                auto_adopt = False
                 if row is None:
-                    row = by_name.get((company, dept_name))
-
-                # 比對到的那筆已經是「別家來源」的鏡像 → 不搶佔
-                if row is not None and row.source_department_id and row.source_department_id != source_id:
-                    warnings.append(
-                        f"{company}／{dept_name}（來源 id={source_id}）比對到的週採部門 "
-                        f"id={row.id} 已連結至來源 id={row.source_department_id}，本筆略過"
-                        f"（通常代表系統設定端有兩個公司/部門的公司+名稱組合恰好重複，"
-                        f"但這在 RefDepartment 有 UniqueConstraint(name, company_id) 保護下"
-                        f"理論上不會發生）"
-                    )
-                    skipped += 1
-                    continue
+                    if dept_name in _dup_names:
+                        warnings.append(
+                            f"{company}／{dept_name}（來源 id={source_id}）：部門名稱重複"
+                            f"（主檔端或週採未連結端有多筆同名），無法自動判定對應，"
+                            f"本筆不自動連結。請在 週期採購 → 部門主檔 手動「連結主檔部門」"
+                        )
+                    else:
+                        row = by_dept_name.get(dept_name)
+                        auto_adopt = row is not None
 
                 if row is not None:
-                    # 舊 key 先從索引移除，理由同 vendor_sync：避免改名後舊 key
-                    # 還指向這一列，下一筆來源可能誤比對到它
-                    old_key = (row.company, row.dept_name)
-                    if by_name.get(old_key) is row:
-                        by_name.pop(old_key, None)
-
+                    old_name = row.dept_name
                     changed = (
-                        row.company != company
-                        or row.dept_name != dept_name
+                        row.dept_name != dept_name
                         or row.source_department_id != source_id
                     )
-                    row.company = company
+                    # company **不碰**（週採自維護）；只在收編當下 company 還是
+                    # 空字串的防呆情況補上主檔值
+                    if not row.company:
+                        row.company = company
+                        changed = True
                     row.dept_name = dept_name
                     row.source_department_id = source_id
+                    if auto_adopt:
+                        by_dept_name.pop(old_name, None)
+                        logger.info(
+                            f"[CP Department Sync] 依部門名稱唯一命中，自動收編："
+                            f"週採 id={row.id}「{row.company}／{old_name}」← 主檔 "
+                            f"{company}／{dept_name}（id={source_id}）"
+                        )
                     if changed:
                         updated += 1
                     else:
                         unchanged += 1
                 else:
-                    # ── 新增：dept_code 沒有天然來源，先帶佔位值 ───────────
+                    # ── 新增：dept_code 沒有天然來源，先帶佔位值；company 帶
+                    #    主檔的 Company.name 當**初始值**（之後由週採自行維護，
+                    #    同步不再覆蓋——2026-09-01 裁示）──────────────────────
                     row = CyclePurchaseDepartment(
                         company=company,
                         dept_code=f"DEPT-{source_id}",
@@ -169,7 +203,6 @@ async def sync_from_reference() -> dict:
                     created += 1
 
                 by_source[source_id] = row
-                by_name[(company, dept_name)] = row
 
             except Exception as exc:
                 errors.append(f"{company}／{dept_name}：{exc}")

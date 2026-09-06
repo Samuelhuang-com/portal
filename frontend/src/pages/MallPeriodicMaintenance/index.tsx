@@ -23,6 +23,7 @@ import {
   WarningOutlined, CheckCircleOutlined, ClockCircleOutlined,
   ExclamationCircleOutlined, RightOutlined, BarChartOutlined,
   ShopOutlined, CalendarOutlined, LineChartOutlined, FileTextOutlined, LinkOutlined,
+  FileExcelOutlined,
 } from '@ant-design/icons'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RcTooltip,
@@ -38,6 +39,7 @@ import {
   generateMallSchedule, getMallScheduleList, getMallScheduleKpi,
   getMallOverdueSchedule, getMallAnnualMatrix, updateMallSchedule,
 } from '@/api/mallPeriodicMaintenance'
+import { exportRowsToExcel } from '@/utils/exportExcel'
 import { fetchMallPMCalendar } from '@/api/mallPeriodicMaintenance'
 import type {
   PMMatrixMetric, MallPMMatrixItem, MallPMCatalogItem,
@@ -295,8 +297,12 @@ function QuarterSelectorCards({ matrix, selectedQ, onSelect }: {
   )
 }
 
+// 2026-09-06 新增 'period_incomplete'：後端 PMYearMatrixMonth 沒有這個欄位，
+// 由前端以 period_total − period_completed 即時算出（見下方 tableData / summaryValues）。
+type MatrixMetricKey = keyof PMYearMatrixMonth | '_sep1' | '_sep2' | 'period_incomplete'
+
 const MATRIX_METRICS: {
-  key: keyof PMYearMatrixMonth | '_sep1' | '_sep2'
+  key: MatrixMetricKey
   label: string; isRate?: boolean; isText?: boolean; tooltip?: string
 }[] = [
   { key: 'prev_carry_over',
@@ -310,6 +316,9 @@ const MATRIX_METRICS: {
   { key: 'period_total',            label: '本期週期保養項目數' },
   { key: 'period_completed',        label: '本期週期保養完成數' },
   { key: 'period_rate',             label: '本期週期保養完成率', isRate: true },
+  { key: 'period_incomplete',
+    label: '本期未完成項目',
+    tooltip: '本期未完成項目數 ＝ 本期週期保養項目數 － 本期週期保養完成數。\n即該欄位所屬期間內應完成、但尚未結案（無完成時間）的項目數，含逾期、進行中、待執行、未排定。' },
   { key: '_sep2',                   label: '' },
   { key: 'incomplete_notes',        label: '未完成事項說明（原因/待協助事項）', isText: true },
 ]
@@ -319,15 +328,27 @@ const CLICKABLE_METRIC_MAP: Record<string, PMMatrixMetric> = {
   prev_resolved_in_period: 'prev_resolved',
   period_total:            'period_total',
   period_completed:        'period_completed',
+  period_incomplete:       'period_incomplete',
 }
 
+// 2026-09-06 依使用者指示：「每月維護」TAB 隱藏累計未結案三列（含其後的 _sep1 分隔列）。
+// 每季／每年維護維持原樣，故做成 props 而非直接刪除列定義。
+const CARRY_OVER_ROW_KEYS: MatrixMetricKey[] = [
+  'prev_carry_over', 'prev_resolved_in_period', 'carry_over_rate', '_sep1',
+]
+
 function YearMatrixTable({
-  data, frequencyType, onCellClick,
+  data, frequencyType, onCellClick, hideCarryOverRows = false,
 }: {
   data: PMYearMatrix
   frequencyType?: string
   onCellClick?: (year: number, month: number, metric: PMMatrixMetric, monthLabel: string) => void
+  /** true = 隱藏「截至上期底累計未結案數／其中本期已結案數／累計項目完成率」與其後分隔列 */
+  hideCarryOverRows?: boolean
 }) {
+  const visibleMetrics = hideCarryOverRows
+    ? MATRIX_METRICS.filter((m) => !CARRY_OVER_ROW_KEYS.includes(m.key))
+    : MATRIX_METRICS
   const nowYear  = dayjs().year()
   const nowMonth = dayjs().month() + 1
   const isFuture = (month: number) =>
@@ -347,6 +368,8 @@ function YearMatrixTable({
     period_completed:        totalPeriodCompleted,
     period_rate:             totalPeriodTotal > 0
                                ? Math.round(totalPeriodCompleted / totalPeriodTotal * 1000) / 10 : null,
+    // 合計 = 合計項目數 − 合計完成數（同樣只累計已過月份 pastMonths）
+    period_incomplete:       totalPeriodTotal - totalPeriodCompleted,
     incomplete_notes:        '',
   }
 
@@ -444,13 +467,19 @@ function YearMatrixTable({
     },
   ]
 
-  const tableData: Record<string, unknown>[] = MATRIX_METRICS.map((metric) => {
+  const tableData: Record<string, unknown>[] = visibleMetrics.map((metric) => {
     const isSep = metric.key === '_sep1' || metric.key === '_sep2'
     const row: Record<string, unknown> = {
       key: metric.key, _key: metric.key, label: metric.label, _isSep: isSep,
       _total: isSep ? null : summaryValues[metric.key as string] ?? null,
     }
-    data.months.forEach((m) => { row[`m${m.month}`] = isSep ? null : m[metric.key as keyof PMYearMatrixMonth] })
+    data.months.forEach((m) => {
+      if (isSep) { row[`m${m.month}`] = null; return }
+      // period_incomplete 為前端衍生欄位，後端不回傳
+      row[`m${m.month}`] = metric.key === 'period_incomplete'
+        ? m.period_total - m.period_completed
+        : m[metric.key as keyof PMYearMatrixMonth]
+    })
     return row
   })
 
@@ -1087,7 +1116,7 @@ export default function MallPeriodicMaintenancePage() {
           <Typography.Text type="secondary">載入年度矩陣中…</Typography.Text>
         </Card>
       ) : matrixData ? (
-        <YearMatrixTable data={matrixData} frequencyType="monthly"
+        <YearMatrixTable data={matrixData} frequencyType="monthly" hideCarryOverRows
           onCellClick={(y, m, metric, label) => openDetailModal('monthly', y, m, metric, label)} />
       ) : (
         <Alert message="尚未載入年度矩陣，請點擊重新整理" type="info" showIcon style={{ marginBottom: 16 }} />
@@ -2002,8 +2031,9 @@ export default function MallPeriodicMaintenancePage() {
 const METRIC_LABELS: Record<string, string> = {
   prev_carry_over:  '截至上期底累計未結案數',
   prev_resolved:    '其中本期已結案數',
-  period_total:     '本期應完成總數',
-  period_completed: '本期已完成',
+  period_total:      '本期應完成總數',
+  period_completed:  '本期已完成',
+  period_incomplete: '本期未完成項目',
 }
 
 // 中文狀態 → Tag 色。後端 2026-08-20 起改回傳 STATUS_LABELS 五態
@@ -2050,19 +2080,62 @@ function MatrixDetailModal({
     { title: '排定日期', dataIndex: 'scheduled_date_full', width: 100 },
     { title: '狀態', dataIndex: 'status', width: 80,
       render: (v: string) => <Tag color={MATRIX_STATUS_TAG_COLOR[v] ?? 'default'}>{v || '—'}</Tag> },
+    // 2026-09-06 新增：原排定人員、執行日期（執行日期＝ end_time 的日期，未完成顯示 —）
+    { title: '原排定人員', dataIndex: 'scheduler_name', width: 100, ellipsis: true,
+      render: (v: string) => v || '—' },
+    { title: '執行日期', dataIndex: 'exec_date', width: 100,
+      render: (v: string) => v || '—' },
     { title: '執行人員', dataIndex: 'executor_name', width: 90, ellipsis: true },
     { title: '備註', dataIndex: 'result_note', ellipsis: true,
       render: (v: string) => <Typography.Text style={{ fontSize: 11 }}>{v || '—'}</Typography.Text> },
   ]
 
+  // ── 匯出 Excel（2026-09-06 新增）───────────────────────────────────────────
+  // 前端直接產檔：資料就是 Modal 已載入的 items，不另打後端，匯出內容與畫面一致。
+  // 分頁只影響顯示，匯出的是全部筆數。
+  const [exporting, setExporting] = useState(false)
+
+  const handleExport = useCallback(async () => {
+    setExporting(true)
+    const periodTag = month === 0 ? `${year}-全年` : `${year}-${String(month).padStart(2, '0')}`
+    await exportRowsToExcel(
+      items.map((r) => ({
+        '保養月份':   r.period_month,
+        '類別':       r.category,
+        '保養項目':   r.task_name,
+        '頻率':       r.frequency,
+        '排定日期':   r.scheduled_date_full,
+        '狀態':       r.status,
+        '原排定人員': r.scheduler_name,
+        '執行日期':   r.exec_date,
+        '執行人員':   r.executor_name,
+        '備註':       r.result_note,
+      })),
+      {
+        filename:  `商場週期保養_${freqLabel}_${metricLabel}_${periodTag}.xlsx`,
+        sheetName: metricLabel,
+        colWidths: [10, 8, 40, 6, 12, 8, 12, 12, 14, 30],
+      },
+    )
+    setExporting(false)
+  }, [items, metricLabel, freqLabel, year, month])
+
   return (
     <Modal open={open} onCancel={onClose} footer={null} width={1000}
       title={
-        <Space>
-          <BarChartOutlined style={{ color: '#1677ff' }} />
-          <span style={{ fontWeight: 600 }}>{year} 年 {monthDisplay}｜{freqLabel}｜{metricLabel}</span>
-          {!loading && <Typography.Text type="secondary" style={{ fontSize: 12 }}>共 {total} 筆</Typography.Text>}
-        </Space>
+        // marginRight 32 讓出 Modal 右上角關閉鈕的位置
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginRight: 32 }}>
+          <Space>
+            <BarChartOutlined style={{ color: '#1677ff' }} />
+            <span style={{ fontWeight: 600 }}>{year} 年 {monthDisplay}｜{freqLabel}｜{metricLabel}</span>
+            {!loading && <Typography.Text type="secondary" style={{ fontSize: 12 }}>共 {total} 筆</Typography.Text>}
+          </Space>
+          <Button size="small" icon={<FileExcelOutlined />}
+            loading={exporting} disabled={loading || items.length === 0}
+            onClick={handleExport}>
+            匯出 Excel
+          </Button>
+        </div>
       }
     >
       {loading ? (

@@ -42,6 +42,22 @@ _admin_dep = require_roles("system_admin", "tenant_admin")
 _dept_admin_dep = require_permission("settings_departments_manage")
 
 
+# 2026-09-01：公司異動後立刻把「據點」鏡像推平（來源＝本頁的 Company）。
+# 沒有這一步的話，使用者在這裡新增一家公司，回到「人員管理 → 新增使用者 →
+# 所屬據點」要等 45 分鐘的排程才看得到。排程那條路仍然保留（見
+# tenant_company_sync.py 檔頭），這裡只是即時補一次。
+#
+# 刻意吞掉例外：鏡像同步失敗不該讓「新增公司」這個主要動作連帶失敗，
+# 錯誤已由 sync 內部寫進 log，下一輪排程也會自動補上。
+def _mirror_tenants(db: Session) -> None:
+    from app.services.tenant_company_sync import sync_companies_to_tenants
+    try:
+        sync_companies_to_tenants(db)
+    except Exception:  # pragma: no cover - 防禦性
+        import logging
+        logging.getLogger(__name__).exception("[reference_data] 據點鏡像同步失敗（已忽略）")
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # 公司別
 # ═══════════════════════════════════════════════════════════════════════════
@@ -75,6 +91,7 @@ def create_company(
     db.add(obj)
     db.commit()
     db.refresh(obj)
+    _mirror_tenants(db)
     return obj
 
 
@@ -94,6 +111,7 @@ def update_company(
     obj.name = payload.name
     db.commit()
     db.refresh(obj)
+    _mirror_tenants(db)
     return obj
 
 
@@ -109,6 +127,7 @@ def toggle_company(
     obj.is_active = not obj.is_active
     db.commit()
     db.refresh(obj)
+    _mirror_tenants(db)
     return obj
 
 
@@ -122,11 +141,20 @@ def department_options(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    q = db.query(RefDepartment).filter(RefDepartment.is_active == True)
+    # 2026-09-01：join Company 帶出 id／公司名稱（人員管理「部門多選」需要，
+    # 見 DepartmentOption 的說明）。既有呼叫端只讀 value/label，不受影響。
+    q = (
+        db.query(RefDepartment, Company)
+        .join(Company, RefDepartment.company_id == Company.id)
+        .filter(RefDepartment.is_active == True)
+    )
     if company_id is not None:
         q = q.filter(RefDepartment.company_id == company_id)
-    rows = q.order_by(RefDepartment.name).all()
-    return [DepartmentOption(value=r.name, label=r.name) for r in rows]
+    rows = q.order_by(Company.name, RefDepartment.name).all()
+    return [
+        DepartmentOption(value=d.name, label=d.name, id=d.id, company=c.name)
+        for d, c in rows
+    ]
 
 
 @router.get("/departments", response_model=List[DepartmentResponse], summary="部門別清單")

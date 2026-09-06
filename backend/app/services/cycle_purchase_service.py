@@ -108,23 +108,64 @@ def update_department(db: Session, dept_id: int, payload) -> Optional[CyclePurch
     """
     2026-08-17：新增「同步鎖定欄位」保護。`source_department_id` 非 None
     代表這筆部門是從 portal.db Company/RefDepartment 鏡像同步過來的（見
-    cycle_purchase_department_sync.py），`company`／`dept_name` 由同步覆蓋，
-    這裡的 API 若也放行改這兩欄，下次同步一跑就會被蓋回去——使用者會以為
-    改成功了，其實只是暫時的，過陣子又「跳回舊值」，比不能改更誤導人。
-    前端 Departments.tsx 會把這兩欄設成唯讀，但這裡才是真正擋住的地方
-    （唯讀限制必須在後端，前端唯讀只是提示，比照 CLAUDE.md §9 廠商規則 4）。
+    cycle_purchase_department_sync.py），同步覆蓋的欄位若在這裡放行編輯，
+    下次同步一跑就被蓋回去——使用者會以為改成功了，其實只是暫時的，
+    比不能改更誤導人。前端 Departments.tsx 會設唯讀，但這裡才是真正擋住的
+    地方（唯讀限制必須在後端，前端唯讀只是提示，比照 CLAUDE.md §9 規則 4）。
+
+    ⚠️ 2026-09-01 Samuel 裁示：**company 改為週採自行輸入**（公司對名稱不統一，
+    週採要用的字串不一定等於主檔的公司名），同步端同日起不再覆蓋 company，
+    因此這裡只剩 dept_name 需要鎖定。
     """
     dept = db.query(CyclePurchaseDepartment).filter(CyclePurchaseDepartment.id == dept_id).first()
     if not dept:
         return None
     updates = payload.model_dump(exclude_unset=True)
     if dept.source_department_id:
-        updates.pop("company", None)
         updates.pop("dept_name", None)
     for k, v in updates.items():
         setattr(dept, k, v)
     db.flush()
     return dept
+
+
+def link_department_to_source(
+    db: Session, dept_id: int, source_department_id: Optional[str],
+) -> tuple[Optional[CyclePurchaseDepartment], Optional[str]]:
+    """
+    手動連結／解除週採部門 ↔ 全站主檔部門（2026-09-01 新增）。
+
+    背景：company 改自行輸入後，同步的名稱比對只剩「部門名稱唯一命中」，
+    同名部門跨公司存在時自動連結會誤判所以刻意不做——這個端點就是給那些
+    情況手動收尾用的。連上之後「部門成員可編輯請購單」的權限鏈才會生效
+    （user_departments 經 source_department_id 對照）。
+
+    source_department_id 傳 None＝解除連結（該部門退回「僅承辦人可編」）。
+    回傳 (dept, error)：error 非 None 時呼叫端應回 4xx。
+
+    ⚠️ 不在這裡驗證主檔部門是否存在——portal.db 與 cycle-purchase 是兩個庫，
+       這個 service 拿不到 portal session。驗證由 router 做（它兩個 session 都有）。
+    """
+    dept = db.query(CyclePurchaseDepartment).filter(CyclePurchaseDepartment.id == dept_id).first()
+    if not dept:
+        return None, None
+    if source_department_id is not None:
+        dup = (
+            db.query(CyclePurchaseDepartment)
+            .filter(
+                CyclePurchaseDepartment.source_department_id == source_department_id,
+                CyclePurchaseDepartment.id != dept_id,
+            )
+            .first()
+        )
+        if dup:
+            return dept, (
+                f"主檔部門已連結到週採部門「{dup.company}／{dup.dept_name}」（id={dup.id}），"
+                "一個主檔部門只能連結一筆。要換過來請先解除那一筆的連結。"
+            )
+    dept.source_department_id = source_department_id
+    db.flush()
+    return dept, None
 
 
 def list_cost_centers(db: Session, department_id: Optional[int] = None, is_active: Optional[bool] = None):
