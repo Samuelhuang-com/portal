@@ -17,14 +17,25 @@ echo  Portal - Prod Update Tool v4
 echo ======================================
 echo.
 
-REM -- check Python 3.12
-py -3.12 --version >nul 2>&1
-if errorlevel 1 (
-    echo [ERROR] Python 3.12 not found!
+REM -- resolve Python launcher tag
+REM    2026-09-06: this script had -3.12 hard-coded, but D:\portal runs 3.11.
+REM    Every "py -3.12" therefore failed and the script died at Step 2, so the
+REM    Alembic step (3/6) was never reached -- that is why the 2026-09-01
+REM    migrations were missing and every login returned 500.
+REM    Override with:  set PORTAL_PYTAG=-3.12  before running this script.
+set PYTAG=%PORTAL_PYTAG%
+if "%PYTAG%"=="" (
+    py -3.11 --version >nul 2>&1 && set PYTAG=-3.11
+)
+if "%PYTAG%"=="" (
+    py -3.12 --version >nul 2>&1 && set PYTAG=-3.12
+)
+if "%PYTAG%"=="" (
+    echo [ERROR] Neither Python 3.11 nor 3.12 found!
     pause
     exit /b 1
 )
-echo [OK] Python 3.12 OK
+echo [OK] Python %PYTAG% OK
 
 REM -- clear stale index.lock
 if exist .git\index.lock (
@@ -78,7 +89,7 @@ echo.
 
 REM -- write version_info.json (PATH here has git; PortalBackend NSSM service PATH does not)
 cd /d D:\portal\backend
-py -3.12 write_version_file.py
+py %PYTAG% write_version_file.py
 cd /d D:\portal
 
 echo [OK] Code updated. Next: install backend packages [2/6]
@@ -87,9 +98,9 @@ pause
 
 REM ── Step 2: Backend packages ──────────────────────────────────────────────────
 echo.
-echo [2/6] Installing backend packages (Python 3.12)...
+echo [2/6] Installing backend packages (Python %PYTAG%)...
 cd /d D:\portal\backend
-py -3.12 -m pip install -r requirements.txt
+py %PYTAG% -m pip install -r requirements.txt
 if errorlevel 1 (
     echo [ERROR] pip install failed!
     pause
@@ -107,7 +118,7 @@ REM    tables and fail). See backend/scripts/alembic_deploy.py
 echo.
 echo [3/6] Database migration (Alembic)...
 cd /d D:\portal\backend
-py -3.12 scripts\alembic_deploy.py
+py %PYTAG% scripts\alembic_deploy.py
 set MIGRATE_RC=%errorlevel%
 if "%MIGRATE_RC%"=="0" goto migrate_ok
 if "%MIGRATE_RC%"=="2" (
@@ -115,8 +126,8 @@ if "%MIGRATE_RC%"=="2" (
     echo [STOP] Migration needs manual action - see the message above.
     echo        Most likely this machine has not been stamped yet:
     echo            cd D:\portal\backend
-    echo            py -3.12 scripts\check_schema_drift.py
-    echo            py -3.12 scripts\alembic_stamp_baseline.py
+    echo            py %PYTAG% scripts\check_schema_drift.py
+    echo            py %PYTAG% scripts\alembic_stamp_current.py
     echo        Then re-run this tool. Nothing has been changed.
     echo.
     pause
@@ -138,7 +149,7 @@ REM -- Step 4: DB Index --------------------------------------------------------
 echo.
 echo [4/6] Creating DB indexes...
 cd /d D:\portal\backend
-py -3.12 create_indexes.py
+py %PYTAG% create_indexes.py
 if errorlevel 1 (
     echo [WARN] create_indexes.py returned error, please verify.
 )
@@ -204,7 +215,7 @@ for /f "tokens=5" %%p in ('netstat -ano ^| findstr ":8000 " ^| findstr "LISTENIN
 timeout /t 2 /nobreak >nul
 
 echo [INFO] Starting uvicorn...
-start "Portal Backend" cmd /k "cd /d D:\portal\backend && py -3.12 -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1"
+start "Portal Backend" cmd /k "cd /d D:\portal\backend && py %PYTAG% -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1"
 echo [OK] uvicorn started in new window
 
 :done
