@@ -412,8 +412,13 @@ function QuarterSelectorCards({
 }
 
 // ── 年度矩陣總表（12個月橫軸、指標縱軸）─────────────────────────────────────
+// 2026-09-07 新增 'period_incomplete'：後端 PMYearMatrixMonth 沒有這個欄位，
+// 由前端以 period_total − period_completed 即時算出（見下方 tableData / summaryValues）。
+// 與 mall/periodic-maintenance 同一做法。
+type MatrixMetricKey = keyof PMYearMatrixMonth | '_sep1' | '_sep2' | 'period_incomplete'
+
 const MATRIX_METRICS: {
-  key: keyof PMYearMatrixMonth | '_sep1' | '_sep2'
+  key: MatrixMetricKey
   label: string
   isRate?: boolean
   isText?: boolean
@@ -430,6 +435,9 @@ const MATRIX_METRICS: {
   { key: 'period_total',     label: '本期應完成總數' },
   { key: 'period_completed', label: '本期已完成' },
   { key: 'period_rate',      label: '本期週期保養完成率', isRate: true },
+  { key: 'period_incomplete',
+    label: '本期未完成項目',
+    tooltip: '本期未完成項目數 ＝ 本期應完成總數 － 本期已完成。\n即該欄位所屬期間內應完成、但尚未結案（無完成時間）的項目數，含逾期、進行中、待執行、未排定。' },
   { key: '_sep2',            label: '' },
   { key: 'incomplete_notes', label: '未完成事項說明（原因/待協助事項）', isText: true },
 ]
@@ -439,15 +447,28 @@ const CLICKABLE_METRIC_MAP: Record<string, PMMatrixMetric> = {
   prev_resolved_in_period: 'prev_resolved',
   period_total:            'period_total',
   period_completed:        'period_completed',
+  period_incomplete:       'period_incomplete',
 }
 
+// 2026-09-07 依使用者指示：「每月維護」TAB 隱藏累計未結案三列（含其後的 _sep1 分隔列）。
+// 每季／每年維護維持原樣，故做成 props 而非直接刪除列定義。
+// 與 mall/periodic-maintenance 同一做法（見該檔 CARRY_OVER_ROW_KEYS）。
+const CARRY_OVER_ROW_KEYS: MatrixMetricKey[] = [
+  'prev_carry_over', 'prev_resolved_in_period', 'carry_over_rate', '_sep1',
+]
+
 function YearMatrixTable({
-  data, frequencyType, onCellClick,
+  data, frequencyType, onCellClick, hideCarryOverRows = false,
 }: {
   data: PMYearMatrix
   frequencyType?: string
   onCellClick?: (year: number, month: number, metric: PMMatrixMetric, monthLabel: string) => void
+  /** true = 隱藏「截至上期底累計未結案數／其中本期已結案數／累計項目完成率」與其後分隔列 */
+  hideCarryOverRows?: boolean
 }) {
+  const visibleMetrics = hideCarryOverRows
+    ? MATRIX_METRICS.filter((m) => !CARRY_OVER_ROW_KEYS.includes(m.key))
+    : MATRIX_METRICS
   const nowYear  = dayjs().year()
   const nowMonth = dayjs().month() + 1
   const isFuture = (month: number) =>
@@ -469,6 +490,8 @@ function YearMatrixTable({
     period_rate:             totalPeriodTotal > 0
                                ? Math.round(totalPeriodCompleted / totalPeriodTotal * 1000) / 10
                                : null,
+    // 合計 = 合計應完成總數 − 合計已完成（同樣只累計已過月份 pastMonths）
+    period_incomplete:       totalPeriodTotal - totalPeriodCompleted,
     incomplete_notes: '',
   }
 
@@ -585,7 +608,7 @@ function YearMatrixTable({
     },
   ]
 
-  const tableData: Record<string, unknown>[] = MATRIX_METRICS.map((metric) => {
+  const tableData: Record<string, unknown>[] = visibleMetrics.map((metric) => {
     const isSep = metric.key === '_sep1' || metric.key === '_sep2'
     const row: Record<string, unknown> = {
       key:    metric.key,
@@ -595,7 +618,12 @@ function YearMatrixTable({
       _total: isSep ? null : summaryValues[metric.key as string] ?? null,
     }
     data.months.forEach((m) => {
-      row[`m${m.month}`] = isSep ? null : m[metric.key as keyof PMYearMatrixMonth]
+      // period_incomplete 為前端衍生欄位，後端不回傳
+      row[`m${m.month}`] = isSep
+        ? null
+        : metric.key === 'period_incomplete'
+          ? m.period_total - m.period_completed
+          : m[metric.key as keyof PMYearMatrixMonth]
     })
     return row
   })
@@ -1405,7 +1433,7 @@ export default function FullBuildingMaintenancePage() {
           <Typography.Text type="secondary">載入年度矩陣中…</Typography.Text>
         </Card>
       ) : matrixData ? (
-        <YearMatrixTable data={matrixData} frequencyType="monthly"
+        <YearMatrixTable data={matrixData} frequencyType="monthly" hideCarryOverRows
           onCellClick={(y, m, metric, label) => openDetailModal('monthly', y, m, metric, label)} />
       ) : (
         <Alert message="尚未載入年度矩陣，請點擊重新整理" type="info" showIcon style={{ marginBottom: 16 }} />
@@ -2497,6 +2525,7 @@ const METRIC_LABELS: Record<string, string> = {
   prev_resolved:     '其中本期已結案數',
   period_total:      '本期應完成總數',
   period_completed:  '本期已完成',
+  period_incomplete: '本期未完成項目',
 }
 
 // 中文狀態 → Tag 色。後端 2026-08-20 起改回傳 STATUS_LABELS 五態

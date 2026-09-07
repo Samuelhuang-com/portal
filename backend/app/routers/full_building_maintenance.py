@@ -1423,7 +1423,7 @@ def _matrix_item_status_zh(item: FullBldgPMItem, period_month: str, is_done: boo
 def get_year_matrix_items(
     year:           int           = Query(..., description="年份"),
     month:          int           = Query(..., description="月份（0 = 全年合計）"),
-    metric:         str           = Query(..., description="prev_carry_over | prev_resolved | period_total | period_completed"),
+    metric:         str           = Query(..., description="prev_carry_over | prev_resolved | period_total | period_completed | period_incomplete"),
     frequency_type: Optional[str] = Query(None, description="monthly | quarterly | yearly"),
     db:             Session = Depends(get_db),
 ):
@@ -1476,6 +1476,11 @@ def get_year_matrix_items(
             pass  # 全部包含
         elif metric == "period_completed":
             if not is_completed:
+                continue
+        elif metric == "period_incomplete":
+            # 2026-09-07 新增：本期應完成但尚未完成（end_time 為空）
+            # 與 period_completed 互補，兩者相加 = period_total
+            if is_completed:
                 continue
         elif metric in ("prev_carry_over", "prev_resolved"):
             pass  # 簡化：月份過濾已完成，詳細邏輯依需求擴充

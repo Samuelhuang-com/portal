@@ -153,7 +153,9 @@ export async function fetchFullBldgPMDailyForm(
 }
 
 // ── 矩陣格明細（數字點擊查詢）────────────────────────────────────────────────
-export type PMMatrixMetric = 'prev_carry_over' | 'prev_resolved' | 'period_total' | 'period_completed'
+export type PMMatrixMetric =
+  | 'prev_carry_over' | 'prev_resolved' | 'period_total' | 'period_completed'
+  | 'period_incomplete'   // 2026-09-07 新增：本期未完成項目（= period_total − period_completed）
 
 export interface FullBldgPMMatrixItem {
   ragic_id:            string
