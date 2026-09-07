@@ -1273,7 +1273,6 @@ def _make_mall_pm_stats_table(
 
     # ── 合計：僅加總有資料的月份 ───────────────────────────────────────────
     active = [m for m in all_months if _has_data(m)]
-    sum_resolve = sum(m.prev_resolved_in_period for m in active)
     sum_total = sum(m.period_total for m in active)
     sum_done = sum(m.period_completed for m in active)
     full_rate = f"{round(sum_done / sum_total * 100, 1):.1f}%" if sum_total else "—"
@@ -1286,26 +1285,24 @@ def _make_mall_pm_stats_table(
         row["total"] = total_val
         return row
 
+    # ── 2026-09-07 依使用者指示：三種頻率一律不顯示累計未結案三列 ────────────
+    # （截至上月底累計未結案數／其中本月已結案數／累計項目完成率）
+    # ⚠️ 網頁只有「每月維護」TAB 隱藏，每季／每年仍顯示——PPT 與網頁在這點上
+    #    刻意不一致，是使用者裁示，不要「順手對齊」回去。
     rows: list[dict] = [
-        _r("截至上月底累計未結案數", lambda m: str(m.prev_carry_over), "—"),
-        _r(
-            "其中本月已結案數",
-            lambda m: str(m.prev_resolved_in_period),
-            str(sum_resolve),
-        ),
-        _r(
-            "累計項目完成率",
-            lambda m: (
-                f"{m.carry_over_rate:.1f}%" if m.carry_over_rate is not None else "—"
-            ),
-            "—",
-        ),
         _r("本月週期保養項目數", lambda m: str(m.period_total), str(sum_total)),
         _r("本月週期保養完成數", lambda m: str(m.period_completed), str(sum_done)),
         _r(
             "本月週期保養完成率",
             lambda m: (f"{m.period_rate:.1f}%" if m.period_rate is not None else "—"),
             full_rate,
+        ),
+        # 2026-09-07 新增，對齊網頁的「本期未完成項目」列
+        # （PPT 既有列一律以「本月」開頭，故此處用「本月未完成項目」）
+        _r(
+            "本月未完成項目",
+            lambda m: str(m.period_total - m.period_completed),
+            str(sum_total - sum_done),
         ),
     ]
     return cols, rows
@@ -1367,7 +1364,6 @@ def _make_fb_pm_stats_table(
 
     # ── 合計：僅加總有資料的月份 ───────────────────────────────────────────
     active = [m for m in all_months if _has_data(m)]
-    sum_resolve = sum(m.prev_resolved_in_period for m in active)
     sum_total = sum(m.period_total for m in active)
     sum_done = sum(m.period_completed for m in active)
     full_rate = f"{round(sum_done / sum_total * 100, 1):.1f}%" if sum_total else "—"
@@ -1380,26 +1376,24 @@ def _make_fb_pm_stats_table(
         row["total"] = total_val
         return row
 
+    # ── 2026-09-07 依使用者指示：三種頻率一律不顯示累計未結案三列 ────────────
+    # （截至上月底累計未結案數／其中本月已結案數／累計項目完成率）
+    # ⚠️ 網頁只有「每月維護」TAB 隱藏，每季／每年仍顯示——PPT 與網頁在這點上
+    #    刻意不一致，是使用者裁示，不要「順手對齊」回去。
     rows: list[dict] = [
-        _r("截至上月底累計未結案數", lambda m: str(m.prev_carry_over), "—"),
-        _r(
-            "其中本月已結案數",
-            lambda m: str(m.prev_resolved_in_period),
-            str(sum_resolve),
-        ),
-        _r(
-            "累計項目完成率",
-            lambda m: (
-                f"{m.carry_over_rate:.1f}%" if m.carry_over_rate is not None else "—"
-            ),
-            "—",
-        ),
         _r("本月週期保養項目數", lambda m: str(m.period_total), str(sum_total)),
         _r("本月週期保養完成數", lambda m: str(m.period_completed), str(sum_done)),
         _r(
             "本月週期保養完成率",
             lambda m: (f"{m.period_rate:.1f}%" if m.period_rate is not None else "—"),
             full_rate,
+        ),
+        # 2026-09-07 新增，對齊網頁的「本期未完成項目」列
+        # （PPT 既有列一律以「本月」開頭，故此處用「本月未完成項目」）
+        _r(
+            "本月未完成項目",
+            lambda m: str(m.period_total - m.period_completed),
+            str(sum_total - sum_done),
         ),
     ]
     return cols, rows
