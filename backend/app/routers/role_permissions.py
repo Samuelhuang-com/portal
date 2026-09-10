@@ -228,7 +228,7 @@ PERMISSION_DEFINITIONS = [
     # 規格書：docs/SPEC_ota_reviews.md §10.2
     #
     # ⚠️ 為什麼另開 group 而不併入「營運分析」：
-    #    §11.1 把 opera_* 那 9 個 key 列為敏感群組（PMS 營收資料），目前只給
+    #    §11.1 把 opera_* 那 10 個 key 列為敏感群組（PMS 營收資料），目前只給
     #    system_admin。OTA 評論是公開資料、不含營收，不該被那條紅線綁住 ——
     #    否則要開放給客務／房務主管看評論，就得連帶把營收權限一起送出去，
     #    那正是 §11 當初要解掉的問題。
@@ -243,6 +243,28 @@ PERMISSION_DEFINITIONS = [
     # 手動觸發爬蟲（P2 上線後才有作用）。與 sources_admin 分開：
     # 能設定來源不等於能隨時對 OTA 發請求 —— 抓太頻繁會被封 IP。
     {"key": "ota_sync_run",       "label": "手動觸發同步",         "group": "口碑分析"},
+    # ── 競品分析（2026-09-09 新增）────────────────────────────────────────────
+    # 資料來自 SerpApi 的 google_hotels 引擎（競品的**公開掛牌價**），
+    # 非 Ragic、非 PMS。規格書：docs/SPEC_compset_analysis.md §11
+    #
+    # ⚠️ 另開 group 的理由同口碑分析：競品掛牌價是公開資料、不含自家營收，
+    #    不該被 §11.1 那條 opera_* 紅線綁住。
+    #
+    # ⚠️⚠️ **`compset_subscriber_admin` 是敏感權限**：它可以改配額、可以手動加發
+    #    一次性額度 —— 直接影響對外收費與 SerpApi 成本。**只給 system_admin**，
+    #    不要放進 portal_role_admin 的建議授權。
+    #    （防提權 P-1「不得對自己所屬的訂閱加發」在 service 層另外強制。）
+    #
+    # ⚠️ 下列 label 必須與 frontend/src/constants/navLabels.ts 的 NAV_PAGE 完全一致。
+    {"key": "compset_view",             "label": "★ 競品分析 Dashboard", "group": "競品分析"},
+    {"key": "compset_matrix_view",      "label": "價格矩陣",             "group": "競品分析"},
+    {"key": "compset_trend_view",       "label": "價格軌跡",             "group": "競品分析"},
+    {"key": "compset_hotels_admin",     "label": "競爭組設定",           "group": "競品分析"},
+    {"key": "compset_settings_admin",   "label": "抓取節奏設定",         "group": "競品分析"},
+    # 手動觸發抓取與設定分開：能改節奏不等於能隨時送出查詢 —— **每次都花錢**。
+    {"key": "compset_fetch_run",        "label": "手動觸發抓取",         "group": "競品分析"},
+    # ⚠️ 敏感：見上方說明
+    {"key": "compset_subscriber_admin", "label": "訂閱與配額管理",       "group": "競品分析"},
 ]
 
 

@@ -167,6 +167,8 @@ export interface FullBldgPMMatrixItem {
   scheduled_date_full: string
   end_time:            string
   status:              string
+  scheduler_name:      string   // 2026-09-08 新增：Ragic「排定人員」
+  exec_date:           string   // 2026-09-08 新增：end_time 的日期部分（YYYY/MM/DD），未完成為空
   executor_name:       string
   result_note:         string
   abnormal_flag:       boolean

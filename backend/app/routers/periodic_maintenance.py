@@ -1054,7 +1054,7 @@ def get_period_stats_year_matrix(
 def get_year_matrix_items(
     year:           int           = Query(..., description="年份，如 2026"),
     month:          int           = Query(..., ge=1, le=12, description="月份 1-12；合計欄傳 0 查全年"),
-    metric:         str           = Query(..., description="prev_carry_over | prev_resolved | period_total | period_completed"),
+    metric:         str           = Query(..., description="prev_carry_over | prev_resolved | period_total | period_completed | period_incomplete"),
     frequency_type: Optional[str] = Query(None, description="monthly | quarterly | yearly；None = 全部"),
     db:             Session = Depends(get_db),
 ):
@@ -1065,6 +1065,7 @@ def get_year_matrix_items(
       prev_resolved      → 上月未完成、於本月結案的項目
       period_total       → 本月應保養項目
       period_completed   → 本月已完成項目
+      period_incomplete  → 本月應保養但尚未完成的項目（＝ period_total − period_completed）
     month = 0 → 全年（合計欄）
     """
     # 決定時間範圍
@@ -1123,6 +1124,10 @@ def get_year_matrix_items(
                   if x["end_date"] is not None and p_start <= x["end_date"] <= p_end]
     elif metric == "period_completed":
         target = [x for x in period_items_list if x["is_done"]]
+    elif metric == "period_incomplete":
+        # 2026-09-10 新增：本期應完成但尚未完成，與 period_completed 互補
+        #（兩者相加 = period_total）。比照 mall/periodic-maintenance。
+        target = [x for x in period_items_list if not x["is_done"]]
     else:  # period_total
         target = period_items_list
 
@@ -1138,6 +1143,8 @@ def get_year_matrix_items(
         # 狀態（中文，對應前端 Tag 顯示）
         is_done = e["is_done"]
         full_d  = e["full_date"]
+        # 2026-09-08：明細 Modal 的「執行日期」欄用（end_time 的日期部分）
+        end_date = _parse_end_date(it.end_time)
         if is_done:
             status_zh = "已完成"
         elif it.start_time:
@@ -1160,6 +1167,11 @@ def get_year_matrix_items(
             "scheduled_date_full": sched_display,
             "end_time":            it.end_time,
             "status":              status_zh,
+            # 2026-09-08 新增兩欄（明細 Modal 用，對齊 mall/periodic-maintenance）
+            #   scheduler_name：Ragic Sheet 11「排定人員」，與「執行人員」是不同的人
+            #   exec_date     ：end_time（保養時間迄）的日期部分，未完成則為空字串
+            "scheduler_name":      it.scheduler_name or "",
+            "exec_date":           end_date.strftime("%Y/%m/%d") if end_date else "",
             "executor_name":       it.executor_name,
             "result_note":         it.result_note,
             "abnormal_flag":       it.abnormal_flag,

@@ -54,6 +54,8 @@ from app.core.scheduler import make_cron_trigger, scheduler as _scheduler, regis
 from app.core.time import twnow
 from app.routers import (
     approvals,
+    compset_rates,
+    compset_admin,
     claim_report,
     combined_report,
     purchase_report,
@@ -1165,6 +1167,13 @@ async def lifespan(app: FastAPI):
     #    那四個排程就是這樣停在 6/24 沒人發現的。
     import app.models.ota_review               # noqa: F401  來源／評論／同步紀錄／主題字典／AI 快取
 
+    # 競品分析（2026-09-09）：資料來自 SerpApi 的 google_hotels 引擎。
+    # 規格書 docs/SPEC_compset_analysis.md；建表走 Alembic revision `compset`
+    # （⚠️ 不靠 create_all —— create_all 補表不補欄位，之後改欄位會靜默失效）。
+    # ⚠️ 本模組**有排程**（每日 04:10），因此必須同時登錄 sync_tool.py 的
+    #    MODULES 與 _ensure_db_schema()（規格書 §10.0）。
+    import app.models.compset_analysis         # noqa: F401  訂閱／競爭組／快照／配額／彙總
+
 
     # 建立尚未存在的資料表（不影響已有表格）
     # 2026-07-16：套用 _run_startup_migration 重試保護（見該函式 docstring）——
@@ -1828,6 +1837,49 @@ async def lifespan(app: FastAPI):
         )
         print("[Portal] OTA sentiment analyze scheduled: daily at 03:40")
 
+        # ── 每日 04:10 競品價格抓取（2026-09-09）───────────────────────
+        # 規格書：docs/SPEC_compset_analysis.md §12
+        #
+        # ⚠️ 為什麼是 04:10：避開整點（module_auto_sync 與 8 支請購／請款同步
+        #    會同時觸發），也避開 OTA 的 03:05／03:40 與 OHIP 快照的 06:00。
+        #
+        # ⚠️ 刻意用同步 `def`（理由同上方各排程）。
+        #
+        # ⚠️ 這條路徑沒有外層鎖，所以呼叫 run_scheduled_fetch()（自帶 sync_lock），
+        #    不是 sync_all_enabled()（那支給 sync_tool.py 用，外層已加鎖，
+        #    兩邊都加會自我死鎖）。
+        #
+        # ⚠️ 本模組同時登錄於 sync_tool.py MODULES —— 只掛這裡不夠，
+        #    SCHEDULER_ENABLED=false 的機器上等於從未執行。
+        #
+        # ⚠️ 未設定 SERPAPI_API_KEY 時不會拋例外，只回 skipped ＋ warning。
+        #    整個排程不該因為一個沒設定好的模組而中斷。
+        def _daily_compset_fetch():
+            from app.services.compset_fetch_service import run_scheduled_fetch
+            try:
+                r = run_scheduled_fetch()
+                print(
+                    f"[Portal] compset fetch: {r.get('success')}/{r.get('total')} subscribers ok "
+                    f"requests={r.get('fetched')} rows={r.get('upserted')}"
+                )
+                # ⚠️ warning 與 error 分開印 —— 「某家沒抓到」與「整個級別失敗」
+                #    在畫面上是不同顏色。
+                for w in (r.get("warnings") or [])[:20]:
+                    print(f"[Portal] compset warning: {w}")
+                for e in r.get("errors") or []:
+                    print(f"[Portal] compset error: {e}")
+            except Exception as exc:
+                print(f"[Portal] compset fetch failed: {exc}")
+
+        _scheduler.add_job(
+            _daily_compset_fetch,
+            trigger=_CronTrigger(hour=4, minute=10),
+            id="compset_rate_fetch",
+            replace_existing=True,
+            misfire_grace_time=3600,
+        )
+        print("[Portal] compset rate fetch scheduled: daily at 04:10")
+
         _scheduler.start()
         print("[Portal] AutoSync scheduler started (cron-aligned, default every 30 minutes).")
     else:
@@ -2398,6 +2450,28 @@ app.include_router(
     ota_admin.router,
     prefix=f"{API_PREFIX}/ota/admin",
     tags=["口碑分析"],
+)
+
+# ── 競品分析：資料來自 SerpApi 的 google_hotels 引擎，非 Ragic、非 PMS ────────
+# 規格書：docs/SPEC_compset_analysis.md §8、§10
+#
+# ⚠️ 兩支 router 共用同一個 prefix —— compset_rates 是查詢、compset_admin 是設定，
+#    路徑不重疊（/rates/* /dashboard /logs vs /hotels /subscribers /settings/*）。
+#
+# ⚠️ 權限另開「競品分析」group，理由同口碑分析：競品掛牌價是公開資料、
+#    不含自家營收，不該被 §11.1 那條 opera_* 紅線綁住。
+#
+# ⚠️ `compset_subscriber_admin` **是敏感權限**（可改配額、可加發額度 ＝
+#    直接影響對外收費與 API 成本），只給 system_admin。
+app.include_router(
+    compset_rates.router,
+    prefix=f"{API_PREFIX}/compset",
+    tags=["競品分析"],
+)
+app.include_router(
+    compset_admin.router,
+    prefix=f"{API_PREFIX}/compset",
+    tags=["競品分析"],
 )
 
 # ── 即時營運：直接向 OPERA Cloud（OHIP）取數，不落地、不共用 opera_* 表 ────────

@@ -1471,6 +1471,8 @@ def get_year_matrix_items(
         # period_total 以「批次月份」為準，不過濾 exec_months（與矩陣計算一致）
 
         is_completed = bool(item.end_time and item.end_time.strip())
+        # 2026-09-08：明細 Modal 的「執行日期」欄用（end_time 的日期部分）
+        end_date = _parse_end_date(item.end_time)
 
         if metric == "period_total":
             pass  # 全部包含
@@ -1495,6 +1497,11 @@ def get_year_matrix_items(
             "scheduled_date_full": f"{batch.period_month[:4]}/{item.scheduled_date}" if item.scheduled_date else "",
             "end_time":            item.end_time or "",
             "status":              _matrix_item_status_zh(item, batch.period_month, is_completed),
+            # 2026-09-08 新增兩欄（明細 Modal 用，對齊 mall/periodic-maintenance）
+            #   scheduler_name：Ragic「排定人員」，與「執行人員」是不同的人
+            #   exec_date     ：end_time（保養結束時間）的日期部分，未完成則為空字串
+            "scheduler_name":      item.scheduler_name or "",
+            "exec_date":           end_date.strftime("%Y/%m/%d") if end_date else "",
             "executor_name":       item.executor_name or "",
             "result_note":         item.result_note or "",
             "abnormal_flag":       bool(item.abnormal_flag),

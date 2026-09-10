@@ -232,6 +232,15 @@ import OtaReviewsPage          from '@/pages/OTA/Reviews'
 import OtaAlertsPage           from '@/pages/OTA/Alerts'
 import OtaTopicRulesPage       from '@/pages/OTA/TopicRules'
 import OtaSourcesPage          from '@/pages/OTA/Sources'
+// 競品分析（2026-09-09）。資料夾用 Compset —— 刻意不叫 Comp：
+// 飯店業的 comp ＝ complimentary room（招待房），會被誤讀（SPEC D8）。
+import CompsetDashboardPage    from '@/pages/Compset/Dashboard'
+import CompsetMatrixPage       from '@/pages/Compset/Matrix'
+import CompsetTrendPage        from '@/pages/Compset/Trend'
+import CompsetHotelsPage       from '@/pages/Compset/Hotels'
+import CompsetCadencePage      from '@/pages/Compset/Cadence'
+import CompsetSubscribersPage  from '@/pages/Compset/Subscribers'
+import CompsetLogsPage         from '@/pages/Compset/Logs'
 
 // ── 首頁重定向（讀取 menu-config 設定，fallback 到第一個有權限的 menu 項目）──────
 // 首頁設定的儲存與選單走訪工具已移至 @/utils/homePage（2026-08-11）
@@ -984,6 +993,54 @@ export default function AppRouter() {
           <Route path="sources" element={
             <PermissionGuard permissionKey="ota_sources_admin">
               <OtaSourcesPage />
+            </PermissionGuard>
+          } />
+        </Route>
+
+        {/* ── 競品分析（2026-09-09）────────────────────────────────────────
+            規格書 docs/SPEC_compset_analysis.md。
+            ⚠️ 每一頁都要有自己的 PermissionGuard —— MainLayout 把選單項藏起來
+               只是視覺，直接打網址仍然會進得去。 */}
+        <Route path="compset">
+          {/* index 導向 dashboard：它是模組入口，權限 key 也就是最基本的 compset_view */}
+          <Route index element={<Navigate to="/compset/dashboard" replace />} />
+          <Route path="dashboard" element={
+            <PermissionGuard permissionKey="compset_view">
+              <CompsetDashboardPage />
+            </PermissionGuard>
+          } />
+          <Route path="matrix" element={
+            <PermissionGuard permissionKey="compset_matrix_view">
+              <CompsetMatrixPage />
+            </PermissionGuard>
+          } />
+          <Route path="trend" element={
+            <PermissionGuard permissionKey="compset_trend_view">
+              <CompsetTrendPage />
+            </PermissionGuard>
+          } />
+          {/* 競爭組設定同時是 CSV 備援匯入的入口，共用 compset_hotels_admin */}
+          <Route path="hotels" element={
+            <PermissionGuard permissionKey="compset_hotels_admin">
+              <CompsetHotelsPage />
+            </PermissionGuard>
+          } />
+          {/* 抓取節奏設定上有「立即抓取」按鈕（會扣配額），該按鈕另受
+              compset_fetch_run 控制，頁面本身只要 compset_settings_admin */}
+          <Route path="cadence" element={
+            <PermissionGuard permissionKey="compset_settings_admin">
+              <CompsetCadencePage />
+            </PermissionGuard>
+          } />
+          {/* ⚠️ 敏感：這一頁可以改配額、可以手動加發，等於能決定花多少錢 */}
+          <Route path="subscribers" element={
+            <PermissionGuard permissionKey="compset_subscriber_admin">
+              <CompsetSubscribersPage />
+            </PermissionGuard>
+          } />
+          <Route path="logs" element={
+            <PermissionGuard permissionKey="compset_view">
+              <CompsetLogsPage />
             </PermissionGuard>
           } />
         </Route>

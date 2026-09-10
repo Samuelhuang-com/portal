@@ -385,8 +385,12 @@ function QuarterSelectorCards({
 }
 
 // ── 年度矩陣總表（12個月橫軸、指標縱軸）────────────────────────────────────────
+// 2026-09-10 新增 'period_incomplete'：後端 PMYearMatrixMonth 沒有這個欄位，
+// 由前端以 period_total − period_completed 即時算出（見下方 tableData / summaryValues）。
+type MatrixMetricKey = keyof PMYearMatrixMonth | '_sep1' | '_sep2' | 'period_incomplete'
+
 const MATRIX_METRICS: {
-  key: keyof PMYearMatrixMonth | '_sep1' | '_sep2'
+  key: MatrixMetricKey
   label: string
   isRate?: boolean
   isText?: boolean
@@ -401,11 +405,32 @@ const MATRIX_METRICS: {
   { key: 'period_total',            label: '本期週期保養項目數' },
   { key: 'period_completed',        label: '本期週期保養完成數' },
   { key: 'period_rate',             label: '本期週期保養完成率', isRate: true },
+  { key: 'period_incomplete',
+    label: '本期未完成項目',
+    tooltip: '本期未完成項目數 ＝ 本期週期保養項目數 － 本期週期保養完成數。\n即該欄位所屬期間內應完成、但尚未結案（無完成時間）的項目數，含逾期、進行中、待執行、未排定。' },
   { key: '_sep2',                   label: '' },
   { key: 'incomplete_notes',        label: '未完成事項說明（原因/待協助事項）', isText: true },
 ]
 
-function YearMatrixTable({ data, frequencyType, onCellClick }: { data: PMYearMatrix; frequencyType?: string; onCellClick?: (year: number, month: number, metric: PMMatrixMetric, monthLabel: string) => void }) {
+// 2026-09-10 依使用者指示：隱藏累計未結案三列（含其後的 _sep1 分隔列）。
+//   第一版只做「每月維護」，同日再指示每季／每年也比照辦理，故三個 TAB 都傳 true。
+//   ⚠️ 仍保留 prop 而不是直接刪列定義：列的計算邏輯（summaryValues）照算不動，
+//      日後任一 TAB 要恢復顯示，只要把該處的 hideCarryOverRows 拿掉即可。
+//   ⚠️ 本模組三個 TAB 全隱藏，商場週期保養／全棟例行維護的網頁目前仍只有每月隱藏。
+const CARRY_OVER_ROW_KEYS: MatrixMetricKey[] = [
+  'prev_carry_over', 'prev_resolved_in_period', 'carry_over_rate', '_sep1',
+]
+
+function YearMatrixTable({ data, frequencyType, onCellClick, hideCarryOverRows = false }: {
+  data: PMYearMatrix
+  frequencyType?: string
+  onCellClick?: (year: number, month: number, metric: PMMatrixMetric, monthLabel: string) => void
+  /** true = 隱藏「截至上期底累計未結案數／其中本期已結案數／累計項目完成率」與其後分隔列 */
+  hideCarryOverRows?: boolean
+}) {
+  const visibleMetrics = hideCarryOverRows
+    ? MATRIX_METRICS.filter((m) => !CARRY_OVER_ROW_KEYS.includes(m.key))
+    : MATRIX_METRICS
   // ── 判斷尚未發生的月份（年份相同則 month > 本月；未來年份整年都是未來）──────
   const nowYear  = dayjs().year()
   const nowMonth = dayjs().month() + 1   // 1-based
@@ -429,6 +454,8 @@ function YearMatrixTable({ data, frequencyType, onCellClick }: { data: PMYearMat
     period_rate:             totalPeriodTotal > 0
                                ? Math.round(totalPeriodCompleted / totalPeriodTotal * 1000) / 10
                                : null,
+    // 合計 = 合計項目數 − 合計完成數（同樣只累計已過月份 pastMonths）
+    period_incomplete:       totalPeriodTotal - totalPeriodCompleted,
     incomplete_notes:        '',
   }
 
@@ -443,6 +470,7 @@ function YearMatrixTable({ data, frequencyType, onCellClick }: { data: PMYearMat
     prev_resolved_in_period: 'prev_resolved',
     period_total:            'period_total',
     period_completed:        'period_completed',
+    period_incomplete:       'period_incomplete',
   }
 
   const renderCell = (v: unknown, row: Record<string, unknown>, isTotal = false, monthNum = 0, monthLabel = '') => {
@@ -561,7 +589,7 @@ function YearMatrixTable({ data, frequencyType, onCellClick }: { data: PMYearMat
   ]
 
   // 轉置：每個 metric 一行，12個月的值當欄位值，最後加 _total
-  const tableData: Record<string, unknown>[] = MATRIX_METRICS.map((metric) => {
+  const tableData: Record<string, unknown>[] = visibleMetrics.map((metric) => {
     const isSep = metric.key === '_sep1' || metric.key === '_sep2'
     const row: Record<string, unknown> = {
       key:     metric.key,
@@ -571,7 +599,11 @@ function YearMatrixTable({ data, frequencyType, onCellClick }: { data: PMYearMat
       _total:  isSep ? null : summaryValues[metric.key as string] ?? null,
     }
     data.months.forEach((m) => {
-      row[`m${m.month}`] = isSep ? null : m[metric.key as keyof PMYearMatrixMonth]
+      if (isSep) { row[`m${m.month}`] = null; return }
+      // period_incomplete 為前端衍生欄位，後端不回傳
+      row[`m${m.month}`] = metric.key === 'period_incomplete'
+        ? m.period_total - m.period_completed
+        : m[metric.key as keyof PMYearMatrixMonth]
     })
     return row
   })
@@ -609,6 +641,10 @@ const TD: React.CSSProperties = {
 // 之後如需重新開啟只要把這個常數改回 true 即可，不要刪除下方程式碼）。比照同日
 // mall_periodic_maintenance / full_building_maintenance 的 SHOW_MONTHLY_CALENDAR 同型改法。
 const SHOW_MONTHLY_CALENDAR = false
+
+// 「每月保養表」TAB 顯示開關（2026-09-10 依使用者指示隱藏；改為 true 即恢復顯示）
+// 比照 mall/periodic-maintenance 的 SHOW_DAILY_FORM_TAB 做法，程式碼一律保留不刪。
+const SHOW_FORM_TAB: boolean = false
 
 export default function PeriodicMaintenancePage() {
   const navigate = useNavigate()
@@ -989,6 +1025,8 @@ export default function PeriodicMaintenancePage() {
   }, [formYear, formMonth])
 
   useEffect(() => {
+    // TAB 隱藏時不需要載入（省下 fetchPMBatches + fetchPMBatchDetail 兩支呼叫）
+    if (!SHOW_FORM_TAB) return
     loadFormItems()
   }, [loadFormItems])
 
@@ -2292,7 +2330,8 @@ export default function PeriodicMaintenancePage() {
           <Typography.Text type="secondary">載入年度矩陣中…</Typography.Text>
         </Card>
       ) : matrixData ? (
-        <YearMatrixTable data={matrixData} frequencyType='monthly' onCellClick={(y, m, metric, lbl) => openDetailModal('monthly', y, m, metric, lbl)} />
+        <YearMatrixTable data={matrixData} frequencyType='monthly' hideCarryOverRows
+          onCellClick={(y, m, metric, lbl) => openDetailModal('monthly', y, m, metric, lbl)} />
       ) : (
         <Alert message="尚未載入年度矩陣，請點擊重新整理" type="info" showIcon style={{ marginBottom: 16 }} />
       )}
@@ -2376,6 +2415,7 @@ export default function PeriodicMaintenancePage() {
         <YearMatrixTable
           data={quarterlyMatrixData}
           frequencyType='quarterly'
+          hideCarryOverRows
           onCellClick={(y, m, metric, lbl) => openDetailModal('quarterly', y, m, metric, lbl)}
         />
       ) : (
@@ -2465,6 +2505,7 @@ export default function PeriodicMaintenancePage() {
         <YearMatrixTable
           data={yearlyMatrixData}
           frequencyType='yearly'
+          hideCarryOverRows
           onCellClick={(y, m, metric, lbl) => openDetailModal('yearly', y, m, metric, lbl)}
         />
       ) : (
@@ -2518,11 +2559,12 @@ export default function PeriodicMaintenancePage() {
         onChange={setActiveTab}
         items={[
           { key: 'dashboard', label: 'Dashboard',  children: DashboardTab },
-          {
+          // 2026-09-10 依使用者指示隱藏「每月保養表」TAB（程式碼保留，改 SHOW_FORM_TAB = true 即可恢復）
+          ...(SHOW_FORM_TAB ? [{
             key:   'form',
             label: <span><CalendarOutlined /> 每月保養表</span>,
             children: FormTab,
-          },
+          }] : []),
           {
             key: 'monthly',
             label: <span><CalendarOutlined /> 每月維護</span>,
@@ -2669,6 +2711,7 @@ const METRIC_LABELS: Record<string, string> = {
   prev_resolved:     '其中本期已結案數',
   period_total:      '本期應完成總數',
   period_completed:  '本期已完成',
+  period_incomplete: '本期未完成項目',
 }
 
 const STATUS_COLOR: Record<string, string> = {
@@ -2715,19 +2758,21 @@ function MatrixDetailModal({
     const periodTag = month === 0 ? `${year}-全年` : `${year}-${String(month).padStart(2, '0')}`
     await exportRowsToExcel(
       items.map((r) => ({
-        '保養月份': r.period_month,
-        '類別':     r.category,
-        '保養項目': r.task_name,
-        '頻率':     r.frequency,
-        '排定日期': r.scheduled_date_full,
-        '狀態':     r.status,
-        '執行人員': r.executor_name,
-        '備註':     r.result_note,
+        '保養月份':   r.period_month,
+        '類別':       r.category,
+        '保養項目':   r.task_name,
+        '頻率':       r.frequency,
+        '排定日期':   r.scheduled_date_full,
+        '狀態':       r.status,
+        '原排定人員': r.scheduler_name,
+        '執行日期':   r.exec_date,
+        '執行人員':   r.executor_name,
+        '備註':       r.result_note,
       })),
       {
         filename:  `飯店週期保養_${freqLabel}_${metricLabel}_${periodTag}.xlsx`,
         sheetName: metricLabel,
-        colWidths: [10, 8, 40, 6, 12, 8, 14, 30],
+        colWidths: [10, 8, 40, 6, 12, 8, 12, 12, 14, 30],
       },
     )
     setExporting(false)
@@ -2746,6 +2791,11 @@ function MatrixDetailModal({
         const color = v === '已完成' ? 'success' : v === '進行中' ? 'processing' : v === '逾期' ? 'error' : 'default'
         return <Tag color={color} style={{ fontSize: 11 }}>{v || '—'}</Tag>
       } },
+    // 2026-09-08 新增：原排定人員、執行日期（執行日期＝ end_time 的日期，未完成顯示 —）
+    { title: '原排定人員', dataIndex: 'scheduler_name',    width: 100, ellipsis: true,
+      render: (v: string) => v || '—' },
+    { title: '執行日期', dataIndex: 'exec_date',           width: 100,
+      render: (v: string) => v || '—' },
     { title: '執行人員', dataIndex: 'executor_name',       width: 90, ellipsis: true },
     { title: '備註',     dataIndex: 'result_note',         ellipsis: true,
       render: (v: string) => <Typography.Text style={{ fontSize: 11 }}>{v || '—'}</Typography.Text> },

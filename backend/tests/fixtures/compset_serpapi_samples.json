@@ -1,0 +1,131 @@
+{
+  "_readme": [
+    "競品分析 — SerpApi google_hotels 真實回應樣本（2026-09-09 P0 探測取得，已精簡）",
+    "來源：SerpApi Playground，實際查詢 q=公館 台北 / property_token=瀚寓夏天，gl=tw hl=zh-tw currency=TWD adults=2",
+    "只保留 parser 會讀到的欄位；images / nearby_places / reviews_breakdown / amenities 已移除。",
+    "每一份樣本都對應至少一個 parser 分支，刪任何一份都會讓測試覆蓋率變差："
+  ],
+  "_branches": {
+    "loc_p1": "地點查詢第 1 頁：有 ads（價格與 token 都和 properties 不同）、有 before_taxes_fees",
+    "loc_p2": "地點查詢第 2 頁：完全沒有 before_taxes_fees、且混入 type=vacation rental",
+    "tok_ok": "token 查詢有房：16 個通路報價、含 official、含缺 before_taxes_fees 的通路、num_guests 混 2/3",
+    "tok_far": "token 查詢 D+90 有房：證明空結果不是「太遠沒報價」",
+    "tok_soldout": "token 查詢賣完：rate_per_night=null、prices=[]，但 typical_price_range 幣別會變（見 §陷阱）"
+  },
+  "_traps": [
+    "ads 的價格比 properties 高 10~25%，token 也是兩套 —— 只解析 properties",
+    "loc_p2 的 rate_per_night 沒有 before_taxes_fees → tax_included 必須是 unknown 不是 no",
+    "台北漫步旅店 lowest == before_taxes_fees == 1000 → 也是 unknown（來源未拆分），不是 no",
+    "type=vacation rental 不是飯店庫存，必須濾掉",
+    "⭐ tok_soldout 的 typical_price_range 只有 extracted_*、沒有 lowest/highest 字串，數值 168/252 是美元不是台幣 —— 沒有字串欄位就不可信任幣別，一律不採用",
+    "prices[] 沒有排序，不可以拿 prices[0] 當最低價"
+  ],
+
+  "loc_p1": {
+    "search_parameters": {"engine": "google_hotels", "q": "公館 台北", "gl": "tw", "hl": "zh-tw", "currency": "TWD", "check_in_date": "2026-09-20", "check_out_date": "2026-09-21", "adults": 2, "children": 0},
+    "search_information": {"total_results": 356},
+    "serpapi_pagination": {"current_from": 1, "current_to": 18, "next_page_token": "CBI="},
+    "ads": [
+      {"name": "承攜行旅 - 台北台大館", "property_token": "CgoIt8Lcl6XB0t84EAE", "price": "$1,583", "extracted_price": 1583, "overall_rating": 3.9},
+      {"name": "捷絲旅 臺大尊賢館 (Just Sleep Taipei NTU)", "property_token": "CgoIkL_Wyc-o05gUEAE", "price": "$3,468", "extracted_price": 3468, "overall_rating": 4.6}
+    ],
+    "properties": [
+      {"type": "hotel", "name": "承攜行旅 - 台北台大館", "property_token": "ChkIt8Lcl6XB0t84Gg0vZy8xMXEzemY5cWNiEAE", "extracted_hotel_class": 3, "overall_rating": 3.9, "reviews": 446,
+       "gps_coordinates": {"latitude": 25.0215859, "longitude": 121.5268865},
+       "rate_per_night": {"lowest": "$1,274", "extracted_lowest": 1274, "before_taxes_fees": "$1,103", "extracted_before_taxes_fees": 1103},
+       "total_rate": {"lowest": "$1,274", "extracted_lowest": 1274, "before_taxes_fees": "$1,103", "extracted_before_taxes_fees": 1103}},
+      {"type": "hotel", "name": "瀚寓夏天 Hanns Summer", "property_token": "ChoIo5Xt8-CnkI__ARoNL2cvMTF2bTFsbDRfcxAB", "extracted_hotel_class": 3, "overall_rating": 4.8, "reviews": 1046,
+       "gps_coordinates": {"latitude": 25.0154982, "longitude": 121.5313595},
+       "rate_per_night": {"lowest": "$1,900", "extracted_lowest": 1900, "before_taxes_fees": "$1,645", "extracted_before_taxes_fees": 1645},
+       "total_rate": {"lowest": "$1,900", "extracted_lowest": 1900, "before_taxes_fees": "$1,645", "extracted_before_taxes_fees": 1645}},
+      {"type": "hotel", "name": "捷絲旅 臺大尊賢館 (Just Sleep Taipei NTU)", "property_token": "ChgIkL_Wyc-o05gUGgwvZy8xMmhyanQwYncQAQ", "extracted_hotel_class": 4, "overall_rating": 4.5, "reviews": 1406,
+       "gps_coordinates": {"latitude": 25.0133365, "longitude": 121.5361173},
+       "rate_per_night": {"lowest": "$3,142", "extracted_lowest": 3142, "before_taxes_fees": "$2,720", "extracted_before_taxes_fees": 2720},
+       "total_rate": {"lowest": "$3,142", "extracted_lowest": 3142, "before_taxes_fees": "$2,720", "extracted_before_taxes_fees": 2720}},
+      {"type": "hotel", "name": "谷墨商旅 GoodMore Hotel", "property_token": "ChoIgvfciKa_utLGARoNL2cvMTFidjFuYmJtYhAB", "extracted_hotel_class": 3, "overall_rating": 4.1, "reviews": 1589,
+       "gps_coordinates": {"latitude": 25.0266799, "longitude": 121.5307666},
+       "rate_per_night": {"lowest": "$1,227", "extracted_lowest": 1227, "before_taxes_fees": "$1,169", "extracted_before_taxes_fees": 1169},
+       "total_rate": {"lowest": "$1,227", "extracted_lowest": 1227, "before_taxes_fees": "$1,169", "extracted_before_taxes_fees": 1169}},
+      {"type": "hotel", "name": "福華國際文教會館", "property_token": "ChkI_fft0o7vhonPARoML2cvMTJobGp3am15EAE", "extracted_hotel_class": 3, "overall_rating": 4.2, "reviews": 4426,
+       "gps_coordinates": {"latitude": 25.0237161, "longitude": 121.5342181},
+       "rate_per_night": {"lowest": "$2,444", "extracted_lowest": 2444, "before_taxes_fees": "$2,110", "extracted_before_taxes_fees": 2110},
+       "total_rate": {"lowest": "$2,444", "extracted_lowest": 2444, "before_taxes_fees": "$2,110", "extracted_before_taxes_fees": 2110}},
+      {"type": "hotel", "name": "台北漫步旅店 Meander Taipei Hostel", "property_token": "ChkI_oqC3cWfjcP7ARoML2cvMXE1Ym14NzFwEAE", "extracted_hotel_class": 3, "overall_rating": 4.6, "reviews": 2086,
+       "gps_coordinates": {"latitude": 25.0438561, "longitude": 121.5024958},
+       "rate_per_night": {"lowest": "$1,000", "extracted_lowest": 1000, "before_taxes_fees": "$1,000", "extracted_before_taxes_fees": 1000},
+       "total_rate": {"lowest": "$1,000", "extracted_lowest": 1000, "before_taxes_fees": "$1,000", "extracted_before_taxes_fees": 1000}}
+    ]
+  },
+
+  "loc_p2": {
+    "search_parameters": {"engine": "google_hotels", "q": "公館 台北", "gl": "tw", "hl": "zh-tw", "currency": "TWD", "check_in_date": "2026-09-20", "check_out_date": "2026-09-21", "adults": 2, "children": 0, "next_page_token": "CBI="},
+    "search_information": {"total_results": 1186},
+    "serpapi_pagination": {"current_from": 19, "current_to": 38, "next_page_token": "CCQ="},
+    "ads": [],
+    "properties": [
+      {"type": "hotel", "name": "綺樂文旅 康定館", "property_token": "ChoInOrn8OeG1Lj4ARoNL2cvMTFiNzMya3AzdxAB", "extracted_hotel_class": 3, "overall_rating": 4.1, "reviews": 776,
+       "gps_coordinates": {"latitude": 25.0439859, "longitude": 121.5026462},
+       "rate_per_night": {"lowest": "$943", "extracted_lowest": 943},
+       "total_rate": {"lowest": "$943", "extracted_lowest": 943}},
+      {"type": "hotel", "name": "台北麗都飯店", "property_token": "ChgI0M6eq5GK5bq6ARoLL2cvMXRkbXM5c3MQAQ", "extracted_hotel_class": 3, "overall_rating": 4.2, "reviews": 882,
+       "gps_coordinates": {"latitude": 25.0337878, "longitude": 121.5337333},
+       "rate_per_night": {"lowest": "$2,413", "extracted_lowest": 2413},
+       "total_rate": {"lowest": "$2,413", "extracted_lowest": 2413}},
+      {"type": "vacation rental", "name": "Mei Lodge - Double Room", "property_token": "ChkQ4YSFv-X3redGGg0vZy8xMXg4cXdkMHR4EAI", "overall_rating": 5, "reviews": 8,
+       "gps_coordinates": {"latitude": 25.0421009, "longitude": 121.5053635},
+       "rate_per_night": {"lowest": "$1,839", "extracted_lowest": 1839},
+       "total_rate": {"lowest": "$1,839", "extracted_lowest": 1839}}
+    ]
+  },
+
+  "tok_ok": {
+    "search_parameters": {"engine": "google_hotels", "q": "瀚寓夏天", "gl": "tw", "hl": "zh-tw", "currency": "TWD", "check_in_date": "2026-09-20", "check_out_date": "2026-09-21", "adults": 2, "children": 0, "property_token": "ChoIo5Xt8-CnkI__ARoNL2cvMTF2bTFsbDRfcxAB"},
+    "type": "hotel",
+    "name": "瀚寓夏天 Hanns Summer",
+    "property_token": "ChoIo5Xt8-CnkI__ARoNL2cvMTF2bTFsbDRfcxAB",
+    "address": "100台灣臺北市中正區富水里汀州路三段62號",
+    "extracted_hotel_class": 3, "overall_rating": 4.8, "reviews": 1046,
+    "gps_coordinates": {"latitude": 25.0154983, "longitude": 121.5313590},
+    "rate_per_night": {"lowest": "$1,900", "extracted_lowest": 1900, "before_taxes_fees": "$1,645", "extracted_before_taxes_fees": 1645},
+    "total_rate": {"lowest": "$1,900", "extracted_lowest": 1900, "before_taxes_fees": "$1,645", "extracted_before_taxes_fees": 1645},
+    "typical_price_range": {"lowest": "$1,430", "extracted_lowest": 1430, "highest": "$1,874", "extracted_highest": 1874},
+    "prices": [
+      {"source": "Hanns Summer", "rate_per_night": {"lowest": "$1,900", "extracted_lowest": 1900, "before_taxes_fees": "$1,645", "extracted_before_taxes_fees": 1645}, "num_guests": 2, "free_cancellation": true, "official": true},
+      {"source": "Trip.com", "rate_per_night": {"lowest": "$2,391", "extracted_lowest": 2391, "before_taxes_fees": "$2,277", "extracted_before_taxes_fees": 2277}, "num_guests": 3, "free_cancellation": true},
+      {"source": "Booking.com", "rate_per_night": {"lowest": "$2,880", "extracted_lowest": 2880, "before_taxes_fees": "$2,755", "extracted_before_taxes_fees": 2755}, "num_guests": 3, "free_cancellation": true},
+      {"source": "Traveloka.com", "rate_per_night": {"lowest": "$2,325", "extracted_lowest": 2325}, "num_guests": 2},
+      {"source": "Expedia.com", "rate_per_night": {"lowest": "$3,666", "extracted_lowest": 3666, "before_taxes_fees": "$3,491", "extracted_before_taxes_fees": 3491}, "num_guests": 2, "free_cancellation": true},
+      {"source": "Hotels.com", "rate_per_night": {"lowest": "$3,666", "extracted_lowest": 3666, "before_taxes_fees": "$3,491", "extracted_before_taxes_fees": 3491}, "num_guests": 2, "free_cancellation": true}
+    ]
+  },
+
+  "tok_far": {
+    "search_parameters": {"engine": "google_hotels", "q": "瀚寓夏天", "gl": "tw", "hl": "zh-tw", "currency": "TWD", "check_in_date": "2026-12-08", "check_out_date": "2026-12-09", "adults": 2, "children": 0, "property_token": "ChoIo5Xt8-CnkI__ARoNL2cvMTF2bTFsbDRfcxAB"},
+    "type": "hotel",
+    "name": "瀚寓夏天 Hanns Summer",
+    "property_token": "ChoIo5Xt8-CnkI__ARoNL2cvMTF2bTFsbDRfcxAB",
+    "address": "100台灣臺北市中正區富水里汀州路三段62號",
+    "extracted_hotel_class": 3, "overall_rating": 4.8, "reviews": 1046,
+    "rate_per_night": {"lowest": "$1,997", "extracted_lowest": 1997, "before_taxes_fees": "$1,729", "extracted_before_taxes_fees": 1729},
+    "total_rate": {"lowest": "$1,997", "extracted_lowest": 1997, "before_taxes_fees": "$1,729", "extracted_before_taxes_fees": 1729},
+    "typical_price_range": {"lowest": "$1,471", "extracted_lowest": 1471, "highest": "$1,838", "extracted_highest": 1838},
+    "prices": [
+      {"source": "Hanns Summer", "rate_per_night": {"lowest": "$1,997", "extracted_lowest": 1997, "before_taxes_fees": "$1,729", "extracted_before_taxes_fees": 1729}, "num_guests": 2, "free_cancellation": true, "official": true},
+      {"source": "Trip.com", "rate_per_night": {"lowest": "$2,425", "extracted_lowest": 2425, "before_taxes_fees": "$2,309", "extracted_before_taxes_fees": 2309}, "num_guests": 3, "free_cancellation": true}
+    ]
+  },
+
+  "tok_soldout": {
+    "search_parameters": {"engine": "google_hotels", "q": "瀚寓夏天", "gl": "tw", "hl": "zh-tw", "currency": "TWD", "check_in_date": "2026-12-31", "check_out_date": "2027-01-01", "adults": 2, "children": 0, "property_token": "ChoIo5Xt8-CnkI__ARoNL2cvMTF2bTFsbDRfcxAB"},
+    "type": "hotel",
+    "name": "瀚寓夏天 Hanns Summer",
+    "property_token": "ChoIo5Xt8-CnkI__ARoNL2cvMTF2bTFsbDRfcxAB",
+    "address": "100台灣臺北市中正區富水里汀州路三段62號",
+    "extracted_hotel_class": 3, "overall_rating": 4.8, "reviews": 1046,
+    "rate_per_night": null,
+    "total_rate": null,
+    "typical_price_range": {"extracted_lowest": 168, "extracted_highest": 252},
+    "featured_prices": [],
+    "prices": []
+  }
+}

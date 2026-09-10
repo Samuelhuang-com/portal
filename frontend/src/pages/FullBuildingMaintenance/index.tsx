@@ -2571,19 +2571,21 @@ function MatrixDetailModal({
     const periodTag = month === 0 ? `${year}-全年` : `${year}-${String(month).padStart(2, '0')}`
     await exportRowsToExcel(
       items.map((r) => ({
-        '保養月份': r.period_month,
-        '類別':     r.category,
-        '保養項目': r.task_name,
-        '頻率':     r.frequency,
-        '排定日期': r.scheduled_date_full,
-        '狀態':     r.status,
-        '執行人員': r.executor_name,
-        '備註':     r.result_note,
+        '保養月份':   r.period_month,
+        '類別':       r.category,
+        '保養項目':   r.task_name,
+        '頻率':       r.frequency,
+        '排定日期':   r.scheduled_date_full,
+        '狀態':       r.status,
+        '原排定人員': r.scheduler_name,
+        '執行日期':   r.exec_date,
+        '執行人員':   r.executor_name,
+        '備註':       r.result_note,
       })),
       {
         filename:  `全棟例行維護_${freqLabel}_${metricLabel}_${periodTag}.xlsx`,
         sheetName: metricLabel,
-        colWidths: [10, 8, 40, 6, 12, 8, 14, 30],
+        colWidths: [10, 8, 40, 6, 12, 8, 12, 12, 14, 30],
       },
     )
     setExporting(false)
@@ -2599,6 +2601,11 @@ function MatrixDetailModal({
     { title: '排定日期', dataIndex: 'scheduled_date_full', width: 100 },
     { title: '狀態', dataIndex: 'status', width: 80,
       render: (v: string) => <Tag color={MATRIX_STATUS_TAG_COLOR[v] ?? 'default'}>{v || '—'}</Tag> },
+    // 2026-09-08 新增：原排定人員、執行日期（執行日期＝ end_time 的日期，未完成顯示 —）
+    { title: '原排定人員', dataIndex: 'scheduler_name', width: 100, ellipsis: true,
+      render: (v: string) => v || '—' },
+    { title: '執行日期', dataIndex: 'exec_date', width: 100,
+      render: (v: string) => v || '—' },
     { title: '執行人員', dataIndex: 'executor_name', width: 90, ellipsis: true },
     { title: '備註', dataIndex: 'result_note', ellipsis: true,
       render: (v: string) => <Typography.Text style={{ fontSize: 11 }}>{v || '—'}</Typography.Text> },

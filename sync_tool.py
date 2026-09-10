@@ -275,6 +275,19 @@ MODULES: list[tuple[str, str, str]] = [
     #    只挑 analyzed_at IS NULL 的，沒有新評論時幾乎不做事（一次 DB 查詢）。
     #    AI 補判有快取與 A1–A4 白名單，放在 15 分一輪的自動同步裡不會燒 API 配額。
     ("OTA 情緒分析",       "app.services.ota_analysis_service",          "run_scheduled_analyze"),
+    # ── 競品分析（2026-09-09）──────────────────────────────────────────
+    # 規格書：docs/SPEC_compset_analysis.md §10、§12
+    #
+    # ⚠️ 為什麼非 Ragic 模組也要登錄：因為它**有排程**（每日 04:10）。
+    #    只掛 main.py 的 APScheduler，在 SCHEDULER_ENABLED=false 的機器上
+    #    等於從未執行 —— 上面那四個 OHIP 模組就是這樣停擺的。
+    #
+    # ⚠️ 內建錨定日判定（is_tier_due），同一天重複觸發只會 upsert 當天那筆，
+    #    不會重複燒配額 —— 但配額仍會被扣，所以不要沒事手動連按。
+    #
+    # ⚠️ 呼叫 sync_all_enabled()（不含 sync_lock），本工具外層已加鎖；
+    #    main.py 那邊呼叫 run_scheduled_fetch()（自帶鎖）。兩邊都加會自我死鎖。
+    ("競品價格抓取",       "app.services.compset_fetch_service",         "sync_all_enabled"),
     # ⚠️ 必須排在最後 —— 它檢查的是「前面那些模組跑得怎麼樣」。
     #    同一個問題一天只寄一次（Memo 去重），沒設 ALERT_EMAIL_TO 就靜默跳過。
     ("同步告警檢查",       "app.services.sync_alert_service",           "check_and_alert"),
@@ -830,6 +843,7 @@ class SyncApp(tk.Tk):
             import app.models.reference_data           # noqa  Company/RefDepartment（據點鏡像來源）
             import app.models.tenant                   # noqa  據點主檔（Company 鏡像，2026-09-01）
             import app.models.user_department          # noqa  使用者↔部門多對多（2026-09-01）
+            import app.models.compset_analysis         # noqa  競品分析 7 張表（2026-09-09）
 
             # ── PostgreSQL：只建表，跳過底下所有 PRAGMA 補丁 ─────────────────
             #

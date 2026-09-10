@@ -1680,7 +1680,6 @@ def _make_hotel_pm_stats_table(db, year: int, freq_type: str):
     cols.append({"key": "total", "label": "\u5408\u8a08", "align": "center"})
 
     active = [m for m in months if _has(m)]
-    sum_res = sum(m.prev_resolved_in_period for m in active)
     sum_total = sum(m.period_total for m in active)
     sum_done = sum(m.period_completed for m in active)
     fr = f"{round(sum_done/sum_total*100,1):.1f}%" if sum_total else "\u2014"
@@ -1692,43 +1691,35 @@ def _make_hotel_pm_stats_table(db, year: int, freq_type: str):
         row["total"] = tv
         return row
 
-    # Labels match frontend TAB display
+    # ── 2026-09-10 依使用者指示：三種頻率一律不顯示累計未結案三列 ────────────
+    # （截至上月底累計未結案數／其中本月已結案數／累計項目完成率）
+    # ⚠️ 網頁只有「每月維護」TAB 隱藏，每季／每年仍顯示——PPT 與網頁在這點上
+    #    刻意不一致，是使用者裁示，不要「順手對齊」回去。
+    #    與 _make_mall_pm_stats_table / _make_fb_pm_stats_table（[1.96.59]）同規則。
     rows = [
         _r(
-            "\u622a\u81f3\u4e0a\u6708\u5e95\u7d2f\u8a08\u672a\u7d50\u6848\u6578",
-            lambda m: str(m.prev_carry_over),
-            "\u2014",
-        ),
-        _r(
-            "\u5176\u4e2d\u672c\u6708\u5df2\u7d50\u6848\u6578",
-            lambda m: str(m.prev_resolved_in_period),
-            str(sum_res),
-        ),
-        _r(
-            "\u7d2f\u8a08\u9805\u76ee\u5b8c\u6210\u7387",
-            lambda m: (
-                f"{m.carry_over_rate:.1f}%"
-                if m.carry_over_rate is not None
-                else "\u2014"
-            ),
-            "\u2014",
-        ),
-        _r(
-            "\u672c\u6708\u9031\u671f\u4fdd\u990a\u9805\u76ee\u6578",
+            "本月週期保養項目數",
             lambda m: str(m.period_total),
             str(sum_total),
         ),
         _r(
-            "\u672c\u6708\u9031\u671f\u4fdd\u990a\u5b8c\u6210\u6578",
+            "本月週期保養完成數",
             lambda m: str(m.period_completed),
             str(sum_done),
         ),
         _r(
-            "\u672c\u6708\u9031\u671f\u4fdd\u990a\u5b8c\u6210\u7387",
+            "本月週期保養完成率",
             lambda m: (
                 f"{m.period_rate:.1f}%" if m.period_rate is not None else "\u2014"
             ),
             fr,
+        ),
+        # 2026-09-10 新增，對齊網頁的「本期未完成項目」列
+        # （PPT 既有列一律以「本月」開頭，故此處用「本月未完成項目」）
+        _r(
+            "本月未完成項目",
+            lambda m: str(m.period_total - m.period_completed),
+            str(sum_total - sum_done),
         ),
     ]
     return cols, rows

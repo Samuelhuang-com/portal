@@ -147,6 +147,13 @@ class Settings(BaseSettings):
     # ── Anthropic Claude（知識庫 AI 問答）─────────────────────────────────────
     ANTHROPIC_API_KEY: str = ""
 
+    # ── SerpApi（競品分析模組 compset，2026-09-09）────────────────────────────
+    # google_hotels 引擎的金鑰。空字串 ＝ 未設定，抓取層會直接跳過並記 warning，
+    # 不會拋例外（避免整個排程因為一個未設定的模組而中斷）。
+    SERPAPI_API_KEY: str = ""
+    SERPAPI_BASE_URL: str = "https://serpapi.com/search.json"
+    SERPAPI_TIMEOUT_SECONDS: int = 30
+
     # ── AI 助理設定 ───────────────────────────────────────────────────────────
     # AI_ENABLED=false 時 AI router 不掛載（端點不存在）
     AI_ENABLED: bool = False

@@ -99,6 +99,7 @@ export const NAV_GROUP = {
   jinxu:                  '金旭分析',          // ← 新增：金旭 PMS 分析（2026-08-05，第二個檔案上傳型模組，與 /opera 完全獨立）
   realtime:               '即時營運',          // ← 新增：OPERA Cloud API 直連（2026-08-06）。與 /opera/*（上傳 TXT）刻意分開：資料來源與時點不同
   ota:                    '口碑分析',          // ← 新增：OTA 評論分析（2026-08-21，外部網站擷取型）。刻意不併入「營運分析」：那組是 PMS 營收敏感權限，評論是公開資料
+  compset:                '競品分析',          // ← 新增：競品房價分析（2026-09-09，SerpApi 擷取型）。刻意獨立於 /opera：資料是別人家的公開牌價，不是自己的 PMS 營收
 } as const
 
 // ── 二級選單（頁面） ──────────────────────────────────────────────────────────
@@ -351,4 +352,17 @@ export const NAV_PAGE = {
   otaTrend:         '趨勢與雙館比較',        // ← route /ota/trend（P5 交付）
   otaSources:       'OTA 來源設定',          // ← route /ota/sources（含 CSV 匯入）
   otaTopics:        '主題字典維護',          // ← route /ota/topics（P4 交付）
+
+  // ── 競品分析（2026-09-09 新增）────────────────────────────────────────────
+  // 資料來源：SerpApi 的 Google Hotels 公開牌價。規格書 docs/SPEC_compset_analysis.md
+  // ⚠️ 下列字串必須與 role_permissions.py PERMISSION_DEFINITIONS 的 label 逐字相同，
+  //    否則管理員在「權限設定」看到的名稱與側邊欄不同，會以為是兩個不同的東西。
+  //    （compsetLogs 例外：它與 Dashboard 共用 compset_view，沒有自己的權限 key）
+  compsetDashboard:   '★ 競品分析 Dashboard',  // ← route /compset/dashboard
+  compsetMatrix:      '價格矩陣',              // ← route /compset/matrix
+  compsetTrend:       '價格軌跡',              // ← route /compset/trend
+  compsetHotels:      '競爭組設定',            // ← route /compset/hotels（含 CSV 備援匯入）
+  compsetCadence:     '抓取節奏設定',          // ← route /compset/cadence（含成本試算與手動觸發）
+  compsetSubscribers: '訂閱與配額管理',        // ← route /compset/subscribers（敏感：可加發配額）
+  compsetLogs:        '抓取紀錄',              // ← route /compset/logs（共用 compset_view）
 } as const

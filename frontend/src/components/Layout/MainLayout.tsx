@@ -541,6 +541,40 @@ export const menuItems: MenuItem[] = [
       { key: '/ota/sources', icon: <SettingOutlined />,       label: NAV_PAGE.otaSources, permissionKey: 'ota_sources_admin' },
     ],
   },
+  // ── 競品分析（2026-09-09 新增）────────────────────────────────────────────
+  // 資料來源：SerpApi 的 Google Hotels **公開牌價**。規格書 docs/SPEC_compset_analysis.md。
+  //
+  // ⚠️ 刻意不併入「營運分析」：opera_* 是自己的 PMS 營收（§11.1 敏感權限，
+  //    只給 system_admin）。競品牌價是**別人家的公開資料**，要開放給業務／
+  //    收益管理看，不該連帶把自家營收權限一起送出去。
+  //
+  // ⚠️ 群組用 permissionKeys（陣列）而非單一 permissionKey：
+  //    只有「價格矩陣」權限的人也要看得到群組。寫成 permissionKey: 'compset_view'
+  //    的話，這些人會整個群組消失。
+  //
+  // ⚠️⚠️ 「訂閱與配額管理」（compset_subscriber_admin）是**敏感權限**：
+  //    它能改配額、能手動加發 —— 等於能決定要花多少 API 錢。不要隨手授權。
+  //    「手動觸發抓取」（compset_fetch_run）刻意不列於此 —— 它是「抓取節奏設定」
+  //    頁上的一顆按鈕而非獨立路由，但仍登錄於 PERMISSION_DEFINITIONS，
+  //    否則管理員無從授權。
+  {
+    key: 'compset',
+    icon: <RadarChartOutlined />,
+    label: NAV_GROUP.compset,
+    permissionKeys: [
+      'compset_view', 'compset_matrix_view', 'compset_trend_view',
+      'compset_hotels_admin', 'compset_settings_admin', 'compset_subscriber_admin',
+    ],
+    children: [
+      { key: '/compset/dashboard',   icon: <DashboardOutlined />,     label: NAV_PAGE.compsetDashboard,   permissionKey: 'compset_view'             },
+      { key: '/compset/matrix',      icon: <TableOutlined />,         label: NAV_PAGE.compsetMatrix,      permissionKey: 'compset_matrix_view'      },
+      { key: '/compset/trend',       icon: <LineChartOutlined />,     label: NAV_PAGE.compsetTrend,       permissionKey: 'compset_trend_view'       },
+      { key: '/compset/hotels',      icon: <ShopOutlined />,          label: NAV_PAGE.compsetHotels,      permissionKey: 'compset_hotels_admin'     },
+      { key: '/compset/cadence',     icon: <ClockCircleOutlined />,   label: NAV_PAGE.compsetCadence,     permissionKey: 'compset_settings_admin'   },
+      { key: '/compset/subscribers', icon: <TeamOutlined />,          label: NAV_PAGE.compsetSubscribers, permissionKey: 'compset_subscriber_admin' },
+      { key: '/compset/logs',        icon: <FileSearchOutlined />,    label: NAV_PAGE.compsetLogs,        permissionKey: 'compset_view'             },
+    ],
+  },
   // ── 金旭分析 ─────────────────────────────────────────────────────────────
   // 2026-08-05 新增。Portal 第二個「檔案上傳型」資料模組（人工上傳金旭 xlsx：
   // FCR02 客帳帳目明細表 + 訂房狀況表），不走 Ragic 同步。

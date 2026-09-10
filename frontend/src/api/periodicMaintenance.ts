@@ -83,7 +83,12 @@ export async function fetchPMYearMatrix(
 }
 
 // ── 矩陣格明細（數字點擊查詢）────────────────────────────────────────────────
-export type PMMatrixMetric = 'prev_carry_over' | 'prev_resolved' | 'period_total' | 'period_completed'
+export type PMMatrixMetric =
+  | 'prev_carry_over'
+  | 'prev_resolved'
+  | 'period_total'
+  | 'period_completed'
+  | 'period_incomplete'   // 2026-09-10 新增：本期未完成項目（比照 mall/periodic-maintenance）
 
 export interface PMMatrixItem {
   ragic_id:              string
@@ -95,6 +100,8 @@ export interface PMMatrixItem {
   scheduled_date_full:   string
   end_time:              string
   status:                string
+  scheduler_name:        string   // 2026-09-08 新增：Ragic Sheet 11「排定人員」
+  exec_date:             string   // 2026-09-08 新增：end_time 的日期部分（YYYY/MM/DD），未完成為空
   executor_name:         string
   result_note:           string
   abnormal_flag:         boolean
