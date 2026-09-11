@@ -47,6 +47,7 @@ import type { RepairStatsData as LuqunRepairStatsData } from '@/types/luqunRepai
 import {
   fetchStats,
   type CategoryStats, type HoursRow, type PersonHoursRow, type PersonRankingItem,
+  type PersonDailyRow,
   type CategorySourceMatrixItem,
   CATEGORY_TAG_COLORS,
 } from '@/api/workCategoryAnalysis'
@@ -166,6 +167,72 @@ function ExecDailyTable({ stats }: { stats: CategoryStats | null }) {
       dataSource={daily.rows.map((r, i) => ({ ...r, key: i }))}
       columns={cols} pagination={false} size="small" scroll={{ x: 'max-content' }}
       rowClassName={r => r.category === 'TOTAL' ? 'exec-total-row' : ''}
+    />
+  )
+}
+
+type ExecPersonDailyRow = PersonDailyRow & { key: number }
+
+/**
+ * 員工工時統計數 — 列＝員工，欄＝當月日期。
+ * 與「每日累計工時表」用同一份 filtered 資料，只換列的維度，故 TOTAL 必然相同。
+ */
+function ExecPersonDailyTable({ stats }: { stats: CategoryStats | null }) {
+  // 本頁的月份選單只有 1~12 月、沒有「全年」，execStats 的 month 永遠 ≥ 1，
+  // 因此不該用「days 為空」反推成「請選擇月份」——那會把「後端沒回這個欄位」
+  // 誤報成使用者的操作問題。三種情況分開判斷：
+  const pd = stats?.person_daily_hours
+  if (!stats)
+    return <div style={{ color: '#aaa', padding: '12px 0', textAlign: 'center' }}>資料載入中…</div>
+  if (!pd)
+    return (
+      <Typography.Text type="warning" style={{ fontSize: 14 }}>
+        尚未取得員工每日工時資料 —— 請先按 Ctrl+F5 重新整理頁面。
+        （Vite HMR 只會換掉元件、不會重新呼叫 API，所以後端重啟後畫面仍會拿到重啟前的舊回應。）
+        重新整理後仍顯示此訊息，才是後端未載入新版程式碼。
+      </Typography.Text>
+    )
+  if (!pd.days.length)
+    return <Typography.Text type="secondary" style={{ fontSize: 14 }}>請選擇月份（非全年）以查看員工每日工時</Typography.Text>
+  if (!pd.rows.length)
+    return <Typography.Text type="secondary" style={{ fontSize: 14 }}>本月無員工工時資料</Typography.Text>
+  const cols = [
+    {
+      title: '員工', dataIndex: 'person', fixed: 'left' as const, width: 100,
+      render: (v: string) => {
+        if (v === 'TOTAL') return <Typography.Text strong style={{ color: EXEC_T.primary }}>TOTAL</Typography.Text>
+        if (v === '未指定') return <Tag color="default" style={{ fontSize: 13 }}>未指定</Tag>
+        return <Typography.Text style={{ fontSize: 14 }}>{v}</Typography.Text>
+      },
+    },
+    ...pd.days.map((d, i) => ({
+      title: (
+        <div style={{ textAlign: 'center' as const }}>
+          <div style={{ fontSize: 12 }}>{d}</div>
+          <div style={{ fontSize: 11, color: EXEC_T.textMuted }}>{pd.weekdays[i]}</div>
+        </div>
+      ),
+      key: `pd${d}`, width: 36, align: 'right' as const,
+      render: (_: unknown, r: ExecPersonDailyRow) => execRenderHr(r.hours[i] ?? 0),
+    })),
+    {
+      title: 'TOTAL', dataIndex: 'total', key: 'tot', width: 58, align: 'right' as const,
+      sorter: (a: ExecPersonDailyRow, b: ExecPersonDailyRow) => a.total - b.total,
+      render: (v: number, r: ExecPersonDailyRow) =>
+        <Typography.Text strong style={{ color: r.person === 'TOTAL' ? EXEC_T.primary : undefined }}>{v.toFixed(1)}</Typography.Text>,
+    },
+    {
+      title: '%', dataIndex: 'pct', key: 'pct', width: 50, align: 'right' as const,
+      render: (v: number, r: ExecPersonDailyRow) =>
+        <Typography.Text style={{ color: r.person === 'TOTAL' ? EXEC_T.textMuted : EXEC_T.warning,
+          fontWeight: r.person !== 'TOTAL' ? 600 : 400 }}>{v.toFixed(1)}%</Typography.Text>,
+    },
+  ]
+  return (
+    <Table<ExecPersonDailyRow>
+      dataSource={pd.rows.map((r, i) => ({ ...r, key: i }))}
+      columns={cols} pagination={false} size="small" scroll={{ x: 'max-content' }}
+      rowClassName={r => r.person === 'TOTAL' ? 'exec-total-row' : ''}
     />
   )
 }
@@ -1143,7 +1210,7 @@ export default function ExecWorkDashboardPage() {
   const [activeTab, setActiveTab] = useState<string>('overview')
 
   const ALL_DAILY_KEYS    = ['hotel-daily', 'mall-daily']
-  const ALL_ANALYSIS_KEYS = ['exec-daily', 'exec-monthly', 'exec-burden', 'unit-comparison', 'category-matrix', 'alerts']
+  const ALL_ANALYSIS_KEYS = ['exec-daily', 'exec-monthly', 'exec-person-daily', 'exec-burden', 'unit-comparison', 'category-matrix', 'alerts']
   const [dailyKeys,    setDailyKeys]    = useState<string[]>([])
   const [analysisKeys, setAnalysisKeys] = useState<string[]>(['alerts'])
   const allExpanded = dailyKeys.length + analysisKeys.length ===
@@ -1873,6 +1940,11 @@ export default function ExecWorkDashboardPage() {
                 key: 'exec-monthly',
                 label: <Space><span>📆</span><Typography.Text strong style={{ fontSize: 16 }}>每月累計工時表 — {selectedYear} 年</Typography.Text></Space>,
                 children: <ExecMonthlyTable stats={execStatsYear} />,
+              },
+              {
+                key: 'exec-person-daily',
+                label: <Space><span>👷</span><Typography.Text strong style={{ fontSize: 16 }}>員工時統計數 — {selectedYear} 年 {selectedMonth} 月</Typography.Text></Space>,
+                children: <ExecPersonDailyTable stats={execStats} />,
               },
             ]}
           />

@@ -114,6 +114,9 @@ export interface DailyHours  { days: number[]; weekdays: string[]; rows: HoursRo
 export interface MonthlyHours { months: number[]; rows: HoursRow[] }
 export interface PersonHoursRow { category: string; pct_by_person: number[] }
 export interface PersonHours { persons: string[]; rows: PersonHoursRow[] }
+/** 員工每日工時：列＝員工（含「未指定」與 TOTAL），欄＝當月日期 */
+export interface PersonDailyRow { person: string; hours: number[]; total: number; pct: number }
+export interface PersonDailyHours { days: number[]; weekdays: string[]; rows: PersonDailyRow[] }
 
 export interface CategoryStats {
   kpi:                    KpiData
@@ -126,6 +129,7 @@ export interface CategoryStats {
   category_source_matrix:    CategorySourceMatrixItem[]
   daily_hours:            DailyHours
   monthly_hours:          MonthlyHours
+  person_daily_hours:     PersonDailyHours
   person_hours:           PersonHours
   meta:                   { year: number; month: number; sources: string[]; category: string; person: string; total_rows: number; last_sync_at?: string }
 }
