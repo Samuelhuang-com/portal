@@ -147,13 +147,6 @@ class Settings(BaseSettings):
     # ── Anthropic Claude（知識庫 AI 問答）─────────────────────────────────────
     ANTHROPIC_API_KEY: str = ""
 
-    # ── SerpApi（競品分析模組 compset，2026-09-09）────────────────────────────
-    # google_hotels 引擎的金鑰。空字串 ＝ 未設定，抓取層會直接跳過並記 warning，
-    # 不會拋例外（避免整個排程因為一個未設定的模組而中斷）。
-    SERPAPI_API_KEY: str = ""
-    SERPAPI_BASE_URL: str = "https://serpapi.com/search.json"
-    SERPAPI_TIMEOUT_SECONDS: int = 30
-
     # ── AI 助理設定 ───────────────────────────────────────────────────────────
     # AI_ENABLED=false 時 AI router 不掛載（端點不存在）
     AI_ENABLED: bool = False
@@ -185,38 +178,6 @@ class Settings(BaseSettings):
     # 起因：同步失敗、模組從未執行、回補假性完成，先前都沒有任何通知管道，
     #       只能靠人工翻 log 才會發現。詳見 services/sync_alert_service.py 檔頭。
     ALERT_EMAIL_TO:  str  = ""
-
-    # ── OPERA Cloud / OHIP（2026-08-06 新增，規劃見 docs/OHIP_INTEGRATION.md）──
-    # 與既有 /opera/* 上傳型模組**並行**，不共用資料表。全部唯讀（只發 GET）。
-    # ⚠️ OHIP_ENTERPRISE_ID 是換 token 時的 header，漏帶會回 401 且訊息完全誤導。
-    OHIP_GATEWAY_URL:   str = ""
-    OHIP_APP_KEY:       str = ""
-    OHIP_CLIENT_ID:     str = ""
-    OHIP_CLIENT_SECRET: str = ""
-    OHIP_ENTERPRISE_ID: str = ""
-    OHIP_HOTEL_ID:      str = ""
-    OHIP_SCOPE:         str = "urn:opc:hgbu:ws:__myscopes__"
-    # 非同步版營收 API（revenueInventoryStatistics）路徑上的外部系統代碼。
-    # 2026-08-06 實測 "PORTAL" 可用，OPERA 端不需預先註冊。
-    OHIP_EXT_SYSTEM_CODE: str = "PORTAL"
-
-    # ── OTA 口碑分析（2026-08-22）────────────────────────────────────────────
-    # 規格書：docs/SPEC_ota_reviews.md §3.3
-    #
-    # OTA_BROWSER_MODE —— 這一項就是規格書 R1 風險的開關：
-    #   "auto"    先試 headless；Booking 抓不到評論卡時自動改開可見視窗重試一次
-    #             （可見視窗在沒有互動式桌面的 Windows Service 上會失敗，
-    #              失敗訊息會直接指向 ota_scraper_cli.py 這條退路）
-    #   "headless" 一律無頭。伺服器上跑排程用這個，失敗就失敗，不做無謂重試
-    #   "visible"  一律開可見視窗。本機工作排程器（以登入使用者身分）用這個
-    OTA_BROWSER_MODE: str = "auto"
-    # 單一來源的擷取逾時（秒）。翻 20 頁 × 每頁等 3 秒，300 秒是有餘裕的上限
-    OTA_FETCH_TIMEOUT: int = 300
-    # 來源與來源之間的隨機間隔（秒）。禮貌性節流，避免被判定為攻擊流量
-    OTA_SOURCE_DELAY_MIN: int = 5
-    OTA_SOURCE_DELAY_MAX: int = 15
-    # 每日至多同步一次：當日已成功的來源，排程會直接 skip
-    OTA_ONCE_PER_DAY: bool = True
 
     # ── 便利屬性：統一取 server prefix ───────────────────────────────────────
     @property

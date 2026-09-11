@@ -230,64 +230,6 @@ MODULES: list[tuple[str, str, str]] = [
     #   目的：人員管理「所屬據點」下拉＝公司名稱清單。
     #   詳見 tenant_company_sync.py 檔頭。
     ("使用者據點",         "app.services.tenant_company_sync",           "sync_from_reference"),
-    # ⚠ 這一個不是 Ragic —— 來源是 OPERA Cloud（OHIP API）。
-    #   只跑「歷史回補」：把往前兩年還沒補的段一次補完，補完後每輪自動 skip
-    #   （只查一次 DB，不打 OHIP）。「昨天」由 main.py 每日 06:30 的
-    #   sync_incremental 負責（重抓最近 14 天），這裡刻意不重複做。
-    ("市場區隔歷史回補",   "app.services.opera_segment_sync",           "sync_backfill_all"),
-    # ⚠️ 2026-08-30 補登錄，與上面那四個 full sync 同一批。增量先前只掛在
-    #    main.py 每日 06:30 的 `opera_segment_incremental`，從未執行 ——
-    #    於是市場區隔只有回補補到的資料，昨天的 EOD 帳務修正永遠進不來。
-    # ⚠️ 必須排在「市場區隔歷史回補」之後：回補負責「以前沒有資料的段」，
-    #    增量負責「最近 14 天重抓覆蓋」，先回補再覆蓋才是正確的先後。
-    # ⚠️ 內建「當日已成功就 skip」（查 DB 不是記憶體旗標），所以放在 15 分
-    #    一輪的自動同步裡不會重複打 OHIP 計費 API。
-    ("市場區隔增量同步",   "app.services.opera_segment_sync",           "sync_incremental_job"),
-    # ── 以下三個同樣不是 Ragic，來源是 OPERA Cloud（OHIP API）────────────────
-    # ⚠️ 2026-08-13 補登錄。DEV 機器 `SCHEDULER_ENABLED=false`（改用本工具），
-    #    但這三個先前只登錄在 main.py 的 APScheduler、沒登錄在這裡，等於
-    #    **從未執行**。實測後果：訂房回補停在 6/24 段、DB 內完全沒有今天以後的
-    #    訂房（在手訂房與 Pace 分析的未來區間永遠是空的）、
-    #    `ohip_inventory_snapshot` 0 筆（「快照精確版」永遠不會開始累積）。
-    #
-    # ⚠️ 三個都會自我判斷「今天做過了沒／還有沒有待補的段」，做完就 skip、
-    #    不打 OHIP，所以放在 15 分一輪的自動同步裡不會燒配額。
-    ("訂房歷史回補",       "app.services.opera_reservation_sync",       "sync_backfill_all"),
-    # 🎯 這一支是唯一會抓到「今天以後」訂房的路徑（回補只補到昨天）。一天跑一次。
-    ("訂房增量同步",       "app.services.opera_reservation_sync",       "sync_incremental_job"),
-    # ⚠️ 快照錯過的日子**永遠補不回來**（OPERA 不提供歷史查詢），寧可多跑。
-    ("OHIP 每日快照",      "app.services.ohip_snapshot_service",        "run_snapshot_job"),
-    # ⚠️ 這一個既不是 Ragic 也不是 OHIP —— 來源是 Booking／Expedia／Tripadvisor
-    #    的**公開評論頁**（Selenium 擷取）。規格書 docs/SPEC_ota_reviews.md
-    #
-    # ⚠️ 為什麼非 Ragic 模組也要登錄在這裡：因為它**有排程**。
-    #    純檔案上傳型（opera_import／jinxu_*）不需要，但有排程的模組若只掛在
-    #    main.py 的 APScheduler，在 SCHEDULER_ENABLED=false 的機器上等於從未執行
-    #    —— 上面那四個 OHIP 模組就是 2026-08-13 才發現這件事補登錄的。
-    #
-    # ⚠️ 內建「當日已成功就 skip」（OTA_ONCE_PER_DAY），所以放在 15 分一輪的
-    #    自動同步裡不會反覆對 OTA 發請求被封 IP。
-    #
-    # ⚠️ 本工具外層已套 sync_lock（見 _run_all_modules），
-    #    sync_all_enabled() 內部刻意不再加鎖，否則會自我死鎖。
-    ("OTA 評論擷取",       "app.services.ota_scraper_service",           "sync_all_enabled"),
-    # ⚠️ 必須排在「OTA 評論擷取」之後 —— 先有資料才有東西可分析。
-    #    只挑 analyzed_at IS NULL 的，沒有新評論時幾乎不做事（一次 DB 查詢）。
-    #    AI 補判有快取與 A1–A4 白名單，放在 15 分一輪的自動同步裡不會燒 API 配額。
-    ("OTA 情緒分析",       "app.services.ota_analysis_service",          "run_scheduled_analyze"),
-    # ── 競品分析（2026-09-09）──────────────────────────────────────────
-    # 規格書：docs/SPEC_compset_analysis.md §10、§12
-    #
-    # ⚠️ 為什麼非 Ragic 模組也要登錄：因為它**有排程**（每日 04:10）。
-    #    只掛 main.py 的 APScheduler，在 SCHEDULER_ENABLED=false 的機器上
-    #    等於從未執行 —— 上面那四個 OHIP 模組就是這樣停擺的。
-    #
-    # ⚠️ 內建錨定日判定（is_tier_due），同一天重複觸發只會 upsert 當天那筆，
-    #    不會重複燒配額 —— 但配額仍會被扣，所以不要沒事手動連按。
-    #
-    # ⚠️ 呼叫 sync_all_enabled()（不含 sync_lock），本工具外層已加鎖；
-    #    main.py 那邊呼叫 run_scheduled_fetch()（自帶鎖）。兩邊都加會自我死鎖。
-    ("競品價格抓取",       "app.services.compset_fetch_service",         "sync_all_enabled"),
     # ⚠️ 必須排在最後 —— 它檢查的是「前面那些模組跑得怎麼樣」。
     #    同一個問題一天只寄一次（Memo 去重），沒設 ALERT_EMAIL_TO 就靜默跳過。
     ("同步告警檢查",       "app.services.sync_alert_service",           "check_and_alert"),
@@ -838,12 +780,9 @@ class SyncApp(tk.Tk):
             import app.models.hotel_routine_pm         # noqa
             import app.models.hotel_routine_pm_schedule  # noqa
             import app.models.contract                 # noqa
-            import app.models.opera_segment            # noqa  ohip_revenue_history + 同步紀錄
-            import app.models.ota_review               # noqa  OTA 口碑分析（2026-08-22）
             import app.models.reference_data           # noqa  Company/RefDepartment（據點鏡像來源）
             import app.models.tenant                   # noqa  據點主檔（Company 鏡像，2026-09-01）
             import app.models.user_department          # noqa  使用者↔部門多對多（2026-09-01）
-            import app.models.compset_analysis         # noqa  競品分析 7 張表（2026-09-09）
 
             # ── PostgreSQL：只建表，跳過底下所有 PRAGMA 補丁 ─────────────────
             #
@@ -925,20 +864,6 @@ class SyncApp(tk.Tk):
                     "CREATE UNIQUE INDEX IF NOT EXISTS ix_vendors_ragic_id ON vendors (ragic_id)"
                 ))
                 conn.commit()
-
-            # ── 7. ota_sync_logs 執行者身分欄位（2026-08-24）─────────────────
-            #
-            # ⚠️ sync_tool 是獨立行程，跑 OTA 同步時會 INSERT ota_sync_logs。
-            #    ORM 已經有 worker_host／worker_pid，DB 沒有就直接
-            #    "no such column" 炸掉 —— 而且是在使用者按下同步的當下才炸。
-            #    不能假設「反正後端會先重啟過」，這台機器可能只跑 sync_tool。
-            #
-            # ⚠️ ALTER 的實作在 ota_sync_recovery.ensure_worker_columns()，
-            #    後端與 ota_scraper_cli 呼叫的是**同一支**。不要在這裡另抄一份。
-            from app.services.ota_sync_recovery import ensure_worker_columns
-
-            for _col in ensure_worker_columns():
-                logger.info("[DB] ota_sync_logs.%s 欄位已新增", _col)
 
             logger.info("[DB] Schema 確認完成 ✓")
 

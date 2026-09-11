@@ -156,72 +156,11 @@ def _check_anomaly(db: Session) -> list[dict[str, Any]]:
     return issues
 
 
-def _check_opera_backfill(db: Session) -> list[dict[str, Any]]:
-    """OPERA 訂房回補的**真實缺口**（天數，不是段數）。
-
-    🎯 2026-08-13 的「假性完成」就是這裡漏掉的：進度顯示 24/24，
-       實際整月 0 筆。改用逐日檢查後，這一項才有意義。
-    """
-    issues = []
-    try:
-        from app.services import opera_reservation_sync as SY
-        from app.services import ohip_client
-        if not ohip_client.is_configured():
-            return []
-        for ds, label in (("reservation", "訂房"), ("block", "團體")):
-            p = SY.backfill_progress(db, ds)
-            missing = int(p.get("missing_days") or 0)
-            if missing > 0:
-                issues.append({
-                    "key": f"backfill_{ds}", "level": "warning",
-                    "module": f"OPERA {label}回補",
-                    "title": f"OPERA {label}歷史資料還缺 {missing} 天",
-                    "detail": (f"涵蓋 {p['covered_days']}/{p['total_days']} 天，"
-                               f"還要補 {p['pending_chunks']} 段。"
-                               f"下一段：{(p.get('next_chunk') or {}).get('start')}"
-                               f"～{(p.get('next_chunk') or {}).get('end')}。"
-                               "在「訂房分析」頁按「補下一段」，"
-                               "或用同步工具的「訂房歷史回補」一次補完。"),
-                })
-    except Exception as exc:      # noqa: BLE001
-        logger.warning("回補檢查失敗（不影響其他告警）：%s", exc)
-    return issues
-
-
-def _check_snapshot(db: Session) -> list[dict[str, Any]]:
-    """每日快照今天有沒有跑。
-
-    ⚠️ 這一項的嚴重性和其他不同：**快照錯過的日子永遠補不回來**
-       （OPERA 不提供歷史查詢），所以列為 error 而不是 warning。
-    """
-    try:
-        from app.models.realtime import OhipSnapshotRun
-        from app.services import ohip_client
-        if not ohip_client.is_configured():
-            return []
-        today_s = date.today().isoformat()
-        done = (db.query(OhipSnapshotRun.id)
-                  .filter(OhipSnapshotRun.snapshot_date == today_s,
-                          OhipSnapshotRun.status != "failed").first())
-        if done:
-            return []
-        return [{
-            "key": "snapshot_missing", "level": "error", "module": "OHIP 每日快照",
-            "title": f"{today_s} 的每日快照還沒跑",
-            "detail": ("快照只能存「當下」，錯過的日子 OPERA 不提供補查，"
-                       "永遠補不回來。請確認同步工具的「OHIP 每日快照」有在執行。"),
-        }]
-    except Exception as exc:      # noqa: BLE001
-        logger.warning("快照檢查失敗（不影響其他告警）：%s", exc)
-        return []
-
-
 # ── 對外 ────────────────────────────────────────────────────────────────────
 
 def collect_issues(db: Session) -> list[dict[str, Any]]:
     """只檢查、不寄信 —— 給前端的健康狀態頁共用。"""
-    return (_check_failures(db) + _check_stale(db) + _check_anomaly(db)
-            + _check_opera_backfill(db) + _check_snapshot(db))
+    return _check_failures(db) + _check_stale(db) + _check_anomaly(db)
 
 
 def _render(issues: list[dict[str, Any]]) -> tuple[str, str]:

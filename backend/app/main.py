@@ -54,8 +54,6 @@ from app.core.scheduler import make_cron_trigger, scheduler as _scheduler, regis
 from app.core.time import twnow
 from app.routers import (
     approvals,
-    compset_rates,
-    compset_admin,
     claim_report,
     combined_report,
     purchase_report,
@@ -118,25 +116,6 @@ from app.routers import (
     contract,
     reference_data,
     tutorial_videos,
-    opera_import,
-    opera_revenue,
-    opera_guest,
-    opera_forecast,
-    opera_segment,
-    opera_reservation,
-    opera_pace,
-    realtime,
-    jinxu_import,
-    jinxu_revenue,
-    jinxu_payment,
-    jinxu_deposit,
-    jinxu_reservation,
-    jinxu_settings,
-    # OTA 口碑分析（2026-08-21）：外部網站擷取型模組，非 Ragic、非上傳型。
-    # ⚠️ 只加下方的 include_router 而漏掉這裡會直接 NameError。
-    ota_reviews,
-    ota_stats,
-    ota_admin,
     cycle_purchase_masters,
     cycle_purchase_items,
     cycle_purchase_cycles,
@@ -505,45 +484,6 @@ def _seed_menu_config_nichiyo_claim():
         print("[Portal] menu_config nichiyo-claim-report seed checked.")
 
 
-def _reap_ota_stale_running():
-    """
-    啟動時回收孤兒 `running`（2026-08-24）。
-
-    ⚠️ **不是「把所有 running 都標成 failed」** —— 那是第一直覺，而且是錯的。
-       回補是用 `ota_scraper_cli` 跑的，那是獨立行程；後端重啟一次就會把
-       一個**正在跑**的 CLI 同步誤判成死掉。
-       `reap_stale_running()` 只收「本機 + pid 確實不在」或「超過 90 分鐘」的。
-    """
-    from app.core.database import SessionLocal
-    from app.services.ota_sync_recovery import reap_stale_running
-
-    db = SessionLocal()
-    try:
-        reaped = reap_stale_running(db)
-        if reaped:
-            db.commit()
-            for r in reaped:
-                print(f"[Portal] OTA 回收孤兒同步紀錄 #{r.log_id}"
-                      f"（來源 #{r.source_id}）：{r.reason}")
-    finally:
-        db.close()
-
-
-def _seed_jinxu():
-    """金旭 PMS 分析 — 科目分類對照表與分析門檻種子（冪等）。
-
-    規格書：docs/SPEC_jinxu_analytics.md 附錄 C、§7.9
-    """
-    from app.core.database import SessionLocal
-    from app.services.jinxu_seed import ensure_jinxu_seed
-
-    db = SessionLocal()
-    try:
-        result = ensure_jinxu_seed(db)
-        if result["subjects"] or result["settings"]:
-            print(f"[Seed] jinxu: subjects +{result['subjects']}, settings +{result['settings']}")
-    finally:
-        db.close()
 
 
 def _seed_reference_data():
@@ -1123,56 +1063,6 @@ async def lifespan(app: FastAPI):
     import app.models.hotel_routine_pm_schedule  # noqa: F401  飯店例行維護排程
     import app.models.tutorial_video_module    # noqa: F401  影音教學模組主檔（本地模組，不對接 Ragic）
     import app.models.tutorial_video           # noqa: F401  影音教學單集（本地模組，不對接 Ragic）
-    # OPERA 營運分析（2026-08-04）：資料來自人工上傳的 OPERA TXT，非 Ragic 同步，
-    # 因此不需登錄 sync_tool.py 的 MODULES／_ensure_db_schema()。
-    # 索引另由專案根目錄的 add_opera_tables.sql 建立（create_all 不會產生複合索引）。
-    import app.models.opera_import             # noqa: F401  匯入批次與錯誤紀錄
-    import app.models.opera_departure          # noqa: F401  Departure 原始層 + 住宿事實表
-    import app.models.opera_revenue            # noqa: F401  History/Forecast 原始層 + 每日營收 + 門檻設定
-    # 房價預測（2026-08-05）：索引另由 add_opera_forecast_tables.sql 建立。
-    import app.models.opera_forecast           # noqa: F401  事件月曆 + 係數 + 預測快照
-    # 市場區隔／房型別歷史營收（2026-08-07）：⚠️ 資料來源是 **OHIP API 落地**，
-    # 不是 TXT 上傳。放在 opera_* 命名下是因為頁面歸屬「營運分析」，
-    # 但**不與 `opera_revenue_daily` 共用任何欄位**（粒度、來源、口徑都不同）。
-    # 複合索引寫在 Model `__table_args__`，create_all 一併建立，不需手動跑 SQL。
-    import app.models.opera_segment           # noqa: F401  ohip_revenue_history + 同步紀錄
-    # 訂房分析（2026-08-07）：來源 OHIP rsvasync／blkasync。
-    # ⚠️ 母體與 opera_departure（TXT）**不同** —— 這裡是所有訂房（含未來、含取消），
-    #    那裡是已離店的住客。同維度數字不同是正常的，不是 bug。
-    import app.models.opera_reservation       # noqa: F401  訂房＋逐日＋團體 block
-    # 即時營運（2026-08-06）：只存 OHIP 呼叫日誌與 API 回應快取，**不存業務資料**。
-    # 2026-08-07 新增 `ohip_async_cache`：非同步端點的回應快取。Oracle 規定相同參數的
-    # async 請求最短間隔 30 分鐘，記憶體快取擋不住（重啟即失效），必須落地。
-    # 刪光這張表只會多打一次 API，不會遺失任何事實，因此不牴觸「不存業務資料」原則。
-    # 2026-08-07 再新增三張**每日快照**表（`ohip_snapshot_run` / `ohip_inventory_snapshot`
-    # / `ohip_revenue_snapshot`）。⚠️ 這三張與上面兩張性質不同：
-    # 上面兩張刪光只會多打一次 API，**這三張刪掉就是永久遺失、無法重建**，
-    # 因為 OHIP 沒有「回到過去」的參數。備份策略要涵蓋它們。
-    # 複合索引已寫在 Model 的 `__table_args__`，create_all 會一併建立，**不需要手動跑 SQL**。
-    import app.models.realtime                 # noqa: F401  OHIP 呼叫日誌 + async 快取 + 每日快照
-    # 金旭 PMS 分析（2026-08-05）：Portal 第二個檔案上傳型模組，資料來自人工上傳的
-    # 金旭 xlsx（FCR02 客帳帳目明細表 + 訂房狀況表），非 Ragic 同步，因此同樣不需
-    # 登錄 sync_tool.py 的 MODULES／_ensure_db_schema()。
-    # 索引另由專案根目錄的 add_jinxu_tables.sql 建立（create_all 不會產生複合索引）。
-    import app.models.jinxu_import             # noqa: F401  匯入批次與錯誤紀錄
-    import app.models.jinxu_ledger             # noqa: F401  FCR02 原始層 + 交易分錄 + 科目對照
-    import app.models.jinxu_reservation        # noqa: F401  訂房原始層 + 訂房事實表 + 住宿明細段
-    import app.models.jinxu_setting            # noqa: F401  分析門檻設定
-
-    # OTA 口碑分析（2026-08-21）：資料來自 Booking／Expedia／Tripadvisor 的公開評論頁。
-    # 規格書 docs/SPEC_ota_reviews.md；建表 SQL docs/add_ota_tables.sql（供既有 DB 補建）。
-    # ⚠️ 本模組**有排程**（P2 起），因此與純上傳型的 opera_import／jinxu_* 不同，
-    #    必須登錄 sync_tool.py 的 MODULES 與 _ensure_db_schema()（規格書 §10.0）。
-    #    否則 SCHEDULER_ENABLED=false 的機器上等於從未執行 —— 2026-08-13 OHIP
-    #    那四個排程就是這樣停在 6/24 沒人發現的。
-    import app.models.ota_review               # noqa: F401  來源／評論／同步紀錄／主題字典／AI 快取
-
-    # 競品分析（2026-09-09）：資料來自 SerpApi 的 google_hotels 引擎。
-    # 規格書 docs/SPEC_compset_analysis.md；建表走 Alembic revision `compset`
-    # （⚠️ 不靠 create_all —— create_all 補表不補欄位，之後改欄位會靜默失效）。
-    # ⚠️ 本模組**有排程**（每日 04:10），因此必須同時登錄 sync_tool.py 的
-    #    MODULES 與 _ensure_db_schema()（規格書 §10.0）。
-    import app.models.compset_analysis         # noqa: F401  訂閱／競爭組／快照／配額／彙總
 
 
     # 建立尚未存在的資料表（不影響已有表格）
@@ -1180,8 +1070,6 @@ async def lifespan(app: FastAPI):
     # 避免後端啟動時剛好撞上 sync_tool.py 寫入中的 SQLite 鎖定，就讓整個服務起不來。
     _run_startup_migration("_create_all_tables", lambda: Base.metadata.create_all(bind=engine))
     print("[Portal] Database tables ensured.")
-
-    _run_startup_migration("_reap_ota_stale_running", _reap_ota_stale_running)
 
     # ── 週期採購（獨立資料庫 cycle-purchase.db，2026-07-10 決策：不與 portal.db 共用）──
     from app.core.cycle_purchase_database import CyclePurchaseBase, cycle_purchase_engine
@@ -1302,12 +1190,6 @@ async def lifespan(app: FastAPI):
     _run_startup_migration("_seed_reference_data", _seed_reference_data)
     print("[Portal] reference_data seed checked.")
 
-    # 金旭 PMS 分析（2026-08-05）：科目分類對照表 35 筆 + 分析門檻 6 筆。
-    # 冪等——已存在的 subject_code 不覆蓋（管理員可能已在設定頁調整過分類）。
-    # ⚠️ 必須在此 seed，否則首次匯入時 40,706 筆分錄會全部被歸為「未分類」。
-    _run_startup_migration("_seed_jinxu", _seed_jinxu)
-    print("[Portal] jinxu subject map & settings seed checked.")
-
     # F3（2026-06-01）：contracts 新欄位 + contract_cost_allocations 資料表
     import app.models.contract  # noqa: F401 — ContractCostAllocation 已在其中
 
@@ -1361,9 +1243,7 @@ async def lifespan(app: FastAPI):
     #    sync_tool.py（本機 GUI，需要視窗開著）負責。
     #
     #    已在 sync_tool.py 的 MODULES 有對應、因此實際會跑的：
-    #        module_auto_sync、purchase_*、claim_*、nichiyo_*、
-    #        opera_segment_*、opera_reservation_incremental、
-    #        ohip_daily_snapshot、ota_review_sync、ota_sentiment_analyze
+    #        module_auto_sync、purchase_*、claim_*、nichiyo_*
     #
     #    ❌ **沒有對應、目前完全不會執行的**（2026-08-30 逐項比對）：
     #        cycle_purchase_auto_close        每日 00:05  逾期請購單自動關閉
@@ -1638,247 +1518,6 @@ async def lifespan(app: FastAPI):
             misfire_grace_time=3600,
         )
         print("[Portal] hotel_periodic_pm auto-generate scheduled: monthly day=1 at 02:20")
-
-        # ═══════════════════════════════════════════════════════════════════
-        # 每日 06:00 OHIP 快照（2026-08-07）
-        # ═══════════════════════════════════════════════════════════════════
-        # ⚠️ 這裡刻意用**同步 `def`** 而不是本檔其他排程慣用的 `async def`。
-        #    APScheduler 兩者都支援，但 `async def` 裡跑同步的 `db.query()` 會卡住
-        #    event loop —— 這正是 2026-07-15 修掉 12 個 router 的那個問題
-        #    （單 worker 下整站無回應）。快照要跑約 20 秒、打 7 次 API，
-        #    用 async def 等於讓整個 Portal 卡 20 秒。其他排程沿用舊寫法未動。
-        #
-        # ⚠️ `misfire_grace_time` 只給 600 秒（10 分鐘），比本檔其他排程的 3600 短很多。
-        #    這是刻意的：pickup 曲線的 X 軸是「提前幾天」，
-        #    若某天延後一小時才跑，該點與前後點的實際間隔就不是 24 小時，曲線會失真。
-        #    **寧可跳過那一天（缺一個點看得出來），也不要補一個時間錯位的點。**
-        def _daily_ohip_snapshot():
-            from app.core.database import SessionLocal
-            from app.services.ohip_snapshot_service import run_snapshot
-            db = SessionLocal()
-            try:
-                r = run_snapshot(db, triggered_by="scheduler")
-                print(
-                    f"[Portal] OHIP snapshot {r.get('snapshot_date')}: "
-                    f"status={r.get('status')} house={r.get('house_rows')} "
-                    f"roomtype={r.get('room_type_rows')} revenue={r.get('revenue_rows')} "
-                    f"calls={r.get('api_calls')} elapsed={r.get('elapsed_ms')}ms"
-                )
-                for w in r.get("warnings") or []:
-                    print(f"[Portal] OHIP snapshot warning: {w}")
-                if r.get("error"):
-                    print(f"[Portal] OHIP snapshot error: {r['error']}")
-            except Exception as exc:
-                print(f"[Portal] OHIP snapshot failed: {exc}")
-            finally:
-                db.close()
-
-        _scheduler.add_job(
-            _daily_ohip_snapshot,
-            trigger=_CronTrigger(hour=6, minute=0),
-            id="ohip_daily_snapshot",
-            replace_existing=True,
-            misfire_grace_time=600,
-        )
-        print("[Portal] OHIP daily snapshot scheduled: daily at 06:00 "
-              "(lookback 7 days + horizon 180 days)")
-
-        # ── 每日 06:30 市場區隔歷史營收增量（2026-08-07）─────────────────────
-        # ⚠️ 排在快照（06:00）之後，兩者不會搶同一個時間點。
-        # ⚠️ 同樣刻意用同步 `def`（理由同上方快照排程）。
-        # ⚠️ grace 用 3600（與本檔多數排程一致）而**不是**快照那個 600：
-        #    這裡抓的是「已完成日期的最終結果」，晚幾小時跑數字完全一樣，
-        #    沒有快照那種「時點錯位會讓曲線失真」的問題。
-        def _daily_segment_incremental():
-            from app.core.database import SessionLocal
-            from app.services.opera_segment_sync import sync_incremental
-            db = SessionLocal()
-            try:
-                r = sync_incremental(db, triggered_by="scheduler")
-                print(
-                    f"[Portal] segment revenue incremental {r.get('date_start')}~{r.get('date_end')}: "
-                    f"status={r.get('status')} rows={r.get('rows_written')} "
-                    f"calls={r.get('api_calls')} elapsed={r.get('elapsed_ms')}ms"
-                )
-                for w in r.get("warnings") or []:
-                    print(f"[Portal] segment revenue warning: {w}")
-                if r.get("error"):
-                    print(f"[Portal] segment revenue error: {r['error']}")
-            except Exception as exc:
-                print(f"[Portal] segment revenue incremental failed: {exc}")
-            finally:
-                db.close()
-
-        _scheduler.add_job(
-            _daily_segment_incremental,
-            trigger=_CronTrigger(hour=6, minute=30),
-            id="opera_segment_incremental",
-            replace_existing=True,
-            misfire_grace_time=3600,
-        )
-        print("[Portal] segment revenue incremental scheduled: daily at 06:30 (last 14 days)")
-
-        # ── 每日 07:00 訂房與團體增量（2026-08-07）───────────────────────────
-        # ⚠️ 排在 06:30 的營收增量之後，避免同時打 OHIP。
-        # ⚠️ 同樣刻意用同步 `def`（async def 裡跑同步 DB 會卡住 event loop）。
-        # ⚠️ 增量區間**含未來 180 天** —— 在手訂房分析需要未來資料，
-        #    只抓過去會讓那一頁永遠是空的。
-        def _daily_reservation_incremental():
-            from app.core.database import SessionLocal
-            from app.services.opera_reservation_sync import sync_incremental
-            db = SessionLocal()
-            try:
-                out = sync_incremental(db, triggered_by="scheduler")
-                for name, r in out.items():
-                    print(
-                        f"[Portal] {name} incremental {r.get('date_start')}~{r.get('date_end')}: "
-                        f"status={r.get('status')} parent={r.get('parent_rows')} "
-                        f"child={r.get('child_rows')} calls={r.get('api_calls')} "
-                        f"elapsed={r.get('elapsed_ms')}ms"
-                    )
-                    for w in r.get("warnings") or []:
-                        print(f"[Portal] {name} warning: {w}")
-                    if r.get("error"):
-                        print(f"[Portal] {name} error: {r['error']}")
-            except Exception as exc:
-                print(f"[Portal] reservation incremental failed: {exc}")
-            finally:
-                db.close()
-
-        _scheduler.add_job(
-            _daily_reservation_incremental,
-            trigger=_CronTrigger(hour=7, minute=0),
-            id="opera_reservation_incremental",
-            replace_existing=True,
-            misfire_grace_time=3600,
-        )
-        print("[Portal] reservation+block incremental scheduled: daily at 07:00 "
-              "(last 14 days + next 180 days)")
-
-        # ── 每日 03:05 OTA 評論擷取（2026-08-22）────────────────────────────
-        # 規格書：docs/SPEC_ota_reviews.md §11
-        #
-        # ⚠️ 為什麼是 03:05 而不是 03:00：整點是全天最擁擠的時段 ——
-        #    module_auto_sync 加上 8 支請購／請款同步共 9 支會同時觸發。
-        #    爬蟲會長時間佔用 DB 寫入，撞上去就是 database is locked。
-        #    比照 cycle_purchase_auto_close 挑 00:05 避開整點的既有作法。
-        #
-        # ⚠️ 同樣刻意用同步 `def` 而非 async def（理由同上方各排程）。
-        #
-        # ⚠️ 這條路徑**沒有外層鎖**，所以呼叫 run_scheduled_sync()（內含 sync_lock）
-        #    而不是 sync_all_enabled()（那支是給 sync_tool.py 用的，外層已加鎖，
-        #    兩邊都加會自我死鎖）。
-        #
-        # ⚠️ 本模組同時登錄於 sync_tool.py MODULES。有排程的非 Ragic 模組
-        #    只掛這裡是不夠的 —— SCHEDULER_ENABLED=false 的機器上等於從未執行
-        #    （2026-08-13 那四個 OHIP 排程就是這樣停擺的）。
-        def _daily_ota_sync():
-            from app.services.ota_scraper_service import run_scheduled_sync
-            try:
-                r = run_scheduled_sync()
-                print(
-                    f"[Portal] OTA review sync: {r.get('success')}/{r.get('attempted')} sources ok "
-                    f"(skipped={r.get('skipped')}) "
-                    f"inserted={r.get('inserted')} updated={r.get('updated')} "
-                    f"dup={r.get('marked_duplicate')}"
-                )
-                # ⚠️ warning 用 warning 印、error 用 error 印，不要混在一起。
-                #    「某幾筆略過」與「整個來源失敗」在畫面上是不同顏色。
-                for w in (r.get("warnings") or [])[:20]:
-                    print(f"[Portal] OTA review warning: {w}")
-                for e in r.get("errors") or []:
-                    print(f"[Portal] OTA review error: {e}")
-            except Exception as exc:
-                print(f"[Portal] OTA review sync failed: {exc}")
-
-        _scheduler.add_job(
-            _daily_ota_sync,
-            trigger=_CronTrigger(hour=3, minute=5),
-            id="ota_review_sync",
-            replace_existing=True,
-            misfire_grace_time=3600,
-        )
-        print("[Portal] OTA review sync scheduled: daily at 03:05 "
-              "(enabled sources, once per day)")
-
-        # ── 每日 03:40 OTA 情緒與主題分析（2026-08-22，P4）──────────────
-        # 規格書：docs/SPEC_ota_reviews.md §7、§11
-        #
-        # ⚠️ 排在擷取（03:05）之後 —— 先有資料才有東西可分析。
-        #    間隔 35 分鐘是給擷取留餘裕（四個來源 × 翻頁，最久可能 20 分鐘）。
-        #    真的撞上也不會壞：分析只挑 analyzed_at IS NULL 的，
-        #    這一輪沒分析到的下一輪會補。
-        #
-        # ⚠️ 同樣刻意用同步 def。
-        # ⚠️ 這條路徑沒有外層鎖，所以自己包 sync_lock
-        #    （run_scheduled_analyze() 內部不加，那支也給 sync_tool.py 用）。
-        def _daily_ota_analyze():
-            from app.core.sync_lock import sync_lock
-            from app.services.ota_analysis_service import run_scheduled_analyze
-            try:
-                with sync_lock("OTA 情緒分析"):
-                    r = run_scheduled_analyze()
-                print(
-                    f"[Portal] OTA analyze: total={r.get('total')} "
-                    f"rule={r.get('rule_count')} ai={r.get('ai_count')} "
-                    f"cache={r.get('cache_hit')} alert={r.get('alert_count')}"
-                )
-                for w in (r.get("warnings") or [])[:20]:
-                    print(f"[Portal] OTA analyze warning: {w}")
-            except Exception as exc:
-                print(f"[Portal] OTA analyze failed: {exc}")
-
-        _scheduler.add_job(
-            _daily_ota_analyze,
-            trigger=_CronTrigger(hour=3, minute=40),
-            id="ota_sentiment_analyze",
-            replace_existing=True,
-            misfire_grace_time=3600,
-        )
-        print("[Portal] OTA sentiment analyze scheduled: daily at 03:40")
-
-        # ── 每日 04:10 競品價格抓取（2026-09-09）───────────────────────
-        # 規格書：docs/SPEC_compset_analysis.md §12
-        #
-        # ⚠️ 為什麼是 04:10：避開整點（module_auto_sync 與 8 支請購／請款同步
-        #    會同時觸發），也避開 OTA 的 03:05／03:40 與 OHIP 快照的 06:00。
-        #
-        # ⚠️ 刻意用同步 `def`（理由同上方各排程）。
-        #
-        # ⚠️ 這條路徑沒有外層鎖，所以呼叫 run_scheduled_fetch()（自帶 sync_lock），
-        #    不是 sync_all_enabled()（那支給 sync_tool.py 用，外層已加鎖，
-        #    兩邊都加會自我死鎖）。
-        #
-        # ⚠️ 本模組同時登錄於 sync_tool.py MODULES —— 只掛這裡不夠，
-        #    SCHEDULER_ENABLED=false 的機器上等於從未執行。
-        #
-        # ⚠️ 未設定 SERPAPI_API_KEY 時不會拋例外，只回 skipped ＋ warning。
-        #    整個排程不該因為一個沒設定好的模組而中斷。
-        def _daily_compset_fetch():
-            from app.services.compset_fetch_service import run_scheduled_fetch
-            try:
-                r = run_scheduled_fetch()
-                print(
-                    f"[Portal] compset fetch: {r.get('success')}/{r.get('total')} subscribers ok "
-                    f"requests={r.get('fetched')} rows={r.get('upserted')}"
-                )
-                # ⚠️ warning 與 error 分開印 —— 「某家沒抓到」與「整個級別失敗」
-                #    在畫面上是不同顏色。
-                for w in (r.get("warnings") or [])[:20]:
-                    print(f"[Portal] compset warning: {w}")
-                for e in r.get("errors") or []:
-                    print(f"[Portal] compset error: {e}")
-            except Exception as exc:
-                print(f"[Portal] compset fetch failed: {exc}")
-
-        _scheduler.add_job(
-            _daily_compset_fetch,
-            trigger=_CronTrigger(hour=4, minute=10),
-            id="compset_rate_fetch",
-            replace_existing=True,
-            misfire_grace_time=3600,
-        )
-        print("[Portal] compset rate fetch scheduled: daily at 04:10")
 
         _scheduler.start()
         print("[Portal] AutoSync scheduler started (cron-aligned, default every 30 minutes).")
@@ -2382,138 +2021,6 @@ app.include_router(
     cycle_purchase_audit.router,
     prefix=f"{API_PREFIX}/cycle-purchase",
     tags=["週期採購"],
-)
-
-# ── 營運分析（OPERA）：檔案上傳型模組，資料來自人工上傳的 OPERA TXT ──────────
-app.include_router(
-    opera_import.router,
-    prefix=f"{API_PREFIX}/opera/import",
-    tags=["營運分析"],
-)
-app.include_router(
-    opera_revenue.router,
-    prefix=f"{API_PREFIX}/opera/revenue",
-    tags=["營運分析"],
-)
-app.include_router(
-    opera_guest.router,
-    prefix=f"{API_PREFIX}/opera/guest",
-    tags=["營運分析"],
-)
-app.include_router(
-    opera_forecast.router,
-    prefix=f"{API_PREFIX}/opera/forecast",
-    tags=["營運分析"],
-)
-# ⚠️ 本組端點雖然掛在 /opera/* 底下，但**資料來源是 OHIP API 落地，不是 TXT 上傳**。
-#    放這裡是因為時間語意一致（都是落地的歷史資料），主管看月報不必跨模組跳。
-#    代價是同一個模組混了兩種來源 —— 畫面上必須標示，service 的 `source.note` 已強制帶出。
-app.include_router(
-    opera_segment.router,
-    prefix=f"{API_PREFIX}/opera/segments",
-    tags=["營運分析"],
-)
-# 訂房分析（2026-08-07）：⚠️ 與 /opera/guest 分析母體不同（所有訂房 vs 已離店住客），
-#    每個回應的 source.population 都會把這句話帶到畫面上。
-app.include_router(
-    opera_reservation.router,
-    prefix=f"{API_PREFIX}/opera/reservations",
-    tags=["營運分析"],
-)
-# 訂房 Pace／Pickup（2026-08-13）：讀 ohip_reservation(_night)，**不新增資料表**。
-#    ⚠️ 歷史進度是以訂房日「回推」得出（sync 是整列覆寫、無版本），
-#       已含後續改期與取消的結果 —— source.population 會把這句話帶到畫面上。
-#    ⚠️ 與 /opera/reservations 的差別：那邊看「現在」，這邊多一個 as_of 觀察時點。
-app.include_router(
-    opera_pace.router,
-    prefix=f"{API_PREFIX}/opera/pace",
-    tags=["營運分析"],
-)
-
-# ── OTA 口碑分析（2026-08-21）：Booking／Expedia／Tripadvisor 公開評論 ──────────
-#    規格書 docs/SPEC_ota_reviews.md。
-#    ⚠️ 與 /opera/*、/jinxu/* 完全獨立：那兩個是 PMS 營收資料（權限敏感群組），
-#       本模組是公開評論，權限另開「口碑分析」group，不受 §11.1 那條紅線約束。
-#    ⚠️ 所有統計一律用 score_10（統一 10 分制）—— Booking 10 分制與 Tripadvisor
-#       5 分制混在一起平均出來的數字是錯的。
-app.include_router(
-    ota_reviews.router,
-    prefix=f"{API_PREFIX}/ota/reviews",
-    tags=["口碑分析"],
-)
-app.include_router(
-    ota_stats.router,
-    prefix=f"{API_PREFIX}/ota/stats",
-    tags=["口碑分析"],
-)
-app.include_router(
-    ota_admin.router,
-    prefix=f"{API_PREFIX}/ota/admin",
-    tags=["口碑分析"],
-)
-
-# ── 競品分析：資料來自 SerpApi 的 google_hotels 引擎，非 Ragic、非 PMS ────────
-# 規格書：docs/SPEC_compset_analysis.md §8、§10
-#
-# ⚠️ 兩支 router 共用同一個 prefix —— compset_rates 是查詢、compset_admin 是設定，
-#    路徑不重疊（/rates/* /dashboard /logs vs /hotels /subscribers /settings/*）。
-#
-# ⚠️ 權限另開「競品分析」group，理由同口碑分析：競品掛牌價是公開資料、
-#    不含自家營收，不該被 §11.1 那條 opera_* 紅線綁住。
-#
-# ⚠️ `compset_subscriber_admin` **是敏感權限**（可改配額、可加發額度 ＝
-#    直接影響對外收費與 API 成本），只給 system_admin。
-app.include_router(
-    compset_rates.router,
-    prefix=f"{API_PREFIX}/compset",
-    tags=["競品分析"],
-)
-app.include_router(
-    compset_admin.router,
-    prefix=f"{API_PREFIX}/compset",
-    tags=["競品分析"],
-)
-
-# ── 即時營運：直接向 OPERA Cloud（OHIP）取數，不落地、不共用 opera_* 表 ────────
-#    唯讀＋記憶體快取；規格書 docs/SPEC_realtime_operations.md。
-#    ⚠️ 與 /opera/*（人工上傳 TXT）完全獨立：資料時點不同，不共用端點或資料表。
-app.include_router(
-    realtime.router,
-    prefix=f"{API_PREFIX}/realtime",
-    tags=["即時營運"],
-)
-
-# ── 金旭 PMS 分析：檔案上傳型模組，資料來自人工上傳的金旭 xlsx ────────────────
-#    路由前綴 /jinxu/*，與 /opera/* 完全獨立，不共用任何端點或資料表。
-app.include_router(
-    jinxu_import.router,
-    prefix=f"{API_PREFIX}/jinxu/import",
-    tags=["金旭分析"],
-)
-app.include_router(
-    jinxu_revenue.router,
-    prefix=f"{API_PREFIX}/jinxu/revenue",
-    tags=["金旭分析"],
-)
-app.include_router(
-    jinxu_payment.router,
-    prefix=f"{API_PREFIX}/jinxu/payment",
-    tags=["金旭分析"],
-)
-app.include_router(
-    jinxu_deposit.router,
-    prefix=f"{API_PREFIX}/jinxu/deposit",
-    tags=["金旭分析"],
-)
-app.include_router(
-    jinxu_reservation.router,
-    prefix=f"{API_PREFIX}/jinxu/reservation",
-    tags=["金旭分析"],
-)
-app.include_router(
-    jinxu_settings.router,
-    prefix=f"{API_PREFIX}/jinxu/settings",
-    tags=["金旭分析"],
 )
 
 # ── AI 工單查詢助理（AI_ENABLED=true 才掛載，正式環境可保持 false）────────────

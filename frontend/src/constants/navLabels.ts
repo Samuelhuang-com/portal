@@ -95,11 +95,6 @@ export const NAV_GROUP = {
   nichiyoPurchaseReport:  '日曜請購月報表',    // ← 日曜核准請購單月報表
   nichiyoClaimReport:     '日曜請款月報表',    // ← 日曜核准請款單月報表
   cyclePurchase:          '週採',              // ← 新增：週期採購管理（2026-07-10，獨立資料庫 cycle-purchase.db）
-  opera:                  '營運分析',          // ← 新增：OPERA 營運分析（2026-08-04，檔案上傳型模組，非 Ragic 同步）
-  jinxu:                  '金旭分析',          // ← 新增：金旭 PMS 分析（2026-08-05，第二個檔案上傳型模組，與 /opera 完全獨立）
-  realtime:               '即時營運',          // ← 新增：OPERA Cloud API 直連（2026-08-06）。與 /opera/*（上傳 TXT）刻意分開：資料來源與時點不同
-  ota:                    '口碑分析',          // ← 新增：OTA 評論分析（2026-08-21，外部網站擷取型）。刻意不併入「營運分析」：那組是 PMS 營收敏感權限，評論是公開資料
-  compset:                '競品分析',          // ← 新增：競品房價分析（2026-09-09，SerpApi 擷取型）。刻意獨立於 /opera：資料是別人家的公開牌價，不是自己的 PMS 營收
 } as const
 
 // ── 二級選單（頁面） ──────────────────────────────────────────────────────────
@@ -289,80 +284,4 @@ export const NAV_PAGE = {
   cyclePurchasePayments:        '請款單',              // ← route /cycle-purchase/payments
   cyclePurchaseAuditLog:        '異常稽核紀錄',        // ← route /cycle-purchase/audit-log
   cyclePurchaseManual:          '週採使用手冊',        // ← route /cycle-purchase/manual（2026-08-07 新增）
-
-  // OPERA 營運分析（2026-08-04 新增；資料來源為人工上傳的 OPERA TXT，非 Ragic 同步）
-  // ⚠️ 以下 label 必須與 role_permissions.py 的 PERMISSION_DEFINITIONS 完全一致
-  operaDashboard:  '★ 營運分析 Dashboard',  // ← route /opera/dashboard
-  operaRevenue:    '營收分析',              // ← route /opera/revenue
-  operaGuest:      '住客與通路分析',        // ← route /opera/guest
-  operaImport:     '資料匯入',              // ← route /opera/import
-  // 2026-08-04：匯入紀錄併入「資料匯入」頁的 TAB，不再是獨立選單項；
-  // 標籤保留給 TAB 標題與 /opera/batches 導向後的頁面使用。
-  operaBatches:    '匯入紀錄',              // ← /opera/import?tab=batches
-  operaLookup:     '歷史同期查詢',          // ← route /opera/lookup（2026-08-05 新增）
-  operaForecast:   '房價預測',              // ← route /opera/forecast（2026-08-05 新增）
-  // 2026-08-05：事件月曆併入房價預測頁的 TAB，選單不再有獨立項目。
-  // 標籤保留給 TAB 標題、權限清單與 /opera/events 導向後的頁面使用。
-  operaEvents:     '事件月曆',              // ← /opera/forecast?tab=events
-  // 市場區隔／房型趨勢（2026-08-07）。⚠️ 資料來源是 OHIP API 落地，不是 TXT 上傳。
-  // ⚠️ 這個字串必須與 role_permissions.py 的 opera_segment_view label 完全一致，
-  //    否則管理員在「權限設定」看到的名稱與側邊欄不同（CLAUDE.md §3）。
-  operaSegments:   '市場區隔分析',          // ← route /opera/segments
-  // 訂房分析（2026-08-07）。⚠️ 母體與 operaGuest 不同：所有訂房 vs 已離店住客。
-  // ⚠️ 這個字串必須與 role_permissions.py 的 opera_reservation_view label 完全一致。
-  operaReservations: '訂房分析',           // ← route /opera/reservations
-  // 訂房 Pace／Pickup（2026-08-13）。⚠️ 這一頁的歷史進度是以訂房日「回推」得出，
-  //    與訂房分析的「現在狀態」可信度不同，所以另開權限 key。
-  // ⚠️ 這個字串必須與 role_permissions.py 的 opera_pace_view label 完全一致。
-  //    注意分隔號是全形「／」，不是半形 /。
-  operaPace:       '訂房 Pace／Pickup',    // ← route /opera/pace
-  operaSettings:   '分析門檻設定',          // ← route /opera/settings
-  operaManual:     '使用手冊',              // ← route /opera/manual（共用 opera_view 權限）
-
-  // ── 即時營運（2026-08-06 新增）────────────────────────────────────────────
-  // 資料直接來自 OPERA Cloud（OHIP）REST API，**不是**上傳的 TXT。
-  // 刻意獨立成一級選單，避免與 /opera/* 的上傳型資料在同一處被誤讀為同一時點。
-  // 規格書：docs/SPEC_realtime_operations.md §8.1
-  // ⚠️ 下列 label 必須與 role_permissions.py 的 PERMISSION_DEFINITIONS 完全一致。
-  realtimeDashboard: '即時營運看板',        // ← route /realtime/dashboard
-  realtimeRevenue:   '營收與結構分析',      // ← route /realtime/revenue
-  realtimeCompare:   '與營運分析比對',      // ← route /realtime/compare
-  realtimeLogs:      'API 呼叫紀錄',        // ← route /realtime/logs（共用 realtime_view）
-  realtimeManual:    '使用手冊',            // ← route /realtime/manual（共用 realtime_view）
-
-  // ── 金旭分析（2026-08-05 新增）────────────────────────────────────────────
-  // ⚠️ 下列名稱必須與 backend/app/routers/role_permissions.py 的 PERMISSION_DEFINITIONS
-  //    label 完全一致，否則管理員在「權限設定」看到的名稱會與側邊欄不同。
-  jinxuDashboard:   '★ 金旭分析 Dashboard',  // ← route /jinxu/dashboard
-  jinxuReservation: '訂房與通路分析',        // ← route /jinxu/reservation
-  jinxuRevenue:     '收入結構分析',          // ← route /jinxu/revenue
-  jinxuPayment:     '付款方式分析',          // ← route /jinxu/payment
-  jinxuDeposit:     '預收訂金追蹤',          // ← route /jinxu/deposit
-  jinxuImport:      '資料匯入',              // ← route /jinxu/import（含匯入紀錄 TAB）
-  jinxuSettings:    '科目與門檻設定',        // ← route /jinxu/settings
-  jinxuManual:      '使用手冊',              // ← route /jinxu/manual（共用 jinxu_view 權限）
-
-  // ── 口碑分析（2026-08-21 新增）────────────────────────────────────────────
-  // 資料來源：Booking／Expedia／Tripadvisor 的公開評論頁。規格書 docs/SPEC_ota_reviews.md
-  // ⚠️ 下列字串必須與 role_permissions.py PERMISSION_DEFINITIONS 的 label 逐字相同，
-  //    否則管理員在「權限設定」看到的名稱與側邊欄不同，會以為是兩個不同的東西。
-  otaDashboard:     '★ 口碑分析 Dashboard',  // ← route /ota/dashboard（P5 交付）
-  otaReviews:       '評論清單',              // ← route /ota/reviews
-  otaAlerts:        '負評警示',              // ← route /ota/alerts（P4 交付）
-  otaTrend:         '趨勢與雙館比較',        // ← route /ota/trend（P5 交付）
-  otaSources:       'OTA 來源設定',          // ← route /ota/sources（含 CSV 匯入）
-  otaTopics:        '主題字典維護',          // ← route /ota/topics（P4 交付）
-
-  // ── 競品分析（2026-09-09 新增）────────────────────────────────────────────
-  // 資料來源：SerpApi 的 Google Hotels 公開牌價。規格書 docs/SPEC_compset_analysis.md
-  // ⚠️ 下列字串必須與 role_permissions.py PERMISSION_DEFINITIONS 的 label 逐字相同，
-  //    否則管理員在「權限設定」看到的名稱與側邊欄不同，會以為是兩個不同的東西。
-  //    （compsetLogs 例外：它與 Dashboard 共用 compset_view，沒有自己的權限 key）
-  compsetDashboard:   '★ 競品分析 Dashboard',  // ← route /compset/dashboard
-  compsetMatrix:      '價格矩陣',              // ← route /compset/matrix
-  compsetTrend:       '價格軌跡',              // ← route /compset/trend
-  compsetHotels:      '競爭組設定',            // ← route /compset/hotels（含 CSV 備援匯入）
-  compsetCadence:     '抓取節奏設定',          // ← route /compset/cadence（含成本試算與手動觸發）
-  compsetSubscribers: '訂閱與配額管理',        // ← route /compset/subscribers（敏感：可加發配額）
-  compsetLogs:        '抓取紀錄',              // ← route /compset/logs（共用 compset_view）
 } as const
