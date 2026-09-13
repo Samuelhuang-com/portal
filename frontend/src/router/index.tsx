@@ -19,6 +19,12 @@ function isJwtExpired(token: string | null): boolean {
 import MainLayout from '@/components/Layout/MainLayout'
 import { useMenuItemsContext } from '@/components/Layout/menuItemsContext'
 import { getHomePageRoute, isRouteInMenu, firstRouteInMenu } from '@/utils/homePage'
+// ── 手機殼層（2026-09-13 新增）──────────────────────────────────────────────
+// 與 "/" 平行的第二套殼層，掛在 /m/* 之下；桌面分支的任何一行都沒有改動。
+import MobileLayout from '@/components/Layout/MobileLayout'
+import MobileLuqunRepairDashboard from '@/pages/Mobile/LuqunRepairDashboard'
+import { useIsMobile } from '@/hooks/useIsMobile'
+import { shouldUseMobileShell } from '@/utils/uiMode'
 import LoginPage           from '@/pages/Login'
 import DashboardPage       from '@/pages/Dashboard'
 import RoomMaintenancePage       from '@/pages/RoomMaintenance'
@@ -234,9 +240,21 @@ const PERM_DEFAULT_ROUTES: { key: string; route: string }[] = [
  *   4. 選單完全算不出來（menu-config API 失敗且無快取）→ 才退回 PERM_DEFAULT_ROUTES
  */
 function HomeRedirect() {
+  // ── 手機殼層建議導向（2026-09-13 新增）──────────────────────────────────
+  // 寬度只在這裡判「一次」：使用者之後旋轉螢幕、縮放視窗都不會被強制搬家，
+  // 避免 Layout 元件被換掉導致整棵子樹重新掛載、正在填的表單資料消失。
+  // 使用者若已明確選過桌面版／手機版，shouldUseMobileShell 會以偏好為準。
+  const isNarrow = useIsMobile()
+
   const user = useAuthStore((s) => s.user)
   const isSystemAdmin = !!(user?.roles?.includes('system_admin'))
   const { items: visibleMenu, loading: menuLoading } = useMenuItemsContext()
+
+  // 手機 → 進 /m。刻意放在等待 /me 之前：手機分支有自己的 PermissionGuard，
+  // 不需要先算出桌面選單。
+  if (shouldUseMobileShell(isNarrow)) {
+    return <Navigate to="/m" replace />
+  }
 
   // permissions 尚未從 /me 載入時等待（避免用空權限計算首頁）
   if (!isSystemAdmin && user?.permissions === undefined) {
@@ -397,6 +415,34 @@ export default function AppRouter() {
     <Routes>
       {/* Public */}
       <Route path="/login" element={<LoginPage />} />
+
+      {/* ── 手機殼層（2026-09-13 新增）──────────────────────────────────────
+          與下方 "/" 分支平行，桌面路由完全不受影響。
+          React Router v6 的路由排序會讓 /m/xxx 勝過 "/" 底下的 catch-all，
+          因此不需要調整既有的任何一條路由。
+
+          ⚠️ 這裡必須直接寫 <Route>；把它包成自訂元件（例如 <MobileRoutes />）
+             會被 <Routes> 靜默忽略——路由不生效，也不會報錯。
+
+          權限：一律沿用桌面既有的 permission_key，不新增任何 key，
+                因此 role_permissions.py / navLabels.ts 都不需要更動。 */}
+      <Route
+        path="/m"
+        element={
+          <PrivateRoute>
+            <MobileLayout />
+          </PrivateRoute>
+        }
+      >
+        <Route index element={<Navigate to="/m/luqun-repair" replace />} />
+        <Route path="luqun-repair" element={
+          <PermissionGuard permissionKey="luqun_repair_view">
+            <MobileLuqunRepairDashboard />
+          </PermissionGuard>
+        } />
+        {/* 手機分支內走錯路徑 → 回手機首頁，不要掉回桌面版 */}
+        <Route path="*" element={<Navigate to="/m" replace />} />
+      </Route>
 
       {/* Protected — all inside MainLayout */}
       <Route

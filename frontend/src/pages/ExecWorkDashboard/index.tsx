@@ -70,6 +70,7 @@ import {
   fetchOtherTaskStats,
   type OtherTaskTypeStat,
 } from '@/api/otherTasks'
+import { fetchLastUpdated, type LastUpdatedResult } from '@/api/ragic'
 
 import type { Dayjs } from 'dayjs'
 dayjs.extend(relativeTime)
@@ -1182,13 +1183,31 @@ export type { WJVenueStat, WJCatStat, WJStats }
 
 
 
+// ── 「資料更新於」採計的資料來源 ──────────────────────────────────────────────
+// 只列本頁真正用到的來源，避免顯示到與本頁無關的模組時間。
+// 名稱須與 backend/app/routers/ragic.py 的 _LAST_UPDATED_SOURCES key 完全一致。
+// ⭐ 時間取自各業務資料表的 synced_at，不是 module_sync_log（排程器沒跑時那張表會凍結）。
+const SYNC_MODULES = [
+  '大直工務報修',        // 飯店工務部（現場報修）
+  '商場工務報修',        // 商場現場報修
+  '客房保養',            // 飯店例行維護
+  '客房保養明細',
+  '飯店週期保養',
+  'IHG客房保養',
+  '飯店每日巡檢',
+  '商場週期保養',        // 商場例行維護
+  '商場工務巡檢',        // 商場每日巡檢
+  '主管交辦／緊急事件',
+]
+
 export default function ExecWorkDashboardPage() {
   const navigate = useNavigate()
 
   const [luqunData,   setLuqunData]   = useState<RepairDashboardData | null>(null)
   const [dazhiData,   setDazhiData]   = useState<RepairDashboardData | null>(null)
   const [loading,     setLoading]     = useState(true)
-  const [refreshed,   setRefreshed]   = useState<Date>(new Date())
+  // 「更新於」＝資料庫最後同步寫入時間（非畫面重新整理時刻）
+  const [dataUpdated, setDataUpdated] = useState<LastUpdatedResult | null>(null)
 
   // 年月篩選狀態（工務報修 + 工項比較表）
   const [selectedYear,   setSelectedYear]   = useState<number>(dayjs().year())
@@ -1223,7 +1242,7 @@ export default function ExecWorkDashboardPage() {
   const loadAll = useCallback(async () => {
     setLoading(true)
     try {
-      const [luqun, dazhi, hotelMon, mallMon, hotelDay, mallDay, execSt, execStYr, dazhiSt, luqunSt, otherSt] =
+      const [luqun, dazhi, hotelMon, mallMon, hotelDay, mallDay, execSt, execStYr, dazhiSt, luqunSt, otherSt, lastUpd] =
         await Promise.allSettled([
           fetchLuqunDashboard(selectedYear, selectedMonth),
           fetchDazhiDashboard(selectedYear, selectedMonth),
@@ -1236,6 +1255,7 @@ export default function ExecWorkDashboardPage() {
           fetchDazhiRepairStats(selectedYear),
           fetchLuqunRepairStats(selectedYear),
           fetchOtherTaskStats({ year: selectedYear, month: selectedMonth }),
+          fetchLastUpdated(SYNC_MODULES),
         ])
       if (luqun.status     === 'fulfilled') setLuqunData(luqun.value)
       if (dazhi.status     === 'fulfilled') setDazhiData(dazhi.value as unknown as RepairDashboardData)
@@ -1248,7 +1268,7 @@ export default function ExecWorkDashboardPage() {
       if (dazhiSt.status   === 'fulfilled') setDazhiRepairStats(dazhiSt.value)
       if (luqunSt.status   === 'fulfilled') setLuqunRepairStats(luqunSt.value)
       if (otherSt.status   === 'fulfilled') setOtherTasksStats(otherSt.value)
-      setRefreshed(new Date())
+      if (lastUpd.status   === 'fulfilled') setDataUpdated(lastUpd.value)
     } finally {
       setLoading(false)
     }
@@ -1352,10 +1372,33 @@ export default function ExecWorkDashboardPage() {
         </div>
         <Space direction="vertical" align="end" size={2}>
           <Space>
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              <ClockCircleOutlined style={{ marginRight: 4 }} />
-              更新於 {dayjs(refreshed).format('HH:mm:ss')}
-            </Text>
+            <Tooltip
+              title={
+                dataUpdated?.modules?.length ? (
+                  <div style={{ fontSize: 12, lineHeight: 1.7 }}>
+                    <div style={{ marginBottom: 4 }}>各來源資料表最後寫入時間：</div>
+                    {dataUpdated.modules.map(m => (
+                      <div key={m.module_name}>
+                        {m.module_name}：{dayjs(m.last_updated).format('MM/DD HH:mm')}
+                      </div>
+                    ))}
+                    {dataUpdated.missing?.length ? (
+                      <div style={{ marginTop: 4 }}>
+                        查無資料：{dataUpdated.missing.join('、')}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : '查無資料更新紀錄'
+              }
+            >
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                <ClockCircleOutlined style={{ marginRight: 4 }} />
+                資料更新於{' '}
+                {dataUpdated?.last_updated
+                  ? dayjs(dataUpdated.last_updated).format('YYYY/MM/DD HH:mm:ss')
+                  : '—'}
+              </Text>
+            </Tooltip>
             <Button size="small" icon={<ReloadOutlined />} onClick={loadAll} loading={loading}>
               重新整理
             </Button>

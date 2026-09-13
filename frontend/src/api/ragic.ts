@@ -173,6 +173,38 @@ export async function triggerSingleModuleSync(moduleName: string): Promise<{ suc
 }
 
 
+// ── 資料庫最後更新時間（供各 Dashboard「資料更新於」）─────────────────────────
+// ⭐ 來源是各業務資料表的 synced_at 最大值，不是 module_sync_log，也不是前端 new Date()。
+//    module_sync_log 只記錄排程器與同步按鈕，sync_tool.py 從不寫入，
+//    排程器沒在跑時它會永遠停在最後一次執行的日期。
+// 一般登入使用者即可呼叫（其餘 sync-logs 端點限系統管理員）。
+
+export interface ModuleLastUpdated {
+  module_name:  string
+  last_updated: string   // 台灣時間 naive ISO，例：2026-09-13T21:23:19
+}
+
+export interface LastUpdatedResult {
+  last_updated: string | null       // 所有指定來源中最新的一筆；查無資料為 null
+  modules:      ModuleLastUpdated[] // 各來源明細，由新到舊
+  requested:    string[]
+  missing:      string[]            // 查無資料（空表）、名稱錯誤或查詢失敗的來源
+  unknown:      string[]            // 不在後端白名單內的名稱（通常是打錯字）
+  failed:       string[]            // 資料表不存在或查詢失敗
+}
+
+/**
+ * 取得資料庫最後寫入的日期時間。
+ * @param modules 來源名稱陣列（見後端 _LAST_UPDATED_SOURCES）；省略則涵蓋全部來源。
+ */
+export async function fetchLastUpdated(modules?: string[]): Promise<LastUpdatedResult> {
+  const { data } = await apiClient.get<LastUpdatedResult>(`${BASE}/sync-logs/last-updated`, {
+    params: modules && modules.length ? { modules: modules.join(',') } : undefined,
+  })
+  return data
+}
+
+
 // ── 資料比對（verify-count）──────────────────────────────────────────────────
 
 export interface VerifyCountResult {

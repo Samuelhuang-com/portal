@@ -12,6 +12,7 @@ Prefix: /api/v1/ragic
   GET    /connections/{id}/logs          — 同步日誌（最新 50 筆）
   GET    /snapshots/{id}/latest          — 最新資料快照
   GET    /scheduler/status               — 列出所有排程任務狀態
+  GET    /sync-logs/last-updated         — 資料庫最後寫入時間（各表 synced_at 最大值，供 Dashboard「更新於」）
 """
 from typing import List, Optional
 
@@ -27,7 +28,7 @@ from app.core.scheduler import (
     register_connection_job,
     set_module_sync_interval,
 )
-from app.dependencies import is_system_admin
+from app.dependencies import get_current_user, is_system_admin
 from app.models.ragic_connection import RagicConnection
 from app.models.sync_log import SyncLog
 from app.schemas.ragic import (
@@ -335,6 +336,100 @@ def get_recent_sync_logs(
         }
         for log in logs
     ]
+
+
+# ── GET /sync-logs/last-updated ──────────────────────────────────────────────
+#
+# ⭐ 為什麼不用 module_sync_log？
+#   module_sync_log 只有 main.py 的 _run_and_log() 會寫，也就是「排程器」與
+#   「同步紀錄頁的 ▶同步 按鈕」兩條路徑。實際上大量資料是由 sync_tool.py 寫進資料庫的，
+#   而 sync_tool.py 從頭到尾沒有寫過 module_sync_log（只 import model 建表）。
+#   排程器若沒在跑，module_sync_log 就會永遠停在它最後一次執行的日期，
+#   即使資料每天都有在更新——這正是「更新於」顯示 2026/07/15 的原因。
+#
+#   各業務資料表的 synced_at 才是唯一可信來源：不論由排程器、同步按鈕或 sync_tool.py
+#   觸發，各 sync_service 都會在 insert 與 update 兩條路徑上明確寫入 synced_at=twnow()。
+
+# 資料來源名稱 → (資料表, 時間欄位)。名稱沿用 main.py _SINGLE_MODULE_MAP 的模組名，
+# 方便與「同步紀錄」頁對照。新增 Dashboard 來源時在這裡加一列即可。
+_LAST_UPDATED_SOURCES: dict[str, tuple[str, str]] = {
+    "大直工務報修":       ("dazhi_repair_case",              "synced_at"),
+    "商場工務報修":       ("luqun_repair_case",              "synced_at"),
+    "主管交辦／緊急事件": ("other_task",                     "synced_at"),
+    "客房保養":          ("room_maintenance_records",        "synced_at"),
+    "客房保養明細":       ("room_maintenance_detail_records", "synced_at"),
+    "飯店週期保養":       ("pm_batch_item",                  "synced_at"),
+    "IHG客房保養":       ("ihg_rm_detail",                   "synced_at"),
+    "飯店每日巡檢":       ("hotel_di_inspection_item",       "synced_at"),
+    "商場週期保養":       ("mall_pm_batch_item",             "synced_at"),
+    "商場工務巡檢":       ("mall_fi_inspection_item",        "synced_at"),
+}
+
+
+@router.get("/sync-logs/last-updated")
+def get_last_updated(
+    modules: Optional[str] = None,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    回傳「資料庫最後一次被寫入」的日期時間 —— 各業務資料表 synced_at 的最大值。
+
+    供各 Dashboard 顯示「資料更新於 …」，取代前端 new Date()
+    （那只是畫面重新整理的時刻，不代表資料本身有多新）。
+
+    參數：
+      modules — 逗號分隔的來源名稱（見 _LAST_UPDATED_SOURCES）；省略則涵蓋全部來源。
+
+    權限：一般登入使用者即可（各 Dashboard 都要用，不限系統管理員）。
+    """
+    from sqlalchemy import text
+
+    names: List[str] = []
+    if modules:
+        names = [m.strip() for m in modules.split(",") if m.strip()]
+    targets = names or list(_LAST_UPDATED_SOURCES.keys())
+
+    per_module: dict[str, str] = {}
+    unknown:    List[str] = []   # 不在白名單內的名稱（前端傳錯字）
+    failed:     List[str] = []   # 資料表不存在或查詢失敗
+
+    for name in targets:
+        entry = _LAST_UPDATED_SOURCES.get(name)
+        if entry is None:
+            unknown.append(name)
+            continue
+        table, col = entry
+        try:
+            # table/col 全部來自上面的伺服器端白名單，不吃使用者輸入，無注入風險
+            val = db.execute(text(f'SELECT MAX("{col}") FROM "{table}"')).scalar()
+        except Exception:
+            # PG 一旦有語句失敗，整個交易會進入 aborted 狀態，
+            # 不 rollback 的話後面每一個查詢都會連帶失敗
+            db.rollback()
+            failed.append(name)
+            continue
+        if val is None:
+            continue
+        # SQLite 回字串、PG 回 datetime，兩種都要能處理
+        per_module[name] = val if isinstance(val, str) else val.isoformat()
+
+    last_at = max(per_module.values()) if per_module else None
+
+    return {
+        # 資料庫最後更新時間（台灣時間，naive ISO 字串；前端 dayjs 直接 parse 即為本地時間）
+        "last_updated": last_at,
+        # 各來源明細，由新到舊——前端可掛 Tooltip 顯示是哪個來源最新／最舊
+        "modules": [
+            {"module_name": n, "last_updated": t}
+            for n, t in sorted(per_module.items(), key=lambda kv: kv[1], reverse=True)
+        ],
+        "requested": names,
+        # 查無資料（空表）、名稱錯誤、或查詢失敗的來源
+        "missing": [n for n in targets if n not in per_module],
+        "unknown": unknown,
+        "failed":  failed,
+    }
 
 
 # ── GET /sync-logs/loop-health ────────────────────────────────────────────────
