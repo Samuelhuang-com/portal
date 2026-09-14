@@ -1067,6 +1067,20 @@ def get_year_matrix_items(
       period_completed   → 本月已完成項目
       period_incomplete  → 本月應保養但尚未完成的項目（＝ period_total − period_completed）
     month = 0 → 全年（合計欄）
+
+    ⭐ **period_* 三個 metric 必須與 `_calc_year_matrix()` 同樣採雙來源**（2026-09-14）
+
+    矩陣格的數字是 `_calc_year_matrix()` 算的，它逐月判斷：該月
+    `pm_schedule`（Portal 自產的排程記錄）有資料就以它計數，沒有才退回
+    `pm_batch_item`（Ragic 批次項目）。這支端點原本**只讀 pm_batch_item**，
+    於是「該月有 pm_schedule、但沒有對應批次項目」時，格子有數字、點開卻是空的。
+
+    2026-09-14 實際踩到：2026/09 每月維護矩陣顯示 3，Drawer 0 筆
+    （PPT 匯出同一個症狀，因為它也是打這支）。
+
+    ⚠️ `prev_carry_over` / `prev_resolved` **不套用**這條：
+       `_calc_year_matrix()` 那兩列本來就只用 `pm_batch_item` 算（跨月累計，
+       pm_schedule 沒有「上期」概念），改了反而會與矩陣分歧。
     """
     # 決定時間範圍
     if month == 0:
@@ -1116,26 +1130,12 @@ def get_year_matrix_items(
         if p_start <= full_date <= p_end:
             period_items_list.append(entry)
 
-    # 依 metric 選擇對應集合
-    if metric == "prev_carry_over":
-        target = prev_carry_over_list
-    elif metric == "prev_resolved":
-        target = [x for x in prev_carry_over_list
-                  if x["end_date"] is not None and p_start <= x["end_date"] <= p_end]
-    elif metric == "period_completed":
-        target = [x for x in period_items_list if x["is_done"]]
-    elif metric == "period_incomplete":
-        # 2026-09-10 新增：本期應完成但尚未完成，與 period_completed 互補
-        #（兩者相加 = period_total）。比照 mall/periodic-maintenance。
-        target = [x for x in period_items_list if not x["is_done"]]
-    else:  # period_total
-        target = period_items_list
-
     # 組裝回傳格式（明細清單）
     ragic_server = getattr(settings, "RAGIC_PM_SERVER_URL", "ap12.ragic.com")
     ragic_account = "soutlet001"
-    result = []
-    for e in target:
+
+    def _item_row(e: dict) -> dict:
+        """pm_batch_item 來源的一列（原本的組裝邏輯，未更動）。"""
         it: PeriodicMaintenanceItem = e["item"]
         b:  PeriodicMaintenanceBatch = e["batch"]
         # 排定日期：優先使用 Ragic 填寫的 scheduled_date，否則顯示批次月份
@@ -1157,7 +1157,7 @@ def get_year_matrix_items(
             status_zh = "待排程"
         # 2026-07-14 起：項目改用 Sheet 11 自己的 _ragicId 直連（不再連回批次 Sheet 8 記錄）
         ragic_link = f"https://{ragic_server}/{ragic_account}/periodic-maintenance/11/{it.ragic_id}"
-        result.append({
+        return {
             "ragic_id":            it.ragic_id,
             "batch_ragic_id":      it.batch_ragic_id,
             "period_month":        b.period_month,
@@ -1177,8 +1177,103 @@ def get_year_matrix_items(
             "abnormal_flag":       it.abnormal_flag,
             "abnormal_note":       it.abnormal_note,
             "ragic_link":          ragic_link,
-        })
+        }
 
+    def _sched_row(r: PMSchedule) -> dict:
+        """pm_schedule 來源的一列（2026-09-14 新增），欄位與 `_item_row()` 完全一致。
+
+        ⚠️ 狀態文字刻意沿用 `_item_row()` 的五態用詞（已排程／待排程），
+           **不是**模組 `STATUS_LABELS` 的（已排定／未排定）—— 同一個 Modal 裡
+           兩種來源的列會並存，用詞不一致使用者會以為是兩種不同狀態。
+        ⚠️ `batch_ragic_id` 這裡放合成值 `sched-<id>`：前端 Modal 的 rowKey 是
+           `ragic_id-batch_ragic_id`，查全年時同一個項目會在多個月出現，
+           不給唯一值 React 會 key 重複。此欄前端不顯示。
+        """
+        _ST = {
+            "completed":   "已完成",
+            "in_progress": "進行中",
+            "overdue":     "逾期",
+            "scheduled":   "已排程",
+            "unscheduled": "待排程",
+        }
+        st = _calc_schedule_status(r)
+        end_date = _parse_end_date(r.end_time)
+        ragic_link = (
+            f"https://{ragic_server}/{ragic_account}/periodic-maintenance/11/{r.item_ragic_id}"
+        )
+        return {
+            "ragic_id":            r.item_ragic_id,
+            "batch_ragic_id":      f"sched-{r.id}",
+            "period_month":        r.year_month,
+            "category":            r.category,
+            "task_name":           r.task_name,
+            "frequency":           r.frequency,
+            # pm_schedule.scheduled_date 只存 MM/DD，補上年份才看得懂
+            "scheduled_date_full": (
+                f"{r.year_month.split('/')[0]}/{r.scheduled_date}"
+                if r.scheduled_date else r.year_month
+            ),
+            "end_time":            r.end_time,
+            "status":              _ST.get(st, st),
+            # pm_schedule 沒有「排定人員」欄位（Ragic Sheet 11 才有），一律留空
+            "scheduler_name":      "",
+            "exec_date":           end_date.strftime("%Y/%m/%d") if end_date else "",
+            "executor_name":       r.executor_name,
+            "result_note":         r.result_note,
+            "abnormal_flag":       r.abnormal_flag,
+            "abnormal_note":       r.abnormal_note,
+            "ragic_link":          ragic_link,
+        }
+
+    # ── period_* 三個 metric：逐月套用 _calc_year_matrix() 的雙來源規則 ────────
+    # 條件寫成「不是 prev_*」而不是白名單，是為了保留原本
+    # `else: target = period_items_list` 的語意：未知 metric 一律當 period_total。
+    if metric not in ("prev_carry_over", "prev_resolved"):
+        # 依批次月份分桶（month=0 查全年時要逐月各自決定來源）
+        period_by_month: dict[int, list[dict]] = {}
+        for e in period_items_list:
+            period_by_month.setdefault(e["full_date"].month, []).append(e)
+
+        months_in_scope = list(range(1, 13)) if month == 0 else [month]
+        freq_clause = _freq_sql_clause(frequency_type, PMSchedule.frequency)
+
+        result = []
+        for m in months_in_scope:
+            sched_q = db.query(PMSchedule).filter(
+                PMSchedule.year_month == f"{year}/{m:02d}"
+            )
+            if freq_clause is not None:
+                sched_q = sched_q.filter(freq_clause)
+            sched_recs = sched_q.all()
+
+            if sched_recs:
+                # 完成與否只看 is_completed 單一欄位，與 _calc_year_matrix() 的
+                # `sum(1 for r in sched_recs if r.is_completed)` 一致。
+                if metric == "period_completed":
+                    sched_recs = [r for r in sched_recs if r.is_completed]
+                elif metric == "period_incomplete":
+                    sched_recs = [r for r in sched_recs if not r.is_completed]
+                result.extend(_sched_row(r) for r in sched_recs)
+            else:
+                ents = period_by_month.get(m, [])
+                if metric == "period_completed":
+                    ents = [x for x in ents if x["is_done"]]
+                elif metric == "period_incomplete":
+                    # 2026-09-10：本期應完成但尚未完成，與 period_completed 互補
+                    #（兩者相加 = period_total）。比照 mall/periodic-maintenance。
+                    ents = [x for x in ents if not x["is_done"]]
+                result.extend(_item_row(e) for e in ents)
+
+        return {"total": len(result), "items": result}
+
+    # ── prev_* 兩個 metric：維持原本的單一來源（pm_batch_item）────────────────
+    if metric == "prev_carry_over":
+        target = prev_carry_over_list
+    else:  # prev_resolved
+        target = [x for x in prev_carry_over_list
+                  if x["end_date"] is not None and p_start <= x["end_date"] <= p_end]
+
+    result = [_item_row(e) for e in target]
     return {"total": len(result), "items": result}
 
 

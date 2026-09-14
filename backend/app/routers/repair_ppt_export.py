@@ -1400,15 +1400,49 @@ def _make_fb_pm_stats_table(
 
 
 # ═══════════════════════════════════════════════════════
-# 週期保養「逾期明細」helpers（luqun 專用）
-# 2026-08-20 新增：接在各「年度統計」表格投影片之後
+# 週期保養「明細」helpers（逾期明細 / 本期未完成項目）
+# 2026-08-20 新增：接在各「年度統計」表格投影片之後（luqun）
+# 2026-09-14 新增 `_PM_DETAIL_MODES`（標題／metric 對照），供飯店版共用；
+#            mall / fb 的行為與呼叫端一行都沒動。飯店版另見
+#            `_make_hotel_pm_detail_table()`（多了 incomplete 口徑）。
 # ═══════════════════════════════════════════════════════
 
 # source → (投影片標題前綴, router module 路徑)
 _PM_OVERDUE_SOURCES = {
     "mall": ("商場週期保養", "app.routers.mall_periodic_maintenance"),
     "fb": ("全棟例行維護", "app.routers.full_building_maintenance"),
+    "hotel": ("飯店週期保養", "app.routers.periodic_maintenance"),
 }
+
+# mode → (標題後綴, 端點 metric, 無資料時的提示文字)
+# overdue    ：2026-08-20 的既有口徑（metric=period_total 再篩 status=="逾期"）
+# incomplete ：本期應保養但尚未完成（含逾期／進行中／已排程／待排程），
+#              數字與「年度統計」表的「本月未完成項目」那一列對得起來
+# ⚠️ 目前只有飯店版在用這張表，而且**只用 incomplete**：
+#    飯店的「逾期明細」頁 2026-09-14 已依裁示移除（逾期是未完成的子集、狀態欄已標出）。
+#    overdue 這一列留著是為了要回復時改一個字就好，不是還有人在呼叫。
+#    mall / fb 走 `_make_pm_overdue_table()`，那支的 metric 是寫死的，不讀這張表。
+_PM_DETAIL_MODES = {
+    "overdue": ("逾期明細", "period_total", "無逾期項目"),
+    "incomplete": ("本期未完成項目", "period_incomplete", "無未完成項目"),
+}
+
+
+def _pm_detail_cols() -> list[dict]:
+    """明細表的 8 欄，與三個 PM 模組網頁矩陣格 Drawer 的 columns 一一對應。
+
+    每次回傳新的 list —— `_add_table_slides()` 不會改它，但共用同一個物件遲早出事。
+    """
+    return [
+        {"key": "period_month", "label": "保養月份", "width": 0.95, "align": "center"},
+        {"key": "category", "label": "類別", "width": 0.85, "align": "center"},
+        {"key": "task_name", "label": "保養項目", "width": 3.60, "align": "left"},
+        {"key": "frequency", "label": "頻率", "width": 0.70, "align": "center"},
+        {"key": "scheduled_date_full", "label": "排定日期", "width": 1.15, "align": "center"},
+        {"key": "status", "label": "狀態", "width": 0.80, "align": "center"},
+        {"key": "executor_name", "label": "執行人員", "width": 1.40, "align": "left"},
+        {"key": "result_note", "label": "備註", "align": "left"},
+    ]
 
 
 def _make_pm_overdue_table(
@@ -1427,6 +1461,9 @@ def _make_pm_overdue_table(
     無逾期時回傳一列「無逾期項目」而不是空 rows：空 rows 會讓
     `_add_table_slides()` 印出「（本期暫無資料）」，語意是「查不到資料」，
     與「查得到、但沒有逾期」是兩回事。
+
+    ⚠️ **飯店（source="hotel"）走 `_make_hotel_pm_detail_table()`**：這一支固定
+       `metric="period_total"`，出不了飯店要的「本期未完成項目」口徑。
     """
     import importlib
 
@@ -1446,16 +1483,7 @@ def _make_pm_overdue_table(
     overdue.sort(key=lambda it: (it.get("scheduled_date_full") or "", it.get("category") or ""))
 
     # ── 欄位：與 MatrixDetailModal 的 columns 一一對應 ──────────────────────
-    cols: list[dict] = [
-        {"key": "period_month", "label": "保養月份", "width": 0.95, "align": "center"},
-        {"key": "category", "label": "類別", "width": 0.85, "align": "center"},
-        {"key": "task_name", "label": "保養項目", "width": 3.60, "align": "left"},
-        {"key": "frequency", "label": "頻率", "width": 0.70, "align": "center"},
-        {"key": "scheduled_date_full", "label": "排定日期", "width": 1.15, "align": "center"},
-        {"key": "status", "label": "狀態", "width": 0.80, "align": "center"},
-        {"key": "executor_name", "label": "執行人員", "width": 1.40, "align": "left"},
-        {"key": "result_note", "label": "備註", "align": "left"},
-    ]
+    cols: list[dict] = _pm_detail_cols()
 
     if not overdue:
         return cols, [
@@ -1530,6 +1558,152 @@ def _add_pm_overdue_slides(
             title_prefix,
             freq_label,
             _od_e,
+            exc_info=True,
+        )
+
+
+# ═══════════════════════════════════════════════════════
+# 飯店週期保養「明細」helpers（2026-09-14）
+#   —— 與上面 mall / fb 那套刻意分開，理由見 docstring
+# ═══════════════════════════════════════════════════════
+
+def _make_hotel_pm_detail_table(
+    db, year: int, month: int, freq_type: str, mode: str
+) -> tuple[list[dict], list[dict]]:
+    """
+    飯店週期保養明細（**只列報告月份當月**）— 8 欄，與網頁矩陣格 Drawer 一致。
+
+    資料源就是網頁 Drawer 打的那支端點函式
+    `periodic_maintenance.get_year_matrix_items()`：
+      mode="incomplete" → metric="period_incomplete"（端點自己算，不在這裡篩）
+      mode="overdue"    → metric="period_total"，再篩出 status == "逾期" 的列
+
+    ⭐ **2026-09-14 起這支端點已改成與 `_calc_year_matrix()` 同樣的雙來源**
+    （該月 `pm_schedule` 有記錄就用它、沒有才退回 `pm_batch_item`），
+    所以這裡直接打它就會與前頁「年度統計」表格的數字對得起來 ——
+    這也是網頁 Drawer 與 PPT 保證一致的唯一方法：**不要在這裡另外重算一份**。
+    （在那之前，2026/09 統計表 3 筆、端點 0 筆，PPT 印出「無未完成項目」。）
+
+    ⚠️ **範圍是報告月份「當月」，不是全年**（Samuel 2026-09-14 最終裁示）。
+       例：報告月份 8 月就只列 8 月的未完成，非當月的不出現；每季／每年頻率同理
+       —— 頻率只決定要篩哪一群保養項目，不會把範圍放大成整年。
+       所以這一頁的筆數只對得起前頁表格**該月那一格**，不是「合計」欄。
+       （month 落在 1~12 之外時端點解讀為全年，副標題也會跟著改。）
+
+    ⚠️ 飯店**不要**走商場那支 `_make_pm_overdue_table()`：那支固定
+       `metric="period_total"`，出不了 incomplete 這個口徑。
+    """
+    from app.routers.periodic_maintenance import get_year_matrix_items
+
+    if mode not in _PM_DETAIL_MODES:
+        raise ValueError(f"未知的 mode：{mode}")
+    _, _metric, _empty_text = _PM_DETAIL_MODES[mode]
+
+    payload = get_year_matrix_items(
+        year=year,
+        month=month,
+        metric=_metric,
+        frequency_type=freq_type,
+        db=db,
+    )
+    items = list(payload.get("items", []))
+    if mode == "overdue":
+        items = [it for it in items if it.get("status") == "逾期"]
+    items.sort(
+        key=lambda it: (
+            it.get("period_month") or "",
+            it.get("category") or "",
+            it.get("task_name") or "",
+        )
+    )
+
+    cols = _pm_detail_cols()
+
+    if not items:
+        # 空 rows 會被 `_add_table_slides()` 印成「（本期暫無資料）」＝「查不到資料」，
+        # 與「查得到、但沒有未完成」是兩回事。
+        return cols, [
+            {
+                "period_month": (
+                    f"{year}/{month:02d}" if 1 <= month <= 12 else f"{year} 全年"
+                ),
+                "category": "\u2014",
+                "task_name": _empty_text,
+                "frequency": "\u2014",
+                "scheduled_date_full": "\u2014",
+                "status": "\u2014",
+                "executor_name": "\u2014",
+                "result_note": "\u2014",
+            }
+        ]
+
+    rows: list[dict] = []
+    for it in items:
+        rows.append(
+            {
+                "period_month": it.get("period_month") or "\u2014",
+                "category": it.get("category") or "\u2014",
+                "task_name": it.get("task_name") or "\u2014",
+                "frequency": it.get("frequency") or "\u2014",
+                "scheduled_date_full": it.get("scheduled_date_full") or "\u2014",
+                "status": it.get("status") or "\u2014",
+                "executor_name": it.get("executor_name") or "\u2014",
+                "result_note": it.get("result_note") or "\u2014",
+            }
+        )
+    return cols, rows
+
+
+def _add_hotel_pm_detail_slides(
+    prs,
+    template_idx: int,
+    db,
+    freq_label: str,
+    freq_type: str,
+    year: int,
+    month: int,
+    now_str: str,
+    SW: float,
+    SH: float,
+    mode: str,
+    prev_note: str,
+    title_fn=None,
+) -> None:
+    """
+    產生一組飯店週期保養明細投影片，接在對應的「年度統計」表格之後。
+
+    ⚠️ 只列**報告月份當月**（Samuel 2026-09-14 最終裁示），與前頁全年 12 個月的
+       統計表不同，所以副標題必須寫明月份。
+
+    title_fn：dazhi 走 IHG 模板，**一定要傳 `_set_ihg_slide_title`**，
+              否則 `_add_table_slides()` 會退回 `_set_slide_title`，
+              標題在 IHG 模板上不會被寫上去（只是空白，不會丟例外）。
+
+    自帶 try/except：明細掛掉不該連累已經產出的統計表。
+    """
+    title_prefix, _ = _PM_OVERDUE_SOURCES["hotel"]
+    _title_suffix, _, _ = _PM_DETAIL_MODES[mode]
+    _range_label = f"{month:02d}月" if 1 <= month <= 12 else "全年"
+    try:
+        d_cols, d_rows = _make_hotel_pm_detail_table(db, year, month, freq_type, mode)
+        _add_table_slides(
+            prs,
+            template_idx,
+            title=f"{title_prefix} — {freq_label}{_title_suffix}",
+            subtitle=f"{year}年{_range_label}　（範圍：{_range_label}；{prev_note}）",
+            columns=d_cols,
+            rows=d_rows,
+            now_str=now_str,
+            SW=SW,
+            SH=SH,
+            title_fn=title_fn,
+        )
+    except Exception as _hd_e:
+        logger.warning(
+            "Hotel PM detail slide (%s / %s) failed (skipped): %s",
+            freq_label,
+            mode,
+            _hd_e,
             exc_info=True,
         )
 
@@ -2898,6 +3072,31 @@ def _build_repair_pptx(module: str, year: int, month: int, db: Session) -> Bytes
                         now_str=now_str,
                         SW=SW,
                         SH=SH,
+                        title_fn=_title_fn,
+                    )
+                    # ── 2026-09-14 新增：每個頻率的年度統計後接一頁明細 ────────
+                    #   本期未完成項目（＝統計表「本月未完成項目」那一列的明細）
+                    # ⚠️ 只列報告月份「當月」的未完成，非當月不出現。
+                    #    走 `_add_hotel_pm_detail_slides()` 而**不是**商場那支
+                    #    `_add_pm_overdue_slides()`——後者固定 metric="period_total"，
+                    #    出不了 incomplete 這個口徑。
+                    # ⚠️ **飯店刻意不出「逾期明細」**（同日稍早出過、已依裁示移除）：
+                    #    逾期只是「本期未完成項目」的子集，狀態欄已經標出來了，
+                    #    另開一頁只是把同一批資料再印一次。
+                    #    商場／全棟沒有 incomplete 那一頁，所以它們的逾期明細保留。
+                    _add_hotel_pm_detail_slides(
+                        prs,
+                        TMPL,
+                        db=db,
+                        freq_label=_hfl,
+                        freq_type=_hfreq,
+                        year=year,
+                        month=month,
+                        now_str=now_str,
+                        SW=SW,
+                        SH=SH,
+                        mode="incomplete",
+                        prev_note="對應前頁年度統計該月的「本月未完成項目」；前頁為全年 12 個月",
                         title_fn=_title_fn,
                     )
             except Exception as _he:
