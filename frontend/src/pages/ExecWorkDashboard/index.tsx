@@ -12,7 +12,7 @@
  *  - GET /api/v1/hotel/daily-hours            → 飯店工項類別日累計（year/month 篩選）
  *  - GET /api/v1/mall/daily-hours             → 商場工項類別日累計（year/month 篩選）
  *  - GET /api/v1/work-category-analysis/stats → 明細分析工時表（year/month，sources=all）
- *  - GET /api/v1/work-journal/matrix          → 每日累計工時表＋員工時統計數（year/month，單位分鐘）
+ *  - GET /api/v1/work-journal/matrix          → 每日累計工時表＋員工時統計數（year/month，單位分鐘，person_scope=named）
  *
  * ⭐ 「每日累計工時表」與「員工時統計數」自 2026-09-14 起改走 /work-journal/matrix，
  *    數字與「工作日誌」頁籤完全一致（單位分鐘）。其餘工時相關區塊（每月累計工時表、
@@ -145,7 +145,8 @@ function JournalBasisNote() {
   return (
     <div style={{ marginTop: 6, color: '#aaa', fontSize: 12 }}>
       來源：工作日誌（<code>/work-journal/matrix</code>），單位為<strong>分鐘</strong>，
-      與「工作日誌」頁籤每日的「N min」同一個數字。
+      與「工作日誌」頁籤「整月」的每日「N min」同一個數字（<strong>僅具名人員</strong>，
+      不含「未指定」——未指定含未來排定、尚未執行的保養項目，會用預估工時計入）。
     </div>
   )
 }
@@ -1274,7 +1275,11 @@ export default function ExecWorkDashboardPage() {
           fetchLuqunRepairStats(selectedYear),
           fetchOtherTaskStats({ year: selectedYear, month: selectedMonth }),
           fetchLastUpdated(SYNC_MODULES),
-          fetchWorkJournalMatrix(selectedYear, selectedMonth),
+          // 'named' ＝ 與工作日誌「整月」頁籤同一個參數（WorkJournalTab 的 mode==='month'
+          // 也是傳 'named'）。⭐ 不能用 'all'：未指定那一列會混進「未來排定、尚未執行」
+          // 的週期保養項目——那些項目沒有執行人員、又因為 `_fetch_hotel_pm` 在沒有實際工時時
+          // 會拿 `estimated_minutes`（預估工時）當 work_min，於是 9/14 之後的未來日期也生出數字。
+          fetchWorkJournalMatrix(selectedYear, selectedMonth, 'named'),
         ])
       if (luqun.status     === 'fulfilled') setLuqunData(luqun.value)
       if (dazhi.status     === 'fulfilled') setDazhiData(dazhi.value as unknown as RepairDashboardData)
