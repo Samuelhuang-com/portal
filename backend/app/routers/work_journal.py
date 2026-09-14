@@ -18,6 +18,7 @@ Prefix: /api/v1/work-journal
 
 import io
 import re
+import calendar
 from datetime import date as _date, timedelta, datetime
 from collections import defaultdict
 from typing import Optional
@@ -1232,6 +1233,96 @@ def get_work_journal_range(
         "date_to":   end.isoformat(),
         "days":      days,
         "total_rows": sum(d["total_rows"] for d in days),
+    }
+
+
+# ─────────────────────────────────────────────────────────────
+# 月矩陣（exec-work-dashboard 的「每日累計工時表」與「員工時統計數」共用）
+# ─────────────────────────────────────────────────────────────
+
+def _matrix_rows(bucket: dict[str, dict[int, int]], key_name: str,
+                 order: list[str], days: list[int]) -> list[dict]:
+    """把 {列名: {日: 分鐘}} 攤平成矩陣列，並附 TOTAL 列。
+
+    `order` 決定列的順序（呼叫端已排好），`key_name` 是列標題欄位名
+    （類別表用 "category"、人員表用 "person"），好讓兩張表共用這段。
+    """
+    rows: list[dict] = []
+    grand_total = 0
+    grand_day = [0] * len(days)
+    for name in order:
+        per_day = [int(bucket[name].get(d, 0)) for d in days]
+        total = sum(per_day)
+        grand_total += total
+        for i, m in enumerate(per_day):
+            grand_day[i] += m
+        rows.append({key_name: name, "minutes": per_day, "total": total, "pct": 0.0})
+    for row in rows:
+        row["pct"] = round(row["total"] / grand_total * 100, 1) if grand_total else 0.0
+    rows.append({
+        key_name: "TOTAL",
+        "minutes": grand_day,
+        "total": grand_total,
+        "pct": 100.0 if grand_total else 0.0,
+    })
+    return rows
+
+
+@router.get("/matrix", summary="工作日誌 — 指定月份的 類別×日期 與 人員×日期 工時矩陣")
+def get_work_journal_matrix(
+    year:  int = Query(..., ge=2020, le=2030),
+    month: int = Query(..., ge=1,    le=12),
+    person_scope: str = Query("all", pattern="^(all|named|unassigned)$",
+                              description="人員範圍：all=全部（預設）/ named=具名 / unassigned=未指定"),
+    venue: str = Query("all", pattern="^(all|hotel|mall)$",
+                       description="歸屬：all=全部（預設）/ hotel=飯店 / mall=商場"),
+    db: Session = Depends(get_db),
+):
+    """把整個月的工作日誌聚合成兩張矩陣，單位一律是**分鐘**（`work_min`）。
+
+    ⭐ 這支端點存在的理由：`/exec-work-dashboard` 的「每日累計工時表」與
+    「員工時統計數」必須與工作日誌 TAB 的數字完全一致。改走這裡之後，
+    三者同源、同一套日期歸戶規則（有子表 → 子表 `start_at`；無 → `occurred_at`
+    ／`created_at`），不再各自從 `work_category_analysis` 重算。
+
+    `by_category` 與 `by_person` 是同一份 rows 的兩種切法，所以兩者的
+    TOTAL 必然相同；要改口徑只能改 `_build_daily`，不要在任何一邊單獨調整。
+
+    `work_min` 為 None（沒有結束時間、算不出工時）的列一律計 0，
+    與工作日誌 TAB 每日標頭上那個「N min」的加總方式一致。
+    """
+    _, days_in_month = calendar.monthrange(year, month)
+    days = list(range(1, days_in_month + 1))
+    zh = ["一", "二", "三", "四", "五", "六", "日"]
+    weekdays = [zh[_date(year, month, d).weekday()] for d in days]
+
+    cat_bucket: dict[str, dict[int, int]] = {c: defaultdict(int) for c in CATEGORIES}
+    person_bucket: dict[str, dict[int, int]] = defaultdict(lambda: defaultdict(int))
+    person_total: dict[str, int] = defaultdict(int)
+
+    for d in days:
+        daily = _build_daily(db, year, month, d, person_scope=person_scope, venue=venue)
+        for pd in daily["persons"]:
+            p = pd["person"]
+            for r in pd["rows"]:
+                wm = r.get("work_min") or 0
+                if r["category"] in cat_bucket:
+                    cat_bucket[r["category"]][d] += wm
+                person_bucket[p][d] += wm
+                person_total[p] += wm
+
+    named = sorted((p for p in person_bucket if p != "未指定"),
+                   key=lambda p: -person_total[p])
+    person_order = named + (["未指定"] if "未指定" in person_bucket else [])
+
+    return {
+        "year":  year,
+        "month": month,
+        "days":     days,
+        "weekdays": weekdays,
+        "unit": "minutes",
+        "by_category": {"rows": _matrix_rows(cat_bucket, "category", CATEGORIES, days)},
+        "by_person":   {"rows": _matrix_rows(person_bucket, "person", person_order, days)},
     }
 
 

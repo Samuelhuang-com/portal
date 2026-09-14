@@ -131,6 +131,40 @@ export async function fetchWorkJournalRange(
   return res.data
 }
 
+// ── 月矩陣（exec-work-dashboard 的兩張工時表共用）────────────────
+//
+// ⭐ 單位一律是「分鐘」（work_min），與工作日誌 TAB 每日標頭的「N min」同一個數字。
+// by_category 與 by_person 是同一份 rows 的兩種切法，TOTAL 必然相同。
+
+export interface JournalMatrixCatRow    { category: string; minutes: number[]; total: number; pct: number }
+export interface JournalMatrixPersonRow { person:   string; minutes: number[]; total: number; pct: number }
+
+export interface WorkJournalMatrix {
+  year:     number
+  month:    number
+  days:     number[]
+  weekdays: string[]
+  unit:     'minutes'
+  by_category: { rows: JournalMatrixCatRow[] }
+  by_person:   { rows: JournalMatrixPersonRow[] }
+}
+
+export async function fetchWorkJournalMatrix(
+  year: number,
+  month: number,
+  personScope?: PersonScope,
+  venue?: JournalVenue,
+): Promise<WorkJournalMatrix> {
+  const res = await apiClient.get<WorkJournalMatrix>('/work-journal/matrix', {
+    params: {
+      year, month,
+      ...(personScope ? { person_scope: personScope } : {}),
+      ...(venue ? { venue } : {}),
+    },
+  })
+  return res.data
+}
+
 // ── 班別區間查詢（飯店＋商場合併）──────────────────────────────
 //
 // 2026-08-14 班表拆分後新增。與單一場域的 fetchShiftsRange() 差別在於：

@@ -788,59 +788,6 @@ def _build_monthly(rows: list[dict]) -> dict:
     return {"months": list(range(1, 13)), "rows": result_rows}
 
 
-def _build_person_daily(rows: list[dict], year: int, month: int) -> dict:
-    """員工每日工時統計表（B2 區）。
-
-    與 `_build_daily` 同一份 `filtered` 資料、同一組日期欄位，只是把列的維度
-    由「工項類別」換成「員工」，因此兩張表的 TOTAL 必然一致。
-
-    列的順序：有名字的人員依當月總工時降冪 → 「未指定」固定排最後 → TOTAL。
-    不設人數上限，當月有工時的人都會出現。
-    """
-    if month == 0:
-        return {"days": [], "weekdays": [], "rows": []}
-    _, days_in_month = calendar.monthrange(year, month)
-    days = list(range(1, days_in_month + 1))
-    zh = ["一", "二", "三", "四", "五", "六", "日"]
-    weekdays = [zh[date(year, month, d).weekday()] for d in days]
-
-    bucket: dict[str, dict[int, float]] = defaultdict(lambda: defaultdict(float))
-    person_total: dict[str, float] = defaultdict(float)
-    for r in [x for x in rows if x["month"] == month]:
-        p = r["person"] or "未指定"
-        bucket[p][r["day"]] += r["work_hours"]
-        person_total[p] += r["work_hours"]
-
-    if not person_total:
-        return {"days": days, "weekdays": weekdays, "rows": []}
-
-    named = sorted(
-        (p for p in person_total if p != "未指定"),
-        key=lambda p: -person_total[p],
-    )
-    ordered = named + (["未指定"] if "未指定" in person_total else [])
-
-    result_rows = []
-    grand_total = 0.0
-    grand_day = [0.0] * len(days)
-    for p in ordered:
-        day_h = [round(bucket[p][d], 1) for d in days]
-        total = round(sum(day_h), 1)
-        grand_total += total
-        for i, h in enumerate(day_h):
-            grand_day[i] += h
-        result_rows.append({"person": p, "hours": day_h, "total": total, "pct": 0.0})
-    for row in result_rows:
-        row["pct"] = round(row["total"] / grand_total * 100, 1) if grand_total else 0.0
-    result_rows.append({
-        "person": "TOTAL",
-        "hours": [round(h, 1) for h in grand_day],
-        "total": round(grand_total, 1),
-        "pct": 100.0,
-    })
-    return {"days": days, "weekdays": weekdays, "rows": result_rows}
-
-
 def _build_person_table(rows: list[dict]) -> dict:
     """每月累計工時（人員）表（D 區）。"""
     person_hours: dict[str, float] = defaultdict(float)
@@ -963,7 +910,6 @@ def get_stats(
         # ── 第三層：表格（支援 category/person filter）─────────────────────
         "daily_hours":  _build_daily(filtered, year, month),
         "monthly_hours": _build_monthly(filtered),
-        "person_daily_hours": _build_person_daily(filtered, year, month),
         "person_hours": _build_person_table(filtered),
 
         # ── Meta ────────────────────────────────────────────────────────────

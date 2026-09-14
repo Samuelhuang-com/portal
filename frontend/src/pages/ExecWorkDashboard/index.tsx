@@ -12,6 +12,11 @@
  *  - GET /api/v1/hotel/daily-hours            → 飯店工項類別日累計（year/month 篩選）
  *  - GET /api/v1/mall/daily-hours             → 商場工項類別日累計（year/month 篩選）
  *  - GET /api/v1/work-category-analysis/stats → 明細分析工時表（year/month，sources=all）
+ *  - GET /api/v1/work-journal/matrix          → 每日累計工時表＋員工時統計數（year/month，單位分鐘）
+ *
+ * ⭐ 「每日累計工時表」與「員工時統計數」自 2026-09-14 起改走 /work-journal/matrix，
+ *    數字與「工作日誌」頁籤完全一致（單位分鐘）。其餘工時相關區塊（每月累計工時表、
+ *    人員負荷與效率分析）仍走 work-category-analysis，單位為小時 —— 兩套口徑並存是已知狀態。
  */
 import React, { useEffect, useState, useCallback, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
@@ -47,7 +52,6 @@ import type { RepairStatsData as LuqunRepairStatsData } from '@/types/luqunRepai
 import {
   fetchStats,
   type CategoryStats, type HoursRow, type PersonHoursRow, type PersonRankingItem,
-  type PersonDailyRow,
   type CategorySourceMatrixItem,
   CATEGORY_TAG_COLORS,
 } from '@/api/workCategoryAnalysis'
@@ -57,8 +61,10 @@ import { fetchMallDailyHours, type MallDailyHoursData,
          fetchMallMonthlyHours, type MallMonthlyHoursData } from '@/api/mallOverview'
 import {
   fetchWorkJournalDaily, fetchWorkJournalRange, fetchJournalImages,
+  fetchWorkJournalMatrix,
   getJournalExcelUrl,
   type WorkJournalDaily, type WorkJournalRange, type JournalRow, type CaseImageItem,
+  type WorkJournalMatrix, type JournalMatrixCatRow, type JournalMatrixPersonRow,
   CATEGORY_COLOR,
 } from '@/api/workJournal'
 import { fetchShiftsRange, type ShiftsRangeData } from '@/api/schedule'
@@ -127,116 +133,126 @@ function execRenderHr(v: number) {
   return <span style={{ fontSize: 14, color: v >= 8 ? '#cf1322' : v >= 4 ? '#fa8c16' : '#333' }}>{v.toFixed(1)}</span>
 }
 
+// 工作日誌口徑的工時是「分鐘」。色階沿用原本的 8HR／4HR 門檻換算成分鐘
+// （480／240），這樣兩張表換單位後看起來的輕重程度不變。
+function execRenderMin(v: number) {
+  if (v === 0) return <span style={{ color: '#ddd', fontSize: 14 }}>—</span>
+  return <span style={{ fontSize: 14, color: v >= 480 ? '#cf1322' : v >= 240 ? '#fa8c16' : '#333' }}>{v}</span>
+}
+
+/** 兩張工時表共用的來源註腳（口徑改動後主管最容易誤會的地方） */
+function JournalBasisNote() {
+  return (
+    <div style={{ marginTop: 6, color: '#aaa', fontSize: 12 }}>
+      來源：工作日誌（<code>/work-journal/matrix</code>），單位為<strong>分鐘</strong>，
+      與「工作日誌」頁籤每日的「N min」同一個數字。
+    </div>
+  )
+}
+
 function execRenderCat(val: string) {
   if (val === 'TOTAL') return <Typography.Text strong style={{ color: EXEC_T.primary }}>TOTAL</Typography.Text>
   return <Tag color={CATEGORY_TAG_COLORS[val] ?? 'default'} style={{ fontSize: 13 }}>{val}</Tag>
 }
 
-type ExecHoursRow = HoursRow & { key: number }
+type ExecJournalCatRow    = JournalMatrixCatRow    & { key: number }
+type ExecJournalPersonRow = JournalMatrixPersonRow & { key: number }
 
-function ExecDailyTable({ stats }: { stats: CategoryStats | null }) {
-  const daily = stats?.daily_hours
-  if (!daily || !daily.days.length)
-    return <Typography.Text type="secondary" style={{ fontSize: 14 }}>請選擇月份（非全年）以查看每日累計</Typography.Text>
-  const cols = [
-    { title: '類別', dataIndex: 'category', fixed: 'left' as const, width: 100, render: execRenderCat },
-    ...daily.days.map((d, i) => ({
+/**
+ * 兩張工時表共用的欄位骨架：第一欄（類別／員工）＋ 每日 ＋ TOTAL ＋ %。
+ * 兩張表刻意共用，避免日後一邊改了另一邊忘了跟。
+ */
+function journalMatrixColumns<T extends { minutes: number[]; total: number; pct: number }>(
+  matrix: WorkJournalMatrix,
+  firstCol: { title: string; dataIndex: string; width: number; render: (v: string) => React.ReactNode },
+  isTotalRow: (r: T) => boolean,
+) {
+  return [
+    { title: firstCol.title, dataIndex: firstCol.dataIndex, fixed: 'left' as const,
+      width: firstCol.width, render: firstCol.render },
+    ...matrix.days.map((d, i) => ({
       title: (
         <div style={{ textAlign: 'center' as const }}>
           <div style={{ fontSize: 12 }}>{d}</div>
-          <div style={{ fontSize: 11, color: EXEC_T.textMuted }}>{daily.weekdays[i]}</div>
+          <div style={{ fontSize: 11, color: EXEC_T.textMuted }}>{matrix.weekdays[i]}</div>
         </div>
       ),
-      key: `d${d}`, width: 36, align: 'right' as const,
-      render: (_: unknown, r: ExecHoursRow) => execRenderHr(r.hours[i] ?? 0),
+      key: `d${d}`, width: 40, align: 'right' as const,
+      render: (_: unknown, r: T) => execRenderMin(r.minutes[i] ?? 0),
     })),
     {
-      title: 'TOTAL', dataIndex: 'total', key: 'tot', width: 58, align: 'right' as const,
-      sorter: (a: ExecHoursRow, b: ExecHoursRow) => a.total - b.total,
-      render: (v: number, r: ExecHoursRow) =>
-        <Typography.Text strong style={{ color: r.category === 'TOTAL' ? EXEC_T.primary : undefined }}>{v.toFixed(1)}</Typography.Text>,
+      title: 'TOTAL', dataIndex: 'total', key: 'tot', width: 66, align: 'right' as const,
+      sorter: (a: T, b: T) => a.total - b.total,
+      render: (v: number, r: T) =>
+        <Typography.Text strong style={{ color: isTotalRow(r) ? EXEC_T.primary : undefined }}>{v}</Typography.Text>,
     },
     {
       title: '%', dataIndex: 'pct', key: 'pct', width: 50, align: 'right' as const,
-      render: (v: number, r: ExecHoursRow) =>
-        <Typography.Text style={{ color: r.category === 'TOTAL' ? EXEC_T.textMuted : EXEC_T.warning,
-          fontWeight: r.category !== 'TOTAL' ? 600 : 400 }}>{v.toFixed(1)}%</Typography.Text>,
+      render: (v: number, r: T) =>
+        <Typography.Text style={{ color: isTotalRow(r) ? EXEC_T.textMuted : EXEC_T.warning,
+          fontWeight: !isTotalRow(r) ? 600 : 400 }}>{v.toFixed(1)}%</Typography.Text>,
     },
   ]
+}
+
+/** 每日累計工時表 — 列＝工項類別，欄＝當月日期。單位：分鐘（工作日誌口徑） */
+function ExecDailyTable({ matrix }: { matrix: WorkJournalMatrix | null }) {
+  if (!matrix)
+    return <div style={{ color: '#aaa', padding: '12px 0', textAlign: 'center' }}>資料載入中…</div>
+  const rows = matrix.by_category.rows
+  if (!rows.length)
+    return <Typography.Text type="secondary" style={{ fontSize: 14 }}>本月無工時資料</Typography.Text>
+  const cols = journalMatrixColumns<ExecJournalCatRow>(
+    matrix,
+    { title: '類別', dataIndex: 'category', width: 100, render: execRenderCat },
+    r => r.category === 'TOTAL',
+  )
   return (
-    <Table<ExecHoursRow>
-      dataSource={daily.rows.map((r, i) => ({ ...r, key: i }))}
-      columns={cols} pagination={false} size="small" scroll={{ x: 'max-content' }}
-      rowClassName={r => r.category === 'TOTAL' ? 'exec-total-row' : ''}
-    />
+    <>
+      <Table<ExecJournalCatRow>
+        dataSource={rows.map((r, i) => ({ ...r, key: i }))}
+        columns={cols} pagination={false} size="small" scroll={{ x: 'max-content' }}
+        rowClassName={r => r.category === 'TOTAL' ? 'exec-total-row' : ''}
+      />
+      <JournalBasisNote />
+    </>
   )
 }
 
-type ExecPersonDailyRow = PersonDailyRow & { key: number }
-
-/**
- * 員工工時統計數 — 列＝員工，欄＝當月日期。
- * 與「每日累計工時表」用同一份 filtered 資料，只換列的維度，故 TOTAL 必然相同。
- */
-function ExecPersonDailyTable({ stats }: { stats: CategoryStats | null }) {
-  // 本頁的月份選單只有 1~12 月、沒有「全年」，execStats 的 month 永遠 ≥ 1，
-  // 因此不該用「days 為空」反推成「請選擇月份」——那會把「後端沒回這個欄位」
-  // 誤報成使用者的操作問題。三種情況分開判斷：
-  const pd = stats?.person_daily_hours
-  if (!stats)
+/** 員工時統計數 — 列＝員工，欄＝當月日期。單位：分鐘（工作日誌口徑） */
+function ExecPersonDailyTable({ matrix }: { matrix: WorkJournalMatrix | null }) {
+  if (!matrix)
     return <div style={{ color: '#aaa', padding: '12px 0', textAlign: 'center' }}>資料載入中…</div>
-  if (!pd)
-    return (
-      <Typography.Text type="warning" style={{ fontSize: 14 }}>
-        尚未取得員工每日工時資料 —— 請先按 Ctrl+F5 重新整理頁面。
-        （Vite HMR 只會換掉元件、不會重新呼叫 API，所以後端重啟後畫面仍會拿到重啟前的舊回應。）
-        重新整理後仍顯示此訊息，才是後端未載入新版程式碼。
-      </Typography.Text>
-    )
-  if (!pd.days.length)
-    return <Typography.Text type="secondary" style={{ fontSize: 14 }}>請選擇月份（非全年）以查看員工每日工時</Typography.Text>
-  if (!pd.rows.length)
+  const rows = matrix.by_person.rows
+  // 只有 TOTAL 一列＝當月完全沒有工時記錄
+  if (rows.length <= 1)
     return <Typography.Text type="secondary" style={{ fontSize: 14 }}>本月無員工工時資料</Typography.Text>
-  const cols = [
+  const cols = journalMatrixColumns<ExecJournalPersonRow>(
+    matrix,
     {
-      title: '員工', dataIndex: 'person', fixed: 'left' as const, width: 100,
+      title: '員工', dataIndex: 'person', width: 100,
       render: (v: string) => {
         if (v === 'TOTAL') return <Typography.Text strong style={{ color: EXEC_T.primary }}>TOTAL</Typography.Text>
         if (v === '未指定') return <Tag color="default" style={{ fontSize: 13 }}>未指定</Tag>
         return <Typography.Text style={{ fontSize: 14 }}>{v}</Typography.Text>
       },
     },
-    ...pd.days.map((d, i) => ({
-      title: (
-        <div style={{ textAlign: 'center' as const }}>
-          <div style={{ fontSize: 12 }}>{d}</div>
-          <div style={{ fontSize: 11, color: EXEC_T.textMuted }}>{pd.weekdays[i]}</div>
-        </div>
-      ),
-      key: `pd${d}`, width: 36, align: 'right' as const,
-      render: (_: unknown, r: ExecPersonDailyRow) => execRenderHr(r.hours[i] ?? 0),
-    })),
-    {
-      title: 'TOTAL', dataIndex: 'total', key: 'tot', width: 58, align: 'right' as const,
-      sorter: (a: ExecPersonDailyRow, b: ExecPersonDailyRow) => a.total - b.total,
-      render: (v: number, r: ExecPersonDailyRow) =>
-        <Typography.Text strong style={{ color: r.person === 'TOTAL' ? EXEC_T.primary : undefined }}>{v.toFixed(1)}</Typography.Text>,
-    },
-    {
-      title: '%', dataIndex: 'pct', key: 'pct', width: 50, align: 'right' as const,
-      render: (v: number, r: ExecPersonDailyRow) =>
-        <Typography.Text style={{ color: r.person === 'TOTAL' ? EXEC_T.textMuted : EXEC_T.warning,
-          fontWeight: r.person !== 'TOTAL' ? 600 : 400 }}>{v.toFixed(1)}%</Typography.Text>,
-    },
-  ]
+    r => r.person === 'TOTAL',
+  )
   return (
-    <Table<ExecPersonDailyRow>
-      dataSource={pd.rows.map((r, i) => ({ ...r, key: i }))}
-      columns={cols} pagination={false} size="small" scroll={{ x: 'max-content' }}
-      rowClassName={r => r.person === 'TOTAL' ? 'exec-total-row' : ''}
-    />
+    <>
+      <Table<ExecJournalPersonRow>
+        dataSource={rows.map((r, i) => ({ ...r, key: i }))}
+        columns={cols} pagination={false} size="small" scroll={{ x: 'max-content' }}
+        rowClassName={r => r.person === 'TOTAL' ? 'exec-total-row' : ''}
+      />
+      <JournalBasisNote />
+    </>
   )
 }
+
+// 每月累計工時表仍走 work-category-analysis（單位：小時），沿用原本的型別
+type ExecHoursRow = HoursRow & { key: number }
 
 function ExecMonthlyTable({ stats }: { stats: CategoryStats | null }) {
   const monthly = stats?.monthly_hours
@@ -1222,6 +1238,8 @@ export default function ExecWorkDashboardPage() {
   const [mallDailyData,    setMallDailyData]    = useState<MallDailyHoursData | null>(null)
   // 主管交辦／緊急事件 stats
   const [otherTasksStats, setOtherTasksStats] = useState<Record<string, OtherTaskTypeStat> | null>(null)
+  // 工作日誌月矩陣 — 「每日累計工時表」與「員工時統計數」共用，單位分鐘
+  const [wjMatrix, setWjMatrix] = useState<WorkJournalMatrix | null>(null)
   // 工作日誌 TAB 類別統計（從表格資料直接加總，確保上方摘要卡片與表格數字一致）
   const [wjStats, setWjStats] = useState<WJStats>({})
   // 受控 Collapse activeKey（全收合/全展開用）
@@ -1242,7 +1260,7 @@ export default function ExecWorkDashboardPage() {
   const loadAll = useCallback(async () => {
     setLoading(true)
     try {
-      const [luqun, dazhi, hotelMon, mallMon, hotelDay, mallDay, execSt, execStYr, dazhiSt, luqunSt, otherSt, lastUpd] =
+      const [luqun, dazhi, hotelMon, mallMon, hotelDay, mallDay, execSt, execStYr, dazhiSt, luqunSt, otherSt, lastUpd, wjMx] =
         await Promise.allSettled([
           fetchLuqunDashboard(selectedYear, selectedMonth),
           fetchDazhiDashboard(selectedYear, selectedMonth),
@@ -1256,6 +1274,7 @@ export default function ExecWorkDashboardPage() {
           fetchLuqunRepairStats(selectedYear),
           fetchOtherTaskStats({ year: selectedYear, month: selectedMonth }),
           fetchLastUpdated(SYNC_MODULES),
+          fetchWorkJournalMatrix(selectedYear, selectedMonth),
         ])
       if (luqun.status     === 'fulfilled') setLuqunData(luqun.value)
       if (dazhi.status     === 'fulfilled') setDazhiData(dazhi.value as unknown as RepairDashboardData)
@@ -1269,6 +1288,7 @@ export default function ExecWorkDashboardPage() {
       if (luqunSt.status   === 'fulfilled') setLuqunRepairStats(luqunSt.value)
       if (otherSt.status   === 'fulfilled') setOtherTasksStats(otherSt.value)
       if (lastUpd.status   === 'fulfilled') setDataUpdated(lastUpd.value)
+      if (wjMx.status      === 'fulfilled') setWjMatrix(wjMx.value)
     } finally {
       setLoading(false)
     }
@@ -1977,7 +1997,7 @@ export default function ExecWorkDashboardPage() {
               {
                 key: 'exec-daily',
                 label: <Space><span>📅</span><Typography.Text strong style={{ fontSize: 16 }}>每日累計工時表 — {selectedYear} 年 {selectedMonth} 月</Typography.Text></Space>,
-                children: <ExecDailyTable stats={execStats} />,
+                children: <ExecDailyTable matrix={wjMatrix} />,
               },
               {
                 key: 'exec-monthly',
@@ -1987,7 +2007,7 @@ export default function ExecWorkDashboardPage() {
               {
                 key: 'exec-person-daily',
                 label: <Space><span>👷</span><Typography.Text strong style={{ fontSize: 16 }}>員工時統計數 — {selectedYear} 年 {selectedMonth} 月</Typography.Text></Space>,
-                children: <ExecPersonDailyTable stats={execStats} />,
+                children: <ExecPersonDailyTable matrix={wjMatrix} />,
               },
             ]}
           />
