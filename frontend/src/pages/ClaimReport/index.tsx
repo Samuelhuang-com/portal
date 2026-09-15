@@ -524,7 +524,11 @@ export default function ClaimReportPage() {
       const a = document.createElement('a'); a.href = url
       a.download = `核准請購單月報表_${label}${deptFilter ? '_' + deptFilter : ''}.xlsx`
       a.click(); URL.revokeObjectURL(url)
-    } catch { message.error('匯出失敗，請稍後再試') }
+    } catch (err: any) {
+      // 404 ＝ 篩選條件下沒有資料，這不是錯誤，用提示而非錯誤訊息
+      if (err?.response?.status === 404) message.info('無資料可匯出')
+      else message.error('匯出失敗，請稍後再試')
+    }
     finally { setExportPurchaseLoading(false) }
   }
 
@@ -545,7 +549,11 @@ export default function ClaimReportPage() {
       const a = document.createElement('a'); a.href = url
       a.download = `核准請款單月報表_${label}${deptFilter ? '_' + deptFilter : ''}.xlsx`
       a.click(); URL.revokeObjectURL(url)
-    } catch { message.error('匯出失敗，請稍後再試') }
+    } catch (err: any) {
+      // 404 ＝ 篩選條件下沒有資料，這不是錯誤，用提示而非錯誤訊息
+      if (err?.response?.status === 404) message.info('無資料可匯出')
+      else message.error('匯出失敗，請稍後再試')
+    }
     finally { setExportClaimLoading(false) }
   }
 
