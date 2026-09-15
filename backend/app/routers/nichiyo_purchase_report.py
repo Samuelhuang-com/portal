@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session
 
 from app.core.dialect_compat import group_concat, sep, year_month as ym_expr
 from app.core.database import get_db, SessionLocal
+from app.core.date_utils import ascii_filename_label
 from app.core.time import twnow
 from app.dependencies import require_permission
 from app.models.module_sync_log import ModuleSyncLog
@@ -558,9 +559,10 @@ def export_excel(
     buf.seek(0)
 
     # B08：RFC 5987 中文檔名編碼
-    label_safe    = label.replace("~", "_")
     filename_cn   = f"日曜核准請購單月報表_{label}.xlsx"
-    filename_safe = f"nichiyo_purchase_report_{label_safe}.xlsx"
+    # filename= 只能是 Latin-1，中文（如「2026年度」）必須轉成 ASCII 後備值，
+    # 否則 Starlette 組 header 時會丟 UnicodeEncodeError（整支匯出 500）。
+    filename_safe = f"nichiyo_purchase_report_{ascii_filename_label(label)}.xlsx"
     encoded       = quote(filename_cn, safe="")
     return StreamingResponse(
         buf,

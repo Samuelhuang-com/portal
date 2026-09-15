@@ -2,6 +2,7 @@
 日期工具函式 — 共用於各 Dashboard 月份統計
 """
 import calendar
+import re
 from datetime import date
 
 
@@ -44,3 +45,29 @@ def to_ragic_year_month(month: str) -> str:
 def current_month_str() -> str:
     """回傳目前月份的 YYYY-MM 字串"""
     return date.today().strftime("%Y-%m")
+
+
+def ascii_filename_label(label: str) -> str:
+    """
+    將期間標籤轉為純 ASCII 的檔名片段。
+
+    用途：Content-Disposition 的 `filename=` 只能是 Latin-1，
+    中文（例如「2026年度」）會讓 Starlette 在組 header 時丟
+    UnicodeEncodeError，整支匯出 API 直接 500。中文檔名一律走
+    `filename*=UTF-8''...`，`filename=` 只放這個 ASCII 後備值。
+
+    Examples:
+        >>> ascii_filename_label("2026-09")
+        '2026-09'
+        >>> ascii_filename_label("2026年度")
+        '2026FY'
+        >>> ascii_filename_label("2026-01~2026-06")
+        '2026-01_2026-06'
+        >>> ascii_filename_label("")
+        'all'
+    """
+    safe = (label or "").replace("~", "_")
+    safe = re.sub(r"(\d{4})\s*年度", r"\1FY", safe)   # 2026年度 → 2026FY
+    safe = re.sub(r"[^A-Za-z0-9._-]", "_", safe)      # 其餘非 ASCII 一律換掉
+    safe = re.sub(r"_{2,}", "_", safe).strip("_")
+    return safe or "all"
