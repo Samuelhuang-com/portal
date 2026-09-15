@@ -10,8 +10,12 @@ POST   /summary/convert-to-po           轉採購單（指定週期＋期別＋�
 
 2026-07-16（匯總請購單改版，見 models/cycle_purchase_summary.py 開頭說明）：
 GET    /summary/department-breakdown    依料號分組展開部門別＋小計（匯總請購單畫面用）
-POST   /summary/push-to-ragic           拋轉到 Ragic（目前為 stub，Ragic 端表單尚未建立）
-                                         ⚠️ 2026-08-09 起已拋轉過的範圍會被擋下
+POST   /summary/push-to-ragic           拋轉到 Ragic「週採匯總請購單」(sheet 57)
+                                         ⚠️ 2026-09-15 起是**真的寫入 Ragic**，且
+                                         **依廠商拆單**：一家廠商一張 Ragic 單、共用
+                                         同一個 batch_no。已拋轉過的列逐列略過（不再
+                                         整批擋下）；缺供應商／缺單價的列回在
+                                         not_pushed；單一廠商失敗回在 failed。
 POST   /summary/cancel-ragic-push       取消拋轉（2026-08-09 新增，清掉拋轉標記，
                                          可重新拋轉，也解開「已拋轉不能退回請購單」）
 
@@ -205,15 +209,17 @@ def convert_to_po(
 @router.post(
     "/summary/push-to-ragic",
     response_model=PushToRagicResult,
-    summary="拋轉到 Ragic「匯總請購單」（目前為 stub，Ragic 端表單尚未建立，見 cycle_purchase_ragic_push.py）",
+    summary="拋轉到 Ragic「週採匯總請購單」(sheet 57)，依廠商拆單",
 )
 def push_to_ragic(
     payload: PushToRagicPayload,
     current_user: User = Depends(require_permission("cycle_purchase_buyer")),
     db: Session = Depends(get_cycle_purchase_db),
 ):
-    """⚠️ 2026-08-09 起**已拋轉過的範圍會被擋下**，要重推請先呼叫
-    POST /summary/cancel-ragic-push。"""
+    """依廠商拆單真正寫入 Ragic。**部分成功也是 200**——成功的在 documents、
+    Ragic 拒絕的廠商在 failed、缺供應商或缺單價而沒送出去的列在 not_pushed，
+    前端要三段都顯示。要重推某個已拋轉的範圍，先呼叫
+    POST /summary/cancel-ragic-push 清掉標記。"""
     return _handle(
         svc.push_summary_to_ragic,
         db, payload.cycle_id, payload.period_label, payload.company, current_user,

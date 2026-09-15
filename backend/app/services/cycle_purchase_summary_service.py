@@ -110,6 +110,8 @@ from typing import Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
+from app.core.config import settings
+from app.core.time import twnow
 from app.models.cycle_purchase_summary import CyclePurchaseSummary
 from app.models.cycle_purchase_po import CyclePurchasePO, CyclePurchasePOItem
 from app.models.cycle_purchase_cycle import CyclePurchaseCycle
@@ -989,13 +991,33 @@ def _next_ragic_push_batch_no(db: Session, company: str, period_label: str) -> s
 def push_summary_to_ragic(
     db: Session, cycle_id: int, period_label: str, company: str, user=None,
 ):
-    """把某週期＋期別＋公司範圍內的彙整列，組成一份「匯總請購單」文件推送到 Ragic。
+    """把某週期＋期別＋公司範圍內的彙整列，**依廠商拆成多張**「週採匯總請購單」寫進 Ragic。
 
-    ⚠️ 現況（2026-07-16）：Ragic 端「匯總請購單」表單尚未建立（與 Samuel 確認，
-    先做 Portal 端＋預留串接），這裡呼叫的 cycle_purchase_ragic_push.push_summary_document()
-    目前是 stub，不會真的打 Ragic API，只會回傳模擬成功結果。等 Ragic 端表單建好、
-    拿到真正的 ragic_path 之後，只需要改 cycle_purchase_ragic_push.py 內部實作，
-    這裡的呼叫介面不需要變動。
+    2026-09-15 改版（Samuel 裁示，取代 2026-07-16 的 stub 版本）：
+
+    | 項目 | 舊版 | 現在 |
+    |------|------|------|
+    | Ragic 端 | 表單不存在，push 是 stub | 真正寫入 sheet 57「週採採購單」 |
+    | 拆單 | 整個「公司＋期別」組一份文件 | **依 vendor_id 拆，一家廠商一張單** |
+    | 金額 | 沒有稅的概念 | 小計／營業稅／總計都是 Ragic 公式，Portal 不送 |
+    | 重複拋轉 | 範圍內有任一列已推就整批擋下 | 已推的逐列略過，沒推的照推 |
+    | 推不了的列 | 不擋、但也沒提示（會憑空消失） | 列進 `not_pushed` 並回傳給前端顯示 |
+
+    同一次動作的所有單共用一個 `batch_no`，但各自拿到不同的 Ragic 採購編號
+    （樂管週採00001…），寫回各自那幾列的 `ragic_record_id`。
+
+    Returns:
+        {
+          "batch_no", "pushed_count",
+          "documents": [{vendor_id, vendor_name, ragic_no, ragic_record_id, line_count}],
+          "not_pushed": [{summary_id, item_code, item_name, department_name, reason}],
+          "failed": [{vendor_name, error}],
+          "already_pushed_count", "is_stub", "message",
+        }
+
+    Raises:
+        SummaryServiceError: 範圍內沒有彙整列／全部都已拋轉／沒有任何一列推得出去／
+            所有廠商都推失敗。部分成功不會 raise，失敗的放在 `failed` 裡回傳。
     """
     cycle = db.query(CyclePurchaseCycle).filter(CyclePurchaseCycle.id == cycle_id).first()
     if not cycle:
@@ -1013,58 +1035,108 @@ def push_summary_to_ragic(
     if not rows:
         raise SummaryServiceError("這個週期＋期別＋公司範圍內沒有彙整列，沒有東西可以拋轉")
 
-    # 2026-08-09：擋重複拋轉（與 Samuel 確認）。改版前沒有這個檢查，按兩次會在
-    # Ragic 產生兩張內容不同的同期單據，而 Ragic 端無從判斷哪一張才算數。
-    # 要重推請先「取消拋轉」（cancel_ragic_push）。
-    already = [r for r in rows if r.ragic_pushed]
-    if already:
-        batches = sorted({r.ragic_push_batch_no for r in already if r.ragic_push_batch_no})
-        raise SummaryServiceError(
-            f"「{period_label}／{company}」已經拋轉過了"
-            f"（批次 {'、'.join(batches) or '—'}，共 {len(already)} 筆彙整列）。"
-            f"若要重新拋轉，請先執行「取消拋轉」。"
-        )
-
     for r in rows:
         _attach_summary_display_fields(db, r)
 
-    breakdown = list_department_breakdown(db, cycle_id, period_label, company)
+    # ── ① 已拋轉過的列：本次直接略過，不擋整批 ────────────────────────────
+    # 2026-09-15 改版：舊版只要範圍內有任何一列 ragic_pushed 就整批拒絕，要求先
+    # 「取消拋轉」。改成依廠商拆單之後這個行為會出事——A 廠商推成功、B 廠商失敗，
+    # 使用者為了重推 B 必須先取消 A，而 A 在 Ragic 已經是一張真單據，取消只是清掉
+    # Portal 的標記，Ragic 那張會變孤兒。所以改成「逐列判斷」：已推的略過並列出來，
+    # 沒推的照推。要真的重推某一張，仍然是先 cancel_ragic_push 再來。
+    already_rows = [r for r in rows if r.ragic_pushed]
+    candidates = [r for r in rows if not r.ragic_pushed]
+    if not candidates:
+        batches = sorted({r.ragic_push_batch_no for r in already_rows if r.ragic_push_batch_no})
+        raise SummaryServiceError(
+            f"「{period_label}／{company}」的 {len(already_rows)} 筆彙整列全部都已經拋轉過了"
+            f"（批次 {'、'.join(batches) or '—'}）。若要重新拋轉，請先執行「取消拋轉」。"
+        )
 
+    # ── ② 挑出推不了的列，但不讓它們憑空消失 ──────────────────────────────
+    # 2026-09-15 Samuel 裁示：有廠商的照常拋轉，推不了的**不擋整批**，改成明確列出。
+    # 「沒單價」也歸在這裡：Ragic 子表的「擬定廠商單價」是必填，而 Ragic API 是
+    # 整筆退不是跳過該列，所以沒單價的列一旦送出去，整張單都會失敗。
+    pushable: list = []
+    not_pushed: list[dict] = []
+    for r in candidates:
+        if not r.vendor_id:
+            reason = "料號對照表沒有指定供應商"
+        elif not r.unit_price or Decimal(r.unit_price) <= 0:
+            reason = "料號對照表沒有單價（Ragic 子表單價為必填，會導致整張單被退回）"
+        elif not (r.adjusted_qty or 0):
+            reason = "調整量為 0"
+        else:
+            pushable.append(r)
+            continue
+        not_pushed.append({
+            "summary_id": r.id,
+            "item_code": r.item_code,
+            "item_name": r.item_name,
+            "department_name": r.department_name,
+            "reason": reason,
+        })
+
+    if not pushable:
+        raise SummaryServiceError(
+            f"「{period_label}／{company}」沒有任何一筆彙整列可以拋轉"
+            f"（{len(not_pushed)} 筆都缺供應商或單價）。"
+            f"請先到料號主檔／對照表補上供應商與單價再試。"
+        )
+
+    # ── ③ 依廠商拆單，一家廠商一張 Ragic 單 ───────────────────────────────
     batch_no = _next_ragic_push_batch_no(db, company, period_label)
-    document = {
-        "batch_no": batch_no,
-        "cycle_name": cycle.cycle_name,
-        "period_label": period_label,
-        "company": company,
-        "items": breakdown,
-        # 週期採購已在料號對照表指定單一廠商，不比價，所以這裡不會有
-        # 廠商(一)/(二)/(三) 這種多廠商比價欄位，見 cycle_purchase_ragic_push.py
-        # 開頭說明。
-    }
+    now = twnow()
+    pushed_at_text = now.strftime("%Y/%m/%d %H:%M:%S")
+    documents = _build_vendor_documents(
+        pushable,
+        batch_no=batch_no,
+        cycle_name=cycle.cycle_name,
+        period_label=period_label,
+        company=company,
+        pushed_at_text=pushed_at_text,
+    )
 
-    try:
-        push_result = cycle_purchase_ragic_push.push_summary_document(document)
-    except Exception as e:  # noqa: BLE001 — 對外一律轉成 SummaryServiceError
-        for r in rows:
-            r.ragic_push_error = str(e)
-        db.flush()
-        raise SummaryServiceError(f"拋轉 Ragic 失敗：{e}")
+    # ── ④ 逐張推送 ────────────────────────────────────────────────────────
+    results: list[dict] = []
+    failed: list[dict] = []
+    for doc in documents:
+        try:
+            push_result = cycle_purchase_ragic_push.push_summary_document(doc)
+        except Exception as e:  # noqa: BLE001 — 一家失敗不影響其他家
+            for r in doc["_rows"]:
+                r.ragic_push_error = str(e)
+            failed.append({"vendor_name": doc.get("vendor_name"), "error": str(e)})
+            continue
 
-    # ⚠️ 這裡用的是 utcnow()，與本模組其他所有時間欄位（closed_at／summarized_at／
-    #    unsummarized_at 都用 datetime.now()）不一致，會差 8 小時。這是既有寫法，
-    #    2026-08-09 發現後回報 Samuel，未經同意不自行修改（改動會影響既有資料的
-    #    解讀方式）。修的話就是把這一行換成 datetime.now()。
-    now = datetime.utcnow()
-    for r in rows:
-        r.ragic_push_batch_no = batch_no
-        r.ragic_pushed = True
-        r.ragic_record_id = push_result.get("ragic_record_id")
-        r.ragic_pushed_at = now
-        r.ragic_push_error = None
+        for r in doc["_rows"]:
+            r.ragic_push_batch_no = batch_no
+            r.ragic_pushed = True
+            r.ragic_record_id = push_result.get("ragic_no") or push_result.get("ragic_record_id")
+            r.ragic_pushed_at = now
+            r.ragic_push_error = None
+        results.append({
+            "vendor_id": doc.get("vendor_id"),
+            "vendor_name": doc.get("vendor_name"),
+            "ragic_record_id": push_result.get("ragic_record_id"),
+            "ragic_no": push_result.get("ragic_no"),
+            "line_count": len(doc["lines"]),
+            "is_stub": push_result.get("is_stub", False),
+        })
     db.flush()
 
-    # 2026-08-09 新增：拋轉也寫稽核。原本只有欄位標記，沒有紀錄——搭配「取消拋轉」
-    # 之後會出現 推 → 取消 → 再推 的來回，沒有紀錄就完全看不出經過。
+    if not results:
+        # 全部都失敗：錯誤已寫進 ragic_push_error，這裡要讓前端看到紅字而不是綠燈
+        db.flush()
+        detail = "；".join(f"{f['vendor_name']}：{f['error']}" for f in failed)
+        raise SummaryServiceError(f"拋轉 Ragic 失敗（{len(failed)} 家廠商全部失敗）：{detail}")
+
+    pushed_count = sum(len(d["_rows"]) for d in documents if any(
+        rr["vendor_id"] == d.get("vendor_id") for rr in results
+    ))
+    is_stub = any(r.get("is_stub") for r in results)
+
+    # ── ⑤ 稽核 ────────────────────────────────────────────────────────────
     record_audit(
         db,
         document_type="summary",
@@ -1072,24 +1144,95 @@ def push_summary_to_ragic(
         document_no=batch_no,
         event_type="ragic_push",
         description=(
-            f"拋轉 Ragic 匯總請購單（{cycle.cycle_name}／{period_label}／{company}）："
-            f"{len(rows)} 筆彙整列"
-            + ("　⚠️ 目前是 stub，未真正寫入 Ragic" if push_result.get("is_stub", True) else "")
+            f"拋轉 Ragic 週採匯總請購單（{cycle.cycle_name}／{period_label}／{company}）："
+            f"{len(results)} 張單、{pushed_count} 筆彙整列"
+            + (f"；{len(not_pushed)} 筆未拋轉（缺供應商或單價）" if not_pushed else "")
+            + (f"；{len(failed)} 家廠商失敗" if failed else "")
+            + (f"；{len(already_rows)} 筆先前已拋轉略過" if already_rows else "")
+            + ("　⚠️ RAGIC_CP_SUMMARY_ENABLED=false，未真正寫入 Ragic" if is_stub else "")
         ),
         operator_user_id=getattr(user, "id", None),
         operator_name=getattr(user, "full_name", None),
         old_value="未拋轉",
-        new_value=f"已拋轉，Ragic 記錄 ID {push_result.get('ragic_record_id') or '—'}",
+        new_value="；".join(
+            f"{r['vendor_name']}→{r['ragic_no'] or r['ragic_record_id'] or '—'}" for r in results
+        ),
     )
     db.flush()
 
+    parts = [f"已拋轉 {len(results)} 張單（{pushed_count} 筆彙整列）"]
+    if not_pushed:
+        parts.append(f"{len(not_pushed)} 筆未拋轉")
+    if failed:
+        parts.append(f"{len(failed)} 家廠商失敗")
+    if already_rows:
+        parts.append(f"{len(already_rows)} 筆先前已拋轉、本次略過")
+
     return {
         "batch_no": batch_no,
-        "pushed_count": len(rows),
-        "ragic_record_id": push_result.get("ragic_record_id"),
-        "is_stub": push_result.get("is_stub", True),
-        "message": push_result.get("message", "已拋轉"),
+        "pushed_count": pushed_count,
+        "documents": results,
+        "not_pushed": not_pushed,
+        "failed": failed,
+        "already_pushed_count": len(already_rows),
+        "is_stub": is_stub,
+        "message": "，".join(parts),
     }
+
+
+def _build_vendor_documents(
+    rows: list,
+    *,
+    batch_no: str,
+    cycle_name: str,
+    period_label: str,
+    company: str,
+    pushed_at_text: str,
+) -> list[dict]:
+    """把可拋轉的彙整列依 vendor_id 分組，每組組成一份 Ragic 單據文件。
+
+    一份文件 = 一張 Ragic「週採匯總請購單」= 一公司 ＋ 一期別 ＋ 一廠商
+    （2026-08-09 SPEC v2 拆單粒度，2026-09-15 Samuel 再次確認）。
+
+    子表一列 = 一個料號 × 一個部門，直接用彙整列本身（彙整粒度就是
+    公司＋料號＋部門，見 models/cycle_purchase_summary.py 的 UniqueConstraint），
+    不需要再做一層依料號分組——SPEC 附錄那個「依料號分組、departments 巢狀」的
+    結構是給舊版單一文件用的，拆單之後攤平反而更貼近 Ragic 子表。
+
+    `_rows` 是給呼叫端回寫狀態用的 ORM 物件參考，**不會送進 Ragic**
+    （build_payload 只讀 lines）。
+    """
+    groups: dict[int, dict] = {}
+    for r in rows:
+        g = groups.setdefault(r.vendor_id, {
+            "batch_no": batch_no,
+            "cycle_name": cycle_name,
+            "period_label": period_label,
+            "company": company,
+            "vendor_id": r.vendor_id,
+            "vendor_name": r.vendor_name,
+            "purpose": f"{period_label} {cycle_name} 匯總請購（{company}）",
+            "applicant": settings.RAGIC_CP_SUMMARY_APPLICANT,
+            "pushed_at": pushed_at_text,
+            "portal_note": "由 Portal 週期採購模組自動產生，明細請勿手動修改",
+            "lines": [],
+            "_rows": [],
+        })
+        g["lines"].append({
+            "item_code": r.item_code,
+            "item_name": r.item_name,
+            "department_name": r.department_name or "",
+            "qty": r.adjusted_qty or 0,
+            "unit": r.unit,
+            "note": r.adjust_reason or "",
+            "unit_price": r.unit_price,
+            "summary_id": r.id,
+        })
+        g["_rows"].append(r)
+
+    result = list(groups.values())
+    result.sort(key=lambda g: (g["vendor_name"] or ""))
+    return result
 
 
 def cancel_ragic_push(

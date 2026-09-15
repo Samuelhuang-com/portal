@@ -30,6 +30,7 @@ from sqlalchemy.orm import Session
 from app.core.dialect_compat import group_concat, sep, year_month as ym_expr
 from app.core.database import get_db, SessionLocal
 from app.core.date_utils import ascii_filename_label
+from app.core.excel_utils import xlsx_safe
 from app.core.time import twnow
 from app.dependencies import require_permission
 from app.models.module_sync_log import ModuleSyncLog
@@ -542,7 +543,7 @@ def export_excel(
             _ragic_url(order),
         ]
         for col_idx, val in enumerate(data, 1):
-            cell = ws.cell(row=row_idx, column=col_idx, value=val)
+            cell = ws.cell(row=row_idx, column=col_idx, value=xlsx_safe(val))
             cell.fill   = PatternFill("solid", fgColor="EBF5FF" if row_idx % 2 == 0 else "FFFFFF")
             cell.border = THIN_BORDER
             cell.alignment = Alignment(vertical="center")

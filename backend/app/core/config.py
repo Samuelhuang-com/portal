@@ -141,6 +141,56 @@ class Settings(BaseSettings):
     RAGIC_DAZHI_REPAIR_PATH: str = "lequn-public-works/8"
     RAGIC_DAZHI_REPAIR_PAGEID: str = "fV8"
 
+    # ── Ragic — 週期採購「週採匯總請購單」拋轉（ap12 / soutlet001）─────────────
+    # URL: https://ap12.ragic.com/soutlet001/community-management-department/57
+    # 這是**唯一一個 Portal 會「寫入」Ragic 的模組**，其餘 Ragic 設定都只讀。
+    # 表單由 Samuel 於 2026-09-15 從管理部「採購單」(sheet 23) 複製後調整而成，
+    # 欄位代號與設計背景見 services/cycle_purchase_ragic_push.py 檔頭。
+    RAGIC_CP_SUMMARY_SERVER_URL: str = "ap12.ragic.com"
+    RAGIC_CP_SUMMARY_ACCOUNT:    str = "soutlet001"
+    RAGIC_CP_SUMMARY_PATH:       str = "community-management-department/57"
+    # false ＝ 不真的寫 Ragic，退回 stub 行為（Portal 端狀態照常更新）。
+    # 測試區想跑完整流程但不要污染 Ragic 正式資料時設 false。
+    RAGIC_CP_SUMMARY_ENABLED:    bool = True
+    RAGIC_CP_SUMMARY_TIMEOUT:    int = 60
+    # 主表「申請人」是 Ragic 的使用者選單，要送 Ragic 帳號的顯示名稱
+    # （2026-09-15 Samuel 裁示一律帶 Samuel）
+    RAGIC_CP_SUMMARY_APPLICANT:  str = "Samuel"
+    # 營業稅率：Portal 端只用於畫面顯示與對帳檢查，實際稅額是 Ragic 公式算的
+    RAGIC_CP_SUMMARY_TAX_RATE:   float = 0.05
+
+    # 主表欄位代號
+    RAGIC_CP_F_DOC_NO:    str = "1020773"   # 採購編號（自動編號，不送）
+    RAGIC_CP_F_PERIOD:    str = "1020774"   # 期別（必填）
+    RAGIC_CP_F_ARRIVAL:   str = "1020775"   # 到貨日期（已改非必填，Portal 不送）
+    RAGIC_CP_F_APPLICANT: str = "1020776"   # 申請人
+    RAGIC_CP_F_PURPOSE:   str = "1020777"   # 用途說明（必填）
+    RAGIC_CP_F_VENDOR:    str = "1020778"   # 擬定廠商（必填）
+    RAGIC_CP_F_COMPANY:   str = "1020793"   # 公司別
+    RAGIC_CP_F_CYCLE:     str = "1020794"   # 週期名稱
+    RAGIC_CP_F_BATCH:     str = "1020795"   # 拋轉批次號
+    RAGIC_CP_F_PUSHED_AT: str = "1020796"   # 拋轉時間（格式 yyyy/MM/dd HH:mm:ss）
+    RAGIC_CP_F_NOTE:      str = "1020797"   # Portal備註
+    # 下面三個是 Ragic 公式欄位，**Portal 只讀不寫**（寫入後回讀來做空殼防呆）：
+    #   小計 = G5、營業稅 = F10*0.05、總計 = F10+F11
+    #   ⚠️ 公式只有在 POST 帶 doFormula=true 時才會算，見 cycle_purchase_ragic_push.py
+    RAGIC_CP_F_SUBTOTAL:  str = "1020786"   # 小計
+    RAGIC_CP_F_TAX:       str = "1020787"   # 營業稅
+    RAGIC_CP_F_TOTAL:     str = "1020788"   # 總計
+
+    # 子表欄位代號（子表 id 1020792）
+    RAGIC_CP_SUBTABLE:        str = "1020792"
+    RAGIC_CP_SF_SEQ:          str = "1020779"   # 項次（$SEQ 自動序號，不送）
+    RAGIC_CP_SF_ITEM_NAME:    str = "1020780"   # 產品名稱
+    RAGIC_CP_SF_QTY:          str = "1020781"   # 數量
+    RAGIC_CP_SF_UNIT:         str = "1020782"   # 單位
+    RAGIC_CP_SF_NOTE:         str = "1020783"   # 品項備註
+    RAGIC_CP_SF_PRICE:        str = "1020784"   # 擬定廠商單價（Ragic 端必填）
+    RAGIC_CP_SF_AMOUNT:       str = "1020785"   # 擬定廠商金額（公式 C5*F5，不送）
+    RAGIC_CP_SF_ITEM_CODE:    str = "1020798"   # 料號
+    RAGIC_CP_SF_DEPT:         str = "1020799"   # 部門
+    RAGIC_CP_SF_SUMMARY_ID:   str = "1020800"   # Portal彙整列ID
+
     # ── OpenAI ────────────────────────────────────────────────────────────────
     OPENAI_API_KEY: str = ""
 

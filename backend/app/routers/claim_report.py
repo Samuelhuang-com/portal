@@ -27,6 +27,7 @@ from sqlalchemy.orm import Session
 from app.core.dialect_compat import year_month as ym_expr
 from app.core.database import get_db, SessionLocal
 from app.core.date_utils import ascii_filename_label
+from app.core.excel_utils import xlsx_safe
 from app.core.time import twnow
 from app.dependencies import require_permission
 from app.models.module_sync_log import ModuleSyncLog
@@ -593,7 +594,7 @@ def export_excel(
             order.payee or "",
         ]
         for ci, val in enumerate(vals, 1):
-            cell = ws.cell(row=ri, column=ci, value=val)
+            cell = ws.cell(row=ri, column=ci, value=xlsx_safe(val))
             cell.alignment = Alignment(vertical="center", wrap_text=False)
 
     col_widths = [12, 8, 20, 14, 16, 12, 10, 8, 35, 6, 30, 6, 6, 14, 14, 14, 25, 12, 10, 12, 20]

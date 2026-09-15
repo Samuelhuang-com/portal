@@ -192,18 +192,47 @@ class CancelRagicPushResult(BaseModel):
 
 
 class PushToRagicPayload(BaseModel):
-    """拋轉到 Ragic：把某週期＋期別＋公司範圍內的彙整列，組成一張「匯總請購單」
-    文件推送到 Ragic（Ragic 端表單目前尚未建立，現階段為 stub 串接，
-    見 services/cycle_purchase_ragic_push.py）。"""
+    """拋轉到 Ragic：把某週期＋期別＋公司範圍內的彙整列，**依廠商拆成多張**
+    「週採匯總請購單」寫進 Ragic sheet 57
+    （見 services/cycle_purchase_ragic_push.py）。"""
     cycle_id: int
     period_label: str
     company: str
 
 
+class PushedDocument(BaseModel):
+    """本次成功寫進 Ragic 的其中一張單（一家廠商一張）。"""
+    vendor_id: Optional[int] = None
+    vendor_name: Optional[str] = None
+    ragic_record_id: Optional[str] = None
+    ragic_no: Optional[str] = None      # Ragic 表單上的採購編號，如 樂管週採00001
+    line_count: int = 0
+    is_stub: bool = False
+
+
+class NotPushedRow(BaseModel):
+    """推不出去的彙整列。**刻意回傳而不是默默過濾掉**——這個模組吃過三次
+    「單子憑空消失」的虧，見 project_cycle_purchase_unsummarize 的結論。"""
+    summary_id: int
+    item_code: Optional[str] = None
+    item_name: Optional[str] = None
+    department_name: Optional[str] = None
+    reason: str
+
+
+class FailedVendor(BaseModel):
+    """Ragic 拒絕或連線失敗的廠商（其他家仍然會照推）。"""
+    vendor_name: Optional[str] = None
+    error: str
+
+
 class PushToRagicResult(BaseModel):
-    """拋轉結果。"""
+    """拋轉結果。部分成功時 HTTP 仍是 200，失敗的內容在 failed／not_pushed 裡。"""
     batch_no: str
     pushed_count: int
-    ragic_record_id: Optional[str] = None
-    is_stub: bool = True
+    documents: list[PushedDocument] = []
+    not_pushed: list[NotPushedRow] = []
+    failed: list[FailedVendor] = []
+    already_pushed_count: int = 0
+    is_stub: bool = False
     message: str
