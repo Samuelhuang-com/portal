@@ -2454,6 +2454,10 @@ def _build_repair_pptx(module: str, year: int, month: int, db: Session) -> Bytes
     from app.services import repair_report_service as rr_svc
 
     all_cases = db.query(CaseModel).all()
+    # 2026-09-16：飯店（dazhi）PPT 排除 Ragic 端已刪除的報修單（同步時只標記、本地保留）。
+    # 只影響本匯出；Portal 網頁與商場 PPT 不變（使用者裁示）。
+    if module == "dazhi":
+        all_cases = [c for c in all_cases if not getattr(c, "is_ragic_deleted", False)]
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
     period_str = f"{year}年{month:02d}月"
 
@@ -3312,6 +3316,7 @@ def _build_repair_pptx(module: str, year: int, month: int, db: Session) -> Bytes
             month=month,
             include_hotel=_is_hotel,
             include_mall=not _is_hotel,
+            exclude_ragic_deleted=_is_hotel,
         )
         uf_title = (
             "\u5831\u4fee\u672a\u5b8c\u6210\u9644\u8868\uff08\u98ef\u5e97\uff09"
@@ -3451,6 +3456,7 @@ def _build_repair_pptx(module: str, year: int, month: int, db: Session) -> Bytes
             month=month,
             include_hotel=True,
             include_mall=False,
+            exclude_ragic_deleted=True,
         )
         _huf_rows = []
         for _hc in _h_unfinished:
