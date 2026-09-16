@@ -36,6 +36,7 @@ import type {
   CpPaymentAllocation,
   CpPaymentDetail,
   CpPushToRagicResult,
+  CpRagicPushedDoc,
   CpReceivableItem,
   CpReceiving,
   CpReceivingDetail,
