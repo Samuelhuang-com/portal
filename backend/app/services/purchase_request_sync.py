@@ -87,17 +87,19 @@ DETAIL_FIELD_CANDIDATES: dict[str, list[str]] = {
 
 # 品項子表格欄位 key（子表格的 key 格式：有時帶前綴數字）
 ITEM_FIELD_CANDIDATES: dict[str, list[str]] = {
+    # ⚠️ 2026-09-16 實測 Ragic 子表格欄位：三家報價＝單價/金額、單價2/金額2、單價3/金額3；
+    #    擬定＝單價4/金額4（僅樂群停管部用「擬定單價/擬定金額」）。舊候選名全部對不到 → 價格全為 NULL
     "seq":              ["項次", "序號"],
     "product_name":     ["產品名稱", "品名", "品項名稱", "名稱"],
     "qty":              ["數量"],
     "unit":             ["單位"],
     "item_remark":      ["品項備註", "備註"],
-    "vendor1_price":    ["廠商(一)金額", "廠商一金額", "廠商1金額"],
-    "vendor2_price":    ["廠商(二)金額", "廠商二金額", "廠商2金額"],
-    "vendor3_price":    ["廠商(三)金額", "廠商三金額", "廠商3金額"],
+    "vendor1_price":    ["廠商(一)金額", "廠商一金額", "廠商1金額", "金額"],
+    "vendor2_price":    ["廠商(二)金額", "廠商二金額", "廠商2金額", "金額2"],
+    "vendor3_price":    ["廠商(三)金額", "廠商三金額", "廠商3金額", "金額3"],
     "selected_vendor":  ["擬定廠商", "選定廠商"],
-    "selected_unit_price": ["擬定單價"],
-    "selected_amount":  ["擬定金額"],
+    "selected_unit_price": ["擬定單價", "單價4"],
+    "selected_amount":  ["擬定金額", "金額4"],
     "is_confirmed":     ["勾選"],
 }
 

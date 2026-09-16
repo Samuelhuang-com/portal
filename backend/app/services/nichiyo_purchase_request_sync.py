@@ -82,17 +82,19 @@ DETAIL_FIELD_CANDIDATES: dict[str, list[str]] = {
 }
 
 ITEM_FIELD_CANDIDATES: dict[str, list[str]] = {
+    # ⚠️ 2026-09-16 實測 Ragic 子表格欄位：三家報價＝單價/金額、單價2/金額2、單價3/金額3；
+    #    擬定＝單價4/金額4（日曜 7 部門皆同）。舊候選名全部對不到 → 價格全為 NULL
     "seq":               ["項次", "序號"],
     "product_name":      ["產品名稱", "品名", "品項名稱", "名稱"],
     "qty":               ["數量"],
     "unit":              ["單位"],
     "item_remark":       ["品項備註", "備註"],
-    "vendor1_price":     ["廠商(一)金額", "廠商一金額", "廠商1金額"],
-    "vendor2_price":     ["廠商(二)金額", "廠商二金額", "廠商2金額"],
-    "vendor3_price":     ["廠商(三)金額", "廠商三金額", "廠商3金額"],
+    "vendor1_price":     ["廠商(一)金額", "廠商一金額", "廠商1金額", "金額"],
+    "vendor2_price":     ["廠商(二)金額", "廠商二金額", "廠商2金額", "金額2"],
+    "vendor3_price":     ["廠商(三)金額", "廠商三金額", "廠商3金額", "金額3"],
     "selected_vendor":   ["擬定廠商", "選定廠商"],
-    "selected_unit_price": ["擬定單價"],
-    "selected_amount":   ["擬定金額"],
+    "selected_unit_price": ["擬定單價", "單價4"],
+    "selected_amount":   ["擬定金額", "金額4"],
     "is_confirmed":      ["勾選"],
 }
 
@@ -193,8 +195,10 @@ def _is_empty_item_row(row: dict) -> bool:
         + list(ITEM_FIELD_CANDIDATES.get("selected_amount", []))
         + list(ITEM_FIELD_CANDIDATES.get("vendor1_price", []))
     )
+    # ⚠️ 金額欄是 Ragic 公式欄，空白列也會回 "0"；補上「金額」候選名後
+    #    若不把 "0" 視為空值，全空白列會被當成有內容而寫進品項
     return all(
-        not str(row.get(k, "") or "").strip()
+        str(row.get(k, "") or "").strip() in ("", "0")
         for k in content_keys
         if k in row
     )

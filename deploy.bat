@@ -163,7 +163,19 @@ if not exist "D:\portal\logs" mkdir D:\portal\logs
 echo [執行] 安裝 PortalBackend 服務...
 nssm install PortalBackend "%UVICORN%"
 nssm set PortalBackend AppDirectory D:\portal\backend
-nssm set PortalBackend AppParameters "app.main:app --host 0.0.0.0 --port 8000 --workers 2"
+:: ---------------------------------------------------------------------------
+:: 2026-09-16 --workers 2 -> 1
+::
+:: (1) uvicorn multi-worker does not work on Windows. The parent binds ONE
+::     socket and hands duplicated handles to the children (see
+::     uvicorn/_subprocess.py); the 2nd child's sock.listen() then fails with
+::     OSError: [WinError 10022] (WSAEINVAL) and the whole service dies.
+::     Observed 2026-09-16 in portal_stderr.log (SpawnProcess-2).
+:: (2) Even if it worked, N workers = N APScheduler instances = every Ragic
+::     sync job firing N times. main.py has no worker guard. Same reason
+::     bootstrap.bat pins WORKERS=1 - keep these two in sync.
+:: ---------------------------------------------------------------------------
+nssm set PortalBackend AppParameters "app.main:app --host 0.0.0.0 --port 8000 --workers 1"
 nssm set PortalBackend DisplayName "Portal Backend"
 nssm set PortalBackend Description "集團 Portal FastAPI 後端服務"
 nssm set PortalBackend Start SERVICE_AUTO_START
