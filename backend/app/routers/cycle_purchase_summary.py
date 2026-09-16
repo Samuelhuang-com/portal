@@ -42,18 +42,21 @@ POST   /summary/unsummarize-request     把單一一張請購單退回未彙整�
 兩支都掛 cycle_purchase_buyer 權限（與「產生彙整」同一個權限，退回是產生彙整
 的反向操作，不另開新 permission key）。
 """
+from datetime import date
 from typing import Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.cycle_purchase_database import get_cycle_purchase_db
 from app.dependencies import require_any_permission, require_permission
 from app.models.user import User
 from app.schemas.cycle_purchase_summary import (
     ConvertToPoPayload, DepartmentBreakdownOut, EligibleRequestOut, GenerateFromRequestsPayload,
     CancelRagicPushPayload, CancelRagicPushResult,
-    PushToRagicPayload, PushToRagicResult, SummarizedRequestOut, SummaryOut, SummaryUpdate,
+    PushToRagicPayload, PushToRagicResult, RagicPushedDateRange, RagicPushedDocOut,
+    SummarizedRequestOut, SummaryOut, SummaryUpdate,
     UnsummarizeRequestPayload, UnsummarizeResult, VendorGroupOut,
 )
 from app.schemas.cycle_purchase_po import PODetail
@@ -87,6 +90,69 @@ def list_summary(
         company=company, vendor_id=vendor_id, status=status_,
         department_id=department_id,
     )
+
+
+@router.get(
+    "/summary/ragic-pushed",
+    response_model=List[RagicPushedDocOut],
+    summary="已彙整 Ragic 採購單：把已拋轉的彙整列還原成一張張 Ragic 單據（可依拋轉日期篩選）",
+)
+def list_ragic_pushed(
+    start: Optional[date] = Query(None, description="拋轉日期起（含當天）"),
+    end: Optional[date] = Query(None, description="拋轉日期迄（含當天）"),
+    cycle_id: Optional[int] = Query(None),
+    company: Optional[str] = Query(None),
+    _: User = Depends(require_any_permission("cycle_purchase_view", "cycle_purchase_buyer")),
+    db: Session = Depends(get_cycle_purchase_db),
+):
+    """一列＝一張 Ragic 單據。日期篩選打在 **`ragic_pushed_at`（拋轉時間）**，
+    不是期別——使用者問的是「這段時間我推了什麼」，8 月的期別可能 9 月才推。
+    `start`／`end` 皆可省略（＝不限）。"""
+    return svc.list_ragic_pushed_documents(db, start=start, end=end, cycle_id=cycle_id, company=company)
+
+
+@router.get(
+    "/summary/ragic-pushed/date-range",
+    response_model=RagicPushedDateRange,
+    summary="已拋轉資料的最早／最晚拋轉日（給 StandardRangePicker 當 anchor）",
+)
+def ragic_pushed_date_range(
+    _: User = Depends(require_any_permission("cycle_purchase_view", "cycle_purchase_buyer")),
+    db: Session = Depends(get_cycle_purchase_db),
+):
+    """⚠️ CLAUDE.md §8.2：快捷要以**資料最後一天**為基準而不是今天。
+    拋轉是人工動作、不是每天都有，用今天當基準「本月」很容易框到一段完全沒資料的
+    區間，使用者會以為資料不見了。"""
+    return svc.ragic_pushed_date_range(db)
+
+
+@router.get(
+    "/summary/ragic-link",
+    summary="取得 Ragic「週採匯總請購單」表單連結（彙整單頁右上角「在 Ragic 查看」用）",
+)
+def get_ragic_link(
+    _: User = Depends(require_any_permission("cycle_purchase_view", "cycle_purchase_buyer")),
+):
+    """回傳 Ragic 表單網址，**由後端依 config 組出來，前端不要自己拼**——
+    表單位置（server／account／path）只有 config.py 那一份真實來源，
+    前端硬寫一份之後 Ragic 搬家就會有一邊沒改到。
+
+    ⚠️ 這支只給到「表單」層級。Ragic 的 UI **不吃** `?<欄位代號>,eq,<值>` 這種
+    網址篩選（2026-09-15 實測，帶了照樣列出全部），所以沒辦法用批次號連到篩選結果。
+
+    **單筆深連結走另一條路**：拋轉當下就把完整網址存進
+    `cycle_purchase_summary.ragic_record_url`（alembic_cp `cpragicurl`），
+    「依供應商分組」與「已彙整 Ragic 採購單」TAB 用的是那個值，不是這支。
+    """
+    return {
+        "url": (
+            f"https://{settings.RAGIC_CP_SUMMARY_SERVER_URL}"
+            f"/{settings.RAGIC_CP_SUMMARY_ACCOUNT}"
+            f"/{settings.RAGIC_CP_SUMMARY_PATH}"
+        ),
+        "sheet_label": "週採匯總請購單",
+        "enabled": settings.RAGIC_CP_SUMMARY_ENABLED,
+    }
 
 
 @router.get(

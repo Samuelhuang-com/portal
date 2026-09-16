@@ -45,19 +45,25 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Alert, Button, Card, Descriptions, Form, Input, InputNumber, Modal,
-  Select, Space, Table, Tag, Tooltip, Typography, message,
+  Select, Space, Table, Tabs, Tag, Tooltip, Typography, message,
 } from 'antd'
+import dayjs, { type Dayjs } from 'dayjs'
+// CLAUDE.md §8：任何「選一段期間」的篩選一律用這個共用元件，不要各模組自己刻
+import StandardRangePicker from '@/components/StandardRangePicker'
 import {
-  CloudUploadOutlined, ExclamationCircleOutlined, LockOutlined, RollbackOutlined,
+  CloudUploadOutlined, ExclamationCircleOutlined, LinkOutlined, LockOutlined, RollbackOutlined,
   ShoppingCartOutlined, SyncOutlined, UndoOutlined,
 } from '@ant-design/icons'
 import {
   cancelRagicPush, closeRequests, convertToPo, generateSummaryFromRequests, getCycles,
-  getDepartmentBreakdown, getEligibleRequests, getRequests, getSummarizedRequests, getSummary,
-  getVendorGroups, pushSummaryToRagic, unsummarizeRequest, updateSummaryItem,
+  getDepartmentBreakdown, getEligibleRequests, getRagicPushedDateRange, getRagicPushedDocs,
+  getRagicSummaryLink, getRequests, getSummarizedRequests, getSummary, getVendorGroups,
+  pushSummaryToRagic, unsummarizeRequest, updateSummaryItem,
 } from '@/api/cyclePurchase'
 import type {
-  CpCycle, CpDepartmentBreakdown, CpEligibleRequest, CpSummarizedRequest, CpSummary, CpVendorGroup,
+  CpCycle, CpDepartmentBreakdown, CpEligibleRequest, CpFailedVendor, CpNotPushedRow,
+  CpPushedDocument, CpPushToRagicResult, CpRagicPushedDoc, CpSummarizedRequest, CpSummary,
+  CpVendorGroup,
 } from '@/types/cyclePurchase'
 import { useAuthStore } from '@/stores/authStore'
 
@@ -149,9 +155,55 @@ export default function CpSummaryPage() {
 
   const [converting, setConverting] = useState<string | null>(null) // key = company|vendor_id
 
+  // 2026-09-15 新增：Ragic「週採匯總請購單」表單連結（右上角「在 Ragic 查看」）。
+  // 網址一律跟後端要，前端不硬寫——表單位置的唯一真實來源是 config.py 的
+  // RAGIC_CP_SUMMARY_*，兩邊各存一份之後 Ragic 搬家一定會有一邊忘了改。
+  const [ragicLink, setRagicLink] = useState<string>('')
+
   useEffect(() => {
     getCycles().then((r) => setCycles(r.data)).catch(() => message.error('載入週期設定失敗'))
+    // 拿不到連結就單純不顯示，不要跳錯誤訊息干擾主要流程
+    getRagicSummaryLink().then((r) => setRagicLink(r.data?.url || '')).catch(() => setRagicLink(''))
   }, [])
+
+  // ── 「已彙整 Ragic 採購單」TAB（2026-09-16 新增）─────────────────────────
+  // 這一頁回答的問題跟「彙整作業」不同：不是「這期要買什麼」，而是
+  // 「我到底推了哪些單到 Ragic、對應 Ragic 上的哪一張」。所以：
+  //   - 一列＝一張 Ragic 單據（後端依 批次號＋廠商 分組），不是一個彙整列
+  //   - 篩選用「拋轉日期」不是期別（8 月的期別可能 9 月才推）
+  //   - 不受上面那排週期／期別／公司篩選影響，這一頁是獨立的查詢
+  const [activeTab, setActiveTab] = useState<string>('work')
+  const [pushedDocs, setPushedDocs] = useState<CpRagicPushedDoc[]>([])
+  const [pushedLoading, setPushedLoading] = useState(false)
+  const [pushedRange, setPushedRange] = useState<[Dayjs, Dayjs] | null>(null)
+  // StandardRangePicker 的 anchor：CLAUDE.md §8.2 規定要用「資料最後一天」而不是
+  // 今天。拋轉是人工動作、不是每天都有，用今天當基準「本月」很容易框到一段完全
+  // 沒有資料的區間，使用者會以為資料不見了。
+  const [pushedAnchor, setPushedAnchor] = useState<string>('')
+
+  useEffect(() => {
+    getRagicPushedDateRange()
+      .then((r) => setPushedAnchor(r.data?.end || ''))
+      .catch(() => setPushedAnchor(''))
+  }, [])
+
+  const loadPushed = () => {
+    setPushedLoading(true)
+    // range 為 null ＝「全部」，照 §8.3 的語意不帶起迄，由後端回全部資料
+    const params = pushedRange
+      ? { start: pushedRange[0].format('YYYY-MM-DD'), end: pushedRange[1].format('YYYY-MM-DD') }
+      : {}
+    getRagicPushedDocs(params)
+      .then((r) => setPushedDocs(r.data))
+      .catch((err) => message.error(errMsg(err, '載入已彙整 Ragic 採購單失敗')))
+      .finally(() => setPushedLoading(false))
+  }
+
+  // 切到這個 TAB 才載入，避免使用者根本沒點就先打一支 API
+  useEffect(() => {
+    if (activeTab === 'pushed') loadPushed()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, pushedRange])
 
   // 依選定週期，抓一下這個週期底下已知的期別標籤（來自請購單），方便下拉選，
   // 但仍允許手動輸入新的期別（例如這期還沒產生過彙整）。
@@ -206,14 +258,26 @@ export default function CpSummaryPage() {
       return
     }
     Modal.confirm({
-      title: '拋轉到 Ragic「匯總請購單」',
+      title: '拋轉到 Ragic「週採匯總請購單」',
+      width: 560,
       content: (
         <div>
-          <p>將把「{periodLabel.trim()}／{company}」範圍內的彙整列組成一份匯總請購單，推送到 Ragic。</p>
+          <p>
+            將把「{periodLabel.trim()}／{company}」範圍內的彙整列寫進 Ragic 的
+            「週採匯總請購單」。
+          </p>
           <Alert
-            type="warning"
+            type="info"
             showIcon
-            message="Ragic 端「匯總請購單」表單目前尚未建立，這是預留串接的 stub，會回傳模擬結果，不是真正寫入 Ragic 的記錄。"
+            message="依廠商拆單：一家廠商一張 Ragic 單"
+            description={
+              <span>
+                同一次拋轉共用一個批次號，但每家廠商在 Ragic 會是獨立的一張單、各自有自己的採購編號。
+                <br />
+                缺供應商或缺單價的料號**不會**送出去（Ragic 子表單價是必填，送了整張單會被退回），
+                拋轉後會列出是哪幾筆。
+              </span>
+            }
           />
         </div>
       ),
@@ -223,11 +287,7 @@ export default function CpSummaryPage() {
         setPushing(true)
         try {
           const res = await pushSummaryToRagic({ cycle_id: cycleId, period_label: periodLabel.trim(), company })
-          if (res.data.is_stub) {
-            message.warning(`（Stub）${res.data.message}，批次號 ${res.data.batch_no}`)
-          } else {
-            message.success(`已拋轉：${res.data.message}（${res.data.batch_no}）`)
-          }
+          showPushResult(res.data)
           load()
         } catch (err: any) {
           message.error(errMsg(err, '拋轉失敗'))
@@ -235,6 +295,124 @@ export default function CpSummaryPage() {
           setPushing(false)
         }
       },
+    })
+  }
+
+  // 2026-09-15 新增：拋轉結果視窗。
+  // ⚠️ **部分成功也是 HTTP 200**，所以不能只丟一行 message.success 就算了——
+  //    成功幾張、哪幾筆沒送出去、哪家廠商失敗，三段都要讓使用者看到。
+  //    這個模組吃過三次「單子憑空消失」的虧（見 CLAUDE.md 與退回請購單那次的結論），
+  //    原則是：不要過濾掉，列出來並寫明原因。
+  //    比照「退回請購單」的做法，三段合併成**一個** Modal，不要連跳好幾個。
+  const showPushResult = (r: CpPushToRagicResult) => {
+    const docs = r.documents ?? []
+    const notPushed = r.not_pushed ?? []
+    const failed = r.failed ?? []
+
+    Modal.info({
+      title: failed.length > 0 ? '拋轉完成（部分廠商失敗）' : '拋轉完成',
+      width: 720,
+      okText: '知道了',
+      content: (
+        <div style={{ maxHeight: '60vh', overflowY: 'auto' }}>
+          {r.is_stub && (
+            <Alert
+              type="warning"
+              showIcon
+              style={{ marginBottom: 12 }}
+              message="RAGIC_CP_SUMMARY_ENABLED=false，這是模擬結果，沒有真正寫入 Ragic"
+            />
+          )}
+          <Descriptions bordered size="small" column={1} style={{ marginBottom: 12 }}>
+            <Descriptions.Item label="批次號">{r.batch_no}</Descriptions.Item>
+            <Descriptions.Item label="結果">{r.message}</Descriptions.Item>
+          </Descriptions>
+
+          {docs.length > 0 && (
+            <>
+              <Text strong>已寫入 Ragic 的單據（{docs.length} 張）</Text>
+              <Table<CpPushedDocument>
+                style={{ marginTop: 8, marginBottom: 12 }}
+                dataSource={docs}
+                rowKey={(d) => `${d.vendor_id ?? 'none'}`}
+                size="small"
+                pagination={false}
+                columns={[
+                  { title: '廠商', dataIndex: 'vendor_name', render: (v: string) => v || '—' },
+                  {
+                    title: 'Ragic 單號',
+                    key: 'no',
+                    render: (_: unknown, d: CpPushedDocument) =>
+                      d.ragic_record_url ? (
+                        <a
+                          href={d.ragic_record_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          style={{ color: '#4BA8E8', display: 'inline-flex', alignItems: 'center', gap: 3 }}
+                        >
+                          <LinkOutlined /> {d.ragic_no || d.ragic_record_id}
+                        </a>
+                      ) : (d.ragic_no || d.ragic_record_id || '—'),
+                  },
+                  { title: '明細列數', dataIndex: 'line_count', width: 90, align: 'right' as const },
+                ]}
+              />
+            </>
+          )}
+
+          {failed.length > 0 && (
+            <>
+              <Alert
+                type="error"
+                showIcon
+                style={{ marginBottom: 8 }}
+                message={`${failed.length} 家廠商寫入失敗（其他家已成功，這幾家可修正後重推）`}
+              />
+              <Table<CpFailedVendor>
+                style={{ marginBottom: 12 }}
+                dataSource={failed}
+                rowKey={(f, i) => `${f.vendor_name ?? ''}-${i}`}
+                size="small"
+                pagination={false}
+                columns={[
+                  { title: '廠商', dataIndex: 'vendor_name', width: 140, render: (v: string) => v || '—' },
+                  { title: '錯誤訊息', dataIndex: 'error' },
+                ]}
+              />
+            </>
+          )}
+
+          {notPushed.length > 0 && (
+            <>
+              <Alert
+                type="warning"
+                showIcon
+                style={{ marginBottom: 8 }}
+                message={`${notPushed.length} 筆彙整列未拋轉`}
+                description="這些列不會出現在 Ragic。請到料號主檔／對照表補上供應商與單價後，用「取消拋轉→重推」或下一期再處理。"
+              />
+              <Table<CpNotPushedRow>
+                dataSource={notPushed}
+                rowKey={(x) => x.summary_id}
+                size="small"
+                pagination={false}
+                columns={[
+                  { title: '料號', dataIndex: 'item_code', width: 130 },
+                  { title: '品名', dataIndex: 'item_name' },
+                  { title: '部門', dataIndex: 'department_name', width: 100, render: (v: string) => v || '—' },
+                  { title: '原因', dataIndex: 'reason', width: 260 },
+                ]}
+              />
+            </>
+          )}
+
+          {(r.already_pushed_count ?? 0) > 0 && (
+            <Text type="secondary" style={{ display: 'block', marginTop: 12 }}>
+              另有 {r.already_pushed_count} 筆彙整列先前已拋轉過，本次略過。
+            </Text>
+          )}
+        </div>
+      ),
     })
   }
 
@@ -483,6 +661,29 @@ export default function CpSummaryPage() {
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
         <Title level={4} style={{ margin: 0 }}>週期採購 — 彙整單／匯總請購單</Title>
         <Space>
+          {/* 2026-09-15 新增：沿用 CLAUDE.md §7 明細 Drawer 的「在 Ragic 查看」樣式
+              （LinkOutlined ＋ 色碼 #4BA8E8 ＋ target="_blank"），放在模組右上角。
+              ⚠️ 只連到表單層級，不是單筆——Ragic 的 UI 不吃網址篩選參數，而且
+              ragic_record_id 存的是採購編號不是內部 id，詳見後端
+              GET /summary/ragic-link 的說明。對帳看清單上的「Ragic 記錄」欄。 */}
+          {ragicLink && (
+            <a
+              href={ragicLink}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                fontSize: 14, color: '#4BA8E8', display: 'flex',
+                alignItems: 'center', gap: 3, fontWeight: 400, marginRight: 4,
+              }}
+            >
+              <LinkOutlined /> 在 Ragic 查看
+            </a>
+          )}
+          {/* 這四顆都是「彙整作業」的動作，切到「已彙整 Ragic 採購單」那頁時
+              它們沒有作用對象（那頁是獨立查詢、不吃上面的週期／期別篩選），
+              所以隨 TAB 隱藏，避免使用者按了沒反應。 */}
+          {activeTab === 'work' && (
+            <>
           {canBuy && (
             <Tooltip
               title={
@@ -520,9 +721,20 @@ export default function CpSummaryPage() {
           {canBuy && (
             <Button icon={<SyncOutlined />} onClick={openGenerate}>產生彙整</Button>
           )}
+            </>
+          )}
         </Space>
       </div>
 
+      <Tabs
+        activeKey={activeTab}
+        onChange={setActiveTab}
+        items={[
+          {
+            key: 'work',
+            label: '彙整作業',
+            children: (
+              <>
       <Card style={{ marginBottom: 16 }}>
         <Space wrap>
           <Select
@@ -583,6 +795,38 @@ export default function CpSummaryPage() {
                         : g.vendor_name,
                   },
                   { title: '料號筆數', dataIndex: 'item_count', width: 100, align: 'right' as const },
+                  {
+                    // 2026-09-15 新增：拋轉是依廠商拆單，一家廠商在 Ragic 就是一張單，
+                    // 所以這一欄直接回答「這組對應 Ragic 哪一張」。
+                    // 樣式沿用 CLAUDE.md §7 明細 Drawer 的「在 Ragic 查看」（LinkOutlined ＋ #4BA8E8）。
+                    title: 'Ragic 單號',
+                    key: 'ragic',
+                    width: 170,
+                    render: (_: unknown, g: CpVendorGroup) => {
+                      if (!g.ragic_pushed || !g.ragic_record_id) return <Text type="secondary">—</Text>
+                      // 2026-09-15 之前拋轉的列沒有 ragic_record_url（當時還沒這個欄位），
+                      // 這種情況只顯示單號不給連結，不要給一個點了會 404 的假連結。
+                      if (!g.ragic_record_url) {
+                        return (
+                          <Tooltip title={`批次 ${g.ragic_push_batch_no || '—'}（這張是舊版拋轉，沒有存單筆連結）`}>
+                            <span>{g.ragic_record_id}</span>
+                          </Tooltip>
+                        )
+                      }
+                      return (
+                        <Tooltip title={`批次 ${g.ragic_push_batch_no || '—'}`}>
+                          <a
+                            href={g.ragic_record_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            style={{ color: '#4BA8E8', display: 'inline-flex', alignItems: 'center', gap: 3 }}
+                          >
+                            <LinkOutlined /> {g.ragic_record_id}
+                          </a>
+                        </Tooltip>
+                      )
+                    },
+                  },
                   {
                     title: '金額（依目前調整量）',
                     dataIndex: 'total_amount',
@@ -781,6 +1025,159 @@ export default function CpSummaryPage() {
           </Card>
         </>
       )}
+              </>
+            ),
+          },
+          {
+            key: 'pushed',
+            label: '已彙整 Ragic 採購單',
+            children: (
+              <>
+                <Card style={{ marginBottom: 16 }}>
+                  <Space wrap align="center">
+                    <Text type="secondary">拋轉日期</Text>
+                    {/* CLAUDE.md §8：共用元件，anchor 傳資料最後一天而不是今天 */}
+                    <StandardRangePicker
+                      value={pushedRange}
+                      anchor={pushedAnchor}
+                      onChange={setPushedRange}
+                    />
+                    <Button icon={<SyncOutlined />} onClick={loadPushed} loading={pushedLoading}>
+                      重新整理
+                    </Button>
+                    {ragicLink && (
+                      <a
+                        href={ragicLink}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{ color: '#4BA8E8', display: 'inline-flex', alignItems: 'center', gap: 3 }}
+                      >
+                        <LinkOutlined /> 在 Ragic 開啟整張表單
+                      </a>
+                    )}
+                  </Space>
+                </Card>
+
+                <Card
+                  title={`已拋轉到 Ragic 的採購單（${pushedDocs.length} 張）`}
+                  loading={pushedLoading}
+                  extra={
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      一列＝Ragic 上的一張單；拋轉是依廠商拆單，所以同一批次會有多張
+                    </Text>
+                  }
+                >
+                  <Table<CpRagicPushedDoc>
+                    dataSource={pushedDocs}
+                    rowKey={(d) => `${d.ragic_push_batch_no ?? ''}|${d.vendor_id ?? 'none'}`}
+                    size="small"
+                    scroll={{ x: 1200 }}
+                    locale={{
+                      emptyText: pushedRange
+                        ? '這段期間沒有拋轉過任何單據（可切換成「全部」看看）'
+                        : '目前還沒有任何已拋轉的單據',
+                    }}
+                    columns={[
+                      {
+                        title: 'Ragic 單號',
+                        key: 'no',
+                        width: 170,
+                        fixed: 'left' as const,
+                        render: (_: unknown, d: CpRagicPushedDoc) => {
+                          if (d.is_stub) {
+                            return (
+                              <Tooltip title="這筆是 2026-09-15 正式串接前的 stub 假資料，Ragic 上沒有對應單據">
+                                <Tag color="default">stub</Tag>
+                              </Tooltip>
+                            )
+                          }
+                          if (!d.ragic_record_id) return <Text type="secondary">—</Text>
+                          // 2026-09-15 之前拋轉的沒有存單筆網址，只顯示單號不給連結，
+                          // 不要給一個點了會 404 的假連結
+                          if (!d.ragic_record_url) {
+                            return (
+                              <Tooltip title="這張是舊版拋轉，沒有存單筆連結；可用右上角開整張表單再自行搜尋">
+                                <span>{d.ragic_record_id}</span>
+                              </Tooltip>
+                            )
+                          }
+                          return (
+                            <a
+                              href={d.ragic_record_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              style={{ color: '#4BA8E8', display: 'inline-flex', alignItems: 'center', gap: 3 }}
+                            >
+                              <LinkOutlined /> {d.ragic_record_id}
+                            </a>
+                          )
+                        },
+                      },
+                      {
+                        title: '拋轉時間',
+                        dataIndex: 'pushed_at',
+                        width: 150,
+                        sorter: (a: CpRagicPushedDoc, b: CpRagicPushedDoc) =>
+                          (a.pushed_at || '').localeCompare(b.pushed_at || ''),
+                        defaultSortOrder: 'descend' as const,
+                        render: (v: string) => (v ? dayjs(v).format('YYYY-MM-DD HH:mm') : '—'),
+                      },
+                      { title: '公司', dataIndex: 'company', width: 90 },
+                      { title: '週期', dataIndex: 'cycle_name', width: 170, render: (v: string) => v || '—' },
+                      { title: '期別', dataIndex: 'period_label', width: 90 },
+                      {
+                        title: '廠商',
+                        dataIndex: 'vendor_name',
+                        width: 140,
+                        render: (v: string) => v || <Text type="secondary">—</Text>,
+                      },
+                      {
+                        title: '部門',
+                        key: 'depts',
+                        width: 150,
+                        render: (_: unknown, d: CpRagicPushedDoc) =>
+                          d.department_names?.length
+                            ? d.department_names.join('、')
+                            : <Text type="secondary">—</Text>,
+                      },
+                      { title: '料號筆數', dataIndex: 'item_count', width: 90, align: 'right' as const },
+                      { title: '總數量', dataIndex: 'total_qty', width: 90, align: 'right' as const },
+                      {
+                        title: '金額（未稅）',
+                        dataIndex: 'total_amount',
+                        width: 130,
+                        align: 'right' as const,
+                        sorter: (a: CpRagicPushedDoc, b: CpRagicPushedDoc) =>
+                          Number(a.total_amount) - Number(b.total_amount),
+                        render: (v: number) => Number(v).toLocaleString(),
+                      },
+                      {
+                        // 讓使用者一眼看出這張單的流程走到哪：拋轉只是送到 Ragic，
+                        // 轉採購單是 Portal 這邊的下一步，兩件事互相獨立
+                        title: '轉採購單',
+                        key: 'converted',
+                        width: 110,
+                        render: (_: unknown, d: CpRagicPushedDoc) =>
+                          d.all_converted
+                            ? <Tag color="green">已全數轉單</Tag>
+                            : d.converted_count > 0
+                              ? <Tag color="blue">{`部分 ${d.converted_count}/${d.item_count}`}</Tag>
+                              : <Tag>未轉單</Tag>,
+                      },
+                      {
+                        title: '拋轉批次號',
+                        dataIndex: 'ragic_push_batch_no',
+                        width: 220,
+                        render: (v: string) => v || '—',
+                      },
+                    ]}
+                  />
+                </Card>
+              </>
+            ),
+          },
+        ]}
+      />
 
       <Modal
         title="產生彙整"

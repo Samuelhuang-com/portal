@@ -103,7 +103,7 @@ adjusted_qty 曾被人工改過（≠ 重算前的 demand_qty），保留該值�
 一起走。重算後 demand_qty 歸零的列，**沒有人工調整過才刪除**；有人工調整過
 的保留（demand_qty=0）並發警告，避免靜默丟掉買家已經做的決定。
 """
-from datetime import date, datetime
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Optional
 
@@ -710,6 +710,107 @@ def update_summary_item(db: Session, summary_id: int, payload) -> Optional[Cycle
     return _attach_summary_display_fields(db, row)
 
 
+def list_ragic_pushed_documents(
+    db: Session,
+    start: Optional[date] = None,
+    end: Optional[date] = None,
+    cycle_id: Optional[int] = None,
+    company: Optional[str] = None,
+):
+    """「已彙整 Ragic 採購單」TAB 用：把已拋轉的彙整列還原成**一張張 Ragic 單據**。
+
+    2026-09-16 新增。與畫面上其他清單的差別：其他清單一列＝一個彙整列（料號×部門），
+    這裡**一列＝一張 Ragic 單據**，因為使用者要問的是「我推了哪些單到 Ragic」。
+
+    分組鍵＝`(ragic_push_batch_no, vendor_id)`，不是用 `ragic_record_id`——
+    2026-09-15 之前 stub 時期的資料 `ragic_record_id` 是共用的假值
+    （`STUB-<batch_no>`），用它分組會把不同廠商併成一列。批次號＋廠商才是
+    「一張 Ragic 單」的真正身分（見 push_summary_to_ragic 的依廠商拆單）。
+
+    日期篩選打在 `ragic_pushed_at`（拋轉時間），不是期別——使用者問的是
+    「這段時間我推了什麼」，跟彙整期別是兩回事（8 月的期別可能 9 月才推）。
+    start／end 都是日期（含當天），None 代表不限。
+    """
+    query = db.query(CyclePurchaseSummary).filter(
+        CyclePurchaseSummary.ragic_pushed == True,  # noqa: E712
+    )
+    if start:
+        query = query.filter(CyclePurchaseSummary.ragic_pushed_at >= datetime.combine(start, time.min))
+    if end:
+        # 含當天：用 < 隔天 00:00，不要用 <= end 23:59:59（會漏掉最後一秒，
+        # 而且 PG 的 timestamp 精度到微秒）
+        query = query.filter(
+            CyclePurchaseSummary.ragic_pushed_at < datetime.combine(end, time.min) + timedelta(days=1)
+        )
+    if cycle_id:
+        query = query.filter(CyclePurchaseSummary.cycle_id == cycle_id)
+    if company:
+        query = query.filter(CyclePurchaseSummary.company == company)
+
+    rows = query.all()
+    for r in rows:
+        _attach_summary_display_fields(db, r)
+
+    docs: dict[tuple, dict] = {}
+    for r in rows:
+        key = (r.ragic_push_batch_no, r.vendor_id)
+        d = docs.setdefault(key, {
+            "ragic_push_batch_no": r.ragic_push_batch_no,
+            "ragic_record_id": r.ragic_record_id,
+            "ragic_record_url": r.ragic_record_url,
+            "cycle_id": r.cycle_id,
+            "cycle_name": r.cycle_name,
+            "period_label": r.period_label,
+            "company": r.company,
+            "vendor_id": r.vendor_id,
+            "vendor_name": r.vendor_name,
+            "item_count": 0,
+            "total_qty": 0,
+            "total_amount": Decimal("0"),
+            "pushed_at": r.ragic_pushed_at,
+            "department_names": [],
+            "converted_count": 0,
+            "is_stub": bool(r.ragic_record_id and str(r.ragic_record_id).startswith("STUB-")),
+        })
+        d["item_count"] += 1
+        d["total_qty"] += (r.adjusted_qty or 0)
+        d["total_amount"] += (r.unit_price or Decimal("0")) * (r.adjusted_qty or 0)
+        if r.status == "converted":
+            d["converted_count"] += 1
+        if r.department_name and r.department_name not in d["department_names"]:
+            d["department_names"].append(r.department_name)
+
+    result = list(docs.values())
+    for d in result:
+        d["department_names"].sort()
+        # 這張單的彙整列是不是都已經轉成採購單了——讓使用者一眼看出流程走到哪
+        d["all_converted"] = d["converted_count"] == d["item_count"] and d["item_count"] > 0
+    # 最近推的排最前面，這一頁的用途是「我最近推了什麼」
+    result.sort(key=lambda d: (d["pushed_at"] or datetime.min), reverse=True)
+    return result
+
+
+def ragic_pushed_date_range(db: Session) -> dict:
+    """回傳已拋轉資料的最早／最晚拋轉日，給前端 StandardRangePicker 當 anchor 用。
+
+    ⚠️ CLAUDE.md §8.2：快捷要以**資料最後一天**為基準，不是今天。拋轉是人工動作、
+    不是每天都有，用今天當基準的話「本月」很容易框到一段完全沒有資料的區間，
+    使用者會以為資料不見了。
+    """
+    first, last = (
+        db.query(
+            func.min(CyclePurchaseSummary.ragic_pushed_at),
+            func.max(CyclePurchaseSummary.ragic_pushed_at),
+        )
+        .filter(CyclePurchaseSummary.ragic_pushed == True)  # noqa: E712
+        .one()
+    )
+    return {
+        "start": first.date().isoformat() if first else None,
+        "end": last.date().isoformat() if last else None,
+    }
+
+
 def list_vendor_groups(db: Session, cycle_id: int, period_label: str, company: Optional[str] = None):
     """給「轉採購單」畫面用：某週期＋期別下還沒轉單（draft）的彙整列，依公司＋供應商分組統計。"""
     query = db.query(CyclePurchaseSummary).filter(
@@ -733,10 +834,22 @@ def list_vendor_groups(db: Session, cycle_id: int, period_label: str, company: O
                 "item_count": 0,
                 "total_amount": Decimal("0"),
                 "has_missing_vendor": r.vendor_id is None,
+                # 2026-09-15 新增：這一組（＝一家廠商）對應到 Ragic 的哪一張單。
+                # 拋轉就是依廠商拆單，所以「公司＋廠商」這個 key 跟 Ragic 單據
+                # 是一對一，直接把該組任一列的拋轉結果帶出來即可。
+                "ragic_record_id": None,
+                "ragic_record_url": None,
+                "ragic_push_batch_no": None,
+                "ragic_pushed": False,
             },
         )
         g["item_count"] += 1
         g["total_amount"] += (r.unit_price or Decimal("0")) * (r.adjusted_qty or 0)
+        if r.ragic_pushed and not g["ragic_record_id"]:
+            g["ragic_record_id"] = r.ragic_record_id
+            g["ragic_record_url"] = r.ragic_record_url
+            g["ragic_push_batch_no"] = r.ragic_push_batch_no
+            g["ragic_pushed"] = True
 
     result = []
     for (company_, vendor_id_), g in groups.items():
@@ -1112,7 +1225,10 @@ def push_summary_to_ragic(
         for r in doc["_rows"]:
             r.ragic_push_batch_no = batch_no
             r.ragic_pushed = True
+            # ragic_record_id 存**給人看的採購編號**（樂管週採00003），清單上顯示的是它；
+            # 單筆網址另外存 ragic_record_url，因為編號與 Ragic 內部 id 無法互推。
             r.ragic_record_id = push_result.get("ragic_no") or push_result.get("ragic_record_id")
+            r.ragic_record_url = push_result.get("ragic_record_url") or None
             r.ragic_pushed_at = now
             r.ragic_push_error = None
         results.append({
@@ -1120,6 +1236,7 @@ def push_summary_to_ragic(
             "vendor_name": doc.get("vendor_name"),
             "ragic_record_id": push_result.get("ragic_record_id"),
             "ragic_no": push_result.get("ragic_no"),
+            "ragic_record_url": push_result.get("ragic_record_url"),
             "line_count": len(doc["lines"]),
             "is_stub": push_result.get("is_stub", False),
         })
@@ -1287,6 +1404,8 @@ def cancel_ragic_push(
         r.ragic_pushed = False
         r.ragic_push_batch_no = None
         r.ragic_record_id = None
+        r.ragic_record_url = None   # 2026-09-15 新增欄位，取消拋轉要一起清掉，
+                                    # 否則畫面上會留下一個指向舊單的死連結
         r.ragic_pushed_at = None
         r.ragic_push_error = None
     db.flush()

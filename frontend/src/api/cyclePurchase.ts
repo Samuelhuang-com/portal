@@ -350,9 +350,28 @@ export const convertToPo = (data: { cycle_id: number; period_label: string; comp
 export const getDepartmentBreakdown = (params: { cycle_id: number; period_label: string; company?: string }) =>
   apiClient.get<CpDepartmentBreakdown[]>(`${BASE}/summary/department-breakdown`, { params })
 
-// 2026-07-16 新增：拋轉到 Ragic「匯總請購單」（目前為 stub，見後端
-// cycle_purchase_ragic_push.py 開頭說明，Ragic 端表單尚未建立）
-// ⚠️ 2026-08-09 起**已拋轉過的範圍會被擋下**（回 422），要重推請先 cancelRagicPush。
+// 2026-09-16 新增：「已彙整 Ragic 採購單」TAB。
+// ⚠️ 一列＝**一張 Ragic 單據**（不是一個彙整列），日期篩選打在「拋轉時間」而不是
+//    期別——使用者問的是「這段時間我推了什麼」，8 月的期別可能 9 月才推。
+export const getRagicPushedDocs = (params?: {
+  start?: string; end?: string; cycle_id?: number; company?: string
+}) => apiClient.get<CpRagicPushedDoc[]>(`${BASE}/summary/ragic-pushed`, { params })
+
+// 已拋轉資料的最早／最晚拋轉日，給 StandardRangePicker 當 anchor 用。
+// ⚠️ CLAUDE.md §8.2：快捷要以「資料最後一天」為基準，不是今天。
+export const getRagicPushedDateRange = () =>
+  apiClient.get<{ start: string | null; end: string | null }>(`${BASE}/summary/ragic-pushed/date-range`)
+
+// 2026-09-15 新增：Ragic「週採匯總請購單」表單連結。
+// 網址由後端依 config 組出來，**前端不要自己拼**——表單位置的唯一真實來源在
+// backend/app/core/config.py 的 RAGIC_CP_SUMMARY_*。
+export const getRagicSummaryLink = () =>
+  apiClient.get<{ url: string; sheet_label: string; enabled: boolean }>(`${BASE}/summary/ragic-link`)
+
+// 2026-07-16 新增：拋轉到 Ragic「週採匯總請購單」。
+// ⚠️ 2026-09-15 起是**真的寫入 Ragic**，而且**依廠商拆單**：一次動作會產生多張
+//    Ragic 單（一家廠商一張），共用同一個 batch_no。回傳的 documents 是各張單的
+//    採購編號。**部分成功也是 200**。
 export const pushSummaryToRagic = (data: { cycle_id: number; period_label: string; company: string }) =>
   apiClient.post<CpPushToRagicResult>(`${BASE}/summary/push-to-ragic`, data)
 

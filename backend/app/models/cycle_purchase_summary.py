@@ -119,8 +119,17 @@ class CyclePurchaseSummary(CyclePurchaseBase):
     ragic_pushed    = Column(Boolean, nullable=False, default=False, comment="是否已拋轉到 Ragic")
     ragic_record_id = Column(
         String(60), nullable=True,
-        comment="Ragic 端回填的單號／記錄 ID（目前 Ragic「匯總請購單」表單尚未建立，"
-                 "現階段為 stub 串接，此欄位可能是暫時性假值，見 cycle_purchase_ragic_push.py）",
+        comment="Ragic 端回填的**採購編號**（給人看的單號，如 樂管週採00003）。"
+                "⚠️ 這不是 Ragic 的內部 _ragicId，不能拿來組單筆網址，"
+                "要連結請用 ragic_record_url，見 cycle_purchase_ragic_push.py",
+    )
+    # 2026-09-15 新增（alembic_cp revision cpragicurl）：
+    # 單筆網址要的是 Ragic 內部 _ragicId，與上面的採購編號完全無法互推
+    # （目前「編號-1＝內部id」只是因為這張表還沒刪過資料，刪一筆就失效）。
+    # 所以在拋轉當下把完整網址一起存起來，前端直接 <a href> 用。
+    ragic_record_url = Column(
+        String(300), nullable=True,
+        comment="Ragic 該筆記錄的完整網址（拋轉當下組好存檔；2026-09-15 之前拋轉的列為 NULL）",
     )
     ragic_pushed_at   = Column(DateTime, nullable=True, comment="拋轉成功時間")
     ragic_push_error  = Column(Text, nullable=True, comment="拋轉失敗時的錯誤訊息")

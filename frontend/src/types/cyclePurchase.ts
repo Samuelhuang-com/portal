@@ -546,6 +546,12 @@ export interface CpVendorGroup {
   item_count: number
   total_amount: number
   has_missing_vendor: boolean
+  // 2026-09-15 新增：這一組（＝一家廠商）對應到 Ragic 的哪一張單。
+  // 拋轉是依廠商拆單，所以「公司＋廠商」與 Ragic 單據是一對一。
+  ragic_pushed?: boolean
+  ragic_record_id?: string | null      // 給人看的採購編號，如 樂管週採00003
+  ragic_record_url?: string | null     // 單筆網址；2026-09-15 之前拋轉的列是 null（只顯示單號、不可點）
+  ragic_push_batch_no?: string | null
 }
 
 // 2026-07-16 新增：匯總請購單畫面用，依料號分組展開部門別＋小計。
@@ -574,12 +580,67 @@ export interface CpDepartmentBreakdown {
   has_missing_vendor: boolean
 }
 
-// 2026-07-16 新增：拋轉到 Ragic「匯總請購單」的結果。Ragic 端表單尚未建立，
-// is_stub=true 代表這是模擬結果，不是真正寫入 Ragic 的記錄。
+// 2026-09-16 新增：「已彙整 Ragic 採購單」TAB 的一列＝**一張 Ragic 單據**。
+// 後端分組鍵是 (ragic_push_batch_no, vendor_id)，因為拋轉是依廠商拆單；
+// 不用 ragic_record_id 分組是為了相容 stub 時期共用假值的舊資料。
+export interface CpRagicPushedDoc {
+  ragic_push_batch_no?: string | null
+  ragic_record_id?: string | null      // Ragic 採購編號，如 樂管週採00003
+  ragic_record_url?: string | null     // 單筆網址；2026-09-15 之前拋轉的為 null
+  cycle_id: number
+  cycle_name?: string | null
+  period_label: string
+  company: string
+  vendor_id?: number | null
+  vendor_name?: string | null
+  item_count: number
+  total_qty: number
+  total_amount: number
+  pushed_at?: string | null
+  department_names: string[]
+  converted_count: number
+  all_converted: boolean
+  is_stub: boolean
+}
+
+// 拋轉到 Ragic「週採匯總請購單」的結果。
+// 2026-09-15 改版：真正寫入 Ragic，而且**依廠商拆單**——一次動作會產生多張
+// Ragic 單（一家廠商一張），共用同一個 batch_no。
+// ⚠️ **部分成功也是 HTTP 200**，所以三段都要顯示，不能只看 message：
+//    documents  = 成功寫進 Ragic 的各張單
+//    not_pushed = 缺供應商／缺單價而沒送出去的彙整列（不是錯誤，但使用者一定要看到）
+//    failed     = Ragic 拒絕或連線失敗的廠商（其他家仍然有推成功）
+// is_stub=true 代表 RAGIC_CP_SUMMARY_ENABLED=false，沒有真的寫入 Ragic。
+export interface CpPushedDocument {
+  vendor_id?: number | null
+  vendor_name?: string | null
+  ragic_record_id?: string | null    // Ragic 內部 _ragicId
+  ragic_no?: string | null           // 採購編號，如 樂管週採00003
+  ragic_record_url?: string | null   // 單筆網址
+  line_count: number
+  is_stub: boolean
+}
+
+export interface CpNotPushedRow {
+  summary_id: number
+  item_code?: string | null
+  item_name?: string | null
+  department_name?: string | null
+  reason: string
+}
+
+export interface CpFailedVendor {
+  vendor_name?: string | null
+  error: string
+}
+
 export interface CpPushToRagicResult {
   batch_no: string
   pushed_count: number
-  ragic_record_id?: string | null
+  documents?: CpPushedDocument[]
+  not_pushed?: CpNotPushedRow[]
+  failed?: CpFailedVendor[]
+  already_pushed_count?: number
   is_stub: boolean
   message: string
 }

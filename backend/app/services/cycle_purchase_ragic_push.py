@@ -278,9 +278,15 @@ def push_summary_document(document: dict[str, Any]) -> dict[str, Any]:
         batch_no, vendor_name, ragic_record_id, ragic_no or "—", len(document.get("lines", [])),
     )
 
+    # 單筆網址用 Ragic 的內部 _ragicId，不是採購編號
+    # （2026-09-15 實測 .../57/2 開出來就是 樂管週採00003）。
+    # 在這裡組好一起回傳，service 存進 ragic_record_url，前端就不用再拼一次網址。
+    ragic_record_url = f"{_sheet_url()}/{ragic_record_id}" if ragic_record_id else ""
+
     return {
         "ragic_record_id": ragic_record_id,
         "ragic_no": ragic_no,
+        "ragic_record_url": ragic_record_url,
         "is_stub": False,
         "message": f"已寫入 Ragic 週採匯總請購單 {ragic_no or ragic_record_id}",
     }

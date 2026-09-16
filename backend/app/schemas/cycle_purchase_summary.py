@@ -95,6 +95,7 @@ class SummaryOut(BaseModel):
     ragic_push_batch_no: Optional[str] = None
     ragic_pushed: bool = False
     ragic_record_id: Optional[str] = None
+    ragic_record_url: Optional[str] = None
     ragic_pushed_at: Optional[datetime] = None
     ragic_push_error: Optional[str] = None
     notes: Optional[str] = None
@@ -141,6 +142,12 @@ class VendorGroupOut(BaseModel):
     item_count: int
     total_amount: Decimal
     has_missing_vendor: bool = False
+    # 2026-09-15 新增：這一組對應的 Ragic 單據。拋轉是依廠商拆單，所以
+    # 「公司＋廠商」與 Ragic 單據是一對一，可以直接掛在這一層。
+    ragic_pushed: bool = False
+    ragic_record_id: Optional[str] = None       # 給人看的採購編號，如 樂管週採00003
+    ragic_record_url: Optional[str] = None      # 單筆網址；2026-09-15 之前拋轉的列為 None
+    ragic_push_batch_no: Optional[str] = None
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -191,6 +198,37 @@ class CancelRagicPushResult(BaseModel):
     next_step: Optional[str] = None
 
 
+class RagicPushedDocOut(BaseModel):
+    """「已彙整 Ragic 採購單」TAB：一列＝**一張 Ragic 單據**（不是一個彙整列）。
+
+    分組鍵是 `(ragic_push_batch_no, vendor_id)`，因為拋轉是依廠商拆單；
+    不用 ragic_record_id 分組是為了相容 stub 時期共用假值的舊資料。
+    """
+    ragic_push_batch_no: Optional[str] = None
+    ragic_record_id: Optional[str] = None       # Ragic 採購編號，如 樂管週採00003
+    ragic_record_url: Optional[str] = None      # 單筆網址；2026-09-15 之前拋轉的為 None
+    cycle_id: int
+    cycle_name: Optional[str] = None
+    period_label: str
+    company: str
+    vendor_id: Optional[int] = None
+    vendor_name: Optional[str] = None
+    item_count: int
+    total_qty: int
+    total_amount: Decimal
+    pushed_at: Optional[datetime] = None
+    department_names: list[str] = []
+    converted_count: int = 0
+    all_converted: bool = False
+    is_stub: bool = False
+
+
+class RagicPushedDateRange(BaseModel):
+    """已拋轉資料的日期範圍，給前端 StandardRangePicker 當 anchor（CLAUDE.md §8.2）。"""
+    start: Optional[str] = None
+    end: Optional[str] = None
+
+
 class PushToRagicPayload(BaseModel):
     """拋轉到 Ragic：把某週期＋期別＋公司範圍內的彙整列，**依廠商拆成多張**
     「週採匯總請購單」寫進 Ragic sheet 57
@@ -204,8 +242,9 @@ class PushedDocument(BaseModel):
     """本次成功寫進 Ragic 的其中一張單（一家廠商一張）。"""
     vendor_id: Optional[int] = None
     vendor_name: Optional[str] = None
-    ragic_record_id: Optional[str] = None
-    ragic_no: Optional[str] = None      # Ragic 表單上的採購編號，如 樂管週採00001
+    ragic_record_id: Optional[str] = None       # Ragic 內部 _ragicId
+    ragic_no: Optional[str] = None              # Ragic 表單上的採購編號，如 樂管週採00003
+    ragic_record_url: Optional[str] = None      # 單筆網址
     line_count: int = 0
     is_stub: bool = False
 
