@@ -38,11 +38,20 @@ def list_items(
     is_active: Optional[bool] = Query(None),
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=5, le=200),
+    # 2026-09-16 新增篩選／排序（"__none__" / 0 = 未設定）
+    company: Optional[str] = Query(None, description="公司別；__none__ = 尚無料號對照"),
+    department_id: Optional[int] = Query(None, ge=1, description="部門 ID（料號對照）"),
+    account_code_id: Optional[int] = Query(None, ge=0, description="會計科目 ID；0 = 未設定"),
+    vendor_id: Optional[int] = Query(None, ge=0, description="供應商 ID（預設供應商或對照供應商）；0 = 未設定"),
+    sort_by: Optional[str] = Query(None, description="排序欄位"),
+    sort_order: str = Query("asc", pattern="^(asc|desc)$"),
     _: User = Depends(require_permission("cycle_purchase_view")),
     db: Session = Depends(get_cycle_purchase_db),
 ):
     items, total = svc.list_items(
-        db, q=q, category=category, is_active=is_active, page=page, per_page=per_page
+        db, q=q, category=category, is_active=is_active, page=page, per_page=per_page,
+        company=company, department_id=department_id, account_code_id=account_code_id,
+        vendor_id=vendor_id, sort_by=sort_by, sort_order=sort_order,
     )
     return ItemListResponse(items=items, total=total, page=page, per_page=per_page)
 

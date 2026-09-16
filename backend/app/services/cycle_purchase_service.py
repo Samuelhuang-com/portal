@@ -455,6 +455,16 @@ def _attach_account_code_labels(db: Session, item: CyclePurchaseItem) -> CyclePu
     return item
 
 
+# 2026-09-16 新增：料號主檔列表的「公司/部門」「會計科目」「供應商」篩選與欄位排序。
+# 列表是後端分頁，所以篩選／排序都必須在後端做（前端只拿得到當頁 20 筆）。
+# 「未設定」一律用 0 / "__none__" 當哨兵值，對應列表上的橘色／灰色「未設定」Tag。
+ITEM_UNSET = "__none__"
+ITEM_SORT_FIELDS = (
+    "item_code", "item_name", "category", "company_departments", "account_code_labels",
+    "unit", "default_vendor_name", "unit_price", "is_active",
+)
+
+
 def list_items(
     db: Session,
     q: str = "",
@@ -462,7 +472,14 @@ def list_items(
     is_active: Optional[bool] = None,
     page: int = 1,
     per_page: int = 20,
+    company: Optional[str] = None,
+    department_id: Optional[int] = None,
+    account_code_id: Optional[int] = None,
+    vendor_id: Optional[int] = None,
+    sort_by: Optional[str] = None,
+    sort_order: str = "asc",
 ):
+    M = CyclePurchaseItemMapping
     query = db.query(CyclePurchaseItem)
     if q:
         like = f"%{q}%"
@@ -470,14 +487,87 @@ def list_items(
             (CyclePurchaseItem.item_name.like(like))
             | (CyclePurchaseItem.item_code.like(like))
         )
-    if category:
+    if category == ITEM_UNSET:
+        query = query.filter((CyclePurchaseItem.category.is_(None)) | (CyclePurchaseItem.category == ""))
+    elif category:
         query = query.filter(CyclePurchaseItem.category == category)
     if is_active is not None:
         query = query.filter(CyclePurchaseItem.is_active == is_active)
 
+    # 公司/部門：存在料號對照表，一個料號可對到多組 → 用 EXISTS，不 join（避免重複列、total 失真）。
+    if company == ITEM_UNSET:
+        query = query.filter(~db.query(M.id).filter(M.item_id == CyclePurchaseItem.id).exists())
+    elif company or department_id:
+        sub = db.query(M.id).filter(M.item_id == CyclePurchaseItem.id)
+        if company:
+            sub = sub.filter(M.company == company)
+        if department_id:
+            sub = sub.filter(M.department_id == department_id)
+        query = query.filter(sub.exists())
+
+    # 會計科目：0 = 沒有任何一筆對照設了科目（＝列表顯示橘色「未設定」）。
+    if account_code_id == 0:
+        query = query.filter(
+            ~db.query(M.id).filter(M.item_id == CyclePurchaseItem.id, M.account_code_id.isnot(None)).exists()
+        )
+    elif account_code_id:
+        query = query.filter(
+            db.query(M.id).filter(M.item_id == CyclePurchaseItem.id, M.account_code_id == account_code_id).exists()
+        )
+
+    # 供應商：料號主檔的預設供應商，或任一筆料號對照上的實際叫貨供應商（彙整單/採購單分單依據）。
+    # 0 = 兩者都沒有。
+    if vendor_id == 0:
+        query = query.filter(
+            CyclePurchaseItem.default_vendor_id.is_(None),
+            ~db.query(M.id).filter(M.item_id == CyclePurchaseItem.id, M.vendor_id.isnot(None)).exists(),
+        )
+    elif vendor_id:
+        query = query.filter(
+            (CyclePurchaseItem.default_vendor_id == vendor_id)
+            | db.query(M.id).filter(M.item_id == CyclePurchaseItem.id, M.vendor_id == vendor_id).exists()
+        )
+
     total = query.count()
+
+    # 排序：衍生欄位（公司/部門、會計科目、供應商名稱）用關聯子查詢取第一個值來排。
+    sort_col = None
+    if sort_by == "company_departments":
+        sort_col = (
+            db.query(func.min(M.company + CyclePurchaseDepartment.dept_name))
+            .select_from(M)
+            .outerjoin(CyclePurchaseDepartment, CyclePurchaseDepartment.id == M.department_id)
+            .filter(M.item_id == CyclePurchaseItem.id)
+            .correlate(CyclePurchaseItem)
+            .scalar_subquery()
+        )
+    elif sort_by == "account_code_labels":
+        sort_col = (
+            db.query(func.min(CyclePurchaseAccountCode.code))
+            .select_from(M)
+            .join(CyclePurchaseAccountCode, CyclePurchaseAccountCode.id == M.account_code_id)
+            .filter(M.item_id == CyclePurchaseItem.id)
+            .correlate(CyclePurchaseItem)
+            .scalar_subquery()
+        )
+    elif sort_by == "default_vendor_name":
+        sort_col = (
+            db.query(CyclePurchaseVendor.vendor_name)
+            .filter(CyclePurchaseVendor.id == CyclePurchaseItem.default_vendor_id)
+            .correlate(CyclePurchaseItem)
+            .scalar_subquery()
+        )
+    elif sort_by in ITEM_SORT_FIELDS:
+        sort_col = getattr(CyclePurchaseItem, sort_by)
+
+    if sort_col is not None:
+        ordered = sort_col.desc() if sort_order == "desc" else sort_col.asc()
+        query = query.order_by(ordered.nulls_last(), CyclePurchaseItem.item_code)
+    else:
+        query = query.order_by(CyclePurchaseItem.item_code)
+
     rows = (
-        query.order_by(CyclePurchaseItem.item_code)
+        query
         .offset((page - 1) * per_page)
         .limit(per_page)
         .all()

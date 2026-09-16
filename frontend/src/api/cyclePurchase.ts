@@ -149,6 +149,13 @@ export const getItems = (params?: {
   is_active?: boolean
   page?: number
   per_page?: number
+  // 2026-09-16 新增：篩選（"__none__" / 0 = 未設定）與排序
+  company?: string
+  department_id?: number
+  account_code_id?: number
+  vendor_id?: number
+  sort_by?: string
+  sort_order?: 'asc' | 'desc'
 }) => apiClient.get<CpItemListResponse>(`${BASE}/items`, { params })
 
 export const getItem = (id: number) =>

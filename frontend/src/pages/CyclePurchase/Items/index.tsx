@@ -17,13 +17,20 @@
  * 的品類（見 cycle_purchase_service.get_cycle_options 與 Cycles/index.tsx
  * 開頭說明）。現在直接在列表帶出（來自後端 ItemOut.company_departments，
  * 衍生自料號對照表，非資料表欄位），選擇前就看得到歸屬。
+ *
+ * 2026-09-16 新增篩選列（類別／公司/部門／會計科目／供應商）與表格欄位排序，
+ * 原本的「搜尋料號／品名」保留。列表是後端分頁，所以篩選與排序都送到後端
+ * （cycle_purchase_service.list_items），不是只排當頁 20 筆。每個篩選都有
+ * 「未設定」選項（"__none__" / 0），方便找出還沒設公司/部門、科目、供應商的料號。
+ * 「供應商」篩選同時比對料號主檔的預設供應商與料號對照上的叫貨供應商。
  */
 import { useEffect, useMemo, useState } from 'react'
 import {
-  Button, Card, Form, Input, InputNumber, Modal, Popconfirm, Select, Space,
+  Button, Card, Cascader, Form, Input, InputNumber, Modal, Popconfirm, Select, Space,
   Switch, Table, Tag, Typography, message, Divider,
 } from 'antd'
-import { PlusOutlined, EditOutlined, StopOutlined, CheckCircleOutlined, ApartmentOutlined, DeleteOutlined } from '@ant-design/icons'
+import type { SorterResult } from 'antd/es/table/interface'
+import { PlusOutlined, EditOutlined, StopOutlined, CheckCircleOutlined, ApartmentOutlined, DeleteOutlined, ClearOutlined } from '@ant-design/icons'
 import {
   createItem, createItemMapping, deleteItemMapping, getCpAccountCodes, getCpDepartments, getItem,
   getItems, getVendors, updateItem, updateItemMapping,
@@ -41,12 +48,23 @@ const CATEGORY_OPTIONS = [
   { label: '營業用品', value: '營業用品' },
 ]
 
+// 篩選「未設定」哨兵值（與後端 cycle_purchase_service.ITEM_UNSET 一致）
+const UNSET = '__none__'
+
 export default function CpItemsPage() {
   const [items, setItems] = useState<CpItem[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
   const [perPage] = useState(20)
   const [q, setQ] = useState('')
+  const [searchText, setSearchText] = useState('')
+  // 2026-09-16 新增：篩選與排序（後端處理）
+  const [fCategory, setFCategory] = useState<string | undefined>()
+  const [fCompanyDept, setFCompanyDept] = useState<string[] | undefined>()
+  const [fAccountCode, setFAccountCode] = useState<number | undefined>()
+  const [fVendor, setFVendor] = useState<number | undefined>()
+  const [sortBy, setSortBy] = useState<string | undefined>()
+  const [sortOrder, setSortOrder] = useState<'ascend' | 'descend' | undefined>()
   const [loading, setLoading] = useState(false)
   const [vendors, setVendors] = useState<CpVendor[]>([])
   const [departments, setDepartments] = useState<CpDepartment[]>([])
@@ -90,9 +108,47 @@ export default function CpItemsPage() {
     [departments, editCompany],
   )
 
+  // 篩選列：公司 → 部門 兩層（可只選公司）
+  const companyDeptFilterOptions = useMemo(
+    () => [
+      { label: '未設定（尚無料號對照）', value: UNSET },
+      ...Array.from(new Set(departments.map((d) => d.company))).map((c) => ({
+        label: c,
+        value: c,
+        children: departments
+          .filter((d) => d.company === c)
+          .map((d) => ({ label: d.dept_name, value: String(d.id) })),
+      })),
+    ],
+    [departments],
+  )
+  const hasFilter = !!(q || fCategory || fCompanyDept?.length || fAccountCode !== undefined || fVendor !== undefined)
+
+  const resetFilters = () => {
+    setSearchText('')
+    setQ('')
+    setFCategory(undefined)
+    setFCompanyDept(undefined)
+    setFAccountCode(undefined)
+    setFVendor(undefined)
+    setPage(1)
+  }
+
   const load = () => {
     setLoading(true)
-    getItems({ q, page, per_page: perPage })
+    const [cdCompany, cdDept] = fCompanyDept ?? []
+    getItems({
+      q,
+      page,
+      per_page: perPage,
+      category: fCategory,
+      company: cdCompany,
+      department_id: cdDept ? Number(cdDept) : undefined,
+      account_code_id: fAccountCode,
+      vendor_id: fVendor,
+      sort_by: sortOrder ? sortBy : undefined,
+      sort_order: sortOrder === 'descend' ? 'desc' : 'asc',
+    })
       .then((r) => {
         setItems(r.data.items)
         setTotal(r.data.total)
@@ -100,7 +156,7 @@ export default function CpItemsPage() {
       .finally(() => setLoading(false))
   }
 
-  useEffect(() => { load() }, [page, q])
+  useEffect(() => { load() }, [page, q, fCategory, fCompanyDept, fAccountCode, fVendor, sortBy, sortOrder])
   useEffect(() => { getVendors({ is_active: true }).then((r) => setVendors(r.data)) }, [])
   useEffect(() => { getCpDepartments({ is_active: true }).then((r) => setDepartments(r.data)) }, [])
   useEffect(() => { getCpAccountCodes({ is_active: true }).then((r) => setAccountCodes(r.data)) }, [])
@@ -262,17 +318,62 @@ export default function CpItemsPage() {
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
         <Title level={4} style={{ margin: 0 }}>週期採購 — 料號主檔</Title>
         <Space>
-          <Input.Search
-            placeholder="搜尋料號／品名"
-            allowClear
-            style={{ width: 220 }}
-            onSearch={(v) => { setPage(1); setQ(v) }}
-          />
           <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新增料號</Button>
         </Space>
       </div>
 
       <Card>
+        {/* 2026-09-16 新增：篩選列（搜尋保留在最前面） */}
+        <Space wrap style={{ marginBottom: 12 }}>
+          <Input.Search
+            placeholder="搜尋料號／品名"
+            allowClear
+            style={{ width: 220 }}
+            value={searchText}
+            onChange={(e) => setSearchText(e.target.value)}
+            onSearch={(v) => { setPage(1); setQ(v) }}
+          />
+          <Select
+            placeholder="類別"
+            allowClear
+            style={{ width: 140 }}
+            value={fCategory}
+            onChange={(v) => { setPage(1); setFCategory(v) }}
+            options={[...CATEGORY_OPTIONS, { label: '未設定', value: UNSET }]}
+          />
+          <Cascader
+            placeholder="公司/部門"
+            allowClear
+            changeOnSelect
+            style={{ width: 200 }}
+            value={fCompanyDept}
+            onChange={(v) => { setPage(1); setFCompanyDept(v && v.length ? (v as string[]) : undefined) }}
+            options={companyDeptFilterOptions}
+            displayRender={(labels) => labels.join('／')}
+          />
+          <Select
+            placeholder="會計科目"
+            allowClear
+            showSearch
+            optionFilterProp="label"
+            style={{ width: 200 }}
+            value={fAccountCode}
+            onChange={(v) => { setPage(1); setFAccountCode(v) }}
+            options={[{ label: '未設定', value: 0 }, ...accountCodeOptions]}
+          />
+          <Select
+            placeholder="供應商"
+            allowClear
+            showSearch
+            optionFilterProp="label"
+            style={{ width: 200 }}
+            value={fVendor}
+            onChange={(v) => { setPage(1); setFVendor(v) }}
+            options={[{ label: '未設定', value: 0 }, ...vendors.map((v) => ({ label: v.vendor_name, value: v.id }))]}
+          />
+          <Button icon={<ClearOutlined />} onClick={resetFilters} disabled={!hasFilter}>清除篩選</Button>
+        </Space>
+
         <Table
           dataSource={items}
           rowKey="id"
@@ -282,17 +383,29 @@ export default function CpItemsPage() {
             current: page,
             pageSize: perPage,
             total,
-            onChange: setPage,
+            showSizeChanger: false,
             showTotal: (t) => `共 ${t} 筆`,
           }}
+          onChange={(pg, _filters, sorter, extra) => {
+            if (extra.action === 'sort') {
+              const s = (Array.isArray(sorter) ? sorter[0] : sorter) as SorterResult<CpItem>
+              setSortBy(s.order ? String(s.field) : undefined)
+              setSortOrder(s.order ?? undefined)
+              setPage(1)
+            } else if (extra.action === 'paginate') {
+              setPage(pg.current ?? 1)
+            }
+          }}
           columns={[
-            { title: '集團料號', dataIndex: 'item_code', width: 120 },
-            { title: '品名', dataIndex: 'item_name' },
-            { title: '類別', dataIndex: 'category', width: 100 },
+            { title: '集團料號', dataIndex: 'item_code', width: 120, sorter: true, sortOrder: sortBy === 'item_code' ? sortOrder : null },
+            { title: '品名', dataIndex: 'item_name', sorter: true, sortOrder: sortBy === 'item_name' ? sortOrder : null },
+            { title: '類別', dataIndex: 'category', width: 100, sorter: true, sortOrder: sortBy === 'category' ? sortOrder : null },
             {
               title: '公司/部門',
               dataIndex: 'company_departments',
               width: 160,
+              sorter: true,
+              sortOrder: sortBy === 'company_departments' ? sortOrder : null,
               render: (v: string[] | undefined) =>
                 v && v.length
                   ? <Space size={[4, 4]} wrap>{v.map((cd) => <Tag key={cd}>{cd}</Tag>)}</Space>
@@ -305,18 +418,22 @@ export default function CpItemsPage() {
               title: '會計科目',
               dataIndex: 'account_code_labels',
               width: 160,
+              sorter: true,
+              sortOrder: sortBy === 'account_code_labels' ? sortOrder : null,
               render: (v: string[] | undefined) =>
                 v && v.length
                   ? <Space size={[4, 4]} wrap>{v.map((ac) => <Tag key={ac} color="blue">{ac}</Tag>)}</Space>
                   : <Tag color="orange">未設定</Tag>,
             },
-            { title: '單位', dataIndex: 'unit', width: 70 },
-            { title: '預設供應商', dataIndex: 'default_vendor_name', width: 140 },
-            { title: '參考單價', dataIndex: 'unit_price', width: 90, render: (v) => v != null ? `$${Number(v).toFixed(2)}` : '—' },
+            { title: '單位', dataIndex: 'unit', width: 80, sorter: true, sortOrder: sortBy === 'unit' ? sortOrder : null },
+            { title: '預設供應商', dataIndex: 'default_vendor_name', width: 140, sorter: true, sortOrder: sortBy === 'default_vendor_name' ? sortOrder : null },
+            { title: '參考單價', dataIndex: 'unit_price', width: 100, sorter: true, sortOrder: sortBy === 'unit_price' ? sortOrder : null, render: (v) => v != null ? `$${Number(v).toFixed(2)}` : '—' },
             {
               title: '狀態',
               dataIndex: 'is_active',
               width: 80,
+              sorter: true,
+              sortOrder: sortBy === 'is_active' ? sortOrder : null,
               render: (v: boolean) => (v ? <Tag color="green">啟用</Tag> : <Tag color="default">停用</Tag>),
             },
             {
