@@ -66,11 +66,14 @@ const ALL_MODULES: string[] = [
   //    而 sync_tool.py MODULES 用的是不含「核准」的名稱。名稱對不上時
   //    latestModuleStatus[moduleName] 永遠查無資料 —— 這兩張卡片一直是灰的。
   '日曜請購單清單', '日曜請款單清單',
+  // 台中（2026-09-16）：名稱必須與 sync_tool.py MODULES 完全一致
+  '台中核准請購單清單', '台中核准請款單清單',
   // ── 四個「完整同步」（清單 + Detail API 品項補全）─────────────────────────
   // 2026-08-30 補登錄：先前只掛在 main.py 的 APScheduler（每 45 分），
   // SCHEDULER_ENABLED=false 等於從未執行，品項明細從來沒補進來。
   // 名稱必須與 sync_tool.py MODULES 完全一致。
   '核准請購單', '核准請款單', '日曜核准請購單', '日曜核准請款單',
+  '台中核准請購單', '台中核准請款單',
   '主管交辦／緊急事件', '週期保養預排', '飯店例行維護', '廠商資料',
   // 來源是 portal.db vendors（非 Ragic），必須排在「廠商資料」之後執行
   '週期採購供應商',

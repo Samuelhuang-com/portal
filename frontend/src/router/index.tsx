@@ -122,6 +122,10 @@ import NichiyoPurchaseReportPage       from '@/pages/NichiyoPurchaseReport'
 // ── 日曜核准請款單月報表 ─────────────────────────────────────────────────────────
 import NichiyoClaimReportPage          from '@/pages/NichiyoClaimReport'
 
+// ── 台中核准請購單／請款單月報表（2026-09-16）──────────────────────────────────────
+import TaichungPurchaseReportPage      from '@/pages/TaichungPurchaseReport'
+import TaichungClaimReportPage         from '@/pages/TaichungClaimReport'
+
 // ── 知識庫（LLM Wiki）──────────────────────────────────────────────────────────
 import WikiPage                        from '@/pages/Wiki'
 
@@ -209,6 +213,8 @@ const PERM_DEFAULT_ROUTES: { key: string; route: string }[] = [
   { key: 'claim_report_view',                 route: '/claim-report/monthly' },
   { key: 'nichiyo_purchase.view',             route: '/nichiyo-purchase-report/monthly' },
   { key: 'nichiyo_claim.view',                route: '/nichiyo-claim-report/monthly' },
+  { key: 'taichung_purchase_report_view',     route: '/taichung-purchase-report/monthly' },
+  { key: 'taichung_claim_report_view',        route: '/taichung-claim-report/monthly' },
   { key: 'contract_view',                     route: '/contract' },
   { key: 'contract_expiring_view',            route: '/contract/expiring' },
   { key: 'contract_claims_view',              route: '/contract/claims' },
@@ -598,6 +604,32 @@ export default function AppRouter() {
             element={
               <PermissionGuard permissionKey="nichiyo_claim.view">
                 <NichiyoClaimReportPage />
+              </PermissionGuard>
+            }
+          />
+          <Route index element={<Navigate to="monthly" replace />} />
+        </Route>
+
+        {/* ── 台中核准請購單月報表（2026-09-16）──────────────────────────── */}
+        <Route path="taichung-purchase-report">
+          <Route
+            path="monthly"
+            element={
+              <PermissionGuard permissionKey="taichung_purchase_report_view">
+                <TaichungPurchaseReportPage />
+              </PermissionGuard>
+            }
+          />
+          <Route index element={<Navigate to="monthly" replace />} />
+        </Route>
+
+        {/* ── 台中核准請款單月報表（2026-09-16）──────────────────────────── */}
+        <Route path="taichung-claim-report">
+          <Route
+            path="monthly"
+            element={
+              <PermissionGuard permissionKey="taichung_claim_report_view">
+                <TaichungClaimReportPage />
               </PermissionGuard>
             }
           />

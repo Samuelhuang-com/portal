@@ -10,6 +10,8 @@ module 值：
   claim            — 樂群核准請款單
   nichiyo_purchase — 日曜核准請購單
   nichiyo_claim    — 日曜核准請款單
+  taichung_purchase — 台中核准請購單（2026-09-16）
+  taichung_claim    — 台中核准請款單（2026-09-16）
 """
 from datetime import datetime
 
@@ -27,7 +29,7 @@ class RagicSheetConfig(Base):
 
     id           = Column(Integer, primary_key=True, autoincrement=True)
     module       = Column(String(50),  nullable=False, index=True)
-    # module 可選值：purchase / claim / nichiyo_purchase / nichiyo_claim
+    # module 可選值：purchase / claim / nichiyo_purchase / nichiyo_claim / taichung_purchase / taichung_claim
 
     display_name = Column(String(50),  nullable=False)
     # Portal 顯示名稱，例如 "執董室" / "停管部" / "工務部"

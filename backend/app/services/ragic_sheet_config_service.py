@@ -62,6 +62,12 @@ def _get_fallback(module: str) -> list[dict]:
     if module == "nichiyo_claim":
         from app.models.nichiyo_claim_request import NICHIYO_CLAIM_DEPT_SHEETS
         return list(NICHIYO_CLAIM_DEPT_SHEETS)
+    if module == "taichung_purchase":
+        from app.models.taichung_purchase_request import TAICHUNG_DEPT_SHEETS
+        return list(TAICHUNG_DEPT_SHEETS)
+    if module == "taichung_claim":
+        from app.models.taichung_claim_request import TAICHUNG_CLAIM_DEPT_SHEETS
+        return list(TAICHUNG_CLAIM_DEPT_SHEETS)
     return []
 
 
@@ -175,6 +181,52 @@ _SEED_DATA: list[dict] = [
     {"module": "nichiyo_claim", "sort_order": 8, "display_name": "設計部", "ragic_dept": "設計",
      "list_path": "free-design-department/1",          "detail_path": "free-design-department/1",
      "extra_json": "{}"},
+
+    # ── 台中請購單（taichung_purchase）10 個表單（2026-09-16）─────────────────────────
+    # ⚠️ display_name 就是報表上的部門名稱（依表單歸屬，不看 Ragic 部門值）
+    {"module": "taichung_purchase", "sort_order": 1, "display_name": "公用表單", "ragic_dept": "公用表單",
+     "list_path": "taichung-public-form/7", "detail_path": "taichung-public-form/7", "extra_json": "{}"},
+    {"module": "taichung_purchase", "sort_order": 2, "display_name": "客務部", "ragic_dept": "客務部",
+     "list_path": "customer-service/9", "detail_path": "customer-service/9", "extra_json": "{}"},
+    {"module": "taichung_purchase", "sort_order": 3, "display_name": "業務部", "ragic_dept": "業務部",
+     "list_path": "business/3", "detail_path": "business/3", "extra_json": "{}"},
+    {"module": "taichung_purchase", "sort_order": 4, "display_name": "工程部", "ragic_dept": "工程部",
+     "list_path": "construction/3", "detail_path": "construction/3", "extra_json": "{}"},
+    {"module": "taichung_purchase", "sort_order": 5, "display_name": "財務部", "ragic_dept": "財務部",
+     "list_path": "finance/9", "detail_path": "finance/9", "extra_json": "{}"},
+    {"module": "taichung_purchase", "sort_order": 6, "display_name": "資訊部", "ragic_dept": "資訊部",
+     "list_path": "info/43", "detail_path": "info/43", "extra_json": "{}"},
+    {"module": "taichung_purchase", "sort_order": 7, "display_name": "行政辦公室", "ragic_dept": "行政辦公室",
+     "list_path": "hr/5", "detail_path": "hr/5", "extra_json": "{}"},
+    {"module": "taichung_purchase", "sort_order": 8, "display_name": "廚房", "ragic_dept": "廚房",
+     "list_path": "kitchen/2", "detail_path": "kitchen/2", "extra_json": "{}"},
+    {"module": "taichung_purchase", "sort_order": 9, "display_name": "餐飲", "ragic_dept": "餐飲",
+     "list_path": "food-drink/2", "detail_path": "food-drink/2", "extra_json": "{}"},
+    {"module": "taichung_purchase", "sort_order": 10, "display_name": "房務部", "ragic_dept": "房務部",
+     "list_path": "housekeeping/2", "detail_path": "housekeeping/2", "extra_json": "{}"},
+
+    # ── 台中請款單（taichung_claim）10 個表單（2026-09-16）─────────────────────────
+    # ⚠️ display_name 就是報表上的部門名稱（依表單歸屬，不看 Ragic 部門值）
+    {"module": "taichung_claim", "sort_order": 1, "display_name": "公用表單", "ragic_dept": "公用表單",
+     "list_path": "taichung-public-form/6", "detail_path": "taichung-public-form/6", "extra_json": "{}"},
+    {"module": "taichung_claim", "sort_order": 2, "display_name": "客務部", "ragic_dept": "客務部",
+     "list_path": "customer-service/14", "detail_path": "customer-service/14", "extra_json": "{}"},
+    {"module": "taichung_claim", "sort_order": 3, "display_name": "業務部", "ragic_dept": "業務部",
+     "list_path": "business/5", "detail_path": "business/5", "extra_json": "{}"},
+    {"module": "taichung_claim", "sort_order": 4, "display_name": "工程部", "ragic_dept": "工程部",
+     "list_path": "construction/5", "detail_path": "construction/5", "extra_json": "{}"},
+    {"module": "taichung_claim", "sort_order": 5, "display_name": "財務部", "ragic_dept": "財務部",
+     "list_path": "finance/12", "detail_path": "finance/12", "extra_json": "{}"},
+    {"module": "taichung_claim", "sort_order": 6, "display_name": "資訊部", "ragic_dept": "資訊部",
+     "list_path": "info/50", "detail_path": "info/50", "extra_json": "{}"},
+    {"module": "taichung_claim", "sort_order": 7, "display_name": "行政辦公室", "ragic_dept": "行政辦公室",
+     "list_path": "hr/7", "detail_path": "hr/7", "extra_json": "{}"},
+    {"module": "taichung_claim", "sort_order": 8, "display_name": "廚房", "ragic_dept": "廚房",
+     "list_path": "kitchen/4", "detail_path": "kitchen/4", "extra_json": "{}"},
+    {"module": "taichung_claim", "sort_order": 9, "display_name": "餐飲", "ragic_dept": "餐飲",
+     "list_path": "food-drink/5", "detail_path": "food-drink/5", "extra_json": "{}"},
+    {"module": "taichung_claim", "sort_order": 10, "display_name": "房務部", "ragic_dept": "房務部",
+     "list_path": "housekeeping/4", "detail_path": "housekeeping/4", "extra_json": "{}"},
 ]
 
 

@@ -105,6 +105,9 @@ from app.routers import (
     work_journal,
     nichiyo_purchase_report,
     nichiyo_claim_report,
+    taichung_purchase_report,
+    taichung_claim_report,
+    taichung_combined_report,
     ragic_sheet_config,
     ragic_field_audit,
     static_pages,
@@ -484,6 +487,100 @@ def _seed_menu_config_nichiyo_claim():
         print("[Portal] menu_config nichiyo-claim-report seed checked.")
 
 
+def _seed_menu_config_taichung_purchase():
+    """
+    選單設定補丁（2026-09-16）：
+    確保 taichung-purchase-report 群組及其子頁面在 menu_configs 中有 DB 記錄（比照日曜寫法）。
+    permission_key = 'taichung_purchase_report_view'（無此權限不顯示）
+    ⚠️ 只補「沒有記錄」的情況；使用者在選單管理把它搬進「請購請款報表 → 台中」之後，
+       parent_key 等設定不會被這裡覆寫。
+    操作冪等：重複執行不會造成重複或錯誤。
+    """
+    from sqlalchemy import text
+
+    CHILDREN = [
+        ("/taichung-purchase-report/monthly", 10),
+    ]
+
+    with engine.connect() as conn:
+        row = conn.execute(
+            text("SELECT menu_key FROM menu_configs WHERE menu_key = 'taichung-purchase-report'")
+        ).fetchone()
+        if row is None:
+            conn.execute(
+                text(
+                    "INSERT INTO menu_configs "
+                    "(menu_key, parent_key, custom_label, sort_order, is_visible, permission_key, updated_at, updated_by) "
+                    "VALUES ('taichung-purchase-report', NULL, NULL, 90, TRUE, 'taichung_purchase_report_view', CURRENT_TIMESTAMP, 'system-seed')"
+                )
+            )
+
+        for menu_key, sort_order in CHILDREN:
+            existing = conn.execute(
+                text("SELECT menu_key FROM menu_configs WHERE menu_key = :k"),
+                {"k": menu_key},
+            ).fetchone()
+            if existing is None:
+                conn.execute(
+                    text(
+                        "INSERT INTO menu_configs "
+                        "(menu_key, parent_key, custom_label, sort_order, is_visible, permission_key, updated_at, updated_by) "
+                        "VALUES (:k, 'taichung-purchase-report', NULL, :o, TRUE, 'taichung_purchase_report_view', CURRENT_TIMESTAMP, 'system-seed')"
+                    ),
+                    {"k": menu_key, "o": sort_order},
+                )
+
+        conn.commit()
+        print("[Portal] menu_config taichung-purchase-report seed checked.")
+
+
+def _seed_menu_config_taichung_claim():
+    """
+    選單設定補丁（2026-09-16）：
+    確保 taichung-claim-report 群組及其子頁面在 menu_configs 中有 DB 記錄（比照日曜寫法）。
+    permission_key = 'taichung_purchase_report_view'（無此權限不顯示）
+    ⚠️ 只補「沒有記錄」的情況；使用者在選單管理把它搬進「請購請款報表 → 台中」之後，
+       parent_key 等設定不會被這裡覆寫。
+    操作冪等：重複執行不會造成重複或錯誤。
+    """
+    from sqlalchemy import text
+
+    CHILDREN = [
+        ("/taichung-claim-report/monthly", 10),
+    ]
+
+    with engine.connect() as conn:
+        row = conn.execute(
+            text("SELECT menu_key FROM menu_configs WHERE menu_key = 'taichung-claim-report'")
+        ).fetchone()
+        if row is None:
+            conn.execute(
+                text(
+                    "INSERT INTO menu_configs "
+                    "(menu_key, parent_key, custom_label, sort_order, is_visible, permission_key, updated_at, updated_by) "
+                    "VALUES ('taichung-claim-report', NULL, NULL, 95, TRUE, 'taichung_purchase_report_view', CURRENT_TIMESTAMP, 'system-seed')"
+                )
+            )
+
+        for menu_key, sort_order in CHILDREN:
+            existing = conn.execute(
+                text("SELECT menu_key FROM menu_configs WHERE menu_key = :k"),
+                {"k": menu_key},
+            ).fetchone()
+            if existing is None:
+                conn.execute(
+                    text(
+                        "INSERT INTO menu_configs "
+                        "(menu_key, parent_key, custom_label, sort_order, is_visible, permission_key, updated_at, updated_by) "
+                        "VALUES (:k, 'taichung-claim-report', NULL, :o, TRUE, 'taichung_purchase_report_view', CURRENT_TIMESTAMP, 'system-seed')"
+                    ),
+                    {"k": menu_key, "o": sort_order},
+                )
+
+        conn.commit()
+        print("[Portal] menu_config taichung-claim-report seed checked.")
+
+
 
 
 def _seed_reference_data():
@@ -830,6 +927,8 @@ async def _auto_sync():
     from app.services.claim_request_sync import sync_list_only as sync_claim_list
     from app.services.nichiyo_purchase_request_sync import sync_list_only as sync_nichiyo_purchase_list
     from app.services.nichiyo_claim_request_sync import sync_list_only as sync_nichiyo_claim_list
+    from app.services.taichung_purchase_request_sync import sync_list_only as sync_taichung_purchase_list
+    from app.services.taichung_claim_request_sync import sync_list_only as sync_taichung_claim_list
     # 透過 _run_loop() 執行：失敗自動重試 + 驗證異常偵測
     await _run_loop("客房保養",           sync_rm)
     await _run_loop("倉庫庫存",           sync_inv)
@@ -863,6 +962,8 @@ async def _auto_sync():
     await _run_loop("核准請款單清單",      sync_claim_list)
     await _run_loop("日曜核准請購單清單",  sync_nichiyo_purchase_list)
     await _run_loop("日曜核准請款單清單",  sync_nichiyo_claim_list)
+    await _run_loop("台中核准請購單清單",  sync_taichung_purchase_list)
+    await _run_loop("台中核准請款單清單",  sync_taichung_claim_list)
 
 
 async def _manual_sync():
@@ -931,6 +1032,8 @@ _SINGLE_MODULE_MAP: dict[str, tuple[str, str]] = {
     "核准請款單清單":     ("app.services.claim_request_sync",            "sync_list_only"),
     "日曜核准請購單清單": ("app.services.nichiyo_purchase_request_sync", "sync_list_only"),
     "日曜核准請款單清單": ("app.services.nichiyo_claim_request_sync",    "sync_list_only"),
+    "台中核准請購單清單": ("app.services.taichung_purchase_request_sync", "sync_list_only"),
+    "台中核准請款單清單": ("app.services.taichung_claim_request_sync",    "sync_list_only"),
     "主管交辦／緊急事件": ("app.services.other_tasks_sync",              "sync_from_ragic"),
     "廠商資料":          ("app.services.vendor_sync",                   "sync_from_ragic"),
     "週期採購供應商":     ("app.services.cycle_purchase_vendor_sync",    "sync_from_contract"),
@@ -1006,6 +1109,32 @@ async def _nichiyo_claim_full_sync():
     await _run_and_log("日曜核准請款單", sync_nichiyo_claim())
 
 
+# ── 台中請購單專屬排程（2026-09-16，比照樂群）─────────────────────────────────────
+async def _taichung_purchase_list_sync():
+    """台中請購單清單同步（每 15 分鐘：僅清單 API + subtable 品項）"""
+    from app.services.taichung_purchase_request_sync import sync_list_only
+    await _run_and_log("台中核准請購單清單", sync_list_only())
+
+
+async def _taichung_purchase_full_sync():
+    """台中請購單完整同步（每 45 分鐘：清單 + Detail API 品項補全）"""
+    from app.services.taichung_purchase_request_sync import sync_from_ragic as sync_taichung_purchase
+    await _run_and_log("台中核准請購單", sync_taichung_purchase())
+
+
+# ── 台中請款單專屬排程（2026-09-16，比照樂群）─────────────────────────────────────
+async def _taichung_claim_list_sync():
+    """台中請款單清單同步（每 15 分鐘：僅清單 API + subtable 品項）"""
+    from app.services.taichung_claim_request_sync import sync_list_only
+    await _run_and_log("台中核准請款單清單", sync_list_only())
+
+
+async def _taichung_claim_full_sync():
+    """台中請款單完整同步（每 45 分鐘：清單 + Detail API 品項補全）"""
+    from app.services.taichung_claim_request_sync import sync_from_ragic as sync_taichung_claim
+    await _run_and_log("台中核准請款單", sync_taichung_claim())
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan: startup / shutdown hooks."""
@@ -1050,6 +1179,8 @@ async def lifespan(app: FastAPI):
     import app.models.claim_request     # noqa: F401
     import app.models.nichiyo_purchase_request  # noqa: F401
     import app.models.nichiyo_claim_request     # noqa: F401
+    import app.models.taichung_purchase_request  # noqa: F401  台中核准請購單（2026-09-16，表由 Alembic tcpurch 建）
+    import app.models.taichung_claim_request     # noqa: F401  台中核准請款單（2026-09-16，表由 Alembic tcpurch 建）
     import app.models.ragic_sheet_config        # noqa: F401
     import app.models.other_tasks               # noqa: F401
     import app.models.pm_plan                   # noqa: F401  週期保養預排（主管排定 Sheet /7 /13 /20）
@@ -1202,6 +1333,10 @@ async def lifespan(app: FastAPI):
 
     # 選單設定補丁（2026-05-14）：確保 nichiyo-claim-report 選單有 DB 記錄
     _run_startup_migration("_seed_menu_config_nichiyo_claim", _seed_menu_config_nichiyo_claim)
+
+    # 選單設定補丁（2026-09-16）：確保 taichung-purchase-report / taichung-claim-report 選單有 DB 記錄
+    _run_startup_migration("_seed_menu_config_taichung_purchase", _seed_menu_config_taichung_purchase)
+    _run_startup_migration("_seed_menu_config_taichung_claim", _seed_menu_config_taichung_claim)
 
     # 客房主檔 seed（若 rooms 表為空，自動填入樓層 × 房號資料）
     from app.services.room_seed import seed_rooms
@@ -1362,6 +1497,36 @@ async def lifespan(app: FastAPI):
             _nichiyo_claim_full_sync,
             trigger=make_cron_trigger(45),
             id="nichiyo_claim_full_sync",
+            replace_existing=True,
+            misfire_grace_time=300,
+        )
+
+        # 台中請購單／請款單（2026-09-16，比照樂群：清單每 15 分、完整每 45 分）
+        _scheduler.add_job(
+            _taichung_purchase_list_sync,
+            trigger=make_cron_trigger(15),
+            id="taichung_purchase_list_sync",
+            replace_existing=True,
+            misfire_grace_time=300,
+        )
+        _scheduler.add_job(
+            _taichung_purchase_full_sync,
+            trigger=make_cron_trigger(45),
+            id="taichung_purchase_full_sync",
+            replace_existing=True,
+            misfire_grace_time=300,
+        )
+        _scheduler.add_job(
+            _taichung_claim_list_sync,
+            trigger=make_cron_trigger(15),
+            id="taichung_claim_list_sync",
+            replace_existing=True,
+            misfire_grace_time=300,
+        )
+        _scheduler.add_job(
+            _taichung_claim_full_sync,
+            trigger=make_cron_trigger(45),
+            id="taichung_claim_full_sync",
             replace_existing=True,
             misfire_grace_time=300,
         )
@@ -1851,6 +2016,23 @@ app.include_router(
     nichiyo_claim_report.router,
     prefix=f"{API_PREFIX}/nichiyo-claim-report",
     tags=["日曜請款月報表"],
+)
+
+# ── 新增：台中核准請購單／請款單月報表 + 整合總表（2026-09-16，複製樂群）──────────
+app.include_router(
+    taichung_purchase_report.router,
+    prefix=f"{API_PREFIX}/taichung-purchase-report",
+    tags=["台中核准請購單月報表"],
+)
+app.include_router(
+    taichung_claim_report.router,
+    prefix=f"{API_PREFIX}/taichung-claim-report",
+    tags=["台中核准請款單月報表"],
+)
+app.include_router(
+    taichung_combined_report.router,
+    prefix=f"{API_PREFIX}/taichung-combined-report",
+    tags=["台中請購請款整合總表"],
 )
 
 # ── Ragic Sheet 設定管理 ─────────────────────────────────────────────────────

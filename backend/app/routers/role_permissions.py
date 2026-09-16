@@ -126,6 +126,11 @@ PERMISSION_DEFINITIONS = [
     {"key": "nichiyo_claim.view",      "label": "日曜請款月報表：查看",   "group": "採購管理"},
     {"key": "nichiyo_claim.export",    "label": "日曜請款月報表：匯出",   "group": "採購管理"},
     {"key": "nichiyo_claim.admin",     "label": "日曜請款月報表：管理員", "group": "採購管理"},
+    # 台中（2026-09-16，比照樂群 key 寫法）
+    {"key": "taichung_purchase_report_view",   "label": "台中請購單報表：查看", "group": "採購管理"},
+    {"key": "taichung_purchase_report_manage", "label": "台中請購單報表：管理", "group": "採購管理"},
+    {"key": "taichung_claim_report_view",      "label": "台中請款單報表：查看", "group": "採購管理"},
+    {"key": "taichung_claim_report_manage",    "label": "台中請款單報表：管理", "group": "採購管理"},
     {"key": "ragic_field_audit_view",   "label": "Ragic 欄位比對：查看",     "group": "系統設定"},
     {"key": "ragic_field_audit_manage", "label": "Ragic 欄位比對：執行/標記","group": "系統設定"},
     {"key": "ragic_field_audit_admin",  "label": "Ragic 欄位比對：管理員",   "group": "系統設定"},

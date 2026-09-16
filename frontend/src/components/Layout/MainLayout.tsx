@@ -164,6 +164,28 @@ export const menuItems: MenuItem[] = [
       { key: '/nichiyo-claim-report/monthly', icon: <AuditOutlined />, label: NAV_PAGE.nichiyoClaimReportMonthly, permissionKey: 'nichiyo_claim.view' },
     ],
   },
+  // ── 台中核准請購單月報表（2026-09-16，完整複製樂群）──────────────────────────
+  // 選單管理裡請再搬進「請購請款報表 → 台中」
+  {
+    key: 'taichung-purchase-report',
+    icon: <FileTextOutlined />,
+    label: NAV_GROUP.taichungPurchaseReport,
+    permissionKey: 'taichung_purchase_report_view',
+    children: [
+      { key: '/taichung-purchase-report/monthly', icon: <AuditOutlined />, label: NAV_PAGE.taichungPurchaseReportMonthly, permissionKey: 'taichung_purchase_report_view' },
+    ],
+  },
+  // ── 台中核准請款單月報表 ──────────────────────────────────────────────────────
+  // ⚠️ 選單權限照抄樂群用「請購」的 view key（使用者 2026-09-16 裁示）；頁面守衛仍是 taichung_claim_report_view
+  {
+    key: 'taichung-claim-report',
+    icon: <FileTextOutlined />,
+    label: NAV_GROUP.taichungClaimReport,
+    permissionKey: 'taichung_purchase_report_view',
+    children: [
+      { key: '/taichung-claim-report/monthly', icon: <AuditOutlined />, label: NAV_PAGE.taichungClaimReportMonthly, permissionKey: 'taichung_purchase_report_view' },
+    ],
+  },
   // ── 預算管理（dashboard 之後）──────────────────────────────────────────────
   {
     key: 'budget',

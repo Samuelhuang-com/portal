@@ -198,6 +198,8 @@ MODULES: list[tuple[str, str, str]] = [
     ("核准請款單清單", "app.services.claim_request_sync",               "sync_list_only"),
     ("日曜請購單清單", "app.services.nichiyo_purchase_request_sync",    "sync_list_only"),
     ("日曜請款單清單", "app.services.nichiyo_claim_request_sync",       "sync_list_only"),
+    ("台中核准請購單清單", "app.services.taichung_purchase_request_sync", "sync_list_only"),
+    ("台中核准請款單清單", "app.services.taichung_claim_request_sync",    "sync_list_only"),
     # ── 四個「完整同步」（清單 + Detail API 品項補全）─────────────────────────
     # ⚠️ 2026-08-30 補登錄。這四個先前只掛在 main.py 的 APScheduler
     #    （`purchase_full_sync` 等，每 45 分一次），而正式區與 DEV 都是
@@ -214,6 +216,8 @@ MODULES: list[tuple[str, str, str]] = [
     ("核准請款單", "app.services.claim_request_sync",               "sync_from_ragic"),
     ("日曜核准請購單", "app.services.nichiyo_purchase_request_sync",    "sync_all"),
     ("日曜核准請款單", "app.services.nichiyo_claim_request_sync",       "sync_all"),
+    ("台中核准請購單", "app.services.taichung_purchase_request_sync",   "sync_from_ragic"),
+    ("台中核准請款單", "app.services.taichung_claim_request_sync",      "sync_from_ragic"),
     ("主管交辦／緊急事件", "app.services.other_tasks_sync",             "sync_from_ragic"),
     ("週期保養預排",       "app.services.pm_plan_sync",                 "sync_from_ragic"),
     ("飯店例行維護",       "app.services.hotel_routine_pm_sync",        "sync_from_ragic"),
@@ -774,6 +778,8 @@ class SyncApp(tk.Tk):
             import app.models.claim_request            # noqa
             import app.models.nichiyo_purchase_request  # noqa
             import app.models.nichiyo_claim_request    # noqa
+            import app.models.taichung_purchase_request  # noqa
+            import app.models.taichung_claim_request   # noqa
             import app.models.ragic_sheet_config       # noqa
             import app.models.other_tasks              # noqa
             import app.models.pm_plan                  # noqa
