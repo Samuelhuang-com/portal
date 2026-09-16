@@ -1056,6 +1056,18 @@ export default function CpSummaryPage() {
                       </a>
                     )}
                   </Space>
+                  {/* 2026-09-16 加：測試區與正式區都指向同一張 Ragic 表單（Samuel 裁示
+                      維持現狀，不做環境隔離），所以 Ragic 上的單據是**所有環境的聯集**，
+                      這份清單必然少於 Ragic 的清單。不寫在畫面上的話，每次有人比對就會
+                      當成「資料漏了」回報——2026-09-16 已經發生過一次
+                      （Ragic 5 筆 vs 本頁 2 筆，逐筆追出來是 2 筆串接測試單＋1 筆另一個
+                      環境推的）。 */}
+                  <div style={{ marginTop: 8 }}>
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      此清單只含<strong>本環境</strong>拋轉的單據，Ragic 上可能另有其他環境推的。
+                      要確認某一張是誰推的，看 Ragic 的「拋轉批次號」欄，或比對本環境的週採稽核紀錄。
+                    </Text>
+                  </div>
                 </Card>
 
                 <Card
