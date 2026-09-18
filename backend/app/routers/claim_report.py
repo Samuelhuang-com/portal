@@ -41,6 +41,7 @@ from app.models.claim_request import (
 router = APIRouter()
 
 _PERM = "claim_report_view"
+_PERM_MANAGE = "claim_report_manage"
 
 
 # ── 工具函式 ──────────────────────────────────────────────────────────────────
@@ -689,7 +690,7 @@ def get_account_subjects(
 async def trigger_sync(
     full_resync:    bool            = Query(False),
     background:     BackgroundTasks = BackgroundTasks(),
-    _:              object          = Depends(require_permission(_PERM)),
+    _:              object          = Depends(require_permission(_PERM_MANAGE)),
 ):
     from app.services.claim_request_sync import sync_from_ragic
 
@@ -731,7 +732,7 @@ async def trigger_sync(
 @router.post("/admin/reparse-approved-dates")
 def reparse_approved_dates(
     db: Session = Depends(get_db),
-    _:  object  = Depends(require_permission(_PERM)),
+    _:  object  = Depends(require_permission(_PERM_MANAGE)),
 ):
     """
     重新從 raw_data_json 解析 approved_date，修正被誤設為同步日期的記錄。
@@ -809,7 +810,7 @@ def reparse_approved_dates(
 @router.post("/admin/reparse-request-no")
 def reparse_request_no(
     db: Session = Depends(get_db),
-    _:  object  = Depends(require_permission(_PERM)),
+    _:  object  = Depends(require_permission(_PERM_MANAGE)),
 ):
     """
     重新從 raw_data_json 解析 request_no，修正因欄位名稱未收錄導致單號為空的記錄。
@@ -868,7 +869,7 @@ def reparse_request_no(
 @router.get("/sync/status")
 def get_sync_status(
     db: Session = Depends(get_db),
-    _:  object  = Depends(require_permission(_PERM)),
+    _:  object  = Depends(require_permission(_PERM_MANAGE)),
 ):
     recent_logs = (
         db.query(ModuleSyncLog)

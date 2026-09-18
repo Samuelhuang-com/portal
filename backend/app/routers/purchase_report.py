@@ -39,6 +39,7 @@ from app.models.purchase_request import (
 router = APIRouter()
 
 _PERM = "purchase_report_view"
+_PERM_MANAGE = "purchase_report_manage"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -49,7 +50,8 @@ _PERM = "purchase_report_view"
 def debug_sample(
     db:    Session = Depends(get_db),
     limit: int = Query(20),
-):  # ← 診斷用，暫不需認證
+    _:     object = Depends(require_permission(_PERM_MANAGE)),
+):  # 2026-09-18：原本完全未掛認證，改為需 purchase_report_manage（比照台中版）
     """診斷：列出最新 N 筆主單的 status / approved_date / last_updated_at 實際值。"""
     rows = (
         db.query(
@@ -578,7 +580,7 @@ _sync_lock = asyncio.Lock()
 async def trigger_sync(
     background_tasks: BackgroundTasks,
     full_resync: bool = False,
-    _: object = Depends(require_permission(_PERM)),
+    _: object = Depends(require_permission(_PERM_MANAGE)),
 ):
     """
     手動觸發核准請購單雙層同步（背景執行，立即回傳 202）。
@@ -607,7 +609,7 @@ async def trigger_sync(
 @router.get("/sync/status")
 def get_sync_status(
     db: Session = Depends(get_db),
-    _:  object  = Depends(require_permission(_PERM)),
+    _:  object  = Depends(require_permission(_PERM_MANAGE)),
 ):
     """查詢最近同步記錄 + 各部門最後同步時間。"""
     recent_logs = (
@@ -916,7 +918,7 @@ def get_approved_order_detail(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# GET /debug/raw-keys — 列出第一筆的 raw_data_json 所有欄位 key（不需認證）
+# GET /debug/raw-keys — 列出第一筆的 raw_data_json 所有欄位 key（需 purchase_report_manage）
 # ─────────────────────────────────────────────────────────────────────────────
 
 @router.get("/debug/raw-keys")
@@ -924,6 +926,7 @@ def debug_raw_keys(
     db:         Session = Depends(get_db),
     department: str = Query("管理部"),
     limit:      int = Query(3),
+    _:          object = Depends(require_permission(_PERM_MANAGE)),
 ):
     """診斷：列出指定部門前 N 筆的 raw_data_json 所有 key，找出日期欄位的真實名稱。"""
     import json as _json

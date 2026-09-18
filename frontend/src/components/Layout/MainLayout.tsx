@@ -139,9 +139,10 @@ export const menuItems: MenuItem[] = [
     key: 'claim-report',
     icon: <FileTextOutlined />,
     label: NAV_GROUP.claimReport,
-    permissionKey: 'purchase_report_view',
+    // 2026-09-18：原本誤掛 'purchase_report_view'，與路由守衛／後端 claim_report_view 不一致，已對齊
+    permissionKey: 'claim_report_view',
     children: [
-      { key: '/claim-report/monthly', icon: <AuditOutlined />, label: NAV_PAGE.claimReportMonthly, permissionKey: 'purchase_report_view' },
+      { key: '/claim-report/monthly', icon: <AuditOutlined />, label: NAV_PAGE.claimReportMonthly, permissionKey: 'claim_report_view' },
     ],
   },
   // ── 日曜核准請購單月報表（財務/採購管理）────────────────────────────────────
