@@ -129,7 +129,18 @@ export const menuItems: MenuItem[] = [
     key: 'purchase-report',
     icon: <FileTextOutlined />,
     label: NAV_GROUP.purchaseReport,
-    permissionKey: 'purchase_report_view',
+    // 2026-09-18：這個 L1 在「選單管理」被改名為「請購請款報表」，日曜／台中都搬進來當子群組。
+    // 原本只掛 purchase_report_view（樂群），導致「只有台中權限」的帳號整組看不到 ——
+    // 群組本身沒通過權限時 filterMenuByPermissions 會整組 return null，子項有權限也沒用。
+    // 改用 permissionKeys（OR）：任一份報表有權限就看得到群組，實際子項仍各自過濾。
+    permissionKeys: [
+      'purchase_report_view',
+      'claim_report_view',
+      'nichiyo_purchase.view',
+      'nichiyo_claim.view',
+      'taichung_purchase_report_view',
+      'taichung_claim_report_view',
+    ],
     children: [
       { key: '/purchase-report/monthly', icon: <AuditOutlined />, label: NAV_PAGE.purchaseReportMonthly, permissionKey: 'purchase_report_view' },
     ],
