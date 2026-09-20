@@ -34,6 +34,32 @@ Create Date: 2026-09-09
    地點查詢路徑拿不到滿房訊號，一律 unknown，不可退化成布林。
 3. `price_gross` 與 `price_pretax` **兩個都要**。各家稅費結構不同
    （實測 +15.5%／+5%／+0%），只留一個口徑一定會誤導。
+
+⚠️ 2026-09-20：upgrade() 改成「表／索引已存在就跳過」
+────────────────────────────────────────────────────────────────────────────
+症狀：`alembic upgrade head` 跑到這一支就爆 DuplicateTable
+（`relation "compset_subscribers" already exists`），而且**整條 main 鏈從此卡死**
+—— 後面的 `tcpurch`（台中請購／請款四張表）永遠跑不到。
+
+根因不在這支 migration，而是那七張表**早就被 `create_all()` 建出來了**：
+切 PG 時 `pg_cutover.py` 用 `create_all()` 建結構、且沒做 stamp
+（見記憶 project_pg_never_stamped_alembic、project_pg_phase2_cutover）。
+所以 DB 裡有表、`alembic_version` 卻停在 `usrdept`，Alembic 認為這支還沒跑。
+
+為什麼不用 `alembic stamp compset` 帶過：stamp 是「相信 DB 已經長對了」，
+但沒有人驗證過 `create_all()` 當時建的欄位與這支 migration 完全一致；
+而且**七張表只要有一張不在**（例如被 drop_split_module_tables.sql 清掉一部分），
+stamp 之後那張表就永遠不會被建出來，錯誤會延到執行期才爆。
+
+改成逐一檢查「表在不在」後才建，兩種環境都對：
+  · 舊環境（表已存在）→ 全部跳過，只推進版本號，效果等同 stamp，但有實際驗證。
+  · 新環境（空庫）→ 照常建立七張表。
+  · 半套環境（部分存在）→ 只補缺的那幾張。
+跳過的表會印出來，跑完看得到到底發生了什麼。
+
+⚠️ 這支 migration 建的是**已經從 Portal 拆走的 compset 模組**的表
+（見記憶 split-revenue-suite，2026-09-11 程式碼已移除、46 張表刻意留著沒 drop）。
+版本檔刻意不刪，因為刪掉會讓既有 DB 的 `alembic_version` 對不上 head。
 """
 from typing import Sequence, Union
 
@@ -48,9 +74,33 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
+# ⚠️ 命名與作法刻意比照 20260916_tcpurch（那一支從一開始就有這個防呆）。
+def _has_table(name: str) -> bool:
+    return sa.inspect(op.get_bind()).has_table(name)
+
+
+def _ensure_table(name: str, *cols, **kw) -> None:
+    if _has_table(name):
+        print(f"    [compset] 表 {name} 已存在，跳過建立")
+        return
+    op.create_table(name, *cols, **kw)
+
+
+def _ensure_index(name: str, table: str, cols: list, **kw) -> None:
+    if not _has_table(table):
+        return
+    existing = {i["name"] for i in sa.inspect(op.get_bind()).get_indexes(table)}
+    if name in existing:
+        print(f"    [compset] 索引 {name} 已存在，跳過建立")
+        return
+    op.create_index(name, table, cols, **kw)
+
+
 def upgrade() -> None:
+    # ⚠️ 見檔頭「2026-09-20」那段：這七張表在既有環境是 create_all() 建的，
+    #    直接 create_table 會 DuplicateTable 並卡死整條 main 鏈。
     # ── 1. 訂閱客戶 ────────────────────────────────────────────────────
-    op.create_table(
+    _ensure_table(
         "compset_subscribers",
         sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
         sa.Column("code", sa.String(20), nullable=False),
@@ -80,10 +130,10 @@ def upgrade() -> None:
         sa.Column("updated_at", sa.DateTime(), nullable=True),
         sa.UniqueConstraint("code", name="uq_compset_subscriber_code"),
     )
-    op.create_index("ix_compset_subscriber_active", "compset_subscribers", ["is_active"])
+    _ensure_index("ix_compset_subscriber_active", "compset_subscribers", ["is_active"])
 
     # ── 2. 訂閱客戶 ↔ 使用者（防提權 P-1 的依據，SPEC D14）───────────────
-    op.create_table(
+    _ensure_table(
         "compset_subscriber_users",
         sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
         sa.Column("subscriber_id", sa.Integer(),
@@ -95,10 +145,10 @@ def upgrade() -> None:
         sa.UniqueConstraint("subscriber_id", "user_id",
                             name="uq_compset_subscriber_user"),
     )
-    op.create_index("ix_compset_subuser_user", "compset_subscriber_users", ["user_id"])
+    _ensure_index("ix_compset_subuser_user", "compset_subscriber_users", ["user_id"])
 
     # ── 3. 競爭組成員 ──────────────────────────────────────────────────
-    op.create_table(
+    _ensure_table(
         "compset_hotels",
         sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
         sa.Column("subscriber_id", sa.Integer(),
@@ -134,14 +184,14 @@ def upgrade() -> None:
         sa.UniqueConstraint("subscriber_id", "display_name",
                             name="uq_compset_hotel_sub_name"),
     )
-    op.create_index("ix_compset_hotel_sub", "compset_hotels",
+    _ensure_index("ix_compset_hotel_sub", "compset_hotels",
                     ["subscriber_id", "is_enabled", "sort_order"])
-    op.create_index("ix_compset_hotel_self", "compset_hotels",
+    _ensure_index("ix_compset_hotel_self", "compset_hotels",
                     ["subscriber_id", "is_self"])
-    op.create_index("ix_compset_hotel_code", "compset_hotels", ["hotel_code"])
+    _ensure_index("ix_compset_hotel_code", "compset_hotels", ["hotel_code"])
 
     # ── 4. 價格快照（主表）─────────────────────────────────────────────
-    op.create_table(
+    _ensure_table(
         "compset_rate_snapshots",
         sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
         sa.Column("subscriber_id", sa.Integer(),
@@ -174,17 +224,17 @@ def upgrade() -> None:
                             "compset_hotel_id", "source",
                             name="uq_compset_snapshot"),
     )
-    op.create_index("ix_compset_snap_matrix", "compset_rate_snapshots",
+    _ensure_index("ix_compset_snap_matrix", "compset_rate_snapshots",
                     ["subscriber_id", "snapshot_date", "stay_date"])
-    op.create_index("ix_compset_snap_trend", "compset_rate_snapshots",
+    _ensure_index("ix_compset_snap_trend", "compset_rate_snapshots",
                     ["subscriber_id", "stay_date", "snapshot_date"])
-    op.create_index("ix_compset_snap_hotel", "compset_rate_snapshots",
+    _ensure_index("ix_compset_snap_hotel", "compset_rate_snapshots",
                     ["compset_hotel_id", "stay_date"])
-    op.create_index("ix_compset_snap_soldout", "compset_rate_snapshots",
+    _ensure_index("ix_compset_snap_soldout", "compset_rate_snapshots",
                     ["subscriber_id", "stay_date", "is_sold_out"])
 
     # ── 5. 抓取批次紀錄 ────────────────────────────────────────────────
-    op.create_table(
+    _ensure_table(
         "compset_fetch_logs",
         sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
         sa.Column("subscriber_id", sa.Integer(),
@@ -205,12 +255,12 @@ def upgrade() -> None:
         sa.Column("warnings_json", sa.Text(), nullable=True),
         sa.Column("error_message", sa.String(500), nullable=False),
     )
-    op.create_index("ix_compset_fetchlog_sub", "compset_fetch_logs",
+    _ensure_index("ix_compset_fetchlog_sub", "compset_fetch_logs",
                     ["subscriber_id", "started_at"])
-    op.create_index("ix_compset_fetchlog_status", "compset_fetch_logs", ["status"])
+    _ensure_index("ix_compset_fetchlog_status", "compset_fetch_logs", ["status"])
 
     # ── 6. 配額手動加發紀錄 ────────────────────────────────────────────
-    op.create_table(
+    _ensure_table(
         "compset_quota_grants",
         sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
         sa.Column("subscriber_id", sa.Integer(),
@@ -223,11 +273,11 @@ def upgrade() -> None:
         sa.Column("granted_at", sa.DateTime(), nullable=True),
         sa.Column("period_start", sa.String(10), nullable=False),
     )
-    op.create_index("ix_compset_grant_sub", "compset_quota_grants",
+    _ensure_index("ix_compset_grant_sub", "compset_quota_grants",
                     ["subscriber_id", "granted_at"])
 
     # ── 7. 每日彙總快取 ────────────────────────────────────────────────
-    op.create_table(
+    _ensure_table(
         "compset_rate_daily",
         sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
         sa.Column("subscriber_id", sa.Integer(),
@@ -254,7 +304,7 @@ def upgrade() -> None:
         sa.UniqueConstraint("subscriber_id", "snapshot_date", "stay_date",
                             name="uq_compset_daily"),
     )
-    op.create_index("ix_compset_daily_stay", "compset_rate_daily",
+    _ensure_index("ix_compset_daily_stay", "compset_rate_daily",
                     ["subscriber_id", "stay_date", "snapshot_date"])
 
 

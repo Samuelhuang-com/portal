@@ -38,6 +38,7 @@ import type { CpDepartment } from '@/types/cyclePurchase'
 
 const { Title } = Typography
 
+
 export default function CpDepartmentsPage() {
   const [depts, setDepts] = useState<CpDepartment[]>([])
   const [userOptions, setUserOptions] = useState<UserOptionItem[]>([])

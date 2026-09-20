@@ -88,6 +88,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_ as sa_or
 
+from app.services import cycle_purchase_seq as seq
 from app.models.cycle_purchase_request import CyclePurchaseRequest, CyclePurchaseRequestItem
 from app.models.cycle_purchase_cycle import CyclePurchaseCycle
 from app.models.cycle_purchase_reference import (
@@ -105,16 +106,19 @@ class RequestServiceError(Exception):
 # 請購單號 / 當期
 # ═══════════════════════════════════════════════════════════════════════════
 
+# 2026-09-20：單號流水號一律走 services/cycle_purchase_seq.py 的「最大號 + 1」。
+# 原本這裡（以及 PO／收貨／付款／各種批次號）都是 COUNT(*)+1，刪過一筆就會倒退
+# 撞號 —— request_no 是 UNIQUE，撞上就是 500 且整個月再也建不出新單。
+# 來龍去脈見 cycle_purchase_seq.py 檔頭與 CHANGELOG [2.10.39]。
+
 def _next_request_no(db: Session, on_date: date) -> str:
-    """2026-07-17 起格式為 PR-YYYY-MM-NNN（3 位流水號，每月重新起算）。"""
+    """2026-07-17 起格式為 PR-YYYY-MM-NNN（3 位流水號，每月重新起算）。
+
+    2026-09-20：改用「最大流水號 + 1」，原本的 `COUNT(*) + 1` 在有單被刪過之後
+    會撞號並讓整個月都建不出新單（詳見 services/cycle_purchase_seq.py 檔頭）。
+    """
     prefix = f"PR-{on_date.strftime('%Y-%m')}-"
-    count = (
-        db.query(func.count(CyclePurchaseRequest.id))
-        .filter(CyclePurchaseRequest.request_no.like(f"{prefix}%"))
-        .scalar()
-        or 0
-    )
-    return f"{prefix}{count + 1:03d}"
+    return seq.next_no(db, CyclePurchaseRequest.request_no, prefix, 3)
 
 
 def _current_period_label() -> str:
@@ -145,14 +149,14 @@ def close_kind_of(req: CyclePurchaseRequest) -> Optional[str]:
 
 
 def _next_close_batch_no(db: Session, year_month: str) -> str:
+    """2026-09-20：從 COUNT(DISTINCT)+1 改成最大號+1。
+
+    這個欄位**沒有 UNIQUE**，撞號不會報錯 —— 只會讓兩批不同的關閉動作共用
+    同一個批次號，「這批關了哪些單」從此查不清楚。而「重新開啟」會把
+    close_batch_no 清成 NULL、計數跟著退回，所以撞號是遲早的事，不是理論風險。
+    """
     prefix = f"CPCLOSE-{year_month.replace('-', '')}-"
-    count = (
-        db.query(func.count(func.distinct(CyclePurchaseRequest.close_batch_no)))
-        .filter(CyclePurchaseRequest.close_batch_no.like(f"{prefix}%"))
-        .scalar()
-        or 0
-    )
-    return f"{prefix}{count + 1:03d}"
+    return seq.next_no(db, CyclePurchaseRequest.close_batch_no, prefix, 3)
 
 
 # ═══════════════════════════════════════════════════════════════════════════

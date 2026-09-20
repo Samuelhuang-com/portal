@@ -103,6 +103,7 @@ adjusted_qty 曾被人工改過（≠ 重算前的 demand_qty），保留該值�
 一起走。重算後 demand_qty 歸零的列，**沒有人工調整過才刪除**；有人工調整過
 的保留（demand_qty=0）並發警告，避免靜默丟掉買家已經做的決定。
 """
+import logging
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Optional
@@ -118,10 +119,13 @@ from app.models.cycle_purchase_cycle import CyclePurchaseCycle
 from app.models.cycle_purchase_vendor import CyclePurchaseVendor
 from app.models.cycle_purchase_item import CyclePurchaseItem, CyclePurchaseItemMapping
 from app.models.cycle_purchase_request import CyclePurchaseRequest, CyclePurchaseRequestItem
-from app.models.cycle_purchase_reference import CyclePurchaseDepartment
+from app.models.cycle_purchase_reference import CyclePurchaseAccountCode, CyclePurchaseDepartment
 from app.services import cycle_purchase_ragic_push
+from app.services import cycle_purchase_seq as seq
 from app.models.cycle_purchase_audit import CyclePurchaseAuditLog
 from app.services.cycle_purchase_audit_service import record_audit
+
+logger = logging.getLogger(__name__)
 
 
 class SummaryServiceError(Exception):
@@ -138,10 +142,46 @@ def _attach_summary_display_fields(db: Session, row: CyclePurchaseSummary) -> Cy
     row.cycle_name = cycle.cycle_name if cycle else None
 
     row.department_name = None
+    # dept_owner_user_id → Ragic 主表「請購人」（必填；帶該部門承辦人的姓名）。
+    # 這裡只讀 cycle-purchase.db，承辦人 id → 姓名的跨庫查詢由呼叫端傳
+    # resolve_user_names 進來做（本檔維持不碰 portal.db，比照 router 的 _attach_owner_names）。
+    #
+    # ⚠️ 2026-09-20 移除 `ragic_dept`：Ragic 子表的「部門」欄已改成**自由文字**，
+    #    可以直接送部門名稱（「工務部」），不再需要七選一的對照。
+    row.dept_owner_user_id = None
     if row.department_id:
         dept = db.query(CyclePurchaseDepartment).filter(CyclePurchaseDepartment.id == row.department_id).first()
         if dept:
             row.department_name = dept.dept_name
+            row.dept_owner_user_id = dept.owner_user_id
+
+    # 2026-09-20 新增：Ragic 子表的「會計課目」逐列帶。彙整列本身沒有會科欄位，
+    # 會科掛在**料號對照表**上（公司＋部門＋料號 → account_code_id，2026-08-18
+    # 起唯一鍵就含 department_id，正是會議要的三維判定）。彙整當下已經把那一列
+    # 對照存進 item_mapping_id，所以這裡直接跟著走，不用再查一次公司＋部門＋料號。
+    row.account_name = None
+    if row.item_mapping_id:
+        mapping = (
+            db.query(CyclePurchaseItemMapping)
+            .filter(CyclePurchaseItemMapping.id == row.item_mapping_id)
+            .first()
+        )
+        if mapping and mapping.account_code_id:
+            acct = (
+                db.query(CyclePurchaseAccountCode)
+                .filter(CyclePurchaseAccountCode.id == mapping.account_code_id)
+                .first()
+            )
+            if acct:
+                # 格式由 config 決定（預設「6238 清潔費」這種 代碼＋名稱）。
+                # 會計科目主檔的 code 目前有些還是暫定值（CPAC-001…），真的換成
+                # 正式代碼之後不用改程式；只想送名稱就把設定改成 "{name}"。
+                try:
+                    row.account_name = settings.RAGIC_CP_SUMMARY_ACCOUNT_FORMAT.format(
+                        code=acct.code or "", name=acct.name or "",
+                    ).strip()
+                except Exception:  # noqa: BLE001 — 設定寫錯不該擋掉整批拋轉
+                    row.account_name = acct.name
 
     row.vendor_name = None
     if row.vendor_id:
@@ -179,13 +219,10 @@ def _next_summary_generate_batch_no(db: Session, cycle_id: int, company: str, ye
     """產生這次「勾選請購單→產生彙整」動作的批次號，蓋章到被納入的請購單上
     （summary_batch_no），跟彙整列本身的 ragic_push_batch_no 是不同用途的批次號。"""
     prefix = f"CPGEN-{year_month.replace('-', '')}-{company}-"
-    count = (
-        db.query(func.count(func.distinct(CyclePurchaseRequest.summary_batch_no)))
-        .filter(CyclePurchaseRequest.summary_batch_no.like(f"{prefix}%"))
-        .scalar()
-        or 0
-    )
-    return f"{prefix}{count + 1:03d}"
+    # 2026-09-20：從 COUNT(DISTINCT)+1 改成最大號+1。這個欄位沒有 UNIQUE，
+    # 撞號不會報錯，只會讓兩批不同的彙整共用同一個批次號；而「退回請購單」
+    # 會把 summary_batch_no 清成 NULL、計數跟著退回，撞號是遲早的事。
+    return seq.next_no(db, CyclePurchaseRequest.summary_batch_no, prefix, 3)
 
 
 def list_eligible_requests(db: Session, cycle_id: int, company: str, year_month: str):
@@ -717,15 +754,21 @@ def list_ragic_pushed_documents(
     cycle_id: Optional[int] = None,
     company: Optional[str] = None,
 ):
-    """「已彙整 Ragic 採購單」TAB 用：把已拋轉的彙整列還原成**一張張 Ragic 單據**。
+    """「已彙整 Ragic 請購單」TAB 用：把已拋轉的彙整列還原成**一張張 Ragic 單據**。
 
     2026-09-16 新增。與畫面上其他清單的差別：其他清單一列＝一個彙整列（料號×部門），
     這裡**一列＝一張 Ragic 單據**，因為使用者要問的是「我推了哪些單到 Ragic」。
 
-    分組鍵＝`(ragic_push_batch_no, vendor_id)`，不是用 `ragic_record_id`——
-    2026-09-15 之前 stub 時期的資料 `ragic_record_id` 是共用的假值
-    （`STUB-<batch_no>`），用它分組會把不同廠商併成一列。批次號＋廠商才是
-    「一張 Ragic 單」的真正身分（見 push_summary_to_ragic 的依廠商拆單）。
+    分組鍵＝`(ragic_push_batch_no, vendor_id, ragic_record_id)`。三段都需要：
+
+      · `ragic_record_id` 單獨用不行——2026-09-15 之前 stub 時期的資料它是共用的
+        假值（`STUB-<batch_no>`），會把不同廠商併成一列。
+      · 只用「批次號＋廠商」也不行——2026-09-18 起拆單加了部門（Ragic 請購單
+        主表的「部門」是必填單選），**同一批次同一家廠商會有多張 Ragic 單**，
+        併成一列的話只會顯示其中一張的單號與連結，另外幾張就消失了。
+      · 加上 `ragic_record_id` 剛好兩邊都對：舊資料（一廠商一張）它本來就唯一，
+        分組結果與改版前完全相同；新資料每個部門一張、id 不同，自然拆得開。
+        刻意**不用 department_id** 當鍵，那會把舊的跨部門單據錯誤地拆成好幾列。
 
     日期篩選打在 `ragic_pushed_at`（拋轉時間），不是期別——使用者問的是
     「這段時間我推了什麼」，跟彙整期別是兩回事（8 月的期別可能 9 月才推）。
@@ -753,7 +796,7 @@ def list_ragic_pushed_documents(
 
     docs: dict[tuple, dict] = {}
     for r in rows:
-        key = (r.ragic_push_batch_no, r.vendor_id)
+        key = (r.ragic_push_batch_no, r.vendor_id, r.ragic_record_id)
         d = docs.setdefault(key, {
             "ragic_push_batch_no": r.ragic_push_batch_no,
             "ragic_record_id": r.ragic_record_id,
@@ -812,7 +855,13 @@ def ragic_pushed_date_range(db: Session) -> dict:
 
 
 def list_vendor_groups(db: Session, cycle_id: int, period_label: str, company: Optional[str] = None):
-    """給「轉採購單」畫面用：某週期＋期別下還沒轉單（draft）的彙整列，依公司＋供應商分組統計。"""
+    """給「轉採購單」畫面用：某週期＋期別下還沒轉單（draft）的彙整列，依公司＋供應商分組統計。
+
+    ⚠️ 分組仍然是「公司＋供應商」（轉採購單的粒度沒變），但 Ragic 拋轉自
+    2026-09-18 起改成依「廠商＋部門」拆單，一組可能對到**多張** Ragic 單，
+    所以新增 `ragic_docs` 清單；`ragic_record_id`／`ragic_record_url` 留著只是
+    相容欄位（＝其中第一張），畫面要顯示的是 `ragic_docs`。
+    """
     query = db.query(CyclePurchaseSummary).filter(
         CyclePurchaseSummary.cycle_id == cycle_id,
         CyclePurchaseSummary.period_label == period_label,
@@ -821,6 +870,9 @@ def list_vendor_groups(db: Session, cycle_id: int, period_label: str, company: O
     if company:
         query = query.filter(CyclePurchaseSummary.company == company)
     rows = query.all()
+    # 需要 department_name 來標示「這張 Ragic 單是哪個部門的」（2026-09-18 拆單含部門）
+    for r in rows:
+        _attach_summary_display_fields(db, r)
 
     groups: dict[tuple[str, Optional[int]], dict] = {}
     for r in rows:
@@ -834,22 +886,36 @@ def list_vendor_groups(db: Session, cycle_id: int, period_label: str, company: O
                 "item_count": 0,
                 "total_amount": Decimal("0"),
                 "has_missing_vendor": r.vendor_id is None,
-                # 2026-09-15 新增：這一組（＝一家廠商）對應到 Ragic 的哪一張單。
-                # 拋轉就是依廠商拆單，所以「公司＋廠商」這個 key 跟 Ragic 單據
-                # 是一對一，直接把該組任一列的拋轉結果帶出來即可。
+                # 2026-09-15 新增：這一組對應到 Ragic 的哪一張單。
+                # ⚠️ 2026-09-18 起拆單粒度是「廠商＋部門」，「公司＋廠商」與 Ragic
+                #    單據**不再是一對一**（該廠商跨幾個部門就有幾張）。原本「拿該組
+                #    第一筆已拋轉的列」的做法會只顯示其中一張、其他張靜默消失，
+                #    所以改成收集全部放進 ragic_docs，單一欄位留著給舊畫面相容。
                 "ragic_record_id": None,
                 "ragic_record_url": None,
                 "ragic_push_batch_no": None,
                 "ragic_pushed": False,
+                "ragic_docs": [],
             },
         )
         g["item_count"] += 1
         g["total_amount"] += (r.unit_price or Decimal("0")) * (r.adjusted_qty or 0)
-        if r.ragic_pushed and not g["ragic_record_id"]:
-            g["ragic_record_id"] = r.ragic_record_id
-            g["ragic_record_url"] = r.ragic_record_url
-            g["ragic_push_batch_no"] = r.ragic_push_batch_no
-            g["ragic_pushed"] = True
+        if r.ragic_pushed:
+            # 用 ragic_record_id 去重：同一張 Ragic 單會對到好幾個彙整列
+            if r.ragic_record_id and not any(
+                d["ragic_record_id"] == r.ragic_record_id for d in g["ragic_docs"]
+            ):
+                g["ragic_docs"].append({
+                    "ragic_record_id": r.ragic_record_id,
+                    "ragic_record_url": r.ragic_record_url,
+                    "ragic_push_batch_no": r.ragic_push_batch_no,
+                    "department_name": getattr(r, "department_name", None),
+                })
+            if not g["ragic_record_id"]:
+                g["ragic_record_id"] = r.ragic_record_id
+                g["ragic_record_url"] = r.ragic_record_url
+                g["ragic_push_batch_no"] = r.ragic_push_batch_no
+                g["ragic_pushed"] = True
 
     result = []
     for (company_, vendor_id_), g in groups.items():
@@ -866,14 +932,14 @@ def list_vendor_groups(db: Session, cycle_id: int, period_label: str, company: O
 # ═══════════════════════════════════════════════════════════════════════════
 
 def _next_po_no(db: Session, on_date: date) -> str:
+    """2026-09-20：從 COUNT(*)+1 改成最大號+1。
+
+    po_no 是 UNIQUE —— 這個月只要刪過一張採購單，COUNT(*)+1 就會倒退去撞
+    還活著的號碼，之後每一次開採購單都必定 500（請購單已經實際踩過，
+    見 CHANGELOG [2.10.39]）。
+    """
     prefix = f"PO-{on_date.strftime('%Y%m')}-"
-    count = (
-        db.query(func.count(CyclePurchasePO.id))
-        .filter(CyclePurchasePO.po_no.like(f"{prefix}%"))
-        .scalar()
-        or 0
-    )
-    return f"{prefix}{count + 1:04d}"
+    return seq.next_no(db, CyclePurchasePO.po_no, prefix, 4)
 
 
 def convert_to_po(
@@ -1082,51 +1148,57 @@ def _next_ragic_push_batch_no(db: Session, company: str, period_label: str) -> s
     所以拿它當號碼來源才不會倒退。
     """
     prefix = f"CPSUM-{period_label.replace('-', '')}-{company}-"
-    used = (
-        db.query(func.count(func.distinct(CyclePurchaseAuditLog.document_no)))
-        .filter(
-            CyclePurchaseAuditLog.event_type == "ragic_push",
-            CyclePurchaseAuditLog.document_no.like(f"{prefix}%"),
-        )
-        .scalar()
-        or 0
+    # 2026-09-20：連「計數」本身也拿掉，改成看既有號碼的最大流水號。
+    # 2026-08-09 換成數稽核紀錄只解決了「來源會被清空」，沒有解決「用數量當號碼」
+    # —— 稽核紀錄若有任何一筆對不上（補寫、搬移），計數一樣會倒退撞號。
+    used = seq.max_suffix(
+        db, CyclePurchaseAuditLog.document_no, prefix,
+        CyclePurchaseAuditLog.event_type == "ragic_push",
     )
     # 防呆：萬一稽核被清過（理論上不會），仍不可與目前彙整表上還在用的號碼相撞
-    in_use = (
-        db.query(func.count(func.distinct(CyclePurchaseSummary.ragic_push_batch_no)))
-        .filter(CyclePurchaseSummary.ragic_push_batch_no.like(f"{prefix}%"))
-        .scalar()
-        or 0
-    )
+    in_use = seq.max_suffix(db, CyclePurchaseSummary.ragic_push_batch_no, prefix)
     return f"{prefix}{max(used, in_use) + 1:04d}"
 
 
 def push_summary_to_ragic(
     db: Session, cycle_id: int, period_label: str, company: str, user=None,
+    resolve_user_names=None,
 ):
-    """把某週期＋期別＋公司範圍內的彙整列，**依廠商拆成多張**「週採匯總請購單」寫進 Ragic。
+    """把某週期＋期別＋公司範圍內的彙整列，**依廠商＋部門拆成多張**請購單寫進 Ragic。
 
-    2026-09-15 改版（Samuel 裁示，取代 2026-07-16 的 stub 版本）：
+    2026-09-18 改版（Samuel 裁示）：拋轉目標從 sheet 57「週採採購單」改成
+    **sheet 58「★週採請購單」**——彙整單的下一步是請購單、由 Ragic 內建簽核流程
+    簽核，先前指到採購單是下錯任務。sheet 57 自此停用。
 
-    | 項目 | 舊版 | 現在 |
-    |------|------|------|
-    | Ragic 端 | 表單不存在，push 是 stub | 真正寫入 sheet 57「週採採購單」 |
-    | 拆單 | 整個「公司＋期別」組一份文件 | **依 vendor_id 拆，一家廠商一張單** |
-    | 金額 | 沒有稅的概念 | 小計／營業稅／總計都是 Ragic 公式，Portal 不送 |
-    | 重複拋轉 | 範圍內有任一列已推就整批擋下 | 已推的逐列略過，沒推的照推 |
-    | 推不了的列 | 不擋、但也沒提示（會憑空消失） | 列進 `not_pushed` 並回傳給前端顯示 |
+    | 項目 | 2026-09-15 版 | 現在（2026-09-18） |
+    |------|---------------|-------------------|
+    | Ragic 端 | sheet 57「週採採購單」 | **sheet 58「★週採請購單」**（樂群比價式請購單的複製） |
+    | 拆單 | 公司＋期別＋廠商 | **再加一層部門**（主表「部門」是必填單選，一張單只放得下一個） |
+    | 部門 | 主表改名成「期別」自由文字 | **子表逐列**送部門名稱（2026-09-20 起；主表退化成表頭固定值） |
+    | 會科 | 沒有 | **子表逐列**送會計課目（來源：料號對照表 公司＋部門＋料號） |
+    | 會科 | 沒這個欄位 | 必填單選，固定送 `RAGIC_CP_SUMMARY_ACCOUNT_CODE`（雜項購置） |
+    | 廠商 | 主表「擬定廠商」一欄 | 主表「廠商(一)」＋子表「擬定廠商」＋「勾選=Yes」三處都要送 |
+    | 請購人 | 沒這個欄位 | 必填，送該部門的承辦人姓名（查不到退回申請人） |
 
-    同一次動作的所有單共用一個 `batch_no`，但各自拿到不同的 Ragic 採購編號
-    （樂管週採00001…），寫回各自那幾列的 `ragic_record_id`。
+    不變的部分：同一次動作的所有單共用一個 `batch_no`、各自拿到不同的 Ragic 編號
+    （樂管購20260900001…）並寫回各自那幾列的 `ragic_record_id`；已推的逐列略過；
+    推不了的列列進 `not_pushed` 而不是默默消失；金額一律由 Ragic 公式算。
 
     Returns:
         {
           "batch_no", "pushed_count",
-          "documents": [{vendor_id, vendor_name, ragic_no, ragic_record_id, line_count}],
+          "documents": [{vendor_id, vendor_name, department_id, department_name,
+                         ragic_no, ragic_record_id, ragic_record_url, line_count}],
           "not_pushed": [{summary_id, item_code, item_name, department_name, reason}],
-          "failed": [{vendor_name, error}],
+          "failed": [{vendor_name, department_name, error}],
           "already_pushed_count", "is_stub", "message",
         }
+
+    Args:
+        resolve_user_names: callable(set[str]) -> dict[str, str]，把部門承辦人的
+            portal.db user id 換成姓名。本檔維持只碰 cycle-purchase.db，跨庫查詢
+            由 router 傳進來（見 routers/cycle_purchase_summary.push_to_ragic）。
+            不傳的話「請購人」一律退回 RAGIC_CP_SUMMARY_APPLICANT。
 
     Raises:
         SummaryServiceError: 範圍內沒有彙整列／全部都已拋轉／沒有任何一列推得出去／
@@ -1179,6 +1251,11 @@ def push_summary_to_ragic(
             reason = "料號對照表沒有單價（Ragic 子表單價為必填，會導致整張單被退回）"
         elif not (r.adjusted_qty or 0):
             reason = "調整量為 0"
+        elif not r.department_id:
+            # 2026-07-16 之前產生的歷史彙整列 department_id 是 NULL。部門現在是
+            # 子表逐列欄位，空白不會被 Ragic 退，但單據上會看不出這幾列是誰要的，
+            # 對帳時反而更麻煩，所以仍然擋下來請人處理。
+            reason = "這是 2026-07-16 之前的歷史彙整列，沒有部門別（Ragic 子表「部門」會是空白）"
         else:
             pushable.append(r)
             continue
@@ -1193,14 +1270,32 @@ def push_summary_to_ragic(
     if not pushable:
         raise SummaryServiceError(
             f"「{period_label}／{company}」沒有任何一筆彙整列可以拋轉"
-            f"（{len(not_pushed)} 筆都缺供應商或單價）。"
-            f"請先到料號主檔／對照表補上供應商與單價再試。"
+            f"（{len(not_pushed)} 筆都缺供應商、缺單價，或是部門還沒對照 Ragic 部門）。"
+            f"請先到料號主檔／對照表補上供應商與單價、到部門主檔設定「Ragic 部門」再試。"
         )
 
-    # ── ③ 依廠商拆單，一家廠商一張 Ragic 單 ───────────────────────────────
+    # ── ③ 依「廠商＋部門」拆單，一組一張 Ragic 請購單 ─────────────────────
+    # 2026-09-18 改版：拆單粒度從「公司＋期別＋廠商」再細到 **＋部門**。
+    # 原因是 sheet 58 主表的「部門」是必填單選，一張單只放得下一個部門；
+    # sheet 57 當初是把該欄改名成「期別」自由文字才躲過這件事，改指 58 之後
+    # 那條路不存在了（Samuel 2026-09-18 裁示：拆單再加一層）。
+    # ⚠️ 單量會變成「廠商數 × 部門數」，而且每一張都要各自在 Ragic 跑簽核。
     batch_no = _next_ragic_push_batch_no(db, company, period_label)
     now = twnow()
     pushed_at_text = now.strftime("%Y/%m/%d %H:%M:%S")
+    apply_date_text = now.strftime("%Y/%m/%d")
+
+    # 請購人＝部門承辦人（2026-09-18 Samuel 裁示）。承辦人 id 存在
+    # cycle-purchase.db，姓名在 portal.db，跨庫查詢由 router 傳進來的
+    # resolve_user_names 負責（本檔不碰 portal.db）。
+    owner_ids = {r.dept_owner_user_id for r in pushable if getattr(r, "dept_owner_user_id", None)}
+    owner_names: dict = {}
+    if owner_ids and callable(resolve_user_names):
+        try:
+            owner_names = resolve_user_names(owner_ids) or {}
+        except Exception as e:  # noqa: BLE001 — 查不到姓名不該擋掉整批拋轉
+            logger.warning("[push_summary_to_ragic] 解析部門承辦人姓名失敗，改用預設申請人：%s", e)
+
     documents = _build_vendor_documents(
         pushable,
         batch_no=batch_no,
@@ -1208,7 +1303,46 @@ def push_summary_to_ragic(
         period_label=period_label,
         company=company,
         pushed_at_text=pushed_at_text,
+        apply_date_text=apply_date_text,
+        owner_names=owner_names,
     )
+
+    # ── ③-b 廠商防呆：送出前先問 Ragic「你認得這個廠商嗎」 ─────────────────
+    # ⚠️ 2026-09-20 實測踩到：主表「廠商(一)」是連結到「廠商資料表」的 Link 欄位，
+    #    只認**完全相符**的既有名稱。Portal 送「北金」而 Ragic 只認
+    #    「北金文具印刷有限公司」時，Ragic **靜默丟掉那一欄、照樣回 SUCCESS** ——
+    #    單子上的廠商欄是空的，而且從 API 回應完全看不出來（見 [2.10.40]）。
+    #    Ragic 的表單定義裡就帶著可接受值清單，所以在這裡先比對，把對不上的
+    #    整張單擋進 not_pushed，而不是推完才發現。
+    # ⚠️ 取不到清單時 fetch 回 None＝「這次無法檢查」，一律放行（fail open）：
+    #    為了一個輔助檢查讓整批拋轉停擺，比原本的行為更糟。
+    accepted_vendors = cycle_purchase_ragic_push.fetch_accepted_vendor_names()
+    vendor_check_skipped = accepted_vendors is None
+    deliverable: list[dict] = []
+    for doc in documents:
+        reason = cycle_purchase_ragic_push.vendor_rejection_reason(
+            doc.get("vendor_name"), accepted_vendors
+        )
+        if reason is None:
+            deliverable.append(doc)
+            continue
+        for r in doc["_rows"]:
+            not_pushed.append({
+                "summary_id": r.id,
+                "item_code": r.item_code,
+                "item_name": r.item_name,
+                "department_name": r.department_name,
+                "reason": reason,
+            })
+    documents = deliverable
+
+    if not documents:
+        raise SummaryServiceError(
+            f"「{period_label}／{company}」這一批的廠商，Ragic 廠商資料表都認不得，"
+            f"全部沒有拋轉（共 {len(not_pushed)} 筆）。"
+            f"請到「週採 → 供應商主檔」用「對應合約廠商」把廠商接到合約主檔、"
+            f"按一次「自合約模組同步」；Ragic 裡沒有的廠商要先在 Ragic 廠商資料表建檔。"
+        )
 
     # ── ④ 逐張推送 ────────────────────────────────────────────────────────
     results: list[dict] = []
@@ -1219,7 +1353,12 @@ def push_summary_to_ragic(
         except Exception as e:  # noqa: BLE001 — 一家失敗不影響其他家
             for r in doc["_rows"]:
                 r.ragic_push_error = str(e)
-            failed.append({"vendor_name": doc.get("vendor_name"), "error": str(e)})
+            failed.append({
+                "vendor_name": doc.get("vendor_name"),
+                # 2026-09-20 起一張單可能跨多個部門，帶清單而不是單一值
+                "department_name": "、".join(doc.get("department_names") or []) or None,
+                "error": str(e),
+            })
             continue
 
         for r in doc["_rows"]:
@@ -1234,10 +1373,16 @@ def push_summary_to_ragic(
         results.append({
             "vendor_id": doc.get("vendor_id"),
             "vendor_name": doc.get("vendor_name"),
+            # 2026-09-18：一個廠商會有多張（依部門拆），沒有部門就分不出是哪一張
+            "department_id": None,   # 2026-09-20 起拆單不含部門，一張單可能跨多個
+            "department_name": "、".join(doc.get("department_names") or []) or None,
             "ragic_record_id": push_result.get("ragic_record_id"),
             "ragic_no": push_result.get("ragic_no"),
             "ragic_record_url": push_result.get("ragic_record_url"),
-            "line_count": len(doc["lines"]),
+            # ⚠️ 2026-09-20：lines 現在含「部門小計列」，計數要把它們排除。
+            #    這個數字會變成回傳的 line_count 與 pushed_count（訊息寫「N 筆彙整列」），
+            #    算進小計列的話，畫面上的筆數會比實際彙整列多、跟 TAB 的 item_count 對不起來。
+            "line_count": sum(1 for ln in doc["lines"] if not ln.get("is_subtotal")),
             "is_stub": push_result.get("is_stub", False),
         })
     db.flush()
@@ -1245,12 +1390,16 @@ def push_summary_to_ragic(
     if not results:
         # 全部都失敗：錯誤已寫進 ragic_push_error，這裡要讓前端看到紅字而不是綠燈
         db.flush()
-        detail = "；".join(f"{f['vendor_name']}：{f['error']}" for f in failed)
-        raise SummaryServiceError(f"拋轉 Ragic 失敗（{len(failed)} 家廠商全部失敗）：{detail}")
+        detail = "；".join(
+            f"{f['vendor_name']}／{f.get('department_name') or '—'}：{f['error']}" for f in failed
+        )
+        raise SummaryServiceError(f"拋轉 Ragic 失敗（{len(failed)} 張單全部失敗）：{detail}")
 
-    pushed_count = sum(len(d["_rows"]) for d in documents if any(
-        rr["vendor_id"] == d.get("vendor_id") for rr in results
-    ))
+    # ⚠️ 2026-09-18：拆單加了部門之後，一個 vendor_id 會對到多張單，
+    #    舊寫法「results 裡有這個 vendor_id 就把該 doc 整份算進去」會重複計數
+    #    （同一廠商只要有一張成功，它其他部門那幾張即使失敗也會被算成已推）。
+    #    改成直接用成功那幾張自己的列數加總。
+    pushed_count = sum(r["line_count"] for r in results)
     is_stub = any(r.get("is_stub") for r in results)
 
     # ── ⑤ 稽核 ────────────────────────────────────────────────────────────
@@ -1264,7 +1413,7 @@ def push_summary_to_ragic(
             f"拋轉 Ragic 週採匯總請購單（{cycle.cycle_name}／{period_label}／{company}）："
             f"{len(results)} 張單、{pushed_count} 筆彙整列"
             + (f"；{len(not_pushed)} 筆未拋轉（缺供應商或單價）" if not_pushed else "")
-            + (f"；{len(failed)} 家廠商失敗" if failed else "")
+            + (f"；{len(failed)} 張單失敗" if failed else "")
             + (f"；{len(already_rows)} 筆先前已拋轉略過" if already_rows else "")
             + ("　⚠️ RAGIC_CP_SUMMARY_ENABLED=false，未真正寫入 Ragic" if is_stub else "")
         ),
@@ -1272,7 +1421,9 @@ def push_summary_to_ragic(
         operator_name=getattr(user, "full_name", None),
         old_value="未拋轉",
         new_value="；".join(
-            f"{r['vendor_name']}→{r['ragic_no'] or r['ragic_record_id'] or '—'}" for r in results
+            f"{r['vendor_name']}／{r.get('department_name') or '—'}"
+            f"→{r['ragic_no'] or r['ragic_record_id'] or '—'}"
+            for r in results
         ),
     )
     db.flush()
@@ -1281,9 +1432,13 @@ def push_summary_to_ragic(
     if not_pushed:
         parts.append(f"{len(not_pushed)} 筆未拋轉")
     if failed:
-        parts.append(f"{len(failed)} 家廠商失敗")
+        parts.append(f"{len(failed)} 張單失敗")
     if already_rows:
         parts.append(f"{len(already_rows)} 筆先前已拋轉、本次略過")
+    if vendor_check_skipped:
+        # 這次沒能跟 Ragic 核對廠商名稱（取定義失敗）。不擋拋轉，但要講出來——
+        # 否則「廠商欄是空的」這件事又會靜悄悄發生一次。
+        parts.append("⚠️ 這次無法向 Ragic 核對廠商名稱，若單上廠商欄空白請檢查供應商對照")
 
     return {
         "batch_no": batch_no,
@@ -1297,6 +1452,68 @@ def push_summary_to_ragic(
     }
 
 
+# 小計列的部門欄後綴。Ragic 端要靠「這一列的料號是空的」來把小計列排除在
+# 小計／全案小計的加總之外，這個字串只是給人看的。
+_SUBTOTAL_SUFFIX = " 小計"
+
+
+def _with_department_subtotals(lines: list[dict]) -> list[dict]:
+    """把明細**依部門排序**，並在每個部門的最後一筆後面插一列「部門小計」。
+
+    2026-09-20（Samuel 指定的版型）：
+        1  CH-G0201001  A3影印紙   2 包  160   320   管理部
+        2  CH-G0201002  A4影印紙   5 包   78   390   管理部
+        3  CH-G0202001  阿波羅紙   3 包   60   180   管理部
+        4                                      890   管理部 小計   ← 這一列
+    小計列**只填部門與金額**，料號／品名／數量／單位／單價／會計課目／彙整列 ID
+    一律留空 —— 一眼看得出來不是品項，Ragic 端也靠「料號為空」把它排除在加總外。
+
+    ⚠️ 排序是這件事的前提。改版前 lines 是照彙整列查出來的順序 append，同一個
+    部門的品項不保證連在一起，小計列就會插在莫名其妙的位置。排序鍵用
+    (部門, 料號) —— 部門用名稱排，同部門內按料號，兩者都穩定可重現。
+
+    ⚠️ 沒有部門的列（歷史資料 department_name 是空的）全部歸到最後，
+    而且**不產生小計列** —— 幫一群「未分部門」的列算小計沒有意義，
+    反而會讓人以為那是某個部門的數字。
+    """
+    if not lines:
+        return []
+
+    ordered = sorted(
+        lines,
+        key=lambda ln: (
+            ln.get("department_name") or "\uffff",   # 無部門的排最後
+            ln.get("item_code") or "",
+        ),
+    )
+
+    out: list[dict] = []
+    current_dept = None
+    running = Decimal("0")
+
+    def flush():
+        # 只有「有部門名稱」且金額有值時才插小計列
+        if current_dept and out:
+            out.append({
+                "is_subtotal": True,
+                "department_name": f"{current_dept}{_SUBTOTAL_SUFFIX}",
+                "amount": running,
+            })
+
+    for ln in ordered:
+        dept = ln.get("department_name") or ""
+        if current_dept is not None and dept != current_dept:
+            flush()
+            running = Decimal("0")
+        current_dept = dept
+        out.append(ln)
+        amount = ln.get("amount")
+        if amount is not None:
+            running += Decimal(str(amount))
+    flush()
+    return out
+
+
 def _build_vendor_documents(
     rows: list,
     *,
@@ -1305,21 +1522,32 @@ def _build_vendor_documents(
     period_label: str,
     company: str,
     pushed_at_text: str,
+    apply_date_text: str,
+    owner_names: dict | None = None,
 ) -> list[dict]:
-    """把可拋轉的彙整列依 vendor_id 分組，每組組成一份 Ragic 單據文件。
+    """把可拋轉的彙整列**依廠商**分組，每組組成一份 Ragic 單據文件。
 
-    一份文件 = 一張 Ragic「週採匯總請購單」= 一公司 ＋ 一期別 ＋ 一廠商
-    （2026-08-09 SPEC v2 拆單粒度，2026-09-15 Samuel 再次確認）。
+    一份文件 = 一張 Ragic「★週期請購單」(sheet 58) = 一公司 ＋ 一期別 ＋ 一廠商
 
-    子表一列 = 一個料號 × 一個部門，直接用彙整列本身（彙整粒度就是
-    公司＋料號＋部門，見 models/cycle_purchase_summary.py 的 UniqueConstraint），
-    不需要再做一層依料號分組——SPEC 附錄那個「依料號分組、departments 巢狀」的
-    結構是給舊版單一文件用的，拆單之後攤平反而更貼近 Ragic 子表。
+    ⚠️ 2026-09-20 改回只依廠商（Samuel 裁示）。2026-09-18～19 曾經是
+    「廠商＋部門」，那是被 Ragic 主表「部門」必填單選逼出來的——一張單只放得下
+    一個部門。0919 會議後 Ragic 端把**部門與會計課目下放到子表、逐列一個**，
+    主表那兩欄退化成表頭，所以拆單不必再切部門了：
+
+        單量：廠商數 × 部門數  →  廠商數        （簽核次數同步變少）
+
+    表頭的「部門」「會科」在 Ragic 仍是必填，送 config 的固定值把必填餵飽
+    （`RAGIC_CP_SUMMARY_HEADER_DEPT` / `RAGIC_CP_SUMMARY_ACCOUNT_CODE`）；
+    真正的歸屬一律看子表。那兩個設定改成空字串就不送，不用改程式。
+
+    子表一列 = 一個料號 × 一個部門（彙整粒度就是公司＋料號＋部門），各自帶
+    自己的「部門」與「會計課目」。
 
     `_rows` 是給呼叫端回寫狀態用的 ORM 物件參考，**不會送進 Ragic**
     （build_payload 只讀 lines）。
     """
-    groups: dict[int, dict] = {}
+    owner_names = owner_names or {}
+    groups: dict = {}
     for r in rows:
         g = groups.setdefault(r.vendor_id, {
             "batch_no": batch_no,
@@ -1328,26 +1556,57 @@ def _build_vendor_documents(
             "company": company,
             "vendor_id": r.vendor_id,
             "vendor_name": r.vendor_name,
-            "purpose": f"{period_label} {cycle_name} 匯總請購（{company}）",
+            # 表頭固定值（Ragic 端必填），實際歸屬看子表
+            "header_dept": settings.RAGIC_CP_SUMMARY_HEADER_DEPT,
+            "account_code": settings.RAGIC_CP_SUMMARY_ACCOUNT_CODE,
+            "purpose": f"{period_label} {cycle_name} 匯總請購（{company}／{r.vendor_name or '—'}）",
             "applicant": settings.RAGIC_CP_SUMMARY_APPLICANT,
+            "apply_date": apply_date_text,
             "pushed_at": pushed_at_text,
             "portal_note": "由 Portal 週期採購模組自動產生，明細請勿手動修改",
             "lines": [],
             "_rows": [],
+            "_dept_owner_ids": set(),
+            "_dept_names": set(),
         })
+        qty = r.adjusted_qty or 0
+        price = r.unit_price
         g["lines"].append({
             "item_code": r.item_code,
             "item_name": r.item_name,
             "department_name": r.department_name or "",
-            "qty": r.adjusted_qty or 0,
+            "account_name": getattr(r, "account_name", None) or "",
+            "qty": qty,
             "unit": r.unit,
             "note": r.adjust_reason or "",
-            "unit_price": r.unit_price,
+            "unit_price": price,
+            # 2026-09-20：金額改由 Portal 算。Ragic 端原本是公式欄（數量×單價），
+            # 為了讓「部門小計列」放得進金額欄，那個公式已拿掉（Samuel 裁示）。
+            # ⚠️ 代價：採購在 Ragic 改數量，金額不會自己跟著變。
+            "amount": (Decimal(str(price)) * qty) if price is not None else None,
             "summary_id": r.id,
         })
         g["_rows"].append(r)
+        if getattr(r, "dept_owner_user_id", None):
+            g["_dept_owner_ids"].add(r.dept_owner_user_id)
+        if r.department_name:
+            g["_dept_names"].add(r.department_name)
 
-    result = list(groups.values())
+    result = []
+    for g in groups.values():
+        # 「請購人」在 Ragic 是必填。一張單只跨一個部門時帶該部門承辦人；
+        # 跨多個部門就沒有單一承辦人可言，退回申請人——硬挑一個反而會讓
+        # 另外那些部門的人以為單子是別人幫他開的。
+        owner_ids = g.pop("_dept_owner_ids")
+        dept_names = g.pop("_dept_names")
+        requester = None
+        if len(owner_ids) == 1:
+            requester = owner_names.get(next(iter(owner_ids)))
+        g["requester"] = requester or settings.RAGIC_CP_SUMMARY_APPLICANT
+        g["department_names"] = sorted(dept_names)
+        g["lines"] = _with_department_subtotals(g["lines"])
+        result.append(g)
+
     result.sort(key=lambda g: (g["vendor_name"] or ""))
     return result
 

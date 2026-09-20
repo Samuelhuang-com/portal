@@ -62,7 +62,7 @@ import {
 } from '@/api/cyclePurchase'
 import type {
   CpCycle, CpDepartmentBreakdown, CpEligibleRequest, CpFailedVendor, CpNotPushedRow,
-  CpPushedDocument, CpPushToRagicResult, CpRagicPushedDoc, CpSummarizedRequest, CpSummary,
+  CpPushedDocument, CpPushToRagicResult, CpRagicDocRef, CpRagicPushedDoc, CpSummarizedRequest, CpSummary,
   CpVendorGroup,
 } from '@/types/cyclePurchase'
 import { useAuthStore } from '@/stores/authStore'
@@ -166,10 +166,13 @@ export default function CpSummaryPage() {
     getRagicSummaryLink().then((r) => setRagicLink(r.data?.url || '')).catch(() => setRagicLink(''))
   }, [])
 
-  // ── 「已彙整 Ragic 採購單」TAB（2026-09-16 新增）─────────────────────────
+  // ── 「已彙整 Ragic 請購單」TAB（2026-09-16 新增）─────────────────────────
   // 這一頁回答的問題跟「彙整作業」不同：不是「這期要買什麼」，而是
   // 「我到底推了哪些單到 Ragic、對應 Ragic 上的哪一張」。所以：
-  //   - 一列＝一張 Ragic 單據（後端依 批次號＋廠商 分組），不是一個彙整列
+  //   - 一列＝一張 Ragic 單據（後端依 批次號＋廠商＋Ragic 單號 分組），不是一個彙整列
+  //   - ⚠️ 這一頁讀的是 **Portal 自己資料庫**的拋轉紀錄，不是去 Ragic 現撈。
+  //     Ragic 上看得到某張單 ≠ 這裡就要有 —— 直接打 Ragic API 建的測試單、
+  //     或別台 Portal 推的單，本來就不會出現在這裡（下面的提示文字已寫明）。
   //   - 篩選用「拋轉日期」不是期別（8 月的期別可能 9 月才推）
   //   - 不受上面那排週期／期別／公司篩選影響，這一頁是獨立的查詢
   const [activeTab, setActiveTab] = useState<string>('work')
@@ -180,6 +183,10 @@ export default function CpSummaryPage() {
   // 今天。拋轉是人工動作、不是每天都有，用今天當基準「本月」很容易框到一段完全
   // 沒有資料的區間，使用者會以為資料不見了。
   const [pushedAnchor, setPushedAnchor] = useState<string>('')
+  // 載入失敗要留在畫面上。只丟一個 message.error 的話，使用者切過來時
+  // toast 早就消失了，看到的是一張空表格——跟「真的沒有資料」長得一模一樣，
+  // 於是會回報成「拋轉了但 TAB 沒出現」。2026-09-19 補。
+  const [pushedError, setPushedError] = useState<string>('')
 
   useEffect(() => {
     getRagicPushedDateRange()
@@ -193,9 +200,15 @@ export default function CpSummaryPage() {
     const params = pushedRange
       ? { start: pushedRange[0].format('YYYY-MM-DD'), end: pushedRange[1].format('YYYY-MM-DD') }
       : {}
+    setPushedError('')
     getRagicPushedDocs(params)
-      .then((r) => setPushedDocs(r.data))
-      .catch((err) => message.error(errMsg(err, '載入已彙整 Ragic 採購單失敗')))
+      .then((r) => { setPushedDocs(r.data); setPushedError('') })
+      .catch((err) => {
+        const m = errMsg(err, '載入已彙整 Ragic 請購單失敗')
+        setPushedDocs([])
+        setPushedError(m)
+        message.error(m)
+      })
       .finally(() => setPushedLoading(false))
   }
 
@@ -258,13 +271,13 @@ export default function CpSummaryPage() {
       return
     }
     Modal.confirm({
-      title: '拋轉到 Ragic「週採匯總請購單」',
-      width: 560,
+      title: '拋轉到 Ragic「★週採請購單」',
+      width: 600,
       content: (
         <div>
           <p>
             將把「{periodLabel.trim()}／{company}」範圍內的彙整列寫進 Ragic 的
-            「週採匯總請購單」。
+            「★週採請購單」，由 Ragic 的簽核流程簽核。
           </p>
           <Alert
             type="info"
@@ -272,10 +285,13 @@ export default function CpSummaryPage() {
             message="依廠商拆單：一家廠商一張 Ragic 單"
             description={
               <span>
-                同一次拋轉共用一個批次號，但每家廠商在 Ragic 會是獨立的一張單、各自有自己的採購編號。
+                同一次拋轉共用一個批次號，每家廠商各自是一張 Ragic 請購單、
+                各有自己的編號，也各自簽核。<b>部門與會計課目逐列帶在子表上</b>，
+                所以一張單可以橫跨多個部門（2026-09-20 起）。
                 <br />
-                缺供應商或缺單價的料號**不會**送出去（Ragic 子表單價是必填，送了整張單會被退回），
-                拋轉後會列出是哪幾筆。
+                下列三種列<b>不會</b>送出去，拋轉後會列出是哪幾筆：
+                缺供應商、缺單價（Ragic 子表單價是必填，送了整張單會被退回）、
+                以及 2026-07-16 之前沒有部門別的歷史彙整列。
               </span>
             }
           />
@@ -310,7 +326,7 @@ export default function CpSummaryPage() {
     const failed = r.failed ?? []
 
     Modal.info({
-      title: failed.length > 0 ? '拋轉完成（部分廠商失敗）' : '拋轉完成',
+      title: failed.length > 0 ? '拋轉完成（部分單據失敗）' : '拋轉完成',
       width: 720,
       okText: '知道了',
       content: (
@@ -334,11 +350,14 @@ export default function CpSummaryPage() {
               <Table<CpPushedDocument>
                 style={{ marginTop: 8, marginBottom: 12 }}
                 dataSource={docs}
-                rowKey={(d) => `${d.vendor_id ?? 'none'}`}
+                /* ⚠️ 2026-09-18：拆單加了部門之後 vendor_id 不再唯一
+                   （同一家廠商會有多張，一個部門一張），rowKey 必須帶部門 */
+                rowKey={(d) => `${d.vendor_id ?? 'none'}-${d.department_id ?? 'none'}`}
                 size="small"
                 pagination={false}
                 columns={[
-                  { title: '廠商', dataIndex: 'vendor_name', render: (v: string) => v || '—' },
+                  { title: '廠商', dataIndex: 'vendor_name', width: 150, render: (v: string) => v || '—' },
+                  { title: '部門', dataIndex: 'department_name', width: 150, render: (v: string) => v || '—' },
                   {
                     title: 'Ragic 單號',
                     key: 'no',
@@ -366,16 +385,17 @@ export default function CpSummaryPage() {
                 type="error"
                 showIcon
                 style={{ marginBottom: 8 }}
-                message={`${failed.length} 家廠商寫入失敗（其他家已成功，這幾家可修正後重推）`}
+                message={`${failed.length} 張單寫入失敗（其他張已成功，這幾張可修正後重推）`}
               />
               <Table<CpFailedVendor>
                 style={{ marginBottom: 12 }}
                 dataSource={failed}
-                rowKey={(f, i) => `${f.vendor_name ?? ''}-${i}`}
+                rowKey={(f, i) => `${f.vendor_name ?? ''}-${f.department_name ?? ''}-${i}`}
                 size="small"
                 pagination={false}
                 columns={[
                   { title: '廠商', dataIndex: 'vendor_name', width: 140, render: (v: string) => v || '—' },
+                  { title: '部門', dataIndex: 'department_name', width: 100, render: (v: string) => v || '—' },
                   { title: '錯誤訊息', dataIndex: 'error' },
                 ]}
               />
@@ -389,7 +409,7 @@ export default function CpSummaryPage() {
                 showIcon
                 style={{ marginBottom: 8 }}
                 message={`${notPushed.length} 筆彙整列未拋轉`}
-                description="這些列不會出現在 Ragic。請到料號主檔／對照表補上供應商與單價後，用「取消拋轉→重推」或下一期再處理。"
+                description="這些列不會出現在 Ragic。請依「原因」欄修正（多半是到料號對照表補供應商與單價）後，用「取消拋轉→重推」或下一期再處理。"
               />
               <Table<CpNotPushedRow>
                 dataSource={notPushed}
@@ -679,7 +699,7 @@ export default function CpSummaryPage() {
               <LinkOutlined /> 在 Ragic 查看
             </a>
           )}
-          {/* 這四顆都是「彙整作業」的動作，切到「已彙整 Ragic 採購單」那頁時
+          {/* 這四顆都是「彙整作業」的動作，切到「已彙整 Ragic 請購單」那頁時
               它們沒有作用對象（那頁是獨立查詢、不吃上面的週期／期別篩選），
               所以隨 TAB 隱藏，避免使用者按了沒反應。 */}
           {activeTab === 'work' && (
@@ -796,34 +816,59 @@ export default function CpSummaryPage() {
                   },
                   { title: '料號筆數', dataIndex: 'item_count', width: 100, align: 'right' as const },
                   {
-                    // 2026-09-15 新增：拋轉是依廠商拆單，一家廠商在 Ragic 就是一張單，
-                    // 所以這一欄直接回答「這組對應 Ragic 哪一張」。
+                    // 2026-09-15 新增。2026-09-18 曾改成依「廠商＋部門」拆單，
+                    // 2026-09-20 又改回**只依廠商**（部門逐列放進 Ragic 子表了）。
+                    // 但這一欄仍然要把 ragic_docs 全部列出來不能只顯示第一張——
+                    // 同一組（公司＋廠商）跨多個批次拋轉時還是會有多張單，
+                    // 只顯示第一張的話其他張會靜默消失。
                     // 樣式沿用 CLAUDE.md §7 明細 Drawer 的「在 Ragic 查看」（LinkOutlined ＋ #4BA8E8）。
                     title: 'Ragic 單號',
                     key: 'ragic',
-                    width: 170,
+                    width: 210,
                     render: (_: unknown, g: CpVendorGroup) => {
-                      if (!g.ragic_pushed || !g.ragic_record_id) return <Text type="secondary">—</Text>
-                      // 2026-09-15 之前拋轉的列沒有 ragic_record_url（當時還沒這個欄位），
-                      // 這種情況只顯示單號不給連結，不要給一個點了會 404 的假連結。
-                      if (!g.ragic_record_url) {
-                        return (
-                          <Tooltip title={`批次 ${g.ragic_push_batch_no || '—'}（這張是舊版拋轉，沒有存單筆連結）`}>
-                            <span>{g.ragic_record_id}</span>
-                          </Tooltip>
-                        )
-                      }
+                      const docs = g.ragic_docs ?? []
+                      if (!g.ragic_pushed && docs.length === 0) return <Text type="secondary">—</Text>
+                      // 舊資料可能沒有 ragic_docs（後端改版前拋轉的），退回單一欄位
+                      const list: CpRagicDocRef[] = docs.length > 0
+                        ? docs
+                        : [{
+                            ragic_record_id: g.ragic_record_id,
+                            ragic_record_url: g.ragic_record_url,
+                            ragic_push_batch_no: g.ragic_push_batch_no,
+                            department_name: null,
+                          }]
                       return (
-                        <Tooltip title={`批次 ${g.ragic_push_batch_no || '—'}`}>
-                          <a
-                            href={g.ragic_record_url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            style={{ color: '#4BA8E8', display: 'inline-flex', alignItems: 'center', gap: 3 }}
-                          >
-                            <LinkOutlined /> {g.ragic_record_id}
-                          </a>
-                        </Tooltip>
+                        <Space direction="vertical" size={0}>
+                          {list.map((d, i) => {
+                            if (!d.ragic_record_id) return null
+                            const tip = `批次 ${d.ragic_push_batch_no || '—'}`
+                              + (d.department_name ? `／${d.department_name}` : '')
+                            // 2026-09-15 之前拋轉的列沒有 ragic_record_url（當時還沒這個欄位），
+                            // 這種情況只顯示單號不給連結，不要給一個點了會 404 的假連結。
+                            if (!d.ragic_record_url) {
+                              return (
+                                <Tooltip key={i} title={`${tip}（這張是舊版拋轉，沒有存單筆連結）`}>
+                                  <span>{d.ragic_record_id}</span>
+                                </Tooltip>
+                              )
+                            }
+                            return (
+                              <Tooltip key={i} title={tip}>
+                                <a
+                                  href={d.ragic_record_url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  style={{ color: '#4BA8E8', display: 'inline-flex', alignItems: 'center', gap: 3 }}
+                                >
+                                  <LinkOutlined /> {d.ragic_record_id}
+                                  {d.department_name && (
+                                    <Text type="secondary" style={{ fontSize: 11 }}>（{d.department_name}）</Text>
+                                  )}
+                                </a>
+                              </Tooltip>
+                            )
+                          })}
+                        </Space>
                       )
                     },
                   },
@@ -999,17 +1044,53 @@ export default function CpSummaryPage() {
                     ) : '—',
                 },
                 {
-                  title: 'Ragic 拋轉',
+                  /*
+                    2026-09-19：原本只有一顆「已拋轉」Tag，看得出狀態卻看不出
+                    **對到 Ragic 哪一張請購單**，使用者要再去別的 TAB 找。
+                    這兩個值（ragic_record_id／ragic_record_url）本來就已經寫在
+                    每一列上了（見 models/cycle_purchase_summary.py），只是沒顯示。
+                    樣式沿用 CLAUDE.md §7 明細 Drawer 的「在 Ragic 查看」
+                    （LinkOutlined ＋ 色碼 #4BA8E8 ＋ target="_blank"）。
+                  */
+                  title: 'Ragic 請購單',
                   dataIndex: 'ragic_pushed',
-                  width: 110,
-                  render: (v: boolean, r: CpSummary) =>
-                    v ? (
-                      <Tag color="blue" title={r.ragic_push_batch_no || undefined}>
-                        已拋轉{r.ragic_record_id?.startsWith('STUB-') ? '（stub）' : ''}
-                      </Tag>
-                    ) : (
-                      <Text type="secondary">—</Text>
-                    ),
+                  width: 190,
+                  render: (v: boolean, r: CpSummary) => {
+                    if (!v) return <Text type="secondary">—</Text>
+                    const isStub = !!r.ragic_record_id?.startsWith('STUB-')
+                    const tip = [
+                      r.ragic_push_batch_no ? `批次 ${r.ragic_push_batch_no}` : null,
+                      r.ragic_pushed_at ? dayjs(r.ragic_pushed_at).format('YYYY-MM-DD HH:mm') : null,
+                    ].filter(Boolean).join('　')
+                    if (isStub) {
+                      return (
+                        <Tooltip title={`${tip}（stub 假資料，Ragic 上沒有對應單據）`}>
+                          <Tag color="default">已拋轉（stub）</Tag>
+                        </Tooltip>
+                      )
+                    }
+                    // 2026-09-15 之前拋轉的列沒有存 ragic_record_url，只顯示單號，
+                    // 不要給一個點了會 404 的假連結
+                    if (!r.ragic_record_url) {
+                      return (
+                        <Tooltip title={`${tip}（舊版拋轉，沒有存單筆連結）`}>
+                          <Tag color="blue">{r.ragic_record_id || '已拋轉'}</Tag>
+                        </Tooltip>
+                      )
+                    }
+                    return (
+                      <Tooltip title={tip}>
+                        <a
+                          href={r.ragic_record_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          style={{ color: '#4BA8E8', display: 'inline-flex', alignItems: 'center', gap: 3 }}
+                        >
+                          <LinkOutlined /> {r.ragic_record_id}
+                        </a>
+                      </Tooltip>
+                    )
+                  },
                 },
                 {
                   title: '操作',
@@ -1030,7 +1111,7 @@ export default function CpSummaryPage() {
           },
           {
             key: 'pushed',
-            label: '已彙整 Ragic 採購單',
+            label: '已彙整 Ragic 請購單',
             children: (
               <>
                 <Card style={{ marginBottom: 16 }}>
@@ -1070,24 +1151,40 @@ export default function CpSummaryPage() {
                   </div>
                 </Card>
 
+                {pushedError && (
+                  <Alert
+                    type="error"
+                    showIcon
+                    style={{ marginBottom: 16 }}
+                    message="載入失敗，下面的空白不代表沒有資料"
+                    description={pushedError}
+                  />
+                )}
+
                 <Card
-                  title={`已拋轉到 Ragic 的採購單（${pushedDocs.length} 張）`}
+                  title={`已拋轉到 Ragic 的請購單（${pushedDocs.length} 張）`}
                   loading={pushedLoading}
                   extra={
                     <Text type="secondary" style={{ fontSize: 12 }}>
-                      一列＝Ragic 上的一張單；拋轉是依廠商拆單，所以同一批次會有多張
+                      一列＝Ragic 上的一張請購單；拋轉依「廠商」拆單（一家廠商一張），同一批次會有多張
                     </Text>
                   }
                 >
                   <Table<CpRagicPushedDoc>
                     dataSource={pushedDocs}
-                    rowKey={(d) => `${d.ragic_push_batch_no ?? ''}|${d.vendor_id ?? 'none'}`}
+                    /* ⚠️ 2026-09-18 起拆單含部門，同一批次同一家廠商會有多張
+                       Ragic 單，rowKey 少了 ragic_record_id 會撞 key（後端分組鍵
+                       也是這三段，見 list_ragic_pushed_documents） */
+                    rowKey={(d) =>
+                      `${d.ragic_push_batch_no ?? ''}|${d.vendor_id ?? 'none'}|${d.ragic_record_id ?? ''}`}
                     size="small"
                     scroll={{ x: 1200 }}
                     locale={{
                       emptyText: pushedRange
                         ? '這段期間沒有拋轉過任何單據（可切換成「全部」看看）'
-                        : '目前還沒有任何已拋轉的單據',
+                        : '這台 Portal 還沒有任何已拋轉的單據。'
+                          + 'Ragic 上看得到的單不一定會在這裡——直接打 Ragic API 建的測試單'
+                          + '（批次號 TEST- 開頭）、或別台 Portal 推的單都不會列入。',
                     }}
                     columns={[
                       {

@@ -141,55 +141,104 @@ class Settings(BaseSettings):
     RAGIC_DAZHI_REPAIR_PATH: str = "lequn-public-works/8"
     RAGIC_DAZHI_REPAIR_PAGEID: str = "fV8"
 
-    # ── Ragic — 週期採購「週採匯總請購單」拋轉（ap12 / soutlet001）─────────────
-    # URL: https://ap12.ragic.com/soutlet001/community-management-department/57
+    # ── Ragic — 週期採購「週採請購單」拋轉（ap12 / soutlet001）─────────────
+    # URL: https://ap12.ragic.com/soutlet001/community-management-department/58
     # 這是**唯一一個 Portal 會「寫入」Ragic 的模組**，其餘 Ragic 設定都只讀。
-    # 表單由 Samuel 於 2026-09-15 從管理部「採購單」(sheet 23) 複製後調整而成，
-    # 欄位代號與設計背景見 services/cycle_purchase_ragic_push.py 檔頭。
+    #
+    # ⚠️ 2026-09-18 改版：拋轉目標由 sheet 57「週採採購單」改為
+    #    sheet 58「★週採請購單」（Samuel 裁示：先前指到採購單是下錯任務，
+    #    彙整單應該進請購單，由 Ragic 內建簽核流程簽核；sheet 57 自此停用）。
+    #    sheet 58 是樂群**比價式請購單**的原樣複製（廠商(一)(二)(三) 三組比價欄
+    #    ＋ Ragic 內建簽核流程 ＋「拋轉採購單／拋轉請款單」動作鈕），
+    #    與 sheet 57 的欄位完全不同，欄位代號整批換過。
+    #    設計背景與各欄位取捨見 services/cycle_purchase_ragic_push.py 檔頭。
     RAGIC_CP_SUMMARY_SERVER_URL: str = "ap12.ragic.com"
     RAGIC_CP_SUMMARY_ACCOUNT:    str = "soutlet001"
-    RAGIC_CP_SUMMARY_PATH:       str = "community-management-department/57"
+    RAGIC_CP_SUMMARY_PATH:       str = "community-management-department/58"
     # false ＝ 不真的寫 Ragic，退回 stub 行為（Portal 端狀態照常更新）。
     # 測試區想跑完整流程但不要污染 Ragic 正式資料時設 false。
     RAGIC_CP_SUMMARY_ENABLED:    bool = True
     RAGIC_CP_SUMMARY_TIMEOUT:    int = 60
-    # 主表「申請人」是 Ragic 的使用者選單，要送 Ragic 帳號的顯示名稱
-    # （2026-09-15 Samuel 裁示一律帶 Samuel）
+    # 主表「申請人」是 Ragic 的使用者選單（唯讀欄，預設值 $USERNAME），
+    # 2026-09-15 Samuel 裁示一律帶 Samuel。
     RAGIC_CP_SUMMARY_APPLICANT:  str = "Samuel"
+    # ── 主表表頭的「部門」「會科」（2026-09-20 改版）────────────────────────
+    # 真正的部門與會科自 2026-09-20 起**逐列放在子表**（Ragic 端已改好），主表
+    # 這兩欄退化成表頭欄位。但它們在 Ragic 仍是**必填單選**，留空會被整筆退，
+    # 所以 Portal 照送一個固定值把必填餵飽。
+    #
+    # ⚠️ 「部門」那欄的選單**沒有開放自訂選項**，只吃這七個字串之一：
+    #     營業／管理／行銷／資訊／執董室／財務／工務
+    #    所以不能送「多部門」這種說明文字。送「管理」代表「這張是管理部彙整出來
+    #    的週採單」，實際歸屬一律看子表。
+    # ⚠️ 「會科」那欄有開放自訂選項，但沿用既有清單裡的「雜項購置」最不會誤導。
+    #
+    # 👉 之後若把 Ragic 端那兩欄的「必填」取消掉，把這兩個設定改成空字串即可，
+    #    Portal 就不再送、表頭留白，**不需要改程式**。
+    RAGIC_CP_SUMMARY_HEADER_DEPT:  str = "管理"
+    RAGIC_CP_SUMMARY_ACCOUNT_CODE: str = "雜項購置"
+    # 子表「會計課目」逐列要送的字串格式。來源是料號對照表的會計科目
+    # （公司＋部門＋料號 → account_code_id）。0919 會議舉的例子是「6238 清潔費」，
+    # 所以預設是 代碼＋名稱；只想送名稱就改成 "{name}"。
+    RAGIC_CP_SUMMARY_ACCOUNT_FORMAT: str = "{code} {name}"
     # 營業稅率：Portal 端只用於畫面顯示與對帳檢查，實際稅額是 Ragic 公式算的
     RAGIC_CP_SUMMARY_TAX_RATE:   float = 0.05
 
-    # 主表欄位代號
-    RAGIC_CP_F_DOC_NO:    str = "1020773"   # 採購編號（自動編號，不送）
-    RAGIC_CP_F_PERIOD:    str = "1020774"   # 期別（必填）
-    RAGIC_CP_F_ARRIVAL:   str = "1020775"   # 到貨日期（已改非必填，Portal 不送）
-    RAGIC_CP_F_APPLICANT: str = "1020776"   # 申請人
-    RAGIC_CP_F_PURPOSE:   str = "1020777"   # 用途說明（必填）
-    RAGIC_CP_F_VENDOR:    str = "1020778"   # 擬定廠商（必填）
-    RAGIC_CP_F_COMPANY:   str = "1020793"   # 公司別
-    RAGIC_CP_F_CYCLE:     str = "1020794"   # 週期名稱
-    RAGIC_CP_F_BATCH:     str = "1020795"   # 拋轉批次號
-    RAGIC_CP_F_PUSHED_AT: str = "1020796"   # 拋轉時間（格式 yyyy/MM/dd HH:mm:ss）
-    RAGIC_CP_F_NOTE:      str = "1020797"   # Portal備註
-    # 下面三個是 Ragic 公式欄位，**Portal 只讀不寫**（寫入後回讀來做空殼防呆）：
-    #   小計 = G5、營業稅 = F10*0.05、總計 = F10+F11
-    #   ⚠️ 公式只有在 POST 帶 doFormula=true 時才會算，見 cycle_purchase_ragic_push.py
-    RAGIC_CP_F_SUBTOTAL:  str = "1020786"   # 小計
-    RAGIC_CP_F_TAX:       str = "1020787"   # 營業稅
-    RAGIC_CP_F_TOTAL:     str = "1020788"   # 總計
+    # ── 主表欄位代號（sheet 58）──────────────────────────────────────────────
+    RAGIC_CP_F_DOC_NO:     str = "1020805"  # 編號（自動編號 樂管購{yyyyMM}{00000}，不送）
+    RAGIC_CP_F_DEPT:       str = "1020806"  # 部門（表頭，必填單選，送 RAGIC_CP_SUMMARY_HEADER_DEPT）
+    RAGIC_CP_F_ACCOUNT:    str = "1020807"  # 會科（表頭，必填單選，送 RAGIC_CP_SUMMARY_ACCOUNT_CODE）
+    RAGIC_CP_F_APPLY_DATE: str = "1020816"  # 申請日期（必填，格式 yyyy/MM/dd）
+    RAGIC_CP_F_APPLICANT:  str = "1020808"  # 申請人（唯讀單選，預設 $USERNAME）
+    RAGIC_CP_F_PURPOSE:    str = "1020809"  # 說明（必填，同時是這張表的標題欄 tf）
+    RAGIC_CP_F_VENDOR:     str = "1020818"  # 廠商(一)（連結「廠商資料表」sheet 15，送廠商名稱）
+    RAGIC_CP_F_REQUESTER:  str = "1020860"  # 請購人（必填，送該部門承辦人）
+    # 2026-09-18 在 Ragic 端新增的 Portal 追蹤欄位
+    RAGIC_CP_F_COMPANY:    str = "1020875"  # 公司別
+    RAGIC_CP_F_CYCLE:      str = "1020876"  # 週期名稱
+    RAGIC_CP_F_BATCH:      str = "1020877"  # 拋轉批次號
+    RAGIC_CP_F_PUSHED_AT:  str = "1020878"  # 拋轉時間（日期型態，格式 yyyy/MM/dd HH:mm:ss）
+    RAGIC_CP_F_NOTE:       str = "1020879"  # Portal備註
+    # 下面幾個是 Ragic 公式欄位，**Portal 只讀不寫**（寫入後回讀來做空殼防呆）。
+    # ⚠️ 公式只有在 POST 帶 doFormula=true 時才會算，見 cycle_purchase_ragic_push.py
+    #
+    # ⚠️ 2026-09-20 Ragic 端整理過金額區，欄位代號整批換過（Samuel 手動執行）：
+    #    舊的「小計 1020838 / 稅 1020843 / 總計 1020849」這一組（比價版型裡
+    #    廠商(一) 專用的那組）**已經被刪除**，改成下面這一組。刪除之前程式仍指著
+    #    1020838，`record.get()` 永遠拿到 None ——「空殼防呆」因此**每推一張單都誤報**
+    #    「小計是空的」，而真正該看的全案小計其實是對的。
+    RAGIC_CP_F_GRAND_SUB:   str = "1020810"  # 全案小計 = O5（子表「金額2(選定)」加總）
+    RAGIC_CP_F_TAX:         str = "1020846"  # 營業稅   = M10*0.05
+    RAGIC_CP_F_GRAND_TOTAL: str = "1020852"  # 全案總計 = M10+M11
+    # 2026-09-20 起這兩個都指到「全案」那一組：整理後表單只剩一組金額
+    # （Portal 拋出來的單一張只有一家廠商，本來就沒有「各廠商各自小計」的概念）。
+    RAGIC_CP_F_TOTAL:       str = "1020852"  # ＝全案總計，保留舊名給既有呼叫端
+    # ⚠️ 1020840「小計」是比價版型留下來的**殘留欄位**，公式還是 `L5`
+    #    （L 欄＝子表「上月累計預算」，整欄都空），所以它**永遠顯示 0**。
+    #    空殼防呆刻意**不看它**（看了會被 "0" 騙過去），改看全案小計。
+    #    這個欄位建議在 Ragic 端刪掉，留著只會讓人以為金額算錯。
+    RAGIC_CP_F_SUBTOTAL:    str = "1020840"  # 小計（殘留欄位，=L5，恆為 0，勿當判斷依據）
 
-    # 子表欄位代號（子表 id 1020792）
-    RAGIC_CP_SUBTABLE:        str = "1020792"
-    RAGIC_CP_SF_SEQ:          str = "1020779"   # 項次（$SEQ 自動序號，不送）
-    RAGIC_CP_SF_ITEM_NAME:    str = "1020780"   # 產品名稱
-    RAGIC_CP_SF_QTY:          str = "1020781"   # 數量
-    RAGIC_CP_SF_UNIT:         str = "1020782"   # 單位
-    RAGIC_CP_SF_NOTE:         str = "1020783"   # 品項備註
-    RAGIC_CP_SF_PRICE:        str = "1020784"   # 擬定廠商單價（Ragic 端必填）
-    RAGIC_CP_SF_AMOUNT:       str = "1020785"   # 擬定廠商金額（公式 C5*F5，不送）
-    RAGIC_CP_SF_ITEM_CODE:    str = "1020798"   # 料號
-    RAGIC_CP_SF_DEPT:         str = "1020799"   # 部門
-    RAGIC_CP_SF_SUMMARY_ID:   str = "1020800"   # Portal彙整列ID
+    # ── 子表欄位代號（子表 id 1020873）───────────────────────────────────────
+    RAGIC_CP_SUBTABLE:        str = "1020873"
+    RAGIC_CP_SF_SEQ:          str = "1020821"  # 項次（$SEQ 自動序號，不送）
+    RAGIC_CP_SF_ITEM_NAME:    str = "1020822"  # 產品名稱
+    RAGIC_CP_SF_QTY:          str = "1020823"  # 數量
+    RAGIC_CP_SF_UNIT:         str = "1020824"  # 單位
+    RAGIC_CP_SF_NOTE:         str = "1020825"  # 品項備註
+    RAGIC_CP_SF_PRICE:        str = "1020826"  # 單價（廠商一）
+    RAGIC_CP_SF_AMOUNT:       str = "1020827"  # 金額（廠商一，公式 C5*F5，不送）
+    # 2026-09-20 Ragic 端把原本「單價(二)/金額(二)/單價(三)/金額(三)」四欄
+    # repurpose 成下面這四欄（改名＋清掉殘留公式＋型態由金額改回文字）。
+    # ⚠️ 欄位代號沿用舊的，不是新建，所以不要以為換了號。
+    RAGIC_CP_SF_ACCOUNT:      str = "1020828"  # 會計課目（文字，逐列；來源見 service 的 _line_account_name）
+    RAGIC_CP_SF_DEPT:         str = "1020829"  # 部門（文字，逐列，直接送部門名稱如「工務部」）
+    RAGIC_CP_SF_BUDGET_M:     str = "1020830"  # 本月預算（金額，人工填，Portal 不送）
+    RAGIC_CP_SF_BUDGET_ACC:   str = "1020831"  # 上月累計預算（金額，人工填，Portal 不送）
+    RAGIC_CP_SF_VENDOR:       str = "1020832"  # 擬定廠商（連結廠商資料表，送與廠商(一) 同一個名稱）
+    RAGIC_CP_SF_CHOSEN:       str = "1020835"  # 勾選（打勾選項 Yes/No，送 Yes）
+    RAGIC_CP_SF_ITEM_CODE:    str = "1020880"  # 料號（2026-09-18 新增）
+    RAGIC_CP_SF_SUMMARY_ID:   str = "1020881"  # Portal彙整列ID（2026-09-18 新增）
 
     # ── OpenAI ────────────────────────────────────────────────────────────────
     OPENAI_API_KEY: str = ""

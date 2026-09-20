@@ -129,10 +129,15 @@ def create_item_mapping(
 ):
     try:
         mapping = svc.create_item_mapping(db, item_id, payload)
-    except IntegrityError:
+    except svc.ItemMappingConflict as e:
         db.rollback()
-        # 2026-08-18：唯一鍵已含 department_id，訊息跟著改。舊訊息寫「該公司」，
-        # 使用者要替第二個部門建對照時撞到既有列，會以為同公司只能有一筆而放棄。
+        raise HTTPException(status_code=409, detail=str(e))
+    except IntegrityError:
+        # 資料庫的 UniqueConstraint 兜底（service 層已先擋過一次，走到這裡代表
+        # 有並行寫入插隊）。2026-08-18：唯一鍵已含 department_id，訊息跟著改——
+        # 舊訊息寫「該公司」，使用者要替第二個部門建對照時撞到既有列，會以為
+        # 同公司只能有一筆而放棄。
+        db.rollback()
         raise HTTPException(status_code=409, detail="此料號已有該公司＋該部門的對照紀錄")
     if not mapping:
         raise HTTPException(status_code=404, detail="料號不存在")
@@ -151,7 +156,17 @@ def update_item_mapping(
     _: User = Depends(require_permission("cycle_purchase_admin")),
     db: Session = Depends(get_cycle_purchase_db),
 ):
-    mapping = svc.update_item_mapping(db, item_id, mapping_id, payload)
+    # 2026-09-20：原本這支完全沒防撞號。料號主檔改成可以在同一個畫面編多列對照
+    # 之後（一個料號 ＝ 一個公司 ＋ 多個部門 ＋ 多個科目），把 A 部門改成 B 部門
+    # 撞到既有列會變成日常操作，不能再讓它變成 500。
+    try:
+        mapping = svc.update_item_mapping(db, item_id, mapping_id, payload)
+    except svc.ItemMappingConflict as e:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(e))
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="此料號已有該公司＋該部門的對照紀錄")
     if not mapping:
         raise HTTPException(status_code=404, detail="料號對照不存在")
     return mapping
@@ -164,7 +179,18 @@ def delete_item_mapping(
     _: User = Depends(require_permission("cycle_purchase_admin")),
     db: Session = Depends(get_cycle_purchase_db),
 ):
-    ok = svc.delete_item_mapping(db, item_id, mapping_id)
+    # 2026-09-20：cycle_purchase_request_items.item_mapping_id 是 ondelete=RESTRICT，
+    # 被請購明細引用過的對照列刪不掉。原本沒接這個例外，使用者會收到一句沒人
+    # 看得懂的 500；改成講清楚為什麼刪不掉、以及該怎麼辦。
+    try:
+        ok = svc.delete_item_mapping(db, item_id, mapping_id)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="這筆對照已經被請購單明細用過，不能刪除（刪掉會讓既有單據查不到當初的單價與科目）。"
+                   "如果不想再讓這個部門請購這個料號，請改用「停用料號」或調整週期設定的適用部門。",
+        )
     if not ok:
         raise HTTPException(status_code=404, detail="料號對照不存在")
     return {"ok": True}

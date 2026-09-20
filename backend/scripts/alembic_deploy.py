@@ -188,17 +188,36 @@ def main() -> int:
             return 2
 
     print()
+    # ⚠️ 2026-09-19 改：**一個資料庫失敗不再中止其餘的**。
+    #    兩個資料庫是各自獨立的 alembic 鏈（portal / cycle_purchase），彼此沒有
+    #    相依，原本「第一個失敗就 return 1」會讓 main database 的一支舊 migration
+    #    卡死之後，cycle-purchase 的 migration **永遠跑不到而且沒有人發現**——
+    #    畫面上的症狀是某個新功能的端點一直 500，看起來像程式 bug。
+    #    （2026-09-19 實際發生：main 的 `compset` 失敗，於是 `cpragicdept` 從頭到尾
+    #      沒被執行過，週採彙整單的「已彙整 Ragic 請購單」TAB 整個空白。）
+    failed: list[str] = []
     for label, ini, _ in pending:
         print(f"  → {label}：alembic -c {ini} upgrade head")
         code, out = _alembic(ini, "upgrade", "head")
         tail = "\n".join(out.strip().splitlines()[-12:])
         print("    " + tail.replace("\n", "\n    "))
         if code != 0:
-            print(f"  ❌ {label} 套用失敗")
-            return 1
+            print(f"  ❌ {label} 套用失敗（其餘資料庫仍會繼續嘗試）")
+            failed.append(label)
+            continue
         print(f"  ✅ {label} 完成")
 
     print()
+    if failed:
+        ok = [lbl for lbl, _, _ in pending if lbl not in failed]
+        if ok:
+            print("  ✅ 已完成：" + "、".join(ok))
+        print("  ❌ 仍有失敗：" + "、".join(failed))
+        print("     這幾個資料庫的 schema 還停在舊版本，對應的功能會整組 500。")
+        print("     先看上面的錯誤訊息，處理完再跑一次本腳本（已完成的不會重跑）。")
+        print()
+        return 1
+
     print("  ✅ 全部套用完成。")
     print()
     return 0

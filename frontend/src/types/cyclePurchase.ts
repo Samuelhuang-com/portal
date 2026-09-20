@@ -20,12 +20,38 @@ export interface CpVendor {
    * null＝週採本地自建，全部欄位可編。
    */
   source_vendor_id?: string | null
+  /**
+   * 2026-09-20：對照到的合約廠商名稱（後端衍生欄位，非資料表欄位）。
+   * 合約主檔的名稱同步自 Ragic 廠商資料表 → 是**全名**；
+   * 而 Ragic 拋轉時主表「廠商(一)」是 Link 欄位、只認全名，
+   * 所以這一欄有值才代表拋轉時廠商送得進去。
+   */
+  source_vendor_name?: string | null
   synced_at?: string | null
   created_at: string
   updated_at: string
 }
 
 /** 供應商鏡像同步（合約模組 → 週期採購）的回傳統計 */
+/** 合約模組的廠商（給「對照合約廠商」下拉選單用，非週採自己的供應商） */
+/** 合併供應商的結果（dry_run=true 時 applied 為 false，只是試算） */
+export interface CpVendorMergeResult {
+  source_id: number
+  source_name: string
+  target_id: number
+  target_name: string
+  moved: Record<string, number>
+  total_moved: number
+  applied: boolean
+}
+
+export interface CpContractVendor {
+  vendor_id: string          // VND-NNNN / V-NNNNN
+  vendor_name: string        // 全名（同步自 Ragic 廠商資料表）
+  tax_id?: string | null
+  ragic_id?: string | null
+}
+
 export interface CpVendorSyncResult {
   fetched: number      // 合約模組共有幾筆廠商
   upserted: number     // created + updated
@@ -91,6 +117,8 @@ export interface CpDepartment {
   // 同步過來的（見 cycle_purchase_department_sync.py），company／dept_name
   // 由同步覆蓋、前端應設唯讀；null 代表本地自建，公司/部門名稱可自由編輯。
   source_department_id?: string | null
+  // ⚠️ 2026-09-20 移除 ragic_dept：Ragic「★週期請購單」已把部門下放到子表、
+  //    逐列一個且改成自由文字，Portal 直接送部門名稱即可，七選一對照不需要了。
 }
 
 export interface CpCostCenter {
@@ -529,6 +557,10 @@ export interface CpSummary {
   ragic_push_batch_no?: string | null
   ragic_pushed: boolean
   ragic_record_id?: string | null
+  // 2026-09-19 補上：後端 SummaryOut 從 2026-09-15 起就有這一欄（alembic_cp
+  // `cpragicurl`），但型別定義一直漏掉，導致清單上顯示不了單筆連結。
+  // 2026-09-15 之前拋轉的列是 null（只顯示單號、不可點）。
+  ragic_record_url?: string | null
   ragic_pushed_at?: string | null
   ragic_push_error?: string | null
   notes?: string | null
@@ -546,12 +578,23 @@ export interface CpVendorGroup {
   item_count: number
   total_amount: number
   has_missing_vendor: boolean
-  // 2026-09-15 新增：這一組（＝一家廠商）對應到 Ragic 的哪一張單。
-  // 拋轉是依廠商拆單，所以「公司＋廠商」與 Ragic 單據是一對一。
+  // 2026-09-15 新增：這一組對應到 Ragic 的哪一張單。
+  // ⚠️ 2026-09-18 起拋轉依「廠商＋部門」拆單，「公司＋廠商」與 Ragic 單據
+  //    **不再是一對一**（該廠商跨幾個部門就有幾張）。畫面請用 ragic_docs，
+  //    下面三個單一欄位只是相容用（值＝其中第一張）。
   ragic_pushed?: boolean
-  ragic_record_id?: string | null      // 給人看的採購編號，如 樂管週採00003
+  ragic_record_id?: string | null      // 給人看的編號，如 樂管購20260900001
   ragic_record_url?: string | null     // 單筆網址；2026-09-15 之前拋轉的列是 null（只顯示單號、不可點）
   ragic_push_batch_no?: string | null
+  ragic_docs?: CpRagicDocRef[]
+}
+
+// 一張 Ragic 單據的參照（2026-09-18 新增，配合依「廠商＋部門」拆單）。
+export interface CpRagicDocRef {
+  ragic_record_id?: string | null
+  ragic_record_url?: string | null
+  ragic_push_batch_no?: string | null
+  department_name?: string | null
 }
 
 // 2026-07-16 新增：匯總請購單畫面用，依料號分組展開部門別＋小計。
@@ -580,7 +623,7 @@ export interface CpDepartmentBreakdown {
   has_missing_vendor: boolean
 }
 
-// 2026-09-16 新增：「已彙整 Ragic 採購單」TAB 的一列＝**一張 Ragic 單據**。
+// 2026-09-16 新增：「已彙整 Ragic 請購單」TAB 的一列＝**一張 Ragic 單據**。
 // 後端分組鍵是 (ragic_push_batch_no, vendor_id)，因為拋轉是依廠商拆單；
 // 不用 ragic_record_id 分組是為了相容 stub 時期共用假值的舊資料。
 export interface CpRagicPushedDoc {
@@ -603,19 +646,23 @@ export interface CpRagicPushedDoc {
   is_stub: boolean
 }
 
-// 拋轉到 Ragic「週採匯總請購單」的結果。
-// 2026-09-15 改版：真正寫入 Ragic，而且**依廠商拆單**——一次動作會產生多張
-// Ragic 單（一家廠商一張），共用同一個 batch_no。
+// 拋轉到 Ragic「★週採請購單」(sheet 58) 的結果。
+// 2026-09-18 改版：拋轉目標從 sheet 57 週採採購單改成 sheet 58 週採請購單，
+// 拆單粒度也從「廠商」再細到「**廠商＋部門**」——Ragic 請購單主表的「部門」
+// 是必填單選，一張單只放得下一個部門，所以同一家廠商可能對到多張單。
 // ⚠️ **部分成功也是 HTTP 200**，所以三段都要顯示，不能只看 message：
-//    documents  = 成功寫進 Ragic 的各張單
-//    not_pushed = 缺供應商／缺單價而沒送出去的彙整列（不是錯誤，但使用者一定要看到）
-//    failed     = Ragic 拒絕或連線失敗的廠商（其他家仍然有推成功）
+//    documents  = 成功寫進 Ragic 的各張單（vendor_name 一定要配 department_name 看）
+//    not_pushed = 缺供應商／缺單價／部門沒對照 Ragic 部門 而沒送出去的彙整列
+//                 （不是錯誤，但使用者一定要看到）
+//    failed     = Ragic 拒絕或連線失敗的那幾張（其他張仍然有推成功）
 // is_stub=true 代表 RAGIC_CP_SUMMARY_ENABLED=false，沒有真的寫入 Ragic。
 export interface CpPushedDocument {
   vendor_id?: number | null
   vendor_name?: string | null
+  department_id?: number | null
+  department_name?: string | null
   ragic_record_id?: string | null    // Ragic 內部 _ragicId
-  ragic_no?: string | null           // 採購編號，如 樂管週採00003
+  ragic_no?: string | null           // 編號，如 樂管購20260900001
   ragic_record_url?: string | null   // 單筆網址
   line_count: number
   is_stub: boolean
@@ -631,6 +678,7 @@ export interface CpNotPushedRow {
 
 export interface CpFailedVendor {
   vendor_name?: string | null
+  department_name?: string | null
   error: string
 }
 

@@ -24,6 +24,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
+from app.services import cycle_purchase_seq as seq
 from app.models.cycle_purchase_payment import (
     CyclePurchasePayment, CyclePurchasePaymentReceiving, CyclePurchasePaymentAllocation,
 )
@@ -92,14 +93,14 @@ def _attach_payment_receiving_display_fields(db: Session, row: CyclePurchasePaym
 
 
 def _next_payment_no(db: Session, on_date: date) -> str:
+    """2026-09-20：從 COUNT(*)+1 改成最大號+1。
+
+    payment_no 是 UNIQUE —— 這個月只要刪過一張付款單，COUNT(*)+1 就會倒退去
+    撞還活著的號碼，之後每一次開付款單都必定 500（請購單已經實際踩過，
+    見 CHANGELOG [2.10.39] 與 services/cycle_purchase_seq.py 檔頭）。
+    """
     prefix = f"PAY-{on_date.strftime('%Y%m')}-"
-    count = (
-        db.query(func.count(CyclePurchasePayment.id))
-        .filter(CyclePurchasePayment.payment_no.like(f"{prefix}%"))
-        .scalar()
-        or 0
-    )
-    return f"{prefix}{count + 1:04d}"
+    return seq.next_no(db, CyclePurchasePayment.payment_no, prefix, 4)
 
 
 def _compute_suggested_allocation(db: Session, po: CyclePurchasePO):

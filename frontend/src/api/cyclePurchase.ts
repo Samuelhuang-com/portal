@@ -52,14 +52,38 @@ import type {
   CpVendorGroup,
   CpVendorSyncResult,
   TodoSummary,
+  CpContractVendor,
+  CpVendorMergeResult,
 } from '@/types/cyclePurchase'
 
 const BASE = '/cycle-purchase'
 
 // ── 供應商主檔 ────────────────────────────────────────────────────────────────
 
-export const getVendors = (params?: { q?: string; is_active?: boolean }) =>
+export const getVendors = (params?: { q?: string; is_active?: boolean; unlinked_only?: boolean }) =>
   apiClient.get<CpVendor[]>(`${BASE}/masters/vendors`, { params })
+
+/** 合約模組的廠商清單（「對照合約廠商」下拉用）。2026-09-20 新增。 */
+export const getContractVendors = (params?: { q?: string }) =>
+  apiClient.get<CpContractVendor[]>(`${BASE}/masters/contract-vendors`, { params })
+
+/**
+ * 把週採供應商對照到合約廠商（source_vendor_id = null 代表解除對照）。
+ * ⚠️ 刻意不走 updateVendor —— 後端的一般編輯永遠不吃 source_vendor_id。
+ */
+/**
+ * 把一筆供應商併入另一筆（料號對照／彙整列／採購單的參照一起搬過去）。
+ * dryRun=true 只試算不寫入 —— 這支會改到歷史資料，一定要先讓使用者看過再做。
+ */
+export const mergeVendor = (vendorId: number, targetVendorId: number, dryRun = false) =>
+  apiClient.post<CpVendorMergeResult>(`${BASE}/masters/vendors/${vendorId}/merge`, {
+    target_vendor_id: targetVendorId, dry_run: dryRun,
+  })
+
+export const linkVendorToContract = (vendorId: number, sourceVendorId: string | null) =>
+  apiClient.put<CpVendor>(`${BASE}/masters/vendors/${vendorId}/link`, {
+    source_vendor_id: sourceVendorId,
+  })
 
 export const createVendor = (data: Omit<CpVendor, 'id' | 'created_at' | 'updated_at'>) =>
   apiClient.post<CpVendor>(`${BASE}/masters/vendors`, data)
@@ -358,7 +382,7 @@ export const convertToPo = (data: { cycle_id: number; period_label: string; comp
 export const getDepartmentBreakdown = (params: { cycle_id: number; period_label: string; company?: string }) =>
   apiClient.get<CpDepartmentBreakdown[]>(`${BASE}/summary/department-breakdown`, { params })
 
-// 2026-09-16 新增：「已彙整 Ragic 採購單」TAB。
+// 2026-09-16 新增：「已彙整 Ragic 請購單」TAB。
 // ⚠️ 一列＝**一張 Ragic 單據**（不是一個彙整列），日期篩選打在「拋轉時間」而不是
 //    期別——使用者問的是「這段時間我推了什麼」，8 月的期別可能 9 月才推。
 export const getRagicPushedDocs = (params?: {

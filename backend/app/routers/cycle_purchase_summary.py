@@ -10,7 +10,7 @@ POST   /summary/convert-to-po           轉採購單（指定週期＋期別＋�
 
 2026-07-16（匯總請購單改版，見 models/cycle_purchase_summary.py 開頭說明）：
 GET    /summary/department-breakdown    依料號分組展開部門別＋小計（匯總請購單畫面用）
-POST   /summary/push-to-ragic           拋轉到 Ragic「週採匯總請購單」(sheet 57)
+POST   /summary/push-to-ragic           拋轉到 Ragic「★週採請購單」(sheet 58)
                                          ⚠️ 2026-09-15 起是**真的寫入 Ragic**，且
                                          **依廠商拆單**：一家廠商一張 Ragic 單、共用
                                          同一個 batch_no。已拋轉過的列逐列略過（不再
@@ -50,6 +50,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.cycle_purchase_database import get_cycle_purchase_db
+from app.core.database import get_db
 from app.dependencies import require_any_permission, require_permission
 from app.models.user import User
 from app.schemas.cycle_purchase_summary import (
@@ -66,12 +67,58 @@ from app.services.cycle_purchase_summary_service import SummaryServiceError
 router = APIRouter()
 
 
+# 2026-09-18 新增的欄位。ORM 一宣告，**每一句碰到該表的 SELECT 都會帶上它**，
+# 所以 migration 沒跑的話不是「新功能沒作用」而是「整組端點 500」。
+_MIGRATION_HINTS = {
+    # 2026-09-20：`ragic_dept` 已從 ORM 移除（Ragic 子表部門改自由文字，不需要
+    # 七選一對照），不會再因為缺這個欄位而 500，所以這裡也不用再提示它。
+    "ragic_record_url": (
+        "cycle_purchase_summary.ragic_record_url",
+        "cpragicurl",
+    ),
+}
+
+
+def _schema_guard(exc: Exception):
+    """把「資料庫少了某個欄位」翻成看得懂的話，而不是丟一句 PG 的 UndefinedColumn。
+
+    ⚠️ 這個訊息要講清楚**是環境沒升級、不是使用者操作錯**——這個專案吃過一次
+    「守衛訊息把欄位不存在寫成像是使用者做錯事」的虧，見專案記憶
+    `feedback_stale_backend_symptom`。
+
+    回 503 而不是 422：422 的語意是「你送的東西有問題」，但這裡是伺服器自己
+    還沒升級完，使用者換個輸入也沒用。
+    """
+    msg = str(exc)
+    for col, (full, revision) in _MIGRATION_HINTS.items():
+        if col in msg and ("does not exist" in msg or "UndefinedColumn" in msg or "no such column" in msg):
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    f"資料庫還缺少 {full} 欄位，這是**環境尚未升級**，不是操作問題。"
+                    f"請先在 backend 執行 `alembic -c alembic_cp.ini upgrade head`"
+                    f"（對應 revision `{revision}`），**再重啟後端**。"
+                    f"（順序反過來會因為缺欄位而整組端點 500）"
+                ),
+            )
+    return None
+
+
 def _handle(fn, *args, **kwargs):
-    """共用：把 SummaryServiceError 轉成 422，統一錯誤訊息格式。"""
+    """共用：把 SummaryServiceError 轉成 422，統一錯誤訊息格式。
+
+    另外攔「資料庫缺欄位」（migration 沒跑）並翻成 503 ＋ 可照做的指示，
+    見 _schema_guard。
+    """
     try:
         return fn(*args, **kwargs)
     except SummaryServiceError as e:
         raise HTTPException(status_code=422, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001 — 只攔缺欄位，其餘原樣往上丟
+        _schema_guard(e)
+        raise
 
 
 @router.get("/summary", response_model=List[SummaryOut], summary="週期採購彙整單清單")
@@ -85,7 +132,8 @@ def list_summary(
     _: User = Depends(require_any_permission("cycle_purchase_view", "cycle_purchase_buyer")),
     db: Session = Depends(get_cycle_purchase_db),
 ):
-    return svc.list_summary(
+    return _handle(
+        svc.list_summary,
         db, cycle_id=cycle_id, period_label=period_label,
         company=company, vendor_id=vendor_id, status=status_,
         department_id=department_id,
@@ -95,7 +143,7 @@ def list_summary(
 @router.get(
     "/summary/ragic-pushed",
     response_model=List[RagicPushedDocOut],
-    summary="已彙整 Ragic 採購單：把已拋轉的彙整列還原成一張張 Ragic 單據（可依拋轉日期篩選）",
+    summary="已彙整 Ragic 請購單：把已拋轉的彙整列還原成一張張 Ragic 單據（可依拋轉日期篩選）",
 )
 def list_ragic_pushed(
     start: Optional[date] = Query(None, description="拋轉日期起（含當天）"),
@@ -108,7 +156,10 @@ def list_ragic_pushed(
     """一列＝一張 Ragic 單據。日期篩選打在 **`ragic_pushed_at`（拋轉時間）**，
     不是期別——使用者問的是「這段時間我推了什麼」，8 月的期別可能 9 月才推。
     `start`／`end` 皆可省略（＝不限）。"""
-    return svc.list_ragic_pushed_documents(db, start=start, end=end, cycle_id=cycle_id, company=company)
+    return _handle(
+        svc.list_ragic_pushed_documents,
+        db, start=start, end=end, cycle_id=cycle_id, company=company,
+    )
 
 
 @router.get(
@@ -123,7 +174,7 @@ def ragic_pushed_date_range(
     """⚠️ CLAUDE.md §8.2：快捷要以**資料最後一天**為基準而不是今天。
     拋轉是人工動作、不是每天都有，用今天當基準「本月」很容易框到一段完全沒資料的
     區間，使用者會以為資料不見了。"""
-    return svc.ragic_pushed_date_range(db)
+    return _handle(svc.ragic_pushed_date_range, db)
 
 
 @router.get(
@@ -142,7 +193,7 @@ def get_ragic_link(
 
     **單筆深連結走另一條路**：拋轉當下就把完整網址存進
     `cycle_purchase_summary.ragic_record_url`（alembic_cp `cpragicurl`），
-    「依供應商分組」與「已彙整 Ragic 採購單」TAB 用的是那個值，不是這支。
+    「依供應商分組」與「已彙整 Ragic 請購單」TAB 用的是那個值，不是這支。
     """
     return {
         "url": (
@@ -167,7 +218,7 @@ def department_breakdown(
     _: User = Depends(require_any_permission("cycle_purchase_view", "cycle_purchase_buyer")),
     db: Session = Depends(get_cycle_purchase_db),
 ):
-    return svc.list_department_breakdown(db, cycle_id, period_label, company)
+    return _handle(svc.list_department_breakdown, db, cycle_id, period_label, company)
 
 
 @router.get(
@@ -182,7 +233,7 @@ def vendor_groups(
     _: User = Depends(require_permission("cycle_purchase_buyer")),
     db: Session = Depends(get_cycle_purchase_db),
 ):
-    return svc.list_vendor_groups(db, cycle_id, period_label, company)
+    return _handle(svc.list_vendor_groups, db, cycle_id, period_label, company)
 
 
 @router.get(
@@ -275,20 +326,35 @@ def convert_to_po(
 @router.post(
     "/summary/push-to-ragic",
     response_model=PushToRagicResult,
-    summary="拋轉到 Ragic「週採匯總請購單」(sheet 57)，依廠商拆單",
+    summary="拋轉到 Ragic「★週採請購單」(sheet 58)，依廠商＋部門拆單",
 )
 def push_to_ragic(
     payload: PushToRagicPayload,
     current_user: User = Depends(require_permission("cycle_purchase_buyer")),
     db: Session = Depends(get_cycle_purchase_db),
+    portal_db: Session = Depends(get_db),
 ):
-    """依廠商拆單真正寫入 Ragic。**部分成功也是 200**——成功的在 documents、
-    Ragic 拒絕的廠商在 failed、缺供應商或缺單價而沒送出去的列在 not_pushed，
-    前端要三段都顯示。要重推某個已拋轉的範圍，先呼叫
-    POST /summary/cancel-ragic-push 清掉標記。"""
+    """依「廠商＋部門」拆單真正寫入 Ragic。**部分成功也是 200**——成功的在
+    documents、Ragic 拒絕的在 failed、缺供應商／缺單價／部門沒對照 Ragic 部門
+    而沒送出去的列在 not_pushed，前端要三段都顯示。要重推某個已拋轉的範圍，
+    先呼叫 POST /summary/cancel-ragic-push 清掉標記。
+
+    `resolve_user_names`：Ragic 主表「請購人」要帶部門承辦人的**姓名**，但
+    承辦人 id 存在 cycle-purchase.db、姓名在 portal.db。service 層維持只碰
+    cycle-purchase.db（比照 cycle_purchase_masters._attach_owner_names 的做法），
+    跨庫查詢包成 callable 由這裡傳進去。
+    """
+    def _resolve_user_names(user_ids):
+        ids = [i for i in (user_ids or []) if i]
+        if not ids:
+            return {}
+        users = portal_db.query(User).filter(User.id.in_(ids)).all()
+        return {u.id: u.full_name for u in users}
+
     return _handle(
         svc.push_summary_to_ragic,
         db, payload.cycle_id, payload.period_label, payload.company, current_user,
+        resolve_user_names=_resolve_user_names,
     )
 
 

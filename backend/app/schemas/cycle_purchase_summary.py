@@ -134,6 +134,17 @@ class ConvertToPoPayload(BaseModel):
     vendor_id: int
 
 
+class RagicDocRef(BaseModel):
+    """一張 Ragic 單據的參照（2026-09-18 新增）。
+
+    拋轉拆單粒度是「公司＋期別＋廠商＋部門」，所以「公司＋廠商」這一組會對到
+    一張以上的 Ragic 單，每一張各自有編號、網址與所屬部門。"""
+    ragic_record_id: Optional[str] = None
+    ragic_record_url: Optional[str] = None
+    ragic_push_batch_no: Optional[str] = None
+    department_name: Optional[str] = None
+
+
 class VendorGroupOut(BaseModel):
     """給「轉採購單」畫面用：某週期＋期別＋公司下，還沒轉單的彙整列依供應商分組統計。"""
     company: str
@@ -142,12 +153,15 @@ class VendorGroupOut(BaseModel):
     item_count: int
     total_amount: Decimal
     has_missing_vendor: bool = False
-    # 2026-09-15 新增：這一組對應的 Ragic 單據。拋轉是依廠商拆單，所以
-    # 「公司＋廠商」與 Ragic 單據是一對一，可以直接掛在這一層。
+    # 2026-09-15 新增：這一組對應的 Ragic 單據。
+    # ⚠️ 2026-09-18 起拋轉依「廠商＋部門」拆單，「公司＋廠商」與 Ragic 單據
+    #    **不再是一對一**，畫面要顯示的是下面的 ragic_docs；這三個單一欄位
+    #    留著是為了相容（值＝其中第一張）。
     ragic_pushed: bool = False
-    ragic_record_id: Optional[str] = None       # 給人看的採購編號，如 樂管週採00003
+    ragic_record_id: Optional[str] = None       # 給人看的編號，如 樂管購20260900001
     ragic_record_url: Optional[str] = None      # 單筆網址；2026-09-15 之前拋轉的列為 None
     ragic_push_batch_no: Optional[str] = None
+    ragic_docs: list[RagicDocRef] = []
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -199,13 +213,16 @@ class CancelRagicPushResult(BaseModel):
 
 
 class RagicPushedDocOut(BaseModel):
-    """「已彙整 Ragic 採購單」TAB：一列＝**一張 Ragic 單據**（不是一個彙整列）。
+    """「已彙整 Ragic 請購單」TAB：一列＝**一張 Ragic 單據**（不是一個彙整列）。
 
-    分組鍵是 `(ragic_push_batch_no, vendor_id)`，因為拋轉是依廠商拆單；
-    不用 ragic_record_id 分組是為了相容 stub 時期共用假值的舊資料。
+    分組鍵是 `(ragic_push_batch_no, vendor_id, ragic_record_id)`。
+    2026-09-18 起拋轉依「廠商＋部門」拆單，同一批次同一家廠商會有多張 Ragic 單，
+    所以鍵裡一定要有 `ragic_record_id`；但刻意**不用 department_id**——
+    2026-09-18 之前的舊單據本來就跨多部門，用部門當鍵會把一張錯誤拆成好幾列。
+    stub 時期共用假值的舊資料則靠 vendor_id 分得開。
     """
     ragic_push_batch_no: Optional[str] = None
-    ragic_record_id: Optional[str] = None       # Ragic 採購編號，如 樂管週採00003
+    ragic_record_id: Optional[str] = None       # Ragic 編號，如 樂管購20260900001
     ragic_record_url: Optional[str] = None      # 單筆網址；2026-09-15 之前拋轉的為 None
     cycle_id: int
     cycle_name: Optional[str] = None
@@ -230,18 +247,25 @@ class RagicPushedDateRange(BaseModel):
 
 
 class PushToRagicPayload(BaseModel):
-    """拋轉到 Ragic：把某週期＋期別＋公司範圍內的彙整列，**依廠商拆成多張**
-    「週採匯總請購單」寫進 Ragic sheet 57
-    （見 services/cycle_purchase_ragic_push.py）。"""
+    """拋轉到 Ragic：把某週期＋期別＋公司範圍內的彙整列，**依廠商＋部門拆成多張**
+    「★週採請購單」寫進 Ragic sheet 58
+    （2026-09-18 改版，原本是 sheet 57 週採採購單；見
+    services/cycle_purchase_ragic_push.py 檔頭）。"""
     cycle_id: int
     period_label: str
     company: str
 
 
 class PushedDocument(BaseModel):
-    """本次成功寫進 Ragic 的其中一張單（一家廠商一張）。"""
+    """本次成功寫進 Ragic 的其中一張單。
+
+    ⚠️ 2026-09-18 起拆單粒度是「公司＋期別＋**廠商＋部門**」，一家廠商可能對到
+    多張單（sheet 58 主表的「部門」是必填單選，一張單只放得下一個部門），
+    所以前端顯示時 vendor_name 一定要配 department_name 一起看。"""
     vendor_id: Optional[int] = None
     vendor_name: Optional[str] = None
+    department_id: Optional[int] = None
+    department_name: Optional[str] = None
     ragic_record_id: Optional[str] = None       # Ragic 內部 _ragicId
     ragic_no: Optional[str] = None              # Ragic 表單上的採購編號，如 樂管週採00003
     ragic_record_url: Optional[str] = None      # 單筆網址
@@ -260,8 +284,12 @@ class NotPushedRow(BaseModel):
 
 
 class FailedVendor(BaseModel):
-    """Ragic 拒絕或連線失敗的廠商（其他家仍然會照推）。"""
+    """Ragic 拒絕或連線失敗的那一張單（其他張仍然會照推）。
+
+    2026-09-18 起拆單含部門，同一家廠商可能一張成功一張失敗，
+    所以這裡也要帶 department_name 才分得出是哪一張。"""
     vendor_name: Optional[str] = None
+    department_name: Optional[str] = None
     error: str
 
 

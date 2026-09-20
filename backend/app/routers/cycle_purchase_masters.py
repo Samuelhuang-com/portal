@@ -19,7 +19,10 @@ from app.core.cycle_purchase_database import get_cycle_purchase_db
 from app.core.database import get_db
 from app.dependencies import get_current_user, require_permission
 from app.models.user import User
-from app.schemas.cycle_purchase_vendor import VendorCreate, VendorOut, VendorUpdate
+from app.schemas.cycle_purchase_vendor import (
+    VendorCreate, VendorLinkPayload, VendorMergePayload, VendorMergeResult,
+    VendorOut, VendorUpdate,
+)
 from app.schemas.cycle_purchase_reference import (
     DepartmentCreate, DepartmentOut, DepartmentUpdate,
     CostCenterCreate, CostCenterOut, CostCenterUpdate,
@@ -56,14 +59,80 @@ def _attach_owner_names(portal_db: Session, depts) -> None:
 
 # ── 供應商主檔 ────────────────────────────────────────────────────────────────
 
+class ContractVendorOut(BaseModel):
+    """合約模組廠商主檔的精簡樣貌，只給「對照合約廠商」下拉選單用。"""
+    vendor_id: str
+    vendor_name: str
+    tax_id: Optional[str] = None
+    ragic_id: Optional[str] = None
+
+
+def _attach_source_vendor_names(rows, portal_db: Session) -> None:
+    """補上 source_vendor_name（合約廠商名稱）。
+
+    合約主檔在 portal.db、供應商表在 cycle-purchase.db，跨庫關聯不了
+    （見 core/cycle_purchase_database.py 開頭：不做 ATTACH DATABASE），
+    所以比照 _attach_owner_names 的做法在 router 這層補。
+    """
+    ids = {r.source_vendor_id for r in rows if r.source_vendor_id}
+    name_map: dict = {}
+    if ids:
+        from app.models.contract import Vendor as ContractVendor
+        found = portal_db.query(ContractVendor).filter(
+            ContractVendor.vendor_id.in_(ids)
+        ).all()
+        name_map = {v.vendor_id: v.vendor_name for v in found}
+    for r in rows:
+        r.source_vendor_name = name_map.get(r.source_vendor_id)
+
+
 @router.get("/vendors", response_model=List[VendorOut], summary="供應商主檔清單")
 def list_vendors(
     q: str = Query("", description="關鍵字（供應商代碼／名稱）"),
     is_active: Optional[bool] = Query(None),
+    unlinked_only: bool = Query(False, description="只列出尚未對照到合約廠商的（找孤兒用）"),
     _: User = Depends(require_permission("cycle_purchase_view")),
     db: Session = Depends(get_cycle_purchase_db),
+    portal_db: Session = Depends(get_db),
 ):
-    return svc.list_vendors(db, is_active=is_active, q=q)
+    rows = svc.list_vendors(db, is_active=is_active, q=q)
+    if unlinked_only:
+        rows = [r for r in rows if not r.source_vendor_id]
+    _attach_source_vendor_names(rows, portal_db)
+    return rows
+
+
+@router.get(
+    "/contract-vendors",
+    response_model=List[ContractVendorOut],
+    summary="合約模組廠商主檔（給「對照合約廠商」下拉選單用）",
+)
+def list_contract_vendors(
+    q: str = Query("", description="關鍵字（名稱／統編）"),
+    _: User = Depends(require_permission("cycle_purchase_view")),
+    portal_db: Session = Depends(get_db),
+):
+    """⚠️ 這是**合約模組**的廠商（portal.db `vendors`），不是週採自己的供應商。
+
+    合約主檔的名稱同步自 Ragic 廠商資料表，所以是**全名**——而 Ragic 拋轉時
+    主表「廠商(一)」只認全名（Link 欄位）。週採供應商對照到這裡之後，
+    同步就會把名稱覆蓋成全名，拋轉才對得上。
+    """
+    from app.models.contract import Vendor as ContractVendor
+    query = portal_db.query(ContractVendor)
+    if q:
+        like = f"%{q}%"
+        query = query.filter(
+            (ContractVendor.vendor_name.ilike(like)) | (ContractVendor.tax_id.ilike(like))
+        )
+    rows = query.order_by(ContractVendor.vendor_name).limit(500).all()
+    return [
+        ContractVendorOut(
+            vendor_id=v.vendor_id, vendor_name=v.vendor_name,
+            tax_id=v.tax_id or None, ragic_id=v.ragic_id,
+        )
+        for v in rows
+    ]
 
 
 @router.post("/vendors", response_model=VendorOut, status_code=status.HTTP_201_CREATED, summary="新增供應商")
@@ -136,6 +205,76 @@ def update_vendor(
     if not vendor:
         raise HTTPException(status_code=404, detail="供應商不存在")
     return vendor
+
+
+@router.put(
+    "/vendors/{vendor_id}/link",
+    response_model=VendorOut,
+    summary="把週採供應商對照到合約模組的廠商（或解除對照）",
+)
+def link_vendor(
+    vendor_id: int,
+    payload: VendorLinkPayload,
+    _: User = Depends(require_permission("cycle_purchase_admin")),
+    db: Session = Depends(get_cycle_purchase_db),
+    portal_db: Session = Depends(get_db),
+):
+    """⚠️ 刻意獨立於 PUT /vendors/{id}：一般編輯**永遠不吃** source_vendor_id
+    （見 services.update_vendor），對照是一個明確的動作，不該混在一般編輯裡
+    被不小心改掉。
+
+    對照完之後要按「自合約模組同步」，名稱等欄位才會被覆蓋成合約主檔的全名
+    （拋轉 Ragic 需要全名，見 services.link_vendor_to_contract 的說明）。
+    """
+    if payload.source_vendor_id:
+        from app.models.contract import Vendor as ContractVendor
+        exists = portal_db.query(ContractVendor).filter(
+            ContractVendor.vendor_id == payload.source_vendor_id
+        ).first()
+        if not exists:
+            raise HTTPException(
+                status_code=404,
+                detail=f"合約模組裡沒有廠商 {payload.source_vendor_id}",
+            )
+    try:
+        vendor = svc.link_vendor_to_contract(db, vendor_id, payload.source_vendor_id)
+    except svc.VendorLinkError as e:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(e))
+    if not vendor:
+        raise HTTPException(status_code=404, detail="供應商不存在")
+    _attach_source_vendor_names([vendor], portal_db)
+    return vendor
+
+
+@router.post(
+    "/vendors/{vendor_id}/merge",
+    response_model=VendorMergeResult,
+    summary="把這筆供應商併入另一筆（料號對照／彙整列／採購單的參照一起搬過去）",
+)
+def merge_vendor(
+    vendor_id: int,
+    payload: VendorMergePayload,
+    _: User = Depends(require_permission("cycle_purchase_admin")),
+    db: Session = Depends(get_cycle_purchase_db),
+):
+    """⚠️ 這支會改動**歷史資料**（既有的料號對照與彙整列），所以：
+
+    * 先用 `dry_run=true` 試算，畫面顯示「會搬動 N 筆料號對照、M 筆彙整列」再讓人確認；
+    * 來源供應商是**停用**不是刪除（採購單的外鍵是 RESTRICT，而且停用可逆）。
+
+    用途見 services.merge_vendor 的說明：週採有 15 家「簡稱孤兒」與正本重複，
+    料號對照指著簡稱那一筆，拋轉到 Ragic 時廠商欄會是空的。
+    """
+    try:
+        fn = svc.preview_vendor_merge if payload.dry_run else svc.merge_vendor
+        result = fn(db, vendor_id, payload.target_vendor_id)
+    except svc.VendorMergeError as e:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(e))
+    if not result:
+        raise HTTPException(status_code=404, detail="來源或目標供應商不存在")
+    return result
 
 
 # ── 部門主檔 ──────────────────────────────────────────────────────────────────

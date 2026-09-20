@@ -22,6 +22,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
+from app.services import cycle_purchase_seq as seq
 from app.models.cycle_purchase_receiving import CyclePurchaseReceiving, CyclePurchaseReceivingItem
 from app.models.cycle_purchase_po import CyclePurchasePO, CyclePurchasePOItem
 from app.models.cycle_purchase_vendor import CyclePurchaseVendor
@@ -49,14 +50,14 @@ def _attach_receiving_display_fields(db: Session, receiving: CyclePurchaseReceiv
 
 
 def _next_receiving_no(db: Session, on_date: date) -> str:
+    """2026-09-20：從 COUNT(*)+1 改成最大號+1。
+
+    receiving_no 是 UNIQUE —— 這個月只要刪過一張收貨單，COUNT(*)+1 就會倒退去
+    撞還活著的號碼，之後每一次收貨都必定 500（請購單已經實際踩過，
+    見 CHANGELOG [2.10.39] 與 services/cycle_purchase_seq.py 檔頭）。
+    """
     prefix = f"RC-{on_date.strftime('%Y%m')}-"
-    count = (
-        db.query(func.count(CyclePurchaseReceiving.id))
-        .filter(CyclePurchaseReceiving.receiving_no.like(f"{prefix}%"))
-        .scalar()
-        or 0
-    )
-    return f"{prefix}{count + 1:04d}"
+    return seq.next_no(db, CyclePurchaseReceiving.receiving_no, prefix, 4)
 
 
 def _cumulative_received_qty(db: Session, po_item_id: int, exclude_receiving_id: Optional[int] = None) -> int:

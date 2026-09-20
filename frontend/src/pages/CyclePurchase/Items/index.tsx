@@ -51,6 +51,43 @@ const CATEGORY_OPTIONS = [
 // 篩選「未設定」哨兵值（與後端 cycle_purchase_service.ITEM_UNSET 一致）
 const UNSET = '__none__'
 
+/**
+ * 編輯料號 Modal 裡那張對照表的一列。
+ * id 有值 ＝ 後端已存在的對照列；沒有 ＝ 使用者剛按「新增一列」還沒存。
+ * key 是畫面用的穩定 rowKey，不送後端。
+ */
+type MappingRow = {
+  key: string
+  id?: number
+  company?: string
+  department_id?: number
+  account_code_id?: number | null
+  original_unit_price?: number | null
+}
+
+let mappingRowSeq = 0
+const newMappingRowKey = () => `new-${++mappingRowSeq}`
+
+const toMappingRow = (m: CpItemMapping): MappingRow => ({
+  key: `db-${m.id}`,
+  id: m.id,
+  company: m.company,
+  department_id: m.department_id ?? undefined,
+  account_code_id: m.account_code_id ?? null,
+  original_unit_price:
+    m.original_unit_price === null || m.original_unit_price === undefined
+      ? null
+      : Number(m.original_unit_price),
+})
+
+// 只比對這張表管得到的四個欄位。其餘欄位（原始料號／品名／廠商／已確認）
+// 仍由「料號對照」Modal 維護，這裡送更新時走 exclude_unset 不會動到它們。
+const mappingRowChanged = (a: MappingRow, b: MappingRow) =>
+  a.company !== b.company
+  || a.department_id !== b.department_id
+  || (a.account_code_id ?? null) !== (b.account_code_id ?? null)
+  || (a.original_unit_price ?? null) !== (b.original_unit_price ?? null)
+
 export default function CpItemsPage() {
   const [items, setItems] = useState<CpItem[]>([])
   const [total, setTotal] = useState(0)
@@ -74,12 +111,15 @@ export default function CpItemsPage() {
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState<CpItem | null>(null)
   const [form] = Form.useForm()
-  // 2026-08-17 新增：編輯料號 Modal 內直接可編／新增公司+部門（見下方
-  // openEdit／handleSubmit 說明）。這兩個 state 記錄「目前這個料號有幾筆
-  // 對照」，用來決定要不要在這個 Modal 顯示可編輯欄位。
-  const [editItemMappings, setEditItemMappings] = useState<CpItemMapping[]>([])
-  const [editSingleMapping, setEditSingleMapping] = useState<CpItemMapping | null>(null)
-  const editCompany = Form.useWatch('company', form)
+  // 2026-09-20 改版（0919 會議 N1）：編輯料號 Modal 內直接編一張「公司／部門／
+  // 會計科目／原始單價」對照表。
+  //   · mappingRows      ＝ 畫面上正在編的工作清單（含還沒存回後端的新列）
+  //   · mappingRowsBase  ＝ 打開 Modal 當下的後端原始狀態，送出時用來 diff
+  //                        （哪些要新增、哪些要更新、哪些被刪掉）
+  // 2026-08-17 的舊作法是「只有 0～1 筆對照時才給編」，>1 筆只能看 Tag ——
+  // 撐不住真實資料（一個料號＝一個公司＋多個部門＋多個科目），見下方表格註解。
+  const [mappingRows, setMappingRows] = useState<MappingRow[]>([])
+  const [mappingRowsBase, setMappingRowsBase] = useState<MappingRow[]>([])
 
   const [mappingItem, setMappingItem] = useState<CpItemDetail | null>(null)
   const [mappingModalOpen, setMappingModalOpen] = useState(false)
@@ -101,12 +141,26 @@ export default function CpItemsPage() {
     () => accountCodes.map((a) => ({ label: `${a.code} ${a.name}`, value: a.id })),
     [accountCodes],
   )
-  const editDepartmentOptions = useMemo(
-    () => departments
-      .filter((d) => d.company === editCompany)
-      .map((d) => ({ label: d.dept_name, value: d.id })),
-    [departments, editCompany],
-  )
+  // 對照表每一列的公司都可能不同，部門選單要按「那一列的公司」過濾，
+  // 不能再用單一個 Form.useWatch('company')。
+  const departmentOptionsOf = (company?: string) =>
+    departments
+      .filter((d) => d.company === company)
+      .map((d) => ({ label: d.dept_name, value: d.id }))
+
+  // 重複判斷鍵＝公司＋部門（2026-09-20 Samuel 裁示，不含會計科目）。
+  // 回傳「與前面某列撞號」的那些列 key，畫面上標紅、送出時擋下。
+  const duplicateRowKeys = useMemo(() => {
+    const seen = new Map<string, string>()
+    const dup = new Set<string>()
+    for (const r of mappingRows) {
+      if (!r.company || !r.department_id) continue
+      const k = `${r.company}|${r.department_id}`
+      const first = seen.get(k)
+      if (first) { dup.add(r.key); dup.add(first) } else { seen.set(k, r.key) }
+    }
+    return dup
+  }, [mappingRows])
 
   // 篩選列：公司 → 部門 兩層（可只選公司）
   const companyDeptFilterOptions = useMemo(
@@ -173,94 +227,112 @@ export default function CpItemsPage() {
 
   const openCreate = () => {
     setEditing(null)
-    setEditItemMappings([])
-    setEditSingleMapping(null)
+    setMappingRows([])
+    setMappingRowsBase([])
     form.resetFields()
     form.setFieldsValue({ is_active: true, is_cycle_item: true, default_qty: 0, moq: 0 })
     setModalOpen(true)
   }
 
-  // 2026-08-17：改成 async，多打一次 getItem 撈這個料號目前的對照筆數。
-  // 只有 0～1 筆時才把公司/部門欄位顯示成可編輯（見下方表單），>1 筆（少數
-  // 共用料號）不知道要編輯哪一筆，維持原本「請到料號對照管理」的路徑。
+  // 2026-08-17：改成 async，多打一次 getItem 撈這個料號目前的對照列。
+  // 2026-09-20：不再只在 0～1 筆時給編，整批都載進工作清單，直接在表格上編。
   const openEdit = async (item: CpItem) => {
     setEditing(item)
     form.resetFields()
     form.setFieldsValue(item)
+    setMappingRows([])
+    setMappingRowsBase([])
     setModalOpen(true)
     try {
       const r = await getItem(item.id)
-      const mappings = r.data.mappings || []
-      setEditItemMappings(mappings)
-      if (mappings.length === 1) {
-        setEditSingleMapping(mappings[0])
-        form.setFieldsValue({
-          company: mappings[0].company,
-          department_id: mappings[0].department_id,
-          // 2026-08-21：會計科目也存在對照表上，一併帶進表單（同上，只有 0～1
-          // 筆對照時才可在這裡直接編輯）。
-          account_code_id: mappings[0].account_code_id ?? undefined,
-        })
-      } else {
-        setEditSingleMapping(null)
-      }
+      const rows = (r.data.mappings || []).map(toMappingRow)
+      setMappingRows(rows)
+      setMappingRowsBase(rows)
     } catch {
-      setEditItemMappings([])
-      setEditSingleMapping(null)
+      setMappingRows([])
+      setMappingRowsBase([])
     }
   }
 
+  // ── 對照表工作清單的增／刪／改 ──────────────────────────────────────────
+  const addMappingRow = () =>
+    setMappingRows((rows) => [...rows, { key: newMappingRowKey(), account_code_id: null, original_unit_price: null }])
+
+  const removeMappingRow = (key: string) =>
+    setMappingRows((rows) => rows.filter((r) => r.key !== key))
+
+  const patchMappingRow = (key: string, patch: Partial<MappingRow>) =>
+    setMappingRows((rows) => rows.map((r) => (r.key === key ? { ...r, ...patch } : r)))
+
   const handleSubmit = async () => {
+    // ── 先把對照表本身檢查完，不要等料號都存好了才發現對照有問題 ──────────
+    const incomplete = mappingRows.filter((r) => !r.company || !r.department_id)
+    if (incomplete.length) {
+      message.error('對照表有列沒選完公司或部門，請補齊或刪掉該列')
+      return
+    }
+    if (duplicateRowKeys.size) {
+      message.error('對照表有重複的「公司＋部門」，同一個料號的同一個公司＋部門只能有一列')
+      return
+    }
+
     try {
       const values = await form.validateFields()
-      // company／department_id／account_code_id 是這裡的便利欄位，不屬於
-      // ItemUpdate/ItemCreate schema，要拆開來另外走料號對照的 API；
       // company_departments／account_code_labels 是列表顯示用的衍生欄位，
-      // 會被 form.setFieldsValue(item) 帶進表單，送出前也要拿掉。
-      const {
-        company, department_id, account_code_id,
-        company_departments, account_code_labels,
-        ...itemValues
-      } = values as any
+      // 會被 form.setFieldsValue(item) 帶進表單，送出前要拿掉。
+      const { company_departments, account_code_labels, ...itemValues } = values as any
       let itemId: number
       if (editing) {
         await updateItem(editing.id, itemValues)
         itemId = editing.id
-        message.success('更新成功')
       } else {
         const res = await createItem(itemValues)
         itemId = res.data.id
-        message.success('新增成功')
       }
 
-      // 只有 0～1 筆對照時欄位才會出現在表單上；company/department_id 都有值
-      // 才動作，任一沒填就當作「這次不設定」，不強迫一定要填。
-      if (editItemMappings.length <= 1 && company && department_id) {
-        // 2026-08-21：會計科目也一起送。account_code_id 清空時要送 null（不是
-        // undefined），否則後端 exclude_unset 會當成「這次沒動到」而清不掉。
-        const nextAccountCodeId = account_code_id ?? null
-        if (editSingleMapping) {
-          if (
-            editSingleMapping.company !== company
-            || editSingleMapping.department_id !== department_id
-            || (editSingleMapping.account_code_id ?? null) !== nextAccountCodeId
-          ) {
-            await updateItemMapping(itemId, editSingleMapping.id, {
-              company, department_id, account_code_id: nextAccountCodeId,
-            })
-          }
-        } else {
-          await createItemMapping(itemId, {
-            company, department_id, account_code_id: nextAccountCodeId, is_confirmed: false,
-          })
-        }
+      // ── 對照表 diff ────────────────────────────────────────────────────
+      // 順序刻意是「先刪、再改、最後新增」：後端唯一鍵是（料號＋公司＋部門），
+      // 先把讓出位置的列處理掉，才不會在中途撞到自己等一下要刪的那列。
+      // ⚠️ 已知例外：兩列互換部門（A:管理→行銷、B:行銷→管理）還是會撞，
+      //    後端會回 409 講清楚是哪一組，使用者分兩次存即可。
+      const baseById = new Map(mappingRowsBase.filter((r) => r.id).map((r) => [r.id!, r]))
+      const keptIds = new Set(mappingRows.filter((r) => r.id).map((r) => r.id!))
+
+      for (const b of mappingRowsBase) {
+        if (b.id && !keptIds.has(b.id)) await deleteItemMapping(itemId, b.id)
+      }
+      for (const r of mappingRows) {
+        if (!r.id) continue
+        const b = baseById.get(r.id)
+        if (b && !mappingRowChanged(r, b)) continue
+        await updateItemMapping(itemId, r.id, {
+          company: r.company!,
+          department_id: r.department_id!,
+          // 清空時要送 null（不是 undefined），否則後端 exclude_unset 會當成
+          // 「這次沒動到」而清不掉。
+          account_code_id: r.account_code_id ?? null,
+          original_unit_price: r.original_unit_price ?? null,
+        })
+      }
+      for (const r of mappingRows) {
+        if (r.id) continue
+        await createItemMapping(itemId, {
+          company: r.company!,
+          department_id: r.department_id!,
+          account_code_id: r.account_code_id ?? null,
+          original_unit_price: r.original_unit_price ?? null,
+          is_confirmed: false,
+        })
       }
 
+      message.success(editing ? '更新成功' : '新增成功')
       setModalOpen(false)
       load()
     } catch (err: any) {
       const detail = err?.response?.data?.detail
       if (detail) message.error(detail)
+      // 料號本身可能已經存好、對照才失敗，重載讓畫面回到真實狀態。
+      load()
     }
   }
 
@@ -462,6 +534,8 @@ export default function CpItemsPage() {
       </Card>
 
       {/* 新增／編輯料號 */}
+      {/* 2026-09-20：Modal 寬度 640 → 1040。公司／部門／會計科目／原始單價 排成
+          一列之後，640 寬會讓每個下拉都窄到看不見完整的部門名與科目名。 */}
       <Modal
         title={editing ? '編輯料號' : '新增料號'}
         open={modalOpen}
@@ -469,7 +543,7 @@ export default function CpItemsPage() {
         onCancel={() => setModalOpen(false)}
         okText="儲存"
         cancelText="取消"
-        width={640}
+        width={1040}
       >
         <Form form={form} layout="vertical" style={{ marginTop: 16 }}>
           <Space.Compact block>
@@ -487,98 +561,142 @@ export default function CpItemsPage() {
             <Input />
           </Form.Item>
 
-          {/* 2026-08-17 新增：公司/部門。這個欄位其實存在「料號對照」子表，
-              一個料號可能對到多組公司/部門（少數共用料號）。只有 0～1 筆對照
-              時才在這裡直接編輯，>1 筆時不知道要編輯哪一筆，改顯示現有對照
-              清單＋跳到「料號對照」管理的按鈕。 */}
-          {editItemMappings.length <= 1 ? (
-            <Space.Compact block>
-              <Form.Item
-                name="company"
-                label="公司"
-                style={{ width: '50%' }}
-                extra={editItemMappings.length === 0 ? '留空 = 先不設定，之後可在「料號對照」新增' : undefined}
-                rules={[{
-                  validator: (_, value) =>
-                    form.getFieldValue('department_id') && !value
-                      ? Promise.reject(new Error('請選公司'))
-                      : Promise.resolve(),
-                }]}
-              >
-                <Select
-                  allowClear
-                  showSearch
-                  placeholder="選擇公司"
-                  options={companyOptions}
-                  onChange={() => form.setFieldValue('department_id', undefined)}
-                />
-              </Form.Item>
-              <Form.Item
-                name="department_id"
-                label="部門"
-                style={{ width: '50%', marginLeft: 8 }}
-                rules={[{
-                  validator: (_, value) =>
-                    form.getFieldValue('company') && !value
-                      ? Promise.reject(new Error('請選部門'))
-                      : Promise.resolve(),
-                }]}
-              >
-                <Select
-                  allowClear
-                  showSearch
-                  optionFilterProp="label"
-                  placeholder={editCompany ? '選擇部門' : '請先選公司'}
-                  disabled={!editCompany}
-                  options={editDepartmentOptions}
-                />
-              </Form.Item>
-            </Space.Compact>
-          ) : (
-            <Form.Item label="公司/部門">
-              <Space direction="vertical" style={{ width: '100%' }}>
-                <Text type="secondary" style={{ fontSize: 12 }}>
-                  這個料號目前對到 {editItemMappings.length} 組公司/部門，請到「料號對照」管理，不在這裡直接編輯。
-                </Text>
-                <Space wrap>
-                  {editItemMappings.map((m) => (
-                    <Tag key={m.id}>
-                      {m.company}／{m.department_name || '未設定'}
-                      {m.account_code_label ? `／${m.account_code_label}` : ''}
-                    </Tag>
-                  ))}
-                </Space>
+          {/* ── 公司／部門／會計科目／原始單價 對照表 ───────────────────────
+              2026-09-20 改版（0919 會議 N1）。原本這三個欄位是「只有 0～1 筆對照
+              時才給編輯」的單組欄位，>1 筆就只能看 Tag、得跳到「料號對照」Modal。
+              撐不住真實資料 —— 一個料號本來就是「一個公司 ＋ 多個部門 ＋ 多個科目」：
+                五月花大捲筒衛生紙 #0105054 ＝ 春大直＋管理部＋6238 清潔費
+                                          ＝ 春大直＋行銷部＋6241 雜項支出
+              這也是「文具用品只有 4 個部門能請購」的原因（一個料號只設得了一個部門）。
+              改成直接在這裡編一張表，每列一組。
+
+              ⚠️ 重複的判斷鍵是「公司＋部門」，**不含會計科目**（2026-09-20 Samuel 裁示）。
+                 請購單建立明細時是用 (公司, 部門) 去抓這筆對照來帶科目與單價
+                 （request_service.add_request_item 的 .first()），一個部門掛兩個
+                 科目那裡就會隨機挑一筆。要改成一部門多科目，得先決定請購單怎麼選。
+
+              ⚠️ 「原始單價」放進這張表是刻意的：請購單的單價就是抓這一欄
+                 （mapping.original_unit_price）。新增一列卻沒填單價，那個部門請購
+                 出來沒價錢，彙整單會以「缺單價」擋下不拋轉。
+
+              其餘欄位（原始料號／原始品名／原始廠商／已確認）仍在「料號對照」Modal
+              維護；這裡送更新時走 exclude_unset，不會動到它們。 */}
+          <Form.Item
+            label="公司 / 部門 / 會計科目"
+            style={{ marginBottom: 12 }}
+            extra="一個料號可以對到多組公司＋部門，各自有自己的會計科目與單價。同一組公司＋部門只能有一列。"
+          >
+            <Table<MappingRow>
+              size="small"
+              rowKey="key"
+              dataSource={mappingRows}
+              pagination={false}
+              locale={{ emptyText: '尚未設定任何公司／部門，請按下方「新增一列」' }}
+              columns={[
+                {
+                  title: <span><span style={{ color: '#ff4d4f' }}>*</span> 公司</span>,
+                  dataIndex: 'company',
+                  width: 170,
+                  render: (_: unknown, r: MappingRow) => (
+                    <Select
+                      style={{ width: '100%' }}
+                      showSearch
+                      placeholder="選擇公司"
+                      status={duplicateRowKeys.has(r.key) ? 'error' : undefined}
+                      value={r.company}
+                      options={companyOptions}
+                      // 換公司時部門一定要清掉：部門選單是依公司過濾的，
+                      // 留著舊部門會存進一筆別家公司的部門 id。
+                      onChange={(v) => patchMappingRow(r.key, { company: v, department_id: undefined })}
+                    />
+                  ),
+                },
+                {
+                  title: <span><span style={{ color: '#ff4d4f' }}>*</span> 部門</span>,
+                  dataIndex: 'department_id',
+                  width: 170,
+                  render: (_: unknown, r: MappingRow) => (
+                    <Select
+                      style={{ width: '100%' }}
+                      showSearch
+                      optionFilterProp="label"
+                      placeholder={r.company ? '選擇部門' : '請先選公司'}
+                      disabled={!r.company}
+                      status={duplicateRowKeys.has(r.key) ? 'error' : undefined}
+                      value={r.department_id}
+                      options={departmentOptionsOf(r.company)}
+                      onChange={(v) => patchMappingRow(r.key, { department_id: v })}
+                    />
+                  ),
+                },
+                {
+                  title: '會計科目',
+                  dataIndex: 'account_code_id',
+                  render: (_: unknown, r: MappingRow) => (
+                    <Select
+                      style={{ width: '100%' }}
+                      allowClear
+                      showSearch
+                      optionFilterProp="label"
+                      placeholder="留空 = 尚未設定"
+                      value={r.account_code_id ?? undefined}
+                      options={accountCodeOptions}
+                      onChange={(v) => patchMappingRow(r.key, { account_code_id: v ?? null })}
+                    />
+                  ),
+                },
+                {
+                  title: '原始單價',
+                  dataIndex: 'original_unit_price',
+                  width: 120,
+                  render: (_: unknown, r: MappingRow) => (
+                    <InputNumber
+                      style={{ width: '100%' }}
+                      min={0}
+                      precision={2}
+                      step={0.01}
+                      placeholder="未設定"
+                      value={r.original_unit_price ?? undefined}
+                      onChange={(v) => patchMappingRow(r.key, { original_unit_price: v ?? null })}
+                    />
+                  ),
+                },
+                {
+                  title: '',
+                  key: 'actions',
+                  width: 90,
+                  render: (_: unknown, r: MappingRow) => (
+                    <Space size={4}>
+                      {duplicateRowKeys.has(r.key) && <Tag color="red">重複</Tag>}
+                      <Button
+                        size="small"
+                        danger
+                        icon={<DeleteOutlined />}
+                        onClick={() => removeMappingRow(r.key)}
+                      />
+                    </Space>
+                  ),
+                },
+              ]}
+            />
+            <Space style={{ marginTop: 8 }}>
+              <Button size="small" icon={<PlusOutlined />} onClick={addMappingRow}>新增一列</Button>
+              {editing && (
                 <Button
                   size="small"
                   icon={<ApartmentOutlined />}
-                  onClick={() => { setModalOpen(false); if (editing) openMappings(editing) }}
+                  onClick={() => { setModalOpen(false); openMappings(editing) }}
                 >
-                  前往料號對照管理
+                  原始料號／品名／廠商…（料號對照管理）
                 </Button>
-              </Space>
-            </Form.Item>
-          )}
-
-          {/* 2026-08-21 新增：會計科目。跟公司/部門一樣存在「料號對照」子表
-              （因為《設料號明細表》的會科是按部門欄位填的，同一料號在不同部門
-              可能記到不同科目，例：E0204002 軌道燈 工程部 621601／營業部 1142），
-              所以同樣只在 0～1 筆對照時才在這裡直接編輯。請購單建立明細時會自動
-              帶入這個科目當快照，請購單畫面不再讓填單人手選。 */}
-          {editItemMappings.length <= 1 && (
-            <Form.Item
-              name="account_code_id"
-              label="會計科目"
-              extra="請購單會自動帶入這個科目，填單人不需要再選。留空 = 尚未設定。"
-            >
-              <Select
-                allowClear
-                showSearch
-                optionFilterProp="label"
-                placeholder="選擇會計科目"
-                options={accountCodeOptions}
-              />
-            </Form.Item>
-          )}
+              )}
+            </Space>
+            {duplicateRowKeys.size > 0 && (
+              <Text type="danger" style={{ display: 'block', marginTop: 8, fontSize: 12 }}>
+                有重複的「公司＋部門」（標紅那幾列），同一個料號的同一個公司＋部門只能有一列。請修正後再儲存。
+              </Text>
+            )}
+          </Form.Item>
 
           <Space.Compact block>
             <Form.Item name="unit" label="單位" style={{ width: '25%' }}>

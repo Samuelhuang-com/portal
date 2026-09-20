@@ -52,6 +52,12 @@ class CyclePurchaseDepartment(CyclePurchaseBase):
                                    comment="跨庫對照鍵，對應 portal.db RefDepartment.id；"
                                             "NULL=本地自建，同步不覆蓋不刪除")
 
+    # ⚠️ 2026-09-20 移除 `ragic_dept`（2026-09-18 才加的，只活了兩天）：
+    #    0919 會議後 Ragic「★週期請購單」(sheet 58) 把部門下放到**子表、逐列一個
+    #    且改成自由文字**，Portal 可以直接送部門名稱（「工務部」），七選一的對照
+    #    就沒有存在意義了。對應的 migration `cpragicdept` 保留在鏈上但不再使用，
+    #    見 alembic_cp/versions/20260918_cpragicdept_add_ragic_dept.py 檔頭。
+
     cost_centers = relationship(
         "CyclePurchaseCostCenter",
         back_populates="department",

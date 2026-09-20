@@ -86,6 +86,158 @@ def update_vendor(db: Session, vendor_id: int, payload) -> Optional[CyclePurchas
     return vendor
 
 
+class VendorLinkError(Exception):
+    """對照到合約廠商時的可預期錯誤（會被 router 轉成 409/404）。"""
+
+
+def link_vendor_to_contract(
+    db: Session, vendor_id: int, source_vendor_id: Optional[str],
+) -> Optional[CyclePurchaseVendor]:
+    """把一筆週採供應商對照到合約模組的廠商主檔（或解除對照）。
+
+    ⚠️ 2026-09-20 新增的背景（見 CHANGELOG [2.10.41]）：
+    週採 204 家供應商裡有 32 家是當初匯入料號時直接用**簡稱**建的孤兒
+    （`CPV-NNNN`、source_vendor_id 空、統編也空）。拋轉 Ragic 時，
+    主表「廠商(一)」是**連結到「廠商資料表」的 Link 欄位，只認全名**
+    （實測：Portal 送「北金」，Ragic 只認「北金文具印刷有限公司」）,
+    對不上就**靜默丟掉還回 SUCCESS** —— 單子上的廠商欄是空的。
+
+    ⚠️ 為什麼不能只按「自合約模組同步」：那支的比對順序是
+    source_vendor_id → 統一編號 → 名稱完全相同。這 32 家三層全部落空
+    （簡稱 ≠ 全名），同步會**另外新增**一筆全名的供應商，而料號對照仍然
+    指著舊的簡稱那筆 —— 變成兩個「北金」。所以必須先把既有這筆接上去。
+
+    接上之後名稱等欄位由同步覆蓋成合約主檔的全名（Samuel 2026-09-20 裁示），
+    所以這裡**只寫 source_vendor_id，不動其他欄位**。
+    """
+    vendor = db.query(CyclePurchaseVendor).filter(CyclePurchaseVendor.id == vendor_id).first()
+    if not vendor:
+        return None
+
+    if source_vendor_id:
+        # 一個合約廠商只能被一筆週採供應商對照。兩筆都指過去的話，同步的
+        # 第 1 層比對會拿到其中一筆（看查詢順序），另一筆就永遠同步不到，
+        # 而且是靜默的。
+        clash = (
+            db.query(CyclePurchaseVendor)
+            .filter(
+                CyclePurchaseVendor.source_vendor_id == source_vendor_id,
+                CyclePurchaseVendor.id != vendor_id,
+            )
+            .first()
+        )
+        if clash:
+            raise VendorLinkError(
+                f"合約廠商 {source_vendor_id} 已經被「{clash.vendor_name}」"
+                f"（{clash.vendor_code}）對照走了，一個合約廠商只能對照一筆週採供應商。"
+                f"如果這兩筆其實是同一家，請先把其中一筆停用。"
+            )
+
+    vendor.source_vendor_id = source_vendor_id or None
+    db.flush()
+    return vendor
+
+
+class VendorMergeError(Exception):
+    """合併供應商時的可預期錯誤（會被 router 轉成 409/404）。"""
+
+
+# 合併時要改指的「表.欄位」清單。新增會參照供應商的資料表時**一定要補進這裡**，
+# 漏一個就會留下指向已停用供應商的孤兒參照，而且不會有任何錯誤訊息。
+_VENDOR_REFERENCES = [
+    ("cycle_purchase_item_mappings", "vendor_id",  "料號對照"),
+    ("cycle_purchase_summary",       "vendor_id",  "彙整列"),
+    ("cycle_purchase_pos",           "vendor_id",  "採購單"),
+    ("cycle_purchase_items",         "default_vendor_id", "料號主檔的預設供應商"),
+]
+
+
+def preview_vendor_merge(db: Session, source_id: int, target_id: int) -> dict:
+    """試算合併會搬動哪些東西，**不寫入任何資料**。
+
+    給畫面按下「合併」之前先確認用 —— 合併會改動料號對照與歷史彙整列，
+    不該按了才知道搬了什麼。
+    """
+    return _vendor_merge(db, source_id, target_id, apply=False)
+
+
+def merge_vendor(db: Session, source_id: int, target_id: int) -> dict:
+    """把 `source` 供應商的所有參照改指到 `target`，然後把 source 停用。
+
+    ⚠️ 2026-09-20 的背景（見 CHANGELOG [2.10.42]）：週採 204 家供應商裡有 32 家是
+    匯入料號時直接用**簡稱**建的孤兒，其中 **15 家在週採裡已經另外有一筆正確的
+    全稱**（例：「北金」 vs 「北金文具印刷有限公司」）。這種情況**不能用「對照」
+    解決**——對照的目標已經被正本佔走，會撞號；要的是把孤兒身上的參照搬到正本。
+
+    Ragic 主表「廠商(一)」是連結欄位、只認廠商資料表裡的全名，所以料號對照只要
+    還指著簡稱那一筆，拋轉出去的單廠商欄就是空的（Ragic 還會回 SUCCESS）。
+
+    ⚠️ **停用 source 而不是刪除**：
+      1. `cycle_purchase_pos.vendor_id` 是 `ondelete=RESTRICT`，有歷史採購單就刪不掉；
+      2. 停用是可逆的，萬一合併錯了還救得回來，刪除不行；
+      3. 歷史稽核仍查得到這筆曾經存在。
+    """
+    return _vendor_merge(db, source_id, target_id, apply=True)
+
+
+def _vendor_merge(db: Session, source_id: int, target_id: int, apply: bool) -> dict:
+    from sqlalchemy import text as sa_text
+
+    if source_id == target_id:
+        raise VendorMergeError("來源與目標是同一筆供應商，不需要合併")
+
+    source = db.query(CyclePurchaseVendor).filter(CyclePurchaseVendor.id == source_id).first()
+    target = db.query(CyclePurchaseVendor).filter(CyclePurchaseVendor.id == target_id).first()
+    if not source or not target:
+        return {}
+
+    # ⚠️ 採購單有 partial unique index（cycle, period, company, vendor，
+    #    條件 status != 'cancelled'）。把 source 的採購單改指到 target 時，
+    #    如果 target 在同一組已經有一張有效的採購單，就會撞號。
+    #    與其讓它拋一個看不懂的 IntegrityError，先查出來講清楚。
+    clash_rows = db.execute(sa_text(
+        "SELECT p1.po_no, p2.po_no FROM cycle_purchase_pos p1 "
+        "JOIN cycle_purchase_pos p2 ON p1.cycle_id = p2.cycle_id "
+        " AND p1.period_label = p2.period_label AND p1.company = p2.company "
+        "WHERE p1.vendor_id = :src AND p2.vendor_id = :tgt "
+        " AND p1.status != 'cancelled' AND p2.status != 'cancelled'"
+    ), {"src": source_id, "tgt": target_id}).fetchall()
+    if clash_rows:
+        pairs = "、".join(f"{a} ↔ {b}" for a, b in clash_rows[:3])
+        raise VendorMergeError(
+            f"這兩筆供應商在同一個週期＋期別＋公司底下各自有有效的採購單（{pairs}），"
+            f"合併會讓採購單撞號。請先把其中一張取消，或改用人工處理。"
+        )
+
+    moved: dict[str, int] = {}
+    for table, column, label in _VENDOR_REFERENCES:
+        n = db.execute(
+            sa_text(f"SELECT COUNT(*) FROM {table} WHERE {column} = :src"),
+            {"src": source_id},
+        ).scalar() or 0
+        moved[label] = int(n)
+        if apply and n:
+            db.execute(
+                sa_text(f"UPDATE {table} SET {column} = :tgt WHERE {column} = :src"),
+                {"src": source_id, "tgt": target_id},
+            )
+
+    result = {
+        "source_id": source_id, "source_name": source.vendor_name,
+        "target_id": target_id, "target_name": target.vendor_name,
+        "moved": moved,
+        "total_moved": sum(moved.values()),
+        "applied": apply,
+    }
+    if apply:
+        source.is_active = False
+        note = (source.notes or "").strip()
+        mark = f"[合併] 已於 2026-09-20 之後併入「{target.vendor_name}」(id={target_id})，本筆停用不再使用。"
+        source.notes = f"{note}\n{mark}".strip() if note else mark
+        db.flush()
+    return result
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # 部門 / 成本中心 / 會計科目 主檔
 # ═══════════════════════════════════════════════════════════════════════════
@@ -607,6 +759,16 @@ def update_item(db: Session, item_id: int, payload) -> Optional[CyclePurchaseIte
     return _attach_vendor_name(db, item)
 
 
+def _department_name(db: Session, department_id: Optional[int]) -> str:
+    """部門顯示名稱，查不到就回 ID —— 只用在錯誤訊息，不讓訊息因為查不到而變空白。"""
+    if not department_id:
+        return "未設定部門"
+    dept = db.query(CyclePurchaseDepartment).filter(
+        CyclePurchaseDepartment.id == department_id
+    ).first()
+    return dept.dept_name if dept else f"部門#{department_id}"
+
+
 def _attach_mapping_display_fields(db: Session, mapping: CyclePurchaseItemMapping) -> CyclePurchaseItemMapping:
     """附加 department_name（部門顯示名稱）與 vendor_name（2026-07-11 新增：這個料號
     在這家公司實際跟哪個供應商叫貨，供彙整單/採購單按供應商分單、以及料號對照表
@@ -650,11 +812,52 @@ def list_item_mappings(db: Session, item_id: int):
     return rows
 
 
+class ItemMappingConflict(Exception):
+    """同一料號的「公司＋部門」已經有對照列。
+
+    2026-09-20：原本只靠資料庫的 UniqueConstraint
+    （uq_cp_item_mapping_item_company_dept）把關，新增時撞到會丟 IntegrityError、
+    router 轉成 409；但**更新**那條路徑完全沒防，把 A 部門改成 B 部門撞到既有列
+    就是一個沒人看得懂的 500。料號主檔改成可以在同一個畫面編多列對照之後
+    （一個料號 ＝ 一個公司 ＋ 多個部門 ＋ 多個科目），這種撞號會變成日常操作，
+    所以在 service 層先明確擋下來，訊息講清楚是哪一組撞到。
+
+    ⚠️ 唯一鍵刻意是「公司＋部門」而**不含會計科目**（2026-09-20 Samuel 裁示）：
+    請購單建立明細時是用 (公司, 部門) 去抓這筆對照來帶科目與單價
+    （request_service.add_request_item 的 `.first()`），同一個部門若能掛兩個科目，
+    那裡就會隨機挑一筆。要改成一個部門多科目的話，得先決定請購單怎麼選。
+    """
+
+
+def _find_conflicting_mapping(
+    db: Session, item_id: int, company: str, department_id: int, exclude_id: Optional[int] = None
+) -> Optional[CyclePurchaseItemMapping]:
+    q = (
+        db.query(CyclePurchaseItemMapping)
+        .filter(
+            CyclePurchaseItemMapping.item_id == item_id,
+            CyclePurchaseItemMapping.company == company,
+            CyclePurchaseItemMapping.department_id == department_id,
+        )
+    )
+    if exclude_id is not None:
+        q = q.filter(CyclePurchaseItemMapping.id != exclude_id)
+    return q.first()
+
+
 def create_item_mapping(db: Session, item_id: int, payload) -> Optional[CyclePurchaseItemMapping]:
     item = db.query(CyclePurchaseItem).filter(CyclePurchaseItem.id == item_id).first()
     if not item:
         return None
-    mapping = CyclePurchaseItemMapping(item_id=item_id, **payload.model_dump())
+    data = payload.model_dump()
+    if data.get("company") and data.get("department_id"):
+        dup = _find_conflicting_mapping(db, item_id, data["company"], data["department_id"])
+        if dup:
+            raise ItemMappingConflict(
+                f"「{data['company']}／{_department_name(db, data['department_id'])}」"
+                f"已經有一筆對照了，同一個料號的同一個公司＋部門只能有一筆。"
+            )
+    mapping = CyclePurchaseItemMapping(item_id=item_id, **data)
     db.add(mapping)
     db.flush()
     return _attach_mapping_display_fields(db, mapping)
@@ -671,7 +874,23 @@ def update_item_mapping(db: Session, item_id: int, mapping_id: int, payload):
     )
     if not mapping:
         return None
-    for k, v in payload.model_dump(exclude_unset=True).items():
+    data = payload.model_dump(exclude_unset=True)
+    # 改到公司／部門時要先確認不會撞上同一料號的其他對照列。
+    # exclude_unset 代表「這次沒送的欄位不動」，所以比較基準要拿現有值補齊。
+    next_company = data.get("company", mapping.company)
+    next_dept = data.get("department_id", mapping.department_id)
+    if next_company and next_dept and (
+        next_company != mapping.company or next_dept != mapping.department_id
+    ):
+        dup = _find_conflicting_mapping(
+            db, item_id, next_company, next_dept, exclude_id=mapping_id
+        )
+        if dup:
+            raise ItemMappingConflict(
+                f"「{next_company}／{_department_name(db, next_dept)}」"
+                f"已經有一筆對照了，同一個料號的同一個公司＋部門只能有一筆。"
+            )
+    for k, v in data.items():
         setattr(mapping, k, v)
     db.flush()
     return _attach_mapping_display_fields(db, mapping)
