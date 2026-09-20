@@ -97,6 +97,7 @@ export const NAV_GROUP = {
   taichungPurchaseReport: '台中請購單報表',    // ← 台中核准請購單月報表（2026-09-16）
   taichungClaimReport:    '台中請款單報表',    // ← 台中核准請款單月報表（2026-09-16）
   cyclePurchase:          '週採',              // ← 新增：週期採購管理（2026-07-10，獨立資料庫 cycle-purchase.db）
+  auditCheck:             '稽核檢查',          // ← 新增：財#3 系統建置稽核（2026-09-20）
 } as const
 
 // ── 二級選單（頁面） ──────────────────────────────────────────────────────────
@@ -290,4 +291,10 @@ export const NAV_PAGE = {
   cyclePurchasePayments:        '請款單',              // ← route /cycle-purchase/payments
   cyclePurchaseAuditLog:        '異常稽核紀錄',        // ← route /cycle-purchase/audit-log
   cyclePurchaseManual:          '週採使用手冊',        // ← route /cycle-purchase/manual（2026-08-07 新增）
+
+  // 稽核檢查（財#3 系統建置稽核，2026-09-20 新增）
+  auditCheckPeriods:            '稽核期別',            // ← route /audit-check
+  auditCheckStatistics:         '分數統計',            // ← route /audit-check/statistics
+  auditCheckItems:              '檢查項主檔',          // ← route /audit-check/masters/items
+  auditCheckResultTypes:        '判定類型設定',        // ← route /audit-check/settings/result-types
 } as const

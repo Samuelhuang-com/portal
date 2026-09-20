@@ -113,6 +113,13 @@ PERMISSION_DEFINITIONS = [
     {"key": "budget_view",              "label": "預算查看",      "group": "財務"},
     {"key": "budget_manage",            "label": "預算管理",      "group": "財務"},
     {"key": "budget_admin",             "label": "預算設定",      "group": "財務"},
+    # ── 稽核檢查（財#3 系統建置稽核，2026-09-20 新增）────────────────────────
+    # ⚠️ label 必須與 frontend/src/constants/navLabels.ts 的顯示名稱完全一致（CLAUDE.md §3）。
+    # ⚠️ 非敏感權限，不列入 §11.1 的 22 個敏感 key（不含 PMS 營收資料）；
+    #    但比照 2026-09-18 報表權限裁示，採「需明確指派」，不包進 portal_general 預設清單。
+    {"key": "audit_check_view",         "label": "稽核檢查：查看", "group": "稽核檢查"},
+    {"key": "audit_check_edit",         "label": "稽核檢查：填寫", "group": "稽核檢查"},
+    {"key": "audit_check_admin",        "label": "稽核檢查：管理", "group": "稽核檢查"},
     {"key": "employee_manual_export_view",     "label": "員工操作手冊：查看",   "group": "系統設定"},
     {"key": "employee_manual_export_generate", "label": "員工操作手冊：產生",   "group": "系統設定"},
     {"key": "employee_manual_export_admin",    "label": "員工操作手冊：管理員", "group": "系統設定"},

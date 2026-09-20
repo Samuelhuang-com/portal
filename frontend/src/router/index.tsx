@@ -23,6 +23,8 @@ import { getHomePageRoute, isRouteInMenu, firstRouteInMenu } from '@/utils/homeP
 // 與 "/" 平行的第二套殼層，掛在 /m/* 之下；桌面分支的任何一行都沒有改動。
 import MobileLayout from '@/components/Layout/MobileLayout'
 import MobileLuqunRepairDashboard from '@/pages/Mobile/LuqunRepairDashboard'
+import MobileAuditCheckList from '@/pages/Mobile/AuditCheckList'
+import MobileAuditCheckSheet from '@/pages/Mobile/AuditCheckSheet'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { shouldUseMobileShell } from '@/utils/uiMode'
 import LoginPage           from '@/pages/Login'
@@ -183,6 +185,13 @@ import CpPaymentDetailPage              from '@/pages/CyclePurchase/Payment/Deta
 import CpAuditLogPage                   from '@/pages/CyclePurchase/AuditLog'
 import CpManualPage                     from '@/pages/CyclePurchase/Manual'
 
+// ── 稽核檢查（財#3 系統建置稽核，2026-09-20 新增）──────────────────────────────
+import AuditCheckPeriodsPage      from '@/pages/AuditCheck'
+import AuditSheetEditorPage       from '@/pages/AuditCheck/SheetEditor'
+import AuditStatisticsPage        from '@/pages/AuditCheck/Statistics'
+import AuditItemsMasterPage       from '@/pages/AuditCheck/Masters/Items'
+import AuditResultTypesPage       from '@/pages/AuditCheck/Settings/ResultTypes'
+
 // ── 合約管理 ──────────────────────────────────────────────────────────────────
 import ContractPage            from '@/pages/Contract'
 import ContractDashboardPage   from '@/pages/Contract/Dashboard'
@@ -228,6 +237,7 @@ const PERM_DEFAULT_ROUTES: { key: string; route: string }[] = [
   { key: 'memos_view',                        route: '/memos/list' },
   { key: 'exec_dashboard_view',               route: '/exec-dashboard' },
   { key: 'work_category_analysis_view',       route: '/work-category-analysis' },
+  { key: 'audit_check_view',                  route: '/audit-check' },
   { key: 'tutorial_videos_view',              route: '/tutorial-videos' },
 ]
 
@@ -444,6 +454,17 @@ export default function AppRouter() {
         <Route path="luqun-repair" element={
           <PermissionGuard permissionKey="luqun_repair_view">
             <MobileLuqunRepairDashboard />
+          </PermissionGuard>
+        } />
+        {/* 稽核檢查（2026-09-20）：沿用桌面 permission key，不新增任何 key */}
+        <Route path="audit-check" element={
+          <PermissionGuard permissionKey="audit_check_view">
+            <MobileAuditCheckList />
+          </PermissionGuard>
+        } />
+        <Route path="audit-check/:id" element={
+          <PermissionGuard permissionKey="audit_check_view">
+            <MobileAuditCheckSheet />
           </PermissionGuard>
         } />
         {/* 手機分支內走錯路徑 → 回手機首頁，不要掉回桌面版 */}
@@ -676,6 +697,27 @@ export default function AppRouter() {
         </Route>
 
         {/* ── 合約管理 ──────────────────────────────────────────────────── */}
+        {/* ── 稽核檢查（財#3 系統建置稽核，2026-09-20 新增）────────────── */}
+        <Route path="audit-check" element={
+          <PermissionGuard permissionKey="audit_check_view">
+            <Outlet />
+          </PermissionGuard>
+        }>
+          <Route index element={<AuditCheckPeriodsPage />} />
+          <Route path="sheets/:id" element={<AuditSheetEditorPage />} />
+          <Route path="statistics" element={<AuditStatisticsPage />} />
+          <Route path="masters/items" element={
+            <PermissionGuard permissionKey="audit_check_admin">
+              <AuditItemsMasterPage />
+            </PermissionGuard>
+          } />
+          <Route path="settings/result-types" element={
+            <PermissionGuard permissionKey="audit_check_admin">
+              <AuditResultTypesPage />
+            </PermissionGuard>
+          } />
+        </Route>
+
         <Route path="contract" element={
           <PermissionGuard permissionKey="contract_view">
             <Outlet />

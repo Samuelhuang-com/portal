@@ -73,6 +73,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import subprocess
 import sys
 
@@ -102,6 +103,14 @@ from sqlalchemy import inspect, text                              # noqa: E402
 #   檢查函式回傳 True=證據存在／False=證據不存在／拋例外=查不出來（→ 離開碼 2）
 #   最後那個「會新增的欄位」是給 drift 檢查排除用的：尚未套用的 migration
 #   要補的欄位，本來就該是 Model 有、DB 沒有，不算 drift。
+#
+# ⚠️⚠️ 【維護規則】每新增一支 migration，就要在下面的 MAIN_CHAIN／CP_CHAIN
+#       補一項，否則這支腳本會把「其實更新的資料庫」判成停在舊版本，
+#       stamp 下去等於把版本號**倒退**，接著 upgrade head 會重跑中間那幾支
+#       而撞 DuplicateTable。
+#       2026-09-21 實際發生過：MAIN_CHAIN 停在 usrdept（漏了 compset／tcpurch／
+#       audchk）、CP_CHAIN 只有 baseline_cp（漏了 cpragicurl／cpragicdept），
+#       導致週採庫的 cpragicdept 被誤報成「與證據推出的 baseline_cp 不符」。
 # ═══════════════════════════════════════════════════════════════════════════
 
 def _col(insp, table: str, col: str) -> dict:
@@ -140,6 +149,63 @@ def _chk_usrdept(insp) -> bool:
     return "user_departments" in set(insp.get_table_names())
 
 
+def _chk_compset(insp) -> bool:
+    """競品分析 7 張表（compset_*）。
+
+    ⚠️ 這支的證據**刻意不是「表在不在」**。2026-09-11 競品分析已隨五組營收模組
+       獨立成新專案，Portal 端的 model 全部移除（見 project_split_revenue_suite），
+       所以 compset_* 在現在的 Portal 可能因為三種完全不同的原因而不存在：
+         (a) 這支 migration 從來沒跑過
+         (b) 跑過，但之後用 docs/drop_split_module_tables.sql 刪掉了
+         (c) 模組移除後 create_all() 本來就不會建它們
+       單看資料庫分不出這三者。
+
+       但真正重要的是：**這支對今日 Portal 的結構已經沒有任何影響**。
+       Base.metadata 裡沒有 compset_*，所以 upgrade 過去不會建出 model 需要的
+       任何東西，跳過它也不會缺任何東西。因此只要 model 端已經沒有 compset_*，
+       就一律視為「已套用」，讓版本號能繼續往後推。
+
+       若日後 compset 重新回到 Portal，下面的 fallback 會自動改回查表。
+    """
+    from app.core.database import Base
+    model_has_compset = any(t.startswith("compset_") for t in Base.metadata.tables)
+    if not model_has_compset:
+        return True
+    return "compset_subscribers" in set(insp.get_table_names())
+
+
+def _chk_tcpurch(insp) -> bool:
+    # 台中核准請購單／請款單 4 張表，挑第一張當代表
+    return "taichung_purchase_requests" in set(insp.get_table_names())
+
+
+def _chk_audchk(insp) -> bool:
+    """稽核檢查 9 張表，挑交叉格（資料主體）當代表。
+
+    ⚠️ 2026-09-21 測試區踩過：這 9 張表可能是 create_all() 先建出來的，
+       形狀（欄位）**未必**與 migration 一致 —— create_all 補表不補欄位。
+       這裡只負責判斷「這支有沒有套用過」，欄位層面的差異由下面的 _drift()
+       負責抓（當時就是 drift 擋下來的，見 Temp/fix_audit_tables.py）。
+    """
+    return "audit_cells" in set(insp.get_table_names())
+
+
+def _chk_cpragicurl(insp) -> bool:
+    try:
+        _col(insp, "cycle_purchase_summary", "ragic_record_url")
+        return True
+    except LookupError:
+        return False
+
+
+def _chk_cpragicdept(insp) -> bool:
+    try:
+        _col(insp, "cycle_purchase_departments", "ragic_dept")
+        return True
+    except LookupError:
+        return False
+
+
 MAIN_CHAIN = [
     ("baseline_main", "建立全部資料表",                    _chk_baseline, []),
     ("widen7",        "4 張巡檢表 result_raw 放寬為 TEXT", _chk_widen7,   []),
@@ -151,12 +217,24 @@ MAIN_CHAIN = [
     #    但那正是接下來 upgrade 要建的表，不是要修的 drift。
     ("usrdept",       "user_departments 關聯表",           _chk_usrdept,
      [("user_departments", None)]),
+    ("compset",       "競品分析 7 張表（模組已移出 Portal）", _chk_compset, []),
+    ("tcpurch",       "台中請購／請款 4 張表",             _chk_tcpurch,
+     [("taichung_purchase_requests", None), ("taichung_purchase_request_items", None),
+      ("taichung_claim_requests", None), ("taichung_claim_request_items", None)]),
+    ("audchk",        "稽核檢查 9 張表",                   _chk_audchk,
+     [("audit_result_types", None), ("audit_items", None), ("audit_periods", None),
+      ("audit_sheets", None), ("audit_sheet_departments", None),
+      ("audit_sheet_items", None), ("audit_item_targets", None),
+      ("audit_cells", None), ("audit_reviews", None)]),
 ]
 
-# 週採庫目前只有 baseline 一支，沒有後續 migration。
 CP_CHAIN = [
     ("baseline_cp", "建立週採全部資料表",
      lambda insp: "cycle_purchase_departments" in set(insp.get_table_names()), []),
+    ("cpragicurl",  "cycle_purchase_summary.ragic_record_url", _chk_cpragicurl,
+     [("cycle_purchase_summary", "ragic_record_url")]),
+    ("cpragicdept", "cycle_purchase_departments.ragic_dept",   _chk_cpragicdept,
+     [("cycle_purchase_departments", "ragic_dept")]),
 ]
 
 
@@ -172,6 +250,56 @@ def _current_version(eng) -> str | None:
     with eng.connect() as conn:
         row = conn.execute(text("SELECT version_num FROM alembic_version")).fetchone()
     return row[0] if row else None
+
+
+def _check_chain_covers_versions(ini: str, chain: list) -> tuple[list[str], list[str]]:
+    """檢查 versions/ 目錄裡的每一支 migration 都有登錄在 chain 裡。
+
+    ⚠️ 2026-09-21 加上這道自檢。在此之前 MAIN_CHAIN 停在 usrdept、CP_CHAIN 只有
+       baseline_cp，漏了後面好幾支，而腳本**完全不會察覺**——它只會安靜地推出一個
+       偏舊的版本號。stamp 下去等於把版本號倒退，接著 upgrade head 重跑中間那幾支
+       就撞 DuplicateTable。漏登錄是可以自動發現的，不該靠人記得。
+
+    ini 檔名與 script_location 同名（alembic.ini → alembic/，
+    alembic_cp.ini → alembic_cp/），沿用專案既有慣例。
+
+    回傳 `(清單落差, 掃描失敗)`。兩者一定要分開報：「讀不到檔案」跟「清單過時」
+    是完全不同的問題，混在同一個訊息裡會把人引去改 MAIN_CHAIN，而真正的原因
+    在別處（2026-09-21 就是這樣：這裡誤用了沒 import 的 io.open，卻報成清單過時）。
+    """
+    vdir = os.path.join(BACKEND, ini[:-4] if ini.endswith(".ini") else ini, "versions")
+    if not os.path.isdir(vdir):
+        return [], [f"找不到 versions 目錄：{vdir}"]
+
+    on_disk: dict[str, str] = {}
+    errors: list[str] = []
+    pat = re.compile(r"""^revision(?::\s*str)?\s*=\s*["']([^"']+)["']""", re.M)
+    for fn in sorted(os.listdir(vdir)):
+        if not fn.endswith(".py") or fn.startswith("__"):
+            continue
+        try:
+            with open(os.path.join(vdir, fn), encoding="utf-8") as fh:
+                text_ = fh.read()
+        except Exception as exc:
+            errors.append(f"{fn} 讀不到：{exc}")
+            continue
+        m = pat.search(text_)
+        if m:
+            on_disk[m.group(1)] = fn
+        else:
+            errors.append(f"{fn} 找不到 revision = 的宣告")
+    if errors:
+        return [], errors
+
+    in_chain = {rev for rev, *_ in chain}
+    problems = []
+    for rev, fn in on_disk.items():
+        if rev not in in_chain:
+            problems.append(f"migration '{rev}'（{fn}）沒有登錄在本腳本的 chain 裡")
+    for rev in in_chain:
+        if rev not in on_disk:
+            problems.append(f"chain 裡的 '{rev}' 在 versions/ 找不到對應檔案")
+    return problems, []
 
 
 def _check_ini_ascii(ini: str) -> list[str]:
@@ -227,6 +355,22 @@ def diagnose(label: str, ini: str, chain: list, base, eng, apply: bool) -> int:
         print(f"❌ {ini} 編碼問題，Alembic 會在啟動前就失敗：")
         for e in enc:
             print(f"     · {e}")
+        return 2
+
+    gaps, scan_errors = _check_chain_covers_versions(ini, chain)
+    if scan_errors:
+        print(f"\n❌ 掃不完 {ini[:-4]}/versions/，無法確認 migration 清單，拒絕判斷：")
+        for e in scan_errors:
+            print(f"     · {e}")
+        print("   → 這是**讀取／解析**的問題，不是 chain 過時，別去改 MAIN_CHAIN。")
+        return 2
+    if gaps:
+        print("\n❌ 本腳本的 migration 清單與 versions/ 目錄對不起來，拒絕判斷：")
+        for g in gaps:
+            print(f"     · {g}")
+        print("   → 請先在 alembic_stamp_current.py 的 MAIN_CHAIN／CP_CHAIN 補上")
+        print("     對應項目（含證據檢查函式）。清單過時會讓這支推出偏舊的版本號，")
+        print("     stamp 下去等於把版本號倒退。")
         return 2
 
     insp = inspect(eng)

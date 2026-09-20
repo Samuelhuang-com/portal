@@ -54,6 +54,7 @@ from app.core.scheduler import make_cron_trigger, scheduler as _scheduler, regis
 from app.core.time import twnow
 from app.routers import (
     approvals,
+    audit_check,
     claim_report,
     combined_report,
     purchase_report,
@@ -581,6 +582,70 @@ def _seed_menu_config_taichung_claim():
         print("[Portal] menu_config taichung-claim-report seed checked.")
 
 
+
+
+def _seed_audit_check_result_types():
+    """
+    稽核檢查（2026-09-20）：植入三筆系統內建的「判定類型」（達標／扣分／建議）。
+    使用者可在「稽核檢查 → 判定類型設定」自行改名、改色、加新類型；
+    這裡只在資料表為空時補上預設值，冪等，不覆寫使用者的修改。
+    """
+    from app.core.database import SessionLocal
+    from app.services.audit_check_service import seed_result_types
+
+    db = SessionLocal()
+    try:
+        seed_result_types(db)
+    finally:
+        db.close()
+    print("[Portal] audit_check result types seed checked.")
+
+
+def _seed_menu_config_audit_check():
+    """
+    選單設定補丁（2026-09-20）：確保 audit-check 群組及其子頁面在 menu_configs
+    有 DB 記錄（比照日曜／台中報表寫法）。permission_key = 'audit_check_view'。
+    ⚠️ 只補「沒有記錄」的情況，使用者在選單管理調整過的設定不會被覆寫。
+    """
+    from sqlalchemy import text
+
+    CHILDREN = [
+        ("/audit-check", 10),
+        ("/audit-check/statistics", 20),
+        ("/audit-check/masters/items", 30),
+        ("/audit-check/settings/result-types", 40),
+    ]
+
+    with engine.connect() as conn:
+        row = conn.execute(
+            text("SELECT menu_key FROM menu_configs WHERE menu_key = 'auditCheck'")
+        ).fetchone()
+        if row is None:
+            conn.execute(
+                text(
+                    "INSERT INTO menu_configs "
+                    "(menu_key, parent_key, custom_label, sort_order, is_visible, permission_key, updated_at, updated_by) "
+                    "VALUES ('auditCheck', NULL, NULL, 98, TRUE, 'audit_check_view', CURRENT_TIMESTAMP, 'system-seed')"
+                )
+            )
+
+        for menu_key, sort_order in CHILDREN:
+            existing = conn.execute(
+                text("SELECT menu_key FROM menu_configs WHERE menu_key = :k"),
+                {"k": menu_key},
+            ).fetchone()
+            if existing is None:
+                conn.execute(
+                    text(
+                        "INSERT INTO menu_configs "
+                        "(menu_key, parent_key, custom_label, sort_order, is_visible, permission_key, updated_at, updated_by) "
+                        "VALUES (:k, 'auditCheck', NULL, :o, TRUE, 'audit_check_view', CURRENT_TIMESTAMP, 'system-seed')"
+                    ),
+                    {"k": menu_key, "o": sort_order},
+                )
+
+        conn.commit()
+        print("[Portal] menu_config audit-check seed checked.")
 
 
 def _seed_reference_data():
@@ -1337,6 +1402,11 @@ async def lifespan(app: FastAPI):
     # 選單設定補丁（2026-09-16）：確保 taichung-purchase-report / taichung-claim-report 選單有 DB 記錄
     _run_startup_migration("_seed_menu_config_taichung_purchase", _seed_menu_config_taichung_purchase)
     _run_startup_migration("_seed_menu_config_taichung_claim", _seed_menu_config_taichung_claim)
+
+    # 稽核檢查（2026-09-20）：模型載入 + 判定類型種子 + 選單 DB 記錄
+    import app.models.audit_check  # noqa: F401 — 確保 create_all 建立資料表
+    _run_startup_migration("_seed_audit_check_result_types", _seed_audit_check_result_types)
+    _run_startup_migration("_seed_menu_config_audit_check", _seed_menu_config_audit_check)
 
     # 客房主檔 seed（若 rooms 表為空，自動填入樓層 × 房號資料）
     from app.services.room_seed import seed_rooms
@@ -2203,6 +2273,14 @@ app.include_router(
     cycle_purchase_audit.router,
     prefix=f"{API_PREFIX}/cycle-purchase",
     tags=["週期採購"],
+)
+
+# ── 稽核檢查（財#3 系統建置稽核，2026-09-20 新增）────────────────────────────
+# 非 Ragic 同步模組：資料由稽核人員人工填寫，sync_tool.py / RagicConnections 不涉及。
+app.include_router(
+    audit_check.router,
+    prefix=f"{API_PREFIX}/audit-check",
+    tags=["稽核檢查"],
 )
 
 # ── AI 工單查詢助理（AI_ENABLED=true 才掛載，正式環境可保持 false）────────────

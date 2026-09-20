@@ -10,7 +10,7 @@
  *    都不需要更動，手機版的可見範圍自動與桌面版一致。
  */
 import React from 'react'
-import { ToolOutlined } from '@ant-design/icons'
+import { AuditOutlined, ToolOutlined } from '@ant-design/icons'
 
 export interface MobileNavItem {
   /** 路由（必須以 /m 開頭） */
@@ -27,5 +27,11 @@ export const mobileNavItems: MobileNavItem[] = [
     label: '商場報修',
     icon: <ToolOutlined />,
     permissionKey: 'luqun_repair_view',
+  },
+  {
+    key: '/m/audit-check',
+    label: '稽核檢查',
+    icon: <AuditOutlined />,
+    permissionKey: 'audit_check_view',
   },
 ]

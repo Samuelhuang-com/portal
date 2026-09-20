@@ -47,6 +47,7 @@ import {
   SyncOutlined,
   SwapOutlined,
   FileSearchOutlined,
+  SafetyCertificateOutlined,
   ThunderboltOutlined,
   RobotOutlined,
   PlayCircleOutlined,
@@ -196,6 +197,20 @@ export const menuItems: MenuItem[] = [
     permissionKey: 'taichung_purchase_report_view',
     children: [
       { key: '/taichung-claim-report/monthly', icon: <AuditOutlined />, label: NAV_PAGE.taichungClaimReportMonthly, permissionKey: 'taichung_purchase_report_view' },
+    ],
+  },
+  // ── 稽核檢查（財#3 系統建置稽核，2026-09-20 新增）────────────────────────────
+  // 非 Ragic 同步模組，資料由稽核人員人工填寫。
+  {
+    key: 'auditCheck',
+    icon: <SafetyCertificateOutlined />,
+    label: NAV_GROUP.auditCheck,
+    permissionKey: 'audit_check_view',
+    children: [
+      { key: '/audit-check',                       icon: <AuditOutlined />,   label: NAV_PAGE.auditCheckPeriods,     permissionKey: 'audit_check_view'  },
+      { key: '/audit-check/statistics',            icon: <BarChartOutlined />, label: NAV_PAGE.auditCheckStatistics, permissionKey: 'audit_check_view'  },
+      { key: '/audit-check/masters/items',         icon: <SettingOutlined />, label: NAV_PAGE.auditCheckItems,       permissionKey: 'audit_check_admin' },
+      { key: '/audit-check/settings/result-types', icon: <SettingOutlined />, label: NAV_PAGE.auditCheckResultTypes, permissionKey: 'audit_check_admin' },
     ],
   },
   // ── 預算管理（dashboard 之後）──────────────────────────────────────────────
