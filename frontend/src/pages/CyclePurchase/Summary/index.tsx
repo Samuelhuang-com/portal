@@ -70,6 +70,13 @@ import { useAuthStore } from '@/stores/authStore'
 const { Title, Text } = Typography
 const { TextArea } = Input
 
+/**
+ * 2026-09-22 Samuel 裁示：「轉採購單」相關功能先隱藏（採購流程改由 Ragic 週採請購單處理）。
+ * 隱藏範圍：①「依供應商分組（轉採購單）」卡片 ②彙整明細的「採購單號」欄
+ * ③已拋轉 Ragic 清單的「轉採購單」欄。程式碼與後端 API 保留，要恢復把這個值改成 true。
+ */
+const SHOW_PO_CONVERT = false
+
 const STATUS_TAG: Record<string, { color: string; label: string }> = {
   draft:     { color: 'default', label: '草稿' },
   converted: { color: 'green',   label: '已轉採購單' },
@@ -795,6 +802,7 @@ export default function CpSummaryPage() {
         <Alert type="info" showIcon message="請先選擇週期與期別" />
       ) : (
         <>
+          {SHOW_PO_CONVERT && (
           <Card title="依供應商分組（轉採購單）" style={{ marginBottom: 16 }} loading={loading}>
             {vendorGroups.length === 0 ? (
               <Text type="secondary">目前沒有草稿狀態的彙整列可以轉單（可能都已轉單，或這期還沒產生彙整）</Text>
@@ -901,6 +909,7 @@ export default function CpSummaryPage() {
               />
             )}
           </Card>
+          )}
 
           <Card
             title="匯總請購單（部門別＋小計）"
@@ -1034,6 +1043,8 @@ export default function CpSummaryPage() {
                   width: 100,
                   render: (v: string) => <Tag color={STATUS_TAG[v]?.color}>{STATUS_TAG[v]?.label || v}</Tag>,
                 },
+                // 2026-09-22 Samuel 裁示：轉採購單功能隱藏（見 SHOW_PO_CONVERT）
+                ...(SHOW_PO_CONVERT ? [
                 {
                   title: '採購單號',
                   dataIndex: 'po_no',
@@ -1042,7 +1053,8 @@ export default function CpSummaryPage() {
                     v && r?.po_id ? (
                       <a onClick={() => navigate(`/cycle-purchase/pos/${r.po_id}`)}>{v}</a>
                     ) : '—',
-                },
+                }
+                ] : []),
                 {
                   /*
                     2026-09-19：原本只有一顆「已拋轉」Tag，看得出狀態卻看不出
@@ -1260,6 +1272,7 @@ export default function CpSummaryPage() {
                           Number(a.total_amount) - Number(b.total_amount),
                         render: (v: number) => Number(v).toLocaleString(),
                       },
+                      ...(SHOW_PO_CONVERT ? [
                       {
                         // 讓使用者一眼看出這張單的流程走到哪：拋轉只是送到 Ragic，
                         // 轉採購單是 Portal 這邊的下一步，兩件事互相獨立
@@ -1272,7 +1285,8 @@ export default function CpSummaryPage() {
                             : d.converted_count > 0
                               ? <Tag color="blue">{`部分 ${d.converted_count}/${d.item_count}`}</Tag>
                               : <Tag>未轉單</Tag>,
-                      },
+                      }
+                      ] : []),
                       {
                         title: '拋轉批次號',
                         dataIndex: 'ragic_push_batch_no',
