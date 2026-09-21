@@ -1,0 +1,157 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "週採部門與權限鏈",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1080,
+      640
+    ]
+  },
+  "stages": [
+    {
+      "label": "全站主檔"
+    },
+    {
+      "label": "歸屬關聯"
+    },
+    {
+      "label": "週採部門"
+    },
+    {
+      "label": "週採單據"
+    },
+    {
+      "label": "判定與輸出"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "refdept",
+      "type": "database",
+      "label": "公司／部門主檔",
+      "sublabel": "settings",
+      "stage": 0,
+      "row": 0,
+      "tag": "唯一真實來源"
+    },
+    {
+      "id": "users",
+      "type": "frontend",
+      "label": "使用者",
+      "sublabel": "users",
+      "stage": 0,
+      "row": 2
+    },
+    {
+      "id": "userdept",
+      "type": "database",
+      "label": "user_departments",
+      "sublabel": "多對多・可跨公司",
+      "stage": 1,
+      "row": 2
+    },
+    {
+      "id": "cpdept",
+      "type": "database",
+      "label": "週採部門",
+      "sublabel": "company 業務字串",
+      "stage": 2,
+      "row": 0,
+      "tag": "春大直／日曜天地／台中"
+    },
+    {
+      "id": "request",
+      "type": "backend",
+      "label": "請購單",
+      "sublabel": "department_id",
+      "stage": 3,
+      "row": 0,
+      "tag": "過月唯讀"
+    },
+    {
+      "id": "gate",
+      "type": "security",
+      "label": "可操作判定",
+      "sublabel": "成員 OR 承辦人",
+      "stage": 4,
+      "row": 1,
+      "tag": "看全部、編自己部門"
+    },
+    {
+      "id": "ragic",
+      "type": "external",
+      "label": "Ragic 子表部門",
+      "sublabel": "七選一",
+      "stage": 2,
+      "row": 1
+    }
+  ],
+  "flows": [
+    {
+      "from": "refdept",
+      "to": "cpdept",
+      "label": "部門名稱鏡像",
+      "classification": "department_sync",
+      "variant": "emphasis",
+      "route": "straight"
+    },
+    {
+      "from": "refdept",
+      "to": "userdept",
+      "label": "部門"
+    },
+    {
+      "from": "users",
+      "to": "userdept",
+      "label": "成員",
+      "route": "straight",
+      "labelDx": 28
+    },
+    {
+      "from": "cpdept",
+      "to": "request",
+      "label": "產生請購單",
+      "variant": "emphasis",
+      "route": "straight"
+    },
+    {
+      "from": "request",
+      "to": "gate",
+      "label": "source_department_id"
+    },
+    {
+      "from": "userdept",
+      "to": "gate",
+      "label": "部門成員"
+    },
+    {
+      "from": "cpdept",
+      "to": "ragic",
+      "label": "Ragic 部門對照",
+      "variant": "dashed",
+      "labelDy": 24
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "兩條授權通道",
+      "items": [
+        "部門成員可操作該部門請購單",
+        "owner_user_id 承辦人保留為備援",
+        "承辦人也是拋轉時的請購人"
+      ]
+    },
+    {
+      "dot": "orange",
+      "title": "會靜默斷掉的地方",
+      "items": [
+        "source_department_id 為空就走不了成員鏈",
+        "未設定 Ragic 部門的列不拋轉",
+        "company 字串不跟主檔公司名同步"
+      ]
+    }
+  ]
+}

@@ -31,6 +31,8 @@ export type Block =
   | { t: 'caution'; text: string }     // 黃底：要注意的事
   | { t: 'wrong'; text: string }       // 紅底：常見誤解
   | { t: 'table'; head: string[]; rows: string[][]; caption?: string }
+  /** 內嵌流程圖（Archify 產出的獨立 HTML，放在 portal/docs/diagrams/，經 /docs-static 提供） */
+  | { t: 'diagram'; src: string; title: string; caption?: string; height?: number }
 
 export interface SubSection {
   id: string
@@ -50,8 +52,8 @@ export interface Section {
 export const MANUAL_META = {
   title: '週期採購 使用手冊',
   subtitle: '從各部門填請購單，一路到彙整、採購、驗收、請款的完整流程',
-  version: '2.1',
-  updated: '2026-08-09',
+  version: '2.2',
+  updated: '2026-09-21',
   disclaimer:
     '週採用的是**獨立資料庫**（cycle-purchase.db），與 Portal 其他模組的資料完全分開。'
     + '所以這裡的部門、成本中心、會計科目、供應商都是週採自己維護的一套主檔，'
@@ -64,6 +66,7 @@ export function subSectionText(sub: SubSection): string {
   for (const b of sub.blocks) {
     if (b.t === 'p' || b.t === 'note' || b.t === 'caution' || b.t === 'wrong') parts.push(b.text)
     else if (b.t === 'ul' || b.t === 'ol') parts.push(...b.items)
+    else if (b.t === 'diagram') parts.push(b.title, b.caption ?? '')
     else if (b.t === 'table') {
       parts.push(...b.head)
       for (const r of b.rows) parts.push(...r)
@@ -112,6 +115,10 @@ export const MANUAL: Section[] = [
               '每個階段都只能從上一階段的資料往下長：沒關閉的請購單彙整不到、'
               + '沒有彙整單就開不了採購單、沒有採購單就沒得驗收。所以卡住的時候，'
               + '往回看一階通常就找得到原因。',
+          },
+          {
+            t: 'note',
+            text: '整條流程、各單據的狀態變化、拋轉 Ragic 的來回，都畫成了圖，放在最後的**附錄：流程圖**。',
           },
         ],
       },
@@ -1351,6 +1358,88 @@ export const MANUAL: Section[] = [
               ['拋轉 Ragic', '把彙整結果送到 Ragic（目前為模擬，見第 9 章）'],
               ['快照', '建立當下把當時的值複製一份存起來，之後改主檔不會影響歷史單據'],
             ],
+          },
+        ],
+      },
+    ],
+  },
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // 附錄：流程圖（2026-09-21）
+  // 圖檔是 Archify 產出的獨立 HTML：portal/docs/diagrams/cycle_purchase/cp-0N-*.html，
+  // 原始規格在同目錄 src/*.json。改圖請改 json 後用 Archify 重新 deliver，不要手改 HTML。
+  // 內容依 2026-09-21 程式碼盤點（docs/CYCLE_PURCHASE_FLOW_NODES.md）。
+  {
+    id: 'ch12',
+    title: '附錄：流程圖',
+    intro:
+      '圖可以拖曳與縮放。按「新視窗開啟」會看到完整版：多了每張圖的重點說明、'
+      + '搜尋，以及右上角 Export 匯出成圖片。',
+    subs: [
+      {
+        id: 'ch12-1',
+        title: '週採全流程：請購到付款',
+        blocks: [
+          {
+            t: 'diagram',
+            src: '/docs-static/diagrams/cycle_purchase/cp-01-flow.html',
+            title: '週採全流程',
+            caption:
+              '每一列是一個角色。實線是正常往下走的路，紅色虛線是往回退'
+              + '（重新開啟、退回請購單、採購單退回彙整單）。',
+          },
+        ],
+      },
+      {
+        id: 'ch12-2',
+        title: '請購單的狀態變化',
+        route: '/cycle-purchase/requests',
+        blocks: [
+          {
+            t: 'diagram',
+            src: '/docs-static/diagrams/cycle_purchase/cp-02-request-lifecycle.html',
+            title: '請購單生命週期',
+            caption: '「關閉」是人工鎖；過了當月是另一道自動的唯讀鎖，兩者互相獨立。',
+          },
+        ],
+      },
+      {
+        id: 'ch12-3',
+        title: '採購單的狀態變化',
+        route: '/cycle-purchase/pos',
+        blocks: [
+          {
+            t: 'diagram',
+            src: '/docs-static/diagrams/cycle_purchase/cp-03-po-lifecycle.html',
+            title: '採購單生命週期',
+            caption: '「取消」＝本期不買，彙整列維持鎖定；「退回彙整單」才會把彙整列解鎖。',
+          },
+        ],
+      },
+      {
+        id: 'ch12-4',
+        title: '彙整單拋轉 Ragic 的來回',
+        route: '/cycle-purchase/summary',
+        blocks: [
+          {
+            t: 'diagram',
+            src: '/docs-static/diagrams/cycle_purchase/cp-04-ragic-sequence.html',
+            title: '拋轉 Ragic 時序圖',
+            caption:
+              '一家廠商拋成一張 Ragic 請購單，部門與會計科目在子表逐列帶。'
+              + '送簽要到 Ragic 按「開始簽核」，簽核結果目前不會回到 Portal。',
+          },
+        ],
+      },
+      {
+        id: 'ch12-5',
+        title: '部門與權限：誰能改哪張請購單',
+        blocks: [
+          {
+            t: 'diagram',
+            src: '/docs-static/diagrams/cycle_purchase/cp-05-dept-permission.html',
+            title: '部門與權限鏈',
+            caption: '同部門的成員都能改該部門的請購單；部門承辦人是備援通道。',
           },
         ],
       },

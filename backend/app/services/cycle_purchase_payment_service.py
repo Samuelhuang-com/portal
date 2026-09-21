@@ -3,7 +3,7 @@
 
 分攤金額怎麼算（建立請款單當下計算一次，之後不再自動變動）：
   對這張採購單的每一個採購明細行，回頭找它的來源彙整列（同週期＋期別＋
-  公司＋料號），再找當初彙整進去的全部已核准（approved）請購明細，依
+  公司＋料號＋部門），再找當初彙整進去的請購明細（is_summarized=True），依
   request.department_id ＋ request.cost_center_id ＋ request_item.account_code_id
   分組加總 request_qty，算出各組的原始請購數量占比，再依這個占比把這個
   採購明細行的小計（subtotal）拆給各組。所有採購明細行的拆分結果，依
@@ -115,16 +115,31 @@ def _compute_suggested_allocation(db: Session, po: CyclePurchasePO):
             buckets[(None, None, None)] += item_subtotal
             continue
 
+        filters = [
+            CyclePurchaseRequest.cycle_id == summary.cycle_id,
+            CyclePurchaseRequest.period_label == summary.period_label,
+            CyclePurchaseRequest.company == summary.company,
+            CyclePurchaseRequestItem.item_id == summary.item_id,
+        ]
+        if summary.department_id is not None:
+            # 2026-09-21 修正：原本只篩 status == "approved"，但 2026-07-17 請購單
+            # 拿掉送出／核准後新資料的 status 固定是 draft，永遠查不到 → 新資料的
+            # 分攤建議全部落到「未歸屬」。改成與 unsummarize_request() 重算時相同的
+            # 口徑：同週期＋期別＋公司＋**部門**、且 is_summarized=True 的請購單。
+            # 加部門條件是因為 2026-07-16 起彙整列（以及轉出的採購明細）本身就是
+            # 分部門的，不限部門會把 A 部門那一行的金額拆給其他部門。
+            filters += [
+                CyclePurchaseRequest.department_id == summary.department_id,
+                CyclePurchaseRequest.is_summarized == True,  # noqa: E712
+            ]
+        else:
+            # 2026-07-16 之前的歷史彙整列沒有部門別，沿用舊規則（跨部門依核准單占比拆）
+            filters.append(CyclePurchaseRequest.status == "approved")
+
         rows = (
             db.query(CyclePurchaseRequest, CyclePurchaseRequestItem)
             .join(CyclePurchaseRequestItem, CyclePurchaseRequestItem.request_id == CyclePurchaseRequest.id)
-            .filter(
-                CyclePurchaseRequest.cycle_id == summary.cycle_id,
-                CyclePurchaseRequest.period_label == summary.period_label,
-                CyclePurchaseRequest.company == summary.company,
-                CyclePurchaseRequestItem.item_id == summary.item_id,
-                CyclePurchaseRequest.status == "approved",
-            )
+            .filter(*filters)
             .all()
         )
 

@@ -1,0 +1,168 @@
+{
+  "schema_version": 1,
+  "diagram_type": "lifecycle",
+  "meta": {
+    "title": "週採採購單生命週期",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1060,
+      650
+    ]
+  },
+  "lanes": [
+    {
+      "id": "main",
+      "label": "主幹狀態"
+    },
+    {
+      "id": "stop",
+      "label": "取消"
+    },
+    {
+      "id": "terminal",
+      "label": "退回"
+    }
+  ],
+  "states": [
+    {
+      "id": "row",
+      "type": "start",
+      "label": "彙整列",
+      "sublabel": "status=draft",
+      "lane": "main",
+      "col": 0,
+      "step": "01",
+      "tag": "可拋轉 Ragic"
+    },
+    {
+      "id": "draft",
+      "type": "active",
+      "label": "採購單草稿",
+      "sublabel": "draft",
+      "lane": "main",
+      "col": 1,
+      "step": "02",
+      "tag": "一供應商一張"
+    },
+    {
+      "id": "issued",
+      "type": "active",
+      "label": "已發出",
+      "sublabel": "issued",
+      "lane": "main",
+      "col": 2,
+      "step": "03"
+    },
+    {
+      "id": "partial",
+      "type": "waiting",
+      "label": "部分驗收",
+      "sublabel": "partial_received",
+      "lane": "main",
+      "col": 3,
+      "step": "04",
+      "tag": "系統重算"
+    },
+    {
+      "id": "received",
+      "type": "success",
+      "label": "已驗收",
+      "sublabel": "received",
+      "lane": "main",
+      "col": 4,
+      "step": "05",
+      "tag": "可請款"
+    },
+    {
+      "id": "cancelled",
+      "type": "failure",
+      "label": "已取消",
+      "sublabel": "本期不買了",
+      "lane": "stop",
+      "col": 0,
+      "tag": "彙整列仍鎖定"
+    },
+    {
+      "id": "reverted",
+      "type": "failure",
+      "label": "退回彙整單",
+      "sublabel": "刪明細、列回 draft",
+      "lane": "terminal",
+      "col": 0,
+      "tag": "無驗收單才可"
+    }
+  ],
+  "transitions": [
+    {
+      "from": "draft",
+      "to": "cancelled",
+      "label": "取消",
+      "variant": "security",
+      "fromSide": "bottom",
+      "toSide": "left",
+      "via": [
+        [
+          248,
+          307
+        ]
+      ]
+    },
+    {
+      "from": "issued",
+      "to": "cancelled",
+      "label": "取消",
+      "variant": "security",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "route": "straight",
+      "labelDy": 24
+    },
+    {
+      "from": "cancelled",
+      "to": "reverted",
+      "label": "退回",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "route": "straight",
+      "labelAt": [
+        402,
+        393
+      ]
+    },
+    {
+      "from": "reverted",
+      "to": "row",
+      "label": "可重新轉單",
+      "variant": "emphasis",
+      "fromSide": "left",
+      "toSide": "bottom",
+      "via": [
+        [
+          94,
+          479
+        ]
+      ]
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "狀態由誰推動",
+      "items": [
+        "發出與取消由採購人工操作",
+        "部分驗收／已驗收由驗收單送出後系統重算",
+        "至少一張驗收單才能開請款單"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "取消 vs 退回",
+      "items": [
+        "取消＝本期不買，彙整列維持鎖定",
+        "草稿、已發出、已取消都可直接退回彙整單",
+        "已有驗收單就不能退回"
+      ]
+    }
+  ]
+}

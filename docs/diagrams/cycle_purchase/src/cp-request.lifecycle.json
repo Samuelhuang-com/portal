@@ -1,0 +1,175 @@
+{
+  "schema_version": 1,
+  "diagram_type": "lifecycle",
+  "meta": {
+    "title": "週採請購單生命週期",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1060,
+      650
+    ]
+  },
+  "lanes": [
+    {
+      "id": "main",
+      "label": "主幹狀態"
+    },
+    {
+      "id": "back",
+      "label": "反向操作"
+    }
+  ],
+  "states": [
+    {
+      "id": "created",
+      "type": "start",
+      "label": "建立",
+      "sublabel": "PR-YYYY-MM-NNN",
+      "lane": "main",
+      "col": 0,
+      "step": "01",
+      "tag": "期別蓋章"
+    },
+    {
+      "id": "open",
+      "type": "active",
+      "label": "開放中",
+      "sublabel": "過月自動唯讀",
+      "lane": "main",
+      "col": 1,
+      "step": "02",
+      "tag": "部門可編"
+    },
+    {
+      "id": "closed",
+      "type": "decision",
+      "label": "已關閉",
+      "sublabel": "數量定案",
+      "lane": "main",
+      "col": 2,
+      "step": "03",
+      "tag": "close 權限"
+    },
+    {
+      "id": "summarized",
+      "type": "active",
+      "label": "已彙整",
+      "sublabel": "is_summarized",
+      "lane": "main",
+      "col": 3,
+      "step": "04"
+    },
+    {
+      "id": "converted",
+      "type": "success",
+      "label": "已轉採購",
+      "sublabel": "彙整列已轉單",
+      "lane": "main",
+      "col": 4,
+      "step": "05",
+      "tag": "不可退回"
+    },
+    {
+      "id": "reopened",
+      "type": "failure",
+      "label": "重新開啟",
+      "sublabel": "改完再關閉",
+      "lane": "back",
+      "col": 0,
+      "width": 110,
+      "tag": "可恢復"
+    },
+    {
+      "id": "returned",
+      "type": "failure",
+      "label": "退回請購單",
+      "sublabel": "重算彙整列",
+      "lane": "back",
+      "col": 1,
+      "yOffset": 78,
+      "tag": "可恢復"
+    }
+  ],
+  "transitions": [
+    {
+      "from": "closed",
+      "to": "reopened",
+      "label": "重新開啟",
+      "variant": "security",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "route": "straight",
+      "labelDy": 24
+    },
+    {
+      "from": "reopened",
+      "to": "open",
+      "label": "回到可編",
+      "variant": "emphasis",
+      "fromSide": "left",
+      "toSide": "bottom",
+      "via": [
+        [
+          248,
+          307
+        ]
+      ]
+    },
+    {
+      "from": "summarized",
+      "to": "returned",
+      "label": "退回",
+      "variant": "security",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "route": "straight",
+      "labelDy": 24
+    },
+    {
+      "from": "returned",
+      "to": "closed",
+      "label": "維持關閉",
+      "variant": "emphasis",
+      "fromSide": "right",
+      "toSide": "top",
+      "via": [
+        [
+          633,
+          385
+        ],
+        [
+          633,
+          100
+        ],
+        [
+          402,
+          100
+        ]
+      ],
+      "labelAt": [
+        518,
+        100
+      ]
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "兩個獨立的鎖",
+      "items": [
+        "關閉＝人工鎖，由關閉權限操作",
+        "過月＝自動唯讀，沒有排程自動關閉",
+        "status 欄固定 draft，只是歷史殘留"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "退回的限制",
+      "items": [
+        "已轉採購單或已拋轉 Ragic 不能退回",
+        "一次退一張，保留人工調整量",
+        "退回不改關閉狀態，可直接再彙整"
+      ]
+    }
+  ]
+}

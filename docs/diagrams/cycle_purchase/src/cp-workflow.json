@@ -1,0 +1,267 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "週採流程：請購到付款",
+    "quality_profile": "showcase"
+  },
+  "lanes": [
+    {
+      "id": "ragic",
+      "label": "Ragic sheet 58"
+    },
+    {
+      "id": "buyer",
+      "label": "採購"
+    },
+    {
+      "id": "dept",
+      "label": "部門請購／關閉人"
+    },
+    {
+      "id": "settle",
+      "label": "驗收人／財務"
+    },
+    {
+      "id": "reverse",
+      "label": "反向操作",
+      "variant": "exception"
+    }
+  ],
+  "phases": [
+    {
+      "id": "p_request",
+      "label": "請購",
+      "fromCol": 0,
+      "toCol": 1
+    },
+    {
+      "id": "p_summary",
+      "label": "彙整＋採購",
+      "fromCol": 2,
+      "toCol": 3,
+      "variant": "emphasis"
+    },
+    {
+      "id": "p_settle",
+      "label": "驗收＋請款",
+      "fromCol": 4,
+      "toCol": 5,
+      "variant": "dashed"
+    }
+  ],
+  "mainPath": [
+    "gen",
+    "fill",
+    "close",
+    "summarize",
+    "po",
+    "receive",
+    "pay"
+  ],
+  "nodes": [
+    {
+      "id": "gen",
+      "lane": "buyer",
+      "col": 0,
+      "type": "backend",
+      "label": "產生請購單",
+      "sublabel": "週期×適用部門",
+      "width": 186
+    },
+    {
+      "id": "fill",
+      "lane": "dept",
+      "col": 0,
+      "type": "frontend",
+      "label": "填請購明細",
+      "sublabel": "當月可編輯",
+      "width": 186
+    },
+    {
+      "id": "close",
+      "lane": "dept",
+      "col": 1,
+      "type": "security",
+      "label": "關閉請購單",
+      "sublabel": "數量定案",
+      "tag": "close 權限",
+      "width": 186
+    },
+    {
+      "id": "summarize",
+      "lane": "buyer",
+      "col": 2,
+      "type": "database",
+      "label": "彙整單",
+      "sublabel": "公司＋料號＋部門",
+      "width": 186
+    },
+    {
+      "id": "po",
+      "lane": "buyer",
+      "col": 3,
+      "type": "backend",
+      "label": "採購單",
+      "sublabel": "一供應商一張",
+      "width": 186
+    },
+    {
+      "id": "sign",
+      "lane": "ragic",
+      "col": 3,
+      "type": "external",
+      "label": "Ragic 簽核",
+      "sublabel": "人工開始簽核",
+      "tag": "不回寫 Portal",
+      "width": 186
+    },
+    {
+      "id": "receive",
+      "lane": "settle",
+      "col": 4,
+      "type": "backend",
+      "label": "驗收單",
+      "sublabel": "有差異照樣可請款",
+      "width": 186
+    },
+    {
+      "id": "pay",
+      "lane": "settle",
+      "col": 5,
+      "type": "database",
+      "label": "請款單",
+      "sublabel": "分攤→付款",
+      "width": 186
+    },
+    {
+      "id": "reopen",
+      "lane": "reverse",
+      "col": 1,
+      "type": "messagebus",
+      "label": "重新開啟",
+      "sublabel": "改完要再關閉",
+      "width": 186
+    },
+    {
+      "id": "unsum",
+      "lane": "reverse",
+      "col": 2,
+      "type": "messagebus",
+      "label": "退回請購單",
+      "sublabel": "重算彙整列",
+      "width": 186
+    },
+    {
+      "id": "revert",
+      "lane": "reverse",
+      "col": 3,
+      "type": "messagebus",
+      "label": "採購單退回",
+      "sublabel": "無驗收單才可",
+      "width": 186
+    }
+  ],
+  "edges": [
+    {
+      "from": "gen",
+      "to": "fill"
+    },
+    {
+      "from": "fill",
+      "to": "close"
+    },
+    {
+      "from": "close",
+      "to": "summarize",
+      "label": "勾選已關閉單",
+      "variant": "emphasis"
+    },
+    {
+      "from": "summarize",
+      "to": "po",
+      "label": "轉單"
+    },
+    {
+      "from": "po",
+      "to": "receive",
+      "label": "發出"
+    },
+    {
+      "from": "receive",
+      "to": "pay"
+    },
+    {
+      "from": "summarize",
+      "to": "sign",
+      "label": "依廠商拆單",
+      "role": "async",
+      "variant": "dashed"
+    },
+    {
+      "from": "close",
+      "to": "reopen",
+      "role": "error",
+      "variant": "security"
+    },
+    {
+      "from": "reopen",
+      "to": "fill",
+      "role": "return",
+      "variant": "dashed"
+    },
+    {
+      "from": "summarize",
+      "to": "unsum",
+      "role": "error",
+      "variant": "security"
+    },
+    {
+      "from": "unsum",
+      "to": "close",
+      "role": "return",
+      "variant": "dashed"
+    },
+    {
+      "from": "po",
+      "to": "revert",
+      "role": "error",
+      "variant": "security"
+    },
+    {
+      "from": "revert",
+      "to": "summarize",
+      "role": "return",
+      "variant": "dashed"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "主幹規則",
+      "items": [
+        "只有已關閉的請購單能彙整",
+        "拋轉 Ragic 依廠商拆單，子表逐列帶部門與會科",
+        "驗收送出後系統重算採購單狀態"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "擋下條件",
+      "items": [
+        "已轉採購單或已拋轉的請購單不能退回",
+        "已有驗收單的採購單不能退回",
+        "缺供應商、單價或 Ragic 部門的列不拋轉"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "目前的限制",
+      "items": [
+        "Ragic 簽核不會擋住轉採購單",
+        "Portal 還讀不到 Ragic 的簽核結果",
+        "取消拋轉不會刪掉 Ragic 上的單"
+      ]
+    }
+  ]
+}

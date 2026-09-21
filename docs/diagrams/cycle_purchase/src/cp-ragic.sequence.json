@@ -1,0 +1,221 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "週採彙整單拋轉 Ragic",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1080,
+      640
+    ],
+    "column_fit": "spread"
+  },
+  "participants": [
+    {
+      "id": "buyer",
+      "type": "frontend",
+      "label": "採購",
+      "sublabel": "彙整單頁面"
+    },
+    {
+      "id": "portal",
+      "type": "backend",
+      "label": "Portal 後端",
+      "sublabel": "summary service"
+    },
+    {
+      "id": "db",
+      "type": "database",
+      "label": "週採 DB",
+      "sublabel": "PostgreSQL"
+    },
+    {
+      "id": "ragic",
+      "type": "external",
+      "label": "Ragic sheet 58",
+      "sublabel": "★週採請購單"
+    },
+    {
+      "id": "signer",
+      "type": "security",
+      "label": "Ragic 簽核人",
+      "sublabel": "Ragic 端指定"
+    }
+  ],
+  "segments": [
+    {
+      "from": 150,
+      "to": 350,
+      "label": "拋轉"
+    },
+    {
+      "from": 358,
+      "to": 466,
+      "label": "簽核"
+    },
+    {
+      "from": 474,
+      "to": 556,
+      "label": "取消拋轉"
+    }
+  ],
+  "messages": [
+    {
+      "from": "buyer",
+      "to": "portal",
+      "y": 168,
+      "label": "push-to-ragic",
+      "variant": "emphasis",
+      "note": "範圍：週期＋期別＋公司"
+    },
+    {
+      "from": "portal",
+      "to": "db",
+      "y": 196,
+      "label": "讀彙整列",
+      "variant": "default"
+    },
+    {
+      "from": "db",
+      "to": "portal",
+      "y": 224,
+      "label": "廠商、單價、Ragic 部門",
+      "variant": "return",
+      "note": "缺任一項的列列入未拋轉"
+    },
+    {
+      "from": "portal",
+      "to": "ragic",
+      "y": 252,
+      "label": "每家廠商一張單",
+      "variant": "emphasis",
+      "note": "子表一列＝料號×部門，逐列帶會科"
+    },
+    {
+      "from": "ragic",
+      "to": "portal",
+      "y": 280,
+      "label": "單號＋_ragicId",
+      "variant": "return"
+    },
+    {
+      "from": "portal",
+      "to": "db",
+      "y": 308,
+      "label": "寫回已拋轉、單號、網址",
+      "variant": "default",
+      "note": "批次號從稽核紀錄取號"
+    },
+    {
+      "from": "portal",
+      "to": "buyer",
+      "y": 336,
+      "label": "成功／未拋轉／失敗清單",
+      "variant": "return"
+    },
+    {
+      "from": "buyer",
+      "to": "ragic",
+      "y": 370,
+      "label": "人工按開始簽核",
+      "variant": "dashed",
+      "note": "拋進去的單簽核狀態為 N"
+    },
+    {
+      "from": "ragic",
+      "to": "signer",
+      "y": 398,
+      "label": "送簽",
+      "variant": "default"
+    },
+    {
+      "from": "signer",
+      "to": "ragic",
+      "y": 426,
+      "label": "核准／退回",
+      "variant": "return"
+    },
+    {
+      "from": "ragic",
+      "to": "portal",
+      "y": 454,
+      "label": "回寫簽核結果（未實作）",
+      "variant": "security",
+      "note": "目前 Portal 讀不到簽核狀態"
+    },
+    {
+      "from": "buyer",
+      "to": "portal",
+      "y": 488,
+      "label": "cancel-ragic-push",
+      "variant": "default",
+      "note": "原因必填"
+    },
+    {
+      "from": "portal",
+      "to": "db",
+      "y": 516,
+      "label": "清除拋轉標記＋寫稽核",
+      "variant": "default"
+    },
+    {
+      "from": "portal",
+      "to": "buyer",
+      "y": 544,
+      "label": "提醒到 Ragic 人工作廢",
+      "variant": "return"
+    }
+  ],
+  "activations": [
+    {
+      "participant": "portal",
+      "from": 162,
+      "to": 342,
+      "type": "backend"
+    },
+    {
+      "participant": "db",
+      "from": 190,
+      "to": 314,
+      "type": "database"
+    },
+    {
+      "participant": "ragic",
+      "from": 246,
+      "to": 460,
+      "type": "external"
+    },
+    {
+      "participant": "signer",
+      "from": 392,
+      "to": 432,
+      "type": "security"
+    },
+    {
+      "participant": "portal",
+      "from": 482,
+      "to": 550,
+      "type": "backend"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "拆單規則（2026-09-20）",
+      "items": [
+        "一張單＝一公司＋一期別＋一廠商",
+        "主表部門與會科送固定值，歸屬看子表",
+        "已拋過的列略過，不擋整批"
+      ]
+    },
+    {
+      "dot": "orange",
+      "title": "尚未串起來的地方",
+      "items": [
+        "Portal 不讀回 Ragic 簽核結果",
+        "未簽核也能轉採購單",
+        "取消拋轉不會刪 Ragic 上的單"
+      ]
+    }
+  ]
+}

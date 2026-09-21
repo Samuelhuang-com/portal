@@ -24,7 +24,7 @@ import {
   Alert, Anchor, Button, Card, Col, Empty, Input, Row, Space, Table, Tag, Typography,
 } from 'antd'
 import {
-  ArrowRightOutlined, BookOutlined, ExclamationCircleOutlined,
+  ArrowRightOutlined, BookOutlined, ExclamationCircleOutlined, ExportOutlined,
   InfoCircleOutlined, SearchOutlined, StopOutlined,
 } from '@ant-design/icons'
 
@@ -159,6 +159,44 @@ const BlockView: React.FC<{ block: Block; keyword: string }> = ({ block, keyword
           )}
         </>
       )
+
+    case 'diagram': {
+      // 圖檔由後端 /docs-static 提供（portal/docs/），比照合約模組說明指南的 iframe 作法。
+      // theme=light：Portal 是淺色版面，避免圖跟著作業系統切成深色。
+      // embed=1：手冊內只顯示圖本體（Archify 內建嵌入模式，隱藏工具列與說明卡片）；
+      // 「新視窗開啟」才給完整版（含 Export、說明卡片）。
+      const url = `${block.src}?theme=light`
+      const embedUrl = `${url}&embed=1`
+      return (
+        <div style={{ marginBottom: 10 }}>
+          <div style={{
+            display: 'flex', justifyContent: 'space-between',
+            alignItems: 'center', marginBottom: 6,
+          }}>
+            <Text type="secondary" style={{ fontSize: 13 }}>{highlight(block.title, keyword)}</Text>
+            <Button size="small" icon={<ExportOutlined />} onClick={() => window.open(url, '_blank')}>
+              新視窗開啟
+            </Button>
+          </div>
+          <iframe
+            src={embedUrl}
+            title={block.title}
+            loading="lazy"
+            style={{
+              width: '100%',
+              height: block.height ?? 640,
+              border: '1px solid #e0e6ed',
+              borderRadius: 6,
+            }}
+          />
+          {block.caption && (
+            <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>
+              {renderInline(block.caption, keyword)}
+            </Text>
+          )}
+        </div>
+      )
+    }
 
     default:
       return null
