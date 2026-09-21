@@ -170,6 +170,10 @@ export const updateCpAccountCode = (id: number, data: Partial<CpAccountCode>) =>
 export const getItems = (params?: {
   q?: string
   category?: string
+  /** 2026-09-21：類別主檔細分類 id；0 ＝ 尚未對應類別主檔 */
+  category_id?: number
+  /** 2026-09-21：類別篩選停在任一層時，該層底下所有細分類 id（逗號分隔） */
+  category_ids?: string
   is_active?: boolean
   page?: number
   per_page?: number

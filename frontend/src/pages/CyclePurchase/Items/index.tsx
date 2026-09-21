@@ -23,30 +23,89 @@
  * （cycle_purchase_service.list_items），不是只排當頁 20 筆。每個篩選都有
  * 「未設定」選項（"__none__" / 0），方便找出還沒設公司/部門、科目、供應商的料號。
  * 「供應商」篩選同時比對料號主檔的預設供應商與料號對照上的叫貨供應商。
+ *
+ * 2026-09-21 類別改接類別主檔（cycle-purchase/masters/categories）：
+ * 原本「類別」下拉是這支檔案寫死的 4 個舊值（工務／清潔用品／文具印刷／營業用品），
+ * 但資料存的是類別主檔的類別字串（如「客廁備品-衛生紙」），一編輯就被改壞，
+ * 料號從請購單「可選料號」消失。現在：
+ *   · 新增／編輯改用「公司 → 大分類 → 中分類 → 細分類」四層 Cascader，送 category_id，
+ *     category 字串由後端從主檔帶入（前端不再送）。
+ *   · 編輯既有料號時，**沒動到類別欄位就不送 category_id**——尚未回填對應的舊料號
+ *     （category_id 為 null）存檔不會被清掉類別字串。
+ *   · 列表「類別」欄顯示「代碼前綴 + 類別字串」；尚未對應主檔的顯示橘色「未對應」。
+ *   · 篩選改成同一棵類別樹＋「未對應類別主檔」，可停在任一層（公司／大／中／細）：
+ *     前端把該層底下所有細分類 id 以 category_ids 送後端。
  */
 import { useEffect, useMemo, useState } from 'react'
 import {
   Button, Card, Cascader, Form, Input, InputNumber, Modal, Popconfirm, Select, Space,
-  Switch, Table, Tag, Typography, message, Divider,
+  Switch, Table, Tag, Tooltip, Typography, message, Divider,
 } from 'antd'
 import type { SorterResult } from 'antd/es/table/interface'
 import { PlusOutlined, EditOutlined, StopOutlined, CheckCircleOutlined, ApartmentOutlined, DeleteOutlined, ClearOutlined } from '@ant-design/icons'
 import {
-  createItem, createItemMapping, deleteItemMapping, getCpAccountCodes, getCpDepartments, getItem,
-  getItems, getVendors, updateItem, updateItemMapping,
+  createItem, createItemMapping, deleteItemMapping, getCpAccountCodes, getCpCategories, getCpDepartments,
+  getItem, getItems, getVendors, updateItem, updateItemMapping,
 } from '@/api/cyclePurchase'
 import type {
-  CpAccountCode, CpDepartment, CpItem, CpItemDetail, CpItemMapping, CpVendor,
+  CpAccountCode, CpCategory, CpDepartment, CpItem, CpItemDetail, CpItemMapping, CpVendor,
 } from '@/types/cyclePurchase'
 
 const { Title, Text } = Typography
 
-const CATEGORY_OPTIONS = [
-  { label: '工務', value: '工務' },
-  { label: '清潔用品', value: '清潔用品' },
-  { label: '文具印刷', value: '文具印刷' },
-  { label: '營業用品', value: '營業用品' },
-]
+// 2026-09-21：類別改由類別主檔建樹（見檔頭），原本寫死的 CATEGORY_OPTIONS 已移除。
+type CategoryNode = { label: string; value: string | number; disabled?: boolean; children?: CategoryNode[] }
+
+/** 類別主檔 → 「公司 → 大分類 → 中分類 → 細分類」樹；葉節點 value＝類別 id */
+function buildCategoryTree(categories: CpCategory[]): CategoryNode[] {
+  const tree: CategoryNode[] = []
+  const find = (list: CategoryNode[], value: string, label: string) => {
+    let n = list.find((x) => x.value === value)
+    if (!n) { n = { label, value, children: [] }; list.push(n) }
+    return n
+  }
+  for (const c of categories) {
+    const company = find(tree, c.company, c.company)
+    const major = find(company.children!, `${c.company}|${c.major_code}`, `${c.major_code} ${c.major_name}`)
+    const mid = find(major.children!, `${c.company}|${c.major_code}|${c.mid_code}`, `${c.mid_code} ${c.mid_name}`)
+    mid.children!.push({
+      label: `${c.sub_code} ${c.sub_name || '（細分類未命名）'}${c.is_active ? '' : '（停用）'}`,
+      value: c.id,
+      disabled: !c.is_active,
+    })
+  }
+  return tree
+}
+
+/** 類別 id → Cascader 的完整路徑值 */
+function categoryPathValue(categories: CpCategory[], id?: number | null): (string | number)[] | undefined {
+  const c = id ? categories.find((x) => x.id === id) : undefined
+  if (!c) return undefined
+  return [c.company, `${c.company}|${c.major_code}`, `${c.company}|${c.major_code}|${c.mid_code}`, c.id]
+}
+
+/** Cascader 搜尋：任一層標籤含關鍵字即命中 */
+const categorySearch = {
+  filter: (input: string, path: CategoryNode[]) =>
+    path.some((o) => String(o.label).toLowerCase().includes(input.toLowerCase())),
+}
+
+/**
+ * 類別樹上任一層的路徑 → 該層底下所有細分類 id。
+ * 路徑值格式見 categoryPathValue：[公司, "公司|大", "公司|大|中", 類別id]
+ */
+function categoryIdsUnder(categories: CpCategory[], path: (string | number)[]): number[] {
+  const [company, major, mid, leaf] = path
+  if (leaf !== undefined) return [Number(leaf)]
+  return categories
+    .filter((c) => c.company === company)
+    .filter((c) => major === undefined || `${c.company}|${c.major_code}` === major)
+    .filter((c) => mid === undefined || `${c.company}|${c.major_code}|${c.mid_code}` === mid)
+    .map((c) => c.id)
+}
+
+// 類別篩選「尚未對應類別主檔」哨兵值（對應後端 category_id=0）
+const CATEGORY_UNMAPPED = '__unmapped__'
 
 // 篩選「未設定」哨兵值（與後端 cycle_purchase_service.ITEM_UNSET 一致）
 const UNSET = '__none__'
@@ -96,7 +155,9 @@ export default function CpItemsPage() {
   const [q, setQ] = useState('')
   const [searchText, setSearchText] = useState('')
   // 2026-09-16 新增：篩選與排序（後端處理）
-  const [fCategory, setFCategory] = useState<string | undefined>()
+  // 2026-09-21：類別篩選改成類別樹路徑（最後一層＝類別 id），或 [CATEGORY_UNMAPPED]
+  const [fCategory, setFCategory] = useState<(string | number)[] | undefined>()
+  const [categories, setCategories] = useState<CpCategory[]>([])
   const [fCompanyDept, setFCompanyDept] = useState<string[] | undefined>()
   const [fAccountCode, setFAccountCode] = useState<number | undefined>()
   const [fVendor, setFVendor] = useState<number | undefined>()
@@ -176,7 +237,12 @@ export default function CpItemsPage() {
     ],
     [departments],
   )
-  const hasFilter = !!(q || fCategory || fCompanyDept?.length || fAccountCode !== undefined || fVendor !== undefined)
+  const categoryTree = useMemo(() => buildCategoryTree(categories), [categories])
+  const categoryFilterOptions = useMemo(
+    () => [{ label: '未對應類別主檔', value: CATEGORY_UNMAPPED }, ...categoryTree],
+    [categoryTree],
+  )
+  const hasFilter = !!(q || fCategory?.length || fCompanyDept?.length || fAccountCode !== undefined || fVendor !== undefined)
 
   const resetFilters = () => {
     setSearchText('')
@@ -195,7 +261,10 @@ export default function CpItemsPage() {
       q,
       page,
       per_page: perPage,
-      category: fCategory,
+      category_id: fCategory?.[0] === CATEGORY_UNMAPPED ? 0 : undefined,
+      category_ids: fCategory?.length && fCategory[0] !== CATEGORY_UNMAPPED
+        ? categoryIdsUnder(categories, fCategory).join(',') || '-1'   // 該層沒有細分類 → 查無資料
+        : undefined,
       company: cdCompany,
       department_id: cdDept ? Number(cdDept) : undefined,
       account_code_id: fAccountCode,
@@ -214,6 +283,8 @@ export default function CpItemsPage() {
   useEffect(() => { getVendors({ is_active: true }).then((r) => setVendors(r.data)) }, [])
   useEffect(() => { getCpDepartments({ is_active: true }).then((r) => setDepartments(r.data)) }, [])
   useEffect(() => { getCpAccountCodes({ is_active: true }).then((r) => setAccountCodes(r.data)) }, [])
+  // 含停用的類別一起撈：既有料號可能掛在已停用的類別上，要能顯示路徑（選單裡會 disabled）
+  useEffect(() => { getCpCategories().then((r) => setCategories(r.data)) }, [])
 
   const toggleActive = async (item: CpItem) => {
     try {
@@ -239,7 +310,7 @@ export default function CpItemsPage() {
   const openEdit = async (item: CpItem) => {
     setEditing(item)
     form.resetFields()
-    form.setFieldsValue(item)
+    form.setFieldsValue({ ...item, category_cascade: categoryPathValue(categories, item.category_id) })
     setMappingRows([])
     setMappingRowsBase([])
     setModalOpen(true)
@@ -280,7 +351,19 @@ export default function CpItemsPage() {
       const values = await form.validateFields()
       // company_departments／account_code_labels 是列表顯示用的衍生欄位，
       // 會被 form.setFieldsValue(item) 帶進表單，送出前要拿掉。
-      const { company_departments, account_code_labels, ...itemValues } = values as any
+      // 2026-09-21：category 相關欄位一律不直接送；類別只送 category_id（由 Cascader 換算）。
+      const {
+        company_departments, account_code_labels,
+        category, category_path, category_company, category_code_prefix, category_cascade,
+        ...itemValues
+      } = values as any
+      // 新增一律送；編輯時只有動過類別欄位才送——沒動就不送，避免尚未回填 category_id
+      // 的舊料號存檔時被清掉類別字串。
+      if (!editing || form.isFieldTouched('category_cascade')) {
+        itemValues.category_id = category_cascade?.length
+          ? Number(category_cascade[category_cascade.length - 1])
+          : null
+      }
       let itemId: number
       if (editing) {
         await updateItem(editing.id, itemValues)
@@ -405,13 +488,16 @@ export default function CpItemsPage() {
             onChange={(e) => setSearchText(e.target.value)}
             onSearch={(v) => { setPage(1); setQ(v) }}
           />
-          <Select
+          <Cascader
             placeholder="類別"
             allowClear
-            style={{ width: 140 }}
+            changeOnSelect
+            showSearch={categorySearch}
+            style={{ width: 240 }}
             value={fCategory}
-            onChange={(v) => { setPage(1); setFCategory(v) }}
-            options={[...CATEGORY_OPTIONS, { label: '未設定', value: UNSET }]}
+            onChange={(v) => { setPage(1); setFCategory(v && v.length ? (v as (string | number)[]) : undefined) }}
+            options={categoryFilterOptions}
+            displayRender={(labels) => labels.join(' / ')}
           />
           <Cascader
             placeholder="公司/部門"
@@ -471,7 +557,24 @@ export default function CpItemsPage() {
           columns={[
             { title: '集團料號', dataIndex: 'item_code', width: 120, sorter: true, sortOrder: sortBy === 'item_code' ? sortOrder : null },
             { title: '品名', dataIndex: 'item_name', sorter: true, sortOrder: sortBy === 'item_name' ? sortOrder : null },
-            { title: '類別', dataIndex: 'category', width: 100, sorter: true, sortOrder: sortBy === 'category' ? sortOrder : null },
+            {
+              // 2026-09-21：顯示「代碼前綴 類別字串」，滑過看完整三層；未對應主檔標橘色
+              title: '類別',
+              dataIndex: 'category',
+              width: 170,
+              sorter: true,
+              sortOrder: sortBy === 'category' ? sortOrder : null,
+              render: (v: string | null | undefined, r: CpItem) =>
+                r.category_id
+                  ? (
+                    <Tooltip title={`${r.category_company ?? ''}：${r.category_path ?? ''}`}>
+                      <span><Text type="secondary">{r.category_code_prefix}</Text> {v}</span>
+                    </Tooltip>
+                  )
+                  : v
+                    ? <Tooltip title="類別字串尚未對應類別主檔，請編輯料號重新選擇類別"><Tag color="orange">未對應</Tag>{v}</Tooltip>
+                    : <Tag color="default">未設定</Tag>,
+            },
             {
               title: '公司/部門',
               dataIndex: 'company_departments',
@@ -550,8 +653,21 @@ export default function CpItemsPage() {
             <Form.Item name="item_code" label="集團料號" rules={[{ required: true }]} style={{ width: '50%' }}>
               <Input placeholder="新編碼，不沿用原公司料號" />
             </Form.Item>
-            <Form.Item name="category" label="類別" style={{ width: '50%', marginLeft: 8 }}>
-              <Select options={CATEGORY_OPTIONS} allowClear />
+            <Form.Item
+              name="category_cascade"
+              label="類別（公司 / 大分類 / 中分類 / 細分類）"
+              style={{ width: '50%', marginLeft: 8 }}
+              extra={editing && !editing.category_id && editing.category
+                ? `目前類別「${editing.category}」尚未對應類別主檔，請重新選擇`
+                : undefined}
+            >
+              <Cascader
+                options={categoryTree}
+                allowClear
+                showSearch={categorySearch}
+                placeholder="選到細分類"
+                displayRender={(labels) => labels.join(' / ')}
+              />
             </Form.Item>
           </Space.Compact>
           <Form.Item name="item_name" label="品名" rules={[{ required: true }]}>

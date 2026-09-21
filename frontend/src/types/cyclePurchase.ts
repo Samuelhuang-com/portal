@@ -145,7 +145,19 @@ export interface CpItem {
   item_code: string
   item_name: string
   spec?: string | null
+  /**
+   * 類別字串。2026-09-21 起為**唯讀衍生值**：後端依 category_id 從類別主檔
+   * category_name 帶入，送出時帶了也會被忽略。
+   */
   category?: string | null
+  /** 2026-09-21 新增：類別主檔細分類 id；null＝尚未對應類別主檔 */
+  category_id?: number | null
+  /** 以下三個是後端附加的顯示欄位（依 category_id 查主檔） */
+  category_company?: string | null
+  /** 如 "E0101" */
+  category_code_prefix?: string | null
+  /** 如 "E 工程 / 01 空調備品 / 01 濾網" */
+  category_path?: string | null
   unit?: string | null
   default_qty: number
   moq: number

@@ -35,6 +35,10 @@ router = APIRouter()
 def list_items(
     q: str = Query("", description="關鍵字（料號／品名）"),
     category: Optional[str] = Query(None),
+    # 2026-09-21：依類別主檔細分類篩選；0 = 尚未對應類別主檔
+    category_id: Optional[int] = Query(None, ge=0, description="類別主檔 ID；0 = 尚未對應"),
+    # 類別篩選停在公司／大分類／中分類時，前端送該層底下所有細分類 id（逗號分隔）
+    category_ids: str = Query("", description="類別主檔 ID 清單（逗號分隔），任一命中即符合"),
     is_active: Optional[bool] = Query(None),
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=5, le=200),
@@ -49,7 +53,11 @@ def list_items(
     db: Session = Depends(get_cycle_purchase_db),
 ):
     items, total = svc.list_items(
-        db, q=q, category=category, is_active=is_active, page=page, per_page=per_page,
+        db, q=q, category=category, category_id=category_id,
+        # 有帶參數就一定套篩選（-1 ＝ 前端選到的節點底下沒有細分類 → 查無資料）
+        category_ids=[int(x) for x in category_ids.split(",") if x.strip().lstrip("-").isdigit()]
+        if category_ids.strip() else None,
+        is_active=is_active, page=page, per_page=per_page,
         company=company, department_id=department_id, account_code_id=account_code_id,
         vendor_id=vendor_id, sort_by=sort_by, sort_order=sort_order,
     )
@@ -76,6 +84,9 @@ def create_item(
 ):
     try:
         return svc.create_item(db, payload)
+    except ValueError as exc:   # 類別不存在／已停用（2026-09-21）
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc))
     except IntegrityError:
         db.rollback()
         raise HTTPException(status_code=409, detail="集團料號已存在")
@@ -90,6 +101,9 @@ def update_item(
 ):
     try:
         item = svc.update_item(db, item_id, payload)
+    except ValueError as exc:   # 類別不存在／已停用（2026-09-21）
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc))
     except IntegrityError:
         db.rollback()
         raise HTTPException(status_code=409, detail="集團料號已存在")

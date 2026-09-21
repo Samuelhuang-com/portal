@@ -62,7 +62,11 @@ class ItemBase(BaseModel):
     item_code: str
     item_name: str
     spec: Optional[str] = None
+    # ⚠️ 2026-09-21 起 category 為**唯讀衍生欄位**：寫入時一律忽略，由後端依
+    #    category_id 從類別主檔 category_name 帶入（見 models/cycle_purchase_item.py）。
     category: Optional[str] = None
+    # 類別主檔細分類 id；None＝未設定類別
+    category_id: Optional[int] = None
     unit: Optional[str] = None
     default_qty: int = 0
     moq: int = 0
@@ -83,7 +87,9 @@ class ItemUpdate(BaseModel):
     item_code: Optional[str] = None
     item_name: Optional[str] = None
     spec: Optional[str] = None
-    category: Optional[str] = None
+    category: Optional[str] = None   # 唯讀衍生欄位，寫入時忽略（見 ItemBase）
+    # 有帶這個 key 才會改類別；明確帶 null ＝ 清空類別
+    category_id: Optional[int] = None
     unit: Optional[str] = None
     default_qty: Optional[int] = None
     moq: Optional[int] = None
@@ -112,6 +118,11 @@ class ItemOut(ItemBase):
     # 科目是逐筆對照設定的，列表看得到才知道哪些料號還沒設——請購明細的科目
     # 是從對照表自動帶入的，漏設等於該筆請購沒有科目可分攤。
     account_code_labels: List[str] = []
+    # 2026-09-21 新增：類別主檔三層顯示（service 附加，不落地）。
+    # category_path 如 "E 工程 / 01 空調備品 / 01 濾網"；category_code_prefix 如 "E0101"。
+    category_company: Optional[str] = None
+    category_code_prefix: Optional[str] = None
+    category_path: Optional[str] = None
 
     class Config:
         from_attributes = True

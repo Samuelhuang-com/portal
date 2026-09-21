@@ -100,6 +100,19 @@ class CyclePurchaseItem(CyclePurchaseBase):
     spec              = Column(String(300), nullable=True,  comment="規格")
     category          = Column(String(50),  nullable=True,
                                 comment="類別（如：清潔用品／文具印刷／營業用品／工務）")
+    # 2026-09-21 新增（migration cpitemcat）：改接類別主檔的**細分類**。
+    # 原本 category 是自由字串，料號頁的下拉還是寫死的 4 個舊值，新增/編輯料號時
+    # 會把正確的類別字串（如「客廁備品-衛生紙」）改成主檔對不上的「清潔用品」，
+    # 料號就從週期設定「適用品類」與請購單「可選料號」裡靜默消失。
+    # 現在 category 字串**保留**但改由後端依 category_id 從主檔 category_name 帶入
+    # （週期設定／請購單／主檔料號數仍以字串比對，保留字串就不用動那幾處）。
+    # NULL＝尚未對應，見 Temp/cp_items_category_backfill_20260921.sql。
+    category_id       = Column(
+        Integer,
+        ForeignKey("cycle_purchase_categories.id", ondelete="RESTRICT"),
+        nullable=True,
+        comment="類別主檔細分類（→ cycle_purchase_categories.id）；NULL=尚未對應",
+    )
     unit              = Column(String(20),  nullable=True,  comment="計量單位")
     default_qty       = Column(Integer,     nullable=False, default=0, comment="批次預載數量")
     moq               = Column(Integer,     nullable=False, default=0, comment="最小訂購量 MOQ")

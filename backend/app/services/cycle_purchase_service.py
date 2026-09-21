@@ -491,8 +491,18 @@ def update_category(db: Session, category_id: int, payload) -> Optional[CyclePur
     )
     if not category:
         return None
+    old_name = category.category_name
     for k, v in payload.model_dump(exclude_unset=True).items():
         setattr(category, k, v)
+    # 2026-09-21：料號的 category 字串是從主檔帶入的衍生值，主檔改名時要跟著改，
+    # 否則已接上 category_id 的料號字串又會跟主檔對不上（正是這次要修的病）。
+    # ⚠️ 週期設定 applicable_categories 存的也是字串，這裡**不**連動改寫——
+    #    改名前請先確認沒有週期設定在用舊名稱。
+    if category.category_name != old_name:
+        db.query(CyclePurchaseItem).filter(
+            CyclePurchaseItem.category_id == category.id
+        ).update({CyclePurchaseItem.category: category.category_name},
+                 synchronize_session=False)
     db.flush()
     return _attach_category_display_fields(db, category)
 
@@ -552,6 +562,57 @@ def get_next_item_code(db: Session, category_id: int) -> Optional[dict]:
 # ═══════════════════════════════════════════════════════════════════════════
 # 料號主檔 + 料號對照表
 # ═══════════════════════════════════════════════════════════════════════════
+
+def _category_path(category: CyclePurchaseCategory) -> str:
+    """類別三層顯示字串，如 `E 工程 / 01 空調備品 / 01 濾網`（細分類未命名時只顯示代碼）。"""
+    sub = f"{category.sub_code} {category.sub_name}" if category.sub_name else category.sub_code
+    return (
+        f"{category.major_code} {category.major_name} / "
+        f"{category.mid_code} {category.mid_name} / {sub}"
+    )
+
+
+def _attach_item_category(db: Session, item: CyclePurchaseItem) -> CyclePurchaseItem:
+    """附加 category_company／category_code_prefix／category_path（2026-09-21）。"""
+    item.category_company = None
+    item.category_code_prefix = None
+    item.category_path = None
+    if item.category_id:
+        cat = db.query(CyclePurchaseCategory).filter(
+            CyclePurchaseCategory.id == item.category_id
+        ).first()
+        if cat:
+            item.category_company = cat.company
+            item.category_code_prefix = cat.code_prefix
+            item.category_path = _category_path(cat)
+    return item
+
+
+def _apply_item_category(db: Session, data: dict) -> dict:
+    """
+    2026-09-21：料號類別一律由類別主檔決定。
+
+    - `category` 字串不接受外部寫入（前端舊版下拉寫死 4 個舊值，就是這樣把正確
+      字串改壞的），一律丟掉。
+    - 有帶 `category_id`：None → 清空類別；有值 → 查主檔，帶入 category_name。
+      查不到或已停用 → ValueError（router 轉 400），不靜默存成對不上的值。
+    - 沒帶 `category_id`（部分更新）→ 類別不動。
+    """
+    data.pop("category", None)
+    if "category_id" not in data:
+        return data
+    cid = data["category_id"]
+    if cid is None:
+        data["category"] = None
+        return data
+    cat = db.query(CyclePurchaseCategory).filter(CyclePurchaseCategory.id == cid).first()
+    if not cat:
+        raise ValueError(f"類別不存在（id={cid}）")
+    if not cat.is_active:
+        raise ValueError(f"類別「{cat.category_name}」已停用，請改選其他類別")
+    data["category"] = cat.category_name
+    return data
+
 
 def _attach_vendor_name(db: Session, item: CyclePurchaseItem) -> CyclePurchaseItem:
     item.default_vendor_name = None
@@ -621,6 +682,8 @@ def list_items(
     db: Session,
     q: str = "",
     category: Optional[str] = None,
+    category_id: Optional[int] = None,
+    category_ids: Optional[list[int]] = None,
     is_active: Optional[bool] = None,
     page: int = 1,
     per_page: int = 20,
@@ -643,6 +706,15 @@ def list_items(
         query = query.filter((CyclePurchaseItem.category.is_(None)) | (CyclePurchaseItem.category == ""))
     elif category:
         query = query.filter(CyclePurchaseItem.category == category)
+    # 2026-09-21：依類別主檔細分類篩選；0 ＝ 尚未對應類別主檔（category_id 為 NULL）
+    if category_id == 0:
+        query = query.filter(CyclePurchaseItem.category_id.is_(None))
+    elif category_id:
+        query = query.filter(CyclePurchaseItem.category_id == category_id)
+    # 2026-09-21：類別篩選可停在任一層（公司／大分類／中分類／細分類），前端把
+    # 該節點底下所有細分類 id 一次送來。
+    if category_ids is not None:
+        query = query.filter(CyclePurchaseItem.category_id.in_(category_ids))
     if is_active is not None:
         query = query.filter(CyclePurchaseItem.is_active == is_active)
 
@@ -728,6 +800,7 @@ def list_items(
         _attach_vendor_name(db, r)
         _attach_company_departments(db, r)
         _attach_account_code_labels(db, r)
+        _attach_item_category(db, r)
     return rows, total
 
 
@@ -737,15 +810,18 @@ def get_item(db: Session, item_id: int) -> Optional[CyclePurchaseItem]:
         _attach_vendor_name(db, item)
         _attach_company_departments(db, item)
         _attach_account_code_labels(db, item)
+        _attach_item_category(db, item)
         for m in item.mappings:
             _attach_mapping_display_fields(db, m)
     return item
 
 
 def create_item(db: Session, payload) -> CyclePurchaseItem:
-    item = CyclePurchaseItem(**payload.model_dump())
+    data = _apply_item_category(db, payload.model_dump())
+    item = CyclePurchaseItem(**data)
     db.add(item)
     db.flush()
+    _attach_item_category(db, item)
     return _attach_vendor_name(db, item)
 
 
@@ -753,9 +829,11 @@ def update_item(db: Session, item_id: int, payload) -> Optional[CyclePurchaseIte
     item = db.query(CyclePurchaseItem).filter(CyclePurchaseItem.id == item_id).first()
     if not item:
         return None
-    for k, v in payload.model_dump(exclude_unset=True).items():
+    data = _apply_item_category(db, payload.model_dump(exclude_unset=True))
+    for k, v in data.items():
         setattr(item, k, v)
     db.flush()
+    _attach_item_category(db, item)
     return _attach_vendor_name(db, item)
 
 
