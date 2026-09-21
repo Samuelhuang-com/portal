@@ -44,6 +44,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
+  DatePicker,
   Alert, Button, Card, Descriptions, Form, Input, InputNumber, Modal,
   Select, Space, Table, Tabs, Tag, Tooltip, Typography, message,
 } from 'antd'
@@ -252,6 +253,66 @@ export default function CpSummaryPage() {
   }
 
   useEffect(() => { load() }, [cycleId, periodLabel, company])
+
+  // ── 2026-09-22：未選週期時顯示「當月彙整總覽」──────────────────────────
+  // 原本一進頁面只有「請先選擇週期與期別」，要先篩選才看得到東西。
+  // 改成：預設列出指定月份（預設當月）所有週期×公司的彙整單，點一列就帶入
+  // 週期／期別／公司，顯示原本的明細畫面。GET /summary 只帶 period_label 即可跨週期查詢。
+  const [overviewMonth, setOverviewMonth] = useState<string>(currentYearMonth())
+  const [overviewRows, setOverviewRows] = useState<CpSummary[]>([])
+  const [overviewLoading, setOverviewLoading] = useState(false)
+  const loadOverview = () => {
+    if (!overviewMonth) { setOverviewRows([]); return }
+    setOverviewLoading(true)
+    getSummary({ period_label: overviewMonth })
+      .then((r) => setOverviewRows(r.data))
+      .catch((err) => message.error(errMsg(err, '載入當月彙整失敗')))
+      .finally(() => setOverviewLoading(false))
+  }
+  useEffect(() => { if (!cycleId) loadOverview() }, [cycleId, overviewMonth])
+
+  type OverviewGroup = {
+    key: string; cycle_id: number; cycle_name: string; company: string; period_label: string
+    items: number; depts: number; vendors: number; qty: number; amount: number
+    pushed: number; total: number; ragic_ids: string[]
+  }
+  const overviewGroups = useMemo<OverviewGroup[]>(() => {
+    const m = new Map<string, OverviewGroup & { _i: Set<number>; _d: Set<number>; _v: Set<number> }>()
+    for (const r of overviewRows) {
+      const key = `${r.cycle_id}|${r.company}|${r.period_label}`
+      let g = m.get(key)
+      if (!g) {
+        g = {
+          key, cycle_id: r.cycle_id,
+          cycle_name: r.cycle_name || cycles.find((c) => c.id === r.cycle_id)?.cycle_name || `週期 #${r.cycle_id}`,
+          company: r.company, period_label: r.period_label,
+          items: 0, depts: 0, vendors: 0, qty: 0, amount: 0, pushed: 0, total: 0, ragic_ids: [],
+          _i: new Set(), _d: new Set(), _v: new Set(),
+        }
+        m.set(key, g)
+      }
+      g._i.add(r.item_id)
+      if (r.department_id) g._d.add(r.department_id)
+      if (r.vendor_id) g._v.add(r.vendor_id)
+      const q = Number(r.adjusted_qty ?? r.demand_qty ?? 0)
+      g.qty += q
+      g.amount += q * Number(r.unit_price ?? 0)
+      g.total += 1
+      if (r.ragic_pushed) g.pushed += 1
+      if (r.ragic_record_id && !g.ragic_ids.includes(r.ragic_record_id)) g.ragic_ids.push(r.ragic_record_id)
+    }
+    return Array.from(m.values())
+      .map(({ _i, _d, _v, ...g }) => ({ ...g, items: _i.size, depts: _d.size, vendors: _v.size }))
+      .sort((a, b) => a.company.localeCompare(b.company) || a.cycle_name.localeCompare(b.cycle_name))
+  }, [overviewRows, cycles])
+
+  const openGroup = (g: OverviewGroup) => {
+    setCycleId(g.cycle_id)
+    setPeriodOptions((prev) => (prev.includes(g.period_label) ? prev : [g.period_label, ...prev]))
+    setPeriodLabel(g.period_label)
+    setCompany(g.company)
+  }
+  const backToOverview = () => { setCycleId(undefined); setPeriodLabel(''); setCompany(undefined) }
 
   const companyOptions = useMemo(
     () => Array.from(new Set(rows.map((r) => r.company))),
@@ -767,6 +828,7 @@ export default function CpSummaryPage() {
           <Select
             placeholder="選擇週期"
             style={{ width: 200 }}
+            allowClear
             value={cycleId}
             onChange={(v) => { setCycleId(v); setPeriodLabel('') }}
             showSearch
@@ -798,10 +860,62 @@ export default function CpSummaryPage() {
         </Space>
       </Card>
 
-      {(!cycleId || !periodLabel.trim()) ? (
-        <Alert type="info" showIcon message="請先選擇週期與期別" />
+      {!cycleId ? (
+        <Card
+          title="當月彙整總覽"
+          style={{ marginBottom: 16 }}
+          extra={
+            <Space>
+              <Text type="secondary">期別</Text>
+              <DatePicker
+                picker="month"
+                allowClear={false}
+                value={overviewMonth ? dayjs(`${overviewMonth}-01`) : null}
+                onChange={(d) => setOverviewMonth(d ? d.format('YYYY-MM') : currentYearMonth())}
+              />
+              <Button onClick={loadOverview}>重新整理</Button>
+            </Space>
+          }
+        >
+          <Table
+            dataSource={overviewGroups}
+            rowKey="key"
+            size="small"
+            loading={overviewLoading}
+            pagination={false}
+            locale={{ emptyText: `${overviewMonth} 還沒有任何彙整單` }}
+            onRow={(g) => ({ onClick: () => openGroup(g), style: { cursor: 'pointer' } })}
+            columns={[
+              { title: '公司', dataIndex: 'company', width: 110 },
+              { title: '週期', dataIndex: 'cycle_name' },
+              { title: '期別', dataIndex: 'period_label', width: 100 },
+              { title: '料號數', dataIndex: 'items', width: 80, align: 'right' as const },
+              { title: '部門數', dataIndex: 'depts', width: 80, align: 'right' as const },
+              { title: '供應商數', dataIndex: 'vendors', width: 90, align: 'right' as const },
+              {
+                title: '金額（未稅）', dataIndex: 'amount', width: 130, align: 'right' as const,
+                render: (v: number) => Math.round(v).toLocaleString(),
+              },
+              {
+                title: '拋轉 Ragic', key: 'pushed', width: 200,
+                render: (_: unknown, g: OverviewGroup) =>
+                  g.pushed === 0
+                    ? <Tag>未拋轉</Tag>
+                    : g.pushed < g.total
+                      ? <Tag color="orange">{`部分 ${g.pushed}/${g.total}`}</Tag>
+                      : <Tooltip title={g.ragic_ids.join('、')}><Tag color="green">已拋轉{g.ragic_ids.length ? `（${g.ragic_ids.length} 張）` : ''}</Tag></Tooltip>,
+              },
+            ]}
+          />
+          <Text type="secondary" style={{ display: 'block', marginTop: 8 }}>
+            點任一列查看該單明細；也可以用上方的週期／期別直接篩選。
+          </Text>
+        </Card>
+      ) : !periodLabel.trim() ? (
+        <Alert type="info" showIcon message="請選擇期別" />
       ) : (
         <>
+          <Button style={{ marginBottom: 12 }} onClick={backToOverview}>← 返回當月總覽</Button>
           {SHOW_PO_CONVERT && (
           <Card title="依供應商分組（轉採購單）" style={{ marginBottom: 16 }} loading={loading}>
             {vendorGroups.length === 0 ? (
