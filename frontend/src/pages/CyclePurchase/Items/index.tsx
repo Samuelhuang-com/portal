@@ -740,7 +740,10 @@ export default function CpItemsPage() {
                       disabled={!r.company}
                       status={duplicateRowKeys.has(r.key) ? 'error' : undefined}
                       value={r.department_id}
-                      options={departmentOptionsOf(r.company)}
+                      // 2026-09-21：同公司其他列已選過的部門不再出現（自己這列目前的值保留）
+                      options={departmentOptionsOf(r.company).filter((o) =>
+                        o.value === r.department_id
+                        || !mappingRows.some((x) => x.key !== r.key && x.company === r.company && x.department_id === o.value))}
                       onChange={(v) => patchMappingRow(r.key, { department_id: v })}
                     />
                   ),
