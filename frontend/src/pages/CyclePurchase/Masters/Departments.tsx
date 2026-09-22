@@ -34,6 +34,7 @@ import {
   getCpDepartmentLinkOptions, linkCpDepartment, type CpDepartmentLinkOption,
 } from '@/api/cyclePurchase'
 import { usersApi, type UserOptionItem } from '@/api/users'
+import { companiesApi, type CompanyOption } from '@/api/referenceData'
 import type { CpDepartment } from '@/types/cyclePurchase'
 
 const { Title } = Typography
@@ -43,6 +44,8 @@ export default function CpDepartmentsPage() {
   const [depts, setDepts] = useState<CpDepartment[]>([])
   const [userOptions, setUserOptions] = useState<UserOptionItem[]>([])
   const [linkOptions, setLinkOptions] = useState<CpDepartmentLinkOption[]>([])
+  // 2026-09-22：公司別改用「系統設定 → 公司/部門管理」的公司下拉（只列啟用中）
+  const [companyOptions, setCompanyOptions] = useState<CompanyOption[]>([])
   const [loading, setLoading] = useState(false)
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState<CpDepartment | null>(null)
@@ -65,7 +68,10 @@ export default function CpDepartmentsPage() {
       .finally(() => setLoading(false))
   }
 
-  useEffect(() => { load() }, [])
+  useEffect(() => {
+    load()
+    companiesApi.options().then(r => setCompanyOptions(r.data)).catch(() => {})
+  }, [])
 
   const toggleActive = async (d: CpDepartment) => {
     try {
@@ -188,12 +194,17 @@ export default function CpDepartmentsPage() {
           {editing?.source_department_id && (
             <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 12 }}>
               這筆部門已連結「系統設定 → 公司/部門管理」的主檔部門：部門名稱由同步維護（要改名請到該頁改）；
-              公司別為週採自行輸入（2026-09-01 起），與主檔的公司名稱不必相同。
+              公司別從公司/部門管理的公司清單選取（2026-09-22 起，停用的公司不列出）。
             </Typography.Paragraph>
           )}
-          <Form.Item name="company" label="公司別" rules={[{ required: true }]}
-            extra="週採自行輸入，不必與公司/部門管理的公司名稱一致">
-            <Input placeholder="如：日曜天地／春大直" />
+          <Form.Item name="company" label="公司別" rules={[{ required: true, message: '請選擇公司別' }]}
+            extra="選項來自「系統設定 → 公司/部門管理」的公司別（停用的不列出）">
+            <Select
+              showSearch
+              placeholder="選擇公司別"
+              optionFilterProp="label"
+              options={companyOptions.map(o => ({ value: o.value, label: o.label }))}
+            />
           </Form.Item>
           <Form.Item name="dept_code" label="部門代碼" rules={[{ required: true }]}>
             <Input />
