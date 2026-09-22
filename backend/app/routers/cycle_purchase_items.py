@@ -3,6 +3,7 @@
 Prefix: /api/v1/cycle-purchase
 
 GET    /items                              料號清單（分頁／搜尋）
+GET    /items/filter-companies             篩選用：有料號對照的公司／部門（2026-09-22）
 GET    /items/{item_id}                    料號詳情（含料號對照表）
 POST   /items                              新增料號
 PUT    /items/{item_id}                    更新料號
@@ -19,6 +20,7 @@ from sqlalchemy.orm import Session
 
 from app.core.cycle_purchase_database import get_cycle_purchase_db
 from app.dependencies import require_permission
+from app.models.cycle_purchase_item import CyclePurchaseItemMapping
 from app.models.user import User
 from app.schemas.cycle_purchase_item import (
     ItemCreate, ItemDetail, ItemListResponse, ItemMappingCreate,
@@ -62,6 +64,32 @@ def list_items(
         vendor_id=vendor_id, sort_by=sort_by, sort_order=sort_order,
     )
     return ItemListResponse(items=items, total=total, page=page, per_page=per_page)
+
+
+# 2026-09-22（Samuel）：料號頁「公司/部門」篩選只列有料號的公司。
+# 以料號對照表（cycle_purchase_item_mappings）實際出現過的 公司＋部門 為準。
+# ⚠️ 必須放在 /items/{item_id} 之前，否則 "filter-companies" 會被當成 item_id 解析成 422。
+@router.get("/items/filter-companies", summary="篩選用：有料號對照的公司與部門")
+def list_item_filter_companies(
+    _: User = Depends(require_permission("cycle_purchase_view")),
+    db: Session = Depends(get_cycle_purchase_db),
+):
+    rows = (
+        db.query(CyclePurchaseItemMapping.company, CyclePurchaseItemMapping.department_id)
+        .distinct()
+        .all()
+    )
+    out: dict[str, set[int]] = {}
+    for company, dept_id in rows:
+        if not company:
+            continue
+        out.setdefault(company, set())
+        if dept_id:
+            out[company].add(dept_id)
+    return [
+        {"company": c, "department_ids": sorted(ids)}
+        for c, ids in sorted(out.items())
+    ]
 
 
 @router.get("/items/{item_id}", response_model=ItemDetail, summary="料號詳情（含料號對照表）")

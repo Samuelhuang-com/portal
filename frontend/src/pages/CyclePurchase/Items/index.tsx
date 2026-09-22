@@ -45,7 +45,7 @@ import type { SorterResult } from 'antd/es/table/interface'
 import { PlusOutlined, EditOutlined, StopOutlined, CheckCircleOutlined, ApartmentOutlined, DeleteOutlined, ClearOutlined } from '@ant-design/icons'
 import {
   createItem, createItemMapping, deleteItemMapping, getCpAccountCodes, getCpCategories, getCpDepartments,
-  getItem, getItems, getVendors, updateItem, updateItemMapping,
+  getItem, getItems, getItemFilterCompanies, getVendors, updateItem, updateItemMapping,
 } from '@/api/cyclePurchase'
 import type {
   CpAccountCode, CpCategory, CpDepartment, CpItem, CpItemDetail, CpItemMapping, CpVendor,
@@ -159,6 +159,8 @@ export default function CpItemsPage() {
   const [fCategory, setFCategory] = useState<(string | number)[] | undefined>()
   const [categories, setCategories] = useState<CpCategory[]>([])
   const [fCompanyDept, setFCompanyDept] = useState<string[] | undefined>()
+  // 2026-09-22：公司/部門篩選只列有料號對照的公司（部門也只列有料號的）
+  const [filterCompanies, setFilterCompanies] = useState<{ company: string; department_ids: number[] }[]>([])
   const [fAccountCode, setFAccountCode] = useState<number | undefined>()
   const [fVendor, setFVendor] = useState<number | undefined>()
   const [sortBy, setSortBy] = useState<string | undefined>()
@@ -224,18 +226,19 @@ export default function CpItemsPage() {
   }, [mappingRows])
 
   // 篩選列：公司 → 部門 兩層（可只選公司）
+  // 2026-09-22：公司只取「有料號對照」的（來源 /items/filter-companies），部門同理
   const companyDeptFilterOptions = useMemo(
     () => [
       { label: '未設定（尚無料號對照）', value: UNSET },
-      ...Array.from(new Set(departments.map((d) => d.company))).map((c) => ({
+      ...filterCompanies.map(({ company: c, department_ids }) => ({
         label: c,
         value: c,
         children: departments
-          .filter((d) => d.company === c)
+          .filter((d) => d.company === c && department_ids.includes(d.id))
           .map((d) => ({ label: d.dept_name, value: String(d.id) })),
       })),
     ],
-    [departments],
+    [departments, filterCompanies],
   )
   const categoryTree = useMemo(() => buildCategoryTree(categories), [categories])
   const categoryFilterOptions = useMemo(
@@ -256,6 +259,8 @@ export default function CpItemsPage() {
 
   const load = () => {
     setLoading(true)
+    // 每次重載都順便更新「有料號的公司」——新增／編輯料號對照後篩選選項才會跟上
+    getItemFilterCompanies().then((r) => setFilterCompanies(r.data)).catch(() => {})
     const [cdCompany, cdDept] = fCompanyDept ?? []
     getItems({
       q,

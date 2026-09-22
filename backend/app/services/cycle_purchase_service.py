@@ -273,8 +273,7 @@ def update_department(db: Session, dept_id: int, payload) -> Optional[CyclePurch
     if not dept:
         return None
     updates = payload.model_dump(exclude_unset=True)
-    if dept.source_department_id:
-        updates.pop("dept_name", None)
+    # 2026-09-22：已停用「週期採購部門」同步，不會再被蓋回，dept_name 鎖定解除
     for k, v in updates.items():
         setattr(dept, k, v)
     db.flush()

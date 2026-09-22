@@ -982,9 +982,8 @@ async def _auto_sync():
     from app.services.cycle_purchase_vendor_sync import (
         sync_from_contract as sync_cp_vendor,
     )
-    from app.services.cycle_purchase_department_sync import (
-        sync_from_reference as sync_cp_department,
-    )
+    # 2026-09-22 Samuel 裁示：週採部門改為全部本地自建，停用「週期採購部門」同步
+    #   （sync_from_reference 會把公司/部門管理的部門自動加回週採，所以不再執行）
     from app.services.tenant_company_sync import (
         sync_from_reference as sync_tenant_company,
     )
@@ -1016,9 +1015,8 @@ async def _auto_sync():
     await _run_loop("廠商資料",           sync_vendor)
     # ⚠ 順序相依：來源是 portal.db vendors（上一行剛同步完），不可提前
     await _run_loop("週期採購供應商",      sync_cp_vendor)
-    # 來源是 portal.db Company/RefDepartment（系統設定 → 公司/部門管理，非
-    # Ragic），跟「週期採購供應商」互不相依，同一批次即可
-    await _run_loop("週期採購部門",        sync_cp_department)
+    # 2026-09-22 Samuel 裁示：週採部門改為全部本地自建，停用「週期採購部門」同步
+    # await _run_loop("週期採購部門",        sync_cp_department)
     # 來源同上（portal.db Company）。人員管理「所屬據點」下拉＝公司名稱清單，
     # 見 tenant_company_sync.py 檔頭。與「週期採購部門」互不相依。
     await _run_loop("使用者據點",          sync_tenant_company)
@@ -1102,7 +1100,7 @@ _SINGLE_MODULE_MAP: dict[str, tuple[str, str]] = {
     "主管交辦／緊急事件": ("app.services.other_tasks_sync",              "sync_from_ragic"),
     "廠商資料":          ("app.services.vendor_sync",                   "sync_from_ragic"),
     "週期採購供應商":     ("app.services.cycle_purchase_vendor_sync",    "sync_from_contract"),
-    "週期採購部門":       ("app.services.cycle_purchase_department_sync", "sync_from_reference"),
+    # "週期採購部門" 已停用（2026-09-22 Samuel 裁示：週採部門改為全部本地自建，停用「週期採購部門」同步）
     "使用者據點":         ("app.services.tenant_company_sync",            "sync_from_reference"),
 }
 

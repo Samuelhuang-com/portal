@@ -228,7 +228,7 @@ MODULES: list[tuple[str, str, str]] = [
     # ⚠ 來源是 portal.db Company/RefDepartment（系統設定 → 公司/部門管理，
     #   非 Ragic）。跟「週期採購供應商」同一批次，兩者互不相依。
     #   詳見 cycle_purchase_department_sync.py 檔頭。
-    ("週期採購部門",       "app.services.cycle_purchase_department_sync", "sync_from_reference"),
+    # ("週期採購部門", ...) 已停用：2026-09-22 Samuel 裁示：週採部門改為全部本地自建，停用「週期採購部門」同步
     # ⚠ 來源同上（portal.db Company，系統設定 → 公司/部門管理，非 Ragic）。
     #   跟「週期採購部門」同一批次，兩者互不相依。
     #   目的：人員管理「所屬據點」下拉＝公司名稱清單。

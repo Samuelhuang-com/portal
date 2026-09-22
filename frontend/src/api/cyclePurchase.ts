@@ -186,6 +186,10 @@ export const getItems = (params?: {
   sort_order?: 'asc' | 'desc'
 }) => apiClient.get<CpItemListResponse>(`${BASE}/items`, { params })
 
+/** 2026-09-22：料號頁公司/部門篩選用——只回有料號對照的公司（含其部門 id） */
+export const getItemFilterCompanies = () =>
+  apiClient.get<{ company: string; department_ids: number[] }[]>(`${BASE}/items/filter-companies`)
+
 export const getItem = (id: number) =>
   apiClient.get<CpItemDetail>(`${BASE}/items/${id}`)
 
