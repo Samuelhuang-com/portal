@@ -49,6 +49,51 @@ export default function CpCategoriesPage() {
 
   useEffect(() => { load() }, [company])
 
+  // 2026-09-22：前端篩選（大分類／中分類／歸屬部門／料號數／狀態）＋欄位排序＋筆數。
+  // 公司別、關鍵字維持原本的後端查詢。
+  const [fMajor, setFMajor] = useState<string | undefined>()
+  const [fMid, setFMid] = useState<string | undefined>()
+  const [fDept, setFDept] = useState<number | undefined>()   // 0 = 不限部門
+  const [fItems, setFItems] = useState<'has' | 'none' | undefined>()
+  const [fActive, setFActive] = useState<'active' | 'inactive' | undefined>()
+
+  const majorFilterOptions = useMemo(() => {
+    const m = new Map<string, string>()
+    categories.forEach((c) => m.set(c.major_code, `${c.major_code}　${c.major_name}`))
+    return Array.from(m, ([value, label]) => ({ value, label })).sort((a, b) => a.value.localeCompare(b.value))
+  }, [categories])
+  const midFilterOptions = useMemo(() => {
+    const m = new Map<string, string>()
+    categories
+      .filter((c) => !fMajor || c.major_code === fMajor)
+      .forEach((c) => m.set(`${c.major_code}|${c.mid_code}`, `${fMajor ? '' : c.major_code}${c.mid_code}　${c.mid_name}`))
+    return Array.from(m, ([value, label]) => ({ value, label })).sort((a, b) => a.value.localeCompare(b.value))
+  }, [categories, fMajor])
+  const deptFilterOptions = useMemo(() => {
+    const m = new Map<number, string>()
+    categories.forEach((c) => { if (c.department_id) m.set(c.department_id, c.department_name || String(c.department_id)) })
+    return [
+      { value: 0, label: '不限部門' },
+      ...Array.from(m, ([value, label]) => ({ value, label })).sort((a, b) => a.label.localeCompare(b.label)),
+    ]
+  }, [categories])
+
+  const filteredCategories = useMemo(() => categories.filter((c) => {
+    if (fMajor && c.major_code !== fMajor) return false
+    if (fMid && `${c.major_code}|${c.mid_code}` !== fMid) return false
+    if (fDept !== undefined && (fDept === 0 ? !!c.department_id : c.department_id !== fDept)) return false
+    if (fItems === 'has' && !(c.item_count > 0)) return false
+    if (fItems === 'none' && c.item_count > 0) return false
+    if (fActive === 'active' && !c.is_active) return false
+    if (fActive === 'inactive' && c.is_active) return false
+    return true
+  }), [categories, fMajor, fMid, fDept, fItems, fActive])
+  const hasLocalFilter = !!(fMajor || fMid || fDept !== undefined || fItems || fActive)
+  const resetLocalFilters = () => {
+    setFMajor(undefined); setFMid(undefined); setFDept(undefined); setFItems(undefined); setFActive(undefined)
+  }
+  const cmp = (a?: string | null, b?: string | null) => (a ?? '').localeCompare(b ?? '')
+
   const companies = useMemo(
     () => Array.from(new Set(depts.map((d) => d.company).filter(Boolean))),
     [depts],
@@ -173,33 +218,96 @@ export default function CpCategoriesPage() {
       />
 
       <Card>
+        <Space wrap style={{ marginBottom: 12 }}>
+          <Select
+            placeholder="大分類"
+            allowClear
+            showSearch
+            optionFilterProp="label"
+            style={{ width: 160 }}
+            value={fMajor}
+            onChange={(v) => { setFMajor(v); setFMid(undefined) }}
+            options={majorFilterOptions}
+          />
+          <Select
+            placeholder="中分類"
+            allowClear
+            showSearch
+            optionFilterProp="label"
+            style={{ width: 180 }}
+            value={fMid}
+            onChange={setFMid}
+            options={midFilterOptions}
+          />
+          <Select
+            placeholder="歸屬部門"
+            allowClear
+            showSearch
+            optionFilterProp="label"
+            style={{ width: 160 }}
+            value={fDept}
+            onChange={setFDept}
+            options={deptFilterOptions}
+          />
+          <Select
+            placeholder="料號數"
+            allowClear
+            style={{ width: 120 }}
+            value={fItems}
+            onChange={setFItems}
+            options={[{ label: '有料號', value: 'has' }, { label: '0（沒有料號）', value: 'none' }]}
+          />
+          <Select
+            placeholder="狀態"
+            allowClear
+            style={{ width: 110 }}
+            value={fActive}
+            onChange={setFActive}
+            options={[{ label: '啟用', value: 'active' }, { label: '停用', value: 'inactive' }]}
+          />
+          {hasLocalFilter && <Button onClick={resetLocalFilters}>清除篩選</Button>}
+          <Text type="secondary">
+            {hasLocalFilter
+              ? <>篩選結果 <Text strong>{filteredCategories.length}</Text> 筆／全部 {categories.length} 筆</>
+              : <>共 <Text strong>{categories.length}</Text> 筆</>}
+            {'（啟用 '}{filteredCategories.filter((c) => c.is_active).length}
+            {'、料號數合計 '}{filteredCategories.reduce((s, c) => s + (c.item_count || 0), 0)}{'）'}
+          </Text>
+        </Space>
         <Table
-          dataSource={categories}
+          dataSource={filteredCategories}
           rowKey="id"
           loading={loading}
           size="small"
-          pagination={{ pageSize: 50, showSizeChanger: true }}
+          pagination={{ pageSize: 50, showSizeChanger: true, showTotal: (t) => `共 ${t} 筆` }}
+          showSorterTooltip={false}
           columns={[
-            { title: '公司別', dataIndex: 'company', width: 110 },
+            { title: '公司別', dataIndex: 'company', width: 110, sorter: (a: CpCategory, b: CpCategory) => cmp(a.company, b.company) },
             {
               title: '料號前綴',
               dataIndex: 'code_prefix',
               width: 100,
+              defaultSortOrder: 'ascend' as const,
+              sorter: (a: CpCategory, b: CpCategory) => cmp(a.company, b.company) || cmp(a.code_prefix, b.code_prefix),
               render: (v: string) => <Text code>{v}</Text>,
             },
             {
               title: '大分類',
               width: 120,
+              sorter: (a: CpCategory, b: CpCategory) => cmp(a.major_code, b.major_code),
               render: (_: unknown, r: CpCategory) => `${r.major_code}　${r.major_name}`,
             },
             {
               title: '中分類',
               width: 160,
+              sorter: (a: CpCategory, b: CpCategory) => cmp(a.major_code + a.mid_code, b.major_code + b.mid_code),
               render: (_: unknown, r: CpCategory) => `${r.mid_code}　${r.mid_name}`,
             },
             {
               title: '細分類',
               width: 160,
+              sorter: (a: CpCategory, b: CpCategory) =>
+                cmp(a.major_code + a.mid_code + a.sub_code, b.major_code + b.mid_code + b.sub_code),
               render: (_: unknown, r: CpCategory) =>
                 r.sub_name ? `${r.sub_code}　${r.sub_name}` : (
                   <Tooltip title="來源 Excel 的類別字串只到中分類，細分類尚未命名">
@@ -207,17 +315,19 @@ export default function CpCategoriesPage() {
                   </Tooltip>
                 ),
             },
-            { title: '類別字串', dataIndex: 'category_name' },
+            { title: '類別字串', dataIndex: 'category_name', sorter: (a: CpCategory, b: CpCategory) => cmp(a.category_name, b.category_name) },
             {
               title: '歸屬部門',
               dataIndex: 'department_name',
               width: 120,
+              sorter: (a: CpCategory, b: CpCategory) => cmp(a.department_name, b.department_name),
               render: (v?: string | null) => v || <Tag color="blue">不限部門</Tag>,
             },
             {
               title: '料號數',
               dataIndex: 'item_count',
-              width: 80,
+              width: 90,
+              sorter: (a: CpCategory, b: CpCategory) => (a.item_count || 0) - (b.item_count || 0),
               align: 'right' as const,
               render: (v: number) => (v > 0 ? v : <Tag color="orange">0</Tag>),
             },
@@ -225,6 +335,7 @@ export default function CpCategoriesPage() {
               title: '狀態',
               dataIndex: 'is_active',
               width: 80,
+              sorter: (a: CpCategory, b: CpCategory) => Number(b.is_active) - Number(a.is_active),
               render: (v: boolean) => (v ? <Tag color="green">啟用</Tag> : <Tag color="default">停用</Tag>),
             },
             {
