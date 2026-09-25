@@ -297,7 +297,7 @@ function CaseDetailDrawer({
     setLiveImages(null)
     if (!caseData) return
     if ((caseData.images ?? []).length > 0) return  // DB 已有圖，不需要再抓
-    // DB 無圖 → 直接從 Ragic 抓 detail
+    // 清單資料無圖 → 再向 /db-images 確認一次（不再 fallback 到 Ragic /8，見 api/luqunRepair.ts）
     setImgLoading(true)
     fetchCaseImages(caseData.ragic_id)
       .then(res => setLiveImages(res.images))

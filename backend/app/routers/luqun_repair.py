@@ -81,8 +81,12 @@ def get_db_images(ragic_id: str, db: Session = Depends(get_db)):
 async def get_case_images(ragic_id: str):
     """
     直接向 Ragic 的 /8 sheet（lequn-public-works/8）抓取單筆案件圖片。
-    圖片 attachment 欄位存在 form view（/8），不在清單 sheet（/6）。
-    邏輯與大直工務部 /images/{ragic_id} 相同。
+
+    ⚠️ 已停用（2026-09-25）：前端不再呼叫。依 CLAUDE.md §5 保留端點不移除。
+    原假設「/8 是 /6 的 form view、共用記錄 ID」不成立 —— 報修清單是
+    luqun-public-works-repair-reporting-system/6，/8 是另一張表，
+    同一個 ragic_id 在 /8 對到的是別件案子（202609-045 顯示他案照片的根因）。
+    照片來源改為 /6「維修照上傳」→ 同步寫入 images_json → GET /db-images。
     """
     import logging
     from app.services.ragic_data_service import parse_images

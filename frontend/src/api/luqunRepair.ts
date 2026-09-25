@@ -191,15 +191,13 @@ export async function fetchSync(): Promise<SyncResult> {
 }
 
 // ── 單筆案件圖片 ─────────────────────────────────────────────────────────────
-// 1. 優先 DB /db-images（不打 Ragic，最可靠）
-// 2. Fallback：/case-images（即時打 Ragic /8 sheet）
+// 只讀 DB /db-images（同步時已從報修清單 /6 的「維修照上傳」寫入 images_json）。
+// ⚠️ 2026-09-25 移除 /case-images fallback：該端點拿同一個 ragic_id 去另一張表
+//    lequn-public-works/8 查，兩張表的記錄 ID 各自編號，DB 無圖的案件會顯示
+//    別件案子的照片（例：202609-045 ↔ /8 第 1064 筆）。DB 無圖＝該案件無照片。
 export async function fetchCaseImages(
   ragicId: string
 ): Promise<{ images: Array<{ url: string; filename: string }>; ragic_id: string }> {
-  try {
-    const res = await apiClient.get(`${BASE}/db-images/${encodeURIComponent(ragicId)}`)
-    if ((res.data?.images ?? []).length > 0) return res.data
-  } catch { /* fallthrough */ }
-  const res = await apiClient.get(`${BASE}/case-images/${encodeURIComponent(ragicId)}`)
-  return res.data
+  const res = await apiClient.get(`${BASE}/db-images/${encodeURIComponent(ragicId)}`)
+  return { images: res.data?.images ?? [], ragic_id: ragicId }
 }
