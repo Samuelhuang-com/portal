@@ -12,6 +12,7 @@
  * 送出前系統會檢查「分攤金額加總」是否等於「發票金額」，不符時必須先在
  * 上方「發票資訊」填寫差異原因（amount_diff_reason）並儲存才能送出。
  */
+import FlowSteps from '@/pages/CyclePurchase/components/FlowSteps'
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import {
@@ -193,6 +194,7 @@ export default function CpPaymentDetailPage() {
 
   return (
     <div>
+      <FlowSteps />
       <Space style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between' }}>
         <Space>
           <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/cycle-purchase/payments')}>返回清單</Button>

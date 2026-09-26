@@ -6,6 +6,36 @@ from typing import Optional
 from pydantic import BaseModel
 
 
+class PendingRequestOut(BaseModel):
+    """GET /summary/pending-requests：全公司已關閉、尚未彙整的請購單（2026-09-25）。"""
+    id: int
+    request_no: str
+    cycle_id: int
+    cycle_name: Optional[str] = None
+    company: str
+    period_label: str
+    department_id: Optional[int] = None
+    department_name: Optional[str] = None
+    closed_by_name: Optional[str] = None
+    closed_at: Optional[datetime] = None
+    close_kind: Optional[str] = None
+    filled_item_count: int = 0
+    total_amount: Decimal
+    # 曾經被退回過的軌跡（重新關閉後又回到待彙整）；只是提示用
+    unsummarized_at: Optional[datetime] = None
+    # 2026-09-25：期別已過＝逾期，不可拋（仍列出，但不能產生彙整）
+    is_overdue: bool = False
+
+
+class ExcludedRequestOut(BaseModel):
+    """GET /summary/excluded-requests：產生彙整範圍內已彙整（不在可勾選清單）的請購單。"""
+    id: int
+    request_no: str
+    department_name: Optional[str] = None
+    summary_batch_no: Optional[str] = None
+    flow_status: str   # summarized／pushed／summarized_reopened
+
+
 class EligibleRequestOut(BaseModel):
     """「彙整單」畫面用：某週期＋公司＋期別（period_label）下，尚未被彙整過的
     請購單（供使用者勾選要納入這次彙整的範圍，見 2026-07-16 第二次調整、
@@ -238,6 +268,8 @@ class RagicPushedDocOut(BaseModel):
     converted_count: int = 0
     all_converted: bool = False
     is_stub: bool = False
+    # 2026-09-25：這張 Ragic 單包含的請購單號（同週期＋期別＋公司＋部門、已彙整）
+    request_nos: list[str] = []
 
 
 class RagicPushedDateRange(BaseModel):

@@ -8,6 +8,7 @@
  * 勾選要合併請款的驗收單（可複選，例如同一張發票涵蓋分好幾次到貨的貨款），
  * 填發票資訊後建立。建立後（草稿）系統自動試算費用分攤明細，導到詳情頁。
  */
+import FlowSteps from '@/pages/CyclePurchase/components/FlowSteps'
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
@@ -134,6 +135,7 @@ export default function CpPaymentListPage() {
 
   return (
     <div>
+      <FlowSteps />
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
         <Title level={4} style={{ margin: 0 }}>週期採購 — 請款單</Title>
         {canFinance && (

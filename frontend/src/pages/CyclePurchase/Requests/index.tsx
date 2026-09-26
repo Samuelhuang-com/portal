@@ -62,24 +62,30 @@
  * 篩得到、關得掉。但「新增請購單」「產生本期請購單」「複製上期請購單」都是
  * 要建立新的請購行為，改用 `activeCycles`（前端過濾 `status === 'active'`）
  * 只給啟用中的週期選，不然選到已經停用的舊週期會建出沒人管的單。
+ *
+ * 2026-09-25（Samuel 裁示）：「產生本期請購單」週期下拉每一列顯示本期進度
+ * （GET /requests/generate-status）：已產生／原申請單位數、未執行單位數、
+ * 已彙整張數、從未執行（＝已產生但未彙整）張數；全部完成時標「本期已完成週採」。
  */
+import FlowSteps from '@/pages/CyclePurchase/components/FlowSteps'
+import MyDepartmentPeriodCard from '@/pages/CyclePurchase/components/MyDepartmentPeriodCard'
+import FlowStatusTag from '@/pages/CyclePurchase/components/FlowStatusTag'
 import { useEffect, useMemo, useState } from 'react'
-import { Alert, Button, Card, Modal, Select, Space, Table, Tag, Tooltip, Typography, message } from 'antd'
+import { Alert, Button, Card, Modal, Segmented, Select, Space, Table, Tag, Tooltip, Typography, message } from 'antd'
 import {
-  CopyOutlined, DeleteOutlined, EditOutlined, EyeOutlined, ExclamationCircleOutlined,
+  CheckCircleOutlined, CopyOutlined, DeleteOutlined, InfoCircleOutlined, EditOutlined, EyeOutlined, ExclamationCircleOutlined,
   LockOutlined, PlusOutlined, ThunderboltOutlined, UnlockOutlined,
 } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import {
   closeAllRequests, closeRequests, copyRequest, createRequest, deleteRequest, generateRequestsForPeriod,
-  getCopySourceCandidates, getCpDepartments, getCycles, getOpenRequestsForClose, getRequests,
+  getCopySourceCandidates, getCpDepartments, getCycles, getGenerateStatus, getOpenRequestsForClose, getRequests,
   previewGenerateRequests, reopenRequests,
 } from '@/api/cyclePurchase'
 import type {
-  CpCloseState, CpCopySourceCandidate, CpCycle, CpDepartment, CpGeneratePreview, CpRequest,
+  CpCloseState, CpCopySourceCandidate, CpCycle, CpCycleGenerateStatus, CpDepartment, CpGeneratePreview, CpRequest,
 } from '@/types/cyclePurchase'
 import { useAuthStore } from '@/stores/authStore'
-import CloseStatusTag from '../components/CloseStatusTag'
 
 const { Title, Text } = Typography
 
@@ -95,9 +101,13 @@ const { Title, Text } = Typography
 // 的話，就沒辦法回答「哪些單是沒人管、被系統關掉的」這個問題。
 // ⚠️ 不要改用 CpRequest.status 做篩選：那是改版前的殘留欄位（新資料一律 draft）。
 const CLOSE_STATE_OPTIONS: { label: string; value: CpCloseState }[] = [
+  // 2026-09-25（0924 會議）：互斥的流程狀態。「開放中」只剩還能追加修改的單，
+  // 已彙整、已拋轉各自一類，不會再混在開放中裡。
   { label: '開放中', value: 'open' },
   { label: '已關閉（人工）', value: 'closed_manual' },
   { label: '關閉（系統）', value: 'closed_auto' },
+  { label: '已彙整（未拋轉）', value: 'summarized' },
+  { label: '已拋轉 Ragic', value: 'pushed' },
 ]
 
 function currentYearMonth() {
@@ -145,6 +155,11 @@ export default function CpRequestsPage() {
   // 所以整個藏起來。判斷條件要與後端 _can_see_closed() 保持一致。
   const canSeeClosed = canClose || hasPermission('cycle_purchase_view')
 
+  // 2026-09-25（Samuel 裁示）：「我的部門／全部」切換。只是篩選不是權限——
+  // 清單可見範圍維持全公司（2026-09-01 裁示）。部門人員預設「我的部門」；
+  // 買家（能產生或關閉）要管全公司，預設「全部」。
+  const [scope, setScope] = useState<'mine' | 'all'>(canCreate || canClose ? 'all' : 'mine')
+
   const [rows, setRows] = useState<CpRequest[]>([])
   const [cycles, setCycles] = useState<CpCycle[]>([])
   const [departments, setDepartments] = useState<CpDepartment[]>([])
@@ -182,6 +197,10 @@ export default function CpRequestsPage() {
   // 2026-08-09：選完週期就先預覽「會產生哪些部門」，不用產生完才知道結果
   const [genPreview, setGenPreview] = useState<CpGeneratePreview | null>(null)
   const [genPreviewLoading, setGenPreviewLoading] = useState(false)
+  // 2026-09-25：週期下拉每列顯示本期進度（已產生／未執行／已彙整／從未執行）
+  const [genStatus, setGenStatus] = useState<Record<number, CpCycleGenerateStatus>>({})
+  const [genStatusPeriod, setGenStatusPeriod] = useState<string>('')
+  const [genStatusLoading, setGenStatusLoading] = useState(false)
 
   // 關閉功能
   const [closeModal, setCloseModal] = useState(false)
@@ -203,7 +222,7 @@ export default function CpRequestsPage() {
   const load = () => {
     setLoading(true)
     Promise.all([
-      getRequests({ cycle_id: cycleId, period_label: periodLabel, close_state: closeState }),
+      getRequests({ cycle_id: cycleId, period_label: periodLabel, close_state: closeState, mine: scope === 'mine' }),
       getCycles(),
       getCpDepartments({ is_active: true }),
     ])
@@ -225,7 +244,7 @@ export default function CpRequestsPage() {
       .finally(() => setLoading(false))
   }
 
-  useEffect(() => { load() }, [cycleId, periodLabel, closeState])
+  useEffect(() => { load() }, [cycleId, periodLabel, closeState, scope])
 
   const openCreate = () => {
     setCreateCycleId(undefined)
@@ -321,10 +340,56 @@ export default function CpRequestsPage() {
     }
   }
 
+  const loadGenStatus = () => {
+    setGenStatusLoading(true)
+    getGenerateStatus()
+      .then((res) => {
+        const map: Record<number, CpCycleGenerateStatus> = {}
+        res.data.cycles.forEach((c) => { map[c.cycle_id] = c })
+        setGenStatus(map)
+        setGenStatusPeriod(res.data.period_label)
+      })
+      // 進度只是輔助資訊，拿不到不擋產生，但要讓人知道
+      .catch((err) => message.warning(errMsg(err, '無法取得本期進度')))
+      .finally(() => setGenStatusLoading(false))
+  }
+
   const openGenerate = () => {
     setGenerateCycleId(undefined)
     setGenPreview(null)
     setGenerateModal(true)
+    loadGenStatus()
+  }
+
+  /** 週期本期進度標籤：已產生／原申請、未執行單位、已彙整、未彙整、本期已完成週採 */
+  const renderGenStatus = (s?: CpCycleGenerateStatus) => {
+    if (!s) return null
+    const tag = { margin: 0 }
+    if (s.applicable_count === 0 && s.request_count === 0) {
+      return <Tag style={tag}>無適用部門</Tag>
+    }
+    return (
+      <Space size={4} wrap>
+        <Tag style={tag} color={s.not_generated_count === 0 ? 'green' : 'blue'}>
+          已產生 {s.generated_count}／原申請 {s.applicable_count}
+        </Tag>
+        <Tag style={tag} color={s.not_generated_count > 0 ? 'orange' : undefined}>
+          未執行單位 {s.not_generated_count}
+        </Tag>
+        <Tag style={tag} color={s.summarized_count > 0 ? 'cyan' : undefined}>
+          已彙整 {s.summarized_count}
+        </Tag>
+        <Tag style={tag} color={s.unsummarized_count > 0 ? 'red' : undefined}>
+          未彙整 {s.unsummarized_count}
+          <Tooltip title="已經產生請購單、但還沒被放進彙整單的張數（不含還沒產生的部門）">
+            <InfoCircleOutlined style={{ marginLeft: 4, color: '#888' }} />
+          </Tooltip>
+        </Tag>
+        {s.completed && (
+          <Tag style={tag} color="success" icon={<CheckCircleOutlined />}>本期已完成週採</Tag>
+        )}
+      </Space>
+    )
   }
 
   /** 選完週期就抓預覽：會產生哪些部門、哪些不會與原因 */
@@ -469,6 +534,7 @@ export default function CpRequestsPage() {
 
   return (
     <div>
+      <FlowSteps />
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
         <Title level={4} style={{ margin: 0 }}>週期採購 — 請購單</Title>
         <Space>
@@ -487,8 +553,20 @@ export default function CpRequestsPage() {
         </Space>
       </div>
 
+      {/* 2026-09-25：「我的部門」模式先給本期總覽，告訴部門人員輪到他做什麼。
+          只有填單權限的人選單看不到 Dashboard，所以這裡也要放一份。 */}
+      {scope === 'mine' && <MyDepartmentPeriodCard />}
+
       <Card>
-        <Space style={{ marginBottom: 12 }}>
+        <Space style={{ marginBottom: 12 }} wrap>
+          <Segmented
+            value={scope}
+            onChange={(v) => setScope(v as 'mine' | 'all')}
+            options={[
+              { label: '我的部門', value: 'mine' },
+              { label: '全部', value: 'all' },
+            ]}
+          />
           <Select
             allowClear
             placeholder="依週期篩選"
@@ -542,33 +620,26 @@ export default function CpRequestsPage() {
             {
               title: '狀態',
               key: 'is_closed',
-              width: 90,
-              render: (_: unknown, r: CpRequest) => (
-                <CloseStatusTag
-                  isClosed={r.is_closed}
-                  closeKind={r.close_kind}
-                  periodLabel={r.period_label}
-                />
-              ),
+              width: 140,
+              // 2026-09-25：單一流程狀態（開放中／已關閉／已彙整／已拋轉 Ragic）
+              render: (_: unknown, r: CpRequest) => <FlowStatusTag request={r} />,
             },
             {
               // 2026-08-09 新增。改版前「已關閉且已彙整」「已關閉但還沒彙整」
               // 「彙整過又被退回」三種狀態在清單上長得一模一樣（都只有「已關閉」），
               // 但處置方式完全不同——第一種不用管、第二種要記得去彙整、第三種要去
               // 追為什麼被退。所以彙整獨立成一欄，不跟「狀態」（開放／關閉）混在一起。
-              title: '彙整',
+              // 2026-09-25：「已彙整」改由「狀態」欄顯示，這欄只留彙整批次與退回紀錄
+              title: '彙整紀錄',
               key: 'is_summarized',
-              width: 130,
+              width: 170,
               render: (_: unknown, r: CpRequest) => (
                 <Space size={4} wrap>
                   {r.is_summarized ? (
                     <Tooltip
-                      title={[
-                        r.summary_batch_no ? `批次 ${r.summary_batch_no}` : null,
-                        r.summarized_at ? `彙整於 ${formatDateTime(r.summarized_at)}` : null,
-                      ].filter(Boolean).join('　') || undefined}
+                      title={r.summarized_at ? `彙整於 ${formatDateTime(r.summarized_at)}` : undefined}
                     >
-                      <Tag color="green" style={{ marginInlineEnd: 0 }}>已彙整</Tag>
+                      <Text type="secondary" style={{ fontSize: 12 }}>{r.summary_batch_no || '已彙整'}</Text>
                     </Tooltip>
                   ) : r.unsummarized_at ? (
                     <Tooltip
@@ -628,12 +699,13 @@ export default function CpRequestsPage() {
                 <Space size="small">
                   <Button
                     size="small"
-                    icon={canEdit && !r.is_closed ? <EditOutlined /> : <EyeOutlined />}
+                    icon={canEdit && !r.is_closed && !r.is_summarized ? <EditOutlined /> : <EyeOutlined />}
                     onClick={() => navigate(`/cycle-purchase/requests/${r.id}`)}
                   >
-                    {canEdit && !r.is_closed ? '填寫' : '檢視'}
+                    {canEdit && !r.is_closed && !r.is_summarized ? '填寫' : '檢視'}
                   </Button>
-                  {canClose && r.is_closed && (
+                  {/* 2026-09-25：已彙整的單不能直接重新開啟（要先從彙整單退回） */}
+                  {canClose && r.is_closed && !r.is_summarized && (
                     <Button size="small" icon={<UnlockOutlined />} onClick={() => handleReopen(r)}>重新開啟</Button>
                   )}
                   {canEdit && !r.is_closed && !r.is_summarized && (
@@ -654,11 +726,18 @@ export default function CpRequestsPage() {
         okText="產生"
         cancelText="取消"
         confirmLoading={generating}
-        width={620}
+        width={820}
         okButtonProps={{ disabled: !!genPreview && genPreview.departments.length === 0 }}
       >
         <div style={{ marginTop: 16, marginBottom: 8 }}>
-          <div style={{ marginBottom: 4 }}>週期</div>
+          <div style={{ marginBottom: 4 }}>
+            週期
+            <span style={{ color: '#888', fontSize: 12, marginLeft: 8 }}>
+              {genStatusLoading
+                ? '本期進度計算中…'
+                : `右側為本期（${genStatusPeriod || currentYearMonth()}）進度；「未彙整」＝已產生但尚未彙整`}
+            </span>
+          </div>
           <Select
             style={{ width: '100%' }}
             showSearch
@@ -667,7 +746,16 @@ export default function CpRequestsPage() {
             value={generateCycleId}
             onChange={handleGenerateCycleChange}
             options={activeCycles.map((c) => ({ label: c.cycle_name, value: c.id }))}
+            optionRender={(opt) => (
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+                <span style={{ flex: '0 0 auto' }}>{opt.label}</span>
+                <span style={{ textAlign: 'right' }}>{renderGenStatus(genStatus[opt.value as number])}</span>
+              </div>
+            )}
           />
+          {generateCycleId && genStatus[generateCycleId] && (
+            <div style={{ marginTop: 8 }}>{renderGenStatus(genStatus[generateCycleId])}</div>
+          )}
         </div>
         <div style={{ color: '#888', fontSize: 12 }}>
           會依週期設定的「適用公司 ∩ 適用部門 ∩ 該品類下有啟用中料號的部門」，
@@ -680,22 +768,36 @@ export default function CpRequestsPage() {
         )}
         {genPreview && (
           <div style={{ marginTop: 16 }}>
-            {genPreview.departments.length > 0 ? (
-              <Alert
-                type="success"
-                showIcon
-                message={`將產生 ${genPreview.departments.length} 個部門的請購單`}
-                description={
-                  <div style={{ marginTop: 4 }}>
-                    {genPreview.departments.map((d) => (
-                      <Tag key={d.department_id} style={{ marginBottom: 4 }}>
-                        {d.company} / {d.department_name}
-                      </Tag>
-                    ))}
-                  </div>
-                }
-              />
-            ) : (
+            {genPreview.departments.length > 0 ? (() => {
+              // 2026-09-25：產生是冪等的，已有單的部門不會新建，要分開講
+              const toCreate = genPreview.departments.filter((d) => !d.already_generated)
+              const existing = genPreview.departments.filter((d) => d.already_generated)
+              return (
+                <Alert
+                  type={toCreate.length > 0 ? 'success' : 'info'}
+                  showIcon
+                  message={
+                    toCreate.length > 0
+                      ? `將新建 ${toCreate.length} 個部門的請購單` + (existing.length ? `（另 ${existing.length} 個部門本期已有，不會重複建立）` : '')
+                      : `適用的 ${existing.length} 個部門本期都已經有請購單，按「產生」不會新建任何單`
+                  }
+                  description={
+                    <div style={{ marginTop: 4 }}>
+                      {toCreate.map((d) => (
+                        <Tag key={d.department_id} color="green" style={{ marginBottom: 4 }}>
+                          {d.company} / {d.department_name}（將新建）
+                        </Tag>
+                      ))}
+                      {existing.map((d) => (
+                        <Tag key={d.department_id} style={{ marginBottom: 4 }}>
+                          {d.company} / {d.department_name}（已有）
+                        </Tag>
+                      ))}
+                    </div>
+                  }
+                />
+              )
+            })() : (
               <Alert
                 type="warning"
                 showIcon

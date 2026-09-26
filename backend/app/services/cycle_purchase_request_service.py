@@ -324,15 +324,27 @@ def preview_applicable_departments(db: Session, cycle_id: int) -> dict:
     if not cycle:
         raise RequestServiceError("週期設定不存在")
     included, excluded = resolve_applicable_departments(db, cycle)
+    period_label = _current_period_label()
+    # 2026-09-25：標出本期已經有單的部門。原本預覽一律寫「將產生 N 個部門」，
+    # 但產生是冪等的，已有單的部門按下去不會新建——Samuel 實測 7 個部門都已有單，
+    # 預覽卻顯示「將產生 7 個」，跟清單與進度標籤兜不起來。
+    existing_ids = {
+        r.department_id
+        for r in db.query(CyclePurchaseRequest.department_id).filter(
+            CyclePurchaseRequest.cycle_id == cycle.id,
+            CyclePurchaseRequest.period_label == period_label,
+        )
+    }
     return {
         "cycle_id": cycle.id,
         "cycle_name": cycle.cycle_name,
-        "period_label": _current_period_label(),
+        "period_label": period_label,
         "departments": [
             {
                 "department_id": d.id,
                 "department_name": d.dept_name,
                 "company": d.company,
+                "already_generated": d.id in existing_ids,
             }
             for d in included
         ],
@@ -402,11 +414,99 @@ def generate_requests_for_period(db: Session, cycle_id: int) -> tuple[list[Cycle
     return created, excluded
 
 
+def generation_status_for_period(db: Session) -> dict:
+    """
+    「產生本期請購單」週期下拉的本期完成度（2026-09-25，Samuel 裁示）。
+
+    每個啟用中週期，在「本月」（_current_period_label()）這一期的進度：
+      - applicable_count    原申請單位數＝resolve_applicable_departments() 的 included 部門數
+                            （與產生時用的是同一套判準，數字才對得起來）
+      - generated_count     適用部門中本期已經有請購單的部門數（distinct 部門）
+      - not_generated_count 未執行單位數＝適用部門中本期還沒有請購單的
+      - request_count       本期此週期的請購單總張數（含手動新增的，可能 > 部門數）
+      - summarized_count    已經被納入彙整單的張數（is_summarized）
+      - unsummarized_count  「從未執行」＝已產生但尚未彙整的張數
+      - completed           本期已完成週採＝有單、未執行單位 0、未彙整 0
+
+    ⚠️ 「從未執行」依 Samuel 裁示定義為「已產生但未彙整」，不是空白單、
+    也不是整個週期沒產生過——後者由 not_generated_count 表達。
+    """
+    period_label = _current_period_label()
+    cycles = (
+        db.query(CyclePurchaseCycle)
+        .filter(CyclePurchaseCycle.status == "active")
+        .order_by(CyclePurchaseCycle.id)
+        .all()
+    )
+    result = []
+    for cycle in cycles:
+        included, _excluded = resolve_applicable_departments(db, cycle)
+        applicable_ids = {d.id for d in included}
+        reqs = (
+            db.query(CyclePurchaseRequest.department_id, CyclePurchaseRequest.is_summarized)
+            .filter(
+                CyclePurchaseRequest.cycle_id == cycle.id,
+                CyclePurchaseRequest.period_label == period_label,
+            )
+            .all()
+        )
+        generated_ids = {r.department_id for r in reqs} & applicable_ids
+        request_count = len(reqs)
+        summarized = sum(1 for r in reqs if r.is_summarized)
+        not_generated = len(applicable_ids - generated_ids)
+        unsummarized = request_count - summarized
+        result.append({
+            "cycle_id": cycle.id,
+            "cycle_name": cycle.cycle_name,
+            "applicable_count": len(applicable_ids),
+            "generated_count": len(generated_ids),
+            "not_generated_count": not_generated,
+            "request_count": request_count,
+            "summarized_count": summarized,
+            "unsummarized_count": unsummarized,
+            "completed": request_count > 0 and not_generated == 0 and unsummarized == 0,
+        })
+    return {"period_label": period_label, "cycles": result}
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # 請購單 CRUD / 查詢
 # ═══════════════════════════════════════════════════════════════════════════
 
-def _attach_display_fields(db: Session, req: CyclePurchaseRequest) -> CyclePurchaseRequest:
+def _pushed_keys(db: Session) -> set:
+    """已拋轉 Ragic 的 (cycle_id, period_label, company, department_id) 集合。
+
+    請購單本身沒有拋轉欄位——拋轉記在彙整列（cycle_purchase_summary.ragic_pushed）。
+    彙整粒度是 公司＋料號＋部門，一張請購單的內容全部落在「同週期＋期別＋公司＋部門」
+    的彙整列上，所以只要那組彙整列有任一列已拋轉，這張已彙整的請購單就視為已拋轉。
+    """
+    from app.models.cycle_purchase_summary import CyclePurchaseSummary
+    return {
+        (r.cycle_id, r.period_label, r.company, r.department_id)
+        for r in db.query(
+            CyclePurchaseSummary.cycle_id, CyclePurchaseSummary.period_label,
+            CyclePurchaseSummary.company, CyclePurchaseSummary.department_id,
+        ).filter(CyclePurchaseSummary.ragic_pushed == True).distinct().all()  # noqa: E712
+    }
+
+
+def flow_status_of(req: CyclePurchaseRequest, pushed_keys: set) -> str:
+    """請購單的單一流程狀態（2026-09-25，0924 會議：四種狀態要分得清楚、互斥）。
+
+      open        開放中（未關閉、未彙整）——可以追加、修改
+      closed      已關閉、尚未彙整——等採購彙整
+      summarized  已彙整、尚未拋轉 Ragic
+      pushed      已拋轉 Ragic
+      summarized_reopened  ⚠️ 已彙整卻又被重新開啟（2026-09-25 前的漏洞留下的舊資料）
+    """
+    if req.is_summarized:
+        if (req.cycle_id, req.period_label, req.company, req.department_id) in pushed_keys:
+            return "pushed"
+        return "summarized" if req.is_closed else "summarized_reopened"
+    return "closed" if req.is_closed else "open"
+
+
+def _attach_display_fields(db: Session, req: CyclePurchaseRequest, pushed_keys: Optional[set] = None) -> CyclePurchaseRequest:
     cycle = db.query(CyclePurchaseCycle).filter(CyclePurchaseCycle.id == req.cycle_id).first()
     req.cycle_name = cycle.cycle_name if cycle else None
     dept = db.query(CyclePurchaseDepartment).filter(CyclePurchaseDepartment.id == req.department_id).first()
@@ -417,6 +517,8 @@ def _attach_display_fields(db: Session, req: CyclePurchaseRequest) -> CyclePurch
         req.cost_center_name = cc.cc_name if cc else None
     # 2026-08-07：人工關閉 / 系統自動關閉的區分（衍生值，不落地成欄位）
     req.close_kind = close_kind_of(req)
+    # 2026-09-25：單一流程狀態（清單批次呼叫時由外面傳入 pushed_keys，避免每列查一次）
+    req.flow_status = flow_status_of(req, pushed_keys if pushed_keys is not None else _pushed_keys(db))
     return req
 
 
@@ -431,7 +533,7 @@ def _attach_item_account_label(db: Session, item: CyclePurchaseRequestItem) -> C
 
 # 「狀態」篩選的合法值。刻意不重用舊的 status 欄位（那是改版前的歷史殘留，
 # 新資料一律是 draft，篩了沒有意義），改用實際有意義的三種狀態。
-CLOSE_STATES = ("open", "closed_manual", "closed_auto")
+CLOSE_STATES = ("open", "closed_manual", "closed_auto", "summarized", "pushed")
 
 
 def list_requests(
@@ -442,8 +544,13 @@ def list_requests(
     status: Optional[str] = None,
     can_see_closed: bool = True,
     close_state: Optional[str] = None,
+    department_ids: Optional[list[int]] = None,
 ):
     """
+    department_ids（2026-09-25「我的部門」切換）：不是 None 時只回傳這些部門的單；
+    空清單＝使用者沒有被指派到任何週採部門，直接回傳空集合。只是篩選，不是權限——
+    清單可見範圍維持全公司（2026-09-01 裁示），切到「全部」照樣看得到。
+
     can_see_closed=False 時，**完全不回傳已關閉的請購單**（不論人工關閉或系統
     自動關閉）。2026-08-07 與 Samuel 確認採後端硬過濾而非前端預設篩選——前端篩選
     只是畫面乾淨，使用者切個下拉就看得到，不算權限控制。
@@ -473,15 +580,26 @@ def list_requests(
         # 也一樣（下面的條件會與這一條 AND 起來，結果必然是空集合，不會外洩）
         query = query.filter(CyclePurchaseRequest.is_closed == False)  # noqa: E712
 
+    # 2026-09-25（0924 會議）：狀態改成**互斥**的流程狀態。「開放中」只剩真正還能
+    # 追加修改的單（未關閉且未彙整）；已關閉只算還沒彙整的；已彙整／已拋轉各自一類。
+    # 已彙整／已拋轉不在 SQL 裡分（拋轉記在彙整列上），先撈 is_summarized，最後再依
+    # flow_status 過濾。
     if close_state == "open":
-        query = query.filter(CyclePurchaseRequest.is_closed == False)  # noqa: E712
+        query = query.filter(
+            CyclePurchaseRequest.is_closed == False,  # noqa: E712
+            CyclePurchaseRequest.is_summarized == False,  # noqa: E712
+        )
+    elif close_state in ("summarized", "pushed"):
+        query = query.filter(CyclePurchaseRequest.is_summarized == True)  # noqa: E712
     elif close_state == "closed_auto":
         query = query.filter(
             CyclePurchaseRequest.is_closed == True,  # noqa: E712
+            CyclePurchaseRequest.is_summarized == False,  # noqa: E712
             CyclePurchaseRequest.close_batch_no.like(f"{_AUTO_CLOSE_PREFIX}%"),
         )
     elif close_state == "closed_manual":
         query = query.filter(
+            CyclePurchaseRequest.is_summarized == False,  # noqa: E712
             CyclePurchaseRequest.is_closed == True,  # noqa: E712
             # close_batch_no 可能是 NULL（理論上不該發生，但舊資料難保），
             # NULL 在 SQL 的 NOT LIKE 會是 NULL 而不是 TRUE，會被濾掉，
@@ -497,11 +615,21 @@ def list_requests(
         query = query.filter(CyclePurchaseRequest.period_label == period_label)
     if department_id is not None:
         query = query.filter(CyclePurchaseRequest.department_id == department_id)
+    if department_ids is not None:
+        if not department_ids:
+            return []
+        query = query.filter(CyclePurchaseRequest.department_id.in_(department_ids))
     if status:
         query = query.filter(CyclePurchaseRequest.status == status)
     rows = query.order_by(CyclePurchaseRequest.request_no.desc()).all()
+    pushed_keys = _pushed_keys(db)
     for r in rows:
-        _attach_display_fields(db, r)
+        _attach_display_fields(db, r, pushed_keys)
+    if close_state == "summarized":
+        # 「已彙整」含舊資料的 summarized_reopened（要讓人找得到、去處理）
+        rows = [r for r in rows if r.flow_status in ("summarized", "summarized_reopened")]
+    elif close_state == "pushed":
+        rows = [r for r in rows if r.flow_status == "pushed"]
     return rows
 
 
@@ -740,6 +868,13 @@ def _check_editable(req: CyclePurchaseRequest) -> None:
          這張單」。若仍卡當月，重新開啟一張過月的單就完全沒有效果，
          等於這個功能對最需要它的情境（上個月漏填要補）失效。
     """
+    # 2026-09-25：已彙整就不能再改（舊資料可能有「重新開啟但仍在彙整單裡」的單，
+    # 改了數量彙整單不會跟著變）。要改請先從彙整單退回。
+    if req.is_summarized:
+        raise RequestServiceError(
+            f"這張請購單已經彙整（批次 {req.summary_batch_no or '—'}），不能再編輯；"
+            "要修改請先到彙整單按「退回請購單」"
+        )
     if req.is_closed:
         if close_kind_of(req) == "auto":
             raise RequestServiceError(
@@ -1151,6 +1286,19 @@ def reopen_requests(db: Session, request_ids: list[int], user) -> list[CyclePurc
     if not_closed:
         raise RequestServiceError(f"以下請購單本來就不是關閉狀態，不能重新開啟：{'、'.join(not_closed)}")
 
+    # 2026-09-25（0924 會議）：已彙整的單不能直接重新開啟。否則會出現「開放中＋已彙整」，
+    # 重開後改數量，彙整單上的數字就跟請購單對不起來（工程部飲水濾芯那張就是這樣）。
+    # 要改請走：彙整單「退回請購單」（已拋轉的要先取消拋轉）→ 再重新開啟。
+    summarized = [
+        f"{r.request_no}（彙整批次 {r.summary_batch_no or '—'}）" for r in rows if r.is_summarized
+    ]
+    if summarized:
+        raise RequestServiceError(
+            "以下請購單已經彙整，不能直接重新開啟：" + "、".join(summarized)
+            + "。要修改請先到彙整單按「退回請購單」（若已拋轉 Ragic，要先在 Ragic 整筆退回並「取消拋轉」），"
+            "退回後才能重新開啟。"
+        )
+
     now = datetime.now()
     for r in rows:
         r.is_closed = False
@@ -1166,6 +1314,88 @@ def reopen_requests(db: Session, request_ids: list[int], user) -> list[CyclePurc
 # ═══════════════════════════════════════════════════════════════════════════
 # Dashboard 待辦提醒
 # ═══════════════════════════════════════════════════════════════════════════
+
+def my_period_overview(db: Session, dept_ids: list[int]) -> dict:
+    """
+    「我的部門本期」卡片（2026-09-25 Samuel 裁示）：登入者所屬部門在本月各啟用中
+    週期的請購單狀況。
+
+    一列＝一個週期 × 一個我的部門。只列「這個部門適用這個週期」或「本期已經有單」
+    的組合——兩者皆否代表這個週期本來就跟我的部門無關，列出來只是雜訊。
+    同部門同期有多張單（手動補建）時每張各一列。
+    適用判斷沿用 resolve_applicable_departments()，與「產生本期請購單」同一套規則。
+    """
+    period_label = _current_period_label()
+    my_depts = []
+    if dept_ids:
+        my_depts = (
+            db.query(CyclePurchaseDepartment)
+            .filter(CyclePurchaseDepartment.id.in_(dept_ids))
+            .order_by(CyclePurchaseDepartment.company, CyclePurchaseDepartment.dept_code)
+            .all()
+        )
+    result_depts = [
+        {"id": d.id, "name": d.dept_name, "company": d.company} for d in my_depts
+    ]
+    rows: list[dict] = []
+    if not my_depts:
+        return {"period_label": period_label, "departments": result_depts, "rows": rows}
+
+    my_ids = {d.id for d in my_depts}
+    cycles = (
+        db.query(CyclePurchaseCycle)
+        .filter(CyclePurchaseCycle.status == "active")
+        .order_by(CyclePurchaseCycle.id)
+        .all()
+    )
+    for cycle in cycles:
+        included, _excluded = resolve_applicable_departments(db, cycle)
+        applicable_ids = {d.id for d in included} & my_ids
+        reqs = (
+            db.query(CyclePurchaseRequest)
+            .filter(
+                CyclePurchaseRequest.cycle_id == cycle.id,
+                CyclePurchaseRequest.period_label == period_label,
+                CyclePurchaseRequest.department_id.in_(my_ids),
+            )
+            .order_by(CyclePurchaseRequest.request_no)
+            .all()
+        )
+        for dept in my_depts:
+            dept_reqs = [r for r in reqs if r.department_id == dept.id]
+            if dept.id not in applicable_ids and not dept_reqs:
+                continue
+            base = {
+                "cycle_id": cycle.id,
+                "cycle_name": cycle.cycle_name,
+                "department_id": dept.id,
+                "department_name": dept.dept_name,
+                "company": dept.company,
+            }
+            if not dept_reqs:
+                rows.append({**base, "request_id": None})
+                continue
+            for r in dept_reqs:
+                filled = (
+                    db.query(func.count(CyclePurchaseRequestItem.id))
+                    .filter(
+                        CyclePurchaseRequestItem.request_id == r.id,
+                        CyclePurchaseRequestItem.request_qty > 0,
+                    )
+                    .scalar()
+                ) or 0
+                rows.append({
+                    **base,
+                    "request_id": r.id,
+                    "request_no": r.request_no,
+                    "is_closed": bool(r.is_closed),
+                    "close_kind": close_kind_of(r),
+                    "is_summarized": bool(r.is_summarized),
+                    "filled_item_count": int(filled),
+                    "total_amount": r.total_amount,
+                })
+    return {"period_label": period_label, "departments": result_depts, "rows": rows}
+
 
 def get_user_cp_department_ids(db: Session, portal_db, user_id: str) -> list[int]:
     """
@@ -1208,7 +1438,7 @@ def get_user_cp_department_ids(db: Session, portal_db, user_id: str) -> list[int
     return sorted(owner_ids | member_ids)
 
 
-def get_dashboard_todos(db: Session, user, is_closer: bool, portal_db=None):
+def get_dashboard_todos(db: Session, user, is_closer: bool, portal_db=None, can_summarize: bool = False):
     """
     待辦提醒：
       - my_pending：登入者可操作的部門（部門成員 OR 承辦人，見
@@ -1264,10 +1494,27 @@ def get_dashboard_todos(db: Session, user, is_closer: bool, portal_db=None):
         for r in pending_close:
             _attach_display_fields(db, r)
 
+    # 2026-09-25（左側選單紅點）：全公司「已關閉但尚未彙整」的請購單張數。
+    # 不分週期/公司/部門——彙整單選單只需要一個總數提醒「有東西可以彙整」，
+    # 真正要彙整哪些由使用者自己進彙整單頁選週期/公司/期別。
+    summary_pending_count = 0
+    if can_summarize:
+        summary_pending_count = (
+            db.query(CyclePurchaseRequest)
+            .filter(
+                CyclePurchaseRequest.is_closed == True,  # noqa: E712
+                CyclePurchaseRequest.is_summarized == False,  # noqa: E712
+                # 2026-09-25：逾期期別不能拋，不算待辦（待彙整 TAB 仍會列出並標逾期）
+                CyclePurchaseRequest.period_label >= current_month,
+            )
+            .count()
+        )
+
     return {
         "my_pending": my_pending,
         "pending_close_count": len(pending_close),
         "pending_close": pending_close,
+        "summary_pending_count": summary_pending_count,
     }
 
 

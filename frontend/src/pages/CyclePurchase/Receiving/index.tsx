@@ -6,6 +6,7 @@
  * draft／cancelled 的採購單不能再建驗收單，後端也會擋，這裡先在前端把選項
  * 縮小，避免選了會被擋下的單）。建立後（草稿）導到詳情頁填明細。
  */
+import FlowSteps from '@/pages/CyclePurchase/components/FlowSteps'
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
@@ -97,6 +98,7 @@ export default function CpReceivingListPage() {
 
   return (
     <div>
+      <FlowSteps />
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
         <Title level={4} style={{ margin: 0 }}>週期採購 — 驗收單</Title>
         {canReceive && (

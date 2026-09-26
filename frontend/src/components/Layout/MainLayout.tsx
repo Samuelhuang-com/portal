@@ -67,6 +67,7 @@ import { fetchMenuConfig, MenuConfigItem } from '@/api/menuConfig'
 import { MenuItemsContext } from '@/components/Layout/menuItemsContext'
 import { resolveIcon } from '@/constants/iconMap'
 import { authApi } from '@/api/auth'
+import { getTodos as getCyclePurchaseTodos } from '@/api/cyclePurchase'
 
 // ── 內部型別：帶 permissionKey 的 menu item ───────────────────────────────────
 interface MenuItem {
@@ -976,6 +977,75 @@ export default function MainLayout() {
     [user?.permissions, isSystemAdmin]
   )
 
+  // ── 週採左側選單紅點（2026-09-25，草稿裁示 1+4）───────────────────────────
+  // 只有具備任一週採權限的人才打這支 API，避免對完全無關的使用者多一次請求。
+  // 數字來源沿用既有 GET /cycle-purchase/requests/todos（Dashboard 待辦提醒
+  // 同一支端點），沒有另外開 API——pending_close_count＝請購單紅點，
+  // summary_pending_count＝彙整單紅點（後端依權限計算，無權限固定 0）。
+  const [cpBadges, setCpBadges] = useState<{ requests: number; summary: number }>({
+    requests: 0,
+    summary: 0,
+  })
+  const hasCyclePurchaseAccess = userPermissions.includes('*') || userPermissions.some(
+    (p) => p.startsWith('cycle_purchase_')
+  )
+  useEffect(() => {
+    if (!hasCyclePurchaseAccess) { setCpBadges({ requests: 0, summary: 0 }); return }
+    let cancelled = false
+    getCyclePurchaseTodos()
+      .then((res) => {
+        if (cancelled) return
+        // 2026-09-25 修正：pending_close_count 只有具關閉權限的人才算得出來，
+        // 一般部門人員永遠是 0 → 紅點對他們沒作用。改成：能關閉的人（買家）看
+        // 全公司本月待關閉；其他人看自己部門本月還沒關閉的單（my_pending，
+        // 部門成員 OR 承辦人）。
+        const isCloser = userPermissions.includes('*') || userPermissions.includes('cycle_purchase_close')
+        setCpBadges({
+          requests: isCloser ? (res.data.pending_close_count ?? 0) : (res.data.my_pending?.length ?? 0),
+          summary: res.data.summary_pending_count ?? 0,
+        })
+      })
+      // 選單紅點是輔助資訊，拿不到就維持 0，不影響選單其餘功能，不跳錯誤訊息
+      .catch(() => { if (!cancelled) setCpBadges({ requests: 0, summary: 0 }) })
+    return () => { cancelled = true }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasCyclePurchaseAccess, userPermissions])
+
+  // 把紅點數字疊到指定路由 key 的 label 上（不動原本的 label 內容，只包一層）；
+  // 遞迴走訪，作用點與 MenuConfig 的文字覆蓋互不衝突（這裡動的是 antd 版本，
+  // 不是 dynamicMenuItems 本體，MenuConfig 改文字照樣生效）。
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const injectCyclePurchaseBadges = (items: any[]): any[] => {
+    const countByKey: Record<string, number> = {
+      '/cycle-purchase/requests': cpBadges.requests,
+      '/cycle-purchase/summary': cpBadges.summary,
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return items.map((item) => {
+      const count = countByKey[item.key]
+      const children = item.children ? injectCyclePurchaseBadges(item.children) : item.children
+      if (!count) return children ? { ...item, children } : item
+      return {
+        ...item,
+        children,
+        label: (
+          <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.label}</span>
+            <span
+              style={{
+                marginLeft: 8, minWidth: 18, height: 18, borderRadius: 999,
+                background: '#e2574c', color: '#fff', fontSize: 11, fontWeight: 700,
+                display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '0 5px', flexShrink: 0,
+              }}
+            >
+              {count > 99 ? '99+' : count}
+            </span>
+          </span>
+        ),
+      }
+    })
+  }
+
   // ── base items ────────────────────────────────────────────────────────────
   // 2026-08-12：原本這裡對非 system_admin 直接砍掉整個 settings 群組。
   // 權限收斂改版後，「能管帳號／角色」不再等於 system_admin，硬砍會讓具備
@@ -1119,8 +1189,9 @@ export default function MainLayout() {
   // 交給 antd <Menu> 的版本：剝掉自訂的 permissionKey / permissionKeys，
   // 避免被當成 DOM 屬性往下傳（見 stripPermissionProps 說明）。
   const antdMenuItems = useMemo(
-    () => stripPermissionProps(dynamicMenuItems),
-    [dynamicMenuItems]
+    () => injectCyclePurchaseBadges(stripPermissionProps(dynamicMenuItems)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [dynamicMenuItems, cpBadges]
   )
 
   const userMenu = {

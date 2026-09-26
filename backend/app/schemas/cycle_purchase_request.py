@@ -81,6 +81,7 @@ class ApplicableDepartmentOut(BaseModel):
     department_id: int
     department_name: str
     company: str
+    already_generated: bool = False   # 2026-09-25：本期已有請購單（按產生不會新建）
 
 
 class GeneratePreviewResult(BaseModel):
@@ -90,6 +91,24 @@ class GeneratePreviewResult(BaseModel):
     period_label: str
     departments: List[ApplicableDepartmentOut] = []
     skipped: List[SkippedDepartmentOut] = []
+
+
+class CycleGenerateStatusOut(BaseModel):
+    """GET /requests/generate-status 單一週期的本期完成度（2026-09-25）。"""
+    cycle_id: int
+    cycle_name: str
+    applicable_count: int       # 原申請單位數
+    generated_count: int        # 適用部門中已產生請購單的部門數
+    not_generated_count: int    # 未執行單位數
+    request_count: int          # 本期請購單總張數
+    summarized_count: int       # 已彙整張數
+    unsummarized_count: int     # 從未執行（已產生但未彙整）
+    completed: bool             # 本期已完成週採
+
+
+class GenerateStatusResult(BaseModel):
+    period_label: str
+    cycles: List[CycleGenerateStatusOut] = []
 
 
 class GenerateRequestsResult(BaseModel):
@@ -149,6 +168,9 @@ class RequestOut(BaseModel):
     # None（還開放中）。衍生欄位，由 service 的 close_kind_of() 依 close_batch_no
     # 前綴推導，不落地成資料表欄位。前端據此顯示不同樣式的標籤。
     close_kind: Optional[str] = None
+    # 2026-09-25：單一流程狀態 open／closed／summarized／pushed／summarized_reopened
+    # （衍生欄位，service 的 flow_status_of()）
+    flow_status: Optional[str] = None
     reopened_by_user_id: Optional[str] = None
     reopened_by_name: Optional[str] = None
     reopened_at: Optional[datetime] = None
@@ -217,6 +239,39 @@ class AvailableItemOut(BaseModel):
     is_confirmed: bool
 
 
+class MyPeriodDepartmentOut(BaseModel):
+    id: int
+    name: str
+    company: str
+
+
+class MyPeriodRowOut(BaseModel):
+    """「我的部門本期」一列：一個週期 × 一個我的部門（×一張單）。request_id=None＝本期還沒有單。"""
+    cycle_id: int
+    cycle_name: str
+    department_id: int
+    department_name: str
+    company: str
+    request_id: Optional[int] = None
+    request_no: Optional[str] = None
+    is_closed: bool = False
+    close_kind: Optional[str] = None
+    is_summarized: bool = False
+    filled_item_count: int = 0
+    total_amount: Optional[Decimal] = None
+
+
+class MyPeriodResult(BaseModel):
+    """GET /requests/my-period（2026-09-25）"""
+    period_label: str
+    departments: List[MyPeriodDepartmentOut] = []
+    rows: List[MyPeriodRowOut] = []
+    # 登入者能不能打開已關閉的單（沒權限時前端不給連結，避免點進去 403）
+    can_open_closed: bool = False
+    # 2026-09-25：all＝管理者看全部啟用中部門；mine＝只看自己所屬部門
+    scope: str = "mine"
+
+
 class TodoSummary(BaseModel):
     """Dashboard 待辦提醒：登入者自己部門這個月還沒關閉的、以及（若有關閉權限）
     全部這個月還沒關閉的請購單。2026-07-17 起拿掉送出/簽核狀態機，
@@ -224,6 +279,10 @@ class TodoSummary(BaseModel):
     my_pending: List[RequestOut] = []
     pending_close_count: int = 0
     pending_close: List[RequestOut] = []
+    # 2026-09-25（左側選單紅點）：已關閉但尚未彙整的請購單張數，供「彙整單」
+    # 選單項目掛紅點用。只有具彙整權限（cycle_purchase_buyer）時才計算，
+    # 否則固定 0（不對無權限的人洩漏張數）。
+    summary_pending_count: int = 0
 
 
 # GenerateRequestsResult 引用了後面才定義的 RequestOut，這裡補上前向參考解析。

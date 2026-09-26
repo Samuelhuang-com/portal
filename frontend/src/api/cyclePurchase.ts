@@ -22,6 +22,10 @@ import type {
   CpEligibleRequest,
   CpExcludeItemCandidate,
   CpGeneratePreview,
+  CpGenerateStatusResult,
+  CpMyPeriodResult,
+  CpPendingRequest,
+  CpExcludedRequest,
   CpGenerateResult,
   CpItem,
   CpItemDetail,
@@ -272,7 +276,13 @@ export const getRequests = (params?: {
   status?: string
   /** 2026-08-07 新增的「狀態」篩選；不給＝全部 */
   close_state?: CpCloseState
+  /** 2026-09-25：只看我所屬部門的單（篩選，不是權限） */
+  mine?: boolean
 }) => apiClient.get<CpRequest[]>(`${BASE}/requests`, { params })
+
+/** 「我的部門本期」：所屬部門在本月各週期的請購單狀況（2026-09-25） */
+export const getMyPeriod = () =>
+  apiClient.get<CpMyPeriodResult>(`${BASE}/requests/my-period`)
 
 export const getRequest = (id: number) =>
   apiClient.get<CpRequestDetail>(`${BASE}/requests/${id}`)
@@ -288,6 +298,10 @@ export const previewGenerateRequests = (cycleId: number) =>
   apiClient.get<CpGeneratePreview>(`${BASE}/requests/generate-preview`, {
     params: { cycle_id: cycleId },
   })
+
+/** 本期各週期完成度（原申請單位數／已產生／未執行／已彙整／從未執行），2026-09-25 */
+export const getGenerateStatus = () =>
+  apiClient.get<CpGenerateStatusResult>(`${BASE}/requests/generate-status`)
 
 export const getTodos = () =>
   apiClient.get<TodoSummary>(`${BASE}/requests/todos`)
@@ -365,6 +379,14 @@ export const getVendorGroups = (params: { cycle_id: number; period_label: string
 // 2026-07-16 改版：拿掉舊版「輸入週期＋期別字串」的產生彙整方式（原本
 // generateSummary()／POST /summary/generate），改成「勾選請購單」——見
 // 後端 services/cycle_purchase_summary_service.py 開頭「第二次調整」說明。
+/** 待彙整請購單：全公司已關閉、尚未彙整的單（2026-09-25，彙整單頁第一個 TAB） */
+export const getPendingRequests = () =>
+  apiClient.get<CpPendingRequest[]>(`${BASE}/summary/pending-requests`)
+
+/** 產生彙整範圍內已彙整／已拋轉、因此不在可勾選清單的請購單（2026-09-25，說明用） */
+export const getExcludedRequests = (params: { cycle_id: number; company: string; year_month: string }) =>
+  apiClient.get<CpExcludedRequest[]>(`${BASE}/summary/excluded-requests`, { params })
+
 export const getEligibleRequests = (params: { cycle_id: number; company: string; year_month: string }) =>
   apiClient.get<CpEligibleRequest[]>(`${BASE}/summary/eligible-requests`, { params })
 

@@ -52,6 +52,7 @@
  * 同時料號主檔列表（Items/index.tsx）也比照加上「公司/部門」欄，兩處
  * 加起來讓使用者在挑選前就看得到歸屬，不必等到請購單空白才發現選錯。
  */
+import FlowSteps from '@/pages/CyclePurchase/components/FlowSteps'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Alert, Button, Card, Form, Input, Modal, Select, Space, Switch, Table, Tag, Typography, message,
@@ -384,6 +385,7 @@ export default function CpCyclesPage() {
 
   return (
     <div>
+      <FlowSteps />
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
         <Title level={4} style={{ margin: 0 }}>週期採購 — 週期設定</Title>
         <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新增週期設定</Button>

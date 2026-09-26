@@ -23,6 +23,7 @@ POST   /summary/cancel-ragic-push       取消拋轉（2026-08-09 新增，清�
 services/cycle_purchase_summary_service.py 開頭說明——原本 POST /summary/generate
 是靠使用者輸入的「週期＋期別」字串完全比對抓資料，期別字串不一致就會查到
 0 筆；已整個移除，不保留備用路徑）：
+GET    /summary/pending-requests        待彙整請購單：全公司已關閉、尚未彙整的單（2026-09-25）
 GET    /summary/eligible-requests       列出某週期＋公司＋期別下，已關閉且尚未
                                          被彙整過的請購單，供勾選
 POST   /summary/generate-from-requests  把勾選的請購單彙整成彙整列（period_label
@@ -55,6 +56,7 @@ from app.dependencies import require_any_permission, require_permission
 from app.models.user import User
 from app.schemas.cycle_purchase_summary import (
     ConvertToPoPayload, DepartmentBreakdownOut, EligibleRequestOut, GenerateFromRequestsPayload,
+    PendingRequestOut, ExcludedRequestOut,
     CancelRagicPushPayload, CancelRagicPushResult,
     PushToRagicPayload, PushToRagicResult, RagicPushedDateRange, RagicPushedDocOut,
     SummarizedRequestOut, SummaryOut, SummaryUpdate,
@@ -234,6 +236,35 @@ def vendor_groups(
     db: Session = Depends(get_cycle_purchase_db),
 ):
     return _handle(svc.list_vendor_groups, db, cycle_id, period_label, company)
+
+
+@router.get(
+    "/summary/pending-requests",
+    response_model=List[PendingRequestOut],
+    summary="待彙整請購單：全公司已關閉、尚未彙整的請購單（不分週期／公司／期別）",
+)
+def pending_requests(
+    _: User = Depends(require_permission("cycle_purchase_buyer")),
+    db: Session = Depends(get_cycle_purchase_db),
+):
+    """2026-09-25：彙整單頁第一個 TAB。條件與左側選單「彙整單」紅點相同。"""
+    return svc.list_pending_requests(db)
+
+
+@router.get(
+    "/summary/excluded-requests",
+    response_model=List[ExcludedRequestOut],
+    summary="產生彙整範圍內已彙整／已拋轉、因此不在可勾選清單的請購單（說明用）",
+)
+def excluded_requests(
+    cycle_id: int = Query(...),
+    company: str = Query(...),
+    year_month: str = Query(...),
+    _: User = Depends(require_permission("cycle_purchase_buyer")),
+    db: Session = Depends(get_cycle_purchase_db),
+):
+    """2026-09-25：讓第一次用的人知道「為什麼選不到」——那些單已經彙整或拋轉過。"""
+    return svc.list_excluded_requests(db, cycle_id, company, year_month)
 
 
 @router.get(

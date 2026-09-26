@@ -313,6 +313,7 @@ export interface CpApplicableDepartment {
   department_id: number
   department_name: string
   company: string
+  already_generated?: boolean   // 2026-09-25：本期已有請購單（按產生不會新建）
 }
 
 /** GET /requests/generate-preview */
@@ -322,6 +323,78 @@ export interface CpGeneratePreview {
   period_label: string
   departments: CpApplicableDepartment[]
   skipped: CpSkippedDepartment[]
+}
+
+/** GET /requests/generate-status：「產生本期請購單」週期下拉的本期完成度（2026-09-25） */
+export interface CpCycleGenerateStatus {
+  cycle_id: number
+  cycle_name: string
+  applicable_count: number      // 原申請單位數
+  generated_count: number       // 適用部門中已產生請購單的部門數
+  not_generated_count: number   // 未執行單位數
+  request_count: number         // 本期請購單總張數
+  summarized_count: number      // 已彙整張數
+  unsummarized_count: number    // 從未執行（已產生但未彙整）
+  completed: boolean            // 本期已完成週採
+}
+
+export interface CpGenerateStatusResult {
+  period_label: string
+  cycles: CpCycleGenerateStatus[]
+}
+
+/** GET /summary/pending-requests：待彙整請購單（已關閉、尚未彙整；2026-09-25） */
+export interface CpPendingRequest {
+  id: number
+  request_no: string
+  cycle_id: number
+  cycle_name?: string | null
+  company: string
+  period_label: string
+  department_id?: number | null
+  department_name?: string | null
+  closed_by_name?: string | null
+  closed_at?: string | null
+  close_kind?: CpCloseKind
+  filled_item_count: number
+  total_amount: number
+  /** 曾經從彙整單退回過（重新關閉後又回到待彙整），提示用 */
+  unsummarized_at?: string | null
+  /** 2026-09-25：期別已過＝逾期，不可拋（仍列出，但不能產生彙整） */
+  is_overdue?: boolean
+}
+
+/** GET /requests/my-period：「我的部門本期」（2026-09-25） */
+export interface CpMyPeriodDepartment {
+  id: number
+  name: string
+  company: string
+}
+
+/** 一列＝一個週期 × 一個我的部門（×一張單）；request_id 為 null＝本期還沒有單 */
+export interface CpMyPeriodRow {
+  cycle_id: number
+  cycle_name: string
+  department_id: number
+  department_name: string
+  company: string
+  request_id: number | null
+  request_no?: string | null
+  is_closed: boolean
+  close_kind?: CpCloseKind
+  is_summarized: boolean
+  filled_item_count: number
+  total_amount?: number | null
+}
+
+export interface CpMyPeriodResult {
+  period_label: string
+  departments: CpMyPeriodDepartment[]
+  rows: CpMyPeriodRow[]
+  /** 能不能打開已關閉的單（沒權限時不給連結，避免 403） */
+  can_open_closed: boolean
+  /** 2026-09-25：all＝管理者看全部啟用中部門；mine＝只看自己所屬部門 */
+  scope?: 'all' | 'mine'
 }
 
 /** POST /requests/generate（2026-08-09 起回傳物件，不再是陣列） */
@@ -353,7 +426,11 @@ export type CpCloseKind = 'manual' | 'auto' | null
  * undefined／不帶＝全部。
  * ⚠️ 不要改用 CpRequest.status 做狀態篩選，那是改版前的殘留欄位（新資料一律 draft）。
  */
-export type CpCloseState = 'open' | 'closed_manual' | 'closed_auto'
+// 2026-09-25：改成互斥的流程狀態（open＝未關閉且未彙整；closed_*＝已關閉未彙整）
+export type CpCloseState = 'open' | 'closed_manual' | 'closed_auto' | 'summarized' | 'pushed'
+
+/** 請購單單一流程狀態（後端衍生欄位 flow_status，2026-09-25） */
+export type CpFlowStatus = 'open' | 'closed' | 'summarized' | 'pushed' | 'summarized_reopened'
 
 export interface CpRequestItem {
   id: number
@@ -405,6 +482,8 @@ export interface CpRequest {
   //   null     — 還開放中
   // ⚠️ 不要改用「closed_by_name 是不是空的」去判斷是不是系統關的，那是實作細節。
   close_kind?: CpCloseKind
+  /** 2026-09-25：單一流程狀態（開放中／已關閉／已彙整／已拋轉 Ragic，互斥） */
+  flow_status?: CpFlowStatus | null
   closed_by_user_id?: string | null
   closed_by_name?: string | null
   closed_at?: string | null
@@ -656,6 +735,17 @@ export interface CpRagicPushedDoc {
   converted_count: number
   all_converted: boolean
   is_stub: boolean
+  /** 2026-09-25：這張 Ragic 單包含的請購單號 */
+  request_nos?: string[]
+}
+
+/** GET /summary/excluded-requests：產生彙整範圍內已彙整／已拋轉、不在可勾選清單的單（2026-09-25） */
+export interface CpExcludedRequest {
+  id: number
+  request_no: string
+  department_name?: string | null
+  summary_batch_no?: string | null
+  flow_status: CpFlowStatus
 }
 
 // 拋轉到 Ragic「★週採請購單」(sheet 58) 的結果。
@@ -924,6 +1014,8 @@ export interface TodoSummary {
   my_pending: CpRequest[]
   pending_close_count: number
   pending_close: CpRequest[]
+  // 2026-09-25（左側選單紅點）：已關閉但尚未彙整的張數，只有具彙整權限的人才非 0
+  summary_pending_count: number
 }
 
 // 2026-08-09：採購單「退回彙整單」的結果。

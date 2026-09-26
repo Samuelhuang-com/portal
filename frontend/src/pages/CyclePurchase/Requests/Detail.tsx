@@ -51,6 +51,7 @@
  * ⚠️ `request_items.account_code_id` 欄位與付款分攤邏輯完全不變，只是不再由這裡
  * 手動指定；要改某個料號的科目請到「料號主檔 → 料號對照」。
  */
+import FlowSteps from '@/pages/CyclePurchase/components/FlowSteps'
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import {
@@ -70,7 +71,8 @@ import type {
   CpAvailableItem, CpCostCenter, CpRequestDetail, CpRequestItem,
 } from '@/types/cyclePurchase'
 import { useAuthStore } from '@/stores/authStore'
-import CloseStatusTag from '../components/CloseStatusTag'
+import RequestTimeline from '../components/RequestTimeline'
+import FlowStatusTag from '../components/FlowStatusTag'
 
 const { Title, Text } = Typography
 
@@ -127,7 +129,8 @@ export default function CpRequestDetailPage() {
   // 過月的單現在會被系統自動關閉（is_closed=True），月份檢查已被涵蓋；
   // 而「重新開啟」的意義就是讓過月的單能補改，若前端還卡當月，
   // 重新開啟後畫面仍是唯讀，跟後端行為不一致。
-  const editable = canEdit && !!detail && !detail.is_closed
+  // 2026-09-25：已彙整的單也不能編輯（含舊資料「已彙整卻被重開」）
+  const editable = canEdit && !!detail && !detail.is_closed && !detail.is_summarized
   const isAutoClosed = !!detail && detail.is_closed && detail.close_kind === 'auto'
 
   const load = async () => {
@@ -377,18 +380,15 @@ export default function CpRequestDetailPage() {
 
   return (
     <div>
+      <FlowSteps />
       <Space style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between' }}>
         <Space>
           <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/cycle-purchase/requests')}>返回清單</Button>
           <Title level={4} style={{ margin: 0 }}>{detail.request_no}</Title>
-          <CloseStatusTag
-            isClosed={detail.is_closed}
-            closeKind={detail.close_kind}
-            periodLabel={detail.period_label}
-          />
+          <FlowStatusTag request={detail} />
         </Space>
         <Space>
-          {canClose && !detail.is_closed && (
+          {canClose && !detail.is_closed && !detail.is_summarized && (
             <Popconfirm
               title="確定要關閉這張請購單？"
               description="關閉後不能再新增/編輯明細，如需修改要先重新開啟"
@@ -397,7 +397,7 @@ export default function CpRequestDetailPage() {
               <Button icon={<LockOutlined />} loading={acting}>關閉此請購單</Button>
             </Popconfirm>
           )}
-          {!canClose && canEdit && !detail.is_closed && (
+          {!canClose && canEdit && !detail.is_closed && !detail.is_summarized && (
             <Popconfirm
               title="確定要送出這張請購單？"
               description="送出後就不能再修改，如果之後還要改，要請有權限的人重新開啟"
@@ -406,15 +406,38 @@ export default function CpRequestDetailPage() {
               <Button type="primary" icon={<SendOutlined />} loading={acting}>送出請購單</Button>
             </Popconfirm>
           )}
-          {canClose && detail.is_closed && (
+          {/* 2026-09-25：已彙整的單不能直接重新開啟，要先從彙整單退回 */}
+          {canClose && detail.is_closed && !detail.is_summarized && (
             <Button icon={<UnlockOutlined />} loading={acting} onClick={handleReopen}>重新開啟</Button>
           )}
         </Space>
       </Space>
 
+      <RequestTimeline detail={detail} />
+
       {/* 2026-08-07：三種提示分開講。系統自動關閉最需要說清楚——使用者看到
           「關閉」但找不到是誰關的，要讓他知道那是月份過了、不是有人動了手腳。 */}
-      {isAutoClosed && (
+      {/* 2026-09-25：已彙整／已拋轉的單講清楚「為什麼不能動、要怎麼改」 */}
+      {detail.is_summarized && (
+        <Alert
+          type={detail.flow_status === 'summarized_reopened' ? 'warning' : 'info'}
+          showIcon
+          style={{ marginBottom: 16 }}
+          message={
+            detail.flow_status === 'pushed'
+              ? '這張請購單已拋轉 Ragic，在 Portal 已經結束'
+              : detail.flow_status === 'summarized_reopened'
+                ? '這張請購單已經在彙整單裡，卻被重新開啟過（舊資料）'
+                : '這張請購單已經彙整，等待拋轉 Ragic'
+          }
+          description={
+            detail.flow_status === 'pushed'
+              ? '不能再修改。若真的要改，需先在 Ragic 整筆退回，再到彙整單「取消拋轉」→「退回請購單」，之後才能重新開啟修改。'
+              : '不能再修改。要修改請先到彙整單按「退回請購單」，退回後才能重新開啟。'
+          }
+        />
+      )}
+      {isAutoClosed && !detail.is_summarized && (
         <Alert
           type="warning"
           showIcon
@@ -423,7 +446,7 @@ export default function CpRequestDetailPage() {
           description={`這張請購單屬於「${detail.period_label}」，月份過了之後系統會自動關閉，沒有經手人。如果還需要補改，請找有「週期採購請購關閉」權限的人重新開啟——重新開啟之後就可以編輯，不受月份限制。`}
         />
       )}
-      {detail.is_closed && !isAutoClosed && (
+      {detail.is_closed && !isAutoClosed && !detail.is_summarized && (
         <Alert
           type="info"
           showIcon

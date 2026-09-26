@@ -29,6 +29,8 @@
  * ⚠️ 這裡刻意**不**在失敗時把卡片藏起來或顯示「—」：數字停在 0 但旁邊有紅字說明，
  *    比整塊消失更容易讓人意識到「是抓不到，不是真的沒有」。
  */
+import FlowSteps from '@/pages/CyclePurchase/components/FlowSteps'
+import MyDepartmentPeriodCard from '@/pages/CyclePurchase/components/MyDepartmentPeriodCard'
 import { useEffect, useState } from 'react'
 import { Alert, Badge, Card, Col, Empty, List, Row, Statistic, Typography } from 'antd'
 import {
@@ -140,7 +142,11 @@ export default function CpDashboardPage() {
 
   return (
     <div>
+      <FlowSteps />
       <Title level={4} style={{ marginBottom: 16 }}>週採（週期採購管理）</Title>
+
+      {/* 2026-09-25：我的部門本期。沒有部門的人（多半是買家/管理者）整張不顯示 */}
+      <MyDepartmentPeriodCard hideWhenNoDepartment />
 
       {loadErrors.length > 0 && (
         <Alert

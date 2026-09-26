@@ -225,6 +225,107 @@ def _next_summary_generate_batch_no(db: Session, cycle_id: int, company: str, ye
     return seq.next_no(db, CyclePurchaseRequest.summary_batch_no, prefix, 3)
 
 
+# 2026-09-25（0924 會議第 8 項，Samuel 裁示「標成『逾期，不可拋』」）：
+# 週採每期只拋一次，**過了當月的期別不能再彙整、也不能再拋轉 Ragic**。
+# 不把單藏起來——仍列在待彙整 TAB，但標「逾期，不可拋」、不給產生彙整按鈕。
+OVERDUE_LABEL = "逾期，不可拋"
+
+
+def is_overdue_period(period_label: Optional[str]) -> bool:
+    """期別早於本月＝逾期。period_label 格式 YYYY-MM，字串比較即時間先後。"""
+    from app.services.cycle_purchase_request_service import _current_period_label
+    return bool(period_label) and period_label < _current_period_label()
+
+
+def list_pending_requests(db: Session) -> list[dict]:
+    """「待彙整請購單」TAB（2026-09-25 Samuel 裁示）：全公司「已關閉、尚未彙整」的
+    請購單，不分週期／公司／期別，一次列出。數字與左側選單「彙整單」紅點
+    （request_service.get_dashboard_todos 的 summary_pending_count）同一個條件，
+    兩邊一定對得上。
+
+    這裡只負責「看得到有哪些」；真正要彙整還是走既有的「產生彙整」視窗
+    （eligible-requests → generate-from-requests），規則完全不變。
+    排序：期別新到舊 → 週期 → 公司 → 請購單號，前端依 週期＋公司＋期別 分組。
+    """
+    from app.services.cycle_purchase_request_service import close_kind_of
+
+    rows = (
+        db.query(CyclePurchaseRequest)
+        .filter(
+            CyclePurchaseRequest.is_closed == True,  # noqa: E712
+            CyclePurchaseRequest.is_summarized == False,  # noqa: E712
+        )
+        .all()
+    )
+    cycle_names = {c.id: c.cycle_name for c in db.query(CyclePurchaseCycle).all()}
+    dept_names = {d.id: d.dept_name for d in db.query(CyclePurchaseDepartment).all()}
+    result = []
+    for r in rows:
+        filled = (
+            db.query(func.count(CyclePurchaseRequestItem.id))
+            .filter(
+                CyclePurchaseRequestItem.request_id == r.id,
+                CyclePurchaseRequestItem.request_qty > 0,
+            )
+            .scalar()
+        ) or 0
+        result.append({
+            "id": r.id,
+            "request_no": r.request_no,
+            "cycle_id": r.cycle_id,
+            "cycle_name": cycle_names.get(r.cycle_id),
+            "company": r.company,
+            "period_label": r.period_label,
+            "department_id": r.department_id,
+            "department_name": dept_names.get(r.department_id),
+            "closed_by_name": r.closed_by_name,
+            "closed_at": r.closed_at,
+            "close_kind": close_kind_of(r),
+            "filled_item_count": int(filled),
+            "total_amount": r.total_amount,
+            "unsummarized_at": r.unsummarized_at,
+            "is_overdue": is_overdue_period(r.period_label),
+        })
+    # 兩段穩定排序：先排次要鍵，再依期別新到舊
+    result.sort(key=lambda x: (x["cycle_name"] or "", x["company"] or "", x["request_no"] or ""))
+    result.sort(key=lambda x: x["period_label"] or "", reverse=True)
+    return result
+
+
+def list_excluded_requests(db: Session, cycle_id: int, company: str, year_month: str) -> list[dict]:
+    """「產生彙整」視窗用（2026-09-25，0924 會議第 7 項）：這個範圍內**已經彙整**、
+    所以不會出現在可勾選清單的請購單，含是否已拋轉 Ragic。
+
+    會議上第一次用的人「選不到請購單」卻不知道為什麼——那些單其實早就彙整／拋轉了。
+    這支只負責「讓人看得到它們在哪、為什麼不在清單裡」，不改任何規則。
+    """
+    from app.services.cycle_purchase_request_service import _pushed_keys, flow_status_of
+
+    rows = (
+        db.query(CyclePurchaseRequest)
+        .filter(
+            CyclePurchaseRequest.cycle_id == cycle_id,
+            CyclePurchaseRequest.company == company,
+            CyclePurchaseRequest.period_label == (year_month or "").strip(),
+            CyclePurchaseRequest.is_summarized == True,  # noqa: E712
+        )
+        .order_by(CyclePurchaseRequest.request_no)
+        .all()
+    )
+    pushed_keys = _pushed_keys(db)
+    dept_names = {d.id: d.dept_name for d in db.query(CyclePurchaseDepartment).all()}
+    return [
+        {
+            "id": r.id,
+            "request_no": r.request_no,
+            "department_name": dept_names.get(r.department_id),
+            "summary_batch_no": r.summary_batch_no,
+            "flow_status": flow_status_of(r, pushed_keys),
+        }
+        for r in rows
+    ]
+
+
 def list_eligible_requests(db: Session, cycle_id: int, company: str, year_month: str):
     """「彙整單」畫面用：列出某週期＋公司下，期別（period_label）等於 year_month
     （YYYY-MM）、還沒被彙整過（is_summarized=False）的請購單，供使用者勾選要納入
@@ -274,8 +375,13 @@ def list_eligible_requests(db: Session, cycle_id: int, company: str, year_month:
             "closed_at": r.closed_at,
             "total_amount": r.total_amount,
             "is_closed": bool(r.is_closed),
-            "can_summarize": bool(r.is_closed),
-            "block_reason": None if r.is_closed else "尚未關閉（關閉後數量才算定案，才能彙整）",
+            # 2026-09-25：逾期期別也列出來但不能勾（逾期，不可拋）
+            "can_summarize": bool(r.is_closed) and not is_overdue_period(r.period_label),
+            "block_reason": (
+                f"{OVERDUE_LABEL}（期別 {r.period_label} 已過，週採每期只拋一次）"
+                if is_overdue_period(r.period_label)
+                else (None if r.is_closed else "尚未關閉（關閉後數量才算定案，才能彙整）")
+            ),
             # 曾被退回過的軌跡：讓買家知道「這張是退回來的，內容可能被改過」
             "unsummarized_at": r.unsummarized_at,
             "unsummarize_reason": r.unsummarize_reason,
@@ -323,6 +429,10 @@ def generate_summary_from_requests(db: Session, request_ids: list[int]) -> list[
         raise SummaryServiceError("週期設定不存在")
 
     period_label = _period_label_from_requests(requests)
+    if is_overdue_period(period_label):
+        raise SummaryServiceError(
+            f"期別「{period_label}」已經過了，{OVERDUE_LABEL}：週採每一期只在當月彙整、拋轉一次。"
+        )
 
     items = (
         db.query(CyclePurchaseRequestItem)
@@ -812,6 +922,7 @@ def list_ragic_pushed_documents(
             "total_amount": Decimal("0"),
             "pushed_at": r.ragic_pushed_at,
             "department_names": [],
+            "_dept_ids": set(),
             "converted_count": 0,
             "is_stub": bool(r.ragic_record_id and str(r.ragic_record_id).startswith("STUB-")),
         })
@@ -822,8 +933,29 @@ def list_ragic_pushed_documents(
             d["converted_count"] += 1
         if r.department_name and r.department_name not in d["department_names"]:
             d["department_names"].append(r.department_name)
+        if r.department_id:
+            d["_dept_ids"].add(r.department_id)
 
     result = list(docs.values())
+    # 2026-09-25（0924 會議第 4 項）：每張 Ragic 單包含哪幾張請購單。
+    # 彙整列不記錄來源請購單，用「同週期＋期別＋公司＋部門、目前已彙整」的請購單還原
+    # ——彙整粒度就是 公司＋料號＋部門，這個對應是精確的。
+    for d in result:
+        dept_ids = d.pop("_dept_ids")
+        d["request_nos"] = []
+        if dept_ids:
+            d["request_nos"] = [
+                r.request_no for r in db.query(CyclePurchaseRequest.request_no)
+                .filter(
+                    CyclePurchaseRequest.cycle_id == d["cycle_id"],
+                    CyclePurchaseRequest.period_label == d["period_label"],
+                    CyclePurchaseRequest.company == d["company"],
+                    CyclePurchaseRequest.department_id.in_(dept_ids),
+                    CyclePurchaseRequest.is_summarized == True,  # noqa: E712
+                )
+                .order_by(CyclePurchaseRequest.request_no)
+                .all()
+            ]
     for d in result:
         d["department_names"].sort()
         # 這張單的彙整列是不是都已經轉成採購單了——讓使用者一眼看出流程走到哪
@@ -1219,6 +1351,13 @@ def push_summary_to_ragic(
     )
     if not rows:
         raise SummaryServiceError("這個週期＋期別＋公司範圍內沒有彙整列，沒有東西可以拋轉")
+    # 2026-09-25（0924 會議第 8 項）：逾期期別不能拋。已拋過的另有更明確的訊息，
+    # 所以只在「還有沒拋的列」時才用這個理由擋。
+    if is_overdue_period(period_label) and any(not r.ragic_pushed for r in rows):
+        raise SummaryServiceError(
+            f"期別「{period_label}」已經過了，{OVERDUE_LABEL}：週採每一期只在當月拋轉一次。"
+            f"這些彙整列會留在畫面上供查閱，但不會再送進 Ragic。"
+        )
 
     for r in rows:
         _attach_summary_display_fields(db, r)
@@ -1233,22 +1372,30 @@ def push_summary_to_ragic(
     candidates = [r for r in rows if not r.ragic_pushed]
     if not candidates:
         batches = sorted({r.ragic_push_batch_no for r in already_rows if r.ragic_push_batch_no})
+        ragic_nos = sorted({r.ragic_record_id for r in already_rows if r.ragic_record_id})
+        # 2026-09-25（0924 會議第 6 項）：講清楚「已經拋過、拋到哪幾張、要重拋怎麼做」。
+        # 會議上使用者以為沒拋過，重複關閉又按拋轉，看到的訊息只說「請先取消拋轉」，
+        # 沒說是哪張 Ragic 單、也沒說 Ragic 那邊要先退回。
         raise SummaryServiceError(
-            f"「{period_label}／{company}」的 {len(already_rows)} 筆彙整列全部都已經拋轉過了"
-            f"（批次 {'、'.join(batches) or '—'}）。若要重新拋轉，請先執行「取消拋轉」。"
+            f"「{period_label}／{company}」這一期已經拋轉過 Ragic 了"
+            f"（Ragic 單號：{'、'.join(ragic_nos) or '—'}；批次 {'、'.join(batches) or '—'}），"
+            f"週採每一期只拋轉一次，不能重複拋。"
+            f"可以到「已彙整 Ragic 請購單」TAB 點單號查看。"
+            f"若真的要重拋：① 先在 Ragic 把這幾張單整筆退回（作廢）"
+            f"② 回到這裡按「取消拋轉」③ 修改後再重新拋轉。"
         )
 
     # ── ② 挑出推不了的列，但不讓它們憑空消失 ──────────────────────────────
     # 2026-09-15 Samuel 裁示：有廠商的照常拋轉，推不了的**不擋整批**，改成明確列出。
-    # 「沒單價」也歸在這裡：Ragic 子表的「擬定廠商單價」是必填，而 Ragic API 是
-    # 整筆退不是跳過該列，所以沒單價的列一旦送出去，整張單都會失敗。
+    # 2026-09-25 Samuel 裁示：**沒單價（空白或 0）不再擋**。拋過去的請購單金額是
+    # 採購在 Ragic 上填寫的，Portal 沒單價就送空白單價與空白金額，由 Ragic 補。
+    # ⚠️ 前提：Ragic sheet 58 子表「單價(一)」必須是非必填——若仍是必填，Ragic API
+    # 會整張退回，會出現在 failed（整張單失敗），不會靜默成功。
     pushable: list = []
     not_pushed: list[dict] = []
     for r in candidates:
         if not r.vendor_id:
             reason = "料號對照表沒有指定供應商"
-        elif not r.unit_price or Decimal(r.unit_price) <= 0:
-            reason = "料號對照表沒有單價（Ragic 子表單價為必填，會導致整張單被退回）"
         elif not (r.adjusted_qty or 0):
             reason = "調整量為 0"
         elif not r.department_id:
@@ -1270,9 +1417,13 @@ def push_summary_to_ragic(
     if not pushable:
         raise SummaryServiceError(
             f"「{period_label}／{company}」沒有任何一筆彙整列可以拋轉"
-            f"（{len(not_pushed)} 筆都缺供應商、缺單價，或是部門還沒對照 Ragic 部門）。"
-            f"請先到料號主檔／對照表補上供應商與單價、到部門主檔設定「Ragic 部門」再試。"
+            f"（{len(not_pushed)} 筆都缺供應商、調整量為 0，或是沒有部門別的歷史列）。"
+            f"請先到料號主檔／對照表補上供應商再試。"
         )
+    # 2026-09-25：沒單價的列照送，但要讓使用者知道有幾筆要去 Ragic 補單價與金額
+    price_blank_count = sum(
+        1 for r in pushable if not r.unit_price or Decimal(str(r.unit_price)) <= 0
+    )
 
     # ── ③ 依「廠商＋部門」拆單，一組一張 Ragic 請購單 ─────────────────────
     # 2026-09-18 改版：拆單粒度從「公司＋期別＋廠商」再細到 **＋部門**。
@@ -1412,7 +1563,8 @@ def push_summary_to_ragic(
         description=(
             f"拋轉 Ragic 週採匯總請購單（{cycle.cycle_name}／{period_label}／{company}）："
             f"{len(results)} 張單、{pushed_count} 筆彙整列"
-            + (f"；{len(not_pushed)} 筆未拋轉（缺供應商或單價）" if not_pushed else "")
+            + (f"；{len(not_pushed)} 筆未拋轉（缺供應商等）" if not_pushed else "")
+            + (f"；{price_blank_count} 筆無單價（單價與金額待 Ragic 填寫）" if price_blank_count else "")
             + (f"；{len(failed)} 張單失敗" if failed else "")
             + (f"；{len(already_rows)} 筆先前已拋轉略過" if already_rows else "")
             + ("　⚠️ RAGIC_CP_SUMMARY_ENABLED=false，未真正寫入 Ragic" if is_stub else "")
@@ -1431,10 +1583,16 @@ def push_summary_to_ragic(
     parts = [f"已拋轉 {len(results)} 張單（{pushed_count} 筆彙整列）"]
     if not_pushed:
         parts.append(f"{len(not_pushed)} 筆未拋轉")
+    if price_blank_count:
+        parts.append(f"{price_blank_count} 筆沒有單價，已送空白單價與金額，請到 Ragic 補填（該部門小計也留空）")
     if failed:
         parts.append(f"{len(failed)} 張單失敗")
     if already_rows:
-        parts.append(f"{len(already_rows)} 筆先前已拋轉、本次略過")
+        prev_nos = sorted({r.ragic_record_id for r in already_rows if r.ragic_record_id})
+        parts.append(
+            f"{len(already_rows)} 筆先前已拋轉、本次略過"
+            + (f"（已在 Ragic 單 {'、'.join(prev_nos)}）" if prev_nos else "")
+        )
     if vendor_check_skipped:
         # 這次沒能跟 Ragic 核對廠商名稱（取定義失敗）。不擋拋轉，但要講出來——
         # 否則「廠商欄是空的」這件事又會靜悄悄發生一次。
@@ -1490,14 +1648,17 @@ def _with_department_subtotals(lines: list[dict]) -> list[dict]:
     out: list[dict] = []
     current_dept = None
     running = Decimal("0")
+    # 2026-09-25：部門裡只要有一列沒單價（金額待 Ragic 填），小計就留空白——
+    # 只加有金額的列會得到一個「看起來是小計、其實少算」的數字，比空白更糟。
+    incomplete = False
 
     def flush():
-        # 只有「有部門名稱」且金額有值時才插小計列
+        # 只有「有部門名稱」時才插小計列；金額不完整時小計金額留空
         if current_dept and out:
             out.append({
                 "is_subtotal": True,
                 "department_name": f"{current_dept}{_SUBTOTAL_SUFFIX}",
-                "amount": running,
+                "amount": None if incomplete else running,
             })
 
     for ln in ordered:
@@ -1505,11 +1666,14 @@ def _with_department_subtotals(lines: list[dict]) -> list[dict]:
         if current_dept is not None and dept != current_dept:
             flush()
             running = Decimal("0")
+            incomplete = False
         current_dept = dept
         out.append(ln)
         amount = ln.get("amount")
         if amount is not None:
             running += Decimal(str(amount))
+        else:
+            incomplete = True
     flush()
     return out
 
@@ -1570,7 +1734,9 @@ def _build_vendor_documents(
             "_dept_names": set(),
         })
         qty = r.adjusted_qty or 0
-        price = r.unit_price
+        # 2026-09-25：單價空白或 0 一律視為「沒有單價」，送空白（不送 0），
+        # 金額也空白，由採購在 Ragic 填。送 0 會讓人以為是免費品項。
+        price = r.unit_price if (r.unit_price is not None and Decimal(str(r.unit_price)) > 0) else None
         g["lines"].append({
             "item_code": r.item_code,
             "item_name": r.item_name,

@@ -59,6 +59,8 @@ GET    /requests                              請購單清單（依週期／期�
 GET    /requests/todos                        Dashboard 待辦提醒（我的待填 + 本月待關閉）
 GET    /requests/{id}                          請購單詳情（含明細；已關閉的單需權限，否則 403）
 GET    /requests/generate-preview               產生前預覽：這個週期會產生哪些部門的單、哪些不會與原因
+GET    /requests/my-period                      我的部門本期：所屬部門在本月各週期的請購單狀況（2026-09-25）
+GET    /requests/generate-status                「產生本期請購單」週期下拉的本期完成度（已產生／未執行／已彙整／未彙整；2026-09-25）
 POST   /requests/generate                      產生本期請購單（依週期設定的適用範圍，一次幫所有適用部門建空白單）
 POST   /requests                               手動新增單一部門的請購單（備用路徑）
 GET    /requests/copy-candidates               複製上期請購單：列出同週期＋同部門過去有填過品項的請購單供選擇
@@ -89,6 +91,7 @@ from app.schemas.cycle_purchase_request import (
     AvailableItemOut, CloseAllRequestsPayload, CloseRequestsPayload,
     CopyRequestResult, CopySkippedItemOut, CopySourceCandidateOut,
     GeneratePreviewResult, GenerateRequestsPayload, GenerateRequestsResult,
+    GenerateStatusResult, MyPeriodResult,
     ReopenRequestsPayload, RequestCreate, RequestDetail,
     RequestItemCreate, RequestItemOut, RequestItemUpdate, RequestOut,
     RequestUpdate, TodoSummary,
@@ -144,16 +147,22 @@ def list_requests(
         None,
         description="狀態篩選：open（開放中）｜closed_manual（人工關閉）｜closed_auto（系統自動關閉）；不給＝全部",
     ),
+    mine: bool = Query(False, description="2026-09-25：只看我所屬部門（部門成員 OR 承辦人）的單；只是篩選不是權限"),
     current_user: User = Depends(require_any_permission("cycle_purchase_view", "cycle_purchase_request")),
     db: Session = Depends(get_cycle_purchase_db),
     portal_db: Session = Depends(get_db),
 ):
+    dept_ids = svc.get_user_cp_department_ids(db, portal_db, current_user.id) if mine else None
+    # 2026-09-25：管理者（"*"）的「我的部門」＝全部部門，與「部門本期」卡片一致
+    if mine and "*" in get_user_permissions(current_user.id, portal_db):
+        dept_ids = None
     try:
         return svc.list_requests(
             db, cycle_id=cycle_id, period_label=period_label,
             department_id=department_id, status=status_,
             can_see_closed=_can_see_closed(current_user, portal_db),
             close_state=close_state,
+            department_ids=dept_ids,
         )
     except RequestServiceError as e:
         raise HTTPException(status_code=422, detail=str(e))
@@ -182,8 +191,13 @@ def get_todos(
 ):
     perms = get_user_permissions(current_user.id, portal_db)
     is_closer = "*" in perms or "cycle_purchase_close" in perms
+    # 2026-09-25：彙整權限（cycle_purchase_buyer）才計算 summary_pending_count，
+    # 供左側選單「彙整單」紅點使用。
+    can_summarize = "*" in perms or "cycle_purchase_buyer" in perms
     # 2026-09-01：傳 portal_db 讓 my_pending 認「部門成員 OR 承辦人」
-    return svc.get_dashboard_todos(db, current_user, is_closer, portal_db=portal_db)
+    return svc.get_dashboard_todos(
+        db, current_user, is_closer, portal_db=portal_db, can_summarize=can_summarize
+    )
 
 
 @router.get(
@@ -199,6 +213,50 @@ def list_open_for_close(
     db: Session = Depends(get_cycle_purchase_db),
 ):
     return svc.list_open_requests_for_close(db, cycle_id, company, year_month)
+
+
+@router.get(
+    "/requests/my-period",
+    response_model=MyPeriodResult,
+    summary="我的部門本期：登入者所屬部門在本月各週期的請購單狀況",
+)
+def my_period(
+    current_user: User = Depends(require_any_permission("cycle_purchase_view", "cycle_purchase_request")),
+    db: Session = Depends(get_cycle_purchase_db),
+    portal_db: Session = Depends(get_db),
+):
+    """⚠️ 路由順序：這支必須宣告在 /requests/{request_id} 之前。
+
+    2026-09-25（Samuel 裁示）：管理者（system_admin，權限含 "*"）看**全部啟用中部門**，
+    不是只看自己所屬部門——管理者通常不屬於任何週採部門，原本會看到空白卡片。
+    """
+    perms = get_user_permissions(current_user.id, portal_db)
+    is_admin = "*" in perms
+    if is_admin:
+        dept_ids = [
+            d.id for d in db.query(CyclePurchaseDepartment.id)
+            .filter(CyclePurchaseDepartment.is_active == True)  # noqa: E712
+            .all()
+        ]
+    else:
+        dept_ids = svc.get_user_cp_department_ids(db, portal_db, current_user.id)
+    result = svc.my_period_overview(db, dept_ids)
+    result["can_open_closed"] = _can_see_closed(current_user, portal_db)
+    result["scope"] = "all" if is_admin else "mine"
+    return result
+
+
+@router.get(
+    "/requests/generate-status",
+    response_model=GenerateStatusResult,
+    summary="本期各週期完成度：原申請單位數／已產生／未執行／已彙整／未彙整",
+)
+def generate_status(
+    _: User = Depends(require_permission("cycle_purchase_buyer")),
+    db: Session = Depends(get_cycle_purchase_db),
+):
+    """⚠️ 路由順序：這支必須宣告在 /requests/{request_id} 之前。"""
+    return svc.generation_status_for_period(db)
 
 
 @router.get(

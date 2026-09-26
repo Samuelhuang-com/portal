@@ -17,6 +17,7 @@
  * －訂購數量，only when 這個料號本次是最後一批），實際判定與擋下仍以後端
  * 送出時的計算為準（避免重複邏輯不同步）。
  */
+import FlowSteps from '@/pages/CyclePurchase/components/FlowSteps'
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import {
@@ -298,6 +299,7 @@ export default function CpReceivingDetailPage() {
 
   return (
     <div>
+      <FlowSteps />
       <Space style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between' }}>
         <Space>
           <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/cycle-purchase/receiving')}>返回清單</Button>

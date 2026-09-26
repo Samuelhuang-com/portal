@@ -41,6 +41,7 @@
  *   3. 下方彙整列明細表 — 可依公司／供應商／狀態篩選；draft 狀態的列可以
  *      點「調整」改調整量／調整原因（調整量≠需求量時後端會要求填原因）。
  */
+import FlowSteps from '@/pages/CyclePurchase/components/FlowSteps'
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
@@ -57,12 +58,12 @@ import {
 } from '@ant-design/icons'
 import {
   cancelRagicPush, closeRequests, convertToPo, generateSummaryFromRequests, getCycles,
-  getDepartmentBreakdown, getEligibleRequests, getRagicPushedDateRange, getRagicPushedDocs,
+  getDepartmentBreakdown, getEligibleRequests, getExcludedRequests, getPendingRequests, getRagicPushedDateRange, getRagicPushedDocs,
   getRagicSummaryLink, getRequests, getSummarizedRequests, getSummary, getVendorGroups,
   pushSummaryToRagic, unsummarizeRequest, updateSummaryItem,
 } from '@/api/cyclePurchase'
 import type {
-  CpCycle, CpDepartmentBreakdown, CpEligibleRequest, CpFailedVendor, CpNotPushedRow,
+  CpCycle, CpDepartmentBreakdown, CpEligibleRequest, CpExcludedRequest, CpFailedVendor, CpNotPushedRow, CpPendingRequest,
   CpPushedDocument, CpPushToRagicResult, CpRagicDocRef, CpRagicPushedDoc, CpSummarizedRequest, CpSummary,
   CpVendorGroup,
 } from '@/types/cyclePurchase'
@@ -139,6 +140,7 @@ export default function CpSummaryPage() {
   const [genMonth, setGenMonth] = useState<string>('')
   const [genCompanyOptions, setGenCompanyOptions] = useState<string[]>([])
   const [eligibleRequests, setEligibleRequests] = useState<CpEligibleRequest[]>([])
+  const [excludedRequests, setExcludedRequests] = useState<CpExcludedRequest[]>([])
   const [loadingEligible, setLoadingEligible] = useState(false)
   const [selectedRequestIds, setSelectedRequestIds] = useState<number[]>([])
   const [closingRequestId, setClosingRequestId] = useState<number | null>(null)
@@ -183,7 +185,52 @@ export default function CpSummaryPage() {
   //     或別台 Portal 推的單，本來就不會出現在這裡（下面的提示文字已寫明）。
   //   - 篩選用「拋轉日期」不是期別（8 月的期別可能 9 月才推）
   //   - 不受上面那排週期／期別／公司篩選影響，這一頁是獨立的查詢
-  const [activeTab, setActiveTab] = useState<string>('work')
+  // 2026-09-25：有彙整權限的人預設停在「待彙整請購單」（TAB 最前面）
+  const [activeTab, setActiveTab] = useState<string>(canBuy ? 'pending' : 'work')
+
+  // ── 待彙整請購單 TAB（2026-09-25 Samuel 裁示）────────────────────────────
+  // 全公司「已關閉、尚未彙整」的單，依 週期＋公司＋期別 分組，每組一顆
+  // 「產生彙整」直接帶好條件開既有的產生彙整視窗。條件與左側選單「彙整單」
+  // 紅點相同，兩邊數字一定對得上。只有 cycle_purchase_buyer 看得到（端點權限）。
+  const [pendingRows, setPendingRows] = useState<CpPendingRequest[]>([])
+  const [pendingLoading, setPendingLoading] = useState(false)
+  const [pendingError, setPendingError] = useState<string>('')
+  const [pendingLoaded, setPendingLoaded] = useState(false)
+
+  const loadPending = () => {
+    if (!canBuy) return
+    setPendingLoading(true)
+    setPendingError('')
+    getPendingRequests()
+      .then((r) => { setPendingRows(r.data); setPendingLoaded(true) })
+      .catch((err) => {
+        const m = errMsg(err, '載入待彙整請購單失敗')
+        setPendingRows([])
+        setPendingError(m)
+      })
+      .finally(() => setPendingLoading(false))
+  }
+
+  useEffect(() => {
+    if (activeTab === 'pending') loadPending()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab])
+
+  const pendingGroups = useMemo(() => {
+    const map = new Map<string, { key: string; cycleId: number; cycleName: string; company: string; period: string; overdue: boolean; rows: CpPendingRequest[] }>()
+    pendingRows.forEach((r) => {
+      const key = `${r.cycle_id}|${r.company}|${r.period_label}`
+      if (!map.has(key)) {
+        map.set(key, { key, cycleId: r.cycle_id, cycleName: r.cycle_name || `週期 #${r.cycle_id}`, company: r.company, period: r.period_label, overdue: !!r.is_overdue, rows: [] })
+      }
+      map.get(key)!.rows.push(r)
+    })
+    // 2026-09-25：逾期（逾期，不可拋）的組排到最後
+    return Array.from(map.values()).sort((a, b) => Number(a.overdue) - Number(b.overdue))
+  }, [pendingRows])
+  // TAB 張數只算還能彙整的（與左側選單紅點一致）；逾期的另外標示
+  const pendingActionable = pendingRows.filter((r) => !r.is_overdue).length
+  const pendingOverdue = pendingRows.length - pendingActionable
   const [pushedDocs, setPushedDocs] = useState<CpRagicPushedDoc[]>([])
   const [pushedLoading, setPushedLoading] = useState(false)
   const [pushedRange, setPushedRange] = useState<[Dayjs, Dayjs] | null>(null)
@@ -275,6 +322,8 @@ export default function CpSummaryPage() {
     key: string; cycle_id: number; cycle_name: string; company: string; period_label: string
     items: number; depts: number; vendors: number; qty: number; amount: number
     pushed: number; total: number; ragic_ids: string[]
+    // 2026-09-25（0924 會議第 4 項）：「已拋轉 N 張」要講清楚是哪幾張、何時拋的
+    ragic_docs: { id: string; url?: string | null; at?: string | null }[]
   }
   const overviewGroups = useMemo<OverviewGroup[]>(() => {
     const m = new Map<string, OverviewGroup & { _i: Set<number>; _d: Set<number>; _v: Set<number> }>()
@@ -286,7 +335,7 @@ export default function CpSummaryPage() {
           key, cycle_id: r.cycle_id,
           cycle_name: r.cycle_name || cycles.find((c) => c.id === r.cycle_id)?.cycle_name || `週期 #${r.cycle_id}`,
           company: r.company, period_label: r.period_label,
-          items: 0, depts: 0, vendors: 0, qty: 0, amount: 0, pushed: 0, total: 0, ragic_ids: [],
+          items: 0, depts: 0, vendors: 0, qty: 0, amount: 0, pushed: 0, total: 0, ragic_ids: [], ragic_docs: [],
           _i: new Set(), _d: new Set(), _v: new Set(),
         }
         m.set(key, g)
@@ -299,7 +348,10 @@ export default function CpSummaryPage() {
       g.amount += q * Number(r.unit_price ?? 0)
       g.total += 1
       if (r.ragic_pushed) g.pushed += 1
-      if (r.ragic_record_id && !g.ragic_ids.includes(r.ragic_record_id)) g.ragic_ids.push(r.ragic_record_id)
+      if (r.ragic_record_id && !g.ragic_ids.includes(r.ragic_record_id)) {
+        g.ragic_ids.push(r.ragic_record_id)
+        g.ragic_docs.push({ id: r.ragic_record_id, url: r.ragic_record_url, at: r.ragic_pushed_at })
+      }
     }
     return Array.from(m.values())
       .map(({ _i, _d, _v, ...g }) => ({ ...g, items: _i.size, depts: _d.size, vendors: _v.size }))
@@ -322,16 +374,19 @@ export default function CpSummaryPage() {
   // 目前篩選範圍的拋轉狀態。⚠️ 只有在「有用依公司篩選指定單一公司」時才有意義——
   // 拋轉的單位就是「週期＋期別＋公司」，沒指定公司時 rows 會混到兩家公司。
   const pushState = useMemo(() => {
-    if (!rows.length) return { pushed: 0, total: 0, batchNo: null as string | null }
+    if (!rows.length) return { pushed: 0, total: 0, batchNo: null as string | null, ragicNos: [] as string[] }
     const pushedRows = rows.filter((r) => r.ragic_pushed)
     return {
       pushed: pushedRows.length,
       total: rows.length,
       batchNo: pushedRows.find((r) => r.ragic_push_batch_no)?.ragic_push_batch_no ?? null,
+      ragicNos: Array.from(new Set(pushedRows.map((r) => r.ragic_record_id).filter((x): x is string => !!x))).sort(),
     }
   }, [rows])
   const rangePicked = !!cycleId && !!periodLabel.trim() && !!company
   const allPushed = rangePicked && pushState.total > 0 && pushState.pushed === pushState.total
+  // 2026-09-25（0924 會議第 8 項）：期別早於本月＝逾期，不可拋（後端也會擋）
+  const periodOverdue = !!periodLabel.trim() && periodLabel.trim() < currentYearMonth()
 
   const handlePushToRagic = () => {
     if (!cycleId || !periodLabel.trim() || !company) {
@@ -357,9 +412,10 @@ export default function CpSummaryPage() {
                 各有自己的編號，也各自簽核。<b>部門與會計課目逐列帶在子表上</b>，
                 所以一張單可以橫跨多個部門（2026-09-20 起）。
                 <br />
-                下列三種列<b>不會</b>送出去，拋轉後會列出是哪幾筆：
-                缺供應商、缺單價（Ragic 子表單價是必填，送了整張單會被退回）、
-                以及 2026-07-16 之前沒有部門別的歷史彙整列。
+                下列列<b>不會</b>送出去，拋轉後會列出是哪幾筆：
+                缺供應商、調整量為 0、以及 2026-07-16 之前沒有部門別的歷史彙整列。
+                <br />
+                <b>沒有單價的列照常送出</b>，單價與金額留空白，請到 Ragic 補填（該部門小計也會留空）。
               </span>
             }
           />
@@ -374,7 +430,13 @@ export default function CpSummaryPage() {
           showPushResult(res.data)
           load()
         } catch (err: any) {
-          message.error(errMsg(err, '拋轉失敗'))
+          // 2026-09-25（0924 會議第 6 項）：拋轉被擋的訊息會列出 Ragic 單號與重拋步驟，
+          // 放 toast 幾秒就消失看不完，改用對話框。
+          Modal.error({
+            title: '無法拋轉',
+            width: 560,
+            content: <div style={{ whiteSpace: 'pre-line' }}>{errMsg(err, '拋轉失敗')}</div>,
+          })
         } finally {
           setPushing(false)
         }
@@ -535,6 +597,16 @@ export default function CpSummaryPage() {
     }
   }
 
+  /** 從「待彙整請購單」TAB 直接帶好 週期＋公司＋期別 開產生彙整視窗 */
+  const openGenerateFor = (cid: number, comp: string, month: string) => {
+    setGenCycleId(cid)
+    setGenCompany(comp)
+    setGenMonth(month)
+    setEligibleRequests([])
+    setSelectedRequestIds([])
+    setGenerateModal(true)
+  }
+
   const openGenerate = () => {
     setGenCycleId(cycleId)
     setGenCompany(company)
@@ -560,8 +632,14 @@ export default function CpSummaryPage() {
     if (!generateModal || !genCycleId || !genCompany || !genMonth) {
       setEligibleRequests([])
       setSelectedRequestIds([])
+      setExcludedRequests([])
       return
     }
+    // 2026-09-25（0924 會議第 7 項）：同時抓「已彙整／已拋轉、所以不在清單裡」的單，
+    // 讓第一次用的人知道為什麼選不到。失敗不影響主流程。
+    getExcludedRequests({ cycle_id: genCycleId, company: genCompany, year_month: genMonth })
+      .then((r) => setExcludedRequests(r.data))
+      .catch(() => setExcludedRequests([]))
     setLoadingEligible(true)
     getEligibleRequests({ cycle_id: genCycleId, company: genCompany, year_month: genMonth })
       .then((r) => {
@@ -610,6 +688,10 @@ export default function CpSummaryPage() {
       // 彙整單的期別是系統從勾選的請購單本身的 period_label 讀出來的，
       // 就等於這次篩選用的月份，直接用它切到對應畫面。
       setPeriodLabel(genMonth)
+      // 2026-09-25：從「待彙整請購單」TAB 產生的話，切到彙整作業看結果
+      // （上面已帶好週期/公司/期別）；回到待彙整 TAB 時會重新載入。
+      if (activeTab === 'pending') setActiveTab('work')
+      else if (pendingLoaded) loadPending()
     } catch (err: any) {
       message.error(errMsg(err, '產生彙整失敗'))
     } finally {
@@ -746,6 +828,7 @@ export default function CpSummaryPage() {
 
   return (
     <div>
+      <FlowSteps />
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
         <Title level={4} style={{ margin: 0 }}>週期採購 — 彙整單／匯總請購單</Title>
         <Space>
@@ -777,8 +860,10 @@ export default function CpSummaryPage() {
               title={
                 !rangePicked
                   ? '請先選擇週期／期別，並用「依公司篩選」指定單一公司'
+                  : periodOverdue && !allPushed
+                    ? `期別 ${periodLabel.trim()} 已過，逾期，不可拋（週採每期只在當月拋轉一次）`
                   : allPushed
-                    ? `這個範圍已經拋轉過了（批次 ${pushState.batchNo || '—'}），要重推請先按「取消拋轉」`
+                    ? `這個範圍已經拋轉過了（批次 ${pushState.batchNo || '—'}${pushState.ragicNos.length ? `，Ragic 單 ${pushState.ragicNos.join('、')}` : ''}）。週採每期只拋一次；真的要重拋，請先在 Ragic 把單整筆退回，再按「取消拋轉」`
                     : undefined
               }
             >
@@ -786,7 +871,7 @@ export default function CpSummaryPage() {
                 icon={<CloudUploadOutlined />}
                 loading={pushing}
                 onClick={handlePushToRagic}
-                disabled={!rangePicked || allPushed}
+                disabled={!rangePicked || allPushed || periodOverdue}
               >
                 拋轉 Ragic
               </Button>
@@ -818,6 +903,102 @@ export default function CpSummaryPage() {
         activeKey={activeTab}
         onChange={setActiveTab}
         items={[
+          ...(canBuy ? [{
+            key: 'pending',
+            label: `待彙整請購單${pendingLoaded ? `（${pendingActionable}${pendingOverdue ? `＋逾期 ${pendingOverdue}` : ''}）` : ''}`,
+            children: (
+              <>
+                <Alert
+                  type="info"
+                  showIcon
+                  style={{ marginBottom: 16 }}
+                  message="這裡列出全公司「已關閉、尚未彙整」的請購單，依 週期／公司／期別 分組"
+                  description="按每組右邊的「產生彙整」會帶好條件打開產生彙整視窗，勾選後產生。還沒關閉的單不在這裡——要先到請購單頁關閉。"
+                />
+                {pendingError && (
+                  <Alert type="error" showIcon style={{ marginBottom: 16 }} message={pendingError} />
+                )}
+                {pendingLoading && !pendingLoaded && <Card loading style={{ marginBottom: 16 }} />}
+                {pendingLoaded && !pendingError && pendingGroups.length === 0 && (
+                  <Card style={{ marginBottom: 16 }}>
+                    <Text type="secondary">目前沒有待彙整的請購單。</Text>
+                  </Card>
+                )}
+                {pendingGroups.map((g) => (
+                  <Card
+                    key={g.key}
+                    size="small"
+                    style={{ marginBottom: 16 }}
+                    title={
+                      <Space size={8} wrap>
+                        <span>{g.cycleName}</span>
+                        <Tag>{g.company}</Tag>
+                        <Tag color={g.overdue ? 'default' : 'blue'}>{g.period}</Tag>
+                        {g.overdue
+                          ? <Tag color="red">逾期，不可拋</Tag>
+                          : <Text type="secondary" style={{ fontWeight: 400 }}>{g.rows.length} 張待彙整</Text>}
+                      </Space>
+                    }
+                    extra={
+                      g.overdue ? (
+                        // 2026-09-25（0924 會議第 8 項）：過了當月不能再彙整／拋轉，只留在畫面供查閱
+                        <Tooltip title={`期別 ${g.period} 已過，週採每期只在當月彙整、拋轉一次`}>
+                          <Button size="small" icon={<SyncOutlined />} disabled>產生彙整</Button>
+                        </Tooltip>
+                      ) : (
+                        <Button
+                          type="primary"
+                          size="small"
+                          icon={<SyncOutlined />}
+                          onClick={() => openGenerateFor(g.cycleId, g.company, g.period)}
+                        >
+                          產生彙整
+                        </Button>
+                      )
+                    }
+                  >
+                    <Table<CpPendingRequest>
+                      dataSource={g.rows}
+                      rowKey="id"
+                      size="small"
+                      pagination={false}
+                      loading={pendingLoading}
+                      columns={[
+                        {
+                          title: '請購單號', dataIndex: 'request_no', width: 160,
+                          render: (v: string, r) => (
+                            <a onClick={() => navigate(`/cycle-purchase/requests/${r.id}`)}>{v}</a>
+                          ),
+                        },
+                        { title: '部門', dataIndex: 'department_name', width: 180, render: (v?: string | null) => v || '—' },
+                        {
+                          title: '已填品項', dataIndex: 'filled_item_count', width: 90, align: 'right' as const,
+                          render: (v: number) => (v === 0 ? <Text type="warning">0（空白單）</Text> : v),
+                        },
+                        {
+                          title: '請購總金額', dataIndex: 'total_amount', width: 120, align: 'right' as const,
+                          render: (v: number) => Number(v || 0).toLocaleString(),
+                        },
+                        {
+                          title: '關閉', key: 'closed', width: 220,
+                          render: (_: unknown, r) => (
+                            <span>
+                              {r.close_kind === 'auto' ? '系統自動關閉' : (r.closed_by_name || '—')}
+                              {r.closed_at ? <Text type="secondary">　{String(r.closed_at).replace('T', ' ').slice(0, 16)}</Text> : null}
+                            </span>
+                          ),
+                        },
+                        {
+                          title: '備註', key: 'note',
+                          render: (_: unknown, r) => (r.unsummarized_at ? <Tag color="orange">曾從彙整單退回</Tag> : null),
+                        },
+                      ]}
+                    />
+                  </Card>
+                ))}
+              </>
+            ),
+          }] : []),
           {
             key: 'work',
             label: '彙整作業',
@@ -897,13 +1078,28 @@ export default function CpSummaryPage() {
                 render: (v: number) => Math.round(v).toLocaleString(),
               },
               {
-                title: '拋轉 Ragic', key: 'pushed', width: 200,
-                render: (_: unknown, g: OverviewGroup) =>
-                  g.pushed === 0
-                    ? <Tag>未拋轉</Tag>
-                    : g.pushed < g.total
-                      ? <Tag color="orange">{`部分 ${g.pushed}/${g.total}`}</Tag>
-                      : <Tooltip title={g.ragic_ids.join('、')}><Tag color="green">已拋轉{g.ragic_ids.length ? `（${g.ragic_ids.length} 張）` : ''}</Tag></Tooltip>,
+                title: '拋轉 Ragic', key: 'pushed', width: 280,
+                // 2026-09-25（0924 會議第 4 項）：原本只有「已拋轉（2 張）」，看不出是哪兩張、
+                // 是不是自己這次拋的。改成逐張列 Ragic 單號（可點開）＋拋轉時間。
+                render: (_: unknown, g: OverviewGroup) => {
+                  if (g.pushed === 0) return <Tag>未拋轉</Tag>
+                  const head = g.pushed < g.total
+                    ? <Tag color="orange">{`部分拋轉 ${g.pushed}/${g.total} 列`}</Tag>
+                    : <Tag color="green">{`已拋轉 ${g.ragic_docs.length} 張 Ragic 單`}</Tag>
+                  return (
+                    <div onClick={(e) => e.stopPropagation()}>
+                      {head}
+                      {g.ragic_docs.map((d) => (
+                        <div key={d.id} style={{ fontSize: 12, marginTop: 2 }}>
+                          {d.url
+                            ? <a href={d.url} target="_blank" rel="noopener noreferrer" style={{ color: '#4BA8E8' }}><LinkOutlined /> {d.id}</a>
+                            : <span>{d.id}</span>}
+                          {d.at && <Text type="secondary" style={{ fontSize: 12 }}>　{String(d.at).replace('T', ' ').slice(0, 16)}</Text>}
+                        </div>
+                      ))}
+                    </div>
+                  )
+                },
               },
             ]}
           />
@@ -1129,7 +1325,10 @@ export default function CpSummaryPage() {
                   dataIndex: 'unit_price',
                   width: 90,
                   align: 'right' as const,
-                  render: (v?: number | null) => (v == null ? '—' : Number(v).toLocaleString()),
+                  // 2026-09-25：沒單價不再擋拋轉，單價與金額在 Ragic 填
+                  render: (v?: number | null) => (v == null || Number(v) <= 0
+                    ? <Tooltip title="沒有單價：拋轉時送空白，請到 Ragic 填單價與金額"><Text type="secondary">Ragic 填</Text></Tooltip>
+                    : Number(v).toLocaleString()),
                 },
                 { title: '需求量', dataIndex: 'demand_qty', width: 90, align: 'right' as const },
                 {
@@ -1375,6 +1574,16 @@ export default function CpSummaryPage() {
                             ? d.department_names.join('、')
                             : <Text type="secondary">—</Text>,
                       },
+                      {
+                        // 2026-09-25（0924 會議第 4 項）：這張 Ragic 單是由哪幾張請購單彙整來的
+                        title: '包含請購單',
+                        key: 'request_nos',
+                        width: 170,
+                        render: (_: unknown, d: CpRagicPushedDoc) =>
+                          d.request_nos?.length
+                            ? <span style={{ fontSize: 12 }}>{d.request_nos.join('、')}</span>
+                            : <Text type="secondary">—</Text>,
+                      },
                       { title: '料號筆數', dataIndex: 'item_count', width: 90, align: 'right' as const },
                       { title: '總數量', dataIndex: 'total_qty', width: 90, align: 'right' as const },
                       {
@@ -1454,6 +1663,33 @@ export default function CpSummaryPage() {
           />
         </Space>
 
+        {genCycleId && genCompany && genMonth && excludedRequests.length > 0 && (() => {
+          const pushedN = excludedRequests.filter((x) => x.flow_status === 'pushed').length
+          return (
+            <Alert
+              type={eligibleRequests.length === 0 ? 'warning' : 'info'}
+              showIcon
+              style={{ marginBottom: 12 }}
+              message={
+                `這個範圍另有 ${excludedRequests.length} 張請購單已經彙整過`
+                + (pushedN ? `（其中 ${pushedN} 張已拋轉 Ragic）` : '')
+                + '，所以不會出現在下面的清單'
+              }
+              description={
+                <div>
+                  <div style={{ fontSize: 12 }}>
+                    {excludedRequests.map((x) =>
+                      `${x.request_no}${x.department_name ? `（${x.department_name}）` : ''}${x.flow_status === 'pushed' ? '・已拋轉' : '・已彙整'}`,
+                    ).join('、')}
+                  </div>
+                  <div style={{ fontSize: 12, marginTop: 4 }}>
+                    週採每一期只拋轉一次。已拋轉的單若真的要重做，要先在 Ragic 整筆退回，再到彙整作業按「取消拋轉」→「退回請購單」。
+                  </div>
+                </div>
+              }
+            />
+          )
+        })()}
         {(!genCycleId || !genCompany || !genMonth) ? (
           <Alert type="info" showIcon message="請先選擇週期／公司／期別，會列出這個範圍內已關閉、尚未被彙整過的請購單" />
         ) : (

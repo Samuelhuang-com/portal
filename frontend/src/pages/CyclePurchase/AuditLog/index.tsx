@@ -13,6 +13,7 @@
  * 2026-08-07：日期區間改用全站標準元件 StandardRangePicker（CLAUDE.md §8），
  * 原本是各自刻的 antd RangePicker，沒有六個標準快捷、也沒有資料基準日。
  */
+import FlowSteps from '@/pages/CyclePurchase/components/FlowSteps'
 import { useEffect, useState } from 'react'
 import { Card, Select, Space, Table, Tag, Typography, message } from 'antd'
 import dayjs from 'dayjs'
@@ -86,6 +87,7 @@ export default function CpAuditLogPage() {
 
   return (
     <div>
+      <FlowSteps />
       <Title level={4} style={{ marginBottom: 16 }}>週期採購 — 異常稽核紀錄</Title>
 
       <Card>
