@@ -168,6 +168,7 @@ class SheetItemOut(BaseModel):
     level: int
     display_no: Optional[str]
     name: str
+    master_name: Optional[str] = Field(None, description="主檔目前名稱（與 name 不同時代表本期名稱已另外修改）")
     scope_note: Optional[str]
     target_department_ids: List[int]
     sort_order: int
@@ -249,6 +250,11 @@ class ReviewUpsert(BaseModel):
 
 class DeficiencyUpsert(BaseModel):
     deficiency_override: Optional[str] = None
+
+
+class SheetItemRename(BaseModel):
+    """修改稽核單上某一列的「本期名稱」— 只影響這一張單，不動主檔與其他期別。"""
+    name: str = Field(..., min_length=1, max_length=200)
 
 
 # ── 統計 ───────────────────────────────────────────────────────────────────

@@ -14,7 +14,10 @@
    名稱、顏色、是否算達標、是否列入缺失彙整，全部由使用者在設定頁維護。
    預設三筆（達標／扣分／建議）為系統內建，可改名改色但不可刪除。
 2. 稽核子項數／達標項數／各部門分數一律**即時計算**，不存欄位。
-3. 檢查項主檔可新增、改名、停用；**已被任一期稽核單引用即鎖定**（只能停用）。
+3. 檢查項主檔可新增、改名、停用；已被引用者**不可刪除**（只能停用）。
+   2026-09-27 裁示：主檔**解鎖改名**。每期稽核單的列自己存一份名稱快照
+   （AuditSheetItem.item_name），主檔改名只影響之後新加入的列，歷史不動；
+   稽核單上也可直接改「本期名稱」，只影響該張單（該月 × 該公司）。
 4. 每期稽核單的檢查項與部門欄皆從主檔勾選，兩家公司可各自不同。
 5. 公司別／部門一律沿用 settings/company-departments 的 companies /
    departments（reference_data.py），**不另建主檔**。因同屬 portal 資料庫，
@@ -201,6 +204,8 @@ class AuditSheetItem(Base):
     id                   = Column(Integer,     primary_key=True, autoincrement=True)
     sheet_id             = Column(Integer,     ForeignKey("audit_sheets.id", ondelete="CASCADE"), nullable=False, index=True)
     item_id              = Column(Integer,     ForeignKey("audit_items.id"), nullable=False)
+    item_name            = Column(String(200), nullable=True,
+                                  comment="本期名稱快照（加入時取主檔名稱；可在稽核單上單獨修改，只影響本張）")
     parent_sheet_item_id = Column(Integer,     ForeignKey("audit_sheet_items.id", ondelete="CASCADE"), nullable=True)
     display_no           = Column(String(10),  nullable=True, comment="該期顯示序號 1 / 1.1")
     scope_note           = Column(String(200), nullable=True, comment="店別補充，如「(飲水機.排煙.污水設備)」")

@@ -209,6 +209,30 @@ export default function AuditSheetEditorPage() {
     }
   }
 
+  // ── 修改本期名稱（2026-09-27 裁示：只影響這一張稽核單，不動主檔與其他月份）──
+  const [renameModal, setRenameModal] = useState<{ item: SheetItem; value: string } | null>(null)
+  const [renaming, setRenaming] = useState(false)
+
+  const saveRename = async () => {
+    if (!renameModal || !detail) return
+    const name = renameModal.value.trim()
+    if (!name) {
+      message.warning('名稱不可空白')
+      return
+    }
+    setRenaming(true)
+    try {
+      const res = await sheetsApi.renameItem(detail.id, renameModal.item.id, name)
+      setDetail(res.data)
+      setRenameModal(null)
+      message.success('已修改本期名稱')
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail ?? '儲存失敗')
+    } finally {
+      setRenaming(false)
+    }
+  }
+
   // ── 新增部門欄（2026-09-21 使用者要求：能直接在稽核單上加部門）──────────
   // 部門仍然只能從 settings/company-departments 主檔挑（CLAUDE.md §9 單一真實
   // 來源），這裡只是省掉「開版面調整 Modal → 在一大包設定裡找部門」那一步。
@@ -342,11 +366,31 @@ export default function AuditSheetEditorPage() {
       fixed: 'left',
       width: COL_ITEM_WIDTH,
       render: (_: unknown, row: MatrixRow) => {
-        if (row.kind === 'major') {
-          return <Text strong style={{ color: '#1B3A5C' }}>{row.label}</Text>
-        }
-        if (row.kind === 'minor') {
-          return <span style={{ paddingLeft: 16 }}>{row.label}</span>
+        if (row.kind === 'major' || row.kind === 'minor') {
+          const it = row.item!
+          const renamed = !!it.master_name && it.master_name !== it.name
+          return (
+            <Space size={4} style={{ paddingLeft: row.kind === 'minor' ? 16 : 0 }} wrap>
+              {row.kind === 'major'
+                ? <Text strong style={{ color: '#1B3A5C' }}>{row.label}</Text>
+                : <span>{row.label}</span>}
+              {renamed && (
+                <Tooltip title={`主檔名稱：${it.master_name}`}>
+                  <Tag color="orange" style={{ margin: 0 }}>本期名稱</Tag>
+                </Tooltip>
+              )}
+              {canEdit && (
+                <Tooltip title="修改本期名稱（只影響這張稽核單）">
+                  <Button
+                    size="small"
+                    type="text"
+                    icon={<EditOutlined />}
+                    onClick={() => setRenameModal({ item: it, value: it.name })}
+                  />
+                </Tooltip>
+              )}
+            </Space>
+          )
         }
         return <Text strong style={{ color: row.kind === 'deficiency' ? '#cf1322' : undefined }}>{row.label}</Text>
       },
@@ -578,6 +622,40 @@ export default function AuditSheetEditorPage() {
       </Card>
 
       {/* ── Drawer / Modal ───────────────────────────────────────────── */}
+      <Modal
+        open={renameModal != null}
+        title="修改本期名稱"
+        onOk={saveRename}
+        onCancel={() => setRenameModal(null)}
+        okText="儲存"
+        cancelText="取消"
+        confirmLoading={renaming}
+        destroyOnClose
+      >
+        <Space direction="vertical" style={{ width: '100%' }}>
+          <Text type="secondary">
+            只影響這張稽核單（{detail.period}・{detail.company_name}），不會改到檢查項主檔，
+            也不會改到其他月份或另一家公司。
+          </Text>
+          <Input
+            value={renameModal?.value ?? ''}
+            maxLength={200}
+            onChange={(e) => setRenameModal((m) => (m ? { ...m, value: e.target.value } : m))}
+            onPressEnter={saveRename}
+          />
+          {renameModal?.item.master_name && renameModal.item.master_name !== renameModal.value && (
+            <Button
+              size="small"
+              type="link"
+              style={{ padding: 0 }}
+              onClick={() => setRenameModal((m) => (m ? { ...m, value: m.item.master_name ?? m.value } : m))}
+            >
+              帶入主檔名稱：{renameModal.item.master_name}
+            </Button>
+          )}
+        </Space>
+      </Modal>
+
       <CellDrawer
         open={drawerItem != null && drawerDept != null}
         sheetId={detail.id}

@@ -4,8 +4,10 @@
  *
  * 兩階結構：1 階大項（如「廠商/客戶管理」）→ 2 階子項（如「聯絡簿」）。
  *
- * ⚠️ 使用者裁示：主檔可自行新增、改名、停用；**一旦被任一期稽核單引用即鎖定**，
- *    不可改名或刪除，只能停用（保護歷史稽核資料）。後端同樣會擋，前端只是提示。
+ * ⚠️ 使用者裁示：主檔可自行新增、改名、停用；被任一期稽核單引用後**不可刪除**，只能停用。
+ *    2026-09-27 裁示：主檔**解鎖改名**。稽核單每一列都存有自己的名稱快照，
+ *    主檔改名只影響之後新加入稽核單的列，既有稽核單不動；
+ *    要改某一期的名稱，請到該張稽核單上「修改本期名稱」。
  * ⚠️ 名稱只填純項目名稱，不要寫「-工程.管理」這類部門後綴或
  *    「(飲水機.排煙.污水設備)」這類店別補充——那兩者是逐期、逐店不同的，
  *    在稽核單版面調整時才指定。
@@ -108,7 +110,7 @@ export default function AuditItemsMasterPage() {
           <span style={{ fontWeight: row.parent_id == null ? 600 : 400, color: row.parent_id == null ? '#1B3A5C' : undefined }}>
             {v}
           </span>
-          {row.in_use && <Tooltip title="已被稽核單引用，不可改名／刪除"><Tag color="blue">使用中</Tag></Tooltip>}
+          {row.in_use && <Tooltip title="已被稽核單引用：可改名（不影響既有稽核單），不可刪除"><Tag color="blue">使用中</Tag></Tooltip>}
           {!row.is_active && <Tag>停用</Tag>}
         </Space>
       ),
@@ -124,9 +126,7 @@ export default function AuditItemsMasterPage() {
           {row.parent_id == null && (
             <Button size="small" icon={<PlusOutlined />} onClick={() => openAdd(row)}>新增子項</Button>
           )}
-          <Tooltip title={row.in_use ? '已被稽核單引用，只能改說明與排序' : ''}>
-            <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(row)}>修改</Button>
-          </Tooltip>
+          <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(row)}>修改</Button>
           <Popconfirm
             title={row.is_active ? '確認停用？停用後不出現在勾選清單，歷史資料不受影響。' : '確認啟用？'}
             onConfirm={() => toggle(row)} okText="確認" cancelText="取消"
@@ -190,9 +190,9 @@ export default function AuditItemsMasterPage() {
             name="name"
             label="項目名稱"
             rules={[{ required: true, message: '請輸入名稱' }]}
-            extra={editing?.in_use ? '此項目已被稽核單引用，改名會被後端擋下（409）' : undefined}
+            extra={editing?.in_use ? '此項目已被稽核單引用：改名只影響之後新加入稽核單的列，既有稽核單維持原名稱' : undefined}
           >
-            <Input placeholder="例：聯絡簿" disabled={!!editing?.in_use} />
+            <Input placeholder="例：聯絡簿" />
           </Form.Item>
           <Form.Item name="description" label="說明">
             <Input.TextArea rows={3} />

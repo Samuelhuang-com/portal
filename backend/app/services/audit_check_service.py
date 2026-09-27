@@ -100,8 +100,18 @@ def _filled(text: Optional[str]) -> bool:
     return bool(text and text.strip())
 
 
+def sheet_item_name(si: AuditSheetItem) -> str:
+    """
+    稽核單某一列的顯示名稱：一律以本期快照 item_name 為準。
+    快照為空（理論上 migration audchkn 已補齊）才退回主檔目前名稱。
+    """
+    if si.item_name:
+        return si.item_name
+    return si.item.name if si.item else ""
+
+
 def item_in_use(db: Session, item_id: int) -> bool:
-    """檢查項是否已被任一期稽核單引用（使用者裁示：引用後鎖定）。"""
+    """檢查項是否已被任一期稽核單引用（被引用者不可刪除，只能停用；改名不受限）。"""
     return db.query(AuditSheetItem.id).filter(AuditSheetItem.item_id == item_id).first() is not None
 
 
@@ -281,7 +291,8 @@ def build_sheet_detail(db: Session, sheet: AuditSheet) -> dict:
             "parent_sheet_item_id": si.parent_sheet_item_id,
             "level": 2 if si.parent_sheet_item_id is not None else 1,
             "display_no": si.display_no,
-            "name": si.item.name if si.item else "",
+            "name": sheet_item_name(si),
+            "master_name": si.item.name if si.item else None,
             "scope_note": si.scope_note,
             "target_department_ids": targets.get(si.id, []),
             "sort_order": si.sort_order,
@@ -386,6 +397,10 @@ def apply_layout(
 
     # 依主檔 sort_order 排序
     parents = {i.id: i for i in db.query(AuditItem).filter(AuditItem.id.in_(majors)).all()}
+
+    def _master_name(iid: int) -> Optional[str]:
+        it = all_items.get(iid) or parents.get(iid)
+        return it.name if it else None
     majors.sort(key=lambda mid: (parents[mid].sort_order, mid) if mid in parents else (9999, mid))
     for mid, lst in minors_by_major.items():
         lst.sort(key=lambda iid: (all_items[iid].sort_order, iid) if iid in all_items else (9999, iid))
@@ -402,7 +417,8 @@ def apply_layout(
     for m_idx, mid in enumerate(majors, start=1):
         row = existing_rows.get(mid)
         if row is None:
-            row = AuditSheetItem(sheet_id=sheet.id, item_id=mid)
+            # 新加入的列：拍下主檔當下名稱；既有列保留原快照（含使用者改過的本期名稱）
+            row = AuditSheetItem(sheet_id=sheet.id, item_id=mid, item_name=_master_name(mid))
             db.add(row)
             db.flush()
         row.parent_sheet_item_id = None
@@ -417,7 +433,7 @@ def apply_layout(
         for s_idx, iid in enumerate(minors_by_major.get(mid, []), start=1):
             child = existing_rows.get(iid)
             if child is None:
-                child = AuditSheetItem(sheet_id=sheet.id, item_id=iid)
+                child = AuditSheetItem(sheet_id=sheet.id, item_id=iid, item_name=_master_name(iid))
                 db.add(child)
                 db.flush()
             child.parent_sheet_item_id = row.id
@@ -533,7 +549,7 @@ def build_statistics(db: Session, year: int, company_id: Optional[int] = None) -
             sheet = per_map[period]
             audited_labels.append(audited_label(sheet))
             major_items.append([
-                (si.item.name if si.item else "") + (si.scope_note or "")
+                sheet_item_name(si) + (si.scope_note or "")
                 for si in sorted(sheet.items, key=lambda i: (i.sort_order, i.id))
                 if si.parent_sheet_item_id is None
             ])

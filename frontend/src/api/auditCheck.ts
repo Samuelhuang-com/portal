@@ -77,7 +77,10 @@ export interface SheetItem {
   /** 1 = 大項、2 = 子項（只有子項計分） */
   level: number
   display_no: string | null
+  /** 本期名稱（稽核單自己的快照；主檔改名不影響） */
   name: string
+  /** 主檔目前名稱；與 name 不同代表本期名稱已另外修改 */
+  master_name?: string | null
   scope_note: string | null
   target_department_ids: number[]
   sort_order: number
@@ -260,6 +263,10 @@ export const sheetsApi = {
 
   upsertReview: (id: number, sheetDepartmentId: number, body: Record<string, unknown>) =>
     client.put<SheetDetail>(`/audit-check/sheets/${id}/reviews/${sheetDepartmentId}`, body),
+
+  /** 修改某一列的本期名稱 — 只影響這一張稽核單，不動主檔與其他月份 */
+  renameItem: (id: number, sheetItemId: number, name: string) =>
+    client.put<SheetDetail>(`/audit-check/sheets/${id}/items/${sheetItemId}/name`, { name }),
 
   upsertDeficiency: (id: number, sheetDepartmentId: number, text: string | null) =>
     client.put<SheetDetail>(

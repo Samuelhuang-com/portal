@@ -38,8 +38,8 @@ from app.models.user import User
 from app.schemas.audit_check import (
     CellBulkUpsert, CellUpsert, DeficiencyUpsert, ItemCreate, ItemOut, ItemUpdate,
     PeriodCreate, PeriodOut, PeriodUpdate, ResultTypeCreate, ResultTypeOut,
-    ResultTypeUpdate, ReviewUpsert, SheetCreate, SheetDetail, SheetLayoutUpdate,
-    SheetUpdate, StatisticsOut,
+    ResultTypeUpdate, ReviewUpsert, SheetCreate, SheetDetail, SheetItemRename,
+    SheetLayoutUpdate, SheetUpdate, StatisticsOut,
 )
 from app.services import audit_check_service as svc
 
@@ -225,9 +225,8 @@ def update_item(
     if item is None:
         raise _not_found("查無此檢查項")
     data = payload.model_dump(exclude_unset=True)
-    # 使用者裁示：已被任一期稽核單引用即鎖定，不可改名（保護歷史資料）
-    if "name" in data and data["name"] != item.name and svc.item_in_use(db, item_id):
-        raise _conflict("此檢查項已被稽核單引用，不可改名；如不再使用請改為「停用」")
+    # 2026-09-27 裁示：主檔解鎖改名。稽核單各列已存名稱快照（item_name），
+    # 這裡改名只影響之後新加入稽核單的列，既有稽核單一律不動。
     for k, v in data.items():
         setattr(item, k, v)
     try:
@@ -540,6 +539,32 @@ def upsert_cells_bulk(
     return svc.build_sheet_detail(db, sheet)
 
 
+# ── 稽核單某一列的本期名稱 ────────────────────────────────────────────────
+@router.put("/sheets/{sheet_id}/items/{sheet_item_id}/name", response_model=SheetDetail)
+def rename_sheet_item(
+    sheet_id: int,
+    sheet_item_id: int,
+    payload: SheetItemRename,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_permission(EDIT)),
+):
+    """
+    2026-09-27 裁示：在稽核單上直接改檢查項名稱，**只影響這一張單**
+    （該月 × 該公司），不動主檔，也不動同月另一家公司或其他月份。
+    """
+    sheet = _get_sheet(db, sheet_id)
+    si = next((i for i in sheet.items if i.id == sheet_item_id), None)
+    if si is None:
+        raise _not_found("此稽核單沒有這一列檢查項")
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="名稱不可空白")
+    si.item_name = name
+    db.commit()
+    db.refresh(sheet)
+    return svc.build_sheet_detail(db, sheet)
+
+
 # ── 覆核區 / 缺失覆寫 ──────────────────────────────────────────────────────
 @router.put("/sheets/{sheet_id}/reviews/{sheet_department_id}", response_model=SheetDetail)
 def upsert_review(
@@ -648,7 +673,11 @@ def flagged_rows(
             "company_name": companies.get(sheet.company_id, "") if sheet else "",
             "department_id": sd.department_id,
             "department_name": dept_names.get(sd.department_id, ""),
-            "item_name": (items.get(si.item_id).name if si and si.item_id in items else ""),
+            # 本期名稱快照優先；快照為空才退回主檔（用已載入的 items，避免逐列 lazy load）
+            "item_name": (
+                (si.item_name or (items[si.item_id].name if si.item_id in items else ""))
+                if si else ""
+            ),
             "display_no": si.display_no if si else "",
             "result_code": c.result_code,
             "result_label": rt.label,
