@@ -906,7 +906,11 @@ def list_ragic_pushed_documents(
 
     docs: dict[tuple, dict] = {}
     for r in rows:
-        key = (r.ragic_push_batch_no, r.vendor_id, r.ragic_record_id)
+        # 2026-09-28 起一張 Ragic 單含多家廠商 → 分組鍵拿掉 vendor_id，
+        # 否則同一張單會依廠商拆成好幾列、單號重複出現。
+        # 例外：stub 時期的假單號（STUB-<batch>）是整批共用，仍要靠廠商分開。
+        is_stub_row = bool(r.ragic_record_id and str(r.ragic_record_id).startswith("STUB-"))
+        key = (r.ragic_push_batch_no, r.ragic_record_id, r.vendor_id if is_stub_row else None)
         d = docs.setdefault(key, {
             "ragic_push_batch_no": r.ragic_push_batch_no,
             "ragic_record_id": r.ragic_record_id,
@@ -924,8 +928,14 @@ def list_ragic_pushed_documents(
             "department_names": [],
             "_dept_ids": set(),
             "converted_count": 0,
-            "is_stub": bool(r.ragic_record_id and str(r.ragic_record_id).startswith("STUB-")),
+            "is_stub": is_stub_row,
+            "_vendor_ids": [],
+            "_vendor_names": [],
         })
+        if r.vendor_id and r.vendor_id not in d["_vendor_ids"]:
+            d["_vendor_ids"].append(r.vendor_id)
+        if r.vendor_name and r.vendor_name not in d["_vendor_names"]:
+            d["_vendor_names"].append(r.vendor_name)
         d["item_count"] += 1
         d["total_qty"] += (r.adjusted_qty or 0)
         d["total_amount"] += (r.unit_price or Decimal("0")) * (r.adjusted_qty or 0)
@@ -941,6 +951,10 @@ def list_ragic_pushed_documents(
     # 彙整列不記錄來源請購單，用「同週期＋期別＋公司＋部門、目前已彙整」的請購單還原
     # ——彙整粒度就是 公司＋料號＋部門，這個對應是精確的。
     for d in result:
+        v_ids = d.pop("_vendor_ids")
+        v_names = sorted(d.pop("_vendor_names"))
+        d["vendor_id"] = v_ids[0] if len(v_ids) == 1 else None
+        d["vendor_name"] = "、".join(v_names) or None
         dept_ids = d.pop("_dept_ids")
         d["request_nos"] = []
         if dept_ids:
@@ -1447,8 +1461,41 @@ def push_summary_to_ragic(
         except Exception as e:  # noqa: BLE001 — 查不到姓名不該擋掉整批拋轉
             logger.warning("[push_summary_to_ragic] 解析部門承辦人姓名失敗，改用預設申請人：%s", e)
 
+    # ── ③-b 廠商防呆（**逐列**）：送出前先問 Ragic「你認得這個廠商嗎」 ────────
+    # ⚠️ 2026-09-20 實測踩到：「擬定廠商」是連結到「廠商資料表」的 Link 欄位，
+    #    只認**完全相符**的既有名稱。Portal 送「北金」而 Ragic 只認
+    #    「北金文具印刷有限公司」時，Ragic **靜默丟掉那一欄、照樣回 SUCCESS**。
+    # 2026-09-28 起一張單含多家廠商，所以改成**逐列**擋：只擋對不上的那幾列，
+    #    其他列照樣進同一張單（舊版是整張單擋下）。
+    # ⚠️ 取不到清單時 fetch 回 None＝「這次無法檢查」，一律放行（fail open）。
+    accepted_vendors = cycle_purchase_ragic_push.fetch_accepted_vendor_names()
+    vendor_check_skipped = accepted_vendors is None
+    deliverable_rows: list = []
+    for r in pushable:
+        reason = cycle_purchase_ragic_push.vendor_rejection_reason(r.vendor_name, accepted_vendors)
+        if reason is None:
+            deliverable_rows.append(r)
+            continue
+        not_pushed.append({
+            "summary_id": r.id,
+            "item_code": r.item_code,
+            "item_name": r.item_name,
+            "department_name": r.department_name,
+            "reason": reason,
+        })
+    if not deliverable_rows:
+        raise SummaryServiceError(
+            f"「{period_label}／{company}」這一批的廠商，Ragic 廠商資料表都認不得，"
+            f"全部沒有拋轉（共 {len(not_pushed)} 筆）。"
+            f"請到「週採 → 供應商主檔」用「對應合約廠商」把廠商接到合約主檔、"
+            f"按一次「自合約模組同步」；Ragic 裡沒有的廠商要先在 Ragic 廠商資料表建檔。"
+        )
+    price_blank_count = sum(
+        1 for r in deliverable_rows if not r.unit_price or Decimal(str(r.unit_price)) <= 0
+    )
+
     documents = _build_vendor_documents(
-        pushable,
+        deliverable_rows,
         batch_no=batch_no,
         cycle_name=cycle.cycle_name,
         period_label=period_label,
@@ -1457,43 +1504,6 @@ def push_summary_to_ragic(
         apply_date_text=apply_date_text,
         owner_names=owner_names,
     )
-
-    # ── ③-b 廠商防呆：送出前先問 Ragic「你認得這個廠商嗎」 ─────────────────
-    # ⚠️ 2026-09-20 實測踩到：主表「廠商(一)」是連結到「廠商資料表」的 Link 欄位，
-    #    只認**完全相符**的既有名稱。Portal 送「北金」而 Ragic 只認
-    #    「北金文具印刷有限公司」時，Ragic **靜默丟掉那一欄、照樣回 SUCCESS** ——
-    #    單子上的廠商欄是空的，而且從 API 回應完全看不出來（見 [2.10.40]）。
-    #    Ragic 的表單定義裡就帶著可接受值清單，所以在這裡先比對，把對不上的
-    #    整張單擋進 not_pushed，而不是推完才發現。
-    # ⚠️ 取不到清單時 fetch 回 None＝「這次無法檢查」，一律放行（fail open）：
-    #    為了一個輔助檢查讓整批拋轉停擺，比原本的行為更糟。
-    accepted_vendors = cycle_purchase_ragic_push.fetch_accepted_vendor_names()
-    vendor_check_skipped = accepted_vendors is None
-    deliverable: list[dict] = []
-    for doc in documents:
-        reason = cycle_purchase_ragic_push.vendor_rejection_reason(
-            doc.get("vendor_name"), accepted_vendors
-        )
-        if reason is None:
-            deliverable.append(doc)
-            continue
-        for r in doc["_rows"]:
-            not_pushed.append({
-                "summary_id": r.id,
-                "item_code": r.item_code,
-                "item_name": r.item_name,
-                "department_name": r.department_name,
-                "reason": reason,
-            })
-    documents = deliverable
-
-    if not documents:
-        raise SummaryServiceError(
-            f"「{period_label}／{company}」這一批的廠商，Ragic 廠商資料表都認不得，"
-            f"全部沒有拋轉（共 {len(not_pushed)} 筆）。"
-            f"請到「週採 → 供應商主檔」用「對應合約廠商」把廠商接到合約主檔、"
-            f"按一次「自合約模組同步」；Ragic 裡沒有的廠商要先在 Ragic 廠商資料表建檔。"
-        )
 
     # ── ④ 逐張推送 ────────────────────────────────────────────────────────
     results: list[dict] = []
@@ -1689,9 +1699,17 @@ def _build_vendor_documents(
     apply_date_text: str,
     owner_names: dict | None = None,
 ) -> list[dict]:
-    """把可拋轉的彙整列**依廠商**分組，每組組成一份 Ragic 單據文件。
+    """把可拋轉的彙整列組成 Ragic 單據文件。
 
-    一份文件 = 一張 Ragic「★週期請購單」(sheet 58) = 一公司 ＋ 一期別 ＋ 一廠商
+    ⭐ **2026-09-28 起（Samuel 裁示）：一次拋轉＝一張 Ragic 單**
+       一張 Ragic「★週期請購單」(sheet 58) = 一公司 ＋ 一期別 ＋ **一個週期**（如「客廁備品週採」），
+       **同一張單可以有不同廠商**，廠商逐列帶在子表「擬定廠商」。
+       呼叫端 push_summary_to_ragic() 的範圍本來就是「週期＋期別＋公司」，
+       所以這裡把所有列放進同一份文件，不再依廠商分組。
+       （Ragic 主表的「廠商」欄已在 2026-09-28 刪除，不再有「一張單只能一家廠商」的限制。）
+
+    ── 以下是歷史說明 ──
+    2026-09-20～09-27 曾經是「一公司 ＋ 一期別 ＋ 一廠商」一張：
 
     ⚠️ 2026-09-20 改回只依廠商（Samuel 裁示）。2026-09-18～19 曾經是
     「廠商＋部門」，那是被 Ragic 主表「部門」必填單選逼出來的——一張單只放得下
@@ -1713,7 +1731,8 @@ def _build_vendor_documents(
     owner_names = owner_names or {}
     groups: dict = {}
     for r in rows:
-        g = groups.setdefault(r.vendor_id, {
+        # 2026-09-28：固定一個鍵＝整批一張單（見 docstring）
+        g = groups.setdefault("__one_document__", {
             "batch_no": batch_no,
             "cycle_name": cycle_name,
             "period_label": period_label,
@@ -1723,7 +1742,7 @@ def _build_vendor_documents(
             # 表頭固定值（Ragic 端必填），實際歸屬看子表
             "header_dept": settings.RAGIC_CP_SUMMARY_HEADER_DEPT,
             "account_code": settings.RAGIC_CP_SUMMARY_ACCOUNT_CODE,
-            "purpose": f"{period_label} {cycle_name} 匯總請購（{company}／{r.vendor_name or '—'}）",
+            "purpose": f"{period_label} {cycle_name} 匯總請購（{company}）",
             "applicant": settings.RAGIC_CP_SUMMARY_APPLICANT,
             "apply_date": apply_date_text,
             "pushed_at": pushed_at_text,
@@ -1732,6 +1751,8 @@ def _build_vendor_documents(
             "_rows": [],
             "_dept_owner_ids": set(),
             "_dept_names": set(),
+            "_vendor_ids": set(),
+            "_vendor_names": set(),
         })
         qty = r.adjusted_qty or 0
         # 2026-09-25：單價空白或 0 一律視為「沒有單價」，送空白（不送 0），
@@ -1751,8 +1772,14 @@ def _build_vendor_documents(
             # ⚠️ 代價：採購在 Ragic 改數量，金額不會自己跟著變。
             "amount": (Decimal(str(price)) * qty) if price is not None else None,
             "summary_id": r.id,
+            # 2026-09-28：一張單多家廠商，廠商逐列帶（子表「擬定廠商」）
+            "vendor_name": r.vendor_name or "",
         })
         g["_rows"].append(r)
+        if r.vendor_id:
+            g["_vendor_ids"].add(r.vendor_id)
+        if r.vendor_name:
+            g["_vendor_names"].add(r.vendor_name)
         if getattr(r, "dept_owner_user_id", None):
             g["_dept_owner_ids"].add(r.dept_owner_user_id)
         if r.department_name:
@@ -1765,6 +1792,14 @@ def _build_vendor_documents(
         # 另外那些部門的人以為單子是別人幫他開的。
         owner_ids = g.pop("_dept_owner_ids")
         dept_names = g.pop("_dept_names")
+        vendor_ids = g.pop("_vendor_ids")
+        vendor_names = sorted(g.pop("_vendor_names"))
+        # 顯示用：多家廠商以「、」串起來；vendor_id 只有單一廠商時才有意義
+        g["vendor_names"] = vendor_names
+        g["vendor_name"] = "、".join(vendor_names) or None
+        g["vendor_id"] = next(iter(vendor_ids)) if len(vendor_ids) == 1 else None
+        # 主表廠商（若 Ragic 又加回來）只能放一家：單一廠商才送，多家留空
+        g["header_vendor"] = vendor_names[0] if len(vendor_names) == 1 else ""
         requester = None
         if len(owner_ids) == 1:
             requester = owner_names.get(next(iter(owner_ids)))

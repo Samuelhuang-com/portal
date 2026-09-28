@@ -405,12 +405,13 @@ export default function CpSummaryPage() {
           <Alert
             type="info"
             showIcon
-            message="依廠商拆單：一家廠商一張 Ragic 單"
+            message="一個週期一張 Ragic 單：同一張單可以有不同廠商"
             description={
               <span>
-                同一次拋轉共用一個批次號，每家廠商各自是一張 Ragic 請購單、
-                各有自己的編號，也各自簽核。<b>部門與會計課目逐列帶在子表上</b>，
-                所以一張單可以橫跨多個部門（2026-09-20 起）。
+                這個週期＋期別＋公司的彙整列會寫成<b>一張</b> Ragic 週期請購單（一個編號、一次簽核）。
+                <b>廠商、部門與會計課目都逐列帶在子表上</b>，所以一張單可以橫跨多家廠商、多個部門（2026-09-28 起）。
+                <br />
+                Ragic 廠商資料表認不得的廠商，只擋那幾列，其他列照常送出。拋轉後要到 Ragic 按「開始簽核」。
                 <br />
                 下列列<b>不會</b>送出去，拋轉後會列出是哪幾筆：
                 缺供應商、調整量為 0、以及 2026-07-16 之前沒有部門別的歷史彙整列。
@@ -1491,7 +1492,7 @@ export default function CpSummaryPage() {
                   loading={pushedLoading}
                   extra={
                     <Text type="secondary" style={{ fontSize: 12 }}>
-                      一列＝Ragic 上的一張請購單；拋轉依「廠商」拆單（一家廠商一張），同一批次會有多張
+                      一列＝Ragic 上的一張請購單；2026-09-28 起一個週期一張（可含多家廠商）
                     </Text>
                   }
                 >

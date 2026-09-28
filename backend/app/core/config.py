@@ -191,7 +191,11 @@ class Settings(BaseSettings):
     RAGIC_CP_F_APPLY_DATE: str = "1020816"  # 申請日期（必填，格式 yyyy/MM/dd）
     RAGIC_CP_F_APPLICANT:  str = "1020808"  # 申請人（唯讀單選，預設 $USERNAME）
     RAGIC_CP_F_PURPOSE:    str = "1020809"  # 說明（必填，同時是這張表的標題欄 tf）
-    RAGIC_CP_F_VENDOR:     str = "1020818"  # 廠商(一)（連結「廠商資料表」sheet 15，送廠商名稱）
+    # ⚠️ 2026-09-28：Ragic 端已刪除主表「廠商(一)」1020818（廠商只留在子表「擬定廠商」）。
+    #    Samuel 裁示 Portal 不再送主表廠商 → 預設空字串＝不送。
+    #    送一個不存在的欄位代號，Ragic 會整張退回「Field ID ... not found」。
+    #    若日後 Ragic 又加回主表廠商，把新代號填在這裡即可，不用改程式。
+    RAGIC_CP_F_VENDOR:     str = ""         # 主表廠商（2026-09-28 起不送）
     RAGIC_CP_F_REQUESTER:  str = "1020860"  # 請購人（必填，送該部門承辦人）
     # 2026-09-18 在 Ragic 端新增的 Portal 追蹤欄位
     RAGIC_CP_F_COMPANY:    str = "1020875"  # 公司別
@@ -237,6 +241,11 @@ class Settings(BaseSettings):
     RAGIC_CP_SF_BUDGET_ACC:   str = "1020831"  # 上月累計預算（金額，人工填，Portal 不送）
     RAGIC_CP_SF_VENDOR:       str = "1020832"  # 擬定廠商（連結廠商資料表，送與廠商(一) 同一個名稱）
     RAGIC_CP_SF_CHOSEN:       str = "1020835"  # 勾選（打勾選項 Yes/No，送 Yes）
+    # 2026-09-28：子表「單價2／金額2」（選定廠商那一組，N/O 欄）原本是公式
+    #   IF(擬定廠商=主表廠商, 單價, …)，主表廠商刪掉後公式一併拿掉，改由 Portal 送。
+    #   ⚠️ 主表「全案小計」= O5（金額2 加總），這兩欄沒送 → 全案小計／營業稅／全案總計整片空白。
+    RAGIC_CP_SF_PRICE_SEL:    str = "1020833"  # 單價2（選定廠商單價，＝單價）
+    RAGIC_CP_SF_AMOUNT_SEL:   str = "1020834"  # 金額2（選定廠商金額，＝金額；全案小計的加總來源）
     RAGIC_CP_SF_ITEM_CODE:    str = "1020880"  # 料號（2026-09-18 新增）
     RAGIC_CP_SF_SUMMARY_ID:   str = "1020881"  # Portal彙整列ID（2026-09-18 新增）
 

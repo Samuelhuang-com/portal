@@ -200,7 +200,13 @@ def fetch_accepted_vendor_names(force: bool = False) -> set[str] | None:
         )
         resp.raise_for_status()
         fields = (resp.json() or {}).get("fields") or {}
-        field = fields.get(f"fid{settings.RAGIC_CP_F_VENDOR}") or {}
+        # 2026-09-28：主表廠商已刪除，改看子表「擬定廠商」的選項（同樣連結廠商資料表）。
+        # 設定仍填了主表廠商代號時優先用主表的。
+        if settings.RAGIC_CP_F_VENDOR:
+            field = fields.get(f"fid{settings.RAGIC_CP_F_VENDOR}") or {}
+        else:
+            subtable = fields.get(f"stid{settings.RAGIC_CP_SUBTABLE}") or {}
+            field = subtable.get(f"fid{settings.RAGIC_CP_SF_VENDOR}") or {}
         options = field.get("options")
         if not isinstance(options, list):
             logger.warning(
@@ -266,8 +272,6 @@ def build_payload(document: dict[str, Any]) -> dict[str, Any]:
         s.RAGIC_CP_F_APPLY_DATE: _text(document.get("apply_date")),
         s.RAGIC_CP_F_PURPOSE:    _text(document.get("purpose")),
         s.RAGIC_CP_F_REQUESTER:  _text(document.get("requester") or s.RAGIC_CP_SUMMARY_APPLICANT),
-        # ── 廠商：主表只填廠商(一)，(二)(三) 留空（週採不比價）────────────
-        s.RAGIC_CP_F_VENDOR:     vendor_name,
         # ── 其他 ────────────────────────────────────────────────────────
         s.RAGIC_CP_F_APPLICANT:  _text(document.get("applicant") or s.RAGIC_CP_SUMMARY_APPLICANT),
         s.RAGIC_CP_F_COMPANY:    _text(document.get("company")),
@@ -277,6 +281,13 @@ def build_payload(document: dict[str, Any]) -> dict[str, Any]:
         s.RAGIC_CP_F_NOTE:       _text(document.get("portal_note")),
         # 小計／稅／總計／全案小計／全案總計 是 Ragic 公式，刻意不送（見檔頭）
     }
+
+    # ── 主表廠商：2026-09-28 起 Ragic 端已刪除，RAGIC_CP_F_VENDOR 預設空字串＝不送 ──
+    # 廠商只留在子表「擬定廠商」。設定填了代號（Ragic 又加回來）才送。
+    # 2026-09-28 起一張單可能有多家廠商，主表只能放一家 → 用 header_vendor（單一廠商才有值）
+    header_vendor = _text(document.get("header_vendor", vendor_name))
+    if s.RAGIC_CP_F_VENDOR and header_vendor:
+        payload[s.RAGIC_CP_F_VENDOR] = header_vendor
 
     # ⚠️ 用 "key in document" 判斷，不能用 `or`：
     #    document 明確給空字串＝「這張單不要送表頭的部門／會科」，
@@ -308,8 +319,12 @@ def build_payload(document: dict[str, Any]) -> dict[str, Any]:
         # 只填部門與金額，其餘一律留空 —— 一眼看得出不是品項，
         # Ragic 端也靠「料號為空」把它排除在小計／全案小計的加總之外。
         if line.get("is_subtotal"):
+            # ⚠️ 2026-09-28：Ragic 子表「金額」改成公式 IF(B5.RAW='',G5,D5*G5)
+            #    —— 料號空白（＝小計列）時金額取「單價」欄，所以小計金額要**同時送進單價**，
+            #    否則 doFormula 重算後小計列金額會被洗成空白。單價2／金額2 不送（小計列不能進全案小計）。
             rows[key] = {
                 s.RAGIC_CP_SF_DEPT:   _text(line.get("department_name")),
+                s.RAGIC_CP_SF_PRICE:  _num(line.get("amount")),
                 s.RAGIC_CP_SF_AMOUNT: _num(line.get("amount")),
             }
             continue
@@ -326,11 +341,18 @@ def build_payload(document: dict[str, Any]) -> dict[str, Any]:
             #    Samuel 裁示把 Ragic 那個公式拿掉，改由 Portal 逐列算好送。
             #    代價：採購在 Ragic 手動改數量，金額不會自己跟著變。
             s.RAGIC_CP_SF_AMOUNT:     _num(line.get("amount")),
+            # 2026-09-28：單價2／金額2（選定廠商那一組）改由 Portal 送，值同單價／金額。
+            #    Ragic 端原本的公式靠「擬定廠商＝主表廠商」挑價，主表廠商刪掉後公式已拿掉；
+            #    主表「全案小計」= O5 是加總金額2，沒送就整張單沒有總額。
+            #    沒單價的列兩組都送空白（2026-09-25 裁示：金額由採購在 Ragic 補）。
+            s.RAGIC_CP_SF_PRICE_SEL:  _num(line.get("unit_price")),
+            s.RAGIC_CP_SF_AMOUNT_SEL: _num(line.get("amount")),
             # 2026-09-20 新增：部門與會計課目逐列帶（Ragic 端已把這兩欄改成自由文字）
             s.RAGIC_CP_SF_DEPT:       _text(line.get("department_name")),
             s.RAGIC_CP_SF_ACCOUNT:    _text(line.get("account_name")),
             # 擬定廠商＋勾選：全案小計／全案總計的公式靠這兩欄才算得出來，見檔頭第 3 點
-            s.RAGIC_CP_SF_VENDOR:     vendor_name,
+            # 2026-09-28：一張單多家廠商 → 擬定廠商逐列（沒帶就退回文件層級的廠商）
+            s.RAGIC_CP_SF_VENDOR:     _text(line.get("vendor_name") or vendor_name),
             s.RAGIC_CP_SF_CHOSEN:     "Yes",
             s.RAGIC_CP_SF_ITEM_CODE:  _text(line.get("item_code")),
             s.RAGIC_CP_SF_SUMMARY_ID: _text(line.get("summary_id")),

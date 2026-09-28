@@ -160,7 +160,8 @@ def test_payload_main_fields():
     assert p[settings.RAGIC_CP_F_APPLY_DATE] == "2026/09/20"
     assert p[settings.RAGIC_CP_F_REQUESTER] == "劉佳佳"      # 必填
     assert p[settings.RAGIC_CP_F_APPLICANT] == "Samuel"
-    assert p[settings.RAGIC_CP_F_VENDOR] == "茂忠"           # 主表 廠商(一)
+    # 2026-09-28：主表廠商已在 Ragic 刪除，不送（送了會整張被退 Field ID not found）
+    assert "1020818" not in p
     assert p[settings.RAGIC_CP_F_COMPANY] == "春大直"
     assert p[settings.RAGIC_CP_F_BATCH] == "CPSUM-202609-春大直-0001"
     assert p[settings.RAGIC_CP_F_PUSHED_AT] == "2026/09/20 21:30:00"
@@ -202,6 +203,25 @@ def test_payload_sends_amount_per_line():
     p = build_payload(doc)
     first = _rows(p)[max(_rows(p), key=lambda k: abs(int(k)))]
     assert first[settings.RAGIC_CP_SF_AMOUNT] == "420"
+    # 2026-09-28：單價2／金額2 也要送 —— 全案小計 = O5（金額2 加總），沒送就沒總額
+    assert first[settings.RAGIC_CP_SF_PRICE_SEL] == "35"
+    assert first[settings.RAGIC_CP_SF_AMOUNT_SEL] == "420"
+
+
+def test_selected_price_and_amount_are_blank_when_line_has_no_price():
+    """沒單價的列（2026-09-25 裁示照送）單價2／金額2 也留空，不能送 0。"""
+    doc = _doc()
+    doc["lines"][0]["unit_price"] = None
+    doc["lines"][0]["amount"] = None
+    first = _rows(build_payload(doc))[max(_rows(build_payload(doc)), key=lambda k: abs(int(k)))]
+    assert first[settings.RAGIC_CP_SF_PRICE_SEL] == ""
+    assert first[settings.RAGIC_CP_SF_AMOUNT_SEL] == ""
+
+
+def test_header_vendor_is_sent_again_if_configured(monkeypatch):
+    """Ragic 若又加回主表廠商，只要填設定就會送，不用改程式。"""
+    monkeypatch.setattr(settings, "RAGIC_CP_F_VENDOR", "1099999")
+    assert build_payload(_doc())["1099999"] == "茂忠"
 
 
 def test_payload_vendor_is_sent_to_all_three_places():
@@ -209,7 +229,7 @@ def test_payload_vendor_is_sent_to_all_three_places():
     少了子表那兩欄，Ragic 的「單價(選定)/金額(選定)」比對不到廠商，
     主表「全案小計／全案總計」會是空的，而 API 照樣回 SUCCESS。"""
     p = build_payload(_doc())
-    assert p[settings.RAGIC_CP_F_VENDOR] == "茂忠"
+    assert "1020818" not in p                     # 2026-09-28 主表廠商已刪除，不送
     for row in _rows(p).values():
         assert row[settings.RAGIC_CP_SF_VENDOR] == "茂忠"
         assert row[settings.RAGIC_CP_SF_CHOSEN] == "Yes"
@@ -302,9 +322,10 @@ def _build(rows, owner_names=None):
     )
 
 
-def test_documents_split_by_vendor_only():
-    """⚠️ 2026-09-18~19 曾經是「廠商＋部門」拆單（被 Ragic 主表部門必填逼出來的），
-    0920 部門下放到子表之後改回只依廠商——同一家廠商跨兩個部門要合成**一張單**。"""
+def test_one_document_per_push_even_with_multiple_vendors():
+    """⭐ 2026-09-28 Samuel 裁示：一個週期（＋期別＋公司）一張 Ragic 單，
+    **同一張單可以有不同廠商**，廠商逐列帶在子表「擬定廠商」。
+    （2026-09-20～27 是一家廠商一張，實測一次拋出三張單，被指出是錯的。）"""
     rows = [
         _row(21, "茂忠", 11, "工務部", "A-1", owner="u-1", acct="6238 清潔費"),
         _row(21, "茂忠", 12, "管理部", "A-2", owner="u-2", acct="6241 雜項支出"),
@@ -312,14 +333,19 @@ def test_documents_split_by_vendor_only():
     ]
     docs = _build(rows, {"u-1": "劉佳佳", "u-2": "王小明"})
 
-    assert len(docs) == 2                       # 兩家廠商 → 兩張單，不是三張
-    by_vendor = {d["vendor_id"]: d for d in docs}
-    # 0920 起每個部門後面會多一列小計，所以這裡要把明細列與小計列分開看
-    detail = [l for l in by_vendor[21]["lines"] if not l.get("is_subtotal")]
-    assert len(detail) == 2                     # 茂忠那張含兩個部門的明細
-    assert by_vendor[21]["department_names"] == ["工務部", "管理部"]
-    assert [l["department_name"] for l in detail] == ["工務部", "管理部"]
-    assert [l["account_name"] for l in detail] == ["6238 清潔費", "6241 雜項支出"]
+    assert len(docs) == 1                       # 兩家廠商 → 仍然只有一張單
+    doc = docs[0]
+    detail = [l for l in doc["lines"] if not l.get("is_subtotal")]
+    assert len(detail) == 3
+    # 廠商逐列
+    assert sorted(l["vendor_name"] for l in detail) == ["Acer商城", "茂忠", "茂忠"]
+    # 顯示用的廠商字串把多家串起來；多家時沒有單一 vendor_id、也不送主表廠商
+    assert doc["vendor_name"] == "Acer商城、茂忠"
+    assert doc["vendor_id"] is None
+    assert doc["header_vendor"] == ""
+    assert "茂忠" not in doc["purpose"] and "Acer" not in doc["purpose"]
+    assert doc["department_names"] == ["工務部", "管理部"]
+    assert sorted(l["department_name"] for l in detail) == ["工務部", "工務部", "管理部"]
     # 表頭一律是 config 的固定值
     for d in docs:
         assert d["header_dept"] == settings.RAGIC_CP_SUMMARY_HEADER_DEPT
@@ -394,6 +420,40 @@ def test_pushed_docs_one_record_across_departments_stays_one_row(db):
     assert sorted(docs[0]["department_names"]) == ["工務部", "管理部"]
 
 
+def test_pushed_docs_one_record_with_two_vendors_is_one_row(db):
+    """2026-09-28 起一張 Ragic 單含多家廠商：同一個單號只能出現一列，
+    廠商欄把多家串起來。舊的分組鍵含 vendor_id，會把它拆成兩列、單號重複。"""
+    _seed(db)
+    now = datetime(2026, 9, 28, 16, 30)
+    db.add(CyclePurchaseVendor(id=23, vendor_code="V-23", vendor_name="碩維"))
+    db.add_all([
+        _summary(id=221, item_id=1, vendor_id=21, department_id=11, item_code="A-1",
+                 item_name="A-1", ragic_pushed=True, ragic_push_batch_no="B-9",
+                 ragic_pushed_at=now, ragic_record_id="樂管購20260900010",
+                 ragic_record_url="https://ap12.ragic.com/x/58/9"),
+        _summary(id=222, item_id=2, vendor_id=23, department_id=11, item_code="A-2",
+                 item_name="A-2", ragic_pushed=True, ragic_push_batch_no="B-9",
+                 ragic_pushed_at=now, ragic_record_id="樂管購20260900010",
+                 ragic_record_url="https://ap12.ragic.com/x/58/9"),
+    ])
+    db.flush()
+    docs = svc.list_ragic_pushed_documents(db)
+    assert len(docs) == 1
+    assert docs[0]["item_count"] == 2
+    assert docs[0]["vendor_id"] is None
+    assert "碩維" in docs[0]["vendor_name"] and "、" in docs[0]["vendor_name"]
+
+
+def test_payload_vendor_is_per_line_when_document_has_several():
+    doc = _doc(header_vendor="")
+    doc["lines"][0]["vendor_name"] = "茂忠"
+    doc["lines"][1]["vendor_name"] = "Acer商城"
+    rows = _rows(build_payload(doc))
+    by_code = {r[settings.RAGIC_CP_SF_ITEM_CODE]: r for r in rows.values()}
+    assert by_code["CH-E0301001"][settings.RAGIC_CP_SF_VENDOR] == "茂忠"
+    assert by_code["CH-E0301002"][settings.RAGIC_CP_SF_VENDOR] == "Acer商城"
+
+
 def test_pushed_docs_ignore_unpushed_rows(db):
     _seed(db)
     db.add(_summary(id=301, vendor_id=21, department_id=11, item_code="A-1", item_name="A-1"))
@@ -415,7 +475,8 @@ def test_push_blocks_unpushable_rows_and_sends_the_rest(db):
         _summary(id=403, item_id=3, vendor_id=None, department_id=11,
                  item_code="A-3", item_name="A-3"),                      # 缺供應商
         _summary(id=404, item_id=4, vendor_id=21, department_id=11,
-                 item_code="A-4", item_name="A-4", unit_price=None),     # 缺單價
+                 item_code="A-4", item_name="A-4", adjusted_qty=0),      # 調整量 0
+        # （2026-09-25 起「缺單價」不再擋，照送空白單價——所以這裡改用調整量 0 當被擋的例子）
         _summary(id=405, item_id=5, vendor_id=21, department_id=None,
                  item_code="A-5", item_name="A-5"),                      # 歷史列沒部門
     ])
@@ -439,7 +500,7 @@ def test_push_blocks_unpushable_rows_and_sends_the_rest(db):
     reasons = {r["item_code"]: r["reason"] for r in result["not_pushed"]}
     assert set(reasons) == {"A-3", "A-4", "A-5"}
     assert "供應商" in reasons["A-3"]
-    assert "單價" in reasons["A-4"]
+    assert "調整量" in reasons["A-4"]
     assert "部門別" in reasons["A-5"]
 
     # 兩筆可推的都是同一家廠商 → **一張單、兩列明細**（0920 起不再依部門拆）
@@ -627,9 +688,13 @@ def test_subtotal_row_payload_only_carries_department_and_amount():
     sub = rows[min(rows, key=lambda k: abs(int(k)))]      # 絕對值最小的＝最後一列
     assert sub == {
         settings.RAGIC_CP_SF_DEPT: "管理部 小計",
+        # 2026-09-28：Ragic 金額公式 IF(B5.RAW='',G5,D5*G5)，小計列金額取單價欄
+        settings.RAGIC_CP_SF_PRICE: "320",
         settings.RAGIC_CP_SF_AMOUNT: "320",
     }
     assert settings.RAGIC_CP_SF_ITEM_CODE not in sub      # 料號是 Ragic 排除小計列的依據
+    # 小計列絕不能帶金額2 —— 全案小計加總的是金額2，帶了就重複計算
+    assert settings.RAGIC_CP_SF_AMOUNT_SEL not in sub
     assert settings.RAGIC_CP_SF_CHOSEN not in sub
     assert settings.RAGIC_CP_SF_VENDOR not in sub
 
@@ -728,8 +793,10 @@ def test_push_puts_unknown_vendors_into_not_pushed_instead_of_sending_them(db):
         svc.cycle_purchase_ragic_push.push_summary_document = orig_push
         svc.cycle_purchase_ragic_push.fetch_accepted_vendor_names = orig_fetch
 
-    # 認得的那家有送出去，不認得的那家一列都沒送
+    # 認得的那家有送出去，不認得的那一列被擋（2026-09-28 起逐列擋，不是整張單）
     assert len(captured) == 1
+    sent = [l for l in captured[0]["lines"] if not l.get("is_subtotal")]
+    assert [l["item_code"] for l in sent] == ["OK-1"]
     assert captured[0]["vendor_name"] == "茂忠"
     blocked = {r["item_code"]: r["reason"] for r in result["not_pushed"]}
     assert "NG-1" in blocked
@@ -833,3 +900,7 @@ def test_config_points_at_fields_that_still_exist_in_ragic():
         assert settings.RAGIC_CP_F_TAX != dead
         assert settings.RAGIC_CP_F_GRAND_TOTAL != dead
         assert settings.RAGIC_CP_F_SUBTOTAL != dead
+    # 2026-09-28：主表廠商 1020818 已在 Ragic 刪除
+    assert settings.RAGIC_CP_F_VENDOR != "1020818"
+    assert settings.RAGIC_CP_SF_PRICE_SEL == "1020833"
+    assert settings.RAGIC_CP_SF_AMOUNT_SEL == "1020834"
