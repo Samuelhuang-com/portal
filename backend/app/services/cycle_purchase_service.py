@@ -690,6 +690,7 @@ def list_items(
     department_id: Optional[int] = None,
     account_code_id: Optional[int] = None,
     vendor_id: Optional[int] = None,
+    vendor_q: str = "",
     sort_by: Optional[str] = None,
     sort_order: str = "asc",
 ):
@@ -749,6 +750,18 @@ def list_items(
         query = query.filter(
             (CyclePurchaseItem.default_vendor_id == vendor_id)
             | db.query(M.id).filter(M.item_id == CyclePurchaseItem.id, M.vendor_id == vendor_id).exists()
+        )
+    # 2026-09-30（Samuel 裁示）：供應商改用 %關鍵字% 模糊比對名稱。
+    # 原因：供應商資料回填後，同一家會同時有簡稱那筆（如 CPV-0027「金百利」，已無料號指向）
+    # 與全名正本（V-00036「英屬蓋曼群島商金百利克拉克…」），用 id 精確篩選容易選到簡稱那筆而查無資料。
+    # 比對範圍同上：預設供應商，或任一筆料號對照的叫貨供應商。
+    if vendor_q and vendor_q.strip():
+        vsub = db.query(CyclePurchaseVendor.id).filter(
+            CyclePurchaseVendor.vendor_name.ilike(f"%{vendor_q.strip()}%")
+        )
+        query = query.filter(
+            CyclePurchaseItem.default_vendor_id.in_(vsub)
+            | db.query(M.id).filter(M.item_id == CyclePurchaseItem.id, M.vendor_id.in_(vsub)).exists()
         )
 
     total = query.count()

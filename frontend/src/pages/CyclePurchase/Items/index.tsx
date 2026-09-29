@@ -38,8 +38,8 @@
  */
 import { useEffect, useMemo, useState } from 'react'
 import {
-  Button, Card, Cascader, Form, Input, InputNumber, Modal, Popconfirm, Select, Space,
-  Switch, Table, Tag, Tooltip, Typography, message, Divider,
+  AutoComplete, Button, Card, Cascader, Form, Input, InputNumber, Modal, Popconfirm, Select, Space,
+  Switch, Table, Tabs, Tag, Tooltip, Typography, message, Divider,
 } from 'antd'
 import type { SorterResult } from 'antd/es/table/interface'
 import { PlusOutlined, EditOutlined, StopOutlined, CheckCircleOutlined, ApartmentOutlined, DeleteOutlined, ClearOutlined } from '@ant-design/icons'
@@ -50,6 +50,8 @@ import {
 import type {
   CpAccountCode, CpCategory, CpDepartment, CpItem, CpItemDetail, CpItemMapping, CpVendor,
 } from '@/types/cyclePurchase'
+import { useAuthStore } from '@/stores/authStore'
+import VendorBackfillTab from './VendorBackfillTab'
 
 const { Title, Text } = Typography
 
@@ -148,6 +150,9 @@ const mappingRowChanged = (a: MappingRow, b: MappingRow) =>
   || (a.original_unit_price ?? null) !== (b.original_unit_price ?? null)
 
 export default function CpItemsPage() {
+  // 2026-09-30：「供應商資料回填」TAB 只對有 cycle_purchase_vendor_backfill 權限者顯示
+  const hasPermission = useAuthStore((s) => s.hasPermission)
+  const canVendorBackfill = hasPermission('cycle_purchase_vendor_backfill')
   const [items, setItems] = useState<CpItem[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
@@ -163,6 +168,9 @@ export default function CpItemsPage() {
   const [filterCompanies, setFilterCompanies] = useState<{ company: string; department_ids: number[] }[]>([])
   const [fAccountCode, setFAccountCode] = useState<number | undefined>()
   const [fVendor, setFVendor] = useState<number | undefined>()
+  // 2026-09-30：供應商篩選改為名稱模糊比對（%關鍵字%）。fVendor 只剩「未設定」(0) 還在用。
+  const [fVendorQ, setFVendorQ] = useState('')
+  const [vendorText, setVendorText] = useState('')
   const [sortBy, setSortBy] = useState<string | undefined>()
   const [sortOrder, setSortOrder] = useState<'ascend' | 'descend' | undefined>()
   const [loading, setLoading] = useState(false)
@@ -245,7 +253,7 @@ export default function CpItemsPage() {
     () => [{ label: '未對應類別主檔', value: CATEGORY_UNMAPPED }, ...categoryTree],
     [categoryTree],
   )
-  const hasFilter = !!(q || fCategory?.length || fCompanyDept?.length || fAccountCode !== undefined || fVendor !== undefined)
+  const hasFilter = !!(q || fCategory?.length || fCompanyDept?.length || fAccountCode !== undefined || fVendor !== undefined || !!fVendorQ)
 
   const resetFilters = () => {
     setSearchText('')
@@ -254,7 +262,22 @@ export default function CpItemsPage() {
     setFCompanyDept(undefined)
     setFAccountCode(undefined)
     setFVendor(undefined)
+    setFVendorQ('')
+    setVendorText('')
     setPage(1)
+  }
+
+  const VENDOR_UNSET_LABEL = '（未設定）'
+  const commitVendorFilter = (text: string) => {
+    const t = (text || '').trim()
+    setPage(1)
+    if (t === VENDOR_UNSET_LABEL) {
+      setFVendor(0)
+      setFVendorQ('')
+    } else {
+      setFVendor(undefined)
+      setFVendorQ(t)
+    }
   }
 
   const load = () => {
@@ -274,6 +297,7 @@ export default function CpItemsPage() {
       department_id: cdDept ? Number(cdDept) : undefined,
       account_code_id: fAccountCode,
       vendor_id: fVendor,
+      vendor_q: fVendorQ || undefined,
       sort_by: sortOrder ? sortBy : undefined,
       sort_order: sortOrder === 'descend' ? 'desc' : 'asc',
     })
@@ -284,7 +308,7 @@ export default function CpItemsPage() {
       .finally(() => setLoading(false))
   }
 
-  useEffect(() => { load() }, [page, q, fCategory, fCompanyDept, fAccountCode, fVendor, sortBy, sortOrder])
+  useEffect(() => { load() }, [page, q, fCategory, fCompanyDept, fAccountCode, fVendor, fVendorQ, sortBy, sortOrder])
   useEffect(() => { getVendors({ is_active: true }).then((r) => setVendors(r.data)) }, [])
   useEffect(() => { getCpDepartments({ is_active: true }).then((r) => setDepartments(r.data)) }, [])
   useEffect(() => { getCpAccountCodes({ is_active: true }).then((r) => setAccountCodes(r.data)) }, [])
@@ -482,6 +506,14 @@ export default function CpItemsPage() {
         </Space>
       </div>
 
+      {/* 2026-09-30：改為 TAB；原本的清單原封不動放在第一個 TAB */}
+      <Tabs
+        defaultActiveKey="list"
+        items={[
+          {
+            key: 'list',
+            label: '料號清單',
+            children: (
       <Card>
         {/* 2026-09-16 新增：篩選列（搜尋保留在最前面） */}
         <Space wrap style={{ marginBottom: 12 }}>
@@ -524,16 +556,24 @@ export default function CpItemsPage() {
             onChange={(v) => { setPage(1); setFAccountCode(v) }}
             options={[{ label: '未設定', value: 0 }, ...accountCodeOptions]}
           />
-          <Select
-            placeholder="供應商"
-            allowClear
-            showSearch
-            optionFilterProp="label"
-            style={{ width: 200 }}
-            value={fVendor}
-            onChange={(v) => { setPage(1); setFVendor(v) }}
-            options={[{ label: '未設定', value: 0 }, ...vendors.map((v) => ({ label: v.vendor_name, value: v.id }))]}
-          />
+          {/* 2026-09-30：供應商改為名稱模糊比對（%關鍵字%）——輸入「金百利」會同時命中
+              簡稱那筆與全名正本；可直接按 Enter，或從下拉挑一個名稱帶入 */}
+          <AutoComplete
+            style={{ width: 220 }}
+            value={vendorText}
+            options={[
+              { value: VENDOR_UNSET_LABEL },
+              ...Array.from(new Set(vendors.map((v) => v.vendor_name))).map((n) => ({ value: n })),
+            ]}
+            filterOption={(input, opt) => String(opt?.value ?? '').toLowerCase().includes(input.toLowerCase())}
+            onChange={(v) => {
+              setVendorText(v)
+              if (!v) commitVendorFilter('')
+            }}
+            onSelect={(v: string) => { setVendorText(v); commitVendorFilter(v) }}
+          >
+            <Input.Search placeholder="供應商（模糊比對）" allowClear onSearch={(v) => commitVendorFilter(v)} />
+          </AutoComplete>
           <Button icon={<ClearOutlined />} onClick={resetFilters} disabled={!hasFilter}>清除篩選</Button>
         </Space>
 
@@ -640,6 +680,13 @@ export default function CpItemsPage() {
           ]}
         />
       </Card>
+            ),
+          },
+          ...(canVendorBackfill
+            ? [{ key: 'vendor-backfill', label: '供應商資料回填', children: <VendorBackfillTab onApplied={load} /> }]
+            : []),
+        ]}
+      />
 
       {/* 新增／編輯料號 */}
       {/* 2026-09-20：Modal 寬度 640 → 1040。公司／部門／會計科目／原始單價 排成

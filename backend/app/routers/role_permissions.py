@@ -166,6 +166,9 @@ PERMISSION_DEFINITIONS = [
     {"key": "cycle_purchase_finance",  "label": "週期採購請款",       "group": "週期採購"},
     {"key": "cycle_purchase_report",   "label": "週期採購報表",       "group": "週期採購"},
     {"key": "cycle_purchase_admin",    "label": "週期採購管理設定",   "group": "週期採購"},
+    # 2026-09-30：料號主檔「供應商資料回填」TAB（同步 Ragic 廠商＋改料號/對照的供應商）。
+    # 會批次改動料號對照的叫貨供應商（影響拋轉 Ragic），採「需明確指派」，不包進 portal_general。
+    {"key": "cycle_purchase_vendor_backfill", "label": "週期採購供應商資料回填", "group": "週期採購"},
     # ── AI 助理 ──────────────────────────────────────────────────────────────
     # 開發期間預設不分配給任何角色（需手動在「角色管理→權限設定」中開放）
     # 注意：擁有 dazhi_repair_view 或 luqun_repair_view 的角色也可查詢對應地點

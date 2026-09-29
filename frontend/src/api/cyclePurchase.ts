@@ -6,6 +6,8 @@
 import apiClient from '@/api/client'
 import type {
   CpAccountCode,
+  CpBackfillApplyResult,
+  CpBackfillPreview,
   CpAuditLog,
   CpAvailableItem,
   CpCancelRagicPushResult,
@@ -173,6 +175,8 @@ export const updateCpAccountCode = (id: number, data: Partial<CpAccountCode>) =>
 
 export const getItems = (params?: {
   q?: string
+  /** 2026-09-30：供應商名稱模糊比對（%關鍵字%） */
+  vendor_q?: string
   category?: string
   /** 2026-09-21：類別主檔細分類 id；0 ＝ 尚未對應類別主檔 */
   category_id?: number
@@ -558,3 +562,12 @@ export const getAuditLog = (params?: {
   date_from?: string
   date_to?: string
 }) => apiClient.get<CpAuditLog[]>(`${BASE}/audit-log`, { params })
+
+// ── 料號主檔「供應商資料回填」（2026-09-30）──────────────────────────────────
+// 同步會依序跑 Ragic→合約廠商、合約廠商→週採供應商兩段同步再抓 Ragic，
+// 超過預設 30 秒很正常，timeout 放寬到 3 分鐘。
+export const syncVendorBackfill = () =>
+  apiClient.post<CpBackfillPreview>(`${BASE}/items/vendor-backfill/sync`, null, { timeout: 180_000 })
+
+export const applyVendorBackfill = (decisions: { vendor_id: number; ragic_id: string }[]) =>
+  apiClient.post<CpBackfillApplyResult>(`${BASE}/items/vendor-backfill/apply`, { decisions })

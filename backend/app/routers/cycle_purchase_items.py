@@ -11,6 +11,8 @@ GET    /items/{item_id}/mappings           料號對照清單
 POST   /items/{item_id}/mappings          新增料號對照
 PUT    /items/{item_id}/mappings/{id}     更新料號對照
 DELETE /items/{item_id}/mappings/{id}     刪除料號對照
+POST   /items/vendor-backfill/sync         供應商資料回填：同步 Ragic 廠商＋比對預覽（2026-09-30）
+POST   /items/vendor-backfill/apply        供應商資料回填：套用勾選的對應（2026-09-30）
 """
 from typing import Optional
 
@@ -19,6 +21,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.cycle_purchase_database import get_cycle_purchase_db
+from app.core.database import get_db
 from app.dependencies import require_permission
 from app.models.cycle_purchase_item import CyclePurchaseItemMapping
 from app.models.user import User
@@ -26,7 +29,11 @@ from app.schemas.cycle_purchase_item import (
     ItemCreate, ItemDetail, ItemListResponse, ItemMappingCreate,
     ItemMappingOut, ItemMappingUpdate, ItemOut, ItemUpdate,
 )
+from app.schemas.cycle_purchase_vendor_backfill import (
+    BackfillApplyPayload, BackfillApplyResult, BackfillPreview,
+)
 from app.services import cycle_purchase_service as svc
+from app.services import cycle_purchase_vendor_backfill_service as backfill_svc
 
 router = APIRouter()
 
@@ -49,6 +56,8 @@ def list_items(
     department_id: Optional[int] = Query(None, ge=1, description="部門 ID（料號對照）"),
     account_code_id: Optional[int] = Query(None, ge=0, description="會計科目 ID；0 = 未設定"),
     vendor_id: Optional[int] = Query(None, ge=0, description="供應商 ID（預設供應商或對照供應商）；0 = 未設定"),
+    # 2026-09-30：供應商名稱模糊比對（%關鍵字%），畫面上的供應商篩選改用這個
+    vendor_q: str = Query("", max_length=100, description="供應商名稱關鍵字（模糊比對）"),
     sort_by: Optional[str] = Query(None, description="排序欄位"),
     sort_order: str = Query("asc", pattern="^(asc|desc)$"),
     _: User = Depends(require_permission("cycle_purchase_view")),
@@ -61,7 +70,7 @@ def list_items(
         if category_ids.strip() else None,
         is_active=is_active, page=page, per_page=per_page,
         company=company, department_id=department_id, account_code_id=account_code_id,
-        vendor_id=vendor_id, sort_by=sort_by, sort_order=sort_order,
+        vendor_id=vendor_id, vendor_q=vendor_q, sort_by=sort_by, sort_order=sort_order,
     )
     return ItemListResponse(items=items, total=total, page=page, per_page=per_page)
 
@@ -236,3 +245,98 @@ def delete_item_mapping(
     if not ok:
         raise HTTPException(status_code=404, detail="料號對照不存在")
     return {"ok": True}
+
+
+# ── 供應商資料回填（2026-09-30 新增）─────────────────────────────────────────
+# 料號主檔「預設供應商」與料號對照「叫貨供應商」很多指向當初用簡稱建的週採
+# 供應商（未對照合約主檔），拋轉 Ragic 時廠商欄會是空的。這組端點以 Ragic
+# 廠商資料表的「簡稱」比對，把引用改指向週採鏡像裡的全名正本。
+# 規則與裁示見 app/services/cycle_purchase_vendor_backfill_service.py 檔頭。
+# 權限：cycle_purchase_vendor_backfill（需在「角色管理 → 權限設定」明確指派）。
+
+@router.post(
+    "/items/vendor-backfill/sync",
+    response_model=BackfillPreview,
+    summary="供應商資料回填：同步 Ragic 廠商資料並產生比對預覽（不寫入料號）",
+)
+def vendor_backfill_sync(
+    _: User = Depends(require_permission("cycle_purchase_vendor_backfill")),
+    cp_db: Session = Depends(get_cycle_purchase_db),
+    portal_db: Session = Depends(get_db),
+):
+    """
+    一鍵同步：
+      1. Ragic 廠商資料表 → 合約模組 vendors（vendor_sync，與排程同一支）
+      2. 合約模組 vendors → 週採供應商鏡像（cycle_purchase_vendor_sync）
+      3. 即時讀 Ragic 廠商資料表（含「簡稱」，portal.db 沒存這欄）產生比對預覽
+
+    ⚠ 同步 def（非 async def）：內部都是阻塞呼叫，放在 thread pool 跑，
+    不可改成 async def（2026-07-15 事件迴圈卡死事故）。
+    1、2 兩步順序相依（CLAUDE.md §9 規則 5），鎖名稱與排程一致，避免與排程同時寫入。
+    這一支**只寫廠商主檔（同步）**，料號／料號對照要等使用者按「套用」才會改。
+    """
+    import asyncio
+
+    from app.core.sync_lock import sync_lock
+    from app.services.cycle_purchase_vendor_sync import sync_from_contract
+    from app.services.vendor_sync import sync_from_ragic as sync_vendor_from_ragic
+
+    steps: list[dict] = []
+
+    try:
+        with sync_lock("廠商資料"):
+            r1 = asyncio.run(sync_vendor_from_ragic())
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Ragic → 合約廠商同步失敗：{exc}")
+    if r1.get("errors"):
+        raise HTTPException(
+            status_code=502,
+            detail="Ragic → 合約廠商同步發生錯誤：" + "；".join(str(e) for e in r1["errors"][:3]),
+        )
+    steps.append({
+        "name": "Ragic 廠商資料表 → 合約模組廠商",
+        "ok": True,
+        "message": f"讀取 {r1.get('fetched', 0)} 筆，新增 {r1.get('created', 0)}、更新 {r1.get('updated', 0)}",
+    })
+
+    try:
+        with sync_lock("週期採購供應商"):
+            r2 = asyncio.run(sync_from_contract())
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"合約廠商 → 週採供應商同步失敗：{exc}")
+    if r2.get("errors"):
+        raise HTTPException(
+            status_code=500,
+            detail="合約廠商 → 週採供應商同步發生錯誤：" + "；".join(str(e) for e in r2["errors"][:3]),
+        )
+    msg2 = f"新增 {r2.get('created', 0)}、更新 {r2.get('updated', 0)}"
+    if r2.get("warnings"):
+        msg2 += f"，提醒 {len(r2['warnings'])} 則"
+    steps.append({"name": "合約模組廠商 → 週採供應商主檔", "ok": True, "message": msg2})
+
+    try:
+        ragic_rows = backfill_svc.fetch_ragic_vendors()
+    except backfill_svc.BackfillError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+    preview = backfill_svc.build_preview(portal_db, cp_db, ragic_rows)
+    return {"sync_steps": steps, **preview}
+
+
+@router.post(
+    "/items/vendor-backfill/apply",
+    response_model=BackfillApplyResult,
+    summary="供應商資料回填：套用勾選的對應（改料號預設供應商＋料號對照叫貨供應商）",
+)
+def vendor_backfill_apply(
+    payload: BackfillApplyPayload,
+    _: User = Depends(require_permission("cycle_purchase_vendor_backfill")),
+    cp_db: Session = Depends(get_cycle_purchase_db),
+    portal_db: Session = Depends(get_db),
+):
+    try:
+        return backfill_svc.apply_backfill(
+            portal_db, cp_db, [d.model_dump() for d in payload.decisions],
+        )
+    except backfill_svc.BackfillError as exc:
+        cp_db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc))

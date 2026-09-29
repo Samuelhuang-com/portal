@@ -1041,3 +1041,67 @@ export interface CpCancelRagicPushResult {
   message: string
   next_step?: string | null
 }
+
+// ── 料號主檔「供應商資料回填」（2026-09-30）──────────────────────────────────
+// 對應後端 app/schemas/cycle_purchase_vendor_backfill.py
+
+export interface CpBackfillCandidate {
+  ragic_id: string
+  ragic_code: string
+  name: string
+  short_name: string
+  tax_id: string
+  ragic_url: string
+  score: number
+  target_vendor_id: number | null
+  target_vendor_code: string | null
+  target_vendor_name: string | null
+  selectable: boolean
+  block_reason: string | null
+}
+
+/** short＝簡稱相同／similar＝名稱相似（人工選定）／none＝Ragic 找不到 */
+export type CpBackfillMatchType = 'short' | 'similar' | 'none'
+
+export interface CpBackfillRow {
+  vendor_id: number
+  vendor_code: string
+  vendor_name: string
+  is_active: boolean
+  item_count: number
+  mapping_count: number
+  /** 尚未拋轉 Ragic、尚未轉採購單的彙整列數（2026-09-30 追加） */
+  summary_count: number
+  match_type: CpBackfillMatchType
+  candidates: CpBackfillCandidate[]
+  suggested_ragic_id: string | null
+}
+
+export interface CpBackfillPreview {
+  sync_steps: { name: string; ok: boolean; message: string }[]
+  summary: {
+    ragic_vendor_count: number
+    ragic_short_name_count: number
+    orphan_count: number
+    short_count: number
+    similar_count: number
+    none_count: number
+    items_without_vendor: number
+  }
+  rows: CpBackfillRow[]
+}
+
+export interface CpBackfillApplyResult {
+  results: {
+    vendor_id: number
+    vendor_name: string
+    target_vendor_id: number
+    target_vendor_name: string
+    items_updated: number
+    mappings_updated: number
+    summaries_updated: number
+  }[]
+  items_updated: number
+  mappings_updated: number
+  summaries_updated: number
+}
