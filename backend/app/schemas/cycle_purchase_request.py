@@ -91,6 +91,8 @@ class GeneratePreviewResult(BaseModel):
     period_label: str
     departments: List[ApplicableDepartmentOut] = []
     skipped: List[SkippedDepartmentOut] = []
+    # 2026-09-29：登入者所屬的週採部門 id（新增／複製請購單的部門下拉預設只列這些）
+    my_department_ids: List[int] = []
 
 
 class CycleGenerateStatusOut(BaseModel):

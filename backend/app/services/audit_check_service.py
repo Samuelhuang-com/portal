@@ -457,21 +457,26 @@ def carry_over_reviews(db: Session, sheet: AuditSheet) -> None:
     period = sheet.period_ref
     if period is None:
         return
-    prev = (
-        db.query(AuditPeriod)
-        .filter(AuditPeriod.period < period.period)
-        .order_by(AuditPeriod.period.desc())
+    # 2026-09-29：同一個月份可以有多期 → 「上一期」＝同公司、排在本期之前的最近一張稽核單
+    # （先比月份、同月再比期別 id），不再假設一個月只有一期。
+    from sqlalchemy import and_, or_
+    row = (
+        db.query(AuditSheet, AuditPeriod)
+        .join(AuditPeriod, AuditPeriod.id == AuditSheet.period_id)
+        .filter(
+            AuditSheet.company_id == sheet.company_id,
+            AuditSheet.id != sheet.id,
+            or_(
+                AuditPeriod.period < period.period,
+                and_(AuditPeriod.period == period.period, AuditPeriod.id < period.id),
+            ),
+        )
+        .order_by(AuditPeriod.period.desc(), AuditPeriod.id.desc())
         .first()
     )
-    if prev is None:
+    if row is None:
         return
-    prev_sheet = (
-        db.query(AuditSheet)
-        .filter(AuditSheet.period_id == prev.id, AuditSheet.company_id == sheet.company_id)
-        .first()
-    )
-    if prev_sheet is None:
-        return
+    prev_sheet, prev = row
 
     by_code, _ = result_type_maps(db)
     prev_cells = db.query(AuditCell).filter(AuditCell.sheet_id == prev_sheet.id).all()
@@ -517,10 +522,16 @@ def build_statistics(db: Session, year: int, company_id: Optional[int] = None) -
     periods = (
         db.query(AuditPeriod)
         .filter(AuditPeriod.period.like(f"{year}-%"))
-        .order_by(AuditPeriod.period)
+        .order_by(AuditPeriod.period, AuditPeriod.id)
         .all()
     )
     period_ids = [p.id for p in periods]
+    # 2026-09-29：同月可多期 → 欄位以期別 id 區分；同月第 2 期起標示「YYYY-MM (2)」
+    col_label: Dict[int, str] = {}
+    _seen: Dict[str, int] = {}
+    for p in periods:
+        _seen[p.period] = _seen.get(p.period, 0) + 1
+        col_label[p.id] = p.period if _seen[p.period] == 1 else f"{p.period} ({_seen[p.period]})"
     if not period_ids:
         return {"year": year, "note": None, "blocks": []}
 
@@ -534,14 +545,13 @@ def build_statistics(db: Session, year: int, company_id: Optional[int] = None) -
 
     by_company: Dict[int, Dict[str, AuditSheet]] = {}
     for s in sheets:
-        p = next((x for x in periods if x.id == s.period_id), None)
-        if p is None:
+        if s.period_id not in col_label:
             continue
-        by_company.setdefault(s.company_id, {})[p.period] = s
+        by_company.setdefault(s.company_id, {})[col_label[s.period_id]] = s
 
     blocks = []
     for cid, per_map in sorted(by_company.items()):
-        period_list = [p.period for p in periods if p.period in per_map]
+        period_list = [col_label[p.id] for p in periods if col_label[p.id] in per_map]
         audited_labels, major_items, completion = [], [], []
         dept_cells: Dict[int, Dict[str, dict]] = {}
 

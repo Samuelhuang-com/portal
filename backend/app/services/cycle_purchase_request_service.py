@@ -318,6 +318,37 @@ def resolve_applicable_departments(
     return included, excluded
 
 
+def assert_department_applicable(
+    db: Session, cycle: CyclePurchaseCycle, dept: CyclePurchaseDepartment
+) -> None:
+    """
+    2026-09-29（Samuel 裁示）：手動「新增請購單」與「複製上期請購單」必須套用與
+    「產生本期請購單」完全相同的適用範圍規則（適用公司 ∩ 適用部門 ∩ 品類下有料號），
+    不符合就拒絕並說明原因。
+
+    改版前這兩條路徑只檢查週期與部門「存在」，可以建出「只適用智選的週期 × 春大直
+    部門」這種單——點進去沒有料號可選、彙整時也對不上，使用者只看得到一張怪單。
+
+    直接重用 resolve_applicable_departments()，不另寫一套判斷，避免兩邊規則漂移。
+    """
+    included, excluded = resolve_applicable_departments(db, cycle)
+    if any(d.id == dept.id for d in included):
+        return
+    reason = next((e["reason"] for e in excluded if e["department_id"] == dept.id), None)
+    if not reason:
+        # resolve_applicable_departments() 刻意不把「不在適用公司／未勾選」列進 excluded
+        # （對產生預覽是雜訊），這裡要自己補上原因。
+        if not dept.is_active:
+            reason = "部門已停用"
+        elif not _company_in_scope(cycle, dept.company):
+            reason = "不屬於此週期的適用公司"
+        else:
+            reason = "不在此週期勾選的適用部門"
+    raise RequestServiceError(
+        f"「{dept.company} - {dept.dept_name}」不能建立「{cycle.cycle_name}」的請購單：{reason}"
+    )
+
+
 def preview_applicable_departments(db: Session, cycle_id: int) -> dict:
     """給前端「產生本期請購單」Modal 的預覽用：先看會產生哪些部門、哪些不會。"""
     cycle = db.query(CyclePurchaseCycle).filter(CyclePurchaseCycle.id == cycle_id).first()
@@ -724,6 +755,11 @@ def copy_request(db: Session, source_request_id: int, user) -> tuple[CyclePurcha
     dept = db.query(CyclePurchaseDepartment).filter(CyclePurchaseDepartment.id == source.department_id).first()
     if not dept:
         raise RequestServiceError("來源請購單的部門已不存在，無法複製")
+    cycle = db.query(CyclePurchaseCycle).filter(CyclePurchaseCycle.id == source.cycle_id).first()
+    if not cycle:
+        raise RequestServiceError("來源請購單的週期設定已不存在，無法複製")
+    # 2026-09-29：週期的適用公司／部門／品類可能在來源單之後改過，以「現在」的設定為準
+    assert_department_applicable(db, cycle, dept)
 
     source_items = (
         db.query(CyclePurchaseRequestItem)
@@ -821,6 +857,8 @@ def create_request(db: Session, payload) -> CyclePurchaseRequest:
     cycle = db.query(CyclePurchaseCycle).filter(CyclePurchaseCycle.id == payload.cycle_id).first()
     if not cycle:
         raise RequestServiceError("週期設定不存在")
+    # 2026-09-29：部門必須在這個週期的適用範圍內（同「產生本期請購單」規則）
+    assert_department_applicable(db, cycle, dept)
 
     period_label = _current_period_label()
 

@@ -101,12 +101,14 @@ class AuditItem(Base):
     )
 
 
-# ── 稽核期別（一個月一期）──────────────────────────────────────────────────
+# ── 稽核期別 ────────────────────────────────────────────────────────────────
+# 2026-09-29 使用者裁示：期別不設限，可無限新增；同一個月份可以有多期，
+# 不再檢查重複（UNIQUE 已由 migration audchkp 拿掉）。
 class AuditPeriod(Base):
     __tablename__ = "audit_periods"
 
     id          = Column(Integer,    primary_key=True, autoincrement=True)
-    period      = Column(String(7),  nullable=False, unique=True, comment="YYYY-MM")
+    period      = Column(String(7),  nullable=False, index=True, comment="YYYY-MM（可重複，同月可多期）")
     title       = Column(String(100), nullable=False, default="財#3系統建置稽核")
     goal_major  = Column(Integer,    nullable=False, default=3, comment="目標大項數")
     goal_minor  = Column(Integer,    nullable=False, default=3, comment="每大項目標子項數")

@@ -323,6 +323,7 @@ export interface CpGeneratePreview {
   period_label: string
   departments: CpApplicableDepartment[]
   skipped: CpSkippedDepartment[]
+  my_department_ids?: number[]   // 2026-09-29：登入者所屬週採部門（新增／複製下拉預設只列這些）
 }
 
 /** GET /requests/generate-status：「產生本期請購單」週期下拉的本期完成度（2026-09-25） */

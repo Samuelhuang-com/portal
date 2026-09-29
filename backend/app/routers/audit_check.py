@@ -319,7 +319,7 @@ def list_periods(
     q = db.query(AuditPeriod)
     if year is not None:
         q = q.filter(AuditPeriod.period.like(f"{year}-%"))
-    return [_period_out(db, p) for p in q.order_by(AuditPeriod.period.desc()).all()]
+    return [_period_out(db, p) for p in q.order_by(AuditPeriod.period.desc(), AuditPeriod.id.desc()).all()]
 
 
 @router.post("/periods", response_model=PeriodOut, status_code=201)
@@ -328,11 +328,18 @@ def create_period(
     db: Session = Depends(get_db),
     user: User = Depends(require_permission(EDIT)),
 ):
-    if db.query(AuditPeriod).filter(AuditPeriod.period == payload.period).first():
-        raise _conflict("該期別已存在")
+    # 2026-09-29 裁示：期別不設限、可無限新增，不再檢查同月份是否已存在
     p = AuditPeriod(**payload.model_dump(), created_by=str(user.id))
     db.add(p)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        # 程式已不檢查重複；會撞到這裡代表資料庫的 UNIQUE 還在（migration audchkp 未執行）
+        raise HTTPException(
+            status_code=500,
+            detail="系統設定未完成：資料庫仍限制同月份只能一期（migration audchkp 尚未執行），請通知管理員執行 alembic upgrade head",
+        )
     db.refresh(p)
     return _period_out(db, p)
 

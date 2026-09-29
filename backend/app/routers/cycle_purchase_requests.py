@@ -266,12 +266,18 @@ def generate_status(
 )
 def preview_generate_requests(
     cycle_id: int = Query(..., description="週期設定 id"),
-    _: User = Depends(require_permission("cycle_purchase_buyer")),
+    current_user: User = Depends(require_permission("cycle_purchase_buyer")),
     db: Session = Depends(get_cycle_purchase_db),
+    portal_db: Session = Depends(get_db),
 ):
     """⚠️ 路由順序：這支必須宣告在 /requests/{request_id} 之前，
-    否則 "generate-preview" 會被當成 request_id。"""
-    return _handle(svc.preview_applicable_departments, db, cycle_id)
+    否則 "generate-preview" 會被當成 request_id。
+
+    2026-09-29：「新增請購單」「複製上期請購單」的部門下拉也改用這支，只列此週期
+    適用的部門；另外回傳 my_department_ids，讓前端預設只列登入者自己的部門。"""
+    result = _handle(svc.preview_applicable_departments, db, cycle_id)
+    result["my_department_ids"] = svc.get_user_cp_department_ids(db, portal_db, current_user.id)
+    return result
 
 
 @router.get(

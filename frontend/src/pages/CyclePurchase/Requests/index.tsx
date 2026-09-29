@@ -71,7 +71,7 @@ import FlowSteps from '@/pages/CyclePurchase/components/FlowSteps'
 import MyDepartmentPeriodCard from '@/pages/CyclePurchase/components/MyDepartmentPeriodCard'
 import FlowStatusTag from '@/pages/CyclePurchase/components/FlowStatusTag'
 import { useEffect, useMemo, useState } from 'react'
-import { Alert, Button, Card, Modal, Segmented, Select, Space, Table, Tag, Tooltip, Typography, message } from 'antd'
+import { Alert, Button, Card, Checkbox, Modal, Segmented, Select, Space, Table, Tag, Tooltip, Typography, message } from 'antd'
 import {
   CheckCircleOutlined, CopyOutlined, DeleteOutlined, InfoCircleOutlined, EditOutlined, EyeOutlined, ExclamationCircleOutlined,
   LockOutlined, PlusOutlined, ThunderboltOutlined, UnlockOutlined,
@@ -88,6 +88,20 @@ import type {
 import { useAuthStore } from '@/stores/authStore'
 
 const { Title, Text } = Typography
+
+/**
+ * 2026-09-29（Samuel 裁示）：「新增請購單」「複製上期請購單」的部門下拉。
+ * - 只列「這個週期適用」的部門（沿用產生前預覽 API，規則與「產生本期請購單」一致），
+ *   避免選出「只適用智選的週期 × 春大直部門」這種對不上的組合。後端也會擋。
+ * - 預設只列登入者自己的部門；勾「顯示全部部門」才列此週期全部適用部門。
+ */
+function applicableDeptOptions(preview: CpGeneratePreview | null, showAll: boolean) {
+  if (!preview) return []
+  const mine = new Set(preview.my_department_ids ?? [])
+  return preview.departments
+    .filter((d) => showAll || mine.has(d.department_id))
+    .map((d) => ({ label: `${d.company} - ${d.department_name}`, value: d.department_id }))
+}
 
 // 2026-07-17：拿掉送出/核准狀態機，狀態欄位只剩改版前的歷史殘留值（新資料
 // 一律是 draft），畫面改用 is_closed 判斷開放中／已關閉，不再需要狀態對照表。
@@ -181,6 +195,10 @@ export default function CpRequestsPage() {
   const [creating, setCreating] = useState(false)
   const [createCycleId, setCreateCycleId] = useState<number | undefined>(undefined)
   const [createDeptId, setCreateDeptId] = useState<number | undefined>(undefined)
+  // 2026-09-29：先選週期 → 部門下拉只列此週期適用部門（預設只列自己部門）
+  const [createPreview, setCreatePreview] = useState<CpGeneratePreview | null>(null)
+  const [createPreviewLoading, setCreatePreviewLoading] = useState(false)
+  const [createShowAll, setCreateShowAll] = useState(false)
 
   // 2026-08-13 新增：複製上期請購單
   const [copyModal, setCopyModal] = useState(false)
@@ -190,6 +208,9 @@ export default function CpRequestsPage() {
   const [copyCandidates, setCopyCandidates] = useState<CpCopySourceCandidate[]>([])
   const [copyCandidatesLoading, setCopyCandidatesLoading] = useState(false)
   const [copySourceId, setCopySourceId] = useState<number | undefined>(undefined)
+  const [copyPreview, setCopyPreview] = useState<CpGeneratePreview | null>(null)
+  const [copyPreviewLoading, setCopyPreviewLoading] = useState(false)
+  const [copyShowAll, setCopyShowAll] = useState(false)
 
   const [generateModal, setGenerateModal] = useState(false)
   const [generating, setGenerating] = useState(false)
@@ -249,7 +270,52 @@ export default function CpRequestsPage() {
   const openCreate = () => {
     setCreateCycleId(undefined)
     setCreateDeptId(undefined)
+    setCreatePreview(null)
+    setCreateShowAll(false)
     setCreateModal(true)
+  }
+
+  /** 2026-09-29：選週期 → 抓此週期適用部門（清掉已選部門，避免殘留不適用的組合） */
+  const loadDeptPreview = async (
+    id: number | undefined,
+    setPreview: (p: CpGeneratePreview | null) => void,
+    setLoadingFlag: (b: boolean) => void,
+  ) => {
+    setPreview(null)
+    if (!id) return
+    setLoadingFlag(true)
+    try {
+      const res = await previewGenerateRequests(id)
+      setPreview(res.data)
+    } catch (err: any) {
+      message.error(errMsg(err, '無法取得此週期的適用部門'))
+    } finally {
+      setLoadingFlag(false)
+    }
+  }
+
+  const handleCreateCycleChange = (id: number) => {
+    setCreateCycleId(id)
+    setCreateDeptId(undefined)
+    loadDeptPreview(id, setCreatePreview, setCreatePreviewLoading)
+  }
+
+  const handleCopyCycleChange = (id: number) => {
+    setCopyCycleId(id)
+    setCopyDeptId(undefined)
+    loadDeptPreview(id, setCopyPreview, setCopyPreviewLoading)
+  }
+
+  const createDeptOptions = useMemo(() => applicableDeptOptions(createPreview, createShowAll), [createPreview, createShowAll])
+  const copyDeptOptions = useMemo(() => applicableDeptOptions(copyPreview, copyShowAll), [copyPreview, copyShowAll])
+
+  /** 部門下拉的空清單提示：沒選週期／週期沒有適用部門／自己不屬於任何適用部門 */
+  const deptEmptyHint = (cycleSel: number | undefined, preview: CpGeneratePreview | null, loadingFlag: boolean, showAll: boolean) => {
+    if (!cycleSel) return '請先選擇週期'
+    if (loadingFlag) return '載入中…'
+    if (!preview || preview.departments.length === 0) return '這個週期目前沒有適用的部門'
+    if (!showAll) return '你不屬於這個週期的任何適用部門，請勾選「顯示全部部門」'
+    return '沒有可選的部門'
   }
 
   const handleCreate = async () => {
@@ -278,6 +344,8 @@ export default function CpRequestsPage() {
   const openCopy = () => {
     setCopyCycleId(undefined)
     setCopyDeptId(undefined)
+    setCopyPreview(null)
+    setCopyShowAll(false)
     setCopyCandidates([])
     setCopySourceId(undefined)
     setCopyModal(true)
@@ -844,20 +912,31 @@ export default function CpRequestsPage() {
             optionFilterProp="label"
             placeholder="選擇週期"
             value={createCycleId}
-            onChange={setCreateCycleId}
+            onChange={handleCreateCycleChange}
             options={activeCycles.map((c) => ({ label: c.cycle_name, value: c.id }))}
           />
         </div>
         <div style={{ marginBottom: 8 }}>
-          <div style={{ marginBottom: 4 }}>部門</div>
+          <div style={{ marginBottom: 4, display: 'flex', justifyContent: 'space-between' }}>
+            <span>部門（只列此週期適用的部門）</span>
+            <Checkbox
+              checked={createShowAll}
+              onChange={(e) => { setCreateShowAll(e.target.checked); setCreateDeptId(undefined) }}
+            >
+              顯示全部部門
+            </Checkbox>
+          </div>
           <Select
             style={{ width: '100%' }}
             showSearch
             optionFilterProp="label"
-            placeholder="選擇部門"
+            placeholder={createCycleId ? '選擇部門' : '請先選擇週期'}
+            disabled={!createCycleId}
+            loading={createPreviewLoading}
             value={createDeptId}
             onChange={setCreateDeptId}
-            options={departments.map((d) => ({ label: `${d.company} - ${d.dept_name}`, value: d.id }))}
+            options={createDeptOptions}
+            notFoundContent={deptEmptyHint(createCycleId, createPreview, createPreviewLoading, createShowAll)}
           />
         </div>
         <div style={{ color: '#888', fontSize: 12 }}>
@@ -887,20 +966,31 @@ export default function CpRequestsPage() {
             optionFilterProp="label"
             placeholder="選擇週期"
             value={copyCycleId}
-            onChange={(v) => { setCopyCycleId(v); setCopyDeptId(undefined) }}
+            onChange={handleCopyCycleChange}
             options={activeCycles.map((c) => ({ label: c.cycle_name, value: c.id }))}
           />
         </div>
         <div style={{ marginBottom: 8 }}>
-          <div style={{ marginBottom: 4 }}>部門</div>
+          <div style={{ marginBottom: 4, display: 'flex', justifyContent: 'space-between' }}>
+            <span>部門（只列此週期適用的部門）</span>
+            <Checkbox
+              checked={copyShowAll}
+              onChange={(e) => { setCopyShowAll(e.target.checked); setCopyDeptId(undefined) }}
+            >
+              顯示全部部門
+            </Checkbox>
+          </div>
           <Select
             style={{ width: '100%' }}
             showSearch
             optionFilterProp="label"
-            placeholder="選擇部門"
+            placeholder={copyCycleId ? '選擇部門' : '請先選擇週期'}
+            disabled={!copyCycleId}
+            loading={copyPreviewLoading}
             value={copyDeptId}
             onChange={setCopyDeptId}
-            options={departments.map((d) => ({ label: `${d.company} - ${d.dept_name}`, value: d.id }))}
+            options={copyDeptOptions}
+            notFoundContent={deptEmptyHint(copyCycleId, copyPreview, copyPreviewLoading, copyShowAll)}
           />
         </div>
         {copyCycleId && copyDeptId && (
