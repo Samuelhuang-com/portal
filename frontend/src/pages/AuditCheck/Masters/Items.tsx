@@ -110,7 +110,7 @@ export default function AuditItemsMasterPage() {
           <span style={{ fontWeight: row.parent_id == null ? 600 : 400, color: row.parent_id == null ? '#1B3A5C' : undefined }}>
             {v}
           </span>
-          {row.in_use && <Tooltip title="已被稽核單引用：可改名（不影響既有稽核單），不可刪除"><Tag color="blue">使用中</Tag></Tooltip>}
+          {row.in_use && <Tooltip title="已被稽核單引用：改名或刪除都不影響既有稽核單（含進行中）"><Tag color="blue">使用中</Tag></Tooltip>}
           {!row.is_active && <Tag>停用</Tag>}
         </Space>
       ),
@@ -133,11 +133,20 @@ export default function AuditItemsMasterPage() {
           >
             <Button size="small" danger={row.is_active}>{row.is_active ? '停用' : '啟用'}</Button>
           </Popconfirm>
-          {!row.in_use && (
-            <Popconfirm title="確認刪除？" onConfirm={() => remove(row)} okText="刪除" cancelText="取消">
-              <Button size="small" type="text" danger icon={<DeleteOutlined />} />
-            </Popconfirm>
-          )}
+          <Popconfirm
+            title="確認刪除？"
+            description={
+              <div style={{ maxWidth: 320 }}>
+                {row.parent_id == null && (row.children?.length ?? 0) > 0 && <div>底下的子項會一併刪除。</div>}
+                {row.in_use || (row.children ?? []).some((c) => c.in_use)
+                  ? <div>此項已被稽核單使用：刪除後主檔與勾選清單不再出現，新的稽核單選不到；<b>既有稽核單（含進行中）的列、名稱、評語與分數完全不變。</b></div>
+                  : <div>尚未被任何稽核單使用，將直接刪除。</div>}
+              </div>
+            }
+            onConfirm={() => remove(row)} okText="刪除" cancelText="取消"
+          >
+            <Button size="small" type="text" danger icon={<DeleteOutlined />} />
+          </Popconfirm>
         </Space>
       ),
     },

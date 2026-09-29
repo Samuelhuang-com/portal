@@ -800,6 +800,35 @@ export default function AuditSheetEditorPage() {
             </div>
           ))}
         </div>
+        {(() => {
+          // 本張已有、但主檔已刪除／停用的子項：照舊保留，列在這裡讓人看得到也能自行取消
+          const visible = new Set(
+            allItems.filter((m) => m.is_active)
+              .flatMap((m) => (m.children ?? []).filter((c) => c.is_active).map((c) => c.id)),
+          )
+          const hidden = detail
+            ? detail.items.filter((x) => x.level === 2 && !visible.has(x.item_id))
+            : []
+          if (hidden.length === 0) return null
+          return (
+            <div style={{ border: '1px dashed #d9d9d9', borderRadius: 6, padding: 12, marginTop: 8 }}>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                以下項目已從主檔刪除或停用，本張稽核單照舊保留；取消勾選才會從本張移除
+              </Text>
+              <div style={{ marginTop: 4 }}>
+                <Checkbox.Group
+                  value={pickedItems.filter((pid) => hidden.some((h) => h.item_id === pid))}
+                  onChange={(vals) => {
+                    const hiddenIds = hidden.map((h) => h.item_id)
+                    const others = pickedItems.filter((pid) => !hiddenIds.includes(pid))
+                    setPickedItems([...others, ...(vals as number[])])
+                  }}
+                  options={hidden.map((h) => ({ value: h.item_id, label: h.name }))}
+                />
+              </div>
+            </div>
+          )
+        })()}
         <Tooltip title="移除的列或欄，其已填寫的評語會一併刪除">
           <Text type="warning" style={{ fontSize: 12 }}>⚠️ 取消勾選會連同該列／該欄已填的評語一起刪除</Text>
         </Tooltip>

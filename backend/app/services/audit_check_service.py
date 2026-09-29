@@ -111,7 +111,7 @@ def sheet_item_name(si: AuditSheetItem) -> str:
 
 
 def item_in_use(db: Session, item_id: int) -> bool:
-    """檢查項是否已被任一期稽核單引用（被引用者不可刪除，只能停用；改名不受限）。"""
+    """檢查項是否已被任一期稽核單引用（被引用者刪除時改為軟刪除；改名不受限）。"""
     return db.query(AuditSheetItem.id).filter(AuditSheetItem.item_id == item_id).first() is not None
 
 
@@ -292,7 +292,7 @@ def build_sheet_detail(db: Session, sheet: AuditSheet) -> dict:
             "level": 2 if si.parent_sheet_item_id is not None else 1,
             "display_no": si.display_no,
             "name": sheet_item_name(si),
-            "master_name": si.item.name if si.item else None,
+            "master_name": si.item.name if (si.item and si.item.deleted_at is None) else None,
             "scope_note": si.scope_note,
             "target_department_ids": targets.get(si.id, []),
             "sort_order": si.sort_order,
@@ -380,6 +380,12 @@ def apply_layout(
     # ── 檢查項列（先算出「大項 → 子項」的完整結構）────────────────────────
     spec_by_item = {s.item_id: s for s in item_specs}
     all_items = {i.id: i for i in db.query(AuditItem).filter(AuditItem.id.in_(spec_by_item.keys())).all()}
+    # 已從主檔刪除（軟刪除）的項目：本張原本就有的列照舊保留；不允許新加入
+    _already = {si.item_id for si in sheet.items}
+    all_items = {
+        iid: it for iid, it in all_items.items()
+        if it.deleted_at is None or iid in _already
+    }
 
     majors: List[int] = []
     minors_by_major: Dict[int, List[int]] = {}

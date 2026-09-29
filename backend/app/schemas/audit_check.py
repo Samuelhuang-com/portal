@@ -64,7 +64,7 @@ class ItemOut(BaseModel):
     description: Optional[str]
     sort_order: int
     is_active: bool
-    in_use: bool = Field(False, description="是否已被任一期稽核單引用（True 則不可改名／刪除）")
+    in_use: bool = Field(False, description="是否已被任一期稽核單引用（True 時刪除改為軟刪除，既有稽核單不受影響）")
     children: List["ItemOut"] = []
 
     class Config:

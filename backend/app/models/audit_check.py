@@ -31,8 +31,8 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import (
-    Boolean, Column, Date, DateTime, ForeignKey, Integer, String, Text,
-    UniqueConstraint,
+    Boolean, Column, Date, DateTime, ForeignKey, Index, Integer, String, Text,
+    UniqueConstraint, text,
 )
 from sqlalchemy.orm import relationship
 
@@ -79,8 +79,14 @@ class AuditItem(Base):
     存在 AuditSheetItem.scope_note 與 AuditItemTarget。
     """
     __tablename__ = "audit_items"
+    # 2026-09-29：同層名稱唯一只看「未刪除」的項目（軟刪除後可再建同名項目）
     __table_args__ = (
-        UniqueConstraint("parent_id", "name", name="uq_audit_items_parent_name"),
+        Index(
+            "uq_audit_items_parent_name_live", "parent_id", "name",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+            sqlite_where=text("deleted_at IS NULL"),
+        ),
     )
 
     id          = Column(Integer,     primary_key=True, autoincrement=True)
@@ -89,6 +95,8 @@ class AuditItem(Base):
     description = Column(Text,        nullable=True,  comment="說明")
     sort_order  = Column(Integer,     nullable=False, default=0)
     is_active   = Column(Boolean,     nullable=False, default=True)
+    deleted_at  = Column(DateTime,    nullable=True,
+                         comment="軟刪除時間（2026-09-29）：已被稽核單引用的項目刪除時只標記，主檔與勾選清單不再出現；既有稽核單的列不受影響")
     created_at  = Column(DateTime,    nullable=False, default=_now)
     updated_at  = Column(DateTime,    nullable=False, default=_now, onupdate=_now)
 

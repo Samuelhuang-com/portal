@@ -149,7 +149,7 @@ def delete_result_type(
 # 檢查項主檔
 # ════════════════════════════════════════════════════════════════════════════
 def _item_tree(db: Session, include_inactive: bool) -> List[dict]:
-    q = db.query(AuditItem)
+    q = db.query(AuditItem).filter(AuditItem.deleted_at.is_(None))
     if not include_inactive:
         q = q.filter(AuditItem.is_active.is_(True))
     rows = q.order_by(AuditItem.sort_order, AuditItem.id).all()
@@ -194,7 +194,9 @@ def create_item(
     _: User = Depends(require_permission(ADMIN)),
 ):
     if payload.parent_id is not None:
-        parent = db.query(AuditItem).filter(AuditItem.id == payload.parent_id).first()
+        parent = db.query(AuditItem).filter(
+            AuditItem.id == payload.parent_id, AuditItem.deleted_at.is_(None),
+        ).first()
         if parent is None:
             raise _not_found("查無上層大項")
         if parent.parent_id is not None:
@@ -221,7 +223,7 @@ def update_item(
     db: Session = Depends(get_db),
     _: User = Depends(require_permission(ADMIN)),
 ):
-    item = db.query(AuditItem).filter(AuditItem.id == item_id).first()
+    item = db.query(AuditItem).filter(AuditItem.id == item_id, AuditItem.deleted_at.is_(None)).first()
     if item is None:
         raise _not_found("查無此檢查項")
     data = payload.model_dump(exclude_unset=True)
@@ -248,7 +250,7 @@ def toggle_item(
     db: Session = Depends(get_db),
     _: User = Depends(require_permission(ADMIN)),
 ):
-    item = db.query(AuditItem).filter(AuditItem.id == item_id).first()
+    item = db.query(AuditItem).filter(AuditItem.id == item_id, AuditItem.deleted_at.is_(None)).first()
     if item is None:
         raise _not_found("查無此檢查項")
     item.is_active = not item.is_active
@@ -270,16 +272,24 @@ def delete_item(
     db: Session = Depends(get_db),
     _: User = Depends(require_permission(ADMIN)),
 ):
-    item = db.query(AuditItem).filter(AuditItem.id == item_id).first()
+    item = db.query(AuditItem).filter(AuditItem.id == item_id, AuditItem.deleted_at.is_(None)).first()
     if item is None:
         raise _not_found("查無此檢查項")
-    if svc.item_in_use(db, item_id):
-        raise _conflict("此檢查項已被稽核單引用，不可刪除；如不再使用請改為「停用」")
-    child_ids = [c.id for c in db.query(AuditItem).filter(AuditItem.parent_id == item_id).all()]
-    for cid in child_ids:
-        if svc.item_in_use(db, cid):
-            raise _conflict("底下的子項已被稽核單引用，不可刪除；如不再使用請改為「停用」")
-    db.delete(item)
+    # 2026-09-29 裁示：開放刪除，但不可影響歷史與進行中的稽核單。
+    #   - 自己與子項都沒被任何稽核單引用 → 真的刪除（子項由 FK CASCADE 一併刪）
+    #   - 有任何一個被引用 → 軟刪除（標 deleted_at＋停用，連同子項）：主檔與勾選清單
+    #     不再出現、新稽核單選不到；既有稽核單的列、名稱快照、評語、分數全部照舊。
+    children = db.query(AuditItem).filter(
+        AuditItem.parent_id == item_id, AuditItem.deleted_at.is_(None),
+    ).all()
+    ids = [item_id] + [c.id for c in children]
+    if any(svc.item_in_use(db, i) for i in ids):
+        now = twnow()
+        for it in [item] + children:
+            it.deleted_at = now
+            it.is_active = False
+    else:
+        db.delete(item)
     db.commit()
     return Response(status_code=204)
 
