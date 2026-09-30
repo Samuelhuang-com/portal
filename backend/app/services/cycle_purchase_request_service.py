@@ -97,6 +97,12 @@ from app.models.cycle_purchase_reference import (
 from app.models.cycle_purchase_item import CyclePurchaseItem, CyclePurchaseItemMapping
 
 
+def _default_cost_center_id(db: Session, department_id: Optional[int]) -> Optional[int]:
+    """部門預設成本中心（2026-09-30）。延遲匯入避免與 cycle_purchase_service 循環匯入。"""
+    from app.services.cycle_purchase_service import resolve_default_cost_center_id
+    return resolve_default_cost_center_id(db, department_id)
+
+
 class RequestServiceError(Exception):
     """給 router 轉成適當 HTTP 錯誤用的一般性例外。"""
     pass
@@ -433,6 +439,8 @@ def generate_requests_for_period(db: Session, cycle_id: int) -> tuple[list[Cycle
             period_label=period_label,
             department_id=dept.id,
             company=dept.company,
+            # 2026-09-30：帶入部門預設成本中心（規則見 cycle_purchase_service）
+            cost_center_id=_default_cost_center_id(db, dept.id),
             status="draft",
             total_amount=0,
         )
@@ -776,7 +784,8 @@ def copy_request(db: Session, source_request_id: int, user) -> tuple[CyclePurcha
         period_label=_current_period_label(),
         department_id=source.department_id,
         company=dept.company,
-        cost_center_id=source.cost_center_id,
+        # 2026-09-30：來源單有選就沿用，沒選就帶部門預設成本中心
+        cost_center_id=source.cost_center_id or _default_cost_center_id(db, source.department_id),
         status="draft",
         total_amount=0,
         notes=f"複製自 {source.request_no}（{source.period_label}）",
@@ -885,7 +894,8 @@ def create_request(db: Session, payload) -> CyclePurchaseRequest:
         period_label=period_label,
         department_id=payload.department_id,
         company=dept.company,
-        cost_center_id=payload.cost_center_id,
+        # 2026-09-30：沒指定就帶部門預設成本中心
+        cost_center_id=payload.cost_center_id or _default_cost_center_id(db, payload.department_id),
         status="draft",
         total_amount=0,
     )

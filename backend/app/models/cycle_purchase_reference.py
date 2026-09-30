@@ -81,6 +81,11 @@ class CyclePurchaseCostCenter(CyclePurchaseBase):
     cc_code    = Column(String(30),  nullable=False, comment="成本中心代碼")
     cc_name    = Column(String(100), nullable=False, comment="成本中心名稱")
     is_active  = Column(Boolean,     nullable=False, default=True)
+    # 2026-09-30（migration cpccdefault）：部門的預設成本中心，每部門最多一組
+    # （partial unique index uq_cp_cc_dept_default）。請購單新增／複製／產生時帶入，
+    # 判定規則見 cycle_purchase_service.resolve_default_cost_center_id。
+    is_default = Column(Boolean,     nullable=False, default=False, server_default="false",
+                        comment="是否為該部門的預設成本中心（每部門最多一組）")
     created_at = Column(DateTime,    nullable=False, server_default=func.now())
 
     department = relationship("CyclePurchaseDepartment", back_populates="cost_centers")

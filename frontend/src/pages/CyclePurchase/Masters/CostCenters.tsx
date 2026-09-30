@@ -1,5 +1,9 @@
 /**
  * 週期採購 — 成本中心主檔維護（依附於部門主檔）
+ *
+ * 2026-09-30 新增「預設」：每個部門最多一組，勾選時同部門其他組自動取消（後端處理）。
+ * 請購單新增／複製／產生時自動帶入；存檔後也會補上該部門「開放中且成本中心空白」的請購單。
+ * 部門只有一組啟用中的成本中心時，不勾也視同預設。
  */
 import { useEffect, useState } from 'react'
 import {
@@ -44,7 +48,7 @@ export default function CpCostCentersPage() {
   const openCreate = () => {
     setEditing(null)
     form.resetFields()
-    form.setFieldsValue({ is_active: true })
+    form.setFieldsValue({ is_active: true, is_default: false })
     setModalOpen(true)
   }
 
@@ -90,6 +94,12 @@ export default function CpCostCentersPage() {
             { title: '所屬部門', dataIndex: 'department_name', width: 160 },
             { title: '成本中心代碼', dataIndex: 'cc_code', width: 120 },
             { title: '成本中心名稱', dataIndex: 'cc_name' },
+            {
+              title: '預設',
+              dataIndex: 'is_default',
+              width: 80,
+              render: (v: boolean) => (v ? <Tag color="blue">預設</Tag> : null),
+            },
             {
               title: '狀態',
               dataIndex: 'is_active',
@@ -143,6 +153,14 @@ export default function CpCostCentersPage() {
             <Input />
           </Form.Item>
           <Form.Item name="is_active" label="是否啟用" valuePropName="checked">
+            <Switch />
+          </Form.Item>
+          <Form.Item
+            name="is_default"
+            label="部門預設成本中心"
+            valuePropName="checked"
+            extra="每個部門只能有一組預設，勾選後同部門其他組會自動取消。請購單會自動帶入預設值；部門只有一組時不勾也會自動帶入。"
+          >
             <Switch />
           </Form.Item>
         </Form>

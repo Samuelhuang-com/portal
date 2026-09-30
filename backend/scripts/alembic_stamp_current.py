@@ -214,6 +214,14 @@ def _chk_cpitemcat(insp) -> bool:
         return False
 
 
+def _chk_cpccdefault(insp) -> bool:
+    try:
+        _col(insp, "cycle_purchase_cost_centers", "is_default")
+        return True
+    except LookupError:
+        return False
+
+
 MAIN_CHAIN = [
     ("baseline_main", "建立全部資料表",                    _chk_baseline, []),
     ("widen7",        "4 張巡檢表 result_raw 放寬為 TEXT", _chk_widen7,   []),
@@ -245,6 +253,8 @@ CP_CHAIN = [
      [("cycle_purchase_departments", "ragic_dept")]),
     ("cpitemcat",   "cycle_purchase_items.category_id",        _chk_cpitemcat,
      [("cycle_purchase_items", "category_id")]),
+    ("cpccdefault", "cycle_purchase_cost_centers.is_default",  _chk_cpccdefault,
+     [("cycle_purchase_cost_centers", "is_default")]),
 ]
 
 

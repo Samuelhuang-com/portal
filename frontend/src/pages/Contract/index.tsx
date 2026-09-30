@@ -24,7 +24,7 @@ import {
   ClockCircleOutlined, AuditOutlined,
   ExpandOutlined, CompressOutlined,
   SafetyOutlined, CheckSquareOutlined, SolutionOutlined, DashboardOutlined,
-  CopyOutlined, BranchesOutlined,
+  CopyOutlined, BranchesOutlined, EyeOutlined,
 } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import type { ColumnsType, TableProps } from 'antd/es/table'
@@ -504,42 +504,50 @@ export default function ContractListPage() {
     },
     {
       title: '操作',
-      width: 160,
+      width: 110,
       fixed: 'right',
+      align: 'center' as const,
+      // 圖示按鈕＋Tooltip，縮窄操作欄避免表格過寬
       render: (_, record) => (
-        <Space size="small">
-          <Button
-            type="link"
-            size="small"
-            onClick={(e) => {
-              e.stopPropagation()
-              setSelectedContract(record)
-              setDrawerOpen(true)
-            }}
-          >
-            查看
-          </Button>
-          <Button
-            type="link"
-            size="small"
-            onClick={(e) => {
-              e.stopPropagation()
-              openCopyRenewModal(record)
-            }}
-          >
-            複製續約
-          </Button>
-          <Button
-            type="link"
-            size="small"
-            danger
-            onClick={(e) => {
-              e.stopPropagation()
-              handleDelete(record.contract_id)
-            }}
-          >
-            刪除
-          </Button>
+        <Space size={4}>
+          <Tooltip title="查看">
+            <Button
+              type="link"
+              size="small"
+              icon={<EyeOutlined />}
+              aria-label="查看"
+              onClick={(e) => {
+                e.stopPropagation()
+                setSelectedContract(record)
+                setDrawerOpen(true)
+              }}
+            />
+          </Tooltip>
+          <Tooltip title="複製續約">
+            <Button
+              type="link"
+              size="small"
+              icon={<CopyOutlined />}
+              aria-label="複製續約"
+              onClick={(e) => {
+                e.stopPropagation()
+                openCopyRenewModal(record)
+              }}
+            />
+          </Tooltip>
+          <Tooltip title="刪除">
+            <Button
+              type="link"
+              size="small"
+              danger
+              icon={<DeleteOutlined />}
+              aria-label="刪除"
+              onClick={(e) => {
+                e.stopPropagation()
+                handleDelete(record.contract_id)
+              }}
+            />
+          </Tooltip>
         </Space>
       ),
     },
@@ -757,6 +765,8 @@ export default function ContractListPage() {
           }}
           onChange={handleTableChange}
           rowKey="contract_id"
+          // 有 fixed 欄位時必須設 scroll.x，否則表格會撐出 Card 跑到畫面右側
+          scroll={{ x: 1390 }}
           expandable={{
             rowExpandable: (record) => !!record.is_renewal_copy || !!record.has_renewal_children,
             expandedRowRender: (record) => <ContractFamilyTree contractId={record.contract_id} />,

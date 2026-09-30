@@ -342,6 +342,7 @@ export default function VendorListPage() {
           }}
           onChange={handleTableChange}
           rowKey="vendor_id"
+          scroll={{ x: 1100 }}
           onRow={(record) => ({
             onClick: () => {
               setSelectedVendor(record)

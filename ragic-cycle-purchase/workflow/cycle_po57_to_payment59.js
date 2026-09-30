@@ -1,5 +1,5 @@
 /**
- * cycle_po57_to_payment59.js  v1.2  (2026-09-28)
+ * cycle_po57_to_payment59.js  v1.3  (2026-09-30)
  *
  * Ragic 伺服器端 JavaScript Workflow ——「★週採採購單」(sheet 57) 的「拋轉請款單」按鈕
  * 把一張 57 週期採購單拋成一張「★週期請款單」(sheet 59)，並把請款單號寫回 57「請款單號」。
@@ -14,6 +14,13 @@
  *   · 57 的「XX部 小計」列（料號空白）不直接複製；v1.1 起由本程式依部門重算，
  *     每個部門最後插一列「XX部 小計」（產品名稱＝「XX部 小計」、數量空白、擬定廠商金額＝部門小計）
  *
+ * v1.3（Samuel 2026-09-30 裁示）59 子表新版型：
+ *   品項列：單價(F)＝57 擬定廠商單價、廠商金額(G)＝57 擬定廠商金額、實際驗收數量(H)＝57 數量（預帶，驗收時人工改）
+ *           實際收貨金額(I) 是 Ragic 公式 H7*F7，程式不寫
+ *   部門小計列：產品名稱「XX部 小計」、廠商金額(G)＝部門廠商金額合計、收貨小計＝部門實際收貨金額合計（拋轉當下；之後人工改）
+ *   59 主表「小計」＝I 加總；小計列沒有數量／單價，I＝0，不會重複計入
+ *
+ * （以下 v1.1 說明已不適用 —— 59 子表欄位已改版）
  * ⚠️ v1.1 前提：59 子表「擬定廠商金額(未稅)」G7 公式要改成
  *        IF(C7.RAW='', 0, IF(E11.RAW = "Yes", ROUND(F7/1.05), F7))
  *     （數量空白＝小計列 → 0），主表「小計」＝G7 加總才不會把部門小計重複算進去。
@@ -30,7 +37,7 @@
  * ⚠️ Ragic 伺服器端是 ES5：只能用 var／function。
  */
 
-var PAY_VERSION = "v1.2";
+var PAY_VERSION = "v1.3";
 
 var PO57P = {
   path: "/community-management-department/57",
@@ -49,6 +56,7 @@ var PO57P = {
   S_QTY: "1020781",
   S_UNIT: "1020782",
   S_NOTE: "1020783",
+  S_AMOUNT57: "1020785",   // 擬定廠商金額（v1.3：直接拋到 59「廠商金額」）
   S_PRICE: "1020784",
   S_DEPT: "1020799"
 };
@@ -74,7 +82,10 @@ var PAY59 = {
   S_QTY: 1020964,
   S_UNIT: 1020965,
   S_NOTE: 1020966,
-  S_AMOUNT: 1020967       // 擬定廠商金額（未稅＝數量×單價）
+  S_PRICE: 1020967,       // 單價（v1.3）
+  S_AMOUNT: 1020968,      // 廠商金額（v1.3：＝57 擬定廠商金額；小計列＝部門合計）
+  S_RECV_QTY: 1021011,    // 實際驗收數量（v1.3：預帶 57 數量，驗收時人工改）
+  S_RECV_SUB: null        // ⚠️ v1.3「收貨小計」欄位代號：Ragic 建好後填入（null＝不寫）
 };
 
 var PAY_DEFAULTS = {
@@ -150,11 +161,13 @@ function convertCyclePOToPayment(recordId) {
     if (!price) { problems.push(label + "：單價不可為 0 或空白"); }
     var dept = _pt(src.getSubtableFieldValue(PO57P.SUB, i, PO57P.S_DEPT));
     var note = _pt(src.getSubtableFieldValue(PO57P.SUB, i, PO57P.S_NOTE));
-    var amount = (qty || 0) * (price || 0);
+    // v1.3：金額直接取 57「擬定廠商金額」
+    var amount = _pn(src.getSubtableFieldValue(PO57P.SUB, i, PO57P.S_AMOUNT57));
+    if (!amount) { problems.push(label + "：擬定廠商金額不可為 0 或空白"); amount = 0; }
     total += amount;
     lines.push({
       dept: dept, code: code,
-      name: name, qty: qty, unit: _pt(src.getSubtableFieldValue(PO57P.SUB, i, PO57P.S_UNIT)),
+      name: name, qty: qty, price: price, unit: _pt(src.getSubtableFieldValue(PO57P.SUB, i, PO57P.S_UNIT)),
       // 59 子表沒有部門／料號欄，放進品項備註保留追溯
       note: dept + "｜" + code + (note ? "｜" + note : ""),
       amount: Math.round(amount * 100) / 100
@@ -206,7 +219,12 @@ function convertCyclePOToPayment(recordId) {
     var row = rows[r];
     pay.setSubtableFieldValue(PAY59.S_NAME, key, row.name);
     pay.setSubtableFieldValue(PAY59.S_AMOUNT, key, String(row.amount));
-    if (!row.subtotal) {
+    if (row.subtotal) {
+      // 收貨小計＝拋轉當下的實際收貨金額合計（實際驗收數量預帶 57 數量，所以＝部門廠商金額合計）
+      if (PAY59.S_RECV_SUB) { pay.setSubtableFieldValue(PAY59.S_RECV_SUB, key, String(row.amount)); }
+    } else {
+      pay.setSubtableFieldValue(PAY59.S_PRICE, key, String(row.price));
+      pay.setSubtableFieldValue(PAY59.S_RECV_QTY, key, String(row.qty));
       pay.setSubtableFieldValue(PAY59.S_QTY, key, String(row.qty));
       pay.setSubtableFieldValue(PAY59.S_UNIT, key, row.unit);
       pay.setSubtableFieldValue(PAY59.S_NOTE, key, row.note);
@@ -226,9 +244,8 @@ function convertCyclePOToPayment(recordId) {
   var sub59 = _pn(saved.getFieldValue(PAY59.F_SUBTOTAL));
   var subWarn = "";
   if (sub59 !== null && Math.abs(sub59 - itemTotal) > 0.01) {
-    subWarn = "\n⚠️ 59「小計」為 " + sub59 + "，但品項合計為 " + itemTotal +
-              "：部門小計被重複計入了。請把 59 子表「擬定廠商金額(未稅)」公式改成 " +
-              "IF(C7.RAW='', 0, IF(E11.RAW = \"Yes\", ROUND(F7/1.05), F7)) 後，開啟這張請款單重新儲存。";
+    subWarn = "\n⚠️ 59「小計」為 " + sub59 + "，但 57 擬定廠商金額合計為 " + itemTotal +
+              "。請確認 59「實際收貨金額」公式為 H7*F7、「實際驗收數量」不是公式，以及 57 金額是否等於數量×單價。";
   }
 
   if (PO57P.F_PAY_NO) {

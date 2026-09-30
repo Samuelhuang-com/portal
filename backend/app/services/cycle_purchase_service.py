@@ -336,10 +336,76 @@ def list_cost_centers(db: Session, department_id: Optional[int] = None, is_activ
     return rows
 
 
+# ── 2026-09-30：部門預設成本中心 ────────────────────────────────────────────
+# Samuel 裁示：請購單「成本中心」直接呈現預設值，同部門有多組才下拉選。
+# 判定規則（resolve_default_cost_center_id）：
+#   1. 該部門啟用中、且勾了 is_default 的 → 用它
+#   2. 沒勾任何預設，但該部門**只有一組**啟用中的 → 視同預設
+#   3. 其餘（沒有成本中心，或多組都沒勾預設）→ None，由使用者自己選
+# 帶入時機：新增／複製／產生本期請購單；以及主檔新增／修改後，補填該部門
+# 「開放中（未關閉、未彙整）且成本中心空白」的請購單。已選過的不覆蓋。
+
+def resolve_default_cost_center_id(db: Session, department_id: Optional[int]) -> Optional[int]:
+    if not department_id:
+        return None
+    active = (
+        db.query(CyclePurchaseCostCenter)
+        .filter(
+            CyclePurchaseCostCenter.department_id == department_id,
+            CyclePurchaseCostCenter.is_active == True,  # noqa: E712
+        )
+        .order_by(CyclePurchaseCostCenter.id)
+        .all()
+    )
+    for cc in active:
+        if cc.is_default:
+            return cc.id
+    if len(active) == 1:
+        return active[0].id
+    return None
+
+
+def fill_open_requests_default_cost_center(db: Session, department_id: int) -> int:
+    """把該部門「開放中且成本中心空白」的請購單補上預設成本中心，回傳補了幾張。"""
+    from app.models.cycle_purchase_request import CyclePurchaseRequest  # 避免循環匯入
+
+    cc_id = resolve_default_cost_center_id(db, department_id)
+    if not cc_id:
+        return 0
+    n = (
+        db.query(CyclePurchaseRequest)
+        .filter(
+            CyclePurchaseRequest.department_id == department_id,
+            CyclePurchaseRequest.cost_center_id.is_(None),
+            CyclePurchaseRequest.is_closed == False,  # noqa: E712
+            CyclePurchaseRequest.is_summarized == False,  # noqa: E712
+        )
+        .update({CyclePurchaseRequest.cost_center_id: cc_id}, synchronize_session=False)
+    )
+    db.flush()
+    return int(n or 0)
+
+
+def _clear_other_defaults(db: Session, department_id: int, keep_id: Optional[int]) -> None:
+    """同部門只能有一組預設：勾選新的預設前，先把其他組取消（避免撞 partial unique index）。"""
+    q = db.query(CyclePurchaseCostCenter).filter(
+        CyclePurchaseCostCenter.department_id == department_id,
+        CyclePurchaseCostCenter.is_default == True,  # noqa: E712
+    )
+    if keep_id is not None:
+        q = q.filter(CyclePurchaseCostCenter.id != keep_id)
+    q.update({CyclePurchaseCostCenter.is_default: False}, synchronize_session=False)
+    db.flush()
+
+
 def create_cost_center(db: Session, payload) -> CyclePurchaseCostCenter:
-    cc = CyclePurchaseCostCenter(**payload.model_dump())
+    data = payload.model_dump()
+    if data.get("is_default"):
+        _clear_other_defaults(db, data["department_id"], keep_id=None)
+    cc = CyclePurchaseCostCenter(**data)
     db.add(cc)
     db.flush()
+    fill_open_requests_default_cost_center(db, cc.department_id)
     return cc
 
 
@@ -347,9 +413,15 @@ def update_cost_center(db: Session, cc_id: int, payload) -> Optional[CyclePurcha
     cc = db.query(CyclePurchaseCostCenter).filter(CyclePurchaseCostCenter.id == cc_id).first()
     if not cc:
         return None
-    for k, v in payload.model_dump(exclude_unset=True).items():
+    old_dept = cc.department_id
+    updates = payload.model_dump(exclude_unset=True)
+    new_dept = updates.get("department_id", old_dept)
+    if updates.get("is_default"):
+        _clear_other_defaults(db, new_dept, keep_id=cc.id)
+    for k, v in updates.items():
         setattr(cc, k, v)
     db.flush()
+    fill_open_requests_default_cost_center(db, new_dept)
     return cc
 
 

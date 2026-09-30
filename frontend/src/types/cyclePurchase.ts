@@ -128,6 +128,8 @@ export interface CpCostCenter {
   cc_code: string
   cc_name: string
   is_active: boolean
+  /** 2026-09-30：部門預設成本中心（每部門最多一組） */
+  is_default?: boolean
   created_at: string
 }
 

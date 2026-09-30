@@ -44,6 +44,8 @@ class CostCenterBase(BaseModel):
     cc_code: str
     cc_name: str
     is_active: bool = True
+    # 2026-09-30：部門預設成本中心（每部門最多一組；勾選時同部門其他組自動取消）
+    is_default: bool = False
 
 
 class CostCenterCreate(CostCenterBase):
@@ -55,6 +57,7 @@ class CostCenterUpdate(BaseModel):
     cc_code: Optional[str] = None
     cc_name: Optional[str] = None
     is_active: Optional[bool] = None
+    is_default: Optional[bool] = None
 
 
 class CostCenterOut(CostCenterBase):

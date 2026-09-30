@@ -475,16 +475,25 @@ export default function CpRequestDetailPage() {
           <Descriptions.Item label="期別">{detail.period_label}</Descriptions.Item>
           <Descriptions.Item label="公司">{detail.company}</Descriptions.Item>
           <Descriptions.Item label="部門">{detail.department_name}</Descriptions.Item>
+          {/* 2026-09-30：預設值直接呈現（後端新增／複製／產生時已帶入部門預設）；
+              部門只有一組且已帶入 → 直接顯示文字；有多組（或尚未帶入）才給下拉 */}
           <Descriptions.Item label="成本中心">
-            {editable ? (
-              <Select
-                allowClear
-                style={{ width: 200 }}
-                placeholder="選擇成本中心（選填）"
-                value={detail.cost_center_id ?? undefined}
-                onChange={(v) => handleCostCenterChange(v ?? null)}
-                options={costCenters.map((c) => ({ label: `${c.cc_code} ${c.cc_name}`, value: c.id }))}
-              />
+            {editable && !(costCenters.length === 1 && detail.cost_center_id === costCenters[0].id) ? (
+              costCenters.length === 0 ? (
+                <Text type="secondary">此部門尚未設定成本中心</Text>
+              ) : (
+                <Select
+                  allowClear
+                  style={{ width: 240 }}
+                  placeholder="選擇成本中心（選填）"
+                  value={detail.cost_center_id ?? undefined}
+                  onChange={(v) => handleCostCenterChange(v ?? null)}
+                  options={costCenters.map((c) => ({
+                    label: `${c.cc_code} ${c.cc_name}${c.is_default ? '（預設）' : ''}`,
+                    value: c.id,
+                  }))}
+                />
+              )
             ) : (detail.cost_center_name || '—')}
           </Descriptions.Item>
           <Descriptions.Item label="請購總金額">
