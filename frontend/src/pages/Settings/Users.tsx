@@ -88,6 +88,10 @@ const UserManagement: React.FC = () => {
     return Array.from(groups.values());
   }, [deptOptions]);
 
+  // 受保護列：對方持有 system_admin、而我不是系統管理員 → 不可編輯／停用／重設密碼／刪除
+  const isProtectedRow = (u: User) =>
+    !isSuperAdmin && (u.roles ?? []).includes('system_admin');
+
   // 角色下拉：只列出目前登入者可指派的角色（2026-09-30）
   //  - 非系統管理員看不到「系統管理員」，也看不到含有自己沒有權限的角色（後端同規則會回 403）
   //  - 編輯時對方已持有、但我無權指派的角色仍顯示為 disabled，避免 Tag 變成英文代碼
@@ -269,7 +273,7 @@ const UserManagement: React.FC = () => {
         <Switch
           checked={active}
           size="small"
-          disabled={u.id === me?.id}
+          disabled={u.id === me?.id || isProtectedRow(u)}
           onChange={() => handleToggleActive(u)}
         />
       ),
@@ -277,7 +281,15 @@ const UserManagement: React.FC = () => {
     {
       title: '操作',
       key: 'actions',
-      render: (_: unknown, u: User) => (
+      render: (_: unknown, u: User) => isProtectedRow(u) ? (
+        // 2026-09-30：非系統管理員不能編輯／重設密碼／刪除「系統管理員」（後端同樣會回 403）
+        <Tooltip title="系統管理員帳號僅能由系統管理員維護">
+          <Space>
+            <Button type="text" size="small" icon={<EditOutlined />} disabled />
+            <Button type="text" size="small" icon={<KeyOutlined />} disabled />
+          </Space>
+        </Tooltip>
+      ) : (
         <Space>
           <Tooltip title="編輯">
             <Button type="text" size="small" icon={<EditOutlined />} onClick={() => openEdit(u)} />
@@ -292,7 +304,8 @@ const UserManagement: React.FC = () => {
               />
             </Tooltip>
           )}
-          {u.id !== me?.id && (
+          {/* 刪除僅系統管理員（後端 delete_user 限 is_system_admin），其他人整顆隱藏 */}
+          {u.id !== me?.id && isSuperAdmin && (
             <Popconfirm
               title="確認刪除此使用者？"
               onConfirm={() => handleDelete(u.id)}
