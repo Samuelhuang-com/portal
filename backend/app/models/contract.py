@@ -56,7 +56,7 @@ class Contract(Base):
         String(50),
         nullable=False,
         default="草稿",
-        comment="合約狀態（草稿/審核中/生效中/即將到期/已終止）"
+        comment="合約狀態（草稿/審核中/生效中/即將到期/已終止/已續約）"
     )
     responsible_dept = Column(String(100), nullable=False, default="", comment="權責部門")
     using_depts = Column(

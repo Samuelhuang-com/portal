@@ -84,7 +84,7 @@ class ContractService:
             skip: 跳過筆數
             limit: 返回筆數
             search: 搜尋編號或名稱（模糊）
-            status: 狀態篩選（草稿/簽訂中/生效中/已結束/已終止）
+            status: 狀態篩選（草稿/簽訂中/生效中/已結束/已終止/已續約）
             vendor_id: 廠商 ID 篩選
             risk_level: 風險等級篩選（低/中/高/關鍵）
             budget_year: 預算年度篩選
@@ -450,6 +450,29 @@ class ContractService:
         return ContractService._make_contract_detail_response(new_contract)
 
     @staticmethod
+    def mark_source_renewed(db: Session, contract: Contract) -> Optional[str]:
+        """
+        新合約轉為「生效中」時，把它的續約來源（renewed_from_contract_id）改為「已續約」。
+        （2026-09-30 使用者裁示：原合約在「新合約生效」那一刻才變更，
+          不在按下複製續約時變更——複製出來的草稿可能被拒絕或刪除，不能誤傷原合約。）
+
+        只有來源合約目前是「生效中／即將到期」才會改；草稿、審核中、已終止、已續約都不動。
+        不自行 commit，由呼叫端與新合約的狀態變更同一個交易提交。
+
+        Returns:
+            被改成「已續約」的來源合約編號；未變更時回傳 None
+        """
+        src_id = getattr(contract, "renewed_from_contract_id", None)
+        if not src_id or contract.contract_status != "生效中":
+            return None
+        src = db.query(Contract).filter(Contract.contract_id == src_id).first()
+        if not src or src.contract_status not in ("生效中", "即將到期"):
+            return None
+        src.contract_status = "已續約"
+        src.updated_at = datetime.now()
+        return src.contract_id
+
+    @staticmethod
     def get_renewal_chain(db: Session, contract_id: str) -> List[Contract]:
         """
         查詢合約的完整續約鏈（上下層級）。
@@ -562,10 +585,15 @@ class ContractService:
             vendor = db.query(Vendor).filter(Vendor.vendor_id == contract.vendor_id).first()
 
         # 更新欄位
+        old_status = contract.contract_status
         update_data = contract_data.dict(exclude_unset=True)
         for key, value in update_data.items():
             if value is not None:
                 setattr(contract, key, value)
+
+        # 手動把續約新合約改成「生效中」→ 原合約轉「已續約」
+        if old_status != "生效中" and contract.contract_status == "生效中":
+            ContractService.mark_source_renewed(db, contract)
 
         # 更新 detail dict
         contract.detail = json.dumps(
@@ -650,6 +678,7 @@ class ContractService:
         contract.approved_at = now
         contract.approval_comment = comment
         contract.updated_at = now
+        ContractService.mark_source_renewed(db, contract)   # 續約新合約生效 → 原合約「已續約」
         db.commit()
         db.refresh(contract)
         return ContractService._to_detail(db, contract)
@@ -869,7 +898,7 @@ class ContractService:
         rows = db.query(Contract).filter(
             Contract.end_date >= today,
             Contract.end_date <= deadline,
-            Contract.contract_status != "已終止",
+            Contract.contract_status.notin_(["已終止", "已續約"]),
         ).order_by(asc(Contract.end_date)).all()
 
         items = []

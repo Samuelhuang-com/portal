@@ -154,7 +154,7 @@ export default function CompareContractsPage() {
   const diffCount = rows.filter(r => r.isDiff).length
 
   const STATUS_COLOR: Record<string, string> = {
-    草稿: 'default', 審核中: 'processing', 生效中: 'success', 即將到期: 'warning', 已終止: 'error',
+    草稿: 'default', 審核中: 'processing', 生效中: 'success', 即將到期: 'warning', 已終止: 'error', 已續約: 'purple',
   }
 
   const columns: ColumnsType<CompareRow> = [

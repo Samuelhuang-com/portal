@@ -348,7 +348,7 @@ def get_calendar_events(
         for c in db.query(Contract).filter(
             Contract.end_date >= d_start,
             Contract.end_date <= d_end,
-            Contract.contract_status.notin_(["已終止"]),
+            Contract.contract_status.notin_(["已終止", "已續約"]),
         ).all():
             events.append({
                 "date": str(c.end_date)[:10],
@@ -671,7 +671,7 @@ def vendor_concentration_inline(
         Contract.vendor_name,
         _func.count(Contract.contract_id).label("contract_count"),
         _func.sum(Contract.total_amount_tax_included).label("total_amount"),
-    ).filter(Contract.contract_status.notin_(["已終止"]))
+    ).filter(Contract.contract_status.notin_(["已終止", "已續約"]))
     if budget_year:
         q = q.filter(Contract.budget_year == budget_year)
     q = q.group_by(Contract.vendor_id, Contract.vendor_name)
@@ -2509,12 +2509,15 @@ def approve_approval_stage(
     all_approved = all(s.status == "已核准" or s.id == stage_id for s in all_stages)
 
     contract = db.query(Contract).filter(Contract.contract_id == contract_id).first()
+    renewed_source_id = None
     if all_approved and contract and contract.contract_status == "審核中":
         contract.contract_status = "生效中"
         contract.approved_by = reviewer
         contract.approved_at = now
         contract.approval_comment = body.comment
         contract.updated_at = now
+        # 續約新合約生效 → 原合約「已續約」（2026-09-30）
+        renewed_source_id = ContractService.mark_source_renewed(db, contract)
 
     db.commit()
     return {
@@ -2522,6 +2525,7 @@ def approve_approval_stage(
         "stage_id": stage_id,
         "status": "已核准",
         "contract_promoted": all_approved,
+        "renewed_source_id": renewed_source_id,
     }
 
 
@@ -2877,7 +2881,7 @@ def cost_trend(
     # 合約金額：依 start_date 歸月/季
     c_q = db.query(Contract).filter(
         Contract.budget_year == budget_year,
-        Contract.contract_status.notin_(["已終止"]),
+        Contract.contract_status.notin_(["已終止", "已續約"]),
     )
     if company:
         c_q = c_q.filter(Contract.signing_company == company)

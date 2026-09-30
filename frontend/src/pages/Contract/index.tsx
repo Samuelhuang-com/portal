@@ -77,6 +77,7 @@ const STATUS_TAG_COLOR: Record<string, string> = {
   '生效中': 'success',
   '即將到期': 'warning',
   '已終止': 'error',
+  '已續約': 'purple',   // 被複製續約的新合約取代（新合約生效時自動設定）
 }
 
 const RISK_LEVEL_COLOR: Record<string, string> = {
@@ -630,6 +631,7 @@ export default function ContractListPage() {
               <Option value="生效中">生效中</Option>
               <Option value="即將到期">即將到期</Option>
               <Option value="已終止">已終止</Option>
+              <Option value="已續約">已續約</Option>
             </Select>
           </Col>
           <Col xs={12} sm={12} lg={4}>
@@ -1513,7 +1515,7 @@ function ContractDetailDrawer({ contract, open, onClose, onUpdate }: ContractDet
               <Col span={12}>
                 <Form.Item name="contract_status" label="狀態">
                   <Select>
-                    {['草稿','審核中','生效中','即將到期','已終止'].map(s => (
+                    {['草稿','審核中','生效中','即將到期','已終止','已續約'].map(s => (
                       <Option key={s} value={s}>{s}</Option>
                     ))}
                   </Select>
