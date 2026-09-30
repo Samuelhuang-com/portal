@@ -30,7 +30,7 @@ from pydantic import BaseModel
 from typing import Optional
 
 from app.core.database import get_db
-from app.dependencies import get_current_user, get_user_permissions, require_permission
+from app.dependencies import get_current_user, get_user_permissions, require_permission, is_system_admin
 from app.models.role import Role
 from app.models.role_permission import RolePermission
 from app.models.user import User
@@ -212,6 +212,39 @@ def list_permission_keys(
     """
     allowed, _is_wildcard = _manageable_keys(current_user, db)
     return [PermissionKeyDef(**d) for d in PERMISSION_DEFINITIONS if d["key"] in allowed]
+
+
+# ── 模組群組「限系統管理員」鎖定（2026-09-30）────────────────────────────────
+# ⚠️ 必須宣告在 /{role_id} 之前，否則 "locked-groups" 會被當成 role_id。
+class LockedGroupsPayload(BaseModel):
+    groups: list[str]
+
+
+@router.get("/locked-groups", response_model=list[str])
+def list_locked_groups(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(_MANAGE),
+):
+    """目前被鎖定為「限系統管理員」的模組群組名稱。"""
+    from app.core.permission_locks import get_locked_groups
+    return get_locked_groups(db)
+
+
+@router.put("/locked-groups", response_model=list[str])
+def save_locked_groups(
+    payload: LockedGroupsPayload,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(is_system_admin),
+):
+    """
+    整批取代鎖定群組清單（僅系統管理員）。
+    鎖定後，群組內所有 key 對非系統管理員失效；角色原本的勾選不會被刪。
+    """
+    from app.core.permission_locks import all_groups, set_locked_groups
+    unknown = [g for g in payload.groups if g not in set(all_groups())]
+    if unknown:
+        raise HTTPException(status_code=422, detail=f"未知的權限群組：{', '.join(unknown)}")
+    return set_locked_groups(db, payload.groups, current_user.email)
 
 
 @router.get("/{role_id}", response_model=RolePermissionsOut)

@@ -79,7 +79,12 @@ def get_user_permissions(user_id: str, db: Session) -> list[str]:
         .filter(RolePermission.role_id.in_(role_ids))
         .all()
     )
-    return list({r[0] for r in perm_rows})
+    perms = {r[0] for r in perm_rows}
+    # 2026-09-30：「限系統管理員」鎖定的模組群組，對非系統管理員一律扣除
+    # （角色設定原樣保留，解除鎖定即恢復）。見 app/core/permission_locks.py
+    from app.core.permission_locks import get_locked_keys
+    perms -= get_locked_keys(db)
+    return list(perms)
 
 
 def require_roles(*roles: str):

@@ -35,6 +35,11 @@ const UserManagement: React.FC = () => {
   // 部門選項（含 id／公司），供「部門（多選）」按公司分組（2026-09-01）
   const [deptOptions, setDeptOptions] = useState<DepartmentOption[]>([]);
   const [allRoles, setAllRoles] = useState<RoleData[]>([]);
+  // 可指派角色（後端 /users/grantable-roles）；null＝尚未載入或端點失敗
+  const [grantable, setGrantable] = useState<string[] | null>(null);
+  // 目前登入者是否為系統管理員（permissions 含 * 或持有 system_admin 角色）
+  const isSuperAdmin = (me?.permissions?.includes('*') ?? false)
+    || (me?.roles?.includes('system_admin') ?? false);
   const [total, setTotal]     = useState(0);
   const [loading, setLoading] = useState(false);
   const [search, setSearch]   = useState('');
@@ -67,6 +72,7 @@ const UserManagement: React.FC = () => {
   useEffect(() => {
     tenantsApi.list().then(r => setTenants(r.data)).catch(() => {});
     fetchRoles().then(setAllRoles).catch(() => {});
+    usersApi.grantableRoles().then(r => setGrantable(r.data)).catch(() => setGrantable(null));
     departmentsApi.options().then(r => setDeptOptions(r.data)).catch(() => {});
   }, []);
 
@@ -82,10 +88,30 @@ const UserManagement: React.FC = () => {
     return Array.from(groups.values());
   }, [deptOptions]);
 
+  // 角色下拉：只列出目前登入者可指派的角色（2026-09-30）
+  //  - 非系統管理員看不到「系統管理員」，也看不到含有自己沒有權限的角色（後端同規則會回 403）
+  //  - 編輯時對方已持有、但我無權指派的角色仍顯示為 disabled，避免 Tag 變成英文代碼
+  //  - grantable 端點失敗（例如後端未重啟）時退回最低限度規則：非系統管理員隱藏 system_admin
+  const roleOptions = React.useMemo(() => {
+    const canGrant = (name: string) =>
+      grantable ? grantable.includes(name) : (isSuperAdmin || name !== 'system_admin');
+    const current: string[] = editUser?.roles ?? [];
+    return allRoles
+      .filter(r => canGrant(r.name) || current.includes(r.name))
+      .map(r => ({
+        value: r.name,
+        label: getRoleLabel(r.name),
+        disabled: !canGrant(r.name),
+      }));
+  }, [allRoles, grantable, isSuperAdmin, editUser]);
+
   const openCreate = () => {
     setEditUser(null);
     form.resetFields();
-    form.setFieldValue('role_names', ['viewer']);
+    // 預設「一般使用者」；若目前登入者無權指派 viewer 就不預帶
+    if (!grantable || grantable.includes('viewer')) {
+      form.setFieldValue('role_names', ['viewer']);
+    }
     setModalOpen(true);
   };
 
@@ -413,10 +439,7 @@ const UserManagement: React.FC = () => {
             <Select
               mode="multiple"
               placeholder="選擇角色"
-              options={allRoles.map(r => ({
-                value: r.name,
-                label: getRoleLabel(r.name),
-              }))}
+              options={roleOptions}
               optionRender={(opt) => {
                 const color = ROLE_COLORS[opt.value as string] || 'geekblue';
                 return (

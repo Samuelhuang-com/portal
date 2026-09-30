@@ -12,8 +12,11 @@ import {
   fetchPermissionKeys,
   fetchRolePermissions,
   saveRolePermissions,
+  fetchLockedGroups,
+  saveLockedGroups,
   PermissionKeyDef,
 } from '@/api/rolePermissions';
+import { useAuthStore } from '@/stores/authStore';
 import {
   fetchRoles,
   createRole,
@@ -280,6 +283,49 @@ function PermissionSettingsTab({ roles }: PermissionSettingsTabProps) {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
 
+  // ── 模組群組「限系統管理員」鎖定（2026-09-30）──────────────────────────────
+  // V 只給系統管理員操作；鎖定後該群組對其他所有角色都不可見（後端 get_user_permissions 扣除）
+  const { user: me } = useAuthStore();
+  const meIsSuperAdmin = (me?.permissions?.includes('*') ?? false)
+    || (me?.roles?.includes('system_admin') ?? false);
+  const [lockedGroups, setLockedGroups] = useState<Set<string>>(new Set());
+  const [lockSaving, setLockSaving] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchLockedGroups()
+      .then((g) => setLockedGroups(new Set(g)))
+      .catch(() => {});
+  }, []);
+
+  const applyGroupLock = async (group: string, lock: boolean) => {
+    const next = new Set(lockedGroups);
+    if (lock) next.add(group); else next.delete(group);
+    setLockSaving(group);
+    try {
+      const saved = await saveLockedGroups(Array.from(next));
+      setLockedGroups(new Set(saved));
+      message.success(lock
+        ? `「${group}」已鎖定：僅系統管理員可見`
+        : `「${group}」已解除鎖定，各角色依原本勾選恢復`);
+    } catch (err: any) {
+      message.error(err?.response?.data?.detail || '更新鎖定設定失敗');
+    } finally {
+      setLockSaving(null);
+    }
+  };
+
+  const toggleGroupLock = (group: string, lock: boolean) => {
+    if (!lock) { applyGroupLock(group, false); return; }
+    Modal.confirm({
+      title: `將「${group}」設為限系統管理員？`,
+      icon: <ExclamationCircleOutlined />,
+      content: '鎖定後，除系統管理員外的所有角色都看不到這個模組（選單、頁面、API 一併擋下）。各角色原本的勾選會保留，解除鎖定後即恢復。',
+      okText: '鎖定',
+      cancelText: '取消',
+      onOk: () => applyGroupLock(group, true),
+    });
+  };
+
   // 取得所有 permission key 定義
   useEffect(() => {
     setPermDefsLoading(true);
@@ -466,9 +512,10 @@ function PermissionSettingsTab({ roles }: PermissionSettingsTabProps) {
                 const groupKeys = groupDefs.map((d) => d.key);
                 const allChecked = groupKeys.every((k) => checkedKeys.has(k));
                 const someChecked = groupKeys.some((k) => checkedKeys.has(k));
+                const groupLocked = lockedGroups.has(group);
 
                 return (
-                  <div key={group} style={{ marginBottom: 20 }}>
+                  <div key={group} style={{ marginBottom: 20, opacity: groupLocked ? 0.75 : 1 }}>
                     <div style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
                       <Checkbox
                         indeterminate={someChecked && !allChecked}
@@ -482,7 +529,30 @@ function PermissionSettingsTab({ roles }: PermissionSettingsTabProps) {
                       >
                         <span style={{ fontWeight: 600, color: '#1B3A5C' }}>{group}</span>
                       </Checkbox>
+                      {groupLocked && (
+                        <Tag icon={<LockOutlined />} color="blue" style={{ marginLeft: 4 }}>
+                          限系統管理員
+                        </Tag>
+                      )}
+                      {meIsSuperAdmin && (
+                        <div style={{ marginLeft: 'auto' }}>
+                          <Tooltip title="勾選 V：此模組只有系統管理員看得到，其他角色的勾選暫不生效（全域設定，不分角色）">
+                            <Checkbox
+                              checked={groupLocked}
+                              disabled={lockSaving !== null}
+                              onChange={(e) => toggleGroupLock(group, e.target.checked)}
+                            >
+                              <span style={{ fontSize: 12, color: '#64748b' }}>V 限系統管理員</span>
+                            </Checkbox>
+                          </Tooltip>
+                        </div>
+                      )}
                     </div>
+                    {groupLocked && (
+                      <div style={{ paddingLeft: 24, marginBottom: 6, fontSize: 12, color: '#94a3b8' }}>
+                        此模組已鎖定為限系統管理員；下方勾選會保留，但在解除鎖定前對此角色不生效。
+                      </div>
+                    )}
                     <div style={{ paddingLeft: 24, display: 'flex', flexWrap: 'wrap', gap: '6px 0' }}>
                       {groupDefs.map((def) => (
                         <div key={def.key} style={{ width: '33%', minWidth: 200 }}>

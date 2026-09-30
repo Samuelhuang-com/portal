@@ -8,6 +8,7 @@ from datetime import timedelta
 from app.core.database import get_db
 from app.core.security import hash_password, verify_password
 from app.core.time import twnow
+from app.core.permission_locks import get_locked_keys
 from app.dependencies import (
     get_current_user,
     get_user_permissions,
@@ -72,6 +73,8 @@ def _assert_can_grant_roles(
     my_perms = set(get_user_permissions(current_user.id, db))
     if "*" in my_perms:
         return
+    # 被「限系統管理員」鎖定的 key 對非系統管理員無效，不計入比對
+    locked_keys = get_locked_keys(db)
 
     for role_name in role_names:
         role = db.query(Role).filter(Role.name == role_name).first()
@@ -89,13 +92,38 @@ def _assert_can_grant_roles(
             .filter(RolePermission.role_id == role.id)
             .all()
         }
-        missing = sorted(role_perms - my_perms)
+        missing = sorted(role_perms - locked_keys - my_perms)
         if missing:
             joined = ", ".join(missing)
             raise HTTPException(
                 status_code=403,
                 detail=f"無法指派角色「{role_name}」：其中包含你未擁有的權限（{joined}）",
             )
+
+
+def _grantable_role_names(current_user: User, db: Session) -> list[str]:
+    """
+    呼叫者「可以指派」的角色清單 —— 與 _assert_can_grant_roles 同一套規則，
+    供前端「新增／編輯使用者」的角色下拉只列出可選項（2026-09-30）。
+    """
+    roles = db.query(Role).order_by(Role.name).all()
+    my_perms = set(get_user_permissions(current_user.id, db))
+    if "*" in my_perms:
+        return [r.name for r in roles]
+    locked_keys = get_locked_keys(db)
+    out: list[str] = []
+    for role in roles:
+        if role.name == "system_admin":
+            continue
+        role_perms = {
+            p[0]
+            for p in db.query(RolePermission.permission_key)
+            .filter(RolePermission.role_id == role.id)
+            .all()
+        }
+        if (role_perms - locked_keys) <= my_perms:
+            out.append(role.name)
+    return out
 
 
 def _assert_can_manage_target(current_user: User, target: User, db: Session) -> None:
@@ -209,6 +237,19 @@ def list_users(
         page=page,
         per_page=per_page,
     )
+
+
+@router.get("/grantable-roles", response_model=list[str])
+def list_grantable_roles(
+    current_user: User = Depends(_USER_MANAGE),
+    db: Session = Depends(get_db),
+):
+    """
+    目前登入者可指派的角色名稱（2026-09-30）。
+    非系統管理員看不到 system_admin，也看不到含有自己未擁有權限的角色；
+    規則與 create_user / update_user 的 _assert_can_grant_roles 相同。
+    """
+    return _grantable_role_names(current_user, db)
 
 
 @router.post("", response_model=UserOut)
