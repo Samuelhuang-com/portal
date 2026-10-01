@@ -177,6 +177,9 @@ function fmtItemTimeRange(item: PMItem): string {
   return '—'
 }
 
+// Ragic Sheet28（全棟週期保養日誌 子表:項目）單筆連結基準；item.ragic_id 即 Sheet28 record ID
+const RAGIC_SHEET28_ITEM_BASE = 'https://ap12.ragic.com/soutlet001/periodic-maintenance/28'
+
 // 實際保養日期（取 start_time，缺則取 end_time 的日期部分），格式 MM/DD；尚未執行則 '—'
 // 開發規範：本模組所有含「保養時間」欄位的項目表格，一律在其前面加一欄「保養日期」（見 project memory）
 function fmtItemActualDate(item: PMItem): string {
@@ -2459,8 +2462,26 @@ export default function FullBuildingMaintenancePage() {
             rowKey={(r) => r.ragic_id}
             size="small"
             pagination={{ pageSize: 15, showTotal: (t: number) => `共 ${t} 項`, showSizeChanger: false }}
-            scroll={{ x: 760 }}
+            scroll={{ x: 820 }}
+            // 2026-10-01：整列可點開次層 Drawer（原本只有「保養時間」有值才能點）
+            onRow={(rec) => ({ onClick: () => setSelectedPMItem(rec), style: { cursor: 'pointer' } })}
             columns={[
+              {
+                // 2026-10-01：每一列都可直接開 Ragic Sheet28 該項目
+                title: 'Ragic', width: 56, align: 'center' as const, fixed: 'left' as const,
+                render: (_: unknown, rec: PMItem) => rec.ragic_id ? (
+                  <Tooltip title="在 Ragic 查看（Sheet28）">
+                    <a
+                      href={`${RAGIC_SHEET28_ITEM_BASE}/${rec.ragic_id}`}
+                      target="_blank" rel="noopener noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                      style={{ color: '#4BA8E8' }}
+                    >
+                      <LinkOutlined />
+                    </a>
+                  </Tooltip>
+                ) : '—',
+              },
               { title: '類別', dataIndex: 'category', width: 80 },
               { title: '項目', dataIndex: 'task_name', width: 180 },
               {
@@ -2493,7 +2514,7 @@ export default function FullBuildingMaintenancePage() {
                   return (
                     <Button
                       type="link" size="small" style={{ padding: 0, height: 'auto', fontSize: 12 }}
-                      onClick={() => setSelectedPMItem(rec)}
+                      onClick={(e) => { e.stopPropagation(); setSelectedPMItem(rec) }}
                     >
                       {label}
                     </Button>
