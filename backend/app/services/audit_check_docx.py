@@ -120,6 +120,21 @@ def _symbol(code: Optional[str], types: Dict[str, dict]) -> str:
     return "X"
 
 
+def _color(code: Optional[str], types: Dict[str, dict]) -> Optional[RGBColor]:
+    """判定類型主檔的顏色（使用者在「判定類型設定」自訂，與網頁畫面同一來源）。"""
+    if not code:
+        return None
+    t = types.get(code)
+    hexv = (t or {}).get("color") or ""
+    hexv = hexv.lstrip("#")
+    if len(hexv) != 6:
+        return None
+    try:
+        return RGBColor.from_string(hexv.upper())
+    except ValueError:
+        return None
+
+
 def _month_label(period: Optional[str]) -> str:
     """'2026-08' → '8月'"""
     if period and len(period) >= 7 and period[4] == "-":
@@ -153,7 +168,7 @@ def build_inspection_docx(
     period = detail.get("period") or ""
     types = {
         (t["code"] if isinstance(t, dict) else t.code): (
-            t if isinstance(t, dict) else {"counts_as_pass": t.counts_as_pass}
+            t if isinstance(t, dict) else {"counts_as_pass": t.counts_as_pass, "color": t.color}
         )
         for t in detail.get("result_types", [])
     }
@@ -240,9 +255,10 @@ def build_inspection_docx(
             rr = add_row(0.9)
             _write(rr.cells[0], minor.get("display_no") or "", 10, align=WD_ALIGN_PARAGRAPH.RIGHT)
             _write(rr.cells[1], f"{minor['name']}{minor.get('scope_note') or ''}", 10)
-            _write(rr.cells[2], c.get("comment") or "", 10)
-            _write(rr.cells[3], _symbol(c.get("result_code") if (c.get("comment") or "").strip() else None, types),
-                   11, align=WD_ALIGN_PARAGRAPH.CENTER)
+            code = c.get("result_code") if (c.get("comment") or "").strip() else None
+            color = _color(code, types)   # 評語與稽核結果依判定顏色（如扣分紅、建議藍）
+            _write(rr.cells[2], c.get("comment") or "", 10, color=color)
+            _write(rr.cells[3], _symbol(code, types), 11, align=WD_ALIGN_PARAGRAPH.CENTER, color=color)
             _write(rr.cells[4], c.get("suggestion") or "", 10, color=BLUE)
 
     has_review = review and ((review.get("pending_text") or "").strip() or (review.get("result_text") or "").strip())
@@ -250,10 +266,12 @@ def build_inspection_docx(
         section_row("覆核.", f"{_month_label(review.get('source_period'))}待補正項目", 9)
         rr = add_row(1.2)
         _write(rr.cells[0], "")
-        _write(rr.cells[1], review.get("pending_text") or "", 10)
-        _write(rr.cells[2], review.get("result_text") or "", 10)
+        _write(rr.cells[1], review.get("pending_text") or "", 10,
+               color=_color(review.get("pending_result"), types))
+        _write(rr.cells[2], review.get("result_text") or "", 10,
+               color=_color(review.get("result_status"), types))
         code = review.get("result_status") if (review.get("result_text") or "").strip() else review.get("pending_result")
-        _write(rr.cells[3], _symbol(code, types), 11, align=WD_ALIGN_PARAGRAPH.CENTER)
+        _write(rr.cells[3], _symbol(code, types), 11, align=WD_ALIGN_PARAGRAPH.CENTER, color=_color(code, types))
         _write(rr.cells[4], "")
 
     # ── 本次稽核說明 ──
@@ -275,9 +293,9 @@ def build_inspection_docx(
         _write(inner.rows[0].cells[idx * 2], label, 10, align=WD_ALIGN_PARAGRAPH.CENTER)
         _write(inner.rows[0].cells[idx * 2 + 1], val, 10, align=WD_ALIGN_PARAGRAPH.CENTER,
                color=RED if idx == 2 else None)
-    _write(inner.rows[1].cells[0], "缺失", 10, align=WD_ALIGN_PARAGRAPH.CENTER)
-    _write(inner.rows[1].cells[1].merge(inner.rows[1].cells[5]), dept.get("deficiency") or "", 10)
-    _write(inner.rows[2].cells[0], "建議", 10, align=WD_ALIGN_PARAGRAPH.CENTER)
+    _write(inner.rows[1].cells[0], "缺失", 10, align=WD_ALIGN_PARAGRAPH.CENTER, color=RED)
+    _write(inner.rows[1].cells[1].merge(inner.rows[1].cells[5]), dept.get("deficiency") or "", 10, color=RED)
+    _write(inner.rows[2].cells[0], "建議", 10, align=WD_ALIGN_PARAGRAPH.CENTER, color=BLUE)
     sugs = [
         cells[m["id"]]["suggestion"].strip()
         for mj in majors for m in minors_by_major[mj["id"]]

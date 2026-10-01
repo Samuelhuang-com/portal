@@ -652,16 +652,18 @@ export default function AuditSheetEditorPage() {
 
         if (row.kind === 'export') {
           return (
-            <Button
-              size="small"
-              icon={<FileWordOutlined />}
-              onClick={() => downloadFile(
-                sheetsApi.inspectionDocxUrl(detail.id, d.id),
-                `內部稽核檢查表-${detail.period}-${detail.company_name}-${d.name}.docx`,
-              )}
-            >
-              匯出 Word
-            </Button>
+            <div style={{ textAlign: 'center' }}>
+              <Button
+                size="small"
+                icon={<FileWordOutlined />}
+                onClick={() => downloadFile(
+                  sheetsApi.inspectionDocxUrl(detail.id, d.id),
+                  `內部稽核檢查表-${detail.period}-${detail.company_name}-${d.name}.docx`,
+                )}
+              >
+                匯出 Word
+              </Button>
+            </div>
           )
         }
 
