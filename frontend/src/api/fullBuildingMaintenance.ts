@@ -245,7 +245,7 @@ export interface FullBldgPMScheduleItem {
   created_at:       string
   updated_at:       string
   status:    string   // 動態計算：completed / in_progress / scheduled / unscheduled / overdue
-  ragic_url: string   // 對應月份批次的 Ragic 連結（後端動態注入）
+  ragic_url: string   // Sheet28 項目連結（2026-10-01 起；舊格式殘留才退回月份批次連結），後端動態注入
 }
 
 export interface FullBldgPMScheduleKpi {

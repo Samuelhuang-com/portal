@@ -391,7 +391,7 @@ async def sync_items_from_ragic() -> dict:
     try:
         # ── Step 1：清除舊格式記錄（ragic_id 不含底線 = 舊版同步遺留的空白記錄）──
         old_style = db.query(PeriodicMaintenanceItem).filter(
-            ~PeriodicMaintenanceItem.ragic_id.contains("_")
+            ~PeriodicMaintenanceItem.ragic_id.contains("_", autoescape=True)
         ).all()
         if old_style:
             logger.info(f"[PMSync][Items] 清除 {len(old_style)} 筆舊格式記錄")
@@ -672,7 +672,7 @@ async def sync_from_sheet11() -> dict:
         #    ⚠️ 注意：舊格式項目上若有 Portal 標記過的 abnormal_flag/abnormal_note，
         #    會隨這次清除一併移除（新格式項目是全新 insert，不会繼承）。
         old_style_items = db.query(PeriodicMaintenanceItem).filter(
-            PeriodicMaintenanceItem.ragic_id.contains("_")
+            PeriodicMaintenanceItem.ragic_id.contains("_", autoescape=True)
         ).all()
         old_style_abnormal = [it for it in old_style_items if it.abnormal_flag]
         if old_style_abnormal:
@@ -691,7 +691,7 @@ async def sync_from_sheet11() -> dict:
         # 同型改版一致：帶有人工資料（已完成／異常／人工調整／已填執行時間）的記錄
         # 只警告不刪除，避免遺失人工資料。
         old_style_sched_all = db.query(PMSchedule).filter(
-            PMSchedule.item_ragic_id.contains("_")
+            PMSchedule.item_ragic_id.contains("_", autoescape=True)
         ).all()
         old_style_sched_risky = [
             s for s in old_style_sched_all

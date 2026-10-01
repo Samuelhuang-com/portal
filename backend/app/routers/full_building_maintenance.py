@@ -53,6 +53,9 @@ from app.core.config import settings
 router = APIRouter(dependencies=[Depends(get_current_user)])
 
 _RAGIC_BASE = "https://ap12.ragic.com/soutlet001/periodic-maintenance/21"
+# 2026-10-01：項目層級連結改指向 Sheet28 項目本身（item.ragic_id 自 2026-07-13 起即為 Sheet28 record ID）；
+# 批次層級連結（batch.ragic_id）仍用上面的 Sheet21 主表。
+_RAGIC_ITEM_BASE = "https://ap12.ragic.com/soutlet001/periodic-maintenance/28"
 
 # ── 狀態色彩對照 ──────────────────────────────────────────────────────────────
 STATUS_COLORS = {
@@ -267,7 +270,7 @@ def _item_to_out(item: FullBldgPMItem, check_month: int) -> PMItemOut:
         portal_edited_at  = item.portal_edited_at,
         synced_at         = item.synced_at,
         status            = _calc_status(item, check_month),
-        ragic_url         = f"{_RAGIC_BASE}/{item.batch_ragic_id}" if item.batch_ragic_id else "",
+        ragic_url         = f"{_RAGIC_ITEM_BASE}/{item.ragic_id}" if item.ragic_id else "",
         repair_hours      = item.repair_hours,
     )
 
@@ -1782,7 +1785,12 @@ def _fb_build_batch_url_map(db: Session) -> dict:
 
 
 def _fb_schedule_to_out(rec: "FullBldgPMSchedule", batch_url_map: Optional[dict] = None) -> "FullBldgPMScheduleOut":
-    url = (batch_url_map or {}).get(rec.year_month, "")
+    # 2026-10-01：排程是「項目」層級，連結改指 Sheet28 項目本身（item_ragic_id 即 Sheet28 record ID）。
+    # 僅舊格式殘留（item_ragic_id 含底線 "{batch}_{row}"，Sheet28 沒有對應記錄）才退回 Sheet21 批次連結。
+    if rec.item_ragic_id and "_" not in rec.item_ragic_id:
+        url = f"{_RAGIC_ITEM_BASE}/{rec.item_ragic_id}"
+    else:
+        url = (batch_url_map or {}).get(rec.year_month, "")
     return FullBldgPMScheduleOut(
         id=rec.id,
         year_month=rec.year_month,
@@ -2397,7 +2405,7 @@ def get_full_bldg_annual_matrix(
                 scheduled_date = cell_sched_date,
                 category       = item.category or "",
                 frequency      = item.frequency or "",
-                ragic_url      = f"{_RAGIC_BASE}/{item.batch_ragic_id}" if item.batch_ragic_id else "",
+                ragic_url      = f"{_RAGIC_ITEM_BASE}/{item.ragic_id}" if item.ragic_id else "",
                 origin_month   = origin_m,
                 off_schedule   = off_sched,
             )
@@ -2461,7 +2469,7 @@ def get_full_bldg_annual_matrix(
             category_variants  = cat_variants,
             frequency_variants = freq_variants,
             month_count        = len(grp["months"]),
-            ragic_url          = f"{_RAGIC_BASE}/{latest_item.batch_ragic_id}" if latest_item.batch_ragic_id else "",
+            ragic_url          = f"{_RAGIC_ITEM_BASE}/{latest_item.ragic_id}" if latest_item.ragic_id else "",
         ))
 
     # 月份 → Ragic 批次 URL（供明細 Drawer 標題列的「在 Ragic 查看」連結）

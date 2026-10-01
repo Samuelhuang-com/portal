@@ -2340,10 +2340,12 @@ export default function FullBuildingMaintenancePage() {
             <Tag>{annualDrawerCell.row.category || '—'}</Tag>
             <span>{annualDrawerCell.row.task_name}</span>
             <Tag>{annualYear}/{String(annualDrawerCell.month).padStart(2, '0')}</Tag>
-            {(annualMatrix?.month_batch_urls?.[String(annualDrawerCell.month)] || annualDrawerCell.row.ragic_url) && (
+            {/* 2026-10-01：改連 Sheet28 該格的項目本身，不再用 month_batch_urls（Sheet21 批次頁）。
+                優先序：該格第一筆項目 → 排程明細的項目連結 → 該列最新一期項目 */}
+            {(annualDrawerCell.cell?.entries?.[0]?.ragic_url || annualCellDetail?.ragic_url || annualDrawerCell.row.ragic_url) && (
               <Tooltip title="在 Ragic 查看原始表單">
                 <a
-                  href={annualMatrix?.month_batch_urls?.[String(annualDrawerCell.month)] || annualDrawerCell.row.ragic_url}
+                  href={annualDrawerCell.cell?.entries?.[0]?.ragic_url || annualCellDetail?.ragic_url || annualDrawerCell.row.ragic_url}
                   target="_blank"
                   rel="noopener noreferrer"
                   style={{ color: '#4BA8E8', fontSize: 16, lineHeight: 1 }}

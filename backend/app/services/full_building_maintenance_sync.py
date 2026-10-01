@@ -346,7 +346,7 @@ async def sync_items_from_ragic() -> dict:
     try:
         # 清除舊格式記錄（ragic_id 不含底線 = 舊版同步遺留）
         old_style = db.query(FullBldgPMItem).filter(
-            ~FullBldgPMItem.ragic_id.contains("_")
+            ~FullBldgPMItem.ragic_id.contains("_", autoescape=True)
         ).all()
         if old_style:
             logger.info(f"[FullBldgPMSync][Items] 清除 {len(old_style)} 筆舊格式記錄")
@@ -749,7 +749,7 @@ async def sync_items_from_sheet28() -> dict:
         # 會隨這次清除一併移除（新格式項目是全新 insert，不会繼承）。若需要保留，
         # 請在本次同步前先手動查詢並記錄。
         old_style = db.query(FullBldgPMItem).filter(
-            FullBldgPMItem.ragic_id.contains("_")
+            FullBldgPMItem.ragic_id.contains("_", autoescape=True)
         ).all()
         old_style_abnormal = [it for it in old_style if it.abnormal_flag]
         if old_style_abnormal:
@@ -779,7 +779,7 @@ async def sync_items_from_sheet28() -> dict:
         # 這次清除一併移除且不會被新格式記錄繼承。若偵測到這類記錄，只記錄警告、不刪除，
         # 避免遺失人工資料（需人工確認後手動處理）。
         old_style_sched_all = db.query(FullBldgPMSchedule).filter(
-            FullBldgPMSchedule.item_ragic_id.contains("_")
+            FullBldgPMSchedule.item_ragic_id.contains("_", autoescape=True)
         ).all()
         old_style_sched_risky = [
             s for s in old_style_sched_all
