@@ -132,7 +132,7 @@ export default function AuditResultTypesPage() {
       render: (v: boolean) => (v ? <Tag color="success">計入</Tag> : <Tag color="error">不計入（扣分）</Tag>),
     },
     {
-      title: '列入缺失／建議彙整',
+      title: '列入缺失彙整',
       dataIndex: 'include_in_summary',
       key: 'include_in_summary',
       width: 130,
@@ -236,8 +236,8 @@ export default function AuditResultTypesPage() {
             extra="關閉 ＝ 此判定視為未達標（扣分）">
             <Switch checkedChildren="計入" unCheckedChildren="扣分" />
           </Form.Item>
-          <Form.Item name="include_in_summary" label="列入缺失／建議彙整" valuePropName="checked"
-            extra="開啟 ＝ 不算達標者彙整到稽核單「缺失」列、算達標者（如建議）彙整到「建議」列，並出現在缺失清單報表">
+          <Form.Item name="include_in_summary" label="列入缺失彙整" valuePropName="checked"
+            extra="開啟 ＝ 出現在稽核單的「缺失」列與缺失清單報表">
             <Switch />
           </Form.Item>
           <Form.Item name="is_default" label="設為新格子的預設判定" valuePropName="checked">

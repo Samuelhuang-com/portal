@@ -36,7 +36,7 @@ from app.models.audit_check import (
 from app.models.reference_data import Company, RefDepartment
 from app.models.user import User
 from app.schemas.audit_check import (
-    CellBulkUpsert, CellUpsert, DeficiencyUpsert, SheetItemOrder, SuggestionUpsert, ItemCreate, ItemOut, ItemUpdate,
+    CellBulkUpsert, CellUpsert, DeficiencyUpsert, SheetItemOrder, ItemCreate, ItemOut, ItemUpdate,
     PeriodCreate, PeriodOut, PeriodUpdate, ResultTypeCreate, ResultTypeOut,
     ResultTypeUpdate, ReviewUpsert, SheetCreate, SheetDetail, SheetItemRename,
     SheetLayoutUpdate, SheetUpdate, StatisticsOut,
@@ -501,7 +501,12 @@ def _upsert_cell(db: Session, sheet: AuditSheet, item: CellUpsert, default_code:
         .first()
     )
     text = (item.comment or "").strip()
-    if not text:
+    # 建議（2026-10-01）：沒帶欄位 ＝ 維持原值
+    if "suggestion" in item.model_fields_set:
+        suggestion = (item.suggestion or "").strip() or None
+    else:
+        suggestion = cell.suggestion if cell is not None else None
+    if not text and not suggestion:
         # 空白 ＝ 該部門本期不查此項，直接刪除不留列（§4.1 分母口徑）
         if cell is not None:
             db.delete(cell)
@@ -518,7 +523,8 @@ def _upsert_cell(db: Session, sheet: AuditSheet, item: CellUpsert, default_code:
             sheet_department_id=item.sheet_department_id,
         )
         db.add(cell)
-    cell.comment = text
+    cell.comment = text or None   # 只填建議、評語空白 → 仍不計入分數分母
+    cell.suggestion = suggestion
     cell.result_code = code
     cell.updated_by = user_id
     cell.updated_at = twnow()
@@ -630,26 +636,6 @@ def upsert_deficiency(
     return svc.build_sheet_detail(db, sheet)
 
 
-@router.put("/sheets/{sheet_id}/departments/{sheet_department_id}/suggestion", response_model=SheetDetail)
-def upsert_suggestion(
-    sheet_id: int,
-    sheet_department_id: int,
-    payload: SuggestionUpsert,
-    db: Session = Depends(get_db),
-    _: User = Depends(require_permission(EDIT)),
-):
-    """「建議」列人工覆寫（2026-10-01）；空字串 → 還原成自動彙整。"""
-    sheet = _get_sheet(db, sheet_id)
-    sd = next((d for d in sheet.departments if d.id == sheet_department_id), None)
-    if sd is None:
-        raise _not_found("此稽核單沒有這一欄部門")
-    text = (payload.suggestion_override or "").strip()
-    sd.suggestion_override = text or None
-    db.commit()
-    db.refresh(sheet)
-    return svc.build_sheet_detail(db, sheet)
-
-
 @router.put("/sheets/{sheet_id}/items/order", response_model=SheetDetail)
 def reorder_sheet_items(
     sheet_id: int,
@@ -708,6 +694,8 @@ def flagged_rows(
 
     rows = []
     for c in q.all():
+        if not (c.comment or "").strip():
+            continue   # 只有建議、沒有評語的格子不列入
         rt = by_code.get(c.result_code)
         if rt is None or not rt.include_in_summary:
             continue
@@ -823,11 +811,6 @@ def export_sheet(
         put(r, 4 + i, d["deficiency"], "FF0000")
     r += 1
 
-    put(r, 3, "建議", "1677FF")
-    for i, d in enumerate(depts):
-        put(r, 4 + i, d.get("suggestion") or "", "1677FF")
-    r += 1
-
     cell_map = {(c["sheet_item_id"], c["sheet_department_id"]): c for c in detail["cells"]}
     first_item_row = r
     for it in detail["items"]:
@@ -836,7 +819,20 @@ def export_sheet(
         for i, d in enumerate(depts):
             c = cell_map.get((it["id"], d["id"]))
             if c:
-                put(r, 4 + i, c["comment"], colors.get(c["result_code"]))
+                cell = put(r, 4 + i, c["comment"] or "", colors.get(c["result_code"]))
+                sug = _clean(c.get("suggestion") or "")
+                if sug:
+                    # 建議固定藍字、與判定無關（2026-10-01）
+                    try:
+                        from openpyxl.cell.rich_text import CellRichText, TextBlock
+                        from openpyxl.cell.text import InlineFont
+                        parts = []
+                        if cell.value:
+                            parts.append(TextBlock(InlineFont(b=True, color="FF" + (colors.get(c["result_code"]) or "000000")), cell.value + "\n"))
+                        parts.append(TextBlock(InlineFont(b=True, color="FF1677FF"), sug))
+                        cell.value = CellRichText(*parts)
+                    except ImportError:
+                        cell.value = f"{cell.value}\n{sug}" if cell.value else sug
         r += 1
     put(first_item_row, 2, "抽檢項:")
 

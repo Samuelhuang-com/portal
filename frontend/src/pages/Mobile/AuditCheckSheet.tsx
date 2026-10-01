@@ -23,6 +23,7 @@ import { ArrowLeftOutlined, SaveOutlined } from '@ant-design/icons'
 
 import { sheetsApi } from '@/api/auditCheck'
 import type { Cell, SheetDetail, SheetItem } from '@/api/auditCheck'
+import { SUGGESTION_COLOR } from '@/pages/AuditCheck/suggestionColor'
 import { useAuthStore } from '@/stores/authStore'
 
 const { Text, Title } = Typography
@@ -70,6 +71,7 @@ export default function MobileAuditCheckSheet() {
   // ── 編輯 Drawer ─────────────────────────────────────────────────────────
   const [picked, setPicked] = useState<SheetItem | null>(null)
   const [comment, setComment] = useState('')
+  const [suggestion, setSuggestion] = useState('')
   const [code, setCode] = useState('ok')
   const [saving, setSaving] = useState(false)
 
@@ -80,6 +82,7 @@ export default function MobileAuditCheckSheet() {
       ?? detail.result_types[0]?.code ?? 'ok'
     setPicked(item)
     setComment(c?.comment ?? '')
+    setSuggestion(c?.suggestion ?? '')
     setCode(c?.result_code ?? def)
   }
 
@@ -91,11 +94,12 @@ export default function MobileAuditCheckSheet() {
         sheet_item_id: picked.id,
         sheet_department_id: deptId,
         comment,
+        suggestion,
         result_code: code,
       })
       setDetail(res.data)
       setPicked(null)
-      message.success(comment.trim() ? '已儲存' : '已清空')
+      message.success(comment.trim() || suggestion.trim() ? '已儲存' : '已清空')
     } catch (e: any) {
       message.error(e?.response?.data?.detail ?? '儲存失敗')
     } finally {
@@ -191,12 +195,17 @@ export default function MobileAuditCheckSheet() {
                     {t && <Tag style={{ color: t.color, margin: 0 }}>{t.label}</Tag>}
                   </div>
                   <div style={{ marginTop: 6, fontSize: 12, whiteSpace: 'pre-wrap', color: t?.color }}>
-                    {c?.comment || (
+                    {c?.comment || (!c?.suggestion && (
                       <Text type="secondary" style={{ fontSize: 12 }}>
                         {isTarget ? '（本期應查，尚未填寫）' : '尚未填寫'}
                       </Text>
-                    )}
+                    ))}
                   </div>
+                  {c?.suggestion && (
+                    <div style={{ marginTop: 4, fontSize: 12, whiteSpace: 'pre-wrap', color: SUGGESTION_COLOR }}>
+                      {c.suggestion}
+                    </div>
+                  )}
                 </Card>
               )
             }}
@@ -230,6 +239,18 @@ export default function MobileAuditCheckSheet() {
           disabled={!canEdit}
           style={{ marginTop: 8 }}
           placeholder="填寫查核情形"
+        />
+        <div style={{ marginTop: 12, marginBottom: 6 }}>
+          <Text strong style={{ color: SUGGESTION_COLOR }}>建議</Text>
+          <Text type="secondary" style={{ fontSize: 12, marginLeft: 6 }}>固定藍字，與判定無關</Text>
+        </div>
+        <Input.TextArea
+          value={suggestion}
+          onChange={(e) => setSuggestion(e.target.value)}
+          rows={3}
+          disabled={!canEdit}
+          style={{ color: SUGGESTION_COLOR }}
+          placeholder="建議事項（可留空）"
         />
         <div style={{ marginTop: 12, marginBottom: 6 }}><Text strong>判定</Text></div>
         <Radio.Group

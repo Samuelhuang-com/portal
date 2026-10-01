@@ -234,15 +234,8 @@ def compute_deficiencies(
     db: Session,
     sheet: AuditSheet,
     cells: Optional[Sequence[AuditCell]] = None,
-    kind: str = "deficiency",
 ) -> Dict[int, str]:
-    """
-    回傳 {sheet_department_id: 彙整文字}（僅自動彙整，不含人工覆寫）。
-
-    2026-10-01 使用者要求「缺失下面多一列＝建議」，同一批「列入彙整」的判定拆成兩列：
-      kind="deficiency"：不算達標者（如扣分）→「缺失」列
-      kind="suggestion"：算達標者（如建議）  →「建議」列
-    """
+    """回傳 {sheet_department_id: 缺失文字}（僅自動彙整，不含人工覆寫）。"""
     by_code, _ = result_type_maps(db)
     if cells is None:
         cells = db.query(AuditCell).filter(AuditCell.sheet_id == sheet.id).all()
@@ -255,9 +248,8 @@ def compute_deficiencies(
         rt = by_code.get(c.result_code)
         if rt is None or not rt.include_in_summary:
             continue
-        if (kind == "suggestion") != bool(rt.counts_as_pass):
-            continue
-        rank = 0
+        # 未達標的排前面，其次才是「建議」類
+        rank = 0 if not rt.counts_as_pass else 1
         buckets.setdefault(c.sheet_department_id, []).append(
             (order.get(c.sheet_item_id, (9999, 0)), rank, c.comment.strip())
         )
@@ -273,7 +265,6 @@ def compute_deficiencies(
 def build_sheet_detail(db: Session, sheet: AuditSheet) -> dict:
     cells = db.query(AuditCell).filter(AuditCell.sheet_id == sheet.id).all()
     auto_def = compute_deficiencies(db, sheet, cells)
-    auto_sug = compute_deficiencies(db, sheet, cells, kind="suggestion")
 
     departments = []
     for sd in sorted(sheet.departments, key=lambda d: (d.sort_order, d.id)):
@@ -284,8 +275,6 @@ def build_sheet_detail(db: Session, sheet: AuditSheet) -> dict:
             "sort_order": sd.sort_order,
             "deficiency_override": sd.deficiency_override,
             "deficiency": sd.deficiency_override if _filled(sd.deficiency_override) else auto_def.get(sd.id, ""),
-            "suggestion_override": sd.suggestion_override,
-            "suggestion": sd.suggestion_override if _filled(sd.suggestion_override) else auto_sug.get(sd.id, ""),
         })
 
     targets: Dict[int, List[int]] = {}
@@ -336,6 +325,7 @@ def build_sheet_detail(db: Session, sheet: AuditSheet) -> dict:
                 "sheet_item_id": c.sheet_item_id,
                 "sheet_department_id": c.sheet_department_id,
                 "comment": c.comment,
+                "suggestion": c.suggestion,
                 "result_code": c.result_code,
                 "updated_at": c.updated_at,
             }

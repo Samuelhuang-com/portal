@@ -1,16 +1,9 @@
-"""audit_cells 加「建議」suggestion（每格一個，固定藍字、與判定無關）
+"""收斂 audchks：資料庫若曾跑過第一版 audchks（部門層級 suggestion_override），
+這支會補上 audit_cells.suggestion 並拿掉 suggestion_override。已是最終狀態則什麼都不做。
 
-Revision ID: audchks
-Revises: audchkd
+Revision ID: audchkt
+Revises: audchks
 Create Date: 2026-10-01
-
-背景（2026-10-01 使用者要求，同日兩次）
-────────────────────────────────────────────────────────────────────────────
-第一版曾在「缺失」下方加一列部門層級的「建議」（audit_sheet_departments.suggestion_override），
-同日使用者改為：建議是每一格自己的欄位，放在 Drawer「查核評語」下方，固定藍字、與判定無關，
-並取消「缺失」下方那一列。本 migration 已改寫成最終版；若資料庫跑過第一版，audchkt 會收斂。
-
-PostgreSQL 方言（CLAUDE.md §0）。可重跑。
 """
 from typing import Sequence, Union
 
@@ -18,8 +11,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision: str = "audchks"
-down_revision: Union[str, None] = "audchkd"
+revision: str = "audchkt"
+down_revision: Union[str, None] = "audchks"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -48,5 +41,4 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    if _has_column("audit_cells", "suggestion"):
-        op.drop_column("audit_cells", "suggestion")
+    pass   # 收斂用，退版交給 audchks

@@ -7,6 +7,8 @@
  *     本模組資料由人工填寫、**沒有 Ragic 來源**，依規範「ragic_url 非空時才顯示」，
  *     故不顯示 Ragic 連結；標題列其餘格式照規範，不自創。
  *   - 分兩區：①基本欄位（Descriptions）②編輯區
+ *
+ * 2026-10-01：查核評語下方加「建議」— 固定藍字、與判定無關、不計分
  */
 import { useEffect, useState } from 'react'
 import {
@@ -15,6 +17,7 @@ import {
 import { LeftOutlined, RightOutlined, SaveOutlined } from '@ant-design/icons'
 
 import { sheetsApi } from '@/api/auditCheck'
+import { SUGGESTION_COLOR } from './suggestionColor'
 import type { Cell, ResultType, SheetDepartment, SheetDetail, SheetItem } from '@/api/auditCheck'
 
 const { Text } = Typography
@@ -46,12 +49,14 @@ export default function CellDrawer(props: CellDrawerProps) {
   const defaultCode = active.find((t) => t.is_default)?.code ?? active[0]?.code ?? 'ok'
 
   const [comment, setComment] = useState('')
+  const [suggestion, setSuggestion] = useState('')
   const [code, setCode] = useState(defaultCode)
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
     if (!open) return
     setComment(cell?.comment ?? '')
+    setSuggestion(cell?.suggestion ?? '')
     setCode(cell?.result_code ?? defaultCode)
   }, [open, cell, defaultCode])
 
@@ -63,10 +68,14 @@ export default function CellDrawer(props: CellDrawerProps) {
         sheet_item_id: item.id,
         sheet_department_id: department.id,
         comment,
+        suggestion,
         result_code: code,
       })
       onSaved(res.data)
-      message.success(comment.trim() ? '已儲存' : '已清空（此格不計入分母）')
+      message.success(
+        comment.trim() ? '已儲存'
+          : suggestion.trim() ? '已儲存（評語空白，此格不計入分母）' : '已清空（此格不計入分母）',
+      )
       if (thenMove !== 0) onNavigate(thenMove)
       else onClose()
     } catch (e: any) {
@@ -152,6 +161,27 @@ export default function CellDrawer(props: CellDrawerProps) {
         }}
       />
       <Text type="secondary" style={{ fontSize: 12 }}>Ctrl + Enter：儲存並跳下一欄</Text>
+
+      <div style={{ marginTop: 16, marginBottom: 8 }}>
+        <Text strong style={{ color: SUGGESTION_COLOR }}>建議</Text>
+        <Text type="secondary" style={{ fontSize: 12, marginLeft: 8 }}>
+          固定藍字，與判定無關，不計分
+        </Text>
+      </div>
+      <Input.TextArea
+        value={suggestion}
+        onChange={(e) => setSuggestion(e.target.value)}
+        rows={4}
+        disabled={readOnly}
+        placeholder="給該部門的建議事項（可留空）"
+        style={{ color: SUGGESTION_COLOR }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !readOnly) {
+            e.preventDefault()
+            save(1)
+          }
+        }}
+      />
 
       <div style={{ marginTop: 16, marginBottom: 8 }}>
         <Text strong>判定</Text>

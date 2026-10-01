@@ -199,7 +199,6 @@ class AuditSheetDepartment(Base):
     column_label        = Column(String(50),  nullable=True, comment="顯示覆寫；空值取部門名稱")
     sort_order          = Column(Integer,     nullable=False, default=0)
     deficiency_override = Column(Text,        nullable=True, comment="「缺失」人工覆寫；空值＝自動彙整")
-    suggestion_override = Column(Text,        nullable=True, comment="「建議」人工覆寫；空值＝自動彙整（2026-10-01）")
 
     sheet      = relationship("AuditSheet", back_populates="departments")
     department = relationship("RefDepartment")
@@ -264,6 +263,8 @@ class AuditCell(Base):
     sheet_item_id       = Column(Integer,    ForeignKey("audit_sheet_items.id", ondelete="CASCADE"), nullable=False, index=True)
     sheet_department_id = Column(Integer,    ForeignKey("audit_sheet_departments.id", ondelete="CASCADE"), nullable=False, index=True)
     comment             = Column(Text,       nullable=True, comment="查核評語（可多行）")
+    suggestion          = Column(Text,       nullable=True,
+                                 comment="建議（2026-10-01）：固定藍字、與判定無關，不計分；評語空白但有建議時仍保留此列")
     result_code         = Column(String(20), nullable=False, default="ok", comment="對應 audit_result_types.code")
     updated_by          = Column(String(36), nullable=True)
     created_at          = Column(DateTime,   nullable=False, default=_now)

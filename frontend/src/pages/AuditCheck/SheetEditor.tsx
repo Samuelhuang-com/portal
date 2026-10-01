@@ -14,7 +14,7 @@
  *   1. 表頭與左側檢查項固定（表格自己捲動，scroll.y + fixed left）
  *   2. 部門欄可用滑鼠拖曳調整順序（拖表頭）；左側檢查項可拖曳調整順序（拖 ⠿ 把手）
  *      — 大項之間互換時子項跟著走；子項只能在同一個大項內移動；只影響這一張稽核單
- *   3. 「缺失」下面多一列「建議」（列入彙整且算達標的判定，可人工覆寫）
+ *   3. 每一格多一個「建議」（CellDrawer 查核評語下方），固定藍字、與判定無關、不計分
  */
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import type React from 'react'
@@ -48,13 +48,15 @@ import type { DepartmentRecord } from '@/api/referenceData'
 import { downloadFile } from '@/api/downloadFile'
 import { useAuthStore } from '@/stores/authStore'
 import CellDrawer from './CellDrawer'
+import { SUGGESTION_COLOR } from './suggestionColor'
 
 const { Title, Text, Paragraph } = Typography
+
 
 const COL_ITEM_WIDTH = 280
 const COL_DEPT_WIDTH = 210
 
-type RowKind = 'stat' | 'deficiency' | 'suggestion' | 'major' | 'minor' | 'pending' | 'result'
+type RowKind = 'stat' | 'deficiency' | 'major' | 'minor' | 'pending' | 'result'
 
 interface MatrixRow {
   key: string
@@ -236,7 +238,6 @@ export default function AuditSheetEditorPage() {
       { key: 'stat-pass', kind: 'stat', label: '達標項數', statKey: 'pass_count' },
       { key: 'stat-score', kind: 'stat', label: '各部門本期稽核分數', statKey: 'score' },
       { key: 'deficiency', kind: 'deficiency', label: '缺失' },
-      { key: 'suggestion', kind: 'suggestion', label: '建議' },
     ]
     detail.items.forEach((it) => {
       out.push({
@@ -294,15 +295,7 @@ export default function AuditSheetEditorPage() {
       })
       return
     }
-    if (kind === 'suggestion') {
-      setTextModal({
-        open: true, kind, deptId: dept.id,
-        title: `建議 — ${dept.name}`,
-        value: dept.suggestion_override ?? dept.suggestion ?? '',
-        code: '',
-      })
-      return
-    }
+
     const rv = reviewByDept.get(dept.id)
     setTextModal({
       open: true, kind, deptId: dept.id,
@@ -318,8 +311,6 @@ export default function AuditSheetEditorPage() {
       let res
       if (textModal.kind === 'deficiency') {
         res = await sheetsApi.upsertDeficiency(detail.id, textModal.deptId, textModal.value.trim() || null)
-      } else if (textModal.kind === 'suggestion') {
-        res = await sheetsApi.upsertSuggestion(detail.id, textModal.deptId, textModal.value.trim() || null)
       } else if (textModal.kind === 'pending') {
         res = await sheetsApi.upsertReview(detail.id, textModal.deptId, {
           pending_text: textModal.value, pending_result: textModal.code,
@@ -579,11 +570,6 @@ export default function AuditSheetEditorPage() {
   }
 
   // ── 欄位定義 ────────────────────────────────────────────────────────────
-  const suggestionColor = useMemo(() => {
-    const t = detail?.result_types.find((x) => x.is_active && x.counts_as_pass && x.include_in_summary)
-    return t?.color ?? '#1677ff'
-  }, [detail])
-
   const columns: ColumnsType<MatrixRow> = useMemo(() => {
     if (!detail) return []
     const first: ColumnsType<MatrixRow>[number] = {
@@ -620,9 +606,7 @@ export default function AuditSheetEditorPage() {
             </Space>
           )
         }
-        const labelColor = row.kind === 'deficiency' ? '#cf1322'
-          : row.kind === 'suggestion' ? suggestionColor : undefined
-        return <Text strong style={{ color: labelColor }}>{row.label}</Text>
+        return <Text strong style={{ color: row.kind === 'deficiency' ? '#cf1322' : undefined }}>{row.label}</Text>
       },
     }
 
@@ -660,22 +644,6 @@ export default function AuditSheetEditorPage() {
               }}
             >
               {d.deficiency || <Text type="secondary">—</Text>}
-              {isOverride && <Tag color="default" style={{ marginLeft: 4 }}>人工</Tag>}
-            </div>
-          )
-        }
-
-        if (row.kind === 'suggestion') {
-          const isOverride = !!d.suggestion_override
-          return (
-            <div
-              onClick={() => openTextModal('suggestion', d)}
-              style={{
-                whiteSpace: 'pre-wrap', color: suggestionColor, fontSize: 12,
-                cursor: canEdit ? 'pointer' : 'default', minHeight: 20,
-              }}
-            >
-              {d.suggestion || <Text type="secondary">—</Text>}
               {isOverride && <Tag color="default" style={{ marginLeft: 4 }}>人工</Tag>}
             </div>
           )
@@ -720,14 +688,17 @@ export default function AuditSheetEditorPage() {
                 : (isTarget && !c ? '1px dashed #d9d9d9' : '1px solid transparent'),
             }}
           >
-            {c?.comment || <Text type="secondary">{isTarget ? '（本期應查）' : '—'}</Text>}
+            {c?.comment || (!c?.suggestion && <Text type="secondary">{isTarget ? '（本期應查）' : '—'}</Text>)}
+            {c?.suggestion && (
+              <div style={{ color: SUGGESTION_COLOR, marginTop: c.comment ? 4 : 0 }}>{c.suggestion}</div>
+            )}
           </div>
         )
       },
     }))
 
     return [first, ...deptCols]
-  }, [detail, cellMap, typeByCode, scoreByDept, reviewByDept, canEdit, suggestionColor])
+  }, [detail, cellMap, typeByCode, scoreByDept, reviewByDept, canEdit])
 
   if (!detail) {
     return <Spin spinning={loading}><Empty description="載入中" /></Spin>
@@ -859,8 +830,7 @@ export default function AuditSheetEditorPage() {
                 rowClassName={(row) =>
                   row.kind === 'major' ? 'audit-row-major'
                     : row.kind === 'stat' ? 'audit-row-stat'
-                      : row.kind === 'deficiency' ? 'audit-row-deficiency'
-                        : row.kind === 'suggestion' ? 'audit-row-suggestion' : ''
+                      : row.kind === 'deficiency' ? 'audit-row-deficiency' : ''
                 }
               />
             </SortableContext>
@@ -952,10 +922,9 @@ export default function AuditSheetEditorPage() {
           rows={6}
           onChange={(e) => setTextModal((s) => (s ? { ...s, value: e.target.value } : s))}
         />
-        {textModal?.kind === 'deficiency' || textModal?.kind === 'suggestion' ? (
+        {textModal?.kind === 'deficiency' ? (
           <Text type="secondary" style={{ fontSize: 12 }}>
-            留空 ＝ 還原成系統自動彙整（依判定類型的「列入缺失／建議彙整」設定；
-            {textModal?.kind === 'deficiency' ? '不算達標者列入缺失' : '算達標者列入建議'}）
+            留空 ＝ 還原成系統自動彙整（依判定類型的「列入缺失彙整」設定）
           </Text>
         ) : (
           <div style={{ marginTop: 12 }}>
@@ -1105,7 +1074,6 @@ export default function AuditSheetEditorPage() {
         .audit-row-major > td { background: #f6f9fc !important; }
         .audit-row-stat > td { background: #fafafa !important; }
         .audit-row-deficiency > td { background: #fff5f5 !important; }
-        .audit-row-suggestion > td { background: #f0f7ff !important; }
       `}</style>
     </div>
   )

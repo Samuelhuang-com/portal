@@ -159,8 +159,6 @@ class SheetDepartmentOut(BaseModel):
     sort_order: int
     deficiency_override: Optional[str]
     deficiency: str = Field("", description="缺失列最終顯示值（覆寫優先，否則自動彙整）")
-    suggestion_override: Optional[str] = None
-    suggestion: str = Field("", description="建議列最終顯示值（覆寫優先，否則自動彙整）")
 
 
 class SheetItemOut(BaseModel):
@@ -180,6 +178,7 @@ class CellOut(BaseModel):
     sheet_item_id: int
     sheet_department_id: int
     comment: Optional[str]
+    suggestion: Optional[str] = None
     result_code: str
     updated_at: Optional[datetime]
 
@@ -235,6 +234,8 @@ class CellUpsert(BaseModel):
     sheet_item_id: int
     sheet_department_id: int
     comment: Optional[str] = None
+    # 2026-10-01：沒帶這個欄位 ＝ 維持原值；帶空字串 ＝ 清除
+    suggestion: Optional[str] = None
     result_code: Optional[str] = None
 
 
@@ -252,10 +253,6 @@ class ReviewUpsert(BaseModel):
 
 class DeficiencyUpsert(BaseModel):
     deficiency_override: Optional[str] = None
-
-
-class SuggestionUpsert(BaseModel):
-    suggestion_override: Optional[str] = None
 
 
 class SheetItemOrder(BaseModel):

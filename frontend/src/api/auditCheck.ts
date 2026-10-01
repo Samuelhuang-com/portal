@@ -68,10 +68,6 @@ export interface SheetDepartment {
   sort_order: number
   deficiency_override: string | null
   deficiency: string
-  /** 「建議」列人工覆寫（2026-10-01）；null ＝ 自動彙整 */
-  suggestion_override: string | null
-  /** 「建議」列最終顯示值 */
-  suggestion: string
 }
 
 export interface SheetItem {
@@ -94,6 +90,8 @@ export interface Cell {
   sheet_item_id: number
   sheet_department_id: number
   comment: string | null
+  /** 建議（2026-10-01）：固定藍字、與判定無關，不計分 */
+  suggestion?: string | null
   result_code: string
   updated_at: string | null
 }
@@ -255,6 +253,8 @@ export const sheetsApi = {
     sheet_item_id: number
     sheet_department_id: number
     comment?: string | null
+    /** 不帶 ＝ 維持原值；空字串 ＝ 清除 */
+    suggestion?: string | null
     result_code?: string | null
   }) => client.put<SheetDetail>(`/audit-check/sheets/${id}/cells`, body),
 
@@ -276,12 +276,6 @@ export const sheetsApi = {
     client.put<SheetDetail>(
       `/audit-check/sheets/${id}/departments/${sheetDepartmentId}/deficiency`,
       { deficiency_override: text },
-    ),
-
-  upsertSuggestion: (id: number, sheetDepartmentId: number, text: string | null) =>
-    client.put<SheetDetail>(
-      `/audit-check/sheets/${id}/departments/${sheetDepartmentId}/suggestion`,
-      { suggestion_override: text },
     ),
 
   /** 拖曳調整檢查項順序（畫面由上到下的 sheet_item_id 清單）— 只影響這一張稽核單 */
