@@ -6,10 +6,10 @@
   受稽單位｜文件編號、受稽人員｜稽核人員、文件名稱
   項次｜內部稽核要項｜稽核紀錄｜稽核結果｜備註
     1.  大項
-    1.1 子項 ｜ 評語（判定色）＋建議（藍字） ｜ V / X ｜ （備註留空）
+    1.1 子項 ｜ 評語 ｜ V / X ｜ 建議（藍字）
     覆核. 8月待補正項目
         待補正內容 ｜ 覆核結果 ｜ V / X
-  本次稽核說明：xx%（稽核子項數／達標項數／本期稽核分數、缺失）
+  本次稽核說明：xx%（稽核子項數／達標項數／本期稽核分數、缺失、建議）
   簽核列：執董／營運最高主管／受稽部門主管／稽核人員
 
 只列出「這個部門有填評語或建議」的子項（沒填 ＝ 本期不查此項）；大項只在底下有子項時出現。
@@ -30,18 +30,8 @@ from docx.shared import Cm, Pt, RGBColor
 
 LOGO_PATH = Path(__file__).parent / "audit_check_assets" / "esse_logo.png"
 FONT = "微軟正黑體"
-# 顏色一律比照網頁稽核單（SheetEditor.tsx）：
-#   缺失 #cf1322、建議 SUGGESTION_COLOR #1677ff、分數 100% 綠 #52c41a／未滿紅 #cf1322；
-#   評語與稽核結果 → 判定類型主檔的顏色（使用者在「判定類型設定」自訂）
-RED = RGBColor(0xCF, 0x13, 0x22)
-GREEN = RGBColor(0x52, 0xC4, 0x1A)
+RED = RGBColor(0xFF, 0x00, 0x00)
 BLUE = RGBColor(0x16, 0x77, 0xFF)
-
-
-def _score_color(score: Optional[float]) -> Optional[RGBColor]:
-    if score is None:
-        return None
-    return GREEN if score >= 1 else RED
 SHADE = "F2F2F2"
 
 # 主表欄寬（A4 直式，左右邊界 1.5cm → 可用 18cm）
@@ -268,20 +258,8 @@ def build_inspection_docx(
             code = c.get("result_code") if (c.get("comment") or "").strip() else None
             color = _color(code, types)   # 評語與稽核結果依判定顏色（如扣分紅、建議藍）
             _write(rr.cells[2], c.get("comment") or "", 10, color=color)
-            sug = (c.get("suggestion") or "").strip()
-            if sug:
-                # 建議放在同一格評語下方，固定藍字、與判定無關（比照網頁格子）
-                cell2 = rr.cells[2]
-                if not (c.get("comment") or "").strip():
-                    _write(cell2, sug, 10, color=BLUE)
-                else:
-                    for line in sug.replace("\r\n", "\n").split("\n"):
-                        para = cell2.add_paragraph()
-                        para.paragraph_format.space_before = Pt(1)
-                        para.paragraph_format.space_after = Pt(1)
-                        _font(para.add_run(line), 10, True, BLUE)
             _write(rr.cells[3], _symbol(code, types), 11, align=WD_ALIGN_PARAGRAPH.CENTER, color=color)
-            _write(rr.cells[4], "")
+            _write(rr.cells[4], c.get("suggestion") or "", 10, color=BLUE)
 
     has_review = review and ((review.get("pending_text") or "").strip() or (review.get("result_text") or "").strip())
     if has_review:
@@ -302,10 +280,9 @@ def build_inspection_docx(
     _write(box, "")
     p = box.paragraphs[0]
     _font(p.add_run("本次稽核說明:  "), 14)
-    score_val = score["score"] if score else None
-    _font(p.add_run(_pct(score_val)), 14, color=_score_color(score_val))
+    _font(p.add_run(_pct(score["score"] if score else None)), 14, color=RED)
 
-    inner = box.add_table(rows=2, cols=6)
+    inner = box.add_table(rows=3, cols=6)
     inner.style = "Table Grid"
     inner.alignment = WD_TABLE_ALIGNMENT.CENTER
     iw = [Cm(2.6), Cm(2.8), Cm(2.6), Cm(2.8), Cm(2.8), Cm(3.0)]
@@ -315,9 +292,16 @@ def build_inspection_docx(
     for idx, (label, val) in enumerate(vals):
         _write(inner.rows[0].cells[idx * 2], label, 10, align=WD_ALIGN_PARAGRAPH.CENTER)
         _write(inner.rows[0].cells[idx * 2 + 1], val, 10, align=WD_ALIGN_PARAGRAPH.CENTER,
-               color=_score_color(score_val) if idx == 2 else None)
+               color=RED if idx == 2 else None)
     _write(inner.rows[1].cells[0], "缺失", 10, align=WD_ALIGN_PARAGRAPH.CENTER, color=RED)
     _write(inner.rows[1].cells[1].merge(inner.rows[1].cells[5]), dept.get("deficiency") or "", 10, color=RED)
+    _write(inner.rows[2].cells[0], "建議", 10, align=WD_ALIGN_PARAGRAPH.CENTER, color=BLUE)
+    sugs = [
+        cells[m["id"]]["suggestion"].strip()
+        for mj in majors for m in minors_by_major[mj["id"]]
+        if (cells[m["id"]].get("suggestion") or "").strip()
+    ]
+    _write(inner.rows[2].cells[1].merge(inner.rows[2].cells[5]), "\n".join(sugs), 10, color=BLUE)
     _fix_widths(inner, iw)
     for row in inner.rows:
         _row_height(row, 0.6)
