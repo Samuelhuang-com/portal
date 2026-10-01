@@ -85,6 +85,27 @@ export const departmentsApi = {
     }),
   toggle: (id: number) =>
     client.patch<DepartmentRecord>(`/settings/departments/${id}/toggle`),
+  /** 2026-10-01：刪除前查引用情形 */
+  usage: (id: number) =>
+    client.get<DepartmentUsage>(`/settings/departments/${id}/usage`),
+  /** 2026-10-01：刪除部門（被稽核檢查引用時後端回 409） */
+  remove: (id: number) =>
+    client.delete<DepartmentDeleteResult>(`/settings/departments/${id}`),
+}
+
+export interface DepartmentUsage {
+  members: number
+  audit_sheet_columns: number
+  audit_item_targets: number
+  cycle_purchase_linked: number
+  blocked: boolean
+}
+
+export interface DepartmentDeleteResult {
+  deleted_id: number
+  name: string
+  removed_members: number
+  unlinked_cycle_purchase_departments: number
 }
 
 // ── 計價規格 ──────────────────────────────────────────────────────────────

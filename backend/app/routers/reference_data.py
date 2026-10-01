@@ -248,6 +248,113 @@ def toggle_department(
     return resp
 
 
+# ── 2026-10-01：部門刪除（Samuel 要求在「部門別」TAB 提供刪除）─────────────
+#
+# 刪除前先查引用：
+#   - 稽核檢查（audit_sheet_departments／audit_item_targets）是 FK 且無 CASCADE，
+#     屬於業務資料 → 有引用就拒絕刪除（409），請使用者改用「停用」。
+#   - user_departments（人員部門歸屬）只是歸屬關係 → 隨部門一併移除；
+#     前端確認視窗會先顯示受影響人數。這裡明確刪除，不依賴 DB 端 ondelete
+#     （SQLite 時代建的表不一定有 CASCADE）。
+#   - 週採部門 source_department_id（跨庫字串對照，2026-09-22 起週採部門已
+#     全部本地自建，理論上不會有）→ 若仍有連結就清成 NULL，不刪週採部門。
+
+def _department_usage(db: Session, dept_id: int) -> dict:
+    from app.models.user_department import UserDepartment
+    from app.models.audit_check import AuditSheetDepartment, AuditItemTarget
+    members = db.query(UserDepartment).filter(UserDepartment.department_id == dept_id).count()
+    audit_cols = db.query(AuditSheetDepartment).filter(AuditSheetDepartment.department_id == dept_id).count()
+    audit_targets = db.query(AuditItemTarget).filter(AuditItemTarget.department_id == dept_id).count()
+    cp_linked = 0
+    try:
+        from app.core.cycle_purchase_database import CyclePurchaseSessionLocal
+        from app.models.cycle_purchase_reference import CyclePurchaseDepartment
+        cp_db = CyclePurchaseSessionLocal()
+        try:
+            cp_linked = cp_db.query(CyclePurchaseDepartment).filter(
+                CyclePurchaseDepartment.source_department_id == str(dept_id)
+            ).count()
+        finally:
+            cp_db.close()
+    except Exception:  # pragma: no cover - 防禦性：週採庫讀不到不影響主流程
+        import logging
+        logging.getLogger(__name__).exception("[reference_data] 讀取週採部門連結失敗（已忽略）")
+    return {
+        "members": members,
+        "audit_sheet_columns": audit_cols,
+        "audit_item_targets": audit_targets,
+        "cycle_purchase_linked": cp_linked,
+        "blocked": (audit_cols + audit_targets) > 0,
+    }
+
+
+@router.get("/departments/{dept_id}/usage", summary="部門被引用情形（刪除前檢查）")
+def department_usage(
+    dept_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(_dept_admin_dep),
+):
+    if not db.query(RefDepartment).filter(RefDepartment.id == dept_id).first():
+        raise HTTPException(status_code=404, detail="部門不存在")
+    return _department_usage(db, dept_id)
+
+
+@router.delete("/departments/{dept_id}", summary="刪除部門別")
+def delete_department(
+    dept_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(_dept_admin_dep),
+):
+    obj = db.query(RefDepartment).filter(RefDepartment.id == dept_id).first()
+    if not obj:
+        raise HTTPException(status_code=404, detail="部門不存在")
+    usage = _department_usage(db, dept_id)
+    if usage["blocked"]:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"部門「{obj.name}」已被稽核檢查使用（稽核單部門欄 {usage['audit_sheet_columns']} 筆、"
+                f"建議查核部門 {usage['audit_item_targets']} 筆），無法刪除，請改用「停用」。"
+            ),
+        )
+
+    from app.models.user_department import UserDepartment
+    removed_members = (
+        db.query(UserDepartment)
+        .filter(UserDepartment.department_id == dept_id)
+        .delete(synchronize_session=False)
+    )
+    name = obj.name
+    db.delete(obj)
+    db.commit()
+
+    unlinked = 0
+    if usage["cycle_purchase_linked"]:
+        try:
+            from app.core.cycle_purchase_database import CyclePurchaseSessionLocal
+            from app.models.cycle_purchase_reference import CyclePurchaseDepartment
+            cp_db = CyclePurchaseSessionLocal()
+            try:
+                unlinked = (
+                    cp_db.query(CyclePurchaseDepartment)
+                    .filter(CyclePurchaseDepartment.source_department_id == str(dept_id))
+                    .update({CyclePurchaseDepartment.source_department_id: None}, synchronize_session=False)
+                )
+                cp_db.commit()
+            finally:
+                cp_db.close()
+        except Exception:  # pragma: no cover - 防禦性
+            import logging
+            logging.getLogger(__name__).exception("[reference_data] 清除週採部門連結失敗（已忽略）")
+
+    return {
+        "deleted_id": dept_id,
+        "name": name,
+        "removed_members": removed_members,
+        "unlinked_cycle_purchase_departments": unlinked,
+    }
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # 計價規格
 # ═══════════════════════════════════════════════════════════════════════════

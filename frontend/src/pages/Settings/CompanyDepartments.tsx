@@ -20,7 +20,7 @@ import { useCallback, useEffect, useState } from 'react'
 import {
   Button, Card, Empty, Form, Input, Modal, Popconfirm, Select, Space, Table, Tabs, Tag, Typography, message,
 } from 'antd'
-import { EditOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons'
+import { DeleteOutlined, EditOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { companiesApi, departmentsApi } from '@/api/referenceData'
 import type { CompanyRecord, DepartmentRecord } from '@/api/referenceData'
@@ -173,6 +173,63 @@ function DepartmentsTab() {
     } catch { message.error('操作失敗') }
   }
 
+  // 2026-10-01：刪除部門。先查引用情形——被稽核檢查使用的不能刪（請改停用）；
+  // 有人員歸屬的，確認視窗先講清楚會一併移除幾位人員的部門歸屬。
+  const handleDelete = async (r: DepartmentRecord) => {
+    let usage
+    try { usage = (await departmentsApi.usage(r.id)).data }
+    catch (e: any) { message.error(e?.response?.data?.detail ?? '查詢部門使用情形失敗'); return }
+
+    if (usage.blocked) {
+      Modal.warning({
+        title: `無法刪除「${r.company_name}／${r.name}」`,
+        content: (
+          <div>
+            此部門已被稽核檢查使用（稽核單部門欄 {usage.audit_sheet_columns} 筆、建議查核部門 {usage.audit_item_targets} 筆），
+            刪除會造成稽核資料失聯。如不再使用，請改用「停用」。
+          </div>
+        ),
+        okText: '知道了',
+      })
+      return
+    }
+
+    Modal.confirm({
+      title: `確認刪除「${r.company_name}／${r.name}」？`,
+      content: (
+        <div>
+          <div>刪除後無法復原。</div>
+          {usage.members > 0 && (
+            <div style={{ marginTop: 8 }}>
+              <Text type="danger">目前有 {usage.members} 位人員歸屬此部門，刪除後會一併移除他們的這個部門歸屬。</Text>
+            </div>
+          )}
+          {usage.cycle_purchase_linked > 0 && (
+            <div style={{ marginTop: 8 }}>
+              <Text type="warning">有 {usage.cycle_purchase_linked} 個週採部門連結到此部門，會解除連結（週採部門本身保留）。</Text>
+            </div>
+          )}
+        </div>
+      ),
+      okText: '刪除',
+      okButtonProps: { danger: true },
+      cancelText: '取消',
+      onOk: async () => {
+        try {
+          const res = (await departmentsApi.remove(r.id)).data
+          message.success(
+            res.removed_members > 0
+              ? `已刪除，並移除 ${res.removed_members} 位人員的部門歸屬`
+              : '已刪除',
+          )
+          load(filterCompanyId)
+        } catch (e: any) {
+          message.error(e?.response?.data?.detail ?? '刪除失敗')
+        }
+      },
+    })
+  }
+
   const columns: ColumnsType<DepartmentRecord> = [
     { title: '歸屬公司', dataIndex: 'company_name', key: 'company_name', width: 120 },
     { title: '部門名稱', dataIndex: 'name', key: 'name' },
@@ -181,7 +238,7 @@ function DepartmentsTab() {
       render: (v: boolean) => <Tag color={v ? 'success' : 'default'}>{v ? '啟用' : '停用'}</Tag>,
     },
     {
-      title: '操作', key: 'actions', width: 160,
+      title: '操作', key: 'actions', width: 240,
       render: (_: any, r: DepartmentRecord) => (
         <Space size="small">
           <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(r)}>修改</Button>
@@ -191,6 +248,7 @@ function DepartmentsTab() {
           >
             <Button size="small" danger={r.is_active}>{r.is_active ? '停用' : '啟用'}</Button>
           </Popconfirm>
+          <Button size="small" danger icon={<DeleteOutlined />} onClick={() => handleDelete(r)}>刪除</Button>
         </Space>
       ),
     },
