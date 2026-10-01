@@ -234,8 +234,15 @@ def compute_deficiencies(
     db: Session,
     sheet: AuditSheet,
     cells: Optional[Sequence[AuditCell]] = None,
+    kind: str = "deficiency",
 ) -> Dict[int, str]:
-    """回傳 {sheet_department_id: 缺失文字}（僅自動彙整，不含人工覆寫）。"""
+    """
+    回傳 {sheet_department_id: 彙整文字}（僅自動彙整，不含人工覆寫）。
+
+    2026-10-01 使用者要求「缺失下面多一列＝建議」，同一批「列入彙整」的判定拆成兩列：
+      kind="deficiency"：不算達標者（如扣分）→「缺失」列
+      kind="suggestion"：算達標者（如建議）  →「建議」列
+    """
     by_code, _ = result_type_maps(db)
     if cells is None:
         cells = db.query(AuditCell).filter(AuditCell.sheet_id == sheet.id).all()
@@ -248,8 +255,9 @@ def compute_deficiencies(
         rt = by_code.get(c.result_code)
         if rt is None or not rt.include_in_summary:
             continue
-        # 未達標的排前面，其次才是「建議」類
-        rank = 0 if not rt.counts_as_pass else 1
+        if (kind == "suggestion") != bool(rt.counts_as_pass):
+            continue
+        rank = 0
         buckets.setdefault(c.sheet_department_id, []).append(
             (order.get(c.sheet_item_id, (9999, 0)), rank, c.comment.strip())
         )
@@ -265,6 +273,7 @@ def compute_deficiencies(
 def build_sheet_detail(db: Session, sheet: AuditSheet) -> dict:
     cells = db.query(AuditCell).filter(AuditCell.sheet_id == sheet.id).all()
     auto_def = compute_deficiencies(db, sheet, cells)
+    auto_sug = compute_deficiencies(db, sheet, cells, kind="suggestion")
 
     departments = []
     for sd in sorted(sheet.departments, key=lambda d: (d.sort_order, d.id)):
@@ -275,6 +284,8 @@ def build_sheet_detail(db: Session, sheet: AuditSheet) -> dict:
             "sort_order": sd.sort_order,
             "deficiency_override": sd.deficiency_override,
             "deficiency": sd.deficiency_override if _filled(sd.deficiency_override) else auto_def.get(sd.id, ""),
+            "suggestion_override": sd.suggestion_override,
+            "suggestion": sd.suggestion_override if _filled(sd.suggestion_override) else auto_sug.get(sd.id, ""),
         })
 
     targets: Dict[int, List[int]] = {}
@@ -401,15 +412,21 @@ def apply_layout(
                 majors.append(it.parent_id)
             minors_by_major.setdefault(it.parent_id, []).append(item_id)
 
-    # 依主檔 sort_order 排序
+    # 排序：本張既有的列保留目前順序（含使用者在稽核單上拖曳調整過的，2026-10-01）；
+    #       新加入的列依主檔 sort_order 排在既有列之後
     parents = {i.id: i for i in db.query(AuditItem).filter(AuditItem.id.in_(majors)).all()}
+    prev_order = {si.item_id: si.sort_order for si in sheet.items}
 
     def _master_name(iid: int) -> Optional[str]:
         it = all_items.get(iid) or parents.get(iid)
         return it.name if it else None
-    majors.sort(key=lambda mid: (parents[mid].sort_order, mid) if mid in parents else (9999, mid))
+    def _key(iid: int, src: dict) -> tuple:
+        if iid in prev_order:
+            return (0, prev_order[iid], 0, iid)
+        return (1, 0, src[iid].sort_order if iid in src else 9999, iid)
+    majors.sort(key=lambda mid: _key(mid, parents))
     for mid, lst in minors_by_major.items():
-        lst.sort(key=lambda iid: (all_items[iid].sort_order, iid) if iid in all_items else (9999, iid))
+        lst.sort(key=lambda iid: _key(iid, all_items))
 
     existing_rows = {si.item_id: si for si in sheet.items}
     wanted = set(majors) | {i for lst in minors_by_major.values() for i in lst}
@@ -452,6 +469,36 @@ def apply_layout(
             db.query(AuditItemTarget).filter(AuditItemTarget.sheet_item_id == child.id).delete()
             for dept_id in (spec.target_department_ids if spec else []):
                 db.add(AuditItemTarget(sheet_item_id=child.id, department_id=dept_id))
+    db.flush()
+
+
+def reorder_items(db: Session, sheet: AuditSheet, sheet_item_ids: Sequence[int]) -> None:
+    """
+    依使用者在稽核單上拖曳後的順序重排檢查項列（2026-10-01）。
+
+    規則：大項之間可互換（子項跟著大項走）；子項只能在同一個大項底下換位置。
+    sheet_item_ids 為畫面由上到下的順序；沒列到的列維持原相對順序排在最後。
+    display_no（1 / 1.1）一併重算。
+    """
+    rows = {si.id: si for si in sheet.items}
+    pos = {sid: idx for idx, sid in enumerate(sheet_item_ids)}
+
+    def _k(si: AuditSheetItem) -> tuple:
+        return (0, pos[si.id]) if si.id in pos else (1, si.sort_order, si.id)
+
+    majors = sorted((si for si in rows.values() if si.parent_sheet_item_id is None), key=_k)
+    order = 0
+    for m_idx, major in enumerate(majors, start=1):
+        major.display_no = str(m_idx)
+        major.sort_order = order
+        order += 10
+        children = sorted(
+            (si for si in rows.values() if si.parent_sheet_item_id == major.id), key=_k,
+        )
+        for s_idx, child in enumerate(children, start=1):
+            child.display_no = f"{m_idx}.{s_idx}"
+            child.sort_order = order
+            order += 10
     db.flush()
 
 

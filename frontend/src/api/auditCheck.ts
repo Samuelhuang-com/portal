@@ -68,6 +68,10 @@ export interface SheetDepartment {
   sort_order: number
   deficiency_override: string | null
   deficiency: string
+  /** 「建議」列人工覆寫（2026-10-01）；null ＝ 自動彙整 */
+  suggestion_override: string | null
+  /** 「建議」列最終顯示值 */
+  suggestion: string
 }
 
 export interface SheetItem {
@@ -273,6 +277,16 @@ export const sheetsApi = {
       `/audit-check/sheets/${id}/departments/${sheetDepartmentId}/deficiency`,
       { deficiency_override: text },
     ),
+
+  upsertSuggestion: (id: number, sheetDepartmentId: number, text: string | null) =>
+    client.put<SheetDetail>(
+      `/audit-check/sheets/${id}/departments/${sheetDepartmentId}/suggestion`,
+      { suggestion_override: text },
+    ),
+
+  /** 拖曳調整檢查項順序（畫面由上到下的 sheet_item_id 清單）— 只影響這一張稽核單 */
+  reorderItems: (id: number, sheetItemIds: number[]) =>
+    client.put<SheetDetail>(`/audit-check/sheets/${id}/items/order`, { sheet_item_ids: sheetItemIds }),
 
   /** 完整路徑（給 downloadFile 用，不經過 client.baseURL） */
   exportUrl: (id: number) => `/api/v1/audit-check/sheets/${id}/export`,

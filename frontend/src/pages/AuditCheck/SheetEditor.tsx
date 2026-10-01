@@ -9,8 +9,24 @@
  *
  * ⚠️ 三列統計數字一律由後端即時計算，前端不重算也不可編輯（使用者裁示）。
  * ⚠️ 格子編輯一律走 CellDrawer（CLAUDE.md §7）。
+ *
+ * 2026-10-01 使用者要求：
+ *   1. 表頭與左側檢查項固定（表格自己捲動，scroll.y + fixed left）
+ *   2. 部門欄可用滑鼠拖曳調整順序（拖表頭）；左側檢查項可拖曳調整順序（拖 ⠿ 把手）
+ *      — 大項之間互換時子項跟著走；子項只能在同一個大項內移動；只影響這一張稽核單
+ *   3. 「缺失」下面多一列「建議」（列入彙整且算達標的判定，可人工覆寫）
  */
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
+import type React from 'react'
+import {
+  DndContext, PointerSensor, closestCenter, useSensor, useSensors,
+  type CollisionDetection, type DragEndEvent,
+} from '@dnd-kit/core'
+import {
+  SortableContext, arrayMove, horizontalListSortingStrategy, useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 import { useNavigate, useParams } from 'react-router-dom'
 import {
   Button, Card, Checkbox, DatePicker, Empty, Input, InputNumber, Modal, Progress, Radio,
@@ -18,7 +34,7 @@ import {
 } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import {
-  ArrowLeftOutlined, DownloadOutlined, EditOutlined, LayoutOutlined, PlusOutlined,
+  ArrowLeftOutlined, DownloadOutlined, EditOutlined, HolderOutlined, LayoutOutlined, PlusOutlined,
   ReloadOutlined,
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
@@ -38,7 +54,7 @@ const { Title, Text, Paragraph } = Typography
 const COL_ITEM_WIDTH = 280
 const COL_DEPT_WIDTH = 210
 
-type RowKind = 'stat' | 'deficiency' | 'major' | 'minor' | 'pending' | 'result'
+type RowKind = 'stat' | 'deficiency' | 'suggestion' | 'major' | 'minor' | 'pending' | 'result'
 
 interface MatrixRow {
   key: string
@@ -46,6 +62,106 @@ interface MatrixRow {
   label: string
   item?: SheetItem
   statKey?: 'sub_count' | 'pass_count' | 'score'
+}
+
+// ── 拖曳（2026-10-01）────────────────────────────────────────────────────
+// 檢查項列：只有拖 ⠿ 把手才會啟動，避免跟「點格子開 Drawer」衝突
+const RowHandleContext = createContext<{
+  setActivatorNodeRef?: (el: HTMLElement | null) => void
+  listeners?: Record<string, unknown>
+  attributes?: Record<string, unknown>
+}>({})
+
+function RowDragHandle() {
+  const { setActivatorNodeRef, listeners, attributes } = useContext(RowHandleContext)
+  if (!listeners) return null
+  return (
+    <span
+      ref={setActivatorNodeRef}
+      {...attributes}
+      {...listeners}
+      title="拖曳調整順序"
+      style={{ cursor: 'grab', color: '#8c8c8c', touchAction: 'none', padding: '0 2px' }}
+    >
+      <HolderOutlined />
+    </span>
+  )
+}
+
+interface BodyRowProps extends React.HTMLAttributes<HTMLTableRowElement> {
+  'data-row-key'?: string
+}
+
+function SortableItemRow(props: BodyRowProps & { rowId: string }) {
+  const { rowId, ...rest } = props
+  const {
+    attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging,
+  } = useSortable({ id: rowId })
+  const ctx = useMemo(
+    () => ({
+      setActivatorNodeRef,
+      listeners: listeners as Record<string, unknown> | undefined,
+      attributes: attributes as unknown as Record<string, unknown>,
+    }),
+    [setActivatorNodeRef, listeners, attributes],
+  )
+  const style: React.CSSProperties = {
+    ...rest.style,
+    transform: CSS.Translate.toString(transform && { ...transform, x: 0 }),
+    transition,
+    ...(isDragging ? { position: 'relative', zIndex: 9, opacity: 0.85 } : {}),
+  }
+  return (
+    <RowHandleContext.Provider value={ctx}>
+      <tr {...rest} ref={setNodeRef} style={style} />
+    </RowHandleContext.Provider>
+  )
+}
+
+function BodyRow(props: BodyRowProps) {
+  const key = props['data-row-key']
+  if (typeof key === 'string' && key.startsWith('item-')) {
+    return <SortableItemRow {...props} rowId={key} />
+  }
+  return <tr {...props} />
+}
+
+interface HeaderCellProps extends React.ThHTMLAttributes<HTMLTableCellElement> {
+  'data-col-id'?: string
+}
+
+function SortableHeaderCell(props: HeaderCellProps & { colId: string }) {
+  const { colId, ...rest } = props
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: colId })
+  const style: React.CSSProperties = {
+    ...rest.style,
+    transform: CSS.Translate.toString(transform && { ...transform, y: 0 }),
+    transition,
+    cursor: 'grab',
+    touchAction: 'none',
+    ...(isDragging ? { position: 'relative', zIndex: 9, background: '#e6f4ff' } : {}),
+  }
+  return <th {...rest} ref={setNodeRef} style={style} {...attributes} {...listeners} />
+}
+
+function HeaderCell(props: HeaderCellProps) {
+  const colId = props['data-col-id']
+  if (colId) return <SortableHeaderCell {...props} colId={colId} />
+  return <th {...props} />
+}
+
+const TABLE_COMPONENTS = {
+  header: { cell: HeaderCell },
+  body: { row: BodyRow },
+}
+
+/** 部門欄只跟部門欄碰撞、檢查項只跟檢查項碰撞 */
+const sameKindCollision: CollisionDetection = (args) => {
+  const prefix = String(args.active.id).split('-')[0] + '-'
+  return closestCenter({
+    ...args,
+    droppableContainers: args.droppableContainers.filter((c) => String(c.id).startsWith(prefix)),
+  })
 }
 
 function rateColor(rate: number | null): string {
@@ -120,6 +236,7 @@ export default function AuditSheetEditorPage() {
       { key: 'stat-pass', kind: 'stat', label: '達標項數', statKey: 'pass_count' },
       { key: 'stat-score', kind: 'stat', label: '各部門本期稽核分數', statKey: 'score' },
       { key: 'deficiency', kind: 'deficiency', label: '缺失' },
+      { key: 'suggestion', kind: 'suggestion', label: '建議' },
     ]
     detail.items.forEach((it) => {
       out.push({
@@ -177,6 +294,15 @@ export default function AuditSheetEditorPage() {
       })
       return
     }
+    if (kind === 'suggestion') {
+      setTextModal({
+        open: true, kind, deptId: dept.id,
+        title: `建議 — ${dept.name}`,
+        value: dept.suggestion_override ?? dept.suggestion ?? '',
+        code: '',
+      })
+      return
+    }
     const rv = reviewByDept.get(dept.id)
     setTextModal({
       open: true, kind, deptId: dept.id,
@@ -192,6 +318,8 @@ export default function AuditSheetEditorPage() {
       let res
       if (textModal.kind === 'deficiency') {
         res = await sheetsApi.upsertDeficiency(detail.id, textModal.deptId, textModal.value.trim() || null)
+      } else if (textModal.kind === 'suggestion') {
+        res = await sheetsApi.upsertSuggestion(detail.id, textModal.deptId, textModal.value.trim() || null)
       } else if (textModal.kind === 'pending') {
         res = await sheetsApi.upsertReview(detail.id, textModal.deptId, {
           pending_text: textModal.value, pending_result: textModal.code,
@@ -233,6 +361,106 @@ export default function AuditSheetEditorPage() {
     }
   }
 
+  // ── 拖曳調整順序（2026-10-01）───────────────────────────────────────────
+  /**
+   * 目前版面原封不動轉成 layout API 的 items（含沒有子項的大項、scope_note、本期應查部門）。
+   * ⚠️ 後端 apply_layout 是「完全取代」語意，沒帶到的列會連同評語一起被刪掉。
+   */
+  const currentSpecs = (d: SheetDetail): SheetItemSpec[] =>
+    d.items
+      .filter((i) => i.level === 2 || !d.items.some((c) => c.parent_sheet_item_id === i.id))
+      .map((i) => ({
+        item_id: i.item_id,
+        scope_note: i.scope_note,
+        target_department_ids: i.target_department_ids,
+      }))
+
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
+  const [reordering, setReordering] = useState(false)
+
+  const reorderDepartments = async (activeKey: string, overKey: string) => {
+    if (!detail) return
+    const keys = detail.departments.map((d) => `dept-${d.id}`)
+    const from = keys.indexOf(activeKey)
+    const to = keys.indexOf(overKey)
+    if (from < 0 || to < 0 || from === to) return
+    const prev = detail
+    const departments = arrayMove(detail.departments, from, to)
+    setDetail({ ...detail, departments })
+    setReordering(true)
+    try {
+      const res = await sheetsApi.updateLayout(detail.id, {
+        department_ids: departments.map((d) => d.department_id),
+        items: currentSpecs(detail),
+      })
+      setDetail(res.data)
+    } catch (e: any) {
+      setDetail(prev)
+      message.error(e?.response?.data?.detail ?? '調整部門順序失敗')
+    } finally {
+      setReordering(false)
+    }
+  }
+
+  const reorderItems = async (activeId: number, overId: number) => {
+    if (!detail) return
+    const items = detail.items
+    const act = items.find((i) => i.id === activeId)
+    const ov = items.find((i) => i.id === overId)
+    if (!act || !ov) return
+    let majors = items.filter((i) => i.parent_sheet_item_id == null)
+    const childMap = new Map<number, SheetItem[]>(
+      majors.map((m) => [m.id, items.filter((c) => c.parent_sheet_item_id === m.id)]),
+    )
+
+    if (act.parent_sheet_item_id == null) {
+      // 大項：落在別的大項（或它的子項）上 → 整組換位置
+      const targetMajorId = ov.parent_sheet_item_id ?? ov.id
+      const from = majors.findIndex((m) => m.id === act.id)
+      const to = majors.findIndex((m) => m.id === targetMajorId)
+      if (from < 0 || to < 0 || from === to) return
+      majors = arrayMove(majors, from, to)
+    } else {
+      const pid = act.parent_sheet_item_id
+      const siblings = childMap.get(pid) ?? []
+      let to: number
+      if (ov.id === pid) to = 0
+      else if (ov.parent_sheet_item_id === pid) to = siblings.findIndex((s) => s.id === ov.id)
+      else {
+        message.warning('子項只能在同一個大項內移動')
+        return
+      }
+      const from = siblings.findIndex((s) => s.id === act.id)
+      if (from < 0 || to < 0 || from === to) return
+      childMap.set(pid, arrayMove(siblings, from, to))
+    }
+
+    const flat = majors.flatMap((m) => [m, ...(childMap.get(m.id) ?? [])])
+    const seen = new Set(flat.map((i) => i.id))
+    items.forEach((i) => { if (!seen.has(i.id)) flat.push(i) })
+
+    const prev = detail
+    setDetail({ ...detail, items: flat })
+    setReordering(true)
+    try {
+      const res = await sheetsApi.reorderItems(detail.id, flat.map((i) => i.id))
+      setDetail(res.data)
+    } catch (e: any) {
+      setDetail(prev)
+      message.error(e?.response?.data?.detail ?? '調整檢查項順序失敗')
+    } finally {
+      setReordering(false)
+    }
+  }
+
+  const onDragEnd = ({ active, over }: DragEndEvent) => {
+    if (!over || active.id === over.id) return
+    const a = String(active.id)
+    const o = String(over.id)
+    if (a.startsWith('dept-') && o.startsWith('dept-')) reorderDepartments(a, o)
+    else if (a.startsWith('item-') && o.startsWith('item-')) reorderItems(Number(a.slice(5)), Number(o.slice(5)))
+  }
+
   // ── 新增部門欄（2026-09-21 使用者要求：能直接在稽核單上加部門）──────────
   // 部門仍然只能從 settings/company-departments 主檔挑（CLAUDE.md §9 單一真實
   // 來源），這裡只是省掉「開版面調整 Modal → 在一大包設定裡找部門」那一步。
@@ -261,13 +489,7 @@ export default function AuditSheetEditorPage() {
    */
   const addDepartments = async () => {
     if (!detail || deptPicked.length === 0) return
-    const specs: SheetItemSpec[] = detail.items
-      .filter((i) => i.level === 2)
-      .map((i) => ({
-        item_id: i.item_id,
-        scope_note: i.scope_note,
-        target_department_ids: i.target_department_ids,
-      }))
+    const specs = currentSpecs(detail)
     setDeptSaving(true)
     try {
       const res = await sheetsApi.updateLayout(detail.id, {
@@ -357,6 +579,11 @@ export default function AuditSheetEditorPage() {
   }
 
   // ── 欄位定義 ────────────────────────────────────────────────────────────
+  const suggestionColor = useMemo(() => {
+    const t = detail?.result_types.find((x) => x.is_active && x.counts_as_pass && x.include_in_summary)
+    return t?.color ?? '#1677ff'
+  }, [detail])
+
   const columns: ColumnsType<MatrixRow> = useMemo(() => {
     if (!detail) return []
     const first: ColumnsType<MatrixRow>[number] = {
@@ -371,6 +598,7 @@ export default function AuditSheetEditorPage() {
           const renamed = !!it.master_name && it.master_name !== it.name
           return (
             <Space size={4} style={{ paddingLeft: row.kind === 'minor' ? 16 : 0 }} wrap>
+              {canEdit && <RowDragHandle />}
               {row.kind === 'major'
                 ? <Text strong style={{ color: '#1B3A5C' }}>{row.label}</Text>
                 : <span>{row.label}</span>}
@@ -392,14 +620,19 @@ export default function AuditSheetEditorPage() {
             </Space>
           )
         }
-        return <Text strong style={{ color: row.kind === 'deficiency' ? '#cf1322' : undefined }}>{row.label}</Text>
+        const labelColor = row.kind === 'deficiency' ? '#cf1322'
+          : row.kind === 'suggestion' ? suggestionColor : undefined
+        return <Text strong style={{ color: labelColor }}>{row.label}</Text>
       },
     }
 
     const deptCols = detail.departments.map((d, idx) => ({
-      title: d.name,
+      title: canEdit
+        ? <span title="按住拖曳可調整部門順序"><HolderOutlined style={{ color: '#bfbfbf', marginRight: 4 }} />{d.name}</span>
+        : d.name,
       key: `dept-${d.id}`,
       width: COL_DEPT_WIDTH,
+      onHeaderCell: () => (canEdit ? { 'data-col-id': `dept-${d.id}` } : {}) as React.HTMLAttributes<HTMLElement>,
       render: (_: unknown, row: MatrixRow) => {
         if (row.kind === 'stat') {
           const sc = scoreByDept.get(d.id)
@@ -427,6 +660,22 @@ export default function AuditSheetEditorPage() {
               }}
             >
               {d.deficiency || <Text type="secondary">—</Text>}
+              {isOverride && <Tag color="default" style={{ marginLeft: 4 }}>人工</Tag>}
+            </div>
+          )
+        }
+
+        if (row.kind === 'suggestion') {
+          const isOverride = !!d.suggestion_override
+          return (
+            <div
+              onClick={() => openTextModal('suggestion', d)}
+              style={{
+                whiteSpace: 'pre-wrap', color: suggestionColor, fontSize: 12,
+                cursor: canEdit ? 'pointer' : 'default', minHeight: 20,
+              }}
+            >
+              {d.suggestion || <Text type="secondary">—</Text>}
               {isOverride && <Tag color="default" style={{ marginLeft: 4 }}>人工</Tag>}
             </div>
           )
@@ -478,7 +727,7 @@ export default function AuditSheetEditorPage() {
     }))
 
     return [first, ...deptCols]
-  }, [detail, cellMap, typeByCode, scoreByDept, reviewByDept, canEdit])
+  }, [detail, cellMap, typeByCode, scoreByDept, reviewByDept, canEdit, suggestionColor])
 
   if (!detail) {
     return <Spin spinning={loading}><Empty description="載入中" /></Spin>
@@ -585,27 +834,44 @@ export default function AuditSheetEditorPage() {
       </Card>
 
       {/* ── 矩陣 ──────────────────────────────────────────────────────── */}
-      <Spin spinning={loading}>
-        <Table<MatrixRow>
-          size="small"
-          bordered
-          sticky
-          rowKey="key"
-          columns={columns}
-          dataSource={rows}
-          pagination={false}
-          scroll={{ x: COL_ITEM_WIDTH + detail.departments.length * COL_DEPT_WIDTH }}
-          rowClassName={(row) =>
-            row.kind === 'major' ? 'audit-row-major'
-              : row.kind === 'stat' ? 'audit-row-stat'
-                : row.kind === 'deficiency' ? 'audit-row-deficiency' : ''
-          }
-        />
+      <Spin spinning={loading || reordering}>
+        <DndContext sensors={sensors} collisionDetection={sameKindCollision} onDragEnd={onDragEnd}>
+          <SortableContext
+            items={detail.departments.map((d) => `dept-${d.id}`)}
+            strategy={horizontalListSortingStrategy}
+          >
+            <SortableContext
+              items={detail.items.map((i) => `item-${i.id}`)}
+              strategy={verticalListSortingStrategy}
+            >
+              <Table<MatrixRow>
+                size="small"
+                bordered
+                rowKey="key"
+                columns={columns}
+                dataSource={rows}
+                pagination={false}
+                components={TABLE_COMPONENTS}
+                scroll={{
+                  x: COL_ITEM_WIDTH + detail.departments.length * COL_DEPT_WIDTH,
+                  y: 'calc(100vh - 300px)',
+                }}
+                rowClassName={(row) =>
+                  row.kind === 'major' ? 'audit-row-major'
+                    : row.kind === 'stat' ? 'audit-row-stat'
+                      : row.kind === 'deficiency' ? 'audit-row-deficiency'
+                        : row.kind === 'suggestion' ? 'audit-row-suggestion' : ''
+                }
+              />
+            </SortableContext>
+          </SortableContext>
+        </DndContext>
       </Spin>
 
       <Paragraph type="secondary" style={{ fontSize: 12, marginTop: 8 }}>
         點任一格即可填寫評語與判定。評語留空 ＝ 該部門本期不查此項，不計入分數分母。
         三列統計數字由系統依評語與判定自動計算，不可手改。
+        {canEdit && '按住部門表頭左右拖曳可調整部門順序；拖檢查項左側 ⠿ 可調整項目順序（子項限同一大項內）。'}
       </Paragraph>
 
       {/* ── 備註 ──────────────────────────────────────────────────────── */}
@@ -686,9 +952,10 @@ export default function AuditSheetEditorPage() {
           rows={6}
           onChange={(e) => setTextModal((s) => (s ? { ...s, value: e.target.value } : s))}
         />
-        {textModal?.kind === 'deficiency' ? (
+        {textModal?.kind === 'deficiency' || textModal?.kind === 'suggestion' ? (
           <Text type="secondary" style={{ fontSize: 12 }}>
-            留空 ＝ 還原成系統自動彙整（依判定類型的「列入缺失彙整」設定）
+            留空 ＝ 還原成系統自動彙整（依判定類型的「列入缺失／建議彙整」設定；
+            {textModal?.kind === 'deficiency' ? '不算達標者列入缺失' : '算達標者列入建議'}）
           </Text>
         ) : (
           <div style={{ marginTop: 12 }}>
@@ -838,6 +1105,7 @@ export default function AuditSheetEditorPage() {
         .audit-row-major > td { background: #f6f9fc !important; }
         .audit-row-stat > td { background: #fafafa !important; }
         .audit-row-deficiency > td { background: #fff5f5 !important; }
+        .audit-row-suggestion > td { background: #f0f7ff !important; }
       `}</style>
     </div>
   )

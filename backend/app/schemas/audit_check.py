@@ -159,6 +159,8 @@ class SheetDepartmentOut(BaseModel):
     sort_order: int
     deficiency_override: Optional[str]
     deficiency: str = Field("", description="缺失列最終顯示值（覆寫優先，否則自動彙整）")
+    suggestion_override: Optional[str] = None
+    suggestion: str = Field("", description="建議列最終顯示值（覆寫優先，否則自動彙整）")
 
 
 class SheetItemOut(BaseModel):
@@ -250,6 +252,15 @@ class ReviewUpsert(BaseModel):
 
 class DeficiencyUpsert(BaseModel):
     deficiency_override: Optional[str] = None
+
+
+class SuggestionUpsert(BaseModel):
+    suggestion_override: Optional[str] = None
+
+
+class SheetItemOrder(BaseModel):
+    """稽核單檢查項的自訂順序（2026-10-01）：依畫面由上到下的 sheet_item_id 完整清單。"""
+    sheet_item_ids: List[int]
 
 
 class SheetItemRename(BaseModel):

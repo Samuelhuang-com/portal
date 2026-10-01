@@ -36,7 +36,7 @@ from app.models.audit_check import (
 from app.models.reference_data import Company, RefDepartment
 from app.models.user import User
 from app.schemas.audit_check import (
-    CellBulkUpsert, CellUpsert, DeficiencyUpsert, ItemCreate, ItemOut, ItemUpdate,
+    CellBulkUpsert, CellUpsert, DeficiencyUpsert, SheetItemOrder, SuggestionUpsert, ItemCreate, ItemOut, ItemUpdate,
     PeriodCreate, PeriodOut, PeriodUpdate, ResultTypeCreate, ResultTypeOut,
     ResultTypeUpdate, ReviewUpsert, SheetCreate, SheetDetail, SheetItemRename,
     SheetLayoutUpdate, SheetUpdate, StatisticsOut,
@@ -630,6 +630,41 @@ def upsert_deficiency(
     return svc.build_sheet_detail(db, sheet)
 
 
+@router.put("/sheets/{sheet_id}/departments/{sheet_department_id}/suggestion", response_model=SheetDetail)
+def upsert_suggestion(
+    sheet_id: int,
+    sheet_department_id: int,
+    payload: SuggestionUpsert,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_permission(EDIT)),
+):
+    """「建議」列人工覆寫（2026-10-01）；空字串 → 還原成自動彙整。"""
+    sheet = _get_sheet(db, sheet_id)
+    sd = next((d for d in sheet.departments if d.id == sheet_department_id), None)
+    if sd is None:
+        raise _not_found("此稽核單沒有這一欄部門")
+    text = (payload.suggestion_override or "").strip()
+    sd.suggestion_override = text or None
+    db.commit()
+    db.refresh(sheet)
+    return svc.build_sheet_detail(db, sheet)
+
+
+@router.put("/sheets/{sheet_id}/items/order", response_model=SheetDetail)
+def reorder_sheet_items(
+    sheet_id: int,
+    payload: SheetItemOrder,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_permission(EDIT)),
+):
+    """稽核單上拖曳調整檢查項順序（2026-10-01）；只影響這一張單。"""
+    sheet = _get_sheet(db, sheet_id)
+    svc.reorder_items(db, sheet, payload.sheet_item_ids)
+    db.commit()
+    db.refresh(sheet)
+    return svc.build_sheet_detail(db, sheet)
+
+
 # ════════════════════════════════════════════════════════════════════════════
 # 統計
 # ════════════════════════════════════════════════════════════════════════════
@@ -786,6 +821,11 @@ def export_sheet(
     put(r, 3, "缺失", "FF0000")
     for i, d in enumerate(depts):
         put(r, 4 + i, d["deficiency"], "FF0000")
+    r += 1
+
+    put(r, 3, "建議", "1677FF")
+    for i, d in enumerate(depts):
+        put(r, 4 + i, d.get("suggestion") or "", "1677FF")
     r += 1
 
     cell_map = {(c["sheet_item_id"], c["sheet_department_id"]): c for c in detail["cells"]}

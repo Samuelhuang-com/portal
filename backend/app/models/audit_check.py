@@ -199,6 +199,7 @@ class AuditSheetDepartment(Base):
     column_label        = Column(String(50),  nullable=True, comment="顯示覆寫；空值取部門名稱")
     sort_order          = Column(Integer,     nullable=False, default=0)
     deficiency_override = Column(Text,        nullable=True, comment="「缺失」人工覆寫；空值＝自動彙整")
+    suggestion_override = Column(Text,        nullable=True, comment="「建議」人工覆寫；空值＝自動彙整（2026-10-01）")
 
     sheet      = relationship("AuditSheet", back_populates="departments")
     department = relationship("RefDepartment")
