@@ -865,6 +865,46 @@ def export_sheet(
     return _xlsx_response(wb, filename)
 
 
+@router.get("/sheets/{sheet_id}/departments/{sheet_department_id}/inspection-docx")
+def export_inspection_docx(
+    sheet_id: int,
+    sheet_department_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_permission(VIEW)),
+):
+    """
+    單一部門「內部稽核檢查表」Word（2026-10-01）——格式比照使用者提供的 .doc 範本。
+    填表日期＝查核日期（未設定則取今天）；稽核人員＝匯出的使用者。
+    """
+    try:
+        from app.services.audit_check_docx import build_inspection_docx
+    except ImportError:
+        raise HTTPException(
+            status_code=500,
+            detail="伺服器尚未安裝 python-docx，請在 backend 執行 pip install -r requirements.txt 後重啟",
+        )
+    sheet = _get_sheet(db, sheet_id)
+    sd = next((d for d in sheet.departments if d.id == sheet_department_id), None)
+    if sd is None:
+        raise _not_found("此稽核單沒有這一欄部門")
+    detail = svc.build_sheet_detail(db, sheet)
+    fill_date = (sheet.audited_on or twnow().date()).strftime("%Y.%m.%d")
+    data = build_inspection_docx(detail, sheet_department_id, user.full_name or "", fill_date)
+
+    dept_name = svc.department_label(sd)
+    filename_cn = f"內部稽核檢查表-{detail['period']}-{detail['company_name']}-{dept_name}.docx"
+    return Response(
+        content=data,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="{_ascii_slug(filename_cn)}"; '
+                f"filename*=UTF-8''{quote(filename_cn, safe='')}"
+            )
+        },
+    )
+
+
 @router.get("/statistics/export")
 def export_statistics(
     year: int = Query(..., ge=2000, le=2999),

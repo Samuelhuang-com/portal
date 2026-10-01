@@ -19,9 +19,10 @@ import {
   Button, Card, Drawer, Empty, Input, List, Progress, Radio, Segmented, Space,
   Spin, Statistic, Tag, Typography, message,
 } from 'antd'
-import { ArrowLeftOutlined, SaveOutlined } from '@ant-design/icons'
+import { ArrowLeftOutlined, FileWordOutlined, SaveOutlined } from '@ant-design/icons'
 
 import { sheetsApi } from '@/api/auditCheck'
+import { downloadFile } from '@/api/downloadFile'
 import type { Cell, SheetDetail, SheetItem } from '@/api/auditCheck'
 import { SUGGESTION_COLOR } from '@/pages/AuditCheck/suggestionColor'
 import { useAuthStore } from '@/stores/authStore'
@@ -159,6 +160,19 @@ export default function MobileAuditCheckSheet() {
                 valueStyle={{ fontSize: 18, color: score?.score === 1 ? '#52c41a' : '#cf1322' }}
               />
             </Space>
+            {deptId != null && (
+              <Button
+                block
+                icon={<FileWordOutlined />}
+                style={{ marginTop: 10 }}
+                onClick={() => downloadFile(
+                  sheetsApi.inspectionDocxUrl(detail.id, deptId),
+                  `內部稽核檢查表-${detail.period}-${detail.company_name}-${detail.departments.find((d) => d.id === deptId)?.name ?? ''}.docx`,
+                )}
+              >
+                匯出稽核檢查表（Word）
+              </Button>
+            )}
           </Card>
 
           <List

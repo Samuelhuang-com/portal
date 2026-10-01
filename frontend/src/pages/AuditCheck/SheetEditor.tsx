@@ -34,7 +34,7 @@ import {
 } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import {
-  ArrowLeftOutlined, DownloadOutlined, EditOutlined, HolderOutlined, LayoutOutlined, PlusOutlined,
+  ArrowLeftOutlined, DownloadOutlined, EditOutlined, FileWordOutlined, HolderOutlined, LayoutOutlined, PlusOutlined,
   ReloadOutlined,
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
@@ -56,7 +56,7 @@ const { Title, Text, Paragraph } = Typography
 const COL_ITEM_WIDTH = 280
 const COL_DEPT_WIDTH = 210
 
-type RowKind = 'stat' | 'deficiency' | 'major' | 'minor' | 'pending' | 'result'
+type RowKind = 'stat' | 'deficiency' | 'major' | 'minor' | 'pending' | 'result' | 'export'
 
 interface MatrixRow {
   key: string
@@ -249,6 +249,7 @@ export default function AuditSheetEditorPage() {
     })
     out.push({ key: 'pending', kind: 'pending', label: `${detail.reviews[0]?.source_period ?? '上期'}待補正項目` })
     out.push({ key: 'result', kind: 'result', label: '結果' })
+    out.push({ key: 'export', kind: 'export', label: '匯出稽核檢查表' })
     return out
   }, [detail])
 
@@ -646,6 +647,21 @@ export default function AuditSheetEditorPage() {
               {d.deficiency || <Text type="secondary">—</Text>}
               {isOverride && <Tag color="default" style={{ marginLeft: 4 }}>人工</Tag>}
             </div>
+          )
+        }
+
+        if (row.kind === 'export') {
+          return (
+            <Button
+              size="small"
+              icon={<FileWordOutlined />}
+              onClick={() => downloadFile(
+                sheetsApi.inspectionDocxUrl(detail.id, d.id),
+                `內部稽核檢查表-${detail.period}-${detail.company_name}-${d.name}.docx`,
+              )}
+            >
+              匯出 Word
+            </Button>
           )
         }
 

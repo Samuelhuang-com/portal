@@ -284,6 +284,10 @@ export const sheetsApi = {
 
   /** 完整路徑（給 downloadFile 用，不經過 client.baseURL） */
   exportUrl: (id: number) => `/api/v1/audit-check/sheets/${id}/export`,
+
+  /** 單一部門「內部稽核檢查表」Word（給 downloadFile 用） */
+  inspectionDocxUrl: (id: number, sheetDepartmentId: number) =>
+    `/api/v1/audit-check/sheets/${id}/departments/${sheetDepartmentId}/inspection-docx`,
 }
 
 // ── 統計 ──────────────────────────────────────────────────────────────────
