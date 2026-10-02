@@ -58,6 +58,44 @@ def _not_found(detail: str = "查無資料") -> HTTPException:
     return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=detail)
 
 
+def _validate_departments(
+    db: Session,
+    company_id: int,
+    department_ids: List[int],
+    existing_ids: Optional[set] = None,
+) -> None:
+    """
+    稽核單的部門欄一律取自 settings/company-departments 主檔（2026-09-20 裁示），
+    且必須屬於該張稽核單的公司別。2026-10-02 起由後端把關，不再只靠前端過濾。
+
+    existing_ids：本張單原本就有的部門。這些照舊放行（停用或歷史資料不擋），
+    只檢查「這次新加入」的部門——不存在／不屬於本公司／已停用 → 400。
+    """
+    if len(department_ids) != len(set(department_ids)):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="受稽部門重複選取")
+    existing_ids = existing_ids or set()
+    new_ids = [d for d in department_ids if d not in existing_ids]
+    if not new_ids:
+        return
+    rows = {
+        d.id: d for d in db.query(RefDepartment).filter(RefDepartment.id.in_(new_ids)).all()
+    }
+    bad = []
+    for dept_id in new_ids:
+        d = rows.get(dept_id)
+        if d is None:
+            bad.append(f"#{dept_id}（查無此部門）")
+        elif d.company_id != company_id:
+            bad.append(f"{d.name}（不屬於本稽核單的公司別）")
+        elif not d.is_active:
+            bad.append(f"{d.name}（已停用）")
+    if bad:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="受稽部門不可選取：" + "、".join(bad),
+        )
+
+
 # ════════════════════════════════════════════════════════════════════════════
 # 判定類型（使用者自訂字色語意）
 # ════════════════════════════════════════════════════════════════════════════
@@ -432,6 +470,8 @@ def create_sheet(
         status="draft",
         created_by=str(user.id),
     )
+    _validate_departments(db, payload.company_id, payload.department_ids)
+
     db.add(sheet)
     db.flush()
 
@@ -468,6 +508,10 @@ def update_sheet_layout(
     _: User = Depends(require_permission(EDIT)),
 ):
     sheet = _get_sheet(db, sheet_id)
+    _validate_departments(
+        db, sheet.company_id, payload.department_ids,
+        existing_ids={sd.department_id for sd in sheet.departments},
+    )
     svc.apply_layout(db, sheet, payload.department_ids, payload.items)
     db.commit()
     db.refresh(sheet)

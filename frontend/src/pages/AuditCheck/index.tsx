@@ -19,10 +19,8 @@ import {
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 
-import { itemsApi, periodsApi, sheetsApi } from '@/api/auditCheck'
-import type { AuditItem, Period, SheetItemSpec } from '@/api/auditCheck'
-import { companiesApi, departmentsApi } from '@/api/referenceData'
-import type { CompanyRecord, DepartmentRecord } from '@/api/referenceData'
+import { itemsApi, periodsApi, refOptionsApi, sheetsApi } from '@/api/auditCheck'
+import type { AuditItem, Period, RefOption, SheetItemSpec } from '@/api/auditCheck'
 import { useAuthStore } from '@/stores/authStore'
 
 const { Title, Text, Paragraph } = Typography
@@ -41,7 +39,7 @@ export default function AuditCheckPeriodsPage() {
   const canAdmin = hasPermission('audit_check_admin')
 
   const [periods, setPeriods] = useState<Period[]>([])
-  const [companies, setCompanies] = useState<CompanyRecord[]>([])
+  const [companies, setCompanies] = useState<RefOption[]>([])
   const [items, setItems] = useState<AuditItem[]>([])
   const [loading, setLoading] = useState(false)
 
@@ -50,11 +48,11 @@ export default function AuditCheckPeriodsPage() {
     try {
       const [p, c, i] = await Promise.all([
         periodsApi.list(),
-        companiesApi.list(),
+        refOptionsApi.companies(),
         itemsApi.list(),
       ])
       setPeriods(p.data)
-      setCompanies(c.data.filter((x) => x.is_active))
+      setCompanies(c)
       setItems(i.data)
     } catch {
       message.error('載入稽核期別失敗')
@@ -113,7 +111,7 @@ export default function AuditCheckPeriodsPage() {
   const [sheetOpen, setSheetOpen] = useState(false)
   const [sheetForm] = Form.useForm()
   const [targetPeriod, setTargetPeriod] = useState<Period | null>(null)
-  const [depts, setDepts] = useState<DepartmentRecord[]>([])
+  const [depts, setDepts] = useState<RefOption[]>([])
   const [pickedItems, setPickedItems] = useState<number[]>([])
   const [saving, setSaving] = useState(false)
 
@@ -133,8 +131,7 @@ export default function AuditCheckPeriodsPage() {
   const onCompanyChange = async (companyId: number) => {
     sheetForm.setFieldsValue({ department_ids: [] })
     try {
-      const res = await departmentsApi.list(companyId)
-      setDepts(res.data.filter((d) => d.is_active))
+      setDepts(await refOptionsApi.departments(companyId))
     } catch {
       message.error('載入部門失敗')
     }

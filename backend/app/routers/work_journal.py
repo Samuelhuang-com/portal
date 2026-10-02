@@ -29,6 +29,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.excel_utils import xlsx_safe
 from app.dependencies import get_current_user
 
 # ── Models ────────────────────────────────────────────────────────────────────
@@ -1617,7 +1618,7 @@ def export_work_journal_excel(
     wb.remove(wb.active)
 
     for pname in persons_order:
-        ws = wb.create_sheet(title=(pname or "未指定")[:31])
+        ws = wb.create_sheet(title=xlsx_safe(pname or "未指定")[:31])
 
         # 欄寬
         for ci, w in COL_WIDTHS.items():
@@ -1632,7 +1633,7 @@ def export_work_journal_excel(
                         else f"{yyyymm_txt} 飯店每日工作日誌 - {pname}"
         else:
             title_val = f"{yyyymm_txt} 飯店每日工作日誌 - {pname}"
-        c1 = ws.cell(row=1, column=1, value=title_val)
+        c1 = ws.cell(row=1, column=1, value=xlsx_safe(title_val))
         c1.font = TITLE_FONT
         c1.alignment = CENTER
         ws.merge_cells("A1:M1")
@@ -1720,7 +1721,7 @@ def export_work_journal_excel(
                 _sl = _shift_label(pname, _day_iso)
                 _sep_val = f"  {daily['date']}　{_sl}".rstrip() if _sl \
                            else f"  {daily['date']}"
-                date_cell = ws.cell(row=row_idx, column=1, value=_sep_val)
+                date_cell = ws.cell(row=row_idx, column=1, value=xlsx_safe(_sep_val))
                 date_cell.fill      = DATE_FILL
                 date_cell.font      = DATE_FONT
                 date_cell.alignment = LEFT
@@ -1765,7 +1766,7 @@ def export_work_journal_excel(
 
                 # 工作事項（前綴飯：/ 商：）
                 _task_val = _venue_prefix(r.get("source", ""), r.get("venue", "")) + r.get("task", "")
-                g = ws.cell(row=row_idx, column=7, value=_task_val)
+                g = ws.cell(row=row_idx, column=7, value=xlsx_safe(_task_val))
                 g.alignment = LEFT
                 g.font      = Font(size=10)
                 g.border    = _border()
@@ -1795,13 +1796,13 @@ def export_work_journal_excel(
                 k.border    = _border()
 
                 # 備註
-                l_cell = ws.cell(row=row_idx, column=12, value=r.get("remark", ""))
+                l_cell = ws.cell(row=row_idx, column=12, value=xlsx_safe(r.get("remark", "")))
                 l_cell.alignment = LEFT
                 l_cell.font      = Font(size=10)
                 l_cell.border    = _border()
 
                 # 回報事項
-                m_cell = ws.cell(row=row_idx, column=13, value=r.get("report", ""))
+                m_cell = ws.cell(row=row_idx, column=13, value=xlsx_safe(r.get("report", "")))
                 m_cell.alignment = LEFT
                 m_cell.font      = Font(size=10, color="D46B08") if r.get("report") else Font(size=10)
                 m_cell.border    = _border(r="medium")

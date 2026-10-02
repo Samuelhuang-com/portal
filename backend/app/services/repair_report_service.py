@@ -33,6 +33,7 @@ from openpyxl.styles.colors import Color
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.core.excel_utils import xlsx_safe
 from app.models.dazhi_repair import DazhiRepairCase
 from app.models.luqun_repair import LuqunRepairCase
 from app.models.repair_report import (
@@ -412,7 +413,7 @@ def _add_sheet(wb: openpyxl.Workbook, title: str, cases: list[dict]) -> None:
             elif field == "pending_days" and val is None:
                 val = "-"
 
-            cell = ws.cell(row=row_idx, column=col_idx, value=val)
+            cell = ws.cell(row=row_idx, column=col_idx, value=xlsx_safe(val))
             cell.alignment = Alignment(wrap_text=True, vertical="top")
 
             # 原始資料連結 → 超連結
@@ -432,7 +433,7 @@ def _add_summary_sheet(wb: openpyxl.Workbook, title: str, rows: list[tuple]) -> 
     ws = wb.create_sheet(title=title)
     for r_idx, row in enumerate(rows, start=1):
         for c_idx, val in enumerate(row, start=1):
-            cell = ws.cell(row=r_idx, column=c_idx, value=val)
+            cell = ws.cell(row=r_idx, column=c_idx, value=xlsx_safe(val))
             if r_idx == 1:
                 cell.font = Font(bold=True)
     # 凍結表頭

@@ -40,6 +40,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.database import get_db
+from app.core.excel_utils import xlsx_safe
 from app.core.security import decode_token
 from app.services.ragic_adapter import RagicAdapter
 from app.dependencies import get_current_user, require_roles
@@ -761,7 +762,7 @@ def export_excel(
         fill = STATUS_FILLS[is_done]
 
         for col_idx, value in enumerate(row_data, 1):
-            cell = ws.cell(row=row_idx, column=col_idx, value=value)
+            cell = ws.cell(row=row_idx, column=col_idx, value=xlsx_safe(value))
             cell.border    = thin_border
             cell.fill      = fill
             cell.alignment = Alignment(vertical="center", wrap_text=False)

@@ -34,6 +34,7 @@ from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.excel_utils import xlsx_safe
 from app.core.time import twnow
 from app.dependencies import get_current_user, require_roles
 from app.models.ihg_room_maintenance import (
@@ -591,8 +592,8 @@ def export_matrix(
         cell.alignment = center
 
     for ri, room in enumerate(matrix["rooms"], start=2):
-        ws.cell(row=ri, column=1, value=room["floor"]).alignment   = center
-        ws.cell(row=ri, column=2, value=room["room_no"]).alignment = center
+        ws.cell(row=ri, column=1, value=xlsx_safe(room["floor"])).alignment   = center
+        ws.cell(row=ri, column=2, value=xlsx_safe(room["room_no"])).alignment = center
         for mi, m in enumerate(matrix["months"], start=3):
             c = room["cells"].get(str(m))
             cell = ws.cell(row=ri, column=mi)
@@ -600,7 +601,7 @@ def export_matrix(
             if not c:
                 continue
             label, bg, fg = status_cfg.get(c["status"], ("", "FFFFFF", "000000"))
-            cell.value = f"{label}\n{c['date']}" if c.get("date") else label
+            cell.value = xlsx_safe(f"{label}\n{c['date']}" if c.get("date") else label)
             cell.fill  = PatternFill("solid", start_color=bg)
             cell.font  = Font(color=fg, size=10)
 

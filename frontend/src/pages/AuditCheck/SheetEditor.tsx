@@ -39,12 +39,10 @@ import {
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 
-import { itemsApi, sheetsApi } from '@/api/auditCheck'
+import { itemsApi, refOptionsApi, sheetsApi } from '@/api/auditCheck'
 import type {
-  AuditItem, Cell, ResultType, SheetDepartment, SheetDetail, SheetItem, SheetItemSpec,
+  AuditItem, Cell, RefOption, ResultType, SheetDepartment, SheetDetail, SheetItem, SheetItemSpec,
 } from '@/api/auditCheck'
-import { departmentsApi } from '@/api/referenceData'
-import type { DepartmentRecord } from '@/api/referenceData'
 import { downloadFile } from '@/api/downloadFile'
 import { useAuthStore } from '@/stores/authStore'
 import CellDrawer from './CellDrawer'
@@ -457,15 +455,14 @@ export default function AuditSheetEditorPage() {
   // 部門仍然只能從 settings/company-departments 主檔挑（CLAUDE.md §9 單一真實
   // 來源），這裡只是省掉「開版面調整 Modal → 在一大包設定裡找部門」那一步。
   const [deptModalOpen, setDeptModalOpen] = useState(false)
-  const [deptOptions, setDeptOptions] = useState<DepartmentRecord[]>([])
+  const [deptOptions, setDeptOptions] = useState<RefOption[]>([])
   const [deptPicked, setDeptPicked] = useState<number[]>([])
   const [deptSaving, setDeptSaving] = useState(false)
 
   const openDeptModal = async () => {
     if (!detail) return
     try {
-      const res = await departmentsApi.list(detail.company_id)
-      setDeptOptions(res.data.filter((d) => d.is_active))
+      setDeptOptions(await refOptionsApi.departments(detail.company_id))
       setDeptPicked([])
       setDeptModalOpen(true)
     } catch {
@@ -501,7 +498,7 @@ export default function AuditSheetEditorPage() {
   // ── 版面調整 ────────────────────────────────────────────────────────────
   const [layoutOpen, setLayoutOpen] = useState(false)
   const [allItems, setAllItems] = useState<AuditItem[]>([])
-  const [depts, setDepts] = useState<DepartmentRecord[]>([])
+  const [depts, setDepts] = useState<RefOption[]>([])
   const [pickedItems, setPickedItems] = useState<number[]>([])
   const [pickedDepts, setPickedDepts] = useState<number[]>([])
   const [layoutSaving, setLayoutSaving] = useState(false)
@@ -509,9 +506,9 @@ export default function AuditSheetEditorPage() {
   const openLayout = async () => {
     if (!detail) return
     try {
-      const [i, d] = await Promise.all([itemsApi.list(), departmentsApi.list(detail.company_id)])
+      const [i, d] = await Promise.all([itemsApi.list(), refOptionsApi.departments(detail.company_id)])
       setAllItems(i.data)
-      setDepts(d.data.filter((x) => x.is_active))
+      setDepts(d)
       setPickedItems(detail.items.filter((x) => x.level === 2).map((x) => x.item_id))
       setPickedDepts(detail.departments.map((x) => x.department_id))
       setLayoutOpen(true)

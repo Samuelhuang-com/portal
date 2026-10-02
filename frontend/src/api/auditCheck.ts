@@ -6,6 +6,7 @@
  * ⚠️ CLAUDE.md §6：元件內不直接用 axios，一律透過這裡的函式。
  */
 import client from './client'
+import { companiesApi, departmentsApi } from './referenceData'
 
 // ── 型別 ──────────────────────────────────────────────────────────────────
 
@@ -304,6 +305,29 @@ export const statisticsApi = {
   }) => client.get<FlaggedRow[]>('/audit-check/statistics/flagged', { params }),
   /** 完整路徑（給 downloadFile 用） */
   exportUrl: (year: number) => `/api/v1/audit-check/statistics/export?year=${year}`,
+}
+
+// ── 公司別／部門下拉 ──────────────────────────────────────────────────────
+// 資料仍來自 settings/company-departments 主檔（單一真實來源），但改走
+// /settings/companies/options、/settings/departments/options：只需登入，
+// 不需要 settings_departments_manage（部門管理）權限，稽核人員也拿得到。
+// 兩支 options 端點本身就只回「啟用中」的資料。（2026-10-02）
+export interface RefOption {
+  id: number
+  name: string
+}
+
+export const refOptionsApi = {
+  companies: async (): Promise<RefOption[]> => {
+    const res = await companiesApi.options()
+    return res.data.map((c) => ({ id: c.id, name: c.label }))
+  },
+  departments: async (companyId: number): Promise<RefOption[]> => {
+    const res = await departmentsApi.options(companyId)
+    return res.data
+      .filter((d) => d.id != null)
+      .map((d) => ({ id: d.id as number, name: d.label }))
+  },
 }
 
 // ── 手機版 ────────────────────────────────────────────────────────────────

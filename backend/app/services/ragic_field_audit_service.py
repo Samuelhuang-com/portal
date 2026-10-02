@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import inspect, text
 
 from app.core.time import twnow
+from app.core.excel_utils import xlsx_safe
 from app.core.config import settings
 from app.models.ragic_app_directory import RagicAppPortalAnnotation
 from app.models.ragic_field_audit import (
@@ -953,7 +954,7 @@ def generate_excel_report(db: Session) -> bytes:
             status_map.get(mod["status"], mod["status"]),
         ]
         for c, v in enumerate(row_data, 1):
-            cell = ws1.cell(row=r, column=c, value=v)
+            cell = ws1.cell(row=r, column=c, value=xlsx_safe(v))
             cell.border = thin_border
             if mod["status"] == "error":
                 cell.fill = error_fill
@@ -1000,7 +1001,7 @@ def generate_excel_report(db: Session) -> bytes:
             m.suggestion or "—",
         ]
         for c, v in enumerate(row_data, 1):
-            cell = ws2.cell(row=r, column=c, value=v)
+            cell = ws2.cell(row=r, column=c, value=xlsx_safe(v))
             cell.border = thin_border
             if m.mapping_status not in ("normal", "unmapped"):
                 if m.severity == "high":
@@ -1028,7 +1029,7 @@ def generate_excel_report(db: Session) -> bytes:
             "是" if m.is_resolved else "否",
         ]
         for c, v in enumerate(row_data, 1):
-            cell = ws3.cell(row=r, column=c, value=v)
+            cell = ws3.cell(row=r, column=c, value=xlsx_safe(v))
             cell.border = thin_border
             if m.severity == "high":
                 cell.fill = error_fill
@@ -1056,7 +1057,7 @@ def generate_excel_report(db: Session) -> bytes:
             k.issue_message or "—",
         ]
         for c, v in enumerate(row_data, 1):
-            cell = ws4.cell(row=r, column=c, value=v)
+            cell = ws4.cell(row=r, column=c, value=xlsx_safe(v))
             cell.border = thin_border
     auto_width(ws4)
 
@@ -1082,7 +1083,7 @@ def generate_excel_report(db: Session) -> bytes:
             "已處理" if m.is_resolved else "待處理",
         ]
         for c, v in enumerate(row_data, 1):
-            cell = ws5.cell(row=r, column=c, value=v)
+            cell = ws5.cell(row=r, column=c, value=xlsx_safe(v))
             cell.border = thin_border
             if m.severity == "high" and not m.is_resolved:
                 cell.fill = error_fill

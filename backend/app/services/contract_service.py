@@ -10,6 +10,7 @@ from datetime import datetime, date, timedelta
 from typing import Optional, List, Dict, Any
 from sqlalchemy import desc, asc, and_, func
 from sqlalchemy.orm import Session
+from app.core.excel_utils import xlsx_safe
 
 from app.core.exceptions import (
     ContractNotFound,
@@ -1937,7 +1938,7 @@ def generate_contract_excel(contracts: list, db=None) -> bytes:
                 val = ""
             elif hasattr(val, "isoformat"):
                 val = str(val)[:10] if field in ("start_date", "end_date", "created_at") else str(val)[:19]
-            ws.cell(row=row_idx, column=col_idx, value=val).alignment = Alignment(vertical="top")
+            ws.cell(row=row_idx, column=col_idx, value=xlsx_safe(val)).alignment = Alignment(vertical="top")
 
         # 費用分攤欄（多欄展開）
         if max_alloc > 0:
@@ -1946,7 +1947,7 @@ def generate_contract_excel(contracts: list, db=None) -> bytes:
             base_col = len(FIXED_COLS) + 1
             for i, alloc in enumerate(allocations):
                 offset = i * 3
-                ws.cell(row=row_idx, column=base_col + offset,     value=alloc.company_name).alignment = Alignment(vertical="top")
+                ws.cell(row=row_idx, column=base_col + offset,     value=xlsx_safe(alloc.company_name)).alignment = Alignment(vertical="top")
                 type_label = "比例%" if alloc.allocation_type == "percentage" else "固定金額"
                 ws.cell(row=row_idx, column=base_col + offset + 1, value=type_label).alignment = Alignment(vertical="top")
                 ws.cell(row=row_idx, column=base_col + offset + 2, value=float(alloc.value)).alignment = Alignment(vertical="top")
@@ -1999,7 +2000,7 @@ def generate_claims_excel(claims: list) -> bytes:
                 val = ""
             elif hasattr(val, "isoformat"):
                 val = str(val)[:10] if field in ("claim_date", "created_at") else str(val)[:19]
-            ws.cell(row=row_idx, column=col_idx, value=val).alignment = Alignment(vertical="top")
+            ws.cell(row=row_idx, column=col_idx, value=xlsx_safe(val)).alignment = Alignment(vertical="top")
 
     # amount 欄動態定位（避免加欄後 hardcode 出錯）
     amt_col_idx = next(i for i, (_, f, _) in enumerate(COLS, start=1) if f == "amount")
