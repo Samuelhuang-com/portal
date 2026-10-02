@@ -139,6 +139,23 @@ export function ShiftTag({
   )
 }
 
+// ── 起迄跨日／超長工時提示（2026-10-02）─────────────────────────────────────
+// 起迄原本只顯示 HH:MM，跨好幾天的案件（例：工時 6078 分鐘 = 4 天又 5 小時）
+// 看起來像同一天內的事。迄與起不同天時改顯示「MM/DD HH:mm」，並加超長工時警示。
+/** 單筆工時超過此值（分鐘）→ 工時旁顯示「超長」 */
+const LONG_ROW_MIN = 480
+/** 人員當日合計超過此值（分鐘）→ 人員列顯示「超過 24 小時」 */
+const LONG_PERSON_MIN = 1440
+
+const dtDate = (dt?: string) => (dt ? dt.slice(0, 10) : '')
+/** 迄與起不在同一天（兩者都有完整日期才判斷） */
+const isCrossDay = (row: JournalRow) =>
+  !!row.start_dt && !!row.end_dt && dtDate(row.start_dt) !== dtDate(row.end_dt)
+const fmtMinutes = (m: number) => {
+  const d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60), mi = m % 60
+  return [d ? `${d} 天` : '', h ? `${h} 小時` : '', mi ? `${mi} 分` : ''].filter(Boolean).join(' ') || '0 分'
+}
+
 // 單一日期的人員分組 Collapse（單日 or 區間內每天複用）
 export function DayPersonCollapse({
   persons,
@@ -199,17 +216,62 @@ export function DayPersonCollapse({
     },
     {
       title: '起', dataIndex: 'start_time', key: 'start', width: 52, align: 'center' as const,
-      render: (v: string) => v ? <Text style={{ fontSize: 14 }}>{v}</Text> : <Text style={{ color: '#ccc', fontSize: 14 }}>—</Text>,
+      render: (v: string, row: JournalRow) => !v
+        ? <Text style={{ color: '#ccc', fontSize: 14 }}>—</Text>
+        : row.start_dt
+          ? <Tooltip title={row.start_dt}><Text style={{ fontSize: 14 }}>{v}</Text></Tooltip>
+          : <Text style={{ fontSize: 14 }}>{v}</Text>,
     },
     {
       title: '迄', dataIndex: 'end_time', key: 'end', width: 52, align: 'center' as const,
-      render: (v: string) => v ? <Text style={{ fontSize: 14 }}>{v}</Text> : <Text style={{ color: '#ccc', fontSize: 14 }}>—</Text>,
+      render: (v: string, row: JournalRow) => {
+        if (!v) return <Text style={{ color: '#ccc', fontSize: 14 }}>—</Text>
+        if (isCrossDay(row)) {
+          // 跨日：顯示 MM/DD HH:mm（end_dt = 'YYYY/MM/DD HH:MM'）
+          return (
+            <Tooltip title={`${row.start_dt} → ${row.end_dt}（跨日）`}>
+              <Text style={{ fontSize: 14, color: '#d46b08', whiteSpace: 'nowrap' }}>{row.end_dt!.slice(5)}</Text>
+            </Tooltip>
+          )
+        }
+        return row.end_dt
+          ? <Tooltip title={row.end_dt}><Text style={{ fontSize: 14 }}>{v}</Text></Tooltip>
+          : <Text style={{ fontSize: 14 }}>{v}</Text>
+      },
     },
     {
       title: '工時(min)', dataIndex: 'work_min', key: 'wh', width: 72, align: 'center' as const,
-      render: (v: number | null) => v != null
-        ? <Text strong style={{ fontSize: 14, color: '#1B3A5C' }}>{v}</Text>
-        : <Text style={{ color: '#ccc', fontSize: 14 }}>—</Text>,
+      render: (v: number | null, row: JournalRow) => {
+        if (v == null) return <Text style={{ color: '#ccc', fontSize: 14 }}>—</Text>
+        // 2026-10-02：滑鼠停在工時數字上 → 顯示起迄區間（跨日時標示），工時大時換算天／小時
+        const cross = isCrossDay(row)
+        const rangeTip = row.start_dt && row.end_dt
+          ? `${row.start_dt} → ${row.end_dt}${cross ? '（跨日）' : ''}`
+            + (v >= 60 ? `\n共 ${v} 分鐘（約 ${fmtMinutes(v)}）` : '')
+          : ''
+        const numText = (
+          <Text strong style={{
+            fontSize: 14, color: '#1B3A5C',
+            ...(cross ? { borderBottom: '1px dashed #d46b08', cursor: 'help' } : {}),
+          }}>{v}</Text>
+        )
+        const num = rangeTip
+          ? <Tooltip title={<span style={{ whiteSpace: 'pre-line' }}>{rangeTip}</span>}>{numText}</Tooltip>
+          : numText
+        if (v <= LONG_ROW_MIN) return num
+        return (
+          <Space size={4} style={{ whiteSpace: 'nowrap' }}>
+            {num}
+            <Tooltip title={
+              `單筆工時 ${v} 分鐘（約 ${fmtMinutes(v)}），超過一個班（${LONG_ROW_MIN} 分鐘）。`
+              + (isCrossDay(row) ? '起迄跨日，可能把等料／等廠商的時間算進去了，' : '可能把等待時間算進去了，')
+              + '請至 Ragic 確認起迄時間。'
+            }>
+              <Tag color="orange" style={{ margin: 0, fontSize: 12 }}>超長</Tag>
+            </Tooltip>
+          </Space>
+        )
+      },
     },
     {
       title: '備註', dataIndex: 'remark', key: 'remark', width: 160,
@@ -244,6 +306,11 @@ export function DayPersonCollapse({
           </Text>
           <Tag color="blue" style={{ fontSize: 13 }}>{p.rows.length} 項</Tag>
           {totalWH > 0 && <Tag color="geekblue" style={{ fontSize: 13 }}>{totalWH} min</Tag>}
+          {totalWH > LONG_PERSON_MIN && (
+            <Tooltip title={`當日合計 ${totalWH} 分鐘（約 ${fmtMinutes(totalWH)}），超過一天 24 小時，必有跨日或異常起迄，請展開檢查標示「超長」的項目。`}>
+              <Tag color="red" style={{ fontSize: 13 }}>超過 24 小時</Tag>
+            </Tooltip>
+          )}
           {sources && <Text type="secondary" style={{ fontSize: 13 }}>{sources}</Text>}
         </Space>
       ),
@@ -346,12 +413,12 @@ export function DayPersonCollapse({
               )}
               {(selectedRow.start_time || selectedRow.detail?.['保養時間起']) && (
                 <Descriptions.Item label="保養時間起">
-                  {selectedRow.start_time || selectedRow.detail?.['保養時間起']}
+                  {selectedRow.start_dt || selectedRow.start_time || selectedRow.detail?.['保養時間起']}
                 </Descriptions.Item>
               )}
               {(selectedRow.end_time || selectedRow.detail?.['保養時間迄']) && (
                 <Descriptions.Item label="保養時間迄">
-                  {selectedRow.end_time || selectedRow.detail?.['保養時間迄']}
+                  {selectedRow.end_dt || selectedRow.end_time || selectedRow.detail?.['保養時間迄']}
                 </Descriptions.Item>
               )}
               {selectedRow.remark && (

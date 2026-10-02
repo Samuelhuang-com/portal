@@ -1447,7 +1447,14 @@ def get_year_matrix_items(
         .all()
     )
 
-    # 預先算出所有批次的 period stats（複用 _calc_year_matrix 的 processed list 邏輯）
+    # 2026-10-02 修正：prev_carry_over / prev_resolved 原本是 stub（只做「批次月份 = 點擊月份」
+    # 過濾），導致點「截至上期底累計未結案數」回傳的其實是本期應完成清單（例：9月矩陣 125、明細 2 筆）。
+    # 改為與 _calc_year_matrix 完全相同的口徑：full_date = 批次月份 1 號、完成只看 end_time。
+    if month == 0:
+        p_start, p_end, prev_end = _get_period_bounds("year", year)
+    else:
+        p_start, p_end, prev_end = _get_period_bounds("month", year, month=month)
+
     results = []
     for item, batch in rows:
         # 解析批次年月
@@ -1457,9 +1464,8 @@ def get_year_matrix_items(
         except Exception:
             continue
 
-        # 月份篩選（month=0 表示全年）
-        if month != 0 and batch_month_val != month:
-            continue
+        # full_date 以批次月份 1 號為基準（與 _calc_year_matrix 一致）
+        full_date = date(batch_year, batch_month_val, 1)
 
         # 解析 exec_months
         try:
@@ -1477,18 +1483,32 @@ def get_year_matrix_items(
         # 2026-09-08：明細 Modal 的「執行日期」欄用（end_time 的日期部分）
         end_date = _parse_end_date(item.end_time)
 
+        in_period = p_start <= full_date <= p_end
         if metric == "period_total":
-            pass  # 全部包含
+            if not in_period:
+                continue
         elif metric == "period_completed":
-            if not is_completed:
+            if not (in_period and is_completed):
                 continue
         elif metric == "period_incomplete":
             # 2026-09-07 新增：本期應完成但尚未完成（end_time 為空）
             # 與 period_completed 互補，兩者相加 = period_total
-            if is_completed:
+            if not (in_period and not is_completed):
                 continue
-        elif metric in ("prev_carry_over", "prev_resolved"):
-            pass  # 簡化：月份過濾已完成，詳細邏輯依需求擴充
+        elif metric == "prev_carry_over":
+            # 截至上期底：full_date ≤ 上期底，且在上期底前尚未結案
+            if full_date > prev_end:
+                continue
+            if is_completed and end_date is not None and end_date <= prev_end:
+                continue
+        elif metric == "prev_resolved":
+            # 上列累計未結案中，結案日落在本期內
+            if full_date > prev_end:
+                continue
+            if end_date is None or not (p_start <= end_date <= p_end):
+                continue
+        else:
+            raise HTTPException(status_code=400, detail=f"未知的 metric：{metric}")
 
         results.append({
             "ragic_id":            item.ragic_id,

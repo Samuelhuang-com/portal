@@ -60,6 +60,8 @@ export interface JournalRow {
   est_min:      number | null   // 預估耗時（分鐘），null = 無資料
   start_time:   string          // 'HH:MM' 或 ''
   end_time:     string          // 'HH:MM' 或 ''
+  start_dt?:    string          // 'YYYY/MM/DD HH:MM' 或 ''（2026-10-02 新增，跨日判斷用）
+  end_dt?:      string          // 'YYYY/MM/DD HH:MM' 或 ''（2026-10-02 新增，跨日判斷用）
   work_min:     number | null   // 工時（分鐘），null = 無資料
   remark:       string          // 備註
   report:       string          // 回報事項

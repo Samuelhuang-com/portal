@@ -161,6 +161,21 @@ def _parse_wm(val: str) -> Optional[int]:
     return round(num) if num > 0 else None
 
 
+_FULL_DT_RE = re.compile(r"^(\d{4})[/-](\d{1,2})[/-](\d{1,2})[ T](\d{1,2}):(\d{2})")
+
+
+def _full_dt(t: str) -> str:
+    """'2026/06/01 10:52(:00)' → '2026/06/01 10:52'；只有 HH:MM 或空值 → ''。
+
+    2026-10-02 新增：工作日誌「迄」跨日時前端要顯示日期（例 06/05 16:10），
+    否則 6078 分鐘這種跨 4 天的工時看起來像是同一天內的事。"""
+    m = _FULL_DT_RE.match((t or "").strip())
+    if not m:
+        return ""
+    y, mo, d, h, mi = m.groups()
+    return f"{y}/{int(mo):02d}/{int(d):02d} {int(h):02d}:{mi}"
+
+
 def _clean_time(t: str) -> str:
     """'2026/05/15 09:00' → '09:00'，已是 HH:MM 則直接回傳"""
     if not t:
@@ -250,8 +265,9 @@ def _group_detail_rows(recs: list, target: _date, fallback_person: str) -> list[
         out.append({
             "person":     person,
             "work_min":   round(g["sec"] / 60) if g["has_end"] else None,
-            "start_time": g["min_start"].strftime("%H:%M") if g["min_start"] else "",
-            "end_time":   g["max_end"].strftime("%H:%M")   if g["max_end"]   else "",
+            # 2026-10-02：回傳完整日期時間，_make_row 會切出 HH:MM 並另存 start_dt/end_dt
+            "start_time": g["min_start"].strftime("%Y/%m/%d %H:%M") if g["min_start"] else "",
+            "end_time":   g["max_end"].strftime("%Y/%m/%d %H:%M")   if g["max_end"]   else "",
         })
     return out
 
@@ -320,8 +336,9 @@ def _group_pm_worklog_rows(recs: list, target: _date, fallback_person: str) -> l
         out.append({
             "person":     person,
             "work_min":   round(g["sec"] / 60) if g["has_end"] else None,
-            "start_time": g["min_start"].strftime("%H:%M") if g["min_start"] else "",
-            "end_time":   g["max_end"].strftime("%H:%M")   if g["max_end"]   else "",
+            # 2026-10-02：回傳完整日期時間，_make_row 會切出 HH:MM 並另存 start_dt/end_dt
+            "start_time": g["min_start"].strftime("%Y/%m/%d %H:%M") if g["min_start"] else "",
+            "end_time":   g["max_end"].strftime("%Y/%m/%d %H:%M")   if g["max_end"]   else "",
         })
     return out
 
@@ -357,6 +374,8 @@ def _make_row(
     detail: Optional[dict] = None,
     detail_records: Optional[list] = None,
 ) -> dict:
+    st_full = _full_dt(start_time)
+    et_full = _full_dt(end_time)
     st = _clean_time(start_time)
     et = _clean_time(end_time)
     # 無工時時，由起迄時間自動計算
@@ -371,6 +390,9 @@ def _make_row(
         "est_min":      est_min,
         "start_time":   st,
         "end_time":     et,
+        # 2026-10-02：完整日期時間（'YYYY/MM/DD HH:MM'，無日期資訊時為 ''），供前端判斷跨日
+        "start_dt":     st_full,
+        "end_dt":       et_full,
         "work_min":     work_min,
         "remark":       (remark or "").strip(),
         "report":       (report or "").strip(),
@@ -421,8 +443,9 @@ def _fetch_dazhi(db: Session, year: int, month: int, day: int) -> list[dict]:
         task       = " ".join(filter(None, [c.repair_type, c.floor, c.title]))
         wm         = round(c.work_hours * 60) if c.work_hours and c.work_hours > 0 else None
         occ        = c.occurred_at.strftime("%Y/%m/%d %H:%M") if c.occurred_at else ""
-        start_t    = c.occurred_at.strftime("%H:%M")  if c.occurred_at  else ""
-        end_t      = c.completed_at.strftime("%H:%M") if c.completed_at else ""
+        # 2026-10-02：帶完整日期，_make_row 切出 HH:MM 並另存 start_dt/end_dt（跨日判斷用）
+        start_t    = c.occurred_at.strftime("%Y/%m/%d %H:%M")  if c.occurred_at  else ""
+        end_t      = c.completed_at.strftime("%Y/%m/%d %H:%M") if c.completed_at else ""
         detail_recs = _detail_records_payload(case_recs)
         common = dict(
             source="dazhi",
@@ -507,8 +530,9 @@ def _fetch_luqun(db: Session, year: int, month: int, day: int) -> list[dict]:
         task       = " ".join(filter(None, [c.repair_type, c.floor, c.title]))
         wm         = round(c.work_hours * 60) if c.work_hours and c.work_hours > 0 else None
         occ        = c.occurred_at.strftime("%Y/%m/%d %H:%M") if c.occurred_at else ""
-        start_t    = c.occurred_at.strftime("%H:%M")  if c.occurred_at  else ""
-        end_t      = c.completed_at.strftime("%H:%M") if c.completed_at else ""
+        # 2026-10-02：帶完整日期，_make_row 切出 HH:MM 並另存 start_dt/end_dt（跨日判斷用）
+        start_t    = c.occurred_at.strftime("%Y/%m/%d %H:%M")  if c.occurred_at  else ""
+        end_t      = c.completed_at.strftime("%Y/%m/%d %H:%M") if c.completed_at else ""
         detail_recs = _detail_records_payload(case_recs)
         common = dict(
             source="luqun",
@@ -649,8 +673,9 @@ def _fetch_ihg(db: Session, year: int, month: int, day: int) -> list[dict]:
         # 起迄時間：DB 欄位優先，fallback raw_json（未重新同步的舊記錄）
         def _str_or_raw(db_val: str, raw_key: str) -> str:
             return db_val.strip() if db_val and db_val.strip() else str(raw.get(raw_key) or "").strip()
-        ihg_start = _clean_time(_str_or_raw(rec.start_time or "", "保養時間起"))
-        ihg_end   = _clean_time(_str_or_raw(rec.end_time   or "", "保養時間迄"))
+        # 2026-10-02：原樣傳入，由 _make_row 切 HH:MM 並保留完整日期（跨日判斷用）
+        ihg_start = _str_or_raw(rec.start_time or "", "保養時間起")
+        ihg_end   = _str_or_raw(rec.end_time   or "", "保養時間迄")
         rows.append(_make_row(
             source="ihg",
             category="例行維護",
@@ -672,8 +697,8 @@ def _fetch_ihg(db: Session, year: int, month: int, day: int) -> list[dict]:
                 "保養日期":   rec.maint_date or "",
                 "完成日期":   rec.completion_date or "",
                 "狀態":       rec.status or "",
-                "保養時間起": ihg_start,
-                "保養時間迄": ihg_end,
+                "保養時間起": _clean_time(ihg_start),
+                "保養時間迄": _clean_time(ihg_end),
                 "工時（分鐘）": str(wm) if wm else "",
                 "備註":       rec.notes or "",
             },

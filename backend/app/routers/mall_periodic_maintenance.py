@@ -1389,13 +1389,15 @@ def get_year_matrix_items(
 
     results = []
     for item, batch in rows:
-        if not _freq_match(item.frequency, frequency_type):
-            continue
-
         try:
             exec_months = json.loads(item.exec_months_json or "[]")
         except Exception:
             exec_months = []
+
+        # 2026-10-02：改與 _calc_year_matrix 完全一致（原本用 _freq_match，frequency 空白的
+        # 項目矩陣有算、明細不出現）
+        if not _freq_match_with_fallback(item.frequency, frequency_type, exec_months):
+            continue
 
         try:
             batch_month = int(batch.period_month.split("/")[1])
@@ -1403,20 +1405,11 @@ def get_year_matrix_items(
         except Exception:
             continue
 
-        # ── 判斷此批次月份是否為執行月份（與統計函式同邏輯）────────────────────
-        if exec_months:
-            if batch_month not in exec_months:
-                continue
-        elif not _should_schedule(item, batch_year, batch_month):
-            continue
-
-        # ── 計算 full_date ────────────────────────────────────────────────────
-        if item.scheduled_date:
-            full_date = _reconstruct_full_date(item.scheduled_date, batch.period_month)
-        else:
-            full_date = date(batch_year, batch_month, 1)
-        if full_date is None:
-            continue
+        # ── full_date 以批次月份 1 號為基準（與 _calc_year_matrix 一致）────────
+        # 2026-10-02 修正：原本這裡①多做一道 exec_months／_should_schedule 過濾、
+        # ②用 scheduled_date 推 full_date，兩者矩陣都沒有，導致點擊明細筆數少於矩陣格
+        #（排定日期落在後面月份的項目，會被排除在「截至上期底累計未結案數」之外）。
+        full_date = date(batch_year, batch_month, 1)
 
         # ── 執行完成判斷：end_time 有值 = 已完成 ─────────────────────────────
         is_done  = bool(item.end_time and item.end_time.strip())
