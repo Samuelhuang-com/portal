@@ -34,6 +34,7 @@ router 掛載於 /api/v1/contract（見 main.py）
 
 import io
 import uuid
+from urllib.parse import quote
 from pathlib import Path
 from datetime import date
 from typing import Optional, List
@@ -123,6 +124,8 @@ from app.schemas.contract import (
     CostSummaryResponse,
     # 原合約複製續約 + 上下層級查詢（2026-07-21）
     ContractChainNode,
+    # 修改合約編號（2026-10-02）
+    ContractRenameRequest,
 )
 
 router = APIRouter(tags=["合約管理"])
@@ -457,10 +460,11 @@ def export_contracts(
         )
         excel_bytes = generate_contract_excel(contracts, db=db)  # F8: 傳入 db 以查詢費用分攤
         filename = f"合約列表_{date.today().strftime('%Y%m%d')}.xlsx"
+        filename_safe = f"contract_list_{date.today().strftime('%Y%m%d')}.xlsx"  # ASCII 後備（Content-Disposition 只能 Latin-1）
         return StreamingResponse(
             io.BytesIO(excel_bytes),
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"},
+            headers={"Content-Disposition": f"attachment; filename=\"{filename_safe}\"; filename*=UTF-8''{quote(filename)}"},
         )
     except HTTPException:
         raise
@@ -1006,10 +1010,11 @@ def export_claims(
         )
         excel_bytes = generate_claims_excel(claims)
         filename = f"請款清單_{date.today().strftime('%Y%m%d')}.xlsx"
+        filename_safe = f"contract_claims_{date.today().strftime('%Y%m%d')}.xlsx"  # ASCII 後備（Content-Disposition 只能 Latin-1）
         return StreamingResponse(
             io.BytesIO(excel_bytes),
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"},
+            headers={"Content-Disposition": f"attachment; filename=\"{filename_safe}\"; filename*=UTF-8''{quote(filename)}"},
         )
     except HTTPException:
         raise
@@ -1809,6 +1814,45 @@ def copy_renew_contract(
             raise HTTPException(status_code=403, detail="權限不足，需要 contract_create_edit")
 
         return ContractService.copy_renew_contract(db, contract_id, contract_data)
+
+    except ContractManagementException as e:
+        raise HTTPException(status_code=e.status_code, detail={"message": e.message, "error_code": e.error_code})
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"伺服器錯誤：{str(e)}")
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# 修改合約編號（2026-10-02）
+# ════════════════════════════════════════════════════════════════════════════
+
+@router.post(
+    "/{contract_id}/rename",
+    response_model=ContractDetailResponse,
+    summary="修改合約編號（連動更新所有關聯資料）",
+)
+def rename_contract(
+    contract_id: str,
+    body: ContractRenameRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    把合約編號從 path 中的 contract_id 改成 body.new_contract_id。
+    合約編號是主鍵，子表（項目／請款／附件／分攤／付款計劃／變更歷程…）
+    會在同一個交易內一併改指新編號；失敗則整筆回滾。
+    僅限 contract_admin（合約設定）權限。
+    """
+    try:
+        user_permissions = get_user_permissions(current_user.id, db)
+        if "*" not in user_permissions and "contract_admin" not in user_permissions:
+            raise HTTPException(status_code=403, detail="權限不足，需要 contract_admin")
+
+        operator = current_user.username if hasattr(current_user, "username") else str(current_user.id)
+        return ContractService.rename_contract(
+            db, contract_id, body.new_contract_id, operator=operator, reason=body.reason,
+        )
 
     except ContractManagementException as e:
         raise HTTPException(status_code=e.status_code, detail={"message": e.message, "error_code": e.error_code})

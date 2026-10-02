@@ -41,6 +41,7 @@ import {
   fetchContractAttachments, uploadContractAttachment, deleteContractAttachment,
   fetchCostAllocations, saveCostAllocations,
   batchUpdateManager, batchSubmit,
+  renameContract,
 } from '@/api/contract'
 import type { CostAllocationItem, CostAllocationRecord } from '@/api/contract'
 import { companiesApi, departmentsApi, pricingSpecsApi } from '@/api/referenceData'
@@ -54,6 +55,7 @@ import type {
 } from '@/types/contract'
 import type { ContractItemRecord, ContractItemCreate, ClaimRecord } from '@/api/contract'
 import { NAV_GROUP, NAV_PAGE } from '@/constants/navLabels'
+import { useAuthStore } from '@/stores/authStore'
 import {
   ContractChangeLogTab,
   ContractPaymentScheduleTab,
@@ -795,6 +797,12 @@ export default function ContractListPage() {
             )
             setSelectedContract(updated)
           }}
+          onRenamed={(oldId, updated) => {
+            setContracts(prev =>
+              prev.map(c => c.contract_id === oldId ? updated : c)
+            )
+            setSelectedContract(updated)
+          }}
         />
       )}
 
@@ -1224,9 +1232,11 @@ interface ContractDetailDrawerProps {
   open: boolean
   onClose: () => void
   onUpdate?: (updated: ContractRecord) => void
+  /** 修改合約編號成功後通知父層（舊編號 → 新資料），父層需以舊編號找到列表那一筆替換 */
+  onRenamed?: (oldId: string, updated: ContractRecord) => void
 }
 
-function ContractDetailDrawer({ contract, open, onClose, onUpdate }: ContractDetailDrawerProps) {
+function ContractDetailDrawer({ contract, open, onClose, onUpdate, onRenamed }: ContractDetailDrawerProps) {
   const [isEditing, setIsEditing] = useState(false)
   const [saveLoading, setSaveLoading] = useState(false)
   const [isFullscreen, setIsFullscreen] = useState(false)
@@ -1250,6 +1260,12 @@ function ContractDetailDrawer({ contract, open, onClose, onUpdate }: ContractDet
   const [approvalModalOpen, setApprovalModalOpen] = useState(false)
   const [approvalAction, setApprovalAction] = useState<'approve' | 'reject' | null>(null)
   const [approvalComment, setApprovalComment] = useState('')
+
+  // 修改合約編號（2026-10-02；僅 contract_admin，用於修正 Excel 匯入打錯的編號）
+  const canRename = useAuthStore((s) => s.hasPermission)('contract_admin')
+  const [renameOpen, setRenameOpen] = useState(false)
+  const [renameLoading, setRenameLoading] = useState(false)
+  const [renameForm] = Form.useForm()
 
   const ragicUrl = contract.ragic_url
   const identifier = contract.contract_id
@@ -1396,6 +1412,25 @@ function ContractDetailDrawer({ contract, open, onClose, onUpdate }: ContractDet
     }
   }
 
+  // ── 修改合約編號 ──────────────────────────────────────────────────────
+  const handleRename = async () => {
+    const values = await renameForm.validateFields()
+    const newId = String(values.new_contract_id ?? '').trim()
+    const oldId = contract.contract_id
+    setRenameLoading(true)
+    try {
+      const result = await renameContract(oldId, { new_contract_id: newId, reason: values.reason || undefined })
+      message.success(`合約編號已由 ${oldId} 改為 ${result.contract_id}`)
+      setRenameOpen(false)
+      renameForm.resetFields()
+      onRenamed?.(oldId, result)
+    } catch (err: any) {
+      message.error(err?.response?.data?.detail?.message ?? err?.response?.data?.detail ?? '修改合約編號失敗')
+    } finally {
+      setRenameLoading(false)
+    }
+  }
+
   // ── 核准 / 拒絕確認 ────────────────────────────────────────────────────
   const handleApprovalConfirm = async () => {
     if (!approvalAction) return
@@ -1471,6 +1506,13 @@ function ContractDetailDrawer({ contract, open, onClose, onUpdate }: ContractDet
                       拒絕
                     </Button>
                   </>
+                )}
+                {canRename && (
+                  <Tooltip title="修正合約編號（關聯的項目、請款、附件、歷程等會一併改到新編號）">
+                    <Button size="small" onClick={() => { renameForm.setFieldsValue({ new_contract_id: contract.contract_id, reason: '' }); setRenameOpen(true) }}>
+                      修改編號
+                    </Button>
+                  </Tooltip>
                 )}
                 <Button size="small" icon={<EditOutlined />} onClick={enterEdit}>編輯</Button>
               </>
@@ -1907,6 +1949,46 @@ function ContractDetailDrawer({ contract, open, onClose, onUpdate }: ContractDet
             onChange={(e) => setApprovalComment(e.target.value)}
             placeholder={approvalAction === 'approve' ? '如：符合採購規範，同意生效' : '如：合約條款需修正，請重新提交'}
           />
+        </Form.Item>
+      </Form>
+    </Modal>
+
+    {/* 修改合約編號 Modal（2026-10-02） */}
+    <Modal
+      title={`修改合約編號（目前：${contract.contract_id}）`}
+      open={renameOpen}
+      onOk={handleRename}
+      onCancel={() => { setRenameOpen(false); renameForm.resetFields() }}
+      confirmLoading={renameLoading}
+      okText="確認修改"
+      cancelText="取消"
+      destroyOnClose
+    >
+      <Alert
+        type="warning"
+        showIcon
+        style={{ marginBottom: 16 }}
+        message="合約項目、請款、附件、費用分攤、付款計劃、變更歷程、稽核日誌、續約關聯等資料會一併改到新編號；變更會記錄在「變更歷程」與「稽核日誌」。"
+      />
+      <Form form={renameForm} layout="vertical">
+        <Form.Item
+          name="new_contract_id"
+          label="新合約編號"
+          rules={[
+            { required: true, whitespace: true, message: '請輸入新合約編號' },
+            { max: 50, message: '不可超過 50 字' },
+            {
+              validator: (_, v) =>
+                String(v ?? '').trim() === contract.contract_id
+                  ? Promise.reject(new Error('新編號與目前編號相同'))
+                  : Promise.resolve(),
+            },
+          ]}
+        >
+          <Input placeholder="例：CON-2026-0001" maxLength={50} />
+        </Form.Item>
+        <Form.Item name="reason" label="修改原因（選填）" rules={[{ max: 200, message: '不可超過 200 字' }]}>
+          <Input placeholder="例：Excel 匯入時編號打錯" maxLength={200} />
         </Form.Item>
       </Form>
     </Modal>

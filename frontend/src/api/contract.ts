@@ -3,6 +3,7 @@
  * 對應後端 /api/v1/contract/*
  */
 import apiClient from './client'
+import { downloadFile } from './downloadFile'
 import type {
   ContractRecord,
   ContractListResponse,
@@ -520,6 +521,12 @@ export async function deleteClaim(claimId: number): Promise<void> {
 
 // ── 匯出 Excel ────────────────────────────────────────────────────────────────
 
+/** 今天 YYYYMMDD（下載預設檔名用，與後端檔名一致） */
+function _yyyymmdd(): string {
+  const d = new Date()
+  return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`
+}
+
 /**
  * 匯出合約列表 Excel
  * 帶入與列表頁相同的篩選條件，瀏覽器直接下載。
@@ -531,19 +538,16 @@ export function exportContractsExcel(params: {
   risk_level?: string
   budget_year?: number
   responsible_dept?: string
-} = {}): void {
+} = {}): Promise<void> {
   const query = new URLSearchParams()
   Object.entries(params).forEach(([k, v]) => {
     if (v !== undefined && v !== null && v !== '') query.set(k, String(v))
   })
   const qs = query.toString()
   const url = `/api/v1/contract/export${qs ? '?' + qs : ''}`
-  const a = document.createElement('a')
-  a.href = url
-  a.download = ''
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
+  // 必須帶 JWT：原本用 <a href> 直接導向不會帶 Authorization，後端回 403 JSON，
+  // 瀏覽器把錯誤訊息存成「export」（Windows 可能顯示成 export.customization）
+  return downloadFile(url, `合約列表_${_yyyymmdd()}.xlsx`)
 }
 
 /**
@@ -553,19 +557,14 @@ export function exportContractsExcel(params: {
 export function exportClaimsExcel(params: {
   contract_id?: string
   status?: string
-} = {}): void {
+} = {}): Promise<void> {
   const query = new URLSearchParams()
   Object.entries(params).forEach(([k, v]) => {
     if (v !== undefined && v !== null && v !== '') query.set(k, String(v))
   })
   const qs = query.toString()
   const url = `/api/v1/contract/claims/export${qs ? '?' + qs : ''}`
-  const a = document.createElement('a')
-  a.href = url
-  a.download = ''
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
+  return downloadFile(url, `請款清單_${_yyyymmdd()}.xlsx`)
 }
 
 // ── 預算執行率分析 ──────────────────────────────────────────────────────────────
@@ -630,6 +629,17 @@ export async function copyRenewContract(
   payload: ContractCreate,
 ): Promise<{ success: boolean; data: ContractRecord }> {
   const { data } = await apiClient.post(`${BASE}/${sourceContractId}/copy-renew`, payload)
+  return data
+}
+
+// ── 修改合約編號（2026-10-02）──────────────────────────────────────────────
+
+/** 修改合約編號（後端同一交易內連動更新所有關聯資料；需 contract_admin） */
+export async function renameContract(
+  contractId: string,
+  payload: { new_contract_id: string; reason?: string },
+): Promise<ContractRecord> {
+  const { data } = await apiClient.post(`${BASE}/${encodeURIComponent(contractId)}/rename`, payload)
   return data
 }
 
@@ -1027,12 +1037,16 @@ export async function fetchSummaryReport(
   return data
 }
 
-export function exportSummaryReport(budgetYear: number, periodType: 'monthly' | 'quarterly'): void {
+export function exportSummaryReport(budgetYear: number, periodType: 'monthly' | 'quarterly'): Promise<void> {
   const params = new URLSearchParams({
     budget_year: String(budgetYear),
     period_type: periodType,
   })
-  window.open(`/api/v1/contract/reports/summary/export?${params}`, '_blank')
+  // 必須帶 JWT：window.open 不會帶 Authorization，後端回 403 JSON
+  return downloadFile(
+    `/api/v1/contract/reports/summary/export?${params}`,
+    `contract_report_${budgetYear}_${periodType}.xlsx`,
+  )
 }
 
 // ── J4 — 批次操作 ─────────────────────────────────────────────────────────────

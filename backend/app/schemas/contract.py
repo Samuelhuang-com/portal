@@ -652,6 +652,14 @@ class RenewalResponse(BaseModel):
         from_attributes = True
 
 
+# ── 修改合約編號 Schema（2026-10-02）─────────────────────────────────────────────
+
+class ContractRenameRequest(BaseModel):
+    """修改合約編號（主要用於修正 Excel 匯入時打錯的編號）"""
+    new_contract_id: str = Field(..., min_length=1, max_length=50, description="新合約編號（不限格式，需唯一）")
+    reason: Optional[str] = Field(None, max_length=200, description="修改原因（寫入稽核日誌）")
+
+
 # ── 原合約複製續約 + 上下層級查詢 Schema（2026-07-21）───────────────────────────
 
 class ContractChainNode(BaseModel):

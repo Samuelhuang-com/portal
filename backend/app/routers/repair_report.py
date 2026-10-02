@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import io
 import logging
+from urllib.parse import quote
 from datetime import date, datetime
 from typing import Optional
 
@@ -145,11 +146,12 @@ def export_excel(
 
     excel_bytes = svc.generate_excel(cases, year, month)
     filename    = f"報修未完成報表_{year}{month:02d}_{date.today().strftime('%Y%m%d')}.xlsx"
+    filename_safe = f"repair_unfinished_{year}{month:02d}_{date.today().strftime('%Y%m%d')}.xlsx"  # ASCII 後備（Content-Disposition 只能 Latin-1）
 
     return StreamingResponse(
         io.BytesIO(excel_bytes),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": f'attachment; filename="{filename_safe}"; filename*=UTF-8\'\'{quote(filename)}'},
     )
 
 

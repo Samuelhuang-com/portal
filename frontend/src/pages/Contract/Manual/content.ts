@@ -916,8 +916,8 @@ export const MANUAL: Section[] = [
                 + '的所有新增改刪；附件上傳；請款「新增」（不含審核）；資料導入頁面'],
               ['contract_approve', '合約審核', '核准/拒絕合約；審核關卡核准/拒絕；審核關卡設定的新增改刪（查詢不需要）'],
               ['contract_vendor_manage', '廠商管理', '廠商所有 CRUD、Excel 匯入、Ragic 同步'],
-              ['contract_admin', '合約設定', '只掛在「合約設定」選單項目，實際各分頁 API 各自掛自己的權限'
-                + '（多數是 contract_create_edit）'],
+              ['contract_admin', '合約設定', '「合約設定」選單項目（各分頁 API 各自掛自己的權限，多數是 contract_create_edit）'
+                + '；合約明細「修改編號」'],
               ['contract_expiring_view', '到期預警', '只掛在「到期預警」頁面路由'],
               ['contract_claims_view', '請款管理', '請款「核准/拒絕/批次審核/匯出」；不含請款清單查詢與新增（那兩個'
                 + '只需要 contract_view / contract_create_edit）'],

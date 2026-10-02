@@ -524,6 +524,178 @@ class ContractService:
         return chain
 
     @staticmethod
+    def rename_contract(
+        db: Session,
+        contract_id: str,
+        new_contract_id: str,
+        operator: str,
+        reason: Optional[str] = None,
+    ) -> ContractDetailResponse:
+        """
+        修改合約編號（2026-10-02；主要用途：修正早期 Excel 匯入時打錯的編號）。
+
+        contract_id 是 contracts 的主鍵，且被多張子表以外鍵參照（皆無 ON UPDATE CASCADE），
+        PostgreSQL 不允許直接 UPDATE 主鍵。因此在「同一個交易」內：
+          1. 以新編號複製一筆主檔
+          2. 把所有外鍵指向舊編號的資料改指新編號
+             （外鍵清單以「資料庫實際的 FK」為準，用 inspector 讀取，
+               之後合約模組新增子表也不會漏改）
+          3. 改寫沒有外鍵、但以字串記錄合約編號的地方：
+               contract_audit_logs.contract_id / resource_id、
+               memos（contract_expiry、budget_alert 的冪等 key）
+          4. 確認沒有任何 FK 還指向舊編號後，刪除舊主檔
+             （子表多為 ON DELETE CASCADE，若漏改會被連帶刪除，所以第 4 步前一定要先驗證）
+          5. 寫入變更歷程（field=contract_id）與稽核日誌（action=rename）
+        任何一步失敗即整筆 rollback。
+
+        Raises:
+            ContractNotFound: 原合約不存在
+            ContractAlreadyExists: 新編號已被其他合約使用
+            InvalidInputData: 新編號空白、與原編號相同、超過長度
+        """
+        from sqlalchemy import inspect as sa_inspect, select, update, delete, table, column
+        from app.models.contract import ContractChangeLog, ContractAuditLog
+        from app.models.memo import Memo
+
+        old_id = contract_id
+        new_id = (new_contract_id or "").strip()
+        if not new_id:
+            raise InvalidInputData("new_contract_id", "新合約編號不可空白")
+        if len(new_id) > 50:
+            raise InvalidInputData("new_contract_id", "新合約編號不可超過 50 字")
+        if new_id == old_id:
+            raise InvalidInputData("new_contract_id", "新合約編號與原編號相同")
+
+        contract = db.query(Contract).filter(Contract.contract_id == old_id).first()
+        if not contract:
+            raise ContractNotFound(old_id)
+        if db.query(Contract.contract_id).filter(Contract.contract_id == new_id).first():
+            raise ContractAlreadyExists(new_id)
+
+        # 之後全部改用 Core 語句操作，先把 ORM 物件移出 session，避免 flush 時與 Core 異動打架
+        db.expunge(contract)
+
+        contracts_t = Contract.__table__
+        pk = contracts_t.c.contract_id
+        moved: Dict[str, int] = {}
+
+        try:
+            # 1. 以新編號複製主檔
+            row = db.execute(select(contracts_t).where(pk == old_id)).mappings().one()
+            values = dict(row)
+            values["contract_id"] = new_id
+            if "updated_at" in values:
+                values["updated_at"] = datetime.now()
+            db.execute(contracts_t.insert().values(**values))
+
+            # 2. 找出資料庫裡所有指向 contracts.contract_id 的外鍵，逐一改指新編號
+            insp = sa_inspect(db.connection())
+            fk_targets: List[tuple] = []
+            for (_schema, tbl_name), fks in insp.get_multi_foreign_keys().items():
+                for fk in fks:
+                    if (
+                        fk.get("referred_table") == "contracts"
+                        and list(fk.get("referred_columns") or []) == ["contract_id"]
+                        and len(fk.get("constrained_columns") or []) == 1
+                    ):
+                        fk_targets.append((tbl_name, fk["constrained_columns"][0]))
+            # 保險：ORM metadata 宣告了、但資料庫沒有實體 FK 的欄位也一併改
+            for tbl in contracts_t.metadata.tables.values():
+                for fk in tbl.foreign_keys:
+                    if fk.target_fullname == "contracts.contract_id":
+                        key = (tbl.name, fk.parent.name)
+                        if key not in fk_targets:
+                            fk_targets.append(key)
+
+            for tbl_name, col_name in fk_targets:
+                t = table(tbl_name, column(col_name))
+                res = db.execute(
+                    update(t).where(t.c[col_name] == old_id).values({col_name: new_id})
+                )
+                if res.rowcount:
+                    moved[f"{tbl_name}.{col_name}"] = res.rowcount
+
+            # 3. 沒有外鍵、以字串記錄合約編號的地方
+            res = db.execute(
+                update(ContractAuditLog.__table__)
+                .where(ContractAuditLog.__table__.c.contract_id == old_id)
+                .values(contract_id=new_id)
+            )
+            if res.rowcount:
+                moved["contract_audit_logs.contract_id"] = res.rowcount
+            res = db.execute(
+                update(ContractAuditLog.__table__)
+                .where(
+                    ContractAuditLog.__table__.c.resource == "contract",
+                    ContractAuditLog.__table__.c.resource_id == old_id,
+                )
+                .values(resource_id=new_id)
+            )
+            if res.rowcount:
+                moved["contract_audit_logs.resource_id"] = res.rowcount
+
+            # memos 的冪等 key（不改的話，下次排程會以新編號重複建立提醒）
+            memo_src_max = Memo.__table__.c.source_id.type.length or 36
+            memo_count = 0
+            if len(new_id) <= memo_src_max:
+                memo_count += db.query(Memo).filter(
+                    Memo.source == "contract_expiry", Memo.source_id == old_id,
+                ).update({Memo.source_id: new_id}, synchronize_session=False)
+            prefix = f"{old_id}_"
+            for memo in db.query(Memo).filter(
+                Memo.source == "budget_alert",
+                Memo.source_id.startswith(prefix, autoescape=True),
+            ).all():
+                new_source_id = new_id + memo.source_id[len(old_id):]
+                if len(new_source_id) <= memo_src_max:
+                    memo.source_id = new_source_id
+                    memo_count += 1
+            if memo_count:
+                moved["memos.source_id"] = memo_count
+            db.flush()
+
+            # 4. 刪除舊主檔前，確認已沒有任何 FK 還指向舊編號（避免 ON DELETE CASCADE 連帶刪資料）
+            for tbl_name, col_name in fk_targets:
+                t = table(tbl_name, column(col_name))
+                left = db.execute(
+                    select(func.count()).select_from(t).where(t.c[col_name] == old_id)
+                ).scalar()
+                if left:
+                    raise RuntimeError(f"{tbl_name}.{col_name} 仍有 {left} 筆指向舊編號，已中止")
+            db.execute(delete(contracts_t).where(pk == old_id))
+
+            # 5. 變更歷程 + 稽核日誌
+            db.add(ContractChangeLog(
+                contract_id=new_id,
+                field_name="contract_id",
+                field_label="合約編號",
+                old_value=old_id,
+                new_value=new_id,
+                operator=operator,
+            ))
+            moved_text = "、".join(f"{k}:{v}" for k, v in moved.items()) or "無關聯資料"
+            db.add(ContractAuditLog(
+                contract_id=new_id,
+                action="rename",
+                resource="contract",
+                resource_id=new_id,
+                operator=operator,
+                payload_summary=(
+                    f"合約編號 {old_id} → {new_id}"
+                    + (f"；原因：{reason.strip()}" if reason and reason.strip() else "")
+                    + f"；連動更新：{moved_text}"
+                ),
+                result="success",
+            ))
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+
+        db.expire_all()
+        return ContractService.get_contract(db, new_id)
+
+    @staticmethod
     def update_contract(
         db: Session,
         contract_id: str,
