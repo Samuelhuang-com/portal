@@ -248,8 +248,7 @@ def build_inspection_docx(
 
     r = add_row(1.0)
     for idx, label in enumerate(["項次", "內部稽核要項", "稽核紀錄", "稽核結果", "建議"]):
-        _write(r.cells[idx], label, 12, align=WD_ALIGN_PARAGRAPH.CENTER,
-               color=BLUE if label == "建議" else None)   # 比照網頁 Drawer「建議」標籤藍字
+        _write(r.cells[idx], label, 12, align=WD_ALIGN_PARAGRAPH.CENTER)
         _shade(r.cells[idx])
 
     def section_row(no: str, title: str, no_size: float = 14):
