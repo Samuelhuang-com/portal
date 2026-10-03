@@ -1643,8 +1643,8 @@ def export_work_journal_excel(
     wb = openpyxl.Workbook()
     wb.remove(wb.active)
 
-    # 彙總 Sheet 用：[(人員, 該人 Sheet 實際名稱, 合計列列號)]
-    summary_rows: list[tuple[str, str, int]] = []
+    # 彙總 Sheet 用：[(人員, 該人 Sheet 實際名稱, 合計列列號, 工作天數公式（跨表引用）)]
+    summary_rows: list[tuple[str, str, int, str]] = []
 
     for pname in persons_order:
         ws = wb.create_sheet(title=xlsx_safe(pname or "未指定")[:31])
@@ -1889,10 +1889,35 @@ def export_work_journal_excel(
             _total_formula = 0
         kt = ws.cell(row=total_row, column=11, value=_total_formula)
         kt.font = Font(bold=True, size=10, color="1B3A5C")
-        summary_rows.append((pname or "未指定", ws.title, total_row))
 
-        # 合計工時欄（L:M 合併）— 文字也改引用 K 欄，手動改工時會跟著重算
-        tc = ws.cell(row=total_row, column=12, value=f'="合計工時："&K{total_row}&" min"')
+        # 工作天數（公式）：多日＝當日小計列的個數（＝有紀錄的天數）；單日＝有任何一筆工作事項即 1
+        if day_subtotal_cells:
+            _days_expr = f"COUNT({','.join(day_subtotal_cells)})"
+        elif row_idx > data_first_row:
+            _days_expr = f"MIN(1,COUNTA(G{data_first_row}:G{row_idx - 1}))"
+        else:
+            _days_expr = "0"
+        _avg_expr = f"IF({_days_expr}=0,0,ROUND(K{total_row}/{_days_expr},0))"
+
+        # 同一個天數公式，改成跨表引用版給彙總 Sheet 用（'人員'!K9 …）
+        _q = "'" + ws.title.replace("'", "''") + "'!"
+        if day_subtotal_cells:
+            _days_expr_q = f"COUNT({','.join(_q + c for c in day_subtotal_cells)})"
+        elif row_idx > data_first_row:
+            _days_expr_q = f"MIN(1,COUNTA({_q}G{data_first_row}:G{row_idx - 1}))"
+        else:
+            _days_expr_q = "0"
+        summary_rows.append((pname or "未指定", ws.title, total_row, _days_expr_q))
+
+        # 合計工時欄（L:M 合併）：「18個工作天(平均144min/天)，合計工時：2596 min」
+        # 三個數字全部是公式（天數、平均、合計都引用工作表內的儲存格），手動改工時會跟著重算
+        tc = ws.cell(
+            row=total_row, column=12,
+            value=(
+                f'={_days_expr}&"個工作天(平均"&{_avg_expr}&"min/天)，'
+                f'合計工時："&K{total_row}&" min"'
+            ),
+        )
         tc.font      = Font(bold=True, size=10, color="1B3A5C")
         tc.alignment = RIGHT
         ws.merge_cells(f"L{total_row}:M{total_row}")
@@ -1938,19 +1963,21 @@ def export_work_journal_excel(
     ws_sum = wb.create_sheet(title="彙總", index=0)
     ws_sum.column_dimensions["A"].width = 20
     ws_sum.column_dimensions["B"].width = 16
+    ws_sum.column_dimensions["C"].width = 12
+    ws_sum.column_dimensions["D"].width = 16
     t = ws_sum.cell(row=1, column=1, value=f"{yyyymm_txt} 工作日誌工時彙總")
     t.font = Font(bold=True, size=14)
-    ws_sum.merge_cells("A1:B1")
+    ws_sum.merge_cells("A1:D1")
     ws_sum.cell(row=2, column=1, value=f"日期：{date_display}").font = META_FONT
-    ws_sum.merge_cells("A2:B2")
-    for ci, label in enumerate(("人員", "工時(min)"), 1):
+    ws_sum.merge_cells("A2:D2")
+    for ci, label in enumerate(("人員", "工時(min)", "工作天", "平均 min/天"), 1):
         hc = ws_sum.cell(row=4, column=ci, value=label)
         hc.fill = HDR_FILL
         hc.font = HDR_FONT
         hc.alignment = CENTER
         hc.border = _border()
     sr = 5
-    for _pn, _title, _trow in summary_rows:
+    for _pn, _title, _trow, _days_q in summary_rows:
         _ref = "'" + _title.replace("'", "''") + "'"
         a = ws_sum.cell(row=sr, column=1, value=xlsx_safe(_pn))
         a.alignment = LEFT
@@ -1958,17 +1985,30 @@ def export_work_journal_excel(
         b = ws_sum.cell(row=sr, column=2, value=f"={_ref}!K{_trow}")
         b.alignment = CENTER
         b.border = _border()
+        c_ = ws_sum.cell(row=sr, column=3, value=f"={_days_q}")
+        c_.alignment = CENTER
+        c_.border = _border()
+        d_ = ws_sum.cell(row=sr, column=4, value=f"=IF(C{sr}=0,0,ROUND(B{sr}/C{sr},0))")
+        d_.alignment = CENTER
+        d_.border = _border()
         sr += 1
     a = ws_sum.cell(row=sr, column=1, value="合計")
     a.font = Font(bold=True, size=10)
     a.fill = TOTAL_FILL
     a.alignment = CENTER
     a.border = _border(t="medium", b="medium")
-    b = ws_sum.cell(row=sr, column=2, value=f"=SUM(B5:B{sr - 1})" if summary_rows else 0)
-    b.font = Font(bold=True, size=10, color="1B3A5C")
-    b.fill = TOTAL_FILL
-    b.alignment = CENTER
-    b.border = _border(t="medium", b="medium")
+    # 合計列：工時、工作天（人天）加總；平均＝總工時 ÷ 總人天（加權平均，不是各人平均再平均）
+    _sum_vals = {
+        2: f"=SUM(B5:B{sr - 1})" if summary_rows else 0,
+        3: f"=SUM(C5:C{sr - 1})" if summary_rows else 0,
+        4: f"=IF(C{sr}=0,0,ROUND(B{sr}/C{sr},0))",
+    }
+    for _ci, _v in _sum_vals.items():
+        b = ws_sum.cell(row=sr, column=_ci, value=_v)
+        b.font = Font(bold=True, size=10, color="1B3A5C")
+        b.fill = TOTAL_FILL
+        b.alignment = CENTER
+        b.border = _border(t="medium", b="medium")
     ws_sum.freeze_panes = "A5"
     # 只讓彙總頁處於選取狀態；否則第一個人員 Sheet 也帶 tabSelected，Excel 開啟會變成「群組工作表」
     for _ws in wb.worksheets:

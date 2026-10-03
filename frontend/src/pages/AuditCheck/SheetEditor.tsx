@@ -312,7 +312,7 @@ export default function AuditSheetEditorPage() {
         res = await sheetsApi.upsertDeficiency(detail.id, textModal.deptId, textModal.value.trim() || null)
       } else if (textModal.kind === 'pending') {
         res = await sheetsApi.upsertReview(detail.id, textModal.deptId, {
-          pending_text: textModal.value, pending_result: textModal.code,
+          pending_text: textModal.value,
         })
       } else {
         res = await sheetsApi.upsertReview(detail.id, textModal.deptId, {
@@ -667,8 +667,8 @@ export default function AuditSheetEditorPage() {
         if (row.kind === 'pending' || row.kind === 'result') {
           const rv = reviewByDept.get(d.id)
           const text = (row.kind === 'pending' ? rv?.pending_text : rv?.result_text) ?? ''
-          const code = (row.kind === 'pending' ? rv?.pending_result : rv?.result_status) ?? 'ok'
-          const t = typeByCode.get(code)
+          // 2026-10-03：待補正是題目、不判定 → 不上判定色；只有「結果」依判定上色
+          const t = row.kind === 'result' ? typeByCode.get(rv?.result_status ?? 'ok') : undefined
           return (
             <div
               onClick={() => openTextModal(row.kind, d)}
@@ -845,7 +845,8 @@ export default function AuditSheetEditorPage() {
                 rowClassName={(row) =>
                   row.kind === 'major' ? 'audit-row-major'
                     : row.kind === 'stat' ? 'audit-row-stat'
-                      : row.kind === 'deficiency' ? 'audit-row-deficiency' : ''
+                      : row.kind === 'deficiency' ? 'audit-row-deficiency'
+                        : row.kind === 'pending' ? 'audit-row-pending' : ''
                 }
               />
             </SortableContext>
@@ -940,6 +941,10 @@ export default function AuditSheetEditorPage() {
         {textModal?.kind === 'deficiency' ? (
           <Text type="secondary" style={{ fontSize: 12 }}>
             留空 ＝ 還原成系統自動彙整（依判定類型的「列入缺失彙整」設定）
+          </Text>
+        ) : textModal?.kind === 'pending' ? (
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            待補正項目是覆核的題目，不需判定；分數只看「結果」（結果未填 ＝ 尚未覆核，不計入分數）
           </Text>
         ) : (
           <div style={{ marginTop: 12 }}>
@@ -1089,6 +1094,7 @@ export default function AuditSheetEditorPage() {
         .audit-row-major > td { background: #f6f9fc !important; }
         .audit-row-stat > td { background: #fafafa !important; }
         .audit-row-deficiency > td { background: #fff5f5 !important; }
+        .audit-row-pending > td { background: #f6ffed !important; }
       `}</style>
     </div>
   )

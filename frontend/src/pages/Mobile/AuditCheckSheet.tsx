@@ -112,14 +112,12 @@ export default function MobileAuditCheckSheet() {
   const review = detail?.reviews.find((r) => r.sheet_department_id === deptId)
   const [reviewOpen, setReviewOpen] = useState(false)
   const [pendingText, setPendingText] = useState('')
-  const [pendingCode, setPendingCode] = useState('ok')
   const [resultText, setResultText] = useState('')
   const [resultCode, setResultCode] = useState('ok')
 
   const openReview = () => {
     if (deptId == null) return
     setPendingText(review?.pending_text ?? '')
-    setPendingCode(review?.pending_result ?? 'ok')
     setResultText(review?.result_text ?? '')
     setResultCode(review?.result_status ?? 'ok')
     setReviewOpen(true)
@@ -131,7 +129,6 @@ export default function MobileAuditCheckSheet() {
     try {
       const res = await sheetsApi.upsertReview(detail.id, deptId, {
         pending_text: pendingText,
-        pending_result: pendingCode,
         result_text: resultText,
         result_status: resultCode,
       })
@@ -199,8 +196,8 @@ export default function MobileAuditCheckSheet() {
             </Space>
             <div style={{ marginTop: 6 }}>
               <Text type="secondary" style={{ fontSize: 11 }}>
-                稽核子項數＝本期有填評語的子項{detail.review_counts_in_score ? '＋覆核（有填就算 1 項）' : ''}；
-                達標項數＝其中判定算達標者{detail.review_counts_in_score ? '（覆核需待補正與結果的判定都算達標）' : ''}
+                稽核子項數＝本期有填評語的子項{detail.review_counts_in_score ? '＋覆核（「結果」有填才算 1 項）' : ''}；
+                達標項數＝其中判定算達標者{detail.review_counts_in_score ? '（覆核只看「結果」的判定）' : ''}
               </Text>
             </div>
             {deptId != null && (
@@ -271,10 +268,9 @@ export default function MobileAuditCheckSheet() {
           {/* ── 覆核 ── */}
           <div style={{ padding: '10px 4px 4px', fontWeight: 600, color: '#1B3A5C' }}>覆核</div>
           {(() => {
-            const pt = typeByCode.get(review?.pending_result ?? '')
+            // 2026-10-03：待補正是題目、不判定；只有「結果」有判定與顏色
             const rt = typeByCode.get(review?.result_status ?? '')
-            const bad = (!!review?.pending_text?.trim() && pt && !pt.counts_as_pass)
-              || (!!review?.result_text?.trim() && rt && !rt.counts_as_pass)
+            const bad = !!review?.result_text?.trim() && rt && !rt.counts_as_pass
             return (
               <Card
                 size="small"
@@ -285,16 +281,15 @@ export default function MobileAuditCheckSheet() {
                 }}
                 onClick={openReview}
               >
-                <Text style={{ fontSize: 13 }}>
-                  {review?.source_period ? `${review.source_period} ` : '上期'}待補正項目
-                </Text>
-                {review?.pending_text?.trim() && pt && (
-                  <Tag style={{ color: pt.color, margin: '0 0 0 6px' }}>{pt.label}</Tag>
-                )}
-                <div style={{ marginTop: 4, fontSize: 12, whiteSpace: 'pre-wrap', color: pt?.color }}>
-                  {review?.pending_text?.trim()
-                    ? review.pending_text
-                    : <Text type="secondary" style={{ fontSize: 12 }}>尚未填寫</Text>}
+                <div style={{ background: '#f6ffed', borderRadius: 4, padding: '6px 8px', margin: '-2px -4px 0' }}>
+                  <Text style={{ fontSize: 13 }}>
+                    {review?.source_period ? `${review.source_period} ` : '上期'}待補正項目
+                  </Text>
+                  <div style={{ marginTop: 4, fontSize: 12, whiteSpace: 'pre-wrap' }}>
+                    {review?.pending_text?.trim()
+                      ? review.pending_text
+                      : <Text type="secondary" style={{ fontSize: 12 }}>尚未填寫</Text>}
+                  </div>
                 </div>
                 <div style={{ marginTop: 10 }}>
                   <Text style={{ fontSize: 13 }}>結果</Text>
@@ -336,19 +331,9 @@ export default function MobileAuditCheckSheet() {
           onChange={(e) => setPendingText(e.target.value)}
           rows={4}
           disabled={!canEdit}
+          style={{ background: '#f6ffed' }}
         />
-        <Radio.Group
-          value={pendingCode}
-          onChange={(e) => setPendingCode(e.target.value)}
-          disabled={!canEdit}
-          optionType="button"
-          buttonStyle="solid"
-          style={{ marginTop: 8 }}
-        >
-          {activeTypes.map((t) => (
-            <Radio.Button key={t.code} value={t.code}>{t.label}</Radio.Button>
-          ))}
-        </Radio.Group>
+        <Text type="secondary" style={{ fontSize: 11 }}>題目，不需判定；分數只看「結果」，結果未填不計分</Text>
 
         <div style={{ marginTop: 16, marginBottom: 6 }}><Text strong>結果</Text></div>
         <Input.TextArea

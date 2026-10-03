@@ -883,9 +883,14 @@ def export_sheet(
     reviews = {rv["sheet_department_id"]: rv for rv in detail["reviews"]}
     put(r, 2, "覆核")
     put(r, 3, "上期待補正項目")
+    # 2026-10-03：待補正是題目、不判定 → 黑字，整列淺綠底以示區別
+    from openpyxl.styles import PatternFill
+    _green = PatternFill(start_color="FFF6FFED", end_color="FFF6FFED", fill_type="solid")
     for i, d in enumerate(depts):
         rv = reviews.get(d["id"])
-        put(r, 4 + i, rv["pending_text"] if rv else "", colors.get(rv["pending_result"]) if rv else None)
+        put(r, 4 + i, rv["pending_text"] if rv else "")
+    for col in range(2, 4 + len(depts)):
+        ws.cell(row=r, column=col).fill = _green
     r += 1
     put(r, 3, "結果")
     for i, d in enumerate(depts):

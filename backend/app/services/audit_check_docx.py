@@ -277,13 +277,15 @@ def build_inspection_docx(
     has_review = review and ((review.get("pending_text") or "").strip() or (review.get("result_text") or "").strip())
     if has_review:
         section_row("覆核.", f"{_month_label(review.get('source_period'))}待補正項目", 9)
+        for c_ in t.rows[-1].cells:
+            _shade(c_, "F6FFED")   # 2026-10-03：待補正列淺綠底，比照網頁
         rr = add_row(1.2)
         _write(rr.cells[0], "")
-        _write(rr.cells[1], review.get("pending_text") or "", 10,
-               color=_color(review.get("pending_result"), types))
+        _write(rr.cells[1], review.get("pending_text") or "", 10)   # 待補正是題目，不判定 → 黑字
+        _shade(rr.cells[1], "F6FFED")
         _write(rr.cells[2], review.get("result_text") or "", 10,
                color=_color(review.get("result_status"), types))
-        code = review.get("result_status") if (review.get("result_text") or "").strip() else review.get("pending_result")
+        code = review.get("result_status") if (review.get("result_text") or "").strip() else None   # 只看結果
         _write(rr.cells[3], _symbol(code, types), 11, align=WD_ALIGN_PARAGRAPH.CENTER, color=_color(code, types))
         _write(rr.cells[4], "")
 

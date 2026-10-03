@@ -157,18 +157,16 @@ def compute_scores(
             passed[c.sheet_department_id] = passed.get(c.sheet_department_id, 0) + 1
 
     # 覆核區算一項（可由期別開關關閉）
+    # 2026-10-03 使用者裁示：「上期待補正項目」是題目，不判定、不計分；
+    # 只有「結果」有填才算 1 個子項，達標與否只看結果的判定。
+    # 待補正有填、結果還沒填（尚未覆核）→ 不計入分數。
     if sheet.period_ref is None or sheet.period_ref.review_counts_in_score:
         for rv in sheet.reviews:
-            texts = [(rv.pending_text, rv.pending_result), (rv.result_text, rv.result_status)]
-            filled_parts = [(t, code) for t, code in texts if _filled(t)]
-            if not filled_parts:
+            if not _filled(rv.result_text):
                 continue
             sub[rv.sheet_department_id] = sub.get(rv.sheet_department_id, 0) + 1
-            ok = all(
-                (by_code.get(code) is None or by_code[code].counts_as_pass)
-                for _t, code in filled_parts
-            )
-            if ok:
+            rt = by_code.get(rv.result_status)
+            if rt is None or rt.counts_as_pass:
                 passed[rv.sheet_department_id] = passed.get(rv.sheet_department_id, 0) + 1
 
     out: List[dict] = []
