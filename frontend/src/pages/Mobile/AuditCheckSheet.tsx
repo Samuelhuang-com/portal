@@ -108,6 +108,43 @@ export default function MobileAuditCheckSheet() {
     }
   }
 
+  // ── 覆核區（上期待補正項目／結果）2026-10-03：手機版補上，與桌面版同一支 API ──
+  const review = detail?.reviews.find((r) => r.sheet_department_id === deptId)
+  const [reviewOpen, setReviewOpen] = useState(false)
+  const [pendingText, setPendingText] = useState('')
+  const [pendingCode, setPendingCode] = useState('ok')
+  const [resultText, setResultText] = useState('')
+  const [resultCode, setResultCode] = useState('ok')
+
+  const openReview = () => {
+    if (deptId == null) return
+    setPendingText(review?.pending_text ?? '')
+    setPendingCode(review?.pending_result ?? 'ok')
+    setResultText(review?.result_text ?? '')
+    setResultCode(review?.result_status ?? 'ok')
+    setReviewOpen(true)
+  }
+
+  const saveReview = async () => {
+    if (!detail || deptId == null) return
+    setSaving(true)
+    try {
+      const res = await sheetsApi.upsertReview(detail.id, deptId, {
+        pending_text: pendingText,
+        pending_result: pendingCode,
+        result_text: resultText,
+        result_status: resultCode,
+      })
+      setDetail(res.data)
+      setReviewOpen(false)
+      message.success('已儲存')
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail ?? '儲存失敗')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   if (!detail) {
     return <Spin spinning={loading}><Empty description="載入中" /></Spin>
   }
@@ -160,6 +197,12 @@ export default function MobileAuditCheckSheet() {
                 valueStyle={{ fontSize: 18, color: score?.score === 1 ? '#52c41a' : '#cf1322' }}
               />
             </Space>
+            <div style={{ marginTop: 6 }}>
+              <Text type="secondary" style={{ fontSize: 11 }}>
+                稽核子項數＝本期有填評語的子項{detail.review_counts_in_score ? '＋覆核（有填就算 1 項）' : ''}；
+                達標項數＝其中判定算達標者{detail.review_counts_in_score ? '（覆核需待補正與結果的判定都算達標）' : ''}
+              </Text>
+            </div>
             {deptId != null && (
               <Button
                 block
@@ -224,8 +267,123 @@ export default function MobileAuditCheckSheet() {
               )
             }}
           />
+
+          {/* ── 覆核 ── */}
+          <div style={{ padding: '10px 4px 4px', fontWeight: 600, color: '#1B3A5C' }}>覆核</div>
+          {(() => {
+            const pt = typeByCode.get(review?.pending_result ?? '')
+            const rt = typeByCode.get(review?.result_status ?? '')
+            const bad = (!!review?.pending_text?.trim() && pt && !pt.counts_as_pass)
+              || (!!review?.result_text?.trim() && rt && !rt.counts_as_pass)
+            return (
+              <Card
+                size="small"
+                style={{
+                  marginBottom: 8,
+                  borderColor: bad ? '#ffccc7' : undefined,
+                  background: bad ? '#fff5f5' : undefined,
+                }}
+                onClick={openReview}
+              >
+                <Text style={{ fontSize: 13 }}>
+                  {review?.source_period ? `${review.source_period} ` : '上期'}待補正項目
+                </Text>
+                {review?.pending_text?.trim() && pt && (
+                  <Tag style={{ color: pt.color, margin: '0 0 0 6px' }}>{pt.label}</Tag>
+                )}
+                <div style={{ marginTop: 4, fontSize: 12, whiteSpace: 'pre-wrap', color: pt?.color }}>
+                  {review?.pending_text?.trim()
+                    ? review.pending_text
+                    : <Text type="secondary" style={{ fontSize: 12 }}>尚未填寫</Text>}
+                </div>
+                <div style={{ marginTop: 10 }}>
+                  <Text style={{ fontSize: 13 }}>結果</Text>
+                  {review?.result_text?.trim() && rt && (
+                    <Tag style={{ color: rt.color, margin: '0 0 0 6px' }}>{rt.label}</Tag>
+                  )}
+                </div>
+                <div style={{ marginTop: 4, fontSize: 12, whiteSpace: 'pre-wrap', color: rt?.color }}>
+                  {review?.result_text?.trim()
+                    ? review.result_text
+                    : <Text type="secondary" style={{ fontSize: 12 }}>尚未填寫</Text>}
+                </div>
+              </Card>
+            )
+          })()}
         </>
       )}
+
+      <Drawer
+        open={reviewOpen}
+        onClose={() => setReviewOpen(false)}
+        placement="bottom"
+        height="82%"
+        destroyOnClose
+        title={
+          <Space size={4} wrap>
+            <Tag color="#1B3A5C" style={{ margin: 0 }}>覆核</Tag>
+            <span style={{ fontWeight: 600, fontSize: 14 }}>
+              {detail.departments.find((d) => d.id === deptId)?.name ?? ''}
+            </span>
+          </Space>
+        }
+      >
+        <div style={{ marginBottom: 6 }}>
+          <Text strong>{review?.source_period ? `${review.source_period} ` : '上期'}待補正項目</Text>
+        </div>
+        <Input.TextArea
+          value={pendingText}
+          onChange={(e) => setPendingText(e.target.value)}
+          rows={4}
+          disabled={!canEdit}
+        />
+        <Radio.Group
+          value={pendingCode}
+          onChange={(e) => setPendingCode(e.target.value)}
+          disabled={!canEdit}
+          optionType="button"
+          buttonStyle="solid"
+          style={{ marginTop: 8 }}
+        >
+          {activeTypes.map((t) => (
+            <Radio.Button key={t.code} value={t.code}>{t.label}</Radio.Button>
+          ))}
+        </Radio.Group>
+
+        <div style={{ marginTop: 16, marginBottom: 6 }}><Text strong>結果</Text></div>
+        <Input.TextArea
+          value={resultText}
+          onChange={(e) => setResultText(e.target.value)}
+          rows={4}
+          disabled={!canEdit}
+        />
+        <Radio.Group
+          value={resultCode}
+          onChange={(e) => setResultCode(e.target.value)}
+          disabled={!canEdit}
+          optionType="button"
+          buttonStyle="solid"
+          style={{ marginTop: 8 }}
+        >
+          {activeTypes.map((t) => (
+            <Radio.Button key={t.code} value={t.code}>{t.label}</Radio.Button>
+          ))}
+        </Radio.Group>
+
+        {canEdit && (
+          <Button
+            type="primary"
+            block
+            size="large"
+            icon={<SaveOutlined />}
+            loading={saving}
+            style={{ marginTop: 20 }}
+            onClick={saveReview}
+          >
+            儲存
+          </Button>
+        )}
+      </Drawer>
 
       <Drawer
         open={!!picked}

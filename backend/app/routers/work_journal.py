@@ -1609,6 +1609,7 @@ def export_work_journal_excel(
     DATE_FILL   = PatternFill(start_color="1B3A5C",  end_color="1B3A5C",  fill_type="solid")
     DATE_FONT   = Font(bold=True, size=11, color="FFFFFF")
     TOTAL_FILL  = PatternFill(start_color="EBF3FB",  end_color="EBF3FB",  fill_type="solid")
+    SUBTOTAL_FILL = PatternFill(start_color="F5F8FC", end_color="F5F8FC", fill_type="solid")  # 每日小計列
     FOOTER_FILL = PatternFill(start_color="D9EAF7",  end_color="D9EAF7",  fill_type="solid")
 
     CENTER = Alignment(horizontal="center", vertical="center", wrap_text=True)
@@ -1641,6 +1642,9 @@ def export_work_journal_excel(
     # ── 建立 Workbook ─────────────────────────────────────────────────────────────
     wb = openpyxl.Workbook()
     wb.remove(wb.active)
+
+    # 彙總 Sheet 用：[(人員, 該人 Sheet 實際名稱, 合計列列號)]
+    summary_rows: list[tuple[str, str, int]] = []
 
     for pname in persons_order:
         ws = wb.create_sheet(title=xlsx_safe(pname or "未指定")[:31])
@@ -1729,6 +1733,8 @@ def export_work_journal_excel(
         row_idx   = 7
         total_min = 0
         global_seq = 0  # sequential item number (resets per day for multi-day)
+        data_first_row = row_idx       # 單日模式合計 SUM 的起點
+        day_subtotal_cells: list[str] = []  # 多日模式：各日小計儲存格（合計 = 這些相加）
 
         for daily in days_data:
             person_rows_for_day: list = []
@@ -1754,6 +1760,8 @@ def export_work_journal_excel(
                 ws.row_dimensions[row_idx].height = 22
                 row_idx += 1
                 day_seq = 0  # reset seq per day
+
+            day_first_row = row_idx  # 當日小計 SUM 的起點（日期分隔列之後）
 
             # 依起始時間排序
             sorted_rows = sorted(
@@ -1839,6 +1847,26 @@ def export_work_journal_excel(
                 )
                 row_idx += 1
 
+            # 多日模式：當日小計列（工時欄 =SUM）；單日模式小計＝合計，不重複加
+            if is_multi_day:
+                for c in range(1, NCOLS + 1):
+                    cell = ws.cell(row=row_idx, column=c)
+                    cell.fill   = SUBTOTAL_FILL
+                    cell.border = _border(
+                        l="medium" if c == 1     else "thin",
+                        r="medium" if c == NCOLS else "thin",
+                    )
+                sc = ws.cell(row=row_idx, column=1, value=f"{daily['date']} 當日小計")
+                sc.font      = Font(bold=True, size=10, color="1B3A5C")
+                sc.alignment = RIGHT
+                ws.merge_cells(f"A{row_idx}:J{row_idx}")
+                kc = ws.cell(row=row_idx, column=11, value=f"=SUM(K{day_first_row}:K{row_idx - 1})")
+                kc.font      = Font(bold=True, size=10, color="1B3A5C")
+                kc.alignment = CENTER
+                day_subtotal_cells.append(f"K{row_idx}")
+                ws.row_dimensions[row_idx].height = 20
+                row_idx += 1
+
         # ── 合計行 ────────────────────────────────────────────────────────────────
         total_row = row_idx
         for c in range(1, NCOLS + 1):
@@ -1852,8 +1880,19 @@ def export_work_journal_excel(
             cell.alignment = CENTER
             cell.font      = Font(size=10)
 
-        # 合計工時欄（L:M 合併）
-        tc = ws.cell(row=total_row, column=12, value=f"合計工時：{total_min} min")
+        # 工時欄合計（=SUM）：多日＝各日小計相加（避免把小計列重複加總），單日＝資料列 SUM
+        if day_subtotal_cells:
+            _total_formula = "=" + "+".join(day_subtotal_cells)
+        elif row_idx > data_first_row:
+            _total_formula = f"=SUM(K{data_first_row}:K{row_idx - 1})"
+        else:
+            _total_formula = 0
+        kt = ws.cell(row=total_row, column=11, value=_total_formula)
+        kt.font = Font(bold=True, size=10, color="1B3A5C")
+        summary_rows.append((pname or "未指定", ws.title, total_row))
+
+        # 合計工時欄（L:M 合併）— 文字也改引用 K 欄，手動改工時會跟著重算
+        tc = ws.cell(row=total_row, column=12, value=f'="合計工時："&K{total_row}&" min"')
         tc.font      = Font(bold=True, size=10, color="1B3A5C")
         tc.alignment = RIGHT
         ws.merge_cells(f"L{total_row}:M{total_row}")
@@ -1894,6 +1933,48 @@ def export_work_journal_excel(
         ws.cell(row=row_idx, column=9).alignment = CENTER
         ws.cell(row=row_idx, column=9).fill      = PatternFill("solid", fgColor="1B3A5C")
         ws.merge_cells(f"I{row_idx}:M{row_idx + 2}")
+
+    # ── 彙總 Sheet（放最前面）：每人一列，工時引用各人 Sheet 的合計格 ─────────────
+    ws_sum = wb.create_sheet(title="彙總", index=0)
+    ws_sum.column_dimensions["A"].width = 20
+    ws_sum.column_dimensions["B"].width = 16
+    t = ws_sum.cell(row=1, column=1, value=f"{yyyymm_txt} 工作日誌工時彙總")
+    t.font = Font(bold=True, size=14)
+    ws_sum.merge_cells("A1:B1")
+    ws_sum.cell(row=2, column=1, value=f"日期：{date_display}").font = META_FONT
+    ws_sum.merge_cells("A2:B2")
+    for ci, label in enumerate(("人員", "工時(min)"), 1):
+        hc = ws_sum.cell(row=4, column=ci, value=label)
+        hc.fill = HDR_FILL
+        hc.font = HDR_FONT
+        hc.alignment = CENTER
+        hc.border = _border()
+    sr = 5
+    for _pn, _title, _trow in summary_rows:
+        _ref = "'" + _title.replace("'", "''") + "'"
+        a = ws_sum.cell(row=sr, column=1, value=xlsx_safe(_pn))
+        a.alignment = LEFT
+        a.border = _border()
+        b = ws_sum.cell(row=sr, column=2, value=f"={_ref}!K{_trow}")
+        b.alignment = CENTER
+        b.border = _border()
+        sr += 1
+    a = ws_sum.cell(row=sr, column=1, value="合計")
+    a.font = Font(bold=True, size=10)
+    a.fill = TOTAL_FILL
+    a.alignment = CENTER
+    a.border = _border(t="medium", b="medium")
+    b = ws_sum.cell(row=sr, column=2, value=f"=SUM(B5:B{sr - 1})" if summary_rows else 0)
+    b.font = Font(bold=True, size=10, color="1B3A5C")
+    b.fill = TOTAL_FILL
+    b.alignment = CENTER
+    b.border = _border(t="medium", b="medium")
+    ws_sum.freeze_panes = "A5"
+    # 只讓彙總頁處於選取狀態；否則第一個人員 Sheet 也帶 tabSelected，Excel 開啟會變成「群組工作表」
+    for _ws in wb.worksheets:
+        _ws.sheet_view.tabSelected = False
+    ws_sum.sheet_view.tabSelected = True
+    wb.active = 0
 
     buf = io.BytesIO()
     wb.save(buf)
