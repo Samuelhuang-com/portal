@@ -11,11 +11,12 @@ Ragic Sheet、sync service 與 router，本模組不另做同步，只把四張
   GET /dashboard/monthly-summary — Dashboard 月份統計（跨樓層）
   GET /dashboard/calendar        — 月曆格（樓層 × 日）
   GET /daily-form                — 每日巡檢表（模板結構；欄位對應尚未接線）
+  GET /daily-sheet?date=        — 指定日期的每日巡檢表（Excel #2.3 版型，Dashboard 月曆格下一層）
 """
 from datetime import date, timedelta
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -354,3 +355,27 @@ def get_daily_form(
         "standard_minutes_total":   STANDARD_MINUTES_TOTAL,
         "actual_minutes":           0,
     }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GET /daily-sheet  — 指定日期的每日巡檢表（Excel #2.3 版型；2026-10-05）
+# Dashboard「整棟巡檢月曆格」點格子的下一層，回傳格式與商場工務巡檢 /daily-sheet 相同，
+# 前端共用 MallFIDailySheetDrawer。判定沿用樓層巡檢圖的整棟巡檢 Provider。
+# ══════════════════════════════════════════════════════════════════════════════
+
+@router.get(
+    "/daily-sheet",
+    summary="取得指定日期的整棟巡檢每日巡檢表（Excel 版型）",
+    tags=["整棟巡檢"],
+)
+def get_daily_sheet(
+    date: str = Query(..., description="巡檢日期 YYYY-MM-DD 或 YYYY/MM/DD"),
+    db: Session = Depends(get_db),
+):
+    from app.services.floor_map.common import normalize_date
+    from app.services.full_building_daily_sheet import build_full_building_daily_sheet
+
+    insp_date = normalize_date(date)
+    if not insp_date:
+        raise HTTPException(status_code=422, detail=f"日期格式錯誤：{date}")
+    return build_full_building_daily_sheet(db, insp_date)

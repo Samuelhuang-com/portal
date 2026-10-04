@@ -3,6 +3,7 @@
  * Prefix: /api/v1/full-building-inspection
  */
 import apiClient from '@/api/client'
+import type { MallFIDailySheetResponse } from '@/api/mallFacilityInspection'
 
 const BASE = '/full-building-inspection'
 
@@ -113,6 +114,15 @@ export async function fetchFullBuildingDailyForm(
 }
 
 // ── 月曆格（樓層 × 日）────────────────────────────────────────────────────────
+
+/**
+ * 指定日期的整棟巡檢每日巡檢表（Excel #2.3 版型，Dashboard 月曆格下一層；2026-10-05）
+ * 回傳格式與商場工務巡檢 /daily-sheet 相同，共用 MallFIDailySheetDrawer。
+ */
+export async function fetchFullBuildingDailySheet(date: string): Promise<MallFIDailySheetResponse> {
+  const res = await apiClient.get<MallFIDailySheetResponse>(`${BASE}/daily-sheet`, { params: { date } })
+  return res.data
+}
 
 export async function fetchFullBuildingInspectionCalendar(
   year: number,

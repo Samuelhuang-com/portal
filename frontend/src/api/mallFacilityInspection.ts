@@ -324,6 +324,8 @@ export interface MallFIDailySheetResponse {
     std_minutes_total:   number
     actual_minutes:      number
     shift_times:         { label: string; range: string }[]
+    // 表尾時間列（整棟巡檢由後端提供；商場不給，Drawer 用 shift_times 組）
+    footer?:             { text: string; minutes: number; note: string }[]
   }
 }
 

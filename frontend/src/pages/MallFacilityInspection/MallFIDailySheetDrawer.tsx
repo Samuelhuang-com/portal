@@ -70,10 +70,25 @@ export interface MallFIDailySheetDrawerProps {
   focusSheet?: string | null  // 從月曆格點進來的樓層（sheet key），該樓層列底色標示
   onClose:    () => void
   onDateChange?: (date: string) => void
+  // 2026-10-05：整棟巡檢共用同一個 Drawer（回傳格式相同）。不給就是商場工務巡檢。
+  fetchSheet?: (date: string) => Promise<MallFIDailySheetResponse>
+  titleText?:  string
+}
+
+type SheetSummary = MallFIDailySheetResponse['summary']
+
+// 表尾時間列：後端有給 footer（整棟巡檢）就照用；否則是商場 Excel #2.2 的早晚班兩列
+function footerRows(s: SheetSummary): { text: string; minutes: number; note: string }[] {
+  if (s.footer && s.footer.length) return s.footer
+  return [
+    { text: `${s.shift_times[0]?.label ?? ''}:${s.shift_times[0]?.range ?? ''}`, minutes: s.std_minutes_routine, note: '一般巡檢' },
+    { text: `${s.shift_times[1]?.label ?? ''}:${s.shift_times[1]?.range ?? ''}`, minutes: s.std_minutes_total,   note: '含櫃位抄表' },
+  ]
 }
 
 export default function MallFIDailySheetDrawer({
   open, date, focusSheet, onClose, onDateChange,
+  fetchSheet = fetchMallFIDailySheet, titleText = '商場工務每日巡檢',
 }: MallFIDailySheetDrawerProps) {
   const [loading, setLoading] = useState(false)
   const [data,    setData]    = useState<MallFIDailySheetResponse | null>(null)
@@ -84,14 +99,14 @@ export default function MallFIDailySheetDrawer({
     setLoading(true)
     setError(null)
     try {
-      setData(await fetchMallFIDailySheet(date))
+      setData(await fetchSheet(date))
     } catch {
       setData(null)
       setError('取得每日巡檢表失敗，請稍後再試')
     } finally {
       setLoading(false)
     }
-  }, [date])
+  }, [date, fetchSheet])
 
   useEffect(() => { if (open) load() }, [open, load])
 
@@ -169,7 +184,7 @@ export default function MallFIDailySheetDrawer({
         <Space wrap>
           <Tag color="#1B3A5C">每日巡檢表</Tag>
           <span>
-            商場工務每日巡檢：{d ? `${d.format('YYYY/MM/DD')}（${WEEKDAY[d.day()]}）` : ''}
+            {titleText}：{d ? `${d.format('YYYY/MM/DD')}（${WEEKDAY[d.day()]}）` : ''}
           </span>
         </Space>
       }
@@ -243,30 +258,20 @@ export default function MallFIDailySheetDrawer({
           scroll={{ x: 1140 }}
           summary={() => s ? (
             <Table.Summary>
-              <Table.Summary.Row>
-                <Table.Summary.Cell index={0} colSpan={2} />
-                <Table.Summary.Cell index={2} colSpan={4}>
-                  <Text>{s.shift_times[0]?.label}:{s.shift_times[0]?.range}</Text>
-                </Table.Summary.Cell>
-                <Table.Summary.Cell index={6} align="center">
-                  <Text strong>{s.std_minutes_routine}分</Text>
-                </Table.Summary.Cell>
-                <Table.Summary.Cell index={7}>
-                  <Text type="secondary" style={{ fontSize: 11 }}>一般巡檢</Text>
-                </Table.Summary.Cell>
-              </Table.Summary.Row>
-              <Table.Summary.Row>
-                <Table.Summary.Cell index={0} colSpan={2} />
-                <Table.Summary.Cell index={2} colSpan={4}>
-                  <Text>{s.shift_times[1]?.label}:{s.shift_times[1]?.range}</Text>
-                </Table.Summary.Cell>
-                <Table.Summary.Cell index={6} align="center">
-                  <Text strong>{s.std_minutes_total}分</Text>
-                </Table.Summary.Cell>
-                <Table.Summary.Cell index={7}>
-                  <Text type="secondary" style={{ fontSize: 11 }}>含櫃位抄表</Text>
-                </Table.Summary.Cell>
-              </Table.Summary.Row>
+              {footerRows(s).map((f, i) => (
+                <Table.Summary.Row key={i}>
+                  <Table.Summary.Cell index={0} colSpan={2} />
+                  <Table.Summary.Cell index={2} colSpan={4}>
+                    <Text>{f.text}</Text>
+                  </Table.Summary.Cell>
+                  <Table.Summary.Cell index={6} align="center">
+                    <Text strong>{f.minutes}分</Text>
+                  </Table.Summary.Cell>
+                  <Table.Summary.Cell index={7}>
+                    <Text type="secondary" style={{ fontSize: 11 }}>{f.note}</Text>
+                  </Table.Summary.Cell>
+                </Table.Summary.Row>
+              ))}
             </Table.Summary>
           ) : null}
         />

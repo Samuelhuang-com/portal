@@ -36,11 +36,13 @@ import {
   fetchFullBuildingMonthlyDashboard,
   fetchFullBuildingInspectionCalendar,
   fetchFullBuildingDailyForm,
+  fetchFullBuildingDailySheet,
   type FullBuildingMonthlySheetSummary,
   type FullBuildingDailyFormRow,
 } from '@/api/fullBuildingInspection'
 import FloorInspectionList from './FloorInspectionList'
 import FloorMapWorkspace from '@/components/FloorPlanMap/FloorMapWorkspace'
+import MallFIDailySheetDrawer from '@/pages/MallFacilityInspection/MallFIDailySheetDrawer'
 import MonthlyCalendarGrid from '@/components/MonthlyCalendarGrid'
 import type { CalendarRow } from '@/components/MonthlyCalendarGrid'
 
@@ -206,6 +208,9 @@ function SummaryTabContent() {
   const [error,      setError]      = useState<string | null>(null)
   const [calRows,    setCalRows]    = useState<CalendarRow[]>([])
   const [calMaxDay,  setCalMaxDay]  = useState(31)
+  // 月曆格下一層：點「樓層 × 日」開啟該日每日巡檢表（Excel #2.3 版型，2026-10-05）
+  const [sheetDate,  setSheetDate]  = useState<string | null>(null)
+  const [sheetFocus, setSheetFocus] = useState<string | null>(null)
 
   const isCurrentMonth = queryMonth === dayjs().format('YYYY-MM')
   const monthLabel     = dayjs(queryMonth, 'YYYY-MM').format('YYYY年M月')
@@ -408,11 +413,30 @@ function SummaryTabContent() {
             maxDay={calMaxDay}
             rows={calRows}
             rowHeaderLabel="樓層"
+            onCellClick={(day, rowKey) => {
+              setSheetFocus(rowKey)
+              setSheetDate(`${queryMonth}-${String(day).padStart(2, '0')}`)
+            }}
           />
         ) : (
           <Text type="secondary">尚無月曆資料</Text>
         )}
+        {calRows.length > 0 && (
+          <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 4 }}>
+            點選有紀錄的格子，可查看當日完整每日巡檢表
+          </Text>
+        )}
       </Card>
+
+      <MallFIDailySheetDrawer
+        open={!!sheetDate}
+        date={sheetDate}
+        focusSheet={sheetFocus}
+        onClose={() => { setSheetDate(null); setSheetFocus(null) }}
+        onDateChange={(d) => { setSheetDate(d); setSheetFocus(null) }}
+        fetchSheet={fetchFullBuildingDailySheet}
+        titleText="整棟每日巡檢"
+      />
     </div>
   )
 }
