@@ -26,135 +26,14 @@ import {
   type MallFIDailySheetResult,
   type MallFIDailySheetRow,
 } from '@/api/mallFacilityInspection'
+// 2026-10-04：結果呈現（☑ 勾選）抽到共用元件，樓層巡檢圖也用同一個（CLAUDE.md §12）
+import CheckRowResult from '@/components/FloorPlanMap/CheckRowResult'
 
 const { Text } = Typography
 
 const WEEKDAY = ['日', '一', '二', '三', '四', '五', '六']
 
-// ☑ 加 U+FE0E 強制文字樣式，否則部分瀏覽器會畫成彩色 emoji，顏色無法跟狀態走
-const CHECKED = '\u2611\uFE0E'
-
-const STATUS_COLOR: Record<string, string> = {
-  normal:    '#52C41A',
-  abnormal:  '#FF4D4F',
-  pending:   '#FAAD14',
-  unchecked: '#bfbfbf',
-}
-
 type RowWithKey = MallFIDailySheetRow & { _key: string }
-
-// ── Excel 選項字串解析 ────────────────────────────────────────────────────────
-// '□正常□異常'                     → ['正常', '異常']
-// '□_______室內度數□_________濕度'  → ['_______室內度數', '_________濕度']
-function parseOptions(opts: string): string[] {
-  return opts.split('□').map((s) => s.trim()).filter(Boolean)
-}
-
-function stripBlank(opt: string): string {
-  return opt.replace(/_+/g, '').trim()
-}
-
-// ── 單一場次的結果 ────────────────────────────────────────────────────────────
-
-function StatusResult({ row, r }: { row: RowWithKey; r: MallFIDailySheetResult }) {
-  const options = parseOptions(row.result_options)
-  const text    = (r.text || '').trim()
-  const tokens  = text.split(/[\s,、]+/).filter(Boolean)
-  const hit     = (opt: string) => text === opt || tokens.includes(opt)
-  const anyHit  = options.some(hit)
-  const color   = STATUS_COLOR[r.status] ?? '#333'
-
-  return (
-    <span>
-      {options.map((opt) => {
-        const on = hit(opt)
-        return (
-          <span
-            key={opt}
-            style={{
-              marginRight: 8,
-              color:       on ? color : '#bfbfbf',
-              fontWeight:  on ? 600 : 400,
-            }}
-          >
-            {on ? CHECKED : '□'}{opt}
-          </span>
-        )
-      })}
-      {/* Ragic 值不在 Excel 選項裡 → 原值直接顯示，不吞掉 */}
-      {text && !anyHit && (
-        <Tag color={r.status === 'normal' ? 'success' : 'error'} style={{ marginLeft: 2 }}>
-          {text}
-        </Tag>
-      )}
-      {!text && <Text type="secondary" style={{ fontSize: 11 }}>（未填）</Text>}
-    </span>
-  )
-}
-
-function ReadingResult({ row, r }: { row: RowWithKey; r: MallFIDailySheetResult }) {
-  const options = parseOptions(row.result_options)
-  return (
-    <span>
-      {options.map((opt, i) => {
-        const label = stripBlank(opt)
-        const value = r.readings[i]?.value ?? ''
-        return (
-          <span key={opt} style={{ marginRight: 10, whiteSpace: 'nowrap' }}>
-            {value ? (
-              <>
-                <span style={{ color: '#1B3A5C' }}>{CHECKED}</span>
-                <span
-                  style={{
-                    display: 'inline-block', minWidth: 40, textAlign: 'center',
-                    borderBottom: '1px solid #1B3A5C', fontWeight: 600, color: '#1B3A5C',
-                    margin: '0 2px',
-                  }}
-                >
-                  {value}
-                </span>
-              </>
-            ) : (
-              <span style={{ color: '#bfbfbf' }}>□______</span>
-            )}
-            <span style={{ color: value ? '#333' : '#bfbfbf' }}>{label}</span>
-          </span>
-        )
-      })}
-    </span>
-  )
-}
-
-// 2026-10-04：樓層巡檢圖（FloorMapTab）右側明細共用同一套結果呈現
-export function ResultCell({ row }: { row: RowWithKey }) {
-  if (row.kind === 'separate' || row.kind === 'unmapped' || row.results.length === 0) {
-    return (
-      <Space size={4} wrap>
-        <Text type="secondary" style={{ fontSize: 12 }}>{row.result_options}</Text>
-        {row.kind === 'separate' && <Tag>另作表單</Tag>}
-        {row.kind === 'unmapped' && (
-          <Tooltip title="Ragic 表單目前沒有這個欄位，無資料可帶入">
-            <Tag color="default">Ragic 無此欄位</Tag>
-          </Tooltip>
-        )}
-      </Space>
-    )
-  }
-  return (
-    <Space direction="vertical" size={2}>
-      {row.results.map((r) => (
-        <div key={r.batch_ragic_id} style={{ fontSize: 12, lineHeight: '20px' }}>
-          {r.time_label && (
-            <Text type="secondary" style={{ fontSize: 11, marginRight: 4 }}>{r.time_label}</Text>
-          )}
-          {row.kind === 'reading'
-            ? <ReadingResult row={row} r={r} />
-            : <StatusResult row={row} r={r} />}
-        </div>
-      ))}
-    </Space>
-  )
-}
 
 // ── 樓層格（含 Ragic 連結與實際時間）─────────────────────────────────────────
 
@@ -254,7 +133,7 @@ export default function MallFIDailySheetDrawer({
     },
     {
       title: '運轉狀況(結果)', width: 270,
-      render: (_: unknown, r) => <ResultCell row={r} />,
+      render: (_: unknown, r) => <CheckRowResult row={r} />,
     },
     {
       title: '異常說明', dataIndex: 'abnormal_note', width: 170,

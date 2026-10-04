@@ -4,12 +4,13 @@
  * 將原本分散的 Dashboard + RF / B4F / B2F / B1F 巡檢紀錄整合為 Tabs
  *   Tab 1 Dashboard    — 今日各樓層 KPI + Sheet 完成率彙整 + 月曆格
  *   （每日巡檢表 Tab 已於 2026-08-25 隱藏，見 SHOW_DAILY_FORM_TAB）
+ *   Tab   樓層巡檢圖   — 平面圖上的巡檢點位與每日狀態（2026-10-04，共用元件 FloorMapWorkspace）
  *   Tab 3 RF 巡檢      — 月份篩選 + 場次清單
  *   Tab 4 B4F 巡檢     — 同上
  *   Tab 5 B2F 巡檢     — 同上
  *   Tab 6 B1F 巡檢     — 同上
  *
- * URL query param：?tab=summary|rf|b4f|b2f|b1f
+ * URL query param：?tab=summary|floor-map|rf|b4f|b2f|b1f
  * 資料來源：Tab 1 Dashboard 已接通本地 DB（rf/b4f/b2f/b1f_inspection_batch|item）；
  *           Tab 2 每日巡檢表的 Ragic 欄位名 ↔ 模板 check_content 對應尚未決定，暫維持模板結構。
  */
@@ -24,7 +25,7 @@ import {
   HomeOutlined, ReloadOutlined,
   WarningOutlined, CheckCircleOutlined, ExclamationCircleOutlined,
   DashboardOutlined, SafetyOutlined, ClockCircleOutlined, LinkOutlined,
-  CalendarOutlined,
+  CalendarOutlined, EnvironmentOutlined,
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { NAV_GROUP, NAV_PAGE } from '@/constants/navLabels'
@@ -39,6 +40,7 @@ import {
   type FullBuildingDailyFormRow,
 } from '@/api/fullBuildingInspection'
 import FloorInspectionList from './FloorInspectionList'
+import FloorMapWorkspace from '@/components/FloorPlanMap/FloorMapWorkspace'
 import MonthlyCalendarGrid from '@/components/MonthlyCalendarGrid'
 import type { CalendarRow } from '@/components/MonthlyCalendarGrid'
 
@@ -421,7 +423,7 @@ function SummaryTabContent() {
 const SHOW_DAILY_FORM_TAB: boolean = false
 
 // 'daily-form' 已從清單移除：舊書籤 ?tab=daily-form 會退回 summary，不會停在不存在的分頁
-const VALID_TABS = ['summary', 'rf', 'b4f', 'b2f', 'b1f']
+const VALID_TABS = ['summary', 'floor-map', 'rf', 'b4f', 'b2f', 'b1f']
 
 export default function FullBuildingInspectionDashboard() {
   const [searchParams] = useSearchParams()
@@ -475,6 +477,12 @@ export default function FullBuildingInspectionDashboard() {
             label:    '每日巡檢表',
             children: openedTabs.has('daily-form') ? <FullBuildingDailyFormTab /> : null,
           }] : []),
+          // 2026-10-04 樓層巡檢圖（共用元件，CLAUDE.md §12／docs/DEV_SPEC_floor_plan_map.md）
+          {
+            key:      'floor-map',
+            label:    <span><EnvironmentOutlined /> 樓層巡檢圖</span>,
+            children: openedTabs.has('floor-map') ? <FloorMapWorkspace module="full_building_inspection" /> : null,
+          },
           {
             key:      'rf',
             label:    'RF 巡檢',

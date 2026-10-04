@@ -76,6 +76,7 @@ from app.routers import (
     mall_dashboard,
     mall_facility_inspection,
     mall_floor_map,
+    floor_map,
     full_building_inspection,
     mall_periodic_maintenance,
     full_building_maintenance,
@@ -1266,6 +1267,15 @@ async def lifespan(app: FastAPI):
     _run_startup_migration("_create_all_tables", lambda: Base.metadata.create_all(bind=engine))
     print("[Portal] Database tables ensured.")
 
+    # ── 樓層巡檢圖點位保底（2026-10-04）──────────────────────────────────────
+    # 開發環境 start-dev.bat 不跑 alembic；create_all 會先建出空的 floor_map_points，
+    # 商場既有點位還在舊表 mall_floor_map_points → 畫面點位全部不見。
+    # 這裡做與 Alembic fmapgen／fmapfbi 相同、可重跑的搬移與草稿寫入（見 services/floor_map/bootstrap.py）。
+    def _ensure_floor_map_data():
+        from app.services.floor_map.bootstrap import ensure_floor_map_data
+        ensure_floor_map_data(engine)
+    _run_startup_migration("_ensure_floor_map_data", _ensure_floor_map_data)
+
     # ── 週期採購（獨立資料庫 cycle-purchase.db，2026-07-10 決策：不與 portal.db 共用）──
     from app.core.cycle_purchase_database import CyclePurchaseBase, cycle_purchase_engine
     import app.models.cycle_purchase_vendor      # noqa: F401
@@ -1952,6 +1962,13 @@ app.include_router(
 app.include_router(
     mall_floor_map.router,
     prefix=f"{API_PREFIX}/mall-floor-map",
+    tags=["樓層巡檢圖（舊路徑相容）"],
+)
+
+# ── 樓層巡檢圖（共用，2026-10-04；CLAUDE.md §12、docs/DEV_SPEC_floor_plan_map.md）──
+app.include_router(
+    floor_map.router,
+    prefix=f"{API_PREFIX}/floor-map",
     tags=["樓層巡檢圖"],
 )
 

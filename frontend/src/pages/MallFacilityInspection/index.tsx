@@ -3,7 +3,7 @@
  *
  * 將原本分散的 Dashboard + 4F / 3F / 1F~3F / 1F / B1F~B4F 巡檢紀錄整合為 Tabs
  *   Tab 1 統計總覽      — 今日各區域 KPI + Sheet 完成率彙整
- *   Tab   樓層巡檢圖    — 平面圖上的巡檢點位與每日狀態（2026-10-04，FloorMapTab.tsx）
+ *   Tab   樓層巡檢圖    — 平面圖上的巡檢點位與每日狀態（共用元件 FloorMapWorkspace，CLAUDE.md §12）
  *   Tab 2 4F 巡檢      — 月份篩選 + 場次清單
  *   Tab 3 3F 巡檢      — 同上
  *   Tab 4 1F~3F 巡檢   — 同上
@@ -42,7 +42,7 @@ import MonthlyCalendarGrid from '@/components/MonthlyCalendarGrid'
 import type { CalendarRow } from '@/components/MonthlyCalendarGrid'
 import MallDailyInspectionFormTab from '@/pages/MallPeriodicMaintenance/MallDailyInspectionFormTab'
 import MallFIDailySheetDrawer from './MallFIDailySheetDrawer'
-import FloorMapTab from './FloorMapTab'
+import FloorMapWorkspace from '@/components/FloorPlanMap/FloorMapWorkspace'
 
 const { Title, Text } = Typography
 
@@ -494,7 +494,7 @@ export default function MallFacilityInspectionDashboard() {
           {
             key:      'floor-map',
             label:    <span><EnvironmentOutlined /> 樓層巡檢圖</span>,
-            children: openedTabs.has('floor-map') ? <FloorMapTab /> : null,
+            children: openedTabs.has('floor-map') ? <FloorMapWorkspace module="mall_facility_inspection" /> : null,
           },
           {
             key:      '4f',
