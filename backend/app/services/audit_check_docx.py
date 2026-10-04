@@ -28,6 +28,11 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Cm, Pt, RGBColor
 
+try:
+    from app.services.audit_check_html import html_to_runs, html_to_text
+except ImportError:   # 單獨測試時
+    from audit_check_html import html_to_runs, html_to_text
+
 LOGO_PATH = Path(__file__).parent / "audit_check_assets" / "esse_logo.png"
 FONT = "微軟正黑體"
 # 顏色一律比照網頁稽核單（SheetEditor.tsx）：
@@ -79,6 +84,46 @@ def _write(cell, text: str, size: float = 10, bold: bool = True,
         p.paragraph_format.space_before = Pt(1)
         p.paragraph_format.space_after = Pt(1)
         _font(p.add_run(line), size, bold, color)
+    cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+
+
+_ALIGN = {
+    "center": WD_ALIGN_PARAGRAPH.CENTER, "right": WD_ALIGN_PARAGRAPH.RIGHT,
+    "justify": WD_ALIGN_PARAGRAPH.JUSTIFY, "left": WD_ALIGN_PARAGRAPH.LEFT,
+}
+
+
+def _write_html(cell, html_s: Optional[str], size: float = 10) -> None:
+    """
+    查核評語（富文字，2026-10-04）→ Word：顏色、粗斜體、底線、刪除線、螢光底色、字級、
+    清單、對齊全部照欄位內的設定；沒設定的文字一律黑字、不粗（與判定無關）。
+    """
+    _write(cell, "", size)
+    paras = html_to_runs(html_s)
+    first = cell.paragraphs[0]
+    for idx, para in enumerate(paras or [{"align": None, "runs": []}]):
+        p = first if idx == 0 else cell.add_paragraph()
+        p.alignment = _ALIGN.get(para.get("align") or "left", WD_ALIGN_PARAGRAPH.LEFT)
+        p.paragraph_format.space_before = Pt(1)
+        p.paragraph_format.space_after = Pt(1)
+        for text, f in para["runs"]:
+            run = p.add_run(text)
+            color = RGBColor.from_string(f["color"]) if f.get("color") else None
+            _font(run, float(f.get("size") or size), bool(f.get("bold", False)), color)
+            run.font.italic = bool(f.get("italic")) or None
+            run.font.underline = bool(f.get("underline")) or None
+            run.font.strike = bool(f.get("strike")) or None
+            if f.get("sub"):
+                run.font.subscript = True
+            if f.get("sup"):
+                run.font.superscript = True
+            if f.get("bg"):
+                rpr = run._element.get_or_add_rPr()
+                shd = OxmlElement("w:shd")
+                shd.set(qn("w:val"), "clear")
+                shd.set(qn("w:color"), "auto")
+                shd.set(qn("w:fill"), str(f["bg"]))
+                rpr.append(shd)
     cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
 
 
@@ -187,7 +232,7 @@ def build_inspection_docx(
         c["sheet_item_id"]: c
         for c in detail["cells"]
         if c["sheet_department_id"] == sheet_department_id
-        and ((c.get("comment") or "").strip() or (c.get("suggestion") or "").strip())
+        and (html_to_text(c.get("comment")) or (c.get("suggestion") or "").strip())
     }
     items: List[dict] = detail["items"]
     minors_by_major: Dict[int, List[dict]] = {}
@@ -266,9 +311,10 @@ def build_inspection_docx(
             rr = add_row(0.9)
             _write(rr.cells[0], minor.get("display_no") or "", 10, align=WD_ALIGN_PARAGRAPH.RIGHT)
             _write(rr.cells[1], f"{minor['name']}{minor.get('scope_note') or ''}", 10)
-            code = c.get("result_code") if (c.get("comment") or "").strip() else None
+            code = c.get("result_code") if html_to_text(c.get("comment")) else None
             color = _color(code, types)   # 評語與稽核結果依判定顏色（如扣分紅、建議藍）
-            _write(rr.cells[2], c.get("comment") or "", 10, color=color)
+            # 評語照欄位內的富文字顏色（2026-10-04）；判定只影響 V／X 的顏色
+            _write_html(rr.cells[2], c.get("comment") or "", 10)
             _write(rr.cells[3], _symbol(code, types), 11, align=WD_ALIGN_PARAGRAPH.CENTER, color=color)
             # 最右欄「建議」（原範本的「備註」欄，2026-10-03 使用者改名）：
             # 該格的建議，固定藍字 SUGGESTION_COLOR、與判定無關

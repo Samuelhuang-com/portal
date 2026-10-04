@@ -47,6 +47,7 @@ import { downloadFile } from '@/api/downloadFile'
 import { useAuthStore } from '@/stores/authStore'
 import CellDrawer from './CellDrawer'
 import { SUGGESTION_COLOR } from './suggestionColor'
+import { RICH_TEXT_CSS, htmlToPlain, toDisplayHtml } from './richText'
 
 const { Title, Text, Paragraph } = Typography
 
@@ -691,9 +692,8 @@ export default function AuditSheetEditorPage() {
           <div
             onClick={() => openCell(item, idx)}
             style={{
-              whiteSpace: 'pre-wrap',
               fontSize: 12,
-              color: t?.color,
+              // 2026-10-04：評語顏色由富文字自訂，判定不再改字色（底色／框線仍標示不達標）
               cursor: 'pointer',
               minHeight: 22,
               padding: '2px 4px',
@@ -703,9 +703,13 @@ export default function AuditSheetEditorPage() {
                 : (isTarget && !c ? '1px dashed #d9d9d9' : '1px solid transparent'),
             }}
           >
-            {c?.comment || (!c?.suggestion && <Text type="secondary">{isTarget ? '（本期應查）' : '—'}</Text>)}
+            {htmlToPlain(c?.comment)
+              ? <div className="audit-rich" dangerouslySetInnerHTML={{ __html: toDisplayHtml(c?.comment) }} />
+              : (!c?.suggestion && <Text type="secondary">{isTarget ? '（本期應查）' : '—'}</Text>)}
             {c?.suggestion && (
-              <div style={{ color: SUGGESTION_COLOR, marginTop: c.comment ? 4 : 0 }}>{c.suggestion}</div>
+              <div style={{ color: SUGGESTION_COLOR, marginTop: htmlToPlain(c.comment) ? 4 : 0, whiteSpace: 'pre-wrap' }}>
+                {c.suggestion}
+              </div>
             )}
           </div>
         )
@@ -1095,6 +1099,7 @@ export default function AuditSheetEditorPage() {
         .audit-row-stat > td { background: #fafafa !important; }
         .audit-row-deficiency > td { background: #fff5f5 !important; }
         .audit-row-pending > td { background: #f6ffed !important; }
+        ${RICH_TEXT_CSS}
       `}</style>
     </div>
   )

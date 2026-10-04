@@ -18,6 +18,8 @@ import { LeftOutlined, RightOutlined, SaveOutlined } from '@ant-design/icons'
 
 import { sheetsApi } from '@/api/auditCheck'
 import { SUGGESTION_COLOR } from './suggestionColor'
+import RichTextEditor from './RichTextEditor'
+import { htmlToPlain, sanitizeHtml } from './richText'
 import type { Cell, ResultType, SheetDepartment, SheetDetail, SheetItem } from '@/api/auditCheck'
 
 const { Text } = Typography
@@ -67,13 +69,13 @@ export default function CellDrawer(props: CellDrawerProps) {
       const res = await sheetsApi.upsertCell(sheetId, {
         sheet_item_id: item.id,
         sheet_department_id: department.id,
-        comment,
+        comment: sanitizeHtml(comment),
         suggestion,
         result_code: code,
       })
       onSaved(res.data)
       message.success(
-        comment.trim() ? '已儲存'
+        htmlToPlain(comment) ? '已儲存'
           : suggestion.trim() ? '已儲存（評語空白，此格不計入分母）' : '已清空（此格不計入分母）',
       )
       if (thenMove !== 0) onNavigate(thenMove)
@@ -147,11 +149,12 @@ export default function CellDrawer(props: CellDrawerProps) {
           留空 ＝ 該部門本期不查此項，不計入分數分母
         </Text>
       </div>
-      <Input.TextArea
+      {/* 2026-10-04：查核評語改為原生富文字編輯器；顏色由使用者自訂，與判定無關 */}
+      <RichTextEditor
         value={comment}
-        onChange={(e) => setComment(e.target.value)}
-        rows={8}
+        onChange={setComment}
         disabled={readOnly}
+        minHeight={180}
         placeholder="例：2026.07.13更新"
         onKeyDown={(e) => {
           if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !readOnly) {
@@ -186,7 +189,7 @@ export default function CellDrawer(props: CellDrawerProps) {
       <div style={{ marginTop: 16, marginBottom: 8 }}>
         <Text strong>判定</Text>
         <Text type="secondary" style={{ fontSize: 12, marginLeft: 8 }}>
-          類型、顏色與是否算達標，可在「判定類型設定」自行調整
+          只影響計分（是否算達標），不會改變查核評語的顏色；類型可在「判定類型設定」調整
         </Text>
       </div>
       <Radio.Group

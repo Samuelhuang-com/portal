@@ -47,6 +47,7 @@ from app.models.audit_check import (
     AuditReview, AuditSheet, AuditSheetDepartment, AuditSheetItem,
 )
 from app.models.reference_data import Company, RefDepartment
+from app.services.audit_check_html import html_to_text
 
 
 # ── 判定類型 ───────────────────────────────────────────────────────────────
@@ -97,7 +98,8 @@ def result_type_maps(db: Session) -> Tuple[Dict[str, AuditResultType], str]:
 
 # ── 小工具 ─────────────────────────────────────────────────────────────────
 def _filled(text: Optional[str]) -> bool:
-    return bool(text and text.strip())
+    # 2026-10-04：查核評語改為富文字 HTML，「<div><br></div>」這類空排版也算空白
+    return bool(html_to_text(text))
 
 
 def sheet_item_name(si: AuditSheetItem) -> str:
@@ -249,7 +251,7 @@ def compute_deficiencies(
         # 未達標的排前面，其次才是「建議」類
         rank = 0 if not rt.counts_as_pass else 1
         buckets.setdefault(c.sheet_department_id, []).append(
-            (order.get(c.sheet_item_id, (9999, 0)), rank, c.comment.strip())
+            (order.get(c.sheet_item_id, (9999, 0)), rank, html_to_text(c.comment))
         )
 
     result: Dict[int, str] = {}
@@ -533,7 +535,7 @@ def carry_over_reviews(db: Session, sheet: AuditSheet) -> None:
         dept_id = prev_dept_map.get(c.sheet_department_id)
         if dept_id is None:
             continue
-        texts.setdefault(dept_id, []).append(c.comment.strip())
+        texts.setdefault(dept_id, []).append(html_to_text(c.comment))
 
     for sd in sheet.departments:
         pending = texts.get(sd.department_id)

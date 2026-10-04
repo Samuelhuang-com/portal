@@ -42,6 +42,7 @@ from app.schemas.audit_check import (
     SheetLayoutUpdate, SheetUpdate, StatisticsOut,
 )
 from app.services import audit_check_service as svc
+from app.services.audit_check_html import html_to_text, sanitize_html
 
 router = APIRouter()
 
@@ -544,7 +545,8 @@ def _upsert_cell(db: Session, sheet: AuditSheet, item: CellUpsert, default_code:
         )
         .first()
     )
-    text = (item.comment or "").strip()
+    # 查核評語改為富文字（2026-10-04）：存檔前白名單清理；實質空白（只有排版標籤）→ 空字串
+    text = sanitize_html(item.comment)
     # 建議（2026-10-01）：沒帶欄位 ＝ 維持原值
     if "suggestion" in item.model_fields_set:
         suggestion = (item.suggestion or "").strip() or None
@@ -738,7 +740,7 @@ def flagged_rows(
 
     rows = []
     for c in q.all():
-        if not (c.comment or "").strip():
+        if not html_to_text(c.comment):
             continue   # 只有建議、沒有評語的格子不列入
         rt = by_code.get(c.result_code)
         if rt is None or not rt.include_in_summary:
@@ -766,7 +768,7 @@ def flagged_rows(
             "result_code": c.result_code,
             "result_label": rt.label,
             "result_color": rt.color,
-            "comment": c.comment or "",
+            "comment": html_to_text(c.comment),
         })
     rows.sort(key=lambda r: (r["period"], r["company_name"], r["department_name"], r["display_no"]))
     return rows
@@ -863,7 +865,8 @@ def export_sheet(
         for i, d in enumerate(depts):
             c = cell_map.get((it["id"], d["id"]))
             if c:
-                cell = put(r, 4 + i, c["comment"] or "", colors.get(c["result_code"]))
+                # 評語為富文字 → Excel 放純文字；顏色不再隨判定（2026-10-04）
+                cell = put(r, 4 + i, html_to_text(c["comment"]))
                 sug = _clean(c.get("suggestion") or "")
                 if sug:
                     # 建議固定藍字、與判定無關（2026-10-01）
@@ -872,7 +875,7 @@ def export_sheet(
                         from openpyxl.cell.text import InlineFont
                         parts = []
                         if cell.value:
-                            parts.append(TextBlock(InlineFont(b=True, color="FF" + (colors.get(c["result_code"]) or "000000")), cell.value + "\n"))
+                            parts.append(TextBlock(InlineFont(b=True), cell.value + "\n"))
                         parts.append(TextBlock(InlineFont(b=True, color="FF1677FF"), sug))
                         cell.value = CellRichText(*parts)
                     except ImportError:

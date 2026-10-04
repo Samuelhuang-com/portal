@@ -25,6 +25,8 @@ import { sheetsApi } from '@/api/auditCheck'
 import { downloadFile } from '@/api/downloadFile'
 import type { Cell, SheetDetail, SheetItem } from '@/api/auditCheck'
 import { SUGGESTION_COLOR } from '@/pages/AuditCheck/suggestionColor'
+import RichTextEditor from '@/pages/AuditCheck/RichTextEditor'
+import { RICH_TEXT_CSS, htmlToPlain, sanitizeHtml, toDisplayHtml } from '@/pages/AuditCheck/richText'
 import { useAuthStore } from '@/stores/authStore'
 
 const { Text, Title } = Typography
@@ -94,13 +96,13 @@ export default function MobileAuditCheckSheet() {
       const res = await sheetsApi.upsertCell(detail.id, {
         sheet_item_id: picked.id,
         sheet_department_id: deptId,
-        comment,
+        comment: sanitizeHtml(comment),
         suggestion,
         result_code: code,
       })
       setDetail(res.data)
       setPicked(null)
-      message.success(comment.trim() || suggestion.trim() ? '已儲存' : '已清空')
+      message.success(htmlToPlain(comment) || suggestion.trim() ? '已儲存' : '已清空')
     } catch (e: any) {
       message.error(e?.response?.data?.detail ?? '儲存失敗')
     } finally {
@@ -248,12 +250,14 @@ export default function MobileAuditCheckSheet() {
                     </Text>
                     {t && <Tag style={{ color: t.color, margin: 0 }}>{t.label}</Tag>}
                   </div>
-                  <div style={{ marginTop: 6, fontSize: 12, whiteSpace: 'pre-wrap', color: t?.color }}>
-                    {c?.comment || (!c?.suggestion && (
-                      <Text type="secondary" style={{ fontSize: 12 }}>
-                        {isTarget ? '（本期應查，尚未填寫）' : '尚未填寫'}
-                      </Text>
-                    ))}
+                  <div style={{ marginTop: 6, fontSize: 12 }}>
+                    {htmlToPlain(c?.comment)
+                      ? <div className="audit-rich" dangerouslySetInnerHTML={{ __html: toDisplayHtml(c?.comment) }} />
+                      : (!c?.suggestion && (
+                        <Text type="secondary" style={{ fontSize: 12 }}>
+                          {isTarget ? '（本期應查，尚未填寫）' : '尚未填寫'}
+                        </Text>
+                      ))}
                   </div>
                   {c?.suggestion && (
                     <div style={{ marginTop: 4, fontSize: 12, whiteSpace: 'pre-wrap', color: SUGGESTION_COLOR }}>
@@ -389,14 +393,15 @@ export default function MobileAuditCheckSheet() {
         <Text type="secondary" style={{ fontSize: 12 }}>
           評語留空 ＝ 該部門本期不查此項，不計入分數分母
         </Text>
-        <Input.TextArea
-          value={comment}
-          onChange={(e) => setComment(e.target.value)}
-          rows={6}
-          disabled={!canEdit}
-          style={{ marginTop: 8 }}
-          placeholder="填寫查核情形"
-        />
+        <div style={{ marginTop: 8 }}>
+          <RichTextEditor
+            value={comment}
+            onChange={setComment}
+            disabled={!canEdit}
+            minHeight={140}
+            placeholder="填寫查核情形"
+          />
+        </div>
         <div style={{ marginTop: 12, marginBottom: 6 }}>
           <Text strong style={{ color: SUGGESTION_COLOR }}>建議</Text>
           <Text type="secondary" style={{ fontSize: 12, marginLeft: 6 }}>固定藍字，與判定無關</Text>
@@ -436,6 +441,7 @@ export default function MobileAuditCheckSheet() {
           </Button>
         )}
       </Drawer>
+      <style>{RICH_TEXT_CSS}</style>
     </div>
   )
 }
