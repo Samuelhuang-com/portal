@@ -14,7 +14,7 @@
  */
 import { useCallback, useEffect, useState } from 'react'
 import {
-  Alert, Button, DatePicker, Drawer, Space, Spin, Table, Tag, Tooltip, Typography,
+  Alert, Button, DatePicker, Drawer, Space, Spin, Switch, Table, Tag, Tooltip, Typography,
 } from 'antd'
 import { LeftOutlined, LinkOutlined, ReloadOutlined, RightOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
@@ -34,6 +34,29 @@ const { Text } = Typography
 const WEEKDAY = ['日', '一', '二', '三', '四', '五', '六']
 
 type RowWithKey = MallFIDailySheetRow & { _key: string }
+
+// 「只看異常／待處理」篩選後，樓層／項目的合併儲存格要依篩選結果重算（2026-10-05）
+function withSpans(list: RowWithKey[]): RowWithKey[] {
+  const run = (i: number, same: (a: RowWithKey, b: RowWithKey) => boolean) => {
+    let n = 0
+    while (i + n < list.length && same(list[i], list[i + n])) n += 1
+    return n
+  }
+  const sameFloor = (a: RowWithKey, b: RowWithKey) => a.source_tab === b.source_tab
+  const sameItem  = (a: RowWithKey, b: RowWithKey) => sameFloor(a, b) && a.item === b.item
+  return list.map((r, i) => {
+    const prev = i > 0 ? list[i - 1] : undefined
+    const floorFirst = !prev || !sameFloor(prev, r)
+    const itemFirst  = !prev || !sameItem(prev, r)
+    return {
+      ...r,
+      floor_first_row: floorFirst,
+      floor_row_count: floorFirst ? run(i, sameFloor) : 0,
+      item_first_row:  itemFirst,
+      item_row_count:  itemFirst ? run(i, sameItem) : 0,
+    }
+  })
+}
 
 // ── 樓層格（含 Ragic 連結與實際時間）─────────────────────────────────────────
 
@@ -93,6 +116,7 @@ export default function MallFIDailySheetDrawer({
   const [loading, setLoading] = useState(false)
   const [data,    setData]    = useState<MallFIDailySheetResponse | null>(null)
   const [error,   setError]   = useState<string | null>(null)
+  const [onlyIssues, setOnlyIssues] = useState(false)
 
   const load = useCallback(async () => {
     if (!date) return
@@ -112,10 +136,13 @@ export default function MallFIDailySheetDrawer({
 
   const d       = date ? dayjs(date) : null
   const floors  = new Map((data?.floors ?? []).map((f) => [f.key, f]))
-  const rows: RowWithKey[] = (data?.rows ?? []).map((r, i) => ({
+  const allRows: RowWithKey[] = (data?.rows ?? []).map((r, i) => ({
     ...r, _key: `${r.source_tab}__${r.item}__${i}`,
   }))
+  const rows = onlyIssues ? withSpans(allRows.filter((r) => r.abnormal)) : allRows
   const s = data?.summary
+  const extra = data?.extra_issues ?? []
+  const issueCount = s ? s.abnormal + s.pending + (s.extra_issues ?? extra.length) : 0
 
   const shift = (n: number) => {
     if (d && onDateChange) onDateChange(d.add(n, 'day').format('YYYY-MM-DD'))
@@ -225,15 +252,47 @@ export default function MallFIDailySheetDrawer({
             <Tag color={s.floors_logged === s.floors_total ? 'success' : 'warning'}>
               已登錄樓層 {s.floors_logged} / {s.floors_total}
             </Tag>
-            <Tag color={s.abnormal + s.pending > 0 ? 'error' : 'default'}>
-              異常／待處理 {s.abnormal + s.pending} 項
+            <Tag color={issueCount > 0 ? 'error' : 'default'}>
+              異常／待處理 {issueCount} 項
             </Tag>
             <Tag>未填 {s.unchecked} 項</Tag>
             {s.actual_minutes > 0 && <Tag color="blue">實際巡檢 {s.actual_minutes} 分</Tag>}
+            <Space size={4}>
+              <Switch size="small" checked={onlyIssues} onChange={setOnlyIssues} />
+              <Text style={{ fontSize: 12 }}>只看異常／待處理</Text>
+            </Space>
             <Text type="secondary" style={{ fontSize: 12 }}>
               ☑ ＝ Ragic 填報值；同日多場次時依開始時間逐筆列出
             </Text>
           </Space>
+        )}
+
+        {extra.length > 0 && (
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginBottom: 12 }}
+            message={`另有 ${extra.length} 項異常／待處理在 Excel 版型以外的 Ragic 欄位`}
+            description={
+              <div>
+                {extra.map((x, i) => (
+                  <div key={i} style={{ fontSize: 12 }}>
+                    • {x.floor}{x.time_label ? ` [${x.time_label}]` : ''}　{x.field}：
+                    <Text style={{ color: '#c0392b', fontSize: 12 }}>{x.text}</Text>
+                  </div>
+                ))}
+              </div>
+            }
+          />
+        )}
+
+        {onlyIssues && data && rows.length === 0 && (
+          <Alert
+            type="success"
+            showIcon
+            style={{ marginBottom: 12 }}
+            message={extra.length > 0 ? 'Excel 版型內沒有異常／待處理項目' : '當日沒有異常／待處理項目'}
+          />
         )}
 
         {data && s && s.floors_logged === 0 && (

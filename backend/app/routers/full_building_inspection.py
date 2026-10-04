@@ -238,8 +238,15 @@ def get_dashboard_calendar(
 
     completion_rate = 該日所有場次的「已填項目數 / 總項目數」× 100，
     同一天有多場次時分子分母各自累加後再相除。
+
+    2026-10-05（v2.10.113）：abnormal_count／pending_count 改用與每日巡檢表 Drawer 相同的判定
+    （services/full_building_daily_sheet.build_full_building_month_issues），每格多回 issues[]
+    （哪一項異常／待處理），供月曆格 Tooltip 直接列出。完成率維持原口徑。
     """
     import calendar as cal_mod
+    from app.services.full_building_daily_sheet import build_full_building_month_issues
+
+    issues_by_day = build_full_building_month_issues(db, year, month)
 
     max_day = cal_mod.monthrange(year, month)[1]
     ym_prefix = f"{year}/{month:02d}/"
@@ -283,22 +290,23 @@ def get_dashboard_calendar(
                     "completion_rate": 0,
                     "abnormal_count":  0,
                     "pending_count":   0,
+                    "issues":          [],
                 }
                 continue
 
-            total = checked = abnormal = pending = 0
+            total = checked = 0
             for b in day_batches:
                 kpi = _calc_item_kpi(items_by_batch.get(b.ragic_id, []))
                 total    += kpi["total"]
                 checked  += kpi["checked"]
-                abnormal += kpi["abnormal"]
-                pending  += kpi["pending"]
 
+            issues = issues_by_day.get(d, {}).get(cfg.key, [])
             daily[str(d)] = {
                 "has_record":      True,
                 "completion_rate": round(checked / total * 100, 1) if total else 0,
-                "abnormal_count":  abnormal,
-                "pending_count":   pending,
+                "abnormal_count":  sum(1 for x in issues if x["status"] == "abnormal"),
+                "pending_count":   sum(1 for x in issues if x["status"] == "pending"),
+                "issues":          issues,
             }
 
         rows.append({"key": cfg.key, "label": cfg.floor, "daily": daily})

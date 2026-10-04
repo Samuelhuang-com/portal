@@ -200,11 +200,23 @@ export interface MallFIDailyFormResponse {
   rows:             MallFIDailyFormRow[]
 }
 
+// 2026-10-05：月曆格每格附「哪幾項異常／待處理」，判定與每日巡檢表 Drawer 同一套
+export interface MallFIDailyIssue {
+  source_tab:    string
+  floor:         string
+  item:          string          // 設備（Excel 項目）；版型外欄位為「版型外欄位」
+  check_content: string          // 檢查內容；版型外欄位為 Ragic 欄位名
+  status:        'abnormal' | 'pending'
+  note:          string          // 異常說明（版型外欄位為 Ragic 填報值）
+  in_template:   boolean
+}
+
 export interface MallFIDailyCalendarDay {
   has_record:      boolean
   completion_rate: number
   abnormal_count:  number
   pending_count:   number
+  issues?:         MallFIDailyIssue[]
 }
 
 export interface MallFIDailyCalendarSheet {
@@ -326,7 +338,19 @@ export interface MallFIDailySheetResponse {
     shift_times:         { label: string; range: string }[]
     // 表尾時間列（整棟巡檢由後端提供；商場不給，Drawer 用 shift_times 組）
     footer?:             { text: string; minutes: number; note: string }[]
+    extra_issues?:       number   // 版型外欄位的異常／待處理筆數（商場）
   }
+  // 2026-10-05：Ragic 有、Excel 版型沒有的欄位，填了異常／待處理時另外列出（商場）
+  extra_issues?: MallFIDailyExtraIssue[]
+}
+
+export interface MallFIDailyExtraIssue {
+  source_tab: string
+  floor:      string
+  field:      string
+  status:     'abnormal' | 'pending'
+  text:       string
+  time_label: string
 }
 
 /** 取得指定日期的每日巡檢表（date = YYYY-MM-DD） */

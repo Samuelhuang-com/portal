@@ -624,6 +624,90 @@ def get_daily_form(
     }
 
 
+# ── 月曆格共用建表（2026-10-05）──────────────────────────────────────────────
+# ⚠ 異常／待處理的判定改用 services/mall_daily_inspection_sheet（與 Drawer 同一套）：
+#   原本直接加總同步時的 result_status，溫度、濕度、電表度數這類「填數字」欄位一律被當成異常，
+#   造成 4F、1F~3F 幾乎每天 ⚠、點進 Drawer 卻找不到異常項目。
+# 完成率維持原口徑（已填項目 ÷ 全部項目）。
+# 每格附 issues（哪一項異常），供月曆格 Tooltip 直接顯示。
+
+def _build_daily_calendar(year: int, month: int, db: Session) -> dict:
+    import calendar as cal_mod
+    from app.services.mall_daily_inspection_sheet import build_daily_sheet, day_issues
+
+    max_day           = cal_mod.monthrange(year, month)[1]
+    year_month_prefix = f"{year}/{month:02d}/"
+
+    month_batches = (
+        db.query(MallFIBatch)
+        .filter(MallFIBatch.inspection_date.like(f"{year_month_prefix}%"))
+        .all()
+    )
+    items_by_batch: dict[str, list[MallFIItem]] = {b.ragic_id: [] for b in month_batches}
+    ids = list(items_by_batch.keys())
+    for i in range(0, len(ids), 500):
+        for it in db.query(MallFIItem).filter(MallFIItem.batch_ragic_id.in_(ids[i:i + 500])).all():
+            items_by_batch.setdefault(it.batch_ragic_id, []).append(it)
+
+    by_date: dict[int, list[MallFIBatch]] = {}
+    for b in month_batches:
+        try:
+            day = int(b.inspection_date.split("/")[2])
+        except (IndexError, ValueError):
+            continue
+        by_date.setdefault(day, []).append(b)
+
+    issues_by_day: dict[int, dict[str, list[dict]]] = {}
+    for day, bl in by_date.items():
+        sheet = build_daily_sheet(bl, {b.ragic_id: items_by_batch.get(b.ragic_id, []) for b in bl})
+        issues_by_day[day] = day_issues(sheet)
+
+    sheets_out = []
+    for cfg in SHEET_CONFIGS:
+        key   = cfg.key
+        daily: dict[str, dict] = {}
+        for day in range(1, max_day + 1):
+            day_batches = [b for b in by_date.get(day, []) if b.sheet_key == key]
+            if not day_batches:
+                daily[str(day)] = {
+                    "has_record":      False,
+                    "completion_rate": 0,
+                    "abnormal_count":  0,
+                    "pending_count":   0,
+                    "issues":          [],
+                }
+                continue
+
+            total_items = checked_items = 0
+            for b in day_batches:
+                kpi = _calc_kpi(items_by_batch.get(b.ragic_id, []))
+                total_items   += kpi["total"]
+                checked_items += kpi["checked"]
+
+            issues = issues_by_day.get(day, {}).get(key, [])
+            daily[str(day)] = {
+                "has_record":      True,
+                "completion_rate": round(checked_items / total_items * 100) if total_items > 0 else 0,
+                "abnormal_count":  sum(1 for x in issues if x["status"] == "abnormal"),
+                "pending_count":   sum(1 for x in issues if x["status"] == "pending"),
+                "issues":          issues,
+            }
+
+        sheets_out.append({
+            "key":   key,
+            "floor": cfg.floor,
+            "title": cfg.title,
+            "daily": daily,
+        })
+
+    return {
+        "year":    year,
+        "month":   month,
+        "max_day": max_day,
+        "sheets":  sheets_out,
+    }
+
+
 # ── GET /daily-calendar ───────────────────────────────────────────────────────
 
 @router.get(
@@ -640,86 +724,10 @@ def get_daily_calendar(
     回傳當月每日 × 每個 Sheet（樓層）的巡檢狀態，供 Dashboard 月曆格使用。
     回傳：
       max_day   — 當月天數
-      sheets[]  — 各樓層，含 daily{day_str: {has_record, completion_rate, abnormal_count, pending_count}}
+      sheets[]  — 各樓層，含 daily{day_str: {has_record, completion_rate, abnormal_count, pending_count, issues[]}}
     """
-    import calendar as cal_mod
-    max_day            = cal_mod.monthrange(year, month)[1]
-    year_month_prefix  = f"{year}/{month:02d}/"
-
-    sheets_out = []
-    for cfg in SHEET_CONFIGS:
-        key = cfg.key
-
-        month_batches = (
-            db.query(MallFIBatch)
-            .filter(
-                MallFIBatch.sheet_key == key,
-                MallFIBatch.inspection_date.like(f"{year_month_prefix}%"),
-            )
-            .all()
-        )
-
-        by_date: dict[int, list] = {}
-        for b in month_batches:
-            try:
-                day = int(b.inspection_date.split("/")[2])
-            except (IndexError, ValueError):
-                continue
-            by_date.setdefault(day, []).append(b)
-
-        daily: dict[str, dict] = {}
-        for day in range(1, max_day + 1):
-            day_batches = by_date.get(day, [])
-            if not day_batches:
-                daily[str(day)] = {
-                    "has_record":      False,
-                    "completion_rate": 0,
-                    "abnormal_count":  0,
-                    "pending_count":   0,
-                }
-                continue
-
-            total_items    = 0
-            checked_items  = 0
-            abnormal_count = 0
-            pending_count  = 0
-
-            for b in day_batches:
-                items = (
-                    db.query(MallFIItem)
-                    .filter(
-                        MallFIItem.batch_ragic_id == b.ragic_id,
-                        MallFIItem.is_note        == False,  # noqa: E712
-                    )
-                    .all()
-                )
-                kpi = _calc_kpi(items)
-                total_items    += kpi["total"]
-                checked_items  += kpi["checked"]
-                abnormal_count += kpi["abnormal"]
-                pending_count  += kpi["pending"]
-
-            rate = round(checked_items / total_items * 100) if total_items > 0 else 0
-            daily[str(day)] = {
-                "has_record":      True,
-                "completion_rate": rate,
-                "abnormal_count":  abnormal_count,
-                "pending_count":   pending_count,
-            }
-
-        sheets_out.append({
-            "key":   key,
-            "floor": cfg.floor,
-            "title": cfg.title,
-            "daily": daily,
-        })
-
-    return {
-        "year":    year,
-        "month":   month,
-        "max_day": max_day,
-        "sheets":  sheets_out,
-    }
+    # 2026-10-05：改用與每日巡檢表 Drawer 相同的判定（_build_daily_calendar）
+    return _build_daily_calendar(year, month, db)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -777,79 +785,7 @@ def get_daily_calendar(
     回傳當月每日 × 每個 Sheet 的巡檢狀態，供 Dashboard 月曆格使用。
     回傳：
       max_day  — 當月天數
-      sheets[] — 各 Sheet，含 daily{day_str: {has_record, completion_rate, abnormal_count, pending_count}}
+      sheets[] — 各 Sheet，含 daily{day_str: {has_record, completion_rate, abnormal_count, pending_count, issues[]}}
     """
-    import calendar as cal_mod
-    max_day = cal_mod.monthrange(year, month)[1]
-    year_month_prefix = f"{year}/{month:02d}/"
-
-    sheets_out = []
-    for cfg in SHEET_CONFIGS:
-        key = cfg.key
-
-        month_batches = (
-            db.query(MallFIBatch)
-            .filter(
-                MallFIBatch.sheet_key == key,
-                MallFIBatch.inspection_date.like(f"{year_month_prefix}%"),
-            )
-            .all()
-        )
-
-        by_date: dict[int, list[MallFIBatch]] = {}
-        for b in month_batches:
-            try:
-                day = int(b.inspection_date.split("/")[2])
-            except (IndexError, ValueError):
-                continue
-            by_date.setdefault(day, []).append(b)
-
-        daily: dict[str, dict] = {}
-        for day in range(1, max_day + 1):
-            day_batches = by_date.get(day, [])
-            if not day_batches:
-                daily[str(day)] = {"has_record": False, "completion_rate": 0.0,
-                                   "abnormal_count": 0, "pending_count": 0}
-                continue
-
-            total_items    = 0
-            checked_items  = 0
-            abnormal_count = 0
-            pending_count  = 0
-
-            for b in day_batches:
-                items = (
-                    db.query(MallFIItem)
-                    .filter(
-                        MallFIItem.batch_ragic_id == b.ragic_id,
-                        MallFIItem.is_note == False,
-                    )
-                    .all()
-                )
-                kpi = _calc_kpi(items)
-                total_items    += kpi["total"]
-                checked_items  += kpi["checked"]
-                abnormal_count += kpi["abnormal"]
-                pending_count  += kpi["pending"]
-
-            rate = round(checked_items / total_items * 100, 1) if total_items > 0 else 0.0
-            daily[str(day)] = {
-                "has_record":      True,
-                "completion_rate": rate,
-                "abnormal_count":  abnormal_count,
-                "pending_count":   pending_count,
-            }
-
-        sheets_out.append({
-            "key":   key,
-            "floor": cfg.floor,
-            "title": cfg.title,
-            "daily": daily,
-        })
-
-    return {
-        "year":    year,
-        "month":   month,
-        "max_day": max_day,
-        "sheets":  sheets_out,
-    }
+    # 2026-10-05：改用與每日巡檢表 Drawer 相同的判定（_build_daily_calendar）
+    return _build_daily_calendar(year, month, db)

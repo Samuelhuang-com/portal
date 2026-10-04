@@ -160,6 +160,65 @@ def ragic_record_url(sheet_key: str, batch_ragic_id: str) -> str:
     return f"{RAGIC_BASE}/{path}/{row_id}"
 
 
+# ── 版型外欄位（2026-10-05）─────────────────────────────────────────────────
+# Ragic 表單有些欄位不在 Excel 2.2 版型內（例：1F~3F 後段 22 欄公共區域巡檢）。
+# 這些欄位若填了「異常／待處理」，Excel 表上看不到，但月曆格與 Drawer 仍必須提示，
+# 不能因為版型沒有就把真的異常藏起來。
+# 這些欄位的選項沒有逐一對照過，為避免再出現假異常，只在值**明確寫出**異常字樣時才算
+# （異常／待處理／待修／故障／損壞／不良／X）；數字、「已清潔」之類的文字不算。
+_NUMERIC_RE = re.compile(r"^[-+]?\d+(?:\.\d+)?\s*(?:°C|℃|°|%|度|kwh|kWh|KWH)?$")
+_EXPLICIT_ISSUE_RE = re.compile(r"異常|待處理|待修|故障|損壞|不良|^[Xx]$")
+
+
+def _referenced_fields() -> dict[str, set[str]]:
+    refs: dict[str, set[str]] = {k: set() for k in SHEET_ORDER}
+    for t in MALL_DAILY_INSPECTION_TEMPLATE:
+        key, content = t["source_tab"], t["check_content"]
+        spec = FIELD_MAP.get((key, content), {"kind": "status", "fields": [(content, "")]})
+        refs.setdefault(key, set()).update(f for f, _ in spec["fields"])
+    for (key, _item), f in NOTE_FIELD.items():
+        refs.setdefault(key, set()).add(f)
+    return refs
+
+
+_REFERENCED = _referenced_fields()
+
+
+def _is_text_field(name: str) -> bool:
+    return any(w in name for w in ("說明", "備註", "照片", "拍照"))
+
+
+def day_issues(sheet: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    """
+    build_daily_sheet 的結果 → {sheet_key: [異常／待處理項目]}。
+    月曆格 ⚠ 與 Drawer 用同一份判定（2026-10-05：月曆格原本用同步時的 result_status，
+    溫度、度數這類數字欄位會被算成異常，造成假 ⚠）。
+    """
+    out: dict[str, list[dict[str, Any]]] = {k: [] for k in SHEET_ORDER}
+    for r in sheet["rows"]:
+        if r["abnormal"]:
+            out.setdefault(r["source_tab"], []).append({
+                "source_tab":    r["source_tab"],
+                "floor":         r["floor"],
+                "item":          r["item"],
+                "check_content": r["check_content"],
+                "status":        r["status"],
+                "note":          r["abnormal_note"],
+                "in_template":   True,
+            })
+    for x in sheet.get("extra_issues", []):
+        out.setdefault(x["source_tab"], []).append({
+            "source_tab":    x["source_tab"],
+            "floor":         x["floor"],
+            "item":          "版型外欄位",
+            "check_content": x["field"],
+            "status":        x["status"],
+            "note":          (f"[{x['time_label']}] " if x["time_label"] else "") + x["text"],
+            "in_template":   False,
+        })
+    return out
+
+
 # ── 主函式（純資料，不碰 DB，方便測試）────────────────────────────────────────
 
 def build_daily_sheet(
@@ -170,7 +229,7 @@ def build_daily_sheet(
     batches        ：當日 MallFIBatch（任意 sheet、可多筆 —— 早班／晚班）
     items_by_batch ：{batch_ragic_id: [MallFIItem, ...]}
 
-    回傳 {floors: [...], rows: [...], summary: {...}}
+    回傳 {floors: [...], rows: [...], summary: {...}, extra_issues: [...]}
     """
     # 依 sheet 分組，組內依開始時間排序
     by_sheet: dict[str, list[Any]] = {k: [] for k in SHEET_ORDER}
@@ -308,6 +367,30 @@ def build_daily_sheet(
             "remark":          REMARK.get((key, content), ""),
         })
 
+    # 版型外欄位的異常／待處理（Excel 表上沒有這些欄位，另外列出）
+    extra_issues: list[dict[str, Any]] = []
+    for key in SHEET_ORDER:
+        refs = _REFERENCED.get(key, set())
+        for b in by_sheet[key]:
+            label = _hhmm(b.start_time or "") if multi[key] else ""
+            for it in items_by_batch.get(b.ragic_id, []):
+                name = it.item_name or ""
+                if getattr(it, "is_note", False) or name in refs or _is_text_field(name):
+                    continue
+                raw = (it.result_raw or "").strip()
+                if not raw or _NUMERIC_RE.match(raw) or not _EXPLICIT_ISSUE_RE.search(raw):
+                    continue
+                st = judge_status(raw)
+                if st in ("abnormal", "pending"):
+                    extra_issues.append({
+                        "source_tab": key,
+                        "floor":      EXCEL_FLOOR_LABEL[key],
+                        "field":      name,
+                        "status":     st,
+                        "text":       raw,
+                        "time_label": label,
+                    })
+
     # Excel G43／G44：一般巡檢合計、含櫃位抄表合計（由模板分鐘數加總，不寫死）
     std_total    = sum(t["minutes"] for t in MALL_DAILY_INSPECTION_TEMPLATE)
     std_separate = sum(
@@ -327,5 +410,6 @@ def build_daily_sheet(
         "std_minutes_total":   std_total,
         "actual_minutes":      sum(f["actual_minutes"] for f in floors),
         "shift_times":         SHIFT_TIMES,
+        "extra_issues":        len(extra_issues),
     }
-    return {"floors": floors, "rows": rows, "summary": summary}
+    return {"floors": floors, "rows": rows, "summary": summary, "extra_issues": extra_issues}

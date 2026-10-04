@@ -44,6 +44,7 @@ import FloorInspectionList from './FloorInspectionList'
 import FloorMapWorkspace from '@/components/FloorPlanMap/FloorMapWorkspace'
 import MallFIDailySheetDrawer from '@/pages/MallFacilityInspection/MallFIDailySheetDrawer'
 import MonthlyCalendarGrid from '@/components/MonthlyCalendarGrid'
+import { renderIssueCell } from '@/components/CalendarIssueCell'
 import type { CalendarRow } from '@/components/MonthlyCalendarGrid'
 
 const { Title, Text } = Typography
@@ -413,6 +414,7 @@ function SummaryTabContent() {
             maxDay={calMaxDay}
             rows={calRows}
             rowHeaderLabel="樓層"
+            renderCell={renderIssueCell}
             onCellClick={(day, rowKey) => {
               setSheetFocus(rowKey)
               setSheetDate(`${queryMonth}-${String(day).padStart(2, '0')}`)
@@ -423,7 +425,7 @@ function SummaryTabContent() {
         )}
         {calRows.length > 0 && (
           <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 4 }}>
-            點選有紀錄的格子，可查看當日完整每日巡檢表
+            點選有紀錄的格子，可查看當日完整每日巡檢表；滑鼠移到 ⚠ 可直接看是哪幾項異常／待處理
           </Text>
         )}
       </Card>
