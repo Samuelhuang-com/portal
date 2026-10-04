@@ -3,13 +3,14 @@
  *
  * 將原本分散的 Dashboard + 4F / 3F / 1F~3F / 1F / B1F~B4F 巡檢紀錄整合為 Tabs
  *   Tab 1 統計總覽      — 今日各區域 KPI + Sheet 完成率彙整
+ *   Tab   樓層巡檢圖    — 平面圖上的巡檢點位與每日狀態（2026-10-04，FloorMapTab.tsx）
  *   Tab 2 4F 巡檢      — 月份篩選 + 場次清單
  *   Tab 3 3F 巡檢      — 同上
  *   Tab 4 1F~3F 巡檢   — 同上
  *   Tab 5 1F 巡檢      — 同上
  *   Tab 6 B1F~B4F 巡檢 — 同上
  *
- * URL query param：?tab=summary|4f|3f|1f-3f|1f|b1f-b4f
+ * URL query param：?tab=summary|floor-map|4f|3f|1f-3f|1f|b1f-b4f
  */
 import { useEffect, useState, useCallback } from 'react'
 import { useSearchParams } from 'react-router-dom'
@@ -22,7 +23,7 @@ import {
   HomeOutlined, ReloadOutlined,
   WarningOutlined, CheckCircleOutlined, ExclamationCircleOutlined,
   DashboardOutlined, ToolOutlined, ClockCircleOutlined, LinkOutlined,
-  CalendarOutlined,
+  CalendarOutlined, EnvironmentOutlined,
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { NAV_GROUP, NAV_PAGE } from '@/constants/navLabels'
@@ -40,6 +41,8 @@ import {
 import MonthlyCalendarGrid from '@/components/MonthlyCalendarGrid'
 import type { CalendarRow } from '@/components/MonthlyCalendarGrid'
 import MallDailyInspectionFormTab from '@/pages/MallPeriodicMaintenance/MallDailyInspectionFormTab'
+import MallFIDailySheetDrawer from './MallFIDailySheetDrawer'
+import FloorMapTab from './FloorMapTab'
 
 const { Title, Text } = Typography
 
@@ -179,6 +182,9 @@ function SummaryTabContent() {
   const [error,      setError]      = useState<string | null>(null)
   const [calRows,    setCalRows]    = useState<CalendarRow[]>([])
   const [calMaxDay,  setCalMaxDay]  = useState(31)
+  // 月曆格下一層：點「樓層 × 日」開啟該日每日巡檢表（Excel 版型）
+  const [sheetDate,  setSheetDate]  = useState<string | null>(null)
+  const [sheetFocus, setSheetFocus] = useState<string | null>(null)
 
   const isCurrentMonth = queryMonth === dayjs().format('YYYY-MM')
   const monthLabel     = dayjs(queryMonth, 'YYYY-MM').format('YYYY年M月')
@@ -391,11 +397,28 @@ function SummaryTabContent() {
             maxDay={calMaxDay}
             rows={calRows}
             rowHeaderLabel="巡檢區域"
+            onCellClick={(day, rowKey) => {
+              setSheetFocus(rowKey)
+              setSheetDate(`${queryMonth}-${String(day).padStart(2, '0')}`)
+            }}
           />
         ) : (
           <Text type="secondary">尚無月曆資料</Text>
         )}
+        {calRows.length > 0 && (
+          <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 4 }}>
+            點選有紀錄的格子，可查看當日完整每日巡檢表
+          </Text>
+        )}
       </Card>
+
+      <MallFIDailySheetDrawer
+        open={!!sheetDate}
+        date={sheetDate}
+        focusSheet={sheetFocus}
+        onClose={() => { setSheetDate(null); setSheetFocus(null) }}
+        onDateChange={(d) => { setSheetDate(d); setSheetFocus(null) }}
+      />
 
       {!loading && sheets.length === 0 && !error && (
         <Alert
@@ -415,7 +438,7 @@ function SummaryTabContent() {
 const SHOW_DAILY_FORM_TAB: boolean = false
 
 // 'daily-form' 已從清單移除：舊書籤 ?tab=daily-form 會退回 summary，不會停在不存在的分頁
-const VALID_TABS = ['summary', '4f', '3f', '1f-3f', '1f', 'b1f-b4f']
+const VALID_TABS = ['summary', 'floor-map', '4f', '3f', '1f-3f', '1f', 'b1f-b4f']
 
 export default function MallFacilityInspectionDashboard() {
   const [searchParams] = useSearchParams()
@@ -468,6 +491,11 @@ export default function MallFacilityInspectionDashboard() {
             label:    <span><CalendarOutlined /> 每日巡檢表</span>,
             children: openedTabs.has('daily-form') ? <MallDailyInspectionFormTab /> : null,
           }] : []),
+          {
+            key:      'floor-map',
+            label:    <span><EnvironmentOutlined /> 樓層巡檢圖</span>,
+            children: openedTabs.has('floor-map') ? <FloorMapTab /> : null,
+          },
           {
             key:      '4f',
             label:    '4F 巡檢',

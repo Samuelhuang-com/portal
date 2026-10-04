@@ -248,3 +248,89 @@ export async function fetchMallFIDailyCalendar(
   })
   return res.data
 }
+
+// ── 每日巡檢表（Excel 版型，Dashboard 月曆格下一層）2026-10-04 ──────────────────
+
+export interface MallFIDailySheetReading {
+  field: string
+  label: string
+  value: string
+}
+
+export interface MallFIDailySheetResult {
+  batch_ragic_id: string
+  time_label:     string   // 同日多場次時為開始時間 HH:MM，單一場次為空字串
+  status:         'normal' | 'abnormal' | 'pending' | 'unchecked' | 'reading'
+  text:           string
+  readings:       MallFIDailySheetReading[]
+}
+
+export interface MallFIDailySheetRow {
+  floor:           string
+  item:            string
+  check_content:   string
+  result_options:  string
+  minutes:         number
+  source_tab:      string
+  item_first_row:  boolean
+  floor_first_row: boolean
+  floor_row_count: number
+  item_row_count:  number
+  kind:            'status' | 'reading' | 'separate' | 'unmapped'
+  ragic_fields:    string[]
+  note_field:      string
+  results:         MallFIDailySheetResult[]
+  status:          string
+  abnormal:        boolean
+  abnormal_note:   string
+  remark:          string
+}
+
+export interface MallFIDailySheetBatch {
+  ragic_id:       string
+  ragic_url:      string
+  inspector:      string
+  start_time:     string
+  end_time:       string
+  start_hhmm:     string
+  end_hhmm:       string
+  work_hours:     string
+  actual_minutes: number
+}
+
+export interface MallFIDailySheetFloor {
+  key:            string
+  floor:          string
+  sheet_url:      string
+  has_record:     boolean
+  inspectors:     string[]
+  batches:        MallFIDailySheetBatch[]
+  actual_minutes: number
+}
+
+export interface MallFIDailySheetResponse {
+  date:    string
+  floors:  MallFIDailySheetFloor[]
+  rows:    MallFIDailySheetRow[]
+  summary: {
+    floors_total:        number
+    floors_logged:       number
+    normal:              number
+    abnormal:            number
+    pending:             number
+    unchecked:           number
+    reading:             number
+    std_minutes_routine: number
+    std_minutes_total:   number
+    actual_minutes:      number
+    shift_times:         { label: string; range: string }[]
+  }
+}
+
+/** 取得指定日期的每日巡檢表（date = YYYY-MM-DD） */
+export async function fetchMallFIDailySheet(date: string): Promise<MallFIDailySheetResponse> {
+  const res = await apiClient.get<MallFIDailySheetResponse>(`${BASE}/daily-sheet`, {
+    params: { date },
+  })
+  return res.data
+}

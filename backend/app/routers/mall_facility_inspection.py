@@ -553,6 +553,43 @@ def get_dashboard_monthly_summary(
     }
 
 
+# ── GET /daily-sheet ──────────────────────────────────────────────────────────
+# 2026-10-04 新增：Dashboard 月曆格的下一層 —— 指定日期，以 Excel「2.2商場-每日巡檢表」
+# 原版型呈現 5 張 Sheet 的實際巡檢結果。對應邏輯見 services/mall_daily_inspection_sheet.py。
+
+@router.get(
+    "/daily-sheet",
+    summary="取得指定日期的商場工務每日巡檢表（Excel 版型）",
+    tags=["春大直商場工務巡檢"],
+)
+def get_daily_sheet(
+    date: str = Query(..., description="巡檢日期 YYYY-MM-DD 或 YYYY/MM/DD"),
+    db: Session = Depends(get_db),
+):
+    from app.services.mall_daily_inspection_sheet import build_daily_sheet, normalize_date
+
+    insp_date = normalize_date(date)
+    if not insp_date:
+        raise HTTPException(status_code=422, detail=f"日期格式錯誤：{date}")
+
+    batches = (
+        db.query(MallFIBatch)
+        .filter(MallFIBatch.inspection_date == insp_date)
+        .all()
+    )
+    items_by_batch: dict[str, list[MallFIItem]] = {b.ragic_id: [] for b in batches}
+    if batches:
+        for it in (
+            db.query(MallFIItem)
+            .filter(MallFIItem.batch_ragic_id.in_(list(items_by_batch.keys())))
+            .all()
+        ):
+            items_by_batch.setdefault(it.batch_ragic_id, []).append(it)
+
+    data = build_daily_sheet(batches, items_by_batch)
+    return {"date": insp_date, **data}
+
+
 # ── GET /daily-form ───────────────────────────────────────────────────────────
 
 @router.get(

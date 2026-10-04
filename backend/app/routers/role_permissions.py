@@ -98,6 +98,9 @@ PERMISSION_DEFINITIONS = [
     {"key": "mall_schedule_view",                  "label": "商場班表",           "group": "商場管理"},
     {"key": "mall_schedule_manage",                "label": "商場班表：匯入/編輯", "group": "商場管理"},
     {"key": "mall_schedule_admin",                 "label": "商場班表：人員/班別", "group": "商場管理"},
+    # 樓層巡檢圖（2026-10-04）：檢視沿用 mall_facility_inspection_view；編輯點位需明確指派，
+    # 不包進 portal_general 預設清單。非路由權限（不在 navLabels），label 依使用者裁示命名。
+    {"key": "mall_floor_map_edit",                 "label": "樓層巡檢圖－編輯點位", "group": "商場管理"},
     {"key": "luqun_repair_view",        "label": "商場工務報修",  "group": "工務報修"},
     {"key": "dazhi_repair_view",        "label": "大直工務部",    "group": "工務報修"},
     {"key": "security_view",            "label": "保全模組",      "group": "保全管理"},

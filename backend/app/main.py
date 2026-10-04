@@ -75,6 +75,7 @@ from app.routers import (
     knowledge_graph,
     mall_dashboard,
     mall_facility_inspection,
+    mall_floor_map,
     full_building_inspection,
     mall_periodic_maintenance,
     full_building_maintenance,
@@ -1945,6 +1946,13 @@ app.include_router(
     mall_facility_inspection.router,
     prefix=f"{API_PREFIX}/mall-facility-inspection",
     tags=["春大直商場工務巡檢"],
+)
+
+# ── 新增：樓層巡檢圖（商場工務巡檢的 TAB，2026-10-04；規格 docs/SPEC_floor_plan_inspection.md）──
+app.include_router(
+    mall_floor_map.router,
+    prefix=f"{API_PREFIX}/mall-floor-map",
+    tags=["樓層巡檢圖"],
 )
 
 # ── 新增：整棟巡檢（Ragic 連結導覽模組）──────────────────────────────────────
