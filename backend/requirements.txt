@@ -5,7 +5,6 @@ pydantic-settings==2.3.4
 sqlalchemy==2.0.31
 aiosqlite==0.20.0
 httpx==0.27.0
-python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
 bcrypt==4.0.1
 PyJWT==2.8.0
@@ -17,9 +16,9 @@ python-pptx==1.0.2
 python-docx>=1.1.2               # 稽核檢查「內部稽核檢查表」Word 匯出（2026-10-01）
 matplotlib>=3.8.0
 apscheduler==3.10.4
-anthropic>=0.25.0
+anthropic>=0.25.0,<1   # 2026-10-05 鎖 <1：1.0（2026-08-20）為破壞性升級（改用 httpx2），新 Server 裝到會壞
 PyYAML>=6.0
-filelock>=3.13.0
+filelock>=3.13.0,<5    # 2026-10-05 鎖 <5：sync_lock.py 的跨行程鎖依賴其行為，避免日後大版本靜默改變
 
 # ── Schema migration（2026-08-28 起，PostgreSQL 遷移 Phase 0）────────────────
 # ⚠️ 每台機器都要裝：prod-update.bat 的 [3/6] 會執行 `alembic upgrade head`。
