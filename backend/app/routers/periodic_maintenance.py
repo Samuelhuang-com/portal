@@ -19,6 +19,7 @@ project_hotel_pm_sheet11_migration.md。
   GET  /period-stats                 — 週期統計（月/季/年）
   PATCH /items/{item_id}             — Portal 回填（執行時間/異常等）
 """
+import logging
 import json
 from calendar import monthrange
 from datetime import date, datetime, timezone
@@ -321,6 +322,35 @@ def _calc_category_stats(items: list[PeriodicMaintenanceItem], check_month: int)
     return result
 
 
+_BAD_BATCH_WARNED: set = set()
+
+
+def _batch_ym(batch) -> "tuple[int, int] | None":
+    """
+    batch.period_month 'YYYY/MM' → (YYYY, MM)；格式不符回傳 None 並記一次 warning。
+
+    2026-10-05：Sheet 11 的批次月份是從「編號」反推（_period_month_from_journal_no），
+    編號格式不符時 period_month 會是空字串；原本直接 int(split) 會讓
+    /period-stats 整支 500（前端顯示「載入月統計失敗」）。改為略過該批次。
+    """
+    pm = batch.period_month
+    try:
+        y_str, m_str = (pm or "").strip().split("/")[:2]
+        y, m = int(y_str), int(m_str)
+        if 1 <= m <= 12:
+            return y, m
+    except (ValueError, TypeError):
+        pass
+    key = (batch.ragic_id, pm)
+    if key not in _BAD_BATCH_WARNED:
+        _BAD_BATCH_WARNED.add(key)
+        logging.getLogger(__name__).warning(
+            f"[PM] 批次月份格式不符，統計時略過：ragic_id={batch.ragic_id!r} "
+            f"journal_no={getattr(batch, 'journal_no', None)!r} period_month={pm!r}"
+        )
+    return None
+
+
 def _get_check_month(period_month: str) -> int:
     """從 'YYYY/MM' 取得月份整數；若解析失敗則用今天的月份。"""
     try:
@@ -452,8 +482,10 @@ def _calc_period_stats_core(
             exec_months = json.loads(item.exec_months_json or "[]")
         except Exception:
             exec_months = []
-        batch_year_num  = int(batch.period_month.split("/")[0])
-        batch_month_num = int(batch.period_month.split("/")[1])
+        _ym = _batch_ym(batch)
+        if _ym is None:
+            continue
+        batch_year_num, batch_month_num = _ym
         if exec_months and batch_month_num not in exec_months:
             continue
 
@@ -658,8 +690,10 @@ def _calc_year_matrix(db: Session, year: int, frequency_type: Optional[str] = No
             exec_months = json.loads(item.exec_months_json or "[]")
         except Exception:
             exec_months = []
-        batch_year_num  = int(batch.period_month.split("/")[0])
-        batch_month_num = int(batch.period_month.split("/")[1])
+        _ym = _batch_ym(batch)
+        if _ym is None:
+            continue
+        batch_year_num, batch_month_num = _ym
         if exec_months and batch_month_num not in exec_months:
             continue
         # full_date = 批次月份 1 日（不依賴 scheduled_date）
@@ -1110,8 +1144,10 @@ def get_year_matrix_items(
             exec_months = json.loads(item.exec_months_json or "[]")
         except Exception:
             exec_months = []
-        batch_year_num  = int(batch.period_month.split("/")[0])
-        batch_month_num = int(batch.period_month.split("/")[1])
+        _ym = _batch_ym(batch)
+        if _ym is None:
+            continue
+        batch_year_num, batch_month_num = _ym
         if exec_months and batch_month_num not in exec_months:
             continue
         # full_date = 批次月份 1 日（不依賴 scheduled_date）

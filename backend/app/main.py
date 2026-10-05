@@ -2341,11 +2341,23 @@ if _FRONTEND_DIST.exists():
     async def favicon():
         return FileResponse(_FRONTEND_DIST / "favicon.svg")
 
+    # ⚠️ 安全（2026-10-05）：不可把 full_path 直接接到 dist 再 is_file()。
+    #    舊寫法 `_FRONTEND_DIST / full_path` 沒有限制範圍，GET /../../backend/.env
+    #    （或 %2e%2e 編碼）會直接回傳 .env；在 Windows 上傳 UNC 路徑
+    #    （\\host\share）還會讓 is_file() 主動連 SMB，外洩服務帳號 NTLM 雜湊。
+    #    改成啟動時列出 dist 內的實體檔案當白名單，使用者輸入的路徑只做字串比對，
+    #    完全不碰檔案系統。dist 重建後需重啟後端才會認得新增的「非 assets」檔案
+    #    （prod-update 本來就會重啟；/assets 由上方 StaticFiles 處理，不受影響）。
+    _DIST_FILES = frozenset(
+        p.relative_to(_FRONTEND_DIST).as_posix()
+        for p in _FRONTEND_DIST.rglob("*")
+        if p.is_file()
+    )
+
     @app.get("/{full_path:path}", include_in_schema=False)
     async def spa_fallback(full_path: str):
         # 若 dist 中存在對應的實體檔案（例如靜態 HTML 頁面），直接回傳；
         # 否則一律回傳 index.html 讓前端 Router 處理（SPA 模式）
-        candidate = _FRONTEND_DIST / full_path
-        if candidate.is_file():
-            return FileResponse(str(candidate))
+        if full_path in _DIST_FILES:
+            return FileResponse(str(_FRONTEND_DIST / full_path))
         return FileResponse(str(_FRONTEND_DIST / "index.html"))
