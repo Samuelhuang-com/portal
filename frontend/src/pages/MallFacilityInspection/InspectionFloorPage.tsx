@@ -28,6 +28,7 @@ import {
   fetchMallFacilityBatches,
   type MallFIStats,
 } from '@/api/mallFacilityInspection'
+import MallFloorInspectionList from './MallFloorInspectionList'
 
 const { Title, Text } = Typography
 
@@ -112,9 +113,8 @@ export default function InspectionFloorPage({ sheetKey }: InspectionFloorPagePro
   }, [sheetKey, yearMonth])
 
   useEffect(() => { loadDashboard() }, [loadDashboard])
-  useEffect(() => {
-    if (activeTab === 'list') loadBatches()
-  }, [activeTab, loadBatches])
+  // 2026-10-05：「巡檢紀錄」Tab 改用共用 MallFloorInspectionList（含明細 Drawer），清單由元件自己載入；
+  //   下方 loadBatches／ListTab 保留未用（不再掛到 Tab 上）
 
   // ── Tab 1：主管儀表板 ──────────────────────────────────────────────────────
 
@@ -401,7 +401,7 @@ export default function InspectionFloorPage({ sheetKey }: InspectionFloorPagePro
         onChange={setActiveTab}
         items={[
           { key: 'dashboard', label: '主管儀表板', children: DashboardTab },
-          { key: 'list',      label: '巡檢紀錄',   children: ListTab },
+          { key: 'list',      label: '巡檢紀錄',   children: activeTab === 'list' ? <MallFloorInspectionList sheetKey={sheetKey} /> : null },
         ]}
       />
     </div>

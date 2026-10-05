@@ -219,6 +219,49 @@ def day_issues(sheet: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     return out
 
 
+# ── 單一欄位狀態（樓層 TAB 場次清單／明細 Drawer 用，2026-10-05）──────────────
+# 與每日巡檢表、月曆格同一套判定，三個畫面的異常數才會一致：
+#   版型內選項欄 → judge_status；溫度／濕度／度數等填數字欄 → measure（記錄值）；
+#   版型外欄位   → 正常字樣算 normal、明確異常字樣算 abnormal/pending，其餘算 measure；
+#   異常說明、建立日期這類附註欄 → note（不算巡檢項目）。
+_READING_FIELDS: dict[str, set[str]] = {}
+for (_k, _c), _spec in FIELD_MAP.items():
+    if _spec["kind"] == "reading":
+        _READING_FIELDS.setdefault(_k, set()).update(f for f, _ in _spec["fields"])
+
+
+def item_status(sheet_key: str, item_name: str, raw: str, is_note: bool = False) -> str:
+    from app.services.inspection_field_rules import is_meta_field
+
+    name = (item_name or "").strip()
+    raw  = (raw or "").strip()
+    if is_note or is_meta_field(name) or _is_text_field(name):
+        return "note"
+    if not raw:
+        return "unchecked"
+    if name in _READING_FIELDS.get(sheet_key, set()) or _NUMERIC_RE.match(raw):
+        return "measure"
+    st = judge_status(raw)
+    if name in _REFERENCED.get(sheet_key, set()) or st == "normal":
+        return st
+    return st if _EXPLICIT_ISSUE_RE.search(raw) else "measure"
+
+
+def item_kpi(sheet_key: str, items: Iterable[Any]) -> dict[str, Any]:
+    """場次 KPI（排除附註欄）：total／checked／normal／abnormal／pending／unchecked／measure／completion_rate。"""
+    sts = [item_status(sheet_key, it.item_name, it.result_raw, bool(getattr(it, "is_note", False))) for it in items]
+    sts = [x for x in sts if x != "note"]
+    c = {k: sum(1 for x in sts if x == k) for k in ("normal", "abnormal", "pending", "unchecked", "measure")}
+    total = len(sts)
+    checked = total - c["unchecked"]
+    return {
+        "total":           total,
+        "checked":         checked,
+        **c,
+        "completion_rate": round(checked / total * 100, 1) if total else 0.0,
+    }
+
+
 # ── 主函式（純資料，不碰 DB，方便測試）────────────────────────────────────────
 
 def build_daily_sheet(

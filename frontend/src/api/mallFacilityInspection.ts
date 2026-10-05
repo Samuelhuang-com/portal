@@ -59,6 +59,32 @@ export interface MallFIBatchRow {
   abnormal:        number
   pending:         number
   completion_rate: number
+  // 2026-10-05 新增（判定與每日巡檢表 Drawer 相同）
+  work_hours?:     string
+  ragic_url?:      string
+  unchecked?:      number
+  measure?:        number   // 記錄值（溫度、度數…），不算異常
+}
+
+// ── 場次明細（樓層 TAB 點列開 Drawer）2026-10-05 ─────────────────────────────
+export type MallFIItemStatus = 'normal' | 'abnormal' | 'pending' | 'unchecked' | 'measure' | 'note'
+
+export interface MallFIBatchDetail {
+  batch: {
+    ragic_id:        string
+    sheet_key:       string
+    inspection_date: string
+    inspector_name:  string
+    start_time:      string
+    end_time:        string
+    work_hours:      string
+    ragic_url:       string
+  }
+  kpi: {
+    total: number; checked: number; normal: number; abnormal: number
+    pending: number; unchecked: number; measure: number; completion_rate: number
+  }
+  items: { ragic_id: string; seq_no: number; item_name: string; result_raw: string; status: MallFIItemStatus }[]
 }
 
 export interface MallFISheetSummary {
@@ -125,6 +151,14 @@ export async function fetchMallFacilityBatches(
   params: { year_month?: string },
 ): Promise<MallFIBatchRow[]> {
   const res = await apiClient.get<MallFIBatchRow[]>(`${BASE}/${sheetKey}/batches`, { params })
+  return res.data
+}
+
+/**
+ * 取得指定樓層單一巡檢場次明細（樓層 TAB 明細 Drawer 用）
+ */
+export async function fetchMallFacilityBatchDetail(sheetKey: string, batchId: string): Promise<MallFIBatchDetail> {
+  const res = await apiClient.get<MallFIBatchDetail>(`${BASE}/${sheetKey}/batches/${encodeURIComponent(batchId)}`)
   return res.data
 }
 

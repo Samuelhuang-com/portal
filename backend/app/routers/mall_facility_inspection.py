@@ -332,27 +332,94 @@ def list_batches(
 
     batches = q.order_by(MallFIBatch.inspection_date.desc()).all()
 
+    # 2026-10-05：異常／待處理改用與每日巡檢表 Drawer 相同的判定（item_kpi）——
+    #   原本 _calc_kpi 沿用同步時的 result_status，溫度、度數被算成異常，清單每天「有異常」。
+    #   item 一次查完，不再每個場次查一次。
+    from app.services.mall_daily_inspection_sheet import item_kpi, ragic_record_url
+
+    items_by_batch: dict[str, list[MallFIItem]] = {b.ragic_id: [] for b in batches}
+    ids = list(items_by_batch.keys())
+    for i in range(0, len(ids), 500):
+        for it in db.query(MallFIItem).filter(MallFIItem.batch_ragic_id.in_(ids[i:i + 500])).all():
+            items_by_batch.setdefault(it.batch_ragic_id, []).append(it)
+
     result = []
     for b in batches:
-        items = (
-            db.query(MallFIItem)
-            .filter(MallFIItem.batch_ragic_id == b.ragic_id)
-            .all()
-        )
-        kpi = _calc_kpi(items)
+        kpi = item_kpi(sheet_key, items_by_batch.get(b.ragic_id, []))
         result.append({
             "id":              b.ragic_id,
             "inspection_date": b.inspection_date,
             "inspector_name":  b.inspector_name,
             "start_time":      b.start_time,
             "end_time":        b.end_time,
+            "work_hours":      b.work_hours,
+            "ragic_url":       ragic_record_url(sheet_key, b.ragic_id),
             "total":           kpi["total"],
             "checked":         kpi["checked"],
             "abnormal":        kpi["abnormal"],
             "pending":         kpi["pending"],
+            "unchecked":       kpi["unchecked"],
+            "measure":         kpi["measure"],
             "completion_rate": kpi["completion_rate"],
         })
     return result
+
+
+# ── GET /{sheet_key}/batches/{batch_id}  — 場次明細（樓層 TAB 點列開 Drawer）────
+# 2026-10-05 新增：比照整棟巡檢 FloorInspectionList 的明細 Drawer。
+# 每個欄位的 status 用 item_status（與每日巡檢表 Drawer、月曆格同一套判定）。
+# 附圖：商場 sync 不收「拍照」欄位（_extract_check_items 排除），DB 沒有檔名，這裡不回附圖。
+
+@router.get(
+    "/{sheet_key}/batches/{batch_id}",
+    summary="取得指定樓層單一巡檢場次明細",
+    tags=["春大直商場工務巡檢"],
+)
+def get_batch_detail(
+    sheet_key: str,
+    batch_id:  str,
+    db: Session = Depends(get_db),
+):
+    from app.services.mall_daily_inspection_sheet import item_kpi, item_status, ragic_record_url
+
+    if sheet_key not in VALID_KEYS:
+        raise HTTPException(status_code=404, detail=f"未知的 sheet_key: {sheet_key}")
+    b = (
+        db.query(MallFIBatch)
+        .filter(MallFIBatch.sheet_key == sheet_key, MallFIBatch.ragic_id == batch_id)
+        .first()
+    )
+    if not b:
+        raise HTTPException(status_code=404, detail=f"找不到場次：{batch_id}")
+    items = (
+        db.query(MallFIItem)
+        .filter(MallFIItem.batch_ragic_id == b.ragic_id)
+        .order_by(MallFIItem.seq_no)
+        .all()
+    )
+    return {
+        "batch": {
+            "ragic_id":        b.ragic_id,
+            "sheet_key":       b.sheet_key,
+            "inspection_date": b.inspection_date,
+            "inspector_name":  b.inspector_name,
+            "start_time":      b.start_time,
+            "end_time":        b.end_time,
+            "work_hours":      b.work_hours,
+            "ragic_url":       ragic_record_url(sheet_key, b.ragic_id),
+        },
+        "kpi":   item_kpi(sheet_key, items),
+        "items": [
+            {
+                "ragic_id":    it.ragic_id,
+                "seq_no":      it.seq_no,
+                "item_name":   it.item_name,
+                "result_raw":  it.result_raw,
+                "status":      item_status(sheet_key, it.item_name, it.result_raw, bool(it.is_note)),
+            }
+            for it in items
+        ],
+    }
 
 
 # ══════════════════════════════════════════════════════════════════════════════
