@@ -1,6 +1,8 @@
-fastapi==0.111.1
+fastapi==0.142.2          # 2026-10-05 由 0.111.1 升級（Starlette／python-multipart CVE）
+starlette==1.7.0          # 明確鎖定：修 CVE-2026-48818（Windows StaticFiles UNC→NTLM）等 6 個
 uvicorn[standard]==0.30.1
-pydantic==2.7.4
+pydantic==2.9.2           # FastAPI 0.142 要求 >=2.9，取最小相容版以減少行為差異
+email-validator==2.3.0    # FastAPI 0.112 起不再附帶；schemas 用 EmailStr，缺了後端無法啟動
 pydantic-settings==2.3.4
 sqlalchemy==2.0.31
 aiosqlite==0.20.0
@@ -9,7 +11,7 @@ passlib[bcrypt]==1.7.4
 bcrypt==4.0.1
 PyJWT==2.8.0
 cryptography==42.0.8
-python-multipart==0.0.9
+python-multipart==0.0.32  # 修上傳 DoS 等 8 個 CVE
 pandas==2.2.2
 openpyxl==3.1.4
 python-pptx==1.0.2
