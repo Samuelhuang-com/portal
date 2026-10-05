@@ -1643,8 +1643,17 @@ def export_work_journal_excel(
     wb = openpyxl.Workbook()
     wb.remove(wb.active)
 
-    # 彙總 Sheet 用：[(人員, 該人 Sheet 實際名稱, 合計列列號, 工作天數公式（跨表引用）)]
-    summary_rows: list[tuple[str, str, int, str]] = []
+    # 彙總 Sheet 用：數值皆由 Python 算好寫入（不寫 Excel 公式，見下方當日小計註解）
+    def _round_half_up(x: float) -> int:
+        """與 Excel ROUND(x,0) 一致的四捨五入（Python round() 是銀行家捨入）。"""
+        from decimal import Decimal, ROUND_HALF_UP
+        return int(Decimal(str(x)).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+
+    def _num_out(x):
+        """整數值的 float 轉 int，避免 Excel 顯示 2596.0。"""
+        return int(x) if isinstance(x, float) and x.is_integer() else x
+
+    summary_rows: list[tuple[str, float, int]] = []  # (人員, 合計工時 min, 工作天)
 
     for pname in persons_order:
         ws = wb.create_sheet(title=xlsx_safe(pname or "未指定")[:31])
@@ -1761,7 +1770,8 @@ def export_work_journal_excel(
                 row_idx += 1
                 day_seq = 0  # reset seq per day
 
-            day_first_row = row_idx  # 當日小計 SUM 的起點（日期分隔列之後）
+            day_first_row = row_idx  # 當日第一筆資料列（日期分隔列之後）
+            day_min = 0              # 當日工時小計（Python 直接算，不寫 Excel 公式）
 
             # 依起始時間排序
             sorted_rows = sorted(
@@ -1779,8 +1789,9 @@ def export_work_journal_excel(
 
                 cat = r.get("category", "")
                 wm  = r.get("work_min")
-                if isinstance(wm, int):
+                if isinstance(wm, (int, float)) and not isinstance(wm, bool):
                     total_min += wm
+                    day_min   += wm
                 cat_col = CAT_COLS.get(cat)
 
                 # 項次
@@ -1847,7 +1858,9 @@ def export_work_journal_excel(
                 )
                 row_idx += 1
 
-            # 多日模式：當日小計列（工時欄 =SUM）；單日模式小計＝合計，不重複加
+            # 多日模式：當日小計列（工時欄寫算好的數值）；單日模式小計＝合計，不重複加
+            # ⚠️ 2026-10-05 起一律寫數值、不寫公式：openpyxl 不存公式計算結果，
+            #    Excel「受保護的檢視」不重算 → 外部使用者打開看到空白。
             if is_multi_day:
                 for c in range(1, NCOLS + 1):
                     cell = ws.cell(row=row_idx, column=c)
@@ -1860,7 +1873,7 @@ def export_work_journal_excel(
                 sc.font      = Font(bold=True, size=10, color="1B3A5C")
                 sc.alignment = RIGHT
                 ws.merge_cells(f"A{row_idx}:J{row_idx}")
-                kc = ws.cell(row=row_idx, column=11, value=f"=SUM(K{day_first_row}:K{row_idx - 1})")
+                kc = ws.cell(row=row_idx, column=11, value=_num_out(day_min))
                 kc.font      = Font(bold=True, size=10, color="1B3A5C")
                 kc.alignment = CENTER
                 day_subtotal_cells.append(f"K{row_idx}")
@@ -1880,42 +1893,27 @@ def export_work_journal_excel(
             cell.alignment = CENTER
             cell.font      = Font(size=10)
 
-        # 工時欄合計（=SUM）：多日＝各日小計相加（避免把小計列重複加總），單日＝資料列 SUM
-        if day_subtotal_cells:
-            _total_formula = "=" + "+".join(day_subtotal_cells)
-        elif row_idx > data_first_row:
-            _total_formula = f"=SUM(K{data_first_row}:K{row_idx - 1})"
-        else:
-            _total_formula = 0
-        kt = ws.cell(row=total_row, column=11, value=_total_formula)
+        # 工時欄合計：多日＝各日小計相加，單日＝資料列加總（兩者都等於 total_min）
+        kt = ws.cell(row=total_row, column=11, value=_num_out(total_min))
         kt.font = Font(bold=True, size=10, color="1B3A5C")
 
-        # 工作天數（公式）：多日＝當日小計列的個數（＝有紀錄的天數）；單日＝有任何一筆工作事項即 1
+        # 工作天數：多日＝當日小計列的個數（＝有紀錄的天數）；單日＝有任何一筆工作事項即 1
         if day_subtotal_cells:
-            _days_expr = f"COUNT({','.join(day_subtotal_cells)})"
+            _days = len(day_subtotal_cells)
         elif row_idx > data_first_row:
-            _days_expr = f"MIN(1,COUNTA(G{data_first_row}:G{row_idx - 1}))"
+            _days = 1
         else:
-            _days_expr = "0"
-        _avg_expr = f"IF({_days_expr}=0,0,ROUND(K{total_row}/{_days_expr},0))"
-
-        # 同一個天數公式，改成跨表引用版給彙總 Sheet 用（'人員'!K9 …）
-        _q = "'" + ws.title.replace("'", "''") + "'!"
-        if day_subtotal_cells:
-            _days_expr_q = f"COUNT({','.join(_q + c for c in day_subtotal_cells)})"
-        elif row_idx > data_first_row:
-            _days_expr_q = f"MIN(1,COUNTA({_q}G{data_first_row}:G{row_idx - 1}))"
-        else:
-            _days_expr_q = "0"
-        summary_rows.append((pname or "未指定", ws.title, total_row, _days_expr_q))
+            _days = 0
+        _avg = _round_half_up(total_min / _days) if _days else 0
+        summary_rows.append((pname or "未指定", total_min, _days))
 
         # 合計工時欄（L:M 合併）：「18個工作天(平均144min/天)，合計工時：2596 min」
-        # 三個數字全部是公式（天數、平均、合計都引用工作表內的儲存格），手動改工時會跟著重算
+        # 2026-10-05 起寫成純文字（原為公式，受保護的檢視下顯示空白）
         tc = ws.cell(
             row=total_row, column=12,
             value=(
-                f'={_days_expr}&"個工作天(平均"&{_avg_expr}&"min/天)，'
-                f'合計工時："&K{total_row}&" min"'
+                f"{_days}個工作天(平均{_num_out(_avg)}min/天)，"
+                f"合計工時：{_num_out(total_min)} min"
             ),
         )
         tc.font      = Font(bold=True, size=10, color="1B3A5C")
@@ -1977,18 +1975,17 @@ def export_work_journal_excel(
         hc.alignment = CENTER
         hc.border = _border()
     sr = 5
-    for _pn, _title, _trow, _days_q in summary_rows:
-        _ref = "'" + _title.replace("'", "''") + "'"
+    for _pn, _pmin, _pdays in summary_rows:
         a = ws_sum.cell(row=sr, column=1, value=xlsx_safe(_pn))
         a.alignment = LEFT
         a.border = _border()
-        b = ws_sum.cell(row=sr, column=2, value=f"={_ref}!K{_trow}")
+        b = ws_sum.cell(row=sr, column=2, value=_num_out(_pmin))
         b.alignment = CENTER
         b.border = _border()
-        c_ = ws_sum.cell(row=sr, column=3, value=f"={_days_q}")
+        c_ = ws_sum.cell(row=sr, column=3, value=_pdays)
         c_.alignment = CENTER
         c_.border = _border()
-        d_ = ws_sum.cell(row=sr, column=4, value=f"=IF(C{sr}=0,0,ROUND(B{sr}/C{sr},0))")
+        d_ = ws_sum.cell(row=sr, column=4, value=_round_half_up(_pmin / _pdays) if _pdays else 0)
         d_.alignment = CENTER
         d_.border = _border()
         sr += 1
@@ -1998,10 +1995,13 @@ def export_work_journal_excel(
     a.alignment = CENTER
     a.border = _border(t="medium", b="medium")
     # 合計列：工時、工作天（人天）加總；平均＝總工時 ÷ 總人天（加權平均，不是各人平均再平均）
+    # 2026-10-05 起全部寫數值（原為公式）
+    _sum_min  = sum(x[1] for x in summary_rows)
+    _sum_days = sum(x[2] for x in summary_rows)
     _sum_vals = {
-        2: f"=SUM(B5:B{sr - 1})" if summary_rows else 0,
-        3: f"=SUM(C5:C{sr - 1})" if summary_rows else 0,
-        4: f"=IF(C{sr}=0,0,ROUND(B{sr}/C{sr},0))",
+        2: _num_out(_sum_min),
+        3: _sum_days,
+        4: _round_half_up(_sum_min / _sum_days) if _sum_days else 0,
     }
     for _ci, _v in _sum_vals.items():
         b = ws_sum.cell(row=sr, column=_ci, value=_v)
