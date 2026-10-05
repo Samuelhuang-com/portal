@@ -92,7 +92,7 @@ class FullBuildingInspectionProvider(FloorMapProvider):
     edit_permission = "mall_full_building_inspection_floor_map_edit"
     floors          = ["rf", "b1f", "b2f", "b4f"]
     default_floor   = "b4f"
-    attr_fields     = ["機房位置"]
+    attr_fields     = ["機房位置", "供應區域"]
 
     def groups(self) -> list[dict[str, Any]]:
         return [
