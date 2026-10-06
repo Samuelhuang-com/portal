@@ -18,18 +18,19 @@ export const JOURNAL_SOURCES = [
 ] as const
 export type JournalSource = typeof JOURNAL_SOURCES[number]
 
+// 2026-10-06：來源名稱統一為側邊選單（navLabels.ts）上的名稱；須與後端 work_journal.py SOURCE_LABEL 一致
 export const SOURCE_LABEL: Record<JournalSource, string> = {
-  dazhi:        '飯店工務',
-  luqun:        '商場工務',
-  hotel_pm:     '飯店週期保養',
+  dazhi:        '飯店工務報修',
+  luqun:        '商場工務報修',
+  hotel_pm:     '飯店例行維護',
   ihg:          'IHG客房保養',
   hotel_di:     '飯店每日巡檢',
-  mall_pm:      '商場週期保養',
-  full_bldg_pm: '整棟保養',
-  mall_fi:      '商場設施巡檢',
+  mall_pm:      '商場例行維護',
+  full_bldg_pm: '全棟例行維護',
+  mall_fi:      '商場工務巡檢',
   full_bi:      '整棟巡檢',
-  hotel_mr:     '飯店水電錶抄表',
-  other_tasks:  '主管交辦/緊急事件',
+  hotel_mr:     '每日數值登錄表',
+  other_tasks:  '主管交辦／緊急事件',
 }
 
 export const CATEGORY_COLOR: Record<JournalCategory, string> = {

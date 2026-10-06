@@ -287,6 +287,13 @@ class Settings(BaseSettings):
     #       只能靠人工翻 log 才會發現。詳見 services/sync_alert_service.py 檔頭。
     ALERT_EMAIL_TO:  str  = ""
 
+    # ── 人員動線 TAB 白名單（2026-10-05 新增）──────────────────────────────────
+    # 逗號或分號分隔的「Portal 登入 email」。**留空＝沒有任何人看得到**（含系統管理員）。
+    # 刻意不用權限 key：system_admin 的 "*" 會自動通過所有 key（CLAUDE.md §11.4 禁改其語意），
+    # 而人員動線是員工行蹤資料，使用者裁示「管理員也要限制、只有指定的人看得到」。
+    # 各 Server 的 .env 各自設定；改完需重啟後端。
+    STAFF_PATH_ALLOWED_EMAILS: str = ""
+
     # ── 便利屬性：統一取 server prefix ───────────────────────────────────────
     @property
     def ragic_server_prefix(self) -> str:

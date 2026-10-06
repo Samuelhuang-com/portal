@@ -53,6 +53,7 @@ from app.models.b4f_inspection  import B4FInspectionBatch
 from app.models.rf_inspection   import RFInspectionBatch
 from app.models.hotel_meter_readings import HotelMRBatch
 from app.models.other_tasks          import OtherTask, OtherTaskRecord
+from app.models.menu_config          import MenuConfig
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
 
@@ -60,21 +61,62 @@ router = APIRouter(dependencies=[Depends(get_current_user)])
 
 CATEGORIES = ["現場報修", "上級交辦", "緊急事件", "例行維護", "每日巡檢"]
 
+# 2026-10-06：來源名稱統一為側邊選單（navLabels.ts）上的名稱
 SOURCE_LABEL = {
-    "dazhi":        "飯店工務",
-    "luqun":        "商場工務",
-    "hotel_pm":     "飯店週期保養",
+    "dazhi":        "飯店工務報修",
+    "luqun":        "商場工務報修",
+    "hotel_pm":     "飯店例行維護",
     "ihg":          "IHG客房保養",
     "hotel_di":     "飯店每日巡檢",
-    "mall_pm":      "商場週期保養",
-    "full_bldg_pm": "整棟保養",
-    "mall_fi":      "商場設施巡檢",
+    "mall_pm":      "商場例行維護",
+    "full_bldg_pm": "全棟例行維護",
+    "mall_fi":      "商場工務巡檢",
     "full_bi":      "整棟巡檢",
-    "hotel_mr":     "飯店水電錶抄表",
-    "other_tasks":  "主管交辦/緊急事件",
+    "hotel_mr":     "每日數值登錄表",
+    "other_tasks":  "主管交辦／緊急事件",
 }
 
 SORT_ORDER = list(SOURCE_LABEL.keys())
+
+# 2026-10-06：「來源」名稱跟著各 Server 的側邊選單走。
+# 選單管理（settings/menu-config）改過名稱 → menu_configs.custom_label 有值 → 以它為準；
+# 沒改過 → 用上方 SOURCE_LABEL（＝navLabels.ts 預設選單名稱）。
+# key：一級群組用群組 key、頁面用路由（同 MainLayout.menuItems 的 key）。
+SOURCE_MENU_KEY: dict[str, str] = {
+    "dazhi":        "dazhi-repair",
+    "luqun":        "luqun-repair",
+    "hotel_pm":     "/hotel/periodic-maintenance",
+    "ihg":          "/hotel/ihg-room-maintenance",
+    "hotel_di":     "/hotel/daily-inspection",
+    "mall_pm":      "/mall/periodic-maintenance",
+    "full_bldg_pm": "/mall/full-building-maintenance",
+    "mall_fi":      "/mall-facility-inspection/dashboard",
+    "full_bi":      "/full-building-inspection/dashboard",
+    "hotel_mr":     "/hotel/daily-meter-readings",
+    "other_tasks":  "/hotel/other-tasks",
+}
+# 選單常帶排序編號（例「2. IHG客房保養」），當來源名稱時去掉
+_MENU_NUM_PREFIX = re.compile(r"^\s*\d+(?:\.\d+)*\.?\s+")
+
+
+def _source_labels(db: Session) -> dict[str, str]:
+    """回傳 {source: 顯示名稱}；選單自訂名稱優先，查不到就用預設。"""
+    labels = dict(SOURCE_LABEL)
+    try:
+        rows = (
+            db.query(MenuConfig.menu_key, MenuConfig.custom_label)
+            .filter(MenuConfig.menu_key.in_(list(SOURCE_MENU_KEY.values())))
+            .all()
+        )
+    except Exception:
+        db.rollback()   # 查詢失敗不能讓同一個 session 後續查詢跟著失敗
+        return labels
+    custom = {k: (v or "").strip() for k, v in rows}
+    for src, key in SOURCE_MENU_KEY.items():
+        v = custom.get(key)
+        if v:
+            labels[src] = _MENU_NUM_PREFIX.sub("", v) or v
+    return labels
 
 # ── Ragic 直連 URL ─────────────────────────────────────────────────────────────
 # 全部模組均位於 ap12.ragic.com / soutlet001
@@ -1168,6 +1210,11 @@ def _build_daily(
 
     if venue in ("hotel", "mall"):
         all_rows = [r for r in all_rows if _row_venue(r) == venue]
+
+    # 來源名稱跟著本 Server 的選單設定（見 _source_labels）
+    labels = _source_labels(db)
+    for r in all_rows:
+        r["source_label"] = labels.get(r["source"], r["source_label"])
 
     person_map: dict[str, list[dict]] = defaultdict(list)
     for r in all_rows:

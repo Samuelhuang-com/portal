@@ -77,6 +77,8 @@ import {
   type OtherTaskTypeStat,
 } from '@/api/otherTasks'
 import { fetchLastUpdated, type LastUpdatedResult } from '@/api/ragic'
+import StaffPathTab from './StaffPathTab'
+import { fetchStaffPathAccess } from '@/api/staffPath'
 
 import type { Dayjs } from 'dayjs'
 dayjs.extend(relativeTime)
@@ -1246,6 +1248,9 @@ export default function ExecWorkDashboardPage() {
   // 受控 Collapse activeKey（全收合/全展開用）
   // 頁籤狀態
   const [activeTab, setActiveTab] = useState<string>('overview')
+  // 人員動線 TAB：只有後端白名單內的帳號才顯示（系統管理員也受限，見 work_journal_path.py）
+  const [staffPathAllowed, setStaffPathAllowed] = useState(false)
+  useEffect(() => { fetchStaffPathAccess().then(setStaffPathAllowed) }, [])
 
   const ALL_DAILY_KEYS    = ['hotel-daily', 'mall-daily']
   const ALL_ANALYSIS_KEYS = ['exec-daily', 'exec-monthly', 'exec-person-daily', 'exec-burden', 'unit-comparison', 'category-matrix', 'alerts']
@@ -2270,6 +2275,13 @@ export default function ExecWorkDashboardPage() {
               </>
             ),
           },
+          // 人員動線：白名單帳號才看得到（STAFF_PATH_ALLOWED_EMAILS）
+          ...(staffPathAllowed ? [{
+            // 2026-10-05 新增：人員動線（工作日誌工作地點 × 時間；客房層標準層平面圖）
+            key: 'staff-path',
+            label: '人員動線',
+            children: <StaffPathTab />,
+          }] : []),
           {
             key: 'methodology',
             label: '統計基準說明',

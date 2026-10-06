@@ -106,6 +106,7 @@ from app.routers import (
     wiki,
     employee_manual_export,
     work_journal,
+    work_journal_path,
     nichiyo_purchase_report,
     nichiyo_claim_report,
     taichung_purchase_report,
@@ -2095,6 +2096,13 @@ app.include_router(
     work_journal.router,
     prefix=f"{API_PREFIX}/work-journal",
     tags=["工作日誌"],
+)
+
+# ── 人員動線（集團工務決策駕駛艙 TAB；工作日誌位置解析）────────────────────────
+app.include_router(
+    work_journal_path.router,
+    prefix=f"{API_PREFIX}/work-journal/path",
+    tags=["人員動線"],
 )
 
 # ── 新增：日曜核准請購單月報表 ──────────────────────────────────────────────────
