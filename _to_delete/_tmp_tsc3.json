@@ -1,0 +1,2 @@
+{ "extends": "./tsconfig.json", "compilerOptions": { "noEmit": true, "skipLibCheck": true, "incremental": false },
+  "include": [], "files": ["src/pages/ExecWorkDashboard/StaffWorkHelp.tsx","src/pages/ExecWorkDashboard/staffPoses.tsx","src/pages/ExecWorkDashboard/StaffWorkBoard.tsx","src/pages/ExecWorkDashboard/StaffPathTab.tsx","src/vite-env.d.ts"] }

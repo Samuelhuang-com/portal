@@ -62,6 +62,8 @@ export interface PathStop {
   work_min:    number | null
   estimated:   boolean
   overlap:     boolean
+  open?:       boolean         // 已打卡開始、尚未填結束（進行中）
+  pose?:       string          // 工作視角人物樣式 P01～P15（後端 _pose_of）
   venue:       'hotel' | 'mall'
   points?:     PathPoint[]       // 商場工務巡檢／整棟巡檢才有
   row:         JournalRow

@@ -16,12 +16,13 @@ import { Button, Progress, Segmented, Slider, Space, Tag, Tooltip, Typography } 
 import {
   CaretRightOutlined, PauseOutlined, FieldTimeOutlined, AimOutlined, InfoCircleOutlined,
 } from '@ant-design/icons'
-import dayjs from 'dayjs'
+import type { Dayjs } from 'dayjs'
 
 import type { StaffPathDay, PathStop, HotelFloorPlan } from '@/api/staffPath'
 import {
   PANEL_TEXT, PANEL_MUTED, GRID, fmtMin, useWidth, Panel, buildCenterline, floorsText, type Pt,
 } from './staffPathShared'
+import { ClockBar, stopEndMin, type DayClock } from './staffClock'
 
 const { Text } = Typography
 
@@ -68,8 +69,10 @@ const shortName = (n: string) => (n.length <= 2 ? n : n.slice(-2))
 
 // ══════════════════════════════════════════════════════════════════════════════
 export default function StaffLiveBoard({
-  data, plan, colorOf, onOpenStop, onFocusPerson,
+  data, plan, colorOf, onOpenStop, onFocusPerson, clock, loadedAt,
 }: {
+  clock: DayClock
+  loadedAt?: Dayjs | null
   data: StaffPathDay
   plan: HotelFloorPlan | null
   colorOf: (p: string) => string
@@ -98,7 +101,7 @@ export default function StaffLiveBoard({
     const wps: WP[] = []
     p.stops.filter(s => s.start_min != null).forEach(s => {
       const t0 = s.start_min as number
-      const t1 = Math.max(t0 + 5, s.end_min ?? (t0 + (s.work_min ?? 10)))
+      const t1 = stopEndMin(s, clock.isToday, clock.now)
       const spread = 0.12 + 0.76 * (((pi * 0.37) + (s.seq * 0.137)) % 1)
       if (s.points?.length) {
         const n = s.points.length, d = (t1 - t0) / n
@@ -116,47 +119,11 @@ export default function StaffLiveBoard({
     })
     wps.sort((a, b) => a.t0 - b.t0)
     return { person: p.person, wps }
-  }), [data, roomXf])
+  }), [data, roomXf, clock.isToday, clock.now])
 
-  // ── 時間範圍 ──
-  const [T0, T1] = useMemo(() => {
-    const ts = tracks.flatMap(t => t.wps.flatMap(w => [w.t0, w.t1]))
-    if (!ts.length) return [480, 1080]
-    return [Math.floor((Math.min(...ts) - 20) / 30) * 30, Math.ceil((Math.max(...ts) + 20) / 30) * 30]
-  }, [tracks])
-
-  const isToday = data.date === dayjs().format('YYYY-MM-DD')
-  const nowMin = () => dayjs().hour() * 60 + dayjs().minute()
-  const [t, setT] = useState<number>(() => (isToday ? Math.min(Math.max(nowMin(), T0), T1) : T0))
-  const [playing, setPlaying] = useState(false)
-  const [speed, setSpeed] = useState<number>(10)     // 每秒前進幾分鐘
+  // ── 時間：共用時鐘（大樓視角／工作視角同一個時間；今天預設 LIVE）──
+  const { t, T0, T1 } = clock
   const [hover, setHover] = useState<string | null>(null)
-
-  // 換日／換資料：回到起點（今天則跳到現在）
-  useEffect(() => {
-    setPlaying(false)
-    setT(isToday ? Math.min(Math.max(nowMin(), T0), T1) : T0)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, T0, T1])
-
-  // 播放迴圈
-  const raf = useRef<number | null>(null)
-  useEffect(() => {
-    if (!playing) return
-    let last = performance.now()
-    const step = (now: number) => {
-      const dt = (now - last) / 1000
-      last = now
-      setT(prev => {
-        const n = prev + dt * speed
-        if (n >= T1) { setPlaying(false); return T1 }
-        return n
-      })
-      raf.current = requestAnimationFrame(step)
-    }
-    raf.current = requestAnimationFrame(step)
-    return () => { if (raf.current) cancelAnimationFrame(raf.current) }
-  }, [playing, speed, T1])
 
   // ── 每人在時間 t 的狀態 ──
   const stateAt = useCallback((wps: WP[], tt: number): PState => {
@@ -238,16 +205,6 @@ export default function StaffLiveBoard({
   const counts: Record<Mode, number> = { work: 0, move: 0, idle: 0, off: 0, done: 0 }
   states.forEach(s => { counts[s.st.mode]++ })
 
-  // ── 忙碌度直條（每 10 分鐘工作中人數）──
-  const buckets = useMemo(() => {
-    const out: { m: number; n: number }[] = []
-    for (let m = T0; m < T1; m += 10) {
-      const n = tracks.filter(tr => tr.wps.some(w => w.t0 < m + 10 && w.t1 > m)).length
-      out.push({ m, n })
-    }
-    return out
-  }, [tracks, T0, T1])
-  const maxB = Math.max(1, ...buckets.map(b => b.n))
 
   // ── 事件跑馬燈 ──
   const events = useMemo(() => {
@@ -255,11 +212,12 @@ export default function StaffLiveBoard({
     data.persons.forEach(p => p.stops.forEach(s => {
       if (s.start_min == null) return
       ev.push({ k: `${p.person}-${s.seq}-s`, m: s.start_min, person: p.person, kind: 'start', stop: s })
-      const e = s.end_min ?? (s.start_min + (s.work_min ?? 10))
+      if (s.open && clock.isToday) return          // 進行中：還沒完成
+      const e = stopEndMin(s, clock.isToday, clock.now)
       ev.push({ k: `${p.person}-${s.seq}-e`, m: e, person: p.person, kind: 'end', stop: s })
     }))
     return ev.sort((a, b) => a.m - b.m)
-  }, [data])
+  }, [data, clock.isToday, clock.now])
   const recent = events.filter(e => e.m <= t).slice(-7).reverse()
 
   const ordered = [...states].sort((a, b) =>
@@ -280,26 +238,8 @@ export default function StaffLiveBoard({
         .slb-card:hover { background: rgba(75,168,232,0.16) !important; transform: translateX(2px) }
       `}</style>
 
-      {/* ── 時鐘列 ── */}
-      <Panel title={null} fill={false}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 18, flexWrap: 'wrap' }}>
-          <div style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', fontSize: 40, fontWeight: 700,
-                        color: '#fff', letterSpacing: 2, lineHeight: 1, minWidth: 128, textShadow: '0 0 18px rgba(75,168,232,0.55)' }}>
-            {fmtMin(Math.floor(t))}
-          </div>
-          <Space size={6}>
-            <Button type="primary" shape="circle" size="large"
-                    icon={playing ? <PauseOutlined /> : <CaretRightOutlined />}
-                    onClick={() => { if (!playing && t >= T1) setT(T0); setPlaying(p => !p) }} />
-            <Segmented size="small" value={speed} onChange={v => setSpeed(v as number)}
-                       options={[{ label: '慢', value: 3 }, { label: '中', value: 10 }, { label: '快', value: 30 }]} />
-            {isToday && (
-              <Tooltip title="跳到現在">
-                <Button size="small" ghost icon={<FieldTimeOutlined />}
-                        onClick={() => { setPlaying(false); setT(Math.min(Math.max(nowMin(), T0), T1)) }}>現在</Button>
-              </Tooltip>
-            )}
-          </Space>
+      {/* ── 時鐘列（共用）── */}
+      <ClockBar clock={clock} data={data} loadedAt={loadedAt} legend={<>
           <Space size={12} wrap>
             {(['work', 'move', 'idle', 'off', 'done'] as Mode[]).map(m => (
               <span key={m} style={{ color: PANEL_TEXT, fontSize: 13 }}>
@@ -311,30 +251,7 @@ export default function StaffLiveBoard({
           <Tooltip title="人員位置來自工作日誌的工作地點；兩站之間經電梯、走道的移動是畫面推定，不是定位軌跡。上下班以 1F 大廳為進出點（推定）。">
             <Text style={{ color: PANEL_MUTED, fontSize: 12, marginLeft: 'auto' }}><InfoCircleOutlined /> 移動為推定</Text>
           </Tooltip>
-        </div>
-
-        {/* 忙碌度直條＋時間軸 */}
-        <div style={{ marginTop: 10 }}>
-          <svg width="100%" height={34} viewBox={`0 0 ${buckets.length * 10} 34`} preserveAspectRatio="none"
-               style={{ display: 'block', cursor: 'pointer' }}
-               onClick={e => {
-                 const r = (e.currentTarget as SVGSVGElement).getBoundingClientRect()
-                 setPlaying(false); setT(T0 + ((e.clientX - r.left) / r.width) * (T1 - T0))
-               }}>
-            {buckets.map((b, i) => (
-              <rect key={b.m} x={i * 10 + 1} y={34 - (b.n / maxB) * 32} width={8} height={(b.n / maxB) * 32}
-                    rx={1.5} fill={b.m <= t ? '#4BA8E8' : 'rgba(127,155,184,0.35)'} />
-            ))}
-            <rect x={((t - T0) / (T1 - T0)) * buckets.length * 10 - 0.75} y={0} width={1.5} height={34} fill="#fff" />
-          </svg>
-          <Slider min={T0} max={T1} step={1} value={Math.round(t)} style={{ margin: '4px 2px 0' }}
-                  onChange={v => { setPlaying(false); setT(v as number) }}
-                  tooltip={{ formatter: v => fmtMin(v ?? 0) }} />
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: PANEL_MUTED }}>
-            <span>{fmtMin(T0)}</span><span>每條＝10 分鐘內工作中的人數</span><span>{fmtMin(T1)}</span>
-          </div>
-        </div>
-      </Panel>
+        </>} />
 
       <div style={{ display: 'flex', gap: 12, marginTop: 12, flexWrap: 'wrap', alignItems: 'flex-start' }}>
         {/* ── 大樓剖面 ── */}
@@ -485,6 +402,7 @@ export default function StaffLiveBoard({
                       </span>
                       <b style={{ color: '#fff' }}>{person}</b>
                       <Tag color={meta.color} style={{ margin: 0, color: '#0d1e30', fontWeight: 600 }}>{meta.label}</Tag>
+                      {st.mode === 'work' && st.wp?.stop.open && <Tag color="red" style={{ margin: 0 }}>進行中</Tag>}
                       <span style={{ marginLeft: 'auto', color: '#4BA8E8', fontSize: 13 }}>
                         {st.mode === 'off' || st.mode === 'done' ? '' : where(st)}
                       </span>

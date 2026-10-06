@@ -27,6 +27,7 @@ from app.dependencies import get_current_user, require_permission
 from app.models.user import User
 from app.routers.work_journal import _build_daily, _row_venue, _MALL_FI_PATHS, _FULL_BI_PATHS
 from app.models.floor_map import FloorMapPoint
+from app.services.dazhi_repair_service import normalize_repair_type
 from app.services.floor_map.providers import get_provider
 from app.services.staff_path.locator import (
     FLOOR_INDEX, building_floors, load_hotel_plan, resolve_row,
@@ -81,6 +82,49 @@ def _minutes(dt_full: str, hm: str, base: _date) -> Optional[int]:
     return None
 
 
+# ── 工作視角人物樣式（2026-10-06 使用者採用 P01～P15）───────────────────────────
+# 由上往下，第一個符合的就用；前端 staffPoses.tsx 依代碼畫人物。
+_PM_SOURCES = {"hotel_pm", "mall_pm", "full_bldg_pm"}
+_TRAIN_RE = re.compile(r"訓練|上課|會議|講習")
+_LOCK_RE = re.compile(r"門鎖|房卡|讀卡|電子鎖")
+_REPAIR_POSE = {   # 報修類型（normalize_repair_type 標準類型）→ 樣式
+    "空調": "P08",
+    "衛廁": "P09", "給排水": "P09",
+    "機電": "P10", "照明": "P10",
+    "內裝": "P11", "建築": "P11",
+    "弱電": "P12", "監控": "P12",
+}
+
+
+def _pose_of(r: dict) -> str:
+    src = r.get("source") or ""
+    task = r.get("task") or ""
+    cat = r.get("category") or ""
+    if src == "other_tasks" and cat == "緊急事件":
+        return "P13"                       # 緊急事件・警示燈奔跑
+    if _TRAIN_RE.search(task):
+        return "P14"                       # 白板・訓練／會議
+    if src == "full_bi":
+        return "P02"                       # 整棟巡檢（機房／地下室）＝安全帽＋手電筒
+    if src in ("mall_fi", "hotel_di"):
+        return "P03"                       # 商場工務巡檢／飯店每日巡檢＝安全帽＋檢查板
+    if src == "hotel_mr":
+        return "P04"                       # 抄表
+    if src in _PM_SOURCES:
+        return "P05"                       # 例行維護＝安全帽＋扳手
+    if src == "ihg":
+        return "P06"                       # 客房保養＝清潔推車
+    if src in ("dazhi", "luqun"):
+        if _LOCK_RE.search(task):
+            return "P12"                   # 門鎖（資料上常歸「內裝」，以關鍵字優先）
+        d = r.get("detail") or {}
+        t = normalize_repair_type(d.get("報修類型") or "", d.get("標題") or task, d.get("發生樓層") or "")
+        return _REPAIR_POSE.get(t, "P07")  # 其他報修＝提工具箱
+    if src == "other_tasks":
+        return "P15"                       # 上級交辦＝拿文件走動
+    return "P01"                           # 預設＝坐著打字
+
+
 def _build_stops(rows: list[dict], base: _date) -> list[dict[str, Any]]:
     stops = []
     for r in rows:
@@ -88,6 +132,8 @@ def _build_stops(rows: list[dict], base: _date) -> list[dict[str, Any]]:
         st = _minutes(r.get("start_dt") or "", r.get("start_time") or "", base)
         et = _minutes(r.get("end_dt") or "", r.get("end_time") or "", base)
         wm = r.get("work_min")
+        # 進行中：已打卡開始、還沒填結束（2026-10-06，工作視角／LIVE 用）
+        is_open = st is not None and not (r.get("end_dt") or r.get("end_time"))
         if st is not None and et is None and wm:
             et = st + int(wm)
         if st is not None and et is not None and et < st:
@@ -101,6 +147,8 @@ def _build_stops(rows: list[dict], base: _date) -> list[dict[str, Any]]:
             "start_dt": r.get("start_dt") or "",
             "end_dt": r.get("end_dt") or "",
             "work_min": wm,
+            "open": is_open,
+            "pose": _pose_of(r),
             # 沒有實際起迄、工時只是預估（週期保養 fallback）——畫面需可辨識
             "estimated": bool(r.get("est_min")) and not (r.get("start_time") or r.get("end_time")),
             "venue": _row_venue(r),

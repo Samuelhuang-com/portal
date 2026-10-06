@@ -35,6 +35,8 @@ import {
 import type { JournalVenue } from '@/api/workJournal'
 import JournalRowDrawer from '@/components/WorkJournal/JournalRowDrawer'
 import StaffLiveBoard from './StaffLiveBoard'
+import StaffWorkBoard from './StaffWorkBoard'
+import { useDayClock } from './staffClock'
 import { FLOOR_MAP_STATUS } from '@/components/FloorPlanMap/status'
 import {
   PANEL_BG, PANEL_TEXT, PANEL_MUTED, GRID, PERSON_COLORS,
@@ -469,8 +471,9 @@ export default function StaffPathTab() {
   const [playIdx, setPlayIdx] = useState<number | null>(null)
   const [playing, setPlaying] = useState(false)
   const [drawerStop, setDrawerStop] = useState<PathStop | null>(null)
-  // 畫面：全員動態（時鐘看板）／個人動線
-  const [view, setView] = useState<'live' | 'person'>('live')
+  // 畫面：大樓視角（剖面時鐘看板）／工作視角（辦公室）／個人動線　2026-10-06 改名＋新增工作視角
+  const [view, setView] = useState<'live' | 'work' | 'person'>('live')
+  const [loadedAt, setLoadedAt] = useState<Dayjs | null>(null)
 
   // ── 全螢幕（只把本 TAB 放大；彈出層全部掛在本容器內，否則全螢幕時看不到）──
   const rootRef = useRef<HTMLDivElement>(null)
@@ -491,6 +494,7 @@ export default function StaffPathTab() {
     try {
       const d = await fetchStaffPathDay(date.format('YYYY-MM-DD'), venue)
       setData(d)
+      setLoadedAt(dayjs())
       setPerson(prev => (prev && d.persons.some(p => p.person === prev)) ? prev : (d.persons[0]?.person ?? null))
     } catch (e: any) {
       setError(e?.response?.data?.detail ?? e?.message ?? '載入失敗')
@@ -501,6 +505,29 @@ export default function StaffPathTab() {
   }, [date, venue])
 
   useEffect(() => { load() }, [load])
+
+  // ── 共用時鐘（大樓視角／工作視角）：今天預設 LIVE ──
+  const clock = useDayClock(data)
+  // LIVE：每 5 分鐘靜默重抓（不轉圈、不重置時間）
+  useEffect(() => {
+    if (!clock.live) return
+    const id = window.setInterval(async () => {
+      try {
+        const d = await fetchStaffPathDay(date.format('YYYY-MM-DD'), venue)
+        setData(d)
+        setLoadedAt(dayjs())
+      } catch { /* 下一輪再試 */ }
+    }, 5 * 60 * 1000)
+    return () => window.clearInterval(id)
+  }, [clock.live, date, venue])
+  // LIVE 跨過午夜：自動換到新的一天（只在「看的是昨天＝剛剛的今天」時觸發，不干擾手動換日）
+  const todayRef = useRef<string>(dayjs().format('YYYY-MM-DD'))
+  useEffect(() => {
+    const today = dayjs().format('YYYY-MM-DD')
+    const prev = todayRef.current
+    todayRef.current = today
+    if (prev !== today && clock.live && data?.date === prev) setDate(dayjs())
+  }, [clock.now, clock.live, data])
   useEffect(() => {
     fetchHotelFloorPlan().then(setPlan).catch(() => setPlan(null))
   }, [])
@@ -621,7 +648,7 @@ export default function StaffPathTab() {
     <div style={isFs ? { height: '100%', overflowY: 'auto', overflowX: 'hidden', padding: 16 } : undefined}>
       {isFs && (
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 10 }}>
-          <span style={{ fontSize: 20, fontWeight: 700, color: '#1B3A5C' }}>人員動線</span>
+          <span style={{ fontSize: 20, fontWeight: 700, color: '#1B3A5C' }}>人員動態</span>
           <Text type="secondary">集團工務決策駕駛艙｜{date.format('YYYY-MM-DD')}（{['日', '一', '二', '三', '四', '五', '六'][date.day()]}）</Text>
           <Text type="secondary" style={{ fontSize: 12, marginLeft: 'auto' }}>按 Esc 離開全螢幕</Text>
         </div>
@@ -635,8 +662,8 @@ export default function StaffPathTab() {
             <Button size="small" icon={<RightOutlined />} onClick={() => setDate(d => d.add(1, 'day'))} />
             <Button size="small" onClick={() => setDate(dayjs())}>今天</Button>
             <Segmented
-              value={view} onChange={v => setView(v as 'live' | 'person')}
-              options={[{ label: '全員動態', value: 'live' }, { label: '個人動線', value: 'person' }]}
+              value={view} onChange={v => setView(v as 'live' | 'work' | 'person')}
+              options={[{ label: '大樓視角', value: 'live' }, { label: '工作視角', value: 'work' }, { label: '個人動線', value: 'person' }]}
             />
             <Segmented size="small" value={venue} onChange={v => setVenue(v as JournalVenue)}
                        options={[{ label: '全部', value: 'all' }, { label: '飯店', value: 'hotel' }, { label: '商場', value: 'mall' }]} />
@@ -707,6 +734,17 @@ export default function StaffPathTab() {
             data={data}
             plan={plan}
             colorOf={colorOf}
+            clock={clock}
+            loadedAt={loadedAt}
+            onOpenStop={openStop}
+            onFocusPerson={p => { setPerson(p); setView('person') }}
+          />
+        ) : data && view === 'work' ? (
+          <StaffWorkBoard
+            data={data}
+            colorOf={colorOf}
+            clock={clock}
+            loadedAt={loadedAt}
             onOpenStop={openStop}
             onFocusPerson={p => { setPerson(p); setView('person') }}
           />

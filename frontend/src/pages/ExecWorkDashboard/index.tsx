@@ -2279,7 +2279,7 @@ export default function ExecWorkDashboardPage() {
           ...(staffPathAllowed ? [{
             // 2026-10-05 新增：人員動線（工作日誌工作地點 × 時間；客房層標準層平面圖）
             key: 'staff-path',
-            label: '人員動線',
+            label: '人員動態',
             children: <StaffPathTab />,
           }] : []),
           {
