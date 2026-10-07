@@ -13,8 +13,14 @@
   跑同一批寫入。鎖檔案固定跟 portal.db 放同一個資料夾（從 DATABASE_URL 推算），
   搬到 C:\\Portal_Data\\ 之後，鎖檔案自然也在那裡，不受 OneDrive 同步影響。
 
-  若 DATABASE_URL 已經不是 SQLite（例如日後遷移到 PostgreSQL），這把鎖視為
-  不需要（PostgreSQL 原生支援多行程並發寫入），直接放行、不阻塞。
+  ⚠️ 2026-10-07 更正：原本這裡寫「DATABASE_URL 不是 SQLite（例如 PostgreSQL）
+  就視為不需要這把鎖，直接放行」——**這個判斷是錯的**。PostgreSQL 能讓兩個寫入
+  同時進行，但各同步的子表是「整批 delete 再 insert」，同一個模組同時跑兩次時，
+  在預設的 READ COMMITTED 下兩邊各刪一次、各寫一份 → **子表資料變兩份**。
+  切到 PG（2026-08-29）之後這把鎖就一直是空的，sync_tool、後端排程、
+  「▶ 同步」按鈕之間完全沒有互斥。
+  現在 PostgreSQL 改用 **pg_advisory_lock**（見下方 _PgAdvisoryLock），
+  語意與檔案鎖相同：全站同一時間只有一個同步在寫。
 
 用法：
   後端（FastAPI，async 呼叫端）：
@@ -33,6 +39,8 @@
 import asyncio
 import logging
 import re
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
@@ -52,6 +60,147 @@ logger = logging.getLogger(__name__)
 DEFAULT_TIMEOUT = 90.0
 
 _SQLITE_URL_RE = re.compile(r"^sqlite(\+\w+)?:///")
+_PG_URL_RE     = re.compile(r"^postgres(ql)?(\+\w+)?://")
+
+# PostgreSQL advisory lock 的鑰匙（2026-10-07）。
+# advisory lock 本來就以「資料庫」為範圍，每個 Server 的 portal 庫各自一把，互不影響。
+# 刻意用一把全站共用的鑰匙（不分模組），與 SQLite 時代的單一 .sync.lock 檔案語意相同：
+# 同一時間只有一個同步在寫（廠商資料 → 週採供應商這類順序相依的同步也因此不會交錯）。
+# ⚠️ 數值必須 < 2^31：describe_lock_owner() 用 pg_locks 的 classid=0 / objid 反查持有者。
+_PG_LOCK_KEY = 20261007
+
+# 取得鎖之後，在持鎖連線上執行一句帶註解的 SELECT，讓 pg_stat_activity.query
+# 留下「誰拿著鎖」。application_name 只收 ASCII（中文會變問號），所以模組名稱放這裡。
+_PG_OWNER_TAG = "portal_sync_lock_owner"
+
+
+def _is_pg() -> bool:
+    return bool(_PG_URL_RE.match(settings.DATABASE_URL))
+
+
+# 每條執行緒各自的持鎖狀態（比照 filelock 預設 thread_local=True 的語意）：
+#   同一條執行緒巢狀取鎖 → 只加計數，不再向 PG 要一次（否則會自己等自己到逾時）；
+#   不同執行緒 → 各自向 PG 取鎖，彼此互斥。
+_pg_tls = threading.local()
+
+
+class _PgAdvisoryLock:
+    """
+    PostgreSQL 版跨行程鎖，介面與 filelock.FileLock 相同（acquire(timeout)／release()），
+    讓 sync_lock()／async_sync_lock() 不需要分兩套寫法。
+
+    - 用一條**專用連線**（AUTOCOMMIT）持有 session-level advisory lock：
+      連線處於 idle（不是 idle in transaction），不會被 PG_IDLE_IN_TX_TIMEOUT_SEC 誤殺；
+      也因為沒有 COMMIT 蓋掉，pg_stat_activity.query 會停在帶持有者註解的那一句。
+    - 行程被硬砍 → 連線斷 → PG 自動釋放鎖。不會像檔案鎖那樣留下過期的持有者資訊。
+    - 逾時一樣 raise filelock.Timeout，呼叫端的 except 不用改。
+    """
+
+    def __init__(self, timeout: float, module_name: str = ""):
+        self._timeout = timeout
+        self._module = module_name or "(unnamed)"
+
+    @staticmethod
+    def _state():
+        if not hasattr(_pg_tls, "depth"):
+            _pg_tls.depth = 0
+            _pg_tls.conn = None
+        return _pg_tls
+
+    @property
+    def is_locked(self) -> bool:
+        return self._state().depth > 0
+
+    def acquire(self, timeout: Optional[float] = None) -> None:
+        from sqlalchemy import text
+        from app.core.database import engine   # 延遲匯入：避免 import 期就建連線
+
+        st = self._state()
+        if st.depth > 0:                       # 同一執行緒巢狀取鎖
+            st.depth += 1
+            return
+
+        limit = self._timeout if timeout is None else timeout
+        deadline = time.monotonic() + max(0.0, limit)
+        conn = engine.connect().execution_options(isolation_level="AUTOCOMMIT")
+        try:
+            while True:
+                got = conn.execute(text("SELECT pg_try_advisory_lock(:k)"),
+                                   {"k": _PG_LOCK_KEY}).scalar()
+                if got:
+                    break
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise Timeout(f"pg_advisory_lock({_PG_LOCK_KEY})")
+                time.sleep(min(1.0, remaining))
+
+            host, pid = worker_identity()
+            safe = lambda v: str(v).replace("*/", "").replace("%", "").replace("\t", " ")
+            conn.exec_driver_sql(
+                "SELECT set_config('application_name', 'portal_sync_lock', false)"
+                f" /* {_PG_OWNER_TAG}\t{safe(self._module)}\t{safe(host)}\t{pid}\t"
+                f"{datetime.now().isoformat(timespec='seconds')} */"
+            )
+        except BaseException:
+            try:
+                conn.close()
+            except Exception:                  # pragma: no cover
+                conn.invalidate()
+            raise
+
+        st.conn = conn
+        st.depth = 1
+
+    def release(self) -> None:
+        from sqlalchemy import text
+
+        st = self._state()
+        if st.depth <= 0:
+            return
+        st.depth -= 1
+        if st.depth > 0:
+            return
+        conn, st.conn = st.conn, None
+        if conn is None:                       # pragma: no cover
+            return
+        try:
+            conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": _PG_LOCK_KEY})
+            conn.exec_driver_sql("SELECT set_config('application_name', '', false)")
+            conn.close()
+        except Exception:
+            # 解鎖失敗就直接丟掉這條連線：連線一斷，PG 一定會釋放 session-level 鎖
+            logger.warning("[SyncLock] pg_advisory_unlock 失敗，改為中斷連線釋放鎖", exc_info=True)
+            try:
+                conn.invalidate()
+            except Exception:                  # pragma: no cover
+                pass
+
+
+def _describe_pg_owner() -> str:
+    """PostgreSQL 版：從 pg_locks + pg_stat_activity 查目前是誰握著鎖。"""
+    from sqlalchemy import text
+    from app.core.database import engine
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(text(
+                "SELECT a.pid, a.query, a.client_addr::text, a.state "
+                "FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid "
+                "WHERE l.locktype = 'advisory' AND l.granted "
+                "  AND l.classid = 0 AND l.objid = :k AND l.objsubid = 1"
+            ), {"k": _PG_LOCK_KEY}).all()
+    except Exception as exc:                   # pragma: no cover
+        return f"（查不到持有者：{exc}）"
+    if not rows:
+        return "（目前沒有人持有鎖 —— 可能剛好已經釋放，可以直接重試）"
+    pg_pid, query, addr, state = rows[0]
+    module = host = os_pid = started = "?"
+    if query and _PG_OWNER_TAG in query:
+        parts = query.split(_PG_OWNER_TAG, 1)[1].split("*/", 1)[0].strip("\t ").split("\t")
+        if len(parts) >= 4:
+            module, host, os_pid, started = (p.strip() for p in parts[:4])
+    return (f"持有者：{module}（{host} pid={os_pid}，自 {started} 起；"
+            f"PG 連線 pid={pg_pid} {addr or 'local'}）—— 連線仍在，鎖有效；"
+            f"該行程結束時 PostgreSQL 會自動釋放")
 
 
 def _lock_file_path() -> Optional[Path]:
@@ -68,7 +217,10 @@ def _lock_file_path() -> Optional[Path]:
     return db_path.parent / ".sync.lock"
 
 
-def _make_lock(timeout: float) -> Optional[FileLock]:
+def _make_lock(timeout: float, module_name: str = ""):
+    """SQLite → 檔案鎖；PostgreSQL → advisory lock；其他資料庫 → None（不鎖）。"""
+    if _is_pg():
+        return _PgAdvisoryLock(timeout, module_name)
     path = _lock_file_path()
     if path is None:
         return None
@@ -133,6 +285,8 @@ def describe_lock_owner() -> str:
     ⚠️ 一定要交代**可信度**：owner 檔可能是上次硬中斷留下的過期資訊。
        同機器就用 pid 實際確認；跨機器只能照實說「無法確認」。
     """
+    if _is_pg():
+        return _describe_pg_owner()
     path = _owner_path()
     if path is None or not path.exists():
         return "（找不到持有者資訊 —— 可能是舊版留下的鎖，或剛好已經釋放）"
@@ -179,7 +333,7 @@ def sync_lock(module_name: str = "", timeout: float = DEFAULT_TIMEOUT,
        （舊版 log 寫「本次略過」但實際上往外拋，沒有任何呼叫端接住它，
         於是使用者看到的是一段 traceback。訊息與行為不一致比沒訊息更糟。）
     """
-    lock = _make_lock(timeout)
+    lock = _make_lock(timeout, module_name)
     if lock is None:
         yield
         return
@@ -241,7 +395,7 @@ async def async_sync_lock(module_name: str = "", timeout: float = DEFAULT_TIMEOU
       release() 一定跑在同一條 OS 執行緒上，徹底避開 filelock 的 thread-local
       陷阱（不依賴特定 filelock 版本是否支援 thread_local=False 參數）。
     """
-    lock = _make_lock(timeout)
+    lock = _make_lock(timeout, module_name)
     if lock is None:
         yield
         return

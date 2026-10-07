@@ -40,6 +40,14 @@ class Settings(BaseSettings):
     # 僅使用者／角色／權限沿用既有 portal.db（見 app/core/cycle_purchase_database.py）。
     CYCLE_PURCHASE_DATABASE_URL: str = "sqlite:///./cycle-purchase.db"
 
+    # ── PostgreSQL：卡住的交易自動結束（2026-10-07）────────────────────────────
+    # 連線停在「idle in transaction」（開了交易、沒 commit 也沒在執行）超過這個秒數，
+    # PostgreSQL 會結束該連線並 rollback，避免某支程式一直握著列鎖不放。
+    # 單位秒；0 ＝ 不設定（沿用 PG 伺服器本身的設定）。只對 postgresql 連線生效。
+    # ⚠️ 量的是「每一段閒置」而不是整筆交易總長：同步迴圈中間呼叫 Ragic 的空檔
+    #    遠小於 10 分鐘，所以正常同步不會被誤殺。
+    PG_IDLE_IN_TX_TIMEOUT_SEC: int = 600
+
     # ── Database — 預算系統（獨立 SQLite 檔案，可透過 .env 覆寫路徑）──────────
     # 2026-07-15：與 Samuel 確認正式區/開發機 DB 統一搬離 OneDrive 同步資料夾。
     # 預設空字串 = 維持舊行為（相對於專案根目錄的 budget_system_v1.sqlite，

@@ -56,8 +56,16 @@ export_router = APIRouter()
 # ── 共用 DB 讀取 helper ────────────────────────────────────────────────────────
 
 def load_cases_from_db(db: Session) -> list[LuqunRepairCase]:
-    """從本地 SQLite 載入所有商場報修案件（ORM 物件與 RepairCase 介面相容）。"""
-    return db.query(LuqunRepairCase).all()
+    """從本地 DB 載入商場報修案件（ORM 物件與 RepairCase 介面相容）。
+
+    排除 Ragic 端已刪除的案件（sync 的 Ghost 偵測會標記 is_ragic_deleted=True）。
+    用 IS NOT TRUE 而非 == False，舊資料若為 NULL 也視為未刪除。
+    """
+    return (
+        db.query(LuqunRepairCase)
+        .filter(LuqunRepairCase.is_ragic_deleted.isnot(True))
+        .all()
+    )
 
 
 # ── /db-images/{ragic_id} — 直接從 DB 讀 images_json ────────────────────────
@@ -460,7 +468,8 @@ async def verify_count(db: Session = Depends(get_db)):
     from sqlalchemy import desc as _desc
 
     def _read_local():
-        portal_count = db.query(LuqunRepairCase).count()
+        # 本地保留的 Ragic 已刪除案件不算，否則永遠與 Ragic 筆數對不上
+        portal_count = db.query(LuqunRepairCase).filter(LuqunRepairCase.is_ragic_deleted.isnot(True)).count()
         last_log = (
             db.query(ModuleSyncLog)
             .filter(ModuleSyncLog.module_name == "商場工務報修")

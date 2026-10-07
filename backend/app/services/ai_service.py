@@ -106,6 +106,8 @@ TOOLS = [
 
 def _apply_filters(q, model, params: dict):
     """套用共用篩選條件到 SQLAlchemy query"""
+    # 排除 Ragic 端已刪除的案件（大直／樂群兩個 model 都有 is_ragic_deleted）
+    q = q.filter(model.is_ragic_deleted.isnot(True))
     floor = params.get("floor", "")
     year = params.get("year")
     month = params.get("month")

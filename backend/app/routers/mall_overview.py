@@ -109,7 +109,7 @@ def get_mall_daily_hours(
     case_bucket: dict[str, dict[int, int]] = {c: defaultdict(int) for c in MALL_CATEGORIES}
 
     # ── ① 現場報修：_stat_dt 口徑（已結案→completed_at，其餘→occurred_at，排除取消）─
-    for c in db.query(LuqunRepairCase).all():
+    for c in db.query(LuqunRepairCase).filter(LuqunRepairCase.is_ragic_deleted.isnot(True)).all():  # 排除 Ragic 端已刪除
         if c.is_excluded_flag:
             continue
         stat_dt = c.completed_at if (c.is_completed_flag and c.completed_at) else c.occurred_at
@@ -314,7 +314,7 @@ def get_mall_monthly_hours(
     year_prefix = f"{year}/"
 
     # ── ① 現場報修：_stat_dt 口徑（已結案→completed_at，其餘→occurred_at，排除取消）─
-    for c in db.query(LuqunRepairCase).all():
+    for c in db.query(LuqunRepairCase).filter(LuqunRepairCase.is_ragic_deleted.isnot(True)).all():  # 排除 Ragic 端已刪除
         if c.is_excluded_flag:
             continue
         stat_dt = c.completed_at if (c.is_completed_flag and c.completed_at) else c.occurred_at
@@ -487,7 +487,10 @@ def get_mall_person_hours(
     ph: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
 
     # ── ① 現場報修：acceptor ─────────────────────────────────────────────────
-    for c in db.query(LuqunRepairCase).filter(LuqunRepairCase.occ_year == year).all():
+    for c in db.query(LuqunRepairCase).filter(
+        LuqunRepairCase.occ_year == year,
+        LuqunRepairCase.is_ragic_deleted.isnot(True),  # 排除 Ragic 端已刪除
+    ).all():
         person = (c.acceptor or "").strip()
         if person and person != "未指定" and (c.work_hours or 0) > 0:
             ph[person]["現場報修"] += c.work_hours

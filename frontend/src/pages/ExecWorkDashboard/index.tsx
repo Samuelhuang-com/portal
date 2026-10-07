@@ -1219,6 +1219,13 @@ const SYNC_MODULES = [
   '主管交辦／緊急事件',
 ]
 
+// ── 「資料更新於」只看最新的那一個來源，會遮住其他停在舊資料的來源（2026-10-07）──
+// 例：只有商場工務報修剛同步完，畫面就顯示「最新」，其餘 9 個來源停在昨天也看不出來。
+// 所以另外列出「最舊來源」；最舊與最新相差超過這個時數、或有來源查無資料時，改用橘色提醒。
+// 依各模組在 sync_tool 的排程頻率調整；目前最慢的是每日一次，故取 24 小時。
+const STALE_GAP_HOURS = 24
+const STALE_COLOR = '#d46b08'
+
 export default function ExecWorkDashboardPage() {
   const navigate = useNavigate()
 
@@ -1227,6 +1234,15 @@ export default function ExecWorkDashboardPage() {
   const [loading,     setLoading]     = useState(true)
   // 「更新於」＝資料庫最後同步寫入時間（非畫面重新整理時刻）
   const [dataUpdated, setDataUpdated] = useState<LastUpdatedResult | null>(null)
+  // 最舊來源（後端 modules 已由新到舊排序，最後一筆就是最舊）與落後時數
+  const oldestSrc = dataUpdated?.modules?.length
+    ? dataUpdated.modules[dataUpdated.modules.length - 1]
+    : null
+  const staleGapHours = oldestSrc && dataUpdated?.last_updated
+    ? dayjs(dataUpdated.last_updated).diff(dayjs(oldestSrc.last_updated), 'hour', true)
+    : 0
+  const notReported = dataUpdated?.missing ?? []
+  const isStale = staleGapHours > STALE_GAP_HOURS || notReported.length > 0
 
   // 年月篩選狀態（工務報修 + 工項比較表）
   const [selectedYear,   setSelectedYear]   = useState<number>(dayjs().year())
@@ -1407,11 +1423,17 @@ export default function ExecWorkDashboardPage() {
                 dataUpdated?.modules?.length ? (
                   <div style={{ fontSize: 12, lineHeight: 1.7 }}>
                     <div style={{ marginBottom: 4 }}>各來源資料表最後寫入時間：</div>
-                    {dataUpdated.modules.map(m => (
-                      <div key={m.module_name}>
-                        {m.module_name}：{dayjs(m.last_updated).format('MM/DD HH:mm')}
-                      </div>
-                    ))}
+                    {dataUpdated.modules.map(m => {
+                      const lag = dataUpdated.last_updated
+                        ? dayjs(dataUpdated.last_updated).diff(dayjs(m.last_updated), 'hour', true)
+                        : 0
+                      return (
+                        <div key={m.module_name}>
+                          {lag > STALE_GAP_HOURS ? '⚠ ' : ''}
+                          {m.module_name}：{dayjs(m.last_updated).format('MM/DD HH:mm')}
+                        </div>
+                      )
+                    })}
                     {dataUpdated.missing?.length ? (
                       <div style={{ marginTop: 4 }}>
                         查無資料：{dataUpdated.missing.join('、')}
@@ -1433,6 +1455,18 @@ export default function ExecWorkDashboardPage() {
               重新整理
             </Button>
           </Space>
+          {oldestSrc && (
+            <Text
+              type={isStale ? undefined : 'secondary'}
+              style={{ fontSize: 12, ...(isStale ? { color: STALE_COLOR } : {}) }}
+            >
+              {isStale && <WarningOutlined style={{ marginRight: 4 }} />}
+              最舊來源：{oldestSrc.module_name}{' '}
+              {dayjs(oldestSrc.last_updated).format('MM/DD HH:mm')}
+              {staleGapHours >= 1 ? `（落後 ${Math.floor(staleGapHours)} 小時）` : ''}
+              {notReported.length ? `；查無資料：${notReported.join('、')}` : ''}
+            </Text>
+          )}
         </Space>
       </div>
 

@@ -158,7 +158,7 @@ def _load_all(db: Session, sources: set[str]) -> list[dict]:
     # 人員：responsible_unit（= Ragic「處理工務」）
     # 工時：work_hours（= 花費工時 HR；若無則 工務處理天數×24）
     if "luqun" in sources:
-        for c in db.query(LuqunRepairCase).all():
+        for c in db.query(LuqunRepairCase).filter(LuqunRepairCase.is_ragic_deleted.isnot(True)).all():  # 排除 Ragic 端已刪除
             if not c.occurred_at or not c.work_hours or c.work_hours <= 0:
                 continue
             dt = _stat_dt_for(c)
@@ -180,7 +180,7 @@ def _load_all(db: Session, sources: set[str]) -> list[dict]:
     #       ⚠️  不用 responsible_unit（= 反應單位，如「房務部」，是部門不是個人）
     # 工時：work_hours（= 維修天數×24 HR；若無則花費工時 HR）
     if "dazhi" in sources:
-        for c in db.query(DazhiRepairCase).all():
+        for c in db.query(DazhiRepairCase).filter(DazhiRepairCase.is_ragic_deleted.isnot(True)).all():  # 排除 Ragic 端已刪除
             if not c.occurred_at or not c.work_hours or c.work_hours <= 0:
                 continue
             dt = _stat_dt_for(c)

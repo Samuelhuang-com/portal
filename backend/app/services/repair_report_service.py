@@ -131,10 +131,10 @@ def get_unfinished_cases(
     exclude_ragic_deleted: bool = False,
 ) -> dict:
     """
-    ⚠️ exclude_ragic_deleted（2026-09-16，**僅飯店、僅 PPT 傳 True**）：
-       Ragic 端已刪除的報修單在同步時只會標 is_ragic_deleted、本地保留，
-       hotel/overview 匯出 PPT 不應列出。預設 False —— 未完成報表網頁／Excel／
-       排程寄信維持原行為（使用者裁示只改飯店 PPT）。
+    ⚠️ Ragic 端已刪除的案件（is_ragic_deleted）一律排除（2026-10-07 使用者裁示，
+       飯店＋商場、網頁／Excel／排程寄信／PPT 全部適用，推翻 2026-09-16
+       「僅飯店 PPT 排除」的裁示）。exclude_ragic_deleted 參數僅為相容舊呼叫端保留，
+       已無作用。
     聚合飯店 + 商場未完成案件。
     過濾條件依 occurred_at（報修日期）的年月分組。
 
@@ -191,13 +191,10 @@ def get_unfinished_cases(
 
     # ── 飯店（大直工務部）──────────────────────────────────────────────────
     if source in ("all", "hotel"):
-        for c in db.query(DazhiRepairCase).all():
+        for c in db.query(DazhiRepairCase).filter(DazhiRepairCase.is_ragic_deleted.isnot(True)).all():  # 排除 Ragic 端已刪除
             # 2026-08-27：改用 is_excluded_flag —— Ragic 的「作廢」寫在獨立的
             # 「狀態」欄（record_status），只看 c.status 永遠比對不到。
             if c.is_excluded_flag:
-                continue
-            # 2026-09-16：PPT 專用——排除 Ragic 端已刪除的單
-            if exclude_ragic_deleted and getattr(c, "is_ragic_deleted", False):
                 continue
             # 2026-09-02：今日現況——只看案件「現在」的處理狀態。
             # 不再用 finished_at 做時點回溯，理由見本函式 docstring。
@@ -212,7 +209,7 @@ def get_unfinished_cases(
 
     # ── 商場（商場工務報修）─────────────────────────────────────────────────
     if source in ("all", "mall"):
-        for c in db.query(LuqunRepairCase).all():
+        for c in db.query(LuqunRepairCase).filter(LuqunRepairCase.is_ragic_deleted.isnot(True)).all():  # 排除 Ragic 端已刪除
             # 2026-08-27：同上，改用 is_excluded_flag（含 record_status）
             if c.is_excluded_flag:
                 continue
@@ -309,7 +306,7 @@ def get_all_unfinished_cases(
 ) -> list[dict]:
     """取得所有未完成案件（不分頁），供排程寄信與 Excel 匯出使用。
 
-    exclude_ragic_deleted：僅作用於飯店，見 get_unfinished_cases。
+    exclude_ragic_deleted：已無作用（一律排除已刪除），見 get_unfinished_cases。
     """
     source = "all"
     if include_hotel and not include_mall:

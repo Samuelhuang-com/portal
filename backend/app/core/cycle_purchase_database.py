@@ -23,6 +23,7 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker, DeclarativeBase, Session
 
 from app.core.config import settings
+from app.core.database import pg_connect_args
 
 # aiosqlite URL → 換回同步 sqlite driver（比照 database.py 的處理方式）
 _cp_db_url = settings.CYCLE_PURCHASE_DATABASE_URL.replace("sqlite+aiosqlite", "sqlite")
@@ -37,7 +38,7 @@ cycle_purchase_engine = create_engine(
             "timeout": 60,
         }
         if "sqlite" in _cp_db_url
-        else {}
+        else pg_connect_args(_cp_db_url)
     ),
     pool_pre_ping=True,
 )

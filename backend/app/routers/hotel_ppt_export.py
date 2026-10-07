@@ -1446,6 +1446,7 @@ def _provide_repair_unfinished(db: Session, params: dict) -> list[dict]:
         .filter(
             DazhiRepairCase.completed_at == None,   # noqa: E711
             DazhiRepairCase.is_completed == False,  # noqa: E712
+            DazhiRepairCase.is_ragic_deleted.isnot(True),  # 排除 Ragic 端已刪除
         )
         .order_by(DazhiRepairCase.occurred_at)
         .all()
@@ -1473,6 +1474,7 @@ def _provide_repair_unfinished_detail(db: Session, params: dict) -> list[dict]:
         .filter(
             DazhiRepairCase.completed_at == None,   # noqa: E711
             DazhiRepairCase.is_completed == False,  # noqa: E712
+            DazhiRepairCase.is_ragic_deleted.isnot(True),  # 排除 Ragic 端已刪除
         )
         .order_by(DazhiRepairCase.occurred_at)
         .all()
@@ -1526,7 +1528,7 @@ def _provide_repair_closed(db: Session, params: dict) -> list[dict]:
     """本月結案工單（以 completed_at 歸月）"""
     from app.models.dazhi_repair import DazhiRepairCase
     year, month = params["year"], params["month"]
-    cases = db.query(DazhiRepairCase).all()
+    cases = db.query(DazhiRepairCase).filter(DazhiRepairCase.is_ragic_deleted.isnot(True)).all()  # 排除 Ragic 端已刪除
     rows  = []
     for c in cases:
         if (c.status or "").strip() == "取消":
@@ -1551,7 +1553,7 @@ def _provide_repair_closed_detail(db: Session, params: dict) -> list[dict]:
     """本月結案工單明細：附加委外費用 / 維修費用欄位"""
     from app.models.dazhi_repair import DazhiRepairCase
     year, month = params["year"], params["month"]
-    cases = db.query(DazhiRepairCase).all()
+    cases = db.query(DazhiRepairCase).filter(DazhiRepairCase.is_ragic_deleted.isnot(True)).all()  # 排除 Ragic 端已刪除
     rows  = []
     for c in cases:
         if (c.status or "").strip() == "取消":
@@ -1614,7 +1616,7 @@ def _provide_dazhi_repair_monthly_stats(db: Session, params: dict) -> list[dict]
     from app.services.dazhi_repair_service import compute_repair_stats
 
     year  = params.get("year", datetime.now().year)
-    cases = db.query(DazhiRepairCase).all()
+    cases = db.query(DazhiRepairCase).filter(DazhiRepairCase.is_ragic_deleted.isnot(True)).all()  # 排除 Ragic 端已刪除
     stats = compute_repair_stats(cases, year)
 
     rows: list[dict] = []
@@ -1703,7 +1705,7 @@ def _provide_dazhi_repair_unfinished(db: Session, params: dict) -> list[dict]:
     from app.models.dazhi_repair import DazhiRepairCase
     from app.services.dazhi_repair_service import is_completed
 
-    cases = db.query(DazhiRepairCase).all()
+    cases = db.query(DazhiRepairCase).filter(DazhiRepairCase.is_ragic_deleted.isnot(True)).all()  # 排除 Ragic 端已刪除
     now   = datetime.now()
     enriched: list = []
 
@@ -1739,7 +1741,7 @@ def _provide_dazhi_repair_unfinished_detail(db: Session, params: dict) -> list[d
     from app.models.dazhi_repair import DazhiRepairCase
     from app.services.dazhi_repair_service import is_completed
 
-    cases = db.query(DazhiRepairCase).all()
+    cases = db.query(DazhiRepairCase).filter(DazhiRepairCase.is_ragic_deleted.isnot(True)).all()  # 排除 Ragic 端已刪除
     now   = datetime.now()
     enriched: list = []
 
@@ -1808,7 +1810,7 @@ def _provide_dazhi_repair_closed_this_month(db: Session, params: dict) -> list[d
     from app.services.dazhi_repair_service import is_completed
 
     year, month = params.get("year"), params.get("month")
-    cases = db.query(DazhiRepairCase).all()
+    cases = db.query(DazhiRepairCase).filter(DazhiRepairCase.is_ragic_deleted.isnot(True)).all()  # 排除 Ragic 端已刪除
     rows: list[dict] = []
 
     for c in cases:
@@ -1840,7 +1842,7 @@ def _provide_dazhi_repair_closed_detail(db: Session, params: dict) -> list[dict]
     from app.services.dazhi_repair_service import is_completed
 
     year, month = params.get("year"), params.get("month")
-    cases = db.query(DazhiRepairCase).all()
+    cases = db.query(DazhiRepairCase).filter(DazhiRepairCase.is_ragic_deleted.isnot(True)).all()  # 排除 Ragic 端已刪除
     rows: list[dict] = []
 
     for c in cases:

@@ -172,7 +172,7 @@ def get_hotel_daily_hours(
     #   與 dazhi-repair/dashboard、work_category_analysis 保持一致（P0 fix）
     # 工時：只統計已結案（completed_at 不為空），以 completed_at 為時間軸
     # ① 取消 案件全部排除
-    for c in db.query(DazhiRepairCase).all():
+    for c in db.query(DazhiRepairCase).filter(DazhiRepairCase.is_ragic_deleted.isnot(True)).all():  # 排除 Ragic 端已刪除
         if (c.status or '').strip() == '取消':  # ① 排除取消案件
             continue
         # -- 案件數：stat-month 口徑（已完成→completed_at，否則→occurred_at）--
@@ -370,7 +370,7 @@ def get_hotel_monthly_hours(
     #   與 dazhi-repair/dashboard、work_category_analysis 保持一致（P0 fix）
     # 工時：只統計已結案（completed_at 不為空），以 completed_at 為時間軸
     # ① 取消 案件全部排除
-    for c in db.query(DazhiRepairCase).all():
+    for c in db.query(DazhiRepairCase).filter(DazhiRepairCase.is_ragic_deleted.isnot(True)).all():  # 排除 Ragic 端已刪除
         if (c.status or '').strip() == '取消':  # ① 排除取消案件
             continue
         # -- 案件數：stat-month 口徑（已完成→completed_at，否則→occurred_at）--
@@ -532,7 +532,10 @@ def get_hotel_person_hours(
 
     # ── ⑤ 飯店工務部：acceptor ─────────────────────────────────────────────────
     # ① 取消 案件排除
-    for c in db.query(DazhiRepairCase).filter(DazhiRepairCase.year == year).all():
+    for c in db.query(DazhiRepairCase).filter(
+        DazhiRepairCase.year == year,
+        DazhiRepairCase.is_ragic_deleted.isnot(True),  # 排除 Ragic 端已刪除
+    ).all():
         if (c.status or '').strip() == '取消':  # ① 排除取消案件
             continue
         person = (c.acceptor or "").strip()

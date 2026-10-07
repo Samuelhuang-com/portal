@@ -72,7 +72,7 @@ def _compute_dashboard_frontend_data(year: int, month: int, db) -> dict:
 
         # ── Repair Costs ─────────────────────────────────────────────────────
         # 累計至指定月份的費用
-        all_cases = db.query(DazhiRepairCase).all()
+        all_cases = db.query(DazhiRepairCase).filter(DazhiRepairCase.is_ragic_deleted.isnot(True)).all()  # 排除 Ragic 端已刪除
         outsource   = sum(c.outsource_fee   or 0 for c in all_cases
                           if c.occurred_at and
                           (c.occurred_at.year < year or

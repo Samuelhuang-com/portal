@@ -463,7 +463,7 @@ def _fetch_dazhi(db: Session, year: int, month: int, day: int) -> list[dict]:
     for recs in rec_map.values():
         recs.sort(key=lambda r: (r.start_at is None, r.start_at or datetime.min))
 
-    for c in db.query(DazhiRepairCase).all():
+    for c in db.query(DazhiRepairCase).filter(DazhiRepairCase.is_ragic_deleted.isnot(True)).all():  # 排除 Ragic 端已刪除
         # 2026-08-27：原本只硬比對「取消」，漏掉「作廢」（且作廢寫在 record_status）。
         # 改用 is_excluded_flag，與報修統計同一套排除規則。
         if c.is_excluded_flag:
@@ -552,7 +552,7 @@ def _fetch_luqun(db: Session, year: int, month: int, day: int) -> list[dict]:
     for recs in rec_map.values():
         recs.sort(key=lambda r: (r.start_at is None, r.start_at or datetime.min))
 
-    for c in db.query(LuqunRepairCase).all():
+    for c in db.query(LuqunRepairCase).filter(LuqunRepairCase.is_ragic_deleted.isnot(True)).all():  # 排除 Ragic 端已刪除
         # 2026-08-27：同上，改用 is_excluded_flag
         if c.is_excluded_flag:
             continue

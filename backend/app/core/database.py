@@ -11,6 +11,22 @@ from app.core.config import settings
 # aiosqlite URL → 換回同步 sqlite driver
 _db_url = settings.DATABASE_URL.replace("sqlite+aiosqlite", "sqlite")
 
+
+def pg_connect_args(db_url: str) -> dict:
+    """
+    PostgreSQL 連線參數（2026-10-07）：每條連線設定 idle_in_transaction_session_timeout。
+
+    開了交易卻停住不動的連線（例如程式卡住、行程被暫停）會一直握著列鎖；
+    設了之後超過 PG_IDLE_IN_TX_TIMEOUT_SEC 秒，PG 會自動結束它並 rollback。
+    非 PostgreSQL 或設定為 0 時回傳 {}（不改變任何行為）。
+    """
+    if not db_url.startswith("postgresql"):
+        return {}
+    sec = int(settings.PG_IDLE_IN_TX_TIMEOUT_SEC or 0)
+    if sec <= 0:
+        return {}
+    return {"options": f"-c idle_in_transaction_session_timeout={sec * 1000}"}
+
 engine = create_engine(
     _db_url,
     echo=settings.DEBUG,
@@ -22,7 +38,7 @@ engine = create_engine(
             "timeout": 60,
         }
         if "sqlite" in _db_url
-        else {}
+        else pg_connect_args(_db_url)
     ),
     pool_pre_ping=True,
 )
