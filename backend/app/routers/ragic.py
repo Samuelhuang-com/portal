@@ -359,7 +359,9 @@ _LAST_UPDATED_SOURCES: dict[str, tuple[str, str]] = {
     "客房保養":          ("room_maintenance_records",        "synced_at"),
     "客房保養明細":       ("room_maintenance_detail_records", "synced_at"),
     "飯店週期保養":       ("pm_batch_item",                  "synced_at"),
-    "IHG客房保養":       ("ihg_rm_detail",                   "synced_at"),
+    # 2026-10-07：改看主表。子表 ihg_rm_detail 從未寫入過資料（同步的 Detail 段每次
+    # details_fetched=0），對它取 MAX(synced_at) 永遠是「查無資料」。
+    "IHG客房保養":       ("ihg_rm_master",                   "synced_at"),
     "飯店每日巡檢":       ("hotel_di_inspection_item",       "synced_at"),
     "商場週期保養":       ("mall_pm_batch_item",             "synced_at"),
     "商場工務巡檢":       ("mall_fi_inspection_item",        "synced_at"),

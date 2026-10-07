@@ -1209,7 +1209,9 @@ export type { WJVenueStat, WJCatStat, WJStats }
 const SYNC_MODULES = [
   '大直工務報修',        // 飯店工務部（現場報修）
   '商場工務報修',        // 商場現場報修
-  '客房保養',            // 飯店例行維護
+  // 飯店例行維護。⚠️ 不列「客房保養」（room_maintenance_records）：該模組已停用
+  // （MainLayout 選單已註解），來源表自 2026-04-09 起 fetched=0，列進來只會造成
+  // 「最舊來源落後幾千小時」的假警報（2026-10-07 移除）。
   '客房保養明細',
   '飯店週期保養',
   'IHG客房保養',
