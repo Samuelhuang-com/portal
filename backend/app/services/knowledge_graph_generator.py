@@ -8,6 +8,9 @@ Portal 專案知識圖譜產生器
   2. 掃描 frontend/src/ 所有 .ts / .tsx 檔 → 提取 component / hook / 函式 + import 關係
   3. 以 networkx 建構有向圖（依賴邊）
   4. 輸出自含式 HTML（vis.js Network，不需 CDN）
+     vis-network 9.1.9 的 JS/CSS 放在 services/vendor/vis-network/，產生時直接內嵌進 HTML。
+     （2026-10-07 修正：原本實際上是 <script src="https://unpkg.com/..."> 外連 CDN，
+       正式機連不到外網時圖譜整片空白。）
 
 呼叫方式：
   python knowledge_graph_generator.py <project_root> <output_dir>
@@ -329,8 +332,21 @@ def build_graph(project_root: Path) -> tuple[list, list]:
 
 # ── HTML 產生 ─────────────────────────────────────────────────────────────────
 
-_VIS_JS_CDN = "https://unpkg.com/vis-network@9.1.9/dist/vis-network.min.js"
-_VIS_CSS_CDN = "https://unpkg.com/vis-network@9.1.9/dist/vis-network.min.css"
+# vis-network 9.1.9 本地檔（內嵌進 graph.html，不連 CDN）——來源與授權見該目錄 README.txt
+_VIS_VENDOR_DIR = Path(__file__).parent / "vendor" / "vis-network"
+_VIS_JS_FILE = _VIS_VENDOR_DIR / "vis-network.min.js"
+_VIS_CSS_FILE = _VIS_VENDOR_DIR / "vis-network.min.css"
+
+
+def _read_vendor(path: Path) -> str:
+    """讀取內嵌用的 vis-network 檔；缺檔直接失敗（寧可產生失敗，也不要產出一張空白圖）。"""
+    if not path.is_file():
+        raise FileNotFoundError(f"缺少 vis-network 本地檔：{path}（請確認 services/vendor/vis-network/ 已部署）")
+    text = path.read_text(encoding="utf-8")
+    # 內嵌在 <script>/<style> 中，若出現結束標籤會提早截斷整段
+    if "</script" in text.lower() or "</style" in text.lower():
+        raise ValueError(f"{path.name} 含有 </script> 或 </style>，無法安全內嵌")
+    return text
 
 _HTML_TEMPLATE = """\
 <!DOCTYPE html>
@@ -339,7 +355,7 @@ _HTML_TEMPLATE = """\
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Portal 專案知識圖譜</title>
-<link rel="stylesheet" href="{vis_css}">
+<style>{vis_css}</style>
 <style>
 * {{ box-sizing: border-box; margin: 0; padding: 0; }}
 body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -396,7 +412,7 @@ body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   <div class="legend-item"><div class="legend-dot" style="background:#667eea"></div><span>TS Module</span></div>
 </div>
 
-<script src="{vis_js}"></script>
+<script>{vis_js}</script>
 <script>
 const RAW_NODES = {nodes_json};
 const RAW_EDGES = {edges_json};
@@ -502,8 +518,8 @@ def generate_html(nodes: list, edges: list, output_path: Path) -> None:
     edges_json = json.dumps(edges, ensure_ascii=False)
 
     html = _HTML_TEMPLATE.format(
-        vis_js=_VIS_JS_CDN,
-        vis_css=_VIS_CSS_CDN,
+        vis_js=_read_vendor(_VIS_JS_FILE),
+        vis_css=_read_vendor(_VIS_CSS_FILE),
         nodes_json=nodes_json,
         edges_json=edges_json,
         group_cfg_json=group_cfg_json,

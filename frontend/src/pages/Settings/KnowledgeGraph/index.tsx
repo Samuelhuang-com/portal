@@ -2,6 +2,10 @@
  * 專案知識圖譜
  * 路由：/settings/knowledge-graph
  * 功能：觸發 graphify 分析整個 portal 專案，以互動式 HTML iframe 呈現結果
+ *
+ * 2026-10-07：iframe 改用 srcDoc 呈現 GET /knowledge-graph/result（帶 JWT）取回的內容，
+ * 不再指向已不存在的 /kg-files/ 靜態路徑。sandbox 刻意「不」給 allow-same-origin——
+ * srcDoc 會繼承父頁 origin，給了就等於讓圖譜頁的 script 讀得到 localStorage 的 token。
  */
 import { useEffect, useRef, useState } from 'react'
 import {
@@ -13,6 +17,7 @@ import {
   Descriptions,
   Progress,
   Space,
+  Spin,
   Tag,
   Tooltip,
   Typography,
@@ -24,7 +29,12 @@ import {
   SyncOutlined,
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
-import { fetchGraphStatus, triggerGenerate, KnowledgeGraphStatus } from '@/api/knowledgeGraph'
+import {
+  fetchGraphHtml,
+  fetchGraphStatus,
+  triggerGenerate,
+  KnowledgeGraphStatus,
+} from '@/api/knowledgeGraph'
 import { NAV_GROUP, NAV_PAGE } from '@/constants/navLabels'
 
 const { Title, Paragraph, Text } = Typography
@@ -61,6 +71,9 @@ export default function KnowledgeGraphPage() {
   const [pollingProgress, setPollingProgress] = useState(0)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const progressRef = useRef(0)
+  const [graphHtml, setGraphHtml] = useState<string | null>(null)
+  const [htmlLoading, setHtmlLoading] = useState(false)
+  const [htmlError, setHtmlError] = useState<string | null>(null)
 
   // 停止輪詢
   const stopPolling = () => {
@@ -128,6 +141,30 @@ export default function KnowledgeGraphPage() {
   const cfg = STATUS_CONFIG[status.status]
   const isGenerating = status.status === 'generating'
   const isReady = status.status === 'ready' && status.html_exists
+
+  // 圖譜就緒（或重新產生完成）時，帶 token 取回 HTML 內容
+  useEffect(() => {
+    if (!isReady) {
+      setGraphHtml(null)
+      return
+    }
+    let cancelled = false
+    setHtmlLoading(true)
+    setHtmlError(null)
+    fetchGraphHtml()
+      .then((html) => {
+        if (!cancelled) setGraphHtml(html)
+      })
+      .catch(() => {
+        if (!cancelled) setHtmlError('圖譜內容載入失敗，請重新整理頁面或重新產生圖譜')
+      })
+      .finally(() => {
+        if (!cancelled) setHtmlLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [isReady, status.generated_at])
 
   return (
     <div style={{ padding: '24px', maxWidth: 1400 }}>
@@ -267,8 +304,20 @@ export default function KnowledgeGraphPage() {
           bodyStyle={{ padding: 0 }}
           style={{ overflow: 'hidden' }}
         >
+          {htmlError && (
+            <Alert type="error" showIcon message={htmlError} style={{ margin: 16 }} />
+          )}
+          {htmlLoading && !graphHtml && (
+            <div style={{ height: '78vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <Space>
+                <Spin />
+                <Text type="secondary">載入圖譜中…</Text>
+              </Space>
+            </div>
+          )}
+          {graphHtml && (
           <iframe
-            src="/kg-files/graph.html"
+            srcDoc={graphHtml}
             title="Portal 專案知識圖譜"
             style={{
               width: '100%',
@@ -277,9 +326,10 @@ export default function KnowledgeGraphPage() {
               display: 'block',
               background: '#0f172a',
             }}
-            sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
+            sandbox="allow-scripts allow-popups allow-forms"
             referrerPolicy="no-referrer"
           />
+          )}
         </Card>
       )}
     </div>
