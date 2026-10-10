@@ -925,7 +925,7 @@ def export_inspection_docx(
     user: User = Depends(require_permission(VIEW)),
 ):
     """
-    單一部門「內部稽核檢查表」Word（2026-10-01）——格式比照使用者提供的 .doc 範本。
+    單一部門「內部稽核報告」Word（2026-10-01；2026-10-10 改名）——格式比照使用者提供的 .doc 範本。
     填表日期＝查核日期（未設定則取今天）；稽核人員＝匯出的使用者。
     """
     try:
@@ -944,7 +944,7 @@ def export_inspection_docx(
     data = build_inspection_docx(detail, sheet_department_id, user.full_name or "", fill_date)
 
     dept_name = svc.department_label(sd)
-    filename_cn = f"內部稽核檢查表-{detail['period']}-{detail['company_name']}-{dept_name}.docx"
+    filename_cn = f"內部稽核報告-{detail['period']}-{detail['company_name']}-{dept_name}.docx"
     return Response(
         content=data,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
