@@ -55,6 +55,7 @@ from app.core.time import twnow
 from app.routers import (
     approvals,
     audit_check,
+    audit_kpo,
     claim_report,
     combined_report,
     purchase_report,
@@ -107,6 +108,7 @@ from app.routers import (
     employee_manual_export,
     work_journal,
     work_journal_path,
+    war_room,
     nichiyo_purchase_report,
     nichiyo_claim_report,
     taichung_purchase_report,
@@ -604,6 +606,22 @@ def _seed_audit_check_result_types():
     print("[Portal] audit_check result types seed checked.")
 
 
+def _seed_audit_kpo_master():
+    """
+    KPO 稽核（2026-10-10）：依 Excel「財#1稽核系統建構-整合」植入 9 個部門與稽核項目。
+    冪等：只在 audit_kpo_departments 為空時植入，不覆寫使用者後續的編輯。
+    """
+    from app.core.database import SessionLocal
+    from app.services.audit_kpo_service import seed_kpo_master
+
+    db = SessionLocal()
+    try:
+        seed_kpo_master(db)
+    finally:
+        db.close()
+    print("[Portal] audit_kpo master seed checked.")
+
+
 def _seed_menu_config_audit_check():
     """
     選單設定補丁（2026-09-20）：確保 audit-check 群組及其子頁面在 menu_configs
@@ -617,6 +635,8 @@ def _seed_menu_config_audit_check():
         ("/audit-check/statistics", 20),
         ("/audit-check/masters/items", 30),
         ("/audit-check/settings/result-types", 40),
+        ("/audit-check/kpo", 50),
+        ("/audit-check/kpo/items", 60),
     ]
 
     with engine.connect() as conn:
@@ -1417,6 +1437,9 @@ async def lifespan(app: FastAPI):
     import app.models.audit_check  # noqa: F401 — 確保 create_all 建立資料表
     _run_startup_migration("_seed_audit_check_result_types", _seed_audit_check_result_types)
     _run_startup_migration("_seed_menu_config_audit_check", _seed_menu_config_audit_check)
+    # KPO 稽核（2026-10-10）
+    import app.models.audit_kpo  # noqa: F401 — 確保 create_all 建立資料表
+    _run_startup_migration("_seed_audit_kpo_master", _seed_audit_kpo_master)
 
     # 客房主檔 seed（若 rooms 表為空，自動填入樓層 × 房號資料）
     from app.services.room_seed import seed_rooms
@@ -2105,6 +2128,13 @@ app.include_router(
     tags=["人員動線"],
 )
 
+# ── 戰情 KPI（第一階模組；樓層戰情＋房間／設備履歷，2026-10-10）──────────────────
+app.include_router(
+    war_room.router,
+    prefix=f"{API_PREFIX}/war-room",
+    tags=["戰情 KPI"],
+)
+
 # ── 新增：日曜核准請購單月報表 ──────────────────────────────────────────────────
 app.include_router(
     nichiyo_purchase_report.router,
@@ -2312,6 +2342,12 @@ app.include_router(
     audit_check.router,
     prefix=f"{API_PREFIX}/audit-check",
     tags=["稽核檢查"],
+)
+# KPO 稽核（財#1 稽核系統建構，2026-10-10 新增；稽核檢查子模組）
+app.include_router(
+    audit_kpo.router,
+    prefix=f"{API_PREFIX}/audit-check/kpo",
+    tags=["稽核檢查-KPO"],
 )
 
 # ── AI 工單查詢助理（AI_ENABLED=true 才掛載，正式環境可保持 false）────────────

@@ -302,6 +302,10 @@ class Settings(BaseSettings):
     # 各 Server 的 .env 各自設定；改完需重啟後端。
     STAFF_PATH_ALLOWED_EMAILS: str = ""
 
+    # ── 戰情 KPI 模組白名單（2026-10-10 新增，同 §11.7 模式）─────────────────────
+    # 逗號或分號分隔的 Portal 登入 email；**留空＝沒有任何人看得到**（含系統管理員）。
+    WAR_ROOM_ALLOWED_EMAILS: str = ""
+
     # ── 便利屬性：統一取 server prefix ───────────────────────────────────────
     @property
     def ragic_server_prefix(self) -> str:

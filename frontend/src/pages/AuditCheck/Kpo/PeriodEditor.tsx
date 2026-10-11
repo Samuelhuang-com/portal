@@ -1,0 +1,567 @@
+/**
+ * KPO 稽核 — 期別明細（選定稽核項目 ＋ 小計）
+ * route: /audit-check/kpo/periods/:id     permissionKey: audit_check_view（編輯需 audit_check_edit）
+ *
+ * 流程：每個部門按「選擇項目」→ 從該部門 16 項主檔勾選本期要稽核的項目（通常 1★＋3 項＝25 分）
+ *       → 逐項標記「符合／不符合」並填查核備註 → 小計由系統即時計算（不可手改）。
+ *
+ * 選定後的項目內容是**快照**：在明細 Drawer 內編輯只改本期，不影響主檔與其他期別；
+ * 要改主檔請到「KPO 稽核項目主檔」。
+ *
+ * 2026-10-10：
+ *   - 每個部門表格下方加小計列（與頁首記分板同款，只是依部門呈現）
+ *   - 部門、部門內的品質項目都可拖曳調整順序（只影響本期；需 audit_check_edit）
+ *   - 「備註（查核方式）」改用稽核檢查的 Web 編輯器（RichTextEditor），
+ *     點選項目列以明細 Drawer 呈現與編輯（CLAUDE.md §7 明細 Drawer 規範）
+ */
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
+import type React from 'react'
+import { DndContext, PointerSensor, closestCenter, useSensor, useSensors } from '@dnd-kit/core'
+import type { DragEndEvent } from '@dnd-kit/core'
+import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
+import { useNavigate, useParams } from 'react-router-dom'
+import {
+  Button, Card, Checkbox, Col, Descriptions, Divider, Drawer, Empty, Form, Input, InputNumber, Modal,
+  Radio, Row, Space, Spin, Statistic, Switch, Table, Tag, Typography, message,
+} from 'antd'
+import type { ColumnsType } from 'antd/es/table'
+import {
+  ArrowLeftOutlined, CheckSquareOutlined, ColumnHeightOutlined, DownOutlined, EditOutlined, HolderOutlined,
+  ReloadOutlined, RightOutlined, SaveOutlined, VerticalAlignMiddleOutlined,
+} from '@ant-design/icons'
+
+import { kpoDeptApi, kpoItemApi, kpoPeriodApi } from '@/api/auditKpo'
+import type {
+  KpoDept, KpoItem, KpoLine, KpoPeriodDetail, KpoSubtotal,
+} from '@/api/auditKpo'
+import { useAuthStore } from '@/stores/authStore'
+import RichTextEditor from '../RichTextEditor'
+import { RICH_TEXT_CSS, htmlToPlain, toDisplayHtml } from '../richText'
+
+const { Title, Text } = Typography
+
+const EMPTY_SUBTOTAL: KpoSubtotal = {
+  item_count: 0, key_count: 0, full_score: 0, pass_count: 0, fail_count: 0,
+  pending_count: 0, earned_score: 0, rate: null,
+}
+
+function fmtRate(rate: number | null): string {
+  return rate == null ? '—' : `${Math.round(rate * 1000) / 10}%`
+}
+
+/** 備註（查核方式）顯示：Web 編輯器產生的 HTML（舊資料為純文字，toDisplayHtml 會處理） */
+function RichView({ html, color }: { html: string | null; color?: string }) {
+  const h = toDisplayHtml(html)
+  if (!h) return <span style={{ color: '#bfbfbf' }}>—</span>
+  return <div className="audit-rich" style={{ color }} dangerouslySetInnerHTML={{ __html: h }} />
+}
+
+/** 部門小計列：與頁首記分板同款，只是依部門呈現 */
+function DeptScoreboard({ s }: { s: KpoSubtotal }) {
+  return (
+    <Card size="small" style={{ marginTop: 8, background: '#fafafa' }}>
+      <Row gutter={[16, 8]}>
+        <Col xs={12} sm={8} md={4}><Statistic title="選定項數" value={s.item_count} suffix={`（★${s.key_count}）`} /></Col>
+        <Col xs={12} sm={8} md={4}><Statistic title="滿分" value={s.full_score} /></Col>
+        <Col xs={12} sm={8} md={4}><Statistic title="符合" value={s.pass_count} valueStyle={{ color: '#389e0d' }} /></Col>
+        <Col xs={12} sm={8} md={4}><Statistic title="不符合" value={s.fail_count} valueStyle={{ color: '#cf1322' }} /></Col>
+        <Col xs={12} sm={8} md={4}><Statistic title="未查核" value={s.pending_count} /></Col>
+        <Col xs={12} sm={8} md={4}><Statistic title="得分" value={s.earned_score} suffix={`（${fmtRate(s.rate)}）`} /></Col>
+      </Row>
+    </Card>
+  )
+}
+
+// ── 拖曳排序元件（@dnd-kit，專案既有套件）───────────────────────────────
+type HandleCtx = {
+  setActivatorNodeRef: (el: HTMLElement | null) => void
+  listeners: Record<string, unknown> | undefined
+  disabled: boolean
+} | null
+const RowHandleContext = createContext<HandleCtx>(null)
+
+function DragHandle({ title }: { title: string }) {
+  const ctx = useContext(RowHandleContext)
+  if (!ctx) return null
+  return (
+    <span
+      ref={ctx.setActivatorNodeRef} {...(ctx.disabled ? {} : ctx.listeners)}
+      title={ctx.disabled ? '' : title}
+      onClick={(e) => e.stopPropagation()}
+      style={{ cursor: ctx.disabled ? 'default' : 'grab', color: ctx.disabled ? '#d9d9d9' : '#8c8c8c', touchAction: 'none', padding: '0 4px' }}
+    >
+      <HolderOutlined />
+    </span>
+  )
+}
+
+/** antd Table 的可拖曳列（拖曳把手在列內的 <DragHandle/>） */
+function SortableRow(props: React.HTMLAttributes<HTMLTableRowElement> & { 'data-row-key': number; disabled?: boolean }) {
+  const { 'data-row-key': rowKey, disabled, style, children, ...rest } = props
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } =
+    useSortable({ id: rowKey, disabled })
+  const merged: React.CSSProperties = {
+    ...style,
+    transform: CSS.Transform.toString(transform ? { ...transform, scaleY: 1 } : null),
+    transition,
+    ...(isDragging ? { position: 'relative', zIndex: 9, background: '#e6f4ff' } : {}),
+  }
+  return (
+    <RowHandleContext.Provider value={{ setActivatorNodeRef, listeners, disabled: !!disabled }}>
+      <tr {...rest} ref={setNodeRef} style={merged} {...attributes}>{children}</tr>
+    </RowHandleContext.Provider>
+  )
+}
+
+/** 部門卡片：整張可拖曳排序，把手在標題列左側 */
+function SortableDeptCard(props: {
+  id: string; disabled: boolean; collapsed: boolean; onToggle: () => void
+  title: React.ReactNode; extra?: React.ReactNode; children: React.ReactNode
+}) {
+  const { id, disabled, collapsed, onToggle, title, extra, children } = props
+  const { setNodeRef, setActivatorNodeRef, attributes, listeners, transform, transition, isDragging } =
+    useSortable({ id, disabled })
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform ? { ...transform, scaleX: 1, scaleY: 1 } : null),
+    transition,
+    marginBottom: 12,
+    ...(isDragging ? { position: 'relative', zIndex: 10, opacity: 0.9, boxShadow: '0 4px 14px rgba(0,0,0,.18)' } : {}),
+  }
+  return (
+    <div ref={setNodeRef} style={style} {...attributes}>
+      <Card size="small" styles={{ header: { background: '#fafafa' }, body: collapsed ? { display: 'none' } : undefined }}
+        title={
+          <Space wrap>
+            <span
+              ref={setActivatorNodeRef} {...(disabled ? {} : listeners)} title={disabled ? '' : '拖曳調整部門順序'}
+              style={{ cursor: disabled ? 'default' : 'grab', color: disabled ? '#d9d9d9' : '#8c8c8c', touchAction: 'none' }}
+            >
+              <HolderOutlined />
+            </span>
+            <span onClick={onToggle} style={{ cursor: 'pointer' }}>{collapsed ? <RightOutlined /> : <DownOutlined />}</span>
+            {title}
+          </Space>
+        }
+        extra={extra}
+      >
+        {children}
+      </Card>
+    </div>
+  )
+}
+
+function SubtotalTags({ s }: { s: KpoSubtotal }) {
+  return (
+    <Space size={[4, 4]} wrap>
+      <Tag color="blue">選定 {s.item_count} 項</Tag>
+      <Tag color="gold">★ {s.key_count}</Tag>
+      <Tag>滿分 {s.full_score}</Tag>
+      <Tag color="green">符合 {s.pass_count}</Tag>
+      <Tag color="red">不符合 {s.fail_count}</Tag>
+      <Tag>未查核 {s.pending_count}</Tag>
+      <Tag color="geekblue">得分 {s.earned_score}（{fmtRate(s.rate)}）</Tag>
+    </Space>
+  )
+}
+
+export default function AuditKpoPeriodEditorPage() {
+  const { id } = useParams()
+  const periodId = Number(id)
+  const navigate = useNavigate()
+  const hasPermission = useAuthStore((s) => s.hasPermission)
+  const canEdit = hasPermission('audit_check_edit')
+
+  const [detail, setDetail] = useState<KpoPeriodDetail | null>(null)
+  const [depts, setDepts] = useState<KpoDept[]>([])
+  const [masterItems, setMasterItems] = useState<KpoItem[]>([])
+  const [loading, setLoading] = useState(true)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      const [d, dp, it] = await Promise.all([
+        kpoPeriodApi.get(periodId), kpoDeptApi.list(), kpoItemApi.list(),
+      ])
+      setDetail(d.data)
+      setDepts(dp.data.filter((x) => x.is_active))
+      setMasterItems(it.data.filter((x) => x.is_active))
+    } catch {
+      message.error('載入 KPO 稽核期別失敗')
+    } finally {
+      setLoading(false)
+    }
+  }, [periodId])
+
+  useEffect(() => { load() }, [load])
+
+  const blockByDept = useMemo(() => {
+    const m = new Map<number, KpoPeriodDetail['departments'][number]>()
+    detail?.departments.forEach((b) => m.set(b.department_id, b))
+    return m
+  }, [detail])
+
+  // ── 拖曳排序（部門、部門內項目）───────────────────────────────────────
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
+  const [collapsedDepts, setCollapsedDepts] = useState<Set<number>>(new Set())
+  const toggleCollapsed = (id: number) => setCollapsedDepts((prev) => {
+    const n = new Set(prev)
+    if (n.has(id)) n.delete(id); else n.add(id)
+    return n
+  })
+
+  const collapseAll = () => setCollapsedDepts(new Set(depts.map((d) => d.id)))
+  const expandAll = () => setCollapsedDepts(new Set())
+
+  // 顯示順序：本期自訂順序優先，其餘（沒排過的）依部門主檔順序接在後面
+  const orderedDepts = useMemo(() => {
+    const pos = new Map((detail?.dept_order ?? []).map((id, i) => [id, i]))
+    return [...depts].sort((a, b) =>
+      (pos.get(a.id) ?? 1e6 + a.sort_order) - (pos.get(b.id) ?? 1e6 + b.sort_order) || a.id - b.id)
+  }, [depts, detail])
+
+  const onDeptDragEnd = async (e: DragEndEvent) => {
+    const { active, over } = e
+    if (!over || active.id === over.id) return
+    const ids = orderedDepts.map((d) => `d-${d.id}`)
+    const from = ids.indexOf(String(active.id)); const to = ids.indexOf(String(over.id))
+    if (from < 0 || to < 0) return
+    const next = arrayMove(orderedDepts, from, to).map((d) => d.id)
+    setDetail((cur) => (cur ? { ...cur, dept_order: next } : cur))      // 先更新畫面
+    try {
+      const res = await kpoPeriodApi.setDeptOrder(periodId, next)
+      setDetail(res.data)
+    } catch {
+      message.error('儲存部門順序失敗')
+      load()
+    }
+  }
+
+  const onLinesDragEnd = async (deptId: number, e: DragEndEvent) => {
+    const { active, over } = e
+    if (!over || active.id === over.id) return
+    const block = blockByDept.get(deptId)
+    if (!block) return
+    const ids = block.lines.map((l) => l.id)
+    const from = ids.indexOf(Number(active.id)); const to = ids.indexOf(Number(over.id))
+    if (from < 0 || to < 0) return
+    const next = arrayMove(block.lines, from, to)
+    setDetail((cur) => cur ? {
+      ...cur,
+      departments: cur.departments.map((b) => (b.department_id === deptId ? { ...b, lines: next } : b)),
+    } : cur)
+    try {
+      const res = await kpoPeriodApi.setLinesOrder(periodId, deptId, next.map((l) => l.id))
+      setDetail(res.data)
+    } catch {
+      message.error('儲存項目順序失敗')
+      load()
+    }
+  }
+
+  // ── 選擇項目 ────────────────────────────────────────────────────────────
+  const [pickDept, setPickDept] = useState<KpoDept | null>(null)
+  const [picked, setPicked] = useState<number[]>([])
+  const [pickSaving, setPickSaving] = useState(false)
+
+  const openPick = (d: KpoDept) => {
+    setPickDept(d)
+    setPicked((blockByDept.get(d.id)?.lines ?? [])
+      .map((l) => l.source_item_id).filter((x): x is number => x != null))
+  }
+
+  const pickItems = useMemo(
+    () => masterItems.filter((i) => i.department_id === pickDept?.id),
+    [masterItems, pickDept],
+  )
+  const pickSum = useMemo(() => {
+    const sel = pickItems.filter((i) => picked.includes(i.id))
+    return {
+      count: sel.length, key: sel.filter((i) => i.is_key).length,
+      score: sel.reduce((a, b) => a + b.score, 0),
+    }
+  }, [pickItems, picked])
+
+  const savePick = async () => {
+    if (!pickDept) return
+    // 取消勾選會一併移除該項已填的判定與備註 → 先提醒
+    const old = blockByDept.get(pickDept.id)?.lines ?? []
+    const dropped = old.filter((l) => l.source_item_id != null && !picked.includes(l.source_item_id)
+      && (l.result || l.remark))
+    if (dropped.length > 0) {
+      const ok = await new Promise<boolean>((resolve) => Modal.confirm({
+        title: `取消勾選 ${dropped.length} 個已填判定／備註的項目？`,
+        content: '這些項目的判定與查核備註會一併移除。',
+        okText: '確定移除', okButtonProps: { danger: true }, cancelText: '返回',
+        onOk: () => resolve(true), onCancel: () => resolve(false),
+      }))
+      if (!ok) return
+    }
+    setPickSaving(true)
+    try {
+      const res = await kpoPeriodApi.setSelection(periodId, pickDept.id, picked)
+      setDetail(res.data)
+      setPickDept(null)
+      message.success('已更新選定項目')
+    } catch (e: unknown) {
+      const err = e as { response?: { data?: { detail?: string } } }
+      message.error(err.response?.data?.detail ?? '儲存失敗')
+    } finally {
+      setPickSaving(false)
+    }
+  }
+
+  // ── 判定／備註（就地儲存）──────────────────────────────────────────────
+  const patchLine = async (lineId: number, body: Parameters<typeof kpoPeriodApi.updateLine>[2]) => {
+    try {
+      const res = await kpoPeriodApi.updateLine(periodId, lineId, body)
+      setDetail(res.data)
+    } catch (e: unknown) {
+      const err = e as { response?: { data?: { detail?: string } } }
+      message.error(err.response?.data?.detail ?? '儲存失敗')
+    }
+  }
+
+  // ── 明細 Drawer：檢視／編輯本期項目內容（只影響本期）──────────────────────
+  const [detailLine, setDetailLine] = useState<KpoLine | null>(null)
+  const [editMode, setEditMode] = useState(false)
+  const [method, setMethod] = useState('')
+  const [drawerSaving, setDrawerSaving] = useState(false)
+  const [editForm] = Form.useForm()
+
+  const openDetail = (ln: KpoLine) => {
+    setDetailLine(ln)
+    setEditMode(false)
+    setMethod(ln.method ?? '')
+  }
+  const saveDetail = async () => {
+    if (!detailLine) return
+    const v = await editForm.validateFields()
+    setDrawerSaving(true)
+    try {
+      const res = await kpoPeriodApi.updateLine(periodId, detailLine.id, {
+        name: v.name, is_key: v.is_key, score: v.score, method: htmlToPlain(method) ? method : null,
+      })
+      setDetail(res.data)
+      const fresh = res.data.departments.flatMap((b) => b.lines).find((l) => l.id === detailLine.id) ?? null
+      setDetailLine(fresh)
+      setEditMode(false)
+      message.success('已儲存')
+    } catch (e: unknown) {
+      const err = e as { response?: { data?: { detail?: string } } }
+      message.error(err.response?.data?.detail ?? '儲存失敗')
+    } finally {
+      setDrawerSaving(false)
+    }
+  }
+  const detailDept = depts.find((d) => d.id === detailLine?.department_id)
+
+  const columns: ColumnsType<KpoLine> = [
+    { title: '', width: 34, align: 'center', render: () => <DragHandle title="拖曳調整項目順序" /> },
+    {
+      title: '項數', width: 70, align: 'center',
+      render: (_, r) => (r.is_key ? <Tag color="gold">★{r.item_no ?? ''}</Tag> : <span>{r.item_no ?? ''}</span>),
+    },
+    { title: '品質項目', dataIndex: 'name', render: (v: string) => <div style={{ whiteSpace: 'pre-wrap' }}>{v}</div> },
+    { title: '分數', dataIndex: 'score', width: 64, align: 'right' },
+    {
+      title: '備註（查核方式）', dataIndex: 'method', width: 220,
+      render: (v: string | null) => <RichView html={v} color="#64748b" />,
+    },
+    {
+      title: '判定', width: 170, align: 'center',
+      render: (_, r) => (
+        <div onClick={(e) => e.stopPropagation()}>
+        <Radio.Group size="small" value={r.result ?? ''} disabled={!canEdit} buttonStyle="solid"
+          onChange={(e) => patchLine(r.id, { result: e.target.value })}>
+          <Radio.Button value="pass"
+            style={r.result === 'pass' ? { background: '#389e0d', borderColor: '#389e0d', color: '#fff' } : undefined}>符合</Radio.Button>
+          <Radio.Button value="fail"
+            style={r.result === 'fail' ? { background: '#cf1322', borderColor: '#cf1322', color: '#fff' } : undefined}>不符合</Radio.Button>
+          <Radio.Button value="">—</Radio.Button>
+        </Radio.Group>
+        </div>
+      ),
+    },
+    {
+      title: '查核備註', width: 220,
+      render: (_, r) => (
+        <div onClick={(e) => e.stopPropagation()}>
+          <Input.TextArea key={`${r.id}-${r.remark ?? ''}`} autoSize={{ minRows: 1, maxRows: 4 }}
+            defaultValue={r.remark ?? ''} disabled={!canEdit} placeholder="查核結果、缺失說明…"
+            onBlur={(e) => { if ((e.target.value || '') !== (r.remark ?? '')) patchLine(r.id, { remark: e.target.value }) }} />
+        </div>
+      ),
+    },
+    {
+      title: '', width: 50, align: 'center',
+      render: (_, r) => (
+        <Button size="small" type="text" icon={<EditOutlined />} title="明細" onClick={(e) => { e.stopPropagation(); openDetail(r) }} />
+      ),
+    },
+  ]
+
+  if (loading && !detail) return <Spin style={{ display: 'block', margin: '80px auto' }} />
+  if (!detail) return <Empty description="查無此期別" />
+
+  const total = detail.total ?? EMPTY_SUBTOTAL
+
+  return (
+    <div>
+      <Space style={{ width: '100%', justifyContent: 'space-between', marginBottom: 12 }} wrap>
+        <Space>
+          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/audit-check/kpo')}>返回</Button>
+          <div>
+            <Title level={4} style={{ margin: 0 }}>{detail.period}　{detail.title}</Title>
+            {detail.note && <Text type="secondary">{detail.note}</Text>}
+          </div>
+        </Space>
+        <Space>
+          <Button icon={<ColumnHeightOutlined />} onClick={expandAll}>全部展開</Button>
+          <Button icon={<VerticalAlignMiddleOutlined />} onClick={collapseAll}>全部收合</Button>
+          <Button icon={<ReloadOutlined />} onClick={load}>重新整理</Button>
+        </Space>
+      </Space>
+
+      <Card size="small" style={{ marginBottom: 12 }}>
+        <Row gutter={[16, 8]}>
+          <Col xs={12} sm={8} md={4}><Statistic title="部門數" value={detail.departments.length} /></Col>
+          <Col xs={12} sm={8} md={4}><Statistic title="選定項數" value={total.item_count} suffix={`（★${total.key_count}）`} /></Col>
+          <Col xs={12} sm={8} md={4}><Statistic title="滿分" value={total.full_score} /></Col>
+          <Col xs={12} sm={8} md={4}><Statistic title="符合 / 不符合" value={`${total.pass_count} / ${total.fail_count}`} /></Col>
+          <Col xs={12} sm={8} md={4}><Statistic title="未查核" value={total.pending_count} /></Col>
+          <Col xs={12} sm={8} md={4}><Statistic title="得分" value={total.earned_score} suffix={`（${fmtRate(total.rate)}）`} /></Col>
+        </Row>
+      </Card>
+
+      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDeptDragEnd}>
+        <SortableContext items={orderedDepts.map((d) => `d-${d.id}`)} strategy={verticalListSortingStrategy}>
+          {orderedDepts.map((d) => {
+            const block = blockByDept.get(d.id)
+            const sub = block?.subtotal ?? EMPTY_SUBTOTAL
+            return (
+              <SortableDeptCard
+                key={d.id} id={`d-${d.id}`} disabled={!canEdit}
+                collapsed={collapsedDepts.has(d.id)} onToggle={() => toggleCollapsed(d.id)}
+                title={
+                  <Space wrap>
+                    <b>{d.display_name}</b>
+                    {block ? <SubtotalTags s={sub} /> : <Text type="secondary">本期尚未選定項目</Text>}
+                  </Space>
+                }
+                extra={canEdit ? (
+                  <Button size="small" type="primary" ghost icon={<CheckSquareOutlined />}
+                    onClick={() => openPick(d)}>選擇項目</Button>
+                ) : null}
+              >
+                {block ? (
+                  <>
+                    <DndContext sensors={sensors} collisionDetection={closestCenter}
+                      onDragEnd={(ev) => onLinesDragEnd(d.id, ev)}>
+                      <SortableContext items={block.lines.map((l) => l.id)} strategy={verticalListSortingStrategy}>
+                        <Table rowKey="id" size="small" columns={columns} dataSource={block.lines}
+                          pagination={false} scroll={{ x: 940 }}
+                          components={{ body: { row: (rp: React.HTMLAttributes<HTMLTableRowElement> & { 'data-row-key': number }) => <SortableRow {...rp} disabled={!canEdit} /> } }}
+                          onRow={(r) => ({ onClick: () => openDetail(r), style: { cursor: 'pointer' } })} />
+                      </SortableContext>
+                    </DndContext>
+                    <DeptScoreboard s={sub} />
+                  </>
+                ) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={`請按「選擇項目」從 ${d.display_name} 的 ${d.item_count} 項中選定本期稽核項目`} />}
+              </SortableDeptCard>
+            )
+          })}
+        </SortableContext>
+      </DndContext>
+
+      <Modal
+        title={pickDept ? `選擇本期稽核項目 — ${pickDept.display_name}` : ''}
+        open={!!pickDept} width={820} onCancel={() => setPickDept(null)}
+        onOk={savePick} confirmLoading={pickSaving} okText="儲存選定" destroyOnClose
+      >
+        <div style={{ marginBottom: 8 }}>
+          <Tag color="blue">已選 {pickSum.count} 項</Tag>
+          <Tag color="gold">★ {pickSum.key}</Tag>
+          <Tag color="geekblue">滿分 {pickSum.score}</Tag>
+          <Text type="secondary">（通常每部門每期 1★＋3 項＝25 分，僅供參考，不強制）</Text>
+        </div>
+        <Checkbox.Group value={picked} onChange={(v) => setPicked(v as number[])} style={{ width: '100%' }}>
+          <Space direction="vertical" style={{ width: '100%' }} size={6}>
+            {pickItems.map((i) => (
+              <Checkbox key={i.id} value={i.id} style={{ alignItems: 'flex-start' }}>
+                <span style={{ whiteSpace: 'pre-wrap' }}>
+                  {i.is_key ? <Tag color="gold">★{i.item_no}</Tag> : <Tag>{i.item_no}</Tag>}
+                  {i.name}　<Text type="secondary">{i.score} 分</Text>
+                </span>
+              </Checkbox>
+            ))}
+          </Space>
+        </Checkbox.Group>
+      </Modal>
+
+      <style>{RICH_TEXT_CSS}</style>
+      <Drawer
+        open={!!detailLine} onClose={() => setDetailLine(null)} width={640} destroyOnClose
+        title={detailLine ? (
+          <Space size="small" wrap>
+            <Tag color="#1B3A5C">{detailDept?.display_name ?? ''}</Tag>
+            <span style={{ fontWeight: 600 }}>KPO 稽核：{detailLine.is_key ? '★' : ''}{detailLine.item_no ?? detailLine.id}</span>
+          </Space>
+        ) : ''}
+        footer={canEdit && detailLine ? (
+          <Space style={{ float: 'right' }}>
+            {editMode ? (
+              <>
+                <Button onClick={() => { setEditMode(false); openDetail(detailLine) }}>取消</Button>
+                <Button type="primary" icon={<SaveOutlined />} loading={drawerSaving} onClick={saveDetail}>儲存</Button>
+              </>
+            ) : (
+              <Button type="primary" icon={<EditOutlined />} onClick={() => setEditMode(true)}>編輯（只影響本期）</Button>
+            )}
+          </Space>
+        ) : null}
+      >
+        {detailLine && (
+          <>
+            <Descriptions size="small" column={2} bordered>
+              <Descriptions.Item label="部門">{detailDept?.display_name ?? '—'}</Descriptions.Item>
+              <Descriptions.Item label="項數">{detailLine.item_no ?? '—'}</Descriptions.Item>
+              <Descriptions.Item label="重點項">{detailLine.is_key ? <Tag color="gold">★ 重點項</Tag> : '—'}</Descriptions.Item>
+              <Descriptions.Item label="分數">{detailLine.score}</Descriptions.Item>
+              <Descriptions.Item label="判定">
+                {detailLine.result === 'pass' ? <Tag color="green">符合</Tag>
+                  : detailLine.result === 'fail' ? <Tag color="red">不符合</Tag> : <Tag>未查核</Tag>}
+              </Descriptions.Item>
+              <Descriptions.Item label="查核備註">{detailLine.remark || '—'}</Descriptions.Item>
+            </Descriptions>
+
+            <Divider orientation="left" plain>明細</Divider>
+            {editMode ? (
+              <Form form={editForm} layout="vertical" key={detailLine.id}
+                initialValues={{ name: detailLine.name, is_key: detailLine.is_key, score: detailLine.score }}>
+                <Form.Item name="name" label="品質項目" rules={[{ required: true, message: '請輸入項目內容' }]}>
+                  <Input.TextArea autoSize={{ minRows: 3, maxRows: 10 }} />
+                </Form.Item>
+                <Space size="large">
+                  <Form.Item name="is_key" label="★ 重點項" valuePropName="checked"><Switch /></Form.Item>
+                  <Form.Item name="score" label="分數" rules={[{ required: true }]}>
+                    <InputNumber min={0} max={100} />
+                  </Form.Item>
+                </Space>
+                <div style={{ marginBottom: 8 }}><Text strong>備註（查核方式）</Text></div>
+                <RichTextEditor value={method} onChange={setMethod} minHeight={220} placeholder="查核方式、依據文件…" />
+              </Form>
+            ) : (
+              <>
+                <div style={{ marginBottom: 4 }}><Text strong>品質項目</Text></div>
+                <div style={{ whiteSpace: 'pre-wrap', marginBottom: 16 }}>{detailLine.name}</div>
+                <div style={{ marginBottom: 4 }}><Text strong>備註（查核方式）</Text></div>
+                <RichView html={detailLine.method} />
+              </>
+            )}
+          </>
+        )}
+      </Drawer>
+    </div>
+  )
+}

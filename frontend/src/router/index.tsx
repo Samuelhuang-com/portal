@@ -111,6 +111,7 @@ import ExecDashboardPage               from '@/pages/ExecDashboard'
 import DataPreparingPage              from '@/pages/DataPreparing'
 import DecisionCockpitPage            from '@/pages/DecisionCockpit'
 import ExecWorkDashboardPage           from '@/pages/ExecWorkDashboard'
+import WarRoomPage                     from '@/pages/WarRoom'
 
 // ── 核准請購單月報表 ────────────────────────────────────────────────────────────
 import PurchaseReportPage              from '@/pages/PurchaseReport'
@@ -191,6 +192,9 @@ import AuditSheetEditorPage       from '@/pages/AuditCheck/SheetEditor'
 import AuditStatisticsPage        from '@/pages/AuditCheck/Statistics'
 import AuditItemsMasterPage       from '@/pages/AuditCheck/Masters/Items'
 import AuditResultTypesPage       from '@/pages/AuditCheck/Settings/ResultTypes'
+import AuditKpoIndexPage          from '@/pages/AuditCheck/Kpo'
+import AuditKpoPeriodEditorPage   from '@/pages/AuditCheck/Kpo/PeriodEditor'
+import AuditKpoItemsMasterPage    from '@/pages/AuditCheck/Kpo/ItemsMaster'
 
 // ── 合約管理 ──────────────────────────────────────────────────────────────────
 import ContractPage            from '@/pages/Contract'
@@ -705,6 +709,14 @@ export default function AppRouter() {
         }>
           <Route index element={<AuditCheckPeriodsPage />} />
           <Route path="sheets/:id" element={<AuditSheetEditorPage />} />
+          {/* KPO 稽核（財#1 稽核系統建構，2026-10-10 新增） */}
+          <Route path="kpo" element={<AuditKpoIndexPage />} />
+          <Route path="kpo/periods/:id" element={<AuditKpoPeriodEditorPage />} />
+          <Route path="kpo/items" element={
+            <PermissionGuard permissionKey="audit_check_admin">
+              <AuditKpoItemsMasterPage />
+            </PermissionGuard>
+          } />
           <Route path="statistics" element={<AuditStatisticsPage />} />
           <Route path="masters/items" element={
             <PermissionGuard permissionKey="audit_check_admin">
@@ -790,6 +802,13 @@ export default function AppRouter() {
         <Route path="exec-work-dashboard" element={
           <PermissionGuard permissionKey="exec_work_dashboard_view">
             <ExecWorkDashboardPage />
+          </PermissionGuard>
+        } />
+
+        {/* ── 戰情 KPI（War Room；另受 WAR_ROOM_ALLOWED_EMAILS 白名單，頁面內自行檢查）── */}
+        <Route path="war-room" element={
+          <PermissionGuard permissionKey="war_room_view">
+            <WarRoomPage />
           </PermissionGuard>
         } />
 

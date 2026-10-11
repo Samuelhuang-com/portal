@@ -68,6 +68,7 @@ import { MenuItemsContext } from '@/components/Layout/menuItemsContext'
 import { resolveIcon } from '@/constants/iconMap'
 import { authApi } from '@/api/auth'
 import { getTodos as getCyclePurchaseTodos } from '@/api/cyclePurchase'
+import { fetchWarRoomAccess } from '@/api/warRoom'
 
 // ── 內部型別：帶 permissionKey 的 menu item ───────────────────────────────────
 interface MenuItem {
@@ -118,6 +119,13 @@ export const menuItems: MenuItem[] = [
     icon: <RadarChartOutlined />,
     label: NAV_PAGE.execWorkDashboard,
     permissionKey: 'exec_work_dashboard_view',
+  },
+  // ── 戰情 KPI（War Room）：war_room_view ＋ WAR_ROOM_ALLOWED_EMAILS 白名單（管理員也受限，§11.7）
+  {
+    key: '/war-room',
+    icon: <AlertOutlined />,
+    label: NAV_PAGE.warRoom,
+    permissionKey: 'war_room_view',
   },
   // ── ★工項類別分析（高階主管 Dashboard 之後，獨立一階）──────────────────────
   {
@@ -212,6 +220,8 @@ export const menuItems: MenuItem[] = [
       { key: '/audit-check/statistics',            icon: <BarChartOutlined />, label: NAV_PAGE.auditCheckStatistics, permissionKey: 'audit_check_view'  },
       { key: '/audit-check/masters/items',         icon: <SettingOutlined />, label: NAV_PAGE.auditCheckItems,       permissionKey: 'audit_check_admin' },
       { key: '/audit-check/settings/result-types', icon: <SettingOutlined />, label: NAV_PAGE.auditCheckResultTypes, permissionKey: 'audit_check_admin' },
+      { key: '/audit-check/kpo',                   icon: <AuditOutlined />,   label: NAV_PAGE.auditCheckKpo,         permissionKey: 'audit_check_view'  },
+      { key: '/audit-check/kpo/items',             icon: <SettingOutlined />, label: NAV_PAGE.auditCheckKpoItems,    permissionKey: 'audit_check_admin' },
     ],
   },
   // ── 預算管理（dashboard 之後）──────────────────────────────────────────────
@@ -1180,18 +1190,36 @@ export default function MainLayout() {
     ),
   ]
 
+  // 戰情 KPI 白名單（CLAUDE.md §11.7）：war_room_view 之外還要在 .env WAR_ROOM_ALLOWED_EMAILS 內，
+  // "*" 的系統管理員也一樣；後端 /war-room/access 判定，未通過就把選單項目藏起來。
+  const [warRoomOk, setWarRoomOk] = useState(false)
+  useEffect(() => {
+    if (!user) { setWarRoomOk(false); return }
+    let alive = true
+    fetchWarRoomAccess().then((ok) => { if (alive) setWarRoomOk(ok) })
+    return () => { alive = false }
+  }, [user?.email])  // eslint-disable-line react-hooks/exhaustive-deps
+  const visibleMenuItems = useMemo(() => {
+    if (warRoomOk) return dynamicMenuItems
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const strip = (items: any[]): any[] => (items ?? [])
+      .filter((i) => i.key !== '/war-room')
+      .map((i) => (i.children ? { ...i, children: strip(i.children) } : i))
+    return strip(dynamicMenuItems)
+  }, [dynamicMenuItems, warRoomOk])
+
   // 供 Outlet 子元件（HomeRedirect）判斷首頁用：與側邊欄完全同一份選單
   const menuItemsCtxValue = useMemo(
-    () => ({ items: dynamicMenuItems, loading: menuLoading }),
-    [dynamicMenuItems, menuLoading]
+    () => ({ items: visibleMenuItems, loading: menuLoading }),
+    [visibleMenuItems, menuLoading]
   )
 
   // 交給 antd <Menu> 的版本：剝掉自訂的 permissionKey / permissionKeys，
   // 避免被當成 DOM 屬性往下傳（見 stripPermissionProps 說明）。
   const antdMenuItems = useMemo(
-    () => injectCyclePurchaseBadges(stripPermissionProps(dynamicMenuItems)),
+    () => injectCyclePurchaseBadges(stripPermissionProps(visibleMenuItems)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [dynamicMenuItems, cpBadges]
+    [visibleMenuItems, cpBadges]
   )
 
   const userMenu = {

@@ -1,0 +1,1 @@
+{ "extends": "./tsconfig.json", "include": ["src/api/auditKpo.ts", "src/pages/AuditCheck", "src/vite-env.d.ts"], "references": [] }

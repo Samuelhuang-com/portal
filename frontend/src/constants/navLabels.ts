@@ -48,6 +48,7 @@
  *   2026-05-03  新增 wiki（知識庫）LLM Wiki 知識庫，含員工 SOP + 開發者 Wiki + AI 問答，route /wiki
  *   2026-05-04  新增 employeeManualExport（員工操作手冊匯出）系統設定群組，route /settings/employee-manual-export
  *   2026-05-07  新增 execWorkDashboard（集團工務決策駕駛艙）以工務決策視角為主，route /exec-work-dashboard
+ *   2026-10-10  新增 warRoom（戰情 KPI）整棟樓層戰情圖＋人員動態＋房間／設備履歷，route /war-room
  *   2026-05-10  新增 knowledgeGraph（專案知識圖譜）graphify 整合，route /settings/knowledge-graph
  *   2026-05-13  新增 purchaseReport（請購單報表）核准請購單月報表，route /purchase-report/monthly
  *   2026-05-17  新增 staticPages（靜態頁面）docs/ 目錄 iframe 瀏覽器，route /settings/static-pages
@@ -156,6 +157,9 @@ export const NAV_PAGE = {
 
   // 集團工務決策駕駛艙（工務決策視角，獨立路由）
   execWorkDashboard:       '集團決策 Dashboard',
+
+  // 戰情 KPI（War Room；權限 war_room_view ＋ .env WAR_ROOM_ALLOWED_EMAILS 白名單）
+  warRoom:                 '戰情 KPI',
 
   // 商場工務巡檢
   mallFacilityDashboard:   '商場工務巡檢',
@@ -297,4 +301,6 @@ export const NAV_PAGE = {
   auditCheckStatistics:         '分數統計',            // ← route /audit-check/statistics
   auditCheckItems:              '檢查項主檔',          // ← route /audit-check/masters/items
   auditCheckResultTypes:        '判定類型設定',        // ← route /audit-check/settings/result-types
+  auditCheckKpo:                'KPO 稽核',            // ← route /audit-check/kpo（財#1 稽核系統建構，2026-10-10 新增）
+  auditCheckKpoItems:           'KPO 稽核項目主檔',    // ← route /audit-check/kpo/items
 } as const

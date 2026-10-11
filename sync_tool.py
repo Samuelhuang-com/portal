@@ -237,6 +237,11 @@ MODULES: list[tuple[str, str, str]] = [
     # ⚠️ 必須排在最後 —— 它檢查的是「前面那些模組跑得怎麼樣」。
     #    同一個問題一天只寄一次（Memo 去重），沒設 ALERT_EMAIL_TO 就靜默跳過。
     ("同步告警檢查",       "app.services.sync_alert_service",           "check_and_alert"),
+    # 戰情 KPI 異常告警（2026-10-10）。auto_send 預設關閉＝只乾跑不寄信，
+    # 要在 Portal「戰情 KPI → 告警 → 設定」打開才會自動寄。建議排程：
+    #   嚴重掃描＝每 30 分；每日彙整＝每天 08:30（在本工具「排程設定」裡設定）。
+    ("戰情告警-嚴重掃描",  "app.services.war_room_alert_service",       "scan_critical"),
+    ("戰情告警-每日彙整",  "app.services.war_room_alert_service",       "daily_digest"),
 ]
 
 # ── 報修報表寄信排程 key（非同步模組，獨立處理）─────────────────────────────

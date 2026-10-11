@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.time import twnow
 from app.core.config import settings
-from app.dependencies import get_current_user, require_permission
+from app.dependencies import get_current_user, require_permission, require_any_permission
 from app.models.user import User
 from app.routers.work_journal import _build_daily, _row_venue, _MALL_FI_PATHS, _FULL_BI_PATHS
 from app.models.floor_map import FloorMapPoint
@@ -51,8 +51,8 @@ def is_staff_path_allowed(user: User) -> bool:
     return (getattr(user, "email", "") or "").strip().lower() in _allowed_emails()
 
 
-def require_staff_path(user: User = Depends(require_permission(PERM))) -> User:
-    """頁面權限（集團決策 Dashboard）＋白名單，兩者都要有。"""
+def require_staff_path(user: User = Depends(require_any_permission(PERM, "war_room_view"))) -> User:
+    """頁面權限（集團決策 Dashboard 或 戰情 KPI，2026-10-10 起兩頁共用人員動態）＋白名單，兩者都要有。"""
     if not is_staff_path_allowed(user):
         raise HTTPException(status_code=403, detail="人員動線尚未開放給此帳號")
     return user

@@ -58,6 +58,8 @@ PERMISSION_DEFINITIONS = [
     {"key": "decision_cockpit_view",      "label": "決策駕駛艙",         "group": "一階選單"},
     {"key": "exec_dashboard_view",        "label": "高階主管 Dashboard",  "group": "一階選單"},
     {"key": "exec_work_dashboard_view",   "label": "集團決策 Dashboard",  "group": "一階選單"},
+    # 2026-10-10 戰情 KPI：另受 .env WAR_ROOM_ALLOWED_EMAILS 白名單限制（CLAUDE.md §11.7），需明確指派
+    {"key": "war_room_view",              "label": "戰情 KPI",            "group": "一階選單"},
     {"key": "work_category_analysis_view","label": "工項類別分析",        "group": "一階選單"},
     {"key": "calendar_view",              "label": "行事曆",             "group": "一階選單"},
     {"key": "tutorial_videos_view",       "label": "影音教學：查看",      "group": "一階選單"},
