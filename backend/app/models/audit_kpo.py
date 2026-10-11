@@ -17,6 +17,8 @@ Excel「整合」Sheet：每個部門一個區塊（B2~Z2 為各部門），每�
   audit_kpo_departments   KPO 部門（營業／客服停管／行銷…共 9 個）
   audit_kpo_items         各部門稽核項目主檔（依 Excel 整合 Sheet 植入，可編輯）
   audit_kpo_periods       稽核期別（月）
+  audit_kpo_sheets        公司別現場營運稽核單（期別 × 公司，2026-10-11，migration kpoaud4）
+  audit_kpo_sheet_depts   稽核單的「受稽部門」（來源＝部門主檔 audit_kpo_departments，不依公司過濾）
   audit_kpo_period_items  每期每部門「選定」的稽核項目；項目內容為**快照**，
                           主檔事後改名／刪除不影響已選定的歷史期別
 
@@ -67,8 +69,11 @@ class AuditKpoDept(Base):
 
     @property
     def display_name(self) -> str:
-        """有連結公司別時顯示「公司｜部門」，同名部門（各公司都有營業部）才分得出來。"""
-        return f"{self.company.name}｜{self.name}" if self.company is not None else self.name
+        """顯示名稱＝部門名稱。
+        2026-10-11 裁示：現場營運稽核先隱藏「公司別」（部門主檔綁公司選起來很怪），
+        所有畫面與匯出一律只顯示部門名稱；公司別只存在於稽核單（audit_kpo_sheets）。
+        company_id 欄位保留，日後要恢復「公司｜部門」顯示時改回即可。"""
+        return self.name
 
 
 class AuditKpoItem(Base):
@@ -110,18 +115,71 @@ class AuditKpoPeriod(Base):
         cascade="all, delete-orphan",
         order_by="AuditKpoPeriodItem.sort_order",
     )
+    sheets = relationship(
+        "AuditKpoSheet", back_populates="period_ref",
+        cascade="all, delete-orphan",
+        order_by="AuditKpoSheet.id",
+    )
+
+
+class AuditKpoSheet(Base):
+    """公司別現場營運稽核單（一期 × 一家公司）。比照財#3 稽核檢查的 audit_sheets。"""
+    __tablename__ = "audit_kpo_sheets"
+    __table_args__ = (
+        UniqueConstraint("period_id", "company_id", name="uq_audit_kpo_sheet_period_company"),
+    )
+
+    id         = Column(Integer, primary_key=True, autoincrement=True)
+    period_id  = Column(Integer, ForeignKey("audit_kpo_periods.id", ondelete="CASCADE"),
+                        nullable=False, index=True)
+    company_id = Column(Integer, ForeignKey("companies.id"), nullable=False, index=True)
+    created_by = Column(String(36), nullable=True)
+    created_at = Column(DateTime, nullable=False, default=_now)
+    updated_at = Column(DateTime, nullable=False, default=_now, onupdate=_now)
+
+    period_ref  = relationship("AuditKpoPeriod", back_populates="sheets")
+    company     = relationship("Company", foreign_keys=[company_id], lazy="joined")
+    departments = relationship(
+        "AuditKpoSheetDept", back_populates="sheet",
+        cascade="all, delete-orphan", order_by="AuditKpoSheetDept.sort_order",
+    )
+    lines = relationship(
+        "AuditKpoPeriodItem", back_populates="sheet",
+        cascade="all, delete-orphan", order_by="AuditKpoPeriodItem.sort_order",
+    )
+
+
+class AuditKpoSheetDept(Base):
+    """稽核單的受稽部門。部門來源為 audit_kpo_departments（現場營運稽核項目的部門），
+    與稽核單的公司別無連動：同一個部門可被不同公司的稽核單各選一次。"""
+    __tablename__ = "audit_kpo_sheet_depts"
+    __table_args__ = (
+        UniqueConstraint("sheet_id", "department_id", name="uq_audit_kpo_sheet_dept"),
+    )
+
+    id            = Column(Integer, primary_key=True, autoincrement=True)
+    sheet_id      = Column(Integer, ForeignKey("audit_kpo_sheets.id", ondelete="CASCADE"),
+                           nullable=False, index=True)
+    department_id = Column(Integer, ForeignKey("audit_kpo_departments.id", ondelete="RESTRICT"),
+                           nullable=False, index=True)
+    sort_order    = Column(Integer, nullable=False, default=0)
+
+    sheet      = relationship("AuditKpoSheet", back_populates="departments")
+    department = relationship("AuditKpoDept")
 
 
 class AuditKpoPeriodItem(Base):
     """某期某部門選定的一個稽核項目（內容為選定當下的快照，可在本期單獨編輯）。"""
     __tablename__ = "audit_kpo_period_items"
     __table_args__ = (
-        UniqueConstraint("period_id", "source_item_id", name="uq_audit_kpo_pi_period_src"),
+        UniqueConstraint("sheet_id", "source_item_id", name="uq_audit_kpo_pi_sheet_src"),
     )
 
     id             = Column(Integer, primary_key=True, autoincrement=True)
     period_id      = Column(Integer, ForeignKey("audit_kpo_periods.id", ondelete="CASCADE"),
                             nullable=False, index=True)
+    sheet_id       = Column(Integer, ForeignKey("audit_kpo_sheets.id", ondelete="CASCADE"),
+                            nullable=False, index=True, comment="所屬公司稽核單（2026-10-11）")
     department_id  = Column(Integer, ForeignKey("audit_kpo_departments.id", ondelete="RESTRICT"),
                             nullable=False, index=True)
     source_item_id = Column(Integer, ForeignKey("audit_kpo_items.id", ondelete="SET NULL"),
@@ -138,4 +196,5 @@ class AuditKpoPeriodItem(Base):
     updated_at     = Column(DateTime, nullable=False, default=_now, onupdate=_now)
 
     period_ref = relationship("AuditKpoPeriod", back_populates="lines")
+    sheet      = relationship("AuditKpoSheet", back_populates="lines")
     department = relationship("AuditKpoDept")

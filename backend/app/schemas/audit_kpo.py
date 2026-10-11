@@ -12,9 +12,11 @@ from pydantic import BaseModel, Field
 
 # ── 部門 ───────────────────────────────────────────────────────────────────
 class KpoDeptCreate(BaseModel):
-    """新增部門：一律從 settings/company-departments 選公司別＋部門別，名稱取自部門主檔。"""
-    company_id: int
-    ref_department_id: int
+    """新增部門。2026-10-11 起公司別先隱藏：只填 name 即可（不連結部門主檔）；
+    若同時給 company_id＋ref_department_id 則維持舊行為（名稱取自 settings/company-departments）。"""
+    name: Optional[str] = Field(None, min_length=1, max_length=100)
+    company_id: Optional[int] = None
+    ref_department_id: Optional[int] = None
     source_title: Optional[str] = Field(None, max_length=200)
     sort_order: Optional[int] = None
 
@@ -99,6 +101,7 @@ class KpoSubtotal(BaseModel):
     pending_count: int = 0    # 尚未查核
     earned_score: int = 0     # 得分（符合項目的分數合計）
     rate: Optional[float] = None   # 得分 / 滿分；滿分 0 → None
+    score100: Optional[int] = None  # 本期分數＝得分÷滿分×100，四捨五入取整數（不呈現 %）；滿分 0 → None
 
 
 class KpoLineOut(BaseModel):
@@ -122,12 +125,29 @@ class KpoDeptBlock(BaseModel):
     subtotal: KpoSubtotal
 
 
+class KpoSheetBrief(BaseModel):
+    id: int
+    company_id: int
+    company_name: str
+    dept_count: int = 0
+
+
+class KpoSheetBlock(BaseModel):
+    """公司別稽核單：公司 → 受稽部門 → 稽核項目。"""
+    id: int
+    company_id: int
+    company_name: str
+    departments: List[KpoDeptBlock]
+    total: KpoSubtotal
+
+
 class KpoPeriodSummary(BaseModel):
     id: int
     period: str
     title: str
     note: Optional[str] = None
     created_at: Optional[datetime] = None
+    sheets: List[KpoSheetBrief] = []
     dept_count: int = 0
     total: KpoSubtotal
 
@@ -137,9 +157,74 @@ class KpoPeriodDetail(BaseModel):
     period: str
     title: str
     note: Optional[str] = None
-    dept_order: List[int] = []     # 本期自訂的部門順序（空＝依主檔）
-    departments: List[KpoDeptBlock]
+    sheets: List[KpoSheetBlock]
     total: KpoSubtotal
+
+
+class KpoHistoryPeriod(BaseModel):
+    period_id: int
+    period: str                      # YYYY-MM
+    score100: Optional[int] = None   # 該期該部門的本期分數
+
+
+class KpoHistoryMark(BaseModel):
+    period_id: int
+    period: str
+    result: Optional[str] = None     # pass / fail / None＝未查核
+
+
+class KpoDeptHistory(BaseModel):
+    """選擇項目視窗用：同公司、同部門在「其他期別」的歷史（不含本期）。"""
+    periods: List[KpoHistoryPeriod] = []
+    period_count: int = 0
+    score_sum: int = 0               # 各期本期分數加總
+    score_avg: Optional[float] = None   # score_sum ÷ period_count，取到小數 1 位
+    items: dict[int, List[KpoHistoryMark]] = {}   # 主檔項目 id → 曾被選定的期別與判定
+
+
+class KpoDashPeriod(BaseModel):
+    period_id: int
+    period: str
+    score100: Optional[int] = None
+
+
+class KpoDashMonth(BaseModel):
+    """某公司某部門某月：該月所有期別本期分數的平均（同月多期取平均）。"""
+    avg: Optional[float] = None
+    count: int = 0
+    periods: List[KpoDashPeriod] = []
+
+
+class KpoDashRow(BaseModel):
+    department_id: int
+    department_name: str
+    months: dict[int, KpoDashMonth] = {}     # 1~12
+    period_count: int = 0                    # 年度內有選定項目的期別數
+    score_sum: int = 0
+    avg: Optional[float] = None              # 年度平均＝各期本期分數 ÷ 期別數
+
+
+class KpoDashCompany(BaseModel):
+    company_id: int
+    company_name: str
+    rows: List[KpoDashRow]
+
+
+class KpoDashboard(BaseModel):
+    year: int
+    years: List[int]
+    companies: List[KpoDashCompany]
+
+
+class KpoSheetCreate(BaseModel):
+    """新增公司別稽核單：公司別＋受稽部門（來源＝現場營運稽核項目的部門，與公司別無連動）。"""
+    company_id: int
+    department_ids: List[int] = Field(..., min_length=1)
+
+
+class KpoSheetDeptsUpdate(BaseModel):
+    """整組替換稽核單的受稽部門（移除的部門其選定項目與判定一併刪除）。"""
+    department_ids: List[int] = Field(..., min_length=1)
 
 
 class KpoSelectionUpdate(BaseModel):

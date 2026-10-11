@@ -9,7 +9,7 @@
     1.1 子項 ｜ 評語（判定色） ｜ V / X ｜ 建議（藍字）
     覆核. 8月待補正項目
         待補正內容 ｜ 覆核結果 ｜ V / X
-  本次稽核說明：xx分  ＋  缺失表
+  本次稽核說明：（不帶分數）＋  缺失表
   本次稽核結果：       ＋  稽核子項數／未達標項數／本期稽核分數（2026-10-10 單獨挪到缺失下方）
   簽核列：人資主管／受稽部門主管／稽核人員（2026-10-10 依範本改為 3 格）
 
@@ -17,7 +17,7 @@
 數字一律取 build_sheet_detail() 的系統計算結果，不在這裡重算。
 
 字級（2026-10-10 使用者範本「內部稽核報告」）：標題 16pt、填表日期 14pt，其餘全部 11pt
-（BODY_PT）。查核評語在 Web editor 內另設的字級一律不採用，固定 11pt（2026-10-10 裁示）；
+（BODY_PT）；唯一例外：「本次稽核結果:」與其統計表為 14pt（RESULT_PT，2026-10-11 裁示）。查核評語在 Web editor 內另設的字級一律不採用，固定 11pt（2026-10-10 裁示）；
 顏色、粗斜體等其餘格式仍照欄位設定。字型一律微軟正黑體。
 分數以「分」呈現（達標數 ÷ 子項數 × 100，四捨五入），統計列顯示「未達標項數」＝ X 的數量。
 """
@@ -57,6 +57,7 @@ SHADE = "F2F2F2"
 TITLE_PT = 16     # 標題「內部稽核報告」
 DATE_PT = 14      # 填表日期
 BODY_PT = 11      # 其餘所有文字（2026-10-10 依使用者範本統一）
+RESULT_PT = 14    # 「本次稽核結果:」與統計表（2026-10-11）
 
 # 主表欄寬（A4 直式，左右邊界 1.5cm → 可用 18cm）
 COLS = [Cm(1.5), Cm(4.3), Cm(6.2), Cm(2.2), Cm(3.8)]
@@ -355,7 +356,7 @@ def build_inspection_docx(
 
     # ── 本次稽核說明（缺失）＋ 本次稽核結果（統計，2026-10-10 單獨挪到下方）──
     # 版面比照使用者範本「內部稽核報告」：
-    #   本次稽核說明:  xx分
+    #   本次稽核說明:   （2026-10-11：後面不帶分數）
     #   [缺失 | 缺失內容]
     #   本次稽核結果:
     #   [稽核子項數 | n | 未達標項數 | n | 本期稽核分數 | xx分]
@@ -365,7 +366,6 @@ def build_inspection_docx(
     p = box.paragraphs[0]
     score_val = score["score"] if score else None
     _font(p.add_run("本次稽核說明:  "), BODY_PT)
-    _font(p.add_run(_pct(score_val)), BODY_PT, color=_score_color(score_val))
 
     deficiency = box.add_table(rows=1, cols=2)
     deficiency.style = "Table Grid"
@@ -377,7 +377,7 @@ def build_inspection_docx(
 
     box.add_paragraph()
     p = box.add_paragraph()
-    _font(p.add_run("本次稽核結果:"), BODY_PT)
+    _font(p.add_run("本次稽核結果:"), RESULT_PT)
 
     stats = box.add_table(rows=1, cols=6)
     stats.style = "Table Grid"
@@ -393,8 +393,8 @@ def build_inspection_docx(
             val_color = RED
         else:
             val_color = None
-        _write(stats.rows[0].cells[idx * 2], label, BODY_PT, align=WD_ALIGN_PARAGRAPH.CENTER)
-        _write(stats.rows[0].cells[idx * 2 + 1], val, BODY_PT, align=WD_ALIGN_PARAGRAPH.CENTER,
+        _write(stats.rows[0].cells[idx * 2], label, RESULT_PT, align=WD_ALIGN_PARAGRAPH.CENTER)
+        _write(stats.rows[0].cells[idx * 2 + 1], val, RESULT_PT, align=WD_ALIGN_PARAGRAPH.CENTER,
                color=val_color)
         if idx == 1:   # 範本：「未達標項數」與數字黃色螢光
             for c_ in (stats.rows[0].cells[2], stats.rows[0].cells[3]):

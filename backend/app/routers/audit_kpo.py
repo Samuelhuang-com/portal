@@ -2,7 +2,7 @@
 KPO 稽核（稽核檢查子模組）— FastAPI Router
 Prefix: /api/v1/audit-check/kpo
 
-中文名稱：KPO 稽核 ／ 英文名稱：Audit KPO
+中文名稱：現場營運稽核（舊名 KPO 稽核）／ 英文名稱：Audit KPO
 前端路由：/audit-check/kpo/*
 對應 Excel：財#1稽核系統建構（整合／2026.11執行／各部門 Sheet）
 規格：docs/SPEC_audit_kpo.md
@@ -27,14 +27,14 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.dependencies import require_permission
 from app.models.audit_kpo import (
-    AuditKpoDept, AuditKpoItem, AuditKpoPeriod, AuditKpoPeriodItem,
+    AuditKpoDept, AuditKpoItem, AuditKpoPeriod, AuditKpoPeriodItem, AuditKpoSheet, AuditKpoSheetDept,
 )
-from app.models.reference_data import RefDepartment
+from app.models.reference_data import Company, RefDepartment
 from app.models.user import User
 from app.schemas.audit_kpo import (
     KpoDeptCreate, KpoDeptOut, KpoDeptUpdate, KpoItemCreate, KpoItemOut,
     KpoDeptOrderUpdate, KpoItemUpdate, KpoLineOrderUpdate, KpoLineUpdate, KpoPeriodCreate, KpoPeriodDetail,
-    KpoPeriodSummary, KpoPeriodUpdate, KpoSelectionUpdate,
+    KpoPeriodSummary, KpoPeriodUpdate, KpoSelectionUpdate, KpoSheetCreate, KpoSheetDeptsUpdate, KpoDeptHistory, KpoDashboard,
 )
 from app.services import audit_kpo_service as svc
 from app.services.audit_check_html import sanitize_html
@@ -126,11 +126,23 @@ def create_department(
     db: Session = Depends(get_db),
     _: User = Depends(require_permission(ADMIN)),
 ):
-    rd = _resolve_ref_department(db, body.company_id, body.ref_department_id)
-    _assert_dept_unique(db, body.company_id, rd.name)
+    if body.ref_department_id is not None:
+        if body.company_id is None:
+            raise HTTPException(status_code=400, detail="請先選擇公司別")
+        rd = _resolve_ref_department(db, body.company_id, body.ref_department_id)
+        name, company_id, ref_id = rd.name, body.company_id, rd.id
+    else:
+        # 公司別先隱藏（2026-10-11）：直接以名稱建立，不連結部門主檔
+        name = (body.name or "").strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="請輸入部門名稱")
+        company_id, ref_id = None, None
+        if db.query(AuditKpoDept.id).filter(AuditKpoDept.name == name).first():
+            raise _409(f"部門「{name}」已存在")      # 畫面不顯示公司別，同名會分不出來 → 不分公司一律擋
+    _assert_dept_unique(db, company_id, name)
     max_order = db.query(func.coalesce(func.max(AuditKpoDept.sort_order), 0)).scalar()
     d = AuditKpoDept(
-        name=rd.name, company_id=body.company_id, ref_department_id=rd.id,
+        name=name, company_id=company_id, ref_department_id=ref_id,
         source_title=body.source_title,
         sort_order=body.sort_order if body.sort_order is not None else int(max_order) + 10,
     )
@@ -270,6 +282,16 @@ def delete_item(
 # ════════════════════════════════════════════════════════════════════════════
 # 期別
 # ════════════════════════════════════════════════════════════════════════════
+@router.get("/dashboard", response_model=KpoDashboard)
+def get_dashboard(
+    year: Optional[int] = Query(None, ge=2000, le=2100),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_permission(VIEW)),
+):
+    """年度 Dashboard：公司 × 部門 × 月份的本期分數（同月多期取平均、列全部啟用部門）。"""
+    return svc.dashboard(db, year)
+
+
 @router.get("/periods", response_model=List[KpoPeriodSummary])
 def list_periods(
     db: Session = Depends(get_db),
@@ -333,22 +355,131 @@ def delete_period(
     db.commit()
 
 
-@router.put("/periods/{period_id}/selection", response_model=KpoPeriodDetail)
+def _get_sheet(p: AuditKpoPeriod, sheet_id: int) -> AuditKpoSheet:
+    for sh in p.sheets:
+        if sh.id == sheet_id:
+            return sh
+    raise _404("查無此公司稽核單")
+
+
+def _check_master_depts(db: Session, department_ids: List[int]) -> List[int]:
+    """受稽部門＝現場營運稽核項目的部門（audit_kpo_departments）；不依公司別過濾。"""
+    ids = list(dict.fromkeys(department_ids))
+    rows = {d.id: d for d in db.query(AuditKpoDept).filter(AuditKpoDept.id.in_(ids or [0])).all()}
+    bad = [i for i in ids if i not in rows]
+    if bad:
+        raise HTTPException(status_code=400, detail=f"查無部門：{bad}")
+    stopped = [rows[i].display_name for i in ids if not rows[i].is_active]
+    if stopped:
+        raise HTTPException(status_code=400, detail=f"部門已停用：{'、'.join(stopped)}")
+    return ids
+
+
+@router.post("/periods/{period_id}/sheets", response_model=KpoPeriodDetail, status_code=201)
+def create_sheet(
+    period_id: int,
+    body: KpoSheetCreate,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_permission(EDIT)),
+):
+    """新增公司別稽核單（一期一家公司一張）＋選受稽部門（可跨公司任選主檔部門）。"""
+    p = _get_period(db, period_id)
+    company = db.get(Company, body.company_id)
+    if company is None:
+        raise HTTPException(status_code=400, detail="查無此公司別")
+    if any(sh.company_id == body.company_id for sh in p.sheets):
+        raise _409(f"本期已建立「{company.name}」的稽核單")
+    ids = _check_master_depts(db, body.department_ids)
+    sh = AuditKpoSheet(period_id=p.id, company_id=body.company_id, created_by=str(user.id))
+    for idx, dept_id in enumerate(ids):
+        sh.departments.append(AuditKpoSheetDept(department_id=dept_id, sort_order=(idx + 1) * 10))
+    p.sheets.append(sh)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise _409("稽核單重複，請重新整理後再試")
+    db.refresh(p)
+    return svc.build_period_detail(db, p)
+
+
+@router.delete("/periods/{period_id}/sheets/{sheet_id}", response_model=KpoPeriodDetail)
+def delete_sheet(
+    period_id: int,
+    sheet_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_permission(ADMIN)),
+):
+    """刪除公司稽核單（其受稽部門、選定項目與判定一併刪除）。"""
+    p = _get_period(db, period_id)
+    sh = _get_sheet(p, sheet_id)
+    p.sheets.remove(sh)
+    db.commit()
+    db.refresh(p)
+    return svc.build_period_detail(db, p)
+
+
+@router.put("/periods/{period_id}/sheets/{sheet_id}/departments", response_model=KpoPeriodDetail)
+def update_sheet_departments(
+    period_id: int,
+    sheet_id: int,
+    body: KpoSheetDeptsUpdate,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_permission(EDIT)),
+):
+    """整組替換受稽部門：新增的接在最後；移除的連同選定項目一併刪除；保留的維持原順序。"""
+    p = _get_period(db, period_id)
+    sh = _get_sheet(p, sheet_id)
+    ids = _check_master_depts(db, body.department_ids)
+    have = {sd.department_id: sd for sd in sh.departments}
+    for dept_id, sd in list(have.items()):
+        if dept_id not in ids:
+            for ln in [x for x in sh.lines if x.department_id == dept_id]:
+                sh.lines.remove(ln)
+            sh.departments.remove(sd)
+    next_order = max([sd.sort_order or 0 for sd in have.values()], default=0)
+    for dept_id in ids:
+        if dept_id not in have:
+            next_order += 10
+            sh.departments.append(AuditKpoSheetDept(department_id=dept_id, sort_order=next_order))
+    db.commit()
+    db.refresh(p)
+    return svc.build_period_detail(db, p)
+
+
+@router.get("/periods/{period_id}/sheets/{sheet_id}/departments/{department_id}/history",
+            response_model=KpoDeptHistory)
+def get_dept_history(
+    period_id: int,
+    sheet_id: int,
+    department_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_permission(VIEW)),
+):
+    """「選擇項目」視窗用：同公司、同部門在其他期別的期別數／分數／平均分數，與各項目曾選過的期別＋判定。"""
+    p = _get_period(db, period_id)
+    sh = _get_sheet(p, sheet_id)
+    return svc.dept_history(db, p, sh, department_id)
+
+
+@router.put("/periods/{period_id}/sheets/{sheet_id}/selection", response_model=KpoPeriodDetail)
 def update_selection(
     period_id: int,
+    sheet_id: int,
     body: KpoSelectionUpdate,
     db: Session = Depends(get_db),
     _: User = Depends(require_permission(EDIT)),
 ):
     """
-    整組替換某部門在本期選定的項目：
+    整組替換某稽核單、某受稽部門選定的項目：
       - 新勾選的 → 由主檔複製一份快照（含 ★、分數、備註）
       - 取消勾選的 → 移除該列（其判定與備註一併消失）
       - 原本就選定的 → 保留不動（本期已編輯的內容與判定不會被主檔覆蓋）
     """
     p = _get_period(db, period_id)
-    if db.get(AuditKpoDept, body.department_id) is None:
-        raise _404("查無此部門")
+    sh = _get_sheet(p, sheet_id)
+    if not any(sd.department_id == body.department_id for sd in sh.departments):
+        raise HTTPException(status_code=400, detail="此部門不是該稽核單的受稽部門")
     wanted = list(dict.fromkeys(body.item_ids))
     masters = {
         it.id: it for it in db.query(AuditKpoItem).filter(
@@ -360,21 +491,18 @@ def update_selection(
     if bad:
         raise HTTPException(status_code=400, detail=f"稽核項目不屬於該部門或不存在：{bad}")
 
-    existing_lines = [ln for ln in p.lines if ln.department_id == body.department_id]
-    next_order = max([ln.sort_order or 0 for ln in existing_lines], default=0)
-    existing = {
-        ln.source_item_id: ln for ln in p.lines
-        if ln.department_id == body.department_id and ln.source_item_id is not None
-    }
+    mine = [ln for ln in sh.lines if ln.department_id == body.department_id]
+    next_order = max([ln.sort_order or 0 for ln in mine], default=0)
+    existing = {ln.source_item_id: ln for ln in mine if ln.source_item_id is not None}
     for sid, ln in list(existing.items()):
         if sid not in masters:
-            p.lines.remove(ln)
+            sh.lines.remove(ln)
     # 新勾選的項目接在該部門現有順序之後（依主檔順序），不會插進使用者調整過的順序中間
     for sid in sorted((i for i in wanted if i not in existing), key=lambda i: (masters[i].sort_order, i)):
         m = masters[sid]
         next_order += 10
-        p.lines.append(AuditKpoPeriodItem(
-            department_id=body.department_id, source_item_id=m.id,
+        sh.lines.append(AuditKpoPeriodItem(
+            period_id=p.id, department_id=body.department_id, source_item_id=m.id,
             item_no=m.item_no, is_key=m.is_key, name=m.name, score=m.score,
             method=m.method, sort_order=next_order,
         ))
@@ -387,40 +515,46 @@ def update_selection(
     return svc.build_period_detail(db, p)
 
 
-@router.put("/periods/{period_id}/dept-order", response_model=KpoPeriodDetail)
+@router.put("/periods/{period_id}/sheets/{sheet_id}/dept-order", response_model=KpoPeriodDetail)
 def update_dept_order(
     period_id: int,
+    sheet_id: int,
     body: KpoDeptOrderUpdate,
     db: Session = Depends(get_db),
     _: User = Depends(require_permission(EDIT)),
 ):
-    """儲存本期部門顯示順序（只影響本期，不動部門主檔順序）。"""
+    """儲存該稽核單的受稽部門顯示順序（只影響這張稽核單）。"""
     p = _get_period(db, period_id)
+    sh = _get_sheet(p, sheet_id)
+    mine = {sd.department_id: sd for sd in sh.departments}
     ids = list(dict.fromkeys(body.department_ids))
-    valid = {r[0] for r in db.query(AuditKpoDept.id).filter(AuditKpoDept.id.in_(ids or [0])).all()}
-    bad = [i for i in ids if i not in valid]
+    bad = [i for i in ids if i not in mine]
     if bad:
-        raise HTTPException(status_code=400, detail=f"查無部門：{bad}")
-    p.dept_order = ",".join(str(i) for i in ids) or None
+        raise HTTPException(status_code=400, detail=f"部門不屬於該稽核單：{bad}")
+    rest = sorted((sd for i, sd in mine.items() if i not in ids), key=lambda x: (x.sort_order or 0, x.id))
+    for idx, sd in enumerate([mine[i] for i in ids] + rest):
+        sd.sort_order = (idx + 1) * 10
     db.commit()
     db.refresh(p)
     return svc.build_period_detail(db, p)
 
 
-@router.put("/periods/{period_id}/lines-order", response_model=KpoPeriodDetail)
+@router.put("/periods/{period_id}/sheets/{sheet_id}/lines-order", response_model=KpoPeriodDetail)
 def update_lines_order(
     period_id: int,
+    sheet_id: int,
     body: KpoLineOrderUpdate,
     db: Session = Depends(get_db),
     _: User = Depends(require_permission(EDIT)),
 ):
-    """儲存某部門在本期的項目順序（只影響本期這個部門）。"""
+    """儲存某稽核單、某部門的項目順序（只影響這張稽核單的這個部門）。"""
     p = _get_period(db, period_id)
-    mine = {ln.id: ln for ln in p.lines if ln.department_id == body.department_id}
+    sh = _get_sheet(p, sheet_id)
+    mine = {ln.id: ln for ln in sh.lines if ln.department_id == body.department_id}
     ids = list(dict.fromkeys(body.line_ids))
     bad = [i for i in ids if i not in mine]
     if bad:
-        raise HTTPException(status_code=400, detail=f"選定項目不屬於本期該部門：{bad}")
+        raise HTTPException(status_code=400, detail=f"選定項目不屬於該稽核單的此部門：{bad}")
     rest = sorted((ln for i, ln in mine.items() if i not in ids),
                   key=lambda x: (x.sort_order or 0, x.id))
     for idx, ln in enumerate([mine[i] for i in ids] + rest):

@@ -1,5 +1,5 @@
 /**
- * KPO 稽核項目主檔
+ * 現場營運稽核項目
  * route: /audit-check/kpo/items     permissionKey: audit_check_admin
  *
  * 各部門 16 項稽核項目（依 Excel「財#1稽核系統建構-整合」植入），可新增、編輯、停用、刪除。
@@ -34,7 +34,7 @@ export default function AuditKpoItemsMasterPage() {
       setItems(i.data)
       setActiveDept((cur) => cur ?? d.data[0]?.id)
     } catch {
-      message.error('載入 KPO 稽核項目主檔失敗')
+      message.error('載入 現場營運稽核項目失敗')
     } finally {
       setLoading(false)
     }
@@ -90,6 +90,8 @@ export default function AuditKpoItemsMasterPage() {
   }
 
   // ── 部門 ────────────────────────────────────────────────────────────────
+  // 2026-10-11 裁示：「公司別」先隱藏（選起來很怪）。部門只用名稱；改 true 即可恢復公司別／部門別連結欄位。
+  const SHOW_COMPANY_FIELD = false
   const [deptOpen, setDeptOpen] = useState(false)
   const [deptEditing, setDeptEditing] = useState<KpoDept | null>(null)
   const [deptForm] = Form.useForm()
@@ -123,14 +125,14 @@ export default function AuditKpoItemsMasterPage() {
         const linked = !!deptEditing.ref_department_id
         await kpoDeptApi.update(deptEditing.id, {
           ...(linked ? {} : { name: v.name }),
-          ...(v.ref_department_id && (v.ref_department_id !== deptEditing.ref_department_id || v.company_id !== deptEditing.company_id)
+          ...(SHOW_COMPANY_FIELD && v.ref_department_id && (v.ref_department_id !== deptEditing.ref_department_id || v.company_id !== deptEditing.company_id)
             ? { company_id: v.company_id, ref_department_id: v.ref_department_id } : {}),
           source_title: v.source_title || null, is_active: v.is_active,
         })
       } else {
-        const res = await kpoDeptApi.create({
-          company_id: v.company_id, ref_department_id: v.ref_department_id, source_title: v.source_title || null,
-        })
+        const res = await kpoDeptApi.create(SHOW_COMPANY_FIELD
+          ? { company_id: v.company_id, ref_department_id: v.ref_department_id, source_title: v.source_title || null }
+          : { name: (v.name ?? '').trim(), source_title: v.source_title || null })
         setActiveDept(res.data.id)
       }
       message.success('已儲存')
@@ -175,7 +177,7 @@ export default function AuditKpoItemsMasterPage() {
     <div>
       <Space style={{ width: '100%', justifyContent: 'space-between', marginBottom: 12 }} wrap>
         <div>
-          <Title level={4} style={{ margin: 0 }}>KPO 稽核項目主檔</Title>
+          <Title level={4} style={{ margin: 0 }}>現場營運稽核項目</Title>
           <Text type="secondary">依 Excel「財#1稽核系統建構-整合」建立；★ 重點項 10 分、其餘 5 分，每部門合計 100 分</Text>
         </div>
         <Space>
@@ -224,19 +226,27 @@ export default function AuditKpoItemsMasterPage() {
       <Modal title={deptEditing ? '編輯部門' : '新增部門'} open={deptOpen} onCancel={() => setDeptOpen(false)}
         onOk={saveDept} okText="儲存" destroyOnClose>
         <Form form={deptForm} layout="vertical">
-          <Form.Item name="company_id" label="公司別" rules={[{ required: !deptEditing || !!deptEditing.ref_department_id, message: '請選擇公司別' }]}>
-            <Select placeholder="選擇公司別" showSearch optionFilterProp="label"
-              options={companies.map((c) => ({ value: c.id, label: c.name }))}
-              onChange={() => deptForm.setFieldValue('ref_department_id', undefined)} />
-          </Form.Item>
-          <Form.Item name="ref_department_id" label="部門別" rules={[{ required: !deptEditing || !!deptEditing.ref_department_id, message: '請選擇部門別' }]}>
-            <Select placeholder={formCompany ? '選擇部門別' : '請先選擇公司別'} disabled={!formCompany}
-              showSearch optionFilterProp="label"
-              options={refDepts.map((d) => ({ value: d.id, label: d.name }))} />
-          </Form.Item>
-          {deptEditing && !deptEditing.ref_department_id && (
-            <Alert type="info" showIcon style={{ marginBottom: 12 }}
-              message={`「${deptEditing.name}」是 Excel 植入、尚未連結部門主檔；請選擇公司別與部門別完成連結（連結後名稱以部門主檔為準）。`} />
+          {SHOW_COMPANY_FIELD ? (
+            <>
+              <Form.Item name="company_id" label="公司別" rules={[{ required: !deptEditing || !!deptEditing.ref_department_id, message: '請選擇公司別' }]}>
+                <Select placeholder="選擇公司別" showSearch optionFilterProp="label"
+                  options={companies.map((c) => ({ value: c.id, label: c.name }))}
+                  onChange={() => deptForm.setFieldValue('ref_department_id', undefined)} />
+              </Form.Item>
+              <Form.Item name="ref_department_id" label="部門別" rules={[{ required: !deptEditing || !!deptEditing.ref_department_id, message: '請選擇部門別' }]}>
+                <Select placeholder={formCompany ? '選擇部門別' : '請先選擇公司別'} disabled={!formCompany}
+                  showSearch optionFilterProp="label"
+                  options={refDepts.map((d) => ({ value: d.id, label: d.name }))} />
+              </Form.Item>
+              {deptEditing && !deptEditing.ref_department_id && (
+                <Alert type="info" showIcon style={{ marginBottom: 12 }}
+                  message={`「${deptEditing.name}」是 Excel 植入、尚未連結部門主檔；請選擇公司別與部門別完成連結（連結後名稱以部門主檔為準）。`} />
+              )}
+            </>
+          ) : (
+            <Form.Item name="name" label="部門名稱" rules={[{ required: true, whitespace: true, message: '請輸入部門名稱' }]}>
+              <Input maxLength={100} disabled={!!deptEditing?.ref_department_id} placeholder="例：營業部" />
+            </Form.Item>
           )}
           <Form.Item name="source_title" label="備註（如會議定案日期）"><Input maxLength={200} /></Form.Item>
           {deptEditing && <Form.Item name="is_active" label="啟用" valuePropName="checked"><Switch /></Form.Item>}

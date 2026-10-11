@@ -1,12 +1,13 @@
 /**
- * KPO 稽核 — 期別清單
+ * 現場營運稽核 — 期別清單
  * route: /audit-check/kpo     permissionKey: audit_check_view
  *
- * 中文名稱：KPO 稽核　英文名稱：Audit KPO　後端 router：audit_kpo.py
+ * 中文名稱：現場營運稽核　英文名稱：Audit KPO　後端 router：audit_kpo.py
  * 對應 Excel：財#1稽核系統建構（整合／2026.11執行）
  *
- * 一期 = 一個月。進入期別後，每個部門從 16 項稽核項目中選定本期要稽核的項目（通常 1★＋3 項＝25 分），
- * 系統自動算出各部門與全部的小計。
+ * 一期 = 一個月。流程（2026-10-11，比照 audit-check）：
+ *   ① 建立期別 → ② 新增公司別稽核單並選「受稽部門」→ ③ 進入期別，依「公司 → 部門 → 稽核項目」
+ *   為每個部門選定本期要稽核的項目（通常 1★＋3 項＝25 分），系統自動算出部門／公司／整期小計與本期分數。
  *
  * ⚠️ 選的是「單一月份」，屬 CLAUDE.md §8.4 不適用 StandardRangePicker 的情境。
  */
@@ -16,12 +17,14 @@ import {
   Button, Card, DatePicker, Form, Input, Modal, Popconfirm, Space, Table, Tag, Typography, message,
 } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
-import { DeleteOutlined, PlusOutlined, ReloadOutlined, UnorderedListOutlined } from '@ant-design/icons'
+import { BankOutlined, DeleteOutlined, PlusOutlined, ReloadOutlined, UnorderedListOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 
 import { kpoPeriodApi } from '@/api/auditKpo'
 import type { KpoPeriodSummary } from '@/api/auditKpo'
 import { useAuthStore } from '@/stores/authStore'
+import AuditKpoDashboard from './Dashboard'
+import SheetCreateModal from './SheetCreateModal'
 
 const { Title, Text } = Typography
 
@@ -36,6 +39,7 @@ export default function AuditKpoIndexPage() {
   const [open, setOpen] = useState(false)
   const [saving, setSaving] = useState(false)
   const [form] = Form.useForm()
+  const [sheetPeriod, setSheetPeriod] = useState<KpoPeriodSummary | null>(null)   // 正在新增公司稽核單的期別
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -43,7 +47,7 @@ export default function AuditKpoIndexPage() {
       const res = await kpoPeriodApi.list()
       setRows(res.data)
     } catch {
-      message.error('載入 KPO 稽核期別失敗')
+      message.error('載入 現場營運稽核期別失敗')
     } finally {
       setLoading(false)
     }
@@ -65,7 +69,7 @@ export default function AuditKpoIndexPage() {
         title: v.title,
         note: v.note || null,
       })
-      message.success('已建立期別，請選定各部門本期稽核項目')
+      message.success('已建立期別，請新增公司別稽核單')
       setOpen(false)
       navigate(`/audit-check/kpo/periods/${res.data.id}`)
     } catch (e: unknown) {
@@ -89,11 +93,23 @@ export default function AuditKpoIndexPage() {
   const columns: ColumnsType<KpoPeriodSummary> = [
     { title: '期別', dataIndex: 'period', width: 100, render: (v: string) => <b>{v}</b> },
     { title: '標題', dataIndex: 'title' },
-    { title: '部門數', dataIndex: 'dept_count', width: 80, align: 'right' },
+    {
+      title: '公司別稽核單', width: 220,
+      render: (_, r) => (r.sheets.length === 0
+        ? <Text type="secondary">尚未建立</Text>
+        : (
+          <Space size={[4, 4]} wrap>
+            {r.sheets.map((sh) => (
+              <Tag key={sh.id} color="blue" icon={<BankOutlined />}>{sh.company_name}（{sh.dept_count} 部門）</Tag>
+            ))}
+          </Space>
+        )),
+    },
     { title: '選定項數', width: 90, align: 'right', render: (_, r) => r.total.item_count },
     { title: '★ 重點項', width: 90, align: 'right', render: (_, r) => r.total.key_count },
     { title: '滿分', width: 80, align: 'right', render: (_, r) => r.total.full_score },
     { title: '得分', width: 80, align: 'right', render: (_, r) => r.total.earned_score },
+    { title: '本期分數', width: 90, align: 'right', render: (_, r) => r.total.score100 ?? '—' },
     {
       title: '符合 / 不符合 / 未查核', width: 170, align: 'center',
       render: (_, r) => (
@@ -105,9 +121,12 @@ export default function AuditKpoIndexPage() {
       ),
     },
     {
-      title: '操作', width: 150, align: 'center',
+      title: '操作', width: 260, align: 'center',
       render: (_, r) => (
-        <Space size={4}>
+        <Space size={4} onClick={(e) => e.stopPropagation()}>
+          {canEdit && (
+            <Button size="small" type="link" icon={<PlusOutlined />} onClick={() => setSheetPeriod(r)}>新增公司稽核單</Button>
+          )}
           <Button size="small" type="link" icon={<UnorderedListOutlined />}
             onClick={() => navigate(`/audit-check/kpo/periods/${r.id}`)}>開啟</Button>
           {canAdmin && (
@@ -125,8 +144,8 @@ export default function AuditKpoIndexPage() {
     <div>
       <Space style={{ width: '100%', justifyContent: 'space-between', marginBottom: 12 }} wrap>
         <div>
-          <Title level={4} style={{ margin: 0 }}>KPO 稽核</Title>
-          <Text type="secondary">財#1 稽核系統建構：每月從各部門 16 項稽核項目中選定本期項目，並自動小計</Text>
+          <Title level={4} style={{ margin: 0 }}>現場營運稽核</Title>
+          <Text type="secondary">財#1 稽核系統建構：建立期別 → 新增公司別稽核單 → 依受稽部門選定本期稽核項目，並自動小計</Text>
         </div>
         <Space>
           <Button icon={<ReloadOutlined />} onClick={load}>重新整理</Button>
@@ -134,13 +153,22 @@ export default function AuditKpoIndexPage() {
         </Space>
       </Space>
 
+      <AuditKpoDashboard />
+
       <Card size="small">
         <Table rowKey="id" size="small" loading={loading} columns={columns} dataSource={rows}
-          pagination={{ pageSize: 20, hideOnSinglePage: true }} scroll={{ x: 900 }}
+          pagination={{ pageSize: 20, hideOnSinglePage: true }} scroll={{ x: 1300 }}
           onRow={(r) => ({ onClick: () => navigate(`/audit-check/kpo/periods/${r.id}`), style: { cursor: 'pointer' } })} />
       </Card>
 
-      <Modal title="新增 KPO 稽核期別" open={open} onOk={submit} onCancel={() => setOpen(false)}
+      <SheetCreateModal
+        open={!!sheetPeriod} periodId={sheetPeriod?.id ?? null} periodLabel={sheetPeriod?.period}
+        usedCompanyIds={(sheetPeriod?.sheets ?? []).map((sh) => sh.company_id)}
+        onClose={() => setSheetPeriod(null)}
+        onCreated={(d) => { setSheetPeriod(null); navigate(`/audit-check/kpo/periods/${d.id}`) }}
+      />
+
+      <Modal title="新增現場營運稽核期別" open={open} onOk={submit} onCancel={() => setOpen(false)}
         confirmLoading={saving} okText="建立" destroyOnClose>
         <Form form={form} layout="vertical">
           <Form.Item name="month" label="稽核月份" rules={[{ required: true, message: '請選擇月份' }]}>

@@ -195,7 +195,7 @@ export default function AuditCheckPeriodsPage() {
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <div>
-          <Title level={4} style={{ margin: 0, color: '#1B3A5C' }}>稽核檢查</Title>
+          <Title level={4} style={{ margin: 0, color: '#1B3A5C' }}>系統建置稽核期別</Title>
           <Text type="secondary">財#3 系統建置稽核 — 每期各公司抽檢 3 大項 × 3 子項</Text>
         </div>
         <Space>
