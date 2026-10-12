@@ -181,6 +181,16 @@ export default function AuditCheckPeriodsPage() {
     })).filter((g) => g.major.is_active)
   }, [items])
 
+  const deleteSheet = async (sheetId: number) => {
+    try {
+      await sheetsApi.remove(sheetId)
+      message.success('已刪除公司稽核單')
+      load()
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail ?? '刪除失敗')
+    }
+  }
+
   const deletePeriod = async (p: Period) => {
     try {
       await periodsApi.remove(p.id)
@@ -247,7 +257,7 @@ export default function AuditCheckPeriodsPage() {
                         </Tooltip>
                       )}
                       {canAdmin && (
-                        <Popconfirm title="確認刪除此期別？（底下有稽核單時無法刪除）" onConfirm={() => deletePeriod(p)} okText="刪除" cancelText="取消">
+                        <Popconfirm title="確認刪除此期別？（底下稽核單若還有部門欄則無法刪除；全是空白稽核單會一併刪除）" onConfirm={() => deletePeriod(p)} okText="刪除" cancelText="取消">
                           <Button size="small" type="text" danger icon={<DeleteOutlined />} />
                         </Popconfirm>
                       )}
@@ -276,6 +286,22 @@ export default function AuditCheckPeriodsPage() {
                           <Text type="secondary" style={{ fontSize: 12 }}>{s.completion_label || '尚未填寫'}</Text>
                         </div>
                         <Text type="secondary" style={{ fontSize: 12 }}>{s.audited_on ?? '—'}</Text>
+                        {canAdmin && (
+                          <span onClick={(e) => e.stopPropagation()}>
+                            <Popconfirm
+                              title={`確認刪除「${s.company_name}」的稽核單？`}
+                              description="該稽核單所有部門欄的查核評語與覆核會一併刪除，無法復原。"
+                              onConfirm={() => deleteSheet(s.id)}
+                              okText="刪除"
+                              okButtonProps={{ danger: true }}
+                              cancelText="取消"
+                            >
+                              <Tooltip title="刪除此公司稽核單">
+                                <Button size="small" type="text" danger icon={<DeleteOutlined />} />
+                              </Tooltip>
+                            </Popconfirm>
+                          </span>
+                        )}
                       </div>
                     ))
                   )}

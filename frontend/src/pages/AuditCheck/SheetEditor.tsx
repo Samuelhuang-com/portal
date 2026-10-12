@@ -34,7 +34,7 @@ import {
 } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import {
-  ArrowLeftOutlined, DownloadOutlined, EditOutlined, FileWordOutlined, HolderOutlined, LayoutOutlined, PlusOutlined,
+  ArrowLeftOutlined, DeleteOutlined, DownloadOutlined, EditOutlined, FileWordOutlined, HolderOutlined, LayoutOutlined, PlusOutlined,
   ReloadOutlined,
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
@@ -512,6 +512,45 @@ export default function AuditSheetEditorPage() {
     }
   }
 
+  // ── 刪除部門欄 ──────────────────────────────────────────────────────────
+  /**
+   * 從這張稽核單移除一個部門欄（只影響本張，不動部門主檔）。
+   * 走 layout API：後端 apply_layout 是「完全取代」語意，部門沒帶到就刪，
+   * 該欄的評語與覆核（ON DELETE CASCADE）一併消失，因此刪除前先確認並顯示筆數。
+   */
+  const deleteDepartment = (d: SheetDetail['departments'][number]) => {
+    if (!detail) return
+    const cellCount = detail.cells.filter((c) => c.sheet_department_id === d.id).length
+    const reviewCount = detail.reviews.filter((r) => r.sheet_department_id === d.id).length
+    Modal.confirm({
+      title: `刪除部門欄「${d.name}」？`,
+      content: (
+        <div>
+          <div>只影響這一張稽核單，不會動部門主檔。</div>
+          <div style={{ marginTop: 4 }}>
+            該欄已填的 <b>{cellCount}</b> 筆查核評語{reviewCount > 0 ? <>與 <b>{reviewCount}</b> 筆覆核</> : null}會一併刪除，無法復原。
+          </div>
+        </div>
+      ),
+      okText: '刪除',
+      okButtonProps: { danger: true },
+      cancelText: '取消',
+      onOk: async () => {
+        try {
+          const res = await sheetsApi.updateLayout(detail.id, {
+            department_ids: detail.departments.filter((x) => x.id !== d.id).map((x) => x.department_id),
+            items: currentSpecs(detail),
+          })
+          setDetail(res.data)
+          message.success(`已刪除部門欄「${d.name}」`)
+        } catch (e: any) {
+          message.error(e?.response?.data?.detail ?? '刪除部門欄失敗')
+          throw e   // 讓 Modal 保持開啟，不要假裝成功
+        }
+      },
+    })
+  }
+
   // ── 版面調整 ────────────────────────────────────────────────────────────
   const [layoutOpen, setLayoutOpen] = useState(false)
   const [allItems, setAllItems] = useState<AuditItem[]>([])
@@ -627,7 +666,19 @@ export default function AuditSheetEditorPage() {
 
     const deptCols = detail.departments.map((d, idx) => ({
       title: canEdit
-        ? <span title="按住拖曳可調整部門順序"><HolderOutlined style={{ color: '#bfbfbf', marginRight: 4 }} />{d.name}</span>
+        ? (
+          <span title="按住拖曳可調整部門順序">
+            <HolderOutlined style={{ color: '#bfbfbf', marginRight: 4 }} />{d.name}
+            <Tooltip title="刪除此部門欄">
+              <DeleteOutlined
+                style={{ color: '#cf1322', marginLeft: 8, cursor: 'pointer' }}
+                // 表頭整格是拖曳把手；按鈕要擋掉 pointerdown，點刪除才不會被當成拖曳
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => { e.stopPropagation(); deleteDepartment(d) }}
+              />
+            </Tooltip>
+          </span>
+        )
         : d.name,
       key: `dept-${d.id}`,
       width: COL_DEPT_WIDTH,

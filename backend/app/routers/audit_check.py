@@ -419,8 +419,10 @@ def delete_period(
     p = db.query(AuditPeriod).filter(AuditPeriod.id == period_id).first()
     if p is None:
         raise _not_found("查無此期別")
-    if p.sheets:
-        raise _conflict("此期別底下尚有稽核單，請先刪除稽核單")
+    # 2026-10-12：底下的稽核單若都是空白（沒有任何部門欄），允許連同稽核單一併刪除；
+    # 只要有一張稽核單還有部門欄，就仍要先處理（避免誤刪已填的評語）
+    if any(sh.departments for sh in p.sheets):
+        raise _conflict("此期別底下的稽核單仍有部門欄，請先刪除稽核單或其部門欄")
     db.delete(p)
     db.commit()
     return Response(status_code=204)
