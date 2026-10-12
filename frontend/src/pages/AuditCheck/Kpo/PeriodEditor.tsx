@@ -32,10 +32,11 @@ import {
 import type { ColumnsType } from 'antd/es/table'
 import {
   ArrowLeftOutlined, BankOutlined, CheckSquareOutlined, ColumnHeightOutlined, DeleteOutlined, DownOutlined,
-  EditOutlined, HolderOutlined, PlusOutlined, ReloadOutlined, RightOutlined, SaveOutlined, TeamOutlined,
+  EditOutlined, FileWordOutlined, HolderOutlined, PlusOutlined, ReloadOutlined, RightOutlined, SaveOutlined, TeamOutlined,
   VerticalAlignMiddleOutlined,
 } from '@ant-design/icons'
 
+import { downloadFile } from '@/api/downloadFile'
 import { kpoDeptApi, kpoItemApi, kpoPeriodApi } from '@/api/auditKpo'
 import type {
   KpoDept, KpoDeptBlock, KpoDeptHistory, KpoItem, KpoLine, KpoPeriodDetail, KpoSheetBlock, KpoSubtotal,
@@ -384,6 +385,7 @@ export default function AuditKpoPeriodEditorPage() {
   const [detailCtx, setDetailCtx] = useState<{ company: string; dept: string } | null>(null)
   const [editMode, setEditMode] = useState(false)
   const [method, setMethod] = useState('')
+  const [remark, setRemark] = useState('')
   const [drawerSaving, setDrawerSaving] = useState(false)
   const [editForm] = Form.useForm()
 
@@ -392,6 +394,7 @@ export default function AuditKpoPeriodEditorPage() {
     setDetailCtx({ company, dept })
     setEditMode(false)
     setMethod(ln.method ?? '')
+    setRemark(ln.remark ?? '')
   }
   const saveDetail = async () => {
     if (!detailLine) return
@@ -400,6 +403,7 @@ export default function AuditKpoPeriodEditorPage() {
     try {
       const res = await kpoPeriodApi.updateLine(periodId, detailLine.id, {
         name: v.name, is_key: v.is_key, score: v.score, method: htmlToPlain(method) ? method : null,
+        remark: htmlToPlain(remark) ? remark : '',
       })
       setDetail(res.data)
       const fresh = res.data.sheets.flatMap((sh) => sh.departments).flatMap((b) => b.lines)
@@ -421,10 +425,10 @@ export default function AuditKpoPeriodEditorPage() {
       title: '項數', width: 70, align: 'center',
       render: (_, r) => (r.is_key ? <Tag color="gold">★{r.item_no ?? ''}</Tag> : <span>{r.item_no ?? ''}</span>),
     },
-    { title: '品質項目', dataIndex: 'name', render: (v: string) => <div style={{ whiteSpace: 'pre-wrap' }}>{v}</div> },
+    { title: '品質項目', dataIndex: 'name', width: 200, render: (v: string) => <div style={{ whiteSpace: 'pre-wrap' }}>{v}</div> },
     { title: '分數', dataIndex: 'score', width: 64, align: 'right' },
     {
-      title: '備註（查核方式）', dataIndex: 'method', width: 220,
+      title: '備註（查核方式）', dataIndex: 'method', width: 320,
       render: (v: string | null) => <RichView html={v} color="#64748b" />,
     },
     {
@@ -443,14 +447,8 @@ export default function AuditKpoPeriodEditorPage() {
       ),
     },
     {
-      title: '查核備註', width: 220,
-      render: (_, r) => (
-        <div onClick={(e) => e.stopPropagation()}>
-          <Input.TextArea key={`${r.id}-${r.remark ?? ''}`} autoSize={{ minRows: 1, maxRows: 4 }}
-            defaultValue={r.remark ?? ''} disabled={!canEdit} placeholder="查核結果、缺失說明…"
-            onBlur={(e) => { if ((e.target.value || '') !== (r.remark ?? '')) patchLine(r.id, { remark: e.target.value }) }} />
-        </div>
-      ),
+      title: '查核備註', width: 320,
+      render: (_, r) => <RichView html={r.remark} />,
     },
     {
       title: '', width: 50, align: 'center',
@@ -542,10 +540,21 @@ export default function AuditKpoPeriodEditorPage() {
                         {hasLines ? <SubtotalTags s={block.subtotal} /> : <Text type="secondary">本期尚未選定項目</Text>}
                       </Space>
                     }
-                    extra={canEdit ? (
-                      <Button size="small" type="primary" ghost icon={<CheckSquareOutlined />}
-                        onClick={() => openPick(sh, block)}>選擇項目</Button>
-                    ) : null}
+                    extra={(
+                      <Space size="small">
+                        {hasLines && (
+                          <Button size="small" icon={<FileWordOutlined />}
+                            onClick={() => downloadFile(
+                              kpoPeriodApi.inspectionDocxUrl(detail.id, sh.id, block.department_id),
+                              `內部稽核報告-${detail.period}-${sh.company_name}-${block.department_name}.docx`,
+                            )}>匯出 Word</Button>
+                        )}
+                        {canEdit && (
+                          <Button size="small" type="primary" ghost icon={<CheckSquareOutlined />}
+                            onClick={() => openPick(sh, block)}>選擇項目</Button>
+                        )}
+                      </Space>
+                    )}
                   >
                     {hasLines ? (
                       <>
@@ -553,7 +562,7 @@ export default function AuditKpoPeriodEditorPage() {
                           onDragEnd={(ev) => onLinesDragEnd(sh, block, ev)}>
                           <SortableContext items={block.lines.map((l) => l.id)} strategy={verticalListSortingStrategy}>
                             <Table rowKey="id" size="small" columns={makeColumns(sh.company_name, block.department_name)}
-                              dataSource={block.lines} pagination={false} scroll={{ x: 940 }}
+                              dataSource={block.lines} pagination={false} scroll={{ x: 1240 }}
                               components={{ body: { row: (rp: React.HTMLAttributes<HTMLTableRowElement> & { 'data-row-key': number }) => <SortableRow {...rp} disabled={!canEdit} /> } }}
                               onRow={(r) => ({ onClick: () => openDetail(r, sh.company_name, block.department_name), style: { cursor: 'pointer' } })} />
                           </SortableContext>
@@ -669,7 +678,7 @@ export default function AuditKpoPeriodEditorPage() {
                 {detailLine.result === 'pass' ? <Tag color="green">符合</Tag>
                   : detailLine.result === 'fail' ? <Tag color="red">不符合</Tag> : <Tag>未查核</Tag>}
               </Descriptions.Item>
-              <Descriptions.Item label="查核備註">{detailLine.remark || '—'}</Descriptions.Item>
+              <Descriptions.Item label="查核備註" span={2}><RichView html={detailLine.remark} /></Descriptions.Item>
             </Descriptions>
 
             <Divider orientation="left" plain>明細</Divider>
@@ -687,6 +696,8 @@ export default function AuditKpoPeriodEditorPage() {
                 </Space>
                 <div style={{ marginBottom: 8 }}><Text strong>備註（查核方式）</Text></div>
                 <RichTextEditor value={method} onChange={setMethod} minHeight={220} placeholder="查核方式、依據文件…" />
+                <div style={{ margin: '16px 0 8px' }}><Text strong>查核備註</Text></div>
+                <RichTextEditor value={remark} onChange={setRemark} minHeight={220} placeholder="查核結果、缺失說明…" />
               </Form>
             ) : (
               <>
@@ -694,6 +705,8 @@ export default function AuditKpoPeriodEditorPage() {
                 <div style={{ whiteSpace: 'pre-wrap', marginBottom: 16 }}>{detailLine.name}</div>
                 <div style={{ marginBottom: 4 }}><Text strong>備註（查核方式）</Text></div>
                 <RichView html={detailLine.method} />
+                <div style={{ margin: '16px 0 4px' }}><Text strong>查核備註</Text></div>
+                <RichView html={detailLine.remark} />
               </>
             )}
           </>

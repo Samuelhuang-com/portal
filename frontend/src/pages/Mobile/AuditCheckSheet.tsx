@@ -209,7 +209,7 @@ export default function MobileAuditCheckSheet() {
                 style={{ marginTop: 10 }}
                 onClick={() => downloadFile(
                   sheetsApi.inspectionDocxUrl(detail.id, deptId),
-                  `內部稽核檢查表-${detail.period}-${detail.company_name}-${detail.departments.find((d) => d.id === deptId)?.name ?? ''}.docx`,
+                  `內部稽核報告-${detail.period}-${detail.company_name}-${detail.departments.find((d) => d.id === deptId)?.name ?? ''}.docx`,
                 )}
               >
                 匯出稽核檢查表（Word）

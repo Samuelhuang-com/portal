@@ -183,6 +183,9 @@ export const kpoPeriodApi = {
     client.put<KpoPeriodDetail>(`${BASE}/periods/${id}/sheets/${sheetId}/dept-order`, { department_ids: departmentIds }),
   setLinesOrder: (id: number, sheetId: number, departmentId: number, lineIds: number[]) =>
     client.put<KpoPeriodDetail>(`${BASE}/periods/${id}/sheets/${sheetId}/lines-order`, { department_id: departmentId, line_ids: lineIds }),
+  /** 單一受稽單位「內部稽核報告」Word（給 downloadFile 用，完整路徑） */
+  inspectionDocxUrl: (id: number, sheetId: number, departmentId: number) =>
+    `/api/v1/audit-check/kpo/periods/${id}/sheets/${sheetId}/departments/${departmentId}/inspection-docx`,
   updateLine: (id: number, lineId: number, body: {
     name?: string; score?: number; is_key?: boolean; method?: string | null
     result?: 'pass' | 'fail' | ''; remark?: string | null

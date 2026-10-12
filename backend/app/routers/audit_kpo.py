@@ -17,14 +17,17 @@ Prefix: /api/v1/audit-check/kpo
 """
 from __future__ import annotations
 
+import re
 from typing import List, Optional
+from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.time import twnow
 from app.dependencies import require_permission
 from app.models.audit_kpo import (
     AuditKpoDept, AuditKpoItem, AuditKpoPeriod, AuditKpoPeriodItem, AuditKpoSheet, AuditKpoSheetDept,
@@ -584,8 +587,47 @@ def update_line(
         data["name"] = data["name"].strip()
     if "method" in data:
         data["method"] = sanitize_html(data["method"]) or None   # 備註為 Web 編輯器 HTML，白名單清理
+    if "remark" in data:
+        data["remark"] = sanitize_html(data["remark"]) or None   # 查核備註同為 Web 編輯器 HTML
     for k, v in data.items():
         setattr(ln, k, v)
     db.commit()
     db.refresh(p)
     return svc.build_period_detail(db, p)
+
+
+@router.get("/periods/{period_id}/sheets/{sheet_id}/departments/{department_id}/inspection-docx")
+def export_inspection_docx(
+    period_id: int,
+    sheet_id: int,
+    department_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_permission(VIEW)),
+):
+    """單一受稽單位「內部稽核報告」Word（2026-10-12）——版型同稽核檢查 sheets 的匯出 Word。
+    填表日期＝今天；稽核人員＝匯出的使用者。"""
+    try:
+        from app.services.audit_kpo_docx import build_kpo_inspection_docx
+    except ImportError:
+        raise HTTPException(
+            status_code=500,
+            detail="伺服器尚未安裝 python-docx，請在 backend 執行 pip install -r requirements.txt 後重啟",
+        )
+    p = _get_period(db, period_id)
+    _get_sheet(p, sheet_id)
+    detail = svc.build_period_detail(db, p)
+    sh = next(s for s in detail["sheets"] if s["id"] == sheet_id)
+    idx = next((i for i, b in enumerate(sh["departments"], 1) if b["department_id"] == department_id), None)
+    if idx is None:
+        raise _404("此公司別稽核單沒有這個受稽單位")
+    block = sh["departments"][idx - 1]
+    data = build_kpo_inspection_docx(
+        detail, sh["company_name"], block, idx, user.full_name or "", twnow().date().strftime("%Y.%m.%d"),
+    )
+    filename_cn = f"內部稽核報告-{detail['period']}-{sh['company_name']}-{block['department_name']}.docx"
+    ascii_name = re.sub(r"[^A-Za-z0-9._-]+", "_", filename_cn).strip("_") or "export.docx"
+    return Response(
+        content=data,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8\'\'{quote(filename_cn, safe='')}"},
+    )

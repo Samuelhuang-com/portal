@@ -656,7 +656,7 @@ export default function AuditSheetEditorPage() {
                 icon={<FileWordOutlined />}
                 onClick={() => downloadFile(
                   sheetsApi.inspectionDocxUrl(detail.id, d.id),
-                  `內部稽核檢查表-${detail.period}-${detail.company_name}-${d.name}.docx`,
+                  `內部稽核報告-${detail.period}-${detail.company_name}-${d.name}.docx`,
                 )}
               >
                 匯出 Word
