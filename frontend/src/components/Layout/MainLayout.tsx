@@ -8,6 +8,7 @@ import { Layout, Menu, Typography, Avatar, Dropdown, Space, theme, Skeleton, Mod
 import { useIdleTimeout } from '@/hooks/useIdleTimeout'
 import {
   ApartmentOutlined,
+  ConsoleSqlOutlined,
   DashboardOutlined,
   HistoryOutlined,
   LineChartOutlined,
@@ -529,6 +530,7 @@ export const menuItems: MenuItem[] = [
       { key: '/settings/knowledge-graph',          icon: <ApartmentOutlined />, label: NAV_PAGE.knowledgeGraph,       permissionKey: 'system_admin_only' },
       { key: '/settings/repair-unfinished-report', icon: <AlertOutlined />,     label: NAV_PAGE.repairUnfinishedReport, permissionKey: 'repair_unfinished_report_view' },
       { key: '/settings/usage-monitor',            icon: <BarChartOutlined />,  label: NAV_PAGE.usageMonitor,           permissionKey: 'system_admin_only' },
+      { key: '/settings/sql-console',              icon: <ConsoleSqlOutlined />, label: NAV_PAGE.sqlConsole,            permissionKey: 'system_admin_only' },
     ],
   },
 ]

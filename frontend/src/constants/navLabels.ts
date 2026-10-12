@@ -218,6 +218,7 @@ export const NAV_PAGE = {
   staticPages:              '靜態頁面',
   repairUnfinishedReport:   '報修未完成報表',
   usageMonitor:             '使用監控',             // ← 2026-05-23 API 存取日誌統計
+  sqlConsole:               'SQL 查詢工具',         // ← 2026-10-12 僅系統管理員，route /settings/sql-console
 
   // 請購單報表
   purchaseReportMonthly:    '核准請購單月報表',  // ← 品項級月報表，route /purchase-report/monthly

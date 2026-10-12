@@ -116,6 +116,7 @@ from app.routers import (
     taichung_combined_report,
     ragic_sheet_config,
     ragic_field_audit,
+    sql_console,
     static_pages,
     other_tasks,
     repair_report,
@@ -2179,6 +2180,13 @@ app.include_router(
     ragic_field_audit.router,
     prefix=f"{API_PREFIX}/settings/ragic-field-audit",
     tags=["Ragic 欄位比對"],
+)
+
+# ── SQL 查詢工具（僅系統管理員；2026-10-12）─────────────────────────────────
+app.include_router(
+    sql_console.router,
+    prefix=f"{API_PREFIX}/settings/sql-console",
+    tags=["SQL 查詢工具"],
 )
 
 # ── 員工操作手冊匯出 ──────────────────────────────────────────────────────────

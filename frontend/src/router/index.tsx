@@ -65,6 +65,7 @@ import StaticPagesPage           from '@/pages/Settings/StaticPages'
 import RagicFieldAuditPage        from '@/pages/Settings/RagicFieldAudit'
 import RepairUnfinishedReportPage from '@/pages/Settings/RepairUnfinishedReport'
 import UsageMonitorPage           from '@/pages/Settings/UsageMonitor'
+import SqlConsolePage             from '@/pages/Settings/SqlConsole'
 import ApprovalListPage   from '@/pages/Approvals/List'
 import ApprovalNewPage    from '@/pages/Approvals/New'
 import ApprovalDetailPage from '@/pages/Approvals/Detail'
@@ -925,6 +926,11 @@ export default function AppRouter() {
           <Route path="usage-monitor" element={
             <PermissionGuard permissionKey="system_admin_only">
               <UsageMonitorPage />
+            </PermissionGuard>
+          } />
+          <Route path="sql-console" element={
+            <PermissionGuard permissionKey="system_admin_only">
+              <SqlConsolePage />
             </PermissionGuard>
           } />
         </Route>

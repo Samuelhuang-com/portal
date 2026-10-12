@@ -1,0 +1,2 @@
+{ "extends": "./tsconfig.json", "compilerOptions": { "noEmit": true, "skipLibCheck": true },
+  "include": ["src/pages/Settings/SqlConsole/index.tsx", "src/api/sqlConsole.ts", "src/vite-env.d.ts"] }

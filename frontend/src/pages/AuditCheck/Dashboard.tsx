@@ -60,14 +60,15 @@ export default function AuditOverviewDashboard() {
   const rows = useMemo(
     () => (data?.rows ?? []).filter((r) => companyId === 'all' || r.company_id === companyId),
     [data, companyId])
+  // 分數矩陣只列「有被稽核」的部門：目前顯示的稽核類型（財#3／財#1）全年都沒有分數者不出現（2026-10-12）
   const byCompany = useMemo(() => {
     const m = new Map<number, { name: string; rows: OverviewRow[] }>()
-    rows.forEach((r) => {
+    rows.filter((r) => kinds.some((k) => r[k].avg != null)).forEach((r) => {
       if (!m.has(r.company_id)) m.set(r.company_id, { name: r.company_name, rows: [] })
       m.get(r.company_id)!.rows.push(r)
     })
     return Array.from(m.entries())
-  }, [rows])
+  }, [rows, kinds])
 
   // 摘要／趨勢／最低分隨公司篩選連動（前端依 rows 重算；財#1、財#3 各自計）
   const stat = useMemo(() => {
