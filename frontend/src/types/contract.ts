@@ -171,7 +171,8 @@ export interface ContractFilters {
   budget_year?: number
   dept?: string
   manager?: string          // J5 個人化篩選
-  renewal_filter?: 'is_copy' | 'has_copies'   // 2026-07-21：續約鏈篩選
+  renewal_filter?: 'is_copy' | 'has_copies' | 'chain'   // 2026-07-21：續約鏈篩選（chain＝兩者皆含，2026-10-12）
+  pin_renewal?: boolean     // 2026-10-12：續約鏈合約置頂（後端預設 true）
   sort_by?: string
   sort_order?: 'asc' | 'desc'
 }

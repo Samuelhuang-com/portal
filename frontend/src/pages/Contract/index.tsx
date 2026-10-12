@@ -82,6 +82,13 @@ const STATUS_TAG_COLOR: Record<string, string> = {
   '已續約': 'purple',   // 被複製續約的新合約取代（新合約生效時自動設定）
 }
 
+// 續約鏈篩選選項文字（2026-10-12）
+const RENEWAL_FILTER_LABEL: Record<'is_copy' | 'has_copies' | 'chain', string> = {
+  chain: '只看複製續約相關（複製產生的＋被複製的原合約）',
+  is_copy: '只看複製續約產生的新合約',
+  has_copies: '只看已被複製續約的原合約',
+}
+
 const RISK_LEVEL_COLOR: Record<string, string> = {
   '低': '#52C41A',
   '中': '#FAAD14',
@@ -155,7 +162,15 @@ export default function ContractListPage() {
   })
 
   // 續約鏈篩選（2026-07-21）：點合約編號旁的 icon 套用
-  const [renewalFilter, setRenewalFilter] = useState<'is_copy' | 'has_copies' | undefined>()
+  const [renewalFilter, setRenewalFilter] = useState<'is_copy' | 'has_copies' | 'chain' | undefined>()
+
+  // 續約鏈合約置頂（2026-10-12）：有複製續約關聯的合約永遠排在最前面，預設開啟，記憶 localStorage
+  const [pinRenewal, setPinRenewal] = useState<boolean>(() => {
+    try { return localStorage.getItem('contract_pin_renewal') !== 'false' } catch { return true }
+  })
+
+  // 時間排序（2026-10-12）：工具列下拉與表格欄位排序共用同一份狀態；undefined＝預設（最近更新）
+  const [sortSpec, setSortSpec] = useState<{ by: string; order: 'asc' | 'desc' } | undefined>()
 
   // ── 載入合約清單 ──────────────────────────────────────────────────────────
   const loadContracts = useCallback(async (page: number, size: number, f: ContractFilters) => {
@@ -206,9 +221,14 @@ export default function ContractListPage() {
       } catch { /* 靜默處理 */ }
     }
     if (renewalFilter) newFilters.renewal_filter = renewalFilter
+    newFilters.pin_renewal = pinRenewal
+    if (sortSpec) {
+      newFilters.sort_by = sortSpec.by
+      newFilters.sort_order = sortSpec.order
+    }
     setFilters(newFilters)
     loadContracts(1, pagination.size, newFilters)
-  }, [searchText, statusFilter, riskLevelFilter, myContractsOnly, renewalFilter, pagination.size, loadContracts])
+  }, [searchText, statusFilter, riskLevelFilter, myContractsOnly, renewalFilter, pinRenewal, sortSpec, pagination.size, loadContracts])
 
   // ── 開啟新增 Modal（回傳廠商清單，供「複製續約」立即判斷原廠商是否存在）───────
   const openAddModal = async (): Promise<VendorListResponse[]> => {
@@ -394,23 +414,21 @@ export default function ContractListPage() {
     const order = s?.order as ('ascend' | 'descend' | undefined)
     const newSortBy = order && field ? field : undefined
     const newSortOrder: 'asc' | 'desc' | undefined = order === 'ascend' ? 'asc' : order === 'descend' ? 'desc' : undefined
-    const sortChanged = newSortBy !== filters.sort_by || newSortOrder !== filters.sort_order
-
-    const newFilters: ContractFilters = { ...filters }
-    if (newSortBy) {
-      newFilters.sort_by = newSortBy
-      newFilters.sort_order = newSortOrder
-    } else {
-      delete newFilters.sort_by
-      delete newFilters.sort_order
+    const sortChanged = newSortBy !== sortSpec?.by || newSortOrder !== sortSpec?.order
+    if (sortChanged) {
+      // 排序變更 → 交給上方 useEffect 以第 1 頁重新載入（同時保留其他篩選條件）
+      setSortSpec(newSortBy && newSortOrder ? { by: newSortBy, order: newSortOrder } : undefined)
+      return
     }
-    setFilters(newFilters)
 
     if (pg.pageSize) {
-      // 排序條件變更時回到第 1 頁；純翻頁則維持目前頁碼
-      loadContracts(sortChanged ? 1 : (pg.current || 1), pg.pageSize, newFilters)
+      loadContracts(pg.current || 1, pg.pageSize, filters)
     }
   }
+
+  // 欄位排序箭頭跟著 sortSpec 走（讓工具列的時間排序下拉與表頭箭頭同步）
+  const sortOrderOf = (field: unknown): 'ascend' | 'descend' | null =>
+    sortSpec && sortSpec.by === field ? (sortSpec.order === 'asc' ? 'ascend' : 'descend') : null
 
   // ── 表格欄位定義 ──────────────────────────────────────────────────────────
   const columns: ColumnsType<ContractRecord> = [
@@ -601,10 +619,10 @@ export default function ContractListPage() {
           <Tag
             closable
             onClose={() => setRenewalFilter(undefined)}
-            color={renewalFilter === 'is_copy' ? 'blue' : 'green'}
+            color={renewalFilter === 'is_copy' ? 'blue' : renewalFilter === 'chain' ? 'purple' : 'green'}
             icon={renewalFilter === 'is_copy' ? <CopyOutlined /> : <BranchesOutlined />}
           >
-            篩選中：{renewalFilter === 'is_copy' ? '複製續約產生的合約' : '已被複製續約過的合約'}
+            篩選中：{RENEWAL_FILTER_LABEL[renewalFilter]}
           </Tag>
         </div>
       )}
@@ -683,6 +701,58 @@ export default function ContractListPage() {
             </Space>
           </Col>
         </Row>
+        {/* 續約鏈篩選／置頂／時間排序（2026-10-12）*/}
+        <Row gutter={16} style={{ marginTop: 16 }} align="middle">
+          <Col xs={24} sm={12} lg={8}>
+            <Select
+              placeholder="複製續約：全部合約"
+              allowClear
+              value={renewalFilter}
+              onChange={(v) => setRenewalFilter(v)}
+              style={{ width: '100%' }}
+              options={[
+                { value: 'chain', label: RENEWAL_FILTER_LABEL.chain },
+                { value: 'is_copy', label: RENEWAL_FILTER_LABEL.is_copy },
+                { value: 'has_copies', label: RENEWAL_FILTER_LABEL.has_copies },
+              ]}
+            />
+          </Col>
+          <Col xs={24} sm={12} lg={8}>
+            <Select
+              placeholder="排序：最近更新"
+              allowClear
+              value={sortSpec ? `${sortSpec.by}:${sortSpec.order}` : undefined}
+              onChange={(v) => {
+                if (!v) { setSortSpec(undefined); return }
+                const [by, order] = String(v).split(':')
+                setSortSpec({ by, order: order === 'asc' ? 'asc' : 'desc' })
+              }}
+              style={{ width: '100%' }}
+              options={[
+                { value: 'start_date:desc', label: '開始日期：新 → 舊' },
+                { value: 'start_date:asc', label: '開始日期：舊 → 新' },
+                { value: 'end_date:asc', label: '到期日：近 → 遠' },
+                { value: 'end_date:desc', label: '到期日：遠 → 近' },
+                { value: 'created_at:desc', label: '建立時間：新 → 舊' },
+                { value: 'created_at:asc', label: '建立時間：舊 → 新' },
+              ]}
+            />
+          </Col>
+          <Col xs={24} sm={12} lg={8}>
+            <Space>
+              <Switch
+                checked={pinRenewal}
+                onChange={(v) => {
+                  setPinRenewal(v)
+                  try { localStorage.setItem('contract_pin_renewal', String(v)) } catch {}
+                }}
+              />
+              <Tooltip title="開啟時，複製續約產生的合約與被複製的原合約永遠排在最前面，其餘排序只在各群組內生效">
+                <span>複製續約合約置頂</span>
+              </Tooltip>
+            </Space>
+          </Col>
+        </Row>
       </Card>
 
       {/* J4 — 批次操作浮動工具列 */}
@@ -751,7 +821,9 @@ export default function ContractListPage() {
       {/* 表格 */}
       <Card>
         <Table<ContractRecord>
-          columns={columns}
+          columns={columns.map((c) => ('sorter' in c && c.sorter)
+            ? { ...c, sortOrder: sortOrderOf((c as any).dataIndex) }
+            : c) as ColumnsType<ContractRecord>}
           dataSource={contracts}
           loading={loading}
           rowSelection={{

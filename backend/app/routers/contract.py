@@ -154,7 +154,12 @@ def list_contracts(
     manager: Optional[str] = Query(None, description="管理人帳號（J5 個人化篩選）"),
     renewal_filter: Optional[str] = Query(
         None,
-        description="續約鏈篩選：is_copy=只看複製續約產生的合約；has_copies=只看已被複製續約過的合約",
+        description="續約鏈篩選：is_copy=只看複製續約產生的合約；has_copies=只看已被複製續約過的合約；"
+                    "chain=只看有複製續約關聯的合約（兩者皆含）",
+    ),
+    pin_renewal: bool = Query(
+        True,
+        description="有複製續約關聯的合約永遠排在最前面（預設開啟）",
     ),
     sort_by: str = Query(
         "updated_at",
@@ -182,6 +187,7 @@ def list_contracts(
             responsible_dept=responsible_dept,
             manager=manager,
             renewal_filter=renewal_filter,
+            pin_renewal=pin_renewal,
             sort_by=sort_by,
             sort_order=sort_order,
         )

@@ -55,18 +55,19 @@ def _manageable_keys(user: User, db: Session) -> tuple[set[str], bool]:
 
 
 PERMISSION_DEFINITIONS = [
-    {"key": "decision_cockpit_view",      "label": "決策駕駛艙",         "group": "一階選單"},
-    {"key": "exec_dashboard_view",        "label": "高階主管 Dashboard",  "group": "一階選單"},
-    {"key": "exec_work_dashboard_view",   "label": "集團決策 Dashboard",  "group": "一階選單"},
+    {"key": "decision_cockpit_view",      "label": "決策駕駛艙",         "group": "決策駕駛艙"},
+    {"key": "exec_dashboard_view",        "label": "高階主管 Dashboard",  "group": "高階主管 Dashboard"},
+    {"key": "exec_work_dashboard_view",   "label": "集團決策 Dashboard",  "group": "集團決策 Dashboard"},
     # 2026-10-10 戰情 KPI：另受 .env WAR_ROOM_ALLOWED_EMAILS 白名單限制（CLAUDE.md §11.7），需明確指派
-    {"key": "war_room_view",              "label": "戰情 KPI",            "group": "一階選單"},
-    {"key": "work_category_analysis_view","label": "工項類別分析",        "group": "一階選單"},
-    {"key": "calendar_view",              "label": "行事曆",             "group": "一階選單"},
-    {"key": "tutorial_videos_view",       "label": "影音教學：查看",      "group": "一階選單"},
-    {"key": "tutorial_videos_manage",     "label": "影音教學：上傳/管理", "group": "一階選單"},
+    # 2026-10-12 一階選單每個項目各自獨立成群組（V 限系統管理員以群組為單位，原「一階選單」勾 V 會整批鎖掉）
+    {"key": "war_room_view",              "label": "戰情 KPI",            "group": "戰情 KPI"},
+    {"key": "work_category_analysis_view","label": "工項類別分析",        "group": "工項類別分析"},
+    {"key": "calendar_view",              "label": "行事曆",             "group": "行事曆"},
+    {"key": "tutorial_videos_view",       "label": "影音教學：查看",      "group": "影音教學"},
+    {"key": "tutorial_videos_manage",     "label": "影音教學：上傳/管理", "group": "影音教學"},
     # 2026-08-11 新增：/wiki 原本在 MainLayout.menuItems 沒有 permissionKey，
     # 而 filterMenuByPermissions 的規則是「沒設 = 公開」，導致知識庫對所有角色顯示。
-    {"key": "wiki_view",                  "label": "知識庫",             "group": "一階選單"},
+    {"key": "wiki_view",                  "label": "知識庫",             "group": "知識庫"},
     {"key": "settings_users_manage",    "label": "人員管理",   "group": "系統設定"},
     {"key": "settings_roles_manage",    "label": "角色管理",   "group": "系統設定"},
     {"key": "settings_menu_manage",     "label": "選單管理",   "group": "系統設定"},

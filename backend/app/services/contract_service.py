@@ -8,7 +8,7 @@
 import json
 from datetime import datetime, date, timedelta
 from typing import Optional, List, Dict, Any
-from sqlalchemy import desc, asc, and_, func
+from sqlalchemy import desc, asc, and_, func, case
 from sqlalchemy.orm import Session
 from app.core.excel_utils import xlsx_safe
 
@@ -74,6 +74,7 @@ class ContractService:
         responsible_dept: Optional[str] = None,
         manager: Optional[str] = None,
         renewal_filter: Optional[str] = None,
+        pin_renewal: bool = True,
         sort_by: str = "updated_at",
         sort_order: str = "desc",
     ) -> tuple[List[ContractDetailResponse], int]:
@@ -96,6 +97,9 @@ class ContractService:
                 is_copy    — 只看複製續約產生的合約（renewed_from_contract_id 非空）
                 has_copies — 只看已被複製續約過的合約（有其他合約的
                              renewed_from_contract_id 指向自己）
+                chain      — 只看有複製續約關聯的合約（is_copy 或 has_copies 任一）
+            pin_renewal: 有複製續約關聯的合約（複製產生的＋被複製的原合約）永遠排在最前面
+                         （2026-10-12），其餘排序條件只在各群組內生效
             sort_by: 排序欄位（contract_id/contract_name/vendor_name/contract_status/
                      risk_level/start_date/end_date/total_amount_tax_included/
                      created_at/updated_at）
@@ -147,6 +151,9 @@ class ContractService:
         elif renewal_filter == "has_copies":
             matching_ids = [cid for cid, f in relation_flags.items() if f["has_children"]]
             query = query.filter(Contract.contract_id.in_(matching_ids))
+        elif renewal_filter == "chain":
+            matching_ids = [cid for cid, f in relation_flags.items() if f["is_copy"] or f["has_children"]]
+            query = query.filter(Contract.contract_id.in_(matching_ids))
 
         # 計算總筆數
         total = query.count()
@@ -173,10 +180,19 @@ class ContractService:
         else:  # updated_at
             sort_col = Contract.updated_at
 
+        # 續約鏈置頂（2026-10-12）：複製續約產生的合約與被複製的原合約永遠排在最前面，
+        # 使用者選的排序（含時間先後）只決定各群組內的順序
+        if pin_renewal:
+            chain_ids = [cid for cid, f in relation_flags.items() if f["is_copy"] or f["has_children"]]
+            if chain_ids:
+                query = query.order_by(
+                    case((Contract.contract_id.in_(chain_ids), 0), else_=1)
+                )
+
         if sort_order.lower() == "asc":
-            query = query.order_by(asc(sort_col))
+            query = query.order_by(asc(sort_col), asc(Contract.contract_id))
         else:
-            query = query.order_by(desc(sort_col))
+            query = query.order_by(desc(sort_col), desc(Contract.contract_id))
 
         # 分頁
         contracts = query.offset(skip).limit(limit).all()
