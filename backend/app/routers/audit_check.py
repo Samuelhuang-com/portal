@@ -700,6 +700,20 @@ def reorder_sheet_items(
 # ════════════════════════════════════════════════════════════════════════════
 # 統計
 # ════════════════════════════════════════════════════════════════════════════
+@router.get("/overview")
+def overview(
+    year: Optional[int] = Query(None, ge=2000, le=2999),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_permission(VIEW)),
+):
+    """稽核總覽 Dashboard（2026-10-12）：財#3 系統建置稽核＋財#1 現場營運稽核並列。"""
+    from app.services.audit_overview_service import build_overview
+    flagged = flagged_rows(
+        period_id=None, company_id=None, department_id=None, only_failing=True, db=db, _=_,
+    )
+    return build_overview(db, year, flagged)
+
+
 @router.get("/statistics", response_model=StatisticsOut)
 def statistics(
     year: int = Query(..., ge=2000, le=2999),
@@ -765,6 +779,9 @@ def flagged_rows(
                 if si else ""
             ),
             "display_no": si.display_no if si else "",
+            "sheet_id": c.sheet_id,
+            "sheet_item_id": c.sheet_item_id,
+            "sheet_department_id": c.sheet_department_id,
             "result_code": c.result_code,
             "result_label": rt.label,
             "result_color": rt.color,

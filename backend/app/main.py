@@ -631,6 +631,7 @@ def _seed_menu_config_audit_check():
     from sqlalchemy import text
 
     CHILDREN = [
+        ("/audit-check/dashboard", 5),
         ("/audit-check", 10),
         ("/audit-check/statistics", 20),
         ("/audit-check/masters/items", 30),

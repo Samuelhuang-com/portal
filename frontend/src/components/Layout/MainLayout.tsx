@@ -216,6 +216,7 @@ export const menuItems: MenuItem[] = [
     label: NAV_GROUP.auditCheck,
     permissionKey: 'audit_check_view',
     children: [
+      { key: '/audit-check/dashboard',             icon: <DashboardOutlined />, label: NAV_PAGE.auditCheckDashboard, permissionKey: 'audit_check_view'  },
       { key: '/audit-check',                       icon: <AuditOutlined />,   label: NAV_PAGE.auditCheckPeriods,     permissionKey: 'audit_check_view'  },
       { key: '/audit-check/statistics',            icon: <BarChartOutlined />, label: NAV_PAGE.auditCheckStatistics, permissionKey: 'audit_check_view'  },
       { key: '/audit-check/masters/items',         icon: <SettingOutlined />, label: NAV_PAGE.auditCheckItems,       permissionKey: 'audit_check_admin' },

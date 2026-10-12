@@ -190,6 +190,7 @@ import CpManualPage                     from '@/pages/CyclePurchase/Manual'
 import AuditCheckPeriodsPage      from '@/pages/AuditCheck'
 import AuditSheetEditorPage       from '@/pages/AuditCheck/SheetEditor'
 import AuditStatisticsPage        from '@/pages/AuditCheck/Statistics'
+import AuditOverviewDashboardPage from '@/pages/AuditCheck/Dashboard'
 import AuditItemsMasterPage       from '@/pages/AuditCheck/Masters/Items'
 import AuditResultTypesPage       from '@/pages/AuditCheck/Settings/ResultTypes'
 import AuditKpoIndexPage          from '@/pages/AuditCheck/Kpo'
@@ -717,6 +718,7 @@ export default function AppRouter() {
               <AuditKpoItemsMasterPage />
             </PermissionGuard>
           } />
+          <Route path="dashboard" element={<AuditOverviewDashboardPage />} />
           <Route path="statistics" element={<AuditStatisticsPage />} />
           <Route path="masters/items" element={
             <PermissionGuard permissionKey="audit_check_admin">

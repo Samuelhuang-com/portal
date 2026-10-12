@@ -18,13 +18,13 @@
  *   - 「備註（查核方式）」改用稽核檢查的 Web 編輯器（RichTextEditor），
  *     點選項目列以明細 Drawer 呈現與編輯（CLAUDE.md §7 明細 Drawer 規範）
  */
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import type React from 'react'
 import { DndContext, PointerSensor, closestCenter, useSensor, useSensors } from '@dnd-kit/core'
 import type { DragEndEvent } from '@dnd-kit/core'
 import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
   Button, Card, Checkbox, Col, Descriptions, Divider, Drawer, Empty, Form, Input, InputNumber, Modal,
   Popconfirm, Radio, Row, Select, Space, Spin, Statistic, Switch, Table, Tag, Typography, message,
@@ -388,6 +388,27 @@ export default function AuditKpoPeriodEditorPage() {
   const [remark, setRemark] = useState('')
   const [drawerSaving, setDrawerSaving] = useState(false)
   const [editForm] = Form.useForm()
+
+  // 從 Dashboard「待改善清單」連進來：?line=<項目 id> → 自動開啟該項目明細 Drawer（只做一次）
+  const [searchParams, setSearchParams] = useSearchParams()
+  const deepLinked = useRef(false)
+  useEffect(() => {
+    if (deepLinked.current || !detail) return
+    const lineQ = Number(searchParams.get('line'))
+    if (!lineQ) return
+    deepLinked.current = true
+    for (const sh of detail.sheets) {
+      for (const b of sh.departments) {
+        const ln = b.lines.find((l) => l.id === lineQ)
+        if (ln) {
+          setDetailLine(ln); setDetailCtx({ company: sh.company_name, dept: b.department_name })
+          setEditMode(false); setMethod(ln.method ?? ''); setRemark(ln.remark ?? '')
+        }
+      }
+    }
+    setSearchParams({}, { replace: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detail])
 
   const openDetail = (ln: KpoLine, company: string, dept: string) => {
     setDetailLine(ln)

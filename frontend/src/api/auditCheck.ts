@@ -335,3 +335,60 @@ export const mobileApi = {
   sheets: (limit = 12) =>
     client.get<MobileSheetRow[]>('/audit-check/my-sheets', { params: { limit } }),
 }
+
+
+// ── 稽核總覽 Dashboard（2026-10-12）：財#3 系統建置稽核＋財#1 現場營運稽核並列 ──────────
+export interface OverviewMonth {
+  avg: number | null
+  count: number
+  /** id＝財#3 稽核單 id／財#1 期別 id */
+  items: { id: number; label: string; score: number | null }[]
+}
+export interface OverviewLine {
+  months: Record<string, OverviewMonth>
+  avg: number | null
+  count: number
+}
+export interface OverviewRow {
+  company_id: number
+  company_name: string
+  department_name: string
+  f3: OverviewLine
+  f1: OverviewLine
+}
+export interface OverviewSummary {
+  period_count: number
+  dept_count: number
+  avg: number | null
+  lowest: { company_name: string; department_name: string; avg: number } | null
+}
+export interface OverviewLow { company_name: string; department_name: string; avg: number }
+export interface OverviewImprovement {
+  type: 'f3' | 'f1'
+  period: string
+  company_name: string
+  department_name: string
+  item: string
+  content: string
+  result: string
+  /** 財#1：期別 id＋項目 id；財#3：稽核單 id＋稽核項目 id＋部門欄 id（點擊開啟該明細） */
+  period_id?: number
+  line_id?: number
+  sheet_id?: number
+  sheet_item_id?: number
+  sheet_department_id?: number
+}
+export interface AuditOverview {
+  year: number
+  years: number[]
+  companies: { company_id: number; company_name: string }[]
+  rows: OverviewRow[]
+  summary: { f3: OverviewSummary; f1: OverviewSummary; improvement_count: number }
+  trend: { f3: (number | null)[]; f1: (number | null)[] }
+  lowest: { f3: OverviewLow[]; f1: OverviewLow[] }
+  improvements: OverviewImprovement[]
+}
+export const overviewApi = {
+  get: (year?: number) =>
+    client.get<AuditOverview>('/audit-check/overview', { params: year != null ? { year } : {} }),
+}

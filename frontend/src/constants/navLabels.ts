@@ -297,6 +297,7 @@ export const NAV_PAGE = {
   cyclePurchaseManual:          '週採使用手冊',        // ← route /cycle-purchase/manual（2026-08-07 新增）
 
   // 稽核檢查（財#3 系統建置稽核，2026-09-20 新增）
+  auditCheckDashboard:          'Dashboard',            // ← route /audit-check/dashboard（稽核總覽，2026-10-12 新增）
   auditCheckPeriods:            '系統建置稽核期別',          // ← route /audit-check
   auditCheckStatistics:         '分數統計',            // ← route /audit-check/statistics
   auditCheckItems:              '檢查項主檔',          // ← route /audit-check/masters/items

@@ -23,7 +23,6 @@ import dayjs from 'dayjs'
 import { kpoPeriodApi } from '@/api/auditKpo'
 import type { KpoPeriodSummary } from '@/api/auditKpo'
 import { useAuthStore } from '@/stores/authStore'
-import AuditKpoDashboard from './Dashboard'
 import SheetCreateModal from './SheetCreateModal'
 
 const { Title, Text } = Typography
@@ -152,8 +151,6 @@ export default function AuditKpoIndexPage() {
           {canEdit && <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新增期別</Button>}
         </Space>
       </Space>
-
-      <AuditKpoDashboard />
 
       <Card size="small">
         <Table rowKey="id" size="small" loading={loading} columns={columns} dataSource={rows}

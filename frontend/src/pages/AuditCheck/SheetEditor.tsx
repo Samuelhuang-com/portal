@@ -16,7 +16,7 @@
  *      — 大項之間互換時子項跟著走；子項只能在同一個大項內移動；只影響這一張稽核單
  *   3. 每一格多一個「建議」（CellDrawer 查核評語下方），固定藍字、與判定無關、不計分
  */
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import type React from 'react'
 import {
   DndContext, PointerSensor, closestCenter, useSensor, useSensors,
@@ -27,7 +27,7 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
   Button, Card, Checkbox, DatePicker, Empty, Input, InputNumber, Modal, Progress, Radio,
   Select, Space, Spin, Table, Tag, Tooltip, Typography, message,
@@ -263,6 +263,22 @@ export default function AuditSheetEditorPage() {
     setDrawerItemId(item.id)
     setDrawerDeptIdx(deptIdx)
   }
+
+  // 從 Dashboard「待改善清單」連進來：?item=<稽核項目 id>&dept=<部門欄 id> → 自動開啟該格 Drawer（只做一次）
+  const [searchParams, setSearchParams] = useSearchParams()
+  const deepLinked = useRef(false)
+  useEffect(() => {
+    if (deepLinked.current || !detail) return
+    const itemQ = Number(searchParams.get('item'))
+    const deptQ = Number(searchParams.get('dept'))
+    if (!itemQ) return
+    deepLinked.current = true
+    const item = detail.items.find((i) => i.id === itemQ)
+    const idx = detail.departments.findIndex((d) => d.id === deptQ)
+    if (item) openCell(item, idx >= 0 ? idx : 0)
+    setSearchParams({}, { replace: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detail])
 
   const navigateCell = (delta: number) => {
     if (!detail) return
