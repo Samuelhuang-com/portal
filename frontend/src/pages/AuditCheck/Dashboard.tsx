@@ -26,11 +26,14 @@ const { Title, Text } = Typography
 
 type Kind = 'f3' | 'f1'
 const KIND_META: Record<Kind, { label: string; short: string; color: string; tag: string }> = {
-  f3: { label: '財#3 系統建置稽核', short: '財#3', color: '#1B3A5C', tag: 'blue' },
-  f1: { label: '財#1 現場營運稽核', short: '財#1', color: '#d46b08', tag: 'orange' },
+  f3: { label: '系統建置', short: '系統建置', color: '#1B3A5C', tag: 'blue' },
+  f1: { label: '現場營運', short: '現場營運', color: '#d46b08', tag: 'orange' },
 }
 const MONTHS = Array.from({ length: 12 }, (_, i) => i + 1)
 const CELL: React.CSSProperties = { padding: '4px 6px', textAlign: 'center', borderBottom: '1px solid #f0f0f0', whiteSpace: 'nowrap' }
+const DEPT_W = 130
+const KIND_W = 92
+const HEAD: React.CSSProperties = { ...CELL, position: 'sticky', top: 0, background: '#fafafa', borderBottom: '1px solid #e8e8e8' }
 const fmt = (v: number | null | undefined) => (v == null ? '—' : Number.isInteger(v) ? String(v) : v.toFixed(1))
 
 export default function AuditOverviewDashboard() {
@@ -185,7 +188,7 @@ export default function AuditOverviewDashboard() {
             options={[{ value: 'all', label: '全部公司' },
               ...(data?.companies ?? []).map((c) => ({ value: c.company_id, label: c.company_name }))]} />
           <Radio.Group value={kindFilter} onChange={(e) => setKindFilter(e.target.value)} optionType="button" buttonStyle="solid"
-            options={[{ value: 'all', label: '全部' }, { value: 'f3', label: '財#3 系統建置' }, { value: 'f1', label: '財#1 現場營運' }]} />
+            options={[{ value: 'all', label: '全部' }, { value: 'f3', label: '系統建置' }, { value: 'f1', label: '現場營運' }]} />
           <a onClick={() => load(year)} title="重新整理"><ReloadOutlined /></a>
         </Space>
       </Space>
@@ -204,31 +207,39 @@ export default function AuditOverviewDashboard() {
           {byCompany.length === 0 ? (
             <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={`${data?.year ?? ''} 年尚無稽核資料`} />
           ) : (
-            <div style={{ overflowX: 'auto' }}>
-              <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 980, fontSize: 13 }}>
+            <div style={{ overflow: 'auto', maxHeight: 'min(70vh, 640px)', border: '1px solid #f0f0f0' }}>
+              <table style={{ borderCollapse: 'separate', borderSpacing: 0, width: '100%', minWidth: 1080, fontSize: 13 }}>
                 <thead>
-                  <tr style={{ background: '#fafafa' }}>
-                    <th style={{ ...CELL, textAlign: 'left', position: 'sticky', left: 0, background: '#fafafa', minWidth: 190 }}>公司 › 部門</th>
-                    {MONTHS.map((m) => <th key={m} style={CELL}>{m} 月</th>)}
-                    <th style={CELL}>期別數</th>
-                    <th style={CELL}>年度平均</th>
+                  <tr>
+                    <th style={{ ...HEAD, left: 0, zIndex: 4, minWidth: DEPT_W, width: DEPT_W, textAlign: 'left' }}>部門</th>
+                    <th style={{ ...HEAD, left: DEPT_W, zIndex: 4, minWidth: KIND_W, width: KIND_W, boxShadow: '2px 0 0 #e8e8e8' }}>稽核類型</th>
+                    {MONTHS.map((m) => <th key={m} style={{ ...HEAD, zIndex: 3 }}>{m} 月</th>)}
+                    <th style={{ ...HEAD, zIndex: 3 }}>期別數</th>
+                    <th style={{ ...HEAD, zIndex: 3 }}>年度平均</th>
                   </tr>
                 </thead>
                 <tbody>
                   {byCompany.map(([cid, grp]) => (
                     <FragmentRows key={cid}>
-                      <tr onClick={() => toggle(cid)} style={{ cursor: 'pointer', background: '#eef3f8' }}>
-                        <td colSpan={15} style={{ ...CELL, textAlign: 'left', fontWeight: 600, color: '#1B3A5C' }}>
-                          <BankOutlined /> {collapsed.has(cid) ? '▸' : '▾'} {grp.name}
-                          <Text type="secondary" style={{ marginLeft: 8, fontWeight: 400, fontSize: 12 }}>{grp.rows.length} 個部門</Text>
+                      <tr onClick={() => toggle(cid)} style={{ cursor: 'pointer' }}>
+                        <td colSpan={15} style={{ ...CELL, padding: 0, background: '#eef3f8', textAlign: 'left' }}>
+                          <div style={{ position: 'sticky', left: 0, display: 'inline-block', padding: '4px 8px', fontWeight: 600, color: '#1B3A5C' }}>
+                            <BankOutlined /> {collapsed.has(cid) ? '▸' : '▾'} {grp.name}
+                            <Text type="secondary" style={{ marginLeft: 8, fontWeight: 400, fontSize: 12 }}>{grp.rows.length} 個部門</Text>
+                          </div>
                         </td>
                       </tr>
                       {!collapsed.has(cid) && grp.rows.map((r) => (
                         <FragmentRows key={`${cid}-${r.department_name}`}>
                           {kinds.map((k, idx) => (
-                            <tr key={k} style={idx === kinds.length - 1 ? undefined : { background: '#fff' }}>
-                              <td style={{ ...CELL, textAlign: 'left', position: 'sticky', left: 0, background: '#fff', paddingLeft: 24 }}>
-                                {idx === 0 ? <b style={{ marginRight: 8 }}>{r.department_name}</b> : <span style={{ display: 'inline-block', width: 0 }} />}
+                            <tr key={k}>
+                              {idx === 0 && (
+                                <td rowSpan={kinds.length} style={{ ...CELL, textAlign: 'left', position: 'sticky', left: 0, zIndex: 2, background: '#fff',
+                                  minWidth: DEPT_W, width: DEPT_W, paddingLeft: 16, fontWeight: 600, whiteSpace: 'normal', verticalAlign: 'middle' }}>
+                                  {r.department_name}
+                                </td>
+                              )}
+                              <td style={{ ...CELL, position: 'sticky', left: DEPT_W, zIndex: 2, background: '#fff', minWidth: KIND_W, width: KIND_W, boxShadow: '2px 0 0 #e8e8e8' }}>
                                 <Tag color={KIND_META[k].tag} style={{ marginRight: 0 }}>{KIND_META[k].short}</Tag>
                               </td>
                               {lineCells(k, r[k])}
@@ -292,7 +303,7 @@ export default function AuditOverviewDashboard() {
           </Col>
         </Row>
 
-        <Card size="small" title={`待改善清單（財#3 缺失類判定＋財#1 不符合項，點擊開啟該明細）　共 ${improvements.length} 筆`}>
+        <Card size="small" title={`待改善清單（系統建置缺失類判定＋現場營運不符合項，點擊開啟該明細）　共 ${improvements.length} 筆`}>
           <Table<OverviewImprovement> size="small" rowKey={(r) => `${r.type}-${r.period}-${r.company_name}-${r.department_name}-${r.item}`}
             columns={impCols} dataSource={improvements} scroll={{ x: 900 }}
             onRow={(r) => ({ onClick: () => openImprovement(r), style: { cursor: 'pointer' } })}
