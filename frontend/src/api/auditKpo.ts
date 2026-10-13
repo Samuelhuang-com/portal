@@ -196,3 +196,49 @@ export const kpoDashboardApi = {
   /** 年度 Dashboard：公司 × 部門 × 月份的本期分數；不帶 year＝有資料的最新年度 */
   get: (year?: number) => client.get<KpoDashboard>(`${BASE}/dashboard`, { params: year ? { year } : undefined }),
 }
+
+// ── 分數統計（2026-10-13）──────────────────────────────────────────────────
+export interface KpoStatCell {
+  period: string
+  period_id: number | null
+  sheet_id: number | null
+  department_id: number | null
+  score: number | null            // 本期分數（0~100 整數）
+  pass_count: number
+  fail_count: number
+  pending_count: number
+  item_count: number
+  label: string                   // 「N項符合 / M項選定」；完成列為「已查核/選定」
+}
+export interface KpoStatBlock {
+  company_id: number
+  company_name: string
+  periods: string[]
+  rows: { department_id: number; name: string; cells: KpoStatCell[] }[]
+  completion: KpoStatCell[]
+}
+export interface KpoStatistics { year: number; years: number[]; blocks: KpoStatBlock[] }
+export interface KpoFlaggedRow {
+  period: string
+  period_id: number
+  sheet_id: number
+  company_id: number
+  company_name: string
+  department_id: number
+  department_name: string
+  line_id: number
+  item_no: number | null
+  is_key: boolean
+  item_name: string
+  result: string
+  result_label: string
+  remark: string
+}
+
+export const kpoStatisticsApi = {
+  get: (year?: number) => client.get<KpoStatistics>(`${BASE}/statistics`, { params: year ? { year } : undefined }),
+  flagged: (year: number, includePending: boolean) =>
+    client.get<KpoFlaggedRow[]>(`${BASE}/statistics/flagged`, { params: { year, include_pending: includePending } }),
+  /** 完整路徑（給 downloadFile 用） */
+  exportUrl: (year: number) => `/api/v1${BASE}/statistics/export?year=${year}`,
+}

@@ -305,4 +305,5 @@ export const NAV_PAGE = {
   auditCheckResultTypes:        '判定類型設定',        // ← route /audit-check/settings/result-types
   auditCheckKpo:                '現場營運稽核',         // ← route /audit-check/kpo（財#1 稽核系統建構，2026-10-10 新增）
   auditCheckKpoItems:           '現場營運稽核項目', // ← route /audit-check/kpo/items
+  auditCheckKpoStatistics:      '現場營運分數統計', // ← route /audit-check/kpo/statistics（2026-10-13 新增）
 } as const

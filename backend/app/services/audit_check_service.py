@@ -607,13 +607,15 @@ def build_statistics(db: Session, year: int, company_id: Optional[int] = None) -
                 if si.parent_sheet_item_id is None
             ])
             rate, label = compute_completion(db, sheet)
-            completion.append({"period": period, "score": rate, "label": label})
+            completion.append({"period": period, "score": rate, "label": label, "sheet_id": sheet.id})
 
             for row in compute_scores(db, sheet):
                 dept_cells.setdefault(row["department_id"], {})[period] = {
                     "period": period,
                     "score": row["score"],
                     "label": row["score_label"],
+                    "sheet_id": sheet.id,
+                    "sheet_department_id": row["sheet_department_id"],
                 }
 
         rows = []

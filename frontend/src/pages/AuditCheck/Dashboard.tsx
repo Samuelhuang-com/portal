@@ -25,9 +25,9 @@ import { scoreColor } from './Kpo/Dashboard'
 const { Title, Text } = Typography
 
 type Kind = 'f3' | 'f1'
-const KIND_META: Record<Kind, { label: string; short: string; color: string; tag: string }> = {
-  f3: { label: '系統建置', short: '系統建置', color: '#1B3A5C', tag: 'blue' },
-  f1: { label: '現場營運', short: '現場營運', color: '#d46b08', tag: 'orange' },
+const KIND_META: Record<Kind, { label: string; short: string; color: string; tag: string; cellBg: string }> = {
+  f3: { label: '系統建置', short: '系統建置', color: '#1B3A5C', tag: 'blue', cellBg: '#e6f4ff' },
+  f1: { label: '現場營運', short: '現場營運', color: '#d46b08', tag: 'orange', cellBg: '#fff7e6' },
 }
 const MONTHS = Array.from({ length: 12 }, (_, i) => i + 1)
 const CELL: React.CSSProperties = { padding: '4px 6px', textAlign: 'center', borderBottom: '1px solid #f0f0f0', whiteSpace: 'nowrap' }
@@ -115,7 +115,8 @@ export default function AuditOverviewDashboard() {
   const cell = (k: Kind, m: OverviewMonth | undefined) => {
     if (!m) return <td style={CELL} />
     const v = m.avg
-    const c = v == null ? { bg: '#f5f5f5', fg: '#8c8c8c' } : scoreColor(v)
+    // 2026-10-13：底色＝稽核類型（同「系統建置／現場營運」標籤色）；字色 <60 紅、≥60 綠
+    const c = { bg: KIND_META[k].cellBg, fg: v == null ? '#8c8c8c' : v < 60 ? '#cf1322' : '#389e0d' }
     const body = (
       <div style={{ background: c.bg, color: c.fg, borderRadius: 4, padding: '2px 0', minWidth: 44, fontWeight: 600, cursor: 'pointer' }}>
         {fmt(v)}{m.count > 1 && <sup style={{ fontWeight: 400, marginLeft: 2 }}>×{m.count}</sup>}
@@ -256,6 +257,9 @@ export default function AuditOverviewDashboard() {
           <div style={{ marginTop: 8 }}>
             <Space size={8} wrap>
               <Text type="secondary" style={{ fontSize: 12 }}>格子＝分數（同月多期取平均，×n 為期數；點格子開啟單據）</Text>
+              <Tag style={{ background: '#e6f4ff', color: '#389e0d', border: 0 }}>系統建置</Tag>
+              <Tag style={{ background: '#fff7e6', color: '#389e0d', border: 0 }}>現場營運</Tag>
+              <Text type="secondary" style={{ fontSize: 12 }}>月份格：底色＝稽核類型；分數 ≥ 60 綠字、&lt; 60 紅字。年度平均與摘要仍用下列色階：</Text>
               <Tag style={{ background: '#d9f7be', color: '#237804', border: 0 }}>≥ 90</Tag>
               <Tag style={{ background: '#fff1b8', color: '#ad6800', border: 0 }}>70 ~ 89</Tag>
               <Tag style={{ background: '#ffccc7', color: '#a8071a', border: 0 }}>&lt; 70</Tag>

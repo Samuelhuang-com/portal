@@ -244,3 +244,115 @@ def dashboard(db: Session, year: int | None) -> Dict[str, object]:
             })
         companies.append({"company_id": cid, "company_name": _company_name(shs[0]), "rows": rows})
     return {"year": year, "years": years or [year], "companies": companies}
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# 分數統計（2026-10-13）— 比照系統建置稽核的「分數統計」
+# ════════════════════════════════════════════════════════════════════════════
+def _year_periods(db: Session, year: int) -> List[AuditKpoPeriod]:
+    return (
+        db.query(AuditKpoPeriod).filter(AuditKpoPeriod.period.like(f"{year}-%"))
+        .order_by(AuditKpoPeriod.period, AuditKpoPeriod.id).all()
+    )
+
+
+def _stat_year(db: Session, year: int | None) -> int:
+    if year is not None:
+        return year
+    ys = sorted({int(p[0][:4]) for p in db.query(AuditKpoPeriod.period).distinct().all()}, reverse=True)
+    if ys:
+        return ys[0]
+    from app.core.time import twnow
+    return twnow().year
+
+
+def statistics(db: Session, year: int | None, company_id: int | None = None) -> Dict[str, object]:
+    """年度分數統計：每家公司一個區塊，欄＝期別、列＝受稽部門。
+    格子＝本期分數（score100）＋「N項符合 / M項選定」；最後一列「查核完成」＝已查核項數 / 選定項數。"""
+    year = _stat_year(db, year)
+    periods = _year_periods(db, year)
+    seen: Dict[str, int] = {}
+    col_label: Dict[int, str] = {}
+    for p in periods:
+        seen[p.period] = seen.get(p.period, 0) + 1
+        col_label[p.id] = p.period if seen[p.period] == 1 else f"{p.period} ({seen[p.period]})"
+
+    by_company: Dict[int, List[AuditKpoSheet]] = {}
+    for per in periods:
+        for sh in per.sheets:
+            if company_id is not None and sh.company_id != company_id:
+                continue
+            by_company.setdefault(sh.company_id, []).append(sh)
+
+    dept_rows = {d.id: d for d in db.query(AuditKpoDept).all()}
+    blocks = []
+    for cid, shs in sorted(by_company.items(), key=lambda kv: (_company_name(kv[1][0]), kv[0])):
+        shs.sort(key=lambda sh: (sh.period_ref.period, sh.period_ref.id))
+        labels = [col_label[sh.period_id] for sh in shs]
+        dept_ids: Dict[int, None] = {}
+        per_cell: Dict[int, Dict[str, Dict[str, object]]] = {}
+        completion = []
+        for sh, label in zip(shs, labels):
+            by_dept: Dict[int, List[AuditKpoPeriodItem]] = {}
+            for ln in sh.lines:
+                by_dept.setdefault(ln.department_id, []).append(ln)
+            for did, lines in by_dept.items():
+                st = subtotal(lines)
+                dept_ids[did] = None
+                per_cell.setdefault(did, {})[label] = {
+                    "period": label, "period_id": sh.period_id, "sheet_id": sh.id, "department_id": did,
+                    "score": st["score100"], "pass_count": st["pass_count"], "fail_count": st["fail_count"],
+                    "pending_count": st["pending_count"], "item_count": st["item_count"],
+                    "label": f"{st['pass_count']}項符合 / {st['item_count']}項選定",
+                }
+            tot = subtotal(sh.lines)
+            checked = tot["pass_count"] + tot["fail_count"]
+            completion.append({
+                "period": label, "period_id": sh.period_id, "sheet_id": sh.id, "department_id": None,
+                "score": tot["score100"], "pass_count": tot["pass_count"], "fail_count": tot["fail_count"],
+                "pending_count": tot["pending_count"], "item_count": tot["item_count"],
+                "label": f"{checked}/{tot['item_count']}" if tot["item_count"] else "—",
+            })
+        order = sorted(dept_ids, key=lambda i: ((dept_rows[i].sort_order or 0) if i in dept_rows else 0, i))
+        rows = [{
+            "department_id": did,
+            "name": dept_rows[did].display_name if did in dept_rows else f"#{did}",
+            "cells": [per_cell[did].get(lb) or {
+                "period": lb, "period_id": None, "sheet_id": None, "department_id": did, "score": None,
+                "pass_count": 0, "fail_count": 0, "pending_count": 0, "item_count": 0, "label": "本月無",
+            } for lb in labels],
+        } for did in order]
+        blocks.append({
+            "company_id": cid, "company_name": _company_name(shs[0]),
+            "periods": labels, "rows": rows, "completion": completion,
+        })
+    years = sorted({int(p[0][:4]) for p in db.query(AuditKpoPeriod.period).distinct().all()}, reverse=True)
+    return {"year": year, "years": years or [year], "blocks": blocks}
+
+
+def flagged(db: Session, year: int | None, include_pending: bool = False) -> List[Dict[str, object]]:
+    """缺失與建議清單：不符合項（可選含未查核），附備註。"""
+    year = _stat_year(db, year)
+    out: List[Dict[str, object]] = []
+    for per in _year_periods(db, year):
+        for sh in per.sheets:
+            for ln in _ordered(list(sh.lines)):
+                if ln.result == "fail":
+                    label = "不符合"
+                elif include_pending and ln.result not in ("pass", "fail"):
+                    label = "未查核"
+                elif ln.result == "pass":
+                    continue
+                else:
+                    continue
+                out.append({
+                    "period": per.period, "period_id": per.id, "sheet_id": sh.id,
+                    "company_id": sh.company_id, "company_name": _company_name(sh),
+                    "department_id": ln.department_id,
+                    "department_name": ln.department.display_name if ln.department is not None else "",
+                    "line_id": ln.id, "item_no": ln.item_no, "is_key": bool(ln.is_key),
+                    "item_name": ln.name, "result": ln.result or "", "result_label": label,
+                    "remark": ln.remark or "",
+                })
+    out.sort(key=lambda r: (r["period"], r["company_name"], r["department_name"], r["item_no"] or 0))
+    return out

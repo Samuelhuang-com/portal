@@ -195,6 +195,7 @@ import AuditOverviewDashboardPage from '@/pages/AuditCheck/Dashboard'
 import AuditItemsMasterPage       from '@/pages/AuditCheck/Masters/Items'
 import AuditResultTypesPage       from '@/pages/AuditCheck/Settings/ResultTypes'
 import AuditKpoIndexPage          from '@/pages/AuditCheck/Kpo'
+import AuditKpoStatisticsPage     from '@/pages/AuditCheck/Kpo/Statistics'
 import AuditKpoPeriodEditorPage   from '@/pages/AuditCheck/Kpo/PeriodEditor'
 import AuditKpoItemsMasterPage    from '@/pages/AuditCheck/Kpo/ItemsMaster'
 
@@ -714,6 +715,7 @@ export default function AppRouter() {
           {/* KPO 稽核（財#1 稽核系統建構，2026-10-10 新增） */}
           <Route path="kpo" element={<AuditKpoIndexPage />} />
           <Route path="kpo/periods/:id" element={<AuditKpoPeriodEditorPage />} />
+          <Route path="kpo/statistics" element={<AuditKpoStatisticsPage />} />
           <Route path="kpo/items" element={
             <PermissionGuard permissionKey="audit_check_admin">
               <AuditKpoItemsMasterPage />

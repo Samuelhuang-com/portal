@@ -223,6 +223,7 @@ export const menuItems: MenuItem[] = [
       { key: '/audit-check/masters/items',         icon: <SettingOutlined />, label: NAV_PAGE.auditCheckItems,       permissionKey: 'audit_check_admin' },
       { key: '/audit-check/settings/result-types', icon: <SettingOutlined />, label: NAV_PAGE.auditCheckResultTypes, permissionKey: 'audit_check_admin' },
       { key: '/audit-check/kpo',                   icon: <AuditOutlined />,   label: NAV_PAGE.auditCheckKpo,         permissionKey: 'audit_check_view'  },
+      { key: '/audit-check/kpo/statistics',        icon: <BarChartOutlined />, label: NAV_PAGE.auditCheckKpoStatistics, permissionKey: 'audit_check_view' },
       { key: '/audit-check/kpo/items',             icon: <SettingOutlined />, label: NAV_PAGE.auditCheckKpoItems,    permissionKey: 'audit_check_admin' },
     ],
   },

@@ -270,6 +270,8 @@ class StatisticsCell(BaseModel):
     period: str
     score: Optional[float]
     label: str
+    sheet_id: Optional[int] = None              # 點格子開啟該期稽核單
+    sheet_department_id: Optional[int] = None   # 部門格才有，開啟時帶 ?dept=
 
 
 class StatisticsRow(BaseModel):

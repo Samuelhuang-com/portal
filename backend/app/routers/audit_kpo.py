@@ -295,6 +295,74 @@ def get_dashboard(
     return svc.dashboard(db, year)
 
 
+@router.get("/statistics")
+def get_statistics(
+    year: Optional[int] = Query(None, ge=2000, le=2100),
+    company_id: Optional[int] = Query(None),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_permission(VIEW)),
+):
+    """分數統計（2026-10-13）：公司 × 部門 × 期別的本期分數，附「N項符合 / M項選定」與查核完成列。"""
+    return svc.statistics(db, year, company_id)
+
+
+@router.get("/statistics/flagged")
+def get_flagged(
+    year: Optional[int] = Query(None, ge=2000, le=2100),
+    include_pending: bool = Query(False, description="True 連「未查核」項目一併列出"),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_permission(VIEW)),
+):
+    """缺失與建議清單：不符合項（含查核備註）。"""
+    return svc.flagged(db, year, include_pending)
+
+
+@router.get("/statistics/export")
+def export_statistics(
+    year: Optional[int] = Query(None, ge=2000, le=2100),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_permission(VIEW)),
+):
+    """匯出分數統計 Excel：每家公司一個 Sheet；每期兩欄（本期分數／符合÷選定），最後一列為查核完成。"""
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font
+    from app.routers.audit_check import _clean, _xlsx_response
+
+    data = svc.statistics(db, year)
+    wb = Workbook()
+    wb.remove(wb.active)
+    bold = Font(bold=True)
+    used: set = set()
+    for blk in data["blocks"]:
+        title = _clean(blk["company_name"])[:28] or "公司"
+        base, n = title, 2
+        while title in used:
+            title, n = f"{base}{n}", n + 1
+        used.add(title)
+        ws = wb.create_sheet(title)
+        ws.cell(row=1, column=1, value=f"{blk['company_name']}　{data['year']} 年　現場營運稽核分數統計").font = bold
+        ws.cell(row=2, column=1, value="部門").font = bold
+        for i, lb in enumerate(blk["periods"]):
+            ws.cell(row=2, column=2 + i * 2, value=_clean(lb)).font = bold
+            ws.cell(row=2, column=3 + i * 2, value="符合/選定").font = bold
+        r = 3
+        for row in blk["rows"]:
+            ws.cell(row=r, column=1, value=_clean(row["name"]))
+            for i, c in enumerate(row["cells"]):
+                ws.cell(row=r, column=2 + i * 2, value=c["score"])
+                ws.cell(row=r, column=3 + i * 2, value=f"{c['pass_count']}/{c['item_count']}" if c["item_count"] else "本月無")
+            r += 1
+        ws.cell(row=r, column=1, value="查核完成（已查核/選定）").font = bold
+        for i, c in enumerate(blk["completion"]):
+            ws.cell(row=r, column=2 + i * 2, value=c["score"])
+            ws.cell(row=r, column=3 + i * 2, value=_clean(c["label"]))
+        ws.column_dimensions["A"].width = 24
+    if not data["blocks"]:
+        ws = wb.create_sheet("無資料")
+        ws.cell(row=1, column=1, value=f"{data['year']} 年尚無現場營運稽核資料").alignment = Alignment(wrap_text=True)
+    return _xlsx_response(wb, f"現場營運稽核-{data['year']}分數統計.xlsx")
+
+
 @router.get("/periods", response_model=List[KpoPeriodSummary])
 def list_periods(
     db: Session = Depends(get_db),

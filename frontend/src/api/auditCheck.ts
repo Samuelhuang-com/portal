@@ -154,6 +154,8 @@ export interface StatisticsCell {
   period: string
   score: number | null
   label: string
+  sheet_id?: number | null
+  sheet_department_id?: number | null
 }
 
 export interface StatisticsBlock {
@@ -183,6 +185,9 @@ export interface FlaggedRow {
   result_label: string
   result_color: string
   comment: string
+  sheet_id?: number | null
+  sheet_item_id?: number | null
+  sheet_department_id?: number | null
 }
 
 export interface MobileSheetRow {

@@ -638,6 +638,7 @@ def _seed_menu_config_audit_check():
         ("/audit-check/masters/items", 30),
         ("/audit-check/settings/result-types", 40),
         ("/audit-check/kpo", 50),
+        ("/audit-check/kpo/statistics", 55),
         ("/audit-check/kpo/items", 60),
     ]
 
