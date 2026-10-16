@@ -365,6 +365,11 @@ _LAST_UPDATED_SOURCES: dict[str, tuple[str, str]] = {
     "飯店每日巡檢":       ("hotel_di_inspection_item",       "synced_at"),
     "商場週期保養":       ("mall_pm_batch_item",             "synced_at"),
     "商場工務巡檢":       ("mall_fi_inspection_item",        "synced_at"),
+    # 2026-10-15：整棟巡檢四層（戰情「值班總覽」用）
+    "B1F巡檢":           ("b1f_inspection_item",            "synced_at"),
+    "B2F巡檢":           ("b2f_inspection_item",            "synced_at"),
+    "B4F巡檢":           ("b4f_inspection_item",            "synced_at"),
+    "RF巡檢":            ("rf_inspection_item",             "synced_at"),
 }
 
 

@@ -20,6 +20,7 @@ class FullBldgPMBatch(Base):
 
     # ── 業務欄位 ──────────────────────────────────────────────────────────────
     journal_no    = Column(String(50),  nullable=False, default="", comment="保養日誌編號，如 全棟保202604-001")
+    journal_no_raw = Column(String(50), nullable=False, default="", server_default="", comment="Ragic 原始編號（2026/10 起為「2026/10棟週保-006」），journal_no 為正規化後的值")
     period_month  = Column(String(10),  nullable=False, default="", comment="保養月份，如 2026/04")
 
     # ── Ragic 時間戳 ──────────────────────────────────────────────────────────

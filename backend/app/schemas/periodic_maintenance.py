@@ -14,6 +14,7 @@ from pydantic import BaseModel
 class PMBatchOut(BaseModel):
     ragic_id:         str
     journal_no:       str
+    journal_no_raw:   str = ""
     period_month:     str
     ragic_created_at: str
     ragic_updated_at: str

@@ -178,9 +178,27 @@ def _normalize_period_month(raw_date: str) -> str:
     return raw_date
 
 
+_JOURNAL_NEW_RE = re.compile(r"^\s*(\d{4})/(\d{2})\*?棟週保-(\d+)\s*$")
+
+
+def _normalize_journal_no(raw: str) -> str:
+    """
+    2026/10 起 Ragic 編號改為「2026/10棟週保-006」，統一轉成舊格式「棟週保202610-006」
+    （與 202609 以前一致）。孤兒紀錄的「2026/10*棟週保-001」（帶星號）也一併處理。
+    舊格式與無法解析的值原樣回傳。
+    """
+    m = _JOURNAL_NEW_RE.match(raw or "")
+    if not m:
+        return raw
+    year, month, seq = m.groups()
+    return f"棟週保{year}{month}-{seq}"
+
+
 def _ragic_batch_to_model(ragic_id: str, raw: dict[str, Any]) -> FullBldgPMBatch:
     rec = FullBldgPMBatch(ragic_id=ragic_id)
-    rec.journal_no   = _stringify(raw.get(CK_JOURNAL_NO, ""))
+    raw_no = _stringify(raw.get(CK_JOURNAL_NO, ""))
+    rec.journal_no_raw = raw_no
+    rec.journal_no   = _normalize_journal_no(raw_no)
     rec.period_month = _normalize_period_month(_stringify(raw.get(CK_PERIOD_MONTH, "")))
     ts = raw.get("_dataTimestamp")
     if ts:
@@ -252,6 +270,7 @@ async def sync_batches_from_ragic() -> dict:
                 existing = db.get(FullBldgPMBatch, str(ragic_id))
                 if existing:
                     existing.journal_no       = new_rec.journal_no
+                    existing.journal_no_raw   = new_rec.journal_no_raw
                     existing.period_month     = _normalize_period_month(new_rec.period_month)
                     existing.ragic_created_at = new_rec.ragic_created_at
                     existing.ragic_updated_at = new_rec.ragic_updated_at
@@ -828,7 +847,7 @@ async def sync_items_from_sheet28() -> dict:
         for item_ragic_id, raw in raw_data.items():
             item_id = str(item_ragic_id)
             try:
-                journal_no = _stringify(raw.get(CK28L_PARENT_REF, ""))
+                journal_no = _normalize_journal_no(_stringify(raw.get(CK28L_PARENT_REF, "")))
                 batch_ragic_id = journal_to_batch.get(journal_no)
                 if not batch_ragic_id:
                     unmatched_journal_nos.add(journal_no or "(空白)")

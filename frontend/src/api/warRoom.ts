@@ -238,3 +238,59 @@ export async function fetchWarRoomAlertRecipients(): Promise<WrAlertRecipient[]>
 export async function saveWarRoomAlertRecipients(recipients: WrAlertRecipient[]): Promise<WrAlertRecipient[]> {
   return (await apiClient.put<{ recipients: WrAlertRecipient[] }>('/war-room/alert-recipients', { recipients })).data.recipients
 }
+
+// ── 值班總覽（每個巡檢模組一張卡＋7 日趨勢，2026-10-15 新增）──────────────────
+export type OverviewLevel = 'critical' | 'warning' | 'ok' | 'none'
+
+export interface WrOverviewCounts {
+  normal:    number
+  abnormal:  number
+  unchecked: number
+  no_record: number
+  total:     number
+  judged:    number
+  coverage:  number | null
+}
+
+export interface WrOverviewTrendDay {
+  date:      string
+  normal:    number
+  abnormal:  number
+  unchecked: number
+  coverage:  number | null
+}
+
+export interface WrOverviewItem {
+  id:             number
+  label:          string
+  floor_key:      string
+  group_label:    string
+  equipment_code: string
+  status:         PointStatus
+}
+
+export interface WrOverviewModule {
+  module:      string
+  label:       string
+  venue:       AlertVenue
+  venue_label: string
+  level:       OverviewLevel
+  headline:    string
+  today:       WrOverviewCounts
+  trend:       WrOverviewTrendDay[]
+  items:       WrOverviewItem[]
+  items_total: number
+}
+
+export interface WrOverview {
+  date:         string
+  generated_at: string
+  deadline:     string
+  is_today:     boolean
+  trend_days:   string[]
+  modules:      WrOverviewModule[]
+}
+
+export async function fetchWarRoomOverview(date: string): Promise<WrOverview> {
+  return (await apiClient.get<WrOverview>('/war-room/overview', { params: { date } })).data
+}

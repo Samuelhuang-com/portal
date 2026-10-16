@@ -445,6 +445,93 @@ class AlertSettingsBody(BaseModel):
     auto_send: Optional[bool] = None
 
 
+# ── 值班總覽（2026-10-15 新增）：每個巡檢模組一張卡＋7 日趨勢 ─────────────────
+TREND_DAYS = 7
+
+
+def _overview_counts(pts: list[dict[str, Any]]) -> dict[str, Any]:
+    cnt = {"normal": 0, "abnormal": 0, "unchecked": 0, "no_record": 0}
+    for p in pts:
+        cnt[p["status"]] = cnt.get(p["status"], 0) + 1
+    judged = cnt["normal"] + cnt["abnormal"] + cnt["unchecked"]
+    coverage = round((cnt["normal"] + cnt["abnormal"]) * 100 / judged) if judged else None
+    return {**cnt, "total": len(pts), "judged": judged, "coverage": coverage}
+
+
+@router.get("/overview", summary="戰情 KPI — 值班總覽（每個巡檢模組一張卡＋7 日趨勢）",
+            dependencies=[Depends(require_war_room)])
+def get_overview(
+    date: Optional[str] = Query(None, description="YYYY-MM-DD；省略＝今天；趨勢為該日往前 7 天"),
+    db: Session = Depends(get_db),
+):
+    base = _parse_date(date)
+    now = twnow()
+    is_today = base == now.date()
+    deadline = alert_svc.get_settings(db)["inspect_deadline"]
+    dl_h, dl_m = (int(x) for x in deadline.split(":"))
+    past_deadline = is_today and (now.hour, now.minute) >= (dl_h, dl_m)
+
+    days = [base - timedelta(days=TREND_DAYS - 1 - i) for i in range(TREND_DAYS)]
+    day_points = {d: _all_points(db, d.strftime("%Y/%m/%d")) for d in days}
+    today_pts = day_points[base]
+
+    modules = []
+    for module, provider in PROVIDERS.items():
+        today = _overview_counts([p for p in today_pts if p["module"] == module])
+        abnormal_pts = [p for p in today_pts if p["module"] == module and p["status"] == "abnormal"]
+        unchecked_pts = [p for p in today_pts if p["module"] == module and p["status"] == "unchecked"]
+
+        if today["abnormal"]:
+            level = "critical"
+            names = "、".join(f"{p['floor_key'].upper()} {p['label']}" for p in abnormal_pts[:3])
+            headline = f"{today['abnormal']} 點位異常：{names}" + ("…" if len(abnormal_pts) > 3 else "")
+        elif today["unchecked"] and past_deadline:
+            level = "warning"
+            headline = f"{today['unchecked']} 點位未填（已過 {deadline}）"
+        elif today["unchecked"]:
+            level = "ok"
+            headline = f"{today['unchecked']} 點位待巡檢（截止 {deadline}）" if is_today else f"{today['unchecked']} 點位未填"
+        elif not today["judged"]:
+            level = "none"
+            headline = "今日無排定巡檢"
+        else:
+            level = "ok"
+            headline = "全部正常"
+
+        trend = []
+        for d in days:
+            c = _overview_counts([p for p in day_points[d] if p["module"] == module])
+            trend.append({"date": d.isoformat(), "normal": c["normal"], "abnormal": c["abnormal"],
+                          "unchecked": c["unchecked"], "coverage": c["coverage"]})
+
+        items = [
+            {"id": p["id"], "label": p["label"], "floor_key": p["floor_key"], "group_label": p["group_label"],
+             "equipment_code": p["equipment_code"], "status": p["status"]}
+            for p in (abnormal_pts + unchecked_pts)[:50]
+        ]
+        modules.append({
+            "module": module,
+            "label": provider.label,
+            "venue": alert_svc.MODULE_VENUE.get(module, "both"),
+            "venue_label": alert_svc.VENUE_LABEL[alert_svc.MODULE_VENUE.get(module, "both")],
+            "level": level,
+            "headline": headline,
+            "today": today,
+            "trend": trend,
+            "items": items,
+            "items_total": today["abnormal"] + today["unchecked"],
+        })
+
+    return {
+        "date": base.isoformat(),
+        "generated_at": now.strftime("%Y-%m-%d %H:%M"),
+        "deadline": deadline,
+        "is_today": is_today,
+        "trend_days": [d.isoformat() for d in days],
+        "modules": modules,
+    }
+
+
 @router.get("/alerts", summary="戰情 KPI — 異常告警清單（只偵測，不寄信）",
             dependencies=[Depends(require_war_room)])
 def get_alerts(

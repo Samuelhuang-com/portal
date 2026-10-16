@@ -727,6 +727,7 @@ def _batch_to_out(batch: FullBldgPMBatch) -> PMBatchOut:
     return PMBatchOut(
         ragic_id         = batch.ragic_id,
         journal_no       = batch.journal_no,
+        journal_no_raw   = batch.journal_no_raw or "",
         period_month     = batch.period_month,
         ragic_created_at = batch.ragic_created_at,
         ragic_updated_at = batch.ragic_updated_at,

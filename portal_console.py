@@ -220,6 +220,10 @@ CONSOLE_VERSION = "1.96.40"
 
 BACKEND_PORT = 8000
 
+# 2026-10-16：啟動本程式時自動啟動前、後台（正式區與測試區皆適用）。
+# port 已在執行中會略過；不想自動啟動時改成 False。
+AUTO_START_SERVICES = True
+
 
 def _detect_frontend_dev_port() -> int:
     """從 frontend/vite.config.ts 讀取實際的開發伺服器 port。
@@ -568,6 +572,9 @@ class PortalConsole(tk.Tk):
         self._refresh_service_status()
         # 每 150ms 把內嵌終端機的輸出佇列搬到畫面上
         self._drain_log_queues()
+        # 開機自動啟動前、後台（畫面與 mainloop 建好後才執行）
+        if AUTO_START_SERVICES:
+            self.after(1500, self._auto_start_services)
 
     # ── 分頁列（圖示＋文字，仿 Adapter / BE Gateway / Configuration…）──────────
     # 前兩個是真正的頁面切換分頁；「🔗 開啟同步工具」是動作項目（仿 OPERA
@@ -758,6 +765,23 @@ class PortalConsole(tk.Tk):
                 #    （與 [1.96.44] 健康檢查那個是同一類，只是觸發點不同）。
                 self._safe_after(0, lambda: on_done(result))
         threading.Thread(target=_worker, daemon=True).start()
+
+    # ── 開機自動啟動前、後台 ─────────────────────────────────────────────────
+    def _auto_start_services(self):
+        """Backend 立即啟動，Frontend 隔 5 秒再啟動；port 已在執行中則略過。"""
+        specs = (
+            ("Backend (uvicorn)", BACKEND_PORT,
+             "uvicorn app.main:app --reload --host 127.0.0.1 --port 8000", _BACKEND),
+            ("Frontend (vite dev)", FRONTEND_PORT, "npm run dev", _FRONTEND),
+        )
+        for i, (name, port, cmd, cwd) in enumerate(specs):
+            def _go(n=name, p=port, c=cmd, d=cwd):
+                if check_port("127.0.0.1", p):
+                    self._log_queues.setdefault(p, queue.Queue()).put(
+                        f"[Console] 自動啟動略過：port {p} 已在執行中")
+                    return
+                self._start(n, p, c, d)
+            self.after(i * 5000, _go)
 
     # ── NSSM 服務控制（net start / net stop）─────────────────────────────────
     # 2026-07-18 新增背景：正式區 Backend 是 NSSM 包出來的 Windows 服務

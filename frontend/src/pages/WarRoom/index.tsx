@@ -6,12 +6,13 @@
  * 權限：war_room_view ＋ .env WAR_ROOM_ALLOWED_EMAILS 白名單（系統管理員也受限，CLAUDE.md §11.7）
  *
  * TAB（第一個固定為 Dashboard）：
- *   1. Dashboard        整棟戰情圖：各樓層人員工作／巡檢異常・未填／未完成報修，點擊即檢視
+ *   1. 值班總覽          每個巡檢模組一張卡：燈號、今日異常／未填、涵蓋率、近 7 日趨勢（2026-10-15 新增，第一位）
+ *   2. Dashboard        整棟戰情圖：各樓層人員工作／巡檢異常・未填／未完成報修，點擊即檢視
  *   ─  3D 樓層          等角整棟模型（客房逐間、巡檢點位、時間軸人員），2026-10-10 新增
  *   ─  告警            異常告警清單 A1～A5＋預覽寄送＋設定（2026-10-10 新增）
- *   2. 人員動態          與 exec-work-dashboard 同一個元件（StaffPathTab），兩邊功能完全相同；
+ *   4. 人員動態          與 exec-work-dashboard 同一個元件（StaffPathTab），兩邊功能完全相同；
  *                        另受 STAFF_PATH_ALLOWED_EMAILS 白名單限制
- *   3. 房間／設備履歷    輸入房號或選設備，看報修、IHG 保養、巡檢紀錄
+ *   5. 房間／設備履歷    輸入房號或選設備，看報修、IHG 保養、巡檢紀錄
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AutoComplete, Button, Card, Col, ConfigProvider, Result, Row, Select, Space, Spin, Tabs, Tag, Typography } from 'antd'
@@ -24,6 +25,7 @@ import StaffPathTab from '@/pages/ExecWorkDashboard/StaffPathTab'
 import FloorBoard from './FloorBoard'
 import FloorIso from './FloorIso'
 import AlertsTab from './AlertsTab'
+import OverviewTab from './OverviewTab'
 import { AssetHistoryPanel, RepairDrawer, type AssetTarget } from './AssetHistory'
 import type { WrRepair } from '@/api/warRoom'
 
@@ -104,7 +106,7 @@ function HistoryTab({ getContainer }: { getContainer?: () => HTMLElement }) {
 export default function WarRoomPage() {
   const [allowed, setAllowed] = useState<boolean | null>(null)
   const [staffAllowed, setStaffAllowed] = useState(false)
-  const [tab, setTab] = useState('dashboard')
+  const [tab, setTab] = useState('overview')
 
   useEffect(() => {
     fetchWarRoomAccess().then(setAllowed)
@@ -150,6 +152,7 @@ export default function WarRoomPage() {
             activeKey={tab}
             onChange={setTab}
             items={[
+              { key: 'overview', label: '值班總覽', children: <OverviewTab getContainer={getContainer} /> },
               { key: 'dashboard', label: 'Dashboard', children: <FloorBoard getContainer={getContainer} /> },
               { key: 'iso', label: '3D 樓層', children: <FloorIso getContainer={getContainer} /> },
               { key: 'alerts', label: '告警', children: <AlertsTab getContainer={getContainer} /> },
