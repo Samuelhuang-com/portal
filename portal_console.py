@@ -677,6 +677,10 @@ class PortalConsole(tk.Tk):
              "npm run dev",
              _FRONTEND, f"http://127.0.0.1:{FRONTEND_PORT}"),
         ):
+            # 正式區前台與後端同一個 port（8000，由 Backend 提供 dist）。
+            # 兩張卡片共用同一個 port 會互相覆蓋狀態元件，所以只保留 Backend 卡片。
+            if IS_PRODUCTION and name.startswith("Frontend"):
+                continue
             card = tk.Frame(wrap, bg=C_CARD_BG, highlightbackground=C_BORDER, highlightthickness=1)
             card.pack(fill=tk.BOTH, expand=True, pady=(0, 16))
 
