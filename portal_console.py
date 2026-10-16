@@ -245,7 +245,21 @@ def _detect_frontend_dev_port() -> int:
     return 5173  # fallback：Vite 官方預設值
 
 
-FRONTEND_PORT = _detect_frontend_dev_port()
+def _is_production() -> bool:
+    """依 backend/.env 的 APP_ENV／ENV 判斷是否為正式區（正式區設 production）。"""
+    try:
+        for line in (_BACKEND / ".env").read_text(encoding="utf-8").splitlines():
+            k, _, v = line.partition("=")
+            if k.strip() in ("APP_ENV", "ENV") and v.strip().strip("\"'").lower() == "production":
+                return True
+    except Exception:
+        pass
+    return False
+
+
+IS_PRODUCTION = _is_production()
+# 正式區前台由 Backend 以 dist 靜態檔提供，對外就是 8000；測試區才是 Vite 的 5300。
+FRONTEND_PORT = BACKEND_PORT if IS_PRODUCTION else _detect_frontend_dev_port()
 
 _CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
@@ -659,7 +673,7 @@ class PortalConsole(tk.Tk):
             ("Backend (uvicorn)", BACKEND_PORT,
              "uvicorn app.main:app --reload --host 127.0.0.1 --port 8000",
              _BACKEND, f"http://127.0.0.1:{BACKEND_PORT}/api/docs"),
-            ("Frontend (vite dev)", FRONTEND_PORT,
+            ("Frontend (dist，由 Backend 提供)" if IS_PRODUCTION else "Frontend (vite dev)", FRONTEND_PORT,
              "npm run dev",
              _FRONTEND, f"http://127.0.0.1:{FRONTEND_PORT}"),
         ):
@@ -769,11 +783,12 @@ class PortalConsole(tk.Tk):
     # ── 開機自動啟動前、後台 ─────────────────────────────────────────────────
     def _auto_start_services(self):
         """Backend 立即啟動，Frontend 隔 5 秒再啟動；port 已在執行中則略過。"""
-        specs = (
+        specs = [
             ("Backend (uvicorn)", BACKEND_PORT,
              "uvicorn app.main:app --reload --host 127.0.0.1 --port 8000", _BACKEND),
-            ("Frontend (vite dev)", FRONTEND_PORT, "npm run dev", _FRONTEND),
-        )
+        ]
+        if not IS_PRODUCTION:  # 正式區前台由 Backend 提供，不另外跑 Vite
+            specs.append(("Frontend (vite dev)", FRONTEND_PORT, "npm run dev", _FRONTEND))
         for i, (name, port, cmd, cwd) in enumerate(specs):
             def _go(n=name, p=port, c=cmd, d=cwd):
                 if check_port("127.0.0.1", p):
