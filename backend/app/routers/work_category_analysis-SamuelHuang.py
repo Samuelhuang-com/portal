@@ -1,0 +1,925 @@
+"""
+★工項類別分析 API Router  (v2 — 主管決策 Dashboard)
+Prefix: /api/v1/work-category-analysis
+
+資料來源（三合一）：
+  luqun    → LuqunRepairCase          (work_hours = 花費工時 HR；fallback: 工務處理天數×24)
+  dazhi    → DazhiRepairCase          (work_hours = 花費工時 HR；fallback: 工務處理天數/維修天數×24)
+  ihg_room → IHGRoomMaintenanceMaster (raw_json["工時計算"] 分鐘，÷60 轉小時；類別=例行維護)
+  other_tasks → OtherTask + OtherTaskRecord
+                (類別=屬性欄位 上級交辦／緊急事件；時間計算方式比照工作日誌：
+                 有子表→依子表「時間開始」日期歸戶、工時=結束−開始、每人各記一份；
+                 無子表→依 created_at 歸戶、工時=主表「維修工時」)
+
+端點：
+  GET /years          — 有資料的年份清單
+  GET /persons        — 人員清單（依總工時降冪）
+  GET /stats          — 主統計端點：KPI + 圖表 + 表格全套資料
+
+五大工項類別：
+  現場報修 | 上級交辦 | 緊急事件 | 例行維護 | 每日巡檢
+
+  luqun/dazhi 依 title+repair_type 關鍵字分類，預設「現場報修」
+
+篩選參數（/stats）：
+  year     : int           年度（必選）
+  month    : int = 0       月份（0=全年）
+  sources  : str = "all"   all / luqun / dazhi / ihg_room / hotel_di / mall_fi / full_bi
+                           / other_tasks（逗號分隔多選）
+  category : str = "all"   all / 現場報修 / 上級交辦 / 緊急事件 / 例行維護 / 每日巡檢
+  person   : str = "all"   all / <人員姓名>
+"""
+from __future__ import annotations
+
+import calendar
+import re
+from collections import defaultdict
+from datetime import date, datetime
+from typing import Optional
+
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy.orm import Session
+
+from sqlalchemy import func
+from app.core.database import get_db
+from app.dependencies import get_current_user
+from app.models.luqun_repair import LuqunRepairCase
+from app.models.dazhi_repair import DazhiRepairCase
+from app.models.ihg_room_maintenance import IHGRoomMaintenanceMaster
+from app.models.hotel_daily_inspection import HotelDIBatch
+from app.models.mall_facility_inspection import MallFIBatch
+from app.models.b1f_inspection import B1FInspectionBatch
+from app.models.b2f_inspection import B2FInspectionBatch
+from app.models.b4f_inspection import B4FInspectionBatch
+from app.models.rf_inspection import RFInspectionBatch
+from app.models.other_tasks import OtherTask, OtherTaskRecord
+from app.services.time_utils import parse_minutes as _parse_di_minutes
+
+# 主管交辦／緊急事件的人員拆分規則刻意共用工作日誌的實作，
+# 確保兩處口徑永遠一致（改一處即同步生效）。
+from app.routers.work_journal import (
+    _persons as _wj_persons,
+    _split_detail_persons as _wj_split_persons,
+    _HOTEL_VENUE_SOURCES as _WJ_HOTEL_VENUE_SOURCES,
+)
+
+router = APIRouter(dependencies=[Depends(get_current_user)])
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 常數
+# ══════════════════════════════════════════════════════════════════════════════
+
+CATEGORIES = ["現場報修", "上級交辦", "緊急事件", "例行維護", "每日巡檢"]
+
+SOURCE_LABELS = {
+    "luqun":    "商場工務",
+    "dazhi":    "大直工務",
+    "ihg_room": "IHG客房保養",
+    "hotel_di": "飯店每日巡檢",
+    "mall_fi":  "商場設施巡檢",
+    "full_bi":  "整棟巡檢",
+    "other_tasks": "主管交辦／緊急事件",
+}
+
+def _parse_minutes_to_hours(val: str) -> float:
+    """'22.00  分鐘' → 22.0 / 60 → 0.367 hours"""
+    if not val:
+        return 0.0
+    m = re.search(r"[\d.]+", str(val))
+    return float(m.group()) / 60.0 if m else 0.0
+
+
+def _parse_hotel_date(date_str: str) -> tuple[int, int, int] | None:
+    """'2026/04/15' or '2026-04-15' → (year, month, day)"""
+    if not date_str:
+        return None
+    for fmt in ("%Y/%m/%d", "%Y-%m/%d", "%Y-%m-%d", "%Y/%m/%d %H:%M"):
+        try:
+            d = datetime.strptime(date_str.strip()[:10].replace("-", "/"), "%Y/%m/%d")
+            return (d.year, d.month, d.day)
+        except ValueError:
+            pass
+    return None
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 資料載入
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _group_other_task_worklogs(recs: list, fallback_person: str) -> list[dict]:
+    """
+    主管交辦／緊急事件子表（維修記錄）按「(時間開始日期, 人員)」分組合併工時。
+    回傳 [{"date": date, "person": str, "hours": float}]。
+
+    口徑刻意與工作日誌 `work_journal._group_detail_rows` 完全一致：
+      - 以子表「時間開始」的**實際日期**歸戶，不採用工單頭的建立日期
+      - 工時 = 時間結束 − 時間開始，僅計 end_at > start_at 的區段
+        （無「時間結束」的子表列 → 工作日誌顯示為無工時，此處同樣不計工時）
+      - 子表「維修人員」可多人（、，；／ 或空白分隔），逐人各記一份工時
+        （人工時口徑：三人同時處理 1 小時 ＝ 3 人工時）
+      - 子表「維修人員」空白 → 退回工單頭「工程人員」→ 「未指定」
+    差異僅在本函式一次處理全部日期（工作日誌是單日查詢），故按日期分組。
+    """
+    acc: dict[tuple, float] = defaultdict(float)
+    for r in recs:
+        if not r.start_at:
+            continue
+        if not r.end_at or r.end_at <= r.start_at:
+            continue
+        sec = (r.end_at - r.start_at).total_seconds()
+        for person in _wj_split_persons(r.person, fallback_person):
+            acc[(r.start_at.date(), person)] += sec
+    return [
+        {"date": d, "person": p, "hours": sec / 3600.0}
+        for (d, p), sec in acc.items()
+    ]
+
+
+def _stat_dt_for(c) -> Optional[datetime]:
+    """
+    統計基準時間點（與 luqun/dazhi dashboard 保持一致的 stat-month 規則）：
+    - 已完成（有 completed_at）→ completed_at（完工月）
+    - 未完成（無 completed_at）→ occurred_at（報修月）
+    """
+    return c.completed_at if c.completed_at else c.occurred_at
+
+
+def _load_all(db: Session, sources: set[str]) -> list[dict]:
+    """
+    合併指定來源資料，每筆回傳 dict：
+    { year, month, day, work_hours, category, person, source }
+
+    時間規則：year/month/day 以 stat-month 為準（completed_at 優先，未完成則用 occurred_at），
+    與 luqun-repair/dashboard 及 dazhi-repair/dashboard 保持一致。
+    """
+    rows: list[dict] = []
+
+    # ── 商場 ──────────────────────────────────────────────────────────────────
+    # 人員：responsible_unit（= Ragic「處理工務」）
+    # 工時：work_hours（= 花費工時 HR；若無則 工務處理天數×24）
+    if "luqun" in sources:
+        for c in db.query(LuqunRepairCase).filter(LuqunRepairCase.is_ragic_deleted.isnot(True)).all():  # 排除 Ragic 端已刪除
+            if not c.occurred_at or not c.work_hours or c.work_hours <= 0:
+                continue
+            dt = _stat_dt_for(c)
+            if not dt:
+                continue
+            rows.append({
+                "year":       dt.year,
+                "month":      dt.month,
+                "day":        dt.day,
+                "work_hours": c.work_hours,
+                "category":   "現場報修",
+                "person":     (c.responsible_unit or "").strip() or "未指定",
+                "source":     "luqun",
+                "case_id":    c.ragic_id,
+            })
+
+    # ── 大直 ──────────────────────────────────────────────────────────────────
+    # 人員：closer（= Ragic「維修人員」，執行修繕的人）
+    #       ⚠️  不用 responsible_unit（= 反應單位，如「房務部」，是部門不是個人）
+    # 工時：work_hours（= 維修天數×24 HR；若無則花費工時 HR）
+    if "dazhi" in sources:
+        for c in db.query(DazhiRepairCase).filter(DazhiRepairCase.is_ragic_deleted.isnot(True)).all():  # 排除 Ragic 端已刪除
+            if not c.occurred_at or not c.work_hours or c.work_hours <= 0:
+                continue
+            dt = _stat_dt_for(c)
+            if not dt:
+                continue
+            rows.append({
+                "year":       dt.year,
+                "month":      dt.month,
+                "day":        dt.day,
+                "work_hours": c.work_hours,
+                "category":   "現場報修",
+                "person":     (c.closer or "").strip() or "未指定",
+                "source":     "dazhi",
+                "case_id":    c.ragic_id,
+            })
+
+    # ── IHG 客房保養 ──────────────────────────────────────────────────────────
+    # 工時：優先用 DB 欄位 rec.work_minutes（分鐘）÷ 60 → HR；
+    #       fallback raw_json["工時計算"]（相容未重新同步的舊記錄）
+    # 類別：固定「例行維護」
+    # 日期：maint_date（優先）；無效則 maint_year/maint_month 第 1 日
+    if "ihg_room" in sources:
+        for rec in db.query(IHGRoomMaintenanceMaster).all():
+            # 工時取值（分鐘 → 小時）
+            if rec.work_minutes is not None and rec.work_minutes > 0:
+                hours = rec.work_minutes / 60.0
+            else:
+                raw = rec.get_raw()
+                mins_val = raw.get("工時計算", "")
+                if mins_val in (None, "", "None"):
+                    continue
+                hours = _parse_minutes_to_hours(str(mins_val))
+            if hours <= 0:
+                continue
+            # 嘗試 maint_date 取日級精度
+            yd = _parse_hotel_date(rec.maint_date) if rec.maint_date else None
+            if yd is None:
+                # fallback：年/月已知，day=1（確保月累計仍正確計入）
+                try:
+                    yd = (int(rec.maint_year), int(rec.maint_month), 1)
+                except (ValueError, TypeError):
+                    continue
+            rows.append({
+                "year":       yd[0],
+                "month":      yd[1],
+                "day":        yd[2],
+                "work_hours": hours,
+                "category":   "例行維護",
+                "person":     (rec.assignee_name or "").strip() or "未指定",
+                "source":     "ihg_room",
+                "case_id":    rec.ragic_id,
+            })
+
+    # ── 飯店每日巡檢 ──────────────────────────────────────────────────────────────
+    # 人員：inspector_name（巡檢人員）
+    # 日期：inspection_date "YYYY/MM/DD"
+    #       ⚠️ 某些 Sheet 的 start_time 存入的是完整日期時間 "2026/04/14 09:26"，
+    #          inspection_date 由 _extract_date(start_time) 產生，格式正確；
+    #          但若 start_time 只有時間 "09:26"，inspection_date 也只有 "09:26"
+    #          → _parse_hotel_date 回 None → 需 fallback 嘗試從 start_time 萃取日期
+    # 工時：start/end_time 可能含完整日期時間前綴，需取時間部分再解析
+    #       fallback：inspection 記錄的 work_hours 欄（Ragic 預算值）
+    def _time_only(s: str) -> str:
+        """'2026/04/14 09:26' → '09:26';  '09:26' → '09:26';  '' → ''"""
+        s = (s or "").strip()
+        return s.rsplit(" ", 1)[-1] if " " in s else s
+
+    if "hotel_di" in sources:
+        for b in db.query(HotelDIBatch).all():
+            # ── 日期解析（雙重 fallback）────────────────────────────────────────
+            yd = _parse_hotel_date(b.inspection_date) if b.inspection_date else None
+            if yd is None and b.start_time:
+                # start_time 含完整日期時間 "2026/04/14 09:26" 時可再嘗試
+                yd = _parse_hotel_date(b.start_time)
+            if not yd:
+                continue  # 完全無法取得日期，跳過
+
+            # ── 工時解析（雙重 fallback）────────────────────────────────────────
+            mins = _parse_di_minutes(
+                _time_only(b.start_time or ""),
+                _time_only(b.end_time   or ""),
+            )
+            if mins > 0:
+                hours = mins / 60.0
+            else:
+                # fallback：Ragic 預計算的工時欄（字串，視為小時數）
+                m = re.search(r"[\d.]+", b.work_hours or "")
+                hours = float(m.group()) if m else 0.0
+
+            rows.append({
+                "year":       yd[0],
+                "month":      yd[1],
+                "day":        yd[2],
+                "work_hours": hours,
+                "category":   "每日巡檢",
+                "person":     (b.inspector_name or "").strip() or "未指定",
+                "source":     "hotel_di",
+                "case_id":    b.ragic_id,
+            })
+
+    # ── 商場設施巡檢（MallFIBatch，5 張 Sheet，類別固定「每日巡檢」）────────────
+    if "mall_fi" in sources:
+        for b in db.query(MallFIBatch).all():
+            yd = _parse_hotel_date(b.inspection_date) if b.inspection_date else None
+            if yd is None and b.start_time:
+                yd = _parse_hotel_date(b.start_time)
+            if not yd:
+                continue
+            mins = _parse_di_minutes(
+                _time_only(b.start_time or ""),
+                _time_only(b.end_time   or ""),
+            )
+            if mins > 0:
+                hours = mins / 60.0
+            else:
+                m = re.search(r"[\d.]+", b.work_hours or "")
+                hours = float(m.group()) if m else 0.0
+            rows.append({
+                "year":       yd[0],
+                "month":      yd[1],
+                "day":        yd[2],
+                "work_hours": hours,
+                "category":   "每日巡檢",
+                "person":     (b.inspector_name or "").strip() or "未指定",
+                "source":     "mall_fi",
+                "case_id":    b.ragic_id,
+            })
+
+    # ── 整棟巡檢（B1F/B2F/B4F/RF，類別固定「每日巡檢」）────────────────────────
+    if "full_bi" in sources:
+        _BI_MODELS = [
+            (B1FInspectionBatch, "B1F 整棟巡檢"),
+            (B2FInspectionBatch, "B2F 整棟巡檢"),
+            (B4FInspectionBatch, "B4F 整棟巡檢"),
+            (RFInspectionBatch,  "RF 整棟巡檢"),
+        ]
+        for Model, label in _BI_MODELS:
+            for b in db.query(Model).all():
+                yd = _parse_hotel_date(b.inspection_date) if b.inspection_date else None
+                if yd is None and b.start_time:
+                    yd = _parse_hotel_date(b.start_time)
+                if not yd:
+                    continue
+                mins = _parse_di_minutes(
+                    _time_only(b.start_time or ""),
+                    _time_only(b.end_time   or ""),
+                )
+                if mins > 0:
+                    hours = mins / 60.0
+                else:
+                    m = re.search(r"[\d.]+", b.work_hours or "")
+                    hours = float(m.group()) if m else 0.0
+                rows.append({
+                    "year":       yd[0],
+                    "month":      yd[1],
+                    "day":        yd[2],
+                    "work_hours": hours,
+                    "category":   "每日巡檢",
+                    "person":     (b.inspector_name or "").strip() or "未指定",
+                    "source":     "full_bi",
+                    "case_id":    b.ragic_id,
+                })
+
+    # ── 主管交辦／緊急事件（OtherTask，類別＝屬性欄位）─────────────────────────
+    # 時間計算方式比照工作日誌 `work_journal._fetch_other_tasks`（2026-08-12 業主指示）：
+    #   有子表（維修記錄，且「時間開始」非空）→ 依子表時間開始的實際日期歸戶，
+    #                                          工時＝結束−開始，每人各記一份
+    #   無子表（或子表全無時間開始）           → 依 created_at 歸戶，工時＝主表「維修工時」，
+    #                                          工程人員多人時每人各記一份
+    # 不做 venue 過濾：本模組為集團層彙總，飯店與商場合併呈現（同 luqun/dazhi 作法）。
+    if "other_tasks" in sources:
+        ot_rec_map: dict[str, list] = defaultdict(list)
+        for r in db.query(OtherTaskRecord).all():
+            if r.start_at is not None:
+                ot_rec_map[r.parent_ragic_id].append(r)
+
+        for rec in db.query(OtherTask).all():
+            # 屬性空白 → 歸「上級交辦」（同工作日誌 `rec.task_type or "上級交辦"`）；
+            # 非五大類別的其他值本模組無處可放，跳過。
+            cat = (rec.task_type or "").strip() or "上級交辦"
+            if cat not in ("上級交辦", "緊急事件"):
+                continue
+
+            dated_recs = ot_rec_map.get(rec.ragic_id, [])
+            if dated_recs:
+                for g in _group_other_task_worklogs(
+                    dated_recs, (rec.engineer or "").strip()
+                ):
+                    if g["hours"] <= 0:
+                        continue
+                    rows.append({
+                        "year":       g["date"].year,
+                        "month":      g["date"].month,
+                        "day":        g["date"].day,
+                        "work_hours": g["hours"],
+                        "category":   cat,
+                        "person":     g["person"],
+                        "source":     "other_tasks",
+                        "case_id":    rec.ragic_id,
+                        "venue":      (rec.venue or "").strip(),
+                    })
+            else:
+                if not rec.created_at:
+                    continue
+                if not rec.work_hours or rec.work_hours <= 0:
+                    continue
+                for person in _wj_persons(rec.engineer or ""):
+                    rows.append({
+                        "year":       rec.created_at.year,
+                        "month":      rec.created_at.month,
+                        "day":        rec.created_at.day,
+                        "work_hours": rec.work_hours,
+                        "category":   cat,
+                        "person":     person,
+                        "source":     "other_tasks",
+                        "case_id":    rec.ragic_id,
+                        "venue":      (rec.venue or "").strip(),
+                    })
+
+    return rows
+
+
+def _parse_sources(sources_str: str) -> set[str]:
+    if sources_str.strip().lower() == "all":
+        return {"luqun", "dazhi", "ihg_room", "hotel_di", "mall_fi", "full_bi", "other_tasks"}
+    return {s.strip() for s in sources_str.split(",") if s.strip()}
+
+
+def _filter_rows(
+    rows: list[dict],
+    year: int,
+    month: int,
+    category: str,
+    person: str,
+) -> list[dict]:
+    result = [r for r in rows if r["year"] == year]
+    if month > 0:
+        result = [r for r in result if r["month"] == month]
+    if category and category.lower() != "all":
+        result = [r for r in result if r["category"] == category]
+    if person and person.lower() != "all":
+        result = [r for r in result if r["person"] == person]
+    return result
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# KPI 計算
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _build_kpi(rows: list[dict], prev_rows: list[dict]) -> dict:
+    """主管摘要卡片資料。"""
+    if not rows:
+        return _empty_kpi()
+
+    total_hours = sum(r["work_hours"] for r in rows)
+    total_cases = len(set(r["case_id"] for r in rows))
+    persons = {r["person"] for r in rows if r["person"] != "未指定"}
+    avg_person_hours = round(total_hours / len(persons), 1) if persons else 0.0
+
+    # 工時最高工項類別
+    cat_hours: dict[str, float] = defaultdict(float)
+    for r in rows:
+        cat_hours[r["category"]] += r["work_hours"]
+    top_cat = max(cat_hours, key=lambda c: cat_hours[c]) if cat_hours else "-"
+
+    # 工時最高人員
+    person_hours: dict[str, float] = defaultdict(float)
+    for r in rows:
+        if r["person"] != "未指定":
+            person_hours[r["person"]] += r["work_hours"]
+    top_person = max(person_hours, key=lambda p: person_hours[p]) if person_hours else "-"
+
+    # 來源占比
+    source_hours: dict[str, float] = defaultdict(float)
+    for r in rows:
+        source_hours[r["source"]] += r["work_hours"]
+    source_breakdown = [
+        {
+            "source": s,
+            "label":  SOURCE_LABELS.get(s, s),
+            "hours":  round(source_hours.get(s, 0), 1),
+            "pct":    round(source_hours.get(s, 0) / total_hours * 100, 1) if total_hours else 0,
+        }
+        for s in ["luqun", "dazhi", "ihg_room", "hotel_di", "mall_fi", "full_bi"]
+        if source_hours.get(s, 0) > 0
+    ]
+
+    # 環比（上月）
+    prev_total = sum(r["work_hours"] for r in prev_rows)
+    mom_change_pct = None
+    if prev_total > 0:
+        mom_change_pct = round((total_hours - prev_total) / prev_total * 100, 1)
+
+    return {
+        "total_hours":       round(total_hours, 1),
+        "total_cases":       total_cases,
+        "total_persons":     len(persons),
+        "avg_person_hours":  avg_person_hours,
+        "top_category":      {
+            "name":  top_cat,
+            "hours": round(cat_hours.get(top_cat, 0), 1),
+            "pct":   round(cat_hours.get(top_cat, 0) / total_hours * 100, 1) if total_hours else 0,
+        },
+        "top_person":        {
+            "name":  top_person,
+            "hours": round(person_hours.get(top_person, 0), 1),
+            "pct":   round(person_hours.get(top_person, 0) / total_hours * 100, 1) if total_hours else 0,
+        },
+        "source_breakdown":  source_breakdown,
+        "mom_change_pct":    mom_change_pct,
+        "prev_month_hours":  round(prev_total, 1),
+    }
+
+
+def _empty_kpi() -> dict:
+    return {
+        "total_hours": 0, "total_cases": 0, "total_persons": 0,
+        "avg_person_hours": 0,
+        "top_category": {"name": "-", "hours": 0, "pct": 0},
+        "top_person": {"name": "-", "hours": 0, "pct": 0},
+        "source_breakdown": [],
+        "mom_change_pct": None, "prev_month_hours": 0,
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 圖表資料
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _build_chart(rows: list[dict], year: int, month: int) -> list[dict]:
+    """A. 類別趨勢折線圖（月份 or 日）。"""
+    if month == 0:
+        bucket: dict[int, dict[str, float]] = {m: {c: 0.0 for c in CATEGORIES} for m in range(1, 13)}
+        for r in rows:
+            bucket[r["month"]][r["category"]] += r["work_hours"]
+        return [{"label": f"{m}月", **{c: round(bucket[m][c], 1) for c in CATEGORIES}} for m in range(1, 13)]
+    else:
+        _, days_in_month = calendar.monthrange(year, month)
+        bucket2: dict[int, dict[str, float]] = {d: {c: 0.0 for c in CATEGORIES} for d in range(1, days_in_month + 1)}
+        for r in [x for x in rows if x["month"] == month]:
+            if 1 <= r["day"] <= days_in_month:
+                bucket2[r["day"]][r["category"]] += r["work_hours"]
+        return [{"label": f"{d}日", **{c: round(bucket2[d][c], 1) for c in CATEGORIES}} for d in range(1, days_in_month + 1)]
+
+
+def _build_category_breakdown(rows: list[dict]) -> list[dict]:
+    """B. 類別占比（圓餅圖）。"""
+    total = sum(r["work_hours"] for r in rows)
+    cat_hours: dict[str, float] = defaultdict(float)
+    cat_cases: dict[str, int]   = defaultdict(int)
+    for r in rows:
+        cat_hours[r["category"]] += r["work_hours"]
+        cat_cases[r["category"]] += 1
+    return [
+        {
+            "name":  c,
+            "value": round(cat_hours.get(c, 0), 1),
+            "pct":   round(cat_hours.get(c, 0) / total * 100, 1) if total else 0,
+            "cases": cat_cases.get(c, 0),
+        }
+        for c in CATEGORIES
+    ]
+
+
+def _build_person_ranking(rows: list[dict], top_n: int = 20) -> list[dict]:
+    """C. 人員工時排名（含件數、平均工時/件）。"""
+    total = sum(r["work_hours"] for r in rows)
+    person_hours: dict[str, float]      = defaultdict(float)
+    person_cases: dict[str, int]         = defaultdict(int)   # 直接累加，不去重
+    person_source: dict[str, set[str]]  = defaultdict(set)
+    person_cat: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
+    for r in rows:
+        p = r["person"]
+        if p == "未指定":
+            continue
+        person_hours[p] += r["work_hours"]
+        person_cases[p] += 1
+        person_source[p].add(r["source"])
+        person_cat[p][r["category"]] += r["work_hours"]
+
+    sorted_persons = sorted(person_hours, key=lambda p: -person_hours[p])[:top_n]
+    result = []
+    for i, p in enumerate(sorted_persons, 1):
+        ph    = person_hours[p]
+        cases = person_cases[p]
+        avg_hr = round(ph / cases, 1) if cases else 0.0
+        top_cat = max(person_cat[p], key=lambda c: person_cat[p][c]) if person_cat[p] else "-"
+        result.append({
+            "rank":          i,
+            "person":        p,
+            "hours":         round(ph, 1),
+            "cases":         cases,
+            "avg_hr":        avg_hr,
+            "pct":           round(ph / total * 100, 1) if total else 0,
+            "sources":       list(person_source[p]),
+            "source_labels": [SOURCE_LABELS.get(s, s) for s in person_source[p]],
+            "top_category":  top_cat,
+        })
+    return result
+
+
+def _build_category_person_matrix(rows: list[dict], top_n: int = 12) -> list[dict]:
+    """D. 類別×人員交叉（Stacked Bar 用）。前 top_n 人員。"""
+    person_hours: dict[str, float] = defaultdict(float)
+    for r in rows:
+        if r["person"] != "未指定":
+            person_hours[r["person"]] += r["work_hours"]
+    top_persons = sorted(person_hours, key=lambda p: -person_hours[p])[:top_n]
+
+    matrix: dict[str, dict[str, float]] = {p: {c: 0.0 for c in CATEGORIES} for p in top_persons}
+    for r in rows:
+        if r["person"] in matrix:
+            matrix[r["person"]][r["category"]] += r["work_hours"]
+
+    return [
+        {"person": p, **{c: round(matrix[p][c], 1) for c in CATEGORIES}}
+        for p in top_persons
+    ]
+
+
+def _build_source_breakdown(rows: list[dict]) -> list[dict]:
+    """E. 來源別分析。"""
+    total = sum(r["work_hours"] for r in rows)
+    data: dict[str, dict] = {
+        s: {"hours": 0.0, "cases": set(), "persons": set(), "cat": defaultdict(float)}
+        for s in ["luqun", "dazhi", "hotel_room", "ihg_room"]
+    }
+    for r in rows:
+        s = r["source"]
+        if s not in data:
+            continue
+        data[s]["hours"] += r["work_hours"]
+        data[s]["cases"].add(r["case_id"])
+        if r["person"] != "未指定":
+            data[s]["persons"].add(r["person"])
+        data[s]["cat"][r["category"]] += r["work_hours"]
+
+    result = []
+    for s in ["luqun", "dazhi", "hotel_room", "ihg_room"]:
+        h = data[s]["hours"]
+        if h <= 0:
+            continue
+        top_cat = max(data[s]["cat"], key=lambda c: data[s]["cat"][c]) if data[s]["cat"] else "-"
+        result.append({
+            "source":       s,
+            "label":        SOURCE_LABELS.get(s, s),
+            "hours":        round(h, 1),
+            "pct":          round(h / total * 100, 1) if total else 0,
+            "cases":        len(data[s]["cases"]),
+            "persons":      len(data[s]["persons"]),
+            "top_category": top_cat,
+        })
+    return result
+
+
+# 本模組的來源代碼與工作日誌略有出入（本模組 ihg_room ↔ 工作日誌 ihg），
+# 對照後即可套用工作日誌那份業主確認過的歸屬規則，不另立第二套口徑。
+_VENUE_SOURCE_ALIAS = {"ihg_room": "ihg"}
+
+
+def _row_venue(r: dict) -> str:
+    """回傳一筆資料的單位歸屬：'hotel'（飯店）或 'mall'（商場）。
+
+    口徑沿用 work_journal._row_venue（2026-06-11 業主確認）：
+      飯店 = dazhi / ihg_room / hotel_di；other_tasks 依 Ragic「歸屬」欄位；
+      其餘來源（luqun / mall_fi / full_bi）一律歸商場。
+    """
+    if r["source"] == "other_tasks":
+        return "hotel" if (r.get("venue") or "") == "飯店" else "mall"
+    src = _VENUE_SOURCE_ALIAS.get(r["source"], r["source"])
+    return "hotel" if src in _WJ_HOTEL_VENUE_SOURCES else "mall"
+
+
+def _build_category_source_matrix(rows: list[dict]) -> list[dict]:
+    """G. 工項類別 × 單位（飯店/商場）交叉矩陣。
+
+    ⚠️ 2026-09-01 修正：原實作只認 source=="dazhi"/"luqun" 兩個來源，
+    但 luqun/dazhi 的類別固定是「現場報修」，因此其餘四個類別
+    （上級交辦／緊急事件／例行維護／每日巡檢）的資料來源
+    （other_tasks / ihg_room / hotel_di / mall_fi / full_bi）全被丟掉，
+    矩陣五列中有四列結構性恆為 0。改以 _row_venue 判定單位，全來源納入。
+    """
+    data: dict[str, dict] = {
+        c: {
+            "dazhi_hours": 0.0, "luqun_hours": 0.0,
+            "dazhi_cases": set(), "luqun_cases": set(),
+        }
+        for c in CATEGORIES
+    }
+    for r in rows:
+        cat = r["category"]
+        if cat not in data:
+            continue
+        # dazhi_* = 飯店、luqun_* = 商場（欄位名沿用既有 API 契約，前端不需改）
+        key = "dazhi" if _row_venue(r) == "hotel" else "luqun"
+        data[cat][f"{key}_hours"] += r["work_hours"]
+        # 同一格現在可能混入多個來源（例：商場的「每日巡檢」＝ mall_fi ＋ full_bi），
+        # 各來源的 ragic_id 是各自編號、會互撞，故以 (source, case_id) 去重。
+        data[cat][f"{key}_cases"].add((r["source"], r["case_id"]))
+
+    total_h = sum(
+        data[c]["dazhi_hours"] + data[c]["luqun_hours"] for c in CATEGORIES
+    )
+    result = []
+    for c in CATEGORIES:
+        d = data[c]
+        dh = round(d["dazhi_hours"], 1)
+        lh = round(d["luqun_hours"], 1)
+        dc = len(d["dazhi_cases"])
+        lc = len(d["luqun_cases"])
+        tot_h = round(dh + lh, 1)
+        tot_c = dc + lc
+        result.append({
+            "category":    c,
+            "dazhi_hours": dh,
+            "luqun_hours": lh,
+            "total_hours": tot_h,
+            "dazhi_cases": dc,
+            "luqun_cases": lc,
+            "total_cases": tot_c,
+            "pct":         round(tot_h / total_h * 100, 1) if total_h else 0.0,
+        })
+    return result
+
+
+def _build_concentration(rows: list[dict]) -> dict:
+    """F. 人力負載集中度分析。"""
+    total = sum(r["work_hours"] for r in rows)
+    person_hours: dict[str, float] = defaultdict(float)
+    for r in rows:
+        if r["person"] != "未指定":
+            person_hours[r["person"]] += r["work_hours"]
+
+    sorted_ph = sorted(person_hours.values(), reverse=True)
+    top3 = sum(sorted_ph[:3])
+    top5 = sum(sorted_ph[:5])
+    top10 = sum(sorted_ph[:10])
+    return {
+        "total_persons": len(person_hours),
+        "top3_pct":  round(top3  / total * 100, 1) if total else 0,
+        "top5_pct":  round(top5  / total * 100, 1) if total else 0,
+        "top10_pct": round(top10 / total * 100, 1) if total else 0,
+        "is_concentrated": (top3 / total * 100 if total else 0) > 70,
+    }
+
+
+def _build_daily(rows: list[dict], year: int, month: int) -> dict:
+    """每日累計工時表（B 區）。"""
+    if month == 0:
+        return {"days": [], "weekdays": [], "rows": []}
+    _, days_in_month = calendar.monthrange(year, month)
+    days = list(range(1, days_in_month + 1))
+    zh = ["一", "二", "三", "四", "五", "六", "日"]
+    weekdays = [zh[date(year, month, d).weekday()] for d in days]
+
+    bucket: dict[str, dict[int, float]] = {c: defaultdict(float) for c in CATEGORIES}
+    for r in [x for x in rows if x["month"] == month]:
+        bucket[r["category"]][r["day"]] += r["work_hours"]
+
+    result_rows = []
+    grand_total = 0.0
+    grand_day = [0.0] * len(days)
+    for cat in CATEGORIES:
+        day_h = [round(bucket[cat][d], 1) for d in days]
+        total = round(sum(day_h), 1)
+        grand_total += total
+        for i, h in enumerate(day_h):
+            grand_day[i] += h
+        result_rows.append({"category": cat, "hours": day_h, "total": total, "pct": 0.0})
+    for row in result_rows:
+        row["pct"] = round(row["total"] / grand_total * 100, 1) if grand_total else 0.0
+    result_rows.append({
+        "category": "TOTAL",
+        "hours": [round(h, 1) for h in grand_day],
+        "total": round(grand_total, 1),
+        "pct": 100.0,
+    })
+    return {"days": days, "weekdays": weekdays, "rows": result_rows}
+
+
+def _build_monthly(rows: list[dict]) -> dict:
+    """每月累計工時表（C 區）。"""
+    bucket: dict[str, dict[int, float]] = {c: defaultdict(float) for c in CATEGORIES}
+    for r in rows:
+        bucket[r["category"]][r["month"]] += r["work_hours"]
+
+    result_rows = []
+    grand_total = 0.0
+    grand_m = [0.0] * 12
+    for cat in CATEGORIES:
+        mh = [round(bucket[cat][m], 1) for m in range(1, 13)]
+        total = round(sum(mh), 1)
+        grand_total += total
+        for i, h in enumerate(mh):
+            grand_m[i] += h
+        result_rows.append({"category": cat, "hours": mh, "total": total, "pct": 0.0})
+    for row in result_rows:
+        row["pct"] = round(row["total"] / grand_total * 100, 1) if grand_total else 0.0
+    result_rows.append({
+        "category": "TOTAL",
+        "hours": [round(h, 1) for h in grand_m],
+        "total": round(grand_total, 1),
+        "pct": 100.0,
+    })
+    return {"months": list(range(1, 13)), "rows": result_rows}
+
+
+def _build_person_table(rows: list[dict]) -> dict:
+    """每月累計工時（人員）表（D 區）。"""
+    person_hours: dict[str, float] = defaultdict(float)
+    for r in rows:
+        if r["person"] != "未指定":
+            person_hours[r["person"]] += r["work_hours"]
+    persons = sorted(person_hours, key=lambda p: -person_hours[p])[:15]
+    if not persons:
+        return {"persons": [], "rows": []}
+
+    bucket: dict[str, dict[str, float]] = {c: defaultdict(float) for c in CATEGORIES}
+    for r in rows:
+        if r["person"] in persons:
+            bucket[r["category"]][r["person"]] += r["work_hours"]
+
+    result_rows = []
+    for cat in CATEGORIES:
+        cat_total = sum(bucket[cat][p] for p in persons)
+        result_rows.append({
+            "category": cat,
+            "pct_by_person": [
+                round(bucket[cat][p] / cat_total * 100, 1) if cat_total else 0.0
+                for p in persons
+            ],
+        })
+    return {"persons": persons, "rows": result_rows}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 同步時間輔助
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _get_last_sync_at(db: Session, src: set[str]) -> str | None:
+    """各來源資料表中最新的 synced_at，回傳 ISO 字串供前端顯示"""
+    candidates = []
+    if "luqun" in src:
+        v = db.query(func.max(LuqunRepairCase.synced_at)).scalar()
+        if v:
+            candidates.append(v)
+    if "dazhi" in src:
+        v = db.query(func.max(DazhiRepairCase.synced_at)).scalar()
+        if v:
+            candidates.append(v)
+    if "ihg_room" in src:
+        v = db.query(func.max(IHGRoomMaintenanceMaster.synced_at)).scalar()
+        if v:
+            candidates.append(v)
+    latest = max(candidates, default=None)
+    return latest.isoformat() if latest else None
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 端點
+# ══════════════════════════════════════════════════════════════════════════════
+
+@router.get("/years", summary="有資料的年份清單")
+def get_years(db: Session = Depends(get_db)):
+    rows = _load_all(db, _parse_sources("all"))
+    years = sorted({r["year"] for r in rows}, reverse=True)
+    return {"years": years or [datetime.now().year]}
+
+
+@router.get("/persons", summary="人員清單（依總工時降冪）")
+def get_persons(
+    year:    Optional[int] = Query(None),
+    sources: str           = Query("all"),
+    db: Session = Depends(get_db),
+):
+    src = _parse_sources(sources)
+    rows = _load_all(db, src)
+    if year:
+        rows = [r for r in rows if r["year"] == year]
+    ph: dict[str, float] = defaultdict(float)
+    for r in rows:
+        if r["person"] != "未指定":
+            ph[r["person"]] += r["work_hours"]
+    persons = sorted(ph, key=lambda p: -ph[p])[:20]
+    return {"persons": persons}
+
+
+@router.get("/stats", summary="工項類別分析主統計（主管 Dashboard）")
+def get_stats(
+    year:     int = Query(..., description="年度"),
+    month:    int = Query(0,     description="月份（0=全年）"),
+    sources:  str = Query("all", description="all / luqun / dazhi / ihg_room"),
+    category: str = Query("all", description="all / 現場報修 / ..."),
+    person:   str = Query("all", description="all / <人員姓名>"),
+    db: Session = Depends(get_db),
+):
+    src = _parse_sources(sources)
+    all_src_rows = _load_all(db, src)
+
+    # 當期資料（年 + 可選月）
+    year_rows   = _filter_rows(all_src_rows, year, month, "all", "all")
+    # 篩選後資料（category + person filter）
+    filtered    = _filter_rows(all_src_rows, year, month, category, person)
+
+    # 上月資料（用於環比，不套 category/person filter）
+    if month > 0:
+        prev_m = month - 1 if month > 1 else 12
+        prev_y = year      if month > 1 else year - 1
+        prev_rows = _filter_rows(all_src_rows, prev_y, prev_m, "all", "all")
+    else:
+        # 全年模式：與去年同期比較
+        prev_rows = _filter_rows(all_src_rows, year - 1, 0, "all", "all")
+
+    return {
+        # ── 第一層：主管 KPI 卡片 ──────────────────────────────────────────
+        "kpi":                    _build_kpi(year_rows, prev_rows),
+
+        # ── 第二層：圖表分析 ────────────────────────────────────────────────
+        "chart_data":             _build_chart(year_rows, year, month),
+        "category_breakdown":     _build_category_breakdown(year_rows),
+        "person_ranking":         _build_person_ranking(year_rows, top_n=20),
+        "category_person_matrix": _build_category_person_matrix(year_rows, top_n=12),
+        "source_breakdown":          _build_source_breakdown(year_rows),
+        "concentration":             _build_concentration(year_rows),
+        "category_source_matrix":    _build_category_source_matrix(year_rows),
+
+        # ── 第三層：表格（支援 category/person filter）─────────────────────
+        "daily_hours":  _build_daily(filtered, year, month),
+        "monthly_hours": _build_monthly(filtered),
+        "person_hours": _build_person_table(filtered),
+
+        # ── Meta ────────────────────────────────────────────────────────────
+        "meta": {
+            "year":     year,
+            "month":    month,
+            "sources":  list(src),
+            "category": category,
+            "person":   person,
+            "total_rows": len(year_rows),
+            "last_sync_at": _get_last_sync_at(db, src),
+        },
+    }

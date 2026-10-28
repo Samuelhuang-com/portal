@@ -1,0 +1,152 @@
+"""
+大直工務部報修案件 ORM Model
+對應 Ragic: ap12.ragic.com/soutlet001/lequun-public-works/4
+
+設計原則：所有欄位對映 RepairCase.__slots__，
+  以便 sync service 可直接從 RepairCase 物件 upsert，
+  router 可從 DB 重建 RepairCase list（不改動任何統計函式）。
+"""
+import uuid
+from datetime import datetime
+from app.core.time import twnow
+from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text
+from sqlalchemy.orm import mapped_column, Mapped
+from app.core.database import Base
+
+
+class DazhiRepairCase(Base):
+    __tablename__ = "dazhi_repair_case"
+
+    ragic_id:         Mapped[str]   = mapped_column(String(50),  primary_key=True)
+    case_no:          Mapped[str]   = mapped_column(String(100), default="")
+    title:            Mapped[str]   = mapped_column(Text,        default="")
+    reporter_name:    Mapped[str]   = mapped_column(String(100), default="")
+    repair_type:      Mapped[str]   = mapped_column(String(50),  default="")
+    floor:            Mapped[str]   = mapped_column(String(100), default="")
+    floor_normalized: Mapped[str]   = mapped_column(String(30),  default="")
+    occurred_at:      Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    responsible_unit: Mapped[str]   = mapped_column(String(100), default="")
+    work_hours:       Mapped[float] = mapped_column(Float,       default=0.0)
+    status:           Mapped[str]   = mapped_column(String(50),  default="")
+    record_status:    Mapped[str]   = mapped_column(String(50),  default="")   # Ragic「狀態」欄（結案／待辦／作廢）
+    outsource_fee:    Mapped[float] = mapped_column(Float,       default=0.0)
+    maintenance_fee:  Mapped[float] = mapped_column(Float,       default=0.0)
+    total_fee:        Mapped[float] = mapped_column(Float,       default=0.0)
+    deduction_item:   Mapped[str]   = mapped_column(String(200), default="")
+    deduction_fee:    Mapped[float] = mapped_column(Float,       default=0.0)
+    acceptor:         Mapped[str]   = mapped_column(String(100), default="")
+    # ⚠️ 驗收人員會在這裡寫長篇說明（實測 446 字），無自然上限 → Text
+    accept_status:    Mapped[str]   = mapped_column(Text, default="")
+    closer:           Mapped[str]   = mapped_column(String(100), default="")
+    finance_note:     Mapped[str]   = mapped_column(Text,        default="")
+    is_completed:     Mapped[bool]  = mapped_column(Boolean,     default=False)
+    completed_at:     Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    close_days:       Mapped[float | None]    = mapped_column(Float, nullable=True)
+    year:             Mapped[int | None]      = mapped_column(Integer, nullable=True)
+    month:            Mapped[int | None]      = mapped_column(Integer, nullable=True)
+    is_room_case:     Mapped[bool]  = mapped_column(Boolean,     default=False)
+    room_no:          Mapped[str]   = mapped_column(String(20),  default="")
+    room_category:    Mapped[str]   = mapped_column(String(50),  default="")
+    images_json:      Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
+    is_ragic_deleted: Mapped[bool]  = mapped_column(Boolean,     default=False)               # Ragic 端已刪除（本地保留）
+    ragic_deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)        # 偵測到刪除的時間
+    synced_at:        Mapped[datetime] = mapped_column(DateTime, default=twnow)
+
+    @property
+    def is_completed_flag(self) -> bool:
+        """有完工時間（completed_at）即視為已完工；亦兼顧狀態欄位判斷"""
+        return (self.completed_at is not None) or self.is_completed
+
+    @property
+    def occ_year(self) -> int | None:
+        """報修年份（永遠 = occurred_at.year，不受結案月影響）
+        計算屬性，不存 DB — 相容尚未重新 sync 的舊資料。"""
+        return self.occurred_at.year if self.occurred_at else None
+
+    @property
+    def occ_month(self) -> int | None:
+        """報修月份（永遠 = occurred_at.month，不受結案月影響）
+        計算屬性，不存 DB — 相容尚未重新 sync 的舊資料。"""
+        return self.occurred_at.month if self.occurred_at else None
+
+    @property
+    def is_excluded_flag(self) -> bool:
+        """RepairCase 相容屬性：排除「取消」「作廢」等不計入統計的案件。
+
+        判定採 OR：「處理狀態」(status) 或 Ragic「狀態」欄 (record_status)
+        任一命中即排除 —— Ragic 的「作廢」只寫在「狀態」欄。
+        """
+        _EXCLUDED = {"取消", "作廢"}
+        return ((self.status or "").strip() in _EXCLUDED
+                or (self.record_status or "").strip() in _EXCLUDED)
+
+    def _parse_images_json(self) -> list:
+        import json
+        if not self.images_json:
+            return []
+        try:
+            return json.loads(self.images_json)
+        except Exception:
+            return []
+
+    def to_dict(self) -> dict:
+        """轉換為 API 回傳用 dict（與 RepairCase.to_dict 介面相同）"""
+        from datetime import datetime as _dt
+        return {
+            "ragic_id":         self.ragic_id,
+            "case_no":          self.case_no,
+            "title":            self.title,
+            "reporter_name":    self.reporter_name,
+            "repair_type":      self.repair_type,
+            "floor":            self.floor,
+            "floor_normalized": self.floor_normalized,
+            "occurred_at":      self.occurred_at.strftime("%Y/%m/%d %H:%M") if self.occurred_at else "",
+            "responsible_unit": self.responsible_unit,
+            "work_hours":       self.work_hours,
+            "status":           self.status,
+            "record_status":    self.record_status or "",
+            "outsource_fee":    self.outsource_fee,
+            "maintenance_fee":  self.maintenance_fee,
+            "total_fee":        self.total_fee,
+            "acceptor":         self.acceptor,
+            "accept_status":    self.accept_status,
+            "closer":           self.closer,
+            "deduction_item":   self.deduction_item,
+            "deduction_fee":    self.deduction_fee,
+            "finance_note":     self.finance_note,
+            "is_completed":     self.is_completed_flag,
+            "is_excluded":      self.is_excluded_flag,
+            "completed_at":     self.completed_at.strftime("%Y/%m/%d") if self.completed_at else "",
+            "close_days":       self.close_days,
+            "pending_days": (
+                round((_dt.now() - self.occurred_at).total_seconds() / 86400)
+                if (self.completed_at is None and self.occurred_at)
+                else None
+            ),
+            "year":             self.year,
+            "month":            self.month,
+            "is_room_case":     self.is_room_case,
+            "room_no":          self.room_no,
+            "room_category":    self.room_category,
+            "images":           self._parse_images_json(),
+            "is_ragic_deleted": self.is_ragic_deleted,
+            "ragic_deleted_at": self.ragic_deleted_at.strftime("%Y/%m/%d %H:%M") if self.ragic_deleted_at else None,
+        }
+
+
+class DazhiRepairRecord(Base):
+    """大直工務報修 — 工單明細子表（維修記錄）
+    對應 Ragic _subtable_1004878：項次/狀態/維修記錄/時間開始/時間結束/維修人員
+    同步策略：每次 sync 以 parent_ragic_id 整批 delete + insert。
+    """
+    __tablename__ = "dazhi_repair_record"
+
+    ragic_id:        Mapped[str] = mapped_column(String(50), primary_key=True)
+    parent_ragic_id: Mapped[str] = mapped_column(String(50), index=True, default="")
+    seq:             Mapped[str] = mapped_column(String(20),  default="")   # 項次
+    status:          Mapped[str] = mapped_column(String(50),  default="")   # 狀態
+    record:          Mapped[str] = mapped_column(Text,        default="")   # 維修記錄
+    start_at:        Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # 時間開始（含秒）
+    end_at:          Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # 時間結束（含秒）
+    person:          Mapped[str] = mapped_column(String(100), default="")   # 維修人員
+    synced_at:       Mapped[datetime] = mapped_column(DateTime, default=twnow)

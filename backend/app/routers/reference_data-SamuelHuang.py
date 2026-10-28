@@ -1,0 +1,497 @@
+"""
+F1 — 基礎參考資料 Router
+  /api/v1/settings/companies
+  /api/v1/settings/departments
+  /api/v1/settings/pricing-specs
+"""
+from __future__ import annotations
+
+from typing import List, Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy.orm import Session
+
+from app.core.database import get_db
+from app.dependencies import get_current_user, require_permission, require_roles
+from app.models.reference_data import Company, RefDepartment, PricingSpec, SlaMetricType
+from app.models.user import User
+from app.schemas.reference_data import (
+    CompanyCreate, CompanyUpdate, CompanyResponse, CompanyOption,
+    DepartmentCreate, DepartmentUpdate, DepartmentResponse, DepartmentOption,
+    PricingSpecCreate, PricingSpecUpdate, PricingSpecResponse, PricingSpecOption,
+    SlaMetricTypeCreate, SlaMetricTypeUpdate, SlaMetricTypeResponse, SlaMetricTypeOption,
+)
+
+router = APIRouter()
+
+# 管理員 dependency（沿用現有 require_roles，system_admin 自動放行）
+# ⚠ 2026-08-17：公司別／部門別改用下面的 _dept_admin_dep（見該處說明），
+# 這個 _admin_dep 現在只剩計價規格／SLA 指標類型在用，維持原樣不動。
+_admin_dep = require_roles("system_admin", "tenant_admin")
+
+# 2026-08-17 新增：公司別／部門別要開放給「系統設定 → 公司/部門管理」這個新頁面，
+# 也要讓週期採購鏡像同步的來源資料可以被非 system_admin 角色管理，因此改用跟
+# 全站其他模組一致的 permission_key 模型，不再沿用寫死的 require_roles。
+#
+# tenant_admin 這個角色目前資料庫裡 0 人持有（跟 2026-08-12 users.py 改用
+# settings_users_manage 時的情況完全相同，可比照辦理），改掉不影響任何真實
+# 使用者；system_admin 仍透過 permissions=["*"] 無條件通過。
+#
+# 刻意不影響 pricing-specs／sla-metric-types（維持 _admin_dep）：那兩個是合約
+# 模組的 K2 SLA 設定，跟這次「公司/部門」的整合範圍無關，不順手一起改。
+_dept_admin_dep = require_permission("settings_departments_manage")
+
+
+# 2026-09-01：公司異動後立刻把「據點」鏡像推平（來源＝本頁的 Company）。
+# 沒有這一步的話，使用者在這裡新增一家公司，回到「人員管理 → 新增使用者 →
+# 所屬據點」要等 45 分鐘的排程才看得到。排程那條路仍然保留（見
+# tenant_company_sync.py 檔頭），這裡只是即時補一次。
+#
+# 刻意吞掉例外：鏡像同步失敗不該讓「新增公司」這個主要動作連帶失敗，
+# 錯誤已由 sync 內部寫進 log，下一輪排程也會自動補上。
+def _mirror_tenants(db: Session) -> None:
+    from app.services.tenant_company_sync import sync_companies_to_tenants
+    try:
+        sync_companies_to_tenants(db)
+    except Exception:  # pragma: no cover - 防禦性
+        import logging
+        logging.getLogger(__name__).exception("[reference_data] 據點鏡像同步失敗（已忽略）")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 公司別
+# ═══════════════════════════════════════════════════════════════════════════
+
+@router.get("/companies/options", response_model=List[CompanyOption], summary="公司別下拉（啟用中）")
+def company_options(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    rows = db.query(Company).filter(Company.is_active == True).order_by(Company.name).all()
+    return [CompanyOption(value=r.name, label=r.name, id=r.id) for r in rows]
+
+
+@router.get("/companies", response_model=List[CompanyResponse], summary="公司別清單")
+def list_companies(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(_dept_admin_dep),
+):
+    return db.query(Company).order_by(Company.name).all()
+
+
+@router.post("/companies", response_model=CompanyResponse, status_code=status.HTTP_201_CREATED, summary="新增公司別")
+def create_company(
+    payload: CompanyCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(_dept_admin_dep),
+):
+    if db.query(Company).filter(Company.name == payload.name).first():
+        raise HTTPException(status_code=400, detail=f"公司「{payload.name}」已存在")
+    obj = Company(name=payload.name)
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    _mirror_tenants(db)
+    return obj
+
+
+@router.put("/companies/{company_id}", response_model=CompanyResponse, summary="修改公司別名稱")
+def update_company(
+    company_id: int,
+    payload: CompanyUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(_dept_admin_dep),
+):
+    obj = db.query(Company).filter(Company.id == company_id).first()
+    if not obj:
+        raise HTTPException(status_code=404, detail="公司不存在")
+    dup = db.query(Company).filter(Company.name == payload.name, Company.id != company_id).first()
+    if dup:
+        raise HTTPException(status_code=400, detail=f"公司名稱「{payload.name}」已被使用")
+    obj.name = payload.name
+    db.commit()
+    db.refresh(obj)
+    _mirror_tenants(db)
+    return obj
+
+
+@router.patch("/companies/{company_id}/toggle", response_model=CompanyResponse, summary="切換公司啟用狀態")
+def toggle_company(
+    company_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(_dept_admin_dep),
+):
+    obj = db.query(Company).filter(Company.id == company_id).first()
+    if not obj:
+        raise HTTPException(status_code=404, detail="公司不存在")
+    obj.is_active = not obj.is_active
+    db.commit()
+    db.refresh(obj)
+    _mirror_tenants(db)
+    return obj
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 部門別
+# ═══════════════════════════════════════════════════════════════════════════
+
+@router.get("/departments/options", response_model=List[DepartmentOption], summary="部門別下拉（啟用中）")
+def department_options(
+    company_id: Optional[int] = Query(None, description="依公司別篩選"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    # 2026-09-01：join Company 帶出 id／公司名稱（人員管理「部門多選」需要，
+    # 見 DepartmentOption 的說明）。既有呼叫端只讀 value/label，不受影響。
+    q = (
+        db.query(RefDepartment, Company)
+        .join(Company, RefDepartment.company_id == Company.id)
+        .filter(RefDepartment.is_active == True)
+    )
+    if company_id is not None:
+        q = q.filter(RefDepartment.company_id == company_id)
+    rows = q.order_by(Company.name, RefDepartment.name).all()
+    return [
+        DepartmentOption(value=d.name, label=d.name, id=d.id, company=c.name)
+        for d, c in rows
+    ]
+
+
+@router.get("/departments", response_model=List[DepartmentResponse], summary="部門別清單")
+def list_departments(
+    company_id: Optional[int] = Query(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(_dept_admin_dep),
+):
+    q = db.query(RefDepartment)
+    if company_id is not None:
+        q = q.filter(RefDepartment.company_id == company_id)
+    rows = q.order_by(RefDepartment.company_id, RefDepartment.name).all()
+    # 填入 company_name
+    result = []
+    for r in rows:
+        resp = DepartmentResponse.from_orm(r)
+        resp.company_name = r.company.name if r.company else ""
+        result.append(resp)
+    return result
+
+
+@router.post("/departments", response_model=DepartmentResponse, status_code=status.HTTP_201_CREATED, summary="新增部門別")
+def create_department(
+    payload: DepartmentCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(_dept_admin_dep),
+):
+    company = db.query(Company).filter(Company.id == payload.company_id).first()
+    if not company:
+        raise HTTPException(status_code=404, detail="公司不存在")
+    dup = db.query(RefDepartment).filter(
+        RefDepartment.name == payload.name,
+        RefDepartment.company_id == payload.company_id,
+    ).first()
+    if dup:
+        raise HTTPException(status_code=400, detail=f"「{company.name}」下已有部門「{payload.name}」")
+    obj = RefDepartment(name=payload.name, company_id=payload.company_id)
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    resp = DepartmentResponse.from_orm(obj)
+    resp.company_name = company.name
+    return resp
+
+
+@router.put("/departments/{dept_id}", response_model=DepartmentResponse, summary="修改部門別")
+def update_department(
+    dept_id: int,
+    payload: DepartmentUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(_dept_admin_dep),
+):
+    obj = db.query(RefDepartment).filter(RefDepartment.id == dept_id).first()
+    if not obj:
+        raise HTTPException(status_code=404, detail="部門不存在")
+    if payload.name is not None:
+        new_company_id = payload.company_id if payload.company_id is not None else obj.company_id
+        dup = db.query(RefDepartment).filter(
+            RefDepartment.name == payload.name,
+            RefDepartment.company_id == new_company_id,
+            RefDepartment.id != dept_id,
+        ).first()
+        if dup:
+            raise HTTPException(status_code=400, detail=f"同公司下已有部門「{payload.name}」")
+        obj.name = payload.name
+    if payload.company_id is not None:
+        if not db.query(Company).filter(Company.id == payload.company_id).first():
+            raise HTTPException(status_code=404, detail="目標公司不存在")
+        obj.company_id = payload.company_id
+    db.commit()
+    db.refresh(obj)
+    resp = DepartmentResponse.from_orm(obj)
+    resp.company_name = obj.company.name if obj.company else ""
+    return resp
+
+
+@router.patch("/departments/{dept_id}/toggle", response_model=DepartmentResponse, summary="切換部門啟用狀態")
+def toggle_department(
+    dept_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(_dept_admin_dep),
+):
+    obj = db.query(RefDepartment).filter(RefDepartment.id == dept_id).first()
+    if not obj:
+        raise HTTPException(status_code=404, detail="部門不存在")
+    obj.is_active = not obj.is_active
+    db.commit()
+    db.refresh(obj)
+    resp = DepartmentResponse.from_orm(obj)
+    resp.company_name = obj.company.name if obj.company else ""
+    return resp
+
+
+# ── 2026-10-01：部門刪除（Samuel 要求在「部門別」TAB 提供刪除）─────────────
+#
+# 刪除前先查引用：
+#   - 稽核檢查（audit_sheet_departments／audit_item_targets）是 FK 且無 CASCADE，
+#     屬於業務資料 → 有引用就拒絕刪除（409），請使用者改用「停用」。
+#   - user_departments（人員部門歸屬）只是歸屬關係 → 隨部門一併移除；
+#     前端確認視窗會先顯示受影響人數。這裡明確刪除，不依賴 DB 端 ondelete
+#     （SQLite 時代建的表不一定有 CASCADE）。
+#   - 週採部門 source_department_id（跨庫字串對照，2026-09-22 起週採部門已
+#     全部本地自建，理論上不會有）→ 若仍有連結就清成 NULL，不刪週採部門。
+
+def _department_usage(db: Session, dept_id: int) -> dict:
+    from app.models.user_department import UserDepartment
+    from app.models.audit_check import AuditSheetDepartment, AuditItemTarget
+    members = db.query(UserDepartment).filter(UserDepartment.department_id == dept_id).count()
+    audit_cols = db.query(AuditSheetDepartment).filter(AuditSheetDepartment.department_id == dept_id).count()
+    audit_targets = db.query(AuditItemTarget).filter(AuditItemTarget.department_id == dept_id).count()
+    cp_linked = 0
+    try:
+        from app.core.cycle_purchase_database import CyclePurchaseSessionLocal
+        from app.models.cycle_purchase_reference import CyclePurchaseDepartment
+        cp_db = CyclePurchaseSessionLocal()
+        try:
+            cp_linked = cp_db.query(CyclePurchaseDepartment).filter(
+                CyclePurchaseDepartment.source_department_id == str(dept_id)
+            ).count()
+        finally:
+            cp_db.close()
+    except Exception:  # pragma: no cover - 防禦性：週採庫讀不到不影響主流程
+        import logging
+        logging.getLogger(__name__).exception("[reference_data] 讀取週採部門連結失敗（已忽略）")
+    return {
+        "members": members,
+        "audit_sheet_columns": audit_cols,
+        "audit_item_targets": audit_targets,
+        "cycle_purchase_linked": cp_linked,
+        "blocked": (audit_cols + audit_targets) > 0,
+    }
+
+
+@router.get("/departments/{dept_id}/usage", summary="部門被引用情形（刪除前檢查）")
+def department_usage(
+    dept_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(_dept_admin_dep),
+):
+    if not db.query(RefDepartment).filter(RefDepartment.id == dept_id).first():
+        raise HTTPException(status_code=404, detail="部門不存在")
+    return _department_usage(db, dept_id)
+
+
+@router.delete("/departments/{dept_id}", summary="刪除部門別")
+def delete_department(
+    dept_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(_dept_admin_dep),
+):
+    obj = db.query(RefDepartment).filter(RefDepartment.id == dept_id).first()
+    if not obj:
+        raise HTTPException(status_code=404, detail="部門不存在")
+    usage = _department_usage(db, dept_id)
+    if usage["blocked"]:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"部門「{obj.name}」已被稽核檢查使用（稽核單部門欄 {usage['audit_sheet_columns']} 筆、"
+                f"建議查核部門 {usage['audit_item_targets']} 筆），無法刪除，請改用「停用」。"
+            ),
+        )
+
+    from app.models.user_department import UserDepartment
+    removed_members = (
+        db.query(UserDepartment)
+        .filter(UserDepartment.department_id == dept_id)
+        .delete(synchronize_session=False)
+    )
+    name = obj.name
+    db.delete(obj)
+    db.commit()
+
+    unlinked = 0
+    if usage["cycle_purchase_linked"]:
+        try:
+            from app.core.cycle_purchase_database import CyclePurchaseSessionLocal
+            from app.models.cycle_purchase_reference import CyclePurchaseDepartment
+            cp_db = CyclePurchaseSessionLocal()
+            try:
+                unlinked = (
+                    cp_db.query(CyclePurchaseDepartment)
+                    .filter(CyclePurchaseDepartment.source_department_id == str(dept_id))
+                    .update({CyclePurchaseDepartment.source_department_id: None}, synchronize_session=False)
+                )
+                cp_db.commit()
+            finally:
+                cp_db.close()
+        except Exception:  # pragma: no cover - 防禦性
+            import logging
+            logging.getLogger(__name__).exception("[reference_data] 清除週採部門連結失敗（已忽略）")
+
+    return {
+        "deleted_id": dept_id,
+        "name": name,
+        "removed_members": removed_members,
+        "unlinked_cycle_purchase_departments": unlinked,
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 計價規格
+# ═══════════════════════════════════════════════════════════════════════════
+
+@router.get("/pricing-specs/options", response_model=List[PricingSpecOption], summary="計價規格下拉（啟用中）")
+def pricing_spec_options(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    rows = db.query(PricingSpec).filter(PricingSpec.is_active == True).order_by(PricingSpec.name).all()
+    return [PricingSpecOption(value=r.name, label=r.name) for r in rows]
+
+
+@router.get("/pricing-specs", response_model=List[PricingSpecResponse], summary="計價規格清單")
+def list_pricing_specs(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(_admin_dep),
+):
+    return db.query(PricingSpec).order_by(PricingSpec.name).all()
+
+
+@router.post("/pricing-specs", response_model=PricingSpecResponse, status_code=status.HTTP_201_CREATED, summary="新增計價規格")
+def create_pricing_spec(
+    payload: PricingSpecCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(_admin_dep),
+):
+    if db.query(PricingSpec).filter(PricingSpec.name == payload.name).first():
+        raise HTTPException(status_code=400, detail=f"計價規格「{payload.name}」已存在")
+    obj = PricingSpec(name=payload.name)
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
+@router.put("/pricing-specs/{spec_id}", response_model=PricingSpecResponse, summary="修改計價規格")
+def update_pricing_spec(
+    spec_id: int,
+    payload: PricingSpecUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(_admin_dep),
+):
+    obj = db.query(PricingSpec).filter(PricingSpec.id == spec_id).first()
+    if not obj:
+        raise HTTPException(status_code=404, detail="計價規格不存在")
+    dup = db.query(PricingSpec).filter(PricingSpec.name == payload.name, PricingSpec.id != spec_id).first()
+    if dup:
+        raise HTTPException(status_code=400, detail=f"計價規格「{payload.name}」已存在")
+    obj.name = payload.name
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
+@router.patch("/pricing-specs/{spec_id}/toggle", response_model=PricingSpecResponse, summary="切換計價規格啟用狀態")
+def toggle_pricing_spec(
+    spec_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(_admin_dep),
+):
+    obj = db.query(PricingSpec).filter(PricingSpec.id == spec_id).first()
+    if not obj:
+        raise HTTPException(status_code=404, detail="計價規格不存在")
+    obj.is_active = not obj.is_active
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# K2 — SLA 指標類型  /settings/sla-metric-types
+# ═══════════════════════════════════════════════════════════════════════════
+
+@router.get("/sla-metric-types/options", response_model=List[SlaMetricTypeOption], summary="SLA 指標類型下拉（啟用中）")
+def sla_type_options(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    rows = db.query(SlaMetricType).filter(SlaMetricType.is_active == True).order_by(SlaMetricType.name).all()
+    return [SlaMetricTypeOption(value=r.name, label=r.name) for r in rows]
+
+
+@router.get("/sla-metric-types", response_model=List[SlaMetricTypeResponse], summary="SLA 指標類型清單")
+def list_sla_types(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(_admin_dep),
+):
+    return db.query(SlaMetricType).order_by(SlaMetricType.name).all()
+
+
+@router.post("/sla-metric-types", response_model=SlaMetricTypeResponse, status_code=status.HTTP_201_CREATED, summary="新增 SLA 指標類型")
+def create_sla_type(
+    payload: SlaMetricTypeCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(_admin_dep),
+):
+    if db.query(SlaMetricType).filter(SlaMetricType.name == payload.name).first():
+        raise HTTPException(status_code=400, detail=f"指標類型「{payload.name}」已存在")
+    obj = SlaMetricType(name=payload.name, description=payload.description)
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
+@router.put("/sla-metric-types/{type_id}", response_model=SlaMetricTypeResponse, summary="修改 SLA 指標類型")
+def update_sla_type(
+    type_id: int,
+    payload: SlaMetricTypeUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(_admin_dep),
+):
+    obj = db.query(SlaMetricType).filter(SlaMetricType.id == type_id).first()
+    if not obj:
+        raise HTTPException(status_code=404, detail="指標類型不存在")
+    if payload.name and payload.name != obj.name:
+        if db.query(SlaMetricType).filter(SlaMetricType.name == payload.name).first():
+            raise HTTPException(status_code=400, detail=f"名稱「{payload.name}」已存在")
+        obj.name = payload.name
+    if payload.description is not None:
+        obj.description = payload.description
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
+@router.patch("/sla-metric-types/{type_id}/toggle", response_model=SlaMetricTypeResponse, summary="切換 SLA 指標類型啟用狀態")
+def toggle_sla_type(
+    type_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(_admin_dep),
+):
+    obj = db.query(SlaMetricType).filter(SlaMetricType.id == type_id).first()
+    if not obj:
+        raise HTTPException(status_code=404, detail="指標類型不存在")
+    obj.is_active = not obj.is_active
+    db.commit()
+    db.refresh(obj)
+    return obj

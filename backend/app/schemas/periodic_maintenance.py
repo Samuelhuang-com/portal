@@ -53,6 +53,8 @@ class PMItemOut(BaseModel):
     status:            str = "unscheduled"
     ragic_url:         str = ""
     repair_hours:      Optional[float] = None
+    parent_no:         Optional[str] = None
+    child_no:          Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -96,11 +98,22 @@ class StatusDistItem(BaseModel):
 
 # ── 批次詳情（含所有項目）────────────────────────────────────────────────────
 
+class PMParentGroupOut(BaseModel):
+    """母項目彙總（項目(母)）。完成條件：每個子項目「執行人員非空」且「維修工時 ≥ 0」；NULL 不計。"""
+    parent_no:           str
+    child_count:         int   = 0
+    done_count:          int   = 0
+    total_repair_hours:  float = 0.0
+    missing_hours_count: int   = 0
+    is_completed:        bool  = False
+
+
 class PMBatchDetail(BaseModel):
-    batch:      PMBatchOut
-    kpi:        PMBatchKPI
-    items:      List[PMItemOut]
-    categories: List[CategoryStat]
+    batch:         PMBatchOut
+    kpi:           PMBatchKPI
+    items:         List[PMItemOut]
+    categories:    List[CategoryStat]
+    parent_groups: List[PMParentGroupOut] = []
 
 
 # ── 全站統計（Dashboard 資料來源）───────────────────────────────────────────

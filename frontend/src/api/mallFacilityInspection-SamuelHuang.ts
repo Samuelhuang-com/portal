@@ -1,0 +1,396 @@
+/**
+ * 春大直商場工務巡檢 API 封裝
+ * Prefix: /api/v1/mall-facility-inspection
+ */
+import apiClient from '@/api/client'
+
+const BASE = '/mall-facility-inspection'
+
+// ── 型別 ─────────────────────────────────────────────────────────────────────
+
+export interface MallFIStats {
+  sheet_key:       string
+  latest_batch:    MallFIBatchInfo | null
+  latest_kpi:      MallFIKpi | null
+  recent_abnormal: MallFIAbnormalItem[]
+  total_batches_7d: number
+  abnormal_trend:  MallFITrendPoint[]
+}
+
+export interface MallFIBatchInfo {
+  ragic_id:        string
+  inspection_date: string
+  inspector_name:  string
+  start_time:      string
+  end_time:        string
+  work_hours:      string
+}
+
+export interface MallFIKpi {
+  total:           number
+  normal:          number
+  abnormal:        number
+  pending:         number
+  unchecked:       number
+  checked:         number
+  completion_rate: number
+}
+
+export interface MallFIAbnormalItem {
+  item_name:     string
+  result_raw:    string
+  result_status: string
+}
+
+export interface MallFITrendPoint {
+  date:           string
+  abnormal_count: number
+  has_record:     boolean
+}
+
+export interface MallFIBatchRow {
+  id:              string
+  inspection_date: string
+  inspector_name:  string
+  start_time:      string
+  end_time:        string
+  total:           number
+  checked:         number
+  abnormal:        number
+  pending:         number
+  completion_rate: number
+  // 2026-10-05 新增（判定與每日巡檢表 Drawer 相同）
+  work_hours?:     string
+  ragic_url?:      string
+  unchecked?:      number
+  measure?:        number   // 記錄值（溫度、度數…），不算異常
+}
+
+// ── 場次明細（樓層 TAB 點列開 Drawer）2026-10-05 ─────────────────────────────
+export type MallFIItemStatus = 'normal' | 'abnormal' | 'pending' | 'unchecked' | 'measure' | 'note'
+
+export interface MallFIBatchDetail {
+  batch: {
+    ragic_id:        string
+    sheet_key:       string
+    inspection_date: string
+    inspector_name:  string
+    start_time:      string
+    end_time:        string
+    work_hours:      string
+    ragic_url:       string
+  }
+  kpi: {
+    total: number; checked: number; normal: number; abnormal: number
+    pending: number; unchecked: number; measure: number; completion_rate: number
+  }
+  items: { ragic_id: string; seq_no: number; item_name: string; result_raw: string; status: MallFIItemStatus }[]
+}
+
+export interface MallFISheetSummary {
+  key:             string
+  floor:           string
+  title:           string
+  total_batches:   number
+  total_items:     number
+  checked_items:   number
+  abnormal_items:  number
+  pending_items:   number
+  unchecked_items: number
+  completion_rate: number
+  has_data:        boolean
+  total_minutes:   number
+}
+
+export interface MallFIDashboardSummary {
+  target_date: string
+  sheets:      MallFISheetSummary[]
+}
+
+/** 月份統計 — 單一 Sheet */
+export interface MallFIMonthlySheetSummary {
+  key:               string
+  floor:             string
+  title:             string
+  month_count:       number              // 查詢月份內登錄筆數
+  missing_count:     number              // 缺漏天數
+  missing_days:      string[]            // 缺漏日期清單
+  latest_batch_date: string              // 查詢月份內最近登錄日期
+  has_today:         boolean             // 今日（或末日）是否已登錄
+  is_current_month:  boolean             // 是否為當月查詢
+  trend_7d:          Array<{ date: string; has_record: boolean }>
+  has_data:          boolean
+}
+
+/** 月份統計 — 跨 Sheet 總覽 */
+export interface MallFIMonthlyDashboardSummary {
+  month:      string   // YYYY-MM
+  year_month: string   // YYYY/MM
+  sheets:     MallFIMonthlySheetSummary[]
+}
+
+// ── API 函式 ──────────────────────────────────────────────────────────────────
+
+/**
+ * 取得指定樓層的 Dashboard 統計（主管儀表板用）
+ */
+export async function fetchMallFacilityStats(
+  sheetKey: string,
+  targetDate?: string,
+): Promise<MallFIStats> {
+  const params = targetDate ? { target_date: targetDate } : {}
+  const res = await apiClient.get<MallFIStats>(`${BASE}/${sheetKey}/stats`, { params })
+  return res.data
+}
+
+/**
+ * 取得指定樓層指定月份的巡檢場次清單
+ */
+export async function fetchMallFacilityBatches(
+  sheetKey:  string,
+  params: { year_month?: string },
+): Promise<MallFIBatchRow[]> {
+  const res = await apiClient.get<MallFIBatchRow[]>(`${BASE}/${sheetKey}/batches`, { params })
+  return res.data
+}
+
+/**
+ * 取得指定樓層單一巡檢場次明細（樓層 TAB 明細 Drawer 用）
+ */
+export async function fetchMallFacilityBatchDetail(sheetKey: string, batchId: string): Promise<MallFIBatchDetail> {
+  const res = await apiClient.get<MallFIBatchDetail>(`${BASE}/${sheetKey}/batches/${encodeURIComponent(batchId)}`)
+  return res.data
+}
+
+/**
+ * 觸發指定樓層 Ragic 同步（背景執行）
+ */
+export async function syncMallFacilityFromRagic(sheetKey: string): Promise<void> {
+  await apiClient.post(`${BASE}/${sheetKey}/sync`)
+}
+
+/**
+ * 觸發全部 5 張 Sheet Ragic 同步（背景執行）
+ */
+export async function syncMallFacilityAllFromRagic(): Promise<void> {
+  await apiClient.post(`${BASE}/sync/all`)
+}
+
+/**
+ * 取得全體商場工務巡檢 Dashboard 統計（跨 Sheet）
+ */
+export async function fetchMallFacilityDashboardSummary(
+  targetDate?: string,
+): Promise<MallFIDashboardSummary> {
+  const params = targetDate ? { target_date: targetDate } : {}
+  const res = await apiClient.get<MallFIDashboardSummary>(`${BASE}/dashboard/summary`, { params })
+  return res.data
+}
+
+/**
+ * 取得商場工務巡檢 Dashboard 月份統計（跨 Sheet）
+ * @param month  查詢月份 YYYY-MM （如 "2026-05"）。不填則後端自動使用當月。
+ */
+export async function fetchMallFacilityMonthlyDashboard(
+  month?: string,
+): Promise<MallFIMonthlyDashboardSummary> {
+  const params = month ? { month } : {}
+  const res = await apiClient.get<MallFIMonthlyDashboardSummary>(
+    `${BASE}/dashboard/monthly-summary`,
+    { params },
+  )
+  return res.data
+}
+
+// ── 每日巡檢表彙整 型別 ───────────────────────────────────────────────────────
+
+export interface MallFIDailyFormRow {
+  // 模板欄位
+  floor:           string
+  item:            string
+  check_content:   string
+  result_options:  string
+  minutes:         number
+  source_tab:      string
+  item_first_row:  boolean
+  floor_first_row: boolean
+  floor_row_count: number
+  item_row_count:  number
+  // 比對結果欄位
+  inspector:       string
+  result_text:     string
+  result_status:   'normal' | 'abnormal' | 'pending' | 'unchecked'
+  abnormal_note:   string
+  matched:         boolean
+  abnormal:        boolean
+  actual_minutes:  number   // 該 Sheet 本次／本月實際巡檢時間（分），0 = 無資料
+}
+
+export interface MallFIDailyFormResponse {
+  year:             number
+  month:            number
+  inspection_date:  string | null
+  has_data_today:   boolean | null   // null = 整月模式；true/false = 單日模式
+  rows:             MallFIDailyFormRow[]
+}
+
+// 2026-10-05：月曆格每格附「哪幾項異常／待處理」，判定與每日巡檢表 Drawer 同一套
+export interface MallFIDailyIssue {
+  source_tab:    string
+  floor:         string
+  item:          string          // 設備（Excel 項目）；版型外欄位為「版型外欄位」
+  check_content: string          // 檢查內容；版型外欄位為 Ragic 欄位名
+  status:        'abnormal' | 'pending'
+  note:          string          // 異常說明（版型外欄位為 Ragic 填報值）
+  in_template:   boolean
+}
+
+export interface MallFIDailyCalendarDay {
+  has_record:      boolean
+  completion_rate: number
+  abnormal_count:  number
+  pending_count:   number
+  issues?:         MallFIDailyIssue[]
+}
+
+export interface MallFIDailyCalendarSheet {
+  key:   string
+  floor: string
+  title: string
+  daily: Record<string, MallFIDailyCalendarDay>  // key = "1" ~ "31"
+}
+
+export interface MallFIDailyCalendarResponse {
+  year:    number
+  month:   number
+  max_day: number
+  sheets:  MallFIDailyCalendarSheet[]
+}
+
+/**
+ * 取得商場工務每日巡檢表彙整資料（依標準模板 + 年月篩選）
+ * inspectionDate 選填：填入時只取該日結果
+ */
+export async function fetchMallFIDailyForm(
+  year: number,
+  month: number,
+  inspectionDate?: string,
+): Promise<MallFIDailyFormResponse> {
+  const params: Record<string, unknown> = { year, month }
+  if (inspectionDate) params.inspection_date = inspectionDate
+  const res = await apiClient.get<MallFIDailyFormResponse>(`${BASE}/daily-form`, { params })
+  return res.data
+}
+
+/**
+ * 取得商場工務指定月份每日巡檢狀況格（Dashboard 月曆格用）
+ */
+export async function fetchMallFIDailyCalendar(
+  year: number,
+  month: number,
+): Promise<MallFIDailyCalendarResponse> {
+  const res = await apiClient.get<MallFIDailyCalendarResponse>(`${BASE}/daily-calendar`, {
+    params: { year, month },
+  })
+  return res.data
+}
+
+// ── 每日巡檢表（Excel 版型，Dashboard 月曆格下一層）2026-10-04 ──────────────────
+
+export interface MallFIDailySheetReading {
+  field: string
+  label: string
+  value: string
+}
+
+export interface MallFIDailySheetResult {
+  batch_ragic_id: string
+  time_label:     string   // 同日多場次時為開始時間 HH:MM，單一場次為空字串
+  status:         'normal' | 'abnormal' | 'pending' | 'unchecked' | 'reading'
+  text:           string
+  readings:       MallFIDailySheetReading[]
+}
+
+export interface MallFIDailySheetRow {
+  floor:           string
+  item:            string
+  check_content:   string
+  result_options:  string
+  minutes:         number
+  source_tab:      string
+  item_first_row:  boolean
+  floor_first_row: boolean
+  floor_row_count: number
+  item_row_count:  number
+  kind:            'status' | 'reading' | 'separate' | 'unmapped'
+  ragic_fields:    string[]
+  note_field:      string
+  results:         MallFIDailySheetResult[]
+  status:          string
+  abnormal:        boolean
+  abnormal_note:   string
+  remark:          string
+}
+
+export interface MallFIDailySheetBatch {
+  ragic_id:       string
+  ragic_url:      string
+  inspector:      string
+  start_time:     string
+  end_time:       string
+  start_hhmm:     string
+  end_hhmm:       string
+  work_hours:     string
+  actual_minutes: number
+}
+
+export interface MallFIDailySheetFloor {
+  key:            string
+  floor:          string
+  sheet_url:      string
+  has_record:     boolean
+  inspectors:     string[]
+  batches:        MallFIDailySheetBatch[]
+  actual_minutes: number
+}
+
+export interface MallFIDailySheetResponse {
+  date:    string
+  floors:  MallFIDailySheetFloor[]
+  rows:    MallFIDailySheetRow[]
+  summary: {
+    floors_total:        number
+    floors_logged:       number
+    normal:              number
+    abnormal:            number
+    pending:             number
+    unchecked:           number
+    reading:             number
+    std_minutes_routine: number
+    std_minutes_total:   number
+    actual_minutes:      number
+    shift_times:         { label: string; range: string }[]
+    // 表尾時間列（整棟巡檢由後端提供；商場不給，Drawer 用 shift_times 組）
+    footer?:             { text: string; minutes: number; note: string }[]
+    extra_issues?:       number   // 版型外欄位的異常／待處理筆數（商場）
+  }
+  // 2026-10-05：Ragic 有、Excel 版型沒有的欄位，填了異常／待處理時另外列出（商場）
+  extra_issues?: MallFIDailyExtraIssue[]
+}
+
+export interface MallFIDailyExtraIssue {
+  source_tab: string
+  floor:      string
+  field:      string
+  status:     'abnormal' | 'pending'
+  text:       string
+  time_label: string
+}
+
+/** 取得指定日期的每日巡檢表（date = YYYY-MM-DD） */
+export async function fetchMallFIDailySheet(date: string): Promise<MallFIDailySheetResponse> {
+  const res = await apiClient.get<MallFIDailySheetResponse>(`${BASE}/daily-sheet`, {
+    params: { date },
+  })
+  return res.data
+}

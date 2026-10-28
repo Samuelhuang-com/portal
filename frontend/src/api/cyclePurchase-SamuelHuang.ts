@@ -1,0 +1,573 @@
+/**
+ * 週期採購（Cycle Purchase）API
+ * 所有週期採購相關 API 呼叫的封裝函數
+ * 對應後端 Prefix: /api/v1/cycle-purchase
+ */
+import apiClient from '@/api/client'
+import type {
+  CpAccountCode,
+  CpBackfillApplyResult,
+  CpBackfillPreview,
+  CpAuditLog,
+  CpAvailableItem,
+  CpCancelRagicPushResult,
+  CpCategory,
+  CpCategoryNextCode,
+  CpCloseState,
+  CpCopyResult,
+  CpCopySourceCandidate,
+  CpCostCenter,
+  CpCycle,
+  CpCycleOptions,
+  CpDepartment,
+  CpDepartmentBreakdown,
+  CpEligibleRequest,
+  CpExcludeItemCandidate,
+  CpGeneratePreview,
+  CpGenerateStatusResult,
+  CpMyPeriodResult,
+  CpPendingRequest,
+  CpExcludedRequest,
+  CpGenerateResult,
+  CpItem,
+  CpItemDetail,
+  CpItemListResponse,
+  CpItemMapping,
+  CpOrphanPreview,
+  CpPO,
+  CpPODetail,
+  CpRevertPoResult,
+  CpPayableReceiving,
+  CpPayment,
+  CpPaymentAllocation,
+  CpPaymentDetail,
+  CpPushToRagicResult,
+  CpRagicPushedDoc,
+  CpReceivableItem,
+  CpReceiving,
+  CpReceivingDetail,
+  CpReceivingItem,
+  CpReceivingReportRow,
+  CpRequest,
+  CpRequestDetail,
+  CpRequestItem,
+  CpSummarizedRequest,
+  CpSummary,
+  CpUnsummarizeResult,
+  CpVendor,
+  CpVendorGroup,
+  CpVendorSyncResult,
+  TodoSummary,
+  CpContractVendor,
+  CpVendorMergeResult,
+} from '@/types/cyclePurchase'
+
+const BASE = '/cycle-purchase'
+
+// ── 供應商主檔 ────────────────────────────────────────────────────────────────
+
+export const getVendors = (params?: { q?: string; is_active?: boolean; unlinked_only?: boolean }) =>
+  apiClient.get<CpVendor[]>(`${BASE}/masters/vendors`, { params })
+
+/** 合約模組的廠商清單（「對照合約廠商」下拉用）。2026-09-20 新增。 */
+export const getContractVendors = (params?: { q?: string }) =>
+  apiClient.get<CpContractVendor[]>(`${BASE}/masters/contract-vendors`, { params })
+
+/**
+ * 把週採供應商對照到合約廠商（source_vendor_id = null 代表解除對照）。
+ * ⚠️ 刻意不走 updateVendor —— 後端的一般編輯永遠不吃 source_vendor_id。
+ */
+/**
+ * 把一筆供應商併入另一筆（料號對照／彙整列／採購單的參照一起搬過去）。
+ * dryRun=true 只試算不寫入 —— 這支會改到歷史資料，一定要先讓使用者看過再做。
+ */
+export const mergeVendor = (vendorId: number, targetVendorId: number, dryRun = false) =>
+  apiClient.post<CpVendorMergeResult>(`${BASE}/masters/vendors/${vendorId}/merge`, {
+    target_vendor_id: targetVendorId, dry_run: dryRun,
+  })
+
+export const linkVendorToContract = (vendorId: number, sourceVendorId: string | null) =>
+  apiClient.put<CpVendor>(`${BASE}/masters/vendors/${vendorId}/link`, {
+    source_vendor_id: sourceVendorId,
+  })
+
+export const createVendor = (data: Omit<CpVendor, 'id' | 'created_at' | 'updated_at'>) =>
+  apiClient.post<CpVendor>(`${BASE}/masters/vendors`, data)
+
+export const updateVendor = (id: number, data: Partial<CpVendor>) =>
+  apiClient.put<CpVendor>(`${BASE}/masters/vendors/${id}`, data)
+
+/**
+ * 自合約模組（portal.db vendors，上游是 Ragic 廠商資料表）鏡像同步供應商主檔。
+ * 同步等待並回傳這次的異動統計，不是背景執行。
+ */
+export const syncVendorsFromContract = () =>
+  apiClient.post<CpVendorSyncResult>(`${BASE}/masters/vendors/sync`)
+
+// ── 類別主檔（2026-08-18 新增）────────────────────────────────────────────────
+
+export const getCpCategories = (params?: {
+  company?: string
+  department_id?: number
+  q?: string
+  is_active?: boolean
+}) => apiClient.get<CpCategory[]>(`${BASE}/masters/categories`, { params })
+
+export const createCpCategory = (
+  data: Omit<CpCategory, 'id' | 'created_at' | 'code_prefix' | 'item_count' | 'department_name'>,
+) => apiClient.post<CpCategory>(`${BASE}/masters/categories`, data)
+
+export const updateCpCategory = (id: number, data: Partial<CpCategory>) =>
+  apiClient.put<CpCategory>(`${BASE}/masters/categories/${id}`, data)
+
+/** 依編碼原則算這個類別下一個可用料號（已用流水碼以該公司的原始碼為準） */
+export const getCpCategoryNextCode = (id: number) =>
+  apiClient.get<CpCategoryNextCode>(`${BASE}/masters/categories/${id}/next-code`)
+
+// ── 部門主檔 ──────────────────────────────────────────────────────────────────
+
+export const getCpDepartments = (params?: { is_active?: boolean }) =>
+  apiClient.get<CpDepartment[]>(`${BASE}/masters/departments`, { params })
+
+export const createCpDepartment = (data: Omit<CpDepartment, 'id' | 'created_at'>) =>
+  apiClient.post<CpDepartment>(`${BASE}/masters/departments`, data)
+
+export const updateCpDepartment = (id: number, data: Partial<CpDepartment>) =>
+  apiClient.put<CpDepartment>(`${BASE}/masters/departments/${id}`, data)
+
+// ── 手動連結主檔部門（2026-09-01，company 改自行輸入後名稱比對只剩部門名唯一命中）──
+export interface CpDepartmentLinkOption {
+  source_department_id: string
+  company: string      // 主檔的公司名稱（與週採自行輸入的 company 可能不同，正常）
+  dept_name: string
+  linked_to?: string | null  // 已被哪個週採部門連結；null＝可選
+}
+
+export const getCpDepartmentLinkOptions = () =>
+  apiClient.get<CpDepartmentLinkOption[]>(`${BASE}/masters/departments/link-options`)
+
+export const linkCpDepartment = (id: number, source_department_id: string | null) =>
+  apiClient.put<CpDepartment>(`${BASE}/masters/departments/${id}/link`, { source_department_id })
+
+// ── 成本中心主檔 ──────────────────────────────────────────────────────────────
+
+export const getCostCenters = (params?: { department_id?: number; is_active?: boolean }) =>
+  apiClient.get<CpCostCenter[]>(`${BASE}/masters/cost-centers`, { params })
+
+export const createCostCenter = (data: Omit<CpCostCenter, 'id' | 'created_at' | 'department_name'>) =>
+  apiClient.post<CpCostCenter>(`${BASE}/masters/cost-centers`, data)
+
+export const updateCostCenter = (id: number, data: Partial<CpCostCenter>) =>
+  apiClient.put<CpCostCenter>(`${BASE}/masters/cost-centers/${id}`, data)
+
+// ── 會計科目主檔 ──────────────────────────────────────────────────────────────
+
+export const getCpAccountCodes = (params?: { is_active?: boolean }) =>
+  apiClient.get<CpAccountCode[]>(`${BASE}/masters/account-codes`, { params })
+
+export const createCpAccountCode = (data: Omit<CpAccountCode, 'id' | 'created_at'>) =>
+  apiClient.post<CpAccountCode>(`${BASE}/masters/account-codes`, data)
+
+export const updateCpAccountCode = (id: number, data: Partial<CpAccountCode>) =>
+  apiClient.put<CpAccountCode>(`${BASE}/masters/account-codes/${id}`, data)
+
+// ── 料號主檔 ──────────────────────────────────────────────────────────────────
+
+export const getItems = (params?: {
+  q?: string
+  /** 2026-09-30：供應商名稱模糊比對（%關鍵字%） */
+  vendor_q?: string
+  category?: string
+  /** 2026-09-21：類別主檔細分類 id；0 ＝ 尚未對應類別主檔 */
+  category_id?: number
+  /** 2026-09-21：類別篩選停在任一層時，該層底下所有細分類 id（逗號分隔） */
+  category_ids?: string
+  is_active?: boolean
+  page?: number
+  per_page?: number
+  // 2026-09-16 新增：篩選（"__none__" / 0 = 未設定）與排序
+  company?: string
+  department_id?: number
+  account_code_id?: number
+  vendor_id?: number
+  sort_by?: string
+  sort_order?: 'asc' | 'desc'
+}) => apiClient.get<CpItemListResponse>(`${BASE}/items`, { params })
+
+/** 2026-09-22：料號頁公司/部門篩選用——只回有料號對照的公司（含其部門 id） */
+export const getItemFilterCompanies = () =>
+  apiClient.get<{ company: string; department_ids: number[] }[]>(`${BASE}/items/filter-companies`)
+
+export const getItem = (id: number) =>
+  apiClient.get<CpItemDetail>(`${BASE}/items/${id}`)
+
+export const createItem = (data: Omit<CpItem, 'id' | 'created_at' | 'updated_at' | 'default_vendor_name'>) =>
+  apiClient.post<CpItem>(`${BASE}/items`, data)
+
+export const updateItem = (id: number, data: Partial<CpItem>) =>
+  apiClient.put<CpItem>(`${BASE}/items/${id}`, data)
+
+// ── 料號對照表 ────────────────────────────────────────────────────────────────
+
+export const getItemMappings = (itemId: number) =>
+  apiClient.get<CpItemMapping[]>(`${BASE}/items/${itemId}/mappings`)
+
+export const createItemMapping = (
+  itemId: number,
+  data: Omit<CpItemMapping, 'id' | 'item_id' | 'created_at' | 'updated_at'>,
+) => apiClient.post<CpItemMapping>(`${BASE}/items/${itemId}/mappings`, data)
+
+export const updateItemMapping = (
+  itemId: number,
+  mappingId: number,
+  data: Partial<CpItemMapping>,
+) => apiClient.put<CpItemMapping>(`${BASE}/items/${itemId}/mappings/${mappingId}`, data)
+
+export const deleteItemMapping = (itemId: number, mappingId: number) =>
+  apiClient.delete(`${BASE}/items/${itemId}/mappings/${mappingId}`)
+
+// ── 週期設定 ──────────────────────────────────────────────────────────────────
+
+export const getCycles = (params?: { status?: string }) =>
+  apiClient.get<CpCycle[]>(`${BASE}/cycles`, { params })
+
+export const getCycle = (id: number) =>
+  apiClient.get<CpCycle>(`${BASE}/cycles/${id}`)
+
+export const createCycle = (data: Omit<CpCycle, 'id' | 'created_at' | 'updated_at'>) =>
+  apiClient.post<CpCycle>(`${BASE}/cycles`, data)
+
+/**
+ * 更新週期設定。
+ * 2026-08-09：deleteOrphans=true 會一併刪除「部門已不再適用」的孤兒空白請購單
+ * （僅明細 0 筆＋未關閉＋未彙整者）。呼叫端**必須先打 previewOrphanRequests
+ * 讓使用者確認**再帶 true —— 刪資料不做靜默執行。
+ */
+export const updateCycle = (id: number, data: Partial<CpCycle>, deleteOrphans = false) =>
+  apiClient.put<CpCycle>(`${BASE}/cycles/${id}`, data, {
+    params: deleteOrphans ? { delete_orphans: true } : undefined,
+  })
+
+/**
+ * 週期設定表單的下拉選項（適用公司／適用品類，取自主檔 distinct 值）。
+ * 2026-08-17 新增 companies 參數：帶值時「適用品類」只回傳該公司底下有
+ * 對照表資料的品類，不讓使用者選到別公司的品類（見 Cycles 頁 docstring）。
+ * 「適用公司」欄位本身不受這個參數影響，一律回傳全部公司。
+ */
+export const getCycleOptions = (params?: { companies?: string }) =>
+  apiClient.get<CpCycleOptions>(`${BASE}/cycles/options`, { params })
+
+/**
+ * 「排除料號」下拉候選清單：依表單目前選的適用公司＋適用品類現算。
+ * companies／categories 給空字串或不給＝不限。2026-08-16 新增
+ */
+export const getExcludeItemCandidates = (params: { companies?: string; categories?: string }) =>
+  apiClient.get<CpExcludeItemCandidate[]>(`${BASE}/cycles/exclude-item-candidates`, { params })
+
+/** 預覽：套用這份（尚未儲存的）設定後，會刪掉哪幾張孤兒空白請購單 */
+export const previewOrphanRequests = (id: number, data: Partial<CpCycle>) =>
+  apiClient.post<CpOrphanPreview>(`${BASE}/cycles/${id}/preview-orphan-requests`, data)
+
+// ── 請購單 ────────────────────────────────────────────────────────────────────
+// 2026-07-11：拿掉「批次」，請購單改依 cycle_id + period_label 篩選/建立。
+// 「產生本期請購單」取代原本批次開放時的自動觸發，隨時可呼叫、同一週期＋期別冪等。
+
+export const getRequests = (params?: {
+  cycle_id?: number
+  period_label?: string
+  department_id?: number
+  /** ⚠️ 改版前的殘留欄位（新資料一律 draft），要篩「狀態」請用 close_state */
+  status?: string
+  /** 2026-08-07 新增的「狀態」篩選；不給＝全部 */
+  close_state?: CpCloseState
+  /** 2026-09-25：只看我所屬部門的單（篩選，不是權限） */
+  mine?: boolean
+}) => apiClient.get<CpRequest[]>(`${BASE}/requests`, { params })
+
+/** 「我的部門本期」：所屬部門在本月各週期的請購單狀況（2026-09-25） */
+export const getMyPeriod = () =>
+  apiClient.get<CpMyPeriodResult>(`${BASE}/requests/my-period`)
+
+export const getRequest = (id: number) =>
+  apiClient.get<CpRequestDetail>(`${BASE}/requests/${id}`)
+
+// 2026-07-17：period_label 不再由呼叫端指定，一律由後端在建立當下蓋章為現在的月份。
+// 2026-08-09：⚠️ 回傳型別從 CpRequest[] 改成 CpGenerateResult（{requests, skipped}），
+// skipped 是「某些部門為什麼沒產生」的原因，必須顯示給使用者。
+export const generateRequestsForPeriod = (data: { cycle_id: number }) =>
+  apiClient.post<CpGenerateResult>(`${BASE}/requests/generate`, data)
+
+/** 產生前預覽：這個週期會產生哪些部門的單、哪些不會與原因 */
+export const previewGenerateRequests = (cycleId: number) =>
+  apiClient.get<CpGeneratePreview>(`${BASE}/requests/generate-preview`, {
+    params: { cycle_id: cycleId },
+  })
+
+/** 本期各週期完成度（原申請單位數／已產生／未執行／已彙整／從未執行），2026-09-25 */
+export const getGenerateStatus = () =>
+  apiClient.get<CpGenerateStatusResult>(`${BASE}/requests/generate-status`)
+
+export const getTodos = () =>
+  apiClient.get<TodoSummary>(`${BASE}/requests/todos`)
+
+export const createRequest = (data: {
+  cycle_id: number
+  department_id: number
+  cost_center_id?: number | null
+}) => apiClient.post<CpRequest>(`${BASE}/requests`, data)
+
+export const updateRequest = (id: number, data: { cost_center_id?: number | null; notes?: string | null }) =>
+  apiClient.put<CpRequest>(`${BASE}/requests/${id}`, data)
+
+/**
+ * 刪除請購單（僅限明細 0 筆＋未關閉＋未彙整的空白單，後端會擋不符合條件的）。
+ * 2026-08-17 新增：手動新增放寬同部門同期擋重後，選錯週期/部門或手滑重複
+ * 建立的空白單需要有辦法清掉。
+ */
+export const deleteRequest = (id: number) =>
+  apiClient.delete<{ ok: boolean }>(`${BASE}/requests/${id}`)
+
+export const getAvailableItems = (requestId: number) =>
+  apiClient.get<CpAvailableItem[]>(`${BASE}/requests/${requestId}/available-items`)
+
+export const addRequestItem = (
+  requestId: number,
+  data: { item_id: number; request_qty?: number; account_code_id?: number | null; notes?: string | null },
+) => apiClient.post<CpRequestItem>(`${BASE}/requests/${requestId}/items`, data)
+
+export const updateRequestItem = (
+  requestId: number,
+  itemRowId: number,
+  data: { request_qty?: number; account_code_id?: number | null; notes?: string | null },
+) => apiClient.put<CpRequestItem>(`${BASE}/requests/${requestId}/items/${itemRowId}`, data)
+
+export const deleteRequestItem = (requestId: number, itemRowId: number) =>
+  apiClient.delete(`${BASE}/requests/${requestId}/items/${itemRowId}`)
+
+// 2026-07-17（第三次調整）：拿掉送出／簽核／退回，改成「關閉／重新開啟」。
+
+export const getOpenRequestsForClose = (params: { cycle_id: number; company?: string; year_month?: string }) =>
+  apiClient.get<CpRequest[]>(`${BASE}/requests/open-for-close`, { params })
+
+export const closeRequests = (request_ids: number[]) =>
+  apiClient.post<CpRequest[]>(`${BASE}/requests/close`, { request_ids })
+
+export const closeAllRequests = (data: { cycle_id: number; company?: string | null; year_month?: string | null }) =>
+  apiClient.post<CpRequest[]>(`${BASE}/requests/close-all`, data)
+
+export const reopenRequests = (request_ids: number[]) =>
+  apiClient.post<CpRequest[]>(`${BASE}/requests/reopen`, { request_ids })
+
+// 2026-08-13 新增：複製上期請購單
+export const getCopySourceCandidates = (params: { cycle_id: number; department_id: number }) =>
+  apiClient.get<CpCopySourceCandidate[]>(`${BASE}/requests/copy-candidates`, { params })
+
+export const copyRequest = (sourceRequestId: number) =>
+  apiClient.post<CpCopyResult>(`${BASE}/requests/${sourceRequestId}/copy`)
+
+// ── 彙整單（第三期，2026-07-11 新增）───────────────────────────────────────────
+// 只彙總 approved 的請購明細，同一週期＋期別＋公司＋料號冪等。
+
+export const getSummary = (params?: {
+  cycle_id?: number
+  period_label?: string
+  company?: string
+  vendor_id?: number
+  status?: string
+  department_id?: number
+}) => apiClient.get<CpSummary[]>(`${BASE}/summary`, { params })
+
+export const getVendorGroups = (params: { cycle_id: number; period_label: string; company?: string }) =>
+  apiClient.get<CpVendorGroup[]>(`${BASE}/summary/vendor-groups`, { params })
+
+// 2026-07-16 改版：拿掉舊版「輸入週期＋期別字串」的產生彙整方式（原本
+// generateSummary()／POST /summary/generate），改成「勾選請購單」——見
+// 後端 services/cycle_purchase_summary_service.py 開頭「第二次調整」說明。
+/** 待彙整請購單：全公司已關閉、尚未彙整的單（2026-09-25，彙整單頁第一個 TAB） */
+export const getPendingRequests = () =>
+  apiClient.get<CpPendingRequest[]>(`${BASE}/summary/pending-requests`)
+
+/** 產生彙整範圍內已彙整／已拋轉、因此不在可勾選清單的請購單（2026-09-25，說明用） */
+export const getExcludedRequests = (params: { cycle_id: number; company: string; year_month: string }) =>
+  apiClient.get<CpExcludedRequest[]>(`${BASE}/summary/excluded-requests`, { params })
+
+export const getEligibleRequests = (params: { cycle_id: number; company: string; year_month: string }) =>
+  apiClient.get<CpEligibleRequest[]>(`${BASE}/summary/eligible-requests`, { params })
+
+export const generateSummaryFromRequests = (data: { request_ids: number[] }) =>
+  apiClient.post<CpSummary[]>(`${BASE}/summary/generate-from-requests`, data)
+
+// 2026-08-09 新增：「退回請購單」——把已彙整的請購單退回未彙整狀態，後端會
+// 依剩下仍為已彙整的請購單重算受影響的草稿彙整列（不是反向扣減，見後端
+// services/cycle_purchase_summary_service.py 開頭「第四次調整」說明）。
+export const getSummarizedRequests = (params: { cycle_id: number; company: string; year_month: string }) =>
+  apiClient.get<CpSummarizedRequest[]>(`${BASE}/summary/summarized-requests`, { params })
+
+export const unsummarizeRequest = (data: { request_id: number; reason: string }) =>
+  apiClient.post<CpUnsummarizeResult>(`${BASE}/summary/unsummarize-request`, data)
+
+export const updateSummaryItem = (id: number, data: { adjusted_qty?: number; adjust_reason?: string | null }) =>
+  apiClient.put<CpSummary>(`${BASE}/summary/${id}`, data)
+
+export const convertToPo = (data: { cycle_id: number; period_label: string; company: string; vendor_id: number }) =>
+  apiClient.post<CpPODetail>(`${BASE}/summary/convert-to-po`, data)
+
+// 2026-07-16 新增：匯總請購單畫面 — 依料號分組展開部門別＋小計
+export const getDepartmentBreakdown = (params: { cycle_id: number; period_label: string; company?: string }) =>
+  apiClient.get<CpDepartmentBreakdown[]>(`${BASE}/summary/department-breakdown`, { params })
+
+// 2026-09-16 新增：「已彙整 Ragic 請購單」TAB。
+// ⚠️ 一列＝**一張 Ragic 單據**（不是一個彙整列），日期篩選打在「拋轉時間」而不是
+//    期別——使用者問的是「這段時間我推了什麼」，8 月的期別可能 9 月才推。
+export const getRagicPushedDocs = (params?: {
+  start?: string; end?: string; cycle_id?: number; company?: string
+}) => apiClient.get<CpRagicPushedDoc[]>(`${BASE}/summary/ragic-pushed`, { params })
+
+// 已拋轉資料的最早／最晚拋轉日，給 StandardRangePicker 當 anchor 用。
+// ⚠️ CLAUDE.md §8.2：快捷要以「資料最後一天」為基準，不是今天。
+export const getRagicPushedDateRange = () =>
+  apiClient.get<{ start: string | null; end: string | null }>(`${BASE}/summary/ragic-pushed/date-range`)
+
+// 2026-09-15 新增：Ragic「週採匯總請購單」表單連結。
+// 網址由後端依 config 組出來，**前端不要自己拼**——表單位置的唯一真實來源在
+// backend/app/core/config.py 的 RAGIC_CP_SUMMARY_*。
+export const getRagicSummaryLink = () =>
+  apiClient.get<{ url: string; sheet_label: string; enabled: boolean }>(`${BASE}/summary/ragic-link`)
+
+// 2026-07-16 新增：拋轉到 Ragic「週採匯總請購單」。
+// ⚠️ 2026-09-15 起是**真的寫入 Ragic**，而且**依廠商拆單**：一次動作會產生多張
+//    Ragic 單（一家廠商一張），共用同一個 batch_no。回傳的 documents 是各張單的
+//    採購編號。**部分成功也是 200**。
+export const pushSummaryToRagic = (data: { cycle_id: number; period_label: string; company: string }) =>
+  apiClient.post<CpPushToRagicResult>(`${BASE}/summary/push-to-ragic`, data)
+
+// 2026-08-09 新增：取消拋轉。清掉該範圍的 Ragic 拋轉標記，可以重新拋轉，
+// 同時解開「已拋轉就不能退回請購單」的限制。
+export const cancelRagicPush = (data: {
+  cycle_id: number; period_label: string; company: string; reason: string
+}) => apiClient.post<CpCancelRagicPushResult>(`${BASE}/summary/cancel-ragic-push`, data)
+
+// ── 採購單（第三期，2026-07-11 新增）───────────────────────────────────────────
+// 一張採購單＝一個公司＋一個供應商（同一週期＋期別內），由「轉採購單」動作產生。
+
+export const getPos = (params?: {
+  cycle_id?: number
+  period_label?: string
+  company?: string
+  vendor_id?: number
+  status?: string
+}) => apiClient.get<CpPO[]>(`${BASE}/pos`, { params })
+
+export const getPo = (id: number) =>
+  apiClient.get<CpPODetail>(`${BASE}/pos/${id}`)
+
+export const updatePo = (id: number, data: { expected_date?: string | null; notes?: string | null }) =>
+  apiClient.put<CpPO>(`${BASE}/pos/${id}`, data)
+
+// 2026-08-09：退回彙整單。與 setPoStatus(id,'cancelled') 是**兩個不同動作**——
+// 取消只把單標成 cancelled、彙整列維持鎖定；退回會把彙整列解鎖回 draft，
+// 讓買家重新調整後再轉一張新單（舊單保留為已取消供追溯）。
+export const revertPoToSummary = (id: number, data: { reason: string }) =>
+  apiClient.post<CpRevertPoResult>(`${BASE}/pos/${id}/revert-to-summary`, data)
+
+export const setPoStatus = (id: number, status: 'issued' | 'cancelled') =>
+  apiClient.post<CpPO>(`${BASE}/pos/${id}/status`, { status })
+
+// ── 驗收單（第四期，2026-07-11 新增）───────────────────────────────────────────
+// 一張採購單可以分好幾次驗收（部分到貨）。送出後系統自動判定 completed／
+// discrepancy，並重算對應採購單狀態（issued -> partial_received -> received）。
+
+export const getReceivingList = (params?: { po_id?: number; status?: string; company?: string }) =>
+  apiClient.get<CpReceiving[]>(`${BASE}/receiving`, { params })
+
+export const getReceiving = (id: number) =>
+  apiClient.get<CpReceivingDetail>(`${BASE}/receiving/${id}`)
+
+export const createReceiving = (data: { po_id: number; received_date: string; notes?: string | null }) =>
+  apiClient.post<CpReceiving>(`${BASE}/receiving`, data)
+
+export const getReceivableItems = (receivingId: number) =>
+  apiClient.get<CpReceivableItem[]>(`${BASE}/receiving/${receivingId}/receivable-items`)
+
+export const upsertReceivingItem = (
+  receivingId: number,
+  data: { po_item_id: number; received_qty: number; is_final_for_item?: boolean; variance_reason?: string | null },
+) => apiClient.post<CpReceivingItem>(`${BASE}/receiving/${receivingId}/items`, data)
+
+export const deleteReceivingItem = (receivingId: number, receivingItemId: number) =>
+  apiClient.delete(`${BASE}/receiving/${receivingId}/items/${receivingItemId}`)
+
+export const submitReceiving = (id: number) =>
+  apiClient.post<CpReceiving>(`${BASE}/receiving/${id}/submit`)
+
+export const getReceivingReport = (params?: {
+  date_from?: string
+  date_to?: string
+  company?: string
+  vendor_id?: number
+}) => apiClient.get<CpReceivingReportRow[]>(`${BASE}/receiving/report`, { params })
+
+// ── 請款單（第五期，2026-07-11 新增）───────────────────────────────────────────
+// 一張採購單可以有多張請款單（例如分期付款）；一張驗收單只能被一張請款單涵蓋。
+// 建立時系統自動試算費用分攤明細，草稿狀態可調整。狀態機：draft -> submitted
+// -> paying -> paid（只能依序推進）。
+
+export const getPayments = (params?: { po_id?: number; status?: string; company?: string }) =>
+  apiClient.get<CpPayment[]>(`${BASE}/payments`, { params })
+
+export const getPayableReceivings = (poId: number) =>
+  apiClient.get<CpPayableReceiving[]>(`${BASE}/payments/payable-receivings`, { params: { po_id: poId } })
+
+export const getPayment = (id: number) =>
+  apiClient.get<CpPaymentDetail>(`${BASE}/payments/${id}`)
+
+export const createPayment = (data: {
+  po_id: number
+  receiving_ids: number[]
+  invoice_no: string
+  invoice_date: string
+  invoice_amount: number
+  notes?: string | null
+}) => apiClient.post<CpPayment>(`${BASE}/payments`, data)
+
+export const updatePayment = (
+  id: number,
+  data: {
+    invoice_no?: string
+    invoice_date?: string
+    invoice_amount?: number
+    notes?: string | null
+    amount_diff_reason?: string | null
+  },
+) => apiClient.put<CpPayment>(`${BASE}/payments/${id}`, data)
+
+export const updateAllocationItem = (
+  paymentId: number,
+  allocationId: number,
+  data: { allocated_amount: number; adjust_reason?: string | null },
+) => apiClient.put<CpPaymentAllocation>(`${BASE}/payments/${paymentId}/allocations/${allocationId}`, data)
+
+export const submitPayment = (id: number) =>
+  apiClient.post<CpPayment>(`${BASE}/payments/${id}/submit`)
+
+export const setPaymentStatus = (id: number, status: 'paying' | 'paid') =>
+  apiClient.post<CpPayment>(`${BASE}/payments/${id}/status`, { status })
+
+// ── 異常稽核紀錄（第五期，2026-07-11 新增）─────────────────────────────────────
+// 系統內部自動寫入（驗收差異／請款差異），append-only，前端只做查詢。
+
+export const getAuditLog = (params?: {
+  document_type?: string
+  event_type?: string
+  date_from?: string
+  date_to?: string
+}) => apiClient.get<CpAuditLog[]>(`${BASE}/audit-log`, { params })
+
+// ── 料號主檔「供應商資料回填」（2026-09-30）──────────────────────────────────
+// 同步會依序跑 Ragic→合約廠商、合約廠商→週採供應商兩段同步再抓 Ragic，
+// 超過預設 30 秒很正常，timeout 放寬到 3 分鐘。
+export const syncVendorBackfill = () =>
+  apiClient.post<CpBackfillPreview>(`${BASE}/items/vendor-backfill/sync`, null, { timeout: 180_000 })
+
+export const applyVendorBackfill = (decisions: { vendor_id: number; ragic_id: string }[]) =>
+  apiClient.post<CpBackfillApplyResult>(`${BASE}/items/vendor-backfill/apply`, { decisions })

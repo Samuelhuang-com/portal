@@ -1,0 +1,2517 @@
+"""
+全棟例行維護 API Router
+Prefix: /api/v1/mall/full-building-maintenance
+
+端點：
+  POST /sync                         — 手動從 Ragic 同步
+  GET  /batches                      — 批次清單（年份篩選）
+  GET  /batches/{batch_id}           — 單筆批次 + 所有項目 + KPI
+  GET  /batches/{batch_id}/kpi       — 批次 KPI 統計
+  GET  /items                        — 所有項目跨批次查詢
+  GET  /stats                        — 全站統計（Dashboard 資料來源）
+  GET  /items/task-history           — 依項目名稱查詢近 N 個月執行歷史
+  GET  /items/{item_ragic_id}/worklogs — 單一項目維修記錄明細（Sheet28 巢狀子表格，2026-07-13 新增）
+  GET  /debug/ragic-raw              — 除錯：顯示 Ragic Sheet 21 原始欄位
+"""
+import json
+from calendar import monthrange
+from datetime import date, datetime, timezone
+from typing import Optional, List
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi.concurrency import run_in_threadpool
+from pydantic import BaseModel
+from sqlalchemy.orm import Session
+
+from app.core.database import get_db
+from app.dependencies import get_current_user, require_roles
+from app.models.full_building_maintenance import FullBldgPMBatch, FullBldgPMItem, FullBldgPMItemWorklog
+from app.models.full_bldg_pm_schedule import FullBldgPMSchedule
+from app.schemas.full_bldg_periodic_maintenance import (
+    FullBldgPMScheduleAnnualMatrix, FullBldgPMScheduleMatrixRow,
+    FullBldgPMScheduleMatrixCell, FullBldgPMScheduleMatrixEntry,
+    FullBldgPMScheduleOut, FullBldgPMScheduleKPI,
+    FullBldgPMScheduleGenerateResult, FullBldgPMScheduleUpdate,
+)
+from app.schemas.periodic_maintenance import (
+    PMBatchOut, PMItemOut, PMBatchKPI, PMBatchDetail,
+    CategoryStat, StatusDistItem, PMStats, PMItemUpdate,
+    PMPeriodStats, PMSubPeriodBreakdown, PMIncompleteItem,
+    PMYearMatrix, PMYearMatrixMonth,
+)
+from app.services.full_building_maintenance_sync import (
+    sync_from_ragic, FULL_BLDG_PM_SERVER_URL, FULL_BLDG_PM_ACCOUNT, FULL_BLDG_PM_JOURNAL_PATH,
+)
+from app.services.ragic_adapter import RagicAdapter
+from app.services.ragic_verify_utils import (
+    read_portal_count_and_last_sync, read_portal_ragic_ids,
+    fetch_ragic_count, fetch_ragic_url_map_single,
+    build_verify_count_response, build_verify_diff_response,
+)
+from app.core.config import settings
+
+router = APIRouter(dependencies=[Depends(get_current_user)])
+
+_RAGIC_BASE = "https://ap12.ragic.com/soutlet001/periodic-maintenance/21"
+# 2026-10-01：項目層級連結改指向 Sheet28 項目本身（item.ragic_id 自 2026-07-13 起即為 Sheet28 record ID）；
+# 批次層級連結（batch.ragic_id）仍用上面的 Sheet21 主表。
+_RAGIC_ITEM_BASE = "https://ap12.ragic.com/soutlet001/periodic-maintenance/28"
+
+# ── 狀態色彩對照 ──────────────────────────────────────────────────────────────
+STATUS_COLORS = {
+    "completed":         "#52C41A",
+    "in_progress":       "#4BA8E8",
+    "scheduled":         "#FAAD14",
+    "unscheduled":       "#FF4D4F",
+    "overdue":           "#C0392B",
+    "non_current_month": "#999999",
+}
+
+STATUS_LABELS = {
+    "completed":         "已完成",
+    "in_progress":       "進行中",
+    "scheduled":         "已排定",
+    "unscheduled":       "未排定",
+    "overdue":           "逾期",
+    "non_current_month": "非本月",
+}
+
+# ── 頻率分類 mapping ─────────────────────────────────────────────────────────
+# 分類原則（2026-08-03 業主決議）：
+#   monthly   = 明確的「月」頻率
+#   yearly    = 明確的「年」頻率
+#   quarterly = 收容區 —— 除月／年以外的所有頻率（季、雙月、半年、未知值、空值）
+# 採 catch-all 寫法，未來 Ragic 若新增頻率值不會從三個統計 TAB 中整個消失。
+_FREQ_MONTHLY_KEYWORDS: set[str] = {"月", "每月", "月維護", "Monthly", "monthly"}
+_FREQ_YEARLY_KEYWORDS:  set[str] = {"年", "每年", "年維護", "Annual", "annual", "Yearly", "yearly"}
+
+
+def _classify_frequency(frequency: str) -> str:
+    """
+    將 Ragic 頻率字串分類為 monthly / quarterly / yearly。
+    月 → monthly；年 → yearly；其餘（季、雙月、半年、未知值、空值）→ quarterly。
+    """
+    freq = (frequency or "").strip()
+    if freq in _FREQ_MONTHLY_KEYWORDS:
+        return "monthly"
+    if freq in _FREQ_YEARLY_KEYWORDS:
+        return "yearly"
+    return "quarterly"
+
+
+def _freq_match(frequency: str, frequency_type: Optional[str]) -> bool:
+    """回傳 True 表示該 item 的頻率符合篩選條件（None = 不篩選）"""
+    if not frequency_type:
+        return True
+    return _classify_frequency(frequency) == frequency_type
+
+
+def _infer_freq_type_from_exec_months(exec_months: list) -> Optional[str]:
+    """
+    當 frequency 欄位為空時，依 exec_months 數量推算頻率類型。
+    推算規則與 _classify_frequency 的分類原則對齊：
+      >= 10 個月 → monthly  （等同每月）
+      == 1  個月 → yearly   （等同每年）
+      2-9   個月 → quarterly（雙月／季／半年等，一律歸收容區）
+      0     個月 → None     （無任何資訊，由呼叫端決定）
+    """
+    n = len(exec_months)
+    if n >= 10: return "monthly"
+    if n == 1:  return "yearly"
+    if n >= 2:  return "quarterly"
+    return None
+
+
+def _freq_match_with_fallback(
+    frequency: str,
+    frequency_type: Optional[str],
+    exec_months: list,
+) -> bool:
+    """
+    同 _freq_match，但當 frequency 欄位為空時改用 exec_months 推算頻率類型。
+    frequency 與 exec_months 皆空時歸入 quarterly 收容區，確保不會漏算。
+    """
+    if not frequency_type:
+        return True
+    freq = (frequency or "").strip()
+    if freq:
+        return _classify_frequency(freq) == frequency_type
+    # frequency 為空 → 從 exec_months 數量推算；仍推不出來就歸收容區
+    inferred = _infer_freq_type_from_exec_months(exec_months) or "quarterly"
+    return inferred == frequency_type
+
+
+# ── 排程邏輯輔助函式（與 mall PM 對齊）────────────────────────────────────────
+
+_FREQ_INTERVAL: dict[str, int] = {
+    # 月頻率（interval=1，每月都執行）
+    "月": 1, "每月": 1, "月維護": 1, "Monthly": 1, "monthly": 1,
+    # 雙月
+    "雙月": 2, "每雙月": 2,
+    # 季頻率（interval=3）
+    "季": 3, "每季": 3, "季維護": 3, "Quarterly": 3, "quarterly": 3,
+    # 半年
+    "半年": 6, "每半年": 6,
+    # 年頻率（interval=12）
+    "年": 12, "每年": 12, "年維護": 12, "Annual": 12, "annual": 12, "Yearly": 12, "yearly": 12,
+}
+
+
+def _should_schedule_by_frequency(frequency: str, month: int) -> bool:
+    """
+    純依頻率字串與月份判斷「本月是否應執行」（exec_months 為空時使用）。
+    月 → 永遠 True；其他 → (month - 1) % interval == 0（從 1 月起算）。
+    """
+    interval = _FREQ_INTERVAL.get(frequency.strip())
+    if interval is None:
+        return False
+    if interval == 1:
+        return True
+    return (month - 1) % interval == 0
+
+
+def _should_schedule(item: FullBldgPMItem, year: int, month: int) -> bool:
+    """判斷指定 year/month 是否應為此項目執行保養。"""
+    freq = (item.frequency or "").strip()
+    if not freq:
+        return False
+    try:
+        exec_months: list[int] = json.loads(item.exec_months_json or "[]")
+    except Exception:
+        exec_months = []
+    if exec_months:
+        return month in exec_months
+    return _should_schedule_by_frequency(freq, month)
+
+
+def _latest_batch_ids_per_month(db: Session) -> set:
+    """每個 period_month 只保留 ragic_updated_at 最新的批次，回傳有效 ragic_id 集合。"""
+    batches = db.query(FullBldgPMBatch).all()
+    latest: dict[str, FullBldgPMBatch] = {}
+    for b in batches:
+        key = b.period_month
+        existing = latest.get(key)
+        if existing is None:
+            latest[key] = b
+        else:
+            b_ts = b.ragic_updated_at or ""
+            e_ts = existing.ragic_updated_at or ""
+            if b_ts > e_ts:
+                latest[key] = b
+    return {b.ragic_id for b in latest.values()}
+
+
+# ── 業務邏輯輔助函式 ──────────────────────────────────────────────────────────
+
+_TIME_FMTS = ["%Y/%m/%d %H:%M:%S", "%Y/%m/%d %H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"]
+
+def _time_diff_minutes(start: str, end: str) -> int:
+    """計算 start_time ~ end_time 差值（分鐘），解析失敗回傳 0。"""
+    if not start or not end:
+        return 0
+    for fmt in _TIME_FMTS:
+        try:
+            st = datetime.strptime(start.strip(), fmt)
+            et = datetime.strptime(end.strip(), fmt)
+            return max(0, int((et - st).total_seconds() / 60))
+        except ValueError:
+            continue
+    return 0
+
+
+def _calc_status(item: FullBldgPMItem, check_month: int) -> str:
+    exec_months: list[int] = []
+    try:
+        exec_months = json.loads(item.exec_months_json or "[]")
+    except Exception:
+        pass
+
+    if exec_months and check_month not in exec_months:
+        return "non_current_month"
+    if item.start_time and item.end_time:
+        return "completed"
+    if item.start_time:
+        return "in_progress"
+    if item.scheduled_date:
+        try:
+            today = date.today()
+            scheduled = datetime.strptime(
+                f"{today.year}/{item.scheduled_date}", "%Y/%m/%d"
+            ).date()
+            if scheduled < today:
+                return "overdue"
+        except Exception:
+            pass
+        return "scheduled"
+    return "unscheduled"
+
+
+def _item_to_out(item: FullBldgPMItem, check_month: int) -> PMItemOut:
+    return PMItemOut(
+        ragic_id          = item.ragic_id,
+        batch_ragic_id    = item.batch_ragic_id,
+        seq_no            = item.seq_no,
+        category          = item.category,
+        frequency         = item.frequency,
+        exec_months_raw   = item.exec_months_raw,
+        exec_months_json  = item.exec_months_json,
+        task_name         = item.task_name,
+        location          = item.location,
+        estimated_minutes = item.estimated_minutes,
+        scheduled_date    = item.scheduled_date,
+        scheduler_name    = item.scheduler_name,
+        executor_name     = item.executor_name,
+        start_time        = item.start_time,
+        end_time          = item.end_time,
+        is_completed      = bool(item.start_time and item.end_time),
+        result_note       = item.result_note,
+        abnormal_flag     = item.abnormal_flag,
+        abnormal_note     = item.abnormal_note,
+        portal_edited_at  = item.portal_edited_at,
+        synced_at         = item.synced_at,
+        status            = _calc_status(item, check_month),
+        ragic_url         = f"{_RAGIC_ITEM_BASE}/{item.ragic_id}" if item.ragic_id else "",
+        repair_hours      = item.repair_hours,
+    )
+
+
+def _calc_kpi(items: list[FullBldgPMItem], check_month: int) -> PMBatchKPI:
+    statuses = [_calc_status(it, check_month) for it in items]
+    current_items = [(it, s) for it, s in zip(items, statuses) if s != "non_current_month"]
+
+    total_all   = len(items)
+    completed   = sum(1 for it in items if it.start_time and it.end_time)
+    in_progress = sum(1 for _, s in current_items if s == "in_progress")
+    scheduled   = sum(1 for _, s in current_items if s == "scheduled")
+    unscheduled = sum(1 for _, s in current_items if s == "unscheduled")
+    overdue     = sum(1 for _, s in current_items if s == "overdue")
+    # 2026-07-14 修正（比照 mall_periodic_maintenance.py 同日修正）：abnormal 原本算
+    # 「整批全部項目」，跟 overdue/scheduled/unscheduled/in_progress 這幾個都只算
+    # 「本月項目」（current_items）的口徑不一致，改為比照這幾個欄位只算本月項目。
+    abnormal    = sum(1 for it, _ in current_items if it.abnormal_flag)
+    planned     = sum(it.estimated_minutes for it, s in current_items)
+    # 2026-07-13 修正：repair_hours（來源 Sheet28「維修工時」）是 Ragic 端逐筆維修記錄
+    # 實際工時的加總；start_time/end_time 則是 Portal 這邊從巢狀子表格「取最早開始、
+    # 最晚結束」推算出來的時間跨度。同一保養項目若有多筆不連續的維修記錄（例如
+    # 15:54-15:55 做一筆、17:00-17:04 又做一筆），時間跨度會把中間的空檔也算進去，
+    # 大幅高估實際工時。有 repair_hours 時一律以其為準，只有沒有 repair_hours
+    # （例如舊資料或極端情況）才退回時間跨度估算。
+    actual = sum(
+        (round(it.repair_hours * 60) if it.repair_hours is not None
+         else _time_diff_minutes(it.start_time, it.end_time))
+        for it in items if it.start_time and it.end_time
+    )
+    rate = round(completed / total_all * 100, 1) if total_all > 0 else 0.0
+
+    return PMBatchKPI(
+        total               = len(items),
+        current_month_total = len(current_items),
+        completed           = completed,
+        in_progress         = in_progress,
+        scheduled           = scheduled,
+        unscheduled         = unscheduled,
+        overdue             = overdue,
+        abnormal            = abnormal,
+        completion_rate     = rate,
+        planned_minutes     = planned,
+        actual_minutes      = actual,
+    )
+
+
+def _calc_category_stats(items: list[FullBldgPMItem], check_month: int) -> list[CategoryStat]:
+    from collections import defaultdict
+    cats: dict[str, dict] = defaultdict(lambda: {"total": 0, "completed": 0})
+    for it in items:
+        s = _calc_status(it, check_month)
+        if s == "non_current_month":
+            continue
+        cat = it.category or "其他"
+        cats[cat]["total"] += 1
+        if s == "completed":
+            cats[cat]["completed"] += 1
+    result = []
+    for cat, counts in sorted(cats.items()):
+        t = counts["total"]
+        c = counts["completed"]
+        result.append(CategoryStat(
+            category  = cat,
+            total     = t,
+            completed = c,
+            rate      = round(c / t * 100, 1) if t > 0 else 0.0,
+        ))
+    return result
+
+
+def _get_check_month(period_month: str) -> int:
+    try:
+        return int(period_month.split("/")[1])
+    except Exception:
+        return date.today().month
+
+
+# ── 週期統計輔助函式 ──────────────────────────────────────────────────────────
+
+_MONTH_LABELS_ZH = ["1月","2月","3月","4月","5月","6月",
+                    "7月","8月","9月","10月","11月","12月"]
+
+
+def _reconstruct_full_date(scheduled_date: str, period_month: str) -> "date | None":
+    """
+    'MM/DD' + 'YYYY/MM' → date(YYYY, MM, DD)
+    年份從 period_month 取，月份以 scheduled_date 為準。
+    空值或解析失敗回傳 None。
+    """
+    if not scheduled_date:
+        return None
+    try:
+        parts = scheduled_date.strip().split("/")
+        if len(parts) != 2:
+            return None
+        month = int(parts[0])
+        day   = int(parts[1])
+        year  = int(period_month.strip().split("/")[0])
+        return date(year, month, day)
+    except Exception:
+        return None
+
+
+def _parse_end_date(end_time: str) -> "date | None":
+    """
+    'YYYY/MM/DD HH:MM:SS' → date(YYYY, MM, DD)
+    解析失敗回傳 None。
+    """
+    if not end_time:
+        return None
+    for fmt in _TIME_FMTS:
+        try:
+            return datetime.strptime(end_time.strip(), fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _get_period_bounds(
+    period_type: str,
+    year: int,
+    month: Optional[int] = None,
+    quarter: Optional[int] = None,
+) -> "tuple[date, date, date]":
+    """
+    回傳 (period_start, period_end, prev_period_end)
+
+    period_type = "month"   → 月區間
+    period_type = "quarter" → 季區間（quarter 1-4）
+    period_type = "year"    → 年區間
+    """
+    today = date.today()
+
+    if period_type == "month":
+        m = month or today.month
+        _, last_day = monthrange(year, m)
+        p_start = date(year, m, 1)
+        p_end   = date(year, m, last_day)
+        if m == 1:
+            _, prev_last = monthrange(year - 1, 12)
+            prev_end = date(year - 1, 12, prev_last)
+        else:
+            _, prev_last = monthrange(year, m - 1)
+            prev_end = date(year, m - 1, prev_last)
+
+    elif period_type == "quarter":
+        q = quarter or ((today.month - 1) // 3 + 1)
+        q_start_m = (q - 1) * 3 + 1
+        q_end_m   = q * 3
+        _, last_day = monthrange(year, q_end_m)
+        p_start = date(year, q_start_m, 1)
+        p_end   = date(year, q_end_m, last_day)
+        if q == 1:
+            _, prev_last = monthrange(year - 1, 12)
+            prev_end = date(year - 1, 12, prev_last)
+        else:
+            prev_q_end_m = (q - 1) * 3
+            _, prev_last = monthrange(year, prev_q_end_m)
+            prev_end = date(year, prev_q_end_m, prev_last)
+
+    else:  # year
+        p_start  = date(year, 1, 1)
+        p_end    = date(year, 12, 31)
+        prev_end = date(year - 1, 12, 31)
+
+    return p_start, p_end, prev_end
+
+
+def _calc_period_stats_core(
+    db: Session,
+    period_start: date,
+    period_end: date,
+    prev_period_end: date,
+    frequency_type: Optional[str] = None,
+) -> dict:
+    """
+    共用統計核心。
+    回傳 dict 含：
+      prev_carry_over, prev_resolved_in_period, carry_over_rate,
+      period_total, period_completed, period_rate,
+      incomplete_items, period_items_list（供子期間分布使用）
+    """
+    # ── 只取每月最新批次（避免重複計算）──────────────────────────────────────
+    valid_batch_ids = _latest_batch_ids_per_month(db)
+    rows = (
+        db.query(FullBldgPMItem, FullBldgPMBatch)
+        .join(
+            FullBldgPMBatch,
+            FullBldgPMItem.batch_ragic_id == FullBldgPMBatch.ragic_id,
+        )
+        .filter(FullBldgPMBatch.ragic_id.in_(valid_batch_ids))
+        .all()
+    )
+
+    prev_carry_over_list: list[dict] = []
+    period_items_list:    list[dict] = []
+
+    for item, batch in rows:
+        # ── 解析批次年月 ──
+        try:
+            batch_year  = int(batch.period_month.split("/")[0])
+            batch_month = int(batch.period_month.split("/")[1])
+        except Exception:
+            continue
+
+        # ── 解析 exec_months（用於頻率推算，不用於執行月份過濾）──
+        try:
+            exec_months: list[int] = json.loads(item.exec_months_json or "[]")
+        except Exception:
+            exec_months = []
+
+        # ── 頻率篩選（優先 frequency 欄位，為空時從 exec_months 推算）──
+        if not _freq_match_with_fallback(item.frequency, frequency_type, exec_months):
+            continue
+
+        # ── period_total 以「批次月份」為準，不過濾 exec_months ──
+        # 原因：exec_months 是 Ragic 排程輔助欄位，不代表該月不需執行；
+        # 「本期應完成總數」應等於當月批次中頻率匹配的全部項目數（與保養項目清單一致）
+
+        # ── full_date 以批次月份 1 號為基準（決定期間歸屬）──
+        # scheduled_date 是「排定日期」（計劃），不應改變項目所屬的統計期間。
+        # 判斷是否完成依 end_time，不依 scheduled_date。
+        full_date = date(batch_year, batch_month, 1)
+
+        end_date = _parse_end_date(item.end_time)
+        # 執行完成判斷：只看 end_time 是否有值（同 mall PM）
+        is_done  = bool(item.end_time and item.end_time.strip())
+
+        entry = {
+            "item":      item,
+            "batch":     batch,
+            "full_date": full_date,
+            "end_date":  end_date,
+            "is_done":   is_done,
+        }
+
+        # ── 上期累計未完成 ──
+        if full_date <= prev_period_end:
+            done_before = (
+                is_done
+                and end_date is not None
+                and end_date <= prev_period_end
+            )
+            if not done_before:
+                prev_carry_over_list.append(entry)
+
+        # ── 本期項目 ──
+        if period_start <= full_date <= period_end:
+            period_items_list.append(entry)
+
+    # 上期未完成，本期結案
+    prev_resolved_list = [
+        x for x in prev_carry_over_list
+        if x["end_date"] is not None
+        and period_start <= x["end_date"] <= period_end
+    ]
+
+    # 本期完成
+    period_completed_list = [x for x in period_items_list if x["is_done"]]
+
+    # 未完成事項（本期未完成的所有項目，含無備註者）
+    incomplete_items = [
+        PMIncompleteItem(
+            task_name           = x["item"].task_name,
+            category            = x["item"].category or "未歸類",
+            scheduled_date_full = x["full_date"].strftime("%Y/%m/%d"),
+            result_note         = x["item"].result_note or "",
+            frequency           = x["item"].frequency,
+        )
+        for x in period_items_list
+        if not x["is_done"]
+    ]
+
+    n_carry    = len(prev_carry_over_list)
+    n_resolved = len(prev_resolved_list)
+    n_total    = len(period_items_list)
+    n_done     = len(period_completed_list)
+
+    return {
+        "prev_carry_over":         n_carry,
+        "prev_resolved_in_period": n_resolved,
+        "carry_over_rate":         round(n_resolved / n_carry * 100, 1) if n_carry > 0 else None,
+        "period_total":            n_total,
+        "period_completed":        n_done,
+        "period_rate":             round(n_done / n_total * 100, 1) if n_total > 0 else None,
+        "incomplete_items":        incomplete_items,
+        "period_items_list":       period_items_list,
+    }
+
+
+def _calc_sub_breakdown(
+    period_type: str,
+    period_start: date,
+    period_items_list: list[dict],
+) -> list[PMSubPeriodBreakdown]:
+    """
+    季統計 → 3 個月分布
+    年統計 → Q1-Q4 分布
+    月統計 → 空清單
+    """
+    if period_type == "month":
+        return []
+
+    breakdown: list[PMSubPeriodBreakdown] = []
+    year = period_start.year
+
+    if period_type == "quarter":
+        start_m = period_start.month
+        for i in range(3):
+            m = start_m + i
+            _, last_day = monthrange(year, m)
+            m_start = date(year, m, 1)
+            m_end   = date(year, m, last_day)
+            items_m = [x for x in period_items_list if m_start <= x["full_date"] <= m_end]
+            total     = len(items_m)
+            completed = sum(1 for x in items_m if x["is_done"])
+            breakdown.append(PMSubPeriodBreakdown(
+                label     = f"{m}月",
+                total     = total,
+                completed = completed,
+                rate      = round(completed / total * 100, 1) if total > 0 else None,
+            ))
+
+    elif period_type == "year":
+        for q in range(1, 5):
+            q_start_m = (q - 1) * 3 + 1
+            q_end_m   = q * 3
+            _, last_day = monthrange(year, q_end_m)
+            q_start = date(year, q_start_m, 1)
+            q_end   = date(year, q_end_m, last_day)
+            items_q = [x for x in period_items_list if q_start <= x["full_date"] <= q_end]
+            total     = len(items_q)
+            completed = sum(1 for x in items_q if x["is_done"])
+            breakdown.append(PMSubPeriodBreakdown(
+                label     = f"Q{q}",
+                total     = total,
+                completed = completed,
+                rate      = round(completed / total * 100, 1) if total > 0 else None,
+            ))
+
+    return breakdown
+
+
+def _calc_year_matrix(db: Session, year: int, frequency_type: Optional[str] = None) -> PMYearMatrix:
+    """
+    全年 12 個月矩陣統計。
+    一次 JOIN 查詢撈全部有效行，再用純 Python 按月分組計算。
+    """
+    # 只取每月最新批次（與 _calc_period_stats_core 一致）
+    valid_batch_ids = _latest_batch_ids_per_month(db)
+    rows = (
+        db.query(FullBldgPMItem, FullBldgPMBatch)
+        .join(
+            FullBldgPMBatch,
+            FullBldgPMItem.batch_ragic_id == FullBldgPMBatch.ragic_id,
+        )
+        .filter(
+            FullBldgPMBatch.ragic_id.in_(valid_batch_ids),
+            FullBldgPMBatch.period_month.like(f"{year}/%"),  # 限制在指定年份，避免舊年資料污染
+        )
+        .all()
+    )
+
+    # 預處理：保留有效行（與 _calc_period_stats_core 對齊）
+    processed: list[dict] = []
+    for item, batch in rows:
+        try:
+            exec_months = json.loads(item.exec_months_json or "[]")
+        except Exception:
+            exec_months = []
+
+        # 頻率篩選：優先 frequency 欄位，空時從 exec_months 推算
+        if not _freq_match_with_fallback(item.frequency, frequency_type, exec_months):
+            continue
+
+        try:
+            batch_year  = int(batch.period_month.split("/")[0])
+            batch_month = int(batch.period_month.split("/")[1])
+        except Exception:
+            continue
+
+        # period_total 以「批次月份」為準，不過濾 exec_months
+        # 保養項目清單 18 筆 = 全部月頻率項目，不論 exec_months 是否包含當月
+
+        # full_date 以批次月份 1 號為基準（決定期間歸屬，不讓 scheduled_date 改變月份）
+        full_date = date(batch_year, batch_month, 1)
+
+        end_date = _parse_end_date(item.end_time)
+        is_done  = bool(item.end_time and item.end_time.strip())  # 同 mall PM：只看 end_time
+        processed.append({
+            "item":      item,
+            "full_date": full_date,
+            "end_date":  end_date,
+            "is_done":   is_done,
+        })
+
+    # 逐月計算
+    month_results: list[PMYearMatrixMonth] = []
+    for m in range(1, 13):
+        p_start, p_end, prev_end = _get_period_bounds("month", year, month=m)
+
+        prev_carry_over_list: list[dict] = []
+        period_items_list:    list[dict] = []
+
+        for e in processed:
+            fd       = e["full_date"]
+            is_done  = e["is_done"]
+            end_date = e["end_date"]
+
+            if fd <= prev_end:
+                done_before = is_done and end_date is not None and end_date <= prev_end
+                if not done_before:
+                    prev_carry_over_list.append(e)
+
+            if p_start <= fd <= p_end:
+                period_items_list.append(e)
+
+        prev_resolved_list = [
+            x for x in prev_carry_over_list
+            if x["end_date"] is not None
+            and p_start <= x["end_date"] <= p_end
+        ]
+        period_completed_list = [x for x in period_items_list if x["is_done"]]
+
+        # 未完成備註（所有未完成項目；有備註才顯示備註）
+        notes_parts = [
+            f"{x['item'].task_name}" + (f"：{x['item'].result_note}" if x["item"].result_note and x["item"].result_note.strip() else "")
+            for x in period_items_list
+            if not x["is_done"]
+        ]
+
+        n_carry    = len(prev_carry_over_list)
+        n_resolved = len(prev_resolved_list)
+        n_total    = len(period_items_list)
+        n_done     = len(period_completed_list)
+
+        month_results.append(PMYearMatrixMonth(
+            month                   = m,
+            label                   = _MONTH_LABELS_ZH[m - 1],
+            prev_carry_over         = n_carry,
+            prev_resolved_in_period = n_resolved,
+            carry_over_rate         = round(n_resolved / n_carry * 100, 1) if n_carry > 0 else None,
+            period_total            = n_total,
+            period_completed        = n_done,
+            period_rate             = round(n_done / n_total * 100, 1) if n_total > 0 else None,
+            incomplete_notes        = "\n".join(notes_parts),
+        ))
+
+    return PMYearMatrix(year=year, months=month_results)
+
+
+def _batch_to_out(batch: FullBldgPMBatch) -> PMBatchOut:
+    return PMBatchOut(
+        ragic_id         = batch.ragic_id,
+        journal_no       = batch.journal_no,
+        journal_no_raw   = batch.journal_no_raw or "",
+        period_month     = batch.period_month,
+        ragic_created_at = batch.ragic_created_at,
+        ragic_updated_at = batch.ragic_updated_at,
+        ragic_url        = f"{_RAGIC_BASE}/{batch.ragic_id}" if batch.ragic_id else "",
+        synced_at        = batch.synced_at,
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# POST /sync
+# ══════════════════════════════════════════════════════════════════════════════
+@router.post("/sync", summary="從 Ragic 同步全棟例行維護資料（背景執行）", dependencies=[Depends(require_roles("system_admin", "module_manager"))])
+async def sync_full_building_maintenance(background_tasks: BackgroundTasks):
+    """手動觸發：Ragic → SQLite，立即回傳，不阻塞畫面"""
+    background_tasks.add_task(sync_from_ragic)
+    return {"status": "ok", "message": "同步已在背景啟動"}
+
+
+# ── /verify-count／/verify-diff ─────────────────────────────────────────────────
+# 注意：比對對象是 FullBldgPMBatch（full_bldg_pm_batch，主表，Sheet21 一對一），
+# 不是 FullBldgPMItem（項目明細，來自 Sheet28）。
+
+@router.get("/verify-count", summary="與 Ragic 數量比對（管理員）",
+            dependencies=[Depends(require_roles("system_admin"))])
+async def verify_count(db: Session = Depends(get_db)):
+    portal_count, last_synced_at = await read_portal_count_and_last_sync(
+        db, FullBldgPMBatch, "全棟例行維護"
+    )
+    try:
+        ragic_count = await fetch_ragic_count(
+            FULL_BLDG_PM_JOURNAL_PATH, FULL_BLDG_PM_SERVER_URL, FULL_BLDG_PM_ACCOUNT
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Ragic 連線失敗：{exc}")
+    return build_verify_count_response("全棟例行維護", portal_count, ragic_count, last_synced_at)
+
+
+@router.get("/verify-diff", summary="與 Ragic 明細差集比對（管理員）",
+            dependencies=[Depends(require_roles("system_admin"))])
+async def verify_diff(db: Session = Depends(get_db)):
+    try:
+        ragic_url_map = await fetch_ragic_url_map_single(
+            FULL_BLDG_PM_JOURNAL_PATH, FULL_BLDG_PM_SERVER_URL, FULL_BLDG_PM_ACCOUNT
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Ragic 連線失敗：{exc}")
+    portal_ids = await read_portal_ragic_ids(db, FullBldgPMBatch)
+    return build_verify_diff_response(ragic_url_map, portal_ids)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GET /batches
+# ══════════════════════════════════════════════════════════════════════════════
+@router.get("/batches", summary="取得全棟例行維護批次清單")
+def list_batches(
+    year: Optional[str] = Query(None, description="篩選年份，如 2026"),
+    db:   Session = Depends(get_db),
+):
+    q = db.query(FullBldgPMBatch)
+    if year:
+        q = q.filter(FullBldgPMBatch.period_month.like(f"{year}%"))
+    batches = q.order_by(FullBldgPMBatch.period_month.desc()).all()
+
+    result = []
+    for b in batches:
+        items = db.query(FullBldgPMItem).filter(
+            FullBldgPMItem.batch_ragic_id == b.ragic_id
+        ).all()
+        check_month = _get_check_month(b.period_month)
+        kpi = _calc_kpi(items, check_month)
+        result.append({
+            "batch": _batch_to_out(b).model_dump(),
+            "kpi":   kpi.model_dump(),
+        })
+    return result
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GET /batches/{batch_id}
+# ══════════════════════════════════════════════════════════════════════════════
+@router.get("/batches/{batch_id}", summary="取得單筆批次完整資料（含所有項目 + KPI）")
+def get_batch_detail(
+    batch_id:           str,
+    current_month_only: bool = Query(False),
+    category:           Optional[str] = Query(None),
+    status_filter:      Optional[str] = Query(None, alias="status"),
+    db:                 Session = Depends(get_db),
+):
+    batch = db.get(FullBldgPMBatch, batch_id)
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch not found")
+
+    items = db.query(FullBldgPMItem).filter(
+        FullBldgPMItem.batch_ragic_id == batch_id
+    ).order_by(FullBldgPMItem.seq_no).all()
+
+    check_month = _get_check_month(batch.period_month)
+    kpi  = _calc_kpi(items, check_month)
+    cats = _calc_category_stats(items, check_month)
+
+    filtered = []
+    for it in items:
+        s = _calc_status(it, check_month)
+        if current_month_only and s == "non_current_month":
+            continue
+        if category and it.category != category:
+            continue
+        if status_filter and s != status_filter:
+            continue
+        filtered.append(_item_to_out(it, check_month))
+
+    return PMBatchDetail(
+        batch      = _batch_to_out(batch),
+        kpi        = kpi,
+        items      = filtered,
+        categories = cats,
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GET /batches/{batch_id}/kpi
+# ══════════════════════════════════════════════════════════════════════════════
+@router.get("/batches/{batch_id}/kpi", summary="取得批次 KPI 統計")
+def get_batch_kpi(batch_id: str, db: Session = Depends(get_db)):
+    batch = db.get(FullBldgPMBatch, batch_id)
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch not found")
+    items = db.query(FullBldgPMItem).filter(
+        FullBldgPMItem.batch_ragic_id == batch_id
+    ).all()
+    check_month = _get_check_month(batch.period_month)
+    return _calc_kpi(items, check_month)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GET /items
+# ══════════════════════════════════════════════════════════════════════════════
+@router.get("/items", summary="跨批次查詢全棟例行維護項目")
+def list_items(
+    batch_id: Optional[str] = Query(None),
+    category: Optional[str] = Query(None),
+    status:   Optional[str] = Query(None),
+    month:    Optional[int] = Query(None, ge=1, le=12),
+    db:       Session = Depends(get_db),
+):
+    q = db.query(FullBldgPMItem)
+    if batch_id:
+        q = q.filter(FullBldgPMItem.batch_ragic_id == batch_id)
+    if category:
+        q = q.filter(FullBldgPMItem.category == category)
+    items = q.order_by(
+        FullBldgPMItem.batch_ragic_id,
+        FullBldgPMItem.seq_no,
+    ).all()
+
+    check_month = month or date.today().month
+    result = []
+    for it in items:
+        s = _calc_status(it, check_month)
+        if status and s != status:
+            continue
+        result.append(_item_to_out(it, check_month))
+    return result
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GET /stats
+# ══════════════════════════════════════════════════════════════════════════════
+@router.get("/stats", summary="全站統計（Dashboard 資料來源）", response_model=PMStats)
+def get_stats(
+    year:  Optional[int] = Query(None, description="篩選年份，如 2026"),
+    month: Optional[int] = Query(None, ge=1, le=12, description="篩選月份，如 5"),
+    db:    Session = Depends(get_db),
+):
+    today = date.today()
+    target_year  = year  or today.year
+    target_month = month or today.month
+    check_month  = target_month
+    target_ym    = f"{target_year}/{target_month:02d}"
+
+    current_batch = db.query(FullBldgPMBatch).filter(
+        FullBldgPMBatch.period_month == target_ym
+    ).first()
+
+    if not current_batch and not (year or month):
+        current_batch = db.query(FullBldgPMBatch).order_by(
+            FullBldgPMBatch.period_month.desc()
+        ).first()
+
+    current_kpi    = None
+    overdue_items: list[PMItemOut] = []
+    upcoming_items: list[PMItemOut] = []
+    cats:           list[CategoryStat] = []
+    status_dist:    list[StatusDistItem] = []
+
+    if current_batch:
+        items = db.query(FullBldgPMItem).filter(
+            FullBldgPMItem.batch_ragic_id == current_batch.ragic_id
+        ).order_by(FullBldgPMItem.seq_no).all()
+
+        current_kpi = _calc_kpi(items, check_month)
+        cats        = _calc_category_stats(items, check_month)
+
+        overdue_items = [
+            _item_to_out(it, check_month)
+            for it in items
+            if _calc_status(it, check_month) == "overdue"
+        ][:10]
+
+        is_current_month = (target_year == today.year and target_month == today.month)
+        upcoming_items = []
+        for it in items:
+            s = _calc_status(it, check_month)
+            if s == "scheduled" and it.scheduled_date:
+                if is_current_month:
+                    try:
+                        sched = datetime.strptime(
+                            f"{today.year}/{it.scheduled_date}", "%Y/%m/%d"
+                        ).date()
+                        days_left = (sched - today).days
+                        if 0 <= days_left <= 7:
+                            upcoming_items.append(_item_to_out(it, check_month))
+                    except Exception:
+                        pass
+                else:
+                    upcoming_items.append(_item_to_out(it, check_month))
+        upcoming_items = upcoming_items[:10]
+
+        from collections import Counter
+        def _dist_status(it: FullBldgPMItem) -> str | None:
+            s = _calc_status(it, check_month)
+            if s == "non_current_month":
+                return "completed" if (it.start_time and it.end_time) else None
+            return s
+
+        status_counts = Counter(
+            s for it in items
+            if (s := _dist_status(it)) is not None
+        )
+        for s, cnt in status_counts.items():
+            status_dist.append(StatusDistItem(
+                status=s,
+                label=STATUS_LABELS.get(s, s),
+                count=cnt,
+                color=STATUS_COLORS.get(s, "#666666"),
+            ))
+
+    return PMStats(
+        current_batch       = _batch_to_out(current_batch) if current_batch else None,
+        current_kpi         = current_kpi,
+        overdue_items       = overdue_items,
+        upcoming_items      = upcoming_items,
+        category_stats      = cats,
+        status_distribution = status_dist,
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GET /items/{item_ragic_id}/worklogs（2026-07-13 新增：Sheet28 巢狀「維修記錄」明細）
+# ══════════════════════════════════════════════════════════════════════════════
+class PMWorklogOut(BaseModel):
+    ragic_id:      str
+    item_ragic_id: str
+    seq_no:        int
+    repair_note:   str
+    start_time:    str
+    end_time:      str
+    staff_name:    str
+
+    class Config:
+        from_attributes = True
+
+
+@router.get(
+    "/items/{item_ragic_id}/worklogs",
+    response_model=List[PMWorklogOut],
+    summary="單一項目維修記錄明細（來源 Ragic Sheet28 巢狀子表格）",
+)
+def get_item_worklogs(item_ragic_id: str, db: Session = Depends(get_db)):
+    rows = (
+        db.query(FullBldgPMItemWorklog)
+        .filter(FullBldgPMItemWorklog.item_ragic_id == item_ragic_id)
+        .order_by(FullBldgPMItemWorklog.seq_no.asc())
+        .all()
+    )
+    return rows
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GET /items/{item_ragic_id}/db-images（2026-07-13 新增：Sheet28「圖片上傳」欄位，
+# 遵循全站「明細 Drawer 強制規範」的 /db-images/{ragic_id} 端點慣例）
+# ══════════════════════════════════════════════════════════════════════════════
+class PMImageOut(BaseModel):
+    url:      str
+    filename: str
+
+
+@router.get(
+    "/items/{item_ragic_id}/db-images",
+    response_model=List[PMImageOut],
+    summary="單一項目附圖（DB 優先，缺資料時即時向 Ragic 補抓一次，來源 Sheet28「圖片上傳」欄位）",
+)
+async def get_item_images(item_ragic_id: str, db: Session = Depends(get_db)):
+    item = await run_in_threadpool(db.get, FullBldgPMItem, item_ragic_id)
+    if item and item.images_json:
+        try:
+            cached = json.loads(item.images_json)
+            if cached:
+                return cached
+        except Exception:
+            pass
+
+    # DB 沒資料（尚未同步過此欄位，或該筆項目本來就沒附圖）→ 即時向 Ragic 補抓一次；
+    # 不寫回 DB，下次排程同步時會自然補齊。
+    from app.services.full_building_maintenance_sync import (
+        FULL_BLDG_PM_SERVER_URL, FULL_BLDG_PM_ACCOUNT, FULL_BLDG_PM_SHEET28_PATH, CK28L_IMAGES,
+    )
+    from app.services.ragic_data_service import parse_images
+
+    adapter = RagicAdapter(
+        sheet_path=FULL_BLDG_PM_SHEET28_PATH,
+        server_url=FULL_BLDG_PM_SERVER_URL,
+        account=FULL_BLDG_PM_ACCOUNT,
+    )
+    try:
+        full_record = await adapter.fetch_one(item_ragic_id)
+        if item_ragic_id in full_record and len(full_record) == 1:
+            full_record = full_record[item_ragic_id]
+        return parse_images(
+            full_record.get(CK28L_IMAGES),
+            server=FULL_BLDG_PM_SERVER_URL,
+            account=FULL_BLDG_PM_ACCOUNT,
+        )
+    except Exception:
+        return []
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GET /items/task-history
+# ══════════════════════════════════════════════════════════════════════════════
+def _offset_month(year: int, month: int, delta: int) -> tuple[int, int]:
+    total = (year * 12 + (month - 1)) + delta
+    return total // 12, (total % 12) + 1
+
+
+@router.get("/items/task-history", summary="依保養項目名稱查詢近 N 個月執行歷史")
+def get_item_task_history(
+    task_name: str = Query(..., description="保養項目名稱（完整比對）"),
+    months:    int = Query(12, ge=1, le=24),
+    db:        Session = Depends(get_db),
+):
+    today = date.today()
+
+    rows = (
+        db.query(FullBldgPMItem, FullBldgPMBatch)
+        .join(
+            FullBldgPMBatch,
+            FullBldgPMItem.batch_ragic_id == FullBldgPMBatch.ragic_id,
+        )
+        .filter(FullBldgPMItem.task_name == task_name)
+        .order_by(FullBldgPMBatch.period_month.desc())
+        .all()
+    )
+
+    if not rows:
+        raise HTTPException(status_code=404, detail=f"找不到保養項目：{task_name}")
+
+    first_item: FullBldgPMItem = rows[0][0]
+
+    month_map: dict[str, tuple] = {}
+    for item, batch in rows:
+        month_map[batch.period_month] = (item, batch)
+
+    monthly_summary = []
+    for i in range(months - 1, -1, -1):
+        y, m = _offset_month(today.year, today.month, -i)
+        period_month = f"{y}/{m:02d}"
+        is_current   = (y == today.year and m == today.month)
+
+        if period_month in month_map:
+            item, _ = month_map[period_month]
+            monthly_summary.append({
+                "period_month":   period_month,
+                "status":         _calc_status(item, m),
+                "has_record":     True,
+                "executor_name":  item.executor_name or "",
+                "scheduled_date": item.scheduled_date or "",
+                "start_time":     item.start_time or "",
+                "end_time":       item.end_time or "",
+                "result_note":    item.result_note or "",
+                "abnormal_flag":  bool(item.abnormal_flag),
+                "abnormal_note":  item.abnormal_note or "",
+                "is_current":     is_current,
+            })
+        else:
+            monthly_summary.append({
+                "period_month":   period_month,
+                "status":         "unscheduled" if is_current else "no_batch",
+                "has_record":     False,
+                "executor_name":  "",
+                "scheduled_date": "",
+                "start_time":     "",
+                "end_time":       "",
+                "result_note":    "",
+                "abnormal_flag":  False,
+                "abnormal_note":  "",
+                "is_current":     is_current,
+            })
+
+    completed_months = sum(1 for ms in monthly_summary if ms["status"] == "completed")
+    abnormal_count   = sum(1 for ms in monthly_summary if ms["abnormal_flag"])
+
+    return {
+        "task_name":       task_name,
+        "category":        first_item.category or "",
+        "frequency":       first_item.frequency or "",
+        "exec_months_raw": first_item.exec_months_raw or "",
+        "monthly_summary": monthly_summary,
+        "stats": {
+            "total_months":     months,
+            "completed_months": completed_months,
+            "abnormal_count":   abnormal_count,
+        },
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GET /period-stats/year-matrix  — 全年 12 個月矩陣統計
+# ⚠️ 必須定義在 /period-stats 之前，否則 FastAPI 會誤判路徑
+# ══════════════════════════════════════════════════════════════════════════════
+@router.get("/period-stats/year-matrix", summary="全年 12 個月矩陣統計", response_model=PMYearMatrix)
+def get_period_stats_year_matrix(
+    year:           Optional[int] = Query(None, description="年份，如 2026；預設今年"),
+    frequency_type: Optional[str] = Query(None, description="monthly | quarterly | yearly"),
+    db:             Session = Depends(get_db),
+):
+    """
+    一次回傳指定年份全部 12 個月的統計矩陣。
+    前端以「月份為欄、指標為列」的表格呈現。
+    """
+    target_year = year or date.today().year
+    return _calc_year_matrix(db, target_year, frequency_type)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GET /period-stats  — 週期統計（月 / 季 / 年）
+# ══════════════════════════════════════════════════════════════════════════════
+@router.get("/period-stats", summary="週期統計（月/季/年）", response_model=PMPeriodStats)
+def get_period_stats(
+    period_type:    str           = Query("month", description="month | quarter | year"),
+    year:           Optional[int] = Query(None, description="年份，如 2026；預設今年"),
+    month:          Optional[int] = Query(None, ge=1, le=12, description="月份（period_type=month 時使用）"),
+    quarter:        Optional[int] = Query(None, ge=1, le=4,  description="季度 1-4（period_type=quarter 時使用）"),
+    frequency_type: Optional[str] = Query(None, description="monthly | quarterly | yearly"),
+    db:             Session = Depends(get_db),
+):
+    today = date.today()
+    target_year = year or today.year
+
+    if period_type not in ("month", "quarter", "year"):
+        raise HTTPException(status_code=400, detail="period_type 須為 month | quarter | year")
+
+    p_start, p_end, prev_end = _get_period_bounds(period_type, target_year, month, quarter)
+
+    # 組 period_label
+    if period_type == "month":
+        m = month or today.month
+        period_label = f"{target_year}年{m}月"
+    elif period_type == "quarter":
+        q = quarter or ((today.month - 1) // 3 + 1)
+        period_label = f"{target_year} Q{q}"
+    else:
+        period_label = f"{target_year}年"
+
+    # 核心計算
+    core = _calc_period_stats_core(db, p_start, p_end, prev_end, frequency_type)
+    period_items_list = core.pop("period_items_list")
+
+    # 子期間分布
+    breakdown = _calc_sub_breakdown(period_type, p_start, period_items_list)
+
+    return PMPeriodStats(
+        period_type              = period_type,
+        period_label             = period_label,
+        period_start             = p_start.strftime("%Y-%m-%d"),
+        period_end               = p_end.strftime("%Y-%m-%d"),
+        prev_period_end          = prev_end.strftime("%Y-%m-%d"),
+        prev_carry_over          = core["prev_carry_over"],
+        prev_resolved_in_period  = core["prev_resolved_in_period"],
+        carry_over_rate          = core["carry_over_rate"],
+        period_total             = core["period_total"],
+        period_completed         = core["period_completed"],
+        period_rate              = core["period_rate"],
+        sub_period_breakdown     = breakdown,
+        incomplete_items         = core["incomplete_items"],
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GET /calendar  — 月曆格（類別 × 日期）
+# ══════════════════════════════════════════════════════════════════════════════
+@router.get("/calendar", summary="全棟例行維護月曆格（類別 × 日）")
+def get_calendar(
+    year:  int = Query(..., description="年份，如 2026"),
+    month: int = Query(..., ge=1, le=12, description="月份，如 5"),
+    db:    Session = Depends(get_db),
+):
+    """
+    回傳指定年月的類別 × 日期月曆格資料。
+    cell key = str(d)（非零填充，配合 MonthlyCalendarGrid）。
+    """
+    import calendar as cal_mod
+    max_day   = cal_mod.monthrange(year, month)[1]
+    target_ym = f"{year}/{month:02d}"
+
+    batch = db.query(FullBldgPMBatch).filter(
+        FullBldgPMBatch.period_month == target_ym
+    ).first()
+
+    # 已知類別順序
+    CATEGORY_ORDER = ["水電", "空調", "照明", "消防", "申報", "整體"]
+
+    def _empty_daily() -> dict:
+        return {
+            str(d): {"has_record": False, "completion_rate": 0, "abnormal_count": 0, "pending_count": 0}
+            for d in range(1, max_day + 1)
+        }
+
+    if not batch:
+        return {
+            "year": year, "month": month, "max_day": max_day,
+            "rows": [{"key": c, "label": c, "daily": _empty_daily()} for c in CATEGORY_ORDER],
+        }
+
+    items = db.query(FullBldgPMItem).filter(
+        FullBldgPMItem.batch_ragic_id == batch.ragic_id
+    ).all()
+
+    # 依類別 × 日分組（用 scheduled_date 的 MM/DD 推算日期）
+    from collections import defaultdict
+    cat_day: dict[str, dict[int, list]] = defaultdict(lambda: defaultdict(list))
+    for it in items:
+        fd = _reconstruct_full_date(it.scheduled_date, batch.period_month)
+        if fd is None or fd.year != year or fd.month != month:
+            continue
+        cat_day[it.category or "其他"][fd.day].append(it)
+
+    # 確保所有已知類別都出現；額外類別附加在後
+    all_cats = list(CATEGORY_ORDER)
+    for c in cat_day:
+        if c not in all_cats:
+            all_cats.append(c)
+
+    rows_out = []
+    for cat in all_cats:
+        daily: dict[str, dict] = {}
+        for d in range(1, max_day + 1):
+            day_items = cat_day[cat].get(d, [])
+            if not day_items:
+                daily[str(d)] = {"has_record": False, "completion_rate": 0, "abnormal_count": 0, "pending_count": 0}
+            else:
+                total     = len(day_items)
+                completed = sum(1 for it in day_items if it.start_time and it.end_time)
+                abnormal  = sum(1 for it in day_items if it.abnormal_flag)
+                pending   = total - completed
+                rate      = round(completed / total * 100, 1) if total > 0 else 0.0
+                daily[str(d)] = {
+                    "has_record":      True,
+                    "completion_rate": rate,
+                    "abnormal_count":  abnormal,
+                    "pending_count":   pending,
+                }
+        rows_out.append({"key": cat, "label": cat, "daily": daily})
+
+    return {"year": year, "month": month, "max_day": max_day, "rows": rows_out}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GET /daily-form  — 每日巡檢表
+# 2026-07-13：原本掛在此 TAB 的「整棟巡檢」（full-building-inspection/1-4，RF/B1F/B2F/B4F
+# 固定巡檢清單）從未實作本地同步、資料結構也與本模組（全棟週期保養日誌）完全無關。
+# 改版為：依「排定日期」篩選當月批次（來源 Sheet28）中排定在指定日期的保養項目，
+# 呈現「當天該做哪些保養項目」的日檢視表。
+# 2026-07-13 追加：view=month 時不篩 scheduled_date，回傳整月批次全部項目（依排定日期排序）。
+# ══════════════════════════════════════════════════════════════════════════════
+class PMDailyFormSummary(BaseModel):
+    total:           int
+    completed:       int
+    overdue:         int
+    abnormal:        int
+    planned_minutes: int
+    actual_minutes:  int
+
+
+class PMDailyFormResponse(BaseModel):
+    view:            str             # "day" | "month"
+    inspection_date: str             # YYYY/MM/DD（view=month 時為該月 1 號）
+    period_month:    str             # YYYY/MM
+    batch_ragic_id:  Optional[str] = None
+    rows:            List[PMItemOut]
+    summary:         PMDailyFormSummary
+
+
+@router.get(
+    "/daily-form",
+    summary="每日巡檢表（依排定日期篩選當日保養項目，或 view=month 檢視整月，來源 Sheet28）",
+    response_model=PMDailyFormResponse,
+)
+def get_daily_form(
+    inspection_date: Optional[str] = Query(None, description="巡檢日期 YYYY/MM/DD，不填則為今天"),
+    view: str = Query("day", description="day = 單日；month = 整月"),
+    db: Session = Depends(get_db),
+):
+    if view not in ("day", "month"):
+        raise HTTPException(status_code=400, detail="view 須為 day 或 month")
+
+    if inspection_date:
+        try:
+            y, m, d = (int(x) for x in inspection_date.strip().split("/"))
+            target = date(y, m, d)
+        except Exception:
+            raise HTTPException(status_code=400, detail="inspection_date 格式須為 YYYY/MM/DD")
+    else:
+        target = date.today()
+
+    target_str   = target.strftime("%Y/%m/%d")
+    period_month = f"{target.year}/{target.month:02d}"
+    short_date   = f"{target.month:02d}/{target.day:02d}"   # 與 _normalize_full_date_to_md() 輸出格式一致
+    check_month  = target.month
+
+    empty_summary = PMDailyFormSummary(
+        total=0, completed=0, overdue=0, abnormal=0, planned_minutes=0, actual_minutes=0,
+    )
+
+    batch = db.query(FullBldgPMBatch).filter(FullBldgPMBatch.period_month == period_month).first()
+    if not batch:
+        return PMDailyFormResponse(
+            view=view, inspection_date=target_str, period_month=period_month,
+            batch_ragic_id=None, rows=[], summary=empty_summary,
+        )
+
+    query = db.query(FullBldgPMItem).filter(FullBldgPMItem.batch_ragic_id == batch.ragic_id)
+    if view == "day":
+        query = query.filter(FullBldgPMItem.scheduled_date == short_date)
+        query = query.order_by(FullBldgPMItem.category, FullBldgPMItem.seq_no)
+    else:
+        query = query.order_by(FullBldgPMItem.scheduled_date, FullBldgPMItem.category, FullBldgPMItem.seq_no)
+    items = query.all()
+
+    rows = [_item_to_out(it, check_month) for it in items]
+    kpi  = _calc_kpi(items, check_month)
+
+    return PMDailyFormResponse(
+        view=view,
+        inspection_date=target_str,
+        period_month=period_month,
+        batch_ragic_id=batch.ragic_id,
+        rows=rows,
+        summary=PMDailyFormSummary(
+            total=len(items),
+            completed=kpi.completed,
+            overdue=kpi.overdue,
+            abnormal=kpi.abnormal,
+            planned_minutes=kpi.planned_minutes,
+            actual_minutes=kpi.actual_minutes,
+        ),
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GET /period-stats/year-matrix/items  — 矩陣格點擊明細
+# ══════════════════════════════════════════════════════════════════════════════
+def _matrix_item_status_zh(item: FullBldgPMItem, period_month: str, is_done: bool) -> str:
+    """
+    矩陣格明細的中文狀態。
+
+    2026-08-20 修正：原本只回「已完成／進行中／待排程」三態，排定日期已過的項目
+    一律顯示「待排程」，看不出逾期，且「待排程」不在本模組 STATUS_LABELS 語彙內。
+    改為沿用 _calc_status() 的判定順序與 STATUS_LABELS 用字，差別有三：
+      1. 完成判定沿用呼叫端的 is_done（只看 end_time），與矩陣「本期已完成」同口徑，
+         避免明細列出的已完成筆數與矩陣格數字對不起來
+      2. 逾期比對用「批次年份 + 排定日期」重建的完整日期，不用 date.today().year，
+         查詢往年資料才不會誤判
+      3. 不判「非本月」：period_total 本來就刻意不過濾 exec_months（使用者確認）
+    """
+    if is_done:
+        return STATUS_LABELS["completed"]
+    if item.start_time and item.start_time.strip():
+        return STATUS_LABELS["in_progress"]
+    full_date = _reconstruct_full_date(item.scheduled_date, period_month)
+    if full_date is None:
+        return STATUS_LABELS["unscheduled"]
+    return STATUS_LABELS["overdue"] if full_date < date.today() else STATUS_LABELS["scheduled"]
+
+
+@router.get("/period-stats/year-matrix/items", summary="矩陣格點擊查詢明細")
+def get_year_matrix_items(
+    year:           int           = Query(..., description="年份"),
+    month:          int           = Query(..., description="月份（0 = 全年合計）"),
+    metric:         str           = Query(..., description="prev_carry_over | prev_resolved | period_total | period_completed | period_incomplete"),
+    frequency_type: Optional[str] = Query(None, description="monthly | quarterly | yearly"),
+    db:             Session = Depends(get_db),
+):
+    """矩陣格點擊查詢明細（與 _calc_year_matrix 使用完全相同的篩選邏輯）"""
+    # 只取每月最新批次（與矩陣計算一致）
+    valid_batch_ids = _latest_batch_ids_per_month(db)
+
+    rows = (
+        db.query(FullBldgPMItem, FullBldgPMBatch)
+        .join(
+            FullBldgPMBatch,
+            FullBldgPMItem.batch_ragic_id == FullBldgPMBatch.ragic_id,
+        )
+        .filter(
+            FullBldgPMBatch.period_month.like(f"{year}/%"),
+            FullBldgPMBatch.ragic_id.in_(valid_batch_ids),
+        )
+        .all()
+    )
+
+    # 2026-10-02 修正：prev_carry_over / prev_resolved 原本是 stub（只做「批次月份 = 點擊月份」
+    # 過濾），導致點「截至上期底累計未結案數」回傳的其實是本期應完成清單（例：9月矩陣 125、明細 2 筆）。
+    # 改為與 _calc_year_matrix 完全相同的口徑：full_date = 批次月份 1 號、完成只看 end_time。
+    if month == 0:
+        p_start, p_end, prev_end = _get_period_bounds("year", year)
+    else:
+        p_start, p_end, prev_end = _get_period_bounds("month", year, month=month)
+
+    results = []
+    for item, batch in rows:
+        # 解析批次年月
+        try:
+            batch_year  = int(batch.period_month.split("/")[0])
+            batch_month_val = int(batch.period_month.split("/")[1])
+        except Exception:
+            continue
+
+        # full_date 以批次月份 1 號為基準（與 _calc_year_matrix 一致）
+        full_date = date(batch_year, batch_month_val, 1)
+
+        # 解析 exec_months
+        try:
+            exec_months = json.loads(item.exec_months_json or "[]")
+        except Exception:
+            exec_months = []
+
+        # 頻率篩選（優先 frequency 欄位，空時從 exec_months 推算）
+        if not _freq_match_with_fallback(item.frequency, frequency_type, exec_months):
+            continue
+
+        # period_total 以「批次月份」為準，不過濾 exec_months（與矩陣計算一致）
+
+        is_completed = bool(item.end_time and item.end_time.strip())
+        # 2026-09-08：明細 Modal 的「執行日期」欄用（end_time 的日期部分）
+        end_date = _parse_end_date(item.end_time)
+
+        in_period = p_start <= full_date <= p_end
+        if metric == "period_total":
+            if not in_period:
+                continue
+        elif metric == "period_completed":
+            if not (in_period and is_completed):
+                continue
+        elif metric == "period_incomplete":
+            # 2026-09-07 新增：本期應完成但尚未完成（end_time 為空）
+            # 與 period_completed 互補，兩者相加 = period_total
+            if not (in_period and not is_completed):
+                continue
+        elif metric == "prev_carry_over":
+            # 截至上期底：full_date ≤ 上期底，且在上期底前尚未結案
+            if full_date > prev_end:
+                continue
+            if is_completed and end_date is not None and end_date <= prev_end:
+                continue
+        elif metric == "prev_resolved":
+            # 上列累計未結案中，結案日落在本期內
+            if full_date > prev_end:
+                continue
+            if end_date is None or not (p_start <= end_date <= p_end):
+                continue
+        else:
+            raise HTTPException(status_code=400, detail=f"未知的 metric：{metric}")
+
+        results.append({
+            "ragic_id":            item.ragic_id,
+            "batch_ragic_id":      item.batch_ragic_id,
+            "period_month":        batch.period_month,
+            "category":            item.category or "",
+            "task_name":           item.task_name or "",
+            "frequency":           item.frequency or "",
+            "scheduled_date_full": f"{batch.period_month[:4]}/{item.scheduled_date}" if item.scheduled_date else "",
+            "end_time":            item.end_time or "",
+            "status":              _matrix_item_status_zh(item, batch.period_month, is_completed),
+            # 2026-09-08 新增兩欄（明細 Modal 用，對齊 mall/periodic-maintenance）
+            #   scheduler_name：Ragic「排定人員」，與「執行人員」是不同的人
+            #   exec_date     ：end_time（保養結束時間）的日期部分，未完成則為空字串
+            "scheduler_name":      item.scheduler_name or "",
+            "exec_date":           end_date.strftime("%Y/%m/%d") if end_date else "",
+            "executor_name":       item.executor_name or "",
+            "result_note":         item.result_note or "",
+            "abnormal_flag":       bool(item.abnormal_flag),
+            "abnormal_note":       item.abnormal_note or "",
+            "ragic_link":          "",
+        })
+
+    return {"total": len(results), "items": results}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GET /items/catalog  — 保養項目目錄（依頻率分類）
+# ══════════════════════════════════════════════════════════════════════════════
+@router.get("/items/catalog", summary="保養項目目錄（依頻率分類）")
+def get_items_catalog(
+    frequency_type: Optional[str] = Query(None, description="monthly | quarterly | yearly"),
+    db:             Session = Depends(get_db),
+):
+    """
+    取得保養項目目錄（不分批次），依 frequency_type 篩選。
+    結果為去重後的保養項目列表，以最大 seq_no 為準。
+    """
+    from sqlalchemy import func as sqlfunc
+
+    subq = (
+        db.query(
+            FullBldgPMItem.task_name,
+            FullBldgPMItem.category,
+            FullBldgPMItem.frequency,
+            sqlfunc.max(FullBldgPMItem.seq_no).label("max_seq"),
+        )
+        .group_by(
+            FullBldgPMItem.task_name,
+            FullBldgPMItem.category,
+            FullBldgPMItem.frequency,
+        )
+        .subquery()
+    )
+
+    rows = (
+        db.query(FullBldgPMItem)
+        .join(
+            subq,
+            (FullBldgPMItem.task_name   == subq.c.task_name)
+            & (FullBldgPMItem.category  == subq.c.category)
+            & (FullBldgPMItem.frequency == subq.c.frequency)
+            & (FullBldgPMItem.seq_no    == subq.c.max_seq),
+        )
+        .order_by(FullBldgPMItem.category, FullBldgPMItem.seq_no)
+        .all()
+    )
+
+    result = []
+    seen: set[tuple] = set()
+    for r in rows:
+        if not _freq_match(r.frequency, frequency_type):
+            continue
+        key = (r.task_name, r.category, r.frequency)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append({
+            "seq_no":            r.seq_no,
+            "category":          r.category or "",
+            "frequency":         r.frequency or "",
+            "task_name":         r.task_name or "",
+            "location":          r.location or "",
+            "estimated_minutes": r.estimated_minutes or 0,
+            "exec_months_raw":   r.exec_months_raw or "",
+        })
+
+    return {"total": len(result), "items": result}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GET /debug/ragic-raw  — 除錯用
+# ══════════════════════════════════════════════════════════════════════════════
+@router.get("/debug/ragic-raw", summary="[除錯] 顯示 Ragic Sheet 21 原始欄位 key", dependencies=[Depends(require_roles("system_admin", "module_manager"))])
+async def debug_ragic_raw():
+    from app.services.full_building_maintenance_sync import (
+        FULL_BLDG_PM_SERVER_URL, FULL_BLDG_PM_ACCOUNT,
+        FULL_BLDG_PM_JOURNAL_PATH, FULL_BLDG_PM_ITEMS_PATH,
+    )
+
+    adapter_batch = RagicAdapter(
+        sheet_path=FULL_BLDG_PM_JOURNAL_PATH,
+        server_url=FULL_BLDG_PM_SERVER_URL,
+        account=FULL_BLDG_PM_ACCOUNT,
+    )
+    adapter_items = RagicAdapter(
+        sheet_path=FULL_BLDG_PM_ITEMS_PATH,
+        server_url=FULL_BLDG_PM_SERVER_URL,
+        account=FULL_BLDG_PM_ACCOUNT,
+    )
+
+    try:
+        raw_batch = await adapter_batch.fetch_all()
+        raw_items = await adapter_items.fetch_all()
+    except Exception as exc:
+        return {"error": str(exc)}
+
+    first_batch = next(iter(raw_batch.values()), {}) if raw_batch else {}
+    first_item  = next(iter(raw_items.values()), {}) if raw_items else {}
+
+    return {
+        "sheet21_batch": {
+            "total_records":       len(raw_batch),
+            "record_ids":          list(raw_batch.keys()),
+            "first_record_fields": first_batch,
+        },
+        "sheet21_items": {
+            "total_records":       len(raw_items),
+            "record_ids":          list(raw_items.keys()),
+            "first_record_fields": first_item,
+        },
+    }
+
+
+# ── GET /debug/ragic-extra-raw ─────────────────────────────────────────────
+
+@router.get("/debug/ragic-extra-raw",
+            summary="[除錯] 顯示 Ragic Sheet 28（維修工時）原始欄位 key",
+            dependencies=[Depends(require_roles("system_admin", "module_manager"))])
+async def debug_ragic_extra_raw(limit: int = 3):
+    """
+    顯示 Sheet 28（全棟週期保養 - 子表: 項目）的前幾筆原始 JSON。
+    用途：確認 CK28_REPAIR_HOURS、CK28_START_TIME、父記錄關聯欄位 key。
+    """
+    from app.services.full_building_maintenance_sync import (
+        FULL_BLDG_PM_SERVER_URL, FULL_BLDG_PM_ACCOUNT,
+        FULL_BLDG_PM_SHEET28_PATH,
+        CK28_REPAIR_HOURS, CK28_START_TIME,
+    )
+
+    adapter = RagicAdapter(
+        sheet_path=FULL_BLDG_PM_SHEET28_PATH,
+        server_url=FULL_BLDG_PM_SERVER_URL,
+        account=FULL_BLDG_PM_ACCOUNT,
+    )
+
+    try:
+        raw_data = await adapter.fetch_all()
+    except Exception as exc:
+        return {"error": str(exc)}
+
+    records = list(raw_data.items())[:limit]
+    samples = {rec_id: rec for rec_id, rec in records}
+    all_keys = sorted({k for _, rec in records for k in rec.keys()})
+
+    return {
+        "sheet28_path":     FULL_BLDG_PM_SHEET28_PATH,
+        "total_records":    len(raw_data),
+        "all_field_keys":   all_keys,
+        "current_ck28_config": {
+            "CK28_REPAIR_HOURS": CK28_REPAIR_HOURS,
+            "CK28_START_TIME":   CK28_START_TIME,
+        },
+        "sample_records": samples,
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 年度計劃矩陣（schedule/annual-matrix）輔助函式
+# ══════════════════════════════════════════════════════════════════════════════
+
+_FREQ_INTERVAL_FB: dict[str, int] = {
+    "月": 1, "每月": 1, "月維護": 1, "Monthly": 1, "monthly": 1,
+    "雙月": 2, "每雙月": 2,
+    "季": 3, "每季": 3, "季維護": 3, "Quarterly": 3, "quarterly": 3,
+    "半年": 6, "每半年": 6,
+    "年": 12, "每年": 12, "年維護": 12, "Annual": 12, "annual": 12, "Yearly": 12, "yearly": 12,
+}
+
+
+def _fb_should_schedule_by_freq(frequency: str, month: int) -> bool:
+    interval = _FREQ_INTERVAL_FB.get((frequency or "").strip())
+    if interval is None:
+        return False
+    if interval == 1:
+        return True
+    return (month - 1) % interval == 0
+
+
+def _fb_get_latest_batch_items(db: Session) -> list[FullBldgPMItem]:
+    latest_batch = (
+        db.query(FullBldgPMBatch)
+        .order_by(FullBldgPMBatch.period_month.desc())
+        .first()
+    )
+    if not latest_batch:
+        return []
+    return (
+        db.query(FullBldgPMItem)
+        .filter(FullBldgPMItem.batch_ragic_id == latest_batch.ragic_id)
+        .order_by(FullBldgPMItem.seq_no)
+        .all()
+    )
+
+
+def _fb_get_batch_items_for_month(db: Session, year: int, month: int) -> list[FullBldgPMItem]:
+    """
+    2026-08-12 新增（比照 mall_pm 2026-07-23 的 `_mall_get_batch_items_for_month()`）：
+    取得指定 year/month「自己那一批」的保養項目。
+
+    取代舊版在「產生排程」「年度計劃表」一律用 `_fb_get_latest_batch_items()`
+    （全站目前最新一批）代表所有月份的問題 —— item.ragic_id 是
+    "{batch_id}_{row_key}" 格式，只要 Ragic 同步進更新一批（例如 08 月批次一到），
+    07 月先前產生的排程使用的 item_ragic_id 就跟新的最新批次完全對不上，年度計劃表
+    用 (item_ragic_id, month) 查表整批落空，7 月的完成狀態永遠顯示不出來。
+
+    同一 period_month 有多筆批次（重複同步）時，比照 `_latest_batch_ids_per_month()`
+    只取 ragic_updated_at 最新的那筆；找不到該月批次則回傳空清單（該月尚未同步進來，
+    如實顯示空缺，不借用其他月份的資料冒充）。
+    """
+    valid_batch_ids = _latest_batch_ids_per_month(db)
+    target_period = f"{year}/{month:02d}"
+    batch = (
+        db.query(FullBldgPMBatch)
+        .filter(
+            FullBldgPMBatch.period_month == target_period,
+            FullBldgPMBatch.ragic_id.in_(valid_batch_ids),
+        )
+        .first()
+    )
+    if not batch:
+        return []
+    return (
+        db.query(FullBldgPMItem)
+        .filter(FullBldgPMItem.batch_ragic_id == batch.ragic_id)
+        .order_by(FullBldgPMItem.seq_no)
+        .all()
+    )
+
+
+_FB_SCHED_DATE_UNSET = object()
+
+
+def _fb_is_future_month(year: int, month: int, today) -> bool:
+    """該年月是否落在今天之後（供年度計劃表判定 future_due）。"""
+    return year > today.year or (year == today.year and month > today.month)
+
+
+def _fb_calc_schedule_status(rec: FullBldgPMSchedule, override_date=_FB_SCHED_DATE_UNSET) -> str:
+    """2026-08-25 新增 override_date：年度計劃表已改為以 Ragic
+    （full_bldg_pm_batch_item.scheduled_date）為排定日期的單一真實來源，狀態判斷必須
+    跟同一個日期走，否則會出現「格子沒有排定日期、卻標成逾期紅點」。
+    不傳此參數時維持原行為（沿用 rec.scheduled_date），其餘呼叫端不受影響。
+    """
+    if rec.is_completed or (rec.start_time and rec.end_time):
+        return "completed"
+    if rec.start_time:
+        return "in_progress"
+    sched_date = rec.scheduled_date if override_date is _FB_SCHED_DATE_UNSET else override_date
+    if sched_date:
+        try:
+            year = int(rec.year_month.split("/")[0])
+            sched = datetime.strptime(f"{year}/{sched_date}", "%Y/%m/%d").date()
+            if sched < date.today():
+                return "overdue"
+        except Exception:
+            pass
+        return "scheduled"
+    return "unscheduled"
+
+
+# ==============================================================================
+# Schedule Helper Functions
+# ==============================================================================
+
+def _fb_build_batch_url_map(db: Session) -> dict:
+    """Build period_month -> ragic_url lookup for schedule Drawer links."""
+    batches = db.query(FullBldgPMBatch).all()
+    result = {}
+    for b in batches:
+        if b.period_month and b.ragic_id:
+            result[b.period_month] = f"{_RAGIC_BASE}/{b.ragic_id}"
+    return result
+
+
+def _fb_schedule_to_out(rec: "FullBldgPMSchedule", batch_url_map: Optional[dict] = None) -> "FullBldgPMScheduleOut":
+    # 2026-10-01：排程是「項目」層級，連結改指 Sheet28 項目本身（item_ragic_id 即 Sheet28 record ID）。
+    # 僅舊格式殘留（item_ragic_id 含底線 "{batch}_{row}"，Sheet28 沒有對應記錄）才退回 Sheet21 批次連結。
+    if rec.item_ragic_id and "_" not in rec.item_ragic_id:
+        url = f"{_RAGIC_ITEM_BASE}/{rec.item_ragic_id}"
+    else:
+        url = (batch_url_map or {}).get(rec.year_month, "")
+    return FullBldgPMScheduleOut(
+        id=rec.id,
+        year_month=rec.year_month,
+        item_ragic_id=rec.item_ragic_id,
+        category=rec.category,
+        task_name=rec.task_name,
+        location=rec.location,
+        frequency=rec.frequency,
+        estimated_minutes=rec.estimated_minutes,
+        scheduled_date=rec.scheduled_date,
+        executor_name=rec.executor_name,
+        schedule_source=rec.schedule_source,
+        start_time=rec.start_time,
+        end_time=rec.end_time,
+        is_completed=rec.is_completed,
+        result_note=rec.result_note,
+        abnormal_flag=rec.abnormal_flag,
+        abnormal_note=rec.abnormal_note,
+        portal_edited_at=rec.portal_edited_at,
+        created_at=rec.created_at,
+        updated_at=rec.updated_at,
+        status=_fb_calc_schedule_status(rec),
+        ragic_url=url,
+    )
+
+
+def _fb_count_should_do_not_done(year_month: str, schedule_records: list, db: Session) -> int:
+    try:
+        m = int(year_month.split("/")[1])
+    except Exception:
+        return 0
+    all_items = _fb_get_latest_batch_items(db)
+    scheduled_ids = {r.item_ragic_id for r in schedule_records}
+    count = 0
+    for item in all_items:
+        if item.ragic_id in scheduled_ids:
+            continue
+        freq = (item.frequency or "").strip()
+        if freq and _fb_should_schedule_by_freq(freq, m):
+            count += 1
+    return count
+
+
+# ==============================================================================
+# GET /schedule
+# ==============================================================================
+
+@router.get("/schedule", summary="Schedule list")
+def list_full_bldg_schedule(
+    year_month: Optional[str] = Query(None),
+    category: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+):
+    q = db.query(FullBldgPMSchedule)
+    if year_month:
+        q = q.filter(FullBldgPMSchedule.year_month == year_month)
+    if category:
+        q = q.filter(FullBldgPMSchedule.category == category)
+    records = q.order_by(FullBldgPMSchedule.id).all()
+
+    batch_url_map = _fb_build_batch_url_map(db)
+    items_out = []
+    for rec in records:
+        out = _fb_schedule_to_out(rec, batch_url_map)
+        if status == "abnormal":
+            if rec.abnormal_flag:
+                items_out.append(out)
+        elif status:
+            if out.status == status:
+                items_out.append(out)
+        else:
+            items_out.append(out)
+
+    should_do = _fb_count_should_do_not_done(year_month or "", records, db) if year_month else 0
+    return {
+        "year_month": year_month or "",
+        "total": len(items_out),
+        "should_do_not_done": should_do,
+        "items": [i.model_dump() for i in items_out],
+    }
+
+
+# ==============================================================================
+# GET /schedule/kpi
+# ==============================================================================
+
+@router.get("/schedule/kpi", summary="Schedule KPI", response_model=FullBldgPMScheduleKPI)
+def get_full_bldg_schedule_kpi(
+    year_month: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+):
+    q = db.query(FullBldgPMSchedule)
+    if year_month:
+        q = q.filter(FullBldgPMSchedule.year_month == year_month)
+    records = q.all()
+
+    statuses = [_fb_calc_schedule_status(r) for r in records]
+    total = len(records)
+    completed = statuses.count("completed")
+    in_progress = statuses.count("in_progress")
+    scheduled = statuses.count("scheduled")
+    unscheduled = statuses.count("unscheduled")
+    overdue = statuses.count("overdue")
+    abnormal = sum(1 for r in records if r.abnormal_flag)
+    should_do = _fb_count_should_do_not_done(year_month or "", records, db) if year_month else 0
+    current = [s for s in statuses if s != "non_month"]
+    done_of_cur = sum(1 for s in current if s == "completed")
+    rate = round(done_of_cur / len(current) * 100, 1) if current else 0.0
+
+    return FullBldgPMScheduleKPI(
+        total=total, unscheduled=unscheduled, scheduled=scheduled,
+        in_progress=in_progress, completed=completed, overdue=overdue,
+        abnormal=abnormal, should_do_not_done=should_do, completion_rate=rate,
+    )
+
+
+# ==============================================================================
+# GET /schedule/overdue
+# ==============================================================================
+
+@router.get("/schedule/overdue", summary="Overdue schedule list")
+def list_full_bldg_overdue_schedule(db: Session = Depends(get_db)):
+    today = date.today()
+    records = db.query(FullBldgPMSchedule).all()
+    batch_url_map = _fb_build_batch_url_map(db)
+    overdue_items = []
+    months_affected: set = set()
+
+    for rec in records:
+        status = _fb_calc_schedule_status(rec)
+        if status != "overdue":
+            continue
+        try:
+            year = int(rec.year_month.split("/")[0])
+            sched = datetime.strptime(f"{year}/{rec.scheduled_date}", "%Y/%m/%d").date()
+            overdue_days = (today - sched).days
+        except Exception:
+            overdue_days = 0
+        out = _fb_schedule_to_out(rec, batch_url_map).model_dump()
+        out["overdue_days"] = overdue_days
+        overdue_items.append(out)
+        months_affected.add(rec.year_month)
+
+    overdue_items.sort(key=lambda x: x.get("scheduled_date", ""))
+    return {
+        "total": len(overdue_items),
+        "months_affected": sorted(months_affected),
+        "items": overdue_items,
+    }
+
+
+# ==============================================================================
+# PATCH /schedule/{schedule_id}
+# ==============================================================================
+
+@router.patch("/schedule/{schedule_id}", summary="Update schedule record")
+def update_full_bldg_schedule(
+    schedule_id: int,
+    payload: FullBldgPMScheduleUpdate,
+    db: Session = Depends(get_db),
+):
+    rec = db.get(FullBldgPMSchedule, schedule_id)
+    if not rec:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    data = payload.model_dump(exclude_unset=True)
+    for k, v in data.items():
+        setattr(rec, k, v)
+    rec.portal_edited_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    if rec.start_time and rec.end_time:
+        rec.is_completed = True
+    db.commit()
+    db.refresh(rec)
+    batch_url_map = _fb_build_batch_url_map(db)
+    return _fb_schedule_to_out(rec, batch_url_map).model_dump()
+
+
+# ==============================================================================
+# 排程產生核心邏輯（供 endpoint 與 scheduler / lazy auto-generate 共用）
+# ==============================================================================
+
+def _do_generate_full_bldg_pm(
+    year: int, month: int, db: Session
+) -> FullBldgPMScheduleGenerateResult:
+    """
+    依「目標 year/month 自己的批次」full_bldg_pm_batch_item 產生 FullBldgPMSchedule 記錄。
+    冪等保護：
+      - is_completed=True            → 跳過
+      - portal_edited_at IS NOT NULL → 跳過
+      - 其他已存在記錄               → 更新排定日期與 Ragic 執行狀態
+
+    2026-07-13 舊修正（已被下方 2026-08-12 修正取代）：
+    item.scheduled_date 永遠是「目前最新批次」自己的值，舊版產生過去月份排程時會把
+    當期月份的日期整批錯誤帶入，因此加上 is_current_batch_month 分支只在當期月份採用。
+
+    2026-08-12 修正（比照 mall_pm 2026-07-23 的 generate_mall_schedule()）：
+    上述分支只是把錯誤縮小，沒有解決根因 —— 來源批次仍是「全站目前最新一批」，
+    跟目標月份無關。實際症狀：08 月批次同步進來後，07 月的「每日巡檢表」（直接讀
+    07 月自己的批次項目）顯示已完成，但「年度計劃表」（讀 full_bldg_pm_schedule）
+    永遠顯示未完成，因為 07 月的排程記錄拿不到完成狀態，且 item_ragic_id
+    （"{batch_id}_{row_key}" 格式）跟新批次完全對不上，矩陣查表整批落空。
+
+    改為：直接用 `_fb_get_batch_items_for_month(db, year, month)` 抓「該月自己的批次」。
+    來源批次必然等於目標月份自己的批次，因此原本的 is_current_batch_month 分支、
+    以及對非當期月份套用頻率公式二次過濾（_fb_should_schedule_by_freq）都不再需要
+    —— 批次裡有的項目，就代表 Ragic 自己已經認定該項目在這個月要執行，item 的
+    scheduled_date / start_time / end_time / is_completed 一律直接採用。
+    """
+    year_month = f"{year}/{str(month).zfill(2)}"
+    all_items = _fb_get_batch_items_for_month(db, year, month)
+
+    generated = updated = skipped_completed = skipped_edited = 0
+    skipped_non_month = skipped_no_frequency = 0
+    errors: List[str] = []
+
+    if not all_items:
+        errors.append(
+            f"{year_month} 尚未同步對應批次（full_bldg_pm_batch 找不到 period_month={year_month} 的記錄），未產生任何排程"
+        )
+
+    for item in all_items:
+        freq = (item.frequency or "").strip()
+        try:
+            exec_months_list: list[int] = json.loads(item.exec_months_json or "[]")
+        except Exception:
+            exec_months_list = []
+
+        has_exec_months = bool(exec_months_list)
+
+        if not freq and not has_exec_months:
+            skipped_no_frequency += 1
+            continue
+
+        # item 來自目標月份自己的批次，來源與目標必然一致，直接採用 Ragic 的排定日期。
+        # 2026-08-25：移除「沒填就退回 exec_months 推算 MM/01」的預設值。該推算會把
+        # Ragic 上根本不存在的日期寫進 full_bldg_pm_schedule，年度計劃表再讀出來顯示，
+        # 使用者無從分辨哪一格是真的排定日期；且排程表沒有任何清除機制，一旦寫進去就
+        # 長期殘留。Ragic 沒填＝尚未排定，如實留空（狀態會落在 unscheduled）。
+        resolved_date = (item.scheduled_date or "").strip()
+
+        existing = (
+            db.query(FullBldgPMSchedule)
+            .filter(
+                FullBldgPMSchedule.year_month == year_month,
+                FullBldgPMSchedule.item_ragic_id == item.ragic_id,
+            )
+            .first()
+        )
+        if existing:
+            if existing.is_completed or (existing.start_time and existing.end_time):
+                skipped_completed += 1
+                continue
+            if existing.portal_edited_at:
+                skipped_edited += 1
+                continue
+            existing.category = item.category
+            existing.task_name = item.task_name
+            existing.location = item.location
+            existing.frequency = freq
+            existing.estimated_minutes = item.estimated_minutes
+            existing.scheduled_date = resolved_date
+            existing.schedule_source = "auto"
+            existing.executor_name  = item.executor_name or ""
+            existing.start_time     = item.start_time
+            existing.end_time       = item.end_time
+            existing.is_completed   = item.is_completed
+            existing.result_note    = item.result_note
+            existing.abnormal_flag  = item.abnormal_flag
+            existing.abnormal_note  = item.abnormal_note
+            updated += 1
+        else:
+            new_rec = FullBldgPMSchedule(
+                year_month=year_month,
+                item_ragic_id=item.ragic_id,
+                category=item.category,
+                task_name=item.task_name,
+                location=item.location,
+                frequency=freq,
+                estimated_minutes=item.estimated_minutes,
+                scheduled_date=resolved_date,
+                executor_name=item.executor_name or "",
+                schedule_source="auto",
+                start_time=item.start_time,
+                end_time=item.end_time,
+                is_completed=item.is_completed,
+                result_note=item.result_note,
+                abnormal_flag=item.abnormal_flag,
+                abnormal_note=item.abnormal_note,
+            )
+            db.add(new_rec)
+            generated += 1
+
+    try:
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        errors.append(str(exc))
+
+    return FullBldgPMScheduleGenerateResult(
+        year_month=year_month,
+        generated=generated,
+        updated=updated,
+        skipped_completed=skipped_completed,
+        skipped_edited=skipped_edited,
+        skipped_non_month=skipped_non_month,
+        skipped_no_frequency=skipped_no_frequency,
+        errors=errors,
+    )
+
+
+# ==============================================================================
+# POST /schedule/generate
+# ==============================================================================
+
+@router.post("/schedule/generate", summary="Generate schedules for month",
+             response_model=FullBldgPMScheduleGenerateResult)
+def generate_full_bldg_schedule(
+    year: int = Query(..., ge=2020, le=2099),
+    month: int = Query(..., ge=1, le=12),
+    db: Session = Depends(get_db),
+):
+    return _do_generate_full_bldg_pm(year, month, db)
+
+
+# ==============================================================================
+# GET /schedule/annual-matrix
+# ==============================================================================
+
+
+# ==============================================================================
+# GET /schedule/annual-matrix
+# ==============================================================================
+
+@router.get("/schedule/annual-matrix", summary="Annual planning matrix",
+            response_model=FullBldgPMScheduleAnnualMatrix)
+def get_full_bldg_annual_matrix(
+    year: int = Query(..., description="Year e.g. 2026"),
+    category: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+):
+    """
+    2026-08-12 改版（比照 mall_pm 2026-07-23 + 2026-08-03 兩次修正）：
+
+    舊版用 `_fb_get_latest_batch_items()` 抓「全站目前最新一批」當成貫穿全年 12 欄的
+    主檔項目清單，再用 (item_ragic_id, month) 去 full_bldg_pm_schedule 查表。但
+    item.ragic_id 是 "{batch_id}_{row_key}" 格式，Ragic 一同步進新一批就整批換掉，
+    先前月份產生的排程記錄立刻對不上，整批退回公式估算 —— 使用者實測症狀：
+    2026/07「每日巡檢表」顯示已完成，「年度計劃表」7 月欄卻永遠不是已完成。
+
+    改為逐月呼叫 `_fb_get_batch_items_for_month()`，只用「那個月自己的批次」決定該月
+    欄位的真實項目與狀態；跨月則以 `task_name`（正規化後）為鍵合併成一列，維持年度
+    計劃表橫向閱讀的用途。合併鍵刻意不含 category / frequency / location：這些欄位
+    在 Ragic 上跨月可能被改動，納入合併鍵反而會把同一個項目拆成多列；跨月出現過的
+    所有值改放 `category_variants` / `frequency_variants` 由前端提示，不靜默隱藏。
+
+    同一個月有多筆同名項目時，該格顯示彙總狀態＋筆數徽章，每一筆原始資料完整保留在
+    `cell.entries` 供明細 Drawer 逐筆列出，不丟棄任何資料。
+
+    已知副作用（比照 mall_pm 2026-08-03 使用者確認接受）：Ragic 上把保養項目改名會讓
+    該項目裂成兩列；真的有兩筆不同的同名項目會被併成一列。
+
+    ────────────────────────────────────────────────────────────────────────────
+    2026-08-27 改版（會議裁示）：`rule` 參數移除，v2 規則成為唯一規則。
+
+    **欄位歸屬 = 執行月份聯集**
+        「item 出現在某個批次」≠「該月要做這個項目」—— Ragic 每個月的保養日誌會把
+        **所有**項目都帶出來（實例：2026/03 的 `棟週保202603-003` 裡就有頻率＝半年、
+        執行月份＝「1月 7月」的項目）。真正決定到期月份的是「執行月份」欄位。
+        以 task_name 分組，項目「該出現的月份集合」＝所有批次列的執行月份聯集
+        （該列執行月份為空 → 退回排定日期的月份，再退回批次月份）。每個月份只採用
+        「批次月份 == 該月」且確實代表該月的列。
+
+    **不做跨月遞補**：某個執行月份還沒有對應批次時，不借用其他月份的列來冒充
+        （會帶著別人的狀態與排定日期），與 `_fb_get_batch_items_for_month` 一致。
+
+    **安全閥**：批次月份不在執行月份內、但該列已有實際執行記錄（`start_time`／
+        `end_time`／`is_completed`）→ 仍然顯示並標 `off_schedule`。已完成的工作
+        不可靜默消失，Ragic 上誤填也要看得見才改得掉。
+
+    **future_due（未來待執行，2026-08-27 新增）**
+        到期月份在未來、但該月的 Ragic 批次還沒建立 → 補一個占位格，狀態
+        `future_due`，前端顯示綠色同心圓。使用者情境：汙水管道通管保養（半年，
+        執行月份「5月 11月」）5 月做完了，11 月要看得到「下次在這裡」，即使還沒
+        約廠商、沒排日期、11 月批次也還不存在。
+        ⚠️ 占位格**不是**跨月遞補：它不帶狀態、不帶排定日期、`schedule_id=None`，
+        只宣告「這個月到期」，前端不開 Drawer，也不計入完成率分母。
+        未來月份原本一律壓成 `non_month`，現在只有 `no_data`／`unscheduled`
+        會轉成 `future_due`；已有排定日期的維持 `scheduled`，由前端依格子月份上色。
+
+    ⚠️ 關鍵實作約束：`full_bldg_pm_schedule.year_month` 存的是**批次月份**，本規則
+    只改「放進哪一格」，不改排程表的月份歸屬。因此第三階段查 `FullBldgPMSchedule`
+    一律用 **origin_month（原批次月份）**，不可用顯示月份，否則 `schedule_id` 會全部
+    對不上 → 格子點不進排程編輯 Drawer，且第二階段的 lazy auto-generate 判斷會永遠
+    成立、每次 GET 都寫一次 DB。第二階段本身也維持跑原批次月份，位置刻意放在重歸屬之前。
+
+    已知口徑分歧（可接受，非 bug）：年度計劃表說 7 月，但「期間統計」「每日巡檢表」
+    「行事曆」「工作日誌」「商場總覽工時」仍按批次月份／實際執行時間計算。
+    """
+    today = date.today()
+
+    # ── 彙總狀態的嚴重度排序（皆未完成時取最嚴重者代表該格）────────────────────
+    _SEVERITY = {
+        "overdue":      0,
+        "scheduled":    1,
+        "no_data":      2,
+        "unscheduled":  3,
+        "future_due":   4,   # 2026-08-27：未來到期，最不急
+        "no_frequency": 5,
+        "non_month":    6,
+    }
+
+    def _aggregate_status(statuses: list) -> str:
+        """全部完成 → completed；部分完成／有進行中 → in_progress；皆未完成 → 最嚴重者。"""
+        if all(st == "completed" for st in statuses):
+            return "completed"
+        if any(st in ("completed", "in_progress") for st in statuses):
+            return "in_progress"
+        return min(statuses, key=lambda st: _SEVERITY.get(st, 99))
+
+    def _norm(name: str) -> str:
+        """合併鍵正規化：去頭尾空白並壓縮中間連續空白，避免純空白差異造成裂列。"""
+        return " ".join((name or "").split())
+
+    def _item_status(item: FullBldgPMItem) -> str:
+        """沒有 full_bldg_pm_schedule 記錄時，直接依該月自己批次的 item 欄位判斷真實狀態。"""
+        if item.is_completed or (item.start_time and item.end_time):
+            return "completed"
+        if item.start_time:
+            return "in_progress"
+        if item.scheduled_date:
+            try:
+                full_sched = datetime.strptime(f"{year}/{item.scheduled_date}", "%Y/%m/%d").date()
+                return "overdue" if full_sched < today else "scheduled"
+            except Exception:
+                pass
+        return "no_data"
+
+    def _v2_row_months(item: FullBldgPMItem, origin_month: int) -> tuple:
+        """
+        算出「這一列代表哪幾個月」，回傳 (月份集合, 安全閥是否生效)。
+
+        Ragic 每個月的保養日誌會把**所有**保養項目都帶出來（實例：2026/03 的
+        `棟週保202603-003` 裡就有一個頻率＝半年、執行月份＝「1月 7月」的項目），
+        所以「item 出現在某個批次」≠「該月要做這個項目」，真正決定到期月份的是
+        「執行月份」欄位。
+        """
+        try:
+            months = {m for m in (item.get_exec_months() or []) if 1 <= m <= 12}
+        except Exception:
+            months = set()
+        if not months:
+            # 執行月份為空 → 退回排定日期的月份（補零後的 MM/DD，見 sync
+            # _normalize_sched_date），再退回批次月份
+            mm = None
+            sd = (item.scheduled_date or "").strip()
+            if sd:
+                try:
+                    v = int(sd.split("/")[0])
+                    if 1 <= v <= 12:
+                        mm = v
+                except Exception:
+                    mm = None
+            months = {mm or origin_month}
+        # 安全閥（2026-08-26 使用者裁示）：批次月份不在執行月份內、但這一列已經有
+        # 實際執行記錄 → 不可隱藏，否則已完成的工作會靜默消失且沒有任何提示。
+        valve = bool(item.is_completed or item.start_time or item.end_time) \
+            and origin_month not in months
+        if valve:
+            months = months | {origin_month}
+        return months, valve
+
+    # ── 第一階段：逐月抓「該月自己的批次」項目 ────────────────────────────────
+    items_by_month: dict[int, list[FullBldgPMItem]] = {}
+    for m in range(1, 13):
+        month_items = _fb_get_batch_items_for_month(db, year, m)
+        if category:
+            month_items = [it for it in month_items if it.category == category]
+        if month_items:
+            items_by_month[m] = month_items
+
+    # ── 第二階段：Lazy auto-generate ──────────────────────────────────────────
+    # 當前年度、今天（含）以前的月份，若該月批次的 item 已有執行狀態、但排程記錄
+    # 缺漏或狀態落後，就補產生一次。_do_generate_full_bldg_pm 為冪等，不會覆蓋
+    # 已完成／人工調整的記錄。放在建列之前，讓本次回應就吃得到補正後的資料。
+    if year == today.year:
+        for m, month_items in items_by_month.items():
+            if m > today.month:
+                continue
+            ym = f"{year}/{m:02d}"
+            recs = {
+                r.item_ragic_id: r
+                for r in db.query(FullBldgPMSchedule).filter(FullBldgPMSchedule.year_month == ym).all()
+            }
+            need = any(
+                _item_status(it) in ("completed", "in_progress", "overdue", "scheduled")
+                and (
+                    it.ragic_id not in recs
+                    or _fb_calc_schedule_status(recs[it.ragic_id]) != _item_status(it)
+                )
+                for it in month_items
+            )
+            if not need:
+                continue
+            try:
+                _do_generate_full_bldg_pm(year, m, db)
+            except Exception as exc:
+                print(f"[full_building_maintenance] lazy auto-generate {year}/{m:02d} failed: {exc}")
+
+    # ── 第二.五階段：欄位重新歸屬（執行月份聯集）───────────────────────────────
+    # display_items: 顯示月份 -> [(原批次月份, item, 是否為非排定月份的執行記錄), ...]
+    # 一定要把原批次月份一起帶著：排程表 full_bldg_pm_schedule 的 year_month 仍是
+    # 批次月份，第三階段查表必須用它，否則 schedule_id 全部對不上。
+    display_items: dict[int, list] = {}
+    # 以 task_name 分組（與第四階段的合併鍵一致），逐項目算出「該出現的月份集合」
+    by_task: dict = {}
+    for origin_m, month_items in items_by_month.items():
+        for it in month_items:
+            by_task.setdefault(_norm(it.task_name), []).append((origin_m, it))
+
+    for _task, pairs in by_task.items():
+        rows = []          # [(origin_m, item, 月份集合, valve), ...]
+        due: set = set()
+        for origin_m, it in pairs:
+            months, valve = _v2_row_months(it, origin_m)
+            rows.append((origin_m, it, months, valve))
+            due |= months
+
+        for M in sorted(due):
+            # 只採用「批次月份 == M」且該列確實代表 M 的列。
+            # 刻意不做跨月遞補：借用別的月份的列來填這一格，等於用其他月份的
+            # 狀態與排定日期冒充，與 _fb_get_batch_items_for_month 的既有原則
+            # 「該月尚未同步進來，如實顯示空缺」相衝突。
+            matched = False
+            for origin_m, it, months, valve in rows:
+                if origin_m == M and M in months:
+                    display_items.setdefault(M, []).append(
+                        (origin_m, it, bool(valve), False)
+                    )
+                    matched = True
+
+            # 2026-08-27（會議裁示）：到期月份在未來、但該月的 Ragic 批次還沒建立
+            # → 補一個「未來待執行」占位格。占位格不帶狀態／日期／schedule_id，
+            # 只宣告「這個月到期」，所以與上面「不做跨月遞補」的原則不衝突。
+            if not matched and _fb_is_future_month(year, M, today):
+                # 顯示欄位取最近月份那一筆（category／frequency 以最新為準）
+                _om, _it, _ms, _vv = max(rows, key=lambda t: t[0])
+                display_items.setdefault(M, []).append((_om, _it, False, True))
+
+    # 同一格內維持「原批次月份 → 項次」的穩定排序
+    for dm in display_items:
+        display_items[dm].sort(key=lambda t: (t[0], t[1].seq_no or 0))
+
+    # ── 第三階段：逐月算出每一筆 item 自己的格子資料 ──────────────────────────
+    groups: dict = {}   # task_name -> {"order": (月,序), "months": {月: [entry,...]}, "seen": [(月, item),...]}
+
+    # 排程記錄快取，以「原批次月份」為鍵（不是顯示月份）
+    _recs_cache: dict[int, dict] = {}
+
+    def _recs(origin_month: int) -> dict:
+        if origin_month not in _recs_cache:
+            ym = f"{year}/{origin_month:02d}"
+            _recs_cache[origin_month] = {
+                r.item_ragic_id: r
+                for r in db.query(FullBldgPMSchedule).filter(FullBldgPMSchedule.year_month == ym).all()
+            }
+        return _recs_cache[origin_month]
+
+    for m in sorted(display_items.keys()):
+        for origin_m, item, off_sched, is_future_ph in display_items[m]:
+            freq = (item.frequency or "").strip()
+            existing = None if is_future_ph else _recs(origin_m).get(item.ragic_id)
+
+            if is_future_ph:
+                # 2026-08-27：未來到期占位格 —— 該月的 Ragic 批次還沒建立，純顯示
+                # 「未來待執行」，不查排程表、不帶排定日期，前端不開 Drawer。
+                cell_status     = "future_due"
+                schedule_id     = None
+                cell_sched_date = None
+            elif existing:
+                # 2026-08-25：排定日期改以 Ragic（full_bldg_pm_batch_item.scheduled_date）
+                # 為單一真實來源。full_bldg_pm_schedule 是 Portal 端的排程副本，全站沒有
+                # 任何清除機制 —— Ragic 上把排定日期刪掉後這裡仍留著舊值（含本次之前由
+                # exec_months 公式推算出來的 MM/01），年度計劃表就會顯示 Ragic 上根本不
+                # 存在的日期與紅點。
+                # 只有 Portal 端人工調整過（portal_edited_at 有值）才視為刻意覆寫，
+                # 優先採用排程表的值。
+                if existing.portal_edited_at is not None:
+                    cell_sched_date = existing.scheduled_date or None
+                else:
+                    cell_sched_date = (item.scheduled_date or "").strip() or None
+                cell_status     = _fb_calc_schedule_status(existing, override_date=cell_sched_date)
+                schedule_id     = existing.id
+            elif not freq:
+                cell_status     = "no_frequency"
+                schedule_id     = None
+                cell_sched_date = None
+            else:
+                cell_status = _item_status(item)
+                # 2026-08-27（會議裁示）：未來月份原本一律壓成「非本月」，改為
+                # 「未來待執行」—— 本規則下未來月份的格子必定落在執行月份內，
+                # 本來就是該做的，壓成「非本月」等於把到期資訊藏起來。
+                # 已有排定日期的（scheduled）保留原狀態，由前端依格子月份上綠色。
+                if _fb_is_future_month(year, m, today) and cell_status in ("no_data", "unscheduled"):
+                    cell_status = "future_due"
+                schedule_id     = None
+                cell_sched_date = item.scheduled_date or None
+
+            entry = FullBldgPMScheduleMatrixEntry(
+                item_ragic_id  = item.ragic_id,
+                status         = cell_status,
+                schedule_id    = schedule_id,
+                scheduled_date = cell_sched_date,
+                category       = item.category or "",
+                frequency      = item.frequency or "",
+                ragic_url      = f"{_RAGIC_ITEM_BASE}/{item.ragic_id}" if item.ragic_id else "",
+                origin_month   = origin_m,
+                off_schedule   = off_sched,
+            )
+
+            grp = groups.setdefault(_norm(item.task_name), {
+                "order":  (m, item.seq_no or 0),
+                "months": {},
+                "seen":   [],
+            })
+            grp["months"].setdefault(m, []).append(entry)
+            grp["seen"].append((m, item))
+
+    # ── 第四階段：每個 task_name 合併成一列 ───────────────────────────────────
+    rows: list = []
+    completed_cnt = 0
+    total_records = 0
+
+    for _key, grp in sorted(groups.items(), key=lambda kv: kv[1]["order"]):
+        # 顯示用欄位取「最近月份」那一筆（seen 依月份遞增 append，最後一筆即最近）
+        _latest_month, latest_item = grp["seen"][-1]
+
+        cells: list = []
+        for m in range(1, 13):
+            entries = grp["months"].get(m)
+            if not entries:
+                cells.append(FullBldgPMScheduleMatrixCell(
+                    month=m, status="non_month", schedule_id=None, count=0, entries=[],
+                ))
+                continue
+
+            # 未來到期占位格不是真實的 Ragic 記錄，不計入完成率分母
+            _real = [e for e in entries if e.status != "future_due"]
+            total_records += len(_real)
+            completed_cnt += sum(1 for e in _real if e.status == "completed")
+
+            first = entries[0]
+            cells.append(FullBldgPMScheduleMatrixCell(
+                month          = m,
+                status         = _aggregate_status([e.status for e in entries]),
+                # 單筆時沿用原本行為，讓既有的點格開明細 / 編輯排程路徑不受影響
+                schedule_id    = first.schedule_id    if len(entries) == 1 else None,
+                scheduled_date = first.scheduled_date if len(entries) == 1 else None,
+                count          = len(entries),
+                entries        = entries,
+            ))
+
+        cat_variants = list(dict.fromkeys(
+            (it.category or "").strip() for _m, it in grp["seen"] if (it.category or "").strip()
+        ))
+        freq_variants = list(dict.fromkeys(
+            (it.frequency or "").strip() for _m, it in grp["seen"] if (it.frequency or "").strip()
+        ))
+
+        rows.append(FullBldgPMScheduleMatrixRow(
+            item_ragic_id      = latest_item.ragic_id,
+            category           = latest_item.category or "",
+            task_name          = latest_item.task_name or "",
+            location           = latest_item.location or "",
+            frequency          = latest_item.frequency or "",
+            cells              = cells,
+            category_variants  = cat_variants,
+            frequency_variants = freq_variants,
+            month_count        = len(grp["months"]),
+            ragic_url          = f"{_RAGIC_ITEM_BASE}/{latest_item.ragic_id}" if latest_item.ragic_id else "",
+        ))
+
+    # 月份 → Ragic 批次 URL（供明細 Drawer 標題列的「在 Ragic 查看」連結）
+    month_batch_urls: dict = {}
+    for m, pairs in display_items.items():
+        # pairs[i] = (origin_m, item, off_sched, is_future_placeholder)
+        # 占位格借用的是別的月份的批次，拿它當本月連結會指到錯的批次 → 跳過
+        _real_pairs = [p for p in pairs if not p[3]]
+        bid = _real_pairs[0][1].batch_ragic_id if _real_pairs else ""
+        if bid:
+            month_batch_urls[str(m)] = f"{_RAGIC_BASE}/{bid}"
+
+    return FullBldgPMScheduleAnnualMatrix(
+        year=year,
+        rows=rows,
+        summary={
+            "total_items":     len(rows),
+            "total_records":   total_records,
+            "total_cells":     total_records,
+            "completed_count": completed_cnt,
+            "completion_rate": round(completed_cnt / total_records * 100, 1) if total_records > 0 else 0.0,
+        },
+        month_batch_urls=month_batch_urls,
+    )

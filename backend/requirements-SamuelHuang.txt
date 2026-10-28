@@ -1,0 +1,55 @@
+fastapi==0.142.2          # 2026-10-05 由 0.111.1 升級（Starlette／python-multipart CVE）
+starlette==1.7.0          # 明確鎖定：修 CVE-2026-48818（Windows StaticFiles UNC→NTLM）等 6 個
+uvicorn[standard]==0.30.1
+pydantic==2.9.2           # FastAPI 0.142 要求 >=2.9，取最小相容版以減少行為差異
+email-validator==2.3.0    # FastAPI 0.112 起不再附帶；schemas 用 EmailStr，缺了後端無法啟動
+pydantic-settings==2.3.4
+sqlalchemy==2.0.31
+aiosqlite==0.20.0
+httpx==0.27.0
+passlib[bcrypt]==1.7.4
+bcrypt==4.0.1
+PyJWT==2.8.0
+cryptography==42.0.8
+python-multipart==0.0.32  # 修上傳 DoS 等 8 個 CVE
+pandas==2.2.2
+openpyxl==3.1.4
+python-pptx==1.0.2
+python-docx>=1.1.2               # 稽核檢查「內部稽核檢查表」Word 匯出（2026-10-01）
+matplotlib>=3.8.0
+apscheduler==3.10.4
+anthropic>=0.25.0,<1   # 2026-10-05 鎖 <1：1.0（2026-08-20）為破壞性升級（改用 httpx2），新 Server 裝到會壞
+PyYAML>=6.0
+filelock>=3.13.0,<5    # 2026-10-05 鎖 <5：sync_lock.py 的跨行程鎖依賴其行為，避免日後大版本靜默改變
+
+# ── Schema migration（2026-08-28 起，PostgreSQL 遷移 Phase 0）────────────────
+# ⚠️ 每台機器都要裝：prod-update.bat 的 [3/6] 會執行 `alembic upgrade head`。
+#    沒裝的話該步驟會失敗，且 schema 變更套用不到那台。
+alembic>=1.13.0
+
+# ── PostgreSQL 驅動（2026-08-28，遷移 Phase 1）───────────────────────────────
+# ⚠️ 裝了**不代表**會連 PostgreSQL —— 走哪個資料庫仍由 .env 的 DATABASE_URL 決定。
+#    Phase 1 是兩庫並存：SQLite 仍是主要來源，PG 只放試點資料。
+# ⚠️ 用 psycopg（第 3 代）不是 psycopg2：SQLAlchemy 2.x 的建議驅動，
+#    連線字串前綴是 postgresql+psycopg://（psycopg2 是 postgresql+psycopg2://）。
+psycopg[binary]>=3.1.0
+
+# OPERA Cloud（OHIP）API 呼叫（2026-08-06）—— 同步，配合同步 service 層
+requests>=2.31.0
+
+# ── OTA 口碑分析（2026-08-22）────────────────────────────────────────────
+# 規格書 docs/SPEC_ota_reviews.md §3.4
+# ⚠️ 這四個只有「跑爬蟲的機器」需要。app/services/ota_browser.py 與
+#    ota_parser.py 一律在函式內 import，沒裝也不影響 Portal 啟動與其他功能
+#    （CSV 匯入那條路徑完全不碰這些套件）。
+beautifulsoup4>=4.12.0          # HTML 解析
+lxml>=5.2.0                     # bs4 的高速 parser backend（沒裝會自動退回 html.parser）
+selenium>=4.21.0                # OTA 動態頁面擷取
+undetected-chromedriver>=3.5.5  # 反偵測；Booking 對無頭瀏覽器偵測較嚴
+# 註：requests 已在上方（OPERA Cloud OHIP），本模組共用不另外加。
+#     pandas / openpyxl 已在上方，Excel 匯出直接用。
+
+# OTA 口碑分析 — 簡繁字形轉換（2026-08-23）
+# ⚠️ 純 Python，不需編譯。缺了不會壞，但主題字典展不開簡繁變體，
+#    簡體中文評論會少掉約六成的主題標籤（analyze 會回 warning）。
+opencc-python-reimplemented>=0.1.7

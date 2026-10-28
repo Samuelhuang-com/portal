@@ -1,0 +1,546 @@
+"""
+週期採購 — 基礎設定主檔 API Router
+Prefix: /api/v1/cycle-purchase/masters
+
+包含：供應商主檔、部門主檔、成本中心主檔、會計科目主檔。
+2026-07-10 決策：以上四張主檔全部是週期採購自建、獨立於 portal.db 其他模組
+（Contract 的 Vendors、Budget 的 budget_system_v1.sqlite、
+reference_data.py 的 Company/RefDepartment）之外，存在獨立的
+cycle-purchase.db（見 app/core/cycle_purchase_database.py 說明）。
+"""
+from typing import Optional, List
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+
+from app.core.cycle_purchase_database import get_cycle_purchase_db
+from app.core.database import get_db
+from app.dependencies import get_current_user, require_permission
+from app.models.user import User
+from app.schemas.cycle_purchase_vendor import (
+    VendorCreate, VendorLinkPayload, VendorMergePayload, VendorMergeResult,
+    VendorOut, VendorUpdate,
+)
+from app.schemas.cycle_purchase_reference import (
+    DepartmentCreate, DepartmentOut, DepartmentUpdate,
+    CostCenterCreate, CostCenterOut, CostCenterUpdate,
+    AccountCodeCreate, AccountCodeOut, AccountCodeUpdate,
+)
+from app.schemas.cycle_purchase_category import (
+    CategoryCreate, CategoryNextCodeOut, CategoryOut, CategoryUpdate,
+)
+from app.services import cycle_purchase_service as svc
+
+router = APIRouter()
+
+
+def _conflict(detail: str = "資料重複（代碼已存在）"):
+    return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
+
+
+def _attach_owner_names(portal_db: Session, depts) -> None:
+    """
+    部門的 owner_user_id 是軟關聯到 portal.db 的 users.id（cycle-purchase.db
+    自己不存 user 資料，比照本專案應用層軟關聯原則）。這裡在 router 層另外
+    拿 portal_db session 補上 owner_name 快照顯示用，cycle_purchase_service.py
+    本身維持只碰 cycle-purchase.db。單一物件或 list 都可傳入。
+    """
+    rows = depts if isinstance(depts, list) else [depts]
+    ids = {r.owner_user_id for r in rows if getattr(r, "owner_user_id", None)}
+    name_map = {}
+    if ids:
+        users = portal_db.query(User).filter(User.id.in_(ids)).all()
+        name_map = {u.id: u.full_name for u in users}
+    for r in rows:
+        r.owner_name = name_map.get(r.owner_user_id)
+
+
+# ── 供應商主檔 ────────────────────────────────────────────────────────────────
+
+class ContractVendorOut(BaseModel):
+    """合約模組廠商主檔的精簡樣貌，只給「對照合約廠商」下拉選單用。"""
+    vendor_id: str
+    vendor_name: str
+    tax_id: Optional[str] = None
+    ragic_id: Optional[str] = None
+
+
+def _attach_source_vendor_names(rows, portal_db: Session) -> None:
+    """補上 source_vendor_name（合約廠商名稱）。
+
+    合約主檔在 portal.db、供應商表在 cycle-purchase.db，跨庫關聯不了
+    （見 core/cycle_purchase_database.py 開頭：不做 ATTACH DATABASE），
+    所以比照 _attach_owner_names 的做法在 router 這層補。
+    """
+    ids = {r.source_vendor_id for r in rows if r.source_vendor_id}
+    name_map: dict = {}
+    if ids:
+        from app.models.contract import Vendor as ContractVendor
+        found = portal_db.query(ContractVendor).filter(
+            ContractVendor.vendor_id.in_(ids)
+        ).all()
+        name_map = {v.vendor_id: v.vendor_name for v in found}
+    for r in rows:
+        r.source_vendor_name = name_map.get(r.source_vendor_id)
+
+
+@router.get("/vendors", response_model=List[VendorOut], summary="供應商主檔清單")
+def list_vendors(
+    q: str = Query("", description="關鍵字（供應商代碼／名稱）"),
+    is_active: Optional[bool] = Query(None),
+    unlinked_only: bool = Query(False, description="只列出尚未對照到合約廠商的（找孤兒用）"),
+    _: User = Depends(require_permission("cycle_purchase_view")),
+    db: Session = Depends(get_cycle_purchase_db),
+    portal_db: Session = Depends(get_db),
+):
+    rows = svc.list_vendors(db, is_active=is_active, q=q)
+    if unlinked_only:
+        rows = [r for r in rows if not r.source_vendor_id]
+    _attach_source_vendor_names(rows, portal_db)
+    return rows
+
+
+@router.get(
+    "/contract-vendors",
+    response_model=List[ContractVendorOut],
+    summary="合約模組廠商主檔（給「對照合約廠商」下拉選單用）",
+)
+def list_contract_vendors(
+    q: str = Query("", description="關鍵字（名稱／統編）"),
+    _: User = Depends(require_permission("cycle_purchase_view")),
+    portal_db: Session = Depends(get_db),
+):
+    """⚠️ 這是**合約模組**的廠商（portal.db `vendors`），不是週採自己的供應商。
+
+    合約主檔的名稱同步自 Ragic 廠商資料表，所以是**全名**——而 Ragic 拋轉時
+    主表「廠商(一)」只認全名（Link 欄位）。週採供應商對照到這裡之後，
+    同步就會把名稱覆蓋成全名，拋轉才對得上。
+    """
+    from app.models.contract import Vendor as ContractVendor
+    query = portal_db.query(ContractVendor)
+    if q:
+        like = f"%{q}%"
+        query = query.filter(
+            (ContractVendor.vendor_name.ilike(like)) | (ContractVendor.tax_id.ilike(like))
+        )
+    rows = query.order_by(ContractVendor.vendor_name).limit(500).all()
+    return [
+        ContractVendorOut(
+            vendor_id=v.vendor_id, vendor_name=v.vendor_name,
+            tax_id=v.tax_id or None, ragic_id=v.ragic_id,
+        )
+        for v in rows
+    ]
+
+
+@router.post("/vendors", response_model=VendorOut, status_code=status.HTTP_201_CREATED, summary="新增供應商")
+def create_vendor(
+    payload: VendorCreate,
+    _: User = Depends(require_permission("cycle_purchase_admin")),
+    db: Session = Depends(get_cycle_purchase_db),
+):
+    try:
+        return svc.create_vendor(db, payload)
+    except IntegrityError:
+        db.rollback()
+        raise _conflict("供應商代碼已存在")
+
+
+@router.post("/vendors/sync", summary="自合約模組同步供應商主檔")
+def sync_vendors_from_contract(
+    _: User = Depends(require_permission("cycle_purchase_admin")),
+):
+    """
+    把合約模組的廠商主檔（portal.db `vendors`）鏡像同步到週期採購。
+
+    ⚠ 這是**同步 def**（不是 async def），FastAPI 會丟到 thread pool 執行。
+    刻意如此：sync_from_contract() 內部是一連串阻塞的 SQLAlchemy 呼叫，
+    寫成 async def 會直接卡住事件迴圈、整個 Portal 沒有回應（2026-07-15 已經
+    因為這個原因修過 12 個 router 檔）。既然已經在 thread pool 的執行緒上，
+    跨行程鎖就用同步版的 sync_lock（見 sync_lock.py 的 docstring）。
+
+    與「設定 → Ragic 連線 → 立即同步」的差別：
+      - 那邊是背景執行、不回傳結果，而且要 system_admin 權限
+      - 這裡同步等待並把 created/updated/skipped/warnings/errors 直接回給前端，
+        使用者在供應商主檔頁面按下去就能看到這次到底同步了什麼
+
+    注意：這條路徑不會寫 module_sync_log（那是 main.py 排程的內部機制），
+    所以「設定 → Ragic 連線」的同步紀錄不會出現這一筆。
+    """
+    import asyncio
+
+    from app.core.sync_lock import sync_lock
+    from app.services.cycle_purchase_vendor_sync import sync_from_contract
+
+    try:
+        with sync_lock("週期採購供應商"):
+            # sync_from_contract 是 async def（要能被 sync_dispatcher 與排程共用），
+            # 但內部沒有任何 await，在這條 worker 執行緒直接 asyncio.run 即可。
+            result = asyncio.run(sync_from_contract())
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"同步失敗：{exc}")
+
+    if result.get("errors"):
+        raise HTTPException(
+            status_code=500,
+            detail="同步過程發生錯誤：" + "；".join(str(e) for e in result["errors"][:3]),
+        )
+    return result
+
+
+@router.put("/vendors/{vendor_id}", response_model=VendorOut, summary="更新供應商")
+def update_vendor(
+    vendor_id: int,
+    payload: VendorUpdate,
+    _: User = Depends(require_permission("cycle_purchase_admin")),
+    db: Session = Depends(get_cycle_purchase_db),
+):
+    try:
+        vendor = svc.update_vendor(db, vendor_id, payload)
+    except IntegrityError:
+        db.rollback()
+        raise _conflict("供應商代碼已存在")
+    if not vendor:
+        raise HTTPException(status_code=404, detail="供應商不存在")
+    return vendor
+
+
+@router.put(
+    "/vendors/{vendor_id}/link",
+    response_model=VendorOut,
+    summary="把週採供應商對照到合約模組的廠商（或解除對照）",
+)
+def link_vendor(
+    vendor_id: int,
+    payload: VendorLinkPayload,
+    _: User = Depends(require_permission("cycle_purchase_admin")),
+    db: Session = Depends(get_cycle_purchase_db),
+    portal_db: Session = Depends(get_db),
+):
+    """⚠️ 刻意獨立於 PUT /vendors/{id}：一般編輯**永遠不吃** source_vendor_id
+    （見 services.update_vendor），對照是一個明確的動作，不該混在一般編輯裡
+    被不小心改掉。
+
+    對照完之後要按「自合約模組同步」，名稱等欄位才會被覆蓋成合約主檔的全名
+    （拋轉 Ragic 需要全名，見 services.link_vendor_to_contract 的說明）。
+    """
+    if payload.source_vendor_id:
+        from app.models.contract import Vendor as ContractVendor
+        exists = portal_db.query(ContractVendor).filter(
+            ContractVendor.vendor_id == payload.source_vendor_id
+        ).first()
+        if not exists:
+            raise HTTPException(
+                status_code=404,
+                detail=f"合約模組裡沒有廠商 {payload.source_vendor_id}",
+            )
+    try:
+        vendor = svc.link_vendor_to_contract(db, vendor_id, payload.source_vendor_id)
+    except svc.VendorLinkError as e:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(e))
+    if not vendor:
+        raise HTTPException(status_code=404, detail="供應商不存在")
+    _attach_source_vendor_names([vendor], portal_db)
+    return vendor
+
+
+@router.post(
+    "/vendors/{vendor_id}/merge",
+    response_model=VendorMergeResult,
+    summary="把這筆供應商併入另一筆（料號對照／彙整列／採購單的參照一起搬過去）",
+)
+def merge_vendor(
+    vendor_id: int,
+    payload: VendorMergePayload,
+    _: User = Depends(require_permission("cycle_purchase_admin")),
+    db: Session = Depends(get_cycle_purchase_db),
+):
+    """⚠️ 這支會改動**歷史資料**（既有的料號對照與彙整列），所以：
+
+    * 先用 `dry_run=true` 試算，畫面顯示「會搬動 N 筆料號對照、M 筆彙整列」再讓人確認；
+    * 來源供應商是**停用**不是刪除（採購單的外鍵是 RESTRICT，而且停用可逆）。
+
+    用途見 services.merge_vendor 的說明：週採有 15 家「簡稱孤兒」與正本重複，
+    料號對照指著簡稱那一筆，拋轉到 Ragic 時廠商欄會是空的。
+    """
+    try:
+        fn = svc.preview_vendor_merge if payload.dry_run else svc.merge_vendor
+        result = fn(db, vendor_id, payload.target_vendor_id)
+    except svc.VendorMergeError as e:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(e))
+    if not result:
+        raise HTTPException(status_code=404, detail="來源或目標供應商不存在")
+    return result
+
+
+# ── 部門主檔 ──────────────────────────────────────────────────────────────────
+
+@router.get("/departments", response_model=List[DepartmentOut], summary="部門主檔清單")
+def list_departments(
+    is_active: Optional[bool] = Query(None),
+    _: User = Depends(require_permission("cycle_purchase_view")),
+    db: Session = Depends(get_cycle_purchase_db),
+    portal_db: Session = Depends(get_db),
+):
+    depts = svc.list_departments(db, is_active=is_active)
+    _attach_owner_names(portal_db, depts)
+    return depts
+
+
+@router.post("/departments", response_model=DepartmentOut, status_code=status.HTTP_201_CREATED, summary="新增部門")
+def create_department(
+    payload: DepartmentCreate,
+    _: User = Depends(require_permission("cycle_purchase_admin")),
+    db: Session = Depends(get_cycle_purchase_db),
+    portal_db: Session = Depends(get_db),
+):
+    dept = svc.create_department(db, payload)
+    _attach_owner_names(portal_db, dept)
+    return dept
+
+
+@router.put("/departments/{dept_id}", response_model=DepartmentOut, summary="更新部門")
+def update_department(
+    dept_id: int,
+    payload: DepartmentUpdate,
+    _: User = Depends(require_permission("cycle_purchase_admin")),
+    db: Session = Depends(get_cycle_purchase_db),
+    portal_db: Session = Depends(get_db),
+):
+    dept = svc.update_department(db, dept_id, payload)
+    if not dept:
+        raise HTTPException(status_code=404, detail="部門不存在")
+    _attach_owner_names(portal_db, dept)
+    return dept
+
+
+class DepartmentLinkPayload(BaseModel):
+    """手動連結主檔部門（2026-09-01）。source_department_id=None＝解除連結。"""
+    source_department_id: Optional[str] = None
+
+
+@router.get(
+    "/departments/link-options",
+    summary="可連結的主檔部門清單（含已被占用標記）",
+)
+def department_link_options(
+    _: User = Depends(require_permission("cycle_purchase_admin")),
+    db: Session = Depends(get_cycle_purchase_db),
+    portal_db: Session = Depends(get_db),
+):
+    """
+    給「連結主檔部門」下拉用：列出 settings/company-departments 的啟用部門
+    （公司／部門名稱／主檔 id），並標記哪些已被其他週採部門連結。
+
+    ⚠️ 週採的 company 是自行輸入（2026-09-01 裁示），這裡顯示的是**主檔**的
+    公司名稱，兩者字串本來就可能不同——這正是需要手動連結的原因。
+    """
+    from app.models.reference_data import Company, RefDepartment
+    from app.models.cycle_purchase_reference import CyclePurchaseDepartment
+
+    taken = {
+        d.source_department_id: f"{d.company}／{d.dept_name}"
+        for d in db.query(CyclePurchaseDepartment)
+        .filter(CyclePurchaseDepartment.source_department_id.isnot(None))
+        .all()
+    }
+    rows = (
+        portal_db.query(RefDepartment, Company)
+        .join(Company, RefDepartment.company_id == Company.id)
+        .filter(RefDepartment.is_active == True)  # noqa: E712
+        .order_by(Company.name, RefDepartment.name)
+        .all()
+    )
+    return [
+        {
+            "source_department_id": str(d.id),
+            "company": c.name,
+            "dept_name": d.name,
+            "linked_to": taken.get(str(d.id)),   # None＝還沒被任何週採部門連結
+        }
+        for d, c in rows
+    ]
+
+
+@router.put(
+    "/departments/{dept_id}/link",
+    response_model=DepartmentOut,
+    summary="連結／解除主檔部門",
+)
+def link_department(
+    dept_id: int,
+    payload: DepartmentLinkPayload,
+    _: User = Depends(require_permission("cycle_purchase_admin")),
+    db: Session = Depends(get_cycle_purchase_db),
+    portal_db: Session = Depends(get_db),
+):
+    """
+    2026-09-01：company 改自行輸入後，同步的名稱比對只剩「部門名稱唯一命中」，
+    重名部門要靠這個端點手動連結，權限鏈（部門成員可編輯請購單）才會生效。
+    """
+    # 主檔部門存在性驗證在這裡做（service 拿不到 portal session）
+    if payload.source_department_id is not None:
+        from app.models.reference_data import RefDepartment
+        try:
+            src_pk = int(payload.source_department_id)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="source_department_id 必須是主檔部門 id")
+        if not portal_db.query(RefDepartment).filter(RefDepartment.id == src_pk).first():
+            raise HTTPException(status_code=404, detail="主檔部門不存在（請重新整理清單）")
+
+    dept, err = svc.link_department_to_source(db, dept_id, payload.source_department_id)
+    if dept is None:
+        raise HTTPException(status_code=404, detail="部門不存在")
+    if err:
+        raise HTTPException(status_code=409, detail=err)
+    _attach_owner_names(portal_db, dept)
+    return dept
+
+
+# ── 成本中心主檔 ──────────────────────────────────────────────────────────────
+
+@router.get("/cost-centers", response_model=List[CostCenterOut], summary="成本中心主檔清單")
+def list_cost_centers(
+    department_id: Optional[int] = Query(None),
+    is_active: Optional[bool] = Query(None),
+    _: User = Depends(require_permission("cycle_purchase_view")),
+    db: Session = Depends(get_cycle_purchase_db),
+):
+    return svc.list_cost_centers(db, department_id=department_id, is_active=is_active)
+
+
+@router.post("/cost-centers", response_model=CostCenterOut, status_code=status.HTTP_201_CREATED, summary="新增成本中心")
+def create_cost_center(
+    payload: CostCenterCreate,
+    _: User = Depends(require_permission("cycle_purchase_admin")),
+    db: Session = Depends(get_cycle_purchase_db),
+):
+    try:
+        return svc.create_cost_center(db, payload)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=422, detail="部門不存在或成本中心代碼重複")
+
+
+@router.put("/cost-centers/{cc_id}", response_model=CostCenterOut, summary="更新成本中心")
+def update_cost_center(
+    cc_id: int,
+    payload: CostCenterUpdate,
+    _: User = Depends(require_permission("cycle_purchase_admin")),
+    db: Session = Depends(get_cycle_purchase_db),
+):
+    cc = svc.update_cost_center(db, cc_id, payload)
+    if not cc:
+        raise HTTPException(status_code=404, detail="成本中心不存在")
+    return cc
+
+
+# ── 會計科目主檔 ──────────────────────────────────────────────────────────────
+
+@router.get("/account-codes", response_model=List[AccountCodeOut], summary="會計科目主檔清單")
+def list_account_codes(
+    is_active: Optional[bool] = Query(None),
+    _: User = Depends(require_permission("cycle_purchase_view")),
+    db: Session = Depends(get_cycle_purchase_db),
+):
+    return svc.list_account_codes(db, is_active=is_active)
+
+
+@router.post("/account-codes", response_model=AccountCodeOut, status_code=status.HTTP_201_CREATED, summary="新增會計科目")
+def create_account_code(
+    payload: AccountCodeCreate,
+    _: User = Depends(require_permission("cycle_purchase_admin")),
+    db: Session = Depends(get_cycle_purchase_db),
+):
+    try:
+        return svc.create_account_code(db, payload)
+    except IntegrityError:
+        db.rollback()
+        raise _conflict("會計科目代碼已存在")
+
+
+@router.put("/account-codes/{ac_id}", response_model=AccountCodeOut, summary="更新會計科目")
+def update_account_code(
+    ac_id: int,
+    payload: AccountCodeUpdate,
+    _: User = Depends(require_permission("cycle_purchase_admin")),
+    db: Session = Depends(get_cycle_purchase_db),
+):
+    ac = svc.update_account_code(db, ac_id, payload)
+    if not ac:
+        raise HTTPException(status_code=404, detail="會計科目不存在")
+    return ac
+
+
+# ── 類別主檔（2026-08-18 新增）────────────────────────────────────────────────
+# 三層編碼（大分類英文 + 中分類 2 碼 + 細分類 2 碼 + 流水 3 碼），
+# 設計理由與 department_id 可為 NULL 的語意見
+# models/cycle_purchase_category.py 檔頭。
+
+@router.get("/categories", response_model=List[CategoryOut], summary="類別主檔清單")
+def list_categories(
+    company: Optional[str] = Query(None, description="公司別"),
+    department_id: Optional[int] = Query(None, description="歸屬部門"),
+    q: str = Query("", description="關鍵字（類別／大中細分類名稱）"),
+    is_active: Optional[bool] = Query(None),
+    _: User = Depends(require_permission("cycle_purchase_view")),
+    db: Session = Depends(get_cycle_purchase_db),
+):
+    return svc.list_categories(
+        db, company=company, department_id=department_id, q=q, is_active=is_active
+    )
+
+
+@router.post(
+    "/categories",
+    response_model=CategoryOut,
+    status_code=status.HTTP_201_CREATED,
+    summary="新增類別",
+)
+def create_category(
+    payload: CategoryCreate,
+    _: User = Depends(require_permission("cycle_purchase_admin")),
+    db: Session = Depends(get_cycle_purchase_db),
+):
+    try:
+        return svc.create_category(db, payload)
+    except IntegrityError:
+        db.rollback()
+        raise _conflict("同公司底下已有相同的大／中／細分類代碼組合")
+
+
+@router.get(
+    "/categories/{category_id}/next-code",
+    response_model=CategoryNextCodeOut,
+    summary="取這個類別下一個可用料號",
+)
+def get_category_next_code(
+    category_id: int,
+    _: User = Depends(require_permission("cycle_purchase_view")),
+    db: Session = Depends(get_cycle_purchase_db),
+):
+    result = svc.get_next_item_code(db, category_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="類別不存在")
+    return result
+
+
+@router.put("/categories/{category_id}", response_model=CategoryOut, summary="更新類別")
+def update_category(
+    category_id: int,
+    payload: CategoryUpdate,
+    _: User = Depends(require_permission("cycle_purchase_admin")),
+    db: Session = Depends(get_cycle_purchase_db),
+):
+    try:
+        category = svc.update_category(db, category_id, payload)
+    except IntegrityError:
+        db.rollback()
+        raise _conflict("同公司底下已有相同的大／中／細分類代碼組合")
+    if not category:
+        raise HTTPException(status_code=404, detail="類別不存在")
+    return category

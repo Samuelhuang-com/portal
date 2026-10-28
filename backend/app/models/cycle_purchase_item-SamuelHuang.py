@@ -1,0 +1,213 @@
+"""
+週期採購 — 料號主檔 + 料號對照表（獨立資料庫 cycle-purchase.db）
+
+依《週期採購_Portal規劃評估_v1.0.md》第四節資料治理結論：
+  - item_code 為「集團新編碼」，全集團唯一，不沿用日曜天地／春大直既有的
+    E（工務）/C（清潔用品）/G（文具印刷）/S（營業用品）系列編碼——
+    實測比對顯示兩家公司料號字串相同的 115 筆中，品名／廠商／單價三者
+    完全一致的只有 7 筆，其餘 108 筆同號不同貨，不能假設「同代碼＝同品項」。
+  - 各公司原始料號只存在 CyclePurchaseItemMapping，作為對照與追溯用途，
+    不作為主鍵。
+
+2026-07-11（與 Samuel 討論後新增部門範圍）：
+  - 逐列核對兩家公司的「設料號明細表.xlsx」後確認：每家公司內部，分頁
+    （工務用／清潔用品／文具&印刷／營業用品）、分頁內的「類別」、料號
+    三者是乾淨的三層關係，沒有任何料號或類別橫跨兩個分頁。這個分頁邊界
+    對應真實的功能性部門（工務部／清潔部／文具印刷部／營業部），不是單純
+    的分類標籤。
+  - 因此 CyclePurchaseItemMapping 新增 department_id：代表「這個料號在
+    這家公司屬於哪個部門」，供請購單「可選料號」查詢按公司＋部門篩選用
+    （見 cycle_purchase_request_service.get_available_items）。放在
+    mapping 上而不是 item 上，因為部門歸屬本質是「公司＋料號」層級的
+    事——理論上同一個集團料號在不同公司可能屬於不同部門（雖然這次資料
+    裡 7 筆兩公司confirmed合併的料號剛好都落在同一個部門）。
+
+2026-07-11（第三期彙整單／採購單規劃時發現並修正）：
+  - 原本 original_vendor_name 只是文字欄位，沒有連到 cycle_purchase_vendors。
+    對絕大多數單一公司專用的料號沒差，但 7 筆兩公司 confirmed 合併的料號，
+    CyclePurchaseItem.default_vendor_id 只會記到「先建檔那家公司」（日曜
+    天地）的供應商，春大直那邊實際供應商只剩文字、沒有 id 可用——彙整單
+    「按供應商分」會分不出來。因此新增 vendor_id（可為 NULL，因為原始
+    Excel 有些列的「廠商」欄位本來就是空的），透過一次性 SQL 回填腳本
+    （scripts/backfill_item_mapping_vendor_id.py）比對 original_vendor_name
+    字串補齊既有資料，不需要重跑整個匯入腳本、不需要再清空資料庫。日後
+    彙整單一律依「料號對照表的 vendor_id」分供應商，不再看料號主檔的
+    default_vendor_id（那個欄位保留給料號主檔頁面「預設供應商」顯示用，
+    語意上代表「這個集團料號慣用的參考供應商」，不作為彙整/採購的依據）。
+
+2026-08-13（0812 會議後，與協理／Samuel 確認，⚠️ 部分反轉上面第一段的決策）：
+  - 背景：協理現場核對料號主檔時，發現「空調備品-濾網」E0101001~004 四筆
+    被匯入腳本自動判定為與日耀重複而停用，但這四筆其實是四種不同尺寸的
+    濾網（12*24*2"／12*24*4"／24*24*2"／24*24*4"），品項不同、判斷有誤。
+    協理最終裁示：春大直與日耀的料號、廠商完全分開維護，**不做跨公司
+    合併**（兩邊廠商本來就不同，臺北的廠商不會為了垃圾袋送去臺中）。
+  - 因此**春大直的 item_code 改用「公司代碼前綴＋原始碼」**（如
+    `CH-E0101001`，CH 是春大直週期代碼的公司字首），不再另外配「集團
+    新編碼」——因為集團新編碼存在的理由（怕同代碼被誤判成同品項而誤
+    合併）已經不成立，兩家公司從此不共用料號命名空間。
+    ⚠️ 2026-08-13 實際執行 `Temp/reimport_chunda_items.py` 時才發現：
+    item_code 是**全表** UNIQUE（不分公司），日耀既有料號本來就用同一套
+    E/C/G/S 編碼慣例各自獨立編號，光用裸原始碼（不加前綴）會直接撞號
+    （實測撞到 `E0102001`）。**純原始碼不夠，一定要加公司前綴**才能真
+    的全表唯一；`cycle_purchase_item_mappings.original_code` 才是存純
+    原始碼（不含前綴），供人工對照與追溯。
+  - **上面第一段的分析結論不變**（108/115 筆同代碼不同貨，不能假設同碼
+    同品項），改變的只是因應對策：原本用「另編一組跨公司碼＋mapping 表
+    人工確認合併」解決，現在用「兩家公司命名空間各自獨立、完全不合併」
+    解決——兩者都是同一個問題（避免誤合併）的不同解法，不是發現原分析
+    有錯。
+  - 目前僅標記兩公司共用的 7 筆統購料號（如永豐餘衛生紙）維持原本的
+    「集團碼＋兩筆 mapping」設計，這 7 筆不受本次調整影響，也沒有跟著
+    改回原始碼（改了會破壞日耀那邊既有的對照）。
+  - 這次調整範圍限定春大直，日耀之後是否跟進同樣改法，待日耀料號整理
+    完成、協理再確認。
+  - Schema 本身沒有變動（item_code 欄位定義不變，仍是 String(30) unique），
+    只是這批資料的 item_code **內容**改變語意，純資料層面的一次性重建，
+    執行腳本見 `Temp/reimport_chunda_items.py`（春大直料號清空重匯入，
+    範圍與刪除順序見腳本開頭說明）。
+
+2026-08-21（與 Samuel 確認，會計科目改由主檔決定）：
+  - 原本會計科目不在料號側，由填單人在請購明細逐行手動選（見
+    models/cycle_purchase_request.py 開頭說明）。協理提供的《設料號明細表》
+    每一列都已標好會科代碼／會科名稱，因此改成**由主檔帶入、請購單不再出現
+    會計科目欄**。
+  - ⚠️ 科目掛在 **CyclePurchaseItemMapping 而不是 CyclePurchaseItem**。原因是
+    Excel 的會科本來就填在「部門欄位」底下（維修備品分頁有管理部／客服停管部／
+    營業部／工程部四組會科代碼欄），且實測確實有跨部門不同科目的案例：
+    `E0204002 公區照明-軌道燈` 在工程部是 `621601 修繕費-維修`，在營業部是
+    `1142 用品盤存`。掛在 item 上就得二選一或把料號拆成兩筆。
+  - `cycle_purchase_request_items.account_code_id` **保留不動**，改由後端在
+    新增明細時自動從 mapping 帶入快照，付款分攤（cycle_purchase_payment_service）
+    與已送出的歷史單據金額完全不受影響。
+"""
+from sqlalchemy import (
+    Column, Integer, String, Boolean, Numeric, Text, DateTime,
+    ForeignKey, UniqueConstraint, func,
+)
+from sqlalchemy.orm import relationship
+
+from app.core.cycle_purchase_database import CyclePurchaseBase
+
+
+class CyclePurchaseItem(CyclePurchaseBase):
+    """週期採購料號主檔（集團新編碼）"""
+    __tablename__ = "cycle_purchase_items"
+
+    id                = Column(Integer, primary_key=True, autoincrement=True)
+    item_code         = Column(String(30),  nullable=False, unique=True,
+                                comment="集團料號（新編碼，非原公司料號）")
+    item_name         = Column(String(200), nullable=False, comment="品名")
+    spec              = Column(String(300), nullable=True,  comment="規格")
+    category          = Column(String(50),  nullable=True,
+                                comment="類別（如：清潔用品／文具印刷／營業用品／工務）")
+    # 2026-09-21 新增（migration cpitemcat）：改接類別主檔的**細分類**。
+    # 原本 category 是自由字串，料號頁的下拉還是寫死的 4 個舊值，新增/編輯料號時
+    # 會把正確的類別字串（如「客廁備品-衛生紙」）改成主檔對不上的「清潔用品」，
+    # 料號就從週期設定「適用品類」與請購單「可選料號」裡靜默消失。
+    # 現在 category 字串**保留**但改由後端依 category_id 從主檔 category_name 帶入
+    # （週期設定／請購單／主檔料號數仍以字串比對，保留字串就不用動那幾處）。
+    # NULL＝尚未對應，見 Temp/cp_items_category_backfill_20260921.sql。
+    category_id       = Column(
+        Integer,
+        ForeignKey("cycle_purchase_categories.id", ondelete="RESTRICT"),
+        nullable=True,
+        comment="類別主檔細分類（→ cycle_purchase_categories.id）；NULL=尚未對應",
+    )
+    unit              = Column(String(20),  nullable=True,  comment="計量單位")
+    default_qty       = Column(Integer,     nullable=False, default=0, comment="批次預載數量")
+    moq               = Column(Integer,     nullable=False, default=0, comment="最小訂購量 MOQ")
+    max_stock         = Column(Integer,     nullable=True,  comment="最大庫存量（僅供參考，不做消帳）")
+    min_stock         = Column(Integer,     nullable=True,  comment="最小庫存量（僅供參考，不做消帳）")
+    unit_price        = Column(Numeric(12, 4), nullable=True, comment="參考單價")
+    default_vendor_id = Column(Integer, nullable=True,
+                                comment="預設供應商 id（→ cycle_purchase_vendors.id，同資料庫內關聯）")
+    is_active         = Column(Boolean, nullable=False, default=True, comment="是否啟用")
+    is_cycle_item     = Column(Boolean, nullable=False, default=True, comment="是否週期採購專用標記")
+    notes             = Column(Text, nullable=True, comment="備註（含原始資料來源說明）")
+
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+
+    mappings = relationship(
+        "CyclePurchaseItemMapping",
+        back_populates="item",
+        cascade="all, delete-orphan",
+        order_by="CyclePurchaseItemMapping.company",
+    )
+
+    def __repr__(self):
+        return f"<CyclePurchaseItem id={self.id} code={self.item_code} name={self.item_name}>"
+
+
+class CyclePurchaseItemMapping(CyclePurchaseBase):
+    """
+    週期採購料號對照表 — 集團料號 ↔ 公司原始料號
+
+    ⚠️ 共同料號治理規則（依規劃報告第四節實測發現）：
+    兩家公司即使原始料號字串相同，品項也極可能不同（實測僅約 6% 一致）。
+    本表每一列代表「集團料號 + 特定公司」的一個對照關係，不得只憑原始料號
+    字串自動建立對照，必須由人工確認品名／廠商／單價後，才把
+    is_confirmed 設為 True。
+    """
+    __tablename__ = "cycle_purchase_item_mappings"
+    __table_args__ = (
+        # 2026-08-18：唯一鍵從 (item_id, company) 擴到含 department_id。
+        # 原因：春大直的文具用品（G 系列）在《設料號明細表》裡的分頁就叫
+        # 「文具用品-所有部門需求」，各部門都會領用；請購單的「可選料號」是按
+        # 公司＋部門查 mapping（get_available_items），一個料號只能有一筆
+        # mapping 的話，文具就只會出現在其中一個部門底下，其他部門請購不到。
+        # 改成一個料號對每個需要的部門各建一筆 mapping。
+        #
+        # ⚠️ 這是**放寬**限制，不是收緊：原本合法的資料在新約束下一律仍然合法，
+        # 所以不需要先清資料。反過來要注意的是「同公司多筆 mapping」現在會
+        # 合法存在，凡是用 (item_id, company) 去 .first() 拿單筆 mapping 的
+        # 舊查詢都要補上 department_id 條件，否則會隨機拿到其中一個部門的
+        # 單價／供應商（已知並已修正的一處：
+        # cycle_purchase_summary_service.generate_summary）。
+        UniqueConstraint(
+            "item_id", "company", "department_id",
+            name="uq_cp_item_mapping_item_company_dept",
+        ),
+    )
+
+    id                   = Column(Integer, primary_key=True, autoincrement=True)
+    item_id              = Column(
+        Integer,
+        ForeignKey("cycle_purchase_items.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    company              = Column(String(50),  nullable=False, comment="公司別（如：日曜天地／春大直）")
+    department_id        = Column(
+        Integer,
+        ForeignKey("cycle_purchase_departments.id", ondelete="RESTRICT"),
+        nullable=False,
+        comment="這個料號在這家公司屬於哪個部門（2026-07-11 新增，供請購單可選料號按部門篩選用）",
+    )
+    original_code        = Column(String(30),  nullable=True, comment="公司原始料號（如 C0101001）")
+    original_name        = Column(String(300), nullable=True, comment="公司原始品名")
+    original_vendor_name = Column(String(200), nullable=True, comment="公司原始廠商名稱（文字，追溯用）")
+    vendor_id            = Column(
+        Integer,
+        ForeignKey("cycle_purchase_vendors.id", ondelete="SET NULL"),
+        nullable=True,
+        comment="這個料號在這家公司實際跟哪個供應商叫貨（2026-07-11 新增，供彙整單/採購單"
+                "按供應商分單用；可為 NULL，因為原始資料有些列廠商欄位本來就是空的）",
+    )
+    original_unit_price  = Column(Numeric(12, 4), nullable=True, comment="公司原始單價")
+    account_code_id      = Column(
+        Integer,
+        ForeignKey("cycle_purchase_account_codes.id", ondelete="SET NULL"),
+        nullable=True,
+        comment="這個料號在這家公司這個部門要記到哪個會計科目（2026-08-21 新增）",
+    )
+    is_confirmed         = Column(Boolean, nullable=False, default=False,
+                                   comment="是否已由人工確認對照正確（不可自動合併帶入）")
+    notes                = Column(Text, nullable=True, comment="備註（如資料清理過程說明）")
+
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+
+    item = relationship("CyclePurchaseItem", back_populates="mappings")
+
+    def __repr__(self):
+        return f"<CyclePurchaseItemMapping id={self.id} item_id={self.item_id} company={self.company}>"

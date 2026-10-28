@@ -71,6 +71,8 @@ class MallPeriodicMaintenanceItem(Base):
     # ── Sheet 24 同步欄位（維修工時，從 /periodic-maintenance/24 拉取）──────────
     repair_hours   = Column(Float,   nullable=True,  comment="維修工時（小時），來源 Sheet 24")
     sheet24_id     = Column(String(50), nullable=True, comment="Sheet 24 的 Ragic record ID，用於直接比對")
+    parent_no      = Column(String(50), nullable=True, default=None, comment="項目(母)，來源 Sheet24；同批次內相同者為同一母項目；空白＝NULL")
+    child_no       = Column(String(50), nullable=True, default=None, comment="項目(子)，來源 Sheet24，如 11.1；空白＝NULL")
 
     # ── 附圖（2026-07-13 新增，來源 Ragic Sheet24「圖片上傳」欄位）───────────
     # 格式：JSON list，元素為 {"url": "...", "filename": "..."}（見 ragic_data_service.parse_images）

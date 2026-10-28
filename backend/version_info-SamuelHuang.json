@@ -1,0 +1,8 @@
+{
+  "commit_hash": "e791b2c4c46bb468548a843a4f2795d148d0d106",
+  "commit_short": "e791b2c",
+  "commit_date": "2026-08-11T07:22:21+08:00",
+  "commit_message": "fix: 20260811-002 搬回被誤歸檔的 4 個運維檔案 (sync_tool.py/deploy.bat/update.bat/git-push.bat)",
+  "branch": "main",
+  "generated_at": "2026-08-11T07:49:17.533138+08:00"
+}

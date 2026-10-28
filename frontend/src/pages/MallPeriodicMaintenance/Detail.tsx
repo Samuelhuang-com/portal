@@ -24,17 +24,24 @@ import {
   BorderOutlined,
 } from '@ant-design/icons'
 import { Input } from 'antd'
-import type { ColumnsType } from 'antd/es/table'
+import type { ColumnsType, ColumnType } from 'antd/es/table'
 import dayjs from 'dayjs'
 
 import { fetchMallPMBatchDetail, fetchMallPMTaskHistory } from '@/api/mallPeriodicMaintenance'
 import type {
-  PMBatchDetail, PMItem, PMItemStatus,
+  PMBatchDetail, PMItem, PMItemStatus, PMParentGroup,
   PMTaskHistory, PMItemHistorySummary,
 } from '@/types/periodicMaintenance'
 import MallPMItemWorklogDrawer from '@/components/MallPMItemWorklogDrawer'
 
 const { Title, Text } = Typography
+
+/** 批次明細表格列：子項目（PMItem）或母項目分組列（GroupRow） */
+type GroupRow = { __group: true; ragic_id: string; group: PMParentGroup }
+type TableRow = PMItem | GroupRow
+function isGroupRow(r: TableRow): r is GroupRow {
+  return (r as GroupRow).__group === true
+}
 const { Option } = Select
 
 // ── 狀態設定 ──────────────────────────────────────────────────────────────────
@@ -362,6 +369,22 @@ export default function MallPeriodicMaintenanceDetailPage() {
     return true
   })
 
+  // 母項目分組列：插在該母項目第一筆「可見」子項目之前；彙總數字取整批（未經篩選）
+  const parentGroupMap = new Map<string, PMParentGroup>(
+    (detail?.parent_groups ?? []).map((g) => [g.parent_no, g] as [string, PMParentGroup])
+  )
+  const tableRows: TableRow[] = []
+  const groupShown = new Set<string>()
+  for (const it of filteredItems) {
+    const pno = (it.parent_no ?? '').trim()
+    const g = pno ? parentGroupMap.get(pno) : undefined
+    if (g && !groupShown.has(pno)) {
+      groupShown.add(pno)
+      tableRows.push({ __group: true, ragic_id: `group:${pno}`, group: g })
+    }
+    tableRows.push(it)
+  }
+
   const tabCounts: Record<string, number> = { all: detail?.items.length ?? 0 }
   for (const it of detail?.items ?? []) {
     tabCounts[it.status] = (tabCounts[it.status] ?? 0) + 1
@@ -381,6 +404,20 @@ export default function MallPeriodicMaintenanceDetailPage() {
       width: 60,
       align: 'center',
       render: (v: number) => <Text type="secondary">{v}</Text>,
+    },
+    {
+      title: '項目(母)',
+      dataIndex: 'parent_no',
+      width: 80,
+      align: 'center',
+      render: (v: string | null | undefined) => v || <Text type="secondary">—</Text>,
+    },
+    {
+      title: '項目(子)',
+      dataIndex: 'child_no',
+      width: 80,
+      align: 'center',
+      render: (v: string | null | undefined) => v || <Text type="secondary">—</Text>,
     },
     {
       title: '類別',
@@ -517,6 +554,30 @@ export default function MallPeriodicMaintenanceDetailPage() {
       },
     },
   ]
+
+  const renderGroupRow = (g: PMParentGroup) => (
+    <Space size={12} wrap>
+      <Tag color="blue" style={{ fontWeight: 600, margin: 0 }}>項目(母) {g.parent_no}</Tag>
+      <Text>子項目完成 {g.done_count}/{g.child_count}</Text>
+      <Text>維修工時 Σ {fmtHours(g.total_repair_hours)}</Text>
+      {g.missing_hours_count > 0 && (
+        <Text type="warning">缺維修工時 {g.missing_hours_count} 筆（未計入）</Text>
+      )}
+      <Tag color={g.is_completed ? 'success' : 'default'} style={{ margin: 0 }}>
+        {g.is_completed ? '母項目已完成' : '母項目未完成'}
+      </Tag>
+    </Space>
+  )
+
+  // 分組列要橫跨整列：第一欄 colSpan = 全部欄數，其餘欄 colSpan = 0
+  const tableColumns: ColumnType<TableRow>[] = (columns as unknown as ColumnType<PMItem>[]).map((col, idx) => ({
+    ...col,
+    onCell: (r: TableRow) => (isGroupRow(r) ? { colSpan: idx === 0 ? columns.length : 0 } : {}),
+    render: (v: unknown, r: TableRow, i: number) => {
+      if (isGroupRow(r)) return idx === 0 ? renderGroupRow(r.group) : null
+      return col.render ? col.render(v, r, i) : (v as React.ReactNode)
+    },
+  }))
 
   const kpi = detail?.kpi
   const kpiCards = kpi ? [
@@ -718,15 +779,15 @@ export default function MallPeriodicMaintenanceDetailPage() {
           })}
         </div>
 
-        <Table<PMItem>
+        <Table<TableRow>
           loading={loading}
-          dataSource={filteredItems}
+          dataSource={tableRows}
           rowKey="ragic_id"
-          columns={columns}
+          columns={tableColumns}
           size="small"
-          pagination={{ pageSize: 20, showTotal: (n) => `共 ${n} 筆` }}
+          pagination={{ pageSize: 20, showTotal: () => `共 ${filteredItems.length} 筆` }}
           onRow={(rec) => ({
-            style: { background: STATUS_CFG[rec.status]?.rowBg },
+            style: { background: isGroupRow(rec) ? '#e6f4ff' : STATUS_CFG[rec.status]?.rowBg },
           })}
         />
       </Card>

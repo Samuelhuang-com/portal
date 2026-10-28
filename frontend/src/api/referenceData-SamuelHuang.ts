@@ -1,0 +1,152 @@
+/**
+ * F1/F2 — 基礎參考資料 API
+ * 公司別 / 部門別 / 計價規格
+ * 對應後端 /api/v1/settings/companies  /departments  /pricing-specs
+ */
+import client from './client'
+
+// ── 型別 ──────────────────────────────────────────────────────────────────
+
+export interface CompanyRecord {
+  id: number
+  name: string
+  is_active: boolean
+  created_at: string
+}
+
+export interface CompanyOption {
+  value: string  // 公司名稱（存 DB）
+  label: string  // 顯示文字
+  id: number     // 供部門下拉過濾
+}
+
+export interface DepartmentRecord {
+  id: number
+  name: string
+  company_id: number
+  company_name: string
+  is_active: boolean
+  created_at: string
+}
+
+export interface DepartmentOption {
+  value: string
+  label: string
+  /** RefDepartment.id — 2026-09-01 起提供，人員管理「部門多選」用 */
+  id?: number
+  /** 公司名稱 — 供按公司分組 */
+  company?: string
+}
+
+export interface PricingSpecRecord {
+  id: number
+  name: string
+  is_active: boolean
+  created_at: string
+}
+
+export interface PricingSpecOption {
+  value: string
+  label: string
+}
+
+// ── 公司別 ────────────────────────────────────────────────────────────────
+
+export const companiesApi = {
+  list: () =>
+    client.get<CompanyRecord[]>('/settings/companies'),
+  options: () =>
+    client.get<CompanyOption[]>('/settings/companies/options'),
+  create: (name: string) =>
+    client.post<CompanyRecord>('/settings/companies', { name }),
+  update: (id: number, name: string) =>
+    client.put<CompanyRecord>(`/settings/companies/${id}`, { name }),
+  toggle: (id: number) =>
+    client.patch<CompanyRecord>(`/settings/companies/${id}/toggle`),
+}
+
+// ── 部門別 ────────────────────────────────────────────────────────────────
+
+export const departmentsApi = {
+  list: (companyId?: number) =>
+    client.get<DepartmentRecord[]>('/settings/departments', {
+      params: companyId != null ? { company_id: companyId } : undefined,
+    }),
+  options: (companyId?: number) =>
+    client.get<DepartmentOption[]>('/settings/departments/options', {
+      params: companyId != null ? { company_id: companyId } : undefined,
+    }),
+  create: (name: string, companyId: number) =>
+    client.post<DepartmentRecord>('/settings/departments', { name, company_id: companyId }),
+  update: (id: number, name: string, companyId?: number) =>
+    client.put<DepartmentRecord>(`/settings/departments/${id}`, {
+      name,
+      ...(companyId != null ? { company_id: companyId } : {}),
+    }),
+  toggle: (id: number) =>
+    client.patch<DepartmentRecord>(`/settings/departments/${id}/toggle`),
+  /** 2026-10-01：刪除前查引用情形 */
+  usage: (id: number) =>
+    client.get<DepartmentUsage>(`/settings/departments/${id}/usage`),
+  /** 2026-10-01：刪除部門（被稽核檢查引用時後端回 409） */
+  remove: (id: number) =>
+    client.delete<DepartmentDeleteResult>(`/settings/departments/${id}`),
+}
+
+export interface DepartmentUsage {
+  members: number
+  audit_sheet_columns: number
+  audit_item_targets: number
+  cycle_purchase_linked: number
+  blocked: boolean
+}
+
+export interface DepartmentDeleteResult {
+  deleted_id: number
+  name: string
+  removed_members: number
+  unlinked_cycle_purchase_departments: number
+}
+
+// ── 計價規格 ──────────────────────────────────────────────────────────────
+
+export const pricingSpecsApi = {
+  list: () =>
+    client.get<PricingSpecRecord[]>('/settings/pricing-specs'),
+  options: () =>
+    client.get<PricingSpecOption[]>('/settings/pricing-specs/options'),
+  create: (name: string) =>
+    client.post<PricingSpecRecord>('/settings/pricing-specs', { name }),
+  update: (id: number, name: string) =>
+    client.put<PricingSpecRecord>(`/settings/pricing-specs/${id}`, { name }),
+  toggle: (id: number) =>
+    client.patch<PricingSpecRecord>(`/settings/pricing-specs/${id}/toggle`),
+}
+
+// ── SLA 指標類型 ──────────────────────────────────────────────────────────────
+
+export interface SlaMetricTypeRecord {
+  id: number
+  name: string
+  description?: string
+  is_active: boolean
+  created_at: string
+}
+
+export interface SlaMetricTypeOption {
+  value: string
+  label: string
+}
+
+export const slaMetricTypesApi = {
+  list: () =>
+    client.get<SlaMetricTypeRecord[]>('/settings/sla-metric-types'),
+  options: () =>
+    client.get<SlaMetricTypeOption[]>('/settings/sla-metric-types/options'),
+  create: (name: string, description?: string) =>
+    client.post<SlaMetricTypeRecord>('/settings/sla-metric-types', { name, description }),
+  update: (id: number, name: string, description?: string) =>
+    client.put<SlaMetricTypeRecord>(`/settings/sla-metric-types/${id}`, { name, description }),
+  toggle: (id: number) =>
+    client.patch<SlaMetricTypeRecord>(`/settings/sla-metric-types/${id}/toggle`),
+}

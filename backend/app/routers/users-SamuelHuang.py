@@ -1,0 +1,533 @@
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.orm import Session
+from typing import Optional
+from pydantic import BaseModel
+import random
+import string
+from datetime import timedelta
+from app.core.database import get_db
+from app.core.security import hash_password, verify_password
+from app.core.time import twnow
+from app.core.permission_locks import get_locked_keys
+from app.dependencies import (
+    get_current_user,
+    get_user_permissions,
+    is_system_admin,
+    require_permission,
+)
+from app.models.user import User
+from app.models.role import Role
+from app.models.role_permission import RolePermission
+from app.models.user_role import UserRole
+from app.models.tenant import Tenant
+from app.models.audit_log import AuditLog
+from app.models.user_department import UserDepartment
+from app.models.reference_data import Company, RefDepartment
+from app.schemas.user import (
+    UserCreate,
+    UserUpdate,
+    UserOut,
+    UserDepartmentOut,
+    UserListResponse,
+    ChangePasswordRequest,
+    AdminResetPasswordResponse,
+)
+
+OTP_EXPIRES_MINUTES = 15
+
+router = APIRouter()
+
+
+# ── 2026-08-12 權限收斂改版 ───────────────────────────────────────────────────
+# 原本人員管理端點是 require_roles("system_admin", "tenant_admin")（角色檢查），
+# 導致「能建帳號」只能靠 system_admin，連帶把 Opera／金旭／即時營運的營收資料
+# 一起送出去。改吃 settings_users_manage 之後，可以只給建帳號能力而不給營運資料。
+#
+# ⚠️ 語意變更：持有 settings_users_manage 即可跨 tenant 管理使用者。
+#    這是必要的 —— 負責建帳號的人在「總公司」，但要管理飯店A／商場A 的使用者。
+#    原本 tenant_admin 只能看自己 tenant 的限制隨之取消（該角色目前 0 人 0 權限）。
+_USER_MANAGE = require_permission("settings_users_manage")
+
+
+def _get_roles(user_id: str, db: Session) -> list[str]:
+    return [
+        r[0]
+        for r in db.query(Role.name)
+        .join(UserRole, UserRole.role_id == Role.id)
+        .filter(UserRole.user_id == user_id)
+        .all()
+    ]
+
+
+def _assert_can_grant_roles(
+    current_user: User, role_names: list[str], db: Session
+) -> None:
+    """
+    防提權：不得指派「含有呼叫者自己沒有的權限」的角色。
+
+    否則只要能管使用者，就能把自己（或別人）加進帶有 opera_* 的角色，
+    等於繞過 role_permissions 那邊的防提權檢查。
+
+    system_admin（permissions=["*"]）不受限。
+    """
+    my_perms = set(get_user_permissions(current_user.id, db))
+    if "*" in my_perms:
+        return
+    # 被「限系統管理員」鎖定的 key 對非系統管理員無效，不計入比對
+    locked_keys = get_locked_keys(db)
+
+    for role_name in role_names:
+        role = db.query(Role).filter(Role.name == role_name).first()
+        if not role:
+            continue
+        # 目標角色若是 system_admin，等同授予全部權限 —— 一律禁止
+        if role.name == "system_admin":
+            raise HTTPException(
+                status_code=403,
+                detail="無法指派 system_admin 角色（需要系統管理員權限）",
+            )
+        role_perms = {
+            p[0]
+            for p in db.query(RolePermission.permission_key)
+            .filter(RolePermission.role_id == role.id)
+            .all()
+        }
+        missing = sorted(role_perms - locked_keys - my_perms)
+        if missing:
+            joined = ", ".join(missing)
+            raise HTTPException(
+                status_code=403,
+                detail=f"無法指派角色「{role_name}」：其中包含你未擁有的權限（{joined}）",
+            )
+
+
+def _grantable_role_names(current_user: User, db: Session) -> list[str]:
+    """
+    呼叫者「可以指派」的角色清單 —— 與 _assert_can_grant_roles 同一套規則，
+    供前端「新增／編輯使用者」的角色下拉只列出可選項（2026-09-30）。
+    """
+    roles = db.query(Role).order_by(Role.name).all()
+    my_perms = set(get_user_permissions(current_user.id, db))
+    if "*" in my_perms:
+        return [r.name for r in roles]
+    locked_keys = get_locked_keys(db)
+    out: list[str] = []
+    for role in roles:
+        if role.name == "system_admin":
+            continue
+        role_perms = {
+            p[0]
+            for p in db.query(RolePermission.permission_key)
+            .filter(RolePermission.role_id == role.id)
+            .all()
+        }
+        if (role_perms - locked_keys) <= my_perms:
+            out.append(role.name)
+    return out
+
+
+def _assert_can_manage_target(current_user: User, target: User, db: Session) -> None:
+    """
+    對稱規則：不得變更「持有呼叫者無法授予之角色」的使用者。
+
+    update_user 是先刪光 user_roles 再依 payload 重建，若不擋，
+    只有 settings_users_manage 的人可以把別人的 system_admin 拔掉
+    （雖然不是提權，但足以癱瘓系統管理權）。
+    """
+    my_perms = set(get_user_permissions(current_user.id, db))
+    if "*" in my_perms:
+        return
+    target_roles = _get_roles(target.id, db)
+    try:
+        _assert_can_grant_roles(current_user, target_roles, db)
+    except HTTPException:
+        raise HTTPException(
+            status_code=403,
+            detail="無法變更此使用者：對方持有你無權管理的角色",
+        )
+
+
+def _get_departments(user_id: str, db: Session) -> list[UserDepartmentOut]:
+    """使用者所屬部門（user_departments ↔ RefDepartment ↔ Company，2026-09-01）。"""
+    rows = (
+        db.query(RefDepartment, Company)
+        .join(UserDepartment, UserDepartment.department_id == RefDepartment.id)
+        .join(Company, RefDepartment.company_id == Company.id)
+        .filter(UserDepartment.user_id == user_id)
+        .order_by(Company.name, RefDepartment.name)
+        .all()
+    )
+    return [
+        UserDepartmentOut(id=dept.id, name=dept.name, company=company.name)
+        for dept, company in rows
+    ]
+
+
+def _set_departments(user_id: str, department_ids: list[int], db: Session) -> None:
+    """整批取代使用者的部門關聯（語意比照 role_names：payload 就是完整清單）。
+
+    ⚠️ 部門 id 必須存在且啟用中才收；無效 id 直接 422 而不是靜默丟棄——
+       靜默丟棄會讓管理員以為設好了，實際上少一個部門（本專案最常出事的
+       錯誤類型：沒有訊息的資料缺漏）。
+    """
+    ids = list(dict.fromkeys(department_ids))  # 去重、保序
+    if ids:
+        found = {
+            d.id
+            for d in db.query(RefDepartment)
+            .filter(RefDepartment.id.in_(ids), RefDepartment.is_active == True)  # noqa: E712
+            .all()
+        }
+        bad = [i for i in ids if i not in found]
+        if bad:
+            raise HTTPException(
+                status_code=422,
+                detail=f"部門不存在或已停用：id={bad}（請重新整理公司/部門清單）",
+            )
+    db.query(UserDepartment).filter(UserDepartment.user_id == user_id).delete()
+    for dept_id in ids:
+        db.add(UserDepartment(user_id=user_id, department_id=dept_id))
+
+
+def _build_user_out(user: User, db: Session) -> UserOut:
+    tenant = db.query(Tenant).filter(Tenant.id == user.tenant_id).first()
+    return UserOut(
+        id=user.id,
+        email=user.email,
+        full_name=user.full_name,
+        tenant_id=user.tenant_id,
+        tenant_name=tenant.name if tenant else "",
+        is_active=user.is_active,
+        roles=_get_roles(user.id, db),
+        departments=_get_departments(user.id, db),
+        last_login=user.last_login,
+        created_at=user.created_at,
+        must_change_password=user.must_change_password or False,
+    )
+
+
+def _generate_otp() -> str:
+    """產生 6 位數字 OTP。"""
+    return "".join(random.choices(string.digits, k=6))
+
+
+@router.get("", response_model=UserListResponse)
+def list_users(
+    page: int = Query(1, ge=1),
+    per_page: int = Query(20, ge=1, le=100),
+    tenant_id: Optional[str] = None,
+    search: Optional[str] = None,
+    current_user: User = Depends(_USER_MANAGE),
+    db: Session = Depends(get_db),
+):
+    q = db.query(User)
+    # 持有 settings_users_manage 即可跨 tenant 檢視（見檔頭 2026-08-12 註記）。
+    # 保留 tenant_id 篩選參數，讓管理者仍能主動只看某一個據點。
+    if tenant_id:
+        q = q.filter(User.tenant_id == tenant_id)
+    if search:
+        q = q.filter(
+            (User.full_name.ilike(f"%{search}%")) | (User.email.ilike(f"%{search}%"))
+        )
+    total = q.count()
+    users = q.offset((page - 1) * per_page).limit(per_page).all()
+    return UserListResponse(
+        items=[_build_user_out(u, db) for u in users],
+        total=total,
+        page=page,
+        per_page=per_page,
+    )
+
+
+@router.get("/grantable-roles", response_model=list[str])
+def list_grantable_roles(
+    current_user: User = Depends(_USER_MANAGE),
+    db: Session = Depends(get_db),
+):
+    """
+    目前登入者可指派的角色名稱（2026-09-30）。
+    非系統管理員看不到 system_admin，也看不到含有自己未擁有權限的角色；
+    規則與 create_user / update_user 的 _assert_can_grant_roles 相同。
+    """
+    return _grantable_role_names(current_user, db)
+
+
+@router.post("", response_model=UserOut)
+def create_user(
+    data: UserCreate,
+    current_user: User = Depends(_USER_MANAGE),
+    db: Session = Depends(get_db),
+):
+    _assert_can_grant_roles(current_user, list(data.role_names or []), db)
+    email = data.email.lower().strip()
+    if "@" not in email:
+        email = f"{email}@portal.local"
+    if db.query(User).filter(User.email == email).first():
+        raise HTTPException(status_code=400, detail="Email 已存在")
+    tenant = db.query(Tenant).filter(Tenant.id == data.tenant_id).first()
+    if not tenant:
+        # 訊息用「公司別」：這個值現在來自「系統設定 → 公司/部門管理」，
+        # 前端欄位名稱也已改成公司別（2026-09-01）。DB 端仍是 tenants 表。
+        raise HTTPException(status_code=404, detail="公司別不存在")
+
+    user = User(
+        email=email,
+        full_name=data.full_name,
+        hashed_password=hash_password(data.password),
+        tenant_id=data.tenant_id,
+    )
+    db.add(user)
+    db.flush()
+
+    # 使用者 ↔ 部門（2026-09-01，多公司多部門）
+    _set_departments(user.id, data.department_ids, db)
+
+    for role_name in data.role_names:
+        role = db.query(Role).filter(Role.name == role_name).first()
+        if role:
+            db.add(
+                UserRole(
+                    user_id=user.id,
+                    role_id=role.id,
+                    tenant_id=data.tenant_id,
+                    granted_by=current_user.id,
+                )
+            )
+
+    db.add(
+        AuditLog(
+            user_id=current_user.id,
+            tenant_id=current_user.tenant_id,
+            action="create",
+            resource_type="user",
+            resource_id=user.id,
+        )
+    )
+    db.commit()
+    db.refresh(user)
+    return _build_user_out(user, db)
+
+
+@router.put("/{user_id}", response_model=UserOut)
+def update_user(
+    user_id: str,
+    data: UserUpdate,
+    current_user: User = Depends(_USER_MANAGE),
+    db: Session = Depends(get_db),
+):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="使用者不存在")
+    _assert_can_manage_target(current_user, user, db)
+    if data.role_names is not None:
+        _assert_can_grant_roles(current_user, list(data.role_names), db)
+    if data.full_name is not None:
+        user.full_name = data.full_name
+    if data.is_active is not None:
+        user.is_active = data.is_active
+
+    # ── 所屬據點（＝公司/部門管理的公司）─────────────────────────────────────
+    # ⚠️ 必須在下面的 role_names 區塊**之前**處理：那一段重建 UserRole 時是用
+    #    `tenant_id=user.tenant_id`，先改好 user.tenant_id 才會帶到新的據點。
+    if data.tenant_id is not None and data.tenant_id != user.tenant_id:
+        new_tenant = db.query(Tenant).filter(Tenant.id == data.tenant_id).first()
+        if not new_tenant:
+            raise HTTPException(status_code=404, detail="公司別不存在")
+        # ⚠️ 停用的據點不能選：`GET /tenants` 只回 is_active，前端下拉根本看不到它，
+        #    能被送上來就代表是舊快取或直接打 API。允許的話這個使用者的據點會變成
+        #    畫面上選不回來的值。
+        if not new_tenant.is_active:
+            raise HTTPException(status_code=400, detail="該公司別已停用，無法指派")
+
+        old_tenant_id = user.tenant_id
+        user.tenant_id = data.tenant_id
+
+        # 既有的 user_roles 也要跟著搬，否則角色會留在舊據點底下。
+        # ⚠️ role_names 有帶時下面那段會整批刪除重建，這裡就不用搬（搬了也會被刪）。
+        # ⚠️ UserRole 有 UniqueConstraint(user_id, role_id, tenant_id)：目標據點下
+        #    若已經有同一組 (user_id, role_id) 就會撞鍵，先刪重複再改，並且要
+        #    flush 讓刪除先落地。
+        if data.role_names is None:
+            existing = {
+                r.role_id
+                for r in db.query(UserRole)
+                .filter(UserRole.user_id == user_id, UserRole.tenant_id == data.tenant_id)
+                .all()
+            }
+            moving = (
+                db.query(UserRole)
+                .filter(UserRole.user_id == user_id, UserRole.tenant_id == old_tenant_id)
+                .all()
+            )
+            keep = []
+            for r in moving:
+                if r.role_id in existing:
+                    db.delete(r)
+                else:
+                    existing.add(r.role_id)
+                    keep.append(r)
+            db.flush()
+            for r in keep:
+                r.tenant_id = data.tenant_id
+
+    # 使用者 ↔ 部門（2026-09-01）：None＝不動、[]＝清空（比照 role_names）
+    if data.department_ids is not None:
+        _set_departments(user_id, data.department_ids, db)
+
+    if data.role_names is not None:
+        db.query(UserRole).filter(UserRole.user_id == user_id).delete()
+        for role_name in data.role_names:
+            role = db.query(Role).filter(Role.name == role_name).first()
+            if role:
+                db.add(
+                    UserRole(
+                        user_id=user.id,
+                        role_id=role.id,
+                        tenant_id=user.tenant_id,
+                        granted_by=current_user.id,
+                    )
+                )
+    # email 更新（system_admin + tenant_admin 皆可；需唯一性檢查）
+    if data.email is not None:
+        new_email = data.email.lower().strip()
+        if "@" not in new_email:
+            new_email = f"{new_email}@portal.local"
+        if new_email != user.email:
+            conflict = db.query(User).filter(User.email == new_email, User.id != user_id).first()
+            if conflict:
+                raise HTTPException(status_code=400, detail="此 Email 已被其他帳號使用")
+            user.email = new_email
+    # 管理員直接設定新密碼（不走 OTP 流程）
+    if data.new_password is not None:
+        user.hashed_password = hash_password(data.new_password)
+        user.otp_code = None
+        user.must_change_password = False
+    db.add(
+        AuditLog(
+            user_id=current_user.id,
+            tenant_id=current_user.tenant_id,
+            action="update",
+            resource_type="user",
+            resource_id=user_id,
+        )
+    )
+    db.commit()
+    db.refresh(user)
+    return _build_user_out(user, db)
+
+
+@router.delete("/{user_id}")
+def delete_user(
+    user_id: str,
+    current_user: User = Depends(is_system_admin),
+    db: Session = Depends(get_db),
+):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="使用者不存在")
+    if user_id == current_user.id:
+        raise HTTPException(status_code=400, detail="不能刪除自己")
+    db.delete(user)
+    db.commit()
+    return {"message": "使用者已刪除"}
+
+
+@router.post("/me/change-password")
+def change_password(
+    data: ChangePasswordRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    # 若帳號標記為「必須更改密碼」（OTP 登入後），免驗舊密碼
+    if not current_user.must_change_password:
+        if not data.old_password:
+            raise HTTPException(status_code=400, detail="請輸入舊密碼")
+        if not verify_password(data.old_password, current_user.hashed_password):
+            raise HTTPException(status_code=400, detail="舊密碼錯誤")
+
+    current_user.hashed_password = hash_password(data.new_password)
+    # 清除 OTP 狀態與強制更改旗標
+    current_user.must_change_password = False
+    current_user.otp_code = None
+    current_user.otp_expires_at = None
+    db.add(
+        AuditLog(
+            user_id=current_user.id,
+            tenant_id=current_user.tenant_id,
+            action="change_password",
+            resource_type="user",
+            resource_id=current_user.id,
+        )
+    )
+    db.commit()
+    return {"message": "密碼已更新"}
+
+
+@router.post("/{user_id}/reset-password", response_model=AdminResetPasswordResponse)
+def admin_reset_password(
+    user_id: str,
+    current_user: User = Depends(_USER_MANAGE),
+    db: Session = Depends(get_db),
+):
+    """
+    管理員替指定使用者產生 OTP。
+    OTP 明文僅回傳一次，管理員需口頭告知使用者。
+    使用者以 OTP 登入後，系統強制要求設定新密碼。
+
+    ⚠️ 這支是提權破口：能重設密碼就能登入對方帳號。因此同樣套用
+       _assert_can_manage_target —— 不得重設「持有你無權管理之角色」
+       的使用者密碼，否則只要能管帳號就能借別人的帳號看營運分析資料。
+    """
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="使用者不存在")
+    if user_id == current_user.id:
+        raise HTTPException(status_code=400, detail="不能重設自己的密碼（請使用「修改密碼」功能）")
+    _assert_can_manage_target(current_user, user, db)
+
+    otp = _generate_otp()
+    user.otp_code = hash_password(otp)
+    user.otp_expires_at = twnow() + timedelta(minutes=OTP_EXPIRES_MINUTES)
+    user.must_change_password = True
+
+    db.add(
+        AuditLog(
+            user_id=current_user.id,
+            tenant_id=current_user.tenant_id,
+            action="admin_reset_password",
+            resource_type="user",
+            resource_id=user_id,
+        )
+    )
+    db.commit()
+
+    return AdminResetPasswordResponse(
+        otp=otp,
+        expires_minutes=OTP_EXPIRES_MINUTES,
+        message=f"已為 {user.full_name} 產生一次性密碼，請口頭告知使用者，密碼 {OTP_EXPIRES_MINUTES_MINUTES} 分鐘後失效。",
+    )
+
+
+# ── 人員選單（供合約等模組的 manager/reviewer 下拉使用）────────────────
+class UserOptionItem(BaseModel):
+    value: str   # full_name
+    label: str   # full_name
+    user_id: str
+
+
+@router.get("/options", response_model=list[UserOptionItem])
+def list_user_options(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """取得啟用中使用者名稱清單，供 manager/reviewer 下拉使用（任何登入者可呼叫）"""
+    users = (
+        db.query(User)
+        .filter(User.is_active == True)
+        .order_by(User.full_name)
+        .all()
+    )
+    return [
+        UserOptionItem(value=u.full_name, label=u.full_name, user_id=u.id)
+        for u in users
+    ]

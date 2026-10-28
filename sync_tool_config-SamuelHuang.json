@@ -1,0 +1,227 @@
+{
+  "disabled_modules": [],
+  "module_schedules": {
+    "大直工務報修": {
+      "mode": "interval",
+      "interval_minutes": 20
+    },
+    "商場工務報修": {
+      "mode": "interval",
+      "interval_minutes": 20
+    },
+    "主管交辦／緊急事件": {
+      "mode": "interval",
+      "interval_minutes": 20
+    },
+    "飯店每日巡檢": {
+      "mode": "interval",
+      "interval_minutes": 20
+    },
+    "商場工務巡檢": {
+      "mode": "interval",
+      "interval_minutes": 20
+    },
+    "客房保養明細": {
+      "mode": "interval",
+      "interval_minutes": 20
+    },
+    "客房保養": {
+      "mode": "interval",
+      "interval_minutes": 20
+    },
+    "每日數值登錄": {
+      "mode": "interval",
+      "interval_minutes": 20
+    },
+    "B1F巡檢": {
+      "mode": "interval",
+      "interval_minutes": 20
+    },
+    "B2F巡檢": {
+      "mode": "interval",
+      "interval_minutes": 20
+    },
+    "B4F巡檢": {
+      "mode": "interval",
+      "interval_minutes": 20
+    },
+    "RF巡檢": {
+      "mode": "interval",
+      "interval_minutes": 20
+    },
+    "同步告警檢查": {
+      "mode": "interval",
+      "interval_minutes": 60
+    },
+    "飯店週期保養": {
+      "mode": "interval",
+      "interval_minutes": 120
+    },
+    "商場週期保養": {
+      "mode": "interval",
+      "interval_minutes": 120
+    },
+    "全棟例行維護": {
+      "mode": "interval",
+      "interval_minutes": 120
+    },
+    "保全巡檢": {
+      "mode": "interval",
+      "interval_minutes": 120
+    },
+    "週期保養預排": {
+      "mode": "interval",
+      "interval_minutes": 120
+    },
+    "飯店例行維護": {
+      "mode": "interval",
+      "interval_minutes": 120
+    },
+    "核准請購單清單": {
+      "mode": "interval",
+      "interval_minutes": 360
+    },
+    "核准請款單清單": {
+      "mode": "interval",
+      "interval_minutes": 360
+    },
+    "日曜請購單清單": {
+      "mode": "interval",
+      "interval_minutes": 360
+    },
+    "日曜請款單清單": {
+      "mode": "interval",
+      "interval_minutes": 360
+    },
+    "台中核准請購單清單": {
+      "mode": "interval",
+      "interval_minutes": 360
+    },
+    "台中核准請款單清單": {
+      "mode": "interval",
+      "interval_minutes": 360
+    },
+    "核准請購單": {
+      "mode": "interval",
+      "interval_minutes": 360
+    },
+    "核准請款單": {
+      "mode": "interval",
+      "interval_minutes": 360
+    },
+    "日曜核准請購單": {
+      "mode": "interval",
+      "interval_minutes": 360
+    },
+    "日曜核准請款單": {
+      "mode": "interval",
+      "interval_minutes": 360
+    },
+    "台中核准請購單": {
+      "mode": "interval",
+      "interval_minutes": 360
+    },
+    "台中核准請款單": {
+      "mode": "interval",
+      "interval_minutes": 360
+    },
+    "廠商資料": {
+      "mode": "daily",
+      "time": "01:30"
+    },
+    "週期採購供應商": {
+      "mode": "daily",
+      "time": "01:35"
+    },
+    "週期採購部門": {
+      "mode": "daily",
+      "time": "01:40"
+    },
+    "使用者據點": {
+      "mode": "daily",
+      "time": "01:40"
+    },
+    "IHG客房保養": {
+      "mode": "daily",
+      "time": "02:00"
+    },
+    "倉庫庫存": {
+      "mode": "off"
+    },
+    "📧 報修未完成報表寄信": {
+      "mode": "weekly",
+      "weekday": 0,
+      "time": "08:00"
+    }
+  },
+  "module_order": [
+    "客房保養",
+    "客房保養明細",
+    "飯店週期保養",
+    "B4F巡檢",
+    "RF巡檢",
+    "B2F巡檢",
+    "B1F巡檢",
+    "商場週期保養",
+    "全棟例行維護",
+    "大直工務報修",
+    "商場工務報修",
+    "保全巡檢",
+    "商場工務巡檢",
+    "飯店每日巡檢",
+    "每日數值登錄",
+    "核准請購單清單",
+    "核准請款單清單",
+    "廠商資料",
+    "日曜請購單清單",
+    "日曜請款單清單",
+    "主管交辦／緊急事件",
+    "IHG客房保養",
+    "週期保養預排",
+    "飯店例行維護",
+    "週期採購供應商",
+    "週期採購部門",
+    "市場區隔歷史回補",
+    "訂房歷史回補",
+    "訂房增量同步",
+    "OHIP 每日快照",
+    "OTA 評論擷取",
+    "OTA 情緒分析",
+    "同步告警檢查",
+    "倉庫庫存"
+  ],
+  "auto_interval_minutes": 0,
+  "sched_last_run": {
+    "客房保養": "2026-10-25T16:35:45",
+    "客房保養明細": "2026-10-25T16:35:45",
+    "飯店週期保養": "2026-10-25T16:15:15",
+    "B4F巡檢": "2026-10-25T16:35:45",
+    "RF巡檢": "2026-10-25T16:35:45",
+    "B2F巡檢": "2026-10-25T16:35:45",
+    "B1F巡檢": "2026-10-25T16:35:45",
+    "商場週期保養": "2026-10-25T16:15:15",
+    "全棟例行維護": "2026-10-25T16:15:15",
+    "大直工務報修": "2026-10-25T16:35:45",
+    "商場工務報修": "2026-10-25T16:35:45",
+    "保全巡檢": "2026-10-25T16:15:15",
+    "商場工務巡檢": "2026-10-25T16:35:45",
+    "飯店每日巡檢": "2026-10-25T16:35:45",
+    "每日數值登錄": "2026-10-25T16:35:45",
+    "核准請購單清單": "2026-10-25T12:14:54",
+    "核准請款單清單": "2026-10-25T12:14:54",
+    "日曜請購單清單": "2026-10-25T12:14:54",
+    "日曜請款單清單": "2026-10-25T12:14:54",
+    "主管交辦／緊急事件": "2026-10-25T16:35:45",
+    "週期保養預排": "2026-10-25T16:15:15",
+    "飯店例行維護": "2026-10-25T16:15:15",
+    "同步告警檢查": "2026-10-25T16:15:45",
+    "核准請購單": "2026-10-25T12:14:54",
+    "核准請款單": "2026-10-25T12:14:54",
+    "日曜核准請購單": "2026-10-25T12:14:54",
+    "日曜核准請款單": "2026-10-25T12:14:54",
+    "台中核准請購單清單": "2026-10-25T12:14:54",
+    "台中核准請購單": "2026-10-25T12:14:54",
+    "台中核准請款單": "2026-10-25T12:14:54",
+    "台中核准請款單清單": "2026-10-25T12:14:54"
+  }
+}

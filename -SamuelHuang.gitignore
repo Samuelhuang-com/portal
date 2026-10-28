@@ -1,0 +1,102 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+venv312/
+backend/venv312/
+.env
+.env.*
+!.env.example
+
+# Node / Frontend
+node_modules/
+dist/
+.vite/
+
+# Playwright E2E（測試產出，不進版控；瀏覽器二進位在 %USERPROFILE%\AppData\Local\ms-playwright）
+test-results/
+playwright-report/
+playwright/.cache/
+blob-report/
+
+# Database / local data
+*.db
+*.sqlite
+*.sqlite3
+*.db-wal
+*.db-shm
+*.sqlite-shm
+*.sqlite-wal
+
+# Logs / uploads
+/logs/
+uploads/
+*.log
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# OneDrive 暫存檔
+.tmp.driveupload/
+*.tmp
+
+# FUSE 掛載殘留：檔案被覆寫但仍被開啟時產生的暫存檔（透過 WSL/容器掛載存取時會出現）
+.fuse_hidden*
+
+# Temp/ — 完全不同步（開發過程的暫存、封存工具、截圖、簡報）
+# 已追蹤的檔案光靠 .gitignore 不會生效，退出版控用：git rm -r --cached Temp
+Temp/
+
+# Jupyter Book 建置產物（每次 build 都會變，且是二進位／大量小檔，diff 會很吵）
+# 原始碼在同層的 *.md / *.ipynb / _config.yml / _toc.yml，成品用 jupyter-book build 重產
+docs/jupyterbook/**/_build/
+
+# 文件 / 試算表（不進正式區）
+*.md
+*.xlsx
+
+# 例外：Jupyter Book 的原始章節要進版控，否則另一台 server 只拿得到成品、無法重建。
+# 必須放在 *.md 之後（gitignore 是後者覆蓋前者）。
+# 注意：_build/ 是「目錄」層級的排除，被排除目錄底下的檔案無法用 ! 重新納入，
+#       因此 _build/html/_sources/*.md 仍然不會進版控 —— 這正是想要的結果。
+!docs/jupyterbook/**/*.md
+
+# Claude AI — 對話、設定、暫存（不進正式區）
+CLAUDE.md
+_Runme.md
+_Context/
+docs/CLAUDE_SOP.md
+backend/fix_login.py
+backend/reset_password.py
+*.claude
+.claude/
+
+# 執行期自動產生（不進版控）
+sync_tool_config.json
+backend/static/knowledge_graph/graph.json
+backend/version_info.json
+
+
+# OHIP 連線驗證的取樣輸出（含真實營運數字，不進版控）
+backend/ohip_inventory_stats_sample.json
+backend/ohip_revenue_async_sample.json
+backend/ohip_probe_*.json
+
+# pg_migrate_pilot.py --allow-orphans 每次執行都重新產生（可重現，不需版控）
+backend/scripts/restore_dropped_fks.sql
+
+# pg_compare_reads.py 的比對輸出（每次重跑都會產生，不需版控）
+# ⚠️ 用「比對輸出」這個廣義規則而不是逐一列檔名 —— 2026-08-29 就是因為
+#    只寫了 cmp*/cp* 而讓 final.txt 混進 commit。
+backend/cmp*.txt
+backend/cp*.txt
+backend/final*.txt
+backend/*_compare*.txt
+
+# pg_cutover.py 產生的 .env 備份與切換時間戳（含密碼，絕對不可進版控）
+backend/.env.bak-*
+backend/.pg_cutover_at

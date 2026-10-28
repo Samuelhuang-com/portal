@@ -1,0 +1,342 @@
+"""
+週期採購 — 料號主檔 + 料號對照表 API Router
+Prefix: /api/v1/cycle-purchase
+
+GET    /items                              料號清單（分頁／搜尋）
+GET    /items/filter-companies             篩選用：有料號對照的公司／部門（2026-09-22）
+GET    /items/{item_id}                    料號詳情（含料號對照表）
+POST   /items                              新增料號
+PUT    /items/{item_id}                    更新料號
+GET    /items/{item_id}/mappings           料號對照清單
+POST   /items/{item_id}/mappings          新增料號對照
+PUT    /items/{item_id}/mappings/{id}     更新料號對照
+DELETE /items/{item_id}/mappings/{id}     刪除料號對照
+POST   /items/vendor-backfill/sync         供應商資料回填：同步 Ragic 廠商＋比對預覽（2026-09-30）
+POST   /items/vendor-backfill/apply        供應商資料回填：套用勾選的對應（2026-09-30）
+"""
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+
+from app.core.cycle_purchase_database import get_cycle_purchase_db
+from app.core.database import get_db
+from app.dependencies import require_permission
+from app.models.cycle_purchase_item import CyclePurchaseItemMapping
+from app.models.user import User
+from app.schemas.cycle_purchase_item import (
+    ItemCreate, ItemDetail, ItemListResponse, ItemMappingCreate,
+    ItemMappingOut, ItemMappingUpdate, ItemOut, ItemUpdate,
+)
+from app.schemas.cycle_purchase_vendor_backfill import (
+    BackfillApplyPayload, BackfillApplyResult, BackfillPreview,
+)
+from app.services import cycle_purchase_service as svc
+from app.services import cycle_purchase_vendor_backfill_service as backfill_svc
+
+router = APIRouter()
+
+
+# ── 料號主檔 ──────────────────────────────────────────────────────────────────
+
+@router.get("/items", response_model=ItemListResponse, summary="週期採購料號清單")
+def list_items(
+    q: str = Query("", description="關鍵字（料號／品名）"),
+    category: Optional[str] = Query(None),
+    # 2026-09-21：依類別主檔細分類篩選；0 = 尚未對應類別主檔
+    category_id: Optional[int] = Query(None, ge=0, description="類別主檔 ID；0 = 尚未對應"),
+    # 類別篩選停在公司／大分類／中分類時，前端送該層底下所有細分類 id（逗號分隔）
+    category_ids: str = Query("", description="類別主檔 ID 清單（逗號分隔），任一命中即符合"),
+    is_active: Optional[bool] = Query(None),
+    page: int = Query(1, ge=1),
+    per_page: int = Query(20, ge=5, le=200),
+    # 2026-09-16 新增篩選／排序（"__none__" / 0 = 未設定）
+    company: Optional[str] = Query(None, description="公司別；__none__ = 尚無料號對照"),
+    department_id: Optional[int] = Query(None, ge=1, description="部門 ID（料號對照）"),
+    account_code_id: Optional[int] = Query(None, ge=0, description="會計科目 ID；0 = 未設定"),
+    vendor_id: Optional[int] = Query(None, ge=0, description="供應商 ID（預設供應商或對照供應商）；0 = 未設定"),
+    # 2026-09-30：供應商名稱模糊比對（%關鍵字%），畫面上的供應商篩選改用這個
+    vendor_q: str = Query("", max_length=100, description="供應商名稱關鍵字（模糊比對）"),
+    sort_by: Optional[str] = Query(None, description="排序欄位"),
+    sort_order: str = Query("asc", pattern="^(asc|desc)$"),
+    _: User = Depends(require_permission("cycle_purchase_view")),
+    db: Session = Depends(get_cycle_purchase_db),
+):
+    items, total = svc.list_items(
+        db, q=q, category=category, category_id=category_id,
+        # 有帶參數就一定套篩選（-1 ＝ 前端選到的節點底下沒有細分類 → 查無資料）
+        category_ids=[int(x) for x in category_ids.split(",") if x.strip().lstrip("-").isdigit()]
+        if category_ids.strip() else None,
+        is_active=is_active, page=page, per_page=per_page,
+        company=company, department_id=department_id, account_code_id=account_code_id,
+        vendor_id=vendor_id, vendor_q=vendor_q, sort_by=sort_by, sort_order=sort_order,
+    )
+    return ItemListResponse(items=items, total=total, page=page, per_page=per_page)
+
+
+# 2026-09-22（Samuel）：料號頁「公司/部門」篩選只列有料號的公司。
+# 以料號對照表（cycle_purchase_item_mappings）實際出現過的 公司＋部門 為準。
+# ⚠️ 必須放在 /items/{item_id} 之前，否則 "filter-companies" 會被當成 item_id 解析成 422。
+@router.get("/items/filter-companies", summary="篩選用：有料號對照的公司與部門")
+def list_item_filter_companies(
+    _: User = Depends(require_permission("cycle_purchase_view")),
+    db: Session = Depends(get_cycle_purchase_db),
+):
+    rows = (
+        db.query(CyclePurchaseItemMapping.company, CyclePurchaseItemMapping.department_id)
+        .distinct()
+        .all()
+    )
+    out: dict[str, set[int]] = {}
+    for company, dept_id in rows:
+        if not company:
+            continue
+        out.setdefault(company, set())
+        if dept_id:
+            out[company].add(dept_id)
+    return [
+        {"company": c, "department_ids": sorted(ids)}
+        for c, ids in sorted(out.items())
+    ]
+
+
+@router.get("/items/{item_id}", response_model=ItemDetail, summary="料號詳情（含料號對照表）")
+def get_item(
+    item_id: int,
+    _: User = Depends(require_permission("cycle_purchase_view")),
+    db: Session = Depends(get_cycle_purchase_db),
+):
+    item = svc.get_item(db, item_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="料號不存在")
+    return item
+
+
+@router.post("/items", response_model=ItemOut, status_code=status.HTTP_201_CREATED, summary="新增料號")
+def create_item(
+    payload: ItemCreate,
+    _: User = Depends(require_permission("cycle_purchase_admin")),
+    db: Session = Depends(get_cycle_purchase_db),
+):
+    try:
+        return svc.create_item(db, payload)
+    except ValueError as exc:   # 類別不存在／已停用（2026-09-21）
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc))
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="集團料號已存在")
+
+
+@router.put("/items/{item_id}", response_model=ItemOut, summary="更新料號")
+def update_item(
+    item_id: int,
+    payload: ItemUpdate,
+    _: User = Depends(require_permission("cycle_purchase_admin")),
+    db: Session = Depends(get_cycle_purchase_db),
+):
+    try:
+        item = svc.update_item(db, item_id, payload)
+    except ValueError as exc:   # 類別不存在／已停用（2026-09-21）
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc))
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="集團料號已存在")
+    if not item:
+        raise HTTPException(status_code=404, detail="料號不存在")
+    return item
+
+
+# ── 料號對照表（集團料號 ↔ 公司原料號）────────────────────────────────────────
+# ⚠️ 依規劃報告第四節：新增對照前，請先人工確認品名／廠商／單價，
+#    不要只憑原始料號字串相同就視為同一品項。
+
+@router.get(
+    "/items/{item_id}/mappings",
+    response_model=list[ItemMappingOut],
+    summary="料號對照清單",
+)
+def list_item_mappings(
+    item_id: int,
+    _: User = Depends(require_permission("cycle_purchase_view")),
+    db: Session = Depends(get_cycle_purchase_db),
+):
+    return svc.list_item_mappings(db, item_id)
+
+
+@router.post(
+    "/items/{item_id}/mappings",
+    response_model=ItemMappingOut,
+    status_code=status.HTTP_201_CREATED,
+    summary="新增料號對照",
+)
+def create_item_mapping(
+    item_id: int,
+    payload: ItemMappingCreate,
+    _: User = Depends(require_permission("cycle_purchase_admin")),
+    db: Session = Depends(get_cycle_purchase_db),
+):
+    try:
+        mapping = svc.create_item_mapping(db, item_id, payload)
+    except svc.ItemMappingConflict as e:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(e))
+    except IntegrityError:
+        # 資料庫的 UniqueConstraint 兜底（service 層已先擋過一次，走到這裡代表
+        # 有並行寫入插隊）。2026-08-18：唯一鍵已含 department_id，訊息跟著改——
+        # 舊訊息寫「該公司」，使用者要替第二個部門建對照時撞到既有列，會以為
+        # 同公司只能有一筆而放棄。
+        db.rollback()
+        raise HTTPException(status_code=409, detail="此料號已有該公司＋該部門的對照紀錄")
+    if not mapping:
+        raise HTTPException(status_code=404, detail="料號不存在")
+    return mapping
+
+
+@router.put(
+    "/items/{item_id}/mappings/{mapping_id}",
+    response_model=ItemMappingOut,
+    summary="更新料號對照",
+)
+def update_item_mapping(
+    item_id: int,
+    mapping_id: int,
+    payload: ItemMappingUpdate,
+    _: User = Depends(require_permission("cycle_purchase_admin")),
+    db: Session = Depends(get_cycle_purchase_db),
+):
+    # 2026-09-20：原本這支完全沒防撞號。料號主檔改成可以在同一個畫面編多列對照
+    # 之後（一個料號 ＝ 一個公司 ＋ 多個部門 ＋ 多個科目），把 A 部門改成 B 部門
+    # 撞到既有列會變成日常操作，不能再讓它變成 500。
+    try:
+        mapping = svc.update_item_mapping(db, item_id, mapping_id, payload)
+    except svc.ItemMappingConflict as e:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(e))
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="此料號已有該公司＋該部門的對照紀錄")
+    if not mapping:
+        raise HTTPException(status_code=404, detail="料號對照不存在")
+    return mapping
+
+
+@router.delete("/items/{item_id}/mappings/{mapping_id}", summary="刪除料號對照")
+def delete_item_mapping(
+    item_id: int,
+    mapping_id: int,
+    _: User = Depends(require_permission("cycle_purchase_admin")),
+    db: Session = Depends(get_cycle_purchase_db),
+):
+    # 2026-09-20：cycle_purchase_request_items.item_mapping_id 是 ondelete=RESTRICT，
+    # 被請購明細引用過的對照列刪不掉。原本沒接這個例外，使用者會收到一句沒人
+    # 看得懂的 500；改成講清楚為什麼刪不掉、以及該怎麼辦。
+    try:
+        ok = svc.delete_item_mapping(db, item_id, mapping_id)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="這筆對照已經被請購單明細用過，不能刪除（刪掉會讓既有單據查不到當初的單價與科目）。"
+                   "如果不想再讓這個部門請購這個料號，請改用「停用料號」或調整週期設定的適用部門。",
+        )
+    if not ok:
+        raise HTTPException(status_code=404, detail="料號對照不存在")
+    return {"ok": True}
+
+
+# ── 供應商資料回填（2026-09-30 新增）─────────────────────────────────────────
+# 料號主檔「預設供應商」與料號對照「叫貨供應商」很多指向當初用簡稱建的週採
+# 供應商（未對照合約主檔），拋轉 Ragic 時廠商欄會是空的。這組端點以 Ragic
+# 廠商資料表的「簡稱」比對，把引用改指向週採鏡像裡的全名正本。
+# 規則與裁示見 app/services/cycle_purchase_vendor_backfill_service.py 檔頭。
+# 權限：cycle_purchase_vendor_backfill（需在「角色管理 → 權限設定」明確指派）。
+
+@router.post(
+    "/items/vendor-backfill/sync",
+    response_model=BackfillPreview,
+    summary="供應商資料回填：同步 Ragic 廠商資料並產生比對預覽（不寫入料號）",
+)
+def vendor_backfill_sync(
+    _: User = Depends(require_permission("cycle_purchase_vendor_backfill")),
+    cp_db: Session = Depends(get_cycle_purchase_db),
+    portal_db: Session = Depends(get_db),
+):
+    """
+    一鍵同步：
+      1. Ragic 廠商資料表 → 合約模組 vendors（vendor_sync，與排程同一支）
+      2. 合約模組 vendors → 週採供應商鏡像（cycle_purchase_vendor_sync）
+      3. 即時讀 Ragic 廠商資料表（含「簡稱」，portal.db 沒存這欄）產生比對預覽
+
+    ⚠ 同步 def（非 async def）：內部都是阻塞呼叫，放在 thread pool 跑，
+    不可改成 async def（2026-07-15 事件迴圈卡死事故）。
+    1、2 兩步順序相依（CLAUDE.md §9 規則 5），鎖名稱與排程一致，避免與排程同時寫入。
+    這一支**只寫廠商主檔（同步）**，料號／料號對照要等使用者按「套用」才會改。
+    """
+    import asyncio
+
+    from app.core.sync_lock import sync_lock
+    from app.services.cycle_purchase_vendor_sync import sync_from_contract
+    from app.services.vendor_sync import sync_from_ragic as sync_vendor_from_ragic
+
+    steps: list[dict] = []
+
+    try:
+        with sync_lock("廠商資料"):
+            r1 = asyncio.run(sync_vendor_from_ragic())
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Ragic → 合約廠商同步失敗：{exc}")
+    if r1.get("errors"):
+        raise HTTPException(
+            status_code=502,
+            detail="Ragic → 合約廠商同步發生錯誤：" + "；".join(str(e) for e in r1["errors"][:3]),
+        )
+    steps.append({
+        "name": "Ragic 廠商資料表 → 合約模組廠商",
+        "ok": True,
+        "message": f"讀取 {r1.get('fetched', 0)} 筆，新增 {r1.get('created', 0)}、更新 {r1.get('updated', 0)}",
+    })
+
+    try:
+        with sync_lock("週期採購供應商"):
+            r2 = asyncio.run(sync_from_contract())
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"合約廠商 → 週採供應商同步失敗：{exc}")
+    if r2.get("errors"):
+        raise HTTPException(
+            status_code=500,
+            detail="合約廠商 → 週採供應商同步發生錯誤：" + "；".join(str(e) for e in r2["errors"][:3]),
+        )
+    msg2 = f"新增 {r2.get('created', 0)}、更新 {r2.get('updated', 0)}"
+    if r2.get("warnings"):
+        msg2 += f"，提醒 {len(r2['warnings'])} 則"
+    steps.append({"name": "合約模組廠商 → 週採供應商主檔", "ok": True, "message": msg2})
+
+    try:
+        ragic_rows = backfill_svc.fetch_ragic_vendors()
+    except backfill_svc.BackfillError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+    preview = backfill_svc.build_preview(portal_db, cp_db, ragic_rows)
+    return {"sync_steps": steps, **preview}
+
+
+@router.post(
+    "/items/vendor-backfill/apply",
+    response_model=BackfillApplyResult,
+    summary="供應商資料回填：套用勾選的對應（改料號預設供應商＋料號對照叫貨供應商）",
+)
+def vendor_backfill_apply(
+    payload: BackfillApplyPayload,
+    _: User = Depends(require_permission("cycle_purchase_vendor_backfill")),
+    cp_db: Session = Depends(get_cycle_purchase_db),
+    portal_db: Session = Depends(get_db),
+):
+    try:
+        return backfill_svc.apply_backfill(
+            portal_db, cp_db, [d.model_dump() for d in payload.decisions],
+        )
+    except backfill_svc.BackfillError as exc:
+        cp_db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc))

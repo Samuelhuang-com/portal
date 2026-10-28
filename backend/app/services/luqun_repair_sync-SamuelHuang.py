@@ -1,0 +1,199 @@
+"""
+商場工務報修同步服務：Ragic → SQLite
+
+設計：
+  1. 呼叫 luqun_repair_service.fetch_all_cases() 取得清洗後的 RepairCase list
+  2. Upsert 到 luqun_repair_case 表（以 ragic_id 為 PK）
+  3. 回傳 { fetched, upserted, errors }
+
+不改動任何 RepairCase 欄位解析邏輯，確保統計與同步行為一致。
+"""
+import json
+import logging
+from datetime import datetime, timezone
+from app.core.time import twnow
+
+from app.core.database import SessionLocal
+from app.models.luqun_repair import LuqunRepairCase, LuqunRepairRecord
+from app.services.repair_detail_utils import extract_detail_records
+from app.services.sync_dispatcher import register
+
+logger = logging.getLogger(__name__)
+
+
+def _now() -> datetime:
+    return twnow()
+
+
+@register("luqun_repair")
+async def sync_from_ragic() -> dict:
+    """
+    從 Ragic 拉取商場工務報修所有案件，Upsert 到本地 SQLite。
+    回傳 { fetched, upserted, errors }
+    """
+    from app.services.luqun_repair_service import fetch_all_cases
+
+    logger.info("[LuqunRepair Sync] 開始從 Ragic 拉取資料（先清快取確保最新）...")
+    # 先清快取，強制從 Ragic 重新抓取最新資料
+    from app.services.luqun_repair_service import invalidate_cache
+    invalidate_cache()
+    try:
+        cases = await fetch_all_cases()
+    except Exception as exc:
+        logger.error(f"[LuqunRepair Sync] 拉取失敗：{exc}")
+        return {"fetched": 0, "upserted": 0, "errors": [str(exc)]}
+
+    fetched       = len(cases)
+    upserted      = 0
+    ghost_deleted = 0
+    errors: list[str] = []
+    now = _now()
+
+    db = SessionLocal()
+    try:
+        # 預載所有現有記錄（避免 N+1 SELECT）
+        all_ragic_ids = [case.ragic_id for case in cases]
+        existing_map: dict = {
+            row.ragic_id: row
+            for row in db.query(LuqunRepairCase).filter(
+                LuqunRepairCase.ragic_id.in_(all_ragic_ids)
+            ).all()
+        }
+
+        for case in cases:
+            try:
+                existing = existing_map.get(case.ragic_id)
+                if existing:
+                    existing.case_no           = case.case_no
+                    existing.title             = case.title
+                    existing.reporter_name     = case.reporter_name
+                    existing.repair_type       = case.repair_type
+                    existing.floor             = case.floor
+                    existing.floor_normalized  = case.floor_normalized
+                    existing.occurred_at       = case.occurred_at
+                    existing.responsible_unit  = case.responsible_unit
+                    existing.work_hours        = case.work_hours
+                    existing.status            = case.status
+                    existing.record_status     = case.record_status
+                    existing.outsource_fee     = case.outsource_fee
+                    existing.maintenance_fee   = case.maintenance_fee
+                    existing.total_fee         = case.total_fee
+                    existing.deduction_item         = case.deduction_item
+                    existing.deduction_fee          = case.deduction_fee
+                    existing.deduction_counter      = case.deduction_counter
+                    existing.deduction_counter_name = case.deduction_counter_name
+                    existing.acceptor               = case.acceptor
+                    existing.accept_status          = case.accept_status
+                    existing.closer                 = case.closer
+                    existing.finance_note           = case.finance_note
+                    existing.mgmt_response          = case.mgmt_response
+                    existing.is_completed      = case.is_completed_flag
+                    existing.completed_at      = case.completed_at
+                    existing.close_days        = case.close_days
+                    existing.year              = case.year
+                    existing.month             = case.month
+                    existing.occ_year          = case.occ_year
+                    existing.occ_month         = case.occ_month
+                    existing.is_room_case      = case.is_room_case
+                    existing.room_no           = case.room_no
+                    existing.room_category     = case.room_category
+                    existing.images_json       = json.dumps(case.images, ensure_ascii=False) if case.images else None
+                    existing.is_ragic_deleted  = False   # 重新出現 → 取消刪除標記
+                    existing.ragic_deleted_at  = None
+                    existing.synced_at         = now
+                else:
+                    db.add(LuqunRepairCase(
+                        ragic_id           = case.ragic_id,
+                        case_no            = case.case_no,
+                        title              = case.title,
+                        reporter_name      = case.reporter_name,
+                        repair_type        = case.repair_type,
+                        floor              = case.floor,
+                        floor_normalized   = case.floor_normalized,
+                        occurred_at        = case.occurred_at,
+                        responsible_unit   = case.responsible_unit,
+                        work_hours         = case.work_hours,
+                        status             = case.status,
+                        record_status      = case.record_status,
+                        outsource_fee      = case.outsource_fee,
+                        maintenance_fee    = case.maintenance_fee,
+                        total_fee          = case.total_fee,
+                        deduction_item          = case.deduction_item,
+                        deduction_fee           = case.deduction_fee,
+                        deduction_counter       = case.deduction_counter,
+                        deduction_counter_name  = case.deduction_counter_name,
+                        acceptor                = case.acceptor,
+                        accept_status           = case.accept_status,
+                        closer                  = case.closer,
+                        finance_note            = case.finance_note,
+                        mgmt_response           = case.mgmt_response,
+                        is_completed       = case.is_completed_flag,
+                        completed_at       = case.completed_at,
+                        close_days         = case.close_days,
+                        year               = case.year,
+                        month              = case.month,
+                        occ_year           = case.occ_year,
+                        occ_month          = case.occ_month,
+                        is_room_case       = case.is_room_case,
+                        room_no            = case.room_no,
+                        room_category      = case.room_category,
+                        images_json        = json.dumps(case.images, ensure_ascii=False) if case.images else None,
+                        synced_at          = now,
+                    ))
+                upserted += 1
+            except Exception as exc:
+                errors.append(f"ragic_id={case.ragic_id}: {exc}")
+                logger.warning(f"[LuqunRepair Sync] 案件 {case.ragic_id} 失敗：{exc}")
+
+        # ── 工單明細子表（維修記錄）：整批 delete + insert ────────────────────
+        records = 0
+        try:
+            db.query(LuqunRepairRecord).filter(
+                LuqunRepairRecord.parent_ragic_id.in_(all_ragic_ids)
+            ).delete(synchronize_session=False)
+            for case in cases:
+                for rec in extract_detail_records(getattr(case, "_raw", None) or {}):
+                    db.add(LuqunRepairRecord(
+                        ragic_id        = rec["ragic_id"],
+                        parent_ragic_id = case.ragic_id,
+                        seq             = rec["seq"],
+                        status          = rec["status"],
+                        record          = rec["record"],
+                        start_at        = rec["start_at"],
+                        end_at          = rec["end_at"],
+                        person          = rec["person"],
+                        synced_at       = now,
+                    ))
+                    records += 1
+        except Exception as exc:
+            errors.append(f"detail records: {exc}")
+            logger.warning(f"[LuqunRepair Sync] 子表同步失敗：{exc}")
+
+        # ── Ghost 偵測：DB 中有但 Ragic 沒有回傳 → 標記為已刪除 ──────────────
+        ghost_deleted = 0
+        try:
+            fetched_ids = set(all_ragic_ids)
+            ghost_rows = db.query(LuqunRepairCase).filter(
+                LuqunRepairCase.ragic_id.notin_(fetched_ids),
+                LuqunRepairCase.is_ragic_deleted == False,  # noqa: E712
+            ).all()
+            for row in ghost_rows:
+                row.is_ragic_deleted = True
+                row.ragic_deleted_at = now
+                ghost_deleted += 1
+            if ghost_deleted:
+                logger.info(f"[LuqunRepair Sync] Ghost 偵測：標記 {ghost_deleted} 筆為已刪除")
+        except Exception as exc:
+            errors.append(f"ghost detection: {exc}")
+            logger.warning(f"[LuqunRepair Sync] Ghost 偵測失敗：{exc}")
+
+        db.commit()
+        logger.info(f"[LuqunRepair Sync] 完成：共 {upserted} 筆，records={records}，ghost={ghost_deleted}，錯誤 {len(errors)} 筆")
+    except Exception as exc:
+        db.rollback()
+        logger.error(f"[LuqunRepair Sync] DB 寫入失敗：{exc}")
+        return {"fetched": fetched, "upserted": 0, "errors": [str(exc)]}
+    finally:
+        db.close()
+
+    return {"fetched": fetched, "upserted": upserted, "records": records, "ghost_deleted": ghost_deleted, "errors": errors}

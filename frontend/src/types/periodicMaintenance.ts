@@ -35,6 +35,8 @@ export interface PMItem {
   status:            PMItemStatus
   ragic_url?:        string
   repair_hours?:     number | null
+  parent_no?:        string | null   // 項目(母)，Sheet24
+  child_no?:         string | null   // 項目(子)，Sheet24
 }
 
 export type PMItemStatus =
@@ -78,11 +80,21 @@ export interface PMBatchListItem {
   kpi:   PMBatchKPI
 }
 
+export interface PMParentGroup {
+  parent_no:           string
+  child_count:         number
+  done_count:          number
+  total_repair_hours:  number
+  missing_hours_count: number
+  is_completed:        boolean
+}
+
 export interface PMBatchDetail {
-  batch:      PMBatch
-  kpi:        PMBatchKPI
-  items:      PMItem[]
-  categories: CategoryStat[]
+  batch:          PMBatch
+  kpi:            PMBatchKPI
+  items:          PMItem[]
+  categories:     CategoryStat[]
+  parent_groups?: PMParentGroup[]
 }
 
 export interface PMStats {

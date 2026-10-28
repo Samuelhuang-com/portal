@@ -1,0 +1,2083 @@
+"""
+工作日誌 API
+Prefix: /api/v1/work-journal
+
+彙整 10 個模組當日工作記錄，依人員分組回傳。
+日誌時間基準：報修類用 occurred_at，保養/巡檢類用各自的 scheduled_date / inspection_date / maint_date。
+
+回傳格式：
+{
+  "date": "2026/05/15",
+  "persons": [
+    { "person": "王大明", "rows": [ JournalRow, ... ] },
+    { "person": "未指定", "rows": [...] }
+  ],
+  "total_rows": 38
+}
+"""
+
+import io
+import re
+import calendar
+from datetime import date as _date, timedelta, datetime
+from collections import defaultdict
+from typing import Optional
+from urllib.parse import quote
+
+from fastapi import APIRouter, Query, Depends
+from fastapi.responses import StreamingResponse
+from sqlalchemy.orm import Session
+
+from app.core.database import get_db
+from app.core.excel_utils import xlsx_safe
+from app.dependencies import get_current_user
+
+# ── Models ────────────────────────────────────────────────────────────────────
+from app.models.schedule                import (
+    ScheduleDetail, ShiftType, VENUE_FLAG as HOTEL_VENUE_FLAG,
+)
+from app.models.mall_schedule           import (
+    MallScheduleDetail, MallShiftType, VENUE_FLAG as MALL_VENUE_FLAG,
+)
+from app.models.dazhi_repair            import DazhiRepairCase, DazhiRepairRecord
+from app.models.luqun_repair            import LuqunRepairCase, LuqunRepairRecord
+from app.models.periodic_maintenance    import PeriodicMaintenanceBatch, PeriodicMaintenanceItem
+from app.models.ihg_room_maintenance    import IHGRoomMaintenanceMaster
+from app.models.hotel_daily_inspection  import HotelDIBatch
+from app.models.mall_periodic_maintenance import MallPeriodicMaintenanceBatch, MallPeriodicMaintenanceItem, MallPMItemWorklog
+from app.models.full_building_maintenance import FullBldgPMBatch, FullBldgPMItem, FullBldgPMItemWorklog
+from app.models.mall_facility_inspection  import MallFIBatch
+from app.models.b1f_inspection  import B1FInspectionBatch
+from app.models.b2f_inspection  import B2FInspectionBatch
+from app.models.b4f_inspection  import B4FInspectionBatch
+from app.models.rf_inspection   import RFInspectionBatch
+from app.models.hotel_meter_readings import HotelMRBatch
+from app.models.other_tasks          import OtherTask, OtherTaskRecord
+from app.models.menu_config          import MenuConfig
+
+router = APIRouter(dependencies=[Depends(get_current_user)])
+
+# ── 常數 ─────────────────────────────────────────────────────────────────────
+
+CATEGORIES = ["現場報修", "上級交辦", "緊急事件", "例行維護", "每日巡檢"]
+
+# 2026-10-06：來源名稱統一為側邊選單（navLabels.ts）上的名稱
+SOURCE_LABEL = {
+    "dazhi":        "飯店工務報修",
+    "luqun":        "商場工務報修",
+    "hotel_pm":     "飯店例行維護",
+    "ihg":          "IHG客房保養",
+    "hotel_di":     "飯店每日巡檢",
+    "mall_pm":      "商場例行維護",
+    "full_bldg_pm": "全棟例行維護",
+    "mall_fi":      "商場工務巡檢",
+    "full_bi":      "整棟巡檢",
+    "hotel_mr":     "每日數值登錄表",
+    "other_tasks":  "主管交辦／緊急事件",
+}
+
+SORT_ORDER = list(SOURCE_LABEL.keys())
+
+# 2026-10-06：「來源」名稱跟著各 Server 的側邊選單走。
+# 選單管理（settings/menu-config）改過名稱 → menu_configs.custom_label 有值 → 以它為準；
+# 沒改過 → 用上方 SOURCE_LABEL（＝navLabels.ts 預設選單名稱）。
+# key：一級群組用群組 key、頁面用路由（同 MainLayout.menuItems 的 key）。
+SOURCE_MENU_KEY: dict[str, str] = {
+    "dazhi":        "dazhi-repair",
+    "luqun":        "luqun-repair",
+    "hotel_pm":     "/hotel/periodic-maintenance",
+    "ihg":          "/hotel/ihg-room-maintenance",
+    "hotel_di":     "/hotel/daily-inspection",
+    "mall_pm":      "/mall/periodic-maintenance",
+    "full_bldg_pm": "/mall/full-building-maintenance",
+    "mall_fi":      "/mall-facility-inspection/dashboard",
+    "full_bi":      "/full-building-inspection/dashboard",
+    "hotel_mr":     "/hotel/daily-meter-readings",
+    "other_tasks":  "/hotel/other-tasks",
+}
+# 選單常帶排序編號（例「2. IHG客房保養」），當來源名稱時去掉
+_MENU_NUM_PREFIX = re.compile(r"^\s*\d+(?:\.\d+)*\.?\s+")
+
+
+def _source_labels(db: Session) -> dict[str, str]:
+    """回傳 {source: 顯示名稱}；選單自訂名稱優先，查不到就用預設。"""
+    labels = dict(SOURCE_LABEL)
+    try:
+        rows = (
+            db.query(MenuConfig.menu_key, MenuConfig.custom_label)
+            .filter(MenuConfig.menu_key.in_(list(SOURCE_MENU_KEY.values())))
+            .all()
+        )
+    except Exception:
+        db.rollback()   # 查詢失敗不能讓同一個 session 後續查詢跟著失敗
+        return labels
+    custom = {k: (v or "").strip() for k, v in rows}
+    for src, key in SOURCE_MENU_KEY.items():
+        v = custom.get(key)
+        if v:
+            labels[src] = _MENU_NUM_PREFIX.sub("", v) or v
+    return labels
+
+# ── Ragic 直連 URL ─────────────────────────────────────────────────────────────
+# 全部模組均位於 ap12.ragic.com / soutlet001
+_RAGIC_BASE    = "https://ap12.ragic.com/soutlet001"
+
+_SOURCE_PATH: dict[str, str] = {
+    "dazhi":        "lequn-public-works/8",
+    "luqun":        "luqun-public-works-repair-reporting-system/6",
+    # hotel_pm 的項目明細來源 2026-07-14 起已改為 Sheet 11（原 Sheet 6 主表＋Sheet 8
+    # 附表已退役，見 periodic_maintenance_sync.py::sync_from_sheet11()）。item.ragic_id
+    # 現在是 Sheet 11 自身的原生記錄 ID，沿用舊路徑 8 會組出不存在的 Ragic 連結。
+    "hotel_pm":     "periodic-maintenance/11",
+    "ihg":          "periodic-maintenance/4",
+    # mall_pm／full_bldg_pm 的項目明細來源 2026-07-13 起已改為 Sheet24／Sheet28
+    # （見 mall_periodic_maintenance_sync.py::sync_items_from_sheet24() 與
+    #  full_building_maintenance_sync.py::sync_items_from_sheet28()）。
+    # item.ragic_id 現在是 Sheet24／Sheet28 自身的記錄 ID，不再屬於舊路徑
+    # 18／21（那是主表 batch 所在的 Sheet），沿用舊路徑會組出錯誤或不存在
+    # 的 Ragic 連結。2026-07-13 修正。
+    "mall_pm":      "periodic-maintenance/24",
+    "full_bldg_pm": "periodic-maintenance/28",
+    "other_tasks":  "other-tasks/1",
+}
+
+# 多 Sheet 來源：sheet_key → Ragic path
+_HOTEL_DI_PATHS: dict[str, str] = {
+    "rf":     "main-project-inspection/17",
+    "4f-10f": "main-project-inspection/18",
+    "4f":     "main-project-inspection/19",
+    "2f":     "main-project-inspection/20",
+    "1f":     "main-project-inspection/21",
+}
+_MALL_FI_PATHS: dict[str, str] = {
+    "4f":      "mall-facility-inspection/2",
+    "3f":      "mall-facility-inspection/3",
+    "1f-3f":   "mall-facility-inspection/4",
+    "1f":      "mall-facility-inspection/5",
+    "b1f-b4f": "mall-facility-inspection/7",
+}
+_FULL_BI_PATHS: dict[str, str] = {
+    "b1f": "full-building-inspection/4",
+    "b2f": "full-building-inspection/3",
+    "b4f": "full-building-inspection/2",
+    "rf":  "full-building-inspection/1",
+}
+_HOTEL_MR_PATHS: dict[str, str] = {
+    "building-electric": "hotel-routine-inspection/11",
+    "mall-ac-electric":  "hotel-routine-inspection/12",
+    "tenant-electric":   "hotel-routine-inspection/14",
+    "tenant-water":      "hotel-routine-inspection/15",
+}
+
+
+def _ragic_url(path: str, ragic_id: str) -> str:
+    """組出 Ragic 記錄直連 URL。
+    多 Sheet 來源的 ragic_id 格式為 '{sheet_key}_{numeric_id}'，取最後一段數字作 record ID。
+    """
+    if not path or not ragic_id:
+        return ""
+    # 取尾段：'rf_2431' → '2431'；'2431' → '2431'
+    numeric_id = ragic_id.rsplit("_", 1)[-1] if "_" in ragic_id else ragic_id
+    return f"{_RAGIC_BASE}/{path}/{numeric_id}"
+
+
+# ── 工具函數 ───────────────────────────────────────────────────────────────────
+
+def _parse_wm(val: str) -> Optional[int]:
+    """'2.50 小時' / '30 分鐘' / '8'（無單位→分鐘）→ int 分鐘，解析不到 → None
+    注意：巡檢模組 work_hours 欄位儲存的是純數字分鐘，無單位標記，因此無單位時直接視為分鐘。
+    """
+    if not val:
+        return None
+    s = str(val).strip()
+    m = re.search(r"[\d.]+", s)
+    if not m:
+        return None
+    num = float(m.group())
+    if "分" in s:
+        return round(num) if num > 0 else None
+    if "時" in s:                          # 含「小時」字樣 → ×60
+        mins = round(num * 60)
+        return mins if mins > 0 else None
+    # 無單位 → 視為分鐘（保全/巡檢 DB 欄位直接儲存分鐘數）
+    return round(num) if num > 0 else None
+
+
+_FULL_DT_RE = re.compile(r"^(\d{4})[/-](\d{1,2})[/-](\d{1,2})[ T](\d{1,2}):(\d{2})")
+
+
+def _full_dt(t: str) -> str:
+    """'2026/06/01 10:52(:00)' → '2026/06/01 10:52'；只有 HH:MM 或空值 → ''。
+
+    2026-10-02 新增：工作日誌「迄」跨日時前端要顯示日期（例 06/05 16:10），
+    否則 6078 分鐘這種跨 4 天的工時看起來像是同一天內的事。"""
+    m = _FULL_DT_RE.match((t or "").strip())
+    if not m:
+        return ""
+    y, mo, d, h, mi = m.groups()
+    return f"{y}/{int(mo):02d}/{int(d):02d} {int(h):02d}:{mi}"
+
+
+def _clean_time(t: str) -> str:
+    """'2026/05/15 09:00' → '09:00'，已是 HH:MM 則直接回傳"""
+    if not t:
+        return ""
+    t = t.strip()
+    if " " in t:
+        t = t.split(" ")[-1]
+    if re.match(r"^\d{1,2}:\d{2}$", t):
+        return t
+    return t[:5] if len(t) >= 5 else t
+
+
+def _calc_wm_from_times(start: str, end: str) -> Optional[int]:
+    """由 HH:MM 起/迄計算工時分鐘；跨午夜視為 +1 天；失敗回 None"""
+    s = _clean_time(start)
+    e = _clean_time(end)
+    if not s or not e:
+        return None
+    try:
+        sh, sm = map(int, s.split(":"))
+        eh, em = map(int, e.split(":"))
+        total = (eh * 60 + em) - (sh * 60 + sm)
+        if total < 0:
+            total += 24 * 60   # 跨午夜
+        return total if total > 0 else None
+    except Exception:
+        return None
+
+
+def _persons(name: str) -> list[str]:
+    """executor_name 可能含多人（空格分隔），拆成 list；空白 → ['未指定']"""
+    if not name or not name.strip():
+        return ["未指定"]
+    parts = [p.strip() for p in name.strip().split() if p.strip()]
+    return parts if parts else ["未指定"]
+
+
+def _date_str(year: int, month: int, day: int) -> str:
+    return f"{year}/{month:02d}/{day:02d}"
+
+
+# ── 工單明細子表（維修記錄）歸戶 helper ────────────────────────────────────────
+# 規格（2026-06-11 業主確認）：
+#   - 有 Detail（至少一列有「時間開始」）→ 整筆工單改按子表歸戶，
+#     以各列「時間開始」的日期決定出現在哪一天的日誌
+#   - 列有起＋迄（不論狀態，含「進行中」）→ 計入工時（秒級計算後 round 成分鐘）
+#   - 列無「時間結束」→ 仍呈現該人員列，該列不貢獻工時
+#   - 同人同工單多列 → 合併一列：工時加總、起=當日最早開始、迄=當日最晚結束
+#   - 維修人員空白 → 掛回工單頭「處理工務」（responsible_unit）
+#   - 一格多人（空白/、/,/;/／分隔）→ 拆開，每人各算該列全額工時
+
+def _split_detail_persons(name: str, fallback: str) -> list[str]:
+    """子表「維修人員」拆多人；空白 → fallback（工單頭處理工務）→ 未指定"""
+    s = re.sub(r"[、,;/／]+", " ", (name or "").strip())
+    parts = [p.strip() for p in s.split() if p.strip()]
+    if parts:
+        return parts
+    return _persons(fallback)
+
+
+def _group_detail_rows(recs: list, target: _date, fallback_person: str) -> list[dict]:
+    """
+    將子表列篩選至「時間開始」日期 == target 後按人員分組合併。
+    回傳 [{person, work_min(int|None), start_time, end_time}]（依人員首次出現排序）。
+    """
+    groups: dict[str, dict] = {}
+    for r in recs:
+        if not r.start_at or r.start_at.date() != target:
+            continue
+        sec = 0
+        has_end = r.end_at is not None
+        if r.end_at and r.end_at > r.start_at:
+            sec = (r.end_at - r.start_at).total_seconds()
+        for person in _split_detail_persons(r.person, fallback_person):
+            g = groups.setdefault(person, {
+                "sec": 0.0, "has_end": False, "min_start": None, "max_end": None,
+            })
+            g["sec"] += sec
+            g["has_end"] = g["has_end"] or has_end
+            if g["min_start"] is None or r.start_at < g["min_start"]:
+                g["min_start"] = r.start_at
+            if r.end_at and (g["max_end"] is None or r.end_at > g["max_end"]):
+                g["max_end"] = r.end_at
+
+    out = []
+    for person, g in groups.items():
+        out.append({
+            "person":     person,
+            "work_min":   round(g["sec"] / 60) if g["has_end"] else None,
+            # 2026-10-02：回傳完整日期時間，_make_row 會切出 HH:MM 並另存 start_dt/end_dt
+            "start_time": g["min_start"].strftime("%Y/%m/%d %H:%M") if g["min_start"] else "",
+            "end_time":   g["max_end"].strftime("%Y/%m/%d %H:%M")   if g["max_end"]   else "",
+        })
+    return out
+
+
+def _detail_records_payload(recs: list) -> list[dict]:
+    """Drawer 用：工單全部子表列（含秒，不限定日期）"""
+    return [{
+        "項次":     r.seq or "",
+        "狀態":     r.status or "",
+        "維修記錄": r.record or "",
+        "時間開始": r.start_at.strftime("%Y/%m/%d %H:%M:%S") if r.start_at else "",
+        "時間結束": r.end_at.strftime("%Y/%m/%d %H:%M:%S")   if r.end_at   else "",
+        "維修人員": r.person or "",
+    } for r in recs]
+
+
+def _parse_pm_datetime(s: str) -> Optional[datetime]:
+    """解析週期保養子表（Sheet24／Sheet28 巢狀維修記錄）的 Ragic 原始日期時間字串，
+    例如 '2026/07/13 09:14:26' 或 '2026/07/13 09:14'。解析失敗（含空字串）回 None。
+    2026-07-14 新增：供 _group_pm_worklog_rows 依「時間開始」實際日期歸戶使用。"""
+    s = (s or "").strip()
+    if not s:
+        return None
+    for fmt in ("%Y/%m/%d %H:%M:%S", "%Y/%m/%d %H:%M", "%Y/%m/%d"):
+        try:
+            return datetime.strptime(s, fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def _group_pm_worklog_rows(recs: list, target: _date, fallback_person: str) -> list[dict]:
+    """
+    週期保養（mall_pm／full_bldg_pm）維修記錄子表版本的 _group_detail_rows。
+    子表 start_time/end_time 為 Ragic 原始字串（非 datetime），先以 _parse_pm_datetime 解析，
+    再篩選至「時間開始」日期 == target 後按人員（staff_name）分組合併。
+    回傳 [{person, work_min(int|None), start_time, end_time}]。
+
+    規格（2026-06-11 業主確認 _group_detail_rows，2026-07-14 推廣至週期保養類）：
+    有維修記錄（子表）時，一律以子表「時間開始」實際日期歸戶，不採用工單頭排定日期
+    （例如颱風延期：排定日期 07/10、實際維修 07/13 → 工作日誌應呈現在 07/13）。
+    """
+    groups: dict[str, dict] = {}
+    for r in recs:
+        start_dt = _parse_pm_datetime(r.start_time)
+        if not start_dt or start_dt.date() != target:
+            continue
+        end_dt = _parse_pm_datetime(r.end_time)
+        sec = 0.0
+        has_end = end_dt is not None
+        if end_dt and end_dt > start_dt:
+            sec = (end_dt - start_dt).total_seconds()
+        for person in _split_detail_persons(r.staff_name, fallback_person):
+            g = groups.setdefault(person, {
+                "sec": 0.0, "has_end": False, "min_start": None, "max_end": None,
+            })
+            g["sec"] += sec
+            g["has_end"] = g["has_end"] or has_end
+            if g["min_start"] is None or start_dt < g["min_start"]:
+                g["min_start"] = start_dt
+            if end_dt and (g["max_end"] is None or end_dt > g["max_end"]):
+                g["max_end"] = end_dt
+
+    out = []
+    for person, g in groups.items():
+        out.append({
+            "person":     person,
+            "work_min":   round(g["sec"] / 60) if g["has_end"] else None,
+            # 2026-10-02：回傳完整日期時間，_make_row 會切出 HH:MM 並另存 start_dt/end_dt
+            "start_time": g["min_start"].strftime("%Y/%m/%d %H:%M") if g["min_start"] else "",
+            "end_time":   g["max_end"].strftime("%Y/%m/%d %H:%M")   if g["max_end"]   else "",
+        })
+    return out
+
+
+def _pm_detail_records_payload(recs: list) -> list[dict]:
+    """Drawer 用：週期保養類（mall_pm／full_bldg_pm）項目底下的維修記錄子表（Sheet24／Sheet28 巢狀子表格）。
+    此子表無「狀態」欄（比照 dazhi/luqun 商場子表無狀態欄的既有規則，前端全空時會自動隱藏該欄）。
+    start_time/end_time 為 Ragic 原始字串（非 datetime），直接原樣顯示。"""
+    return [{
+        "項次":     r.seq_no or "",
+        "狀態":     "",
+        "維修記錄": r.repair_note or "",
+        "時間開始": r.start_time or "",
+        "時間結束": r.end_time or "",
+        "維修人員": r.staff_name or "",
+    } for r in recs]
+
+
+def _make_row(
+    source: str,
+    category: str,
+    task: str,
+    person: str,
+    est_min: Optional[int] = None,
+    start_time: str = "",
+    end_time: str = "",
+    work_min: Optional[int] = None,
+    remark: str = "",
+    report: str = "",
+    ragic_id: str = "",
+    ragic_url: str = "",
+    venue: str = "",
+    detail: Optional[dict] = None,
+    detail_records: Optional[list] = None,
+) -> dict:
+    st_full = _full_dt(start_time)
+    et_full = _full_dt(end_time)
+    st = _clean_time(start_time)
+    et = _clean_time(end_time)
+    # 無工時時，由起迄時間自動計算
+    if work_min is None:
+        work_min = _calc_wm_from_times(st, et)
+    return {
+        "source":       source,
+        "source_label": SOURCE_LABEL.get(source, source),
+        "category":     category,
+        "task":         task.strip(),
+        "person":       person or "未指定",
+        "est_min":      est_min,
+        "start_time":   st,
+        "end_time":     et,
+        # 2026-10-02：完整日期時間（'YYYY/MM/DD HH:MM'，無日期資訊時為 ''），供前端判斷跨日
+        "start_dt":     st_full,
+        "end_dt":       et_full,
+        "work_min":     work_min,
+        "remark":       (remark or "").strip(),
+        "report":       (report or "").strip(),
+        "ragic_id":     ragic_id,
+        "ragic_url":    ragic_url,
+        "venue":        venue,
+        "detail":       detail or {},
+        "detail_records": detail_records or [],
+    }
+
+
+# ── 10 個模組 helper ──────────────────────────────────────────────────────────
+
+def _fetch_dazhi(db: Session, year: int, month: int, day: int) -> list[dict]:
+    """大直工務報修。
+    無 Detail（子表）→ occurred_at 日期口徑、人員=處理工務、工時=工單頭（原邏輯）。
+    有 Detail → 以子表「時間開始」日期歸戶，人員/工時按子表列計算（見 _group_detail_rows）。
+    """
+    rows = []
+    target = _date(year, month, day)
+
+    # 預載子表（維修記錄）並按工單分組
+    rec_map: dict[str, list] = defaultdict(list)
+    for r in db.query(DazhiRepairRecord).all():
+        rec_map[r.parent_ragic_id].append(r)
+    for recs in rec_map.values():
+        recs.sort(key=lambda r: (r.start_at is None, r.start_at or datetime.min))
+
+    for c in db.query(DazhiRepairCase).filter(DazhiRepairCase.is_ragic_deleted.isnot(True)).all():  # 排除 Ragic 端已刪除
+        # 2026-08-27：原本只硬比對「取消」，漏掉「作廢」（且作廢寫在 record_status）。
+        # 改用 is_excluded_flag，與報修統計同一套排除規則。
+        if c.is_excluded_flag:
+            continue
+        case_recs  = rec_map.get(c.ragic_id, [])
+        dated_recs = [r for r in case_recs if r.start_at is not None]
+
+        # 有 Detail → 子表歸戶；無（或子表全無時間開始）→ 原邏輯
+        if dated_recs:
+            groups = _group_detail_rows(dated_recs, target, (c.responsible_unit or "").strip())
+            if not groups:
+                continue   # 該日無子表活動 → 此工單不出現在本日日誌
+        else:
+            if not c.occurred_at or c.occurred_at.date() != target:
+                continue
+            groups = None
+
+        person     = (c.responsible_unit or "").strip() or "未指定"
+        task       = " ".join(filter(None, [c.repair_type, c.floor, c.title]))
+        wm         = round(c.work_hours * 60) if c.work_hours and c.work_hours > 0 else None
+        occ        = c.occurred_at.strftime("%Y/%m/%d %H:%M") if c.occurred_at else ""
+        # 2026-10-02：帶完整日期，_make_row 切出 HH:MM 並另存 start_dt/end_dt（跨日判斷用）
+        start_t    = c.occurred_at.strftime("%Y/%m/%d %H:%M")  if c.occurred_at  else ""
+        end_t      = c.completed_at.strftime("%Y/%m/%d %H:%M") if c.completed_at else ""
+        detail_recs = _detail_records_payload(case_recs)
+        common = dict(
+            source="dazhi",
+            category="現場報修",
+            task=task or "(無說明)",
+            remark=c.finance_note or "",
+            ragic_id=c.ragic_id,
+            ragic_url=_ragic_url(_SOURCE_PATH["dazhi"], c.ragic_id),
+            detail_records=detail_recs,
+            detail={
+                "報修編號":  c.case_no or "",
+                "標題":      c.title or "",
+                "報修人姓名": c.reporter_name or "",
+                "報修類型":  c.repair_type or "",
+                "發生樓層":  c.floor or "",
+                "發生時間":  occ,
+                "負責單位":  c.responsible_unit or "",
+                "花費工時":  f"{c.work_hours:.2f} hr" if c.work_hours else "",
+                "處理狀況":  c.status or "",
+                "委外費用":  str(int(c.outsource_fee or 0)),
+                "維修費用":  str(int(c.maintenance_fee or 0)),
+                "總費用":    str(int(c.total_fee or 0)),
+                "驗收者":    c.acceptor or "",
+                "驗收":      c.accept_status or "",
+                "結案人":    c.closer or "",
+                "結案時間":  c.completed_at.strftime("%Y/%m/%d") if c.completed_at else "",
+                "結案天數":  f"{c.close_days:.1f} 天" if c.close_days else "",
+                "扣款事項":  c.deduction_item or "",
+                "扣款費用":  str(int(c.deduction_fee or 0)),
+                "財務備註":  c.finance_note or "",
+            },
+        )
+        if groups is None:
+            # 無 Detail → 原邏輯：單列、occurred_at 起、工單頭工時
+            rows.append(_make_row(
+                person=person, start_time=start_t, end_time=end_t, work_min=wm,
+                **common,
+            ))
+        else:
+            # 有 Detail → 每人一列（同人多列已合併、工時加總）
+            for g in groups:
+                rows.append(_make_row(
+                    person=g["person"], start_time=g["start_time"],
+                    end_time=g["end_time"], work_min=g["work_min"],
+                    **common,
+                ))
+    return rows
+
+
+def _fetch_luqun(db: Session, year: int, month: int, day: int) -> list[dict]:
+    """商場工務報修。
+    無 Detail（子表）→ occurred_at 日期口徑、人員=處理工務、工時=工單頭（原邏輯）。
+    有 Detail → 以子表「時間開始」日期歸戶，人員/工時按子表列計算（見 _group_detail_rows）。
+    """
+    rows = []
+    target = _date(year, month, day)
+
+    # 預載子表（維修記錄）並按工單分組
+    rec_map: dict[str, list] = defaultdict(list)
+    for r in db.query(LuqunRepairRecord).all():
+        rec_map[r.parent_ragic_id].append(r)
+    for recs in rec_map.values():
+        recs.sort(key=lambda r: (r.start_at is None, r.start_at or datetime.min))
+
+    for c in db.query(LuqunRepairCase).filter(LuqunRepairCase.is_ragic_deleted.isnot(True)).all():  # 排除 Ragic 端已刪除
+        # 2026-08-27：同上，改用 is_excluded_flag
+        if c.is_excluded_flag:
+            continue
+        case_recs  = rec_map.get(c.ragic_id, [])
+        dated_recs = [r for r in case_recs if r.start_at is not None]
+
+        if dated_recs:
+            groups = _group_detail_rows(dated_recs, target, (c.responsible_unit or "").strip())
+            if not groups:
+                continue   # 該日無子表活動 → 此工單不出現在本日日誌
+        else:
+            if not c.occurred_at or c.occurred_at.date() != target:
+                continue
+            groups = None
+
+        person     = (c.responsible_unit or "").strip() or "未指定"
+        task       = " ".join(filter(None, [c.repair_type, c.floor, c.title]))
+        wm         = round(c.work_hours * 60) if c.work_hours and c.work_hours > 0 else None
+        occ        = c.occurred_at.strftime("%Y/%m/%d %H:%M") if c.occurred_at else ""
+        # 2026-10-02：帶完整日期，_make_row 切出 HH:MM 並另存 start_dt/end_dt（跨日判斷用）
+        start_t    = c.occurred_at.strftime("%Y/%m/%d %H:%M")  if c.occurred_at  else ""
+        end_t      = c.completed_at.strftime("%Y/%m/%d %H:%M") if c.completed_at else ""
+        detail_recs = _detail_records_payload(case_recs)
+        common = dict(
+            source="luqun",
+            category="現場報修",
+            task=task or "(無說明)",
+            remark=c.mgmt_response or c.finance_note or "",
+            ragic_id=c.ragic_id,
+            ragic_url=_ragic_url(_SOURCE_PATH["luqun"], c.ragic_id),
+            detail_records=detail_recs,
+            detail={
+                "報修編號":  c.case_no or "",
+                "標題":      c.title or "",
+                "報修人姓名": c.reporter_name or "",
+                "報修類型":  c.repair_type or "",
+                "發生樓層":  c.floor or "",
+                "發生時間":  occ,
+                "負責單位":  c.responsible_unit or "",
+                "花費工時":  f"{c.work_hours:.2f} hr" if c.work_hours else "",
+                "處理狀況":  c.status or "",
+                "委外費用":  str(int(c.outsource_fee or 0)),
+                "維修費用":  str(int(c.maintenance_fee or 0)),
+                "總費用":    str(int(c.total_fee or 0)),
+                "驗收者":    c.acceptor or "",
+                "驗收":      c.accept_status or "",
+                "結案人":    c.closer or "",
+                "結案時間":  c.completed_at.strftime("%Y/%m/%d") if c.completed_at else "",
+                "結案天數":  f"{c.close_days:.1f} 天" if c.close_days else "",
+                "扣款事項":  c.deduction_item or "",
+                "扣款費用":  str(int(c.deduction_fee or 0)),
+                "管理回應":  c.mgmt_response or "",
+                "財務備註":  c.finance_note or "",
+            },
+        )
+        if groups is None:
+            # 無 Detail → 原邏輯：單列、occurred_at 起、工單頭工時
+            rows.append(_make_row(
+                person=person, start_time=start_t, end_time=end_t, work_min=wm,
+                **common,
+            ))
+        else:
+            # 有 Detail → 每人一列（同人多列已合併、工時加總）
+            for g in groups:
+                rows.append(_make_row(
+                    person=g["person"], start_time=g["start_time"],
+                    end_time=g["end_time"], work_min=g["work_min"],
+                    **common,
+                ))
+    return rows
+
+
+def _fetch_hotel_pm(db: Session, year: int, month: int, day: int) -> list[dict]:
+    """飯店週期保養：batch.period_month + item.scheduled_date"""
+    rows = []
+    period_month = f"{year}/{month:02d}"
+    sched_day    = f"{month:02d}/{day:02d}"
+
+    batches = (
+        db.query(PeriodicMaintenanceBatch)
+        .filter(PeriodicMaintenanceBatch.period_month == period_month)
+        .all()
+    )
+    if not batches:
+        return rows
+    batch_map = {b.ragic_id: b for b in batches}
+    batch_ids = set(batch_map.keys())
+
+    items = (
+        db.query(PeriodicMaintenanceItem)
+        .filter(
+            PeriodicMaintenanceItem.batch_ragic_id.in_(batch_ids),
+            PeriodicMaintenanceItem.scheduled_date == sched_day,
+        )
+        .all()
+    )
+    for item in items:
+        batch = batch_map.get(item.batch_ragic_id)
+        task = " ".join(filter(None, [item.task_name, item.location]))
+        wm = None
+        if item.ragic_work_minutes and item.ragic_work_minutes > 0:
+            wm = int(item.ragic_work_minutes)
+        elif item.estimated_minutes and item.estimated_minutes > 0:
+            wm = int(item.estimated_minutes)
+        est = item.estimated_minutes if item.estimated_minutes else None
+        for person in _persons(item.executor_name):
+            rows.append(_make_row(
+                source="hotel_pm",
+                category="例行維護",
+                task=task or "(無說明)",
+                person=person,
+                est_min=est,
+                start_time=item.start_time or "",
+                end_time=item.end_time or "",
+                work_min=wm,
+                remark=item.result_note or "",
+                ragic_id=item.ragic_id,
+                ragic_url=_ragic_url(_SOURCE_PATH["hotel_pm"], item.ragic_id),
+                detail={
+                    "日誌編號":  (batch.journal_no if batch else "") or "",
+                    "保養月份":  (batch.period_month if batch else "") or "",
+                    "類別":      item.category or "",
+                    "頻率":      item.frequency or "",
+                    "區域":      item.location or "",
+                    "排定日期":  item.scheduled_date or "",
+                    "排定人員":  item.scheduler_name or "",
+                    "執行人員":  item.executor_name or "",
+                    "完成狀況":  "已完成" if item.is_completed else "未完成",
+                    "執行結果":  item.result_note or "",
+                    "異常說明":  item.abnormal_note if getattr(item, "abnormal_flag", False) else "",
+                },
+            ))
+    return rows
+
+
+def _fetch_ihg(db: Session, year: int, month: int, day: int) -> list[dict]:
+    """IHG客房保養：maint_date YYYY/MM/DD"""
+    rows = []
+    date_prefix = _date_str(year, month, day)
+    for rec in (
+        db.query(IHGRoomMaintenanceMaster)
+        .filter(IHGRoomMaintenanceMaster.maint_date == date_prefix)
+        .all()
+    ):
+        person = (rec.assignee_name or "").strip() or "未指定"
+        task   = f"IHG客房保養 {rec.room_no}".strip()
+        # 工時：優先用 DB 欄位 work_minutes；fallback raw_json 解析
+        raw = rec.get_raw() if hasattr(rec, "get_raw") else {}
+        wm_float: float | None = None
+        if rec.work_minutes is not None and rec.work_minutes > 0:
+            wm_float = rec.work_minutes
+        else:
+            try:
+                mins_val = raw.get("工時計算", "")
+                if mins_val and re.search(r"[\d.]+", str(mins_val)):
+                    wm_float = float(re.search(r"[\d.]+", str(mins_val)).group())
+            except Exception:
+                pass
+        wm = round(wm_float) if wm_float and wm_float > 0 else None
+        # 起迄時間：DB 欄位優先，fallback raw_json（未重新同步的舊記錄）
+        def _str_or_raw(db_val: str, raw_key: str) -> str:
+            return db_val.strip() if db_val and db_val.strip() else str(raw.get(raw_key) or "").strip()
+        # 2026-10-02：原樣傳入，由 _make_row 切 HH:MM 並保留完整日期（跨日判斷用）
+        ihg_start = _str_or_raw(rec.start_time or "", "保養時間起")
+        ihg_end   = _str_or_raw(rec.end_time   or "", "保養時間迄")
+        rows.append(_make_row(
+            source="ihg",
+            category="例行維護",
+            task=task,
+            person=person,
+            est_min=wm,
+            start_time=ihg_start,
+            end_time=ihg_end,
+            work_min=wm,
+            remark=rec.notes or "",
+            ragic_id=rec.ragic_id,
+            ragic_url=_ragic_url(_SOURCE_PATH["ihg"], rec.ragic_id),
+            detail={
+                "房號":       rec.room_no or "",
+                "樓層":       rec.floor or "",
+                "保養類型":   rec.maint_type or "",
+                "保養人員":   rec.assignee_name or "",
+                "複核人員":   rec.checker_name or "",
+                "保養日期":   rec.maint_date or "",
+                "完成日期":   rec.completion_date or "",
+                "狀態":       rec.status or "",
+                "保養時間起": _clean_time(ihg_start),
+                "保養時間迄": _clean_time(ihg_end),
+                "工時（分鐘）": str(wm) if wm else "",
+                "備註":       rec.notes or "",
+            },
+        ))
+    return rows
+
+
+def _fetch_hotel_di(db: Session, year: int, month: int, day: int) -> list[dict]:
+    """飯店每日巡檢：hotel_di_inspection_batch"""
+    rows = []
+    date_str = _date_str(year, month, day)
+    for b in (
+        db.query(HotelDIBatch)
+        .filter(HotelDIBatch.inspection_date == date_str)
+        .all()
+    ):
+        person = (b.inspector_name or "").strip() or "未指定"
+        task   = f"{b.sheet_name} 巡檢" if b.sheet_name else "飯店每日巡檢"
+        wm     = _parse_wm(b.work_hours)
+        rows.append(_make_row(
+            source="hotel_di",
+            category="每日巡檢",
+            task=task,
+            person=person,
+            start_time=b.start_time or "",
+            end_time=b.end_time or "",
+            work_min=wm,
+            ragic_id=b.ragic_id,
+            ragic_url=_ragic_url(_HOTEL_DI_PATHS.get(b.sheet_key, ""), b.ragic_id),
+            detail={
+                "巡檢表名稱": b.sheet_name or "",
+                "巡檢人員":   b.inspector_name or "",
+                "巡檢日期":   b.inspection_date or "",
+                "開始時間":   b.start_time or "",
+                "結束時間":   b.end_time or "",
+                "工時":       f"{wm} min" if wm else "",
+            },
+        ))
+    return rows
+
+
+def _fetch_mall_pm(db: Session, year: int, month: int, day: int) -> list[dict]:
+    """商場週期保養：mall_pm_batch + mall_pm_batch_item（+ mall_pm_item_worklog 維修記錄子表）
+    無維修記錄（子表無可解析「時間開始」）→ 排定日期口徑（原邏輯，人員=執行人員、工時=預估工時）。
+    有維修記錄（子表）→ 改以子表「時間開始」實際日期歸戶，忽略排定日期（見 _group_pm_worklog_rows）。
+    2026-07-14：修正排定日期與實際維修日期不一致（如颱風延期）時工作日誌顯示錯誤日期的問題。
+    """
+    rows = []
+    target = _date(year, month, day)
+    period_month = f"{year}/{month:02d}"
+    sched_day    = f"{month:02d}/{day:02d}"
+
+    batches = (
+        db.query(MallPeriodicMaintenanceBatch)
+        .filter(MallPeriodicMaintenanceBatch.period_month == period_month)
+        .all()
+    )
+    if not batches:
+        return rows
+    batch_map = {b.ragic_id: b for b in batches}
+    batch_ids = set(batch_map.keys())
+
+    # 不再以 scheduled_date 篩選 SQL：需取得整批項目才能判斷是否有子表活動落在 target
+    items = (
+        db.query(MallPeriodicMaintenanceItem)
+        .filter(MallPeriodicMaintenanceItem.batch_ragic_id.in_(batch_ids))
+        .all()
+    )
+    if not items:
+        return rows
+
+    # 預載維修記錄子表（Sheet24 巢狀子表格），依項目分組、按子表項次排序
+    item_ids = {item.ragic_id for item in items}
+    wl_map: dict[str, list] = defaultdict(list)
+    for wl in db.query(MallPMItemWorklog).filter(MallPMItemWorklog.item_ragic_id.in_(item_ids)).all():
+        wl_map[wl.item_ragic_id].append(wl)
+    for wls in wl_map.values():
+        wls.sort(key=lambda w: w.seq_no)
+
+    for item in items:
+        batch = batch_map.get(item.batch_ragic_id)
+        task = " ".join(filter(None, [item.task_name, item.location]))
+        est  = item.estimated_minutes if item.estimated_minutes else None
+        item_wls    = wl_map.get(item.ragic_id, [])
+        dated_wls   = [wl for wl in item_wls if _parse_pm_datetime(wl.start_time)]
+        detail_recs = _pm_detail_records_payload(item_wls)
+
+        common = dict(
+            source="mall_pm",
+            category="例行維護",
+            task=task or "(無說明)",
+            est_min=est,
+            remark=item.result_note or "",
+            ragic_id=item.ragic_id,
+            ragic_url=_ragic_url(_SOURCE_PATH["mall_pm"], item.ragic_id),
+            detail_records=detail_recs,
+            detail={
+                "日誌編號":  (batch.journal_no if batch else "") or "",
+                "保養月份":  (batch.period_month if batch else "") or "",
+                "類別":      item.category or "",
+                "頻率":      item.frequency or "",
+                "區域":      item.location or "",
+                "排定日期":  item.scheduled_date or "",
+                "排定人員":  item.scheduler_name or "",
+                "執行人員":  item.executor_name or "",
+                "完成狀況":  "已完成" if item.is_completed else "未完成",
+                "執行結果":  item.result_note or "",
+                "異常說明":  item.abnormal_note if getattr(item, "abnormal_flag", False) else "",
+            },
+        )
+
+        if dated_wls:
+            # 有維修記錄（子表）→ 以子表「時間開始」實際日期歸戶，忽略排定日期
+            groups = _group_pm_worklog_rows(dated_wls, target, item.executor_name or "")
+            if not groups:
+                continue   # 該日無子表活動 → 此項目不出現在本日日誌
+            for g in groups:
+                rows.append(_make_row(
+                    person=g["person"],
+                    start_time=g["start_time"],
+                    end_time=g["end_time"],
+                    work_min=g["work_min"],
+                    **common,
+                ))
+        else:
+            # 無維修記錄（或子表無可解析時間）→ 排定日期口徑（原邏輯）
+            if item.scheduled_date != sched_day:
+                continue
+            wm = int(item.estimated_minutes) if item.estimated_minutes and item.estimated_minutes > 0 else None
+            for person in _persons(item.executor_name):
+                rows.append(_make_row(
+                    person=person,
+                    start_time=item.start_time or "",
+                    end_time=item.end_time or "",
+                    work_min=wm,
+                    **common,
+                ))
+    return rows
+
+
+def _fetch_full_bldg_pm(db: Session, year: int, month: int, day: int) -> list[dict]:
+    """整棟保養：full_bldg_pm_batch + full_bldg_pm_batch_item（+ full_bldg_pm_item_worklog 維修記錄子表）
+    無維修記錄（子表無可解析「時間開始」）→ 排定日期口徑（原邏輯，人員=執行人員、工時=預估工時）。
+    有維修記錄（子表）→ 改以子表「時間開始」實際日期歸戶，忽略排定日期（見 _group_pm_worklog_rows）。
+    2026-07-14：修正排定日期與實際維修日期不一致（如颱風延期）時工作日誌顯示錯誤日期的問題。
+    """
+    rows = []
+    target = _date(year, month, day)
+    period_month = f"{year}/{month:02d}"
+    sched_day    = f"{month:02d}/{day:02d}"
+
+    batches = (
+        db.query(FullBldgPMBatch)
+        .filter(FullBldgPMBatch.period_month == period_month)
+        .all()
+    )
+    if not batches:
+        return rows
+    batch_map = {b.ragic_id: b for b in batches}
+    batch_ids = set(batch_map.keys())
+
+    # 不再以 scheduled_date 篩選 SQL：需取得整批項目才能判斷是否有子表活動落在 target
+    items = (
+        db.query(FullBldgPMItem)
+        .filter(FullBldgPMItem.batch_ragic_id.in_(batch_ids))
+        .all()
+    )
+    if not items:
+        return rows
+
+    # 預載維修記錄子表（Sheet28 巢狀子表格），依項目分組、按子表項次排序
+    item_ids = {item.ragic_id for item in items}
+    wl_map: dict[str, list] = defaultdict(list)
+    for wl in db.query(FullBldgPMItemWorklog).filter(FullBldgPMItemWorklog.item_ragic_id.in_(item_ids)).all():
+        wl_map[wl.item_ragic_id].append(wl)
+    for wls in wl_map.values():
+        wls.sort(key=lambda w: w.seq_no)
+
+    for item in items:
+        batch = batch_map.get(item.batch_ragic_id)
+        task = " ".join(filter(None, [item.task_name, item.location]))
+        est  = item.estimated_minutes if item.estimated_minutes else None
+        item_wls    = wl_map.get(item.ragic_id, [])
+        dated_wls   = [wl for wl in item_wls if _parse_pm_datetime(wl.start_time)]
+        detail_recs = _pm_detail_records_payload(item_wls)
+
+        common = dict(
+            source="full_bldg_pm",
+            category="例行維護",
+            task=task or "(無說明)",
+            est_min=est,
+            remark=item.result_note or "",
+            ragic_id=item.ragic_id,
+            ragic_url=_ragic_url(_SOURCE_PATH["full_bldg_pm"], item.ragic_id),
+            detail_records=detail_recs,
+            detail={
+                "日誌編號":  (batch.journal_no if batch else "") or "",
+                "保養月份":  (batch.period_month if batch else "") or "",
+                "類別":      item.category or "",
+                "頻率":      item.frequency or "",
+                "區域":      item.location or "",
+                "排定日期":  item.scheduled_date or "",
+                "排定人員":  item.scheduler_name or "",
+                "執行人員":  item.executor_name or "",
+                "完成狀況":  "已完成" if item.is_completed else "未完成",
+                "執行結果":  item.result_note or "",
+                "異常說明":  item.abnormal_note if getattr(item, "abnormal_flag", False) else "",
+            },
+        )
+
+        if dated_wls:
+            # 有維修記錄（子表）→ 以子表「時間開始」實際日期歸戶，忽略排定日期
+            groups = _group_pm_worklog_rows(dated_wls, target, item.executor_name or "")
+            if not groups:
+                continue   # 該日無子表活動 → 此項目不出現在本日日誌
+            for g in groups:
+                rows.append(_make_row(
+                    person=g["person"],
+                    start_time=g["start_time"],
+                    end_time=g["end_time"],
+                    work_min=g["work_min"],
+                    **common,
+                ))
+        else:
+            # 無維修記錄（或子表無可解析時間）→ 排定日期口徑（原邏輯）
+            if item.scheduled_date != sched_day:
+                continue
+            wm = int(item.estimated_minutes) if item.estimated_minutes and item.estimated_minutes > 0 else None
+            for person in _persons(item.executor_name):
+                rows.append(_make_row(
+                    person=person,
+                    start_time=item.start_time or "",
+                    end_time=item.end_time or "",
+                    work_min=wm,
+                    **common,
+                ))
+    return rows
+
+
+def _fetch_mall_fi(db: Session, year: int, month: int, day: int) -> list[dict]:
+    """商場設施巡檢：mall_fi_inspection_batch"""
+    rows = []
+    date_str = _date_str(year, month, day)
+    for b in (
+        db.query(MallFIBatch)
+        .filter(MallFIBatch.inspection_date == date_str)
+        .all()
+    ):
+        person = (b.inspector_name or "").strip() or "未指定"
+        task   = f"{b.sheet_name} 設施巡檢" if b.sheet_name else "商場設施巡檢"
+        wm     = _parse_wm(b.work_hours)
+        rows.append(_make_row(
+            source="mall_fi",
+            category="每日巡檢",
+            task=task,
+            person=person,
+            start_time=b.start_time or "",
+            end_time=b.end_time or "",
+            work_min=wm,
+            ragic_id=b.ragic_id,
+            ragic_url=_ragic_url(_MALL_FI_PATHS.get(b.sheet_key, ""), b.ragic_id),
+            detail={
+                "巡檢表名稱": b.sheet_name or "",
+                "巡檢人員":   b.inspector_name or "",
+                "巡檢日期":   b.inspection_date or "",
+                "開始時間":   b.start_time or "",
+                "結束時間":   b.end_time or "",
+                "工時":       f"{wm} min" if wm else "",
+            },
+        ))
+    return rows
+
+
+def _fetch_full_bi(db: Session, year: int, month: int, day: int) -> list[dict]:
+    """整棟巡檢：B1F / B2F / B4F / RF inspection_batch"""
+    rows = []
+    date_str = _date_str(year, month, day)
+    SHEETS = [
+        (B1FInspectionBatch, "B1F 整棟巡檢", "b1f"),
+        (B2FInspectionBatch, "B2F 整棟巡檢", "b2f"),
+        (B4FInspectionBatch, "B4F 整棟巡檢", "b4f"),
+        (RFInspectionBatch,  "RF 整棟巡檢",  "rf"),
+    ]
+    for Model, label, bi_key in SHEETS:
+        for b in (
+            db.query(Model)
+            .filter(Model.inspection_date == date_str)
+            .all()
+        ):
+            person = (b.inspector_name or "").strip() or "未指定"
+            wm     = _parse_wm(b.work_hours)
+            rows.append(_make_row(
+                source="full_bi",
+                category="每日巡檢",
+                task=label,
+                person=person,
+                start_time=b.start_time or "",
+                end_time=b.end_time or "",
+                work_min=wm,
+                ragic_id=b.ragic_id,
+                ragic_url=_ragic_url(_FULL_BI_PATHS[bi_key], b.ragic_id),
+                detail={
+                    "巡檢表名稱": label,
+                    "巡檢人員":   b.inspector_name or "",
+                    "巡檢日期":   b.inspection_date or "",
+                    "開始時間":   b.start_time or "",
+                    "結束時間":   b.end_time or "",
+                    "工時":       f"{wm} min" if wm else "",
+                },
+            ))
+    return rows
+
+
+def _fetch_hotel_mr(db: Session, year: int, month: int, day: int) -> list[dict]:
+    """飯店水電錶抄表：hotel_mr_batch（4 張 Sheet，每張獨立一行）"""
+    rows = []
+    date_str = _date_str(year, month, day)
+    for b in (
+        db.query(HotelMRBatch)
+        .filter(HotelMRBatch.record_date == date_str)
+        .all()
+    ):
+        person = (b.recorder_name or "").strip() or "未指定"
+        task   = f"{b.sheet_name} 抄表" if b.sheet_name else "水電錶抄表"
+        wm     = _parse_wm(b.work_hours)
+        rows.append(_make_row(
+            source="hotel_mr",
+            category="每日巡檢",
+            task=task,
+            person=person,
+            start_time=b.start_time or "",
+            end_time=b.end_time or "",
+            work_min=wm,
+            ragic_id=b.ragic_id,
+            ragic_url=_ragic_url(_HOTEL_MR_PATHS.get(b.sheet_key, ""), b.ragic_id),
+            detail={
+                "抄表表名稱": b.sheet_name or "",
+                "抄表人員":   b.recorder_name or "",
+                "抄表日期":   b.record_date or "",
+                "開始時間":   b.start_time or "",
+                "結束時間":   b.end_time or "",
+                "工時":       f"{wm} min" if wm else "",
+            },
+        ))
+    return rows
+
+
+def _fetch_other_tasks(db: Session, year: int, month: int, day: int) -> list[dict]:
+    """主管交辦／緊急事件。
+    無子表（或子表全無「時間開始」）→ created_at 日期口徑（原邏輯）。
+    有子表 → 以子表「時間開始」日期歸戶，人員/工時按子表列計算（同 dazhi/luqun 模式）。
+    """
+    rows = []
+    target = _date(year, month, day)
+
+    # 預載子表（維修記錄）並按工單分組
+    rec_map: dict[str, list] = defaultdict(list)
+    for r in db.query(OtherTaskRecord).all():
+        rec_map[r.parent_ragic_id].append(r)
+    for recs in rec_map.values():
+        recs.sort(key=lambda r: (r.start_at is None, r.start_at or datetime.min))
+
+    for rec in db.query(OtherTask).all():
+        case_recs  = rec_map.get(rec.ragic_id, [])
+        dated_recs = [r for r in case_recs if r.start_at is not None]
+
+        # 有子表 → 子表歸戶；無（或子表全無時間開始）→ 原邏輯
+        if dated_recs:
+            fallback_person = (rec.engineer or "").strip()
+            groups = _group_detail_rows(dated_recs, target, fallback_person)
+            if not groups:
+                continue   # 該日無子表活動 → 此工單不出現在本日日誌
+        else:
+            if not rec.created_at or rec.created_at.date() != target:
+                continue
+            groups = None
+
+        wm = round(rec.work_hours * 60) if rec.work_hours and rec.work_hours > 0 else None
+        created_str   = rec.created_at.strftime("%Y/%m/%d %H:%M") if rec.created_at else ""
+        updated_str   = rec.updated_at.strftime("%Y/%m/%d %H:%M") if rec.updated_at else ""
+        ragic_url_val = _ragic_url(_SOURCE_PATH["other_tasks"], rec.ragic_id) if rec.ragic_id else ""
+        detail_recs   = _detail_records_payload(case_recs)
+
+        common = dict(
+            source="other_tasks",
+            category=rec.task_type or "上級交辦",
+            task=rec.description or "(無說明)",
+            remark=rec.notes or "",
+            ragic_id=rec.ragic_id or "",
+            ragic_url=ragic_url_val,
+            venue=rec.venue or "",
+            detail_records=detail_recs,
+            detail={
+                "歸屬":         rec.venue or "",
+                "屬性":         rec.task_type or "",
+                "交辦主管":     rec.supervisor or "",
+                "工程人員":     rec.engineer or "",
+                "建立日期":     created_str,
+                "最後更新日期": updated_str,
+                "狀態":         rec.status or "",
+                "維修工時":     f"{rec.work_hours:.2f} hr" if rec.work_hours else "",
+                "問題說明":     rec.description or "",
+                "備註":         rec.notes or "",
+            },
+        )
+
+        if groups is None:
+            # 無子表 → 原邏輯：單列、主表工時
+            for person in _persons(rec.engineer):
+                rows.append(_make_row(person=person, work_min=wm, **common))
+        else:
+            # 有子表 → 每人一列（同人多列已合併、工時加總）
+            for g in groups:
+                rows.append(_make_row(
+                    person=g["person"],
+                    start_time=g["start_time"],
+                    end_time=g["end_time"],
+                    work_min=g["work_min"],
+                    **common,
+                ))
+    return rows
+
+
+# ── 端點 ─────────────────────────────────────────────────────────────────────
+
+# 飯店/商場歸屬判斷（與前端工作日誌「飯/商」標籤邏輯一致）：
+# 飯店 = dazhi / hotel_pm / ihg / hotel_di；other_tasks 依「歸屬」欄位；
+# 其餘來源（含 hotel_mr 飯店水電錶抄表）一律歸商場（2026-06-11 業主確認維持現狀）。
+_HOTEL_VENUE_SOURCES = {"dazhi", "hotel_pm", "ihg", "hotel_di"}
+
+
+def _row_venue(r: dict) -> str:
+    """回傳工作日誌一行的歸屬：'hotel' 或 'mall'。"""
+    if r["source"] == "other_tasks":
+        return "hotel" if (r.get("venue") or "") == "飯店" else "mall"
+    return "hotel" if r["source"] in _HOTEL_VENUE_SOURCES else "mall"
+
+
+def _build_daily(
+    db: Session, year: int, month: int, day: int,
+    person_scope: str = "all",
+    venue: str = "all",
+) -> dict:
+    """內部共用：聚合指定日期的全模組工作記錄，回傳 WorkJournalDaily dict。
+
+    person_scope:
+      - "all"        全部人員（預設，維持既有行為）
+      - "named"      只含具名人員
+      - "unassigned" 只含「未指定」
+    venue:
+      - "all"   全部（預設）
+      - "hotel" 只含飯店歸屬
+      - "mall"  只含商場歸屬
+    """
+    all_rows: list[dict] = []
+    all_rows += _fetch_dazhi(db, year, month, day)
+    all_rows += _fetch_luqun(db, year, month, day)
+    all_rows += _fetch_hotel_pm(db, year, month, day)
+    all_rows += _fetch_ihg(db, year, month, day)
+    all_rows += _fetch_hotel_di(db, year, month, day)
+    all_rows += _fetch_mall_pm(db, year, month, day)
+    all_rows += _fetch_full_bldg_pm(db, year, month, day)
+    all_rows += _fetch_mall_fi(db, year, month, day)
+    all_rows += _fetch_full_bi(db, year, month, day)
+    all_rows += _fetch_hotel_mr(db, year, month, day)
+    all_rows += _fetch_other_tasks(db, year, month, day)
+
+    if venue in ("hotel", "mall"):
+        all_rows = [r for r in all_rows if _row_venue(r) == venue]
+
+    # 來源名稱跟著本 Server 的選單設定（見 _source_labels）
+    labels = _source_labels(db)
+    for r in all_rows:
+        r["source_label"] = labels.get(r["source"], r["source_label"])
+
+    person_map: dict[str, list[dict]] = defaultdict(list)
+    for r in all_rows:
+        person_map[r["person"]].append(r)
+
+    named = sorted(
+        [p for p in person_map if p != "未指定"],
+        key=lambda p: sum(r["work_min"] or 0 for r in person_map[p]),
+        reverse=True,
+    )
+    if person_scope == "named":
+        persons_order = named
+    elif person_scope == "unassigned":
+        persons_order = ["未指定"] if "未指定" in person_map else []
+    else:
+        persons_order = named + (["未指定"] if "未指定" in person_map else [])
+
+    def _row_sort_key(r: dict):
+        st = r["start_time"]
+        has_time = bool(st and re.match(r"^\d{1,2}:\d{2}$", st))
+        src_order = SORT_ORDER.index(r["source"]) if r["source"] in SORT_ORDER else 99
+        return (0 if has_time else 1, st or "99:99", src_order)
+
+    persons_data = []
+    for p in persons_order:
+        sorted_rows = sorted(person_map[p], key=_row_sort_key)
+        for i, row in enumerate(sorted_rows, 1):
+            row["seq"] = i
+        persons_data.append({"person": p, "rows": sorted_rows})
+
+    return {
+        "date":       _date_str(year, month, day),
+        "persons":    persons_data,
+        "total_rows": sum(len(pd["rows"]) for pd in persons_data),
+    }
+
+
+@router.get("/daily", summary="工作日誌 — 指定日期所有人員工作記錄")
+def get_work_journal_daily(
+    year:  int = Query(..., ge=2020, le=2030),
+    month: int = Query(..., ge=1,    le=12),
+    day:   int = Query(..., ge=1,    le=31),
+    person_scope: str = Query("all", pattern="^(all|named|unassigned)$",
+                              description="人員範圍：all=全部（預設）/ named=具名 / unassigned=未指定"),
+    venue: str = Query("all", pattern="^(all|hotel|mall)$",
+                       description="歸屬：all=全部（預設）/ hotel=飯店 / mall=商場"),
+    db:    Session = Depends(get_db),
+):
+    """聚合 10 個模組當日工作記錄，依人員分組回傳。"""
+    return _build_daily(db, year, month, day, person_scope=person_scope, venue=venue)
+
+
+@router.get("/range", summary="工作日誌 — 日期區間（最多 31 天）")
+def get_work_journal_range(
+    date_from: str = Query(..., description="起始日期 YYYY-MM-DD"),
+    date_to:   str = Query(..., description="結束日期 YYYY-MM-DD"),
+    person_scope: str = Query("all", pattern="^(all|named|unassigned)$",
+                              description="人員範圍：all=全部（預設）/ named=具名 / unassigned=未指定"),
+    venue: str = Query("all", pattern="^(all|hotel|mall)$",
+                       description="歸屬：all=全部（預設）/ hotel=飯店 / mall=商場"),
+    db: Session = Depends(get_db),
+):
+    """
+    聚合 date_from～date_to 區間的工作記錄（最多 31 天）。
+    僅回傳有記錄的日期（total_rows > 0）。
+    整月查詢：date_from=YYYY-MM-01, date_to=YYYY-MM-{last_day}。
+    """
+    try:
+        start = _date.fromisoformat(date_from)
+        end   = _date.fromisoformat(date_to)
+    except ValueError:
+        return {"date_from": date_from, "date_to": date_to, "days": [], "total_rows": 0}
+
+    if end < start:
+        start, end = end, start
+    if (end - start).days > 30:
+        end = start + timedelta(days=30)
+
+    days = []
+    cur  = start
+    while cur <= end:
+        daily = _build_daily(db, cur.year, cur.month, cur.day, person_scope=person_scope, venue=venue)
+        if daily["total_rows"] > 0:
+            days.append(daily)
+        cur += timedelta(days=1)
+
+    return {
+        "date_from": start.isoformat(),
+        "date_to":   end.isoformat(),
+        "days":      days,
+        "total_rows": sum(d["total_rows"] for d in days),
+    }
+
+
+# ─────────────────────────────────────────────────────────────
+# 月矩陣（exec-work-dashboard 的「每日累計工時表」與「員工時統計數」共用）
+# ─────────────────────────────────────────────────────────────
+
+def _matrix_rows(bucket: dict[str, dict[int, int]], key_name: str,
+                 order: list[str], days: list[int]) -> list[dict]:
+    """把 {列名: {日: 分鐘}} 攤平成矩陣列，並附 TOTAL 列。
+
+    `order` 決定列的順序（呼叫端已排好），`key_name` 是列標題欄位名
+    （類別表用 "category"、人員表用 "person"），好讓兩張表共用這段。
+    """
+    rows: list[dict] = []
+    grand_total = 0
+    grand_day = [0] * len(days)
+    for name in order:
+        per_day = [int(bucket[name].get(d, 0)) for d in days]
+        total = sum(per_day)
+        grand_total += total
+        for i, m in enumerate(per_day):
+            grand_day[i] += m
+        rows.append({key_name: name, "minutes": per_day, "total": total, "pct": 0.0})
+    for row in rows:
+        row["pct"] = round(row["total"] / grand_total * 100, 1) if grand_total else 0.0
+    rows.append({
+        key_name: "TOTAL",
+        "minutes": grand_day,
+        "total": grand_total,
+        "pct": 100.0 if grand_total else 0.0,
+    })
+    return rows
+
+
+@router.get("/matrix", summary="工作日誌 — 指定月份的 類別×日期 與 人員×日期 工時矩陣")
+def get_work_journal_matrix(
+    year:  int = Query(..., ge=2020, le=2030),
+    month: int = Query(..., ge=1,    le=12),
+    person_scope: str = Query("all", pattern="^(all|named|unassigned)$",
+                              description="人員範圍：all=全部（預設）/ named=具名 / unassigned=未指定"),
+    venue: str = Query("all", pattern="^(all|hotel|mall)$",
+                       description="歸屬：all=全部（預設）/ hotel=飯店 / mall=商場"),
+    db: Session = Depends(get_db),
+):
+    """把整個月的工作日誌聚合成兩張矩陣，單位一律是**分鐘**（`work_min`）。
+
+    ⭐ 這支端點存在的理由：`/exec-work-dashboard` 的「每日累計工時表」與
+    「員工時統計數」必須與工作日誌 TAB 的數字完全一致。改走這裡之後，
+    三者同源、同一套日期歸戶規則（有子表 → 子表 `start_at`；無 → `occurred_at`
+    ／`created_at`），不再各自從 `work_category_analysis` 重算。
+
+    `by_category` 與 `by_person` 是同一份 rows 的兩種切法，所以兩者的
+    TOTAL 必然相同；要改口徑只能改 `_build_daily`，不要在任何一邊單獨調整。
+
+    `work_min` 為 None（沒有結束時間、算不出工時）的列一律計 0，
+    與工作日誌 TAB 每日標頭上那個「N min」的加總方式一致。
+    """
+    _, days_in_month = calendar.monthrange(year, month)
+    days = list(range(1, days_in_month + 1))
+    zh = ["一", "二", "三", "四", "五", "六", "日"]
+    weekdays = [zh[_date(year, month, d).weekday()] for d in days]
+
+    cat_bucket: dict[str, dict[int, int]] = {c: defaultdict(int) for c in CATEGORIES}
+    person_bucket: dict[str, dict[int, int]] = defaultdict(lambda: defaultdict(int))
+    person_total: dict[str, int] = defaultdict(int)
+
+    for d in days:
+        daily = _build_daily(db, year, month, d, person_scope=person_scope, venue=venue)
+        for pd in daily["persons"]:
+            p = pd["person"]
+            for r in pd["rows"]:
+                wm = r.get("work_min") or 0
+                if r["category"] in cat_bucket:
+                    cat_bucket[r["category"]][d] += wm
+                person_bucket[p][d] += wm
+                person_total[p] += wm
+
+    named = sorted((p for p in person_bucket if p != "未指定"),
+                   key=lambda p: -person_total[p])
+    person_order = named + (["未指定"] if "未指定" in person_bucket else [])
+
+    return {
+        "year":  year,
+        "month": month,
+        "days":     days,
+        "weekdays": weekdays,
+        "unit": "minutes",
+        "by_category": {"rows": _matrix_rows(cat_bucket, "category", CATEGORIES, days)},
+        "by_person":   {"rows": _matrix_rows(person_bucket, "person", person_order, days)},
+    }
+
+
+# ─────────────────────────────────────────────────────────────
+# 班別區間查詢（飯店 ＋ 商場合併）
+# ─────────────────────────────────────────────────────────────
+
+def _collect_shifts(
+    db: Session,
+    detail_model,
+    shift_model,
+    venue_flag: str,
+    start: _date,
+    end: _date,
+    out: dict[str, dict[str, list]],
+) -> None:
+    """把單一場域的班表明細併進 out（就地修改）。
+
+    out 結構：{ "2026-08-01": { "王大明": [ {..飯..}, {..商..} ] } }
+    """
+    shift_type_map: dict[str, dict] = {
+        s.code: {"color": s.color, "work_minutes": s.work_minutes, "name": s.name}
+        for s in db.query(shift_model).filter(shift_model.is_deleted == False).all()
+    }
+
+    details = (
+        db.query(detail_model)
+        .filter(
+            detail_model.work_date >= start,
+            detail_model.work_date <= end,
+            detail_model.is_deleted == False,
+        )
+        .all()
+    )
+
+    for d in details:
+        date_str = d.work_date.isoformat()
+        per_date = out.setdefault(date_str, {})
+        entries  = per_date.setdefault(d.staff_name, [])
+
+        st = shift_type_map.get(d.shift_code)
+        if st is not None:
+            color      = st["color"]
+            is_working = st["work_minutes"] > 0
+            shift_name = st["name"]
+        else:
+            # 未知班別代碼：以明細本身的 work_minutes 判斷
+            color      = "#6b7280"
+            is_working = (d.work_minutes or 0) > 0
+            shift_name = ""
+
+        # 同一人、同一天、同一場域若有多筆（理論上不應發生），以 is_working=True 優先
+        existing = next((e for e in entries if e["venue_flag"] == venue_flag), None)
+        if existing is not None:
+            if existing["is_working"]:
+                continue
+            entries.remove(existing)
+
+        entries.append({
+            "shift_code":  d.shift_code,
+            "shift_name":  shift_name,
+            "shift_color": color,
+            "is_working":  is_working,
+            "venue_flag":  venue_flag,
+        })
+
+
+@router.get("/shifts-range", summary="班別查詢（日期區間）— 飯店＋商場合併")
+def get_merged_shifts_range(
+    date_from: str = Query(..., description="起始日期 YYYY-MM-DD"),
+    date_to:   str = Query(..., description="結束日期 YYYY-MM-DD"),
+    db: Session = Depends(get_db),
+):
+    """
+    回傳指定日期區間內每日人員班別映射，飯店與商場合併為同一份結果。
+
+    格式（值為**陣列**，與單一場域端點的物件格式不同）：
+    {
+      "2026-08-01": {
+        "王大明": [
+          {"venue_flag": "飯", "shift_code": "N1", "shift_name": "日班",
+           "shift_color": "#3b82f6", "is_working": true},
+          {"venue_flag": "商", "shift_code": "E6", "shift_name": "晚班",
+           "shift_color": "#f59e0b", "is_working": true}
+        ]
+      }
+    }
+
+    人員以「姓名字串」為 key —— 依 2026-08-14 決策，兩邊同名視為同一人，
+    在工作日誌呈現雙標籤。兩邊各自匯入、不做人員比對，所以同一人在兩張
+    人員表會各有一筆，這裡才需要合併。
+
+    區間上限 93 天，超過時截斷。
+    """
+    try:
+        start = _date.fromisoformat(date_from)
+        end   = _date.fromisoformat(date_to)
+    except ValueError:
+        return {}
+
+    if end < start:
+        start, end = end, start
+    if (end - start).days > 92:
+        end = start + timedelta(days=92)
+
+    result: dict[str, dict[str, list]] = {}
+    _collect_shifts(db, ScheduleDetail,     ShiftType,     HOTEL_VENUE_FLAG, start, end, result)
+    _collect_shifts(db, MallScheduleDetail, MallShiftType, MALL_VENUE_FLAG,  start, end, result)
+
+    # 固定排序：飯在前、商在後，避免前端標籤順序隨查詢結果跳動
+    order = {HOTEL_VENUE_FLAG: 0, MALL_VENUE_FLAG: 1}
+    for per_date in result.values():
+        for entries in per_date.values():
+            entries.sort(key=lambda e: order.get(e["venue_flag"], 9))
+
+    return result
+
+
+@router.get("/export-excel", summary="工作日誌匯出 Excel（每人一 Sheet）")
+def export_work_journal_excel(
+    date_from: str = Query(..., description="起始日期 YYYY-MM-DD"),
+    date_to:   str = Query(..., description="結束日期 YYYY-MM-DD"),
+    person:    Optional[str] = Query(None, description="指定人員；不傳則匯出全員"),
+    person_scope: str = Query("all", pattern="^(all|named|unassigned)$",
+                              description="人員範圍：all=全部（預設）/ named=具名 / unassigned=未指定"),
+    venue: str = Query("all", pattern="^(all|hotel|mall)$",
+                       description="歸屬：all=全部（預設）/ hotel=飯店 / mall=商場"),
+    db: Session = Depends(get_db),
+):
+    """匯出指定日期區間工作日誌為 Excel；全員模式每人一 Sheet，最多 93 天。"""
+    try:
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    except ImportError:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=500, detail="openpyxl 未安裝")
+
+    try:
+        start = _date.fromisoformat(date_from)
+        end   = _date.fromisoformat(date_to)
+    except ValueError:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="日期格式錯誤，需 YYYY-MM-DD")
+
+    if end < start:
+        start, end = end, start
+    if (end - start).days > 92:
+        end = start + timedelta(days=92)
+
+    # ── 收集資料 ───────────────────────────────────────────────────────────────
+    days_data = []
+    cur = start
+    while cur <= end:
+        daily = _build_daily(db, cur.year, cur.month, cur.day, person_scope=person_scope, venue=venue)
+        if daily["total_rows"] > 0:
+            days_data.append(daily)
+        cur += timedelta(days=1)
+
+    # ── 人員清單 ───────────────────────────────────────────────────────────────
+    if person:
+        persons_order = [person]
+    else:
+        seen: set = set()
+        persons_order = []
+        for daily in days_data:
+            for pd in daily["persons"]:
+                if pd["person"] not in seen:
+                    persons_order.append(pd["person"])
+                    seen.add(pd["person"])
+
+    # ── 班別對照表：{ staff_name: { "YYYY-MM-DD": { name, start, end } } } ────────
+    # 查詢區間內所有相關人員的班表明細，join ShiftType 取名稱與時間
+    _shift_type_map: dict[str, dict] = {
+        s.code: {"name": s.name, "start": s.start_time, "end": s.end_time}
+        for s in db.query(ShiftType).filter(ShiftType.is_deleted == False).all()
+    }
+    _details = (
+        db.query(ScheduleDetail)
+        .filter(
+            ScheduleDetail.work_date >= start,
+            ScheduleDetail.work_date <= end,
+            ScheduleDetail.is_deleted == False,
+        )
+        .all()
+    )
+    # shift_lookup[staff_name][date_iso] = "班別名稱　HH:MM-HH:MM"
+    shift_lookup: dict[str, dict[str, str]] = {}
+    for _d in _details:
+        _sn = _d.staff_name
+        _ds = _d.work_date.isoformat()          # "2026-05-20"
+        _st = _shift_type_map.get(_d.shift_code, {})
+        _name  = _st.get("name", "") or _d.shift_code
+        _start = _d.start_time or _st.get("start", "")
+        _end   = _d.end_time   or _st.get("end",   "")
+        _time_range = f"{_start}-{_end}" if _start and _end else (_start or "")
+        _label = f"{_name}　{_time_range}".rstrip() if _time_range else _name
+        shift_lookup.setdefault(_sn, {})[_ds] = _label
+
+    def _shift_label(pname: str, date_iso: str) -> str:
+        """取某人某天的班別顯示字串，查不到回空字串。"""
+        return shift_lookup.get(pname, {}).get(date_iso, "")
+
+    # ── openpyxl helpers ──────────────────────────────────────────────────────────
+    from openpyxl.utils import get_column_letter
+
+    THIN   = Side(style="thin")
+    MEDIUM = Side(style="medium")
+
+    def _border(l="thin", r="thin", t="thin", b="thin"):
+        def _s(x):
+            return Side(style=x) if x else Side(style=None)
+        return Border(left=_s(l), right=_s(r), top=_s(t), bottom=_s(b))
+
+    def _apply_row(ws, ri, n_cols, fill=None, font=None, alignment=None, border_fn=None, height=None):
+        for c in range(1, n_cols + 1):
+            cell = ws.cell(row=ri, column=c)
+            if fill:      cell.fill      = fill
+            if font:      cell.font      = font
+            if alignment: cell.alignment = alignment
+            if border_fn: cell.border    = border_fn(c)
+        if height is not None:
+            ws.row_dimensions[ri].height = height
+
+    # ── 飯店 / 商場 來源集合（供工作事項前綴用）────────────────────────────────────
+    _HOTEL_SRC = {"dazhi", "hotel_pm", "ihg", "hotel_di"}
+
+    def _venue_prefix(source: str, venue: str = "") -> str:
+        """回傳工作事項前綴（飯：/ 商：）。
+        other_tasks 以「歸屬」欄位為準；其餘來源依 source 判斷。"""
+        if source == "other_tasks":
+            return "飯：" if venue == "飯店" else "商："
+        return "飯：" if source in _HOTEL_SRC else "商："
+
+    def _row_height(task: str, remark: str, report: str) -> float:
+        import math
+        def _lines(text: str, col_w: float) -> int:
+            """估算折行數：依欄寬（Excel 字元單位），中文字算 2、ASCII 算 1；
+            文字中若含換行符則逐段計算後加總。"""
+            if not text:
+                return 1
+            total = 0
+            for seg in text.replace('\r\n', '\n').replace('\r', '\n').split('\n'):
+                w = sum(2 if ord(c) > 127 else 1 for c in seg)
+                total += max(1, math.ceil(w / col_w)) if w else 1
+            return total
+        max_lines = max(_lines(task, 46), _lines(remark, 22), _lines(report, 34))
+        return max(20.0, max_lines * 15.0) + 2
+
+    # ── 樣式常數 ──────────────────────────────────────────────────────────────────
+    NCOLS       = 13
+    CAT_COLS    = {"現場報修": 2, "上級交辦": 3, "緊急事件": 4, "例行維護": 5, "每日巡檢": 6}
+    COL_WIDTHS  = {1:5, 2:7, 3:7, 4:7, 5:7, 6:7, 7:46, 8:9, 9:10, 10:10, 11:9, 12:22, 13:34}
+
+    TITLE_FONT  = Font(bold=True, size=18)
+    META_FONT   = Font(size=10)
+    HDR_FILL    = PatternFill(start_color="D9EAF7",  end_color="D9EAF7",  fill_type="solid")
+    HDR_FONT    = Font(bold=True, size=10)
+    DATE_FILL   = PatternFill(start_color="1B3A5C",  end_color="1B3A5C",  fill_type="solid")
+    DATE_FONT   = Font(bold=True, size=11, color="FFFFFF")
+    TOTAL_FILL  = PatternFill(start_color="EBF3FB",  end_color="EBF3FB",  fill_type="solid")
+    SUBTOTAL_FILL = PatternFill(start_color="F5F8FC", end_color="F5F8FC", fill_type="solid")  # 每日小計列
+    FOOTER_FILL = PatternFill(start_color="D9EAF7",  end_color="D9EAF7",  fill_type="solid")
+
+    CENTER = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    LEFT   = Alignment(horizontal="left",   vertical="center", wrap_text=True)
+    RIGHT  = Alignment(horizontal="right",  vertical="center", wrap_text=True)
+
+    # ── 標題文字（支援 YYYY-MM-DD 與 YYYY/MM/DD 兩種格式） ────────────────────────
+    def _parse_dt(s: str):
+        for fmt in ("%Y-%m-%d", "%Y/%m/%d"):
+            try:
+                return datetime.strptime(s, fmt)
+            except ValueError:
+                pass
+        raise ValueError(f"Cannot parse date: {s}")
+
+    try:
+        df_dt = _parse_dt(date_from)
+        dt_dt = _parse_dt(date_to)
+        if df_dt.year == dt_dt.year and df_dt.month == dt_dt.month:
+            yyyymm_txt = f"{df_dt.month}月"          # e.g. "5月" — matches paper form
+        else:
+            yyyymm_txt = f"{df_dt.year}/{df_dt.month:02d}~{dt_dt.year}/{dt_dt.month:02d}"
+        date_display = date_from if date_from == date_to else f"{date_from} ~ {date_to}"
+    except Exception:
+        yyyymm_txt   = date_from
+        date_display = f"{date_from} ~ {date_to}"
+
+    is_multi_day = len(days_data) > 1
+
+    # ── 建立 Workbook ─────────────────────────────────────────────────────────────
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)
+
+    # 彙總 Sheet 用：數值皆由 Python 算好寫入（不寫 Excel 公式，見下方當日小計註解）
+    def _round_half_up(x: float) -> int:
+        """與 Excel ROUND(x,0) 一致的四捨五入（Python round() 是銀行家捨入）。"""
+        from decimal import Decimal, ROUND_HALF_UP
+        return int(Decimal(str(x)).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+
+    def _num_out(x):
+        """整數值的 float 轉 int，避免 Excel 顯示 2596.0。"""
+        return int(x) if isinstance(x, float) and x.is_integer() else x
+
+    summary_rows: list[tuple[str, float, int]] = []  # (人員, 合計工時 min, 工作天)
+
+    for pname in persons_order:
+        ws = wb.create_sheet(title=xlsx_safe(pname or "未指定")[:31])
+
+        # 欄寬
+        for ci, w in COL_WIDTHS.items():
+            ws.column_dimensions[get_column_letter(ci)].width = w
+
+        # ── Row 1: 大標題 ─────────────────────────────────────────────────────────
+        # 單日模式：人員名稱後附上班別名稱 + 上下班時間
+        if not is_multi_day:
+            _single_date_iso = start.isoformat()   # 單日 start == end
+            _sl = _shift_label(pname, _single_date_iso)
+            title_val = f"{yyyymm_txt} 飯店每日工作日誌 - {pname}　{_sl}".rstrip() if _sl \
+                        else f"{yyyymm_txt} 飯店每日工作日誌 - {pname}"
+        else:
+            title_val = f"{yyyymm_txt} 飯店每日工作日誌 - {pname}"
+        c1 = ws.cell(row=1, column=1, value=xlsx_safe(title_val))
+        c1.font = TITLE_FONT
+        c1.alignment = CENTER
+        ws.merge_cells("A1:M1")
+        ws.row_dimensions[1].height = 28
+
+        # ── Row 2: 日期行 ─────────────────────────────────────────────────────────
+        # G 欄寬 48，把班別+時間合在同一格避免 H 欄（寬9）換行
+        ws.cell(row=2, column=1, value="日期").font = META_FONT
+        ws.cell(row=2, column=1).alignment = CENTER
+        ws.cell(row=2, column=2, value=f"　{date_display}").font = META_FONT
+        ws.cell(row=2, column=2).alignment = LEFT
+        ws.merge_cells("B2:F2")
+        ws.cell(row=2, column=7, value="早班值班　08:30-17:30").font = META_FONT
+        ws.cell(row=2, column=7).alignment = LEFT
+        ws.merge_cells("G2:H2")
+        ws.cell(row=2, column=9, value="簽名：").font = META_FONT
+        ws.cell(row=2, column=9).alignment = LEFT
+        ws.merge_cells("I2:M2")
+        ws.row_dimensions[2].height = 20
+
+        # ── Row 3: 天氣行 ─────────────────────────────────────────────────────────
+        ws.cell(row=3, column=1, value="天氣").font = META_FONT
+        ws.cell(row=3, column=1).alignment = CENTER
+        ws.cell(row=3, column=2, value="□ 晴").font = META_FONT
+        ws.cell(row=3, column=2).alignment = CENTER
+        ws.cell(row=3, column=3, value="□ 陰").font = META_FONT
+        ws.cell(row=3, column=3).alignment = CENTER
+        ws.cell(row=3, column=4, value="□ 雨").font = META_FONT
+        ws.cell(row=3, column=4).alignment = LEFT
+        ws.merge_cells("D3:F3")
+        ws.cell(row=3, column=7, value="晚班值班　14:00-23:00").font = META_FONT
+        ws.cell(row=3, column=7).alignment = LEFT
+        ws.merge_cells("G3:H3")
+        ws.cell(row=3, column=9, value="簽名：").font = META_FONT
+        ws.cell(row=3, column=9).alignment = LEFT
+        ws.merge_cells("I3:M3")
+        ws.row_dimensions[3].height = 20
+
+        # ── Row 4: 溫度行 ─────────────────────────────────────────────────────────
+        ws.cell(row=4, column=1, value="溫度").font = META_FONT
+        ws.cell(row=4, column=1).alignment = CENTER
+        ws.cell(row=4, column=2, value="　　　度").font = META_FONT
+        ws.cell(row=4, column=2).alignment = LEFT
+        ws.merge_cells("B4:F4")
+        ws.merge_cells("G4:M4")
+        ws.row_dimensions[4].height = 20
+
+        # ── Row 5: 空白分隔 ───────────────────────────────────────────────────────
+        ws.merge_cells("A5:M5")
+        ws.row_dimensions[5].height = 8
+
+        # ── Row 6: 欄位表頭 ───────────────────────────────────────────────────────
+        HDR_LABELS = [
+            "項次", "現場\n報修", "上級\n交辦", "緊急\n事件", "例行\n維護", "每日\n巡檢",
+            "工作事項", "預估\n耗時\n(min)", "執行時間\n起", "執行時間\n迄", "工時\n(min)", "備註", "回報事項",
+        ]
+        for ci, label in enumerate(HDR_LABELS, 1):
+            cell = ws.cell(row=6, column=ci, value=label)
+            cell.fill      = HDR_FILL
+            cell.font      = HDR_FONT
+            cell.alignment = CENTER
+            l_style = "medium" if ci == 1    else "thin"
+            r_style = "medium" if ci == NCOLS else "thin"
+            cell.border = _border(l=l_style, r=r_style, t="medium", b="medium")
+        ws.row_dimensions[6].height = 42
+
+        # ── 資料行 ────────────────────────────────────────────────────────────────
+        row_idx   = 7
+        total_min = 0
+        global_seq = 0  # sequential item number (resets per day for multi-day)
+        data_first_row = row_idx       # 單日模式合計 SUM 的起點
+        day_subtotal_cells: list[str] = []  # 多日模式：各日小計儲存格（合計 = 這些相加）
+
+        for daily in days_data:
+            person_rows_for_day: list = []
+            for pd in daily["persons"]:
+                if pd["person"] == pname:
+                    person_rows_for_day = pd["rows"]
+                    break
+            if not person_rows_for_day:
+                continue
+
+            # 多日模式：日期分隔行（日期 + 當日班別名稱 + 上班時間）
+            if is_multi_day:
+                # daily["date"] 格式 "2026/05/20" → 轉 ISO 查班別
+                _day_iso = daily["date"].replace("/", "-")
+                _sl = _shift_label(pname, _day_iso)
+                _sep_val = f"  {daily['date']}　{_sl}".rstrip() if _sl \
+                           else f"  {daily['date']}"
+                date_cell = ws.cell(row=row_idx, column=1, value=xlsx_safe(_sep_val))
+                date_cell.fill      = DATE_FILL
+                date_cell.font      = DATE_FONT
+                date_cell.alignment = LEFT
+                ws.merge_cells(f"A{row_idx}:L{row_idx}")
+                ws.row_dimensions[row_idx].height = 22
+                row_idx += 1
+                day_seq = 0  # reset seq per day
+
+            day_first_row = row_idx  # 當日第一筆資料列（日期分隔列之後）
+            day_min = 0              # 當日工時小計（Python 直接算，不寫 Excel 公式）
+
+            # 依起始時間排序
+            sorted_rows = sorted(
+                person_rows_for_day,
+                key=lambda r: r.get("start_time") or "99:99",
+            )
+
+            for r in sorted_rows:
+                if is_multi_day:
+                    day_seq += 1
+                    seq_val = day_seq
+                else:
+                    global_seq += 1
+                    seq_val = global_seq
+
+                cat = r.get("category", "")
+                wm  = r.get("work_min")
+                if isinstance(wm, (int, float)) and not isinstance(wm, bool):
+                    total_min += wm
+                    day_min   += wm
+                cat_col = CAT_COLS.get(cat)
+
+                # 項次
+                a = ws.cell(row=row_idx, column=1, value=seq_val)
+                a.alignment = CENTER
+                a.font      = Font(size=10)
+                a.border    = _border(l="medium")
+
+                # 類別勾選欄 B-F
+                for c in range(2, 7):
+                    mark = "✓" if c == cat_col else ""
+                    cell = ws.cell(row=row_idx, column=c, value=mark)
+                    cell.alignment = CENTER
+                    cell.font      = Font(size=10, bold=(mark == "✓"))
+                    cell.border    = _border()
+
+                # 工作事項（前綴飯：/ 商：）
+                _task_val = _venue_prefix(r.get("source", ""), r.get("venue", "")) + r.get("task", "")
+                g = ws.cell(row=row_idx, column=7, value=xlsx_safe(_task_val))
+                g.alignment = LEFT
+                g.font      = Font(size=10)
+                g.border    = _border()
+
+                # 預估耗時
+                h = ws.cell(row=row_idx, column=8, value=r.get("est_min") or "")
+                h.alignment = CENTER
+                h.font      = Font(size=10)
+                h.border    = _border()
+
+                # 起
+                i = ws.cell(row=row_idx, column=9, value=r.get("start_time") or "")
+                i.alignment = CENTER
+                i.font      = Font(size=10)
+                i.border    = _border()
+
+                # 迄
+                j = ws.cell(row=row_idx, column=10, value=r.get("end_time") or "")
+                j.alignment = CENTER
+                j.font      = Font(size=10)
+                j.border    = _border()
+
+                # 工時(min)
+                k = ws.cell(row=row_idx, column=11, value=wm if wm is not None else "")
+                k.alignment = CENTER
+                k.font      = Font(size=10, bold=True, color="1B3A5C") if wm is not None else Font(size=10)
+                k.border    = _border()
+
+                # 備註
+                l_cell = ws.cell(row=row_idx, column=12, value=xlsx_safe(r.get("remark", "")))
+                l_cell.alignment = LEFT
+                l_cell.font      = Font(size=10)
+                l_cell.border    = _border()
+
+                # 回報事項
+                m_cell = ws.cell(row=row_idx, column=13, value=xlsx_safe(r.get("report", "")))
+                m_cell.alignment = LEFT
+                m_cell.font      = Font(size=10, color="D46B08") if r.get("report") else Font(size=10)
+                m_cell.border    = _border(r="medium")
+
+                ws.row_dimensions[row_idx].height = _row_height(
+                    _task_val,
+                    r.get("remark", "") or "",
+                    r.get("report", "") or "",
+                )
+                row_idx += 1
+
+            # 多日模式：當日小計列（工時欄寫算好的數值）；單日模式小計＝合計，不重複加
+            # ⚠️ 2026-10-05 起一律寫數值、不寫公式：openpyxl 不存公式計算結果，
+            #    Excel「受保護的檢視」不重算 → 外部使用者打開看到空白。
+            if is_multi_day:
+                for c in range(1, NCOLS + 1):
+                    cell = ws.cell(row=row_idx, column=c)
+                    cell.fill   = SUBTOTAL_FILL
+                    cell.border = _border(
+                        l="medium" if c == 1     else "thin",
+                        r="medium" if c == NCOLS else "thin",
+                    )
+                sc = ws.cell(row=row_idx, column=1, value=f"{daily['date']} 當日小計")
+                sc.font      = Font(bold=True, size=10, color="1B3A5C")
+                sc.alignment = RIGHT
+                ws.merge_cells(f"A{row_idx}:J{row_idx}")
+                kc = ws.cell(row=row_idx, column=11, value=_num_out(day_min))
+                kc.font      = Font(bold=True, size=10, color="1B3A5C")
+                kc.alignment = CENTER
+                day_subtotal_cells.append(f"K{row_idx}")
+                ws.row_dimensions[row_idx].height = 20
+                row_idx += 1
+
+        # ── 合計行 ────────────────────────────────────────────────────────────────
+        total_row = row_idx
+        for c in range(1, NCOLS + 1):
+            cell = ws.cell(row=total_row, column=c)
+            cell.fill   = TOTAL_FILL
+            cell.border = _border(
+                l="medium" if c == 1     else "thin",
+                r="medium" if c == NCOLS else "thin",
+                t="medium", b="medium",
+            )
+            cell.alignment = CENTER
+            cell.font      = Font(size=10)
+
+        # 工時欄合計：多日＝各日小計相加，單日＝資料列加總（兩者都等於 total_min）
+        kt = ws.cell(row=total_row, column=11, value=_num_out(total_min))
+        kt.font = Font(bold=True, size=10, color="1B3A5C")
+
+        # 工作天數：多日＝當日小計列的個數（＝有紀錄的天數）；單日＝有任何一筆工作事項即 1
+        if day_subtotal_cells:
+            _days = len(day_subtotal_cells)
+        elif row_idx > data_first_row:
+            _days = 1
+        else:
+            _days = 0
+        _avg = _round_half_up(total_min / _days) if _days else 0
+        summary_rows.append((pname or "未指定", total_min, _days))
+
+        # 合計工時欄（L:M 合併）：「18個工作天(平均144min/天)，合計工時：2596 min」
+        # 2026-10-05 起寫成純文字（原為公式，受保護的檢視下顯示空白）
+        tc = ws.cell(
+            row=total_row, column=12,
+            value=(
+                f"{_days}個工作天(平均{_num_out(_avg)}min/天)，"
+                f"合計工時：{_num_out(total_min)} min"
+            ),
+        )
+        tc.font      = Font(bold=True, size=10, color="1B3A5C")
+        tc.alignment = RIGHT
+        ws.merge_cells(f"L{total_row}:M{total_row}")
+        ws.row_dimensions[total_row].height = 22
+        row_idx += 1
+
+        # ── Footer: 主管覆核 / 值班人員簽名 / 備註 ───────────────────────────────
+        for fr in range(row_idx, row_idx + 3):
+            ws.row_dimensions[fr].height = 22
+
+        # Footer — 先設樣式再 merge，避免對 MergedCell 設 fill/border 時 AttributeError
+        # 每格先設 fill + border，再做 merge_cells（merge 只影響顯示，不影響已設的樣式）
+        for fr in range(row_idx, row_idx + 3):
+            for c in range(1, NCOLS + 1):
+                cell = ws.cell(row=fr, column=c)
+                cell.fill   = FOOTER_FILL
+                cell.border = _border(
+                    l="medium" if c == 1     else "thin",
+                    r="medium" if c == NCOLS else "thin",
+                    t="thin",
+                    b="medium",
+                )
+
+        # 主管覆核
+        ws.cell(row=row_idx, column=1, value="主管覆核").font      = Font(bold=True, size=10, color="FFFFFF")
+        ws.cell(row=row_idx, column=1).alignment = CENTER
+        ws.cell(row=row_idx, column=1).fill      = PatternFill("solid", fgColor="1B3A5C")
+        ws.merge_cells(f"A{row_idx}:D{row_idx + 2}")
+
+        # 值班人員簽名
+        ws.cell(row=row_idx, column=5, value="值班人員簽名").font      = Font(bold=True, size=10, color="FFFFFF")
+        ws.cell(row=row_idx, column=5).alignment = CENTER
+        ws.cell(row=row_idx, column=5).fill      = PatternFill("solid", fgColor="1B3A5C")
+        ws.merge_cells(f"E{row_idx}:H{row_idx + 2}")
+
+        # 備註
+        ws.cell(row=row_idx, column=9, value="備註").font      = Font(bold=True, size=10, color="FFFFFF")
+        ws.cell(row=row_idx, column=9).alignment = CENTER
+        ws.cell(row=row_idx, column=9).fill      = PatternFill("solid", fgColor="1B3A5C")
+        ws.merge_cells(f"I{row_idx}:M{row_idx + 2}")
+
+    # ── 彙總 Sheet（放最前面）：每人一列，工時引用各人 Sheet 的合計格 ─────────────
+    ws_sum = wb.create_sheet(title="彙總", index=0)
+    ws_sum.column_dimensions["A"].width = 20
+    ws_sum.column_dimensions["B"].width = 16
+    ws_sum.column_dimensions["C"].width = 12
+    ws_sum.column_dimensions["D"].width = 16
+    t = ws_sum.cell(row=1, column=1, value=f"{yyyymm_txt} 工作日誌工時彙總")
+    t.font = Font(bold=True, size=14)
+    ws_sum.merge_cells("A1:D1")
+    ws_sum.cell(row=2, column=1, value=f"日期：{date_display}").font = META_FONT
+    ws_sum.merge_cells("A2:D2")
+    for ci, label in enumerate(("人員", "工時(min)", "工作天", "平均 min/天"), 1):
+        hc = ws_sum.cell(row=4, column=ci, value=label)
+        hc.fill = HDR_FILL
+        hc.font = HDR_FONT
+        hc.alignment = CENTER
+        hc.border = _border()
+    sr = 5
+    for _pn, _pmin, _pdays in summary_rows:
+        a = ws_sum.cell(row=sr, column=1, value=xlsx_safe(_pn))
+        a.alignment = LEFT
+        a.border = _border()
+        b = ws_sum.cell(row=sr, column=2, value=_num_out(_pmin))
+        b.alignment = CENTER
+        b.border = _border()
+        c_ = ws_sum.cell(row=sr, column=3, value=_pdays)
+        c_.alignment = CENTER
+        c_.border = _border()
+        d_ = ws_sum.cell(row=sr, column=4, value=_round_half_up(_pmin / _pdays) if _pdays else 0)
+        d_.alignment = CENTER
+        d_.border = _border()
+        sr += 1
+    a = ws_sum.cell(row=sr, column=1, value="合計")
+    a.font = Font(bold=True, size=10)
+    a.fill = TOTAL_FILL
+    a.alignment = CENTER
+    a.border = _border(t="medium", b="medium")
+    # 合計列：工時、工作天（人天）加總；平均＝總工時 ÷ 總人天（加權平均，不是各人平均再平均）
+    # 2026-10-05 起全部寫數值（原為公式）
+    _sum_min  = sum(x[1] for x in summary_rows)
+    _sum_days = sum(x[2] for x in summary_rows)
+    _sum_vals = {
+        2: _num_out(_sum_min),
+        3: _sum_days,
+        4: _round_half_up(_sum_min / _sum_days) if _sum_days else 0,
+    }
+    for _ci, _v in _sum_vals.items():
+        b = ws_sum.cell(row=sr, column=_ci, value=_v)
+        b.font = Font(bold=True, size=10, color="1B3A5C")
+        b.fill = TOTAL_FILL
+        b.alignment = CENTER
+        b.border = _border(t="medium", b="medium")
+    ws_sum.freeze_panes = "A5"
+    # 只讓彙總頁處於選取狀態；否則第一個人員 Sheet 也帶 tabSelected，Excel 開啟會變成「群組工作表」
+    for _ws in wb.worksheets:
+        _ws.sheet_view.tabSelected = False
+    ws_sum.sheet_view.tabSelected = True
+    wb.active = 0
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    label         = f"{date_from}_{date_to}" + (f"_{person}" if person else "")
+    filename_safe = f"work_journal_{date_from}_{date_to}.xlsx"   # ASCII only — no Chinese chars
+    filename_cn   = f"工作日誌_{label}.xlsx"
+
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="{filename_safe}"; '
+                f"filename*=UTF-8''{quote(filename_cn)}"
+            ),
+        },
+    )

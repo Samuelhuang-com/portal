@@ -1,0 +1,563 @@
+/**
+ * 工作日誌共用渲染元件
+ *
+ * 自 ExecWorkDashboard/index.tsx 抽出（行為零變更），供以下頁面共用：
+ *  - ExecWorkDashboard 工作日誌 TAB
+ *  - LuqunRepair「未指定工作日誌」TAB
+ *
+ * 包含：
+ *  - CAT_COLS / JournalCategory / JournalMode 共用型別與常數
+ *  - ShiftTag           班別 Tag（含「未指定」警示 icon）
+ *  - DayPersonCollapse  單一日期的人員分組 Collapse + 明細 Drawer（含 Ragic 連結、附圖 Lightbox）
+ *  - isHotelRow         判斷工作日誌一行是否屬飯店
+ */
+import React, { useEffect, useState } from 'react'
+import {
+  Typography, Tag, Table, Collapse, Space, Tooltip,
+  Drawer, Descriptions, Divider, Spin, Image,
+} from 'antd'
+import {
+  UserDeleteOutlined, MinusCircleOutlined, FileUnknownOutlined, LinkOutlined,
+} from '@ant-design/icons'
+
+import {
+  fetchJournalImages, IMAGE_CAPABLE_SOURCES,
+  type WorkJournalDaily, type JournalRow, type CaseImageItem,
+  CATEGORY_COLOR,
+} from '@/api/workJournal'
+import type { ShiftInfo } from '@/api/schedule'
+
+const { Text } = Typography
+
+// ── 共用型別與常數 ─────────────────────────────────────────────────────────────
+export type JournalCategory = '現場報修' | '上級交辦' | '緊急事件' | '例行維護' | '每日巡檢'
+export const CAT_COLS: JournalCategory[] = ['現場報修', '上級交辦', '緊急事件', '例行維護', '每日巡檢']
+
+export type JournalMode = 'single' | 'range' | 'month' | 'person' | 'unassigned'
+
+// ── 飯店/商場判斷 ─────────────────────────────────────────────────────────────
+const _HOTEL_SOURCES = new Set<string>(['dazhi', 'hotel_pm', 'ihg', 'hotel_di'])
+
+/** 判斷工作日誌一行是否屬飯店。
+ *  other_tasks 以 venue 欄位為準；其餘來源以 source 集合判斷。 */
+export function isHotelRow(row: JournalRow): boolean {
+  if (row.source === 'other_tasks') return row.venue === '飯店'
+  return _HOTEL_SOURCES.has(row.source)
+}
+
+// 班別 Tag 渲染輔助
+// shiftMap = undefined → 班表資料尚未載入，不顯示任何標記
+// shiftMap = {}        → 已載入但該日無班表資料，仍不顯示（避免誤報）
+// shiftMap 有資料      → 依 is_working 判斷顯示彩色代碼或警示 icon
+//
+// 2026-08-14 班表拆分後，每個人的值由「單一 ShiftInfo」改為「ShiftInfo 陣列」，
+// 因為同一人可能同時有飯店班與商場班（兩邊各自匯入、同名視為同一人）。
+// 陣列已由後端排序為「飯」在前、「商」在後。
+export function ShiftTag({
+  person,
+  shiftMap,
+}: {
+  person:   string
+  shiftMap: Record<string, ShiftInfo[]> | undefined
+}) {
+  // 警示 icon 共用樣式
+  const warnTagStyle: React.CSSProperties = {
+    fontWeight: 700, fontSize: 16, padding: '0 4px',
+    lineHeight: '20px', marginRight: 4, cursor: 'default',
+  }
+
+  // 「未指定」人員 → UserDeleteOutlined（身分不明）
+  if (person === '未指定') return (
+    <Tooltip title="人員未指定" placement="top">
+      <Tag color="error" style={warnTagStyle}>
+        <UserDeleteOutlined />
+      </Tag>
+    </Tooltip>
+  )
+
+  // 班表資料未載入或整日無班表 → 不顯示
+  if (!shiftMap || Object.keys(shiftMap).length === 0) return null
+
+  const infos = shiftMap[person] ?? []
+
+  // 無班表記錄（有工單卻沒排班）→ FileUnknownOutlined（查無記錄）
+  if (infos.length === 0) return (
+    <Tooltip title="此日無班表記錄" placement="top">
+      <Tag color="warning" style={warnTagStyle}>
+        <FileUnknownOutlined />
+      </Tag>
+    </Tooltip>
+  )
+
+  // 兩邊都排休才算「明確排休」；只要任一場域有上班就顯示班別代碼。
+  if (infos.every(i => !i.is_working)) {
+    const tipText = infos
+      .map(i => i.shift_name
+        ? `${i.venue_flag}｜${i.shift_code}（${i.shift_name}）`
+        : `${i.venue_flag}｜${i.shift_code}`)
+      .join('、') + ' — 非上班班別'
+    return (
+      <Tooltip title={tipText} placement="top">
+        <Tag color="error" style={warnTagStyle}>
+          <MinusCircleOutlined />
+        </Tag>
+      </Tooltip>
+    )
+  }
+
+  // 正常上班班別 → 每個場域各一個彩色標籤，標籤內含「飯」/「商」場域字樣
+  return (
+    <>
+      {infos.filter(i => i.is_working).map(info => {
+        const tipText = info.shift_name
+          ? `${info.venue_flag}｜${info.shift_code}｜${info.shift_name}`
+          : `${info.venue_flag}｜${info.shift_code}`
+        return (
+          <Tooltip key={`${info.venue_flag}-${info.shift_code}`} title={tipText} placement="top">
+            <Tag
+              style={{
+                backgroundColor: info.shift_color,
+                color: '#fff',
+                fontWeight: 700,
+                fontSize: 15,
+                minWidth: 26,
+                textAlign: 'center',
+                padding: '0 5px',
+                lineHeight: '20px',
+                marginRight: 4,
+                border: 'none',
+                cursor: 'default',
+              }}
+            >
+              <span style={{ fontSize: 11, opacity: 0.85, marginRight: 2 }}>{info.venue_flag}</span>
+              {info.shift_code}
+            </Tag>
+          </Tooltip>
+        )
+      })}
+    </>
+  )
+}
+
+// ── 起迄跨日／超長工時提示（2026-10-02）─────────────────────────────────────
+// 起迄原本只顯示 HH:MM，跨好幾天的案件（例：工時 6078 分鐘 = 4 天又 5 小時）
+// 看起來像同一天內的事。迄與起不同天時改顯示「MM/DD HH:mm」，並加超長工時警示。
+/** 單筆工時超過此值（分鐘）→ 工時旁顯示「超長」 */
+const LONG_ROW_MIN = 480
+/** 人員當日合計超過此值（分鐘）→ 人員列顯示「超過 24 小時」 */
+const LONG_PERSON_MIN = 1440
+
+const dtDate = (dt?: string) => (dt ? dt.slice(0, 10) : '')
+/** 迄與起不在同一天（兩者都有完整日期才判斷） */
+const isCrossDay = (row: JournalRow) =>
+  !!row.start_dt && !!row.end_dt && dtDate(row.start_dt) !== dtDate(row.end_dt)
+const fmtMinutes = (m: number) => {
+  const d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60), mi = m % 60
+  return [d ? `${d} 天` : '', h ? `${h} 小時` : '', mi ? `${mi} 分` : ''].filter(Boolean).join(' ') || '0 分'
+}
+
+// 單一日期的人員分組 Collapse（單日 or 區間內每天複用）
+export function DayPersonCollapse({
+  persons,
+  collapsed,
+  shiftMap,
+}: {
+  persons:   WorkJournalDaily['persons']
+  collapsed?: boolean
+  shiftMap?:  Record<string, ShiftInfo[]>
+}) {
+  const [selectedRow, setSelectedRow] = useState<JournalRow | null>(null)
+  const [drawerImages, setDrawerImages] = useState<CaseImageItem[]>([])
+  const [imgLoading,   setImgLoading]   = useState(false)
+  const [personActiveKeys, setPersonActiveKeys] = useState<string[]>(() =>
+    persons.map((_, i) => `person-${i}`)
+  )
+  useEffect(() => {
+    if (collapsed === undefined) return
+    setPersonActiveKeys(collapsed ? [] : persons.map((_, i) => `person-${i}`))
+  }, [collapsed]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const journalColumns = [
+    {
+      title: '項次', dataIndex: 'seq', key: 'seq', width: 48, align: 'center' as const,
+      render: (v: number) => <Text style={{ fontSize: 14, color: '#888' }}>{v}</Text>,
+    },
+    ...CAT_COLS.map(cat => ({
+      title: <span style={{ fontSize: 13, color: CATEGORY_COLOR[cat as JournalCategory], whiteSpace: 'nowrap' as const }}>{cat}</span>,
+      key: cat, width: 56, align: 'center' as const,
+      render: (_: unknown, row: JournalRow) =>
+        row.category === cat
+          ? <span style={{ color: CATEGORY_COLOR[cat as JournalCategory], fontSize: 18, fontWeight: 700 }}>✓</span>
+          : null,
+    })),
+    {
+      title: '工作事項', dataIndex: 'task', key: 'task', width: 200,
+      render: (v: string, row: JournalRow) => {
+        const isHotel = isHotelRow(row)
+        return (
+          <Text style={{ fontSize: 14 }}>
+            <span style={{
+              display: 'inline-block', marginRight: 4,
+              fontSize: 11, fontWeight: 700, lineHeight: '16px',
+              padding: '0 4px', borderRadius: 3,
+              background: isHotel ? '#e8f4fd' : '#e8f5e9',
+              color:      isHotel ? '#1565C0' : '#2E7D32',
+            }}>{isHotel ? '飯' : '商'}</span>
+            {v}
+          </Text>
+        )
+      },
+    },
+    {
+      title: '預估耗時(min)', dataIndex: 'est_min', key: 'est_min', width: 88, align: 'center' as const,
+      render: (v: number | null) => v != null
+        ? <Text style={{ fontSize: 14 }}>{v}</Text>
+        : <Text style={{ color: '#ccc', fontSize: 14 }}>—</Text>,
+    },
+    {
+      title: '起', dataIndex: 'start_time', key: 'start', width: 52, align: 'center' as const,
+      render: (v: string, row: JournalRow) => !v
+        ? <Text style={{ color: '#ccc', fontSize: 14 }}>—</Text>
+        : row.start_dt
+          ? <Tooltip title={row.start_dt}><Text style={{ fontSize: 14 }}>{v}</Text></Tooltip>
+          : <Text style={{ fontSize: 14 }}>{v}</Text>,
+    },
+    {
+      title: '迄', dataIndex: 'end_time', key: 'end', width: 52, align: 'center' as const,
+      render: (v: string, row: JournalRow) => {
+        if (!v) return <Text style={{ color: '#ccc', fontSize: 14 }}>—</Text>
+        if (isCrossDay(row)) {
+          // 跨日：顯示 MM/DD HH:mm（end_dt = 'YYYY/MM/DD HH:MM'）
+          return (
+            <Tooltip title={`${row.start_dt} → ${row.end_dt}（跨日）`}>
+              <Text style={{ fontSize: 14, color: '#d46b08', whiteSpace: 'nowrap' }}>{row.end_dt!.slice(5)}</Text>
+            </Tooltip>
+          )
+        }
+        return row.end_dt
+          ? <Tooltip title={row.end_dt}><Text style={{ fontSize: 14 }}>{v}</Text></Tooltip>
+          : <Text style={{ fontSize: 14 }}>{v}</Text>
+      },
+    },
+    {
+      title: '工時(min)', dataIndex: 'work_min', key: 'wh', width: 72, align: 'center' as const,
+      render: (v: number | null, row: JournalRow) => {
+        if (v == null) return <Text style={{ color: '#ccc', fontSize: 14 }}>—</Text>
+        // 2026-10-02：滑鼠停在工時數字上 → 顯示起迄區間（跨日時標示），工時大時換算天／小時
+        const cross = isCrossDay(row)
+        const rangeTip = row.start_dt && row.end_dt
+          ? `${row.start_dt} → ${row.end_dt}${cross ? '（跨日）' : ''}`
+            + (v >= 60 ? `\n共 ${v} 分鐘（約 ${fmtMinutes(v)}）` : '')
+          : ''
+        const numText = (
+          <Text strong style={{
+            fontSize: 14, color: '#1B3A5C',
+            ...(cross ? { borderBottom: '1px dashed #d46b08', cursor: 'help' } : {}),
+          }}>{v}</Text>
+        )
+        const num = rangeTip
+          ? <Tooltip title={<span style={{ whiteSpace: 'pre-line' }}>{rangeTip}</span>}>{numText}</Tooltip>
+          : numText
+        if (v <= LONG_ROW_MIN) return num
+        return (
+          <Space size={4} style={{ whiteSpace: 'nowrap' }}>
+            {num}
+            <Tooltip title={
+              `單筆工時 ${v} 分鐘（約 ${fmtMinutes(v)}），超過一個班（${LONG_ROW_MIN} 分鐘）。`
+              + (isCrossDay(row) ? '起迄跨日，可能把等料／等廠商的時間算進去了，' : '可能把等待時間算進去了，')
+              + '請至 Ragic 確認起迄時間。'
+            }>
+              <Tag color="orange" style={{ margin: 0, fontSize: 12 }}>超長</Tag>
+            </Tooltip>
+          </Space>
+        )
+      },
+    },
+    {
+      title: '備註', dataIndex: 'remark', key: 'remark', width: 160,
+      render: (v: string) => v ? <Text style={{ fontSize: 14, color: '#666' }}>{v}</Text> : null,
+    },
+    {
+      title: '回報事項', dataIndex: 'report', key: 'report', width: 160,
+      render: (v: string) => v ? <Text style={{ fontSize: 14, color: '#d46b08' }}>{v}</Text> : null,
+    },
+  ]
+
+  if (!persons.length) return (
+    <div style={{ textAlign: 'center', color: '#aaa', padding: '12px 0' }}>此日無工作記錄</div>
+  )
+
+  const STATUS_COLOR: Record<string, string> = {
+    '已完成': '#52c41a', '已修復': '#52c41a', '已結案': '#52c41a', '已調整': '#52c41a', '已固定': '#52c41a',
+    '完成':   '#52c41a',
+    '待辦驗': '#faad14', '未完成': '#faad14', '進行中': '#1677ff',
+  }
+
+  const items = persons.map((p, idx) => {
+    const totalWH = p.rows.reduce((acc, r) => acc + (r.work_min ?? 0), 0)
+    const sources = [...new Set(p.rows.map(r => r.source_label))].join('、')
+    return {
+      key: `person-${idx}`,
+      label: (
+        <Space align="center">
+          <ShiftTag person={p.person} shiftMap={shiftMap} />
+          <Text strong style={{ fontSize: 16, color: p.person === '未指定' ? '#aaa' : '#1B3A5C' }}>
+            {p.person}
+          </Text>
+          <Tag color="blue" style={{ fontSize: 13 }}>{p.rows.length} 項</Tag>
+          {totalWH > 0 && <Tag color="geekblue" style={{ fontSize: 13 }}>{totalWH} min</Tag>}
+          {totalWH > LONG_PERSON_MIN && (
+            <Tooltip title={`當日合計 ${totalWH} 分鐘（約 ${fmtMinutes(totalWH)}），超過一天 24 小時，必有跨日或異常起迄，請展開檢查標示「超長」的項目。`}>
+              <Tag color="red" style={{ fontSize: 13 }}>超過 24 小時</Tag>
+            </Tooltip>
+          )}
+          {sources && <Text type="secondary" style={{ fontSize: 13 }}>{sources}</Text>}
+        </Space>
+      ),
+      children: (
+        <Table
+          size="small"
+          dataSource={p.rows.map((r, i) => ({ ...r, key: i }))}
+          columns={journalColumns}
+          pagination={false}
+          scroll={{ x: 'max-content' }}
+          style={{ marginTop: 4 }}
+          onRow={row => ({
+            onClick: () => {
+              const r = row as JournalRow
+              setSelectedRow(r)
+              setDrawerImages([])
+              if (r.ragic_id && IMAGE_CAPABLE_SOURCES.has(r.source)) {
+                setImgLoading(true)
+                fetchJournalImages(r.source, r.ragic_id)
+                  .then(imgs => setDrawerImages(imgs))
+                  .catch(() => setDrawerImages([]))
+                  .finally(() => setImgLoading(false))
+              }
+            },
+            style: { cursor: 'pointer' },
+          })}
+        />
+      ),
+    }
+  })
+
+  return (
+    <>
+      <Collapse
+        activeKey={personActiveKeys}
+        onChange={keys => setPersonActiveKeys(keys as string[])}
+        items={items}
+        style={{ background: '#fff' }}
+      />
+      <Drawer
+        open={!!selectedRow}
+        onClose={() => { setSelectedRow(null); setDrawerImages([]) }}
+        title={
+          selectedRow && (() => {
+            // 取最有意義的識別碼：報修編號 > 日誌編號 > 房號 > ragic_id
+            const d = selectedRow.detail ?? {}
+            const identifier = d['報修編號'] || d['日誌編號'] || d['房號'] || selectedRow.ragic_id || ''
+            return (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <Tag color={CATEGORY_COLOR[selectedRow.category as keyof typeof CATEGORY_COLOR]}
+                     style={{ margin: 0 }}>
+                  {selectedRow.category}
+                </Tag>
+                <span style={{ fontSize: 16, color: '#1B3A5C', fontWeight: 600 }}>
+                  {selectedRow.source_label}
+                  {identifier && <>：<span style={{ fontWeight: 400 }}>{identifier}</span></>}
+                </span>
+                {selectedRow.ragic_url && (
+                  <a
+                    href={selectedRow.ragic_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ fontSize: 14, color: '#4BA8E8', display: 'flex', alignItems: 'center', gap: 3, fontWeight: 400 }}
+                  >
+                    <LinkOutlined /> 在 Ragic 查看
+                  </a>
+                )}
+              </div>
+            )
+          })()
+        }
+        width={selectedRow && IMAGE_CAPABLE_SOURCES.has(selectedRow.source) ? 640 : 480}
+        styles={{ body: { padding: '16px 20px' } }}
+      >
+        {selectedRow && (
+          <>
+            <Typography.Title level={5} style={{ margin: '0 0 12px', color: '#1B3A5C' }}>
+              {selectedRow.task}
+            </Typography.Title>
+            <Descriptions
+              bordered
+              size="small"
+              column={1}
+              labelStyle={{ width: 100, background: '#f5f7fa', fontWeight: 500 }}
+              contentStyle={{ background: '#fff' }}
+            >
+              <Descriptions.Item label="人員">{selectedRow.person}</Descriptions.Item>
+              <Descriptions.Item label="來源">{selectedRow.source_label}</Descriptions.Item>
+              {selectedRow.source === 'other_tasks' && selectedRow.venue && (
+                <Descriptions.Item label="歸屬">
+                  <Tag color={selectedRow.venue === '飯店' ? '#1565C0' : '#2E7D32'} style={{ margin: 0 }}>
+                    {selectedRow.venue}
+                  </Tag>
+                </Descriptions.Item>
+              )}
+              {selectedRow.work_min != null && (
+                <Descriptions.Item label="工時(min)">
+                  <Text strong style={{ color: '#1B3A5C' }}>{selectedRow.work_min}</Text>
+                </Descriptions.Item>
+              )}
+              {(selectedRow.start_time || selectedRow.detail?.['保養時間起']) && (
+                <Descriptions.Item label="保養時間起">
+                  {selectedRow.start_dt || selectedRow.start_time || selectedRow.detail?.['保養時間起']}
+                </Descriptions.Item>
+              )}
+              {(selectedRow.end_time || selectedRow.detail?.['保養時間迄']) && (
+                <Descriptions.Item label="保養時間迄">
+                  {selectedRow.end_dt || selectedRow.end_time || selectedRow.detail?.['保養時間迄']}
+                </Descriptions.Item>
+              )}
+              {selectedRow.remark && (
+                <Descriptions.Item label="備註">
+                  <Text style={{ color: '#666' }}>{selectedRow.remark}</Text>
+                </Descriptions.Item>
+              )}
+              {selectedRow.report && (
+                <Descriptions.Item label="回報事項">
+                  <Text style={{ color: '#d46b08' }}>{selectedRow.report}</Text>
+                </Descriptions.Item>
+              )}
+            </Descriptions>
+
+            {Object.keys(selectedRow.detail ?? {}).length > 0 && (
+              <>
+                <Divider style={{ margin: '16px 0 12px' }} />
+                <Descriptions
+                  bordered
+                  size="small"
+                  column={1}
+                  labelStyle={{ width: 96, background: '#f5f7fa', fontWeight: 500, fontSize: 15 }}
+                  contentStyle={{ background: '#fff', fontSize: 15 }}
+                >
+                  {Object.entries(selectedRow.detail).map(([k, v]) => {
+                    const isEmpty = !v
+                    // 費用欄：加 $ 符號
+                    const isFee   = k.includes('費用')
+                    // 狀況欄：彩色 Tag
+                    const isStatus = k === '處理狀況' || k === '完成狀況' || k === '狀態'
+                    // 類型欄：Tag
+                    const isType  = k === '報修類型'
+                    // 總費用：粗體
+                    const isTotalFee = k === '總費用'
+                    // 標題：粗體大字
+                    const isTitle = k === '標題'
+
+                    let content: React.ReactNode
+                    if (isEmpty) {
+                      content = <Text type="secondary">-</Text>
+                    } else if (isStatus) {
+                      content = <Tag color={STATUS_COLOR[v] ?? 'default'} style={{ margin: 0 }}>{v}</Tag>
+                    } else if (isType) {
+                      content = <Tag style={{ margin: 0 }}>{v}</Tag>
+                    } else if (isTotalFee) {
+                      content = <Text strong style={{ fontSize: 16 }}>${v}</Text>
+                    } else if (isFee) {
+                      content = <Text>${v}</Text>
+                    } else if (isTitle) {
+                      content = <Text strong style={{ fontSize: 16 }}>{v}</Text>
+                    } else {
+                      content = <Text>{v}</Text>
+                    }
+                    return (
+                      <Descriptions.Item key={k} label={k}>{content}</Descriptions.Item>
+                    )
+                  })}
+                </Descriptions>
+              </>
+            )}
+
+            {/* 工單明細子表（維修記錄）— dazhi / luqun 有 Detail 時呈現 */}
+            {(selectedRow.detail_records?.length ?? 0) > 0 && (
+              <>
+                <Divider style={{ margin: '16px 0 8px' }} />
+                <div style={{ fontWeight: 500, marginBottom: 8, color: '#555', fontSize: 15 }}>
+                  維修記錄明細
+                </div>
+                <Table
+                  size="small"
+                  pagination={false}
+                  dataSource={(selectedRow.detail_records ?? []).map((r, i) => ({ ...r, key: i }))}
+                  scroll={{ x: 'max-content' }}
+                  columns={[
+                    {
+                      title: '項次', dataIndex: '項次', key: 'seq', width: 44, align: 'center' as const,
+                      render: (v: string) => <Text style={{ fontSize: 13, color: '#888' }}>{v || '—'}</Text>,
+                    },
+                    // 商場子表無「狀態」欄 → 全空時隱藏整欄
+                    ...((selectedRow.detail_records ?? []).some(r => r['狀態']) ? [{
+                      title: '狀態', dataIndex: '狀態', key: 'status', width: 64, align: 'center' as const,
+                      render: (v: string) => v
+                        ? <Tag color={STATUS_COLOR[v] ?? 'default'} style={{ margin: 0 }}>{v}</Tag>
+                        : <Text style={{ color: '#ccc' }}>—</Text>,
+                    }] : []),
+                    {
+                      title: '維修記錄', dataIndex: '維修記錄', key: 'record', width: 160,
+                      render: (v: string) => <Text style={{ fontSize: 13 }}>{v || '—'}</Text>,
+                    },
+                    {
+                      title: '時間開始', dataIndex: '時間開始', key: 'start', width: 128, align: 'center' as const,
+                      render: (v: string) => <Text style={{ fontSize: 12, color: '#666' }}>{v || '—'}</Text>,
+                    },
+                    {
+                      title: '時間結束', dataIndex: '時間結束', key: 'end', width: 128, align: 'center' as const,
+                      render: (v: string) => <Text style={{ fontSize: 12, color: '#666' }}>{v || '—'}</Text>,
+                    },
+                    {
+                      title: '維修人員', dataIndex: '維修人員', key: 'person', width: 72, align: 'center' as const,
+                      render: (v: string) => <Text style={{ fontSize: 13 }}>{v || '—'}</Text>,
+                    },
+                  ]}
+                />
+              </>
+            )}
+
+            {/* 維修圖片／附圖（見 IMAGE_CAPABLE_SOURCES：dazhi / luqun / other_tasks / full_bldg_pm / mall_pm） */}
+            {(imgLoading || drawerImages.length > 0) && (
+              <>
+                <Divider style={{ margin: '16px 0 8px' }} />
+                <div style={{ fontWeight: 500, marginBottom: 8, color: '#555', fontSize: 15 }}>
+                  維修圖片
+                </div>
+                {imgLoading
+                  ? <div style={{ textAlign: 'center', padding: 16 }}><Spin size="small" /></div>
+                  : (
+                    <Image.PreviewGroup>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                        {drawerImages.map((img, i) => (
+                          <Image
+                            key={i}
+                            src={img.url}
+                            alt={img.filename || `圖片 ${i + 1}`}
+                            width={120}
+                            height={90}
+                            style={{ objectFit: 'cover', borderRadius: 4, border: '1px solid #e8e8e8', cursor: 'pointer' }}
+                            fallback="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+                          />
+                        ))}
+                      </div>
+                    </Image.PreviewGroup>
+                  )
+                }
+              </>
+            )}
+
+          </>
+        )}
+      </Drawer>
+    </>
+  )
+}

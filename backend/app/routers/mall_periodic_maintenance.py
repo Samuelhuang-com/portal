@@ -31,7 +31,7 @@ from app.models.mall_periodic_maintenance import (
 )
 from app.models.mall_pm_schedule import MallPMSchedule
 from app.schemas.periodic_maintenance import (
-    PMBatchOut, PMItemOut, PMBatchKPI, PMBatchDetail,
+    PMBatchOut, PMItemOut, PMBatchKPI, PMBatchDetail, PMParentGroupOut,
     CategoryStat, StatusDistItem, PMStats, PMItemUpdate,
     PMPeriodStats, PMSubPeriodBreakdown, PMIncompleteItem,
     PMYearMatrix, PMYearMatrixMonth,
@@ -302,6 +302,8 @@ def _item_to_out(item: MallPeriodicMaintenanceItem, check_month: int) -> PMItemO
         status            = _calc_status(item, check_month),
         ragic_url         = f"{_RAGIC_BASE}/{item.batch_ragic_id}" if item.batch_ragic_id else "",
         repair_hours      = item.repair_hours,
+        parent_no         = (item.parent_no or None),
+        child_no          = (item.child_no or None),
     )
 
 
@@ -345,6 +347,33 @@ def _calc_kpi(items: list[MallPeriodicMaintenanceItem], check_month: int) -> PMB
         planned_minutes     = planned,
         actual_minutes      = actual,
     )
+
+
+def _child_done_for_parent(it: MallPeriodicMaintenanceItem) -> bool:
+    """子項目是否滿足母項目完成條件：執行人員非空，且維修工時為有效數值（≥0；NULL 不計）。"""
+    return bool((it.executor_name or "").strip()) and it.repair_hours is not None and it.repair_hours >= 0
+
+
+def _build_parent_groups(items: list[MallPeriodicMaintenanceItem]) -> list[PMParentGroupOut]:
+    """以項目(母)分組彙總。傳入的 items 必須是整批全部項目（未經篩選），且已依 seq_no 排序。"""
+    groups: dict[str, list[MallPeriodicMaintenanceItem]] = {}
+    for it in items:
+        pno = (it.parent_no or "").strip()
+        if pno:
+            groups.setdefault(pno, []).append(it)
+    result: list[PMParentGroupOut] = []
+    for pno, children in groups.items():
+        hours = [c.repair_hours for c in children if c.repair_hours is not None]
+        done = sum(1 for c in children if _child_done_for_parent(c))
+        result.append(PMParentGroupOut(
+            parent_no=pno,
+            child_count=len(children),
+            done_count=done,
+            total_repair_hours=round(sum(hours), 2),
+            missing_hours_count=len(children) - len(hours),
+            is_completed=(done == len(children)),
+        ))
+    return result
 
 
 def _calc_category_stats(items: list[MallPeriodicMaintenanceItem], check_month: int) -> list[CategoryStat]:
@@ -855,6 +884,7 @@ def get_batch_detail(
         kpi        = kpi,
         items      = filtered,
         categories = cats,
+        parent_groups = _build_parent_groups(items),
     )
 
 

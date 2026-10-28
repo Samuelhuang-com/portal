@@ -1,0 +1,1109 @@
+/**
+ * 週期採購（Cycle Purchase）型別定義
+ * 對應後端 backend/app/schemas/cycle_purchase_*.py
+ */
+
+// ── 供應商主檔 ────────────────────────────────────────────────────────────────
+export interface CpVendor {
+  id: number
+  vendor_code: string
+  vendor_name: string
+  tax_id?: string | null
+  contact_name?: string | null
+  contact_phone?: string | null
+  payment_terms?: string | null
+  notes?: string | null
+  is_active: boolean
+  /**
+   * 2026-08-10：鏡像自合約模組 vendors 的來源鍵（VND-NNNN）。
+   * 非 null＝受同步管控，代碼／名稱／統編／聯絡人／電話唯讀；
+   * null＝週採本地自建，全部欄位可編。
+   */
+  source_vendor_id?: string | null
+  /**
+   * 2026-09-20：對照到的合約廠商名稱（後端衍生欄位，非資料表欄位）。
+   * 合約主檔的名稱同步自 Ragic 廠商資料表 → 是**全名**；
+   * 而 Ragic 拋轉時主表「廠商(一)」是 Link 欄位、只認全名，
+   * 所以這一欄有值才代表拋轉時廠商送得進去。
+   */
+  source_vendor_name?: string | null
+  synced_at?: string | null
+  created_at: string
+  updated_at: string
+}
+
+/** 供應商鏡像同步（合約模組 → 週期採購）的回傳統計 */
+/** 合約模組的廠商（給「對照合約廠商」下拉選單用，非週採自己的供應商） */
+/** 合併供應商的結果（dry_run=true 時 applied 為 false，只是試算） */
+export interface CpVendorMergeResult {
+  source_id: number
+  source_name: string
+  target_id: number
+  target_name: string
+  moved: Record<string, number>
+  total_moved: number
+  applied: boolean
+}
+
+export interface CpContractVendor {
+  vendor_id: string          // VND-NNNN / V-NNNNN
+  vendor_name: string        // 全名（同步自 Ragic 廠商資料表）
+  tax_id?: string | null
+  ragic_id?: string | null
+}
+
+export interface CpVendorSyncResult {
+  fetched: number      // 合約模組共有幾筆廠商
+  upserted: number     // created + updated
+  created: number      // 新建立的鏡像筆數
+  updated: number      // 內容有異動而更新的筆數
+  unchanged: number    // 比對到但內容完全沒變的筆數
+  skipped: number      // 略過（通常是來源端有重複統編）
+  orphans: number      // 週採有、合約端已無對應的筆數（只示警不處理）
+  warnings: string[]
+  errors: string[]
+}
+
+// ── 部門 / 成本中心 / 會計科目 主檔 ──────────────────────────────────────────
+/**
+ * 週期採購類別主檔（2026-08-18 新增）
+ * 三層編碼：大分類英文 + 中分類 2 碼 + 細分類 2 碼（+ 流水 3 碼＝料號）。
+ * department_id 為 null ＝「不限部門（全公司共用）」，如春大直的文具用品。
+ * category_name 是與既有 cycle_purchase_items.category 對照用的字串，
+ * 不會因為補了 sub_name 就跟著改寫（理由見後端 model 檔頭）。
+ */
+export interface CpCategory {
+  id: number
+  company: string
+  department_id?: number | null
+  department_name?: string | null
+  major_code: string
+  major_name: string
+  mid_code: string
+  mid_name: string
+  sub_code: string
+  sub_name?: string | null
+  category_name: string
+  serial_width: number
+  is_active: boolean
+  notes?: string | null
+  created_at: string
+  code_prefix: string
+  /** 目前 category 等於 category_name 的啟用中料號筆數；0＝主檔有、但沒料號在用 */
+  item_count: number
+}
+
+export interface CpCategoryNextCode {
+  category_id: number
+  code_prefix: string
+  next_code: string
+  used_serials: string[]
+  /** 中間的跳號（如春大直 E03 停車場照明缺 02／03／05），不自動補、由使用者決定 */
+  gap_serials: string[]
+}
+
+export interface CpDepartment {
+  id: number
+  company: string
+  dept_code: string
+  dept_name: string
+  // 2026-07-11 新增：承辦人（portal.db users.id，軟關聯），供「待辦提醒」
+  // 判斷登入者屬於哪個週採部門用。owner_name 由後端 router 層跨查 portal.db 附加。
+  owner_user_id?: string | null
+  owner_name?: string | null
+  is_active: boolean
+  created_at: string
+  // 2026-08-17 新增：非 null 代表這筆是從「系統設定 → 公司/部門管理」鏡像
+  // 同步過來的（見 cycle_purchase_department_sync.py），company／dept_name
+  // 由同步覆蓋、前端應設唯讀；null 代表本地自建，公司/部門名稱可自由編輯。
+  source_department_id?: string | null
+  // ⚠️ 2026-09-20 移除 ragic_dept：Ragic「★週期請購單」已把部門下放到子表、
+  //    逐列一個且改成自由文字，Portal 直接送部門名稱即可，七選一對照不需要了。
+}
+
+export interface CpCostCenter {
+  id: number
+  department_id: number
+  department_name?: string | null
+  cc_code: string
+  cc_name: string
+  is_active: boolean
+  /** 2026-09-30：部門預設成本中心（每部門最多一組） */
+  is_default?: boolean
+  created_at: string
+}
+
+export interface CpAccountCode {
+  id: number
+  code: string
+  name: string
+  is_active: boolean
+  created_at: string
+}
+
+// ── 料號主檔 + 料號對照表 ─────────────────────────────────────────────────────
+export interface CpItem {
+  id: number
+  item_code: string
+  item_name: string
+  spec?: string | null
+  /**
+   * 類別字串。2026-09-21 起為**唯讀衍生值**：後端依 category_id 從類別主檔
+   * category_name 帶入，送出時帶了也會被忽略。
+   */
+  category?: string | null
+  /** 2026-09-21 新增：類別主檔細分類 id；null＝尚未對應類別主檔 */
+  category_id?: number | null
+  /** 以下三個是後端附加的顯示欄位（依 category_id 查主檔） */
+  category_company?: string | null
+  /** 如 "E0101" */
+  category_code_prefix?: string | null
+  /** 如 "E 工程 / 01 空調備品 / 01 濾網" */
+  category_path?: string | null
+  unit?: string | null
+  default_qty: number
+  moq: number
+  max_stock?: number | null
+  min_stock?: number | null
+  unit_price?: number | null
+  default_vendor_id?: number | null
+  default_vendor_name?: string | null
+  is_active: boolean
+  is_cycle_item: boolean
+  notes?: string | null
+  created_at: string
+  updated_at: string
+  /**
+   * 2026-08-17 新增：這個料號目前掛在哪幾組「公司／部門」（衍生自料號對照表，
+   * 格式如 `"春大直／工務部"`）。絕大多數只有一組；僅少數兩公司統購共用料號
+   * 會有兩組。原本要點進「料號對照」才看得到，容易讓人誤以為同名品類可以
+   * 跨公司套用。
+   */
+  company_departments: string[]
+  /**
+   * 2026-08-21 新增：這個料號目前設了哪些會計科目（衍生自料號對照表的
+   * account_code_id，格式如 `"621601 修繕費-維修"`）。科目是逐筆對照設定的，
+   * 少數料號跨部門科目不同會有多個值（如 E0204002 軌道燈：工程部 621601／
+   * 營業部 1142）。請購明細的科目從對照表自動帶入，漏設等於該筆請購沒有科目
+   * 可分攤，所以列表要看得到。
+   */
+  account_code_labels: string[]
+}
+
+export interface CpItemMapping {
+  id: number
+  item_id: number
+  company: string
+  // 2026-07-11 新增：這個料號在這家公司屬於哪個部門（工務／清潔／文具印刷／
+  // 營業用品），逐列核對兩家公司的「設料號明細表.xlsx」後確認分頁邊界對應
+  // 真實的功能性部門。請購單「可選料號」查詢按公司＋部門篩選用。
+  department_id: number
+  department_name?: string | null
+  original_code?: string | null
+  original_name?: string | null
+  original_vendor_name?: string | null
+  // 2026-07-11 新增（第三期彙整單／採購單規劃時發現並修正）：這個料號在這家
+  // 公司實際跟哪個供應商叫貨，取代原本只有文字的 original_vendor_name。
+  // 彙整單/採購單一律依這個欄位分供應商。可為 null（原始資料廠商欄位本來
+  // 就是空的，或舊資料尚未跑過 backfill_item_mapping_vendor_id.py 回填）。
+  vendor_id?: number | null
+  vendor_name?: string | null
+  original_unit_price?: number | null
+  // 2026-08-21 新增：這個料號在這家公司這個部門要記到哪個會計科目。掛在對照表
+  // 而不是料號主檔，因為《設料號明細表》的會科本來就是按部門欄位填的，且確實
+  // 有跨部門不同科目的案例（E0204002 軌道燈：工程部 621601／營業部 1142）。
+  // 請購單建立明細時會自動帶入這個值當快照，請購單畫面不再顯示會計科目欄。
+  account_code_id?: number | null
+  account_code_label?: string | null
+  is_confirmed: boolean
+  notes?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface CpItemDetail extends CpItem {
+  mappings: CpItemMapping[]
+}
+
+export interface CpItemListResponse {
+  items: CpItem[]
+  total: number
+  page: number
+  per_page: number
+}
+
+// ── 週期設定 ──────────────────────────────────────────────────────────────────
+export interface CpCycle {
+  id: number
+  cycle_code: string
+  cycle_name: string
+  frequency: 'monthly' | 'biweekly' | 'bimonthly' | 'custom'
+  open_rule?: string | null
+  close_rule?: string | null
+  /** 適用品類（逗號分隔，對應料號主檔 category）；空＝不限。2026-08-09 起真正生效 */
+  applicable_categories?: string | null
+  /**
+   * 適用公司（逗號分隔，或 all／空＝不限）。
+   * ⚠️ 2026-08-09 語意收斂：這欄只放「公司」。改版前欄位標籤誤植為「適用公司／部門」，
+   * 但後端從來只比對公司；部門請改用 applicable_department_ids。
+   */
+  applicable_scope?: string | null
+  /** 適用部門（逗號分隔的部門 id）；**空＝適用公司底下的全部啟用中部門**。2026-08-09 新增 */
+  applicable_department_ids?: string | null
+  /**
+   * 從「適用品類」整包中手動排除的料號（逗號分隔的 cycle_purchase_items.id）；
+   * 空＝不排除任何料號。是例外排除清單，不是白名單——品類底下新增料號仍會
+   * 自動涵蓋，只有這裡列出的少數幾筆不算。2026-08-16 新增
+   */
+  excluded_item_ids?: string | null
+  auto_generate: boolean
+  reminder_rule?: string | null
+  status: 'active' | 'inactive' | 'paused'
+  notes?: string | null
+  created_at: string
+  updated_at: string
+  /** 僅 PUT ?delete_orphans=true 時後端回傳：順便刪掉了幾張孤兒空白請購單 */
+  deleted_orphan_count?: number | null
+}
+
+/** 週期設定表單的下拉選項來源（取自主檔 distinct 值，不讓使用者手打） */
+export interface CpCycleOptions {
+  companies: string[]
+  categories: string[]
+  /** 品類 → 部門名稱清單，供下拉選項標籤附加部門名稱（如「空調備品-濾網（工務部）」），
+   * 避免同公司底下不同部門的品類混在一起難以分辨。2026-08-17 新增 */
+  category_departments: Record<string, string[]>
+}
+
+/** 「排除料號」下拉候選：依表單目前的適用公司＋適用品類現算，不是固定清單。2026-08-16 新增 */
+export interface CpExcludeItemCandidate {
+  item_id: number
+  item_code: string
+  item_name: string
+  category?: string | null
+  companies: string[]
+}
+
+/**
+ * 一張會因為週期範圍縮小而被刪掉的空白請購單。
+ * 判準：明細 0 筆 + 未關閉 + 未彙整，三者全部成立才會出現在這裡。
+ */
+export interface CpOrphanRequest {
+  id: number
+  request_no: string
+  period_label: string
+  company: string
+  department_id: number
+  department_name?: string | null
+}
+
+export interface CpOrphanPreview {
+  orphans: CpOrphanRequest[]
+  /** 部門雖已不適用，但因為有明細／已關閉／已彙整而保留不刪的張數 */
+  protected_count: number
+}
+
+/** 某個部門沒有產生請購單的原因（產生預覽 / 產生結果共用） */
+export interface CpSkippedDepartment {
+  department_id: number
+  department_name: string
+  company?: string | null
+  reason: string
+}
+
+export interface CpApplicableDepartment {
+  department_id: number
+  department_name: string
+  company: string
+  already_generated?: boolean   // 2026-09-25：本期已有請購單（按產生不會新建）
+}
+
+/** GET /requests/generate-preview */
+export interface CpGeneratePreview {
+  cycle_id: number
+  cycle_name: string
+  period_label: string
+  departments: CpApplicableDepartment[]
+  skipped: CpSkippedDepartment[]
+  my_department_ids?: number[]   // 2026-09-29：登入者所屬週採部門（新增／複製下拉預設只列這些）
+}
+
+/** GET /requests/generate-status：「產生本期請購單」週期下拉的本期完成度（2026-09-25） */
+export interface CpCycleGenerateStatus {
+  cycle_id: number
+  cycle_name: string
+  applicable_count: number      // 原申請單位數
+  generated_count: number       // 適用部門中已產生請購單的部門數
+  not_generated_count: number   // 未執行單位數
+  request_count: number         // 本期請購單總張數
+  summarized_count: number      // 已彙整張數
+  unsummarized_count: number    // 從未執行（已產生但未彙整）
+  completed: boolean            // 本期已完成週採
+}
+
+export interface CpGenerateStatusResult {
+  period_label: string
+  cycles: CpCycleGenerateStatus[]
+}
+
+/** GET /summary/pending-requests：待彙整請購單（已關閉、尚未彙整；2026-09-25） */
+export interface CpPendingRequest {
+  id: number
+  request_no: string
+  cycle_id: number
+  cycle_name?: string | null
+  company: string
+  period_label: string
+  department_id?: number | null
+  department_name?: string | null
+  closed_by_name?: string | null
+  closed_at?: string | null
+  close_kind?: CpCloseKind
+  filled_item_count: number
+  total_amount: number
+  /** 曾經從彙整單退回過（重新關閉後又回到待彙整），提示用 */
+  unsummarized_at?: string | null
+  /** 2026-09-25：期別已過＝逾期，不可拋（仍列出，但不能產生彙整） */
+  is_overdue?: boolean
+}
+
+/** GET /requests/my-period：「我的部門本期」（2026-09-25） */
+export interface CpMyPeriodDepartment {
+  id: number
+  name: string
+  company: string
+}
+
+/** 一列＝一個週期 × 一個我的部門（×一張單）；request_id 為 null＝本期還沒有單 */
+export interface CpMyPeriodRow {
+  cycle_id: number
+  cycle_name: string
+  department_id: number
+  department_name: string
+  company: string
+  request_id: number | null
+  request_no?: string | null
+  is_closed: boolean
+  close_kind?: CpCloseKind
+  is_summarized: boolean
+  filled_item_count: number
+  total_amount?: number | null
+}
+
+export interface CpMyPeriodResult {
+  period_label: string
+  departments: CpMyPeriodDepartment[]
+  rows: CpMyPeriodRow[]
+  /** 能不能打開已關閉的單（沒權限時不給連結，避免 403） */
+  can_open_closed: boolean
+  /** 2026-09-25：all＝管理者看全部啟用中部門；mine＝只看自己所屬部門 */
+  scope?: 'all' | 'mine'
+}
+
+/** POST /requests/generate（2026-08-09 起回傳物件，不再是陣列） */
+export interface CpGenerateResult {
+  requests: CpRequest[]
+  skipped: CpSkippedDepartment[]
+}
+
+// ── 請購單 / 請購明細 ──────────────────────────────────────────────────────────
+// 2026-07-11：拿掉「批次」實體（原本批次開放後系統自動產生請購單）。
+// 請購單改成直接掛「週期設定」(cycle_id) + 期別標籤 (period_label，如
+// 「2026-07」)，取代原本的 batch_id/batch_no。「產生本期請購單」隨時可觸發，
+// 同一週期＋期別冪等，不需要先手動開批次，也沒有固定時間窗限制 —— 週採的
+// 範圍界線是「料號主檔」，不是時間窗。
+// 2026-07-17（第三次調整，請購單流程大改版）：拿掉送出／核准／退回，status
+// 欄位是改版前的歷史殘留（新資料一律固定寫 draft），實際可不可以編輯看的是
+// is_closed（有沒有被關閉）＋ period_label（是不是還是當月），不是 status。
+// 新增關閉／重新開啟相關欄位，見 backend models/cycle_purchase_request.py
+// 開頭「2026-07-17」說明。
+// 2026-08-07（第四次調整）：期別已過的單由系統自動關閉，可不可以編輯**只看
+// is_closed**（不再檢查當月——過月已由自動關閉涵蓋，而重新開啟就是為了讓過月的
+// 單能補改）。新增 close_kind 區分人工／系統關閉。
+
+/** 這張請購單是怎麼關的。null＝還開放中。 */
+export type CpCloseKind = 'manual' | 'auto' | null
+
+/**
+ * 請購單清單的「狀態」篩選值（2026-08-07 新增）。
+ * undefined／不帶＝全部。
+ * ⚠️ 不要改用 CpRequest.status 做狀態篩選，那是改版前的殘留欄位（新資料一律 draft）。
+ */
+// 2026-09-25：改成互斥的流程狀態（open＝未關閉且未彙整；closed_*＝已關閉未彙整）
+export type CpCloseState = 'open' | 'closed_manual' | 'closed_auto' | 'summarized' | 'pushed'
+
+/** 請購單單一流程狀態（後端衍生欄位 flow_status，2026-09-25） */
+export type CpFlowStatus = 'open' | 'closed' | 'summarized' | 'pushed' | 'summarized_reopened'
+
+export interface CpRequestItem {
+  id: number
+  request_id: number
+  item_id: number
+  item_mapping_id?: number | null
+  account_code_id?: number | null
+  account_code_label?: string | null
+  item_code: string
+  item_name: string
+  unit?: string | null
+  unit_price?: number | null
+  request_qty: number
+  subtotal: number
+  notes?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface CpRequest {
+  id: number
+  request_no: string
+  cycle_id: number
+  cycle_name?: string | null
+  period_label: string
+  department_id: number
+  department_name?: string | null
+  company: string
+  cost_center_id?: number | null
+  cost_center_name?: string | null
+  total_amount: number
+  // 改版前的狀態機殘留欄位：新資料一律固定寫 draft，實際可不可以編輯看
+  // is_closed／period_label，不是這個欄位（見上方 2026-07-17 說明）。
+  status: 'draft' | 'submitted' | 'approved' | 'rejected'
+  submitted_by_user_id?: string | null
+  submitted_by_name?: string | null
+  submitted_at?: string | null
+  // [改版前歷史欄位，2026-07-17 起停止寫入]
+  approved_by_user_id?: string | null
+  approved_by_name?: string | null
+  approved_at?: string | null
+  reject_reason?: string | null
+  // 2026-07-17 新增：是否已關閉（關閉後不能再新增/編輯明細，也不能再修改請購單本身）。
+  is_closed: boolean
+  // 2026-08-07 新增：這張單是「怎麼關的」。後端衍生欄位（依 close_batch_no 前綴
+  // 推導，不是資料表欄位）：
+  //   'manual' — 有人按了關閉
+  //   'auto'   — 期別已過，系統自動關閉
+  //   null     — 還開放中
+  // ⚠️ 不要改用「closed_by_name 是不是空的」去判斷是不是系統關的，那是實作細節。
+  close_kind?: CpCloseKind
+  /** 2026-09-25：單一流程狀態（開放中／已關閉／已彙整／已拋轉 Ragic，互斥） */
+  flow_status?: CpFlowStatus | null
+  closed_by_user_id?: string | null
+  closed_by_name?: string | null
+  closed_at?: string | null
+  close_batch_no?: string | null
+  reopened_by_user_id?: string | null
+  reopened_by_name?: string | null
+  reopened_at?: string | null
+  // 2026-08-09 新增：彙整狀態。這些欄位 model 早就有，但改版前**沒有回傳給前端**，
+  // 所以清單分不出「已彙整」「還沒彙整」「彙整過又被退回」三種狀態。
+  //   is_summarized      — **目前**是不是在某張彙整單裡（退回後會變回 false）
+  //   unsummarized_at    — 曾經被退回過的**歷史軌跡**，重新彙整也不會清掉
+  // ⚠️ 判斷「現在有沒有進彙整」一律看 is_summarized，不要用 unsummarized_at 反推。
+  is_summarized: boolean
+  summary_batch_no?: string | null
+  summarized_at?: string | null
+  unsummarized_by_name?: string | null
+  unsummarized_at?: string | null
+  unsummarize_reason?: string | null
+  notes?: string | null
+  created_at: string
+  updated_at: string
+  /**
+   * 2026-08-17 新增：手動新增請購單（POST /requests）若同週期＋期別＋部門
+   * 已有其他單，不再擋，改成這裡帶警告文字給前端提示；沒有重複時是 null。
+   * 只有建立當下的回應才會有值，清單/詳情 GET 一律是 null（衍生欄位不落地）。
+   */
+  duplicate_warning?: string | null
+}
+
+export interface CpRequestDetail extends CpRequest {
+  items: CpRequestItem[]
+}
+
+// 2026-08-13 新增：複製上期請購單。協理要求可自由選任一過去期別（不只
+// 最近一次），所以是清單而非單一物件；複製一律建立新單（見
+// backend models/cycle_purchase_request.py「2026-08-13」說明），跳過的
+// 品項一定要顯示給使用者，不能靜默漏掉。
+
+/** GET /requests/copy-candidates 清單一列：同週期＋同部門過去有填過品項的請購單 */
+export interface CpCopySourceCandidate {
+  id: number
+  request_no: string
+  period_label: string
+  is_closed: boolean
+  item_count: number
+  total_amount: number
+}
+
+/** 複製時因為料號現在停用/已不屬於此部門而被跳過的品項 */
+export interface CpCopySkippedItem {
+  item_code: string
+  item_name: string
+  reason: string
+}
+
+/** POST /requests/{id}/copy 回傳 */
+export interface CpCopyResult {
+  request: CpRequestDetail
+  skipped_items: CpCopySkippedItem[]
+}
+
+// 2026-07-16 新增（彙整單產生方式改版）：「彙整單」頁面用，列出某週期＋公司＋
+// 期別下，已關閉且尚未被彙整過的請購單，供使用者勾選要納入這次彙整的範圍。
+// 2026-07-17：approved_by_name／approved_at 改成 closed_by_name／closed_at
+// （拿掉核准這個動作，「關閉」才是彙整的前提條件）。
+// 2026-08-09：**未關閉的單也會出現在這個清單**（can_summarize=false + block_reason），
+// 不再直接濾掉——否則使用者只看到空清單，不知道那張單就在那裡只差一個關閉動作。
+// ⚠️ 規則沒放寬：後端 generate-from-requests 仍然只接受已關閉的單。
+export interface CpEligibleRequest {
+  id: number
+  request_no: string
+  is_closed: boolean
+  can_summarize: boolean
+  block_reason?: string | null
+  unsummarized_at?: string | null
+  unsummarize_reason?: string | null
+  department_id?: number | null
+  department_name?: string | null
+  submitted_by_name?: string | null
+  closed_by_name?: string | null
+  closed_at?: string | null
+  total_amount: number
+}
+
+// 2026-08-09 新增：「退回請購單」清單（CpEligibleRequest 的鏡像，列的是
+// 已彙整的請購單）。can_unsummarize=false 的列仍會出現在清單裡，用
+// block_reason 說明退不了的原因，不隱藏。
+export interface CpSummarizedRequest {
+  id: number
+  request_no: string
+  department_id?: number | null
+  department_name?: string | null
+  submitted_by_name?: string | null
+  closed_by_name?: string | null
+  closed_at?: string | null
+  total_amount: number
+  summary_batch_no?: string | null
+  summarized_at?: string | null
+  can_unsummarize: boolean
+  block_reason?: string | null
+}
+
+// 2026-08-09 新增：退回請購單的結果。warnings 不是錯誤（動作已成功），
+// 是「需求量重算了但調整量是人工設定過所以保留不動」之類要買家複查的提醒。
+export interface CpUnsummarizeResult {
+  request_id: number
+  request_no: string
+  period_label: string
+  company: string
+  previous_summary_batch_no?: string | null
+  updated_summaries: CpSummary[]
+  deleted_summary_ids: number[]
+  warnings: string[]
+  message: string
+  // 退回後「要改內容就重新開啟，但改完記得再關閉」的下一步指引
+  next_step?: string | null
+}
+
+export interface CpAvailableItem {
+  item_id: number
+  item_mapping_id: number
+  item_code: string
+  item_name: string
+  unit?: string | null
+  category?: string | null
+  unit_price?: number | null
+  is_confirmed: boolean
+}
+
+// ── 彙整單（第三期，2026-07-11 新增）──────────────────────────────────────────
+// 只彙總 approved 的請購明細（草稿/已送出/已退回都不算）。同一週期＋期別＋
+// 公司＋料號只會有一列（冪等）：重複「產生彙整」不會覆寫已存在的列，只會
+// 新增這次才第一次出現的組合——若核准的請購明細在彙整之後又增加，需要
+// 人工重新整理，這是刻意的保守設計，避免自動改動已經在跑後續流程的數字。
+// 供應商一律來自料號對照表的 vendor_id（不是料號主檔的 default_vendor_id）。
+// 狀態機：draft（可調整調整量／原因）-> converted（已轉採購單，鎖定不可再改）。
+// 2026-07-16：彙整粒度改成「公司＋料號＋部門」（department_id），並新增拋轉
+// Ragic 追蹤欄位。department_id 為 null 代表 2026-07-16 之前產生的歷史列，
+// 未拆分部門（見 backend models/cycle_purchase_summary.py 開頭說明）。
+export interface CpSummary {
+  id: number
+  cycle_id: number
+  cycle_name?: string | null
+  period_label: string
+  company: string
+  item_id: number
+  item_mapping_id?: number | null
+  department_id?: number | null
+  department_name?: string | null
+  vendor_id?: number | null
+  vendor_name?: string | null
+  item_code: string
+  item_name: string
+  unit?: string | null
+  unit_price?: number | null
+  demand_qty: number
+  adjusted_qty: number
+  adjust_reason?: string | null
+  status: 'draft' | 'converted'
+  po_id?: number | null
+  po_no?: string | null
+  ragic_push_batch_no?: string | null
+  ragic_pushed: boolean
+  ragic_record_id?: string | null
+  // 2026-09-19 補上：後端 SummaryOut 從 2026-09-15 起就有這一欄（alembic_cp
+  // `cpragicurl`），但型別定義一直漏掉，導致清單上顯示不了單筆連結。
+  // 2026-09-15 之前拋轉的列是 null（只顯示單號、不可點）。
+  ragic_record_url?: string | null
+  ragic_pushed_at?: string | null
+  ragic_push_error?: string | null
+  notes?: string | null
+  created_at: string
+  updated_at: string
+}
+
+// 給「轉採購單」畫面用：某週期＋期別下還沒轉單（draft）的彙整列，依公司＋
+// 供應商分組統計。has_missing_vendor=true 代表這組沒有供應商，不能轉單，
+// 需要先到料號對照表補上供應商。
+export interface CpVendorGroup {
+  company: string
+  vendor_id?: number | null
+  vendor_name?: string | null
+  item_count: number
+  total_amount: number
+  has_missing_vendor: boolean
+  // 2026-09-15 新增：這一組對應到 Ragic 的哪一張單。
+  // ⚠️ 2026-09-18 起拋轉依「廠商＋部門」拆單，「公司＋廠商」與 Ragic 單據
+  //    **不再是一對一**（該廠商跨幾個部門就有幾張）。畫面請用 ragic_docs，
+  //    下面三個單一欄位只是相容用（值＝其中第一張）。
+  ragic_pushed?: boolean
+  ragic_record_id?: string | null      // 給人看的編號，如 樂管購20260900001
+  ragic_record_url?: string | null     // 單筆網址；2026-09-15 之前拋轉的列是 null（只顯示單號、不可點）
+  ragic_push_batch_no?: string | null
+  ragic_docs?: CpRagicDocRef[]
+}
+
+// 一張 Ragic 單據的參照（2026-09-18 新增，配合依「廠商＋部門」拆單）。
+export interface CpRagicDocRef {
+  ragic_record_id?: string | null
+  ragic_record_url?: string | null
+  ragic_push_batch_no?: string | null
+  department_name?: string | null
+}
+
+// 2026-07-16 新增：匯總請購單畫面用，依料號分組展開部門別＋小計。
+export interface CpDepartmentBreakdownRow {
+  summary_id: number
+  department_id?: number | null
+  department_name?: string | null
+  demand_qty: number
+  adjusted_qty: number
+  subtotal: number
+  status: 'draft' | 'converted'
+}
+
+export interface CpDepartmentBreakdown {
+  company: string
+  item_id: number
+  item_code: string
+  item_name: string
+  unit?: string | null
+  vendor_id?: number | null
+  vendor_name?: string | null
+  unit_price?: number | null
+  departments: CpDepartmentBreakdownRow[]
+  total_adjusted_qty: number
+  total_amount: number
+  has_missing_vendor: boolean
+}
+
+// 2026-09-16 新增：「已彙整 Ragic 請購單」TAB 的一列＝**一張 Ragic 單據**。
+// 後端分組鍵是 (ragic_push_batch_no, vendor_id)，因為拋轉是依廠商拆單；
+// 不用 ragic_record_id 分組是為了相容 stub 時期共用假值的舊資料。
+export interface CpRagicPushedDoc {
+  ragic_push_batch_no?: string | null
+  ragic_record_id?: string | null      // Ragic 採購編號，如 樂管週採00003
+  ragic_record_url?: string | null     // 單筆網址；2026-09-15 之前拋轉的為 null
+  cycle_id: number
+  cycle_name?: string | null
+  period_label: string
+  company: string
+  vendor_id?: number | null
+  vendor_name?: string | null
+  item_count: number
+  total_qty: number
+  total_amount: number
+  pushed_at?: string | null
+  department_names: string[]
+  converted_count: number
+  all_converted: boolean
+  is_stub: boolean
+  /** 2026-09-25：這張 Ragic 單包含的請購單號 */
+  request_nos?: string[]
+}
+
+/** GET /summary/excluded-requests：產生彙整範圍內已彙整／已拋轉、不在可勾選清單的單（2026-09-25） */
+export interface CpExcludedRequest {
+  id: number
+  request_no: string
+  department_name?: string | null
+  summary_batch_no?: string | null
+  flow_status: CpFlowStatus
+}
+
+// 拋轉到 Ragic「★週採請購單」(sheet 58) 的結果。
+// 2026-09-18 改版：拋轉目標從 sheet 57 週採採購單改成 sheet 58 週採請購單，
+// 拆單粒度也從「廠商」再細到「**廠商＋部門**」——Ragic 請購單主表的「部門」
+// 是必填單選，一張單只放得下一個部門，所以同一家廠商可能對到多張單。
+// ⚠️ **部分成功也是 HTTP 200**，所以三段都要顯示，不能只看 message：
+//    documents  = 成功寫進 Ragic 的各張單（vendor_name 一定要配 department_name 看）
+//    not_pushed = 缺供應商／缺單價／部門沒對照 Ragic 部門 而沒送出去的彙整列
+//                 （不是錯誤，但使用者一定要看到）
+//    failed     = Ragic 拒絕或連線失敗的那幾張（其他張仍然有推成功）
+// is_stub=true 代表 RAGIC_CP_SUMMARY_ENABLED=false，沒有真的寫入 Ragic。
+export interface CpPushedDocument {
+  vendor_id?: number | null
+  vendor_name?: string | null
+  department_id?: number | null
+  department_name?: string | null
+  ragic_record_id?: string | null    // Ragic 內部 _ragicId
+  ragic_no?: string | null           // 編號，如 樂管購20260900001
+  ragic_record_url?: string | null   // 單筆網址
+  line_count: number
+  is_stub: boolean
+}
+
+export interface CpNotPushedRow {
+  summary_id: number
+  item_code?: string | null
+  item_name?: string | null
+  department_name?: string | null
+  reason: string
+}
+
+export interface CpFailedVendor {
+  vendor_name?: string | null
+  department_name?: string | null
+  error: string
+}
+
+export interface CpPushToRagicResult {
+  batch_no: string
+  pushed_count: number
+  documents?: CpPushedDocument[]
+  not_pushed?: CpNotPushedRow[]
+  failed?: CpFailedVendor[]
+  already_pushed_count?: number
+  is_stub: boolean
+  message: string
+}
+
+// ── 採購單（第三期，2026-07-11 新增）──────────────────────────────────────────
+// 一張採購單＝一個公司＋一個供應商（同一週期＋期別內，同公司同供應商的所有
+// 彙整列合成一張採購單）。由「轉採購單」動作產生，只會納入調整量 > 0 的
+// 彙整列進明細；調整量 = 0 的列（代表「本期決定不訂這個料號」）會一併鎖定
+// 但不會出現在採購明細裡。狀態機：draft -> issued -> cancelled（issued 也
+// 可以直接 cancelled，例如供應商無法供貨）。
+export interface CpPOItem {
+  id: number
+  po_id: number
+  summary_id: number
+  item_id: number
+  item_code: string
+  item_name: string
+  unit?: string | null
+  unit_price?: number | null
+  ordered_qty: number
+  subtotal: number
+  created_at: string
+  updated_at: string
+}
+
+export interface CpPO {
+  id: number
+  po_no: string
+  cycle_id: number
+  cycle_name?: string | null
+  period_label: string
+  company: string
+  vendor_id: number
+  vendor_name?: string | null
+  buyer_user_id?: string | null
+  buyer_name?: string | null
+  expected_date?: string | null
+  total_amount: number
+  // 2026-07-11（第四期）：partial_received／received 由驗收單送出後系統自動
+  // 重算，不會透過 PUT /pos/{id}/status 人工指定（那個 endpoint 只給
+  // issued／cancelled 用）。
+  status: 'draft' | 'issued' | 'partial_received' | 'received' | 'cancelled'
+  notes?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface CpPODetail extends CpPO {
+  items: CpPOItem[]
+}
+
+// ── 驗收單（第四期，2026-07-11 新增）──────────────────────────────────────────
+// 一張採購單可以分好幾次驗收（部分到貨）。每張驗收明細行有 is_final_for_item
+// 旗標（預設 true，多數情況一次到齊）：只有這個旗標為 true 的列，送出時才會
+// 計算差異數量（variance_qty＝累計已驗收數量－訂購數量），非 true 的列代表
+// 「這只是部分到貨，之後還會再驗收」，中途不計算差異，避免誤判。
+// 這期不記錄發票數量（留到第五期請款單再處理），差異只比對「驗收數量 vs
+// 訂購數量」。驗收用獨立權限 cycle_purchase_receive；報表用 cycle_purchase_report。
+// 狀態機：draft（可編輯明細）-> completed（送出後無差異）／discrepancy（送出
+// 後有差異，系統自動判定，不可人工指定）。送出後不能再編輯明細。
+export interface CpReceivableItem {
+  po_item_id: number
+  item_id: number
+  item_code: string
+  item_name: string
+  unit?: string | null
+  ordered_qty: number
+  previously_received_qty: number
+  remaining_qty: number
+  // 若這張（草稿）驗收單已經填過這個料號，以下欄位會有值：
+  receiving_item_id?: number | null
+  received_qty?: number | null
+  is_final_for_item?: boolean | null
+  variance_reason?: string | null
+}
+
+export interface CpReceivingItem {
+  id: number
+  receiving_id: number
+  po_item_id: number
+  item_id: number
+  item_code: string
+  item_name: string
+  unit?: string | null
+  ordered_qty: number
+  previously_received_qty: number
+  received_qty: number
+  is_final_for_item: boolean
+  variance_qty?: number | null
+  variance_reason?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface CpReceiving {
+  id: number
+  receiving_no: string
+  po_id: number
+  po_no?: string | null
+  company?: string | null
+  vendor_name?: string | null
+  receiver_user_id?: string | null
+  receiver_name?: string | null
+  received_date: string
+  status: 'draft' | 'completed' | 'discrepancy'
+  notes?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface CpReceivingDetail extends CpReceiving {
+  items: CpReceivingItem[]
+}
+
+// 進貨數量報表：依月份＋公司＋供應商＋料號彙總，只計已送出（completed/
+// discrepancy）驗收單，草稿不算。
+export interface CpReceivingReportRow {
+  period: string
+  company: string
+  vendor_id?: number | null
+  vendor_name?: string | null
+  item_id: number
+  item_code: string
+  item_name: string
+  unit?: string | null
+  total_received_qty: number
+  total_amount: number
+  receiving_count: number
+}
+
+// ── 請款單（第五期，2026-07-11 新增）──────────────────────────────────────────
+// 請款單關聯到「一張採購單」（po_id），涵蓋這張採購單底下的一或多張已送出
+// （completed/discrepancy）驗收單（同一張驗收單只能被一張請款單涵蓋）。
+// 建立時系統自動依原始請購資料試算費用分攤明細（suggested_amount，不可再
+// 變動），allocated_amount 預設等於試算值，草稿狀態下可調整（不同時需填
+// adjust_reason）。狀態機：draft -> submitted -> paying -> paid（只能依序
+// 推進，不能跳過或倒退）。送出時若分攤總額與發票金額不符，需先填
+// amount_diff_reason（透過 PUT /payments/{id} 更新）才能送出，並自動寫一筆
+// 異常稽核紀錄。
+export interface CpPayableReceiving {
+  receiving_id: number
+  receiving_no: string
+  received_date: string
+  status: 'completed' | 'discrepancy'
+  estimated_amount: number
+}
+
+export interface CpPaymentAllocation {
+  id: number
+  payment_id: number
+  company: string
+  department_id?: number | null
+  department_name?: string | null
+  cost_center_id?: number | null
+  cost_center_name?: string | null
+  account_code_id?: number | null
+  account_code_label?: string | null
+  suggested_amount: number
+  allocated_amount: number
+  adjust_reason?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface CpPaymentReceiving {
+  id: number
+  receiving_id: number
+  receiving_no?: string | null
+  received_date?: string | null
+  status?: string | null
+}
+
+export interface CpPayment {
+  id: number
+  payment_no: string
+  po_id: number
+  po_no?: string | null
+  company?: string | null
+  vendor_name?: string | null
+  invoice_no: string
+  invoice_date: string
+  invoice_amount: number
+  total_allocated?: number | null
+  status: 'draft' | 'submitted' | 'paying' | 'paid'
+  amount_diff_reason?: string | null
+  processor_user_id?: string | null
+  processor_name?: string | null
+  notes?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface CpPaymentDetail extends CpPayment {
+  allocations: CpPaymentAllocation[]
+  receivings: CpPaymentReceiving[]
+}
+
+// ── 異常稽核紀錄（第五期，2026-07-11 新增）─────────────────────────────────────
+// 系統內部自動寫入（驗收單送出有差異／請款單送出金額不符時），append-only，
+// 沒有新增／修改／刪除 endpoint，前端只做查詢。查看權限 cycle_purchase_admin。
+export interface CpAuditLog {
+  id: number
+  document_type: 'request' | 'po' | 'receiving' | 'payment'
+  document_id: number
+  document_no: string
+  event_type: 'backfill' | 'overdue' | 'shortage' | 'substitute' | 'receiving_variance' | 'payment_variance'
+  description: string
+  operator_user_id?: string | null
+  operator_name?: string | null
+  old_value?: string | null
+  new_value?: string | null
+  created_at: string
+}
+
+// ── Dashboard 待辦提醒 ──────────────────────────────────────────────────────────
+// 2026-07-11 新增：登入者自己部門待填（依 CpDepartment.owner_user_id 判斷）+
+// （若有簽核權限）全部待簽核。目前只做 Dashboard 卡片，不做 email 通知。
+// 2026-07-17：拿掉送出/核准狀態機，pending_approval 改名 pending_close
+// （本月還沒關閉、需要買家記得關閉的請購單，依 cycle_purchase_close 權限判斷）。
+export interface TodoSummary {
+  my_pending: CpRequest[]
+  pending_close_count: number
+  pending_close: CpRequest[]
+  // 2026-09-25（左側選單紅點）：已關閉但尚未彙整的張數，只有具彙整權限的人才非 0
+  summary_pending_count: number
+}
+
+// 2026-08-09：採購單「退回彙整單」的結果。
+// deleted_item_count 是被刪掉的採購明細筆數——明細不保留是因為 po_items.summary_id
+// 是 RESTRICT 外鍵，留著會擋住之後彙整列的刪除；內容已寫進稽核紀錄。
+export interface CpRevertPoResult {
+  po_id: number
+  po_no: string
+  period_label: string
+  company: string
+  vendor_id: number
+  unlocked_summary_count: number
+  deleted_item_count: number
+  message: string
+  next_step?: string | null
+}
+
+// 2026-08-09：取消拋轉的結果。清掉的是「拋轉標記」，不動彙整列的 status／po_id。
+export interface CpCancelRagicPushResult {
+  cleared_count: number
+  previous_batch_no?: string | null
+  message: string
+  next_step?: string | null
+}
+
+// ── 料號主檔「供應商資料回填」（2026-09-30）──────────────────────────────────
+// 對應後端 app/schemas/cycle_purchase_vendor_backfill.py
+
+export interface CpBackfillCandidate {
+  ragic_id: string
+  ragic_code: string
+  name: string
+  short_name: string
+  tax_id: string
+  ragic_url: string
+  score: number
+  target_vendor_id: number | null
+  target_vendor_code: string | null
+  target_vendor_name: string | null
+  selectable: boolean
+  block_reason: string | null
+}
+
+/** short＝簡稱相同／similar＝名稱相似（人工選定）／none＝Ragic 找不到 */
+export type CpBackfillMatchType = 'short' | 'similar' | 'none'
+
+export interface CpBackfillRow {
+  vendor_id: number
+  vendor_code: string
+  vendor_name: string
+  is_active: boolean
+  item_count: number
+  mapping_count: number
+  /** 尚未拋轉 Ragic、尚未轉採購單的彙整列數（2026-09-30 追加） */
+  summary_count: number
+  match_type: CpBackfillMatchType
+  candidates: CpBackfillCandidate[]
+  suggested_ragic_id: string | null
+}
+
+export interface CpBackfillPreview {
+  sync_steps: { name: string; ok: boolean; message: string }[]
+  summary: {
+    ragic_vendor_count: number
+    ragic_short_name_count: number
+    orphan_count: number
+    short_count: number
+    similar_count: number
+    none_count: number
+    items_without_vendor: number
+  }
+  rows: CpBackfillRow[]
+}
+
+export interface CpBackfillApplyResult {
+  results: {
+    vendor_id: number
+    vendor_name: string
+    target_vendor_id: number
+    target_vendor_name: string
+    items_updated: number
+    mappings_updated: number
+    summaries_updated: number
+  }[]
+  items_updated: number
+  mappings_updated: number
+  summaries_updated: number
+}

@@ -1,0 +1,337 @@
+"""週期採購 — 彙整單 Pydantic Schemas"""
+from __future__ import annotations
+from datetime import datetime
+from decimal import Decimal
+from typing import Optional
+from pydantic import BaseModel
+
+
+class PendingRequestOut(BaseModel):
+    """GET /summary/pending-requests：全公司已關閉、尚未彙整的請購單（2026-09-25）。"""
+    id: int
+    request_no: str
+    cycle_id: int
+    cycle_name: Optional[str] = None
+    company: str
+    period_label: str
+    department_id: Optional[int] = None
+    department_name: Optional[str] = None
+    closed_by_name: Optional[str] = None
+    closed_at: Optional[datetime] = None
+    close_kind: Optional[str] = None
+    filled_item_count: int = 0
+    total_amount: Decimal
+    # 曾經被退回過的軌跡（重新關閉後又回到待彙整）；只是提示用
+    unsummarized_at: Optional[datetime] = None
+    # 2026-09-25：期別已過＝逾期，不可拋（仍列出，但不能產生彙整）
+    is_overdue: bool = False
+
+
+class ExcludedRequestOut(BaseModel):
+    """GET /summary/excluded-requests：產生彙整範圍內已彙整（不在可勾選清單）的請購單。"""
+    id: int
+    request_no: str
+    department_name: Optional[str] = None
+    summary_batch_no: Optional[str] = None
+    flow_status: str   # summarized／pushed／summarized_reopened
+
+
+class EligibleRequestOut(BaseModel):
+    """「彙整單」畫面用：某週期＋公司＋期別（period_label）下，尚未被彙整過的
+    請購單（供使用者勾選要納入這次彙整的範圍，見 2026-07-16 第二次調整、
+    2026-07-17 第三次調整說明）。
+
+    2026-08-09：**未關閉的單也會出現在這個清單**，用 `can_summarize=False` ＋
+    `block_reason` 標記，不再直接濾掉——否則使用者只會看到空清單，不知道「那張
+    單就在那裡，只差一個關閉動作」。⚠️ 規則沒有放寬，`generate-from-requests`
+    仍然只接受已關閉的單。"""
+    id: int
+    request_no: str
+    department_id: Optional[int] = None
+    department_name: Optional[str] = None
+    submitted_by_name: Optional[str] = None
+    closed_by_name: Optional[str] = None
+    closed_at: Optional[datetime] = None
+    total_amount: Decimal
+    is_closed: bool = True
+    can_summarize: bool = True
+    block_reason: Optional[str] = None
+    # 曾被退回過的軌跡（重新彙整也不會清空），讓買家知道這張是退回來的
+    unsummarized_at: Optional[datetime] = None
+    unsummarize_reason: Optional[str] = None
+
+
+class GenerateFromRequestsPayload(BaseModel):
+    """「產生彙整」：把使用者勾選的這些請購單（必須都已關閉 is_closed=True 且
+    尚未被彙整過）彙整成彙整列。period_label 由系統從勾選的請購單本身的
+    period_label 讀出來（不是「產生當下」的日期），不接受使用者指定。"""
+    request_ids: list[int]
+
+
+class SummarizedRequestOut(BaseModel):
+    """「退回請購單」畫面用（2026-08-09 第四次調整）：某週期＋公司＋期別下
+    **已經被彙整過**（is_summarized=True）的請購單。是 EligibleRequestOut 的
+    鏡像清單。`can_unsummarize=False` 的列仍會出現在清單裡（不隱藏），
+    `block_reason` 說明為什麼退不了，避免使用者以為系統漏抓。"""
+    id: int
+    request_no: str
+    department_id: Optional[int] = None
+    department_name: Optional[str] = None
+    submitted_by_name: Optional[str] = None
+    closed_by_name: Optional[str] = None
+    closed_at: Optional[datetime] = None
+    total_amount: Decimal
+    summary_batch_no: Optional[str] = None
+    summarized_at: Optional[datetime] = None
+    can_unsummarize: bool = True
+    block_reason: Optional[str] = None
+
+
+class UnsummarizeRequestPayload(BaseModel):
+    """「退回請購單」：一次退一張，退回原因必填（會寫進請購單的
+    unsummarize_reason 與稽核紀錄）。"""
+    request_id: int
+    reason: str
+
+
+class SummaryUpdate(BaseModel):
+    """調整量／調整原因（僅 draft 狀態的彙整列可編輯）"""
+    adjusted_qty: Optional[int] = None
+    adjust_reason: Optional[str] = None
+
+
+class SummaryOut(BaseModel):
+    id: int
+    cycle_id: int
+    cycle_name: Optional[str] = None
+    period_label: str
+    company: str
+    item_id: int
+    item_mapping_id: Optional[int] = None
+    department_id: Optional[int] = None
+    department_name: Optional[str] = None
+    vendor_id: Optional[int] = None
+    vendor_name: Optional[str] = None
+    item_code: str
+    item_name: str
+    unit: Optional[str] = None
+    unit_price: Optional[Decimal] = None
+    demand_qty: int
+    adjusted_qty: int
+    adjust_reason: Optional[str] = None
+    status: str
+    po_id: Optional[int] = None
+    po_no: Optional[str] = None
+    ragic_push_batch_no: Optional[str] = None
+    ragic_pushed: bool = False
+    ragic_record_id: Optional[str] = None
+    ragic_record_url: Optional[str] = None
+    ragic_pushed_at: Optional[datetime] = None
+    ragic_push_error: Optional[str] = None
+    notes: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class UnsummarizeResult(BaseModel):
+    """退回結果（2026-08-09 第四次調整）。updated_summaries 是被重算過需求量的
+    彙整列；deleted_summary_ids 是重算後需求量歸零、且沒有人工調整過因而被刪除
+    的列；warnings 是「需求量重算了但調整量是人工設定過所以保留不動」之類需要
+    買家複查的提醒（不是錯誤，動作已經成功）。"""
+    request_id: int
+    request_no: str
+    period_label: str
+    company: str
+    previous_summary_batch_no: Optional[str] = None
+    updated_summaries: list[SummaryOut] = []
+    deleted_summary_ids: list[int] = []
+    warnings: list[str] = []
+    message: str
+    # 2026-08-09：退回後「要不要重新開啟去改、改完要記得再關閉」這件事沒有任何
+    # 地方講過，實際害使用者卡住過一次。在退回成功的當下就把下一步說清楚。
+    next_step: Optional[str] = None
+
+
+class ConvertToPoPayload(BaseModel):
+    """轉採購單：指定週期＋期別＋公司＋供應商，把符合條件、狀態仍是 draft 的彙整列
+    合成一張採購單（調整量為 0 的列會一併鎖定但不會出現在採購明細裡）。"""
+    cycle_id: int
+    period_label: str
+    company: str
+    vendor_id: int
+
+
+class RagicDocRef(BaseModel):
+    """一張 Ragic 單據的參照（2026-09-18 新增）。
+
+    拋轉拆單粒度是「公司＋期別＋廠商＋部門」，所以「公司＋廠商」這一組會對到
+    一張以上的 Ragic 單，每一張各自有編號、網址與所屬部門。"""
+    ragic_record_id: Optional[str] = None
+    ragic_record_url: Optional[str] = None
+    ragic_push_batch_no: Optional[str] = None
+    department_name: Optional[str] = None
+
+
+class VendorGroupOut(BaseModel):
+    """給「轉採購單」畫面用：某週期＋期別＋公司下，還沒轉單的彙整列依供應商分組統計。"""
+    company: str
+    vendor_id: Optional[int] = None
+    vendor_name: Optional[str] = None
+    item_count: int
+    total_amount: Decimal
+    has_missing_vendor: bool = False
+    # 2026-09-15 新增：這一組對應的 Ragic 單據。
+    # ⚠️ 2026-09-18 起拋轉依「廠商＋部門」拆單，「公司＋廠商」與 Ragic 單據
+    #    **不再是一對一**，畫面要顯示的是下面的 ragic_docs；這三個單一欄位
+    #    留著是為了相容（值＝其中第一張）。
+    ragic_pushed: bool = False
+    ragic_record_id: Optional[str] = None       # 給人看的編號，如 樂管購20260900001
+    ragic_record_url: Optional[str] = None      # 單筆網址；2026-09-15 之前拋轉的列為 None
+    ragic_push_batch_no: Optional[str] = None
+    ragic_docs: list[RagicDocRef] = []
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 2026-07-16 新增：部門別＋小計 拆解畫面、拋轉 Ragic
+# ═══════════════════════════════════════════════════════════════════════════
+
+class DepartmentBreakdownRow(BaseModel):
+    """匯總請購單畫面用：某料號下，某一個部門的需求／調整量與小計。"""
+    summary_id: int
+    department_id: Optional[int] = None
+    department_name: Optional[str] = None
+    demand_qty: int
+    adjusted_qty: int
+    subtotal: Decimal
+    status: str
+
+
+class DepartmentBreakdownOut(BaseModel):
+    """匯總請購單畫面用：依料號分組，展開底下各部門別＋部門小計（比照 0715 會議
+    「匯總請購單」設計方向：一張單涵蓋多部門，用子表列部門別＋小計）。"""
+    company: str
+    item_id: int
+    item_code: str
+    item_name: str
+    unit: Optional[str] = None
+    vendor_id: Optional[int] = None
+    vendor_name: Optional[str] = None
+    unit_price: Optional[Decimal] = None
+    departments: list[DepartmentBreakdownRow]
+    total_adjusted_qty: int
+    total_amount: Decimal
+    has_missing_vendor: bool = False
+
+
+class CancelRagicPushPayload(BaseModel):
+    """「取消拋轉」：清掉某週期＋期別＋公司範圍的 Ragic 拋轉標記，讓它可以重新
+    拋轉，同時解開「已拋轉就不能退回請購單」的限制。原因必填。"""
+    cycle_id: int
+    period_label: str
+    company: str
+    reason: str
+
+
+class CancelRagicPushResult(BaseModel):
+    cleared_count: int
+    previous_batch_no: Optional[str] = None
+    message: str
+    next_step: Optional[str] = None
+
+
+class RagicPushedDocOut(BaseModel):
+    """「已彙整 Ragic 請購單」TAB：一列＝**一張 Ragic 單據**（不是一個彙整列）。
+
+    分組鍵是 `(ragic_push_batch_no, vendor_id, ragic_record_id)`。
+    2026-09-18 起拋轉依「廠商＋部門」拆單，同一批次同一家廠商會有多張 Ragic 單，
+    所以鍵裡一定要有 `ragic_record_id`；但刻意**不用 department_id**——
+    2026-09-18 之前的舊單據本來就跨多部門，用部門當鍵會把一張錯誤拆成好幾列。
+    stub 時期共用假值的舊資料則靠 vendor_id 分得開。
+    """
+    ragic_push_batch_no: Optional[str] = None
+    ragic_record_id: Optional[str] = None       # Ragic 編號，如 樂管購20260900001
+    ragic_record_url: Optional[str] = None      # 單筆網址；2026-09-15 之前拋轉的為 None
+    cycle_id: int
+    cycle_name: Optional[str] = None
+    period_label: str
+    company: str
+    vendor_id: Optional[int] = None
+    vendor_name: Optional[str] = None
+    item_count: int
+    total_qty: int
+    total_amount: Decimal
+    pushed_at: Optional[datetime] = None
+    department_names: list[str] = []
+    converted_count: int = 0
+    all_converted: bool = False
+    is_stub: bool = False
+    # 2026-09-25：這張 Ragic 單包含的請購單號（同週期＋期別＋公司＋部門、已彙整）
+    request_nos: list[str] = []
+
+
+class RagicPushedDateRange(BaseModel):
+    """已拋轉資料的日期範圍，給前端 StandardRangePicker 當 anchor（CLAUDE.md §8.2）。"""
+    start: Optional[str] = None
+    end: Optional[str] = None
+
+
+class PushToRagicPayload(BaseModel):
+    """拋轉到 Ragic：把某週期＋期別＋公司範圍內的彙整列，**依廠商＋部門拆成多張**
+    「★週採請購單」寫進 Ragic sheet 58
+    （2026-09-18 改版，原本是 sheet 57 週採採購單；見
+    services/cycle_purchase_ragic_push.py 檔頭）。"""
+    cycle_id: int
+    period_label: str
+    company: str
+
+
+class PushedDocument(BaseModel):
+    """本次成功寫進 Ragic 的其中一張單。
+
+    ⚠️ 2026-09-18 起拆單粒度是「公司＋期別＋**廠商＋部門**」，一家廠商可能對到
+    多張單（sheet 58 主表的「部門」是必填單選，一張單只放得下一個部門），
+    所以前端顯示時 vendor_name 一定要配 department_name 一起看。"""
+    vendor_id: Optional[int] = None
+    vendor_name: Optional[str] = None
+    department_id: Optional[int] = None
+    department_name: Optional[str] = None
+    ragic_record_id: Optional[str] = None       # Ragic 內部 _ragicId
+    ragic_no: Optional[str] = None              # Ragic 表單上的採購編號，如 樂管週採00003
+    ragic_record_url: Optional[str] = None      # 單筆網址
+    line_count: int = 0
+    is_stub: bool = False
+
+
+class NotPushedRow(BaseModel):
+    """推不出去的彙整列。**刻意回傳而不是默默過濾掉**——這個模組吃過三次
+    「單子憑空消失」的虧，見 project_cycle_purchase_unsummarize 的結論。"""
+    summary_id: int
+    item_code: Optional[str] = None
+    item_name: Optional[str] = None
+    department_name: Optional[str] = None
+    reason: str
+
+
+class FailedVendor(BaseModel):
+    """Ragic 拒絕或連線失敗的那一張單（其他張仍然會照推）。
+
+    2026-09-18 起拆單含部門，同一家廠商可能一張成功一張失敗，
+    所以這裡也要帶 department_name 才分得出是哪一張。"""
+    vendor_name: Optional[str] = None
+    department_name: Optional[str] = None
+    error: str
+
+
+class PushToRagicResult(BaseModel):
+    """拋轉結果。部分成功時 HTTP 仍是 200，失敗的內容在 failed／not_pushed 裡。"""
+    batch_no: str
+    pushed_count: int
+    documents: list[PushedDocument] = []
+    not_pushed: list[NotPushedRow] = []
+    failed: list[FailedVendor] = []
+    already_pushed_count: int = 0
+    is_stub: bool = False
+    message: str

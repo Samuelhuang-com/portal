@@ -1,0 +1,245 @@
+/**
+ * 工作日誌 API 封裝
+ * 對應後端 /api/v1/work-journal/*
+ */
+import apiClient from '@/api/client'
+import type { ShiftInfo } from '@/api/schedule'
+
+export const JOURNAL_CATEGORIES = ['現場報修', '上級交辦', '緊急事件', '例行維護', '每日巡檢'] as const
+export type JournalCategory = typeof JOURNAL_CATEGORIES[number]
+
+// 注意：'security'（保全巡檢）曾列在此清單，但後端 work_journal.py 的彙整邏輯
+// 從未實作 _fetch_security()，保全巡檢資料實際上不會出現在工作日誌裡。
+// 2026-07-24 移除這個死選項，避免前端型別暗示「有資料」造成誤解。
+export const JOURNAL_SOURCES = [
+  'dazhi', 'luqun', 'hotel_pm', 'ihg', 'hotel_di',
+  'mall_pm', 'full_bldg_pm', 'mall_fi', 'full_bi', 'hotel_mr',
+  'other_tasks',
+] as const
+export type JournalSource = typeof JOURNAL_SOURCES[number]
+
+// 2026-10-06：來源名稱統一為側邊選單（navLabels.ts）上的名稱；須與後端 work_journal.py SOURCE_LABEL 一致
+export const SOURCE_LABEL: Record<JournalSource, string> = {
+  dazhi:        '飯店工務報修',
+  luqun:        '商場工務報修',
+  hotel_pm:     '飯店例行維護',
+  ihg:          'IHG客房保養',
+  hotel_di:     '飯店每日巡檢',
+  mall_pm:      '商場例行維護',
+  full_bldg_pm: '全棟例行維護',
+  mall_fi:      '商場工務巡檢',
+  full_bi:      '整棟巡檢',
+  hotel_mr:     '每日數值登錄表',
+  other_tasks:  '主管交辦／緊急事件',
+}
+
+export const CATEGORY_COLOR: Record<JournalCategory, string> = {
+  現場報修: '#4BA8E8',
+  上級交辦: '#52C41A',
+  緊急事件: '#FF4D4F',
+  例行維護: '#FA8C16',
+  每日巡檢: '#722ED1',
+}
+
+export const CATEGORY_TAG_COLOR: Record<JournalCategory, string> = {
+  現場報修: 'blue',
+  上級交辦: 'green',
+  緊急事件: 'red',
+  例行維護: 'orange',
+  每日巡檢: 'purple',
+}
+
+// ── 型別定義 ──────────────────────────────────────────────────────────────────
+
+export interface JournalRow {
+  seq:          number
+  source:       JournalSource
+  source_label: string
+  category:     JournalCategory
+  task:         string
+  person:       string
+  est_min:      number | null   // 預估耗時（分鐘），null = 無資料
+  start_time:   string          // 'HH:MM' 或 ''
+  end_time:     string          // 'HH:MM' 或 ''
+  start_dt?:    string          // 'YYYY/MM/DD HH:MM' 或 ''（2026-10-02 新增，跨日判斷用）
+  end_dt?:      string          // 'YYYY/MM/DD HH:MM' 或 ''（2026-10-02 新增，跨日判斷用）
+  work_min:     number | null   // 工時（分鐘），null = 無資料
+  remark:       string          // 備註
+  report:       string          // 回報事項
+  ragic_id:     string          // 原始記錄 Ragic ID
+  ragic_url:    string          // Ragic 記錄直連 URL（空字串 = 無）
+  venue:        string          // 歸屬（飯店 / 商場），僅 other_tasks 有值
+  detail:       Record<string, string>  // 模組專屬明細欄位
+  detail_records?: JournalDetailRecord[]  // 工單明細子表（維修記錄），dazhi/luqun 有值
+}
+
+/** 工單明細子表（維修記錄）一列：項次/狀態/維修記錄/時間開始/時間結束/維修人員 */
+export type JournalDetailRecord = Record<string, string>
+
+export interface JournalPerson {
+  person: string
+  rows:   JournalRow[]
+}
+
+export interface WorkJournalDaily {
+  date:        string          // 'YYYY/MM/DD'
+  persons:     JournalPerson[]
+  total_rows:  number
+}
+
+// ── API 函數 ──────────────────────────────────────────────────────────────────
+
+/** 人員範圍：all=全部（預設）/ named=具名 / unassigned=未指定 */
+export type PersonScope = 'all' | 'named' | 'unassigned'
+/** 歸屬：all=全部（預設）/ hotel=飯店 / mall=商場 */
+export type JournalVenue = 'all' | 'hotel' | 'mall'
+
+export async function fetchWorkJournalDaily(
+  year: number,
+  month: number,
+  day: number,
+  personScope?: PersonScope,
+  venue?: JournalVenue,
+): Promise<WorkJournalDaily> {
+  const res = await apiClient.get<WorkJournalDaily>('/work-journal/daily', {
+    params: {
+      year, month, day,
+      ...(personScope ? { person_scope: personScope } : {}),
+      ...(venue ? { venue } : {}),
+    },
+  })
+  return res.data
+}
+
+export interface WorkJournalRange {
+  date_from:  string
+  date_to:    string
+  days:       WorkJournalDaily[]
+  total_rows: number
+}
+
+export async function fetchWorkJournalRange(
+  date_from: string,
+  date_to: string,
+  personScope?: PersonScope,
+  venue?: JournalVenue,
+): Promise<WorkJournalRange> {
+  const res = await apiClient.get<WorkJournalRange>('/work-journal/range', {
+    params: {
+      date_from, date_to,
+      ...(personScope ? { person_scope: personScope } : {}),
+      ...(venue ? { venue } : {}),
+    },
+  })
+  return res.data
+}
+
+// ── 月矩陣（exec-work-dashboard 的兩張工時表共用）────────────────
+//
+// ⭐ 單位一律是「分鐘」（work_min），與工作日誌 TAB 每日標頭的「N min」同一個數字。
+// by_category 與 by_person 是同一份 rows 的兩種切法，TOTAL 必然相同。
+
+export interface JournalMatrixCatRow    { category: string; minutes: number[]; total: number; pct: number }
+export interface JournalMatrixPersonRow { person:   string; minutes: number[]; total: number; pct: number }
+
+export interface WorkJournalMatrix {
+  year:     number
+  month:    number
+  days:     number[]
+  weekdays: string[]
+  unit:     'minutes'
+  by_category: { rows: JournalMatrixCatRow[] }
+  by_person:   { rows: JournalMatrixPersonRow[] }
+}
+
+export async function fetchWorkJournalMatrix(
+  year: number,
+  month: number,
+  personScope?: PersonScope,
+  venue?: JournalVenue,
+): Promise<WorkJournalMatrix> {
+  const res = await apiClient.get<WorkJournalMatrix>('/work-journal/matrix', {
+    params: {
+      year, month,
+      ...(personScope ? { person_scope: personScope } : {}),
+      ...(venue ? { venue } : {}),
+    },
+  })
+  return res.data
+}
+
+// ── 班別區間查詢（飯店＋商場合併）──────────────────────────────
+//
+// 2026-08-14 班表拆分後新增。與單一場域的 fetchShiftsRange() 差別在於：
+//   單一場域：{ 日期: { 姓名: ShiftInfo   } }   ← 物件
+//   合併版　：{ 日期: { 姓名: ShiftInfo[] } }   ← 陣列，可同時含「飯」「商」
+//
+// 兩邊同名視為同一人（2026-08-14 決策），因此同一個姓名可能同時有飯店班與商場班，
+// 由 <ShiftTag> 渲染成兩個標籤。
+
+/** { "2026-08-01": { "王大明": [ShiftInfo(飯), ShiftInfo(商)] } } */
+export type MergedShiftsRangeData = Record<string, Record<string, ShiftInfo[]>>
+
+export async function fetchMergedShiftsRange(
+  date_from: string,
+  date_to: string,
+): Promise<MergedShiftsRangeData> {
+  const res = await apiClient.get<MergedShiftsRangeData>('/work-journal/shifts-range', {
+    params: { date_from, date_to },
+  })
+  return res.data
+}
+
+/** 回傳匯出 Excel 的 API URL（由前端用 downloadFile() 觸發下載） */
+export function getJournalExcelUrl(
+  date_from: string,
+  date_to: string,
+  person?: string,
+  personScope?: PersonScope,
+  venue?: JournalVenue,
+): string {
+  const params = new URLSearchParams({ date_from, date_to })
+  if (person) params.set('person', person)
+  if (personScope) params.set('person_scope', personScope)
+  if (venue) params.set('venue', venue)
+  return `/api/v1/work-journal/export-excel?${params.toString()}`
+}
+
+export interface CaseImageItem { url: string; filename: string }
+
+/**
+ * 依來源模組組出附圖端點 URL。
+ * dazhi/luqun/other_tasks：/{module}/db-images/{ragicId}
+ * full_bldg_pm/mall_pm：/{module}/items/{ragicId}/db-images
+ *   （2026-07-14 新增，比照 full_building_maintenance／mall_periodic_maintenance
+ *    模組自身明細 Drawer 既有使用的 /items/{item_ragic_id}/db-images 端點）
+ */
+const IMAGE_URL_BUILDERS: Record<string, (ragicId: string) => string> = {
+  dazhi:        (id) => `/dazhi-repair/db-images/${encodeURIComponent(id)}`,
+  luqun:        (id) => `/luqun-repair/db-images/${encodeURIComponent(id)}`,
+  other_tasks:  (id) => `/other-tasks/db-images/${encodeURIComponent(id)}`,
+  full_bldg_pm: (id) => `/mall/full-building-maintenance/items/${encodeURIComponent(id)}/db-images`,
+  mall_pm:      (id) => `/mall/periodic-maintenance/items/${encodeURIComponent(id)}/db-images`,
+}
+
+/** 目前支援附圖的來源集合（Drawer 是否觸發抓圖、寬度 480/640 判斷共用同一份清單） */
+export const IMAGE_CAPABLE_SOURCES = new Set(Object.keys(IMAGE_URL_BUILDERS))
+
+/**
+ * 依來源模組取案件／項目圖片。
+ */
+export async function fetchJournalImages(
+  source: string,
+  ragicId: string,
+): Promise<CaseImageItem[]> {
+  if (!ragicId) return []
+  const buildUrl = IMAGE_URL_BUILDERS[source]
+  if (!buildUrl) return []
+  try {
+    const { default: apiClient } = await import('@/api/client')
+    const res = await apiClient.get(buildUrl(ragicId))
+    return res.data?.images ?? []
+  } catch {
+    return []
+  }
+}

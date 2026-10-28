@@ -1,0 +1,858 @@
+"""
+春大直商場工務巡檢 API Router
+Prefix: /api/v1/mall-facility-inspection
+
+端點：
+  GET  /sheets                  — 取得所有樓層巡檢 Sheet 設定（Ragic URL 等）
+  POST /{sheet_key}/sync        — 從 Ragic 同步指定樓層（背景執行）
+  POST /sync/all                — 從 Ragic 同步全部 5 張 Sheet（背景執行）
+  GET  /{sheet_key}/stats       — 指定樓層統計（Dashboard 用）
+  GET  /{sheet_key}/batches     — 指定樓層場次清單（月份篩選）
+"""
+from collections import Counter
+from datetime import date, timedelta
+from typing import List, Optional
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from pydantic import BaseModel
+from sqlalchemy.orm import Session
+
+from app.core.database import get_db
+from app.dependencies import get_current_user, require_roles
+from app.models.mall_facility_inspection import MallFIBatch, MallFIItem
+from app.services.mall_facility_inspection_sync import MFI_SERVER_URL, MFI_ACCOUNT, SHEET_CONFIGS
+from app.services.ragic_verify_utils import (
+    read_portal_count_and_last_sync, read_portal_ragic_ids,
+    fetch_ragic_count_multi, fetch_ragic_url_map_multi,
+    build_verify_count_response, build_verify_diff_response,
+)
+
+router = APIRouter(dependencies=[Depends(get_current_user)])
+
+
+# ── Schema ────────────────────────────────────────────────────────────────────
+
+class InspectionSheetConfig(BaseModel):
+    key:         str
+    floor:       str
+    title:       str
+    ragic_url:   str
+    description: str
+
+
+# ── Sheet 設定（對應 Ragic mall-facility-inspection 各 Sheet）──────────────────
+
+SHEET_CONFIGS: List[InspectionSheetConfig] = [
+    InspectionSheetConfig(
+        key="4f",
+        floor="4F",
+        title="商場工務每日巡檢 - 4F",
+        ragic_url="https://ap12.ragic.com/soutlet001/mall-facility-inspection/2?PAGEID=i4T",
+        description="春大直商場 4 樓工務設施每日例行巡檢",
+    ),
+    InspectionSheetConfig(
+        key="3f",
+        floor="3F",
+        title="商場工務每日巡檢 - 3F",
+        ragic_url="https://ap12.ragic.com/soutlet001/mall-facility-inspection/3?PAGEID=i4T",
+        description="春大直商場 3 樓工務設施每日例行巡檢",
+    ),
+    InspectionSheetConfig(
+        key="1f-3f",
+        floor="1F ~ 3F",
+        title="商場工務每日巡檢 - 1F ~ 3F",
+        ragic_url="https://ap12.ragic.com/soutlet001/mall-facility-inspection/4?PAGEID=i4T",
+        description="春大直商場 1F 至 3F 工務設施每日例行巡檢",
+    ),
+    InspectionSheetConfig(
+        key="1f",
+        floor="1F",
+        title="商場工務每日巡檢 - 1F",
+        ragic_url="https://ap12.ragic.com/soutlet001/mall-facility-inspection/5?PAGEID=i4T",
+        description="春大直商場 1 樓工務設施每日例行巡檢",
+    ),
+    InspectionSheetConfig(
+        key="b1f-b4f",
+        floor="B1F ~ B4F",
+        title="商場工務每日巡檢 - B1F ~ B4F",
+        ragic_url="https://ap12.ragic.com/soutlet001/mall-facility-inspection/7?PAGEID=i4T",
+        description="春大直商場地下 1 至 4 樓工務設施每日例行巡檢",
+    ),
+]
+
+VALID_KEYS = {c.key for c in SHEET_CONFIGS}
+
+
+# ── 業務邏輯輔助 ───────────────────────────────────────────────────────────────
+
+def _calc_kpi(items: list[MallFIItem]) -> dict:
+    """計算一組巡檢項目的 KPI 統計（排除 is_note 項目）"""
+    scored = [it for it in items if not it.is_note]
+    total     = len(scored)
+    normal    = sum(1 for it in scored if it.result_status == "normal")
+    abnormal  = sum(1 for it in scored if it.result_status == "abnormal")
+    pending   = sum(1 for it in scored if it.result_status == "pending")
+    unchecked = sum(1 for it in scored if it.result_status == "unchecked")
+    checked   = normal + abnormal + pending
+
+    completion_rate = round(checked / total * 100, 1) if total > 0 else 0.0
+    return {
+        "total":           total,
+        "normal":          normal,
+        "abnormal":        abnormal,
+        "pending":         pending,
+        "unchecked":       unchecked,
+        "checked":         checked,
+        "completion_rate": completion_rate,
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GET /sheets
+# ══════════════════════════════════════════════════════════════════════════════
+
+@router.get(
+    "/sheets",
+    summary="取得工務巡檢 Sheet 設定清單",
+    response_model=List[InspectionSheetConfig],
+    tags=["春大直商場工務巡檢"],
+)
+def get_sheets():
+    """
+    回傳春大直商場工務巡檢各樓層 Sheet 設定，
+    包含 Ragic URL 供前端導頁或顯示摘要使用。
+    """
+    return SHEET_CONFIGS
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# POST /sync/all  ← 必須在 /{sheet_key}/sync 之前定義，避免 "all" 被解析為 sheet_key
+# ══════════════════════════════════════════════════════════════════════════════
+
+@router.post(
+    "/sync/all",
+    summary="從 Ragic 同步全部 5 張 Sheet（背景執行）",
+    tags=["春大直商場工務巡檢"],
+)
+async def sync_all_sheets(background_tasks: BackgroundTasks):
+    """觸發背景同步：全部 5 張 Sheet，立即回傳，不阻塞畫面"""
+    from app.services.mall_facility_inspection_sync import sync_all
+    background_tasks.add_task(sync_all)
+    return {"status": "ok", "message": "全部 5 張 Sheet 同步已在背景啟動"}
+
+
+# ── /verify-count／/verify-diff ─────────────────────────────────────────────────
+# 5 張 Sheet 都 pivot 進同一張 MallFIBatch（sheet_key 區分），做法同飯店每日巡檢。
+
+def _mfi_sheets() -> list[dict]:
+    return [
+        {"sheet_key": key, "sheet_path": cfg["path"], "server_url": MFI_SERVER_URL, "account": MFI_ACCOUNT}
+        for key, cfg in SHEET_CONFIGS.items()
+    ]
+
+
+@router.get("/verify-count", summary="與 Ragic 數量比對（管理員，5 張 Sheet 加總）",
+            dependencies=[Depends(require_roles("system_admin"))])
+async def verify_count(db: Session = Depends(get_db)):
+    portal_count, last_synced_at = await read_portal_count_and_last_sync(
+        db, MallFIBatch, "商場工務巡檢"
+    )
+    try:
+        ragic_count = await fetch_ragic_count_multi(_mfi_sheets())
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Ragic 連線失敗：{exc}")
+    return build_verify_count_response("商場工務巡檢", portal_count, ragic_count, last_synced_at)
+
+
+@router.get("/verify-diff", summary="與 Ragic 明細差集比對（管理員，5 張 Sheet 加總）",
+            dependencies=[Depends(require_roles("system_admin"))])
+async def verify_diff(db: Session = Depends(get_db)):
+    try:
+        ragic_url_map = await fetch_ragic_url_map_multi(_mfi_sheets())
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Ragic 連線失敗：{exc}")
+    portal_ids = await read_portal_ragic_ids(db, MallFIBatch)
+    return build_verify_diff_response(ragic_url_map, portal_ids)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# POST /{sheet_key}/sync
+# ══════════════════════════════════════════════════════════════════════════════
+
+@router.post(
+    "/{sheet_key}/sync",
+    summary="從 Ragic 同步指定樓層（背景執行）",
+    tags=["春大直商場工務巡檢"],
+)
+async def sync_sheet(sheet_key: str, background_tasks: BackgroundTasks):
+    """觸發背景同步：指定 sheet_key，立即回傳，不阻塞畫面"""
+    if sheet_key not in VALID_KEYS:
+        raise HTTPException(
+            status_code=404,
+            detail=f"未知的 sheet_key: {sheet_key}，有效值：{sorted(VALID_KEYS)}",
+        )
+    from app.services.mall_facility_inspection_sync import sync_sheet as _sync
+    background_tasks.add_task(_sync, sheet_key)
+    return {"status": "ok", "message": f"{sheet_key} 同步已在背景啟動"}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GET /{sheet_key}/stats
+# ══════════════════════════════════════════════════════════════════════════════
+
+@router.get(
+    "/{sheet_key}/stats",
+    summary="取得指定樓層 Dashboard 統計",
+    tags=["春大直商場工務巡檢"],
+)
+def get_sheet_stats(
+    sheet_key: str,
+    target_date: Optional[str] = Query(
+        None,
+        description="查詢日期 YYYY/MM/DD，不填則取最新場次"
+    ),
+    db: Session = Depends(get_db),
+):
+    if sheet_key not in VALID_KEYS:
+        raise HTTPException(status_code=404, detail=f"未知的 sheet_key: {sheet_key}")
+
+    today = date.today()
+
+    # ── 取最新（或指定日期）場次 ─────────────────────────────────────────────
+    q = db.query(MallFIBatch).filter(MallFIBatch.sheet_key == sheet_key)
+    if target_date:
+        q = q.filter(MallFIBatch.inspection_date == target_date)
+
+    latest_batch = q.order_by(MallFIBatch.inspection_date.desc()).first()
+
+    latest_kpi   = None
+    latest_batch_info = None
+    recent_abnormal: list[dict] = []
+
+    if latest_batch:
+        items = (
+            db.query(MallFIItem)
+            .filter(MallFIItem.batch_ragic_id == latest_batch.ragic_id)
+            .order_by(MallFIItem.seq_no)
+            .all()
+        )
+        latest_kpi = _calc_kpi(items)
+        latest_batch_info = {
+            "ragic_id":       latest_batch.ragic_id,
+            "inspection_date": latest_batch.inspection_date,
+            "inspector_name": latest_batch.inspector_name,
+            "start_time":     latest_batch.start_time,
+            "end_time":       latest_batch.end_time,
+            "work_hours":     latest_batch.work_hours,
+        }
+        recent_abnormal = [
+            {
+                "item_name":     it.item_name,
+                "result_raw":    it.result_raw,
+                "result_status": it.result_status,
+            }
+            for it in items
+            if it.result_status in ("abnormal", "pending") and not it.is_note
+        ][:20]
+
+    # ── 近 7 日場次數 ─────────────────────────────────────────────────────────
+    week_ago = (today - timedelta(days=7)).strftime("%Y/%m/%d")
+    batches_7d = (
+        db.query(MallFIBatch)
+        .filter(
+            MallFIBatch.sheet_key == sheet_key,
+            MallFIBatch.inspection_date >= week_ago,
+        )
+        .count()
+    )
+
+    # ── 近 7 日異常趨勢 ───────────────────────────────────────────────────────
+    abnormal_trend = []
+    for i in range(6, -1, -1):
+        d     = today - timedelta(days=i)
+        d_str = d.strftime("%Y/%m/%d")
+
+        day_batches = (
+            db.query(MallFIBatch)
+            .filter(
+                MallFIBatch.sheet_key == sheet_key,
+                MallFIBatch.inspection_date == d_str,
+            )
+            .all()
+        )
+
+        abn_count = 0
+        for b in day_batches:
+            abn_count += (
+                db.query(MallFIItem)
+                .filter(
+                    MallFIItem.batch_ragic_id == b.ragic_id,
+                    MallFIItem.result_status.in_(["abnormal", "pending"]),
+                    MallFIItem.is_note == False,
+                )
+                .count()
+            )
+
+        abnormal_trend.append({
+            "date":           d_str,
+            "abnormal_count": abn_count,
+            "has_record":     len(day_batches) > 0,
+        })
+
+    return {
+        "sheet_key":       sheet_key,
+        "latest_batch":    latest_batch_info,
+        "latest_kpi":      latest_kpi,
+        "recent_abnormal": recent_abnormal,
+        "total_batches_7d": batches_7d,
+        "abnormal_trend":  abnormal_trend,
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GET /{sheet_key}/batches
+# ══════════════════════════════════════════════════════════════════════════════
+
+@router.get(
+    "/{sheet_key}/batches",
+    summary="取得指定樓層巡檢場次清單",
+    tags=["春大直商場工務巡檢"],
+)
+def list_batches(
+    sheet_key:  str,
+    year_month: Optional[str] = Query(None, description="篩選年月，如 2026/04"),
+    db: Session = Depends(get_db),
+):
+    if sheet_key not in VALID_KEYS:
+        raise HTTPException(status_code=404, detail=f"未知的 sheet_key: {sheet_key}")
+
+    q = db.query(MallFIBatch).filter(MallFIBatch.sheet_key == sheet_key)
+    if year_month:
+        q = q.filter(MallFIBatch.inspection_date.like(f"{year_month}%"))
+
+    batches = q.order_by(MallFIBatch.inspection_date.desc()).all()
+
+    # 2026-10-05：異常／待處理改用與每日巡檢表 Drawer 相同的判定（item_kpi）——
+    #   原本 _calc_kpi 沿用同步時的 result_status，溫度、度數被算成異常，清單每天「有異常」。
+    #   item 一次查完，不再每個場次查一次。
+    from app.services.mall_daily_inspection_sheet import item_kpi, ragic_record_url
+
+    items_by_batch: dict[str, list[MallFIItem]] = {b.ragic_id: [] for b in batches}
+    ids = list(items_by_batch.keys())
+    for i in range(0, len(ids), 500):
+        for it in db.query(MallFIItem).filter(MallFIItem.batch_ragic_id.in_(ids[i:i + 500])).all():
+            items_by_batch.setdefault(it.batch_ragic_id, []).append(it)
+
+    result = []
+    for b in batches:
+        kpi = item_kpi(sheet_key, items_by_batch.get(b.ragic_id, []))
+        result.append({
+            "id":              b.ragic_id,
+            "inspection_date": b.inspection_date,
+            "inspector_name":  b.inspector_name,
+            "start_time":      b.start_time,
+            "end_time":        b.end_time,
+            "work_hours":      b.work_hours,
+            "ragic_url":       ragic_record_url(sheet_key, b.ragic_id),
+            "total":           kpi["total"],
+            "checked":         kpi["checked"],
+            "abnormal":        kpi["abnormal"],
+            "pending":         kpi["pending"],
+            "unchecked":       kpi["unchecked"],
+            "measure":         kpi["measure"],
+            "completion_rate": kpi["completion_rate"],
+        })
+    return result
+
+
+# ── GET /{sheet_key}/batches/{batch_id}  — 場次明細（樓層 TAB 點列開 Drawer）────
+# 2026-10-05 新增：比照整棟巡檢 FloorInspectionList 的明細 Drawer。
+# 每個欄位的 status 用 item_status（與每日巡檢表 Drawer、月曆格同一套判定）。
+# 附圖：商場 sync 不收「拍照」欄位（_extract_check_items 排除），DB 沒有檔名，這裡不回附圖。
+
+@router.get(
+    "/{sheet_key}/batches/{batch_id}",
+    summary="取得指定樓層單一巡檢場次明細",
+    tags=["春大直商場工務巡檢"],
+)
+def get_batch_detail(
+    sheet_key: str,
+    batch_id:  str,
+    db: Session = Depends(get_db),
+):
+    from app.services.mall_daily_inspection_sheet import item_kpi, item_status, ragic_record_url
+
+    if sheet_key not in VALID_KEYS:
+        raise HTTPException(status_code=404, detail=f"未知的 sheet_key: {sheet_key}")
+    b = (
+        db.query(MallFIBatch)
+        .filter(MallFIBatch.sheet_key == sheet_key, MallFIBatch.ragic_id == batch_id)
+        .first()
+    )
+    if not b:
+        raise HTTPException(status_code=404, detail=f"找不到場次：{batch_id}")
+    items = (
+        db.query(MallFIItem)
+        .filter(MallFIItem.batch_ragic_id == b.ragic_id)
+        .order_by(MallFIItem.seq_no)
+        .all()
+    )
+    return {
+        "batch": {
+            "ragic_id":        b.ragic_id,
+            "sheet_key":       b.sheet_key,
+            "inspection_date": b.inspection_date,
+            "inspector_name":  b.inspector_name,
+            "start_time":      b.start_time,
+            "end_time":        b.end_time,
+            "work_hours":      b.work_hours,
+            "ragic_url":       ragic_record_url(sheet_key, b.ragic_id),
+        },
+        "kpi":   item_kpi(sheet_key, items),
+        "items": [
+            {
+                "ragic_id":    it.ragic_id,
+                "seq_no":      it.seq_no,
+                "item_name":   it.item_name,
+                "result_raw":  it.result_raw,
+                "status":      item_status(sheet_key, it.item_name, it.result_raw, bool(it.is_note)),
+            }
+            for it in items
+        ],
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ── 工時解析輔助函式 ─────────────────────────────────────────────────────────────
+
+def _parse_minutes(start: str, end: str) -> int:
+    """解析 HH:MM 格式的開始/結束時間，回傳分鐘數差值；格式無效時回傳 0。"""
+    import re
+    def to_min(t: str):
+        m = re.match(r'^(\d{1,2}):(\d{2})$', t.strip())
+        if m:
+            return int(m.group(1)) * 60 + int(m.group(2))
+        return None
+    s, e = to_min(start), to_min(end)
+    if s is None or e is None:
+        return 0
+    diff = e - s
+    return diff + 24 * 60 if diff < 0 else diff
+
+
+# GET /dashboard/summary  — 跨 Sheet 統計（index.tsx Dashboard 用）
+# ══════════════════════════════════════════════════════════════════════════════
+
+@router.get(
+    "/dashboard/summary",
+    summary="取得全體商場工務巡檢 Dashboard 統計（跨 Sheet）",
+    tags=["春大直商場工務巡檢"],
+)
+def get_dashboard_summary(
+    target_date: Optional[str] = Query(
+        None,
+        description="查詢日期 YYYY/MM/DD，不填則取今日"
+    ),
+    db: Session = Depends(get_db),
+):
+    if not target_date:
+        target_date = date.today().strftime("%Y/%m/%d")
+
+    results = []
+    for cfg in SHEET_CONFIGS:
+        key = cfg.key
+
+        # 指定日期的所有場次
+        day_batches = (
+            db.query(MallFIBatch)
+            .filter(
+                MallFIBatch.sheet_key == key,
+                MallFIBatch.inspection_date == target_date,
+            )
+            .all()
+        )
+
+        total_batches   = len(day_batches)
+        total_items     = 0
+        checked_items   = 0
+        abnormal_items  = 0
+        pending_items   = 0
+        unchecked_items = 0
+        total_minutes   = 0
+
+        for b in day_batches:
+            items = (
+                db.query(MallFIItem)
+                .filter(
+                    MallFIItem.batch_ragic_id == b.ragic_id,
+                    MallFIItem.is_note == False,
+                )
+                .all()
+            )
+            kpi = _calc_kpi(items)
+            total_items     += kpi["total"]
+            checked_items   += kpi["checked"]
+            abnormal_items  += kpi["abnormal"]
+            pending_items   += kpi["pending"]
+            unchecked_items += kpi["unchecked"]
+            total_minutes   += _parse_minutes(b.start_time or "", b.end_time or "")
+
+        completion_rate = (
+            round(checked_items / total_items * 100, 1) if total_items > 0 else 0.0
+        )
+
+        results.append({
+            "key":             key,
+            "floor":           cfg.floor,
+            "title":           cfg.title,
+            "total_batches":   total_batches,
+            "total_items":     total_items,
+            "checked_items":   checked_items,
+            "abnormal_items":  abnormal_items,
+            "pending_items":   pending_items,
+            "unchecked_items": unchecked_items,
+            "completion_rate": completion_rate,
+            "has_data":        total_batches > 0,
+            "total_minutes":   total_minutes,
+        })
+
+    return {"target_date": target_date, "sheets": results}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GET /dashboard/monthly-summary  — 跨 Sheet 月份統計（Dashboard 查詢月份用）
+# ══════════════════════════════════════════════════════════════════════════════
+
+@router.get(
+    "/dashboard/monthly-summary",
+    summary="取得全體商場工務巡檢 Dashboard 月份統計（跨 Sheet）",
+    tags=["春大直商場工務巡檢"],
+)
+def get_dashboard_monthly_summary(
+    month: Optional[str] = Query(
+        None,
+        description="查詢月份 YYYY-MM（如 2026-05），不填則取當月"
+    ),
+    db: Session = Depends(get_db),
+):
+    """
+    依查詢月份回傳各 Sheet 的月份 KPI：
+      - 本月登錄筆數（batch count）
+      - 缺漏天數（days without any batch）
+      - 最近登錄日期（within the query month）
+      - 缺漏日期清單
+      - 今日 / 末日是否登錄
+      - 近 7 天趨勢
+    """
+    from app.core.date_utils import get_month_range, to_ragic_year_month
+
+    today = date.today()
+    if not month:
+        month = today.strftime("%Y-%m")
+
+    start_date, end_date = get_month_range(month)
+    year_month  = to_ragic_year_month(month)        # "2026/05"
+    is_current  = (start_date.year == today.year and start_date.month == today.month)
+    missing_end = today if is_current else end_date
+    trend_ref   = today if is_current else end_date
+    ref_date_str = today.strftime("%Y/%m/%d") if is_current else end_date.strftime("%Y/%m/%d")
+
+    results = []
+    for cfg in SHEET_CONFIGS:
+        key = cfg.key
+
+        # ── 查詢月份所有 batch ─────────────────────────────────────────────
+        month_batches = (
+            db.query(MallFIBatch)
+            .filter(
+                MallFIBatch.sheet_key == key,
+                MallFIBatch.inspection_date.like(f"{year_month}%"),
+            )
+            .all()
+        )
+        month_count = len(month_batches)
+
+        # ── 查詢月份內最近登錄日期 ─────────────────────────────────────────
+        latest_batch_date = ""
+        if month_batches:
+            latest_batch_date = max(b.inspection_date for b in month_batches)
+
+        # ── 已登錄日期集合 ─────────────────────────────────────────────────
+        inspected_days = {b.inspection_date for b in month_batches}
+
+        # ── 今日（或末日）是否已登錄 ──────────────────────────────────────
+        has_today = ref_date_str in inspected_days
+
+        # ── 缺漏日期（月初到 missing_end）────────────────────────────────
+        missing_days: list[str] = []
+        current = start_date
+        while current <= missing_end:
+            d_str = current.strftime("%Y/%m/%d")
+            if d_str not in inspected_days:
+                missing_days.append(d_str)
+            current += timedelta(days=1)
+
+        # ── 近 7 天趨勢（依 trend_ref 往前 7 天）─────────────────────────
+        trend_7d = []
+        for i in range(6, -1, -1):
+            d     = trend_ref - timedelta(days=i)
+            d_str = d.strftime("%Y/%m/%d")
+            trend_7d.append({"date": d_str, "has_record": d_str in inspected_days})
+
+        results.append({
+            "key":               key,
+            "floor":             cfg.floor,
+            "title":             cfg.title,
+            "month_count":       month_count,
+            "missing_count":     len(missing_days),
+            "missing_days":      missing_days,
+            "latest_batch_date": latest_batch_date,
+            "has_today":         has_today,
+            "is_current_month":  is_current,
+            "trend_7d":          trend_7d,
+            "has_data":          month_count > 0,
+        })
+
+    return {
+        "month":      month,
+        "year_month": year_month,
+        "sheets":     results,
+    }
+
+
+# ── GET /daily-sheet ──────────────────────────────────────────────────────────
+# 2026-10-04 新增：Dashboard 月曆格的下一層 —— 指定日期，以 Excel「2.2商場-每日巡檢表」
+# 原版型呈現 5 張 Sheet 的實際巡檢結果。對應邏輯見 services/mall_daily_inspection_sheet.py。
+
+@router.get(
+    "/daily-sheet",
+    summary="取得指定日期的商場工務每日巡檢表（Excel 版型）",
+    tags=["春大直商場工務巡檢"],
+)
+def get_daily_sheet(
+    date: str = Query(..., description="巡檢日期 YYYY-MM-DD 或 YYYY/MM/DD"),
+    db: Session = Depends(get_db),
+):
+    from app.services.mall_daily_inspection_sheet import build_daily_sheet, normalize_date
+
+    insp_date = normalize_date(date)
+    if not insp_date:
+        raise HTTPException(status_code=422, detail=f"日期格式錯誤：{date}")
+
+    batches = (
+        db.query(MallFIBatch)
+        .filter(MallFIBatch.inspection_date == insp_date)
+        .all()
+    )
+    items_by_batch: dict[str, list[MallFIItem]] = {b.ragic_id: [] for b in batches}
+    if batches:
+        for it in (
+            db.query(MallFIItem)
+            .filter(MallFIItem.batch_ragic_id.in_(list(items_by_batch.keys())))
+            .all()
+        ):
+            items_by_batch.setdefault(it.batch_ragic_id, []).append(it)
+
+    data = build_daily_sheet(batches, items_by_batch)
+    return {"date": insp_date, **data}
+
+
+# ── GET /daily-form ───────────────────────────────────────────────────────────
+
+@router.get(
+    "/daily-form",
+    summary="取得每日巡檢表彙整（依標準模板與各 Sheet 比對）",
+    tags=["春大直商場工務巡檢"],
+)
+def get_daily_form(
+    year:            int           = Query(...,  ge=2020, le=2030, description="年份"),
+    month:           int           = Query(...,  ge=1,    le=12,   description="月份（1–12）"),
+    inspection_date: Optional[str] = Query(None, description="指定日期 YYYY/MM/DD；不填則取整月彙整"),
+    db: Session = Depends(get_db),
+):
+    """
+    依標準模板（2.2商場-每日巡檢表.xlsx）與各樓層 Sheet 實際巡檢資料比對。
+
+    inspection_date 不填 → 整月所有 batch 彙整。
+    inspection_date 填入 → 只取該日 batch；無資料時所有列 matched=False。
+    """
+    from app.services.mall_daily_inspection_builder import build_mall_daily_inspection_table
+    rows = build_mall_daily_inspection_table(
+        year=year, month=month, db=db,
+        inspection_date=inspection_date,
+    )
+    has_data_today = any(r["matched"] for r in rows) if inspection_date else None
+    return {
+        "year":            year,
+        "month":           month,
+        "inspection_date": inspection_date,
+        "has_data_today":  has_data_today,
+        "rows":            rows,
+    }
+
+
+# ── 月曆格共用建表（2026-10-05）──────────────────────────────────────────────
+# ⚠ 異常／待處理的判定改用 services/mall_daily_inspection_sheet（與 Drawer 同一套）：
+#   原本直接加總同步時的 result_status，溫度、濕度、電表度數這類「填數字」欄位一律被當成異常，
+#   造成 4F、1F~3F 幾乎每天 ⚠、點進 Drawer 卻找不到異常項目。
+# 完成率維持原口徑（已填項目 ÷ 全部項目）。
+# 每格附 issues（哪一項異常），供月曆格 Tooltip 直接顯示。
+
+def _build_daily_calendar(year: int, month: int, db: Session) -> dict:
+    import calendar as cal_mod
+    from app.services.mall_daily_inspection_sheet import build_daily_sheet, day_issues
+
+    max_day           = cal_mod.monthrange(year, month)[1]
+    year_month_prefix = f"{year}/{month:02d}/"
+
+    month_batches = (
+        db.query(MallFIBatch)
+        .filter(MallFIBatch.inspection_date.like(f"{year_month_prefix}%"))
+        .all()
+    )
+    items_by_batch: dict[str, list[MallFIItem]] = {b.ragic_id: [] for b in month_batches}
+    ids = list(items_by_batch.keys())
+    for i in range(0, len(ids), 500):
+        for it in db.query(MallFIItem).filter(MallFIItem.batch_ragic_id.in_(ids[i:i + 500])).all():
+            items_by_batch.setdefault(it.batch_ragic_id, []).append(it)
+
+    by_date: dict[int, list[MallFIBatch]] = {}
+    for b in month_batches:
+        try:
+            day = int(b.inspection_date.split("/")[2])
+        except (IndexError, ValueError):
+            continue
+        by_date.setdefault(day, []).append(b)
+
+    issues_by_day: dict[int, dict[str, list[dict]]] = {}
+    for day, bl in by_date.items():
+        sheet = build_daily_sheet(bl, {b.ragic_id: items_by_batch.get(b.ragic_id, []) for b in bl})
+        issues_by_day[day] = day_issues(sheet)
+
+    sheets_out = []
+    for cfg in SHEET_CONFIGS:
+        key   = cfg.key
+        daily: dict[str, dict] = {}
+        for day in range(1, max_day + 1):
+            day_batches = [b for b in by_date.get(day, []) if b.sheet_key == key]
+            if not day_batches:
+                daily[str(day)] = {
+                    "has_record":      False,
+                    "completion_rate": 0,
+                    "abnormal_count":  0,
+                    "pending_count":   0,
+                    "issues":          [],
+                }
+                continue
+
+            total_items = checked_items = 0
+            for b in day_batches:
+                kpi = _calc_kpi(items_by_batch.get(b.ragic_id, []))
+                total_items   += kpi["total"]
+                checked_items += kpi["checked"]
+
+            issues = issues_by_day.get(day, {}).get(key, [])
+            daily[str(day)] = {
+                "has_record":      True,
+                "completion_rate": round(checked_items / total_items * 100) if total_items > 0 else 0,
+                "abnormal_count":  sum(1 for x in issues if x["status"] == "abnormal"),
+                "pending_count":   sum(1 for x in issues if x["status"] == "pending"),
+                "issues":          issues,
+            }
+
+        sheets_out.append({
+            "key":   key,
+            "floor": cfg.floor,
+            "title": cfg.title,
+            "daily": daily,
+        })
+
+    return {
+        "year":    year,
+        "month":   month,
+        "max_day": max_day,
+        "sheets":  sheets_out,
+    }
+
+
+# ── GET /daily-calendar ───────────────────────────────────────────────────────
+
+@router.get(
+    "/daily-calendar",
+    summary="取得指定月份每日巡檢狀況（各樓層 × 各日，Dashboard 月曆格用）",
+    tags=["春大直商場工務巡檢"],
+)
+def get_daily_calendar(
+    year:  int = Query(..., ge=2020, le=2030, description="年份"),
+    month: int = Query(..., ge=1,    le=12,   description="月份（1–12）"),
+    db: Session = Depends(get_db),
+):
+    """
+    回傳當月每日 × 每個 Sheet（樓層）的巡檢狀態，供 Dashboard 月曆格使用。
+    回傳：
+      max_day   — 當月天數
+      sheets[]  — 各樓層，含 daily{day_str: {has_record, completion_rate, abnormal_count, pending_count, issues[]}}
+    """
+    # 2026-10-05：改用與每日巡檢表 Drawer 相同的判定（_build_daily_calendar）
+    return _build_daily_calendar(year, month, db)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GET /daily-form  — 每日巡檢表彙整（year + month 篩選）
+# ══════════════════════════════════════════════════════════════════════════════
+
+@router.get(
+    "/daily-form",
+    summary="取得商場工務每日巡檢表彙整（依標準模板與各 Sheet 比對）",
+    tags=["春大直商場工務巡檢"],
+)
+def get_daily_form(
+    year:            int           = Query(...,  ge=2020, le=2030, description="年份"),
+    month:           int           = Query(...,  ge=1,    le=12,   description="月份（1–12）"),
+    inspection_date: Optional[str] = Query(None, description="指定日期 YYYY/MM/DD；不填則取整月彙整"),
+    db: Session = Depends(get_db),
+):
+    """
+    依標準模板（2.2商場-每日巡檢表.xlsx）與各 Sheet 實際巡檢資料比對。
+
+    inspection_date 不填 → 整月所有 batch 彙整。
+    inspection_date 填入 → 只取該日 batch；無資料時所有列 matched=False。
+    回傳額外欄位 has_data_today（bool）供前端顯示提示橫幅。
+    """
+    from app.services.mall_daily_inspection_builder import build_mall_daily_inspection_table
+    rows = build_mall_daily_inspection_table(
+        year=year, month=month, db=db,
+        inspection_date=inspection_date,
+    )
+    has_data_today = any(r["matched"] for r in rows) if inspection_date else None
+    return {
+        "year":            year,
+        "month":           month,
+        "inspection_date": inspection_date,
+        "has_data_today":  has_data_today,
+        "rows":            rows,
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GET /daily-calendar  — 月份每日巡檢狀況格（Dashboard 用）
+# ══════════════════════════════════════════════════════════════════════════════
+
+@router.get(
+    "/daily-calendar",
+    summary="取得指定月份每日巡檢狀況（各 Sheet × 各日，Dashboard 月曆格用）",
+    tags=["春大直商場工務巡檢"],
+)
+def get_daily_calendar(
+    year:  int = Query(..., ge=2020, le=2030, description="年份"),
+    month: int = Query(..., ge=1,    le=12,   description="月份（1–12）"),
+    db: Session = Depends(get_db),
+):
+    """
+    回傳當月每日 × 每個 Sheet 的巡檢狀態，供 Dashboard 月曆格使用。
+    回傳：
+      max_day  — 當月天數
+      sheets[] — 各 Sheet，含 daily{day_str: {has_record, completion_rate, abnormal_count, pending_count, issues[]}}
+    """
+    # 2026-10-05：改用與每日巡檢表 Drawer 相同的判定（_build_daily_calendar）
+    return _build_daily_calendar(year, month, db)

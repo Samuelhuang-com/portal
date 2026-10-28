@@ -1,0 +1,1384 @@
+"""
+大直工務部 — 共用 Service Layer
+
+功能：
+  1. Ragic 資料抓取（大直工務部主表）
+  2. 欄位清洗與標準化（unified field mapping）
+  3. 完成狀態判定（可集中配置）
+  4. 報修類型標準化 mapping
+  5. 客房房號解析
+  6. 4.1 ~ 4.4 統計公式
+  7. Dashboard 統計
+
+資料來源：
+  https://ap12.ragic.com/soutlet001/lequn-public-works/8?PAGEID=fV8
+
+⚠️  欄位名稱對應說明：
+    - 實際 Ragic 欄位名稱請用 /api/v1/dazhi-repair/raw-fields 確認
+    - 若名稱不符，只需修改下方 RK_* 常數或 RK_ALIASES，業務邏輯不需改動
+"""
+from __future__ import annotations
+
+import logging
+import re
+from datetime import datetime, date
+from typing import Any, Optional
+
+from app.core.config import settings
+from app.services.ragic_adapter import RagicAdapter
+from app.services.ragic_data_service import (
+    get_merged_records, parse_images, safe_work_days_to_hours,
+    IMAGE_FIELD_DAZHI, invalidate,
+)
+
+logger = logging.getLogger(__name__)
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 1. 可集中配置的常數
+# ═════════════════════════════════════════════════════════════════════════════
+
+# ── 1-A. 未結案狀態白名單（2026-09-02 改為判定的單一依據）─────────────────────
+# 來源：Ragic 飯店報修表「處理狀態」欄的「未結案」清單篩選條件
+#   https://ap12.ragic.com/soutlet001/lequn-public-works/8
+# 業主確認（2026-09-02）在該 5 項之外，另把「辦驗未通過」也視為未結案
+#   —— 驗收沒過代表還要重做，語意上尚未完成。
+#
+# ⚠️ 為什麼改成「未結案白名單」而不是原本的「完成白名單」：
+#   舊寫法是 status ∈ COMPLETED_STATUSES **且** completed_at 非空。
+#   但 completed_at 取自 Ragic 的「維修日期／驗收日期」，這兩欄**非必填、
+#   也不代表結案**（2026-09-02 業主確認），飯店表單本來就沒有「結案日期」。
+#   於是 14 筆「已辦驗」因為沒填日期被判成未完成，Portal 與 PPT 附表都算進去。
+#   現在完成與否**只看處理狀態**，completed_at 退回只負責「何時完成」（見 finished_at）。
+UNFINISHED_STATUSES: set[str] = {
+    "待修中", "待料中", "委外處理", "進行中", "待辦驗",
+    "辦驗未通過",   # 2026-09-02 業主指示：驗收未通過仍屬未結案
+}
+
+# 完成狀態集合 —— 保留作為文件與相容用途，**判定已不使用**（改用 UNFINISHED_STATUSES）
+COMPLETED_STATUSES: set[str] = {
+    # 大直工務部 Ragic 實際出現的狀態（2026-04-21 確認）
+    "結案",
+    "已辦驗",   # 已辦理驗收，視為完成
+    # 通用完成狀態（保留相容）
+    "已驗收", "已結案", "完修", "已完成", "完成",
+}
+
+# ── 1-A-2. 排除狀態集合（不計入任何統計，明細總表仍可查閱）──────────────────
+# 設計原因：「取消」案件既非「完成」也非「待辦」。
+#   若歸入已完成 → 3月開單4月取消，3月完成率虛高；4月上月未完成少算
+#   若歸入未完成 → 案件永遠殘留在待辦清單，污染未完成統計
+#   正確做法   → 從統計中排除，視為「不計算」，只在明細總表保留記錄
+EXCLUDED_STATUSES: set[str] = {
+    "取消",
+    "作廢",   # 2026-06-17 新增：Ragic 端作廢的案件不計入統計，明細總表仍保留
+}
+
+
+def is_unfinished(status: str) -> bool:
+    """判斷案件是否尚未結案（集中配置，改此處即全部生效）"""
+    return status.strip() in UNFINISHED_STATUSES
+
+
+def is_completed(status: str) -> bool:
+    """判斷案件是否已完成（集中配置，改此處即全部生效）。
+
+    2026-09-02 起改為「非排除、且不在未結案白名單內」——
+    與 Ragic 清單篩選同語意（未勾選的狀態就不算未結案）。
+    處理狀態空白者依此規則歸為已結案（飯店現有 2 筆）。
+    """
+    s = status.strip()
+    return s not in EXCLUDED_STATUSES and s not in UNFINISHED_STATUSES
+
+
+def is_excluded(status: str) -> bool:
+    """判斷案件是否排除於統計之外（取消等）"""
+    return status.strip() in EXCLUDED_STATUSES
+
+
+def finished_at(c):
+    """『何時不再是未結案』的時間近似值；仍未結案或已排除則回傳 None。
+
+    ⚠️ completed_at 取自 Ragic「維修日期／驗收日期」，非必填、不等於結案日期，
+       因此**不能**拿來判斷「有沒有完成」，只能拿來判斷「什麼時候完成」。
+       缺值時退回 occurred_at（保守假設報修當月即處理完），
+       否則無日期的已結案案件會永遠留在歷史月份的未結案清單裡。
+
+    close_days 不受影響 —— 仍只在 completed_at 真的有值時才計算，
+    所以 4.2 結案時間統計不會被 occurred_at 代理值污染。
+    """
+    status = getattr(c, "status", "") or ""
+    if is_excluded(status) or is_unfinished(status):
+        return None
+    return getattr(c, "completed_at", None) or getattr(c, "occurred_at", None)
+
+
+# ── 1-B. 報修類型標準化 mapping ───────────────────────────────────────────────
+# key = 可能出現的原始值（小寫比對），value = 標準類型名稱
+REPAIR_TYPE_MAPPING: dict[str, str] = {
+    # 建築
+    "建築": "建築", "結構": "建築", "外牆": "建築", "玻璃": "建築",
+    "門窗": "建築", "電梯": "建築", "手扶梯": "建築", "招牌": "建築",
+    # 衛廁
+    "衛廁": "衛廁", "衛厠": "衛廁",   # 衛厠 為常見錯字（廁 vs 厠）
+    "廁所": "衛廁", "馬桶": "衛廁", "洗手": "衛廁",
+    "洗手槽": "衛廁", "烘手機": "衛廁", "哺乳": "衛廁",
+    "蓮蓬頭": "衛廁", "浴缸": "衛廁", "花灑": "衛廁", "淋浴": "衛廁",
+    "水龍頭": "衛廁", "洗臉": "衛廁", "面盆": "衛廁",
+    "浴廁": "衛廁", "浴室玻璃": "衛廁",   # 浴廁拉門 / 浴室玻璃門 → 衛廁（非建築）
+    # 消防
+    "消防": "消防", "瓦斯": "消防", "偵煙": "消防", "灑水": "消防",
+    "鐵捲門": "消防", "安全門": "消防", "緊急": "消防",
+    # 空調
+    "空調": "空調", "冷氣": "空調", "冷卻": "空調", "送風": "空調",
+    "補風": "空調", "導流": "空調", "分離式": "空調",
+    # 機電
+    "機電": "機電", "機房": "機電", "發電機": "機電", "配電": "機電",
+    # 給排水
+    "給排水": "給排水", "漏水": "給排水", "水塔": "給排水",
+    "污水": "給排水", "排水": "給排水", "給水": "給排水",
+    # 排煙
+    "排煙": "排煙", "靜電機": "排煙", "水洗機": "排煙",
+    "截油槽": "排煙", "排煙管": "排煙",
+    # 監控
+    "監控": "監控", "cctv": "監控", "攝影": "監控", "監視": "監控",
+    # 弱電
+    "弱電": "弱電", "交換機": "弱電", "電話": "弱電", "網路": "弱電",
+    # 照明
+    "照明": "照明", "燈": "照明", "燈具": "照明", "路燈": "照明",
+    # 停車
+    "停車": "停車", "車牌": "停車", "繳費機": "停車", "柵欄": "停車",
+    # 其他
+    "人流": "其他", "入金機": "其他",
+    # 專櫃
+    "專櫃": "專櫃", "租戶": "專櫃", "承租": "專櫃",
+    # 公區
+    "公區": "公區", "公共": "公區", "lobby": "公區", "大廳": "公區",
+    "廣場": "公區", "梯廳": "公區", "接待": "公區", "露台": "公區",
+    # 後勤空間
+    "後勤": "後勤空間", "辦公室": "後勤空間", "儲藏": "後勤空間",
+    "員工餐": "後勤空間",
+}
+
+# 類型顯示順序（固定，不可隨意更改）
+REPAIR_TYPE_ORDER = [
+    "建築", "衛廁", "消防", "空調", "機電", "給排水",
+    "排煙", "監控", "弱電", "照明", "停車", "其他",
+    "專櫃", "凍&藏類設備", "內裝", "廚房&吧台設備",
+    "會議設備", "瓦斯類設備", "公區", "後勤空間",
+]
+
+# 各類型的「MD內容」說明文字（依規格書 Markdown 表格）
+REPAIR_TYPE_EXAMPLES: dict[str, str] = {
+    "建築":       "連續壁 / 外觀玻璃 / 外觀門窗 / 電梯 / 手扶梯 / 招牌 / 植栽",
+    "衛廁":       "馬桶 / 洗手槽 / 烘手機 / 哺給乳室 / 衛生紙架 / 淋浴間 / 浴簾 / 吹風機",
+    "消防":       "偵煙感知器 / 灑水頭 / 鐵捲門 / 安全門 / 緊急廣播系統 / 煙霧偵測器 / R型受信總機 / 消防圖控 / 緊急消防加壓送水泵",
+    "空調":       "主機 / 送風機 / 冷卻水塔 / 補風機 / 分離式冷氣 / 導流風機",
+    "機電":       "機房 / 緊急發電機 / 不斷電系統 / 鍋爐",
+    "給排水":     "漏水 / 水塔 / 污水處理 / 排水系統 / 截油槽",
+    "排煙":       "靜電機 / 水洗機 / 截油槽 / 排煙管 / 排風扇",
+    "監控":       "CCTV / 監控主機",
+    "弱電":       "交換機 / 電話 / 網路 / 插座",
+    "照明":       "建築外觀 / 燈具",
+    "停車":       "車牌辨識 / 自動繳費機 / 柵欄機",
+    "其他":       "人流計數器 / 入金機",
+    "專櫃":       "",
+    "凍&藏類設備": "冰箱（冷凍 & 藏）/ 凍庫 / 飲料機 / 製冰機",
+    "內裝":       "天花板 / 牆壁 / 地板 / 門 / 窗簾 / 遮光簾 / 紗簾 / 家具 / 櫃子 / 地毯 / 保險箱",
+    "廚房&吧台設備": "蒸烤爐 / 洗碗機 / 封口機 / 洗杯機 / 層架 / 捕蚊燈 / 熱水壺 / 咖啡機",
+    "會議設備":   "宴會顯示器 / 投影機 / 電視 / 影音設備",
+    "瓦斯類設備": "天然氣緊急遮斷系統 / 熱盤櫃 / 單口爐 / 雙口爐",
+    "公區":       "電扶梯、商場、停車場 / 機廳 / 廚場、飯店、LOBBY / 4F接待區 / 4F餐台 / 各層梯廳",
+    "後勤空間":   "辦公室 / 儲藏室 / 員工餐區 / 更衣室",
+}
+
+
+def normalize_repair_type(raw_type: str, title: str = "", floor: str = "") -> str:
+    """
+    報修類型標準化。
+    優先用 raw_type 欄位做 mapping；無法判定時再用 title / floor 關鍵字補判。
+    最後歸到「其他」。
+    """
+    # 嘗試直接 mapping
+    for keyword, std_type in REPAIR_TYPE_MAPPING.items():
+        if keyword.lower() in raw_type.lower():
+            return std_type
+
+    # 嘗試標題關鍵字補判
+    combined = (title + " " + floor).lower()
+    for keyword, std_type in REPAIR_TYPE_MAPPING.items():
+        if keyword.lower() in combined:
+            return std_type
+
+    # fallback
+    return raw_type.strip() if raw_type.strip() else "其他"
+
+
+# ── 1-C. 客房類別欄位對應（12 個標準分類）─────────────────────────────────────
+ROOM_REPAIR_CATEGORIES = [
+    "客房房門", "客房消防", "客房設備", "客房傢俱",
+    "客房燈", "客房牆", "面盆/台面", "浴廁", "浴間",
+    "天地壁", "配電盤", "環境",
+]
+
+# 客房判定關鍵字（出現在發生樓層或標題）
+ROOM_FLOOR_KEYWORDS = [
+    "5f", "6f", "7f", "8f", "9f", "10f",
+    "5樓", "6樓", "7樓", "8樓", "9樓", "10樓", "客房",
+]
+
+
+# ── 1-D. 案件大小型分類邏輯（可後續改為依「核可層級」判斷）──────────────────
+def is_large_repair(case: "RepairCase") -> bool:
+    """
+    判斷是否為中大型報修。
+    初版邏輯：total_fee > 0 視為中大型，否則視為小型。
+    後續可改此函式，畫面不需修改。
+    """
+    return case.total_fee > 0
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 2. Ragic 欄位名稱常數（命名依實際 Ragic 回傳中文 key）
+# ─────────────────────────────────────────────────────────────────────────────
+# ⚠️  若 Ragic 回傳的欄位名稱與下方不符，只需修改這裡，不需改業務邏輯。
+# ⚠️  可用 /api/v1/dazhi-repair/raw-fields 確認實際 key 名稱。
+# ═════════════════════════════════════════════════════════════════════════════
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ⚠️  欄位名稱已依 /ping 端點回傳的實際 Ragic key 更新（2026-04-16）
+#     實際資料範例 record #2315：
+#       報修單編號 / 報修日期 / 報修人 / 反應單位 / 維修地點 / (備註/詳細說明)
+#       類型(array) / 維修人員 / 維修日期 / 處理狀態 / 維修天數(天)
+#       驗收人員 / 驗收日期 / 處理說明
+# ─────────────────────────────────────────────────────────────────────────────
+
+# 主要欄位
+RK_CASE_NO         = "報修單編號"          # Ragic: 報修單編號
+RK_TITLE           = "(備註/詳細說明)"     # Ragic: (備註/詳細說明) — 報修說明當作標題
+RK_REPORTER        = "報修人"              # Ragic: 報修人
+RK_REPAIR_TYPE     = "類型"               # Ragic: 類型（值為 JSON array，e.g. ["蓮蓬頭"]）
+RK_FLOOR           = "維修地點"            # Ragic: 維修地點（值為房號，e.g. "526"）
+RK_OCCURRED_AT     = "報修日期"            # Ragic: 報修日期（決定年月分組）
+RK_RESPONSIBLE     = "反應單位"            # Ragic: 反應單位（e.g.房務部，部門）；人員統計用 RK_CLOSER（維修人員）
+RK_WORK_HOURS      = "花費工時"            # 備用工時欄位；主欄位「維修天數」在 __init__ 直接讀取
+RK_STATUS          = "處理狀態"            # Ragic: 處理狀態（e.g. "結案"）
+RK_OUTSOURCE_FEE   = "委外費用"            # 此 Sheet 無此欄，回傳 0
+RK_MAINTENANCE_FEE = "維修費用"            # 此 Sheet 無此欄，回傳 0
+RK_ACCEPTOR        = "驗收人員"            # Ragic: 驗收人員
+RK_ACCEPT_STATUS   = "驗收說明"            # Ragic: 驗收說明
+RK_CLOSER          = "維修人員"            # Ragic: 維修人員（執行修繕的人）
+RK_DEDUCTION_ITEM  = "扣款事項"            # 此 Sheet 無此欄
+RK_DEDUCTION_FEE   = "扣款費用"            # 此 Sheet 無此欄，回傳 0
+RK_FINANCE_NOTE    = "處理說明"            # Ragic: 處理說明
+# 結案時間：優先用維修日期，再用驗收日期
+RK_COMPLETED_AT    = "維修日期"            # Ragic: 維修日期（完修時間）
+RK_CLOSE_DATE      = "驗收日期"            # Ragic: 驗收日期（備用）
+RK_ACCEPT_DATE     = "驗收日期"            # Ragic: 驗收日期
+# Ragic 清單另有獨立的「狀態」欄（結案／待辦／作廢），與「處理狀態」是兩個不同欄位。
+# 「作廢」只會寫在這一欄，因此排除判定必須一併讀取。
+RK_RECORD_STATUS   = "狀態"                # Ragic 清單「狀態」欄
+
+# 別名對應（第一個 alias = Ragic 實際欄位名，後面為備用）
+RK_ALIASES: dict[str, list[str]] = {
+    RK_CASE_NO:         ["報修單編號", "報修編號", "編號", "案件編號"],
+    RK_TITLE:           ["(備註/詳細說明)", "備註/詳細說明", "備註", "標題", "報修名稱"],
+    RK_REPORTER:        ["報修人", "報修人姓名", "申報人"],
+    RK_REPAIR_TYPE:     ["類型", "報修類型", "類別"],
+    RK_FLOOR:           ["維修地點", "發生樓層", "樓層", "位置"],
+    RK_OCCURRED_AT:     ["報修日期", "發生時間", "報修時間", "申報時間"],
+    RK_RESPONSIBLE:     ["處理工務", "反應單位", "負責單位", "負責人", "承辦單位"],  # 2026-04-23: 處理工務優先
+    RK_WORK_HOURS:      ["花費工時", "工時"],    # 備用；主欄位「維修天數(天)」/「維修天數」在 __init__ 手動讀取
+    RK_STATUS:          ["處理狀態"],
+    RK_OUTSOURCE_FEE:   ["委外費用", "外包費用"],
+    RK_MAINTENANCE_FEE: ["維修費用", "費用"],
+    RK_ACCEPTOR:        ["驗收人員", "驗收者", "驗收人"],
+    RK_ACCEPT_STATUS:   ["驗收說明", "驗收", "驗收結果", "驗收狀態"],
+    RK_CLOSER:          ["維修人員", "結案人", "結案者"],
+    RK_DEDUCTION_ITEM:  ["扣款事項"],
+    RK_DEDUCTION_FEE:   ["扣款費用"],
+    RK_FINANCE_NOTE:    ["處理說明", "財務備註", "備註"],
+    RK_COMPLETED_AT:    ["完工時間", "維修日期", "結案時間", "完成時間"],  # 實測：完工時間優先，維修日期備用
+    RK_CLOSE_DATE:      ["驗收日期", "結案日期", "完成日期"],
+    RK_ACCEPT_DATE:     ["驗收日期"],
+    RK_RECORD_STATUS:   ["狀態"],
+}
+
+
+def _get_field(raw: dict, canonical_key: str, fallback: str = "") -> Any:
+    """
+    從 Ragic 原始 dict 取值，支援多別名。
+    找不到時回傳 fallback。
+    """
+    aliases = RK_ALIASES.get(canonical_key, [canonical_key])
+    for alias in aliases:
+        if alias in raw:
+            return raw[alias]
+    return fallback
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 3. 資料清洗工具函式
+# ═════════════════════════════════════════════════════════════════════════════
+
+def _str(v: Any) -> str:
+    """
+    任意值轉字串，dict 取 value/label，list 用逗號連接。
+    ⚠️ 不可用 `v.get("value") or ...`，因為 0 / 0.0 / False 是 falsy，
+       會被誤判為「無值」。改用 `is not None` 判斷（與 luqun_repair_service 一致）。
+    """
+    if v is None:
+        return ""
+    if isinstance(v, list):
+        return ", ".join(_str(x) for x in v)
+    if isinstance(v, dict):
+        # 優先取 "value" key（即使值為 0 也要保留）
+        if "value" in v and v["value"] is not None:
+            return _str(v["value"])
+        if "label" in v and v["label"] is not None:
+            return _str(v["label"])
+        return ""
+    return str(v).strip()
+
+
+def _float(v: Any) -> float:
+    """字串/數字轉 float，失敗回傳 0.0"""
+    try:
+        cleaned = re.sub(r"[,，$＄\s]", "", _str(v))
+        return float(cleaned) if cleaned else 0.0
+    except (ValueError, TypeError):
+        return 0.0
+
+
+def _parse_datetime(v: Any) -> Optional[datetime]:
+    """解析各種日期格式，失敗回傳 None"""
+    s = _str(v)
+    if not s:
+        return None
+    formats = [
+        "%Y/%m/%d %H:%M:%S", "%Y/%m/%d %H:%M", "%Y/%m/%d",
+        "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d",
+        "%Y.%m.%d",
+    ]
+    for fmt in formats:
+        try:
+            return datetime.strptime(s.strip(), fmt)
+        except (ValueError, TypeError):
+            continue
+    # 嘗試只取前 10 碼
+    try:
+        return datetime.strptime(s[:10], "%Y/%m/%d")
+    except Exception:
+        pass
+    try:
+        return datetime.strptime(s[:10], "%Y-%m-%d")
+    except Exception:
+        pass
+    logger.debug(f"[DazhiRepair] 無法解析日期: {s!r}")
+    return None
+
+
+def _parse_room_no(floor: str, title: str) -> tuple[str, str]:
+    """
+    從發生樓層或標題中解析「房號」與「樓層」。
+    回傳 (room_no, floor_normalized)
+
+    房號規則：3~4 位數字（e.g. 501, 1023）
+    客房樓層：5F~10F
+    """
+    combined = f"{floor} {title}"
+    # 尋找房號（3~4 位數字）
+    room_match = re.search(r"\b([5-9]\d{2}|10\d{2})\b", combined)
+    room_no = room_match.group(1) if room_match else ""
+
+    # 標準化樓層
+    floor_match = re.search(r"(\d+)[Ff樓]", combined)
+    floor_num = floor_match.group(1) if floor_match else ""
+    floor_normalized = f"{floor_num}F" if floor_num else floor.strip()
+
+    return room_no, floor_normalized
+
+
+def _is_room_case(floor: str, title: str, repair_type: str) -> bool:
+    """判斷案件是否屬於客房報修"""
+    combined = (floor + " " + title + " " + repair_type).lower()
+    for kw in ROOM_FLOOR_KEYWORDS:
+        if kw.lower() in combined:
+            return True
+    # 有解析出客房房號也算
+    room_no, _ = _parse_room_no(floor, title)
+    return bool(room_no)
+
+
+def _classify_room_category(repair_type: str, title: str) -> str:
+    """將案件歸類到客房報修的 12 個分類之一"""
+    combined = (repair_type + " " + title).lower()
+    category_keywords: dict[str, list[str]] = {
+        "客房房門":  ["房門", "門鎖", "門縫", "門框"],
+        "客房消防":  ["消防", "偵煙", "灑水", "火警"],
+        "客房設備":  ["設備", "電視", "冰箱", "電話", "保險箱", "電熱水器"],
+        "客房傢俱":  ["傢俱", "家具", "床", "椅", "桌", "衣櫃", "沙發"],
+        "客房燈":    ["燈", "電源", "插座", "開關"],
+        "客房牆":    ["牆", "壁紙", "油漆", "牆面"],
+        "面盆/台面": ["面盆", "台面", "水龍頭", "鏡面"],
+        "浴廁":      ["浴廁", "馬桶", "洗手", "廁所"],
+        "浴間":      ["浴間", "浴缸", "淋浴", "蓮蓬頭"],
+        "天地壁":    ["天花板", "地板", "地磚", "天地壁"],
+        "配電盤":    ["配電盤", "電箱", "斷路器"],
+        "環境":      ["異味", "噪音", "蟲", "環境"],
+    }
+    for cat, keywords in category_keywords.items():
+        for kw in keywords:
+            if kw in combined:
+                return cat
+    return "客房設備"  # default fallback
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 4. RepairCase 資料類別（標準化後的案件）
+# ═════════════════════════════════════════════════════════════════════════════
+
+class RepairCase:
+    """標準化後的單筆報修案件（大直工務部）"""
+    __slots__ = (
+        "ragic_id", "case_no", "title", "reporter_name", "repair_type",
+        "floor", "occurred_at", "responsible_unit", "work_hours",
+        "status", "record_status", "outsource_fee", "maintenance_fee",
+        "acceptor", "accept_status", "closer",
+        "deduction_item", "deduction_fee", "finance_note",
+        "total_fee", "is_completed_flag", "is_excluded_flag", "completed_at", "close_days",
+        "pending_days",
+        "year", "month",
+        "occ_year", "occ_month",   # 報修月份（永遠以 occurred_at 為準，供 Dashboard/報修統計用）
+        "is_room_case", "room_no", "floor_normalized", "room_category",
+        "images",
+        "_raw",
+    )
+
+    def __init__(self, ragic_id: str, raw: dict):
+        self._raw = raw
+        self.ragic_id = ragic_id
+
+        # 基本欄位
+        self.case_no          = _str(_get_field(raw, RK_CASE_NO))
+        self.title            = _str(_get_field(raw, RK_TITLE))
+        self.reporter_name    = _str(_get_field(raw, RK_REPORTER))
+        self.floor            = _str(_get_field(raw, RK_FLOOR))
+        self.occurred_at      = _parse_datetime(_get_field(raw, RK_OCCURRED_AT))
+        self.responsible_unit = _str(_get_field(raw, RK_RESPONSIBLE))
+        # 工時讀取優先順序：
+        #   ① 維修工時（大直 Ragic 實際欄位，直接以小時為單位）
+        #   ② 維修天數(天) × 24（含括號，天→小時）
+        #   ③ 維修天數 × 24（不含括號備用）
+        #   ④ 花費工時 / 工時（其他 sheet 備用）
+        _work_hrs = _float(raw.get("維修工時", ""))
+        if _work_hrs <= 0:
+            _work_hrs = safe_work_days_to_hours(
+                raw.get("維修天數(天)") or raw.get("維修天數", "")
+            )
+        if _work_hrs <= 0:
+            _work_hrs = _float(_get_field(raw, RK_WORK_HOURS))
+        self.work_hours = _work_hrs
+        self.status           = _str(_get_field(raw, RK_STATUS))
+        # Ragic「狀態」欄：與「處理狀態」並存，作廢只寫在此欄
+        self.record_status    = _str(_get_field(raw, RK_RECORD_STATUS))
+        self.outsource_fee    = _float(_get_field(raw, RK_OUTSOURCE_FEE))
+        self.maintenance_fee  = _float(_get_field(raw, RK_MAINTENANCE_FEE))
+        self.acceptor         = _str(_get_field(raw, RK_ACCEPTOR))
+        self.accept_status    = _str(_get_field(raw, RK_ACCEPT_STATUS))
+        self.closer           = _str(_get_field(raw, RK_CLOSER))
+        self.deduction_item   = _str(_get_field(raw, RK_DEDUCTION_ITEM))
+        self.deduction_fee    = _float(_get_field(raw, RK_DEDUCTION_FEE))
+        self.finance_note     = _str(_get_field(raw, RK_FINANCE_NOTE))
+
+        # 報修類型標準化
+        raw_type = _str(_get_field(raw, RK_REPAIR_TYPE))
+        self.repair_type = normalize_repair_type(raw_type, self.title, self.floor)
+
+        # 衍生欄位
+        self.total_fee        = self.outsource_fee + self.maintenance_fee
+        # 排除判定採 OR：「處理狀態」或 Ragic「狀態」欄任一命中即不計入統計。
+        # 不改動完成判定 —— 完成與否仍只看「處理狀態」。
+        self.is_excluded_flag = is_excluded(self.status) or is_excluded(self.record_status)
+
+        # 結案時間：優先用 RK_COMPLETED_AT，再 RK_CLOSE_DATE，再 RK_ACCEPT_DATE
+        completed_raw = (
+            _get_field(raw, RK_COMPLETED_AT) or
+            _get_field(raw, RK_CLOSE_DATE)   or
+            _get_field(raw, RK_ACCEPT_DATE)
+        )
+        self.completed_at = _parse_datetime(completed_raw)
+
+        # 完工判定：以「處理狀況」(status) 為唯一依據
+        # completed_at 保留供查閱/close_days 計算，不作為完成判斷條件
+        self.is_completed_flag = is_completed(self.status)
+
+        # 結案天數（close_days = completed_at - occurred_at）
+        if self.is_completed_flag and self.occurred_at and self.completed_at:
+            delta = self.completed_at - self.occurred_at
+            self.close_days = round(delta.total_seconds() / 86400, 2)
+        else:
+            self.close_days = None
+
+        # 未完成天數（pending_days = now - occurred_at，僅 completed_at 為空的案件）
+        if self.completed_at is None and self.occurred_at:
+            self.pending_days = round(
+                (datetime.now() - self.occurred_at).total_seconds() / 86400
+            )
+        else:
+            self.pending_days = None
+
+        # 統計月份：結案案件以「結案月份」為準，未結案以「報修月份」為準
+        # （與 luqun_repair_service 口徑一致）
+        if self.is_completed_flag and self.completed_at:
+            self.year  = self.completed_at.year
+            self.month = self.completed_at.month
+        elif self.occurred_at:
+            self.year  = self.occurred_at.year
+            self.month = self.occurred_at.month
+        else:
+            self.year  = None
+            self.month = None
+
+        # 報修月份（4.1 報修統計、Dashboard「本月新增」專用；永遠以 occurred_at 為準）
+        if self.occurred_at:
+            self.occ_year  = self.occurred_at.year
+            self.occ_month = self.occurred_at.month
+        else:
+            self.occ_year  = None
+            self.occ_month = None
+
+        # 客房相關
+        self.is_room_case     = _is_room_case(self.floor, self.title, raw_type)
+        self.room_no, self.floor_normalized = _parse_room_no(self.floor, self.title)
+        self.room_category    = _classify_room_category(raw_type, self.title) if self.is_room_case else ""
+
+        # 圖片（Ragic 「上傳圖片」附件欄位，用 file.jsp API 取實際檔案）
+        self.images = parse_images(
+            raw.get(IMAGE_FIELD_DAZHI) or raw.get("上傳圖片.1") or raw.get("維修照上傳") or raw.get("維修照"),
+            server=settings.RAGIC_DAZHI_REPAIR_SERVER_URL,
+            account=settings.RAGIC_DAZHI_REPAIR_ACCOUNT,
+        )
+
+    def to_dict(self) -> dict:
+        """轉換為 API 回傳用 dict"""
+        return {
+            "ragic_id":         self.ragic_id,
+            "case_no":          self.case_no,
+            "title":            self.title,
+            "reporter_name":    self.reporter_name,
+            "repair_type":      self.repair_type,
+            "floor":            self.floor,
+            "floor_normalized": self.floor_normalized,
+            "occurred_at":      self.occurred_at.strftime("%Y/%m/%d %H:%M") if self.occurred_at else "",
+            "responsible_unit": self.responsible_unit,
+            "work_hours":       self.work_hours,
+            "status":           self.status,
+            "record_status":    self.record_status,
+            "outsource_fee":    self.outsource_fee,
+            "maintenance_fee":  self.maintenance_fee,
+            "total_fee":        self.total_fee,
+            "acceptor":         self.acceptor,
+            "accept_status":    self.accept_status,
+            "closer":           self.closer,
+            "deduction_item":   self.deduction_item,
+            "deduction_fee":    self.deduction_fee,
+            "finance_note":     self.finance_note,
+            "is_completed":     self.is_completed_flag,
+            "is_excluded":      self.is_excluded_flag,
+            "completed_at":     self.completed_at.strftime("%Y/%m/%d") if self.completed_at else "",
+            "close_days":       self.close_days,
+            "pending_days":     self.pending_days,
+            "year":             self.year,
+            "month":            self.month,
+            "is_room_case":     self.is_room_case,
+            "room_no":          self.room_no,
+            "room_category":    self.room_category,
+            "images":           self.images,
+        }
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 5. Ragic 資料抓取
+# ═════════════════════════════════════════════════════════════════════════════
+
+def _get_adapter() -> RagicAdapter:
+    return RagicAdapter(
+        sheet_path=settings.RAGIC_DAZHI_REPAIR_PATH,
+        api_key=settings.RAGIC_API_KEY,
+        server_url=settings.RAGIC_DAZHI_REPAIR_SERVER_URL,
+        account=settings.RAGIC_DAZHI_REPAIR_ACCOUNT,
+    )
+
+
+_CACHE_KEY = "dazhi_repair"
+
+async def fetch_all_cases() -> list[RepairCase]:
+    """
+    從 Ragic 抓取全部報修案件（主表 + detail merge），清洗後回傳 RepairCase list。
+    採 stale-while-revalidate：首次回傳主表資料，背景完成 detail merge 後更新 cache。
+    """
+    adapter = _get_adapter()
+    records = await get_merged_records(
+        adapter=adapter,
+        cache_key=_CACHE_KEY,
+        limit=500,
+        extra_params={"PAGEID": settings.RAGIC_DAZHI_REPAIR_PAGEID},
+    )
+
+    cases: list[RepairCase] = []
+    for record in records:
+        rid = record.get("_ragic_id", "")
+        try:
+            cases.append(RepairCase(ragic_id=rid, raw=record))
+        except Exception as exc:
+            logger.warning(f"[DazhiRepair] 案件 {rid} 清洗失敗，跳過: {exc}")
+
+    logger.info(f"[DazhiRepair] 共載入 {len(cases)} 筆案件")
+    return cases
+
+
+def invalidate_cache() -> None:
+    """清除大直報修 cache（sync 後呼叫）"""
+    invalidate(_CACHE_KEY)
+
+
+async def fetch_raw_fields() -> dict:
+    """取得第一筆資料的 key 列表（供 debug / 欄位確認用）"""
+    adapter = _get_adapter()
+    try:
+        raw_data = await adapter.fetch_all(
+            limit=2,
+            extra_params={"PAGEID": settings.RAGIC_DAZHI_REPAIR_PAGEID},
+        )
+        for rid, row in raw_data.items():
+            return {"ragic_id": rid, "fields": list(row.keys()), "sample": row}
+    except Exception as exc:
+        logger.error(f"[DazhiRepair] fetch_raw_fields 失敗: {exc}")
+    return {}
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 6. 過濾輔助
+# ═════════════════════════════════════════════════════════════════════════════
+
+def _stat_year(c) -> Optional[int]:
+    """統計年份：已完成(status) AND 有 completed_at → 完工年；否則 → 報修年。
+    動態計算確保相容：
+      ① 服務層 RepairCase（c.year 已正確）
+      ② 舊版 DB DazhiRepairCase（c.year = occurred_at.year，需從 completed_at 補算）
+    """
+    if is_completed(getattr(c, 'status', '')):
+        at = getattr(c, 'completed_at', None)
+        if at is not None:
+            return at.year
+    return getattr(c, 'year', None)
+
+
+def _stat_month(c) -> Optional[int]:
+    """統計月份：已完成(status) AND 有 completed_at → 完工月；否則 → 報修月。
+    動態計算確保相容：
+      ① 服務層 RepairCase（c.month 已正確）
+      ② 舊版 DB DazhiRepairCase（c.month = occurred_at.month，需從 completed_at 補算）
+    """
+    if is_completed(getattr(c, 'status', '')):
+        at = getattr(c, 'completed_at', None)
+        if at is not None:
+            return at.month
+    return getattr(c, 'month', None)
+
+
+def filter_cases(
+    cases: list[RepairCase],
+    year: Optional[int] = None,
+    month: Optional[int] = None,
+) -> list[RepairCase]:
+    """依統計年/月過濾（直接從 completed_at 計算，不依賴儲存的 year/month）"""
+    result = cases
+    if year is not None:
+        result = [c for c in result if _stat_year(c) == year]
+    if month is not None:
+        result = [c for c in result if _stat_month(c) == month]
+    return result
+
+
+def filter_cases_up_to(
+    cases: list[RepairCase],
+    year: int,
+    month: int,
+) -> list[RepairCase]:
+    """回傳 occurred_at <= 指定年月底的所有案件"""
+    return [
+        c for c in cases
+        if c.year is not None and (
+            c.year < year or (c.year == year and c.month <= month)
+        )
+    ]
+
+
+def get_years(cases: list[RepairCase]) -> list[int]:
+    """取得資料中所有年份（排序後）"""
+    years = sorted({c.year for c in cases if c.year is not None}, reverse=True)
+    return years if years else [datetime.now().year]
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 7. Dashboard 統計
+# ═════════════════════════════════════════════════════════════════════════════
+
+def compute_dashboard(
+    all_cases: list[RepairCase],
+    year: int,
+    month: int,
+) -> dict:
+    """
+    Dashboard KPI + 圖表資料。
+    month 若為 0 表示顯示全年。
+    """
+    # 排除「取消」等不計入統計的案件（明細總表仍完整保留）
+    all_cases = [c for c in all_cases if not c.is_excluded_flag]
+
+    # ── 本月相關案件口徑：① 上月累計未完成 + ⑤ 本月報修 ──────────────────────
+    # 與 4.1 報修統計 Tab 口徑對齊；全年檢視（month=0）沿用舊邏輯
+    # 使用 occ_year/occ_month（= occurred_at 年月）避免跨月結案被重複計入
+    if month:
+        _prev_y, _prev_m = _month_offset(year, month, -1)
+        _cases_up_to_prev = [
+            c for c in all_cases
+            if c.occ_year is not None
+            and (c.occ_year < _prev_y or (c.occ_year == _prev_y and c.occ_month <= _prev_m))
+        ]
+        # 上期未結：以 status 判斷（不再使用 completed_at 時間戳）
+        _prev_uncompleted = [c for c in _cases_up_to_prev if not is_completed(c.status)]
+        # 本月新增：永遠以「報修月份」(occ_year/occ_month) 為準，避免跨月結案雙重計入
+        _this_month_new   = [c for c in all_cases if c.occ_year == year and c.occ_month == month]
+        this_month_cases  = _prev_uncompleted + _this_month_new
+    else:
+        # 全年模式：口徑與 3.1/3.3 一致，依「報修日期」(occ_year) 為準
+        this_month_cases = [c for c in all_cases if c.occ_year == year]
+
+    # ── KPI ──────────────────────────────────────────────────────────────────
+    total       = len(this_month_cases)
+    # 已完成：status in COMPLETED_STATUSES（以處理狀況為準）
+    completed   = sum(1 for c in this_month_cases if is_completed(c.status))
+    # 待辦驗：先算，供 uncompleted 扣除（三類互斥）
+    pending_verify_cases = [c for c in this_month_cases if c.status.strip() == "待辦驗"]
+    pending_verify_count = len(pending_verify_cases)
+    # 未完成 = 總數 - 已完成 - 待辦驗（三類互斥，不重疊）
+    uncompleted = total - completed - pending_verify_count
+    room_cases  = [c for c in this_month_cases if c.is_room_case]
+
+    close_days_list = [
+        c.close_days for c in this_month_cases
+        if is_completed(c.status) and c.close_days is not None
+    ]
+    avg_close_days = (
+        round(sum(close_days_list) / len(close_days_list), 2)
+        if close_days_list else None
+    )
+
+    total_fee        = sum(c.total_fee    for c in this_month_cases)
+    # 工時口徑：與費用相同，依「驗收月」(completed_at) 統計；
+    # 不可用 this_month_cases（含上月未結舊案，其工時為 0 且跨月完工案件不在其中）
+    hours_month_cases = filter_cases(all_cases, year, month if month else None)
+    total_work_hours = round(sum(c.work_hours for c in hours_month_cases), 2)
+
+    # ── 近 12 個月趨勢 ────────────────────────────────────────────────────────
+    # 趨勢以「報修月份」(occ_year/occ_month) 為準，反映各月實際新增報修件數
+    # completed 口徑與 4.1 報修統計一致：_completed_in（completed_at 落在該月）
+    # 避免「跨月結案」被計入報修月，造成完成率虛高
+    trend_12m = []
+    for m_offset in range(11, -1, -1):
+        y, m = _month_offset(year, month if month else datetime.now().month, -m_offset)
+        mc = [c for c in all_cases if c.occ_year == y and c.occ_month == m]
+        trend_12m.append({
+            "label":     f"{y}/{m:02d}",
+            "year":      y,
+            "month":     m,
+            "total":     len(mc),
+            "completed": sum(1 for c in mc if _completed_in(c, y, m)),
+        })
+
+    # ── 類型分布（口徑與 3.3 報修類型統計 Tab 一致：occ_year/occ_month 報修日期）──
+    if month:
+        _type_tab_cases = [c for c in all_cases if c.occ_year == year and c.occ_month == month]
+    else:
+        _type_tab_cases = [c for c in all_cases if c.occ_year == year]
+    _type_dist_raw: dict[str, int] = {}
+    for c in _type_tab_cases:
+        t = c.repair_type or "其他"
+        _type_dist_raw[t] = _type_dist_raw.get(t, 0) + 1
+    # 依 REPAIR_TYPE_ORDER 排序，未在清單內的排後面
+    type_dist: dict[str, int] = {
+        t: _type_dist_raw[t] for t in REPAIR_TYPE_ORDER if t in _type_dist_raw
+    } | {t: v for t, v in _type_dist_raw.items() if t not in REPAIR_TYPE_ORDER}
+
+    # ── 樓層分布 ──────────────────────────────────────────────────────────────
+    floor_dist: dict[str, int] = {}
+    for c in this_month_cases:
+        key = c.floor_normalized or c.floor or "未知"
+        floor_dist[key] = floor_dist.get(key, 0) + 1
+
+    # ── 狀態分布 ──────────────────────────────────────────────────────────────
+    status_dist: dict[str, int] = {}
+    for c in this_month_cases:
+        status_dist[c.status] = status_dist.get(c.status, 0) + 1
+
+    # ── 未完成 Top10（status 非完成非排除，依等待天數降序）──────────────────────
+    all_uncompleted = [c for c in all_cases
+                       if not is_completed(c.status) and not c.is_excluded_flag and c.occurred_at]
+    all_uncompleted.sort(
+        key=lambda x: (datetime.now() - x.occurred_at).total_seconds(),
+        reverse=True,
+    )
+    top_uncompleted = [c.to_dict() for c in all_uncompleted[:10]]
+
+    # ── 高費用 Top10 ──────────────────────────────────────────────────────────
+    fee_list = sorted(this_month_cases, key=lambda x: x.total_fee, reverse=True)
+    top_fee = [c.to_dict() for c in fee_list[:10] if c.total_fee > 0]
+
+    # ── 高工時 Top10（口徑與 total_work_hours 一致：驗收月）──────────────────────
+    hours_list = sorted(hours_month_cases, key=lambda x: x.work_hours, reverse=True)
+    top_hours = [c.to_dict() for c in hours_list[:10] if c.work_hours > 0]
+
+    # ── 當月費用（口徑與「金額統計」Tab 一致：c.year/c.month，結案以結案月份為準）
+    # 注意：不可用 this_month_cases（含上月未結），費用必須用獨立的「當月完工」口徑
+    fee_month_cases = filter_cases(all_cases, year, month if month else None)
+    month_outsource_fee     = round(sum(c.outsource_fee   for c in fee_month_cases), 2)
+    month_maintenance_fee   = round(sum(c.maintenance_fee for c in fee_month_cases), 2)
+    month_deduction_fee     = round(sum(c.deduction_fee   for c in fee_month_cases), 2)
+    month_deduction_counter = 0.0  # 大直目前 Ragic 無此欄位
+    month_total_fee         = round(month_outsource_fee + month_maintenance_fee + month_deduction_fee, 2)
+
+    # ── 累計費用（月份選定時：1月~M月 YTD；全年檢視：全年）────────────────────
+    if month:
+        ytd_cases = [
+            c for c in all_cases
+            if _stat_year(c) == year
+            and _stat_month(c) is not None
+            and _stat_month(c) <= month
+        ]
+    else:
+        ytd_cases = filter_cases(all_cases, year, None)
+
+    annual_outsource    = round(sum(c.outsource_fee   for c in ytd_cases), 2)
+    annual_maintenance  = round(sum(c.maintenance_fee for c in ytd_cases), 2)
+    annual_fee          = round(annual_outsource + annual_maintenance, 2)
+    annual_deduction    = round(sum(c.deduction_fee   for c in ytd_cases), 2)
+
+    # 累計費用明細 — 委外+維修 Top20
+    annual_fee_records = sorted(
+        [c for c in ytd_cases if c.total_fee > 0],
+        key=lambda x: x.total_fee, reverse=True,
+    )
+    annual_fee_detail = [
+        {**c.to_dict(), "outsource_fee": c.outsource_fee, "maintenance_fee": c.maintenance_fee}
+        for c in annual_fee_records[:20]
+    ]
+
+    # 累計扣款費用明細 Top20
+    annual_deduction_detail = [
+        c.to_dict() for c in sorted(
+            [c for c in ytd_cases if c.deduction_fee > 0],
+            key=lambda x: x.deduction_fee, reverse=True,
+        )[:20]
+    ]
+
+    # ── KPI 明細（點擊卡片時用）— 三類互斥，以 status 為準 ───────────────────
+    completed_cases   = [c for c in this_month_cases if is_completed(c.status)]
+    # 未完成明細：排除已完成 AND 排除待辦驗（與 KPI 數字一致）
+    uncompleted_cases = [c for c in this_month_cases
+                         if not is_completed(c.status) and c.status.strip() != "待辦驗"]
+    close_days_cases  = [c for c in completed_cases if c.close_days is not None]
+    # pending_verify_cases / pending_verify_count 已在上方 KPI 區段計算
+    # 工時明細：口徑與 total_work_hours 一致（驗收月），含跨月完工案件
+    work_hours_cases  = sorted([c for c in hours_month_cases if c.work_hours > 0], key=lambda x: x.work_hours, reverse=True)
+
+    return {
+        "kpi": {
+            "total":            total,
+            "completed":        completed,
+            "uncompleted":      uncompleted,
+            "avg_close_days":   avg_close_days,
+            "total_fee":        total_fee,
+            "total_work_hours": total_work_hours,
+            "room_cases":       len(room_cases),
+            # 當月費用（依年+月篩選，月份=0 時為全年合計）
+            "month_outsource_fee":     month_outsource_fee,
+            "month_maintenance_fee":   month_maintenance_fee,
+            "month_deduction_fee":     month_deduction_fee,
+            "month_deduction_counter": month_deduction_counter,
+            "month_total_fee":         month_total_fee,
+            # 年度費用（費用 KPI 卡片用，不受月份篩選影響）
+            "annual_fee":              annual_fee,
+            "annual_outsource_fee":    annual_outsource,
+            "annual_maintenance_fee":  annual_maintenance,
+            "annual_deduction_fee":    annual_deduction,
+            "pending_verify":          pending_verify_count,
+        },
+        # KPI 明細清單
+        "kpi_total_detail":          [c.to_dict() for c in sorted(this_month_cases, key=lambda x: x.occurred_at or datetime.min, reverse=True)],
+        "kpi_completed_detail":      [c.to_dict() for c in sorted(completed_cases,   key=lambda x: x.completed_at or datetime.min, reverse=True)],
+        "kpi_uncompleted_detail":    [c.to_dict() for c in sorted(uncompleted_cases, key=lambda x: x.occurred_at or datetime.min)],
+        "kpi_pending_verify_detail": [c.to_dict() for c in sorted(pending_verify_cases, key=lambda x: x.occurred_at or datetime.min)],
+        "kpi_close_days_detail":     [c.to_dict() for c in sorted(close_days_cases,  key=lambda x: x.close_days or 0, reverse=True)],
+        "kpi_room_detail":           [c.to_dict() for c in sorted(room_cases,        key=lambda x: x.occurred_at or datetime.min, reverse=True)],
+        "kpi_hours_detail":          [c.to_dict() for c in work_hours_cases],
+        "trend_12m":     trend_12m,
+        "type_dist":     [{"type": k, "count": v} for k, v in type_dist.items()],
+        "floor_dist":    [{"floor": k, "count": v} for k, v in sorted(floor_dist.items(), key=lambda x: -x[1])],
+        "status_dist":   [{"status": k, "count": v} for k, v in status_dist.items()],
+        "top_uncompleted": top_uncompleted,
+        "top_fee":         top_fee,
+        "top_hours":       top_hours,
+        # 年度費用明細（點擊 KPI 卡片時用）
+        "annual_fee_detail":        annual_fee_detail,
+        "annual_deduction_detail":  annual_deduction_detail,
+    }
+
+
+def _month_offset(year: int, month: int, offset: int) -> tuple[int, int]:
+    """計算月份偏移（offset 為正數往後、負數往前）"""
+    total = (year * 12 + month - 1) + offset
+    return total // 12, total % 12 + 1
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 8. 4.1 報修統計
+# ═════════════════════════════════════════════════════════════════════════════
+
+def _completed_by(c: RepairCase, y: int, m: int) -> bool:
+    """已結案 且 完成時間截至 (y, m) 月底（含）之前。
+
+    2026-09-02：完成時間改用 finished_at()（completed_at 缺值時退回 occurred_at），
+    完成與否只看處理狀態 —— 時點回溯能力不變。
+    """
+    ft = finished_at(c)
+    if ft is None:
+        return False
+    return ft.year < y or (ft.year == y and ft.month <= m)
+
+
+def _completed_in(c: RepairCase, y: int, m: int) -> bool:
+    """已結案 且 完成時間恰好落在 (y, m) 月（時間來源同 _completed_by）"""
+    ft = finished_at(c)
+    if ft is None:
+        return False
+    return ft.year == y and ft.month == m
+
+
+def compute_repair_stats(
+    all_cases: list[RepairCase],
+    year: int,
+) -> dict:
+    """
+    4.1 報修統計表：1月~12月 × 6項統計指標。
+
+    統計項目：
+    1. 上月累計未完成項目數
+    2. 上月累計未完成項目，於本月結案數
+    3. 累計項目完成率
+    4. 本月報修項目數
+    5. 本月報修項目完成數
+    6. 本月報修項目完成率
+
+    時間規則（2026-09-02 修正）：
+      「是否完成」＝ 處理狀態不在 UNFINISHED_STATUSES 內（不再要求 completed_at 非空）
+      「何時完成」＝ finished_at()：completed_at 優先，缺值退回 occurred_at
+    """
+    # 排除「取消」等不計入統計的案件（明細總表仍完整保留）
+    all_cases = [c for c in all_cases if not c.is_excluded_flag]
+    months_data = {}
+
+    for month in range(1, 13):
+        # 截至上月底的累計案件（以「報修月份」occ_year/occ_month 為準）
+        prev_y, prev_m = _month_offset(year, month, -1)
+        cases_up_to_prev = [
+            c for c in all_cases
+            if c.occ_year is not None and (
+                c.occ_year < prev_y or (c.occ_year == prev_y and c.occ_month <= prev_m)
+            )
+        ]
+        # 1. 上月累計未完成（截至上月底尚未完成）
+        prev_uncompleted = [c for c in cases_up_to_prev if not _completed_by(c, prev_y, prev_m)]
+        prev_uncompleted_count = len(prev_uncompleted)
+
+        # 2. 上月未完成，本月結案數（completed_at 落在本月）
+        closed_from_prev_list = [c for c in prev_uncompleted if _completed_in(c, year, month)]
+        closed_this_month_from_prev = len(closed_from_prev_list)
+
+        # 2b. 上月累計完成數 = ① - ② = 上月累計未完成中，本月後仍未結案的案件
+        prev_remaining_list = [c for c in prev_uncompleted if not _completed_in(c, year, month)]
+        prev_remaining_count = prev_uncompleted_count - closed_this_month_from_prev
+
+        # 3. 累計完成率（截至本月底，以 occurred_at 為報修基準、completed_at 為完工基準）
+        cases_up_to_this = [
+            c for c in all_cases
+            if c.occ_year is not None and (
+                c.occ_year < year or (c.occ_year == year and c.occ_month <= month)
+            )
+        ]
+        cum_total = len(cases_up_to_this)
+        cum_completed = sum(1 for c in cases_up_to_this if _completed_by(c, year, month))
+        cum_rate = round(cum_completed / cum_total * 100, 1) if cum_total > 0 else None
+
+        # 4. 本月報修項目數（以「報修月份」occ_year/occ_month 為準，不受結案月影響）
+        this_month_cases = [
+            c for c in all_cases if c.occ_year == year and c.occ_month == month
+        ]
+        this_total = len(this_month_cases)
+
+        # 5. 本月報修項目完成數（completed_at 落在本月）
+        this_completed_list = [c for c in this_month_cases if _completed_in(c, year, month)]
+        this_completed = len(this_completed_list)
+
+        # 6. 本月未完成數
+        this_uncompleted_list = [c for c in this_month_cases if not _completed_in(c, year, month)]
+        this_uncompleted = len(this_uncompleted_list)
+
+        # 7. 本月完成率
+        this_rate = round(this_completed / this_total * 100, 1) if this_total > 0 else None
+
+        months_data[month] = {
+            "month":                      month,
+            "prev_uncompleted":           prev_uncompleted_count,
+            "closed_from_prev":           closed_this_month_from_prev,
+            "prev_remaining":             prev_remaining_count,
+            "cum_completion_rate":        cum_rate,
+            "this_month_total":           this_total,
+            "this_month_completed":       this_completed,
+            "this_month_uncompleted":     this_uncompleted,
+            "this_month_completion_rate": this_rate,
+            # 明細（可點擊展開）
+            "prev_uncompleted_detail":     [c.to_dict() for c in prev_uncompleted],
+            "closed_from_prev_detail":     [c.to_dict() for c in closed_from_prev_list],
+            "prev_remaining_detail":       [c.to_dict() for c in prev_remaining_list],
+            "this_month_total_detail":       [c.to_dict() for c in this_month_cases],
+            "this_month_completed_detail":   [c.to_dict() for c in this_completed_list],
+            "this_month_uncompleted_detail": [c.to_dict() for c in this_uncompleted_list],
+        }
+
+    return {"year": year, "months": months_data}
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 9. 金額統計（費用類型 × 月份交叉表）
+# ═════════════════════════════════════════════════════════════════════════════
+
+FEE_KEYS = ["outsource_fee", "maintenance_fee", "deduction_fee"]
+FEE_LABELS = {
+    "outsource_fee":   "委外費用",
+    "maintenance_fee": "維修費用",
+    "deduction_fee":   "扣款費用",
+}
+
+
+def compute_fee_stats(all_cases: list, year: int) -> dict:
+    """
+    金額統計：3 項費用 × 12 個月交叉表。
+    回傳 monthly[月份][fee_key] = 金額合計，以及各維度小計。
+    同時回傳每個非零格子的明細案件清單（供點擊展開）。
+
+    注意：大直工務部目前 Ragic 無「扣款專櫃」欄位，
+    若 Ragic 日後補上，將 deduction_counter 加入 FEE_KEYS 即可。
+    """
+    # 排除「取消」等不計入統計的案件
+    all_cases = [c for c in all_cases if not c.is_excluded_flag]
+    monthly_totals: dict[int, dict[str, float]] = {}
+    monthly_detail: dict[str, list[dict]] = {}
+
+    # 費用口徑：依「驗收月」（completed_at 月份）統計，未完成案件費用為 0 不影響結果
+    # filter_cases → _stat_month → 已完成案件用 completed_at.month，符合業主「驗收月」需求
+    for m in range(1, 13):
+        mc = filter_cases(all_cases, year, m)
+        monthly_totals[m] = {
+            fk: round(sum(getattr(c, fk, 0) for c in mc), 2) for fk in FEE_KEYS
+        }
+        for fk in FEE_KEYS:
+            cases_with_fee = [c for c in mc if getattr(c, fk, 0) > 0]
+            cases_with_fee.sort(key=lambda c: getattr(c, fk, 0), reverse=True)
+            if cases_with_fee:
+                monthly_detail[f"{m}_{fk}"] = [c.to_dict() for c in cases_with_fee]
+
+    fee_totals = {fk: round(sum(monthly_totals[m][fk] for m in range(1,13)), 2) for fk in FEE_KEYS}
+    # 月份小計 = 委外費用 + 維修費用（扣款費用不計入小計）
+    _SUBTOTAL_KEYS = ["outsource_fee", "maintenance_fee"]
+    month_totals = {m: round(sum(monthly_totals[m][fk] for fk in _SUBTOTAL_KEYS), 2) for m in range(1,13)}
+    grand_total = round(sum(fee_totals[fk] for fk in _SUBTOTAL_KEYS), 2)
+    return {"year": year, "monthly_totals": monthly_totals, "fee_totals": fee_totals, "month_totals": month_totals, "grand_total": grand_total, "monthly_detail": monthly_detail, "fee_labels": FEE_LABELS}
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 9. 4.2 結案時間統計
+# ═════════════════════════════════════════════════════════════════════════════
+
+def _closed_in(c: RepairCase, y: int, m: int) -> bool:
+    """completed_at 落在 (y, m) 月且有 close_days（用於結案時間統計）"""
+    return _completed_in(c, y, m) and c.close_days is not None
+
+
+def compute_closing_time(
+    all_cases: list[RepairCase],
+    year: int,
+    month: Optional[int] = None,
+) -> dict:
+    """
+    4.2 結案時間統計。
+    時間規則：「結案」= status in COMPLETED_STATUSES AND completed_at 落在指定年/月內。
+    """
+    all_cases = [c for c in all_cases if not c.is_excluded_flag]
+
+    def block(cases):
+        total_days = round(sum(c.close_days for c in cases), 2)
+        return {
+            "closed_count": len(cases),
+            "total_days": total_days,
+            "avg_days": round(total_days / len(cases), 2) if cases else None,
+        }
+
+    monthly: dict = {}
+    for m in range(1, 13):
+        mc_closed = [c for c in all_cases if _closed_in(c, year, m)]
+        monthly[m] = {
+            "small": block([c for c in mc_closed if not is_large_repair(c)]),
+            "large": block([c for c in mc_closed if is_large_repair(c)]),
+        }
+
+    # 彙總列（month=None 時顯示全年；有指定月份時顯示該月）
+    if month is not None:
+        summary_closed = [c for c in all_cases if _closed_in(c, year, month)]
+    else:
+        summary_closed = [c for c in all_cases if _completed_by(c, year, 12) and c.close_days is not None
+                          and c.completed_at and c.completed_at.year == year]
+    small = [c for c in summary_closed if not is_large_repair(c)]
+    large = [c for c in summary_closed if is_large_repair(c)]
+
+    return {
+        "year": year, "month": month,
+        "small": block(small), "large": block(large),
+        "monthly": monthly,
+        "classification_note": "小型=total_fee=0；中大型=total_fee>0",
+    }
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 10. 4.3 報修類型統計
+# ═════════════════════════════════════════════════════════════════════════════
+
+def compute_type_stats(
+    all_cases: list[RepairCase],
+    year: int,
+    month: Optional[int] = None,
+) -> dict:
+    all_cases = [c for c in all_cases if not c.is_excluded_flag]
+    # 口徑與 4.1 報修統計一致：依「報修日期」(occ_year/occ_month) 分組
+    # 這樣 3.3 年度加總 = 3.1 年度「本月報修」加總
+    year_cases = [c for c in all_cases if c.occ_year == year]
+    focus_month = month
+
+    # ── 上月資料（跨年修正）──────────────────────────────────────────────────
+    # focus_month=1 時上月為上一年 12 月，需另外計算；同年則直接從 type_monthly 取
+    _prev_y: Optional[int] = None
+    _prev_m: Optional[int] = None
+    _type_prev_extra: Optional[dict[str, int]] = None   # 跨年時才用
+    if focus_month:
+        _prev_y, _prev_m = _month_offset(year, focus_month, -1)
+        if _prev_y != year:
+            # 上月屬於前一年，type_monthly 無資料，需另外計算
+            _prev_cases = [c for c in all_cases if c.occ_year == _prev_y and c.occ_month == _prev_m]
+            _type_prev_extra = {}
+            for _c in _prev_cases:
+                _type_prev_extra[_c.repair_type] = _type_prev_extra.get(_c.repair_type, 0) + 1
+
+    type_monthly: dict[str, dict[int, int]] = {t: {} for t in REPAIR_TYPE_ORDER}
+    type_monthly_cases: dict[str, dict[int, list]] = {t: {} for t in REPAIR_TYPE_ORDER}
+
+    for case in year_cases:
+        m = case.occ_month   # 報修月份（與 3.1 同口徑）
+        if m is None:
+            continue
+        rt = case.repair_type
+        if rt not in type_monthly:
+            type_monthly[rt] = {}
+            type_monthly_cases[rt] = {}
+        type_monthly[rt][m] = type_monthly[rt].get(m, 0) + 1
+        type_monthly_cases[rt].setdefault(m, []).append(case)
+
+    def _build_row(rt: str) -> dict:
+        monthly    = type_monthly.get(rt, {})
+        row_total  = sum(monthly.values())
+        if focus_month:
+            if _type_prev_extra is not None:
+                # 上月跨年（如 1月→上年12月），從獨立計算的 dict 取值
+                prev_m_val = _type_prev_extra.get(rt, 0)
+            else:
+                prev_m_val = monthly.get(_prev_m, 0)
+            this_m_val = monthly.get(focus_month, 0)
+        else:
+            prev_m_val = 0
+            this_m_val = 0
+        monthly_detail = {
+            m: [c.to_dict() for c in cs]
+            for m, cs in type_monthly_cases.get(rt, {}).items()
+        }
+        return {
+            "type":          rt,
+            "example":       REPAIR_TYPE_EXAMPLES.get(rt, ""),
+            "monthly":       {m: monthly.get(m, 0) for m in range(1, 13)},
+            "monthly_detail": monthly_detail,
+            "row_total":     row_total,
+            "prev_month":    prev_m_val,
+            "this_month":    this_m_val,
+            "cum_pct":       round(row_total / len(year_cases) * 100, 1) if year_cases else 0.0,
+        }
+
+    rows = []
+    year_total = 0
+
+    # ① 依固定順序輸出標準類型
+    for rt in REPAIR_TYPE_ORDER:
+        row = _build_row(rt)
+        rows.append(row)
+        year_total += row["row_total"]
+
+    # ② 輸出不在 REPAIR_TYPE_ORDER 的其他類型（依件數降序）
+    #    保留原始 Ragic 類型名稱（如 "天花板"、"衣櫃拉門" 等）
+    extra_types = sorted(
+        [rt for rt in type_monthly if rt not in REPAIR_TYPE_ORDER],
+        key=lambda rt: -sum(type_monthly[rt].values()),
+    )
+    for rt in extra_types:
+        row = _build_row(rt)
+        if row["row_total"] == 0:
+            continue
+        rows.append(row)
+        year_total += row["row_total"]
+
+    return {
+        "year":         year,
+        "focus_month":  focus_month,
+        "rows":         rows,
+        "year_total":   year_total,
+        "type_order":   REPAIR_TYPE_ORDER,
+        "extra_types":  extra_types,   # 前端可視需要顯示分隔線
+    }
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 11. 4.4 客房報修表
+# ═════════════════════════════════════════════════════════════════════════════
+
+def compute_room_repair_table(
+    all_cases: list[RepairCase],
+    year: int,
+    month: int,
+) -> dict:
+    all_cases = [c for c in all_cases if not c.is_excluded_flag]
+    # 口徑與 3.1/3.3 一致：依「報修日期」(occ_year/occ_month) 篩選
+    room_cases = [c for c in all_cases if c.occ_year == year and c.occ_month == month and c.is_room_case]
+
+    matrix: dict[str, dict[str, list]] = {}
+    unknown_room: list = []
+
+    for case in room_cases:
+        rno = case.room_no
+        cat = case.room_category or "客房設備"
+        if not rno:
+            unknown_room.append(case.to_dict())
+            continue
+        if rno not in matrix:
+            matrix[rno] = {c: [] for c in ROOM_REPAIR_CATEGORIES}
+        if cat not in matrix[rno]:
+            matrix[rno][cat] = []
+        matrix[rno][cat].append(case.to_dict())
+
+    sorted_rooms = sorted(matrix.keys())
+    floors_with_data: set[str] = set()
+    for rno in sorted_rooms:
+        if rno:
+            try:
+                floor_num = int(rno[0]) if len(rno) == 3 else int(rno[:2])
+                floors_with_data.add(f"{floor_num}F")
+            except (ValueError, IndexError):
+                pass
+
+    rows = [
+        {
+            "room_no": rno,
+            "floor": f"{rno[0]}F" if len(rno) == 3 else (f"{rno[:2]}F" if len(rno) >= 2 else "?"),
+            "categories": matrix[rno],
+        }
+        for rno in sorted_rooms
+    ]
+
+    return {
+        "year": year, "month": month,
+        "categories": ROOM_REPAIR_CATEGORIES,
+        "rows": rows,
+        "unknown_room_cases": unknown_room,
+        "floors_with_data": sorted(floors_with_data),
+        "total_room_cases": len(room_cases),
+    }
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 12. 明細查詢
+# ═════════════════════════════════════════════════════════════════════════════
+
+def query_detail(
+    all_cases: list[RepairCase],
+    year: Optional[int] = None,
+    month: Optional[int] = None,
+    repair_type: Optional[str] = None,
+    floor: Optional[str] = None,
+    status: Optional[str] = None,
+    record_status: Optional[str] = None,
+    keyword: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 50,
+    sort_by: str = "occurred_at",
+    sort_desc: bool = True,
+) -> dict:
+    result = all_cases
+    if year is not None:
+        result = [c for c in result if _stat_year(c) == year]
+    if month is not None:
+        result = [c for c in result if _stat_month(c) == month]
+    if repair_type:
+        result = [c for c in result if c.repair_type == repair_type]
+    if floor:
+        result = [c for c in result if floor.lower() in (c.floor + " " + c.floor_normalized).lower()]
+    if status:
+        _statuses = {s.strip() for s in status.split(',')}
+        result = [c for c in result if c.status in _statuses]
+    if record_status:
+        _rec = {s.strip() for s in record_status.split(',')}
+        result = [c for c in result if c.record_status in _rec]
+    if keyword:
+        kw = keyword.lower()
+        result = [c for c in result if kw in c.case_no.lower() or kw in c.title.lower()]
+
+    sort_key_map = {
+        "occurred_at": lambda c: c.occurred_at or datetime.min,
+        "total_fee":   lambda c: c.total_fee,
+        "work_hours":  lambda c: c.work_hours,
+        "close_days":  lambda c: c.close_days or 0.0,
+        "case_no":     lambda c: c.case_no,
+    }
+    result.sort(key=sort_key_map.get(sort_by, sort_key_map["occurred_at"]), reverse=sort_desc)
+
+    total = len(result)
+    start = (page - 1) * page_size
+    return {
+        "total": total, "page": page, "page_size": page_size,
+        "items": [c.to_dict() for c in result[start:start + page_size]],
+    }
+
+
+def get_filter_options(all_cases: list[RepairCase]) -> dict:
+    return {
+        "repair_types": sorted({c.repair_type for c in all_cases if c.repair_type}),
+        "floors":       sorted({(c.floor_normalized or c.floor) for c in all_cases if c.floor}),
+        "statuses":     sorted({c.status for c in all_cases if c.status}),
+        # Ragic「狀態」欄（結案／待辦／作廢）— 與「處理狀態」是不同欄位
+        "record_statuses": sorted({c.record_status for c in all_cases if c.record_status}),
+    }
