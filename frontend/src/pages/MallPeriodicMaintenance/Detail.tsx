@@ -570,7 +570,7 @@ export default function MallPeriodicMaintenanceDetailPage() {
   )
 
   // 分組列要橫跨整列：第一欄 colSpan = 全部欄數，其餘欄 colSpan = 0
-  const tableColumns: ColumnType<TableRow>[] = (columns as unknown as ColumnType<PMItem>[]).map((col, idx) => ({
+  const tableColumns: ColumnType<TableRow>[] = (columns as unknown as ColumnType<TableRow>[]).map((col, idx) => ({
     ...col,
     onCell: (r: TableRow) => (isGroupRow(r) ? { colSpan: idx === 0 ? columns.length : 0 } : {}),
     render: (v: unknown, r: TableRow, i: number) => {
