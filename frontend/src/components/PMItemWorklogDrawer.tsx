@@ -144,6 +144,8 @@ export default function PMItemWorklogDrawer({ open, onClose, item }: PMItemWorkl
             labelStyle={{ width: 90, background: '#f5f7fa', fontWeight: 500 }}
             contentStyle={{ background: '#fff' }}
           >
+            <Descriptions.Item label="項目(母)">{item.parent_no || '—'}</Descriptions.Item>
+            <Descriptions.Item label="項目母項名稱">{item.parent_name || '—'}</Descriptions.Item>
             <Descriptions.Item label="排定日期">{item.scheduled_date || '—'}</Descriptions.Item>
             <Descriptions.Item label="預估耗時">{item.estimated_minutes ? `${item.estimated_minutes} 分` : '—'}</Descriptions.Item>
             <Descriptions.Item label="執行人員">{item.executor_name || '—'}</Descriptions.Item>

@@ -55,6 +55,7 @@ class PMItemOut(BaseModel):
     repair_hours:      Optional[float] = None
     parent_no:         Optional[str] = None
     child_no:          Optional[str] = None
+    parent_name:       Optional[str] = None   # 2026-10-29 新增：項目母項名稱（全棟 Sheet28；商場尚未使用）
 
     class Config:
         from_attributes = True

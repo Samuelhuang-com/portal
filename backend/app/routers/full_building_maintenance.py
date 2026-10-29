@@ -34,7 +34,7 @@ from app.schemas.full_bldg_periodic_maintenance import (
     FullBldgPMScheduleGenerateResult, FullBldgPMScheduleUpdate,
 )
 from app.schemas.periodic_maintenance import (
-    PMBatchOut, PMItemOut, PMBatchKPI, PMBatchDetail,
+    PMBatchOut, PMItemOut, PMBatchKPI, PMBatchDetail, PMParentGroupOut,
     CategoryStat, StatusDistItem, PMStats, PMItemUpdate,
     PMPeriodStats, PMSubPeriodBreakdown, PMIncompleteItem,
     PMYearMatrix, PMYearMatrixMonth,
@@ -272,7 +272,39 @@ def _item_to_out(item: FullBldgPMItem, check_month: int) -> PMItemOut:
         status            = _calc_status(item, check_month),
         ragic_url         = f"{_RAGIC_ITEM_BASE}/{item.ragic_id}" if item.ragic_id else "",
         repair_hours      = item.repair_hours,
+        parent_no         = (item.parent_no or None),
+        child_no          = (item.child_no or None),
+        parent_name       = (item.parent_name or None),
     )
+
+
+def _child_done_for_parent(it: FullBldgPMItem) -> bool:
+    """子項目是否滿足母項目完成條件：執行人員非空，且維修工時為有效數值（≥0；NULL 不計）。
+    規則與商場週期保養相同（2026-10-29 業主確認）。"""
+    return bool((it.executor_name or "").strip()) and it.repair_hours is not None and it.repair_hours >= 0
+
+
+def _build_parent_groups(items: list[FullBldgPMItem]) -> list[PMParentGroupOut]:
+    """以項目(母)分組彙總。傳入的 items 必須是單一批次的全部項目（未經篩選），且已依 seq_no 排序。
+    分組鍵 (batch, parent_no)：此處已限定同一批次，故以 parent_no 分組即可。"""
+    groups: dict[str, list[FullBldgPMItem]] = {}
+    for it in items:
+        pno = (it.parent_no or "").strip()
+        if pno:
+            groups.setdefault(pno, []).append(it)
+    result: list[PMParentGroupOut] = []
+    for pno, children in groups.items():
+        hours = [c.repair_hours for c in children if c.repair_hours is not None]
+        done = sum(1 for c in children if _child_done_for_parent(c))
+        result.append(PMParentGroupOut(
+            parent_no=pno,
+            child_count=len(children),
+            done_count=done,
+            total_repair_hours=round(sum(hours), 2),
+            missing_hours_count=len(children) - len(hours),
+            is_completed=(done == len(children)),
+        ))
+    return result
 
 
 def _calc_kpi(items: list[FullBldgPMItem], check_month: int) -> PMBatchKPI:
@@ -844,6 +876,7 @@ def get_batch_detail(
         kpi        = kpi,
         items      = filtered,
         categories = cats,
+        parent_groups = _build_parent_groups(items),
     )
 
 

@@ -37,6 +37,7 @@ export interface PMItem {
   repair_hours?:     number | null
   parent_no?:        string | null   // 項目(母)，Sheet24
   child_no?:         string | null   // 項目(子)，Sheet24
+  parent_name?:      string | null   // 項目母項名稱，Sheet28（全棟；2026-10-29 新增）
 }
 
 export type PMItemStatus =

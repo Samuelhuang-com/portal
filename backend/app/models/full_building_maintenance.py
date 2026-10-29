@@ -73,6 +73,10 @@ class FullBldgPMItem(Base):
     # ── Sheet 28（子表平鋪視圖）同步欄位 ─────────────────────────────────────
     repair_hours = Column(Float,      nullable=True, comment="維修工時（小時），來源 Ragic Sheet 28")
     sheet28_id   = Column(String(50), nullable=True, comment="Sheet 28 的 Ragic record ID 快取，供下次直接比對")
+    # 2026-10-29 新增：Sheet28 項目(母)／項目(子)／項目母項名稱（nullable；既有列為 NULL，重新同步後寫入）
+    parent_no    = Column(String(50),  nullable=True, default=None, comment="項目(母)，來源 Sheet28；同批次內相同者為同一母項目；空白＝NULL")
+    child_no     = Column(String(50),  nullable=True, default=None, comment="項目(子)，來源 Sheet28，如 20.1；空白＝NULL")
+    parent_name  = Column(String(200), nullable=True, default=None, comment="項目母項名稱，來源 Sheet28；空白＝NULL")
 
     # ── 附圖（2026-07-13 新增，來源 Ragic Sheet 28「圖片上傳」欄位）───────────
     # 格式：JSON list，元素為 {"url": "...", "filename": "..."}（見 ragic_data_service.parse_images）

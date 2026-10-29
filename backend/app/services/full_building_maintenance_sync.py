@@ -92,6 +92,9 @@ CK28L_EXECUTOR     = "執行人員"
 CK28L_NOTE         = "備註"
 CK28L_REPAIR_HOURS = "維修工時"
 CK28L_IMAGES       = "圖片上傳"   # 2026-07-13 新增：只有 fetch_one() 全量結果才有實際檔名清單
+CK28L_PARENT_NO    = "項目(母)"       # 2026-10-29 新增（業主 Ragic 實測）：母項目分組鍵
+CK28L_CHILD_NO     = "項目(子)"       # 2026-10-29 新增（業主 Ragic 實測）：子項目編號，如 20.1
+CK28L_PARENT_NAME  = "項目母項名稱"   # 2026-10-29 新增（業主 Ragic 實測）：母項目名稱
 
 # ── Sheet 28 每筆記錄底下巢狀子表格「維修記錄」欄位 key（僅 fetch_one 才有，實測驗證）──
 # Ragic 內部子表格 key 為 _subtable_<動態數字>（本帳號實測為 _subtable_1015852，
@@ -957,6 +960,9 @@ async def sync_items_from_sheet28() -> dict:
                 target.exec_months_json  = json.dumps(_parse_exec_months(exec_months_raw), ensure_ascii=False)
                 target.repair_hours      = repair_hours
                 target.sheet28_id        = item_id
+                target.parent_no         = _stringify(raw.get(CK28L_PARENT_NO, "")) or None
+                target.child_no          = _stringify(raw.get(CK28L_CHILD_NO, "")) or None
+                target.parent_name       = _stringify(raw.get(CK28L_PARENT_NAME, "")) or None
                 target.images_json       = json.dumps(images, ensure_ascii=False)
                 target.synced_at         = now
 

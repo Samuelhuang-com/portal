@@ -25,19 +25,29 @@ import {
   LinkOutlined,
 } from '@ant-design/icons'
 import { Input } from 'antd'
-import type { ColumnsType } from 'antd/es/table'
+import type { ColumnsType, ColumnType } from 'antd/es/table'
 import dayjs from 'dayjs'
 
 import {
   fetchFullBldgPMBatchDetail, fetchFullBldgPMTaskHistory,
 } from '@/api/fullBuildingMaintenance'
 import type {
-  PMBatchDetail, PMItem, PMItemStatus,
+  PMBatchDetail, PMItem, PMItemStatus, PMParentGroup,
   PMTaskHistory, PMItemHistorySummary,
 } from '@/types/periodicMaintenance'
 import PMItemWorklogDrawer from '@/components/PMItemWorklogDrawer'
 
 const { Title, Text } = Typography
+
+// 2026-10-29 業主裁示：批次明細頁標題列連結指向 Ragic Sheet 28（項目表）
+const RAGIC_SHEET28_BASE = 'https://ap12.ragic.com/soutlet001/periodic-maintenance/28'
+
+/** 批次明細表格列：子項目（PMItem）或母項目分組列（GroupRow）（2026-10-29 比照商場週期保養） */
+type GroupRow = { __group: true; ragic_id: string; group: PMParentGroup; parent_name: string }
+type TableRow = PMItem | GroupRow
+function isGroupRow(r: TableRow): r is GroupRow {
+  return (r as GroupRow).__group === true
+}
 const { Option } = Select
 
 // ── 狀態設定 ──────────────────────────────────────────────────────────────────
@@ -354,6 +364,28 @@ export default function FullBuildingMaintenanceDetailPage() {
     return true
   })
 
+  // 母項目分組列：插在該母項目第一筆「可見」子項目之前；彙總數字取整批（未經篩選）
+  const parentGroupMap = new Map<string, PMParentGroup>(
+    (detail?.parent_groups ?? []).map((g) => [g.parent_no, g] as [string, PMParentGroup])
+  )
+  const parentNameMap = new Map<string, string>()
+  for (const it of detail?.items ?? []) {
+    const pno = (it.parent_no ?? '').trim()
+    const pname = (it.parent_name ?? '').trim()
+    if (pno && pname && !parentNameMap.has(pno)) parentNameMap.set(pno, pname)
+  }
+  const tableRows: TableRow[] = []
+  const groupShown = new Set<string>()
+  for (const it of filteredItems) {
+    const pno = (it.parent_no ?? '').trim()
+    const g = pno ? parentGroupMap.get(pno) : undefined
+    if (g && !groupShown.has(pno)) {
+      groupShown.add(pno)
+      tableRows.push({ __group: true, ragic_id: `group:${pno}`, group: g, parent_name: parentNameMap.get(pno) ?? '' })
+    }
+    tableRows.push(it)
+  }
+
   const tabCounts: Record<string, number> = { all: detail?.items.length ?? 0 }
   for (const it of detail?.items ?? []) {
     tabCounts[it.status] = (tabCounts[it.status] ?? 0) + 1
@@ -375,10 +407,31 @@ export default function FullBuildingMaintenanceDetailPage() {
       render: (v: number) => <Text type="secondary">{v}</Text>,
     },
     {
+      title: '項目(母)',
+      dataIndex: 'parent_no',
+      width: 80,
+      align: 'center',
+      render: (v: string | null | undefined) => v || <Text type="secondary">—</Text>,
+    },
+    {
+      title: '項目(子)',
+      dataIndex: 'child_no',
+      width: 80,
+      align: 'center',
+      render: (v: string | null | undefined) => v || <Text type="secondary">—</Text>,
+    },
+    {
       title: '類別',
       dataIndex: 'category',
       width: 90,
       render: (v: string) => <Tag>{v || '—'}</Tag>,
+    },
+    {
+      title: '項目母項名稱',
+      dataIndex: 'parent_name',
+      width: 160,
+      ellipsis: true,
+      render: (v: string | null | undefined) => v || <Text type="secondary">—</Text>,
     },
     {
       title: '保養項目',
@@ -510,6 +563,31 @@ export default function FullBuildingMaintenanceDetailPage() {
     },
   ]
 
+  const renderGroupRow = (r: GroupRow) => (
+    <Space size={12} wrap>
+      <Tag color="blue" style={{ fontWeight: 600, margin: 0 }}>項目(母) {r.group.parent_no}</Tag>
+      {r.parent_name && <Text strong>{r.parent_name}</Text>}
+      <Text>子項目完成 {r.group.done_count}/{r.group.child_count}</Text>
+      <Text>維修工時 Σ {fmtHours(r.group.total_repair_hours)}</Text>
+      {r.group.missing_hours_count > 0 && (
+        <Text type="warning">缺維修工時 {r.group.missing_hours_count} 筆（未計入）</Text>
+      )}
+      <Tag color={r.group.is_completed ? 'success' : 'default'} style={{ margin: 0 }}>
+        {r.group.is_completed ? '母項目已完成' : '母項目未完成'}
+      </Tag>
+    </Space>
+  )
+
+  // 分組列要橫跨整列：第一欄 colSpan = 全部欄數，其餘欄 colSpan = 0
+  const tableColumns: ColumnType<TableRow>[] = (columns as unknown as ColumnType<TableRow>[]).map((col, idx) => ({
+    ...col,
+    onCell: (r: TableRow) => (isGroupRow(r) ? { colSpan: idx === 0 ? columns.length : 0 } : {}),
+    render: (v: unknown, r: TableRow, i: number) => {
+      if (isGroupRow(r)) return idx === 0 ? renderGroupRow(r) : null
+      return col.render ? col.render(v, r, i) : (v as React.ReactNode)
+    },
+  }))
+
   const kpi = detail?.kpi
   const kpiCards = kpi ? [
     { label: '本月有效',  value: kpi.current_month_total, color: '#1B3A5C' },
@@ -546,10 +624,10 @@ export default function FullBuildingMaintenanceDetailPage() {
           </Title>
         </Space>
         <Space>
-          {detail?.batch.ragic_url && (
+          {detail && (
             <Tooltip title="在 Ragic 查看原始工單">
               <a
-                href={detail.batch.ragic_url}
+                href={RAGIC_SHEET28_BASE}
                 target="_blank"
                 rel="noopener noreferrer"
                 style={{ color: '#4BA8E8', fontSize: 20, lineHeight: 1, display: 'inline-flex', alignItems: 'center' }}
@@ -724,15 +802,15 @@ export default function FullBuildingMaintenanceDetailPage() {
           })}
         </div>
 
-        <Table<PMItem>
+        <Table<TableRow>
           loading={loading}
-          dataSource={filteredItems}
+          dataSource={tableRows}
           rowKey="ragic_id"
-          columns={columns}
+          columns={tableColumns}
           size="small"
-          pagination={{ pageSize: 20, showTotal: (n) => `共 ${n} 筆` }}
+          pagination={{ pageSize: 20, showTotal: () => `共 ${filteredItems.length} 筆` }}
           onRow={(rec) => ({
-            style: { background: STATUS_CFG[rec.status]?.rowBg },
+            style: { background: isGroupRow(rec) ? '#e6f4ff' : STATUS_CFG[rec.status]?.rowBg },
           })}
         />
       </Card>
