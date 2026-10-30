@@ -31,9 +31,14 @@ from app.models.b1f_inspection import B1FInspectionBatch, B1FInspectionItem
 from app.models.b2f_inspection import B2FInspectionBatch, B2FInspectionItem
 from app.models.b4f_inspection import B4FInspectionBatch, B4FInspectionItem
 from app.models.rf_inspection import RFInspectionBatch, RFInspectionItem
+from app.models.b1b4_inspection import B1B4InspectionBatch, B1B4InspectionItem
 from app.services.floor_map.common import batch_out, hhmm, merge_group_status
+from app.services.inspection_sources import path_for_batch_id, numeric_id
 from app.services.floor_map.providers.base import FloorMapProvider
-from app.services.full_building_inspection_template import FULL_BUILDING_DAILY_INSPECTION_TEMPLATE
+from app.services.full_building_inspection_template import (
+    FULL_BUILDING_DAILY_INSPECTION_TEMPLATE, CONTENT_ALIASES,
+)
+from app.services.inspection_field_rules import is_equipment_field
 
 # tab → (Batch model, Item model, Ragic sheet path, 樓層文字)
 SHEETS: dict[str, tuple[Any, Any, str, str]] = {
@@ -41,6 +46,8 @@ SHEETS: dict[str, tuple[Any, Any, str, str]] = {
     "b4f": (B4FInspectionBatch, B4FInspectionItem, "full-building-inspection/2", "B4F"),
     "b2f": (B2FInspectionBatch, B2FInspectionItem, "full-building-inspection/3", "B2F"),
     "b1f": (B1FInspectionBatch, B1FInspectionItem, "full-building-inspection/4", "B1F"),
+    # B1~B4：新樓層（獨立表）；項目依 Ragic 實際欄位動態產生，見 _contents_for
+    "b1b4": (B1B4InspectionBatch, B1B4InspectionItem, "full-building-inspection/8", "B1~B4"),
 }
 
 # (tab, 設備組, 檢查內容) → Ragic 沒有此欄位
@@ -62,6 +69,7 @@ NOTE_FIELD: dict[tuple[str, str], str] = {
     ("b4f", "連續壁"):                   "異常說明2",
     ("b4f", "汙廢水"):                   "異常說明3",
     ("b4f", "下水塔"):                   "異常說明4",
+    ("b1b4", "抽排風設備"):              "異常說明",
 }
 
 SYSTEM: dict[str, str] = {
@@ -71,6 +79,8 @@ SYSTEM: dict[str, str] = {
     "電信設備": "電信",
     "油脂截流槽": "排水", "汙廢水": "排水",
     "連續壁": "結構",
+    "瓦斯設備": "燃氣",
+    "抽排風設備": "抽排",
 }
 
 SHARED: dict[tuple[str, str], str] = {
@@ -82,7 +92,9 @@ _STATUS_ORDER = ("abnormal", "pending", "unchecked", "measure", "normal")
 
 
 def _template_groups() -> list[tuple[str, str]]:
-    return list(dict.fromkeys((t["source_tab"], t["item"]) for t in FULL_BUILDING_DAILY_INSPECTION_TEMPLATE))
+    groups = list(dict.fromkeys((t["source_tab"], t["item"]) for t in FULL_BUILDING_DAILY_INSPECTION_TEMPLATE))
+    groups.append(("b1b4", "抽排風設備"))
+    return groups
 
 
 class FullBuildingInspectionProvider(FloorMapProvider):
@@ -90,7 +102,7 @@ class FullBuildingInspectionProvider(FloorMapProvider):
     label           = "整棟巡檢"
     view_permission = "mall_full_building_inspection_view"
     edit_permission = "mall_full_building_inspection_floor_map_edit"
-    floors          = ["rf", "b1f", "b2f", "b4f"]
+    floors          = ["rf", "b1f", "b2f", "b4f", "b1b4"]
     default_floor   = "b4f"
     attr_fields     = ["機房位置", "供應區域"]
 
@@ -118,6 +130,41 @@ class FullBuildingInspectionProvider(FloorMapProvider):
         return batches, values
 
     @staticmethod
+    def _contents_for(tab: str, item: str, batches: list[Any], values: dict[str, dict[str, Any]]) -> list[tuple[str, str]]:
+        """回傳 (檢查內容, kind) 清單。B1~B4 沒有範本，依場次實際的設備欄位動態產生。"""
+        if tab == "b1b4":
+            seen: set[str] = set()
+            names: list[str] = []
+            for b in batches:
+                vmap = values.get(b.ragic_id, {})
+                for name, it in sorted(vmap.items(), key=lambda kv: kv[1].seq_no):
+                    if name in seen or not is_equipment_field(name, it.result_raw):
+                        continue
+                    seen.add(name)
+                    names.append(name)
+            return [(n, "status") for n in names]
+        out: list[tuple[str, str]] = []
+        for t in FULL_BUILDING_DAILY_INSPECTION_TEMPLATE:
+            if t["source_tab"] != tab or t["item"] != item:
+                continue
+            content = t["check_content"]
+            out.append((content, "unmapped" if (tab, item, content) in UNMAPPED else "status"))
+        return out
+
+    @staticmethod
+    def _combine(items: list[Any]) -> tuple[str, str]:
+        """同一列多個欄位（別名）合併：狀態取最差、文字以「／」串接。"""
+        texts = [(it.result_raw or "").strip() for it in items]
+        if not any(texts):
+            return "unchecked", ""
+        statuses = [
+            (it.result_status if (it.result_raw or "").strip() else "unchecked") or "unchecked"
+            for it in items
+        ]
+        st = next((p for p in _STATUS_ORDER if p in statuses), "unchecked")
+        return st, "／".join(t for t in texts if t)
+
+    @staticmethod
     def _rows(tab: str, item: str, batches: list[Any], values: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
         multi = len(batches) > 1
         note_field = NOTE_FIELD.get((tab, item), "")
@@ -129,35 +176,37 @@ class FullBuildingInspectionProvider(FloorMapProvider):
                 notes.append((f"[{hhmm(b.start_time or '')}] " if multi else "") + txt)
 
         rows = []
-        for t in FULL_BUILDING_DAILY_INSPECTION_TEMPLATE:
-            if t["source_tab"] != tab or t["item"] != item:
-                continue
-            content = t["check_content"]
-            kind = "unmapped" if (tab, item, content) in UNMAPPED else "status"
+        for content, kind in FullBuildingInspectionProvider._contents_for(tab, item, batches, values):
+            fields = CONTENT_ALIASES.get(content, (content,))
             results = []
             if kind == "status":
                 for b in batches:
-                    it = values.get(b.ragic_id, {}).get(content)
-                    raw = (it.result_raw or "").strip() if it else ""
-                    st = (it.result_status if it and raw else "unchecked") or "unchecked"
+                    vmap = values.get(b.ragic_id, {})
+                    present = [vmap[f] for f in fields if f in vmap]
+                    if not present:
+                        # 該場次沒有這個欄位（新資料沒有就不呈現）→ 不列入此場次
+                        continue
+                    st, text = FullBuildingInspectionProvider._combine(present)
                     results.append({
                         "batch_ragic_id": b.ragic_id,
                         "time_label":     hhmm(b.start_time or "") if multi else "",
                         "status":         st,
-                        "text":           raw,
+                        "text":           text,
                         "readings":       [],
                     })
-            if kind == "unmapped":
-                merged = "unmapped"
-            elif not results:
-                merged = "no_record"
-            else:
+                if not results:
+                    # 所有場次都沒有這個欄位 → 整列不呈現
+                    continue
                 sts = [r["status"] for r in results]
                 merged = next((p for p in _STATUS_ORDER if p in sts), "unchecked")
+            else:
+                merged = "unmapped"
             rows.append({
                 "check_content":  content,
-                "result_options": t["result_options"],
-                "minutes":        t["minutes"],
+                "result_options": next((t["result_options"] for t in FULL_BUILDING_DAILY_INSPECTION_TEMPLATE
+                                        if t["source_tab"] == tab and t["item"] == item and t["check_content"] == content), ""),
+                "minutes":        next((t["minutes"] for t in FULL_BUILDING_DAILY_INSPECTION_TEMPLATE
+                                        if t["source_tab"] == tab and t["item"] == item and t["check_content"] == content), 0),
                 "kind":           kind,
                 "status":         merged,
                 "results":        results,
@@ -169,9 +218,11 @@ class FullBuildingInspectionProvider(FloorMapProvider):
     def _group_day(self, tab: str, item: str, batches: list[Any], values: dict) -> dict[str, Any]:
         _B, _I, path, _l = SHEETS[tab]
         rows = self._rows(tab, item, batches, values)
-        bo = [batch_out(path, b.ragic_id, b) for b in batches]
+        bo = [batch_out(path_for_batch_id(b.ragic_id) or path, numeric_id(b.ragic_id), b) for b in batches]
+        # 沒有任何可判定的列（例如場次都沒有此群組的欄位）→ 視為無記錄，不得判成正常
+        has_status = any(r["kind"] == "status" for r in rows)
         return {
-            "status":         merge_group_status(rows, bool(batches)),
+            "status":         merge_group_status(rows, bool(batches) and has_status),
             "rows":           rows,
             "batches":        bo,
             "inspectors":     list(dict.fromkeys(x["inspector"] for x in bo if x["inspector"])),

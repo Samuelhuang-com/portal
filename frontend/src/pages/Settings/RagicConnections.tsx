@@ -56,7 +56,7 @@ const STATUS_TAG: Record<string, { color: string; label: string }> = {
 
 const ALL_MODULES: string[] = [
   '客房保養', '倉庫庫存', '客房保養明細', '飯店週期保養',
-  'B4F巡檢', 'RF巡檢', 'B2F巡檢', 'B1F巡檢',
+  'B4F巡檢', 'RF巡檢', 'B2F巡檢', 'B1F巡檢', 'B1~B4巡檢',
   '商場週期保養', '全棟例行維護', '大直工務報修', '商場工務報修',
   '保全巡檢', '商場工務巡檢', '飯店每日巡檢', '每日數值登錄',
   'IHG客房保養', '核准請購單清單', '核准請款單清單',
@@ -295,6 +295,7 @@ const RagicConnections: React.FC = () => {
     { key: 'mall_fi',      name: '商場工務巡檢',      desc: 'mall-facility-inspection/2,3,4,5,7（5張Sheet加總）', apiPrefix: '/mall-facility-inspection', ragicUrl: 'https://ap12.ragic.com/soutlet001/mall-facility-inspection/2' },
     { key: 'hotel_mr',     name: '每日數值登錄',      desc: 'hotel-routine-inspection/11,12,14,15（4張Sheet加總）', apiPrefix: '/hotel-meter-readings', ragicUrl: 'https://ap12.ragic.com/soutlet001/hotel-routine-inspection/11' },
     { key: 'b1f',          name: 'B1F巡檢',          desc: 'full-building-inspection/4',                   apiPrefix: '/mall/b1f-inspection',        ragicUrl: 'https://ap12.ragic.com/soutlet001/full-building-inspection/4' },
+    { key: 'b1b4', name: 'B1~B4巡檢', desc: 'full-building-inspection/8（抽排風設備）', apiPrefix: '/mall/b1b4-inspection', ragicUrl: 'https://ap12.ragic.com/soutlet001/full-building-inspection/8' },
     { key: 'b2f',          name: 'B2F巡檢',          desc: 'full-building-inspection/3',                   apiPrefix: '/mall/b2f-inspection',        ragicUrl: 'https://ap12.ragic.com/soutlet001/full-building-inspection/3' },
     { key: 'b4f',          name: 'B4F巡檢',          desc: 'full-building-inspection/2',                   apiPrefix: '/mall/b4f-inspection',        ragicUrl: 'https://ap12.ragic.com/soutlet001/full-building-inspection/2' },
     { key: 'rf',           name: 'RF巡檢',           desc: 'full-building-inspection/1',                   apiPrefix: '/mall/rf-inspection',         ragicUrl: 'https://ap12.ragic.com/soutlet001/full-building-inspection/1' },

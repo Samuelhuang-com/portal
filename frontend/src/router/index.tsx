@@ -49,6 +49,8 @@ import B2FInspectionPage                 from '@/pages/B2FInspection'
 import B2FInspectionDetailPage           from '@/pages/B2FInspection/Detail'
 import B1FInspectionPage                 from '@/pages/B1FInspection'
 import B1FInspectionDetailPage           from '@/pages/B1FInspection/Detail'
+import B1B4InspectionPage                from '@/pages/B1B4Inspection'
+import B1B4InspectionDetailPage          from '@/pages/B1B4Inspection/Detail'
 import SecurityDashboardPage             from '@/pages/SecurityDashboard'
 import SecurityPatrolPage                from '@/pages/SecurityPatrol'
 import SecurityPatrolDetailPage          from '@/pages/SecurityPatrol/Detail'
@@ -571,6 +573,8 @@ export default function AppRouter() {
           <Route path="b2f-inspection/:batchId"       element={<B2FInspectionDetailPage />} />
           <Route path="b1f-inspection"                element={<B1FInspectionPage />} />
           <Route path="b1f-inspection/:batchId"       element={<B1FInspectionDetailPage />} />
+          <Route path="b1b4-inspection"               element={<B1B4InspectionPage />} />
+          <Route path="b1b4-inspection/:batchId"      element={<B1B4InspectionDetailPage />} />
           {/* 主管交辦／緊急事件共用同一元件（飯店/商場雙入口） */}
           <Route path="other-tasks"             element={<OtherTasksPage />} />
           <Route path="calendar"               element={<MallCalendarPage />} />

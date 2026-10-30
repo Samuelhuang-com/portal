@@ -15,11 +15,19 @@ export interface MallFacilityInspectionSheet {
 }
 
 export const MALL_FACILITY_INSPECTION_SHEETS: Record<string, MallFacilityInspectionSheet> = {
+  '1-4f': {
+    key:         '1-4f',
+    floor:       '1-4F',
+    title:       '商場工務每日巡檢 - 1F ~ 4F',
+    ragicUrl:    'https://ap12.ragic.com/soutlet001/mall-facility-inspection/26?PAGEID=i4T',
+    description: '春大直商場 1F 至 4F 工務設施每日例行巡檢',
+    color:       '#13c2c2',
+  },
   '4f': {
     key:         '4f',
     floor:       '4F',
     title:       '商場工務每日巡檢 - 4F',
-    ragicUrl:    'https://ap12.ragic.com/soutlet001/mall-facility-inspection/2?PAGEID=i4T',
+    ragicUrl:    'https://ap12.ragic.com/soutlet001/mall-facility-inspection/27?PAGEID=i4T',
     description: '春大直商場 4 樓工務設施每日例行巡檢',
     color:       '#1B3A5C',
   },
@@ -27,7 +35,7 @@ export const MALL_FACILITY_INSPECTION_SHEETS: Record<string, MallFacilityInspect
     key:         '3f',
     floor:       '3F',
     title:       '商場工務每日巡檢 - 3F',
-    ragicUrl:    'https://ap12.ragic.com/soutlet001/mall-facility-inspection/3?PAGEID=i4T',
+    ragicUrl:    'https://ap12.ragic.com/soutlet001/mall-facility-inspection/28?PAGEID=i4T',
     description: '春大直商場 3 樓工務設施每日例行巡檢',
     color:       '#4BA8E8',
   },
@@ -35,7 +43,7 @@ export const MALL_FACILITY_INSPECTION_SHEETS: Record<string, MallFacilityInspect
     key:         '1f-3f',
     floor:       '1F ~ 3F',
     title:       '商場工務每日巡檢 - 1F ~ 3F',
-    ragicUrl:    'https://ap12.ragic.com/soutlet001/mall-facility-inspection/4?PAGEID=i4T',
+    ragicUrl:    'https://ap12.ragic.com/soutlet001/mall-facility-inspection/29?PAGEID=i4T',
     description: '春大直商場 1F 至 3F 工務設施每日例行巡檢',
     color:       '#52C41A',
   },
@@ -43,7 +51,7 @@ export const MALL_FACILITY_INSPECTION_SHEETS: Record<string, MallFacilityInspect
     key:         '1f',
     floor:       '1F',
     title:       '商場工務每日巡檢 - 1F',
-    ragicUrl:    'https://ap12.ragic.com/soutlet001/mall-facility-inspection/5?PAGEID=i4T',
+    ragicUrl:    'https://ap12.ragic.com/soutlet001/mall-facility-inspection/30?PAGEID=i4T',
     description: '春大直商場 1 樓工務設施每日例行巡檢',
     color:       '#722ed1',
   },

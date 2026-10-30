@@ -10,11 +10,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Alert, Button, Card, Col, DatePicker, Empty, Form, Input, Modal, Popconfirm,
-  Row, Segmented, Select, Space, Spin, Tag, Tooltip, Typography, message,
+  InputNumber, Row, Segmented, Select, Space, Spin, Tag, Tooltip, Typography, Upload, message,
 } from 'antd'
 import {
   AimOutlined, EditOutlined, LeftOutlined, LinkOutlined, PlusOutlined,
-  ReloadOutlined, RightOutlined, SaveOutlined, StopOutlined,
+  ReloadOutlined, RightOutlined, SaveOutlined, StopOutlined, UploadOutlined,
 } from '@ant-design/icons'
 import dayjs, { type Dayjs } from 'dayjs'
 import { useAuthStore } from '@/stores/authStore'
@@ -22,7 +22,7 @@ import FloorPlanMap, { type Ratio } from './FloorPlanMap'
 import CheckRowResult from './CheckRowResult'
 import {
   createFloorMapPoint, deleteFloorMapPoint, fetchFloorMapMeta, fetchFloorMapMonth,
-  fetchFloorMapStatus, fetchFloorPlanImageUrl, fetchFloorPlans, updateFloorMapPoint,
+  fetchFloorMapStatus, fetchFloorPlanImageUrl, fetchFloorPlans, updateFloorMapPoint, uploadFloorPlanImage,
   type FloorMapDayCell, type FloorMapModuleMeta, type FloorMapPoint, type FloorMapPointInput,
   type FloorMapStatusResponse, type FloorPlan,
 } from './api'
@@ -47,8 +47,19 @@ export default function FloorMapWorkspace({ module, defaultFloor }: FloorMapWork
   const [system,   setSystem]   = useState<string>('全部')
 
   const canEdit = useAuthStore((s) => (meta ? s.hasPermission(meta.edit_permission) : false))
+  // 置換底圖：全站共用權限（權限設定 → 樓層巡檢圖：置換底圖）
+  const canReplaceImage = useAuthStore((s) => s.hasPermission('floor_map_image_manage'))
+  const [replaceOpen, setReplaceOpen] = useState(false)
+  const [replaceFile, setReplaceFile] = useState<File | null>(null)
+  const [replacing,   setReplacing]   = useState(false)
+  const [replacePage, setReplacePage] = useState<number>(1)
+  // 錯誤留在對話框內（message 約 3 秒即消失，容易漏看）
+  const [replaceError, setReplaceError] = useState<string | null>(null)
+  const [replaceDpi,  setReplaceDpi]  = useState<number>(150)
 
   const [imageUrl, setImageUrl] = useState<string | null>(null)
+  // 底圖尚未提供（後端 404）：不是錯誤，畫面顯示「無底圖，待補」
+  const [noImage, setNoImage] = useState(false)
   const imageCache = useRef<Record<string, string>>({})
 
   const [loading, setLoading] = useState(false)
@@ -89,15 +100,48 @@ export default function FloorMapWorkspace({ module, defaultFloor }: FloorMapWork
     if (!floorKey) return
     let alive = true
     const cached = imageCache.current[floorKey]
-    if (cached) { setImageUrl(cached); return }
+    if (cached) { setImageUrl(cached); setNoImage(false); return }
     setImageUrl(null)
+    setNoImage(false)
     fetchFloorPlanImageUrl(floorKey)
       .then((u) => { imageCache.current[floorKey] = u; if (alive) setImageUrl(u) })
-      .catch(() => alive && setError('取得底圖失敗'))
+      .catch((e) => {
+        if (!alive) return
+        if (e?.response?.status === 404) setNoImage(true)
+        else setError('取得底圖失敗')
+      })
     return () => { alive = false }
   }, [floorKey])
 
   useEffect(() => () => { Object.values(imageCache.current).forEach((u) => URL.revokeObjectURL(u)) }, [])
+
+  // ── 置換底圖：上傳成功後清除快取、重新載入底圖與尺寸 ───────────────────────
+  const handleReplaceImage = async () => {
+    if (!replaceFile || !floorKey) return
+    setReplacing(true)
+    setReplaceError(null)
+    try {
+      const isPdf = /\.pdf$/i.test(replaceFile.name)
+      await uploadFloorPlanImage(floorKey, replaceFile, isPdf ? { page: replacePage, dpi: replaceDpi } : {})
+      const old = imageCache.current[floorKey]
+      if (old) { URL.revokeObjectURL(old); delete imageCache.current[floorKey] }
+      const url = await fetchFloorPlanImageUrl(floorKey)
+      imageCache.current[floorKey] = url
+      setImageUrl(url)
+      setNoImage(false)
+      setPlans(await fetchFloorPlans())
+      message.success('底圖已置換')
+      setReplaceOpen(false)
+      setReplaceFile(null)
+    } catch (e: any) {
+      const detail = e?.response?.data?.detail
+      const text = typeof detail === 'string' ? detail : (e?.message ?? '置換底圖失敗')
+      setReplaceError(`${e?.response?.status ? `HTTP ${e.response.status}：` : ''}${text}`)
+      message.error('置換底圖失敗，請見對話框內說明')
+    } finally {
+      setReplacing(false)
+    }
+  }
 
   // ── 點位＋當日狀態 ────────────────────────────────────────────────────────
   const load = useCallback(async () => {
@@ -106,9 +150,12 @@ export default function FloorMapWorkspace({ module, defaultFloor }: FloorMapWork
     setError(null)
     try {
       setData(await fetchFloorMapStatus(module, floorKey, date.format('YYYY-MM-DD')))
-    } catch {
+    } catch (e: any) {
       setData(null)
-      setError('取得點位狀態失敗，請稍後再試')
+      const status = e?.response?.status
+      const detail = e?.response?.data?.detail
+      const text = typeof detail === 'string' ? detail : (e?.message ?? '')
+      setError(`取得點位狀態失敗${status ? `（HTTP ${status}）` : ''}：${text || '請稍後再試'}`)
     } finally {
       setLoading(false)
     }
@@ -415,8 +462,14 @@ export default function FloorMapWorkspace({ module, defaultFloor }: FloorMapWork
               </span>
             ))}
           </Space>
-          {canEdit && (
-            <Space>
+          <Space>
+            {canReplaceImage && (
+              <Button size="small" icon={<UploadOutlined />} onClick={() => setReplaceOpen(true)}>
+                置換圖檔
+              </Button>
+            )}
+            {canEdit && (
+            <>
               <Button size="small" type={editing ? 'primary' : 'default'} icon={<EditOutlined />}
                       onClick={() => { setEditing(!editing); setPlacing(false) }}
                       style={editing ? { background: '#1B3A5C', borderColor: '#1B3A5C' } : undefined}>
@@ -428,12 +481,52 @@ export default function FloorMapWorkspace({ module, defaultFloor }: FloorMapWork
                   {placing ? '點圖上位置…（再按取消）' : '新增點位'}
                 </Button>
               )}
-            </Space>
-          )}
+            </>
+            )}
+          </Space>
         </Space>
       </Card>
 
       {error && <Alert type="error" message={error} showIcon closable onClose={() => setError(null)} style={{ marginBottom: 12 }} />}
+      <Modal
+        title={`置換底圖：${floor?.label ?? floorKey}`}
+        open={replaceOpen}
+        onCancel={() => { setReplaceOpen(false); setReplaceFile(null) }}
+        onOk={handleReplaceImage}
+        okText="確認置換"
+        cancelText="取消"
+        okButtonProps={{ disabled: !replaceFile, loading: replacing }}
+        destroyOnClose
+      >
+        <Alert type="warning" showIcon style={{ marginBottom: 12 }}
+               message="置換後所有使用者會立即看到新底圖；舊圖會保留為備份。支援 WebP、PNG、JPG、PDF（統一轉為 WebP）。" />
+        <Upload
+          accept=".webp,.png,.jpg,.jpeg,.pdf,image/webp,image/png,image/jpeg,application/pdf"
+          maxCount={1}
+          beforeUpload={(file) => {
+            const ok = /\.(webp|png|jpe?g|pdf)$/i.test(file.name)
+            if (!ok) { message.error('僅接受 WebP、PNG、JPG、PDF'); return Upload.LIST_IGNORE }
+            if (file.size > 40 * 1024 * 1024) { message.error('檔案超過 40 MB'); return Upload.LIST_IGNORE }
+            setReplaceFile(file)
+            setReplaceError(null)
+            return false
+          }}
+          onRemove={() => setReplaceFile(null)}
+        >
+          <Button icon={<UploadOutlined />}>選擇檔案</Button>
+        </Upload>
+        {replaceError && (
+          <Alert type="error" showIcon style={{ marginTop: 12 }} message="置換失敗" description={replaceError} />
+        )}
+        {replaceFile && /\.pdf$/i.test(replaceFile.name) && (
+          <Space style={{ marginTop: 12 }} wrap>
+            <span>PDF 頁碼</span>
+            <InputNumber min={1} precision={0} value={replacePage} onChange={(v) => setReplacePage(v ?? 1)} />
+            <span>解析度（DPI）</span>
+            <InputNumber min={72} max={300} precision={0} value={replaceDpi} onChange={(v) => setReplaceDpi(v ?? 150)} />
+          </Space>
+        )}
+      </Modal>
       {editing && (
         <Alert type="info" showIcon style={{ marginBottom: 12 }}
                message="編輯模式：拖曳點位可移動；點選點位可在右側修改或停用；按「新增點位」後點圖上位置新增。" />
@@ -445,6 +538,7 @@ export default function FloorMapWorkspace({ module, defaultFloor }: FloorMapWork
             <FloorPlanMap
               floor={floor}
               imageUrl={imageUrl}
+              noImage={noImage}
               points={points}
               selectedId={selId}
               editing={editing}

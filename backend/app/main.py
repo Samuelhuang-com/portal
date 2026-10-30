@@ -67,6 +67,7 @@ from app.routers import (
     rf_inspection,
     b2f_inspection,
     b1f_inspection,
+    b1b4_inspection,
     calendar,
     dazhi_repair,
     hotel_daily_inspection,
@@ -990,6 +991,7 @@ async def _auto_sync():
     from app.services.rf_inspection_sync import sync_from_ragic as sync_rf
     from app.services.b2f_inspection_sync import sync_from_ragic as sync_b2f
     from app.services.b1f_inspection_sync import sync_from_ragic as sync_b1f
+    from app.services.b1b4_inspection_sync import sync_from_ragic as sync_b1b4
     from app.services.mall_periodic_maintenance_sync import (
         sync_from_ragic as sync_mall_pm,
     )
@@ -1028,6 +1030,7 @@ async def _auto_sync():
     await _run_loop("RF巡檢",             sync_rf)
     await _run_loop("B2F巡檢",            sync_b2f)
     await _run_loop("B1F巡檢",            sync_b1f)
+    await _run_loop("B1~B4巡檢",          sync_b1b4)
     await _run_loop("商場週期保養",        sync_mall_pm)
     await _run_loop("全棟例行維護",        sync_full_bldg_pm)
     await _run_loop("大直工務報修",        sync_dazhi)
@@ -1108,6 +1111,7 @@ _SINGLE_MODULE_MAP: dict[str, tuple[str, str]] = {
     "RF巡檢":           ("app.services.rf_inspection_sync",             "sync_from_ragic"),
     "B2F巡檢":          ("app.services.b2f_inspection_sync",            "sync_from_ragic"),
     "B1F巡檢":          ("app.services.b1f_inspection_sync",            "sync_from_ragic"),
+    "B1~B4巡檢":        ("app.services.b1b4_inspection_sync",           "sync_from_ragic"),
     "商場週期保養":       ("app.services.mall_periodic_maintenance_sync","sync_from_ragic"),
     "全棟例行維護":       ("app.services.full_building_maintenance_sync","sync_from_ragic"),
     "大直工務報修":       ("app.services.dazhi_repair_sync",             "sync_from_ragic"),
@@ -1247,6 +1251,7 @@ async def lifespan(app: FastAPI):
     import app.models.rf_inspection  # noqa: F401
     import app.models.b2f_inspection  # noqa: F401
     import app.models.b1f_inspection  # noqa: F401
+    import app.models.b1b4_inspection  # noqa: F401
     import app.models.security_patrol  # noqa: F401
     import app.models.approval  # noqa: F401
     import app.models.memo  # noqa: F401
@@ -1941,6 +1946,13 @@ app.include_router(
     b1f_inspection.router,
     prefix=f"{API_PREFIX}/mall/b1f-inspection",
     tags=["整棟工務每日巡檢 B1F"],
+)
+
+# ── 新增：整棟工務每日巡檢 B1~B4（新樓層，獨立表）─────────────────────────────
+app.include_router(
+    b1b4_inspection.router,
+    prefix=f"{API_PREFIX}/mall/b1b4-inspection",
+    tags=["整棟工務每日巡檢 B1~B4"],
 )
 
 # ── 新增：商場管理 Overview — 跨模組彙整（daily-hours 等）────────────────────

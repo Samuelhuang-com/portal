@@ -44,31 +44,38 @@ class InspectionSheetConfig(BaseModel):
 
 SHEET_CONFIGS: List[InspectionSheetConfig] = [
     InspectionSheetConfig(
+        key="1-4f",
+        floor="1F ~ 4F",
+        title="商場工務每日巡檢 - 1F ~ 4F",
+        ragic_url="https://ap12.ragic.com/soutlet001/mall-facility-inspection/26?PAGEID=i4T",
+        description="春大直商場 1F 至 4F 工務設施每日例行巡檢",
+    ),
+    InspectionSheetConfig(
         key="4f",
         floor="4F",
         title="商場工務每日巡檢 - 4F",
-        ragic_url="https://ap12.ragic.com/soutlet001/mall-facility-inspection/2?PAGEID=i4T",
+        ragic_url="https://ap12.ragic.com/soutlet001/mall-facility-inspection/27?PAGEID=i4T",
         description="春大直商場 4 樓工務設施每日例行巡檢",
     ),
     InspectionSheetConfig(
         key="3f",
         floor="3F",
         title="商場工務每日巡檢 - 3F",
-        ragic_url="https://ap12.ragic.com/soutlet001/mall-facility-inspection/3?PAGEID=i4T",
+        ragic_url="https://ap12.ragic.com/soutlet001/mall-facility-inspection/28?PAGEID=i4T",
         description="春大直商場 3 樓工務設施每日例行巡檢",
     ),
     InspectionSheetConfig(
         key="1f-3f",
         floor="1F ~ 3F",
         title="商場工務每日巡檢 - 1F ~ 3F",
-        ragic_url="https://ap12.ragic.com/soutlet001/mall-facility-inspection/4?PAGEID=i4T",
+        ragic_url="https://ap12.ragic.com/soutlet001/mall-facility-inspection/29?PAGEID=i4T",
         description="春大直商場 1F 至 3F 工務設施每日例行巡檢",
     ),
     InspectionSheetConfig(
         key="1f",
         floor="1F",
         title="商場工務每日巡檢 - 1F",
-        ragic_url="https://ap12.ragic.com/soutlet001/mall-facility-inspection/5?PAGEID=i4T",
+        ragic_url="https://ap12.ragic.com/soutlet001/mall-facility-inspection/30?PAGEID=i4T",
         description="春大直商場 1 樓工務設施每日例行巡檢",
     ),
     InspectionSheetConfig(
@@ -145,9 +152,11 @@ async def sync_all_sheets(background_tasks: BackgroundTasks):
 # 5 張 Sheet 都 pivot 進同一張 MallFIBatch（sheet_key 區分），做法同飯店每日巡檢。
 
 def _mfi_sheets() -> list[dict]:
+    """所有 Ragic 來源（現行＋封存），供 verify 多 Sheet 比對；key 為 source_key（場次 ID 前綴）。"""
+    from app.services.mall_facility_sources import SOURCES
     return [
-        {"sheet_key": key, "sheet_path": cfg["path"], "server_url": MFI_SERVER_URL, "account": MFI_ACCOUNT}
-        for key, cfg in SHEET_CONFIGS.items()
+        {"sheet_key": src.source_key, "sheet_path": src.sheet_path, "server_url": MFI_SERVER_URL, "account": MFI_ACCOUNT}
+        for src in SOURCES
     ]
 
 
@@ -335,7 +344,8 @@ def list_batches(
     # 2026-10-05：異常／待處理改用與每日巡檢表 Drawer 相同的判定（item_kpi）——
     #   原本 _calc_kpi 沿用同步時的 result_status，溫度、度數被算成異常，清單每天「有異常」。
     #   item 一次查完，不再每個場次查一次。
-    from app.services.mall_daily_inspection_sheet import item_kpi, ragic_record_url
+    from app.services.mall_daily_inspection_sheet import item_kpi
+    from app.services.mall_facility_sources import record_url as ragic_record_url
 
     items_by_batch: dict[str, list[MallFIItem]] = {b.ragic_id: [] for b in batches}
     ids = list(items_by_batch.keys())
@@ -353,7 +363,7 @@ def list_batches(
             "start_time":      b.start_time,
             "end_time":        b.end_time,
             "work_hours":      b.work_hours,
-            "ragic_url":       ragic_record_url(sheet_key, b.ragic_id),
+            "ragic_url":       ragic_record_url(b.ragic_id),
             "total":           kpi["total"],
             "checked":         kpi["checked"],
             "abnormal":        kpi["abnormal"],
@@ -380,7 +390,8 @@ def get_batch_detail(
     batch_id:  str,
     db: Session = Depends(get_db),
 ):
-    from app.services.mall_daily_inspection_sheet import item_kpi, item_status, ragic_record_url
+    from app.services.mall_daily_inspection_sheet import item_kpi, item_status
+    from app.services.mall_facility_sources import record_url as ragic_record_url
 
     if sheet_key not in VALID_KEYS:
         raise HTTPException(status_code=404, detail=f"未知的 sheet_key: {sheet_key}")
@@ -406,7 +417,7 @@ def get_batch_detail(
             "start_time":      b.start_time,
             "end_time":        b.end_time,
             "work_hours":      b.work_hours,
-            "ragic_url":       ragic_record_url(sheet_key, b.ragic_id),
+            "ragic_url":       ragic_record_url(b.ragic_id),
         },
         "kpi":   item_kpi(sheet_key, items),
         "items": [

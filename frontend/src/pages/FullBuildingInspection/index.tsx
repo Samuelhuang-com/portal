@@ -10,7 +10,7 @@
  *   Tab 5 B2F 巡檢     — 同上
  *   Tab 6 B1F 巡檢     — 同上
  *
- * URL query param：?tab=summary|floor-map|rf|b4f|b2f|b1f
+ * URL query param：?tab=summary|floor-map|rf|b4f|b2f|b1f|b1b4
  * 資料來源：Tab 1 Dashboard 已接通本地 DB（rf/b4f/b2f/b1f_inspection_batch|item）；
  *           Tab 2 每日巡檢表的 Ragic 欄位名 ↔ 模板 check_content 對應尚未決定，暫維持模板結構。
  */
@@ -236,8 +236,11 @@ function SummaryTabContent() {
       ])
       setSheets(data.sheets)
       if (calData) { setCalMaxDay(calData.max_day); setCalRows(calData.rows) }
-    } catch {
-      setError('取得統計資料失敗，請稍後再試')
+    } catch (e: any) {
+      const status = e?.response?.status
+      const detail = e?.response?.data?.detail
+      const text = typeof detail === 'string' ? detail : (e?.message ?? '')
+      setError(`取得統計資料失敗${status ? `（HTTP ${status}）` : ''}：${text || '請稍後再試'}`)
       setSheets([])
     } finally {
       setLoading(false)
@@ -449,7 +452,7 @@ function SummaryTabContent() {
 const SHOW_DAILY_FORM_TAB: boolean = false
 
 // 'daily-form' 已從清單移除：舊書籤 ?tab=daily-form 會退回 summary，不會停在不存在的分頁
-const VALID_TABS = ['summary', 'floor-map', 'rf', 'b4f', 'b2f', 'b1f']
+const VALID_TABS = ['summary', 'floor-map', 'rf', 'b4f', 'b2f', 'b1f', 'b1b4']
 
 export default function FullBuildingInspectionDashboard() {
   const [searchParams] = useSearchParams()
@@ -528,6 +531,11 @@ export default function FullBuildingInspectionDashboard() {
             key:      'b1f',
             label:    'B1F 巡檢',
             children: openedTabs.has('b1f') ? <FloorInspectionList sheetKey="b1f" /> : null,
+          },
+          {
+            key:      'b1b4',
+            label:    'B1~B4 巡檢',
+            children: openedTabs.has('b1b4') ? <FloorInspectionList sheetKey="b1b4" /> : null,
           },
         ]}
       />

@@ -21,6 +21,7 @@ from app.core.database import SessionLocal
 from app.models.security_patrol import SecurityPatrolBatch, SecurityPatrolItem
 from app.services.ragic_adapter import RagicAdapter
 from app.services.sync_dispatcher import register
+from app.services.sync_result import aggregate_sync_results
 
 logger = logging.getLogger(__name__)
 
@@ -324,4 +325,4 @@ async def sync_all() -> dict:
     results = {}
     for sheet_key in SHEET_CONFIGS:
         results[sheet_key] = await sync_sheet(sheet_key)
-    return results
+    return aggregate_sync_results(results)

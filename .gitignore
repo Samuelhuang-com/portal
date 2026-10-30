@@ -100,3 +100,6 @@ backend/*_compare*.txt
 # pg_cutover.py 產生的 .env 備份與切換時間戳（含密碼，絕對不可進版控）
 backend/.env.bak-*
 backend/.pg_cutover_at
+
+# 個人副本（2026-10-29）：不納入版控
+*-SamuelHuang.*

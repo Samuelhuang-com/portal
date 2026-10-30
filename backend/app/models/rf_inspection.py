@@ -16,6 +16,10 @@ class RFInspectionBatch(Base):
     """一次完整巡檢場次，對應 Ragic Sheet 1 的一個 Row。"""
     __tablename__ = "rf_inspection_batch"
 
+    # ── 來源 Sheet（多 Sheet 架構，見 inspection_sources.SOURCES）──────────────
+    sheet_key         = Column(String(40), nullable=False, default="", comment="來源 Sheet key，如 b4f_9")
+    estimated_minutes = Column(Integer, nullable=True, comment="預估時間（分鐘，Ragic 預排時間）")
+
     ragic_id = Column(String(50), primary_key=True, comment="Ragic Sheet 1 記錄 ID")
 
     # ── 場次基本資訊 ──────────────────────────────────────────────────────────
@@ -39,6 +43,9 @@ class RFInspectionBatch(Base):
 class RFInspectionItem(Base):
     """巡檢設備項目（一筆 = 一個設備欄位值）。"""
     __tablename__ = "rf_inspection_item"
+
+    # ── 來源 Sheet（冗餘欄位，方便依來源篩選）──────────────────────────────
+    sheet_key = Column(String(40), nullable=False, default="", comment="來源 Sheet key，如 b4f_9")
 
     ragic_id = Column(String(80), primary_key=True, comment="複合鍵：{batch_ragic_id}_{seq_no}")
 

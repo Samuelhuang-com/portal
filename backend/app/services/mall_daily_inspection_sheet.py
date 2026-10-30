@@ -40,20 +40,22 @@ from app.services.mall_daily_inspection_template import MALL_DAILY_INSPECTION_TE
 RAGIC_BASE = "https://ap12.ragic.com/soutlet001"
 
 # ── Sheet（source_tab）→ Ragic 路徑 ／ Excel 樓層文字 ─────────────────────────
+# 現行來源路徑（2026-10-30 更新；封存來源與連結解析見 mall_facility_sources）
 SHEET_PATH: dict[str, str] = {
-    "4f":      "mall-facility-inspection/2",
-    "3f":      "mall-facility-inspection/3",
-    "1f-3f":   "mall-facility-inspection/4",
-    "1f":      "mall-facility-inspection/5",
+    "1-4f":    "mall-facility-inspection/26",
+    "4f":      "mall-facility-inspection/27",
+    "3f":      "mall-facility-inspection/28",
+    "1f-3f":   "mall-facility-inspection/29",
+    "1f":      "mall-facility-inspection/30",
     "b1f-b4f": "mall-facility-inspection/7",
 }
 
 # Excel A 欄原文（模板裡是「1F ~ 3F」「B1 ~ B4」，畫面照 Excel 寫法）
 EXCEL_FLOOR_LABEL: dict[str, str] = {
-    "4f": "4F", "3f": "3F", "1f-3f": "1F~3F", "1f": "1F", "b1f-b4f": "B1~B4",
+    "1-4f": "1-4F", "4f": "4F", "3f": "3F", "1f-3f": "1F~3F", "1f": "1F", "b1f-b4f": "B1~B4",
 }
 
-SHEET_ORDER = ["4f", "3f", "1f-3f", "1f", "b1f-b4f"]
+SHEET_ORDER = ["1-4f", "4f", "3f", "1f-3f", "1f", "b1f-b4f"]
 
 # ── 檢查內容 → Ragic 欄位（明確對應；未列者預設「同名欄位」）────────────────────
 #   kind = status   ：單一選項欄（正常／異常…）
@@ -152,12 +154,9 @@ def judge_status(raw: str) -> str:
 
 
 def ragic_record_url(sheet_key: str, batch_ragic_id: str) -> str:
-    """batch_ragic_id = '{sheet_key}_{ragic_row_id}' → Ragic 單筆紀錄網址。"""
-    path = SHEET_PATH.get(sheet_key, "")
-    row_id = batch_ragic_id.rsplit("_", 1)[-1] if batch_ragic_id else ""
-    if not path or not row_id:
-        return ""
-    return f"{RAGIC_BASE}/{path}/{row_id}"
+    """batch_ragic_id = '{source_key}_{ragic_row_id}' → Ragic 單筆紀錄網址（依場次所屬來源）。"""
+    from app.services.mall_facility_sources import record_url
+    return record_url(batch_ragic_id)
 
 
 # ── 版型外欄位（2026-10-05）─────────────────────────────────────────────────

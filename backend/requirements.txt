@@ -12,6 +12,8 @@ bcrypt==4.0.1
 PyJWT==2.8.0
 cryptography==42.0.8
 python-multipart==0.0.32  # 修上傳 DoS 等 8 個 CVE
+pillow>=12.3,<13        # 樓層底圖：PNG／JPG 轉 WebP（2026-10-30）
+pymupdf>=1.28.2,<2      # 樓層底圖：PDF 指定頁渲染成圖（2026-10-30）
 pandas==2.2.2
 openpyxl==3.1.4
 python-pptx==1.0.2

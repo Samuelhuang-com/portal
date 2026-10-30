@@ -21,6 +21,7 @@ from app.core.database import SessionLocal
 from app.models.mall_facility_inspection import MallFIBatch, MallFIItem
 from app.services.ragic_adapter import RagicAdapter
 from app.services.sync_dispatcher import register
+from app.services.sync_result import aggregate_sync_results
 
 logger = logging.getLogger(__name__)
 
@@ -29,32 +30,23 @@ MFI_SERVER_URL = getattr(settings, "RAGIC_MFI_SERVER_URL", "ap12.ragic.com")
 MFI_ACCOUNT    = getattr(settings, "RAGIC_MFI_ACCOUNT",    "soutlet001")
 
 # ── Sheet 設定表 ──────────────────────────────────────────────────────────────
+_TAB_NAMES: dict[str, str] = {
+    "1-4f":    "商場工務每日巡檢 - 1F ~ 4F",
+    "4f":      "商場工務每日巡檢 - 4F",
+    "3f":      "商場工務每日巡檢 - 3F",
+    "1f-3f":   "商場工務每日巡檢 - 1F ~ 3F",
+    "1f":      "商場工務每日巡檢 - 1F",
+    "b1f-b4f": "商場工務每日巡檢 - B1F ~ B4F",
+}
+# 頁籤 → 現行來源路徑（僅供舊有引用相容；實際同步依 mall_facility_sources.SOURCES）
 SHEET_CONFIGS: dict[str, dict] = {
-    "4f": {
-        "path": "mall-facility-inspection/2",
-        "name": "商場工務每日巡檢 - 4F",
-    },
-    "3f": {
-        "path": "mall-facility-inspection/3",
-        "name": "商場工務每日巡檢 - 3F",
-    },
-    "1f-3f": {
-        "path": "mall-facility-inspection/4",
-        "name": "商場工務每日巡檢 - 1F ~ 3F",
-    },
-    "1f": {
-        "path": "mall-facility-inspection/5",
-        "name": "商場工務每日巡檢 - 1F",
-    },
-    "b1f-b4f": {
-        "path": "mall-facility-inspection/7",
-        "name": "商場工務每日巡檢 - B1F ~ B4F",
-    },
+    tab: {"path": "", "name": name} for tab, name in _TAB_NAMES.items()
 }
 
 # ── 場次 metadata 欄位（不視為巡檢點）────────────────────────────────────────
 SESSION_FIELDS = {
     "巡檢人員",
+    "預估時間",
     "保全人員",
     "工務人員",
     "開始巡檢時間",
@@ -169,102 +161,74 @@ def _extract_check_items(row: dict) -> list[str]:
     return items
 
 
-# ── 單一 Sheet 同步 ───────────────────────────────────────────────────────────
+# ── 單一頁籤同步（頁籤下的所有來源：現行＋封存） ─────────────────────────────
 
-async def sync_sheet(sheet_key: str) -> dict:
-    """
-    同步指定 sheet_key 的 Ragic Sheet：
-      每個 Row → 1 筆 MallFIBatch + pivot 成 N 筆 MallFIItem。
-    """
-    if sheet_key not in SHEET_CONFIGS:
-        return {
-            "fetched": 0, "upserted": 0, "item_rows": 0,
-            "errors": [f"未知的 sheet_key: {sheet_key}"],
-        }
+def _parse_minutes(raw: str) -> int | None:
+    m = re.search(r"\d+(?:\.\d+)?", raw or "")
+    return int(round(float(m.group()))) if m else None
 
-    cfg        = SHEET_CONFIGS[sheet_key]
-    sheet_path = cfg["path"]
-    sheet_name = cfg["name"]
 
-    adapter = RagicAdapter(
-        sheet_path=sheet_path,
-        server_url=MFI_SERVER_URL,
-        account=MFI_ACCOUNT,
-    )
-    logger.info(f"[MFISync:{sheet_key}] 開始同步 {sheet_path}...")
+async def _sync_one_source(src, tab: str, log_tag: str) -> dict:
+    """同步單一 Ragic Sheet（來源）。場次 ID = {source_key}_{Row ID}，sheet_key = 頁籤。"""
+    from app.services.mall_daily_inspection_sheet import item_status
 
+    adapter = RagicAdapter(sheet_path=src.sheet_path, server_url=MFI_SERVER_URL, account=MFI_ACCOUNT)
+    logger.info(f"[{log_tag}] 開始同步 {src.source_key}（{src.sheet_path}）...")
     try:
         raw_data = await adapter.fetch_all()
     except Exception as exc:
-        logger.error(f"[MFISync:{sheet_key}] 拉取失敗：{exc}")
-        return {"fetched": 0, "upserted": 0, "item_rows": 0, "errors": [str(exc)]}
+        logger.error(f"[{log_tag}] {src.source_key} 拉取失敗：{exc}")
+        return {"source_key": src.source_key, "fetched": 0, "upserted": 0, "item_rows": 0,
+                "errors": [f"{src.source_key} 拉取失敗：{exc}"]}
 
-    fetched   = len(raw_data)
-    upserted  = 0
+    fetched = len(raw_data)
+    upserted = 0
     item_rows = 0
     errors: list[str] = []
     now = twnow()
 
-    # 從第一筆取得巡檢點欄位清單（動態偵測）
     check_items: list[str] = []
     if fetched > 0:
-        first_rec = next(iter(raw_data.values()))
-        check_items = _extract_check_items(first_rec)
-        logger.info(
-            f"[MFISync:{sheet_key}] 偵測到 {len(check_items)} 個巡檢點：{check_items}"
-        )
+        check_items = _extract_check_items(next(iter(raw_data.values())))
 
     db = SessionLocal()
     try:
         for ragic_row_id, raw in raw_data.items():
-            # batch ragic_id = "{sheet_key}_{ragic_row_id}"（避免不同 Sheet 衝突）
-            batch_id = f"{sheet_key}_{ragic_row_id}"
+            batch_id = f"{src.source_key}_{ragic_row_id}"
             try:
                 start_raw = _pick_field(raw, START_TIME_CANDIDATES)
-                batch = MallFIBatch(
-                    ragic_id        = batch_id,
-                    sheet_key       = sheet_key,
-                    sheet_name      = sheet_name,
-                    inspection_date = _extract_date(start_raw),
-                    inspector_name  = _pick_field(raw, INSPECTOR_CANDIDATES),
-                    start_time      = start_raw,
-                    end_time        = _pick_field(raw, END_TIME_CANDIDATES),
-                    work_hours      = _pick_field(raw, WORK_HOURS_CANDIDATES),
-                    synced_at       = now,
+                fields = dict(
+                    sheet_key         = tab,
+                    sheet_name        = _TAB_NAMES.get(tab, tab),
+                    inspection_date   = _extract_date(start_raw),
+                    inspector_name    = _pick_field(raw, INSPECTOR_CANDIDATES),
+                    start_time        = start_raw,
+                    end_time          = _pick_field(raw, END_TIME_CANDIDATES),
+                    work_hours        = _pick_field(raw, WORK_HOURS_CANDIDATES),
+                    estimated_minutes = _parse_minutes(_pick_field(raw, ["預估時間"])),
+                    synced_at         = now,
                 )
-
                 existing = db.get(MallFIBatch, batch_id)
                 if existing:
-                    existing.sheet_name      = batch.sheet_name
-                    existing.inspection_date = batch.inspection_date
-                    existing.inspector_name  = batch.inspector_name
-                    existing.start_time      = batch.start_time
-                    existing.end_time        = batch.end_time
-                    existing.work_hours      = batch.work_hours
-                    existing.synced_at       = now
+                    for k, v in fields.items():
+                        setattr(existing, k, v)
                 else:
-                    db.add(batch)
+                    db.add(MallFIBatch(ragic_id=batch_id, **fields))
 
-                # Pivot：清除舊 items，重新產生
-                db.query(MallFIItem).filter(
-                    MallFIItem.batch_ragic_id == batch_id
-                ).delete(synchronize_session=False)
+                db.query(MallFIItem).filter(MallFIItem.batch_ragic_id == batch_id).delete(synchronize_session=False)
 
                 row_check_items = check_items or _extract_check_items(raw)
                 for seq, col_name in enumerate(row_check_items, start=1):
                     result_raw = _stringify(raw.get(col_name, ""))
                     is_note = "異常說明" in str(col_name)
-
-                    if is_note:
-                        result_status = "note"
-                        abnormal_flag = False
-                    else:
-                        result_status, abnormal_flag = _normalize_result_status(result_raw)
+                    # 與畫面、每日巡檢表同一套規則（mall_daily_inspection_sheet.item_status）
+                    result_status = item_status(tab, col_name, result_raw, is_note)
+                    abnormal_flag = result_status in ("abnormal", "pending")
 
                     db.add(MallFIItem(
                         ragic_id       = f"{batch_id}_{seq}",
                         batch_ragic_id = batch_id,
-                        sheet_key      = sheet_key,
+                        sheet_key      = tab,
                         seq_no         = seq,
                         item_name      = col_name,
                         result_raw     = result_raw,
@@ -274,40 +238,45 @@ async def sync_sheet(sheet_key: str) -> dict:
                         synced_at      = now,
                     ))
                     item_rows += 1
-
                 upserted += 1
-
             except Exception as exc:
-                errors.append(f"ragic_row_id={ragic_row_id}: {exc}")
-                logger.warning(f"[MFISync:{sheet_key}] 記錄 {ragic_row_id} 失敗：{exc}")
+                errors.append(f"{src.source_key} row={ragic_row_id}: {exc}")
+                logger.warning(f"[{log_tag}] {src.source_key} 記錄 {ragic_row_id} 失敗：{exc}")
 
         db.commit()
-        logger.info(
-            f"[MFISync:{sheet_key}] 完成：fetched={fetched}, "
-            f"batches={upserted}, items={item_rows}, errors={len(errors)}"
-        )
+        logger.info(f"[{log_tag}] {src.source_key} 完成：fetched={fetched}, batches={upserted}, items={item_rows}, errors={len(errors)}")
     except Exception as exc:
         db.rollback()
-        errors.append(f"DB commit error: {exc}")
-        logger.error(f"[MFISync:{sheet_key}] DB 寫入失敗：{exc}")
+        errors.append(f"{src.source_key} DB commit error: {exc}")
+        logger.error(f"[{log_tag}] {src.source_key} DB 寫入失敗：{exc}")
     finally:
         db.close()
 
-    return {
-        "fetched":          fetched,
-        "upserted":         upserted,
-        "item_rows":        item_rows,
-        "check_item_count": len(check_items),
-        "errors":           errors,
-    }
+    return {"source_key": src.source_key, "fetched": fetched, "upserted": upserted,
+            "item_rows": item_rows, "check_item_count": len(check_items), "errors": errors}
 
 
-# ── 全部 Sheet 同步 ───────────────────────────────────────────────────────────
+async def sync_sheet(sheet_key: str) -> dict:
+    """同步指定頁籤（sheet_key）下的所有來源（含封存）。"""
+    from app.services.mall_facility_sources import sources_for
+    if sheet_key not in SHEET_CONFIGS:
+        return {"fetched": 0, "upserted": 0, "item_rows": 0, "errors": [f"未知的 sheet_key: {sheet_key}"]}
+    summary = {"fetched": 0, "upserted": 0, "item_rows": 0, "check_item_count": 0, "errors": [], "sources": {}}
+    for src in sources_for(sheet_key):
+        res = await _sync_one_source(src, sheet_key, "MFISync")
+        summary["sources"][src.source_key] = res
+        for k in ("fetched", "upserted", "item_rows", "check_item_count"):
+            summary[k] += res.get(k, 0)
+        summary["errors"].extend(res.get("errors", []))
+    return summary
+
+
+# ── 全部頁籤同步 ──────────────────────────────────────────────────────────────
 
 @register("mall_facility_inspection")
 async def sync_all() -> dict:
-    """同步所有 5 張商場工務巡檢 Sheet。"""
+    """同步所有頁籤（每個頁籤包含其現行與封存來源）。"""
     results = {}
     for sheet_key in SHEET_CONFIGS:
         results[sheet_key] = await sync_sheet(sheet_key)
-    return results
+    return aggregate_sync_results(results)

@@ -107,6 +107,8 @@ PERMISSION_DEFINITIONS = [
     #    其餘模組一律 '{view key 去掉 _view}_floor_map_edit'。
     {"key": "mall_floor_map_edit",                 "label": "商場工務巡檢：樓層巡檢圖－編輯點位", "group": "商場管理"},
     {"key": "mall_full_building_inspection_floor_map_edit", "label": "整棟巡檢：樓層巡檢圖－編輯點位", "group": "商場管理"},
+    # 樓層巡檢圖：置換底圖（全站共用，不分模組；僅明確指派者可用）
+    {"key": "floor_map_image_manage", "label": "樓層巡檢圖：置換底圖", "group": "商場管理"},
     {"key": "luqun_repair_view",        "label": "商場工務報修",  "group": "工務報修"},
     {"key": "dazhi_repair_view",        "label": "大直工務部",    "group": "工務報修"},
     {"key": "security_view",            "label": "保全模組",      "group": "保全管理"},

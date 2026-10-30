@@ -185,6 +185,7 @@ MODULES: list[tuple[str, str, str]] = [
     ("RF巡檢",        "app.services.rf_inspection_sync",             "sync_from_ragic"),
     ("B2F巡檢",       "app.services.b2f_inspection_sync",            "sync_from_ragic"),
     ("B1F巡檢",       "app.services.b1f_inspection_sync",            "sync_from_ragic"),
+    ("B1~B4巡檢",     "app.services.b1b4_inspection_sync",           "sync_from_ragic"),
     ("商場週期保養",   "app.services.mall_periodic_maintenance_sync", "sync_from_ragic"),
     ("全棟例行維護",   "app.services.full_building_maintenance_sync", "sync_from_ragic"),
     ("大直工務報修",   "app.services.dazhi_repair_sync",              "sync_from_ragic"),
@@ -763,6 +764,7 @@ class SyncApp(tk.Tk):
             import app.models.rf_inspection            # noqa
             import app.models.b2f_inspection           # noqa
             import app.models.b1f_inspection           # noqa
+            import app.models.b1b4_inspection          # noqa
             import app.models.security_patrol          # noqa
             import app.models.approval                 # noqa
             import app.models.memo                     # noqa

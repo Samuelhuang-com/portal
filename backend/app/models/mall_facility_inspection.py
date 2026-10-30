@@ -46,6 +46,7 @@ class MallFIBatch(Base):
     start_time      = Column(String(30),  nullable=False, default="", comment="開始巡檢時間（原始值）")
     end_time        = Column(String(30),  nullable=False, default="", comment="巡檢結束時間（原始值）")
     work_hours      = Column(String(20),  nullable=False, default="", comment="工時計算")
+    estimated_minutes = Column(Integer, nullable=True, comment="預估時間（分鐘，Ragic 預排時間）")
 
     # ── 同步時間 ───────────────────────────────────────────────────────────────
     synced_at = Column(

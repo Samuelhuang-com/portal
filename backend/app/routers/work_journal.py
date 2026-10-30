@@ -162,12 +162,21 @@ _FULL_BI_PATHS: dict[str, str] = {
     "b4f": "full-building-inspection/2",
     "rf":  "full-building-inspection/1",
 }
+# 多 Sheet：場次所屬 Sheet（sheet_key）→ Ragic 路徑；樓層路徑僅作 fallback
+from app.services.inspection_sources import SOURCES as _INSP_SOURCES  # noqa: E402
+_FULL_BI_SOURCE_PATHS: dict[str, str] = {s.sheet_key: s.sheet_path for s in _INSP_SOURCES}
 _HOTEL_MR_PATHS: dict[str, str] = {
     "building-electric": "hotel-routine-inspection/11",
     "mall-ac-electric":  "hotel-routine-inspection/12",
     "tenant-electric":   "hotel-routine-inspection/14",
     "tenant-water":      "hotel-routine-inspection/15",
 }
+
+
+def _mall_fi_record_url(batch_id: str) -> str:
+    """商場工務巡檢場次 → Ragic 單筆網址（依場次所屬來源；含封存來源）。"""
+    from app.services.mall_facility_sources import record_url
+    return record_url(batch_id)
 
 
 def _ragic_url(path: str, ragic_id: str) -> str:
@@ -1001,7 +1010,7 @@ def _fetch_mall_fi(db: Session, year: int, month: int, day: int) -> list[dict]:
             end_time=b.end_time or "",
             work_min=wm,
             ragic_id=b.ragic_id,
-            ragic_url=_ragic_url(_MALL_FI_PATHS.get(b.sheet_key, ""), b.ragic_id),
+            ragic_url=_mall_fi_record_url(b.ragic_id),
             detail={
                 "巡檢表名稱": b.sheet_name or "",
                 "巡檢人員":   b.inspector_name or "",
@@ -1041,7 +1050,7 @@ def _fetch_full_bi(db: Session, year: int, month: int, day: int) -> list[dict]:
                 end_time=b.end_time or "",
                 work_min=wm,
                 ragic_id=b.ragic_id,
-                ragic_url=_ragic_url(_FULL_BI_PATHS[bi_key], b.ragic_id),
+                ragic_url=_ragic_url(_FULL_BI_SOURCE_PATHS.get(b.sheet_key) or _FULL_BI_PATHS[bi_key], b.ragic_id),
                 detail={
                     "巡檢表名稱": label,
                     "巡檢人員":   b.inspector_name or "",

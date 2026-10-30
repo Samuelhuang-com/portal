@@ -17,15 +17,18 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.dependencies import get_current_user, get_user_permissions
 from app.models.user import User
 from app.services.floor_map import service as svc
+from app.services.floor_map.floor_image_store import MAX_BYTES, replace_floor_image
+from app.services.floor_map.floor_image_convert import ConverterUnavailable, UnsupportedFormat
 from app.services.floor_map.common import normalize_date
 from app.services.floor_map.providers import PROVIDERS, get_provider
 from app.services.floor_map.providers.base import FloorMapProvider
@@ -110,7 +113,36 @@ def floor_image(floor_key: str, db: Session = Depends(get_db), user: User = Depe
     path = floor_image_path(floor_key)
     if not path.is_file():
         raise HTTPException(status_code=404, detail=f"找不到底圖檔：{path.name}")
-    return FileResponse(path, media_type="image/webp", headers={"Cache-Control": "private, max-age=86400"})
+    # no-cache：置換底圖後立即生效（仍會驗證權限，不會對外快取）
+    return FileResponse(path, media_type="image/webp", headers={"Cache-Control": "private, no-cache"})
+
+
+FLOOR_IMAGE_PERM = "floor_map_image_manage"
+
+
+@router.post("/floors/{floor_key}/image", summary="置換樓層底圖（需 floor_map_image_manage；WebP／PNG／JPG／PDF）")
+async def replace_floor_image_endpoint(
+    floor_key: str,
+    file: UploadFile = File(...),
+    page: int = Query(1, ge=1, description="PDF 頁碼（從 1 開始；非 PDF 忽略）"),
+    dpi:  int = Query(150, ge=72, le=300, description="PDF 渲染解析度（非 PDF 忽略）"),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    _require(user, db, FLOOR_IMAGE_PERM)
+    if floor_key not in FLOOR_MAP:
+        raise HTTPException(status_code=404, detail=f"未知的樓層：{floor_key}")
+    data = await file.read(MAX_BYTES + 1)
+    if len(data) > MAX_BYTES:
+        raise HTTPException(status_code=413, detail="檔案超過 40 MB")
+    if not data:
+        raise HTTPException(status_code=400, detail="檔案是空的")
+    try:
+        return replace_floor_image(floor_key, data, user.email, page=page, dpi=dpi)
+    except UnsupportedFormat as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except ConverterUnavailable as exc:
+        raise HTTPException(status_code=501, detail=str(exc))
 
 
 # ── 模組 ──────────────────────────────────────────────────────────────────────
@@ -134,7 +166,19 @@ def floor_status(
     d = normalize_date(date)
     if not d:
         raise HTTPException(status_code=422, detail=f"日期格式錯誤：{date}")
-    return svc.floor_status(db, p, floor_key, d)
+    try:
+        return svc.floor_status(db, p, floor_key, d)
+    except ProgrammingError as exc:
+        # 資料庫缺少欄位或資料表（通常是 alembic 尚未升級）：明確告知，不要只顯示「失敗」
+        db.rollback()
+        first = str(exc.orig).splitlines()[0][:200] if exc.orig is not None else str(exc)[:200]
+        raise HTTPException(
+            status_code=503,
+            detail=f"資料庫結構尚未更新（缺少欄位或資料表），請在後端執行 alembic upgrade head。原始錯誤：{first}",
+        )
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"{type(exc).__name__}：{str(exc).splitlines()[0][:200] if str(exc) else ''}")
 
 
 @router.get("/{module}/month", summary="本月每日狀況")

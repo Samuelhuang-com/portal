@@ -50,6 +50,7 @@ function ClickToPlace({ active, onPlace }: { active: boolean; onPlace: (ll: L.La
 export interface FloorPlanMapProps {
   floor:      FloorPlan
   imageUrl:   string | null
+  noImage?:   boolean
   points:     FloorMapPoint[]
   selectedId: number | null
   editing:    boolean
@@ -61,7 +62,7 @@ export interface FloorPlanMapProps {
 }
 
 export default function FloorPlanMap({
-  floor, imageUrl, points, selectedId, editing, placing, height = 640, onSelect, onMove, onPlace,
+  floor, imageUrl, noImage = false, points, selectedId, editing, placing, height = 640, onSelect, onMove, onPlace,
 }: FloorPlanMapProps) {
   const W = floor.width
   const H = floor.height
@@ -123,6 +124,10 @@ export default function FloorPlanMap({
             />
           ))}
         </MapContainer>
+      ) : noImage ? (
+        <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#8c8c8c', fontSize: 16 }}>
+          無底圖，待補
+        </div>
       ) : (
         <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <Spin tip="載入底圖…"><div style={{ width: 120, height: 60 }} /></Spin>

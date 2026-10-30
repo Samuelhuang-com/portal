@@ -19,7 +19,7 @@ import {
 } from 'antd'
 import { ReloadOutlined, LinkOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
-import { FULL_BUILDING_INSPECTION_SHEETS } from '@/constants/fullBuildingInspection'
+import { FULL_BUILDING_INSPECTION_SHEETS, ragicRecordUrl } from '@/constants/fullBuildingInspection'
 import {
   fetchFloorBatches,
   fetchFloorBatchDetail,
@@ -116,9 +116,6 @@ export default function FloorInspectionList({ sheetKey }: { sheetKey: string }) 
     }
   }, [sheetKey])
 
-  // Ragic 單筆連結：常數裡的 ragicUrl 帶了 ?PAGEID=，要去掉才能接 record id
-  const ragicRecordUrl = (ragicId: string) =>
-    sheet ? `${sheet.ragicUrl.split('?')[0]}/${ragicId}` : ''
 
   const columns = [
     {

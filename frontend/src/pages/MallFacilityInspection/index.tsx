@@ -321,7 +321,7 @@ function SummaryTabContent() {
 const SHOW_DAILY_FORM_TAB: boolean = false
 
 // 'daily-form' 已從清單移除：舊書籤 ?tab=daily-form 會退回 summary，不會停在不存在的分頁
-const VALID_TABS = ['summary', 'floor-map', '4f', '3f', '1f-3f', '1f', 'b1f-b4f']
+const VALID_TABS = ['summary', 'floor-map', '1-4f', '4f', '3f', '1f-3f', '1f', 'b1f-b4f']
 
 export default function MallFacilityInspectionDashboard() {
   const [searchParams] = useSearchParams()
@@ -378,6 +378,11 @@ export default function MallFacilityInspectionDashboard() {
             key:      'floor-map',
             label:    <span><EnvironmentOutlined /> 樓層巡檢圖</span>,
             children: openedTabs.has('floor-map') ? <FloorMapWorkspace module="mall_facility_inspection" /> : null,
+          },
+          {
+            key:      '1-4f',
+            label:    '1-4F',
+            children: openedTabs.has('1-4f') ? <MallFloorInspectionList sheetKey="1-4f" /> : null,
           },
           {
             key:      '4f',

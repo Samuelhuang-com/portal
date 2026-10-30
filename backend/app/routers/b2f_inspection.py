@@ -27,15 +27,22 @@ from app.schemas.b2f_inspection import (
     B2FInspectionBatchOut, B2FInspectionItemOut, B2FInspectionBatchKPI,
     B2FInspectionBatchDetail, StatusDistItem, B2FInspectionStats,
 )
-from app.services.b2f_inspection_sync import (
-    sync_from_ragic, B2F_SERVER_URL, B2F_ACCOUNT, B2F_SHEET_PATH,
-)
+from app.services.b2f_inspection_sync import sync_from_ragic
+from app.services.inspection_sources import sources_for, source_by_key, SERVER_URL as _SERVER, ACCOUNT as _ACCOUNT
 from app.services.ragic_adapter import RagicAdapter
 from app.services.ragic_verify_utils import (
     read_portal_count_and_last_sync, read_portal_ragic_ids,
-    fetch_ragic_count, fetch_ragic_url_map_single,
+    fetch_ragic_count_multi, fetch_ragic_url_map_multi,
     build_verify_count_response, build_verify_diff_response,
 )
+
+def _sheet_cfgs() -> list[dict]:
+    """本樓層所有 Ragic 來源（含封存），供 verify 多 Sheet 比對。"""
+    return [
+        {"sheet_key": s.sheet_key, "sheet_path": s.sheet_path, "server_url": _SERVER, "account": _ACCOUNT}
+        for s in sources_for("b2f")
+    ]
+
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
 
@@ -152,7 +159,7 @@ async def verify_count(db: Session = Depends(get_db)):
         db, B2FInspectionBatch, "B2F巡檢"
     )
     try:
-        ragic_count = await fetch_ragic_count(B2F_SHEET_PATH, B2F_SERVER_URL, B2F_ACCOUNT)
+        ragic_count = await fetch_ragic_count_multi(_sheet_cfgs())
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Ragic 連線失敗：{exc}")
     return build_verify_count_response("B2F巡檢", portal_count, ragic_count, last_synced_at)
@@ -162,7 +169,7 @@ async def verify_count(db: Session = Depends(get_db)):
             dependencies=[Depends(require_roles("system_admin"))])
 async def verify_diff(db: Session = Depends(get_db)):
     try:
-        ragic_url_map = await fetch_ragic_url_map_single(B2F_SHEET_PATH, B2F_SERVER_URL, B2F_ACCOUNT)
+        ragic_url_map = await fetch_ragic_url_map_multi(_sheet_cfgs())
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Ragic 連線失敗：{exc}")
     portal_ids = await read_portal_ragic_ids(db, B2FInspectionBatch)
@@ -221,7 +228,7 @@ def get_batch_db_images(batch_ragic_id: str, db: Session = Depends(get_db)):
             continue
         for token in split_attachment_value(it.result_raw):
             images.extend(parse_images(
-                token, server=B2F_SERVER_URL, account=B2F_ACCOUNT,
+                token, server=_SERVER, account=_ACCOUNT,
             ))
     return images
 
@@ -458,11 +465,10 @@ def get_item_history(
 
 
 @router.get("/debug/ragic-raw", summary="[除錯] 顯示 Ragic Sheet 3 原始欄位", dependencies=[Depends(require_roles("system_admin", "module_manager"))])
-async def debug_ragic_raw():
-    from app.services.b2f_inspection_sync import (
-        B2F_SERVER_URL, B2F_ACCOUNT, B2F_SHEET_PATH,
-        SESSION_FIELDS, _extract_check_items,
-    )
+async def debug_ragic_raw(sheet_key: str | None = None):
+    from app.services.inspection_sync_core import SESSION_FIELDS, _extract_check_items
+    _src = source_by_key(sheet_key) if sheet_key else sources_for("b2f")[0]
+    B2F_SERVER_URL, B2F_ACCOUNT, B2F_SHEET_PATH = _SERVER, _ACCOUNT, _src.sheet_path
     adapter = RagicAdapter(
         sheet_path=B2F_SHEET_PATH,
         server_url=B2F_SERVER_URL,

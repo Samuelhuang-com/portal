@@ -98,6 +98,22 @@ export interface FloorMapPointInput {
   note?:           string | null
 }
 
+/** 置換樓層底圖（僅 WebP；需 floor_map_image_manage 權限） */
+export async function uploadFloorPlanImage(
+  floorKey: string,
+  file: File,
+  opts: { page?: number; dpi?: number } = {},
+): Promise<{ key: string; width: number; height: number; version: string; source_format: string; page: number; page_count: number }> {
+  const form = new FormData()
+  form.append('file', file)
+  // 全域預設 Content-Type 為 application/json，必須明確指定 multipart（同 approvals.ts／contract.ts）
+  const res = await apiClient.post(`${BASE}/floors/${floorKey}/image`, form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    params:  { page: opts.page ?? 1, dpi: opts.dpi ?? 150 },
+  })
+  return res.data
+}
+
 export async function fetchFloorPlans(): Promise<FloorPlan[]> {
   const res = await apiClient.get(`${BASE}/floors`)
   return res.data.floors

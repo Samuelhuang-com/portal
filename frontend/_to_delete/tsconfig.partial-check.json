@@ -1,0 +1,41 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "useDefineForClassFields": true,
+    "lib": [
+      "ES2020",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "module": "ESNext",
+    "skipLibCheck": true,
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "noFallthroughCasesInSwitch": true,
+    "baseUrl": "..",
+    "paths": {
+      "@/*": [
+        "./src/*"
+      ]
+    }
+  },
+  "include": [
+    "../src/vite-env.d.ts"
+  ],
+  "files": [
+    "../src/constants/fullBuildingInspection.ts",
+    "../src/api/b1b4Inspection.ts",
+    "../src/types/b1b4Inspection.ts",
+    "../src/constants/navLabels.ts",
+    "../src/pages/B1B4Inspection/index.tsx",
+    "../src/pages/B1B4Inspection/Detail.tsx",
+    "../src/pages/B1FInspection/Detail.tsx"
+  ]
+}

@@ -24,7 +24,9 @@ from app.services.floor_map.providers.base import FloorMapProvider
 from app.services.mall_daily_inspection_sheet import EXCEL_FLOOR_LABEL, build_daily_sheet
 
 _GROUPS: list[tuple[str, str, str]] = [
-    # sheet_key, 設備組, 系統
+    # sheet_key, 設備組, 系統（4F 為 2026-10-30 新增：現行 Sheet 27）
+    ("4f",      "配電室",     "電力"),
+    ("4f",      "預冷空調箱", "空調"),
     ("1f-3f",   "空調箱",     "空調"),
     ("3f",      "靜電機",     "油煙處理"),
     ("1f",      "水洗機",     "油煙處理"),
@@ -32,6 +34,35 @@ _GROUPS: list[tuple[str, str, str]] = [
     ("b1f-b4f", "電信設備",   "電信"),
 ]
 _SHARED = {"1f-3f": "1F~3F 共用一筆", "b1f-b4f": "B1~B4 共用一筆"}
+
+
+def _present_rows(rows: list[dict[str, Any]], items: dict[str, list[Any]]) -> list[dict[str, Any]]:
+    """
+    缺欄位規則（2026-10-30 裁示，與整棟巡檢相同）：
+      - 場次沒有此檢查的欄位 → 該場次不列此項（新資料沒有就不呈現，舊資料有一樣呈現）。
+      - 所有場次都沒有 → 整列不呈現。
+    """
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        if r.get("kind") in ("separate", "unmapped"):
+            out.append(r)
+            continue
+        fields = set(r.get("ragic_fields") or [])
+        kept = []
+        for res in r.get("results", []):
+            names = {it.item_name for it in items.get(res["batch_ragic_id"], [])}
+            if fields & names:
+                kept.append(res)
+        if not kept:
+            continue
+        sts = [x["status"] for x in kept]
+        merged = next(
+            (p for p in ("abnormal", "pending", "unchecked", "reading", "normal") if p in sts),
+            "unchecked",
+        )
+        out.append({**r, "results": kept, "status": merged,
+                    "abnormal": merged in ("abnormal", "pending")})
+    return out
 
 
 def _ref(sheet_key: str, item: str) -> str:
@@ -43,7 +74,7 @@ class MallFacilityInspectionProvider(FloorMapProvider):
     label           = "商場工務巡檢"
     view_permission = "mall_facility_inspection_view"
     edit_permission = "mall_floor_map_edit"
-    floors          = ["3f", "2f", "1f", "b1f", "b2f", "b3f", "b4f"]
+    floors          = ["4f", "3f", "2f", "1f", "b1f", "b2f", "b3f", "b4f"]
     default_floor   = "3f"
     attr_fields     = ["機房位置", "供應區域"]
 
@@ -78,11 +109,11 @@ class MallFacilityInspectionProvider(FloorMapProvider):
         floors = {f["key"]: f for f in sheet["floors"]}
         out: dict[str, dict[str, Any]] = {}
         for g, (sk, item, _sys) in zip(self.groups(), _GROUPS):
-            rows = self._group_rows(sheet, sk, item)
+            rows = _present_rows(self._group_rows(sheet, sk, item), items)
             fl = floors.get(sk, {})
             out[g["source_ref"]] = {
                 **g,
-                "status":         merge_group_status(rows, bool(fl.get("has_record"))),
+                "status":         merge_group_status(rows, bool(fl.get("has_record")) and bool(rows)),
                 "rows":           rows,
                 "batches":        fl.get("batches", []),
                 "inspectors":     fl.get("inspectors", []),
@@ -107,10 +138,10 @@ class MallFacilityInspectionProvider(FloorMapProvider):
                 days.append({"day": d, "date": date_str, "status": "no_record", "abnormal_rows": 0})
                 continue
             sheet = build_daily_sheet(bl, {b.ragic_id: items.get(b.ragic_id, []) for b in bl})
-            rows = self._group_rows(sheet, sk, item)
+            rows = _present_rows(self._group_rows(sheet, sk, item), items)
             days.append({
                 "day": d, "date": date_str,
-                "status": merge_group_status(rows, True),
+                "status": merge_group_status(rows, bool(rows)),
                 "abnormal_rows": sum(1 for r in rows if r["abnormal"]),
             })
         return days

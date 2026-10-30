@@ -18,6 +18,7 @@ import {
 import { Input, Select } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 
+import { ragicRecordUrl } from '@/constants/fullBuildingInspection'
 import { fetchB4FBatchDetail, fetchB4FItemHistory } from '@/api/b4fInspection'
 import type {
   InspectionBatchDetail, InspectionItem, InspectionResultStatus,
@@ -127,7 +128,7 @@ function ItemHistoryDrawer({
           {ragicId && (
             <Tooltip title="在 Ragic 查看此批次原始紀錄">
               <a
-                href={`https://ap12.ragic.com/soutlet001/full-building-inspection/2/${ragicId}`}
+                href={ragicRecordUrl(ragicId)}
                 target="_blank"
                 rel="noopener noreferrer"
                 style={{ color: '#4BA8E8', fontSize: 18, lineHeight: 1, display: 'inline-flex', alignItems: 'center' }}

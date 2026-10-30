@@ -24,8 +24,12 @@ class B4FInspectionBatch(Base):
     """B4F 巡檢場次（每筆 Ragic 記錄 = 一次完整巡檢）"""
     __tablename__ = "b4f_inspection_batch"
 
+    # ── 來源 Sheet（多 Sheet 架構，見 inspection_sources.SOURCES）──────────────
+    sheet_key         = Column(String(40), nullable=False, default="", comment="來源 Sheet key，如 b4f_9")
+    estimated_minutes = Column(Integer, nullable=True, comment="預估時間（分鐘，Ragic 預排時間）")
+
     # ── 主鍵（使用 Ragic Row ID，數字字串）──────────────────────────────────
-    ragic_id = Column(String(50), primary_key=True, comment="Ragic Sheet 2 記錄 ID")
+    ragic_id = Column(String(50), primary_key=True, comment="場次 ID：{sheet_key}_{Ragic Row ID}")
 
     # ── 場次欄位 ──────────────────────────────────────────────────────────────
     inspection_date = Column(String(20),  nullable=False, default="", comment="巡檢日期，從開始時間萃取 YYYY/MM/DD")
@@ -52,6 +56,9 @@ class B4FInspectionBatch(Base):
 class B4FInspectionItem(Base):
     """B4F 巡檢設備項目（每個設備欄位一筆，由 Sync 時 pivot 產生）"""
     __tablename__ = "b4f_inspection_item"
+
+    # ── 來源 Sheet（冗餘欄位，方便依來源篩選）──────────────────────────────
+    sheet_key = Column(String(40), nullable=False, default="", comment="來源 Sheet key，如 b4f_9")
 
     # ── 主鍵（"{batch_ragic_id}_{seq_no}"）────────────────────────────────────
     ragic_id = Column(String(80), primary_key=True, comment="複合鍵：{batch_ragic_id}_{seq_no}")

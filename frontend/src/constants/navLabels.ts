@@ -139,6 +139,7 @@ export const NAV_PAGE = {
   rfInspection:            '工務巡檢 - RF',
   b2fInspection:           '工務巡檢 - B2F',
   b1fInspection:           '工務巡檢 - B1F', //整棟工務每日巡檢
+  b1b4Inspection:          '工務巡檢 - B1~B4', //整棟工務每日巡檢（新樓層，獨立表）
 
   // 商場工務報修
   luqunRepairDashboard:    '商場工務報修 Dashboard',

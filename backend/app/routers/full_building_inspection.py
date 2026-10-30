@@ -26,6 +26,7 @@ from app.models.rf_inspection  import RFInspectionBatch,  RFInspectionItem
 from app.models.b4f_inspection import B4FInspectionBatch, B4FInspectionItem
 from app.models.b2f_inspection import B2FInspectionBatch, B2FInspectionItem
 from app.models.b1f_inspection import B1FInspectionBatch, B1FInspectionItem
+from app.models.b1b4_inspection import B1B4InspectionBatch, B1B4InspectionItem
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
 
@@ -38,6 +39,7 @@ MODEL_MAP = {
     "b4f": (B4FInspectionBatch, B4FInspectionItem),
     "b2f": (B2FInspectionBatch, B2FInspectionItem),
     "b1f": (B1FInspectionBatch, B1FInspectionItem),
+    "b1b4": (B1B4InspectionBatch, B1B4InspectionItem),
 }
 
 
@@ -64,6 +66,16 @@ def _calc_item_kpi(items) -> dict:
     }
 
 
+from app.services.inspection_sources import SOURCES, sources_for, SERVER_URL, ACCOUNT
+
+
+def _live_url(floor: str) -> str:
+    """樓層的第一個現行（非封存）Sheet 網址，供 /sheets 的樓層層級連結使用。"""
+    live = [s for s in sources_for(floor) if not s.archived]
+    path = live[0].sheet_path if live else sources_for(floor)[0].sheet_path
+    return f"https://{SERVER_URL}/{ACCOUNT}/{path}"
+
+
 # ── Schema ────────────────────────────────────────────────────────────────────
 
 class InspectionSheetConfig(BaseModel):
@@ -81,29 +93,36 @@ SHEET_CONFIGS: List[InspectionSheetConfig] = [
         key="rf",
         floor="RF",
         title="整棟工務每日巡檢 - RF",
-        ragic_url="https://ap12.ragic.com/soutlet001/full-building-inspection/1?PAGEID=i4T",
+        ragic_url=_live_url("rf"),
         description="整棟工務 RF 層（屋頂層）設施每日例行巡檢",
     ),
     InspectionSheetConfig(
         key="b4f",
         floor="B4F",
         title="整棟工務每日巡檢 - B4F",
-        ragic_url="https://ap12.ragic.com/soutlet001/full-building-inspection/2?PAGEID=i4T",
+        ragic_url=_live_url("b4f"),
         description="整棟工務 B4F 地下 4 樓設施每日例行巡檢",
     ),
     InspectionSheetConfig(
         key="b2f",
         floor="B2F",
         title="整棟工務每日巡檢 - B2F",
-        ragic_url="https://ap12.ragic.com/soutlet001/full-building-inspection/3?PAGEID=i4T",
+        ragic_url=_live_url("b2f"),
         description="整棟工務 B2F 地下 2 樓設施每日例行巡檢",
     ),
     InspectionSheetConfig(
         key="b1f",
         floor="B1F",
         title="整棟工務每日巡檢 - B1F",
-        ragic_url="https://ap12.ragic.com/soutlet001/full-building-inspection/4?PAGEID=i4T",
+        ragic_url=_live_url("b1f"),
         description="整棟工務 B1F 地下 1 樓設施每日例行巡檢",
+    ),
+    InspectionSheetConfig(
+        key="b1b4",
+        floor="B1~B4",
+        title="整棟工務每日巡檢 - B1~B4",
+        ragic_url=_live_url("b1b4"),
+        description="整棟工務 B1～B4 抽排風設備每日例行巡檢（新樓層，獨立表）",
     ),
 ]
 
@@ -122,6 +141,34 @@ def get_sheets():
     包含 Ragic URL 供前端導頁或顯示摘要使用。
     """
     return SHEET_CONFIGS
+
+
+class InspectionSourceOut(BaseModel):
+    sheet_key:  str
+    floor:      str
+    label:      str
+    ragic_url:  str
+    archived:   bool
+
+
+@router.get(
+    "/sources",
+    summary="取得各 Ragic Sheet 來源清單（含封存來源）",
+    response_model=List[InspectionSourceOut],
+    tags=["整棟巡檢"],
+)
+def get_sources():
+    """每一張 Ragic Sheet 一筆，供前端依來源呈現與連結。"""
+    return [
+        InspectionSourceOut(
+            sheet_key=s.sheet_key,
+            floor=s.floor,
+            label=s.label,
+            ragic_url=f"https://{SERVER_URL}/{ACCOUNT}/{s.sheet_path}",
+            archived=s.archived,
+        )
+        for s in SOURCES
+    ]
 
 
 # ══════════════════════════════════════════════════════════════════════════════

@@ -22,6 +22,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.services.floor_map.common import batch_out, hhmm
+from app.services.inspection_sources import path_for_batch_id, numeric_id
 from app.services.floor_map.providers.full_building_inspection import (
     NOTE_FIELD, SHEETS, FullBuildingInspectionProvider,
 )
@@ -75,7 +76,8 @@ def _build(insp_date: str, loaded: dict[str, tuple[list[Any], dict[str, dict[str
     for tab in _TABS:
         batches, _values = loaded[tab]
         path = SHEETS[tab][2]
-        bo = [batch_out(path, b.ragic_id, b) for b in batches]
+        # 多 Sheet：每個場次依其所屬來源組連結；row_id 取 Ragic 原始編號
+        bo = [batch_out(path_for_batch_id(b.ragic_id) or path, numeric_id(b.ragic_id), b) for b in batches]
         floors.append({
             "key":            tab,
             "floor":          _FLOOR_LABEL[tab],
