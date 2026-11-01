@@ -19,6 +19,7 @@ PUT  /cycles/{id}                         更新週期設定（可帶 delete_orp
 from typing import Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from app.services.cycle_purchase_company_scope import CompanyContext, company_context, assert_row_visible, assert_company_visible_by_name
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -34,6 +35,15 @@ from app.services import cycle_purchase_service as svc
 from app.services import cycle_purchase_request_service as req_svc
 
 router = APIRouter()
+
+
+def _visible_codes(cp_db, ctx, company_names: list) -> list:
+    """請求的公司（名稱或代碼）∩ 可見公司；未指定則為全部可見公司。"""
+    from app.services.cycle_purchase_company_scope import resolve_company_code
+    if not company_names:
+        return sorted(ctx.codes)
+    codes = {resolve_company_code(cp_db, n) for n in company_names}
+    return sorted(c for c in codes if c and c in ctx.codes)
 
 
 @router.get("/cycles", response_model=List[CycleOut], summary="週期採購週期設定清單")
@@ -53,11 +63,12 @@ def get_cycle_options(
     ),
     _: User = Depends(require_permission("cycle_purchase_view")),
     db: Session = Depends(get_cycle_purchase_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
     """⚠️ 路由順序：這支必須宣告在 /cycles/{cycle_id} 之前，
     否則 "options" 會被 FastAPI 當成 cycle_id 去 match 到詳情端點。"""
     company_list = [c.strip() for c in companies.split(",") if c.strip()]
-    return svc.get_cycle_options(db, companies_filter=company_list or None)
+    return svc.get_cycle_options(db, companies_filter=_visible_codes(db, ctx, company_list))
 
 
 @router.get(
@@ -70,12 +81,13 @@ def get_exclude_item_candidates(
     categories: str = Query("", description="逗號分隔的品類清單，留空＝不限"),
     _: User = Depends(require_permission("cycle_purchase_view")),
     db: Session = Depends(get_cycle_purchase_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
     """⚠️ 路由順序：這支必須宣告在 /cycles/{cycle_id} 之前，
     否則 "exclude-item-candidates" 會被當成 cycle_id。"""
     company_list = [c.strip() for c in companies.split(",") if c.strip()]
     category_list = [c.strip() for c in categories.split(",") if c.strip()]
-    return svc.list_exclude_item_candidates(db, company_list, category_list)
+    return svc.list_exclude_item_candidates(db, _visible_codes(db, ctx, company_list), category_list)
 
 
 @router.get("/cycles/{cycle_id}", response_model=CycleOut, summary="週期設定詳情")
@@ -95,7 +107,9 @@ def create_cycle(
     payload: CycleCreate,
     _: User = Depends(require_permission("cycle_purchase_admin")),
     db: Session = Depends(get_cycle_purchase_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
+    _check_cycle_payload(db, ctx, payload)
     try:
         return svc.create_cycle(db, payload)
     except IntegrityError:
@@ -149,7 +163,9 @@ def update_cycle(
     ),
     _: User = Depends(require_permission("cycle_purchase_admin")),
     db: Session = Depends(get_cycle_purchase_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
+    _check_cycle_payload(db, ctx, payload)
     try:
         cycle = svc.update_cycle(db, cycle_id, payload)
     except IntegrityError:
@@ -164,3 +180,37 @@ def update_cycle(
         deleted = req_svc.delete_orphan_blank_requests(db, cycle)
         cycle.deleted_orphan_count = deleted  # 衍生欄位，供前端提示；不落地
     return cycle
+
+
+def _check_cycle_payload(cp_db, ctx, payload) -> None:
+    """週期設定：所選適用部門、適用公司（具名者）必須都在可見範圍內。"""
+    ids = getattr(payload, "applicable_department_ids", None)
+    if ids:
+        for part in str(ids).split(","):
+            part = part.strip()
+            if part.isdigit():
+                assert_row_visible(cp_db, ctx, "cycle_purchase_departments", int(part))
+    scope = getattr(payload, "applicable_scope", None)
+    if scope and scope.strip().lower() != "all":
+        for name in scope.split(","):
+            if name.strip():
+                assert_company_visible_by_name(cp_db, ctx, name.strip())
+
+
+@router.get("/companies", summary="目前使用者可見的週採公司別（給公司切換器用）")
+def list_visible_companies(
+    ctx: CompanyContext = Depends(company_context),
+    _: User = Depends(require_permission("cycle_purchase_view")),
+    db: Session = Depends(get_cycle_purchase_db),
+):
+    from app.models.cycle_purchase_company import CyclePurchaseCompany
+    rows = (
+        db.query(CyclePurchaseCompany)
+        .filter(CyclePurchaseCompany.code.in_(ctx.codes))
+        .order_by(CyclePurchaseCompany.code)
+        .all()
+    )
+    return {
+        "current": ctx.code,
+        "companies": [{"code": r.code, "name": r.name} for r in rows],
+    }

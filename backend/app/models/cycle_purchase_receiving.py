@@ -40,6 +40,9 @@ from app.core.cycle_purchase_database import CyclePurchaseBase
 class CyclePurchaseReceiving(CyclePurchaseBase):
     """週期採購驗收單（一張採購單可以有多張驗收單，對應分批到貨）"""
     __tablename__ = "cycle_purchase_receiving"
+    company_code = Column(String(10), ForeignKey("cycle_purchase_companies.code", ondelete="RESTRICT"),
+                          nullable=False, index=True,
+                          comment="公司代碼（cpco3 起 NOT NULL）")
 
     id              = Column(Integer, primary_key=True, autoincrement=True)
     receiving_no    = Column(String(30), nullable=False, unique=True,

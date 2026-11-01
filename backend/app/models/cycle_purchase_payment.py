@@ -43,6 +43,9 @@ from app.core.cycle_purchase_database import CyclePurchaseBase
 class CyclePurchasePayment(CyclePurchaseBase):
     """週期採購請款單（一張採購單可以有多張請款單，例如分期付款）"""
     __tablename__ = "cycle_purchase_payments"
+    company_code = Column(String(10), ForeignKey("cycle_purchase_companies.code", ondelete="RESTRICT"),
+                          nullable=False, index=True,
+                          comment="公司代碼（cpco3 起 NOT NULL）")
 
     id             = Column(Integer, primary_key=True, autoincrement=True)
     payment_no     = Column(String(30), nullable=False, unique=True,
@@ -100,6 +103,9 @@ class CyclePurchasePaymentAllocation(CyclePurchaseBase):
     """請款單費用分攤明細（一列＝這張請款單分攤到某個部門／成本中心／
     會計科目的金額）"""
     __tablename__ = "cycle_purchase_payment_allocations"
+    company_code = Column(String(10), ForeignKey("cycle_purchase_companies.code", ondelete="RESTRICT"),
+                          nullable=False, index=True,
+                          comment="公司代碼（cpco3 起 NOT NULL）")
 
     id             = Column(Integer, primary_key=True, autoincrement=True)
     payment_id     = Column(

@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from app.core.cycle_purchase_database import get_cycle_purchase_db
 from app.core.database import get_db
 from app.dependencies import get_current_user, require_permission
+from app.services.cycle_purchase_company_scope import CompanyContext, company_context, assert_row_visible
 from app.models.user import User
 from app.schemas.cycle_purchase_vendor import (
     VendorCreate, VendorLinkPayload, VendorMergePayload, VendorMergeResult,
@@ -94,8 +95,9 @@ def list_vendors(
     _: User = Depends(require_permission("cycle_purchase_view")),
     db: Session = Depends(get_cycle_purchase_db),
     portal_db: Session = Depends(get_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
-    rows = svc.list_vendors(db, is_active=is_active, q=q)
+    rows = svc.list_vendors(db, is_active=is_active, q=q, company_code=ctx.code)
     if unlinked_only:
         rows = [r for r in rows if not r.source_vendor_id]
     _attach_source_vendor_names(rows, portal_db)
@@ -140,9 +142,13 @@ def create_vendor(
     payload: VendorCreate,
     _: User = Depends(require_permission("cycle_purchase_admin")),
     db: Session = Depends(get_cycle_purchase_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
     try:
-        return svc.create_vendor(db, payload)
+        return svc.create_vendor(db, payload, ctx.code)
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc))
     except IntegrityError:
         db.rollback()
         raise _conflict("供應商代碼已存在")
@@ -196,7 +202,9 @@ def update_vendor(
     payload: VendorUpdate,
     _: User = Depends(require_permission("cycle_purchase_admin")),
     db: Session = Depends(get_cycle_purchase_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
+    assert_row_visible(db, ctx, "cycle_purchase_vendors", vendor_id)
     try:
         vendor = svc.update_vendor(db, vendor_id, payload)
     except IntegrityError:
@@ -218,7 +226,9 @@ def link_vendor(
     _: User = Depends(require_permission("cycle_purchase_admin")),
     db: Session = Depends(get_cycle_purchase_db),
     portal_db: Session = Depends(get_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
+    assert_row_visible(db, ctx, "cycle_purchase_vendors", vendor_id)
     """⚠️ 刻意獨立於 PUT /vendors/{id}：一般編輯**永遠不吃** source_vendor_id
     （見 services.update_vendor），對照是一個明確的動作，不該混在一般編輯裡
     被不小心改掉。
@@ -257,7 +267,9 @@ def merge_vendor(
     payload: VendorMergePayload,
     _: User = Depends(require_permission("cycle_purchase_admin")),
     db: Session = Depends(get_cycle_purchase_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
+    assert_row_visible(db, ctx, "cycle_purchase_vendors", vendor_id)
     """⚠️ 這支會改動**歷史資料**（既有的料號對照與彙整列），所以：
 
     * 先用 `dry_run=true` 試算，畫面顯示「會搬動 N 筆料號對照、M 筆彙整列」再讓人確認；
@@ -285,8 +297,9 @@ def list_departments(
     _: User = Depends(require_permission("cycle_purchase_view")),
     db: Session = Depends(get_cycle_purchase_db),
     portal_db: Session = Depends(get_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
-    depts = svc.list_departments(db, is_active=is_active)
+    depts = svc.list_departments(db, is_active=is_active, company_code=ctx.code)
     _attach_owner_names(portal_db, depts)
     return depts
 
@@ -296,9 +309,14 @@ def create_department(
     payload: DepartmentCreate,
     _: User = Depends(require_permission("cycle_purchase_admin")),
     db: Session = Depends(get_cycle_purchase_db),
+    ctx: CompanyContext = Depends(company_context),
     portal_db: Session = Depends(get_db),
 ):
-    dept = svc.create_department(db, payload)
+    try:
+        dept = svc.create_department(db, payload, ctx.code)
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc))
     _attach_owner_names(portal_db, dept)
     return dept
 
@@ -310,7 +328,9 @@ def update_department(
     _: User = Depends(require_permission("cycle_purchase_admin")),
     db: Session = Depends(get_cycle_purchase_db),
     portal_db: Session = Depends(get_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
+    assert_row_visible(db, ctx, "cycle_purchase_departments", dept_id)
     dept = svc.update_department(db, dept_id, payload)
     if not dept:
         raise HTTPException(status_code=404, detail="部門不存在")
@@ -331,6 +351,7 @@ def department_link_options(
     _: User = Depends(require_permission("cycle_purchase_admin")),
     db: Session = Depends(get_cycle_purchase_db),
     portal_db: Session = Depends(get_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
     """
     給「連結主檔部門」下拉用：列出 settings/company-departments 的啟用部門
@@ -346,6 +367,7 @@ def department_link_options(
         d.source_department_id: f"{d.company}／{d.dept_name}"
         for d in db.query(CyclePurchaseDepartment)
         .filter(CyclePurchaseDepartment.source_department_id.isnot(None))
+        .filter(CyclePurchaseDepartment.company_code.in_(ctx.codes))
         .all()
     }
     rows = (
@@ -355,6 +377,8 @@ def department_link_options(
         .order_by(Company.name, RefDepartment.name)
         .all()
     )
+    from app.services.cycle_purchase_company_scope import resolve_company_code
+    rows = [(d, c) for d, c in rows if resolve_company_code(db, c.name) in ctx.codes]  # 只列可見公司的主檔部門
     return [
         {
             "source_department_id": str(d.id),
@@ -377,7 +401,9 @@ def link_department(
     _: User = Depends(require_permission("cycle_purchase_admin")),
     db: Session = Depends(get_cycle_purchase_db),
     portal_db: Session = Depends(get_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
+    assert_row_visible(db, ctx, "cycle_purchase_departments", dept_id)
     """
     2026-09-01：company 改自行輸入後，同步的名稱比對只剩「部門名稱唯一命中」，
     重名部門要靠這個端點手動連結，權限鏈（部門成員可編輯請購單）才會生效。
@@ -409,8 +435,9 @@ def list_cost_centers(
     is_active: Optional[bool] = Query(None),
     _: User = Depends(require_permission("cycle_purchase_view")),
     db: Session = Depends(get_cycle_purchase_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
-    return svc.list_cost_centers(db, department_id=department_id, is_active=is_active)
+    return svc.list_cost_centers(db, department_id=department_id, is_active=is_active, company_code=ctx.code)
 
 
 @router.post("/cost-centers", response_model=CostCenterOut, status_code=status.HTTP_201_CREATED, summary="新增成本中心")
@@ -418,9 +445,13 @@ def create_cost_center(
     payload: CostCenterCreate,
     _: User = Depends(require_permission("cycle_purchase_admin")),
     db: Session = Depends(get_cycle_purchase_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
     try:
-        return svc.create_cost_center(db, payload)
+        return svc.create_cost_center(db, payload, ctx.code)
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc))
     except IntegrityError:
         db.rollback()
         raise HTTPException(status_code=422, detail="部門不存在或成本中心代碼重複")
@@ -432,7 +463,9 @@ def update_cost_center(
     payload: CostCenterUpdate,
     _: User = Depends(require_permission("cycle_purchase_admin")),
     db: Session = Depends(get_cycle_purchase_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
+    assert_row_visible(db, ctx, "cycle_purchase_cost_centers", cc_id)
     cc = svc.update_cost_center(db, cc_id, payload)
     if not cc:
         raise HTTPException(status_code=404, detail="成本中心不存在")
@@ -446,8 +479,9 @@ def list_account_codes(
     is_active: Optional[bool] = Query(None),
     _: User = Depends(require_permission("cycle_purchase_view")),
     db: Session = Depends(get_cycle_purchase_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
-    return svc.list_account_codes(db, is_active=is_active)
+    return svc.list_account_codes(db, is_active=is_active, company_code=ctx.code)
 
 
 @router.post("/account-codes", response_model=AccountCodeOut, status_code=status.HTTP_201_CREATED, summary="新增會計科目")
@@ -455,9 +489,13 @@ def create_account_code(
     payload: AccountCodeCreate,
     _: User = Depends(require_permission("cycle_purchase_admin")),
     db: Session = Depends(get_cycle_purchase_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
     try:
-        return svc.create_account_code(db, payload)
+        return svc.create_account_code(db, payload, ctx.code)
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc))
     except IntegrityError:
         db.rollback()
         raise _conflict("會計科目代碼已存在")
@@ -469,7 +507,9 @@ def update_account_code(
     payload: AccountCodeUpdate,
     _: User = Depends(require_permission("cycle_purchase_admin")),
     db: Session = Depends(get_cycle_purchase_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
+    assert_row_visible(db, ctx, "cycle_purchase_account_codes", ac_id)
     ac = svc.update_account_code(db, ac_id, payload)
     if not ac:
         raise HTTPException(status_code=404, detail="會計科目不存在")
@@ -483,13 +523,14 @@ def update_account_code(
 
 @router.get("/categories", response_model=List[CategoryOut], summary="類別主檔清單")
 def list_categories(
-    company: Optional[str] = Query(None, description="公司別"),
+    ctx: CompanyContext = Depends(company_context),
     department_id: Optional[int] = Query(None, description="歸屬部門"),
     q: str = Query("", description="關鍵字（類別／大中細分類名稱）"),
     is_active: Optional[bool] = Query(None),
     _: User = Depends(require_permission("cycle_purchase_view")),
     db: Session = Depends(get_cycle_purchase_db),
 ):
+    company = ctx.code  # 多公司隔離：一律以可見公司為準，忽略前端直接傳入的公司字串
     return svc.list_categories(
         db, company=company, department_id=department_id, q=q, is_active=is_active
     )
@@ -505,9 +546,13 @@ def create_category(
     payload: CategoryCreate,
     _: User = Depends(require_permission("cycle_purchase_admin")),
     db: Session = Depends(get_cycle_purchase_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
     try:
-        return svc.create_category(db, payload)
+        return svc.create_category(db, payload, ctx.code)
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc))
     except IntegrityError:
         db.rollback()
         raise _conflict("同公司底下已有相同的大／中／細分類代碼組合")
@@ -522,7 +567,9 @@ def get_category_next_code(
     category_id: int,
     _: User = Depends(require_permission("cycle_purchase_view")),
     db: Session = Depends(get_cycle_purchase_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
+    assert_row_visible(db, ctx, "cycle_purchase_categories", category_id)
     result = svc.get_next_item_code(db, category_id)
     if not result:
         raise HTTPException(status_code=404, detail="類別不存在")
@@ -535,7 +582,9 @@ def update_category(
     payload: CategoryUpdate,
     _: User = Depends(require_permission("cycle_purchase_admin")),
     db: Session = Depends(get_cycle_purchase_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
+    assert_row_visible(db, ctx, "cycle_purchase_categories", category_id)
     try:
         category = svc.update_category(db, category_id, payload)
     except IntegrityError:

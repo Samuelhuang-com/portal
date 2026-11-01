@@ -4,6 +4,7 @@
  * ✅  執行期自訂 label 與排序由 /api/v1/settings/menu-config 動態載入
  */
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import CycleCompanySwitcher from './CycleCompanySwitcher'
 import { Layout, Menu, Typography, Avatar, Dropdown, Space, theme, Skeleton, Modal, Button, Form, Input, Alert } from 'antd'
 import { useIdleTimeout } from '@/hooks/useIdleTimeout'
 import {
@@ -1368,6 +1369,8 @@ export default function MainLayout() {
           >
             {collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
           </div>
+
+          {location.pathname.startsWith('/cycle-purchase') && <CycleCompanySwitcher />}
 
           <Dropdown menu={userMenu} placement="bottomRight">
             <Space style={{ cursor: 'pointer' }}>

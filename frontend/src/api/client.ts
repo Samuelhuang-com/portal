@@ -23,6 +23,11 @@ apiClient.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   // 防止瀏覽器對 API 回應做 HTTP 快取
   config.headers['Cache-Control'] = 'no-cache'
   config.headers['Pragma'] = 'no-cache'
+  // 週採多公司：/cycle-purchase 的請求一律帶上網址的 co（公司代碼），後端以此決定公司範圍
+  if (config.url?.startsWith('/cycle-purchase')) {
+    const co = new URLSearchParams(window.location.search).get('co')
+    if (co) config.params = { co, ...(config.params || {}) }
+  }
   return config
 })
 

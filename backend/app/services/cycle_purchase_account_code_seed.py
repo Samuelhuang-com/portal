@@ -12,6 +12,7 @@ AccountCodes.tsx）修改代碼／名稱即可，不影響已送出單據的歷�
 代碼採用暫定的 CPAC-xxx 格式，之後協理提供正式會計科目代碼時可直接覆蓋
 （code 欄位有 unique 限制，改代碼前建議先確認沒有請購明細正在使用中）。
 """
+from app.services.cycle_purchase_company_scope import DEFAULT_COMPANY_CODE
 from sqlalchemy.orm import Session
 
 from app.models.cycle_purchase_reference import CyclePurchaseAccountCode
@@ -34,6 +35,6 @@ def seed_default_account_codes(db: Session) -> int:
         return 0
 
     for row in DEFAULT_ACCOUNT_CODES:
-        db.add(CyclePurchaseAccountCode(code=row["code"], name=row["name"], is_active=True))
+        db.add(CyclePurchaseAccountCode(code=row["code"], name=row["name"], is_active=True, company_code=DEFAULT_COMPANY_CODE))
     db.commit()
     return len(DEFAULT_ACCOUNT_CODES)

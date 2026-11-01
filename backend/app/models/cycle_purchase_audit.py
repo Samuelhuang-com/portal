@@ -27,12 +27,16 @@ GET /audit-log 列表查詢。
 """
 from sqlalchemy import Column, Integer, String, Text, DateTime, func
 
+from sqlalchemy import ForeignKey
 from app.core.cycle_purchase_database import CyclePurchaseBase
 
 
 class CyclePurchaseAuditLog(CyclePurchaseBase):
     """週期採購異常稽核紀錄（append-only，沒有 updated_at，紀錄本身不可修改）"""
     __tablename__ = "cycle_purchase_audit_logs"
+    company_code = Column(String(10), ForeignKey("cycle_purchase_companies.code", ondelete="RESTRICT"),
+                          nullable=False, index=True,
+                          comment="公司代碼（cpco3 起 NOT NULL）")
 
     id             = Column(Integer, primary_key=True, autoincrement=True)
     document_type  = Column(String(20), nullable=False,

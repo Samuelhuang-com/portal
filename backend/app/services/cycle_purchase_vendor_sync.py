@@ -45,6 +45,7 @@ cycle_purchase_vendor_sync.py — 廠商主檔鏡像同步：合約模組 → �
 import logging
 from typing import Optional
 
+from app.services.cycle_purchase_company_scope import DEFAULT_COMPANY_CODE
 from app.core.cycle_purchase_database import CyclePurchaseSessionLocal
 from app.core.database import SessionLocal
 from app.core.time import twnow
@@ -199,6 +200,7 @@ async def sync_from_contract() -> dict:
                     code = _unique_vendor_code(vendor_id, used_codes)
                     used_codes.add(code)
                     row = CyclePurchaseVendor(
+                        company_code=DEFAULT_COMPANY_CODE,
                         vendor_code=code,
                         vendor_name=name,
                         tax_id=tax_id,

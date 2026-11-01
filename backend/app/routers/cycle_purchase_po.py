@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.core.cycle_purchase_database import get_cycle_purchase_db
 from app.dependencies import require_any_permission, require_permission
+from app.services.cycle_purchase_company_scope import CompanyContext, company_context, assert_row_visible
 from app.models.user import User
 from app.schemas.cycle_purchase_po import (
     PODetail, POOut, POStatusPayload, POUpdate, RevertPoPayload, RevertPoResult,
@@ -36,12 +37,13 @@ def _handle(fn, *args, **kwargs):
 def list_pos(
     cycle_id: Optional[int] = Query(None),
     period_label: Optional[str] = Query(None),
-    company: Optional[str] = Query(None),
+    ctx: CompanyContext = Depends(company_context),
     vendor_id: Optional[int] = Query(None),
     status_: Optional[str] = Query(None, alias="status"),
     _: User = Depends(require_any_permission("cycle_purchase_view", "cycle_purchase_buyer")),
     db: Session = Depends(get_cycle_purchase_db),
 ):
+    company = ctx.code  # 多公司隔離：一律以可見公司為準，忽略前端直接傳入的公司字串
     return svc.list_pos(
         db, cycle_id=cycle_id, period_label=period_label,
         company=company, vendor_id=vendor_id, status=status_,
@@ -53,7 +55,9 @@ def get_po(
     po_id: int,
     _: User = Depends(require_any_permission("cycle_purchase_view", "cycle_purchase_buyer")),
     db: Session = Depends(get_cycle_purchase_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
+    assert_row_visible(db, ctx, "cycle_purchase_pos", po_id)
     po = svc.get_po(db, po_id)
     if not po:
         raise HTTPException(status_code=404, detail="採購單不存在")
@@ -66,7 +70,9 @@ def update_po(
     payload: POUpdate,
     _: User = Depends(require_permission("cycle_purchase_buyer")),
     db: Session = Depends(get_cycle_purchase_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
+    assert_row_visible(db, ctx, "cycle_purchase_pos", po_id)
     po = _handle(svc.update_po, db, po_id, payload)
     if not po:
         raise HTTPException(status_code=404, detail="採購單不存在")
@@ -79,7 +85,9 @@ def set_po_status(
     payload: POStatusPayload,
     _: User = Depends(require_permission("cycle_purchase_buyer")),
     db: Session = Depends(get_cycle_purchase_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
+    assert_row_visible(db, ctx, "cycle_purchase_pos", po_id)
     po = _handle(svc.set_po_status, db, po_id, payload.status)
     if not po:
         raise HTTPException(status_code=404, detail="採購單不存在")
@@ -96,7 +104,9 @@ def revert_po_to_summary(
     payload: RevertPoPayload,
     current_user: User = Depends(require_permission("cycle_purchase_buyer")),
     db: Session = Depends(get_cycle_purchase_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
+    assert_row_visible(db, ctx, "cycle_purchase_pos", po_id)
     """與「取消」是兩個不同動作：取消只標 cancelled、彙整列維持鎖定；
     退回會把彙整列放回 draft。唯一擋下條件是「已經有驗收單」，見
     services/cycle_purchase_po_service.py 開頭說明。"""

@@ -119,6 +119,7 @@ def create_receiving(db: Session, po_id: int, received_date: date, notes: Option
     receiving = CyclePurchaseReceiving(
         receiving_no=_next_receiving_no(db, date.today()),
         po_id=po_id,
+        company_code=po.company_code,
         receiver_user_id=user.id,
         receiver_name=user.full_name,
         received_date=received_date,
@@ -143,7 +144,7 @@ def list_receiving(
         query = query.filter(CyclePurchaseReceiving.status == status)
     if company:
         query = query.join(CyclePurchasePO, CyclePurchaseReceiving.po_id == CyclePurchasePO.id).filter(
-            CyclePurchasePO.company == company
+            CyclePurchasePO.company_code == company
         )
     rows = query.order_by(CyclePurchaseReceiving.receiving_no.desc()).all()
     for r in rows:
@@ -312,6 +313,7 @@ def submit_receiving(db: Session, receiving_id: int) -> CyclePurchaseReceiving:
             record_audit(
                 db,
                 document_type="receiving",
+                company_code=receiving.company_code,
                 document_id=receiving.id,
                 document_no=receiving.receiving_no,
                 event_type="receiving_variance",
@@ -359,7 +361,7 @@ def get_receiving_report(
     if date_to:
         query = query.filter(CyclePurchaseReceiving.received_date <= date_to)
     if company:
-        query = query.filter(CyclePurchasePO.company == company)
+        query = query.filter(CyclePurchasePO.company_code == company)
     if vendor_id is not None:
         query = query.filter(CyclePurchasePO.vendor_id == vendor_id)
 

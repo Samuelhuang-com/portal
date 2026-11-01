@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 
 from app.core.cycle_purchase_database import get_cycle_purchase_db
 from app.dependencies import require_any_permission, require_permission
+from app.services.cycle_purchase_company_scope import CompanyContext, company_context, assert_row_visible
 from app.models.user import User
 from app.schemas.cycle_purchase_receiving import (
     ReceivableItemOut, ReceivingCreate, ReceivingDetail, ReceivingItemOut,
@@ -46,10 +47,11 @@ def _handle(fn, *args, **kwargs):
 def list_receiving(
     po_id: Optional[int] = Query(None),
     status_: Optional[str] = Query(None, alias="status"),
-    company: Optional[str] = Query(None),
+    ctx: CompanyContext = Depends(company_context),
     _: User = Depends(require_any_permission("cycle_purchase_view", "cycle_purchase_receive")),
     db: Session = Depends(get_cycle_purchase_db),
 ):
+    company = ctx.code  # 多公司隔離：一律以可見公司為準，忽略前端直接傳入的公司字串
     return svc.list_receiving(db, po_id=po_id, status=status_, company=company)
 
 
@@ -61,11 +63,12 @@ def list_receiving(
 def get_receiving_report(
     date_from: Optional[date] = Query(None),
     date_to: Optional[date] = Query(None),
-    company: Optional[str] = Query(None),
+    ctx: CompanyContext = Depends(company_context),
     vendor_id: Optional[int] = Query(None),
     _: User = Depends(require_permission("cycle_purchase_report")),
     db: Session = Depends(get_cycle_purchase_db),
 ):
+    company = ctx.code  # 多公司隔離：一律以可見公司為準，忽略前端直接傳入的公司字串
     return svc.get_receiving_report(db, date_from=date_from, date_to=date_to, company=company, vendor_id=vendor_id)
 
 
@@ -74,7 +77,9 @@ def get_receiving(
     receiving_id: int,
     _: User = Depends(require_any_permission("cycle_purchase_view", "cycle_purchase_receive")),
     db: Session = Depends(get_cycle_purchase_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
+    assert_row_visible(db, ctx, "cycle_purchase_receiving", receiving_id)
     receiving = svc.get_receiving(db, receiving_id)
     if not receiving:
         raise HTTPException(status_code=404, detail="驗收單不存在")
@@ -91,7 +96,9 @@ def create_receiving(
     payload: ReceivingCreate,
     current_user: User = Depends(require_permission("cycle_purchase_receive")),
     db: Session = Depends(get_cycle_purchase_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
+    assert_row_visible(db, ctx, "cycle_purchase_pos", payload.po_id)
     return _handle(
         svc.create_receiving, db, payload.po_id, payload.received_date, payload.notes, current_user,
     )
@@ -106,7 +113,9 @@ def get_receivable_items(
     receiving_id: int,
     _: User = Depends(require_permission("cycle_purchase_receive")),
     db: Session = Depends(get_cycle_purchase_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
+    assert_row_visible(db, ctx, "cycle_purchase_receiving", receiving_id)
     return _handle(svc.get_receivable_items, db, receiving_id)
 
 
@@ -120,7 +129,9 @@ def upsert_receiving_item(
     payload: ReceivingItemUpsert,
     _: User = Depends(require_permission("cycle_purchase_receive")),
     db: Session = Depends(get_cycle_purchase_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
+    assert_row_visible(db, ctx, "cycle_purchase_receiving", receiving_id)
     return _handle(svc.upsert_receiving_item, db, receiving_id, payload)
 
 
@@ -130,7 +141,9 @@ def delete_receiving_item(
     receiving_item_id: int,
     _: User = Depends(require_permission("cycle_purchase_receive")),
     db: Session = Depends(get_cycle_purchase_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
+    assert_row_visible(db, ctx, "cycle_purchase_receiving", receiving_id)
     ok = _handle(svc.delete_receiving_item, db, receiving_id, receiving_item_id)
     if not ok:
         raise HTTPException(status_code=404, detail="驗收明細不存在")
@@ -146,5 +159,7 @@ def submit_receiving(
     receiving_id: int,
     _: User = Depends(require_permission("cycle_purchase_receive")),
     db: Session = Depends(get_cycle_purchase_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
+    assert_row_visible(db, ctx, "cycle_purchase_receiving", receiving_id)
     return _handle(svc.submit_receiving, db, receiving_id)

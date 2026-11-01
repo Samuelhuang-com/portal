@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 from app.core.cycle_purchase_database import get_cycle_purchase_db
 from app.core.database import get_db
 from app.dependencies import require_permission
+from app.services.cycle_purchase_company_scope import CompanyContext, company_context, assert_row_visible
 from app.models.cycle_purchase_item import CyclePurchaseItemMapping
 from app.models.user import User
 from app.schemas.cycle_purchase_item import (
@@ -62,9 +63,10 @@ def list_items(
     sort_order: str = Query("asc", pattern="^(asc|desc)$"),
     _: User = Depends(require_permission("cycle_purchase_view")),
     db: Session = Depends(get_cycle_purchase_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
     items, total = svc.list_items(
-        db, q=q, category=category, category_id=category_id,
+        db, q=q, company_code=ctx.code, category=category, category_id=category_id,
         # 有帶參數就一定套篩選（-1 ＝ 前端選到的節點底下沒有細分類 → 查無資料）
         category_ids=[int(x) for x in category_ids.split(",") if x.strip().lstrip("-").isdigit()]
         if category_ids.strip() else None,
@@ -82,9 +84,11 @@ def list_items(
 def list_item_filter_companies(
     _: User = Depends(require_permission("cycle_purchase_view")),
     db: Session = Depends(get_cycle_purchase_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
     rows = (
         db.query(CyclePurchaseItemMapping.company, CyclePurchaseItemMapping.department_id)
+        .filter(CyclePurchaseItemMapping.company_code == ctx.code)
         .distinct()
         .all()
     )
@@ -106,7 +110,9 @@ def get_item(
     item_id: int,
     _: User = Depends(require_permission("cycle_purchase_view")),
     db: Session = Depends(get_cycle_purchase_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
+    assert_row_visible(db, ctx, "cycle_purchase_items", item_id)
     item = svc.get_item(db, item_id)
     if not item:
         raise HTTPException(status_code=404, detail="料號不存在")
@@ -118,9 +124,10 @@ def create_item(
     payload: ItemCreate,
     _: User = Depends(require_permission("cycle_purchase_admin")),
     db: Session = Depends(get_cycle_purchase_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
     try:
-        return svc.create_item(db, payload)
+        return svc.create_item(db, payload, ctx.code)
     except ValueError as exc:   # 類別不存在／已停用（2026-09-21）
         db.rollback()
         raise HTTPException(status_code=400, detail=str(exc))
@@ -135,7 +142,9 @@ def update_item(
     payload: ItemUpdate,
     _: User = Depends(require_permission("cycle_purchase_admin")),
     db: Session = Depends(get_cycle_purchase_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
+    assert_row_visible(db, ctx, "cycle_purchase_items", item_id)
     try:
         item = svc.update_item(db, item_id, payload)
     except ValueError as exc:   # 類別不存在／已停用（2026-09-21）
@@ -162,7 +171,9 @@ def list_item_mappings(
     item_id: int,
     _: User = Depends(require_permission("cycle_purchase_view")),
     db: Session = Depends(get_cycle_purchase_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
+    assert_row_visible(db, ctx, "cycle_purchase_items", item_id)
     return svc.list_item_mappings(db, item_id)
 
 
@@ -177,12 +188,17 @@ def create_item_mapping(
     payload: ItemMappingCreate,
     _: User = Depends(require_permission("cycle_purchase_admin")),
     db: Session = Depends(get_cycle_purchase_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
+    assert_row_visible(db, ctx, "cycle_purchase_items", item_id)
     try:
         mapping = svc.create_item_mapping(db, item_id, payload)
     except svc.ItemMappingConflict as e:
         db.rollback()
         raise HTTPException(status_code=409, detail=str(e))
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc))
     except IntegrityError:
         # 資料庫的 UniqueConstraint 兜底（service 層已先擋過一次，走到這裡代表
         # 有並行寫入插隊）。2026-08-18：唯一鍵已含 department_id，訊息跟著改——
@@ -206,7 +222,9 @@ def update_item_mapping(
     payload: ItemMappingUpdate,
     _: User = Depends(require_permission("cycle_purchase_admin")),
     db: Session = Depends(get_cycle_purchase_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
+    assert_row_visible(db, ctx, "cycle_purchase_items", item_id)
     # 2026-09-20：原本這支完全沒防撞號。料號主檔改成可以在同一個畫面編多列對照
     # 之後（一個料號 ＝ 一個公司 ＋ 多個部門 ＋ 多個科目），把 A 部門改成 B 部門
     # 撞到既有列會變成日常操作，不能再讓它變成 500。
@@ -215,6 +233,9 @@ def update_item_mapping(
     except svc.ItemMappingConflict as e:
         db.rollback()
         raise HTTPException(status_code=409, detail=str(e))
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc))
     except IntegrityError:
         db.rollback()
         raise HTTPException(status_code=409, detail="此料號已有該公司＋該部門的對照紀錄")
@@ -229,7 +250,9 @@ def delete_item_mapping(
     mapping_id: int,
     _: User = Depends(require_permission("cycle_purchase_admin")),
     db: Session = Depends(get_cycle_purchase_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
+    assert_row_visible(db, ctx, "cycle_purchase_items", item_id)
     # 2026-09-20：cycle_purchase_request_items.item_mapping_id 是 ondelete=RESTRICT，
     # 被請購明細引用過的對照列刪不掉。原本沒接這個例外，使用者會收到一句沒人
     # 看得懂的 500；改成講清楚為什麼刪不掉、以及該怎麼辦。

@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 
 from app.core.cycle_purchase_database import get_cycle_purchase_db
 from app.dependencies import require_any_permission, require_permission
+from app.services.cycle_purchase_company_scope import CompanyContext, company_context, assert_row_visible
 from app.models.user import User
 from app.schemas.cycle_purchase_payment import (
     AllocationUpdate, PayableReceivingOut, PaymentCreate, PaymentDetail,
@@ -46,10 +47,11 @@ def _handle(fn, *args, **kwargs):
 def list_payments(
     po_id: Optional[int] = Query(None),
     status_: Optional[str] = Query(None, alias="status"),
-    company: Optional[str] = Query(None),
+    ctx: CompanyContext = Depends(company_context),
     _: User = Depends(require_any_permission("cycle_purchase_view", "cycle_purchase_finance")),
     db: Session = Depends(get_cycle_purchase_db),
 ):
+    company = ctx.code  # 多公司隔離：一律以可見公司為準，忽略前端直接傳入的公司字串
     return svc.list_payments(db, po_id=po_id, status=status_, company=company)
 
 
@@ -71,7 +73,9 @@ def get_payment(
     payment_id: int,
     _: User = Depends(require_any_permission("cycle_purchase_view", "cycle_purchase_finance")),
     db: Session = Depends(get_cycle_purchase_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
+    assert_row_visible(db, ctx, "cycle_purchase_payments", payment_id)
     payment = svc.get_payment(db, payment_id)
     if not payment:
         raise HTTPException(status_code=404, detail="請款單不存在")
@@ -88,7 +92,9 @@ def create_payment(
     payload: PaymentCreate,
     current_user: User = Depends(require_permission("cycle_purchase_finance")),
     db: Session = Depends(get_cycle_purchase_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
+    assert_row_visible(db, ctx, "cycle_purchase_pos", payload.po_id)
     return _handle(
         svc.create_payment,
         db, payload.po_id, payload.receiving_ids, payload.invoice_no, payload.invoice_date,
@@ -102,7 +108,9 @@ def update_payment(
     payload: PaymentUpdate,
     _: User = Depends(require_permission("cycle_purchase_finance")),
     db: Session = Depends(get_cycle_purchase_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
+    assert_row_visible(db, ctx, "cycle_purchase_payments", payment_id)
     payment = _handle(svc.update_payment, db, payment_id, payload)
     if not payment:
         raise HTTPException(status_code=404, detail="請款單不存在")
@@ -119,7 +127,9 @@ def update_allocation_item(
     payload: AllocationUpdate,
     _: User = Depends(require_permission("cycle_purchase_finance")),
     db: Session = Depends(get_cycle_purchase_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
+    assert_row_visible(db, ctx, "cycle_purchase_payments", payment_id)
     return _handle(svc.update_allocation_item, db, payment_id, allocation_id, payload)
 
 
@@ -132,7 +142,9 @@ def submit_payment(
     payment_id: int,
     _: User = Depends(require_permission("cycle_purchase_finance")),
     db: Session = Depends(get_cycle_purchase_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
+    assert_row_visible(db, ctx, "cycle_purchase_payments", payment_id)
     return _handle(svc.submit_payment, db, payment_id)
 
 
@@ -146,5 +158,7 @@ def set_payment_status(
     payload: PaymentStatusPayload,
     _: User = Depends(require_permission("cycle_purchase_finance")),
     db: Session = Depends(get_cycle_purchase_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
+    assert_row_visible(db, ctx, "cycle_purchase_payments", payment_id)
     return _handle(svc.set_payment_status, db, payment_id, payload.status)

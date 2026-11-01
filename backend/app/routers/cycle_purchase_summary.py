@@ -47,12 +47,14 @@ from datetime import date
 from typing import Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from app.services.cycle_purchase_company_scope import assert_company_visible_by_name, assert_requests_visible
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.cycle_purchase_database import get_cycle_purchase_db
 from app.core.database import get_db
 from app.dependencies import require_any_permission, require_permission
+from app.services.cycle_purchase_company_scope import CompanyContext, company_context, assert_row_visible
 from app.models.user import User
 from app.schemas.cycle_purchase_summary import (
     ConvertToPoPayload, DepartmentBreakdownOut, EligibleRequestOut, GenerateFromRequestsPayload,
@@ -127,13 +129,14 @@ def _handle(fn, *args, **kwargs):
 def list_summary(
     cycle_id: Optional[int] = Query(None),
     period_label: Optional[str] = Query(None),
-    company: Optional[str] = Query(None),
+    ctx: CompanyContext = Depends(company_context),
     vendor_id: Optional[int] = Query(None),
     status_: Optional[str] = Query(None, alias="status"),
     department_id: Optional[int] = Query(None),
     _: User = Depends(require_any_permission("cycle_purchase_view", "cycle_purchase_buyer")),
     db: Session = Depends(get_cycle_purchase_db),
 ):
+    company = ctx.code  # 多公司隔離：一律以可見公司為準，忽略前端直接傳入的公司字串
     return _handle(
         svc.list_summary,
         db, cycle_id=cycle_id, period_label=period_label,
@@ -151,10 +154,11 @@ def list_ragic_pushed(
     start: Optional[date] = Query(None, description="拋轉日期起（含當天）"),
     end: Optional[date] = Query(None, description="拋轉日期迄（含當天）"),
     cycle_id: Optional[int] = Query(None),
-    company: Optional[str] = Query(None),
+    ctx: CompanyContext = Depends(company_context),
     _: User = Depends(require_any_permission("cycle_purchase_view", "cycle_purchase_buyer")),
     db: Session = Depends(get_cycle_purchase_db),
 ):
+    company = ctx.code  # 多公司隔離：一律以可見公司為準，忽略前端直接傳入的公司字串
     """一列＝一張 Ragic 單據。日期篩選打在 **`ragic_pushed_at`（拋轉時間）**，
     不是期別——使用者問的是「這段時間我推了什麼」，8 月的期別可能 9 月才推。
     `start`／`end` 皆可省略（＝不限）。"""
@@ -172,11 +176,12 @@ def list_ragic_pushed(
 def ragic_pushed_date_range(
     _: User = Depends(require_any_permission("cycle_purchase_view", "cycle_purchase_buyer")),
     db: Session = Depends(get_cycle_purchase_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
     """⚠️ CLAUDE.md §8.2：快捷要以**資料最後一天**為基準而不是今天。
     拋轉是人工動作、不是每天都有，用今天當基準「本月」很容易框到一段完全沒資料的
     區間，使用者會以為資料不見了。"""
-    return _handle(svc.ragic_pushed_date_range, db)
+    return _handle(svc.ragic_pushed_date_range, db, company_code=ctx.code)
 
 
 @router.get(
@@ -216,10 +221,11 @@ def get_ragic_link(
 def department_breakdown(
     cycle_id: int = Query(...),
     period_label: str = Query(...),
-    company: Optional[str] = Query(None),
+    ctx: CompanyContext = Depends(company_context),
     _: User = Depends(require_any_permission("cycle_purchase_view", "cycle_purchase_buyer")),
     db: Session = Depends(get_cycle_purchase_db),
 ):
+    company = ctx.code  # 多公司隔離：一律以可見公司為準，忽略前端直接傳入的公司字串
     return _handle(svc.list_department_breakdown, db, cycle_id, period_label, company)
 
 
@@ -231,10 +237,11 @@ def department_breakdown(
 def vendor_groups(
     cycle_id: int = Query(...),
     period_label: str = Query(...),
-    company: Optional[str] = Query(None),
+    ctx: CompanyContext = Depends(company_context),
     _: User = Depends(require_permission("cycle_purchase_buyer")),
     db: Session = Depends(get_cycle_purchase_db),
 ):
+    company = ctx.code  # 多公司隔離：一律以可見公司為準，忽略前端直接傳入的公司字串
     return _handle(svc.list_vendor_groups, db, cycle_id, period_label, company)
 
 
@@ -246,9 +253,10 @@ def vendor_groups(
 def pending_requests(
     _: User = Depends(require_permission("cycle_purchase_buyer")),
     db: Session = Depends(get_cycle_purchase_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
     """2026-09-25：彙整單頁第一個 TAB。條件與左側選單「彙整單」紅點相同。"""
-    return svc.list_pending_requests(db)
+    return svc.list_pending_requests(db, company_code=ctx.code)
 
 
 @router.get(
@@ -258,11 +266,12 @@ def pending_requests(
 )
 def excluded_requests(
     cycle_id: int = Query(...),
-    company: str = Query(...),
+    ctx: CompanyContext = Depends(company_context),
     year_month: str = Query(...),
     _: User = Depends(require_permission("cycle_purchase_buyer")),
     db: Session = Depends(get_cycle_purchase_db),
 ):
+    company = ctx.code  # 多公司隔離：一律以可見公司為準，忽略前端直接傳入的公司字串
     """2026-09-25：讓第一次用的人知道「為什麼選不到」——那些單已經彙整或拋轉過。"""
     return svc.list_excluded_requests(db, cycle_id, company, year_month)
 
@@ -274,11 +283,12 @@ def excluded_requests(
 )
 def eligible_requests(
     cycle_id: int = Query(...),
-    company: str = Query(...),
+    ctx: CompanyContext = Depends(company_context),
     year_month: str = Query(..., description="期別，格式 YYYY-MM，依請購單 period_label 判斷"),
     _: User = Depends(require_permission("cycle_purchase_buyer")),
     db: Session = Depends(get_cycle_purchase_db),
 ):
+    company = ctx.code  # 多公司隔離：一律以可見公司為準，忽略前端直接傳入的公司字串
     return _handle(svc.list_eligible_requests, db, cycle_id, company, year_month)
 
 
@@ -291,7 +301,9 @@ def generate_summary_from_requests(
     payload: GenerateFromRequestsPayload,
     _: User = Depends(require_permission("cycle_purchase_buyer")),
     db: Session = Depends(get_cycle_purchase_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
+    assert_requests_visible(db, ctx, payload.request_ids)
     return _handle(svc.generate_summary_from_requests, db, payload.request_ids)
 
 
@@ -302,11 +314,12 @@ def generate_summary_from_requests(
 )
 def summarized_requests(
     cycle_id: int = Query(...),
-    company: str = Query(...),
+    ctx: CompanyContext = Depends(company_context),
     year_month: str = Query(..., description="期別，格式 YYYY-MM，依請購單 period_label 判斷"),
     _: User = Depends(require_permission("cycle_purchase_buyer")),
     db: Session = Depends(get_cycle_purchase_db),
 ):
+    company = ctx.code  # 多公司隔離：一律以可見公司為準，忽略前端直接傳入的公司字串
     return _handle(svc.list_summarized_requests, db, cycle_id, company, year_month)
 
 
@@ -319,7 +332,9 @@ def unsummarize_request(
     payload: UnsummarizeRequestPayload,
     current_user: User = Depends(require_permission("cycle_purchase_buyer")),
     db: Session = Depends(get_cycle_purchase_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
+    assert_requests_visible(db, ctx, [payload.request_id])
     return _handle(svc.unsummarize_request, db, payload.request_id, payload.reason, current_user)
 
 
@@ -329,7 +344,9 @@ def update_summary_item(
     payload: SummaryUpdate,
     _: User = Depends(require_permission("cycle_purchase_buyer")),
     db: Session = Depends(get_cycle_purchase_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
+    assert_row_visible(db, ctx, "cycle_purchase_summary", summary_id)
     row = _handle(svc.update_summary_item, db, summary_id, payload)
     if not row:
         raise HTTPException(status_code=404, detail="彙整列不存在")
@@ -346,7 +363,9 @@ def convert_to_po(
     payload: ConvertToPoPayload,
     current_user: User = Depends(require_permission("cycle_purchase_buyer")),
     db: Session = Depends(get_cycle_purchase_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
+    assert_company_visible_by_name(db, ctx, payload.company)
     return _handle(
         svc.convert_to_po,
         db, payload.cycle_id, payload.period_label, payload.company, payload.vendor_id,
@@ -364,7 +383,9 @@ def push_to_ragic(
     current_user: User = Depends(require_permission("cycle_purchase_buyer")),
     db: Session = Depends(get_cycle_purchase_db),
     portal_db: Session = Depends(get_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
+    assert_company_visible_by_name(db, ctx, payload.company)
     """依「廠商＋部門」拆單真正寫入 Ragic。**部分成功也是 200**——成功的在
     documents、Ragic 拒絕的在 failed、缺供應商／缺單價／部門沒對照 Ragic 部門
     而沒送出去的列在 not_pushed，前端要三段都顯示。要重推某個已拋轉的範圍，
@@ -398,7 +419,9 @@ def cancel_ragic_push(
     payload: CancelRagicPushPayload,
     current_user: User = Depends(require_permission("cycle_purchase_buyer")),
     db: Session = Depends(get_cycle_purchase_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
+    assert_company_visible_by_name(db, ctx, payload.company)
     """取消的是「拋轉」這個標記，不動彙整列本身的 status／po_id。
     ⚠️ Ragic 端真正串接之後，這裡要另外決定 Ragic 那筆記錄怎麼處理，
     見 services/cycle_purchase_summary_service.cancel_ragic_push() 的 TODO。"""

@@ -92,6 +92,9 @@ from app.core.cycle_purchase_database import CyclePurchaseBase
 class CyclePurchaseItem(CyclePurchaseBase):
     """週期採購料號主檔（集團新編碼）"""
     __tablename__ = "cycle_purchase_items"
+    company_code = Column(String(10), ForeignKey("cycle_purchase_companies.code", ondelete="RESTRICT"),
+                          nullable=False, index=True,
+                          comment="公司代碼（cpco3 起 NOT NULL）")
 
     id                = Column(Integer, primary_key=True, autoincrement=True)
     item_code         = Column(String(30),  nullable=False, unique=True,
@@ -150,6 +153,9 @@ class CyclePurchaseItemMapping(CyclePurchaseBase):
     is_confirmed 設為 True。
     """
     __tablename__ = "cycle_purchase_item_mappings"
+    company_code = Column(String(10), ForeignKey("cycle_purchase_companies.code", ondelete="RESTRICT"),
+                          nullable=False, index=True,
+                          comment="公司代碼（cpco3 起 NOT NULL）")
     __table_args__ = (
         # 2026-08-18：唯一鍵從 (item_id, company) 擴到含 department_id。
         # 原因：春大直的文具用品（G 系列）在《設料號明細表》裡的分頁就叫
@@ -165,7 +171,7 @@ class CyclePurchaseItemMapping(CyclePurchaseBase):
         # 單價／供應商（已知並已修正的一處：
         # cycle_purchase_summary_service.generate_summary）。
         UniqueConstraint(
-            "item_id", "company", "department_id",
+            "item_id", "company_code", "department_id",
             name="uq_cp_item_mapping_item_company_dept",
         ),
     )

@@ -255,6 +255,20 @@ CP_CHAIN = [
      [("cycle_purchase_items", "category_id")]),
     ("cpccdefault", "cycle_purchase_cost_centers.is_default",  _chk_cpccdefault,
      [("cycle_purchase_cost_centers", "is_default")]),
+    ("cpco1",       "cycle_purchase_companies＋各表 company_code",
+     lambda insp: "cycle_purchase_companies" in set(insp.get_table_names())
+                  and "company_code" in {c["name"] for c in insp.get_columns("cycle_purchase_items")},
+     [("cycle_purchase_companies", "code"), ("cycle_purchase_items", "company_code")]),
+    ("cpco2",       "唯一鍵改用 company_code（含採購單部分索引修正）",
+     lambda insp: "uq_cp_account_code_company_code" in {u["name"] for u in insp.get_unique_constraints("cycle_purchase_account_codes")},
+     [("cycle_purchase_account_codes", "company_code")]),
+    ("cpco3",       "分公司表 company_code NOT NULL",
+     lambda insp: all(next(c["nullable"] is False for c in insp.get_columns(t) if c["name"]=="company_code")
+                      for t in ["cycle_purchase_items","cycle_purchase_pos","cycle_purchase_vendors"]),
+     [("cycle_purchase_items", "company_code")]),
+    ("cpco4",       "OU 公司名稱改為「日曜」",
+     lambda insp: "cycle_purchase_companies" in set(insp.get_table_names()),
+     [("cycle_purchase_companies", "name")]),
 ]
 
 

@@ -64,8 +64,11 @@ class CyclePurchaseSummary(CyclePurchaseBase):
     """週期採購彙整列（一列＝一個週期＋期別＋公司＋料號＋部門的彙整工作項目，
     2026-07-16 起彙整粒度含部門；2026-07-16 之前產生的歷史列 department_id 為 NULL）"""
     __tablename__ = "cycle_purchase_summary"
+    company_code = Column(String(10), ForeignKey("cycle_purchase_companies.code", ondelete="RESTRICT"),
+                          nullable=False, index=True,
+                          comment="公司代碼（cpco3 起 NOT NULL）")
     __table_args__ = (
-        UniqueConstraint("cycle_id", "period_label", "company", "item_id", "department_id",
+        UniqueConstraint("cycle_id", "period_label", "company_code", "item_id", "department_id",
                           name="uq_cp_summary_cycle_period_company_item_dept"),
     )
 

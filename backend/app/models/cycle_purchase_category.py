@@ -64,12 +64,15 @@ from app.core.cycle_purchase_database import CyclePurchaseBase
 class CyclePurchaseCategory(CyclePurchaseBase):
     """週期採購類別主檔（一列 = 一個細分類葉節點）"""
     __tablename__ = "cycle_purchase_categories"
+    company_code = Column(String(10), ForeignKey("cycle_purchase_companies.code", ondelete="RESTRICT"),
+                          nullable=False, index=True,
+                          comment="公司代碼（cpco3 起 NOT NULL）")
     __table_args__ = (
         # 同一家公司內，三段碼組合唯一。sub_code 為 NOT NULL（每個料號碼位本來
         # 就一定有細分類那兩碼），所以不會踩到 SQLite「NULL 彼此不相等、
         # UNIQUE 擋不住重複 NULL」的坑。
         UniqueConstraint(
-            "company", "major_code", "mid_code", "sub_code",
+            "company_code", "major_code", "mid_code", "sub_code",
             name="uq_cp_category_company_codes",
         ),
     )

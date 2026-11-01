@@ -84,6 +84,7 @@ from sqlalchemy.orm import Session
 from app.core.cycle_purchase_database import get_cycle_purchase_db
 from app.core.database import get_db
 from app.dependencies import require_permission, require_any_permission, get_user_permissions
+from app.services.cycle_purchase_company_scope import CompanyContext, company_context, assert_row_visible, assert_requests_visible, assert_company_visible_by_name
 from app.models.cycle_purchase_reference import CyclePurchaseDepartment
 from app.models.cycle_purchase_request import CyclePurchaseRequest
 from app.models.user import User
@@ -151,6 +152,7 @@ def list_requests(
     current_user: User = Depends(require_any_permission("cycle_purchase_view", "cycle_purchase_request")),
     db: Session = Depends(get_cycle_purchase_db),
     portal_db: Session = Depends(get_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
     dept_ids = svc.get_user_cp_department_ids(db, portal_db, current_user.id) if mine else None
     # 2026-09-25：管理者（"*"）的「我的部門」＝全部部門，與「部門本期」卡片一致
@@ -158,7 +160,7 @@ def list_requests(
         dept_ids = None
     try:
         return svc.list_requests(
-            db, cycle_id=cycle_id, period_label=period_label,
+            db, company_code=ctx.code, cycle_id=cycle_id, period_label=period_label,
             department_id=department_id, status=status_,
             can_see_closed=_can_see_closed(current_user, portal_db),
             close_state=close_state,
@@ -188,6 +190,7 @@ def get_todos(
     current_user: User = Depends(require_any_permission("cycle_purchase_view", "cycle_purchase_request")),
     db: Session = Depends(get_cycle_purchase_db),
     portal_db: Session = Depends(get_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
     perms = get_user_permissions(current_user.id, portal_db)
     is_closer = "*" in perms or "cycle_purchase_close" in perms
@@ -196,7 +199,7 @@ def get_todos(
     can_summarize = "*" in perms or "cycle_purchase_buyer" in perms
     # 2026-09-01：傳 portal_db 讓 my_pending 認「部門成員 OR 承辦人」
     return svc.get_dashboard_todos(
-        db, current_user, is_closer, portal_db=portal_db, can_summarize=can_summarize
+        db, current_user, is_closer, portal_db=portal_db, can_summarize=can_summarize, company_code=ctx.code
     )
 
 
@@ -207,11 +210,12 @@ def get_todos(
 )
 def list_open_for_close(
     cycle_id: int = Query(...),
-    company: Optional[str] = Query(None),
+    ctx: CompanyContext = Depends(company_context),
     year_month: Optional[str] = Query(None),
     _: User = Depends(require_permission("cycle_purchase_close")),
     db: Session = Depends(get_cycle_purchase_db),
 ):
+    company = ctx.code  # 多公司隔離：一律以可見公司為準，忽略前端直接傳入的公司字串
     return svc.list_open_requests_for_close(db, cycle_id, company, year_month)
 
 
@@ -224,6 +228,7 @@ def my_period(
     current_user: User = Depends(require_any_permission("cycle_purchase_view", "cycle_purchase_request")),
     db: Session = Depends(get_cycle_purchase_db),
     portal_db: Session = Depends(get_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
     """⚠️ 路由順序：這支必須宣告在 /requests/{request_id} 之前。
 
@@ -240,7 +245,7 @@ def my_period(
         ]
     else:
         dept_ids = svc.get_user_cp_department_ids(db, portal_db, current_user.id)
-    result = svc.my_period_overview(db, dept_ids)
+    result = svc.my_period_overview(db, dept_ids, company_code=ctx.code)
     result["can_open_closed"] = _can_see_closed(current_user, portal_db)
     result["scope"] = "all" if is_admin else "mine"
     return result
@@ -254,9 +259,10 @@ def my_period(
 def generate_status(
     _: User = Depends(require_permission("cycle_purchase_buyer")),
     db: Session = Depends(get_cycle_purchase_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
     """⚠️ 路由順序：這支必須宣告在 /requests/{request_id} 之前。"""
-    return svc.generation_status_for_period(db)
+    return svc.generation_status_for_period(db, company_code=ctx.code)
 
 
 @router.get(
@@ -269,13 +275,14 @@ def preview_generate_requests(
     current_user: User = Depends(require_permission("cycle_purchase_buyer")),
     db: Session = Depends(get_cycle_purchase_db),
     portal_db: Session = Depends(get_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
     """⚠️ 路由順序：這支必須宣告在 /requests/{request_id} 之前，
     否則 "generate-preview" 會被當成 request_id。
 
     2026-09-29：「新增請購單」「複製上期請購單」的部門下拉也改用這支，只列此週期
     適用的部門；另外回傳 my_department_ids，讓前端預設只列登入者自己的部門。"""
-    result = _handle(svc.preview_applicable_departments, db, cycle_id)
+    result = _handle(svc.preview_applicable_departments, db, cycle_id, company_code=ctx.code)
     result["my_department_ids"] = svc.get_user_cp_department_ids(db, portal_db, current_user.id)
     return result
 
@@ -290,7 +297,9 @@ def list_copy_source_candidates(
     department_id: int = Query(...),
     _: User = Depends(require_permission("cycle_purchase_buyer")),
     db: Session = Depends(get_cycle_purchase_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
+    assert_row_visible(db, ctx, "cycle_purchase_departments", department_id)
     """⚠️ 路由順序：這支必須宣告在 /requests/{request_id} 之前，
     否則 "copy-candidates" 會被當成 request_id。"""
     return svc.list_copy_source_candidates(db, cycle_id, department_id)
@@ -302,7 +311,9 @@ def get_request(
     current_user: User = Depends(require_any_permission("cycle_purchase_view", "cycle_purchase_request")),
     db: Session = Depends(get_cycle_purchase_db),
     portal_db: Session = Depends(get_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
+    assert_row_visible(db, ctx, "cycle_purchase_requests", request_id)
     try:
         req = svc.get_request(
             db, request_id, can_see_closed=_can_see_closed(current_user, portal_db)
@@ -323,8 +334,9 @@ def generate_requests(
     payload: GenerateRequestsPayload,
     _: User = Depends(require_permission("cycle_purchase_buyer")),
     db: Session = Depends(get_cycle_purchase_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
-    requests, skipped = _handle(svc.generate_requests_for_period, db, payload.cycle_id)
+    requests, skipped = _handle(svc.generate_requests_for_period, db, payload.cycle_id, ctx.codes)
     return GenerateRequestsResult(requests=requests, skipped=skipped)
 
 
@@ -333,7 +345,9 @@ def create_request(
     payload: RequestCreate,
     _: User = Depends(require_permission("cycle_purchase_buyer")),
     db: Session = Depends(get_cycle_purchase_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
+    assert_row_visible(db, ctx, "cycle_purchase_departments", payload.department_id)
     return _handle(svc.create_request, db, payload)
 
 
@@ -347,7 +361,9 @@ def copy_request(
     source_request_id: int,
     current_user: User = Depends(require_permission("cycle_purchase_buyer")),
     db: Session = Depends(get_cycle_purchase_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
+    assert_row_visible(db, ctx, "cycle_purchase_requests", source_request_id)
     new_req, skipped = _handle(svc.copy_request, db, source_request_id, current_user)
     return CopyRequestResult(
         request=new_req,
@@ -362,7 +378,9 @@ def update_request(
     current_user: User = Depends(require_permission("cycle_purchase_request")),
     db: Session = Depends(get_cycle_purchase_db),
     portal_db: Session = Depends(get_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
+    assert_row_visible(db, ctx, "cycle_purchase_requests", request_id)
     _ensure_own_department(request_id, current_user, db, portal_db)
     req = _handle(svc.update_request, db, request_id, payload)
     if not req:
@@ -379,7 +397,9 @@ def delete_request(
     current_user: User = Depends(require_permission("cycle_purchase_request")),
     db: Session = Depends(get_cycle_purchase_db),
     portal_db: Session = Depends(get_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
+    assert_row_visible(db, ctx, "cycle_purchase_requests", request_id)
     """2026-08-17 新增：判準跟既有「週期範圍縮小時自動清孤兒單」
     （find_orphan_blank_requests／delete_orphan_blank_requests）完全一樣，
     只是這裡是使用者主動刪單一張——手動新增放寬擋重後，選錯週期／部門、
@@ -401,7 +421,9 @@ def get_available_items(
     current_user: User = Depends(require_permission("cycle_purchase_request")),
     db: Session = Depends(get_cycle_purchase_db),
     portal_db: Session = Depends(get_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
+    assert_row_visible(db, ctx, "cycle_purchase_requests", request_id)
     _ensure_own_department(request_id, current_user, db, portal_db)
     return _handle(svc.get_available_items, db, request_id)
 
@@ -418,7 +440,9 @@ def add_request_item(
     current_user: User = Depends(require_permission("cycle_purchase_request")),
     db: Session = Depends(get_cycle_purchase_db),
     portal_db: Session = Depends(get_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
+    assert_row_visible(db, ctx, "cycle_purchase_requests", request_id)
     _ensure_own_department(request_id, current_user, db, portal_db)
     return _handle(svc.add_request_item, db, request_id, payload)
 
@@ -435,7 +459,9 @@ def update_request_item(
     current_user: User = Depends(require_permission("cycle_purchase_request")),
     db: Session = Depends(get_cycle_purchase_db),
     portal_db: Session = Depends(get_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
+    assert_row_visible(db, ctx, "cycle_purchase_requests", request_id)
     _ensure_own_department(request_id, current_user, db, portal_db)
     row = _handle(svc.update_request_item, db, request_id, item_row_id, payload)
     if not row:
@@ -450,7 +476,9 @@ def delete_request_item(
     current_user: User = Depends(require_permission("cycle_purchase_request")),
     db: Session = Depends(get_cycle_purchase_db),
     portal_db: Session = Depends(get_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
+    assert_row_visible(db, ctx, "cycle_purchase_requests", request_id)
     _ensure_own_department(request_id, current_user, db, portal_db)
     ok = _handle(svc.delete_request_item, db, request_id, item_row_id)
     if not ok:
@@ -463,7 +491,9 @@ def close_requests(
     payload: CloseRequestsPayload,
     current_user: User = Depends(require_permission("cycle_purchase_close")),
     db: Session = Depends(get_cycle_purchase_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
+    assert_requests_visible(db, ctx, payload.request_ids)
     return _handle(svc.close_requests, db, payload.request_ids, current_user)
 
 
@@ -472,7 +502,9 @@ def close_all_requests(
     payload: CloseAllRequestsPayload,
     current_user: User = Depends(require_permission("cycle_purchase_close")),
     db: Session = Depends(get_cycle_purchase_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
+    assert_company_visible_by_name(db, ctx, payload.company)
     return _handle(
         svc.close_all_requests, db, payload.cycle_id, payload.company, payload.year_month, current_user,
     )
@@ -483,5 +515,7 @@ def reopen_requests(
     payload: ReopenRequestsPayload,
     current_user: User = Depends(require_permission("cycle_purchase_close")),
     db: Session = Depends(get_cycle_purchase_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
+    assert_requests_visible(db, ctx, payload.request_ids)
     return _handle(svc.reopen_requests, db, payload.request_ids, current_user)

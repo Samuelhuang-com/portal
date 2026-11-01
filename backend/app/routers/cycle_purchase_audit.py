@@ -16,6 +16,7 @@ from typing import Optional, List
 from datetime import date
 
 from fastapi import APIRouter, Depends, Query
+from app.services.cycle_purchase_company_scope import CompanyContext, company_context
 from sqlalchemy.orm import Session
 
 from app.core.cycle_purchase_database import get_cycle_purchase_db
@@ -35,5 +36,6 @@ def list_audit_log(
     date_to: Optional[date] = Query(None),
     _: User = Depends(require_permission("cycle_purchase_admin")),
     db: Session = Depends(get_cycle_purchase_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
-    return svc.list_audit_log(db, document_type=document_type, event_type=event_type, date_from=date_from, date_to=date_to)
+    return svc.list_audit_log(db, document_type=document_type, event_type=event_type, date_from=date_from, date_to=date_to, company_code=ctx.code)

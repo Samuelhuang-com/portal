@@ -103,3 +103,7 @@ backend/.pg_cutover_at
 
 # 個人副本（2026-10-29）：不納入版控
 *-SamuelHuang.*
+
+# 2026-11-01 週採多公司：測試／交接產物不進版控
+"Claude outputs/"
+backend/cp_company_grants_*.json

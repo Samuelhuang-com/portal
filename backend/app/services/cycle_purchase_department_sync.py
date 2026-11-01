@@ -56,6 +56,7 @@ cycle_purchase_department_sync.py — 部門主檔鏡像同步：系統設定（
 import logging
 from typing import Optional
 
+from app.services.cycle_purchase_company_scope import require_company_code
 from app.core.cycle_purchase_database import CyclePurchaseSessionLocal
 from app.core.database import SessionLocal
 from app.models.reference_data import Company, RefDepartment
@@ -194,6 +195,7 @@ async def sync_from_reference() -> dict:
                     #    同步不再覆蓋——2026-09-01 裁示）──────────────────────
                     row = CyclePurchaseDepartment(
                         company=company,
+                        company_code=require_company_code(db, company),
                         dept_code=f"DEPT-{source_id}",
                         dept_name=dept_name,
                         is_active=True,

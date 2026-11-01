@@ -23,6 +23,7 @@ Depends(get_cycle_purchase_db)（cycle-purchase.db），不是 portal.db 的 get
 """
 from typing import Optional
 
+from app.services.cycle_purchase_company_scope import require_company_code
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -41,8 +42,8 @@ from app.models.cycle_purchase_cycle import CyclePurchaseCycle
 # 供應商主檔
 # ═══════════════════════════════════════════════════════════════════════════
 
-def list_vendors(db: Session, is_active: Optional[bool] = None, q: str = ""):
-    query = db.query(CyclePurchaseVendor)
+def list_vendors(db: Session, is_active: Optional[bool] = None, q: str = "", *, company_code: str):
+    query = db.query(CyclePurchaseVendor).filter(CyclePurchaseVendor.company_code == company_code)
     if is_active is not None:
         query = query.filter(CyclePurchaseVendor.is_active == is_active)
     if q:
@@ -54,8 +55,20 @@ def list_vendors(db: Session, is_active: Optional[bool] = None, q: str = ""):
     return query.order_by(CyclePurchaseVendor.vendor_code).all()
 
 
-def create_vendor(db: Session, payload) -> CyclePurchaseVendor:
-    vendor = CyclePurchaseVendor(**payload.model_dump())
+def _assert_company_matches_name(db: Session, company_name, company_code: str) -> None:
+    """payload 若帶公司字串，必須與目前公司代碼一致（防止 A 公司的請求寫入 B 公司）。"""
+    if company_name and require_company_code(db, company_name) != company_code:
+        raise ValueError(f"公司別「{company_name}」與目前所選公司不一致")
+
+
+def _assert_department_company(db: Session, department_id, company_code: str) -> None:
+    dept = db.get(CyclePurchaseDepartment, department_id)
+    if dept is None or dept.company_code != company_code:
+        raise ValueError("部門不屬於此公司別")
+
+
+def create_vendor(db: Session, payload, company_code: str) -> CyclePurchaseVendor:
+    vendor = CyclePurchaseVendor(**payload.model_dump(), company_code=company_code)
     db.add(vendor)
     db.flush()
     return vendor
@@ -242,15 +255,16 @@ def _vendor_merge(db: Session, source_id: int, target_id: int, apply: bool) -> d
 # 部門 / 成本中心 / 會計科目 主檔
 # ═══════════════════════════════════════════════════════════════════════════
 
-def list_departments(db: Session, is_active: Optional[bool] = None):
-    query = db.query(CyclePurchaseDepartment)
+def list_departments(db: Session, is_active: Optional[bool] = None, *, company_code: str):
+    query = db.query(CyclePurchaseDepartment).filter(CyclePurchaseDepartment.company_code == company_code)
     if is_active is not None:
         query = query.filter(CyclePurchaseDepartment.is_active == is_active)
     return query.order_by(CyclePurchaseDepartment.company, CyclePurchaseDepartment.dept_code).all()
 
 
-def create_department(db: Session, payload) -> CyclePurchaseDepartment:
-    dept = CyclePurchaseDepartment(**payload.model_dump())
+def create_department(db: Session, payload, company_code: str) -> CyclePurchaseDepartment:
+    _assert_company_matches_name(db, getattr(payload, "company", None), company_code)
+    dept = CyclePurchaseDepartment(**payload.model_dump(), company_code=company_code)
     db.add(dept)
     db.flush()
     return dept
@@ -319,8 +333,8 @@ def link_department_to_source(
     return dept, None
 
 
-def list_cost_centers(db: Session, department_id: Optional[int] = None, is_active: Optional[bool] = None):
-    query = db.query(CyclePurchaseCostCenter)
+def list_cost_centers(db: Session, department_id: Optional[int] = None, is_active: Optional[bool] = None, *, company_code: str):
+    query = db.query(CyclePurchaseCostCenter).filter(CyclePurchaseCostCenter.company_code == company_code)
     if department_id is not None:
         query = query.filter(CyclePurchaseCostCenter.department_id == department_id)
     if is_active is not None:
@@ -398,11 +412,12 @@ def _clear_other_defaults(db: Session, department_id: int, keep_id: Optional[int
     db.flush()
 
 
-def create_cost_center(db: Session, payload) -> CyclePurchaseCostCenter:
+def create_cost_center(db: Session, payload, company_code: str) -> CyclePurchaseCostCenter:
     data = payload.model_dump()
+    _assert_department_company(db, data["department_id"], company_code)
     if data.get("is_default"):
         _clear_other_defaults(db, data["department_id"], keep_id=None)
-    cc = CyclePurchaseCostCenter(**data)
+    cc = CyclePurchaseCostCenter(**data, company_code=company_code)
     db.add(cc)
     db.flush()
     fill_open_requests_default_cost_center(db, cc.department_id)
@@ -425,15 +440,15 @@ def update_cost_center(db: Session, cc_id: int, payload) -> Optional[CyclePurcha
     return cc
 
 
-def list_account_codes(db: Session, is_active: Optional[bool] = None):
-    query = db.query(CyclePurchaseAccountCode)
+def list_account_codes(db: Session, is_active: Optional[bool] = None, *, company_code: str):
+    query = db.query(CyclePurchaseAccountCode).filter(CyclePurchaseAccountCode.company_code == company_code)
     if is_active is not None:
         query = query.filter(CyclePurchaseAccountCode.is_active == is_active)
     return query.order_by(CyclePurchaseAccountCode.code).all()
 
 
-def create_account_code(db: Session, payload) -> CyclePurchaseAccountCode:
-    ac = CyclePurchaseAccountCode(**payload.model_dump())
+def create_account_code(db: Session, payload, company_code: str) -> CyclePurchaseAccountCode:
+    ac = CyclePurchaseAccountCode(**payload.model_dump(), company_code=company_code)
     db.add(ac)
     db.flush()
     return ac
@@ -498,7 +513,7 @@ def list_categories(
 ):
     query = db.query(CyclePurchaseCategory)
     if company:
-        query = query.filter(CyclePurchaseCategory.company == company)
+        query = query.filter(CyclePurchaseCategory.company_code == company)
     if department_id is not None:
         query = query.filter(CyclePurchaseCategory.department_id == department_id)
     if is_active is not None:
@@ -547,8 +562,9 @@ def get_category(db: Session, category_id: int) -> Optional[CyclePurchaseCategor
     return category
 
 
-def create_category(db: Session, payload) -> CyclePurchaseCategory:
-    category = CyclePurchaseCategory(**payload.model_dump())
+def create_category(db: Session, payload, company_code: str) -> CyclePurchaseCategory:
+    _assert_company_matches_name(db, getattr(payload, "company", None), company_code)
+    category = CyclePurchaseCategory(**payload.model_dump(), company_code=company_code)
     db.add(category)
     db.flush()
     return _attach_category_display_fields(db, category)
@@ -604,7 +620,7 @@ def get_next_item_code(db: Session, category_id: int) -> Optional[dict]:
     rows = (
         db.query(CyclePurchaseItemMapping.original_code)
         .filter(
-            CyclePurchaseItemMapping.company == category.company,
+            CyclePurchaseItemMapping.company_code == category.company_code,
             CyclePurchaseItemMapping.original_code.like(f"{prefix}%"),
         )
         .distinct()
@@ -765,9 +781,11 @@ def list_items(
     vendor_q: str = "",
     sort_by: Optional[str] = None,
     sort_order: str = "asc",
+    *,
+    company_code: str,
 ):
     M = CyclePurchaseItemMapping
-    query = db.query(CyclePurchaseItem)
+    query = db.query(CyclePurchaseItem).filter(CyclePurchaseItem.company_code == company_code)
     if q:
         like = f"%{q}%"
         query = query.filter(
@@ -796,7 +814,7 @@ def list_items(
     elif company or department_id:
         sub = db.query(M.id).filter(M.item_id == CyclePurchaseItem.id)
         if company:
-            sub = sub.filter(M.company == company)
+            sub = sub.filter(M.company_code == company_code)
         if department_id:
             sub = sub.filter(M.department_id == department_id)
         query = query.filter(sub.exists())
@@ -900,9 +918,13 @@ def get_item(db: Session, item_id: int) -> Optional[CyclePurchaseItem]:
     return item
 
 
-def create_item(db: Session, payload) -> CyclePurchaseItem:
+def create_item(db: Session, payload, company_code: str) -> CyclePurchaseItem:
     data = _apply_item_category(db, payload.model_dump())
-    item = CyclePurchaseItem(**data)
+    if data.get("category_id"):
+        cat = db.get(CyclePurchaseCategory, data["category_id"])
+        if cat is not None and cat.company_code != company_code:
+            raise ValueError("分類不屬於此公司別")
+    item = CyclePurchaseItem(**data, company_code=company_code)
     db.add(item)
     db.flush()
     _attach_item_category(db, item)
@@ -998,7 +1020,7 @@ def _find_conflicting_mapping(
         db.query(CyclePurchaseItemMapping)
         .filter(
             CyclePurchaseItemMapping.item_id == item_id,
-            CyclePurchaseItemMapping.company == company,
+            CyclePurchaseItemMapping.company_code == require_company_code(db, company),
             CyclePurchaseItemMapping.department_id == department_id,
         )
     )
@@ -1019,7 +1041,10 @@ def create_item_mapping(db: Session, item_id: int, payload) -> Optional[CyclePur
                 f"「{data['company']}／{_department_name(db, data['department_id'])}」"
                 f"已經有一筆對照了，同一個料號的同一個公司＋部門只能有一筆。"
             )
-    mapping = CyclePurchaseItemMapping(item_id=item_id, **data)
+    _assert_company_matches_name(db, data.get("company"), item.company_code)
+    if data.get("department_id"):
+        _assert_department_company(db, data["department_id"], item.company_code)
+    mapping = CyclePurchaseItemMapping(item_id=item_id, company_code=item.company_code, **data)
     db.add(mapping)
     db.flush()
     return _attach_mapping_display_fields(db, mapping)
@@ -1138,13 +1163,14 @@ def get_cycle_options(db: Session, companies_filter: Optional[list[str]] = None)
     因為理論上 schema 沒有強制 1 品類 1 部門，極端情況下可能有多個部門，
     要能如實反映。
     """
+    companies_q = db.query(CyclePurchaseDepartment.company).filter(
+        CyclePurchaseDepartment.is_active == True  # noqa: E712
+    )
+    if companies_filter is not None:  # 只列使用者可見的公司（空清單＝沒有任何可見公司）
+        companies_q = companies_q.filter(CyclePurchaseDepartment.company_code.in_(companies_filter))
     companies = [
         row[0]
-        for row in db.query(CyclePurchaseDepartment.company)
-        .filter(CyclePurchaseDepartment.is_active == True)  # noqa: E712
-        .distinct()
-        .order_by(CyclePurchaseDepartment.company)
-        .all()
+        for row in companies_q.distinct().order_by(CyclePurchaseDepartment.company).all()
         if row[0]
     ]
 
@@ -1153,10 +1179,10 @@ def get_cycle_options(db: Session, companies_filter: Optional[list[str]] = None)
         CyclePurchaseItem.category.isnot(None),
         CyclePurchaseItem.category != "",
     )
-    if companies_filter:
+    if companies_filter is not None:
         category_query = category_query.join(
             CyclePurchaseItemMapping, CyclePurchaseItemMapping.item_id == CyclePurchaseItem.id
-        ).filter(CyclePurchaseItemMapping.company.in_(companies_filter))
+        ).filter(CyclePurchaseItemMapping.company_code.in_(companies_filter))
     categories = [
         row[0]
         for row in category_query.distinct().order_by(CyclePurchaseItem.category.nullslast()).all()
@@ -1180,8 +1206,8 @@ def get_cycle_options(db: Session, companies_filter: Optional[list[str]] = None)
             CyclePurchaseItem.category != "",
         )
     )
-    if companies_filter:
-        dept_query = dept_query.filter(CyclePurchaseItemMapping.company.in_(companies_filter))
+    if companies_filter is not None:
+        dept_query = dept_query.filter(CyclePurchaseItemMapping.company_code.in_(companies_filter))
     category_departments: dict[str, list[str]] = {}
     # ⚠️ `.order_by()` + 最後再 `sorted()` 都是**穩定性**需要，不是排序需求
     #    （2026-08-29 補）。原本是裸的 `.distinct().all()`，回傳順序由引擎決定
@@ -1228,8 +1254,8 @@ def list_exclude_item_candidates(
         )
         .filter(CyclePurchaseItem.is_active == True)  # noqa: E712
     )
-    if companies:
-        query = query.filter(CyclePurchaseItemMapping.company.in_(companies))
+    if companies is not None:
+        query = query.filter(CyclePurchaseItemMapping.company_code.in_(companies))
     if categories:
         query = query.filter(CyclePurchaseItem.category.in_(categories))
 

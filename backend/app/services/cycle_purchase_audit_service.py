@@ -21,12 +21,14 @@ def record_audit(
     document_no: str,
     event_type: str,
     description: str,
+    company_code: str,
     operator_name: Optional[str] = None,
     operator_user_id: Optional[str] = None,
     old_value: Optional[str] = None,
     new_value: Optional[str] = None,
 ) -> CyclePurchaseAuditLog:
     row = CyclePurchaseAuditLog(
+        company_code=company_code,
         document_type=document_type,
         document_id=document_id,
         document_no=document_no,
@@ -47,8 +49,10 @@ def list_audit_log(
     event_type: Optional[str] = None,
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
+    *,
+    company_code: str,
 ):
-    query = db.query(CyclePurchaseAuditLog)
+    query = db.query(CyclePurchaseAuditLog).filter(CyclePurchaseAuditLog.company_code == company_code)
     if document_type:
         query = query.filter(CyclePurchaseAuditLog.document_type == document_type)
     if event_type:

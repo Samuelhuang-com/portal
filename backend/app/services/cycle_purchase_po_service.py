@@ -85,7 +85,7 @@ def list_pos(
     if period_label:
         query = query.filter(CyclePurchasePO.period_label == period_label)
     if company:
-        query = query.filter(CyclePurchasePO.company == company)
+        query = query.filter(CyclePurchasePO.company_code == company)
     if vendor_id is not None:
         query = query.filter(CyclePurchasePO.vendor_id == vendor_id)
     if status:
@@ -209,6 +209,7 @@ def revert_po_to_summary(db: Session, po_id: int, reason: str, user) -> dict:
     record_audit(
         db,
         document_type="po",
+        company_code=po.company_code,
         document_id=po.id,
         document_no=po.po_no,
         event_type="revert_to_summary",

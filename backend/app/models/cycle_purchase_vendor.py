@@ -24,12 +24,16 @@ Vendors 主檔關聯（各自維護，避免跨 SQLite 檔案關聯）。
 """
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, func
 
+from sqlalchemy import ForeignKey
 from app.core.cycle_purchase_database import CyclePurchaseBase
 
 
 class CyclePurchaseVendor(CyclePurchaseBase):
     """週期採購供應商主檔"""
     __tablename__ = "cycle_purchase_vendors"
+    company_code = Column(String(10), ForeignKey("cycle_purchase_companies.code", ondelete="RESTRICT"),
+                          nullable=False, index=True,
+                          comment="公司代碼（cpco3 起 NOT NULL）")
 
     id            = Column(Integer, primary_key=True, autoincrement=True)
     vendor_code   = Column(String(30),  nullable=False, unique=True, comment="供應商代碼")

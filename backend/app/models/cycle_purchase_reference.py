@@ -29,12 +29,16 @@ RefDepartment（portal.db，供合約模組使用）關聯。
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, func
 from sqlalchemy.orm import relationship
 
+from sqlalchemy import UniqueConstraint
 from app.core.cycle_purchase_database import CyclePurchaseBase
 
 
 class CyclePurchaseDepartment(CyclePurchaseBase):
     """週期採購部門主檔（週期採購自建，不等於 Budget／Contract 模組的部門主檔）"""
     __tablename__ = "cycle_purchase_departments"
+    company_code = Column(String(10), ForeignKey("cycle_purchase_companies.code", ondelete="RESTRICT"),
+                          nullable=False, index=True,
+                          comment="公司代碼（cpco3 起 NOT NULL）")
 
     id             = Column(Integer, primary_key=True, autoincrement=True)
     company        = Column(String(50),  nullable=False, comment="公司別")
@@ -71,6 +75,9 @@ class CyclePurchaseDepartment(CyclePurchaseBase):
 class CyclePurchaseCostCenter(CyclePurchaseBase):
     """週期採購成本中心主檔"""
     __tablename__ = "cycle_purchase_cost_centers"
+    company_code = Column(String(10), ForeignKey("cycle_purchase_companies.code", ondelete="RESTRICT"),
+                          nullable=False, index=True,
+                          comment="公司代碼（cpco3 起 NOT NULL）")
 
     id            = Column(Integer, primary_key=True, autoincrement=True)
     department_id = Column(
@@ -97,9 +104,15 @@ class CyclePurchaseCostCenter(CyclePurchaseBase):
 class CyclePurchaseAccountCode(CyclePurchaseBase):
     """週期採購會計科目主檔"""
     __tablename__ = "cycle_purchase_account_codes"
+    __table_args__ = (
+        UniqueConstraint("company_code", "code", name="uq_cp_account_code_company_code"),
+    )
+    company_code = Column(String(10), ForeignKey("cycle_purchase_companies.code", ondelete="RESTRICT"),
+                          nullable=False, index=True,
+                          comment="公司代碼（cpco3 起 NOT NULL）")
 
     id         = Column(Integer, primary_key=True, autoincrement=True)
-    code       = Column(String(30),  nullable=False, unique=True, comment="會計科目代碼")
+    code       = Column(String(30),  nullable=False, comment="會計科目代碼")
     name       = Column(String(100), nullable=False, comment="會計科目名稱")
     is_active  = Column(Boolean,     nullable=False, default=True)
     created_at = Column(DateTime,    nullable=False, server_default=func.now())

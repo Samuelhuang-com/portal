@@ -52,13 +52,16 @@ from app.core.cycle_purchase_database import CyclePurchaseBase
 class CyclePurchasePO(CyclePurchaseBase):
     """週期採購採購單（單一公司＋單一供應商在單一週期＋期別下的一張單）"""
     __tablename__ = "cycle_purchase_pos"
+    company_code = Column(String(10), ForeignKey("cycle_purchase_companies.code", ondelete="RESTRICT"),
+                          nullable=False, index=True,
+                          comment="公司代碼（cpco3 起 NOT NULL）")
     __table_args__ = (
         # 2026-08-09：partial unique index 取代原本的 UniqueConstraint，
         # 已取消（cancelled）的單不參與唯一性檢查，見檔案開頭說明。
         # 仍然保證「同一組同時只會有一張有效（未取消）的採購單」。
         Index(
             "uq_cp_po_active_cycle_period_company_vendor",
-            "cycle_id", "period_label", "company", "vendor_id",
+            "cycle_id", "period_label", "company_code", "vendor_id",
             unique=True,
             # ⚠️⚠️ 條件必須每個方言各給一次；`sqlite_where` 不會套用到 PostgreSQL。
             #    少了 `postgresql_where`，PG 會建成沒有條件的唯一索引，

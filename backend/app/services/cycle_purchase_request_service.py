@@ -85,6 +85,7 @@ from datetime import datetime, date
 from decimal import Decimal
 from typing import Optional
 
+from app.services.cycle_purchase_company_scope import require_company_code, resolve_company_code
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_ as sa_or
 
@@ -225,7 +226,7 @@ def _has_available_items(
         db.query(func.count(CyclePurchaseItemMapping.id))
         .join(CyclePurchaseItem, CyclePurchaseItemMapping.item_id == CyclePurchaseItem.id)
         .filter(
-            CyclePurchaseItemMapping.company == company,
+            CyclePurchaseItemMapping.company_code == require_company_code(db, company),
             CyclePurchaseItemMapping.department_id == department_id,
             CyclePurchaseItem.is_active == True,  # noqa: E712
         )
@@ -300,7 +301,7 @@ def resolve_applicable_departments(
         scope = (cycle.applicable_scope or "").strip()
         companies = _split_csv(scope)
         if scope and scope.lower() != "all" and companies:
-            query = query.filter(CyclePurchaseDepartment.company.in_(companies))
+            query = query.filter(CyclePurchaseDepartment.company_code.in_([x for x in (resolve_company_code(db, c) for c in companies) if x]))
         candidates = query.all()
 
     # ── D 層：該公司＋部門在此品類下（扣掉手動排除的料號）有沒有啟用中料號 ──
@@ -355,12 +356,14 @@ def assert_department_applicable(
     )
 
 
-def preview_applicable_departments(db: Session, cycle_id: int) -> dict:
+def preview_applicable_departments(db: Session, cycle_id: int, *, company_code: str) -> dict:
     """給前端「產生本期請購單」Modal 的預覽用：先看會產生哪些部門、哪些不會。"""
     cycle = db.query(CyclePurchaseCycle).filter(CyclePurchaseCycle.id == cycle_id).first()
     if not cycle:
         raise RequestServiceError("週期設定不存在")
     included, excluded = resolve_applicable_departments(db, cycle)
+    included = [d for d in included if d.company_code == company_code]
+    excluded = [x for x in excluded if not x.get("company") or resolve_company_code(db, x.get("company")) == company_code]
     period_label = _current_period_label()
     # 2026-09-25：標出本期已經有單的部門。原本預覽一律寫「將產生 N 個部門」，
     # 但產生是冪等的，已有單的部門按下去不會新建——Samuel 實測 7 個部門都已有單，
@@ -369,6 +372,7 @@ def preview_applicable_departments(db: Session, cycle_id: int) -> dict:
         r.department_id
         for r in db.query(CyclePurchaseRequest.department_id).filter(
             CyclePurchaseRequest.cycle_id == cycle.id,
+            CyclePurchaseRequest.company_code == company_code,
             CyclePurchaseRequest.period_label == period_label,
         )
     }
@@ -389,7 +393,7 @@ def preview_applicable_departments(db: Session, cycle_id: int) -> dict:
     }
 
 
-def generate_requests_for_period(db: Session, cycle_id: int) -> tuple[list[CyclePurchaseRequest], list[dict]]:
+def generate_requests_for_period(db: Session, cycle_id: int, company_codes=None) -> tuple[list[CyclePurchaseRequest], list[dict]]:
     """
     「產生本期請購單」：為每個適用部門建立一張空白請購單。
     隨時可呼叫，沒有時間窗限制；同一 cycle_id+period_label 冪等
@@ -407,6 +411,8 @@ def generate_requests_for_period(db: Session, cycle_id: int) -> tuple[list[Cycle
         raise RequestServiceError("週期設定不存在")
 
     departments, excluded = resolve_applicable_departments(db, cycle)
+    if company_codes is not None:  # 只產生使用者可見公司的請購單
+        departments = [d for d in departments if d.company_code in company_codes]
     if not departments:
         if excluded:
             reasons = "；".join(
@@ -439,6 +445,7 @@ def generate_requests_for_period(db: Session, cycle_id: int) -> tuple[list[Cycle
             period_label=period_label,
             department_id=dept.id,
             company=dept.company,
+            company_code=dept.company_code,
             # 2026-09-30：帶入部門預設成本中心（規則見 cycle_purchase_service）
             cost_center_id=_default_cost_center_id(db, dept.id),
             status="draft",
@@ -453,7 +460,7 @@ def generate_requests_for_period(db: Session, cycle_id: int) -> tuple[list[Cycle
     return created, excluded
 
 
-def generation_status_for_period(db: Session) -> dict:
+def generation_status_for_period(db: Session, *, company_code: str) -> dict:
     """
     「產生本期請購單」週期下拉的本期完成度（2026-09-25，Samuel 裁示）。
 
@@ -482,7 +489,7 @@ def generation_status_for_period(db: Session) -> dict:
         included, _excluded = resolve_applicable_departments(db, cycle)
         applicable_ids = {d.id for d in included}
         reqs = (
-            db.query(CyclePurchaseRequest.department_id, CyclePurchaseRequest.is_summarized)
+            db.query(CyclePurchaseRequest.department_id, CyclePurchaseRequest.is_summarized).filter(CyclePurchaseRequest.company_code == company_code)
             .filter(
                 CyclePurchaseRequest.cycle_id == cycle.id,
                 CyclePurchaseRequest.period_label == period_label,
@@ -584,6 +591,8 @@ def list_requests(
     can_see_closed: bool = True,
     close_state: Optional[str] = None,
     department_ids: Optional[list[int]] = None,
+    *,
+    company_code: str,
 ):
     """
     department_ids（2026-09-25「我的部門」切換）：不是 None 時只回傳這些部門的單；
@@ -613,7 +622,7 @@ def list_requests(
             f"不支援的狀態篩選值「{close_state}」，可用值：{'、'.join(CLOSE_STATES)}"
         )
 
-    query = db.query(CyclePurchaseRequest)
+    query = db.query(CyclePurchaseRequest).filter(CyclePurchaseRequest.company_code == company_code)
     if not can_see_closed:
         # 沒權限的人一律只看得到開放中的單；就算前端硬送 close_state=closed_auto
         # 也一樣（下面的條件會與這一條 AND 起來，結果必然是空集合，不會外洩）
@@ -784,6 +793,7 @@ def copy_request(db: Session, source_request_id: int, user) -> tuple[CyclePurcha
         period_label=_current_period_label(),
         department_id=source.department_id,
         company=dept.company,
+        company_code=dept.company_code,
         # 2026-09-30：來源單有選就沿用，沒選就帶部門預設成本中心
         cost_center_id=source.cost_center_id or _default_cost_center_id(db, source.department_id),
         status="draft",
@@ -806,7 +816,7 @@ def copy_request(db: Session, source_request_id: int, user) -> tuple[CyclePurcha
             db.query(CyclePurchaseItemMapping)
             .filter(
                 CyclePurchaseItemMapping.item_id == item.id,
-                CyclePurchaseItemMapping.company == dept.company,
+                CyclePurchaseItemMapping.company_code == dept.company_code,
                 CyclePurchaseItemMapping.department_id == dept.id,
             )
             .first()
@@ -894,6 +904,7 @@ def create_request(db: Session, payload) -> CyclePurchaseRequest:
         period_label=period_label,
         department_id=payload.department_id,
         company=dept.company,
+        company_code=dept.company_code,
         # 2026-09-30：沒指定就帶部門預設成本中心
         cost_center_id=payload.cost_center_id or _default_cost_center_id(db, payload.department_id),
         status="draft",
@@ -1045,7 +1056,7 @@ def get_available_items(db: Session, request_id: int):
             CyclePurchaseItemMapping.item_id == CyclePurchaseItem.id,
         )
         .filter(
-            CyclePurchaseItemMapping.company == req.company,
+            CyclePurchaseItemMapping.company_code == req.company_code,
             CyclePurchaseItemMapping.department_id == req.department_id,
             CyclePurchaseItem.is_active == True,  # noqa: E712
         )
@@ -1089,7 +1100,7 @@ def add_request_item(db: Session, request_id: int, payload) -> CyclePurchaseRequ
         db.query(CyclePurchaseItemMapping)
         .filter(
             CyclePurchaseItemMapping.item_id == payload.item_id,
-            CyclePurchaseItemMapping.company == req.company,
+            CyclePurchaseItemMapping.company_code == req.company_code,
             CyclePurchaseItemMapping.department_id == req.department_id,
         )
         .first()
@@ -1203,7 +1214,7 @@ def list_open_requests_for_close(
         CyclePurchaseRequest.is_closed == False,  # noqa: E712
     )
     if company:
-        query = query.filter(CyclePurchaseRequest.company == company)
+        query = query.filter(CyclePurchaseRequest.company_code == company)
     query = query.filter(CyclePurchaseRequest.period_label == (year_month or _current_period_label()))
     rows = query.order_by(CyclePurchaseRequest.request_no.asc()).all()
     for r in rows:
@@ -1255,7 +1266,8 @@ def close_all_requests(
     user,
 ) -> list[CyclePurchaseRequest]:
     """「全部關閉」：撈出這個週期＋公司＋月份目前開放中的全部請購單，一次關閉。"""
-    open_rows = list_open_requests_for_close(db, cycle_id, company, year_month)
+    company_code = require_company_code(db, company)  # 呼叫端傳入的是公司字串，過濾用代碼
+    open_rows = list_open_requests_for_close(db, cycle_id, company_code, year_month)
     if not open_rows:
         raise RequestServiceError("目前沒有開放中的請購單可以關閉")
     return close_requests(db, [r.id for r in open_rows], user)
@@ -1363,7 +1375,7 @@ def reopen_requests(db: Session, request_ids: list[int], user) -> list[CyclePurc
 # Dashboard 待辦提醒
 # ═══════════════════════════════════════════════════════════════════════════
 
-def my_period_overview(db: Session, dept_ids: list[int]) -> dict:
+def my_period_overview(db: Session, dept_ids: list[int], *, company_code: str) -> dict:
     """
     「我的部門本期」卡片（2026-09-25 Samuel 裁示）：登入者所屬部門在本月各啟用中
     週期的請購單狀況。
@@ -1377,7 +1389,7 @@ def my_period_overview(db: Session, dept_ids: list[int]) -> dict:
     my_depts = []
     if dept_ids:
         my_depts = (
-            db.query(CyclePurchaseDepartment)
+            db.query(CyclePurchaseDepartment).filter(CyclePurchaseDepartment.company_code == company_code)
             .filter(CyclePurchaseDepartment.id.in_(dept_ids))
             .order_by(CyclePurchaseDepartment.company, CyclePurchaseDepartment.dept_code)
             .all()
@@ -1400,7 +1412,7 @@ def my_period_overview(db: Session, dept_ids: list[int]) -> dict:
         included, _excluded = resolve_applicable_departments(db, cycle)
         applicable_ids = {d.id for d in included} & my_ids
         reqs = (
-            db.query(CyclePurchaseRequest)
+            db.query(CyclePurchaseRequest).filter(CyclePurchaseRequest.company_code == company_code)
             .filter(
                 CyclePurchaseRequest.cycle_id == cycle.id,
                 CyclePurchaseRequest.period_label == period_label,
@@ -1486,7 +1498,7 @@ def get_user_cp_department_ids(db: Session, portal_db, user_id: str) -> list[int
     return sorted(owner_ids | member_ids)
 
 
-def get_dashboard_todos(db: Session, user, is_closer: bool, portal_db=None, can_summarize: bool = False):
+def get_dashboard_todos(db: Session, user, is_closer: bool, portal_db=None, can_summarize: bool = False, *, company_code: str):
     """
     待辦提醒：
       - my_pending：登入者可操作的部門（部門成員 OR 承辦人，見
@@ -1506,7 +1518,7 @@ def get_dashboard_todos(db: Session, user, is_closer: bool, portal_db=None, can_
     else:
         my_dept_ids = [
             d.id
-            for d in db.query(CyclePurchaseDepartment.id)
+            for d in db.query(CyclePurchaseDepartment.id).filter(CyclePurchaseDepartment.company_code == company_code)
             .filter(CyclePurchaseDepartment.owner_user_id == user.id)
             .all()
         ]
@@ -1516,7 +1528,7 @@ def get_dashboard_todos(db: Session, user, is_closer: bool, portal_db=None, can_
     my_pending = []
     if my_dept_ids:
         my_pending = (
-            db.query(CyclePurchaseRequest)
+            db.query(CyclePurchaseRequest).filter(CyclePurchaseRequest.company_code == company_code)
             .filter(
                 CyclePurchaseRequest.department_id.in_(my_dept_ids),
                 CyclePurchaseRequest.period_label == current_month,
@@ -1531,7 +1543,7 @@ def get_dashboard_todos(db: Session, user, is_closer: bool, portal_db=None, can_
     pending_close = []
     if is_closer:
         pending_close = (
-            db.query(CyclePurchaseRequest)
+            db.query(CyclePurchaseRequest).filter(CyclePurchaseRequest.company_code == company_code)
             .filter(
                 CyclePurchaseRequest.period_label == current_month,
                 CyclePurchaseRequest.is_closed == False,  # noqa: E712
@@ -1548,7 +1560,7 @@ def get_dashboard_todos(db: Session, user, is_closer: bool, portal_db=None, can_
     summary_pending_count = 0
     if can_summarize:
         summary_pending_count = (
-            db.query(CyclePurchaseRequest)
+            db.query(CyclePurchaseRequest).filter(CyclePurchaseRequest.company_code == company_code)
             .filter(
                 CyclePurchaseRequest.is_closed == True,  # noqa: E712
                 CyclePurchaseRequest.is_summarized == False,  # noqa: E712

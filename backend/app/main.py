@@ -1311,6 +1311,7 @@ async def lifespan(app: FastAPI):
     import app.models.cycle_purchase_reference   # noqa: F401
     import app.models.cycle_purchase_item        # noqa: F401
     import app.models.cycle_purchase_category    # noqa: F401
+    import app.models.cycle_purchase_company     # noqa: F401
     import app.models.cycle_purchase_cycle       # noqa: F401
     import app.models.cycle_purchase_request     # noqa: F401
     import app.models.cycle_purchase_summary     # noqa: F401

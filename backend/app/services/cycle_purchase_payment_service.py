@@ -118,7 +118,7 @@ def _compute_suggested_allocation(db: Session, po: CyclePurchasePO):
         filters = [
             CyclePurchaseRequest.cycle_id == summary.cycle_id,
             CyclePurchaseRequest.period_label == summary.period_label,
-            CyclePurchaseRequest.company == summary.company,
+            CyclePurchaseRequest.company_code == summary.company_code,
             CyclePurchaseRequestItem.item_id == summary.item_id,
         ]
         if summary.department_id is not None:
@@ -270,6 +270,7 @@ def create_payment(
     payment = CyclePurchasePayment(
         payment_no=_next_payment_no(db, date.today()),
         po_id=po_id,
+        company_code=po.company_code,
         invoice_no=invoice_no.strip(),
         invoice_date=invoice_date,
         invoice_amount=invoice_amount,
@@ -290,6 +291,7 @@ def create_payment(
         db.add(CyclePurchasePaymentAllocation(
             payment_id=payment.id,
             company=po.company,
+            company_code=po.company_code,
             department_id=dept_id,
             cost_center_id=cc_id,
             account_code_id=acct_id,
@@ -314,7 +316,7 @@ def list_payments(
         query = query.filter(CyclePurchasePayment.status == status)
     if company:
         query = query.join(CyclePurchasePO, CyclePurchasePayment.po_id == CyclePurchasePO.id).filter(
-            CyclePurchasePO.company == company
+            CyclePurchasePO.company_code == company
         )
     rows = query.order_by(CyclePurchasePayment.payment_no.desc()).all()
     for p in rows:
@@ -428,6 +430,7 @@ def submit_payment(db: Session, payment_id: int) -> CyclePurchasePayment:
         record_audit(
             db,
             document_type="payment",
+            company_code=payment.company_code,
             document_id=payment.id,
             document_no=payment.payment_no,
             event_type="payment_variance",

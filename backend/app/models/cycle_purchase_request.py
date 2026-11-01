@@ -153,6 +153,9 @@ class CyclePurchaseRequest(CyclePurchaseBase):
     """週期採購請購單（單一部門在單一週期＋期別下的請購單；2026-08-13 起
     同一週期＋期別＋部門可以有多張，見上方 class docstring「複製上期請購單」）"""
     __tablename__ = "cycle_purchase_requests"
+    company_code = Column(String(10), ForeignKey("cycle_purchase_companies.code", ondelete="RESTRICT"),
+                          nullable=False, index=True,
+                          comment="公司代碼（cpco3 起 NOT NULL）")
     __table_args__ = (
         Index("ix_cp_request_cycle_period_dept", "cycle_id", "period_label", "department_id"),
     )

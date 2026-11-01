@@ -108,6 +108,7 @@ from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Optional
 
+from app.services.cycle_purchase_company_scope import require_company_code
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
@@ -237,7 +238,7 @@ def is_overdue_period(period_label: Optional[str]) -> bool:
     return bool(period_label) and period_label < _current_period_label()
 
 
-def list_pending_requests(db: Session) -> list[dict]:
+def list_pending_requests(db: Session, *, company_code: str) -> list[dict]:
     """「待彙整請購單」TAB（2026-09-25 Samuel 裁示）：全公司「已關閉、尚未彙整」的
     請購單，不分週期／公司／期別，一次列出。數字與左側選單「彙整單」紅點
     （request_service.get_dashboard_todos 的 summary_pending_count）同一個條件，
@@ -250,7 +251,7 @@ def list_pending_requests(db: Session) -> list[dict]:
     from app.services.cycle_purchase_request_service import close_kind_of
 
     rows = (
-        db.query(CyclePurchaseRequest)
+        db.query(CyclePurchaseRequest).filter(CyclePurchaseRequest.company_code == company_code)
         .filter(
             CyclePurchaseRequest.is_closed == True,  # noqa: E712
             CyclePurchaseRequest.is_summarized == False,  # noqa: E712
@@ -305,7 +306,7 @@ def list_excluded_requests(db: Session, cycle_id: int, company: str, year_month:
         db.query(CyclePurchaseRequest)
         .filter(
             CyclePurchaseRequest.cycle_id == cycle_id,
-            CyclePurchaseRequest.company == company,
+            CyclePurchaseRequest.company_code == company,
             CyclePurchaseRequest.period_label == (year_month or "").strip(),
             CyclePurchaseRequest.is_summarized == True,  # noqa: E712
         )
@@ -353,7 +354,7 @@ def list_eligible_requests(db: Session, cycle_id: int, company: str, year_month:
         db.query(CyclePurchaseRequest)
         .filter(
             CyclePurchaseRequest.cycle_id == cycle_id,
-            CyclePurchaseRequest.company == company,
+            CyclePurchaseRequest.company_code == company,
             CyclePurchaseRequest.is_summarized == False,  # noqa: E712
             CyclePurchaseRequest.period_label == year_month,
         )
@@ -461,7 +462,7 @@ def generate_summary_from_requests(db: Session, request_ids: list[int]) -> list[
             .filter(
                 CyclePurchaseSummary.cycle_id == cycle_id,
                 CyclePurchaseSummary.period_label == period_label,
-                CyclePurchaseSummary.company == company_,
+                CyclePurchaseSummary.company_code == require_company_code(db, company_),
                 CyclePurchaseSummary.item_id == item_id,
                 CyclePurchaseSummary.department_id == department_id,
                 CyclePurchaseSummary.status == "draft",
@@ -493,7 +494,7 @@ def generate_summary_from_requests(db: Session, request_ids: list[int]) -> list[
             db.query(CyclePurchaseItemMapping)
             .filter(
                 CyclePurchaseItemMapping.item_id == item_id,
-                CyclePurchaseItemMapping.company == company_,
+                CyclePurchaseItemMapping.company_code == require_company_code(db, company_),
                 CyclePurchaseItemMapping.department_id == department_id,
             )
             .first()
@@ -507,7 +508,7 @@ def generate_summary_from_requests(db: Session, request_ids: list[int]) -> list[
                 db.query(CyclePurchaseItemMapping)
                 .filter(
                     CyclePurchaseItemMapping.item_id == item_id,
-                    CyclePurchaseItemMapping.company == company_,
+                    CyclePurchaseItemMapping.company_code == require_company_code(db, company_),
                 )
                 .order_by(CyclePurchaseItemMapping.id)
                 .first()
@@ -517,6 +518,7 @@ def generate_summary_from_requests(db: Session, request_ids: list[int]) -> list[
             cycle_id=cycle_id,
             period_label=period_label,
             company=company_,
+            company_code=require_company_code(db, company_),
             item_id=item_id,
             department_id=department_id,
             item_mapping_id=mapping.id if mapping else None,
@@ -567,7 +569,7 @@ def list_summarized_requests(db: Session, cycle_id: int, company: str, year_mont
         db.query(CyclePurchaseRequest)
         .filter(
             CyclePurchaseRequest.cycle_id == cycle_id,
-            CyclePurchaseRequest.company == company,
+            CyclePurchaseRequest.company_code == company,
             CyclePurchaseRequest.is_summarized == True,  # noqa: E712
             CyclePurchaseRequest.period_label == year_month,
         )
@@ -616,7 +618,7 @@ def _affected_summary_rows(db: Session, req: CyclePurchaseRequest) -> list[Cycle
         .filter(
             CyclePurchaseSummary.cycle_id == req.cycle_id,
             CyclePurchaseSummary.period_label == req.period_label,
-            CyclePurchaseSummary.company == req.company,
+            CyclePurchaseSummary.company_code == req.company_code,
             CyclePurchaseSummary.department_id == req.department_id,
             CyclePurchaseSummary.item_id.in_(item_ids),
         )
@@ -705,7 +707,7 @@ def unsummarize_request(db: Session, request_id: int, reason: str, user) -> dict
         .filter(
             CyclePurchaseRequest.cycle_id == req.cycle_id,
             CyclePurchaseRequest.period_label == req.period_label,
-            CyclePurchaseRequest.company == req.company,
+            CyclePurchaseRequest.company_code == req.company_code,
             CyclePurchaseRequest.department_id == req.department_id,
             CyclePurchaseRequest.is_summarized == True,  # noqa: E712
             CyclePurchaseRequestItem.item_id.in_(item_ids or [-1]),
@@ -754,6 +756,7 @@ def unsummarize_request(db: Session, request_id: int, reason: str, user) -> dict
     record_audit(
         db,
         document_type="request",
+        company_code=req.company_code,
         document_id=req.id,
         document_no=req.request_no,
         event_type="unsummarize",
@@ -816,7 +819,7 @@ def list_summary(
     if period_label:
         query = query.filter(CyclePurchaseSummary.period_label == period_label)
     if company:
-        query = query.filter(CyclePurchaseSummary.company == company)
+        query = query.filter(CyclePurchaseSummary.company_code == company)
     if vendor_id is not None:
         query = query.filter(CyclePurchaseSummary.vendor_id == vendor_id)
     if status:
@@ -898,7 +901,7 @@ def list_ragic_pushed_documents(
     if cycle_id:
         query = query.filter(CyclePurchaseSummary.cycle_id == cycle_id)
     if company:
-        query = query.filter(CyclePurchaseSummary.company == company)
+        query = query.filter(CyclePurchaseSummary.company_code == company)
 
     rows = query.all()
     for r in rows:
@@ -963,7 +966,7 @@ def list_ragic_pushed_documents(
                 .filter(
                     CyclePurchaseRequest.cycle_id == d["cycle_id"],
                     CyclePurchaseRequest.period_label == d["period_label"],
-                    CyclePurchaseRequest.company == d["company"],
+                    CyclePurchaseRequest.company_code == require_company_code(db, d["company"]),
                     CyclePurchaseRequest.department_id.in_(dept_ids),
                     CyclePurchaseRequest.is_summarized == True,  # noqa: E712
                 )
@@ -979,7 +982,7 @@ def list_ragic_pushed_documents(
     return result
 
 
-def ragic_pushed_date_range(db: Session) -> dict:
+def ragic_pushed_date_range(db: Session, *, company_code: str) -> dict:
     """回傳已拋轉資料的最早／最晚拋轉日，給前端 StandardRangePicker 當 anchor 用。
 
     ⚠️ CLAUDE.md §8.2：快捷要以**資料最後一天**為基準，不是今天。拋轉是人工動作、
@@ -991,6 +994,7 @@ def ragic_pushed_date_range(db: Session) -> dict:
             func.min(CyclePurchaseSummary.ragic_pushed_at),
             func.max(CyclePurchaseSummary.ragic_pushed_at),
         )
+        .filter(CyclePurchaseSummary.company_code == company_code)
         .filter(CyclePurchaseSummary.ragic_pushed == True)  # noqa: E712
         .one()
     )
@@ -1014,7 +1018,7 @@ def list_vendor_groups(db: Session, cycle_id: int, period_label: str, company: O
         CyclePurchaseSummary.status == "draft",
     )
     if company:
-        query = query.filter(CyclePurchaseSummary.company == company)
+        query = query.filter(CyclePurchaseSummary.company_code == company)
     rows = query.all()
     # 需要 department_name 來標示「這張 Ragic 單是哪個部門的」（2026-09-18 拆單含部門）
     for r in rows:
@@ -1109,7 +1113,7 @@ def convert_to_po(
         .filter(
             CyclePurchasePO.cycle_id == cycle_id,
             CyclePurchasePO.period_label == period_label,
-            CyclePurchasePO.company == company,
+            CyclePurchasePO.company_code == require_company_code(db, company),
             CyclePurchasePO.vendor_id == vendor_id,
             CyclePurchasePO.status != "cancelled",
         )
@@ -1126,7 +1130,7 @@ def convert_to_po(
         .filter(
             CyclePurchaseSummary.cycle_id == cycle_id,
             CyclePurchaseSummary.period_label == period_label,
-            CyclePurchaseSummary.company == company,
+            CyclePurchaseSummary.company_code == require_company_code(db, company),
             CyclePurchaseSummary.vendor_id == vendor_id,
             CyclePurchaseSummary.status == "draft",
         )
@@ -1179,6 +1183,7 @@ def convert_to_po(
         cycle_id=cycle_id,
         period_label=period_label,
         company=company,
+        company_code=require_company_code(db, company),
         vendor_id=vendor_id,
         buyer_user_id=user.id,
         buyer_name=user.full_name,
@@ -1234,7 +1239,7 @@ def list_department_breakdown(
         CyclePurchaseSummary.period_label == period_label,
     )
     if company:
-        query = query.filter(CyclePurchaseSummary.company == company)
+        query = query.filter(CyclePurchaseSummary.company_code == company)
     rows = query.order_by(CyclePurchaseSummary.company, CyclePurchaseSummary.item_code).all()
     for r in rows:
         _attach_summary_display_fields(db, r)
@@ -1359,7 +1364,7 @@ def push_summary_to_ragic(
         .filter(
             CyclePurchaseSummary.cycle_id == cycle_id,
             CyclePurchaseSummary.period_label == period_label,
-            CyclePurchaseSummary.company == company,
+            CyclePurchaseSummary.company_code == require_company_code(db, company),
         )
         .all()
     )
@@ -1567,6 +1572,7 @@ def push_summary_to_ragic(
     record_audit(
         db,
         document_type="summary",
+        company_code=require_company_code(db, company),
         document_id=cycle_id,   # 彙整單沒有單一主鍵，真正的識別是 document_no（批次號）
         document_no=batch_no,
         event_type="ragic_push",
@@ -1846,7 +1852,7 @@ def cancel_ragic_push(
         .filter(
             CyclePurchaseSummary.cycle_id == cycle_id,
             CyclePurchaseSummary.period_label == period_label,
-            CyclePurchaseSummary.company == company,
+            CyclePurchaseSummary.company_code == require_company_code(db, company),
             CyclePurchaseSummary.ragic_pushed == True,  # noqa: E712
         )
         .all()
@@ -1873,6 +1879,7 @@ def cancel_ragic_push(
     record_audit(
         db,
         document_type="summary",
+        company_code=require_company_code(db, company),
         document_id=cycle_id,
         document_no=(batches[0] if batches else f"{period_label}/{company}"),
         event_type="ragic_push_cancel",
