@@ -214,6 +214,7 @@ export const NAV_PAGE = {
   ragicAppDirectory:        'Ragic 對應表',
   companyDepartments:       '公司/部門管理',   // ← route /settings/company-departments（2026-08-17 新增）
   ragicFieldAudit:          'Ragic 欄位比對',  // ← 新增：Ragic 與 Portal 欄位稽核
+  devStats:                 '開發統計',        // ← route /settings/dev-stats（2026-11-02）
   menuConfig:               '選單管理',
   employeeManualExport:     '員工操作手冊匯出',
   knowledgeGraph:           '專案知識圖譜',
@@ -304,6 +305,7 @@ export const NAV_PAGE = {
   auditCheckDashboard:          'Dashboard',            // ← route /audit-check/dashboard（稽核總覽，2026-10-12 新增）
   auditCheckPeriods:            '系統建置稽核期別',          // ← route /audit-check
   auditCheckStatistics:         '分數統計',            // ← route /audit-check/statistics
+  auditCheckScore:              '稽核檢查統計',        // ← route /audit-check/score（2026-11-02 合併計分）
   auditCheckItems:              '檢查項主檔',          // ← route /audit-check/masters/items
   auditCheckResultTypes:        '判定類型設定',        // ← route /audit-check/settings/result-types
   auditCheckKpo:                '現場營運稽核',         // ← route /audit-check/kpo（財#1 稽核系統建構，2026-10-10 新增）

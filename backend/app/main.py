@@ -56,6 +56,8 @@ from app.routers import (
     approvals,
     audit_check,
     audit_kpo,
+    audit_score,
+    dev_log,
     claim_report,
     combined_report,
     purchase_report,
@@ -1351,6 +1353,7 @@ async def lifespan(app: FastAPI):
     import app.models.nichiyo_claim_request     # noqa: F401
     import app.models.taichung_purchase_request  # noqa: F401  台中核准請購單（2026-09-16，表由 Alembic tcpurch 建）
     import app.models.taichung_claim_request     # noqa: F401  台中核准請款單（2026-09-16，表由 Alembic tcpurch 建）
+    import app.models.dev_log  # noqa  開發統計（2026-11-02，表由 Alembic devlog1 建）
     import app.models.return_stats  # noqa: F401  退件統計（2026-11-02，表由 Alembic rrs1 建）
     import app.models.ragic_sheet_config        # noqa: F401
     import app.models.other_tasks               # noqa: F401
@@ -2454,6 +2457,16 @@ app.include_router(
     tags=["稽核檢查"],
 )
 # KPO 稽核（財#1 稽核系統建構，2026-10-10 新增；稽核檢查子模組）
+app.include_router(
+    dev_log.router,
+    prefix=f"{API_PREFIX}/dev-log",
+    tags=["開發統計"],
+)
+app.include_router(
+    audit_score.router,
+    prefix=f"{API_PREFIX}/audit-check/score",
+    tags=["稽核檢查統計"],
+)
 app.include_router(
     audit_kpo.router,
     prefix=f"{API_PREFIX}/audit-check/kpo",

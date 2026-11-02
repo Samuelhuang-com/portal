@@ -65,6 +65,7 @@ import EmployeeManualExportPage from '@/pages/Settings/EmployeeManualExport'
 import KnowledgeGraphPage        from '@/pages/Settings/KnowledgeGraph'
 import StaticPagesPage           from '@/pages/Settings/StaticPages'
 import RagicFieldAuditPage        from '@/pages/Settings/RagicFieldAudit'
+import DevStatsPage               from '@/pages/DevStats'
 import RepairUnfinishedReportPage from '@/pages/Settings/RepairUnfinishedReport'
 import UsageMonitorPage           from '@/pages/Settings/UsageMonitor'
 import SqlConsolePage             from '@/pages/Settings/SqlConsole'
@@ -131,6 +132,9 @@ import NichiyoClaimReportPage          from '@/pages/NichiyoClaimReport'
 // ── 台中核准請購單／請款單月報表（2026-09-16）──────────────────────────────────────
 import TaichungPurchaseReportPage      from '@/pages/TaichungPurchaseReport'
 import TaichungClaimReportPage         from '@/pages/TaichungClaimReport'
+
+// ── 稽核檢查統計（合併計分，2026-11-02）──────────────────────────────────────
+import AuditScorePage                  from '@/pages/AuditScore'
 
 // ── 退件統計（2026-11-02）──────────────────────────────────────────────────────
 import ReturnRejectStatsPage           from '@/pages/ReturnRejectStats'
@@ -237,6 +241,8 @@ const PERM_DEFAULT_ROUTES: { key: string; route: string }[] = [
   { key: 'taichung_purchase_report_view',     route: '/taichung-purchase-report/monthly' },
   { key: 'taichung_claim_report_view',        route: '/taichung-claim-report/monthly' },
   { key: 'return_reject_stats_view',          route: '/return-reject-stats/records' },
+  { key: 'audit_check_score_view',            route: '/audit-check/score' },
+  { key: 'dev_log_view',                      route: '/settings/dev-stats' },
   { key: 'contract_view',                     route: '/contract' },
   { key: 'contract_expiring_view',            route: '/contract/expiring' },
   { key: 'contract_claims_view',              route: '/contract/claims' },
@@ -744,6 +750,11 @@ export default function AppRouter() {
           } />
           <Route path="dashboard" element={<AuditOverviewDashboardPage />} />
           <Route path="statistics" element={<AuditStatisticsPage />} />
+          <Route path="score" element={
+            <PermissionGuard permissionKey="audit_check_score_view">
+              <AuditScorePage />
+            </PermissionGuard>
+          } />
           <Route path="masters/items" element={
             <PermissionGuard permissionKey="audit_check_admin">
               <AuditItemsMasterPage />
@@ -934,6 +945,11 @@ export default function AppRouter() {
           <Route path="ragic-field-audit" element={
             <PermissionGuard permissionKey="ragic_field_audit_view">
               <RagicFieldAuditPage />
+            </PermissionGuard>
+          } />
+          <Route path="dev-stats" element={
+            <PermissionGuard permissionKey="dev_log_view">
+              <DevStatsPage />
             </PermissionGuard>
           } />
           <Route path="repair-unfinished-report" element={

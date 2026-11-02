@@ -131,6 +131,7 @@ PERMISSION_DEFINITIONS = [
     {"key": "audit_check_view",         "label": "稽核檢查：查看", "group": "稽核檢查"},
     {"key": "audit_check_edit",         "label": "稽核檢查：填寫", "group": "稽核檢查"},
     {"key": "audit_check_admin",        "label": "稽核檢查：管理", "group": "稽核檢查"},
+    {"key": "audit_check_score_view",    "label": "稽核檢查統計：查看", "group": "稽核檢查"},
     {"key": "employee_manual_export_view",     "label": "員工操作手冊：查看",   "group": "系統設定"},
     {"key": "employee_manual_export_generate", "label": "員工操作手冊：產生",   "group": "系統設定"},
     {"key": "employee_manual_export_admin",    "label": "員工操作手冊：管理員", "group": "系統設定"},
@@ -152,6 +153,8 @@ PERMISSION_DEFINITIONS = [
     # 退件統計（2026-11-02，docs/SPEC_return_reject_stats.md）
     {"key": "return_reject_stats_view",   "label": "退件統計：查看", "group": "退件統計"},
     {"key": "return_reject_stats_manage", "label": "退件統計：管理", "group": "退件統計"},
+    {"key": "dev_log_view",   "label": "開發統計：查看", "group": "系統設定"},
+    {"key": "dev_log_manage", "label": "開發統計：管理（匯入、編輯時間）", "group": "系統設定"},
     {"key": "ragic_field_audit_view",   "label": "Ragic 欄位比對：查看",     "group": "系統設定"},
     {"key": "ragic_field_audit_manage", "label": "Ragic 欄位比對：執行/標記","group": "系統設定"},
     {"key": "ragic_field_audit_admin",  "label": "Ragic 欄位比對：管理員",   "group": "系統設定"},
