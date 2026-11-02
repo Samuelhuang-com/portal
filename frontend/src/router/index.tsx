@@ -132,6 +132,9 @@ import NichiyoClaimReportPage          from '@/pages/NichiyoClaimReport'
 import TaichungPurchaseReportPage      from '@/pages/TaichungPurchaseReport'
 import TaichungClaimReportPage         from '@/pages/TaichungClaimReport'
 
+// ── 退件統計（2026-11-02）──────────────────────────────────────────────────────
+import ReturnRejectStatsPage           from '@/pages/ReturnRejectStats'
+
 // ── 知識庫（LLM Wiki）──────────────────────────────────────────────────────────
 import WikiPage                        from '@/pages/Wiki'
 
@@ -233,6 +236,7 @@ const PERM_DEFAULT_ROUTES: { key: string; route: string }[] = [
   { key: 'nichiyo_claim.view',                route: '/nichiyo-claim-report/monthly' },
   { key: 'taichung_purchase_report_view',     route: '/taichung-purchase-report/monthly' },
   { key: 'taichung_claim_report_view',        route: '/taichung-claim-report/monthly' },
+  { key: 'return_reject_stats_view',          route: '/return-reject-stats/records' },
   { key: 'contract_view',                     route: '/contract' },
   { key: 'contract_expiring_view',            route: '/contract/expiring' },
   { key: 'contract_claims_view',              route: '/contract/claims' },
@@ -666,6 +670,19 @@ export default function AppRouter() {
             }
           />
           <Route index element={<Navigate to="monthly" replace />} />
+        </Route>
+
+        {/* ── 退件統計（2026-11-02）──────────────────────────────────────── */}
+        <Route path="return-reject-stats">
+          <Route
+            path="records"
+            element={
+              <PermissionGuard permissionKey="return_reject_stats_view">
+                <ReturnRejectStatsPage />
+              </PermissionGuard>
+            }
+          />
+          <Route index element={<Navigate to="records" replace />} />
         </Route>
 
         {/* ── 預算管理 ──────────────────────────────────────────────────── */}

@@ -1,0 +1,296 @@
+/**
+ * 退件統計（規格 docs/SPEC_return_reject_stats.md §7）
+ * 篩選：公司、部門、表單類型、表單名稱、狀態、期間（StandardRangePicker，anchor=資料最後一天）、簽核人、申請人、關鍵字
+ */
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Button, Card, Col, Descriptions, Drawer, Input, Radio, Row, Select, Space, Statistic, Table, Tag, Tooltip, message } from 'antd'
+import { LinkOutlined } from '@ant-design/icons'
+import type { ColumnsType } from 'antd/es/table'
+import StandardRangePicker, { type StandardRange } from '@/components/StandardRangePicker'
+import {
+  exportReturnStatsExcel,
+  getReturnStatsDetail,
+  getReturnStatsFilters,
+  getReturnStatsRecords,
+  getReturnStatsSummary,
+  runReturnStatsSync,
+  type Outcome,
+  type RRDetail,
+  type RRFilters,
+  type RRListItem,
+  type RRQuery,
+  type RRSummary,
+} from '@/api/returnRejectStats'
+
+const OUTCOME_COLOR: Record<Outcome, string> = {
+  rejected: 'red', withdrawn: 'orange', approved: 'green', agreed: 'cyan', pending: 'gold', unknown: 'default',
+}
+const FORM_TYPE_LABEL: Record<string, string> = { purchase: '請購', claim: '請款', seal: '用印' }
+const CARD_OUTCOMES: { key: Outcome; label: string }[] = [
+  { key: 'rejected', label: '退件' },
+  { key: 'withdrawn', label: '退簽' },
+  { key: 'agreed', label: '同意' },
+  { key: 'pending', label: '待審' },
+]
+
+const emptyCounts = (): Record<Outcome, number> => ({
+  rejected: 0, withdrawn: 0, approved: 0, agreed: 0, pending: 0, unknown: 0,
+})
+
+export default function ReturnRejectStatsPage() {
+  const [filters, setFilters] = useState<RRFilters | null>(null)
+  const [company, setCompany] = useState<string[]>([])
+  const [dept, setDept] = useState<string[]>([])
+  const [formType, setFormType] = useState<string[]>([])
+  const [formName, setFormName] = useState<string[]>([])
+  const [outcome, setOutcome] = useState<string[]>([])
+  const [range, setRange] = useState<StandardRange>(null)
+  const [dateField, setDateField] = useState<'apply' | 'last_sign'>('apply')
+  const [approver, setApprover] = useState('')
+  const [rejectionApprover, setRejectionApprover] = useState<string | undefined>(undefined)
+  const [applicant, setApplicant] = useState('')
+  const [keyword, setKeyword] = useState('')
+
+  const [summary, setSummary] = useState<RRSummary | null>(null)
+  const [rows, setRows] = useState<RRListItem[]>([])
+  const [total, setTotal] = useState(0)
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(50)
+  const [loading, setLoading] = useState(false)
+
+  const [drawerId, setDrawerId] = useState<number | null>(null)
+  const [detail, setDetail] = useState<RRDetail | null>(null)
+
+  useEffect(() => {
+    getReturnStatsFilters().then((r) => setFilters(r.data)).catch(() => message.error('讀取篩選選項失敗'))
+  }, [])
+
+  const query: RRQuery = useMemo(() => ({
+    company, dept, form_type: formType, form_name: formName, outcome,
+    start: range ? range[0].format('YYYY-MM-DD') : undefined,
+    end: range ? range[1].format('YYYY-MM-DD') : undefined,
+    date_field: dateField,
+    approver: approver || undefined,
+    rejection_approver: rejectionApprover || undefined,
+    applicant: applicant || undefined,
+    keyword: keyword || undefined,
+  }), [company, dept, formType, formName, outcome, range, dateField, approver, rejectionApprover, applicant, keyword])
+
+  const load = useCallback(async (p = page, ps = pageSize) => {
+    setLoading(true)
+    try {
+      const [s, l] = await Promise.all([
+        getReturnStatsSummary(query),
+        getReturnStatsRecords({ ...query, page: p, page_size: ps }),
+      ])
+      setSummary(s.data)
+      setRows(l.data.items)
+      setTotal(l.data.total)
+    } catch {
+      message.error('查詢失敗，請確認權限或稍後再試')
+    } finally {
+      setLoading(false)
+    }
+  }, [query, page, pageSize])
+
+  useEffect(() => { setPage(1); load(1, pageSize) /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [query])
+
+  const deptOptions = useMemo(() => (filters?.departments ?? [])
+    .filter((d) => company.length === 0 || company.includes(d.company))
+    .map((d) => ({ label: `${d.company}｜${d.dept}`, value: d.dept })), [filters, company])
+
+  const openDetail = async (id: number) => {
+    setDrawerId(id)
+    setDetail(null)
+    try {
+      const r = await getReturnStatsDetail(id)
+      setDetail(r.data)
+    } catch {
+      message.error('讀取明細失敗')
+    }
+  }
+
+  const onExport = async () => {
+    try {
+      const res = await exportReturnStatsExcel(query)
+      const url = URL.createObjectURL(new Blob([res.data]))
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `退件統計_${new Date().toISOString().slice(0, 10).replace(/-/g, '')}.xlsx`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+    } catch {
+      message.error('匯出失敗（筆數可能超過上限，或沒有權限）')
+    }
+  }
+
+  const onManualSync = async () => {
+    try {
+      await runReturnStatsSync()
+      message.success('已完成同步，重新查詢中')
+      load(1, pageSize)
+    } catch {
+      message.error('同步失敗（需要「退件統計：管理」權限）')
+    }
+  }
+
+  const counts = summary?.counts ?? emptyCounts()
+  const toggleOutcome = (key: Outcome) => setOutcome(outcome.length === 1 && outcome[0] === key ? [] : [key])
+
+  const columns: ColumnsType<RRListItem> = [
+    { title: '公司', dataIndex: 'company', width: 70 },
+    { title: '部門', dataIndex: 'dept', width: 90 },
+    { title: '表單', dataIndex: 'form_name', width: 110,
+      render: (v: string, r) => `${FORM_TYPE_LABEL[r.form_type] ?? r.form_type}｜${v}` },
+    { title: '記錄編號', dataIndex: 'ragic_record_id', width: 90,
+      render: (v: string, r) => <a onClick={() => openDetail(r.id)}>{v}</a> },
+    { title: '申請人', dataIndex: 'applicant', width: 90 },
+    { title: '申請日期', dataIndex: 'apply_date', width: 110, sorter: (a, b) => (a.apply_date ?? '').localeCompare(b.apply_date ?? '') },
+    { title: '金額', dataIndex: 'amount', width: 100, align: 'right',
+      render: (v: number | null) => (v == null ? '—' : `$${v.toLocaleString()}`) },
+    { title: '事由', dataIndex: 'purpose', ellipsis: true, width: 220 },
+    { title: '狀態', dataIndex: 'outcome', width: 110,
+      render: (v: Outcome, r) => <Tooltip title={r.outcome_reason}><Tag color={OUTCOME_COLOR[v]}>{r.outcome_label}</Tag></Tooltip> },
+    { title: '退件／退簽原因', dataIndex: 'rejection_note', ellipsis: true, width: 220,
+      render: (v: string) => (v ? <Tooltip title={v}>{v.length > 40 ? `${v.slice(0, 40)}…` : v}</Tooltip> : '—') },
+    { title: '退件簽核人', dataIndex: 'rejection_approver', width: 110, render: (v: string) => v || '—' },
+    { title: '下一位簽核人', dataIndex: 'next_approver', width: 120, render: (v: string | null) => v || '—' },
+    { title: 'Ragic', key: 'ragic', width: 60, align: 'center',
+      render: (_: unknown, r) => r.ragic_url
+        ? <Tooltip title="在 Ragic 開啟"><a href={r.ragic_url} target="_blank" rel="noreferrer"><LinkOutlined /></a></Tooltip>
+        : '—' },
+  ]
+
+  const identifier = detail
+    ? (detail.detail['行請編號'] || detail.detail['付款編號'] || detail.ragic_record_id)
+    : ''
+
+  return (
+    <div>
+      <Card size="small" style={{ marginBottom: 12 }}>
+        <Space wrap size={8} style={{ width: '100%' }}>
+          <Select mode="multiple" allowClear placeholder="公司" style={{ minWidth: 120 }}
+            value={company} onChange={(v) => { setCompany(v); setDept([]) }}
+            options={(filters?.companies ?? []).map((c) => ({ label: c, value: c }))} />
+          <Select mode="multiple" allowClear placeholder="部門" style={{ minWidth: 160 }}
+            value={dept} onChange={setDept} options={deptOptions} />
+          <Select mode="multiple" allowClear placeholder="表單類型" style={{ minWidth: 120 }}
+            value={formType} onChange={setFormType}
+            options={(filters?.form_types ?? []).map((t) => ({ label: FORM_TYPE_LABEL[t] ?? t, value: t }))} />
+          <Select mode="multiple" allowClear placeholder="表單名稱" style={{ minWidth: 150 }}
+            value={formName} onChange={setFormName}
+            options={(filters?.form_names ?? []).map((n) => ({ label: n, value: n }))} />
+          <Select mode="multiple" allowClear placeholder="狀態" style={{ minWidth: 160 }}
+            value={outcome} onChange={setOutcome}
+            options={(filters?.outcomes ?? []).map((o) => ({ label: o.label, value: o.value }))} />
+          <StandardRangePicker value={range} onChange={setRange} anchor={filters?.data_end ?? null} />
+          <Radio.Group value={dateField} onChange={(e) => setDateField(e.target.value)} optionType="button" size="small">
+            <Radio.Button value="apply">依申請日期</Radio.Button>
+            <Radio.Button value="last_sign">依最後簽署日期</Radio.Button>
+          </Radio.Group>
+          <Input allowClear placeholder="簽核人" style={{ width: 120 }} value={approver} onChange={(e) => setApprover(e.target.value)} />
+          <Select allowClear showSearch placeholder="退件簽核人" style={{ minWidth: 130 }}
+            value={rejectionApprover} onChange={(v) => setRejectionApprover(v)}
+            options={(filters?.rejection_approvers ?? []).map((n) => ({ label: n, value: n }))} />
+          <Input allowClear placeholder="申請人" style={{ width: 120 }} value={applicant} onChange={(e) => setApplicant(e.target.value)} />
+          <Input allowClear placeholder="關鍵字（事由／回應）" style={{ width: 180 }} value={keyword} onChange={(e) => setKeyword(e.target.value)} />
+          <Button onClick={() => {
+            setCompany([]); setDept([]); setFormType([]); setFormName([]); setOutcome([])
+            setRange(null); setDateField('apply'); setApprover(''); setRejectionApprover(undefined); setApplicant(''); setKeyword('')
+          }}>清除篩選</Button>
+          <Button onClick={onExport}>匯出 Excel</Button>
+          <Button onClick={onManualSync}>重新同步</Button>
+        </Space>
+      </Card>
+
+      <Row gutter={12} style={{ marginBottom: 12 }}>
+        {CARD_OUTCOMES.map((c) => (
+          <Col span={6} key={c.key}>
+            <Card size="small" hoverable onClick={() => toggleOutcome(c.key)}
+              style={{ cursor: 'pointer', borderColor: outcome.includes(c.key) ? '#1B3A5C' : undefined }}>
+              <Statistic title={c.label} value={counts[c.key]} />
+            </Card>
+          </Col>
+        ))}
+      </Row>
+
+      <Table<RRListItem>
+        rowKey="id"
+        size="small"
+        loading={loading}
+        columns={columns}
+        dataSource={rows}
+        scroll={{ x: 1400 }}
+        pagination={{
+          current: page, pageSize, total, showSizeChanger: true, pageSizeOptions: [20, 50, 100, 200],
+          showTotal: (t) => `共 ${t} 筆`,
+          onChange: (p, ps) => { setPage(p); setPageSize(ps); load(p, ps) },
+        }}
+        onRow={(r) => ({ onClick: () => openDetail(r.id), style: { cursor: 'pointer' } })}
+      />
+
+      <Drawer
+        open={drawerId !== null}
+        width={480}
+        onClose={() => { setDrawerId(null); setDetail(null) }}
+        title={detail ? (
+          <Space>
+            <Tag color={OUTCOME_COLOR[detail.outcome]}>{detail.outcome_label}</Tag>
+            <span>{`${detail.form_name}：${identifier}`}</span>
+            {detail.ragic_url && (
+              <a href={detail.ragic_url} target="_blank" rel="noopener noreferrer" style={{ color: '#4BA8E8' }}>
+                <LinkOutlined /> 在 Ragic 查看
+              </a>
+            )}
+          </Space>
+        ) : '載入中…'}
+      >
+        {detail && (
+          <>
+            <Descriptions size="small" column={1} bordered style={{ marginBottom: 16 }}>
+              <Descriptions.Item label="公司">{detail.company}</Descriptions.Item>
+              <Descriptions.Item label="部門">{detail.dept}</Descriptions.Item>
+              <Descriptions.Item label="表單類型">{FORM_TYPE_LABEL[detail.form_type] ?? detail.form_type}</Descriptions.Item>
+              <Descriptions.Item label="申請人">{detail.applicant || '—'}</Descriptions.Item>
+              <Descriptions.Item label="申請日期">{detail.apply_date || '—'}</Descriptions.Item>
+              <Descriptions.Item label="金額">{detail.amount == null ? '—' : `$${detail.amount.toLocaleString()}`}</Descriptions.Item>
+              <Descriptions.Item label="事由"><span style={{ whiteSpace: 'pre-wrap' }}>{detail.purpose || '—'}</span></Descriptions.Item>
+              <Descriptions.Item label="送簽人">{detail.submitter || '—'}</Descriptions.Item>
+              <Descriptions.Item label="下一位簽核人">{detail.next_approver || '—'}</Descriptions.Item>
+              <Descriptions.Item label="Ragic 狀態">{detail.ragic_status || '—'}</Descriptions.Item>
+              <Descriptions.Item label="判定依據">{detail.outcome_reason}</Descriptions.Item>
+            </Descriptions>
+
+            <div style={{ fontWeight: 600, marginBottom: 6 }}>簽核流程</div>
+            <Table
+              size="small"
+              rowKey={(s) => `${s.step_no}-${s.role_field}`}
+              pagination={false}
+              dataSource={detail.steps}
+              columns={[
+                { title: '步驟', dataIndex: 'step_no', width: 50 },
+                { title: '角色', dataIndex: 'role_field', width: 100 },
+                { title: '簽核人', dataIndex: 'approver', width: 100,
+                  render: (v: string, s) => (s.inferred_last ? <span>{v}（推斷）</span> : v || '—') },
+                { title: '簽署日期', dataIndex: 'sign_date', width: 100, render: (v: string | null) => v || '—' },
+                { title: '回應／備註', dataIndex: 'remark', render: (v: string) => (v ? <span style={{ whiteSpace: 'pre-wrap' }}>{v}</span> : '—') },
+              ]}
+            />
+
+            <div style={{ fontWeight: 600, margin: '16px 0 6px' }}>原始欄位</div>
+            <Descriptions size="small" column={1} bordered>
+              {Object.entries(detail.detail).map(([k, v]) => (
+                <Descriptions.Item key={k} label={k}>
+                  <span style={{ whiteSpace: 'pre-wrap' }}>{v}</span>
+                </Descriptions.Item>
+              ))}
+            </Descriptions>
+          </>
+        )}
+      </Drawer>
+    </div>
+  )
+}
+

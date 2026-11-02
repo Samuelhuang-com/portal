@@ -37,6 +37,7 @@ from app.models.periodic_maintenance import (
     PeriodicMaintenanceItem,
 )
 from app.models.other_tasks import OtherTask
+from app.services.other_tasks_service import task_type_category
 
 router = APIRouter(prefix="/hotel", tags=["飯店管理 Dashboard"])
 
@@ -195,7 +196,7 @@ def get_hotel_daily_hours(
         .filter(OtherTask.year == year, OtherTask.month == month, OtherTask.venue == "飯店")
         .all()
     ):
-        tt = ot.task_type
+        tt = task_type_category(ot.task_type)
         if tt not in ("上級交辦", "緊急事件"):
             continue
         if ot.created_at is None:
@@ -393,7 +394,7 @@ def get_hotel_monthly_hours(
         .filter(OtherTask.year == year, OtherTask.venue == "飯店")
         .all()
     ):
-        tt = ot.task_type
+        tt = task_type_category(ot.task_type)
         if tt not in ("上級交辦", "緊急事件"):
             continue
         m = ot.month
@@ -548,7 +549,7 @@ def get_hotel_person_hours(
         .filter(OtherTask.year == year, OtherTask.venue == "飯店")
         .all()
     ):
-        tt = ot.task_type
+        tt = task_type_category(ot.task_type)
         if tt not in ("上級交辦", "緊急事件"):
             continue
         person = (ot.engineer or "").strip()

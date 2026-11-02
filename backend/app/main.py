@@ -114,6 +114,7 @@ from app.routers import (
     nichiyo_claim_report,
     taichung_purchase_report,
     taichung_claim_report,
+    return_stats,
     taichung_combined_report,
     ragic_sheet_config,
     ragic_field_audit,
@@ -546,7 +547,7 @@ def _seed_menu_config_taichung_claim():
     """
     選單設定補丁（2026-09-16）：
     確保 taichung-claim-report 群組及其子頁面在 menu_configs 中有 DB 記錄（比照日曜寫法）。
-    permission_key = 'taichung_purchase_report_view'（無此權限不顯示）
+    permission_key = 'taichung_claim_report_view'（無此權限不顯示；2026-11-02 由請購 key 改為獨立 key）
     ⚠️ 只補「沒有記錄」的情況；使用者在選單管理把它搬進「請購請款報表 → 台中」之後，
        parent_key 等設定不會被這裡覆寫。
     操作冪等：重複執行不會造成重複或錯誤。
@@ -566,7 +567,7 @@ def _seed_menu_config_taichung_claim():
                 text(
                     "INSERT INTO menu_configs "
                     "(menu_key, parent_key, custom_label, sort_order, is_visible, permission_key, updated_at, updated_by) "
-                    "VALUES ('taichung-claim-report', NULL, NULL, 95, TRUE, 'taichung_purchase_report_view', CURRENT_TIMESTAMP, 'system-seed')"
+                    "VALUES ('taichung-claim-report', NULL, NULL, 95, TRUE, 'taichung_claim_report_view', CURRENT_TIMESTAMP, 'system-seed')"
                 )
             )
 
@@ -580,7 +581,7 @@ def _seed_menu_config_taichung_claim():
                     text(
                         "INSERT INTO menu_configs "
                         "(menu_key, parent_key, custom_label, sort_order, is_visible, permission_key, updated_at, updated_by) "
-                        "VALUES (:k, 'taichung-claim-report', NULL, :o, TRUE, 'taichung_purchase_report_view', CURRENT_TIMESTAMP, 'system-seed')"
+                        "VALUES (:k, 'taichung-claim-report', NULL, :o, TRUE, 'taichung_claim_report_view', CURRENT_TIMESTAMP, 'system-seed')"
                     ),
                     {"k": menu_key, "o": sort_order},
                 )
@@ -589,6 +590,81 @@ def _seed_menu_config_taichung_claim():
         print("[Portal] menu_config taichung-claim-report seed checked.")
 
 
+
+
+def _fix_taichung_claim_menu_permission():
+    """
+    選單權限補丁（2026-11-02）：台中請款單選單改用獨立權限 taichung_claim_report_view。
+    只改「仍是舊值 taichung_purchase_report_view」的列；使用者在選單管理自行改過的值不覆寫。
+    操作冪等：重複執行不會有副作用。
+    """
+    from sqlalchemy import text
+
+    with engine.connect() as conn:
+        conn.execute(
+            text(
+                "UPDATE menu_configs SET permission_key = 'taichung_claim_report_view', "
+                "updated_at = CURRENT_TIMESTAMP, updated_by = 'system-fix-20261102' "
+                "WHERE menu_key IN ('taichung-claim-report', '/taichung-claim-report/monthly') "
+                "AND permission_key = 'taichung_purchase_report_view'"
+            )
+        )
+        conn.commit()
+        print("[Portal] menu_config taichung-claim-report permission fix checked.")
+
+
+def _seed_menu_config_return_reject_stats():
+    """
+    選單補丁（2026-11-02）：第一層「退件統計」，權限 return_reject_stats_view。
+    只補「沒有記錄」的情況，不覆寫使用者在選單管理自行搬移或改名的設定。冪等。
+    """
+    from sqlalchemy import text
+
+    CHILDREN = [
+        ("/return-reject-stats/records", 10),
+    ]
+
+    with engine.connect() as conn:
+        row = conn.execute(
+            text("SELECT menu_key FROM menu_configs WHERE menu_key = 'return-reject-stats'")
+        ).fetchone()
+        if row is None:
+            conn.execute(
+                text(
+                    "INSERT INTO menu_configs "
+                    "(menu_key, parent_key, custom_label, sort_order, is_visible, permission_key, updated_at, updated_by) "
+                    "VALUES ('return-reject-stats', NULL, NULL, 100, TRUE, 'return_reject_stats_view', CURRENT_TIMESTAMP, 'system-seed')"
+                )
+            )
+        for menu_key, sort_order in CHILDREN:
+            existing = conn.execute(
+                text("SELECT menu_key FROM menu_configs WHERE menu_key = :k"),
+                {"k": menu_key},
+            ).fetchone()
+            if existing is None:
+                conn.execute(
+                    text(
+                        "INSERT INTO menu_configs "
+                        "(menu_key, parent_key, custom_label, sort_order, is_visible, permission_key, updated_at, updated_by) "
+                        "VALUES (:k, 'return-reject-stats', NULL, :o, TRUE, 'return_reject_stats_view', CURRENT_TIMESTAMP, 'system-seed')"
+                    ),
+                    {"k": menu_key, "o": sort_order},
+                )
+        conn.commit()
+        print("[Portal] menu_config return-reject-stats seed checked.")
+
+
+def _seed_return_stats_sources():
+    """退件統計來源登錄植入（冪等；已存在的來源不覆寫）。"""
+    from app.core.database import SessionLocal
+    from app.services.return_stats_sync import seed_sources
+
+    db = SessionLocal()
+    try:
+        added = seed_sources(db)
+        print(f"[Portal] return_stats sources seeded: +{added}")
+    finally:
+        db.close()
 
 
 def _seed_audit_check_result_types():
@@ -1275,6 +1351,7 @@ async def lifespan(app: FastAPI):
     import app.models.nichiyo_claim_request     # noqa: F401
     import app.models.taichung_purchase_request  # noqa: F401  台中核准請購單（2026-09-16，表由 Alembic tcpurch 建）
     import app.models.taichung_claim_request     # noqa: F401  台中核准請款單（2026-09-16，表由 Alembic tcpurch 建）
+    import app.models.return_stats  # noqa: F401  退件統計（2026-11-02，表由 Alembic rrs1 建）
     import app.models.ragic_sheet_config        # noqa: F401
     import app.models.other_tasks               # noqa: F401
     import app.models.pm_plan                   # noqa: F401  週期保養預排（主管排定 Sheet /7 /13 /20）
@@ -1441,6 +1518,9 @@ async def lifespan(app: FastAPI):
     # 選單設定補丁（2026-09-16）：確保 taichung-purchase-report / taichung-claim-report 選單有 DB 記錄
     _run_startup_migration("_seed_menu_config_taichung_purchase", _seed_menu_config_taichung_purchase)
     _run_startup_migration("_seed_menu_config_taichung_claim", _seed_menu_config_taichung_claim)
+    _run_startup_migration("_fix_taichung_claim_menu_permission", _fix_taichung_claim_menu_permission)
+    _run_startup_migration("_seed_menu_config_return_reject_stats", _seed_menu_config_return_reject_stats)
+    _run_startup_migration("_seed_return_stats_sources", _seed_return_stats_sources)
 
     # 稽核檢查（2026-09-20）：模型載入 + 判定類型種子 + 選單 DB 記錄
     import app.models.audit_check  # noqa: F401 — 確保 create_all 建立資料表
@@ -2175,6 +2255,13 @@ app.include_router(
     taichung_claim_report.router,
     prefix=f"{API_PREFIX}/taichung-claim-report",
     tags=["台中核准請款單月報表"],
+)
+
+# ── 退件統計（2026-11-02，docs/SPEC_return_reject_stats.md）──────────────────
+app.include_router(
+    return_stats.router,
+    prefix=f"{API_PREFIX}/return-stats",
+    tags=["退件統計"],
 )
 app.include_router(
     taichung_combined_report.router,

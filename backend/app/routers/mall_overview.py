@@ -30,6 +30,7 @@ from app.models.mall_periodic_maintenance import (
 )
 from app.models.rf_inspection import RFInspectionBatch
 from app.models.other_tasks import OtherTask
+from app.services.other_tasks_service import task_type_category
 from app.models.schedule import StaffMember
 
 router = APIRouter(prefix="/mall", tags=["商場管理 Dashboard"])
@@ -230,7 +231,7 @@ def get_mall_daily_hours(
         .filter(OtherTask.year == year, OtherTask.month == month, OtherTask.venue == "商場")
         .all()
     ):
-        tt = ot.task_type
+        tt = task_type_category(ot.task_type)
         if tt not in ("上級交辦", "緊急事件"):
             continue
         if ot.created_at is None:
@@ -405,7 +406,7 @@ def get_mall_monthly_hours(
         .filter(OtherTask.year == year, OtherTask.venue == "商場")
         .all()
     ):
-        tt = ot.task_type
+        tt = task_type_category(ot.task_type)
         if tt not in ("上級交辦", "緊急事件"):
             continue
         m = ot.month
@@ -552,7 +553,7 @@ def get_mall_person_hours(
         .filter(OtherTask.year == year, OtherTask.venue == "商場")
         .all()
     ):
-        tt = ot.task_type
+        tt = task_type_category(ot.task_type)
         if tt not in ("上級交辦", "緊急事件"):
             continue
         person = (ot.engineer or "").strip()

@@ -68,6 +68,8 @@ const ALL_MODULES: string[] = [
   '日曜請購單清單', '日曜請款單清單',
   // 台中（2026-09-16）：名稱必須與 sync_tool.py MODULES 完全一致
   '台中核准請購單清單', '台中核准請款單清單',
+  // 退件統計（2026-11-02）：名稱必須與 sync_tool.py MODULES 完全一致
+  '退件統計',
   // ── 四個「完整同步」（清單 + Detail API 品項補全）─────────────────────────
   // 2026-08-30 補登錄：先前只掛在 main.py 的 APScheduler（每 45 分），
   // SCHEDULER_ENABLED=false 等於從未執行，品項明細從來沒補進來。

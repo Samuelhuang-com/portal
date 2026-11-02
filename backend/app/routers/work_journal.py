@@ -1135,7 +1135,8 @@ def _fetch_other_tasks(db: Session, year: int, month: int, day: int) -> list[dic
 
         common = dict(
             source="other_tasks",
-            category=rec.task_type or "上級交辦",
+            # 屬性只有「緊急事件」獨立成類；其餘（上級交辦、安檢稽查…）都歸「上級交辦」欄
+            category="緊急事件" if rec.task_type == "緊急事件" else "上級交辦",
             task=rec.description or "(無說明)",
             remark=rec.notes or "",
             ragic_id=rec.ragic_id or "",

@@ -311,3 +311,25 @@ async def fetch_all_records() -> list[OtherTaskRecord]:
 
     logger.info(f"[OtherTasks] 共抓取 {len(records)} 筆，有日期={sum(1 for r in records if r.created_at)} 筆，有附圖={sum(1 for r in records if r.images)} 筆")
     return records
+
+
+# ── 屬性 → 看板類別（工作日誌／飯店・商場總覽／明細篩選共用）──────────────────
+# 「緊急事件」獨立成類；「上級交辦」與「安檢稽查」等主管交辦類型都歸入「上級交辦」。
+SUPERVISOR_TASK_TYPES = ("上級交辦", "安檢稽查")
+EMERGENCY_TASK_TYPE = "緊急事件"
+
+
+def task_type_category(task_type):
+    """屬性原值 → 類別（上級交辦／緊急事件）；不屬於任一類者回傳 None。"""
+    if task_type == EMERGENCY_TASK_TYPE:
+        return EMERGENCY_TASK_TYPE
+    if task_type in SUPERVISOR_TASK_TYPES:
+        return "上級交辦"
+    return None
+
+
+def raw_task_types_of(name):
+    """類別名稱 → 對應的屬性原值清單（查詢用）。"""
+    if name == "上級交辦":
+        return list(SUPERVISOR_TASK_TYPES)
+    return [name]

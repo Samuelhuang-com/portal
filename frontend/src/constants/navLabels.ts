@@ -97,6 +97,7 @@ export const NAV_GROUP = {
   nichiyoClaimReport:     '日曜請款月報表',    // ← 日曜核准請款單月報表
   taichungPurchaseReport: '台中請購單報表',    // ← 台中核准請購單月報表（2026-09-16）
   taichungClaimReport:    '台中請款單報表',    // ← 台中核准請款單月報表（2026-09-16）
+  returnRejectStats:      '退件統計',          // ← 退件統計（2026-11-02，docs/SPEC_return_reject_stats.md）
   cyclePurchase:          '週採',              // ← 新增：週期採購管理（2026-07-10，獨立資料庫 cycle-purchase.db）
   auditCheck:             '稽核檢查',          // ← 新增：財#3 系統建置稽核（2026-09-20）
 } as const
@@ -237,6 +238,7 @@ export const NAV_PAGE = {
   // 台中請購／請款月報表（2026-09-16，完整複製樂群）
   taichungPurchaseReportMonthly: '台中核准請購單月報表',  // ← route /taichung-purchase-report/monthly
   taichungClaimReportMonthly:    '台中核准請款單月報表',  // ← route /taichung-claim-report/monthly
+  returnRejectStatsRecords:      '退件明細',            // ← route /return-reject-stats/records（2026-11-02）
 
   // 飯店班表（本地 SQLite 模組，飯店管理 → 飯店班表）
   // ⚠️ 這裡的顯示名稱必須與 role_permissions.py PERMISSION_DEFINITIONS 的 label 一致，

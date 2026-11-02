@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.dependencies import get_current_user, require_roles
 from app.models.other_tasks import OtherTask
-from app.services.other_tasks_service import _make_adapter
+from app.services.other_tasks_service import _make_adapter, raw_task_types_of, task_type_category
 from app.services.ragic_verify_utils import (
     read_portal_count_and_last_sync, read_portal_ragic_ids,
     build_verify_count_response, build_verify_diff_response,
@@ -164,7 +164,7 @@ def get_detail(
     q = db.query(OtherTask)
 
     if task_type:
-        q = q.filter(OtherTask.task_type == task_type)
+        q = q.filter(OtherTask.task_type.in_(raw_task_types_of(task_type)))
     if year:
         q = q.filter(OtherTask.year == year)
     if month:
@@ -301,7 +301,18 @@ def get_stats(
         elif vrow.venue == "商場":
             result[vrow.task_type]["mall"] += vrow.cnt or 0
 
-    return result
+    # 依看板類別合併（安檢稽查 → 上級交辦），前端仍以「上級交辦／緊急事件」取值
+    merged: dict = {}
+    for raw_tt, s in result.items():
+        key = task_type_category(raw_tt) or raw_tt
+        if key not in merged:
+            merged[key] = dict(s)
+            continue
+        m = merged[key]
+        for k in ("total", "hotel", "mall", "completed", "open"):
+            m[k] += s[k]
+        m["work_hours"] = round(m["work_hours"] + s["work_hours"], 1)
+    return merged
 
 
 # ── /db-images/{ragic_id} ─────────────────────────────────────────────────────

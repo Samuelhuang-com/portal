@@ -149,6 +149,9 @@ PERMISSION_DEFINITIONS = [
     {"key": "taichung_purchase_report_manage", "label": "台中請購單報表：管理", "group": "採購管理"},
     {"key": "taichung_claim_report_view",      "label": "台中請款單報表：查看", "group": "採購管理"},
     {"key": "taichung_claim_report_manage",    "label": "台中請款單報表：管理", "group": "採購管理"},
+    # 退件統計（2026-11-02，docs/SPEC_return_reject_stats.md）
+    {"key": "return_reject_stats_view",   "label": "退件統計：查看", "group": "採購管理"},
+    {"key": "return_reject_stats_manage", "label": "退件統計：管理", "group": "採購管理"},
     {"key": "ragic_field_audit_view",   "label": "Ragic 欄位比對：查看",     "group": "系統設定"},
     {"key": "ragic_field_audit_manage", "label": "Ragic 欄位比對：執行/標記","group": "系統設定"},
     {"key": "ragic_field_audit_admin",  "label": "Ragic 欄位比對：管理員",   "group": "系統設定"},

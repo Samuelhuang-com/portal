@@ -200,14 +200,24 @@ export const menuItems: MenuItem[] = [
     ],
   },
   // ── 台中核准請款單月報表 ──────────────────────────────────────────────────────
-  // ⚠️ 選單權限照抄樂群用「請購」的 view key（使用者 2026-09-16 裁示）；頁面守衛仍是 taichung_claim_report_view
+  // 2026-11-02 使用者裁示：請款選單改用獨立的 taichung_claim_report_view（撤銷 2026-09-16 暫時照抄請購 key 的做法）；頁面守衛同為 taichung_claim_report_view
   {
     key: 'taichung-claim-report',
     icon: <FileTextOutlined />,
     label: NAV_GROUP.taichungClaimReport,
-    permissionKey: 'taichung_purchase_report_view',
+    permissionKey: 'taichung_claim_report_view',
     children: [
-      { key: '/taichung-claim-report/monthly', icon: <AuditOutlined />, label: NAV_PAGE.taichungClaimReportMonthly, permissionKey: 'taichung_purchase_report_view' },
+      { key: '/taichung-claim-report/monthly', icon: <AuditOutlined />, label: NAV_PAGE.taichungClaimReportMonthly, permissionKey: 'taichung_claim_report_view' },
+    ],
+  },
+  // ── 退件統計（2026-11-02，docs/SPEC_return_reject_stats.md）──────────────────
+  {
+    key: 'return-reject-stats',
+    icon: <FileTextOutlined />,
+    label: NAV_GROUP.returnRejectStats,
+    permissionKey: 'return_reject_stats_view',
+    children: [
+      { key: '/return-reject-stats/records', icon: <AuditOutlined />, label: NAV_PAGE.returnRejectStatsRecords, permissionKey: 'return_reject_stats_view' },
     ],
   },
   // ── 稽核檢查（財#3 系統建置稽核，2026-09-20 新增）────────────────────────────
