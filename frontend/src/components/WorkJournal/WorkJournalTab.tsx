@@ -13,7 +13,7 @@
 import React, { useState, useCallback, useEffect } from 'react'
 import {
   Segmented, DatePicker, Select, Space, Button,
-  Collapse, Typography, Tag, Spin, Card,
+  Collapse, Typography, Tag, Spin, Card, message,
 } from 'antd'
 import {
   ReloadOutlined, UserOutlined, UserDeleteOutlined, FileExcelOutlined,
@@ -34,6 +34,7 @@ import {
 } from '@/components/WorkJournal/shared'
 import { downloadFile } from '@/api/downloadFile'
 import { CATEGORY_TAG_COLORS } from '@/api/workCategoryAnalysis'
+import StandardRangePicker, { type StandardRange } from '@/components/StandardRangePicker'
 
 dayjs.extend(relativeTime)
 dayjs.locale('zh-tw')
@@ -90,14 +91,26 @@ interface WorkJournalTabProps {
   onStatsChange?: (s: WJStats) => void
 }
 
+// 區間上限 31 天（後端 /work-journal/range 超過會靜默截斷，這裡先擋）；未通過時已提示，不查詢
+function _rangeWithinLimit(r: StandardRange): r is [Dayjs, Dayjs] {
+  if (!r || !r[0] || !r[1]) {
+    message.warning('請選擇查詢區間；「全部」超過 31 天上限，請改選區間')
+    return false
+  }
+  if (r[1].diff(r[0], 'day') > 30) {
+    message.warning('區間最多 31 天，請縮小區間（「今年」「去年」「全部」超出上限）')
+    return false
+  }
+  return true
+}
+
 export default function WorkJournalTab({
   venue = 'all',
   onStatsChange,
 }: WorkJournalTabProps) {
   const [mode,      setMode]      = useState<JournalMode>('single')
-  const [year,      setYear]      = useState<number>(dayjs().year())
-  const [month,     setMonth]     = useState<number>(dayjs().month() + 1)
-  const [day,       setDay]       = useState<number>(dayjs().date())
+  // 查詢日期（單日／未指定單日共用）— StandardRangePicker；起迄同一天＝單日視圖
+  const [singleRange, setSingleRange] = useState<StandardRange>([dayjs(), dayjs()])
   const [rangeDates, setRangeDates] = useState<[Dayjs, Dayjs] | null>(null)
   const [monthDate,  setMonthDate]  = useState<Dayjs | null>(dayjs())
   const [singleData,      setSingleData]      = useState<WorkJournalDaily | null>(null)
@@ -114,26 +127,53 @@ export default function WorkJournalTab({
   // 「未指定」模式的子模式（單日/區間/整月）
   const [unSubMode, setUnSubMode] = useState<'single'|'range'|'month'>('single')
 
-  const daysInMonth = dayjs(`${year}-${String(month).padStart(2,'0')}-01`).daysInMonth()
-  const dayOptions  = Array.from({ length: daysInMonth }, (_, i) => ({ label: `${i + 1} 日`, value: i + 1 }))
-
   const handleLoad = useCallback(async () => {
     setLoading(true)
     try {
       setGlobalCollapsed(false)
 
-      if (mode === 'single') {
-        const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+      // 查詢日期：起迄同一天走單日 API；不同天走區間 API（後端區間上限 31 天，超過會靜默截斷，這裡先擋）
+      const loadSingle = async (scope: 'named' | 'unassigned') => {
+        if (!singleRange || !singleRange[0] || !singleRange[1]) {
+          message.warning('請選擇查詢日期；「全部」超過 31 天上限，請改選區間')
+          return
+        }
+        const d0 = singleRange[0]
+        const d1 = singleRange[1]
+        const from = d0.format('YYYY-MM-DD')
+        const to   = d1.format('YYYY-MM-DD')
+        const named = scope === 'named'
+        if (from === to) {
+          const [journal, shifts] = await Promise.all([
+            fetchWorkJournalDaily(d0.year(), d0.month() + 1, d0.date(), scope, venue),
+            named ? fetchMergedShiftsRange(from, to).catch(_warnShiftsFailed) : Promise.resolve({} as MergedShiftsRangeData),
+          ])
+          setSingleData(journal)
+          setRangeData(null)
+          setShiftMapByDate(shifts)
+          setDateActiveKeys([])
+          return
+        }
+        if (d1.diff(d0, 'day') > 30) {
+          message.warning('區間最多 31 天，請縮小區間（「今年」「去年」「全部」超出上限）')
+          return
+        }
         const [journal, shifts] = await Promise.all([
-          fetchWorkJournalDaily(year, month, day, 'named', venue),
-          fetchMergedShiftsRange(dateStr, dateStr).catch(_warnShiftsFailed),
+          fetchWorkJournalRange(from, to, scope, venue),
+          named ? fetchMergedShiftsRange(from, to).catch(_warnShiftsFailed) : Promise.resolve({} as MergedShiftsRangeData),
         ])
-        setSingleData(journal)
-        setRangeData(null)
+        setRangeData(journal)
+        setSingleData(null)
         setShiftMapByDate(shifts)
-        setDateActiveKeys([])
+        setDateActiveKeys(journal.days.map((_, i) => `day-${i}`))
+        if (named) onStatsChange?.(_computeWJStats(journal.days))
+      }
 
-      } else if (mode === 'range' && rangeDates) {
+      if (mode === 'single') {
+        await loadSingle('named')
+
+      } else if (mode === 'range') {
+        if (!_rangeWithinLimit(rangeDates)) return
         const from = rangeDates[0].format('YYYY-MM-DD')
         const to   = rangeDates[1].format('YYYY-MM-DD')
         const [journal, shifts] = await Promise.all([
@@ -188,12 +228,9 @@ export default function WorkJournalTab({
 
       } else if (mode === 'unassigned') {
         if (unSubMode === 'single') {
-          const journal = await fetchWorkJournalDaily(year, month, day, 'unassigned', venue)
-          setSingleData(journal)
-          setRangeData(null)
-          setShiftMapByDate({})
-          setDateActiveKeys([])
+          await loadSingle('unassigned')
         } else {
+          if (unSubMode === 'range' && !_rangeWithinLimit(rangeDates)) return
           let from = '', to = ''
           if (unSubMode === 'range' && rangeDates) {
             from = rangeDates[0].format('YYYY-MM-DD')
@@ -217,7 +254,7 @@ export default function WorkJournalTab({
     } finally {
       setLoading(false)
     }
-  }, [mode, year, month, day, rangeDates, monthDate, personSubMode, personRangeDates, personMonthDate, personFilter, unSubMode, venue])
+  }, [mode, singleRange, rangeDates, monthDate, personSubMode, personRangeDates, personMonthDate, personFilter, unSubMode, venue])
 
   // 掛載時自動載入當月份統計，供上方摘要卡片立即顯示；不觸碰表格狀態
   useEffect(() => {
@@ -248,24 +285,21 @@ export default function WorkJournalTab({
       <Space wrap>
         {unSubSeg}
         <Text type="secondary" style={{ fontSize: 15 }}>查詢日期：</Text>
-        <Select value={year} onChange={v => setYear(v)} style={{ width: 90 }}
-          options={Array.from({ length: 3 }, (_, i) => { const y = dayjs().year() - i; return { label: `${y} 年`, value: y } })} />
-        <Select value={month} onChange={v => { setMonth(v); if (day > dayjs(`${year}-${String(v).padStart(2,'0')}-01`).daysInMonth()) setDay(1) }}
-          style={{ width: 80 }}
-          options={Array.from({ length: 12 }, (_, i) => ({ label: `${i + 1} 月`, value: i + 1 }))} />
-        <Select value={day} onChange={v => setDay(v)} style={{ width: 80 }} options={dayOptions} />
+        <StandardRangePicker
+          value={singleRange}
+          onChange={v => setSingleRange(v)}
+          style={{ width: 260 }}
+        />
       </Space>
     )
     if (effMode === 'range') return (
       <Space wrap>
         {unSubSeg}
         <Text type="secondary" style={{ fontSize: 15 }}>查詢區間（最多 31 天）：</Text>
-        <DatePicker.RangePicker
+        <StandardRangePicker
           value={rangeDates}
-          onChange={v => setRangeDates(v as [Dayjs, Dayjs] | null)}
-          format="YYYY/MM/DD"
+          onChange={v => setRangeDates(v)}
           style={{ width: 260 }}
-          disabledDate={cur => cur && cur > dayjs().endOf('day')}
         />
       </Space>
     )
