@@ -29,6 +29,7 @@ interface StatRow {
   name: string
   cells: StatisticsCell[]
   texts?: string[]
+  annual?: number | null
 }
 
 function buildRows(block: StatisticsBlock): StatRow[] {
@@ -43,7 +44,7 @@ function buildRows(block: StatisticsBlock): StatRow[] {
     },
   ]
   block.rows.forEach((r) => {
-    rows.push({ key: `d-${r.department_id}`, kind: 'dept', name: r.name, cells: r.cells })
+    rows.push({ key: `d-${r.department_id}`, kind: 'dept', name: r.name, cells: r.cells, annual: r.annual_avg })
   })
   rows.push({ key: 'completion', kind: 'completion', name: '稽核完成率', cells: block.completion })
   return rows
@@ -151,6 +152,17 @@ export default function AuditStatisticsPage() {
           )
         },
       })),
+      {
+        // 2026-11-02：全年平均（該部門各月有評分者之平均），以「分」呈現，不受期別篩選影響
+        title: '全年平均',
+        key: 'annual',
+        width: 120,
+        render: (_: unknown, row: StatRow) => {
+          if (row.kind !== 'dept') return null
+          if (row.annual == null) return <Text type="secondary">本年無資料</Text>
+          return <Text strong style={{ color: scoreColor(row.annual) }}>{Math.round(row.annual * 100)}分</Text>
+        },
+      },
     ]
 
     return (
@@ -162,7 +174,7 @@ export default function AuditStatisticsPage() {
           columns={columns}
           dataSource={rows}
           pagination={false}
-          scroll={{ x: 200 + block.periods.length * 200 }}
+          scroll={{ x: 200 + block.periods.length * 200 + 120 }}
           rowClassName={(row) => (row.kind === 'dept' ? '' : 'audit-stat-header-row')}
         />
       </Card>

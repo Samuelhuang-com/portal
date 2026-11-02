@@ -620,13 +620,17 @@ def build_statistics(db: Session, year: int, company_id: Optional[int] = None) -
 
         rows = []
         for dept_id, per_cell in dept_cells.items():
+            cells = [
+                per_cell.get(p, {"period": p, "score": None, "label": "本月無"})
+                for p in period_list
+            ]
+            # 全年平均（2026-11-02）：該部門有評分的月份之平均（0~1 小數，以「分」呈現於前端／Excel）；不受頁面篩選影響
+            vals = [cl["score"] for cl in cells if cl["score"] is not None]
             rows.append({
                 "department_id": dept_id,
                 "name": dept_names.get(dept_id, f"#{dept_id}"),
-                "cells": [
-                    per_cell.get(p, {"period": p, "score": None, "label": "本月無"})
-                    for p in period_list
-                ],
+                "cells": cells,
+                "annual_avg": (sum(vals) / len(vals)) if vals else None,
             })
         rows.sort(key=lambda r: r["name"])
 

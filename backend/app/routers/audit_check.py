@@ -811,6 +811,11 @@ def _stat_points(score) -> Optional[str]:
     return None if score is None else f"{round(score * 100)}分"
 
 
+def _annual_pts(avg) -> Optional[str]:
+    """全年平均（0~1 小數）以「分」呈現，半進位（2026-11-02）。"""
+    return None if avg is None else f"{int(avg * 100 + 0.5)}分"
+
+
 def _strip_pct(label: str) -> str:
     """去掉「= 88.9%」等百分比尾巴（2026-11-02）。"""
     return re.sub(r"\s*=\s*[\d.]+%\s*$", "", label or "")
@@ -1017,6 +1022,7 @@ def export_statistics(
         ws.cell(row=r, column=1, value=_clean(block["company_name"])).font = Font(bold=True)
         for i, p in enumerate(block["periods"]):
             ws.cell(row=r, column=3 + i * 2, value=_clean(p)).font = Font(bold=True)
+        ws.cell(row=r, column=3 + len(block["periods"]) * 2, value="全年平均").font = Font(bold=True)
         r += 1
         ws.cell(row=r, column=2, value="稽核時間")
         for i, lb in enumerate(block["audited_labels"]):
@@ -1031,6 +1037,7 @@ def export_statistics(
             for i, cell in enumerate(row["cells"]):
                 ws.cell(row=r, column=3 + i * 2, value=_stat_points(cell["score"]))
                 ws.cell(row=r, column=4 + i * 2, value=_clean(_strip_pct(cell["label"])))
+            ws.cell(row=r, column=3 + len(block["periods"]) * 2, value=_annual_pts(row.get("annual_avg")))
             r += 1
         ws.cell(row=r, column=2, value="稽核完成率")
         for i, cell in enumerate(block["completion"]):

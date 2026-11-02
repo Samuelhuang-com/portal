@@ -164,7 +164,7 @@ export interface StatisticsBlock {
   periods: string[]
   audited_labels: string[]
   major_items: string[][]
-  rows: { department_id: number; name: string; cells: StatisticsCell[] }[]
+  rows: { department_id: number; name: string; cells: StatisticsCell[]; annual_avg: number | null }[]
   completion: StatisticsCell[]
 }
 

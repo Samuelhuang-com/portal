@@ -278,6 +278,8 @@ class StatisticsRow(BaseModel):
     department_id: int
     name: str
     cells: List[StatisticsCell]
+    # 全年平均（2026-11-02）：有評分月份之平均（0~1 小數）；本月無不計入。None ＝ 全年無資料
+    annual_avg: Optional[float] = None
 
 
 class StatisticsBlock(BaseModel):
