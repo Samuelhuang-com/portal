@@ -692,7 +692,7 @@ export default function AuditSheetEditorPage() {
             const pct = Math.round(sc.score * 100)
             return (
               <Text strong style={{ color: sc.score >= 1 ? '#52c41a' : '#cf1322' }}>
-                {sc.score.toFixed(4).replace(/0+$/, '').replace(/\.$/, '')}（{pct}%）
+                {pct}分
               </Text>
             )
           }
@@ -709,7 +709,9 @@ export default function AuditSheetEditorPage() {
                 cursor: canEdit ? 'pointer' : 'default', minHeight: 20,
               }}
             >
-              {d.deficiency || <Text type="secondary">—</Text>}
+              {htmlToPlain(d.deficiency)
+                ? <div className="audit-rich" dangerouslySetInnerHTML={{ __html: toDisplayHtml(d.deficiency) }} />
+                : <Text type="secondary">—</Text>}
               {isOverride && <Tag color="default" style={{ marginLeft: 4 }}>人工</Tag>}
             </div>
           )

@@ -49,14 +49,7 @@ function buildRows(block: StatisticsBlock): StatRow[] {
   return rows
 }
 
-/** 2026-10-13：分數以「分子/分母」呈現，不轉百分比、不顯示 0.33 小數。
- *  部門格 label＝「N項 / P項達標」→ P/N；完成率 label＝「3*3-1=8　8/9 = 88.9%」→ 8/9，並去掉百分比。 */
-function fractionOf(label: string): string | null {
-  const m1 = label.match(/(\d+)項\s*\/\s*(\d+)項達標/)
-  if (m1) return `${m1[2]}/${m1[1]}`
-  const m2 = label.match(/(\d+)\s*\/\s*(\d+)/)
-  return m2 ? `${m2[1]}/${m2[2]}` : null
-}
+/** 2026-11-02：分數統一以「分」呈現（0.75 → 75分），與稽核檢查 sheet 一致。 */
 const stripPct = (label: string) => label.replace(/\s*=\s*[\d.]+%\s*$/, '')
 
 const uniq = (a: string[]) => Array.from(new Set(a.filter(Boolean)))
@@ -151,7 +144,7 @@ export default function AuditStatisticsPage() {
           return (
             <div>
               <Text strong style={{ color: scoreColor(c.score) }}>
-                {fractionOf(c.label) ?? c.score.toFixed(2)}
+                {Math.round(c.score * 100)}分
               </Text>
               <div style={{ fontSize: 12, color: '#64748b' }}>{stripPct(c.label)}</div>
             </div>

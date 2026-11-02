@@ -806,6 +806,16 @@ def _clean(val) -> str:
     return _ILLEGAL.sub("", str(val))
 
 
+def _stat_points(score) -> Optional[str]:
+    """分數統計以「分」呈現（0.75 → 75分），與網頁一致（2026-11-02）。"""
+    return None if score is None else f"{round(score * 100)}分"
+
+
+def _strip_pct(label: str) -> str:
+    """去掉「= 88.9%」等百分比尾巴（2026-11-02）。"""
+    return re.sub(r"\s*=\s*[\d.]+%\s*$", "", label or "")
+
+
 def _ascii_slug(text: str) -> str:
     out = re.sub(r"[^A-Za-z0-9._-]+", "_", text or "")
     return out.strip("_") or "export"
@@ -868,12 +878,18 @@ def export_sheet(
         put(r, 3, label)
         for i, d in enumerate(depts):
             sc = scores.get(d["id"])
-            put(r, 4 + i, "" if sc is None else sc[key])
+            if key == "score":
+                # 與網頁一致：分數以「分」呈現（0.75 → 75分）；本期無資料 → 本月無
+                val = "" if sc is None else ("本月無" if sc[key] is None else f"{round(sc[key] * 100)}分")
+            else:
+                val = "" if sc is None else sc[key]
+            put(r, 4 + i, val)
         r += 1
 
     put(r, 3, "缺失", "FF0000")
     for i, d in enumerate(depts):
-        put(r, 4 + i, d["deficiency"], "FF0000")
+        # 缺失彙整可能含評語 HTML → Excel 放純文字（2026-11-02）
+        put(r, 4 + i, html_to_text(d["deficiency"]), "FF0000")
     r += 1
 
     cell_map = {(c["sheet_item_id"], c["sheet_department_id"]): c for c in detail["cells"]}
@@ -1013,13 +1029,13 @@ def export_statistics(
         for row in block["rows"]:
             ws.cell(row=r, column=2, value=_clean(row["name"]))
             for i, cell in enumerate(row["cells"]):
-                ws.cell(row=r, column=3 + i * 2, value=cell["score"])
-                ws.cell(row=r, column=4 + i * 2, value=_clean(cell["label"]))
+                ws.cell(row=r, column=3 + i * 2, value=_stat_points(cell["score"]))
+                ws.cell(row=r, column=4 + i * 2, value=_clean(_strip_pct(cell["label"])))
             r += 1
         ws.cell(row=r, column=2, value="稽核完成率")
         for i, cell in enumerate(block["completion"]):
-            ws.cell(row=r, column=3 + i * 2, value=cell["score"])
-            ws.cell(row=r, column=4 + i * 2, value=_clean(cell["label"]))
+            ws.cell(row=r, column=3 + i * 2, value=_stat_points(cell["score"]))
+            ws.cell(row=r, column=4 + i * 2, value=_clean(_strip_pct(cell["label"])))
         r += 3
 
     ws.column_dimensions["B"].width = 20

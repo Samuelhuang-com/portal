@@ -317,6 +317,18 @@ def get_flagged(
     return svc.flagged(db, year, include_pending)
 
 
+def _kpo_pts(score) -> Optional[str]:
+    """本期分數（0~100 整數）以「分」呈現（2026-11-02）。"""
+    return None if score is None else f"{score}分"
+
+
+def _kpo_completion_pts(checked: int, total: int) -> Optional[str]:
+    """查核完成率以「分」呈現：已查核÷選定×100，四捨五入（半進位，同 subtotal 的算法）。"""
+    if not total:
+        return None
+    return f"{(checked * 200 + total) // (2 * total)}分"
+
+
 @router.get("/statistics/export")
 def export_statistics(
     year: Optional[int] = Query(None, ge=2000, le=2100),
@@ -349,13 +361,17 @@ def export_statistics(
         for row in blk["rows"]:
             ws.cell(row=r, column=1, value=_clean(row["name"]))
             for i, c in enumerate(row["cells"]):
-                ws.cell(row=r, column=2 + i * 2, value=c["score"])
+                ws.cell(row=r, column=2 + i * 2, value=_kpo_pts(c["score"]))
                 ws.cell(row=r, column=3 + i * 2, value=f"{c['pass_count']}/{c['item_count']}" if c["item_count"] else "本月無")
             r += 1
         ws.cell(row=r, column=1, value="查核完成（已查核/選定）").font = bold
         for i, c in enumerate(blk["completion"]):
-            ws.cell(row=r, column=2 + i * 2, value=c["score"])
-            ws.cell(row=r, column=3 + i * 2, value=_clean(c["label"]))
+            checked = c["pass_count"] + c["fail_count"]
+            ws.cell(row=r, column=2 + i * 2, value=_kpo_completion_pts(checked, c["item_count"]))
+            detail = f"已查核 {checked}/{c['item_count']}項"
+            if c["score"] is not None:
+                detail += f"；整期本期分數 {_kpo_pts(c['score'])}"
+            ws.cell(row=r, column=3 + i * 2, value=_clean(detail))
         ws.column_dimensions["A"].width = 24
     if not data["blocks"]:
         ws = wb.create_sheet("無資料")

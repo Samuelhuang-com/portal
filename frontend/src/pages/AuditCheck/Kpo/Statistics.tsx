@@ -4,7 +4,7 @@
  *
  * 2026-10-13 新增，比照系統建置稽核的「分數統計」（/audit-check/statistics）：
  *   - 分頁①「分數統計」：每家公司一個區塊，欄＝期別、列＝受稽部門；
- *     格子＝本期分數（大字）＋「N項符合 / M項選定」（小字，不顯示 %）；最後一列「查核完成」＝已查核項數/選定項數
+ *     格子＝本期分數（大字，以「分」呈現）＋「N項符合 / M項選定」（小字）；最後一列「查核完成」＝完成率（分）＋已查核項數/選定項數（2026-11-02 改為分）
  *   - 分頁②「缺失與建議清單」：不符合項＋查核備註（可選含未查核）
  *   - 篩選：公司／部門／期別（清單另有判定類型、關鍵字）；格子與清單列都可點擊進入該期期別頁
  *   - 匯出 Excel（整年度）
@@ -89,17 +89,20 @@ export default function KpoStatisticsPage() {
           const c = row.cells[idx]
           if (!c || (row.kind === 'dept' && !c.item_count)) return <Text type="secondary">{c?.label ?? '—'}</Text>
           if (row.kind === 'completion') {
+            // 2026-11-02：完成率以「分」呈現（已查核÷選定×100），detail 保留已查核數
+            const checked = c.pass_count + c.fail_count
             return (
               <div>
-                <Text strong>{c.label}</Text>
-                {c.score != null && <div style={{ fontSize: 12, color: '#64748b' }}>整期本期分數 {c.score}</div>}
+                <Text strong>{c.item_count ? `${Math.round((checked / c.item_count) * 100)}分` : '—'}</Text>
+                <div style={{ fontSize: 12, color: '#64748b' }}>已查核 {checked}/{c.item_count}項</div>
+                {c.score != null && <div style={{ fontSize: 12, color: '#64748b' }}>整期本期分數 {c.score}分</div>}
               </div>
             )
           }
           const col = c.score == null ? undefined : scoreColor(c.score).fg
           return (
             <div>
-              <Text strong style={{ color: col, fontSize: 15 }}>{c.score ?? '—'}</Text>
+              <Text strong style={{ color: col, fontSize: 15 }}>{c.score != null ? `${c.score}分` : '—'}</Text>
               <div style={{ fontSize: 12, color: '#64748b' }}>{c.label}</div>
             </div>
           )
