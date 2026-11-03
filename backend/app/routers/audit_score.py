@@ -40,7 +40,7 @@ def export_score(
     wb = Workbook()
     ws = wb.active
     ws.title = f"{year}年稽核統計"
-    headers = ["公司", "部門", "稽核子項數", "稽核達標數", "KPO 選定項數", "KPO 符合項數",
+    headers = ["公司", "部門", "系統檢查子項數", "系統檢查達標數", "現場稽核選定項數", "現場稽核符合項數",
                "合計項數", "合計達標數", "合併達標率"]
     ws.append(headers)
     for c in ws[1]:

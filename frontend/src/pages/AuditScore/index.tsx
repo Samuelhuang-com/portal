@@ -18,7 +18,7 @@ function monthCell(items: AuditScoreMonthly[]) {
       {items.map((m) => (
         <div key={`${m.source}-${m.source_sheet_id}`}>
           <span style={{ color: m.source === '稽核檢查' ? '#1B3A5C' : '#4BA8E8', fontWeight: 600 }}>
-            {m.source === '稽核檢查' ? '稽核' : 'KPO'}
+            {SOURCE_LABEL[m.source] ?? m.source}
           </span>
           {` ${m.pass}/${m.sub}`}
           <span style={{ color: '#666' }}>
@@ -49,11 +49,14 @@ function monthColumns(year: number): ColumnsType<AuditScoreRow> {
   })
 }
 
+// 2026-11-03：畫面顯示名稱（內部鍵值 source 仍為 '稽核檢查' / 'KPO'，計算邏輯不變）
+const SOURCE_LABEL: Record<string, string> = { '稽核檢查': '系統檢查', 'KPO': '現場稽核' }
+
 const monthlyColumns: ColumnsType<AuditScoreMonthly> = [
   { title: '期別', dataIndex: 'period', width: 100 },
-  { title: '來源模組', dataIndex: 'source', width: 110 },
-  { title: '子項數（稽核）／選定數（KPO）', dataIndex: 'sub', width: 200, align: 'right' },
-  { title: '達標數（稽核）／符合數（KPO）', dataIndex: 'pass', width: 200, align: 'right' },
+  { title: '來源模組', dataIndex: 'source', width: 110, render: (v: string) => SOURCE_LABEL[v] ?? v },
+  { title: '子項數（系統檢查）／選定數（現場稽核）', dataIndex: 'sub', width: 200, align: 'right' },
+  { title: '達標數（系統檢查）／符合數（現場稽核）', dataIndex: 'pass', width: 200, align: 'right' },
   {
     title: '原模組分數', dataIndex: 'module_score', width: 130, align: 'right',
     render: (v: number | null, r) => {
@@ -102,16 +105,27 @@ export default function AuditScorePage() {
 
   const columns: ColumnsType<AuditScoreRow> = [
     { title: '部門', dataIndex: 'department', width: 140 },
-    { title: '稽核子項數', dataIndex: 'audit_sub', width: 110, align: 'right' },
-    { title: '稽核達標數', dataIndex: 'audit_pass', width: 110, align: 'right' },
-    { title: 'KPO 選定項數', dataIndex: 'kpo_sub', width: 120, align: 'right' },
-    { title: 'KPO 符合項數', dataIndex: 'kpo_pass', width: 120, align: 'right' },
+    // 2026-11-03：合併群組標題（系統建置稽核／現場營運稽核）
+    {
+      title: '系統建置稽核', align: 'center',
+      children: [
+        { title: '系統檢查子項數', dataIndex: 'audit_sub', width: 110, align: 'right' },
+        { title: '系統檢查達標數', dataIndex: 'audit_pass', width: 110, align: 'right' },
+      ],
+    },
+    {
+      title: '現場營運稽核', align: 'center',
+      children: [
+        { title: '現場稽核選定項數', dataIndex: 'kpo_sub', width: 120, align: 'right' },
+        { title: '現場稽核符合項數', dataIndex: 'kpo_pass', width: 120, align: 'right' },
+      ],
+    },
     { title: '合計項數', dataIndex: 'total_sub', width: 110, align: 'right' },
     { title: '合計達標數', dataIndex: 'total_pass', width: 110, align: 'right' },
     {
       title: '合併達標率', dataIndex: 'rate', width: 130, align: 'right',
       render: (v: number | null, r) => (
-        <Tooltip title={`稽核 ${r.audit_months} 個月、KPO ${r.kpo_months} 個月有資料（無資料的月份不計）`}>
+        <Tooltip title={`系統檢查 ${r.audit_months} 個月、現場稽核 ${r.kpo_months} 個月有資料（無資料的月份不計）`}>
           <span style={{ fontWeight: 600, color: v == null ? '#999' : '#1B3A5C' }}>{pct(v)}</span>
         </Tooltip>
       ),
