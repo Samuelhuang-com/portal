@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Button, Card, Drawer, Input, Select, Space, Spin, Table, Tag, Typography, message } from 'antd'
+import { Button, Card, Drawer, Input, Select, Space, Spin, Table, Tabs, Tag, Typography, message } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import { DownOutlined, DownloadOutlined, FullscreenExitOutlined, FullscreenOutlined, LinkOutlined, RightOutlined } from '@ant-design/icons'
 import {
   exportReturnMatrixExcel, fetchReturnDetail, fetchReturnMatrix,
   type DetailItem, type DetailResult, type MatrixResult, type MonthCell,
 } from '@/api/returnDashboard'
+
+import ReturnChartsPage from './ChartsPage'
 
 const { Title, Text, Link } = Typography
 
@@ -165,13 +167,17 @@ export default function ReturnDashboardPage() {
   const CellView = ({ row, cell, month }: { row: FlatRow; cell: MonthCell | undefined; month: number }) => {
     if (!cell || cell.sent === 0) return <Text type="secondary">—</Text>
     return (
-      <span>
-        <Link onClick={() => openDetail(row, month, 'sent')}>{cell.sent}</Link>
-        <Text type="secondary"> / </Text>
-        {cell.returned > 0
-          ? <Link style={{ color: '#cf1322' }} onClick={() => openDetail(row, month, 'returned')}>{cell.returned}</Link>
-          : <Text type="secondary">0</Text>}
-      </span>
+      <div>
+        <span>
+          <Link onClick={() => openDetail(row, month, 'sent')}>{cell.sent}</Link>
+          <Text type="secondary"> / </Text>
+          {cell.returned > 0
+            ? <Link style={{ color: '#cf1322' }} onClick={() => openDetail(row, month, 'returned')}>{cell.returned}</Link>
+            : <Text type="secondary">0</Text>}
+        </span>
+        {/* 2026-11-03：每月退件率 */}
+        <div style={{ fontSize: 12, color: '#64748b' }}>{pct(cell.rate)}</div>
+      </div>
     )
   }
 
@@ -243,6 +249,9 @@ export default function ReturnDashboardPage() {
     <div>
       <Title level={4} style={{ marginBottom: 4 }}>退件Dashboard</Title>
       <Text type="secondary">每格顯示「送件數 / 退件數」，點數字可看明細；退件 = 退件（拒絕）＋退簽。月份依申請日期計算。</Text>
+      <div style={{ marginTop: 4 }}>
+        <Text type="secondary">全年退件率 ＝ Σ 各月退件率 ÷ 有送件月數（「—」月份不計）　例：停管部 (8 月 20% ＋ 10 月 25%) ÷ 10 ＝ 4.5%</Text>
+      </div>
 
       <Card style={{ margin: '16px 0' }} size="small">
         <Space wrap>
@@ -258,17 +267,33 @@ export default function ReturnDashboardPage() {
         </Space>
       </Card>
 
-      <Spin spinning={loading}>
-        <Table<FlatRow>
-          rowKey="key"
-          dataSource={rows}
-          columns={columns}
-          pagination={false}
-          size="small"
-          scroll={{ x: 1600 }}
-          rowClassName={r => (r.kind === 'company' || r.kind === 'total' ? 'return-dashboard-company-row' : '')}
-        />
-      </Spin>
+      <Tabs
+        defaultActiveKey="charts"
+        items={[
+          {
+            key: 'charts',
+            label: '統計圖',
+            children: <ReturnChartsPage year={year} formType={formType} companies={companies} />,
+          },
+          {
+            key: 'matrix',
+            label: '月份矩陣',
+            children: (
+              <Spin spinning={loading}>
+                <Table<FlatRow>
+                  rowKey="key"
+                  dataSource={rows}
+                  columns={columns}
+                  pagination={false}
+                  size="small"
+                  scroll={{ x: 1600 }}
+                  rowClassName={r => (r.kind === 'company' || r.kind === 'total' ? 'return-dashboard-company-row' : '')}
+                />
+              </Spin>
+            ),
+          },
+        ]}
+      />
 
       <Drawer
         title={drawer?.title}

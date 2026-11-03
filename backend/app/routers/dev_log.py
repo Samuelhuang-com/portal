@@ -13,7 +13,7 @@ from app.core.database import get_db
 from app.core.time import twnow
 from app.dependencies import require_permission
 from app.models.dev_log import DevLogEntry
-from app.services.dev_log_service import import_entries, stats
+from app.services.dev_log_service import REPO_ROOT, import_entries, stats, sync_from_git
 
 router = APIRouter()
 VIEW = "dev_log_view"
@@ -79,6 +79,17 @@ async def import_changelog(
         raise HTTPException(status_code=400, detail="檔案必須是 UTF-8 編碼的 CHANGELOG.md")
     who = getattr(user, "email", None) or getattr(user, "username", None) or "unknown"
     return import_entries(db, text, who=who, now=twnow())
+
+
+@router.post("/sync-git", summary="從 git 歷史同步 commit（每個 commit 一筆，只新增，不覆寫）")
+def sync_git(
+    db: Session = Depends(get_db),
+    user=Depends(require_permission(MANAGE)),
+):
+    try:
+        return sync_from_git(db, REPO_ROOT, now=twnow())
+    except RuntimeError as ex:
+        raise HTTPException(status_code=400, detail=str(ex))
 
 
 class TimePatch(BaseModel):

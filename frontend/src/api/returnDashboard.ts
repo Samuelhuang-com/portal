@@ -10,6 +10,7 @@ export interface MonthCell {
   month: number
   sent: number
   returned: number
+  rate: number | null   // 月退件率（退件÷送件；送件為 0 → null）
 }
 
 export interface DeptRow {

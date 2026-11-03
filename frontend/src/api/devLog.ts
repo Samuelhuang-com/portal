@@ -36,6 +36,9 @@ export const getDevLogStats = (params: { module?: string; month?: string }) =>
 export const patchDevLogEntry = (id: number, body: { start_at?: string | null; end_at?: string | null; time_note?: string }) =>
   client.patch<DevLogItem>(`/dev-log/entries/${id}`, body)
 
+export const syncDevLogGit = () =>
+  client.post<{ commits: number; added: number; skipped_existing: number }>('/dev-log/sync-git', null, { timeout: 300_000 })
+
 export const importDevLog = (file: File) => {
   const fd = new FormData()
   fd.append('file', file)

@@ -133,14 +133,15 @@ def export_matrix(
     ws.title = "月份矩陣"
     headers = ["公司", "部門"]
     for m in range(1, 13):
-        headers += [f"{m}月送件", f"{m}月退件"]
+        headers += [f"{m}月送件", f"{m}月退件", f"{m}月退件率"]
     headers += MATRIX_HEADERS_TAIL
     write_header(ws, headers)
 
     def line(label_company, label_dept, months, year_sent, year_returned, year_rate):
         vals = [label_company, label_dept]
         for c in months:
-            vals += [c["sent"], c["returned"]]
+            # 月退件率（2026-11-03）：送件為 0 → 「—」，與網頁一致
+            vals += [c["sent"], c["returned"], c["rate"] if c["rate"] is not None else "—"]
         vals += [year_sent, year_returned, pct(year_rate)]
         return vals
 
@@ -164,6 +165,10 @@ def export_matrix(
     for row in ws.iter_rows(min_row=2, min_col=len(headers), max_col=len(headers)):
         for c in row:
             c.number_format = "0.0%"
+    for m in range(1, 13):
+        rate_col = 5 + 3 * (m - 1)   # A=公司、B=部門；每月 送件／退件／退件率 三欄
+        for r_idx in range(2, ws.max_row + 1):
+            ws.cell(row=r_idx, column=rate_col).number_format = "0.0%"
 
     ws2 = wb.create_sheet("明細")
     write_header(ws2, DETAIL_HEADERS)

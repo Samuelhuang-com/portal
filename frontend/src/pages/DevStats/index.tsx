@@ -12,7 +12,7 @@ import {
   ResponsiveContainer, Tooltip as RTooltip, XAxis, YAxis,
 } from 'recharts'
 import {
-  getDevLogEntries, getDevLogStats, importDevLog, patchDevLogEntry,
+  getDevLogEntries, getDevLogStats, importDevLog, patchDevLogEntry, syncDevLogGit,
   type DevLogItem, type DevLogStats,
 } from '@/api/devLog'
 
@@ -53,6 +53,7 @@ export default function DevStatsPage() {
   const [form] = Form.useForm()
   const fileRef = useRef<HTMLInputElement>(null)
   const [importing, setImporting] = useState(false)
+  const [syncing, setSyncing] = useState(false)
 
   const load = async () => {
     setLoading(true)
@@ -121,6 +122,19 @@ export default function DevStatsPage() {
     }
   }
 
+  const onSyncGit = async () => {
+    setSyncing(true)
+    try {
+      const res = await syncDevLogGit()
+      message.success(`git 共 ${res.data.commits} 筆 commit，新增 ${res.data.added} 筆，既有 ${res.data.skipped_existing} 筆保留不覆寫`)
+      load()
+    } catch (err: unknown) {
+      message.error(errText(err, '從 git 同步失敗（需要「開發統計：管理」權限）'))
+    } finally {
+      setSyncing(false)
+    }
+  }
+
   const columns: ColumnsType<DevLogItem> = [
     { title: '版本日期', dataIndex: 'entry_date', width: 110 },
     { title: '類型', dataIndex: 'category', width: 90, render: (v: string) => <Tag>{v}</Tag> },
@@ -150,6 +164,7 @@ export default function DevStatsPage() {
           <Button icon={<UploadOutlined />} loading={importing} onClick={() => fileRef.current?.click()}>
             匯入 CHANGELOG.md
           </Button>
+          <Button loading={syncing} onClick={onSyncGit}>從 git 同步</Button>
           <Select allowClear placeholder="模組" style={{ minWidth: 180 }} value={module} onChange={setModule} options={moduleOptions} />
           <Select allowClear placeholder="月份" style={{ minWidth: 120 }} value={month} onChange={setMonth} options={monthOptions} />
           <Space>只看時間未知<Switch checked={unknownOnly} onChange={setUnknownOnly} /></Space>
