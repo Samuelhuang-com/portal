@@ -73,6 +73,7 @@ export interface DetailQuery {
   company?: string[]
   dept?: string[]
   form_type?: string
+  rejection_approver?: string
 }
 
 export async function fetchReturnMatrix(year: number, formType: string, companies: string[], rejectionApprover = ''): Promise<MatrixResult> {
@@ -86,9 +87,12 @@ export async function fetchReturnMatrix(year: number, formType: string, companie
   return res.data
 }
 
-export async function exportReturnMatrixExcel(year: number, formType: string, companies: string[]) {
+export async function exportReturnMatrixExcel(year: number, formType: string, companies: string[], rejectionApprover = '') {
   return apiClient.get<Blob>('/return-dashboard/export', {
-    params: { year, form_type: formType || undefined, company: companies.length ? companies : undefined },
+    params: {
+      year, form_type: formType || undefined, company: companies.length ? companies : undefined,
+      rejection_approver: rejectionApprover || undefined,
+    },
     responseType: 'blob',
     timeout: 120_000,
     ...LIST_PARAMS,
@@ -102,6 +106,7 @@ export async function fetchReturnDetail(q: DetailQuery): Promise<DetailResult> {
       company: q.company?.length ? q.company : undefined,
       dept: q.dept?.length ? q.dept : undefined,
       form_type: q.form_type || undefined,
+      rejection_approver: q.rejection_approver || undefined,
     },
     ...LIST_PARAMS,
   })

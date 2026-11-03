@@ -25,6 +25,7 @@ export interface RRFilters {
 }
 
 export interface RRQuery {
+  ragic_rej?: boolean
   company?: string[]
   dept?: string[]
   form_type?: string[]
@@ -48,6 +49,7 @@ export interface RRSummary {
 
 export interface RRListItem {
   id: number
+  doc_no: string
   company: string
   form_type: string
   dept: string

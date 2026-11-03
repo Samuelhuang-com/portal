@@ -53,7 +53,7 @@ def _filtered(
     outcome: Optional[list[str]],
     start: Optional[str], end: Optional[str], date_field: str,
     approver: Optional[str], applicant: Optional[str], keyword: Optional[str],
-    db: Session, rejection_approver: Optional[str] = None,
+    db: Session, rejection_approver: Optional[str] = None, ragic_rej: bool = False,
 ):
     q = q.filter(ReturnStatsRecord.is_deleted == False)  # noqa: E712
     if company:
@@ -75,10 +75,13 @@ def _filtered(
     if applicant:
         q = q.filter(ReturnStatsRecord.applicant.like(f"%{applicant}%"))
     if approver:
+        # 流程含簽核人：只看簽核步驟（與退件Dashboard 送件口徑一致；不含「下一位簽核人」）
         step_ids = db.query(ReturnStatsStep.record_id).filter(
             ReturnStatsStep.approver_text.like(f"%{approver}%"))
-        q = q.filter(or_(ReturnStatsRecord.next_approver.like(f"%{approver}%"),
-                         ReturnStatsRecord.id.in_(step_ids)))
+        q = q.filter(ReturnStatsRecord.id.in_(step_ids))
+    if ragic_rej:
+        # 簽核狀態＝REJ（退件，與 Ragic 直接統計口徑一致）
+        q = q.filter(ReturnStatsRecord.ragic_status == "REJ")
     if rejection_approver:
         rej_ids = db.query(ReturnStatsStep.record_id).filter(
             ReturnStatsStep.response_code == "REJ",
@@ -106,11 +109,12 @@ def _filter_params(
     applicant: Optional[str] = None,
     keyword: Optional[str] = None,
     rejection_approver: Optional[str] = None,
+    ragic_rej: bool = Query(False),
 ):
     return dict(company=company, dept=dept, form_type=form_type, form_name=form_name,
                 outcome=outcome, start=start, end=end, date_field=date_field,
                 approver=approver, applicant=applicant, keyword=keyword,
-                rejection_approver=rejection_approver)
+                rejection_approver=rejection_approver, ragic_rej=ragic_rej)
 
 
 @router.get("/filters", summary="篩選下拉選項")
@@ -189,6 +193,7 @@ def list_records(
             "id": r.id, "company": r.company, "form_type": r.form_type,
             "dept": r.dept_display, "form_name": r.form_name,
             "ragic_record_id": r.ragic_record_id,
+            "doc_no": _doc_no(r),
             "ragic_url": _ragic_url(r),
             "applicant": r.applicant, "apply_date": r.apply_date.isoformat() if r.apply_date else None,
             "amount": r.amount, "purpose": html_to_text(r.purpose),
@@ -201,6 +206,35 @@ def list_records(
             "last_sign_date": r.last_sign_date.isoformat() if r.last_sign_date else None,
         })
     return {"total": total, "page": page, "page_size": page_size, "items": items}
+
+
+# 各表單的原始單號欄位（依優先順序）。請款的「付款編號」未填時改用「專請編號」。
+DOC_NO_KEYS = {
+    "purchase": ["編號"],
+    "claim": ["付款編號", "工請編號", "專請編號", "編號"],
+    "seal": ["印鑑編號", "編號"],
+}
+# 其他含「編號」的欄位若要當作單號，需排除這些（採購編號是 ERP 採購單號，不是表單單號）
+DOC_NO_EXCLUDE = {"採購編號", "傳票號碼"}
+
+
+def _doc_no(r: ReturnStatsRecord) -> str:
+    """Ragic 原始單號（例如 樂專購20260500004、樂專印20260900001）；取不到時退回 Ragic 紀錄編號。"""
+    try:
+        raw = json.loads(r.raw_json or "{}")
+    except (TypeError, ValueError):
+        raw = {}
+    for key in DOC_NO_KEYS.get(r.form_type, ["編號"]):
+        v = as_text(raw.get(key)).strip()
+        if v:
+            return v
+    # 後備：任何含「編號」且非空的欄位（排除 DOC_NO_EXCLUDE）
+    for key, val in raw.items():
+        if "編號" in key and key not in DOC_NO_EXCLUDE:
+            v = as_text(val).strip()
+            if v:
+                return v
+    return r.ragic_record_id
 
 
 def _ragic_url(r: ReturnStatsRecord) -> str:
@@ -329,7 +363,7 @@ def export_records(
     write_header(ws, RECORD_HEADERS)
     for r in recs:
         ws.append([xlsx_safe(v) for v in [
-            r.company, r.dept_display, r.form_name, r.ragic_record_id, _ragic_url(r),
+            r.company, r.dept_display, r.form_name, _doc_no(r), _ragic_url(r),
             r.applicant or "", r.apply_date.isoformat() if r.apply_date else "",
             r.amount, html_to_text(r.purpose), OUTCOME_LABEL.get(r.outcome, r.outcome), r.outcome_reason,
             rejection_approver_of(db, r), rejection_note_of(db, r), r.next_approver or "",

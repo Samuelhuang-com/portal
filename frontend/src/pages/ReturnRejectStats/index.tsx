@@ -3,7 +3,7 @@
  * 篩選：公司、部門、表單類型、表單名稱、狀態、期間（StandardRangePicker，anchor=資料最後一天）、簽核人、申請人、關鍵字
  */
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Alert, Button, Card, Col, Descriptions, Drawer, Input, Modal, Radio, Row, Select, Space, Statistic, Table, Tag, Tooltip, message } from 'antd'
+import { Alert, Button, Card, Checkbox, Col, Descriptions, Drawer, Input, Modal, Radio, Row, Select, Space, Statistic, Table, Tag, Tooltip, message } from 'antd'
 import { LinkOutlined, ReloadOutlined, SyncOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import StandardRangePicker, { type StandardRange } from '@/components/StandardRangePicker'
@@ -49,6 +49,7 @@ export default function ReturnRejectStatsPage() {
   const [range, setRange] = useState<StandardRange>(null)
   const [dateField, setDateField] = useState<'apply' | 'last_sign'>('apply')
   const [approver, setApprover] = useState('')
+  const [ragicRej, setRagicRej] = useState(false)
   // 預設篩選退件簽核人＝楊國鼎（2026-11-03）；清空即為全部簽核人
   const [rejectionApprover, setRejectionApprover] = useState<string | undefined>('楊國鼎')
   const [applicant, setApplicant] = useState('')
@@ -81,7 +82,8 @@ export default function ReturnRejectStatsPage() {
     rejection_approver: rejectionApprover || undefined,
     applicant: applicant || undefined,
     keyword: keyword || undefined,
-  }), [company, dept, formType, formName, outcome, range, dateField, approver, rejectionApprover, applicant, keyword])
+    ragic_rej: ragicRej || undefined,
+  }), [company, dept, formType, formName, outcome, range, dateField, approver, rejectionApprover, applicant, keyword, ragicRej])
 
   const load = useCallback(async (p = page, ps = pageSize) => {
     setLoading(true)
@@ -208,7 +210,7 @@ export default function ReturnRejectStatsPage() {
     { title: '部門', dataIndex: 'dept', width: 90 },
     { title: '表單', dataIndex: 'form_name', width: 110,
       render: (v: string, r) => `${FORM_TYPE_LABEL[r.form_type] ?? r.form_type}｜${v}` },
-    { title: '記錄編號', dataIndex: 'ragic_record_id', width: 90,
+    { title: '記錄編號', dataIndex: 'doc_no', width: 150,
       render: (v: string, r) => <a onClick={() => openDetail(r.id)}>{v}</a> },
     { title: '申請人', dataIndex: 'applicant', width: 90 },
     { title: '申請日期', dataIndex: 'apply_date', width: 110, sorter: (a, b) => (a.apply_date ?? '').localeCompare(b.apply_date ?? '') },
@@ -254,7 +256,8 @@ export default function ReturnRejectStatsPage() {
             <Radio.Button value="apply">依申請日期</Radio.Button>
             <Radio.Button value="last_sign">依最後簽署日期</Radio.Button>
           </Radio.Group>
-          <Input allowClear placeholder="簽核人" style={{ width: 120 }} value={approver} onChange={(e) => setApprover(e.target.value)} />
+          <Input allowClear placeholder="流程含簽核人" style={{ width: 130 }} value={approver} onChange={(e) => setApprover(e.target.value)} />
+          <Checkbox checked={ragicRej} onChange={(e) => setRagicRej(e.target.checked)}>簽核狀態 REJ（退件）</Checkbox>
           <Select allowClear showSearch placeholder="退件簽核人" style={{ minWidth: 130 }}
             value={rejectionApprover} onChange={(v) => setRejectionApprover(v)}
             options={(filters?.rejection_approvers ?? []).map((n) => ({ label: n, value: n }))} />
@@ -262,7 +265,7 @@ export default function ReturnRejectStatsPage() {
           <Input allowClear placeholder="關鍵字（事由／回應）" style={{ width: 180 }} value={keyword} onChange={(e) => setKeyword(e.target.value)} />
           <Button onClick={() => {
             setCompany([]); setDept([]); setFormType([]); setFormName([]); setOutcome([])
-            setRange(null); setDateField('apply'); setApprover(''); setRejectionApprover(undefined); setApplicant(''); setKeyword('')
+            setRange(null); setDateField('apply'); setApprover(''); setRagicRej(false); setRejectionApprover(undefined); setApplicant(''); setKeyword('')
           }}>清除篩選</Button>
           <Button onClick={onExport}>匯出 Excel</Button>
           <Button icon={<ReloadOutlined />} loading={loading} onClick={onRefresh}>重新整理</Button>

@@ -164,6 +164,26 @@ def _module_rows(db, src: ReturnStatsSource) -> dict:
     return out
 
 
+async def _attach_approval(src: ReturnStatsSource, out: dict, stats: dict | None = None) -> None:
+    """
+    module_table 來源（請購／請款／用印）原本只有 REJ 紀錄會補抓簽核步驟，
+    其餘紀錄沒有步驟，「流程含某簽核人」會大量漏算（2026-11-03：2026 送件 205 vs Ragic 636）。
+    這裡以清單 approval=true 一次補上全部紀錄的簽核步驟。
+    """
+    adapter = RagicAdapter(sheet_path=src.ragic_path, server_url=RAGIC_SERVER, account=RAGIC_ACCOUNT)
+    appr = await adapter.fetch_all(extra_params={"approval": "true"})
+    attached = 0
+    for rid, rec in out.items():
+        a = appr.get(rid) or {}
+        if a.get("_approval_steps"):
+            rec["_approval_steps"] = a["_approval_steps"]
+            rec["_approval_id"] = a.get("_approval_id")
+            attached += 1
+    if stats is not None:
+        stats["approval_attached"] = attached
+    logger.info("[ReturnStats] %s 清單 approval 補上 %d 筆步驟", src.source_key, attached)
+
+
 async def _backfill_rejected(src: ReturnStatsSource, out: dict, stats: dict | None = None) -> None:
     """
     簽核狀態=REJ 但沒有 approval 步驟者，逐筆以單筆 approval=true 補抓（單筆最多試兩次）。
@@ -280,6 +300,7 @@ async def sync_return_stats() -> dict:
                 backfill: dict = {}
                 if src.origin == "module_table":
                     rows = _module_rows(db, src)
+                    await _attach_approval(src, rows, backfill)
                     await _backfill_rejected(src, rows, backfill)
                 else:
                     rows = await _ragic_rows(src, backfill)

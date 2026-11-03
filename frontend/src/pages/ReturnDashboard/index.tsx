@@ -116,7 +116,7 @@ export default function ReturnDashboardPage() {
   async function onExport() {
     setExporting(true)
     try {
-      const res = await exportReturnMatrixExcel(year, formType, companies)
+      const res = await exportReturnMatrixExcel(year, formType, companies, approver)
       const url = URL.createObjectURL(new Blob([res.data]))
       const a = document.createElement('a')
       a.href = url
@@ -142,14 +142,14 @@ export default function ReturnDashboardPage() {
     const company = row.company ? [row.company] : companies
     const dept = row.dept ? [row.dept] : []
     const label = row.kind === 'total' ? '合計' : row.dept ? `${row.company}／${row.dept}` : row.company
-    const title = `${label}　${year} 年 ${month} 月　${kind === 'sent' ? '送件明細' : '退件明細'}`
+    const title = `${label}　${year} 年 ${month} 月　${kind === 'sent' ? '送件明細' : '退件明細'}${approver ? `　經手簽核人：${approver}` : ''}`
     setDrawer({ title, month, kind, company, dept })
     setKeyword('')
     setOutcomeFilter('')
     setDetail(null)
     setDetailLoading(true)
     try {
-      setDetail(await fetchReturnDetail({ year, month, kind, company, dept, form_type: formType }))
+      setDetail(await fetchReturnDetail({ year, month, kind, company, dept, form_type: formType, rejection_approver: approver }))
     } catch {
       message.error('載入明細失敗')
     } finally {
@@ -274,7 +274,7 @@ export default function ReturnDashboardPage() {
           <Select mode="multiple" allowClear value={companies} onChange={setCompanies}
             placeholder="全部公司" style={{ minWidth: 220 }}
             options={knownCompanies.map(c => ({ value: c, label: c }))} />
-          <Select allowClear showSearch value={approver || undefined} placeholder="全部簽核人"
+          <Select allowClear showSearch value={approver || undefined} placeholder="全部經手簽核人"
             style={{ width: 160 }} onChange={v => setApprover(v ?? '')}
             options={approverOpts.map(n => ({ value: n, label: n }))} />
           <Button onClick={() => setCollapsed(new Set())}>全部展開</Button>

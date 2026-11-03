@@ -15,6 +15,17 @@ from app.models.return_stats import ReturnStatsRecord, ReturnStatsStep
 RETURNED = ("rejected", "withdrawn")
 
 
+def approver_filter(q, db: Session, name: Optional[str]):
+    """經手簽核人篩選（母體）：流程中任一簽核步驟的簽核人＝所選姓名（同意或拒絕皆算經手）。
+    送件＝母體紀錄數；退件＝母體中 outcome 為退件（rejected／withdrawn）的紀錄。（2026-11-03 依 Ragic 核對）
+    """
+    if not name:
+        return q
+    ids = db.query(ReturnStatsStep.record_id).filter(
+        ReturnStatsStep.approver_text == name)
+    return q.filter(ReturnStatsRecord.id.in_(ids))
+
+
 def _with_rate(c: dict) -> dict:
     """月退件率 ＝ 退件 ÷ 送件；送件為 0 → None（顯示「—」，不計入全年）。"""
     c["rate"] = (c["returned"] / c["sent"]) if c["sent"] else None
@@ -30,14 +41,6 @@ def _avg_rate(cells: list) -> Optional[float]:
 def build_matrix(db: Session, year: int, form_type: Optional[str] = None,
                  companies: Optional[list[str]] = None,
                  rejection_approver: Optional[str] = None) -> dict:
-    # 退件簽核人篩選（2026-11-03）：只限縮「退件數」（分子）；送件數不變。
-    # 定義同退件明細：紀錄存在一個 REJ 步驟，且該步驟簽核人＝所選姓名。
-    rej_ids = None
-    if rejection_approver:
-        rej_ids = {rid for (rid,) in db.query(ReturnStatsStep.record_id).filter(
-            ReturnStatsStep.response_code == "REJ",
-            ReturnStatsStep.approver_text == rejection_approver).all()}
-
     q = db.query(ReturnStatsRecord).filter(
         ReturnStatsRecord.is_deleted == False,  # noqa: E712
         ReturnStatsRecord.apply_date.isnot(None),
@@ -48,13 +51,23 @@ def build_matrix(db: Session, year: int, form_type: Optional[str] = None,
         q = q.filter(ReturnStatsRecord.form_type == form_type)
     if companies:
         q = q.filter(ReturnStatsRecord.company.in_(companies))
+    q = approver_filter(q, db, rejection_approver)  # 送件母體：流程中有此簽核人（含尚未處理）
+    # 退件（選定簽核人時）：此簽核人有 REJ 步驟（他拒絕的）；未選簽核人時＝簽核狀態 REJ
+    rej_by = None
+    if rejection_approver:
+        rej_by = {rid for (rid,) in db.query(ReturnStatsStep.record_id).filter(
+            ReturnStatsStep.response_code == "REJ",
+            ReturnStatsStep.approver_text == rejection_approver).all()}
 
     # (company, dept) → month → [sent, returned]
     cell = defaultdict(lambda: defaultdict(lambda: [0, 0]))
     month_total = defaultdict(lambda: [0, 0])
     for r in q.all():
         m = r.apply_date.month
-        returned = r.outcome in RETURNED and (rej_ids is None or r.id in rej_ids)
+        if rej_by is not None:
+            returned = r.id in rej_by
+        else:
+            returned = (r.ragic_status or "").strip().upper() == "REJ"
         c = cell[(r.company, r.dept_display)][m]
         c[0] += 1
         if returned:

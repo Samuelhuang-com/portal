@@ -15,9 +15,9 @@ from app.core.database import get_db
 from app.core.excel_utils import xlsx_safe
 from app.core.time import twnow
 from app.dependencies import require_permission
-from app.models.return_stats import ReturnStatsRecord
+from app.models.return_stats import ReturnStatsRecord, ReturnStatsStep
 from app.routers.return_stats import EXPORT_MAX_ROWS, OUTCOME_LABEL, _ragic_url
-from app.services.return_dashboard_service import RETURNED, build_matrix
+from app.services.return_dashboard_service import RETURNED, approver_filter, build_matrix
 from app.services.return_stats_parser import html_to_text
 from app.services.return_stats_sync import rejection_approver_of, rejection_note_of
 
@@ -32,7 +32,7 @@ def get_matrix(
     year: int = Query(..., ge=2000, le=2100),
     form_type: Optional[str] = Query(None, pattern="^(purchase|claim|seal)$"),
     company: list[str] = Query(default=[]),
-    rejection_approver: Optional[str] = Query(None, description="退件簽核人（只限縮退件數）"),
+    rejection_approver: Optional[str] = Query(None, description="退件簽核人（篩選母體：該簽核人有 REJ 步驟的紀錄）"),
     db: Session = Depends(get_db),
     _=Depends(require_permission(VIEW)),
 ):
@@ -47,6 +47,7 @@ def get_detail(
     company: list[str] = Query(default=[]),
     dept: list[str] = Query(default=[]),
     form_type: Optional[str] = Query(None, pattern="^(purchase|claim|seal)$"),
+    rejection_approver: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     _=Depends(require_permission(VIEW)),
 ):
@@ -64,7 +65,14 @@ def get_detail(
     if form_type:
         q = q.filter(ReturnStatsRecord.form_type == form_type)
     if kind == "returned":
-        q = q.filter(ReturnStatsRecord.outcome.in_(RETURNED))
+        if rejection_approver:
+            # 選定簽核人時：退件＝他拒絕的（REJ 步驟）
+            q = q.filter(ReturnStatsRecord.id.in_(db.query(ReturnStatsStep.record_id).filter(
+                ReturnStatsStep.response_code == "REJ",
+                ReturnStatsStep.approver_text == rejection_approver)))
+        else:
+            q = q.filter(ReturnStatsRecord.ragic_status == "REJ")  # 未選簽核人：簽核狀態 REJ
+    q = approver_filter(q, db, rejection_approver)
     total = q.count()
     recs = (q.order_by(ReturnStatsRecord.company, ReturnStatsRecord.dept_display,
                        ReturnStatsRecord.apply_date, ReturnStatsRecord.id)
@@ -95,10 +103,11 @@ def export_matrix(
     year: int = Query(..., ge=2000, le=2100),
     form_type: Optional[str] = Query(None, pattern="^(purchase|claim|seal)$"),
     company: list[str] = Query(default=[]),
+    rejection_approver: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     _=Depends(require_permission(VIEW)),
 ):
-    data = build_matrix(db, year, form_type, company or None)
+    data = build_matrix(db, year, form_type, company or None, rejection_approver or None)
 
     q = db.query(ReturnStatsRecord).filter(
         ReturnStatsRecord.is_deleted == False,  # noqa: E712
@@ -109,6 +118,7 @@ def export_matrix(
         q = q.filter(ReturnStatsRecord.form_type == form_type)
     if company:
         q = q.filter(ReturnStatsRecord.company.in_(company))
+    q = approver_filter(q, db, rejection_approver)
     total = q.count()
     if total > EXPORT_MAX_ROWS:
         raise HTTPException(status_code=400, detail=f"筆數 {total} 超過匯出上限 {EXPORT_MAX_ROWS}，請縮小篩選範圍")
