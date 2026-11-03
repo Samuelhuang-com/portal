@@ -240,6 +240,7 @@ export const NAV_PAGE = {
   taichungPurchaseReportMonthly: '台中核准請購單月報表',  // ← route /taichung-purchase-report/monthly
   taichungClaimReportMonthly:    '台中核准請款單月報表',  // ← route /taichung-claim-report/monthly
   returnRejectStatsRecords:      '退件明細',            // ← route /return-reject-stats/records（2026-11-02）
+  returnRejectDashboard:         '退件Dashboard',       // ← route /return-reject-stats/dashboard（2026-11-03）
 
   // 飯店班表（本地 SQLite 模組，飯店管理 → 飯店班表）
   // ⚠️ 這裡的顯示名稱必須與 role_permissions.py PERMISSION_DEFINITIONS 的 label 一致，

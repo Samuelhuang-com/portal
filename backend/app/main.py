@@ -58,6 +58,7 @@ from app.routers import (
     audit_kpo,
     audit_score,
     dev_log,
+    return_dashboard,
     claim_report,
     combined_report,
     purchase_report,
@@ -2457,6 +2458,11 @@ app.include_router(
     tags=["稽核檢查"],
 )
 # KPO 稽核（財#1 稽核系統建構，2026-10-10 新增；稽核檢查子模組）
+app.include_router(
+    return_dashboard.router,
+    prefix=f"{API_PREFIX}/return-dashboard",
+    tags=["退件Dashboard"],
+)
 app.include_router(
     dev_log.router,
     prefix=f"{API_PREFIX}/dev-log",

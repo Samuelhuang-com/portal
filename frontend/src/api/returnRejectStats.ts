@@ -43,6 +43,7 @@ export interface RRSummary {
   total: number
   counts: Record<Outcome, number>
   by_dept: ({ company: string; dept: string; total: number } & Record<Outcome, number>)[]
+  last_synced_at: string | null
 }
 
 export interface RRListItem {
@@ -102,8 +103,36 @@ export const getReturnStatsRecords = (params: RRQuery & { page: number; page_siz
 export const getReturnStatsDetail = (id: number) =>
   apiClient.get<RRDetail>(`${BASE}/records/${id}`)
 
+// 單筆重抓 Ragic 簽核步驟（失敗時 detail 為 Ragic 錯誤原文）
+export const refreshReturnApproval = (id: number) =>
+  apiClient.post<{ ok: boolean; steps: number; outcome: string; outcome_reason: string }>(
+    `${BASE}/records/${id}/refresh-approval`, null, { timeout: 120_000 })
+
 export const exportReturnStatsExcel = (params: RRQuery) =>
   apiClient.get<Blob>(`${BASE}/export`, { params, ...LIST_PARAMS, responseType: 'blob' })
 
+export interface RRSyncSource {
+  source_key: string
+  fetched?: number
+  inserted?: number
+  updated?: number
+  deleted_marked?: number
+  error?: string
+  backfill_tried?: number
+  backfill_ok?: number
+  backfill_empty?: number
+  backfill_failed?: number
+  backfill_error?: string
+}
+
+export interface RRSyncResult {
+  fetched: number
+  upserted: number
+  errors: string[]
+  sources: RRSyncSource[]
+  finished_at: string
+}
+
+// 同步要抓多個 Ragic 表單，逾時放寬到 5 分鐘（預設 30 秒會誤報失敗）
 export const runReturnStatsSync = () =>
-  apiClient.post(`${BASE}/sync`)
+  apiClient.post<RRSyncResult>(`${BASE}/sync`, null, { timeout: 300_000 })

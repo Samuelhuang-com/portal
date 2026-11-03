@@ -134,10 +134,18 @@ def parse_steps(raw: dict, profile: str = PROFILE_STANDARD) -> list[dict]:
         m = _SLOT_RE.match(k)
         if m:
             suffixes.add(m.group(1))
+    # 2026-11-03：部分表單（例如樂群專案部）沒有「簽核主管N」欄位，只有「回應N／日期N」。
+    # 此時以回應N 建立步驟（簽核人姓名無法從一般欄位取得，留待 approval 資料補上）。
+    fallback = not suffixes
+    if fallback:
+        for k in raw:
+            m = re.match(r"^回應(\d*)$", k)
+            if m:
+                suffixes.add(m.group(1))
     steps = []
     for sfx in sorted(suffixes, key=lambda s: int(s) if s else 0):
-        name = as_text(raw.get(f"簽核主管{sfx}"))
-        date_txt = as_text(raw.get(_date_field(profile, sfx)))
+        name = "" if fallback else as_text(raw.get(f"簽核主管{sfx}"))
+        date_txt = as_text(raw.get(_date_field(profile, sfx)) or raw.get(f"日期{sfx}"))
         remark = as_text(raw.get(f"回應{sfx}"))
         if name or date_txt or remark:
             steps.append({
@@ -214,28 +222,28 @@ def classify(ragic_status: str, steps: list[dict]) -> tuple[str, str]:
 
 
 def rejection_note(outcome: str, steps: list[dict]) -> str:
-    # approval 來源：退簽的原因就是拒絕簽核那一步的備註
-    if outcome == "withdrawn" and any(s.get("code") for s in steps):
-        for s in steps:
-            if s.get("code") == CODE_REJECT:
-                return s.get("remark") or ""
-        return ""
     """
-    退件原因（使用者 2026-11-02 裁示）：取「被判定那一步」的備註。
-    - withdrawn：第一個回應含「退簽」的步驟的備註
-    - rejected ：第一個回應含「退件／退回／駁回」的步驟的備註
-    - 其他（含只有簽核狀態=REJ、沒有備註可對應）：回傳空字串，不推測步驟
+    退件原因：取「被判定那一步」的備註（規格 2026-11-02）。
+    1) 有 Ragic 回應代碼：第一個代碼為 REJ（拒絕簽核）且有備註的步驟。
+    2) 關鍵字：withdrawn 找「退簽」，rejected 找「退件／退回／駁回」。
+    3) rejected 且無代碼（簽核狀態=REJ，非 approval 來源）：REJ 會結束流程，
+       最後一個有備註的步驟即被判定步驟。（2026-11-03 修正：「今年巿集暫緩」不含關鍵字而漏掉）
+    其他 outcome 回傳空字串。
     """
-    if outcome == "withdrawn":
-        words = WITHDRAW_WORDS
-    elif outcome == "rejected":
-        words = REJECT_WORDS
-    else:
+    if outcome not in ("rejected", "withdrawn"):
         return ""
     for s in steps:
-        t = s["remark"] or ""
+        if s.get("code") == CODE_REJECT and (s.get("remark") or "").strip():
+            return s["remark"]
+    words = WITHDRAW_WORDS if outcome == "withdrawn" else REJECT_WORDS
+    for s in steps:
+        t = s.get("remark") or ""
         if any(w in t for w in words):
             return t
+    if outcome == "rejected":
+        for s in reversed(steps):
+            if (s.get("remark") or "").strip():
+                return s["remark"]
     return ""
 
 

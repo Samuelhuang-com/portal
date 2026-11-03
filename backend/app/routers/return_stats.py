@@ -2,6 +2,7 @@
 退件統計 API（規格 §6）。前綴 /api/v1/return-stats，全部需 return_reject_stats_view；
 手動同步需 return_reject_stats_manage。
 """
+import asyncio
 import json
 from datetime import date
 from typing import Optional
@@ -21,8 +22,9 @@ from app.dependencies import require_permission
 from app.models.return_stats import ReturnStatsRecord, ReturnStatsSource, ReturnStatsStep
 from app.core.excel_utils import xlsx_safe
 from app.core.time import twnow
-from app.services.return_stats_parser import as_text, html_to_text
-from app.services.return_stats_sync import sync_return_stats, rejection_note_of, rejection_approver_of
+from app.services.ragic_adapter import RagicAdapter
+from app.services.return_stats_parser import as_text, classify_approval, html_to_text, steps_from_approval
+from app.services.return_stats_sync import RAGIC_ACCOUNT, RAGIC_SERVER, sync_return_stats, rejection_note_of, rejection_approver_of
 
 router = APIRouter()
 
@@ -159,10 +161,13 @@ def get_summary(f: dict = Depends(_filter_params), db: Session = Depends(get_db)
                                                  **{k: 0 for k in OUTCOMES}, "total": 0})
         item[o] = n
         item["total"] += n
+    # 上次同步時間：每次同步都會寫入 synced_at（台北時間），取最大值即最後一次寫入
+    last = db.query(func.max(ReturnStatsRecord.synced_at)).scalar()
     return {
         "total": total,
         "counts": counts,
         "by_dept": sorted(by_dept.values(), key=lambda x: (x["company"], -x["total"])),
+        "last_synced_at": last.strftime("%Y-%m-%d %H:%M") if last else None,
     }
 
 
@@ -259,6 +264,40 @@ RECORD_HEADERS = [
 STEP_HEADERS = [
     "公司", "部門", "表單", "記錄編號", "步驟", "角色", "簽核人", "簽署日期", "代碼", "回應／備註",
 ]
+
+
+@router.post("/records/{record_id}/refresh-approval", summary="重新抓取此紀錄的 Ragic 簽核步驟（單筆）")
+def refresh_approval(record_id: int, db: Session = Depends(get_db), _=Depends(require_permission(MANAGE))):
+    """
+    直接以單筆 approval=true 查詢 Ragic，寫入簽核步驟並重算退件判定。
+    失敗時回傳 Ragic 的錯誤原文，方便定位（2026-11-03）。
+    """
+    r = db.query(ReturnStatsRecord).filter_by(id=record_id).first()
+    if r is None:
+        raise HTTPException(status_code=404, detail="找不到紀錄")
+    src = db.query(ReturnStatsSource).filter_by(source_key=r.source_key).first()
+    if src is None or not src.ragic_path:
+        raise HTTPException(status_code=400, detail="此來源沒有 Ragic 路徑，無法抓取簽核資料")
+    adapter = RagicAdapter(sheet_path=src.ragic_path, server_url=RAGIC_SERVER, account=RAGIC_ACCOUNT)
+    try:
+        one = asyncio.run(adapter.fetch_one(r.ragic_record_id, extra_params={"approval": "true"}))
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"Ragic 查詢失敗：{type(exc).__name__} {str(exc)[:200]}")
+    single = (one.get(r.ragic_record_id) or {}) if isinstance(one, dict) else {}
+    raw_steps = single.get("_approval_steps") or []
+    if not raw_steps:
+        raise HTTPException(status_code=404, detail="Ragic 回傳沒有簽核步驟（此紀錄可能未送簽）")
+    steps = steps_from_approval(raw_steps)
+    outcome, reason = classify_approval(steps)
+    db.query(ReturnStatsStep).filter_by(record_id=r.id).delete()
+    for st in steps:
+        db.add(ReturnStatsStep(
+            record_id=r.id, step_no=st["step_no"], role_field=st["role_field"],
+            approver_text=st["approver_text"], sign_date=st["sign_date"], remark=st["remark"],
+            is_inferred_last=False, response_code=st.get("code") or None))
+    r.outcome, r.outcome_reason = outcome, reason
+    db.commit()
+    return {"ok": True, "steps": len(steps), "outcome": outcome, "outcome_reason": reason}
 
 
 @router.get("/export", summary="匯出 Excel（與清單同篩選條件，不分頁）")

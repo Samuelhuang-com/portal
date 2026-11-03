@@ -138,6 +138,7 @@ import AuditScorePage                  from '@/pages/AuditScore'
 
 // ── 退件統計（2026-11-02）──────────────────────────────────────────────────────
 import ReturnRejectStatsPage           from '@/pages/ReturnRejectStats'
+import ReturnDashboardPage             from '@/pages/ReturnDashboard'
 
 // ── 知識庫（LLM Wiki）──────────────────────────────────────────────────────────
 import WikiPage                        from '@/pages/Wiki'
@@ -685,6 +686,14 @@ export default function AppRouter() {
             element={
               <PermissionGuard permissionKey="return_reject_stats_view">
                 <ReturnRejectStatsPage />
+              </PermissionGuard>
+            }
+          />
+          <Route
+            path="dashboard"
+            element={
+              <PermissionGuard permissionKey="return_reject_stats_view">
+                <ReturnDashboardPage />
               </PermissionGuard>
             }
           />

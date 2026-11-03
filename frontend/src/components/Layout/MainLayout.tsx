@@ -218,6 +218,7 @@ export const menuItems: MenuItem[] = [
     permissionKey: 'return_reject_stats_view',
     children: [
       { key: '/return-reject-stats/records', icon: <AuditOutlined />, label: NAV_PAGE.returnRejectStatsRecords, permissionKey: 'return_reject_stats_view' },
+      { key: '/return-reject-stats/dashboard', icon: <AuditOutlined />, label: NAV_PAGE.returnRejectDashboard, permissionKey: 'return_reject_stats_view' },
     ],
   },
   // ── 稽核檢查（財#3 系統建置稽核，2026-09-20 新增）────────────────────────────

@@ -179,12 +179,14 @@ class RagicAdapter:
                 offset += limit
         return ids
 
-    async def fetch_one(self, record_id: int | str) -> dict[str, Any]:
-        async with httpx.AsyncClient(timeout=15.0, verify=self.verify_ssl) as client:
+    async def fetch_one(self, record_id: int | str, extra_params: dict | None = None) -> dict[str, Any]:
+        # approval 查詢回應含簽名圖（base64），較大，放寬逾時（2026-11-03）
+        timeout = 60.0 if extra_params else 15.0
+        async with httpx.AsyncClient(timeout=timeout, verify=self.verify_ssl) as client:
             resp = await client.get(
                 f"{self.base_url}/{record_id}",
                 headers=self.auth_header,
-                params=self._base_params(),
+                params=self._base_params(extra_params),
             )
             resp.raise_for_status()
             return resp.json()

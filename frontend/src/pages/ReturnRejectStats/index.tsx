@@ -3,8 +3,8 @@
  * 篩選：公司、部門、表單類型、表單名稱、狀態、期間（StandardRangePicker，anchor=資料最後一天）、簽核人、申請人、關鍵字
  */
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Button, Card, Col, Descriptions, Drawer, Input, Radio, Row, Select, Space, Statistic, Table, Tag, Tooltip, message } from 'antd'
-import { LinkOutlined } from '@ant-design/icons'
+import { Alert, Button, Card, Col, Descriptions, Drawer, Input, Modal, Radio, Row, Select, Space, Statistic, Table, Tag, Tooltip, message } from 'antd'
+import { LinkOutlined, ReloadOutlined, SyncOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import StandardRangePicker, { type StandardRange } from '@/components/StandardRangePicker'
 import {
@@ -13,9 +13,11 @@ import {
   getReturnStatsFilters,
   getReturnStatsRecords,
   getReturnStatsSummary,
+  refreshReturnApproval,
   runReturnStatsSync,
   type Outcome,
   type RRDetail,
+  type RRSyncResult,
   type RRFilters,
   type RRListItem,
   type RRQuery,
@@ -59,6 +61,10 @@ export default function ReturnRejectStatsPage() {
   const [loading, setLoading] = useState(false)
 
   const [drawerId, setDrawerId] = useState<number | null>(null)
+  const [syncing, setSyncing] = useState(false)
+  const [syncResult, setSyncResult] = useState<RRSyncResult | null>(null)
+  const [syncOpen, setSyncOpen] = useState(false)
+  const [refreshingApproval, setRefreshingApproval] = useState(false)
   const [detail, setDetail] = useState<RRDetail | null>(null)
 
   useEffect(() => {
@@ -127,14 +133,71 @@ export default function ReturnRejectStatsPage() {
   }
 
   const onManualSync = async () => {
+    setSyncing(true)
     try {
-      await runReturnStatsSync()
-      message.success('已完成同步，重新查詢中')
-      load(1, pageSize)
-    } catch {
-      message.error('同步失敗（需要「退件統計：管理」權限）')
+      const r = await runReturnStatsSync()
+      setSyncResult(r.data)
+      const hasError = r.data.errors.length > 0 || r.data.sources.some((s) => (s.backfill_failed ?? 0) > 0)
+      if (hasError) {
+        setSyncOpen(true)
+        message.warning('同步完成，但有錯誤，請看結果')
+      } else {
+        message.success('已完成同步')
+      }
+      await load(1, pageSize)
+    } catch (e) {
+      const detail = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      message.error(`同步失敗${detail ? `：${detail}` : '（請確認「退件統計：管理」權限與後端紀錄）'}`)
+    } finally {
+      setSyncing(false)
     }
   }
+
+  const onRefreshApproval = async () => {
+    if (drawerId === null) return
+    setRefreshingApproval(true)
+    try {
+      const r = await refreshReturnApproval(drawerId)
+      message.success(`已更新 ${r.data.steps} 筆簽核步驟，判定：${r.data.outcome_reason}`)
+      await Promise.all([openDetail(drawerId), load(page, pageSize)])
+    } catch (e) {
+      const d = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      message.error(`重新抓取失敗：${d ?? '請查看後端紀錄'}`)
+    } finally {
+      setRefreshingApproval(false)
+    }
+  }
+
+  const onRefresh = async () => {
+    try {
+      const [f] = await Promise.all([getReturnStatsFilters(), load(page, pageSize)])
+      setFilters(f.data)
+      message.success('已重新整理')
+    } catch {
+      message.error('重新整理失敗')
+    }
+  }
+
+  const syncColumns: ColumnsType<RRSyncResult['sources'][number]> = [
+    { title: '來源', dataIndex: 'source_key', ellipsis: true },
+    { title: '讀取', dataIndex: 'fetched', width: 70, align: 'right', render: (v?: number) => v ?? '—' },
+    { title: '新增', dataIndex: 'inserted', width: 70, align: 'right', render: (v?: number) => v ?? '—' },
+    { title: '更新', dataIndex: 'updated', width: 70, align: 'right', render: (v?: number) => v ?? '—' },
+    { title: '標記刪除', dataIndex: 'deleted_marked', width: 90, align: 'right', render: (v?: number) => v ?? '—' },
+    {
+      title: '簽核補抓（REJ）', key: 'backfill', width: 170,
+      render: (_: unknown, r) => (r.backfill_tried
+        ? <span>{r.backfill_tried} 筆：有步驟 {r.backfill_ok ?? 0}／無 {r.backfill_empty ?? 0}／<span style={{ color: r.backfill_failed ? '#cf1322' : undefined }}>失敗 {r.backfill_failed ?? 0}</span></span>
+        : '—'),
+    },
+    {
+      title: '錯誤', key: 'error',
+      render: (_: unknown, r) => {
+        const msg = r.error || (r.backfill_failed ? `補抓失敗：${r.backfill_error ?? ''}` : '')
+        return msg ? <span style={{ color: '#cf1322' }}>{msg}</span> : '—'
+      },
+    },
+  ]
 
   const counts = summary?.counts ?? emptyCounts()
   const toggleOutcome = (key: Outcome) => setOutcome(outcome.length === 1 && outcome[0] === key ? [] : [key])
@@ -201,7 +264,32 @@ export default function ReturnRejectStatsPage() {
             setRange(null); setDateField('apply'); setApprover(''); setRejectionApprover(undefined); setApplicant(''); setKeyword('')
           }}>清除篩選</Button>
           <Button onClick={onExport}>匯出 Excel</Button>
-          <Button onClick={onManualSync}>重新同步</Button>
+          <Button icon={<ReloadOutlined />} loading={loading} onClick={onRefresh}>重新整理</Button>
+          <Button icon={<SyncOutlined />} loading={syncing} onClick={onManualSync}>重新同步</Button>
+          <span style={{ color: '#595959', fontSize: 13 }}>
+            上次同步：{summary?.last_synced_at ?? '尚未同步過'}
+          </span>
+          <Modal
+            open={syncOpen}
+            title={syncResult && syncResult.errors.length > 0 ? '同步完成（有來源失敗）' : '同步完成'}
+            onOk={() => setSyncOpen(false)}
+            onCancel={() => setSyncOpen(false)}
+            okText="關閉"
+            cancelButtonProps={{ style: { display: 'none' } }}
+            width={760}
+          >
+            {syncResult && (
+              <>
+                <p>共讀取 {syncResult.fetched} 筆，寫入 {syncResult.upserted} 筆（新增與更新合計）。完成時間 {syncResult.finished_at.replace('T', ' ').slice(0, 19)}</p>
+                {syncResult.errors.length > 0 && (
+                  <Alert type="error" showIcon style={{ marginBottom: 12 }}
+                    message={`${syncResult.errors.length} 個來源失敗`} description={syncResult.errors.join('；')} />
+                )}
+                <Table size="small" pagination={false} rowKey="source_key"
+                  dataSource={syncResult.sources} columns={syncColumns} />
+              </>
+            )}
+          </Modal>
         </Space>
       </Card>
 
@@ -263,7 +351,12 @@ export default function ReturnRejectStatsPage() {
               <Descriptions.Item label="判定依據">{detail.outcome_reason}</Descriptions.Item>
             </Descriptions>
 
-            <div style={{ fontWeight: 600, marginBottom: 6 }}>簽核流程</div>
+            <Space style={{ marginBottom: 6 }}>
+              <span style={{ fontWeight: 600 }}>簽核流程</span>
+              <Button size="small" icon={<SyncOutlined />} loading={refreshingApproval} onClick={onRefreshApproval}>
+                重新抓取 Ragic 簽核資料
+              </Button>
+            </Space>
             <Table
               size="small"
               rowKey={(s) => `${s.step_no}-${s.role_field}`}

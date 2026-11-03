@@ -17,7 +17,7 @@ from app.models.nichiyo_claim_request import NichiyoClaimRequest
 from app.models.taichung_purchase_request import TaichungPurchaseRequest
 from app.models.taichung_claim_request import TaichungClaimRequest
 from app.models.return_stats import ReturnStatsSource, ReturnStatsRecord, ReturnStatsStep
-from app.services.return_stats_parser import parse_record, rejection_note
+from app.services.return_stats_parser import as_text, parse_record, rejection_note
 from app.services.ragic_adapter import RagicAdapter
 
 logger = logging.getLogger(__name__)
@@ -164,7 +164,45 @@ def _module_rows(db, src: ReturnStatsSource) -> dict:
     return out
 
 
-async def _ragic_rows(src: ReturnStatsSource) -> dict:
+async def _backfill_rejected(src: ReturnStatsSource, out: dict, stats: dict | None = None) -> None:
+    """
+    簽核狀態=REJ 但沒有 approval 步驟者，逐筆以單筆 approval=true 補抓（單筆最多試兩次）。
+    適用於 Ragic 直接來源與 module_table 來源（2026-11-03：請購／請款來源原本不經過補抓）。
+    """
+    if stats is not None:
+        stats.update({"backfill_tried": 0, "backfill_ok": 0, "backfill_empty": 0,
+                      "backfill_failed": 0, "backfill_error": ""})
+    missing = [rid for rid, rec in out.items()
+               if not rec.get("_approval_steps")
+               and as_text(rec.get("簽核狀態")).strip().upper() == "REJ"]
+    if not missing:
+        return
+    adapter = RagicAdapter(sheet_path=src.ragic_path, server_url=RAGIC_SERVER, account=RAGIC_ACCOUNT)
+    for rid in missing:
+        if stats is not None:
+            stats["backfill_tried"] += 1
+        last_exc = None
+        for _attempt in range(2):
+            try:
+                one = await adapter.fetch_one(rid, extra_params={"approval": "true"})
+                single = (one.get(rid) or {}) if isinstance(one, dict) else {}
+                out[rid]["_approval_steps"] = single.get("_approval_steps") or []
+                out[rid]["_approval_id"] = single.get("_approval_id")
+                last_exc = None
+                break
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+        if last_exc is not None:
+            logger.warning("[ReturnStats] 補抓 approval 失敗 %s/%s：%r", src.source_key, rid, last_exc)
+            if stats is not None:
+                stats["backfill_failed"] += 1
+                stats["backfill_error"] = stats["backfill_error"] or f"{rid}: {type(last_exc).__name__} {str(last_exc)[:140]}"
+        elif stats is not None:
+            stats["backfill_ok" if out[rid]["_approval_steps"] else "backfill_empty"] += 1
+    logger.info("[ReturnStats] %s 補抓 REJ 簽核步驟 %d 筆", src.source_key, len(missing))
+
+
+async def _ragic_rows(src: ReturnStatsSource, stats: dict | None = None) -> dict:
     """
     兩次清單請求，合併為一份：
     - 一般清單：欄位顯示名稱（申請人為姓名）。
@@ -181,6 +219,7 @@ async def _ragic_rows(src: ReturnStatsSource) -> dict:
         rec["_approval_steps"] = a.get("_approval_steps") or []
         rec["_approval_id"] = a.get("_approval_id")
         out[rid] = rec
+    await _backfill_rejected(src, out, stats)
     return out
 
 
@@ -238,13 +277,15 @@ async def sync_return_stats() -> dict:
                    .order_by(ReturnStatsSource.sort_order).all())
         for src in sources:
             try:
+                backfill: dict = {}
                 if src.origin == "module_table":
                     rows = _module_rows(db, src)
+                    await _backfill_rejected(src, rows, backfill)
                 else:
-                    rows = await _ragic_rows(src)
+                    rows = await _ragic_rows(src, backfill)
                 stat = _upsert(db, src, rows, twnow())
                 db.commit()
-                results.append({"source_key": src.source_key, "fetched": len(rows), **stat})
+                results.append({"source_key": src.source_key, "fetched": len(rows), **stat, **backfill})
             except Exception as exc:  # noqa: BLE001
                 db.rollback()
                 logger.error("[ReturnStats] %s 失敗：%s", src.source_key, exc)
@@ -274,6 +315,12 @@ def rejection_approver_of(db, record) -> str:
     if target is None and not any(s.response_code for s in steps):
         for s in steps:  # 舊資料（無 approval 步驟）：以備註關鍵字對應
             if s.remark and any(w in s.remark for w in ("退簽", "退件", "退回", "駁回")):
+                target = s
+                break
+    if target is None and record.outcome == "rejected":
+        # 與 rejection_note 相同：無代碼時取最後一個有備註的步驟
+        for s in reversed(steps):
+            if (s.remark or "").strip():
                 target = s
                 break
     if target is None or not target.approver_text or target.approver_text == "（簽名圖）":
