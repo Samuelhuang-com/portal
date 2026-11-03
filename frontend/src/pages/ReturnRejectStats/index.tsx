@@ -49,7 +49,8 @@ export default function ReturnRejectStatsPage() {
   const [range, setRange] = useState<StandardRange>(null)
   const [dateField, setDateField] = useState<'apply' | 'last_sign'>('apply')
   const [approver, setApprover] = useState('')
-  const [rejectionApprover, setRejectionApprover] = useState<string | undefined>(undefined)
+  // 預設篩選退件簽核人＝楊國鼎（2026-11-03）；清空即為全部簽核人
+  const [rejectionApprover, setRejectionApprover] = useState<string | undefined>('楊國鼎')
   const [applicant, setApplicant] = useState('')
   const [keyword, setKeyword] = useState('')
 

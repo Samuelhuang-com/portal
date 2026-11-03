@@ -75,9 +75,12 @@ export interface DetailQuery {
   form_type?: string
 }
 
-export async function fetchReturnMatrix(year: number, formType: string, companies: string[]): Promise<MatrixResult> {
+export async function fetchReturnMatrix(year: number, formType: string, companies: string[], rejectionApprover = ''): Promise<MatrixResult> {
   const res = await apiClient.get('/return-dashboard/matrix', {
-    params: { year, form_type: formType || undefined, company: companies.length ? companies : undefined },
+    params: {
+      year, form_type: formType || undefined, company: companies.length ? companies : undefined,
+      rejection_approver: rejectionApprover || undefined,
+    },
     ...LIST_PARAMS,
   })
   return res.data

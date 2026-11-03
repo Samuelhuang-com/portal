@@ -48,7 +48,8 @@ const heatBucket = (rate: number | null): number => {
 // 折線末端直接標籤（relief rule：青綠對比 < 3:1，需直接標籤）
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const endLabel = (name: string, color: string, lastIdx: number) => (props: any) => {
-  if (props.index !== lastIdx || props.x == null || props.y == null) return null
+  // recharts 的 label 型別不接受 null，非末端點回傳空的 <g />
+  if (props.index !== lastIdx || props.x == null || props.y == null) return <g />
   return (
     <text x={props.x + 8} y={props.y + 4} fill={color} fontSize={12} fontWeight={600}>{name}</text>
   )
@@ -58,19 +59,19 @@ interface ChartsPageProps {
   year: number
   formType: string
   companies: string[]
+  rejectionApprover: string   // 退件簽核人（由 Dashboard 篩選列提供；空字串＝全部）
 }
 
-export default function ReturnChartsPage({ year, formType, companies }: ChartsPageProps) {
+export default function ReturnChartsPage({ year, formType, companies, rejectionApprover }: ChartsPageProps) {
   const [loading, setLoading] = useState(false)
   const [data, setData] = useState<MatrixResult | null>(null)
-
   useEffect(() => {
     setLoading(true)
-    fetchReturnMatrix(year, formType, companies)
+    fetchReturnMatrix(year, formType, companies, rejectionApprover)
       .then(setData)
       .catch(() => message.error('載入統計圖失敗'))
       .finally(() => setLoading(false))
-  }, [year, formType, companies])
+  }, [year, formType, companies, rejectionApprover])
 
   const blocks = useMemo(() => data?.blocks ?? [], [data])
 

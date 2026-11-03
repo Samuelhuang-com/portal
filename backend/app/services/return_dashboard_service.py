@@ -10,7 +10,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from app.models.return_stats import ReturnStatsRecord
+from app.models.return_stats import ReturnStatsRecord, ReturnStatsStep
 
 RETURNED = ("rejected", "withdrawn")
 
@@ -28,7 +28,16 @@ def _avg_rate(cells: list) -> Optional[float]:
 
 
 def build_matrix(db: Session, year: int, form_type: Optional[str] = None,
-                 companies: Optional[list[str]] = None) -> dict:
+                 companies: Optional[list[str]] = None,
+                 rejection_approver: Optional[str] = None) -> dict:
+    # 退件簽核人篩選（2026-11-03）：只限縮「退件數」（分子）；送件數不變。
+    # 定義同退件明細：紀錄存在一個 REJ 步驟，且該步驟簽核人＝所選姓名。
+    rej_ids = None
+    if rejection_approver:
+        rej_ids = {rid for (rid,) in db.query(ReturnStatsStep.record_id).filter(
+            ReturnStatsStep.response_code == "REJ",
+            ReturnStatsStep.approver_text == rejection_approver).all()}
+
     q = db.query(ReturnStatsRecord).filter(
         ReturnStatsRecord.is_deleted == False,  # noqa: E712
         ReturnStatsRecord.apply_date.isnot(None),
@@ -45,13 +54,14 @@ def build_matrix(db: Session, year: int, form_type: Optional[str] = None,
     month_total = defaultdict(lambda: [0, 0])
     for r in q.all():
         m = r.apply_date.month
+        returned = r.outcome in RETURNED and (rej_ids is None or r.id in rej_ids)
         c = cell[(r.company, r.dept_display)][m]
         c[0] += 1
-        if r.outcome in RETURNED:
+        if returned:
             c[1] += 1
         t = month_total[m]
         t[0] += 1
-        if r.outcome in RETURNED:
+        if returned:
             t[1] += 1
 
     companies_map = defaultdict(list)

@@ -32,10 +32,11 @@ def get_matrix(
     year: int = Query(..., ge=2000, le=2100),
     form_type: Optional[str] = Query(None, pattern="^(purchase|claim|seal)$"),
     company: list[str] = Query(default=[]),
+    rejection_approver: Optional[str] = Query(None, description="退件簽核人（只限縮退件數）"),
     db: Session = Depends(get_db),
     _=Depends(require_permission(VIEW)),
 ):
-    return build_matrix(db, year, form_type, company or None)
+    return build_matrix(db, year, form_type, company or None, rejection_approver or None)
 
 
 @router.get("/detail", summary="單一格子（月份 × 部門 × 送件／退件）的明細")

@@ -8,6 +8,7 @@ import {
 } from '@/api/returnDashboard'
 
 import ReturnChartsPage from './ChartsPage'
+import { getReturnStatsFilters } from '@/api/returnRejectStats'
 
 const { Title, Text, Link } = Typography
 
@@ -52,6 +53,9 @@ export default function ReturnDashboardPage() {
   const [year, setYear] = useState<number>(thisYear)
   const [formType, setFormType] = useState<string>('')
   const [companies, setCompanies] = useState<string[]>([])
+  // 退件簽核人（2026-11-03）：預設楊國鼎，只限縮退件數；統計圖與月份矩陣共用
+  const [approver, setApprover] = useState<string>('楊國鼎')
+  const [approverOpts, setApproverOpts] = useState<string[]>([])
   const [knownCompanies, setKnownCompanies] = useState<string[]>([])
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(false)
@@ -66,8 +70,14 @@ export default function ReturnDashboardPage() {
   const [outcomeFilter, setOutcomeFilter] = useState<string>('')
 
   useEffect(() => {
+    getReturnStatsFilters()
+      .then(res => setApproverOpts(res.data.rejection_approvers ?? []))
+      .catch(() => setApproverOpts([]))
+  }, [])
+
+  useEffect(() => {
     setLoading(true)
-    fetchReturnMatrix(year, formType, companies)
+    fetchReturnMatrix(year, formType, companies, approver)
       .then(res => {
         setData(res)
         // 公司選項：未篩選時記下全部公司，篩選後仍保留選項清單
@@ -75,7 +85,7 @@ export default function ReturnDashboardPage() {
       })
       .catch(() => message.error('載入退件Dashboard失敗'))
       .finally(() => setLoading(false))
-  }, [year, formType, companies])
+  }, [year, formType, companies, approver])
 
   const rows = useMemo<FlatRow[]>(() => {
     if (!data) return []
@@ -248,9 +258,12 @@ export default function ReturnDashboardPage() {
   return (
     <div>
       <Title level={4} style={{ marginBottom: 4 }}>退件Dashboard</Title>
-      <Text type="secondary">每格顯示「送件數 / 退件數」，點數字可看明細；退件 = 退件（拒絕）＋退簽。月份依申請日期計算。</Text>
       <div style={{ marginTop: 4 }}>
-        <Text type="secondary">全年退件率 ＝ Σ 各月退件率 ÷ 有送件月數（「—」月份不計）　例：停管部 (8 月 20% ＋ 10 月 25%) ÷ 10 ＝ 4.5%</Text>
+        <Text type="secondary">計算範圍：請購＋請款＋簽呈＋用印 ＝ 全部申請件數</Text><br />
+        <Text type="secondary">退件數：執董退件數</Text><br />
+        <Text type="secondary">當月各部門退件率 ＝ 當月執董退件數 ÷ 當月全部申請件數</Text><br />
+        <Text type="secondary">全年退件率 ＝ 每月退件率合約平均數</Text><br />
+        <Text type="secondary">跨月被退的案件，就算在被退月份</Text>
       </div>
 
       <Card style={{ margin: '16px 0' }} size="small">
@@ -261,6 +274,9 @@ export default function ReturnDashboardPage() {
           <Select mode="multiple" allowClear value={companies} onChange={setCompanies}
             placeholder="全部公司" style={{ minWidth: 220 }}
             options={knownCompanies.map(c => ({ value: c, label: c }))} />
+          <Select allowClear showSearch value={approver || undefined} placeholder="全部簽核人"
+            style={{ width: 160 }} onChange={v => setApprover(v ?? '')}
+            options={approverOpts.map(n => ({ value: n, label: n }))} />
           <Button onClick={() => setCollapsed(new Set())}>全部展開</Button>
           <Button onClick={() => setCollapsed(new Set(allCompanyNames))}>全部縮列</Button>
           <Button icon={<DownloadOutlined />} onClick={onExport} loading={exporting}>匯出 Excel</Button>
@@ -273,7 +289,7 @@ export default function ReturnDashboardPage() {
           {
             key: 'charts',
             label: '統計圖',
-            children: <ReturnChartsPage year={year} formType={formType} companies={companies} />,
+            children: <ReturnChartsPage year={year} formType={formType} companies={companies} rejectionApprover={approver} />,
           },
           {
             key: 'matrix',
