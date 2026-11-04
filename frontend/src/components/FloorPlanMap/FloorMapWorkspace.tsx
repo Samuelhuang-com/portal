@@ -73,6 +73,8 @@ export default function FloorMapWorkspace({ module, defaultFloor }: FloorMapWork
   const [editing, setEditing] = useState(false)
   const [placing, setPlacing] = useState(false)
   const [newAt,   setNewAt]   = useState<Ratio | null>(null)
+  // 從「未對應」清單放點時預填的資料來源（2026-11-04）
+  const [prefill, setPrefill] = useState<{ source_ref: string; label: string } | null>(null)
   const [saving,  setSaving]  = useState(false)
   const [addForm]  = Form.useForm()
   const [editForm] = Form.useForm()
@@ -191,7 +193,11 @@ export default function FloorMapWorkspace({ module, defaultFloor }: FloorMapWork
     }
   }, [sel?.id, editing]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const changeFloor = (k: string) => { setFloorKey(k); setSelId(null); setPlacing(false) }
+  useEffect(() => {
+    if (newAt && prefill) addForm.setFieldsValue({ source_ref: prefill.source_ref, label: prefill.label })
+  }, [newAt]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const changeFloor = (k: string) => { setFloorKey(k); setSelId(null); setPlacing(false); setPrefill(null) }
 
   // ── 編輯 ──────────────────────────────────────────────────────────────────
   const formToInput = (v: Record<string, any>): Omit<FloorMapPointInput, 'x' | 'y'> => ({
@@ -221,7 +227,7 @@ export default function FloorMapWorkspace({ module, defaultFloor }: FloorMapWork
     try {
       const p = await createFloorMapPoint(module, floorKey, { ...newAt, ...formToInput(v) })
       message.success('已新增點位')
-      setNewAt(null); setPlacing(false); addForm.resetFields()
+      setNewAt(null); setPlacing(false); setPrefill(null); addForm.resetFields()
       await load()
       setSelId(p.id)
     } catch {
@@ -264,11 +270,17 @@ export default function FloorMapWorkspace({ module, defaultFloor }: FloorMapWork
     return c
   }, [points])
 
+  // 資料來源欄位名稱：Provider 未提供時維持原文字（巡檢模組不受影響）
+  const srcLabel = meta?.source_label ?? '對應 Ragic 設備組'
+  const isDefaultSrc = srcLabel === '對應 Ragic 設備組'
   const pointFields = (
     <>
-      <Form.Item name="source_ref" label="對應 Ragic 設備組" rules={[{ required: true, message: '請選擇設備組' }]}>
+      <Form.Item name="source_ref" label={srcLabel}
+                 rules={[{ required: true, message: isDefaultSrc ? '請選擇設備組' : `請選擇${srcLabel.replace(/^對應/, '')}` }]}>
         <Select
-          placeholder="這個點要看哪一組 Ragic 巡檢欄位"
+          placeholder={isDefaultSrc ? '這個點要看哪一組 Ragic 巡檢欄位' : `請選擇${srcLabel.replace(/^對應/, '')}`}
+          showSearch
+          optionFilterProp="label"
           options={(meta?.groups ?? []).map((g) => ({
             value: g.source_ref,
             label: `${g.label}${g.shared_label ? `（${g.shared_label}）` : ''}`,
@@ -290,9 +302,41 @@ export default function FloorMapWorkspace({ module, defaultFloor }: FloorMapWork
   )
 
   // ── 右側面板 ──────────────────────────────────────────────────────────────
+  const unmapped = data?.unmapped ?? []
+  const renderUnmapped = () => (
+    <Card size="small" style={{ marginTop: 12 }}
+          title={<span style={{ color: '#d46b08' }}>未對應項目（{unmapped.length}）</span>}
+          extra={<Tooltip title="所選月份的資料中，還沒有任何點位的項目"><Text type="secondary" style={{ fontSize: 11 }}>{date?.format('YYYY年M月')}</Text></Tooltip>}>
+      {!(canEdit && editing) && (
+        <Text type="secondary" style={{ fontSize: 12 }}>
+          {canEdit ? '按「編輯點位」後，可把項目直接放到圖上。' : '需要「編輯點位」權限才能放到圖上。'}
+        </Text>
+      )}
+      <Space direction="vertical" style={{ width: '100%', marginTop: 4 }} size={4}>
+        {unmapped.map((g) => (
+          <div key={g.source_ref}
+               style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                        gap: 6, padding: '4px 6px', borderBottom: '1px solid #f0f0f0' }}>
+            <span style={{ fontSize: 12 }}>
+              {g.system && <Tag style={{ marginRight: 4 }}>{g.system}</Tag>}{g.label}
+            </span>
+            {canEdit && editing && (
+              <Button size="small" icon={<AimOutlined />}
+                      type={placing && prefill?.source_ref === g.source_ref ? 'primary' : 'default'}
+                      onClick={() => { setPrefill({ source_ref: g.source_ref, label: g.label }); setPlacing(true); setSelId(null) }}>
+                放到圖上
+              </Button>
+            )}
+          </div>
+        ))}
+      </Space>
+    </Card>
+  )
+
   const renderSide = () => {
     if (!sel) {
       return (
+        <>
         <Card size="small" title={`${floor?.label ?? ''} 點位（${points.length}）`}>
           {points.length === 0 ? (
             <Empty description={editing ? '按「新增點位」後點圖上位置' : '這層還沒有點位'} />
@@ -315,6 +359,8 @@ export default function FloorMapWorkspace({ module, defaultFloor }: FloorMapWork
             </Space>
           )}
         </Card>
+        {unmapped.length > 0 && renderUnmapped()}
+        </>
       )
     }
 
@@ -385,7 +431,7 @@ export default function FloorMapWorkspace({ module, defaultFloor }: FloorMapWork
                   </div>
                 ))
               ) : (
-                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="當日無巡檢紀錄" />
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={meta?.empty_day_text ?? '當日無巡檢紀錄'} />
               )}
               {note && <Alert type="error" style={{ marginTop: 8, whiteSpace: 'pre-wrap' }} message={`異常說明：${note}`} />}
             </div>
@@ -471,16 +517,17 @@ export default function FloorMapWorkspace({ module, defaultFloor }: FloorMapWork
             {canEdit && (
             <>
               <Button size="small" type={editing ? 'primary' : 'default'} icon={<EditOutlined />}
-                      onClick={() => { setEditing(!editing); setPlacing(false) }}
+                      onClick={() => { setEditing(!editing); setPlacing(false); setPrefill(null) }}
                       style={editing ? { background: '#1B3A5C', borderColor: '#1B3A5C' } : undefined}>
                 {editing ? '結束編輯' : '編輯點位'}
               </Button>
               {editing && (
                 <Button size="small" icon={placing ? <AimOutlined /> : <PlusOutlined />}
-                        onClick={() => setPlacing(!placing)} danger={placing}>
+                        onClick={() => { setPrefill(null); setPlacing(!placing) }} danger={placing}>
                   {placing ? '點圖上位置…（再按取消）' : '新增點位'}
                 </Button>
               )}
+              {editing && placing && prefill && <Tag color="orange">放置：{prefill.label}</Tag>}
             </>
             )}
           </Space>
@@ -563,7 +610,7 @@ export default function FloorMapWorkspace({ module, defaultFloor }: FloorMapWork
         cancelText="取消"
         confirmLoading={saving}
         onOk={handleAdd}
-        onCancel={() => { setNewAt(null); addForm.resetFields() }}
+        onCancel={() => { setNewAt(null); setPrefill(null); setPlacing(false); addForm.resetFields() }}
         destroyOnClose
       >
         <Form form={addForm} layout="vertical" size="small">{pointFields}</Form>

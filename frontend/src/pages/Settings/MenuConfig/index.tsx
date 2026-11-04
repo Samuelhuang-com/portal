@@ -230,7 +230,9 @@ function buildWorkItems(
   // ④ 非 base 結構的 DB 項目（custom_ 或舊版無前綴的使用者項目）：從 DB 插入
   // 只排除已在 structureKeys 的 base 項目；不再強制要求 custom_ 前綴，
   // 以相容「mall-pm-group」等早期建立的非 custom_ 自訂 key
-  const extra = configs.filter((c) => !structureKeys.has(c.menu_key))
+  // 路由格式的 key（以 / 開頭）只會來自程式內的頁面；若 DB 殘留已從程式移除的頁面（例如已下線的選單），
+  // 不再當作額外項目顯示（否則無法刪除，只能隱藏）。下次儲存時會自然從 DB 清除。
+  const extra = configs.filter((c) => !structureKeys.has(c.menu_key) && !c.menu_key.startsWith('/'))
   for (let round = 0; round < 3; round++) {
     extra.forEach((cfg) => {
       if (itemMap.has(cfg.menu_key)) return

@@ -272,6 +272,14 @@ def ensure_floor_map_data(engine) -> dict[str, str]:
                 result["mall_facility_inspection"] = f"寫入草稿 {_seed(conn, 'mall_facility_inspection')} 筆"
         if _count(conn, "full_building_inspection") == 0:
             result["full_building_inspection"] = f"寫入草稿 {_seed(conn, 'full_building_inspection')} 筆"
+        # 2026-11-04 例行維護類（商場／全棟）：模組一筆點位都沒有時寫入待定位點位；
+        # 與 Alembic fmappm1 共用 seed_pm_points。不套用 sync_point_list（它以「樓層＋名稱」比對，
+        # 使用者在畫面上改名後會被重新種回來）。
+        from app.services.floor_map.pm_seed import PM_ITEMS, seed_pm_points
+        for mod in PM_ITEMS:
+            n = seed_pm_points(conn, mod, tag=f"startup:{mod}")
+            if n:
+                result[mod] = f"寫入待定位 {n} 筆"
         # 2026-10-05：套用最新點位清單（補缺、更新屬性；不動已校正的位置）
         for mod in _SEED:
             st = sync_point_list(conn, mod)

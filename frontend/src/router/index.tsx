@@ -107,6 +107,7 @@ import FullBuildingInspectionB4F       from '@/pages/FullBuildingInspection/B4F'
 import FullBuildingInspectionB2F       from '@/pages/FullBuildingInspection/B2F'
 import FullBuildingInspectionB1F       from '@/pages/FullBuildingInspection/B1F'
 import FullBuildingMaintenancePage       from '@/pages/FullBuildingMaintenance'
+import DbErdPage                         from '@/pages/DbErd'
 import FullBuildingMaintenanceDetailPage from '@/pages/FullBuildingMaintenance/Detail'
 import LuqunRepairPage                 from '@/pages/LuqunRepair'
 import DazhiRepairPage                 from '@/pages/DazhiRepair'
@@ -979,6 +980,11 @@ export default function AppRouter() {
           <Route path="sql-console" element={
             <PermissionGuard permissionKey="system_admin_only">
               <SqlConsolePage />
+            </PermissionGuard>
+          } />
+          <Route path="erd" element={
+            <PermissionGuard permissionKey="system_admin_only">
+              <DbErdPage />
             </PermissionGuard>
           } />
         </Route>

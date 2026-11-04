@@ -175,6 +175,8 @@ def _point_out(p: FloorMapPoint, group: dict, day: dict) -> dict[str, Any]:
 def _all_points(db: Session, insp_date: Optional[str]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for module, provider in PROVIDERS.items():
+        if not provider.in_war_room:   # 例行維護類模組不列入戰情 KPI 巡檢點位（2026-11-04）
+            continue
         pts = (
             db.query(FloorMapPoint)
             .filter(FloorMapPoint.module == module, FloorMapPoint.is_active.is_(True))
@@ -477,6 +479,8 @@ def get_overview(
 
     modules = []
     for module, provider in PROVIDERS.items():
+        if not provider.in_war_room:   # 同 _all_points
+            continue
         today = _overview_counts([p for p in today_pts if p["module"] == module])
         abnormal_pts = [p for p in today_pts if p["module"] == module and p["status"] == "abnormal"]
         unchecked_pts = [p for p in today_pts if p["module"] == module and p["status"] == "unchecked"]

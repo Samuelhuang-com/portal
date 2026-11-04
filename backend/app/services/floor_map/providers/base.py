@@ -26,6 +26,10 @@ class FloorMapProvider:
     floors:          ClassVar[list[str]]       # 這個模組用到的底圖 key（工具列樓層順序）
     default_floor:   ClassVar[str]
     attr_fields:     ClassVar[list[str]] = []  # 點位自訂屬性欄位（表單與 Tag 用），例：['機房位置', '供應區域']
+    # ── 以下為 2026-11-04 新增的可選設定（預設值＝既有巡檢模組的行為，不必覆寫）─────────
+    in_war_room:     ClassVar[bool] = True     # False＝不列入戰情 KPI 的巡檢點位（例行維護類模組）
+    source_label:    ClassVar[str]  = "對應 Ragic 設備組"   # 新增／修改點位表單的「資料來源」欄位名稱
+    empty_day_text:  ClassVar[str]  = "當日無巡檢紀錄"      # 選中點位、當日沒有資料時的提示
 
     # ── 必須實作 ─────────────────────────────────────────────────────────────
     def groups(self) -> list[dict[str, Any]]:
@@ -42,15 +46,28 @@ class FloorMapProvider:
         """資料最後一天 'YYYY/MM/DD'（前端日期預設值）"""
         raise NotImplementedError
 
+    # ── 可選：資料驅動的資料來源（2026-11-04，例行維護類模組）─────────────────────
+    def dynamic_groups(self, db: Session) -> list[dict[str, Any]]:
+        """除 groups() 寫死的對照表外，從資料本身取得的資料來源（GroupMeta）。預設沒有。"""
+        return []
+
+    def unmapped(self, db: Session, insp_date: str, used_refs: set[str]) -> list[dict[str, Any]]:
+        """insp_date 所在期間出現、但模組內還沒有任何點位的資料來源（GroupMeta）。預設沒有。"""
+        return []
+
     # ── 共用 ─────────────────────────────────────────────────────────────────
-    def group_map(self) -> dict[str, dict[str, Any]]:
-        return {g["source_ref"]: g for g in self.groups()}
+    def group_map(self, db: Session | None = None) -> dict[str, dict[str, Any]]:
+        out = {g["source_ref"]: g for g in self.groups()}
+        if db is not None:
+            for g in self.dynamic_groups(db):
+                out.setdefault(g["source_ref"], g)
+        return out
 
-    def has_source(self, source_ref: str) -> bool:
-        return source_ref in self.group_map()
+    def has_source(self, source_ref: str, db: Session | None = None) -> bool:
+        return source_ref in self.group_map(db)
 
-    def meta(self) -> dict[str, Any]:
-        groups = self.groups()
+    def meta(self, db: Session | None = None) -> dict[str, Any]:
+        groups = list(self.group_map(db).values())
         return {
             "module":          self.module,
             "label":           self.label,
@@ -58,6 +75,8 @@ class FloorMapProvider:
             "default_floor":   self.default_floor,
             "attr_fields":     self.attr_fields,
             "edit_permission": self.edit_permission,
+            "source_label":    self.source_label,
+            "empty_day_text":  self.empty_day_text,
             "groups":          groups,
             "systems":         list(dict.fromkeys(g["system"] for g in groups if g["system"])),
         }

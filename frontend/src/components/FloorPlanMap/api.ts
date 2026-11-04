@@ -30,6 +30,8 @@ export interface FloorMapModuleMeta {
   default_floor:   string
   attr_fields:     string[]
   edit_permission: string
+  source_label?:   string   // 點位表單「資料來源」欄位名稱（2026-11-04；未提供＝對應 Ragic 設備組）
+  empty_day_text?: string   // 當日無資料時的提示（2026-11-04；未提供＝當日無巡檢紀錄）
   groups:          FloorMapGroupMeta[]
   systems:         string[]
   data_end:        string | null   // 資料最後一天 YYYY/MM/DD
@@ -78,6 +80,7 @@ export interface FloorMapStatusResponse {
   floor_key: string
   points:    FloorMapPoint[]
   groups:    Record<string, FloorMapGroupDay>
+  unmapped?: FloorMapGroupMeta[]   // 所選期間有資料、但模組內還沒有點位的資料來源（例行維護類，2026-11-04）
 }
 
 export interface FloorMapDayCell {

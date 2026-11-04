@@ -546,6 +546,7 @@ export const menuItems: MenuItem[] = [
       { key: '/settings/repair-unfinished-report', icon: <AlertOutlined />,     label: NAV_PAGE.repairUnfinishedReport, permissionKey: 'repair_unfinished_report_view' },
       { key: '/settings/usage-monitor',            icon: <BarChartOutlined />,  label: NAV_PAGE.usageMonitor,           permissionKey: 'system_admin_only' },
       { key: '/settings/sql-console',              icon: <ConsoleSqlOutlined />, label: NAV_PAGE.sqlConsole,            permissionKey: 'system_admin_only' },
+      { key: '/settings/erd',                     icon: <DatabaseOutlined />,   label: NAV_PAGE.dbErd,                permissionKey: 'system_admin_only' },
     ],
   },
 ]

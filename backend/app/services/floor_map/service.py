@@ -16,8 +16,9 @@ class FloorMapError(ValueError):
     """輸入錯誤（router 轉成 422）"""
 
 
-def point_out(p: FloorMapPoint, provider: FloorMapProvider) -> dict[str, Any]:
-    g = provider.group_map().get(p.source_ref, {})
+def point_out(p: FloorMapPoint, provider: FloorMapProvider,
+              gmap: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
+    g = (gmap if gmap is not None else provider.group_map()).get(p.source_ref, {})
     attrs = p.attrs if isinstance(p.attrs, dict) else {}
     return {
         "id":             p.id,
@@ -52,15 +53,29 @@ def active_points(db: Session, module: str, floor_key: str) -> list[FloorMapPoin
     )
 
 
+def module_used_refs(db: Session, module: str) -> set[str]:
+    """模組內所有樓層、啟用中點位用到的資料來源"""
+    rows = (
+        db.query(FloorMapPoint.source_ref)
+        .filter(FloorMapPoint.module == module, FloorMapPoint.is_active.is_(True))
+        .distinct()
+        .all()
+    )
+    return {r[0] for r in rows}
+
+
 def floor_status(db: Session, provider: FloorMapProvider, floor_key: str, insp_date: str) -> dict[str, Any]:
-    points = [point_out(p, provider) for p in active_points(db, provider.module, floor_key)]
+    gmap = provider.group_map(db)
+    points = [point_out(p, provider, gmap) for p in active_points(db, provider.module, floor_key)]
     used = {p["source_ref"] for p in points}
     all_groups = provider.day_status(db, insp_date) if used else {}
     groups = {k: v for k, v in all_groups.items() if k in used}
     for p in points:
         p["status"] = groups.get(p["source_ref"], {}).get("status", "no_record")
+    # 未對應（2026-11-04）：Provider 有實作才有內容；巡檢模組一律回空陣列
+    unmapped = provider.unmapped(db, insp_date, module_used_refs(db, provider.module))
     return {"date": insp_date, "module": provider.module, "floor_key": floor_key,
-            "points": points, "groups": groups}
+            "points": points, "groups": groups, "unmapped": unmapped}
 
 
 # ── 寫入 ──────────────────────────────────────────────────────────────────────
@@ -68,8 +83,8 @@ def floor_status(db: Session, provider: FloorMapProvider, floor_key: str, insp_d
 _WRITABLE = ("x", "y", "label", "equipment_code", "source_ref", "placement", "attrs", "note")
 
 
-def _validate(provider: FloorMapProvider, data: dict[str, Any]) -> None:
-    if "source_ref" in data and not provider.has_source(data["source_ref"]):
+def _validate(provider: FloorMapProvider, data: dict[str, Any], db: Session | None = None) -> None:
+    if "source_ref" in data and not provider.has_source(data["source_ref"], db):
         raise FloorMapError(f"未知的資料來源：{data['source_ref']}")
     if "placement" in data and data["placement"] not in PLACEMENTS:
         raise FloorMapError(f"placement 必須是 {PLACEMENTS} 之一")
@@ -84,7 +99,7 @@ def _validate(provider: FloorMapProvider, data: dict[str, Any]) -> None:
 
 def create_point(db: Session, provider: FloorMapProvider, floor_key: str,
                  data: dict[str, Any], who: str) -> FloorMapPoint:
-    _validate(provider, data)
+    _validate(provider, data, db)
     now = twnow()
     p = FloorMapPoint(
         module=provider.module, floor_key=floor_key,
@@ -110,7 +125,7 @@ def get_active(db: Session, provider: FloorMapProvider, point_id: int) -> FloorM
 def update_point(db: Session, provider: FloorMapProvider, p: FloorMapPoint,
                  data: dict[str, Any], who: str) -> FloorMapPoint:
     data = {k: v for k, v in data.items() if k in _WRITABLE}
-    _validate(provider, data)
+    _validate(provider, data, db)
     for k, v in data.items():
         setattr(p, k, v)
     p.updated_by = who

@@ -24,7 +24,7 @@ import {
   ExclamationCircleOutlined, RightOutlined, BarChartOutlined,
   ShopOutlined, CalendarOutlined, LineChartOutlined, LinkOutlined,
   ScheduleOutlined, TableOutlined,
-  FileExcelOutlined,
+  FileExcelOutlined, EnvironmentOutlined,
 } from '@ant-design/icons'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RcTooltip,
@@ -56,6 +56,7 @@ import type {
 } from '@/types/periodicMaintenance'
 import { NAV_GROUP, NAV_PAGE } from '@/constants/navLabels'
 import FullBldgDailyFormTab from './FullBldgDailyFormTab'
+import FloorMapWorkspace from '@/components/FloorPlanMap/FloorMapWorkspace'
 
 const { Title, Text } = Typography
 
@@ -662,6 +663,9 @@ const SHOW_MONTHLY_CALENDAR = false
 export default function FullBuildingMaintenancePage() {
   const navigate = useNavigate()
   const [activeTab, setActiveTab] = useState('dashboard')
+  // 樓層巡檢圖：第一次切到該 TAB 才掛載，之後保留狀態（樓層、日期、選取點位）
+  const [floorMapOpened, setFloorMapOpened] = useState(false)
+  useEffect(() => { if (activeTab === 'floor-map') setFloorMapOpened(true) }, [activeTab])
   const [stats, setStats]     = useState<PMStats | null>(null)
   const [batches, setBatches] = useState<PMBatchListItem[]>([])
   const [dashYear,  setDashYear]  = useState(dayjs().format('YYYY'))
@@ -2151,6 +2155,12 @@ export default function FullBuildingMaintenancePage() {
               label:    <span><CalendarOutlined /> 每日巡檢表</span>,
               children: activeTab === 'daily-form' ? <FullBldgDailyFormTab /> : null,
             }] : []),
+            // 2026-11-04 樓層巡檢圖（共用元件，CLAUDE.md §12／docs/DEV_SPEC_floor_plan_map.md；第一次點開才載入）
+            {
+              key:      'floor-map',
+              label:    <span><EnvironmentOutlined /> 樓層巡檢圖</span>,
+              children: floorMapOpened ? <FloorMapWorkspace module="mall_full_building_maintenance" /> : null,
+            },
             {
               key: 'monthly',
               label: <span><CalendarOutlined /> 每月維護</span>,

@@ -136,6 +136,7 @@ export const NAV_PAGE = {
   mallDashboard:              '商場週期保養',
   mallPeriodicMaintenance:    '商場例行維護',
   fullBuildingMaintenance:    '全棟例行維護',   // ← 新增：Ragic Sheet 21
+  dbErd:                      'ERD',   // 資料庫 ERD（系統管理員）
   b4fInspection:           '工務巡檢 - B4F',
   rfInspection:            '工務巡檢 - RF',
   b2fInspection:           '工務巡檢 - B2F',

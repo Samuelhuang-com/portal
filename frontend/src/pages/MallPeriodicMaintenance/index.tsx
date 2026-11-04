@@ -23,7 +23,7 @@ import {
   WarningOutlined, CheckCircleOutlined, ClockCircleOutlined,
   ExclamationCircleOutlined, RightOutlined, BarChartOutlined,
   ShopOutlined, CalendarOutlined, LineChartOutlined, FileTextOutlined, LinkOutlined,
-  FileExcelOutlined,
+  FileExcelOutlined, EnvironmentOutlined,
 } from '@ant-design/icons'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RcTooltip,
@@ -56,6 +56,7 @@ import MallDailyInspectionFormTab from './MallDailyInspectionFormTab'
 import MonthlyCalendarGrid from '@/components/MonthlyCalendarGrid'
 import type { CalendarRow } from '@/components/MonthlyCalendarGrid'
 import MallPMItemWorklogDrawer from '@/components/MallPMItemWorklogDrawer'
+import FloorMapWorkspace from '@/components/FloorPlanMap/FloorMapWorkspace'
 
 const { Title, Text } = Typography
 
@@ -512,6 +513,9 @@ const SHOW_MONTHLY_CALENDAR = false
 export default function MallPeriodicMaintenancePage() {
   const navigate = useNavigate()
   const [activeTab, setActiveTab] = useState('dashboard')
+  // 樓層巡檢圖：第一次切到該 TAB 才掛載，之後保留狀態（樓層、日期、選取點位）
+  const [floorMapOpened, setFloorMapOpened] = useState(false)
+  useEffect(() => { if (activeTab === 'floor-map') setFloorMapOpened(true) }, [activeTab])
   const [stats, setStats]     = useState<PMStats | null>(null)
   const [batches, setBatches] = useState<PMBatchListItem[]>([])
   const [dashYear,  setDashYear]  = useState(dayjs().format('YYYY'))
@@ -1916,6 +1920,8 @@ export default function MallPeriodicMaintenancePage() {
           { key: 'dashboard',  label: 'Dashboard',                                        children: DashboardTab },
           // 2026-08-25 依使用者指示隱藏「每日巡檢表」TAB（程式碼保留，改 SHOW_DAILY_FORM_TAB = true 即可恢復）
           ...(SHOW_DAILY_FORM_TAB ? [{ key: 'daily-form', label: <span><FileTextOutlined /> 每日巡檢表</span>, children: <MallDailyInspectionFormTab /> }] : []),
+          // 2026-11-04 樓層巡檢圖（共用元件，CLAUDE.md §12／docs/DEV_SPEC_floor_plan_map.md；第一次點開才載入）
+          { key: 'floor-map',  label: <span><EnvironmentOutlined /> 樓層巡檢圖</span>,          children: floorMapOpened ? <FloorMapWorkspace module="mall_periodic_maintenance" /> : null },
           { key: 'monthly',    label: <span><CalendarOutlined /> 每月維護</span>,          children: MonthlyStatsTab },
           { key: 'quarterly',  label: <span><LineChartOutlined /> 每季維護</span>,         children: QuarterlyStatsTab },
           { key: 'yearly',     label: <span><BarChartOutlined /> 每年維護</span>,           children: YearlyStatsTab },

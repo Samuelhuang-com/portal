@@ -151,7 +151,7 @@ async def replace_floor_image_endpoint(
 def module_meta(module: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     p = _provider(module)
     _require(user, db, p.view_permission)
-    return {**p.meta(), "data_end": p.data_end(db)}
+    return {**p.meta(db), "data_end": p.data_end(db)}
 
 
 @router.get("/{module}/floors/{floor_key}/status", summary="點位＋當日狀態")
@@ -191,7 +191,7 @@ def month_status(
 ):
     p = _provider(module)
     _require(user, db, p.view_permission)
-    if not p.has_source(source_ref):
+    if not p.has_source(source_ref, db):
         raise HTTPException(status_code=422, detail=f"未知的資料來源：{source_ref}")
     return {"year": year, "month": month, "source_ref": source_ref,
             "days": p.month_status(db, source_ref, year, month)}
@@ -206,7 +206,7 @@ def create_point(
     _require(user, db, p.edit_permission)
     _floor(p, floor_key)
     pt = _call(svc.create_point, db, p, floor_key, body.model_dump(), _who(user))
-    return svc.point_out(pt, p)
+    return svc.point_out(pt, p, p.group_map(db))
 
 
 @router.patch("/{module}/points/{point_id}", summary="修改／移動點位")
@@ -221,7 +221,7 @@ def update_point(
         raise HTTPException(status_code=404, detail="點位不存在")
     data: dict[str, Any] = body.model_dump(exclude_unset=True)
     pt = _call(svc.update_point, db, p, pt, data, _who(user))
-    return svc.point_out(pt, p)
+    return svc.point_out(pt, p, p.group_map(db))
 
 
 @router.delete("/{module}/points/{point_id}", summary="停用點位（不硬刪）")
