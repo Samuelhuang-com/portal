@@ -80,7 +80,7 @@ export interface FloorMapStatusResponse {
   floor_key: string
   points:    FloorMapPoint[]
   groups:    Record<string, FloorMapGroupDay>
-  unmapped?: FloorMapGroupMeta[]   // 所選期間有資料、但模組內還沒有點位的資料來源（例行維護類，2026-11-04）
+  unmapped?: FloorMapGroupMeta[]   // 所選期間有資料、但模組內沒有點位紀錄（含已停用）的資料來源（例行維護類，2026-11-04）
 }
 
 export interface FloorMapDayCell {

@@ -53,11 +53,14 @@ def active_points(db: Session, module: str, floor_key: str) -> list[FloorMapPoin
     )
 
 
-def module_used_refs(db: Session, module: str) -> set[str]:
-    """模組內所有樓層、啟用中點位用到的資料來源"""
+def module_known_refs(db: Session, module: str) -> set[str]:
+    """
+    模組內所有樓層「有點位紀錄」的資料來源，**含已停用的點**。
+    給「未對應」判定用：停用＝刻意不放在圖上，不再列為未對應（Samuel 2026-11-04 裁示）。
+    """
     rows = (
         db.query(FloorMapPoint.source_ref)
-        .filter(FloorMapPoint.module == module, FloorMapPoint.is_active.is_(True))
+        .filter(FloorMapPoint.module == module)
         .distinct()
         .all()
     )
@@ -72,8 +75,9 @@ def floor_status(db: Session, provider: FloorMapProvider, floor_key: str, insp_d
     groups = {k: v for k, v in all_groups.items() if k in used}
     for p in points:
         p["status"] = groups.get(p["source_ref"], {}).get("status", "no_record")
-    # 未對應（2026-11-04）：Provider 有實作才有內容；巡檢模組一律回空陣列
-    unmapped = provider.unmapped(db, insp_date, module_used_refs(db, provider.module))
+    # 未對應（2026-11-04）：Provider 有實作才有內容；巡檢模組一律回空陣列。
+    # 有點位紀錄（含已停用）就不算未對應。
+    unmapped = provider.unmapped(db, insp_date, module_known_refs(db, provider.module))
     return {"date": insp_date, "module": provider.module, "floor_key": floor_key,
             "points": points, "groups": groups, "unmapped": unmapped}
 

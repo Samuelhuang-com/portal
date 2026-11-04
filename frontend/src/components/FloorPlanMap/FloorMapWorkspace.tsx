@@ -306,7 +306,7 @@ export default function FloorMapWorkspace({ module, defaultFloor }: FloorMapWork
   const renderUnmapped = () => (
     <Card size="small" style={{ marginTop: 12 }}
           title={<span style={{ color: '#d46b08' }}>未對應項目（{unmapped.length}）</span>}
-          extra={<Tooltip title="所選月份的資料中，還沒有任何點位的項目"><Text type="secondary" style={{ fontSize: 11 }}>{date?.format('YYYY年M月')}</Text></Tooltip>}>
+          extra={<Tooltip title="所選月份的資料中，還沒有任何點位的項目（已停用的點位視為刻意不放，不列入）"><Text type="secondary" style={{ fontSize: 11 }}>{date?.format('YYYY年M月')}</Text></Tooltip>}>
       {!(canEdit && editing) && (
         <Text type="secondary" style={{ fontSize: 12 }}>
           {canEdit ? '按「編輯點位」後，可把項目直接放到圖上。' : '需要「編輯點位」權限才能放到圖上。'}

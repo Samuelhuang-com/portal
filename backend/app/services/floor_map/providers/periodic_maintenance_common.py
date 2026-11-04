@@ -10,6 +10,7 @@
     已知風險：Ragic 排序對調時兩點資料會跟著對調）。
   - 對照表（點位清單）寫在 services/floor_map/pm_seed.py；批次中出現、清單沒有的項目
     由 dynamic_groups() 補進可選清單，並由 unmapped() 列為「未對應」，讓使用者在畫面上直接新增點位。
+    有點位紀錄（含已停用）的項目不算未對應：停用＝刻意不放在圖上（2026-11-04 裁示）。
   - 「當天」以排定日（scheduled_date）為準；只看該月批次，排定日不在該月者不列入（以排定月份為主）；
     排定日在當月但執行月份不含當月者照樣列入（以排定日為準）。
   - 同月份多張批次取 ragic_updated_at 最新者（與模組現有統計 _latest_batch_ids_per_month 一致）。
@@ -223,7 +224,7 @@ class PeriodicMaintenanceFloorMapProvider(FloorMapProvider):
         ]
 
     def unmapped(self, db: Session, insp_date: str, used_refs: set[str]) -> list[dict[str, Any]]:
-        """所選日期所在月份的批次中，模組內還沒有任何點位的項目（Samuel 2026-11-04：只看所選月份）"""
+        """所選日期所在月份的批次中，模組內沒有任何點位紀錄（含已停用）的項目（Samuel 2026-11-04：只看所選月份）"""
         d = _parse_ymd(insp_date)
         if d is None:
             return []

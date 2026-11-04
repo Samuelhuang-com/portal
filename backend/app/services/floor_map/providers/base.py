@@ -52,7 +52,7 @@ class FloorMapProvider:
         return []
 
     def unmapped(self, db: Session, insp_date: str, used_refs: set[str]) -> list[dict[str, Any]]:
-        """insp_date 所在期間出現、但模組內還沒有任何點位的資料來源（GroupMeta）。預設沒有。"""
+        """insp_date 所在期間出現、但模組內沒有任何點位紀錄（含已停用）的資料來源（GroupMeta）。預設沒有。"""
         return []
 
     # ── 共用 ─────────────────────────────────────────────────────────────────
