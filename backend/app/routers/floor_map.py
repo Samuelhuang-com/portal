@@ -51,6 +51,19 @@ class PointCreate(BaseModel):
     note:           Optional[str] = Field(None, max_length=300)
 
 
+class ChildPointCreate(BaseModel):
+    """two_level 新增子項點位：母項＋一個以上子項（2026-11-05）"""
+    x:              float = Field(..., ge=0, le=1)
+    y:              float = Field(..., ge=0, le=1)
+    source_ref:     str   = Field(..., min_length=1, max_length=200)   # 母項
+    child_refs:     list[str] = Field(..., min_length=1, max_length=100)
+    label:          Optional[str] = Field(None, max_length=100)
+    equipment_code: Optional[str] = Field(None, max_length=50)
+    placement:      str   = Field("confirmed", max_length=20)
+    attrs:          Optional[dict[str, Optional[str]]] = None
+    note:           Optional[str] = Field(None, max_length=300)
+
+
 class SourceDisabledIn(BaseModel):
     source_ref: str  = Field(..., min_length=1, max_length=200)
     disabled:   bool
@@ -213,6 +226,35 @@ def create_point(
     _floor(p, floor_key)
     pt = _call(svc.create_point, db, p, floor_key, body.model_dump(), _who(user))
     return svc.point_out(pt, p, p.group_map(db))
+
+
+@router.get("/{module}/children", summary="母項底下的子項清單（two_level 模組）")
+def list_children(
+    module: str, parent: str = Query(..., min_length=1, max_length=200),
+    db: Session = Depends(get_db), user: User = Depends(get_current_user),
+):
+    p = _provider(module)
+    _require(user, db, p.view_permission)
+    if not getattr(p, "two_level", False):
+        raise HTTPException(status_code=422, detail="此模組沒有母項／子項結構")
+    if not p.has_source(parent, db):
+        raise HTTPException(status_code=404, detail=f"未知的母項：{parent}")
+    return {"parent": parent, "children": [{"source_ref": c, "label": c} for c in p.child_keys(db, parent)]}
+
+
+@router.post("/{module}/floors/{floor_key}/child-points", summary="新增子項點位（母項＋多選子項）")
+def create_child_points(
+    module: str, floor_key: str, body: ChildPointCreate,
+    db: Session = Depends(get_db), user: User = Depends(get_current_user),
+):
+    p = _provider(module)
+    _require(user, db, p.edit_permission)
+    _floor(p, floor_key)
+    data = body.model_dump()
+    refs = data.pop("child_refs")
+    pts = _call(svc.create_child_points, db, p, floor_key, data, refs, _who(user))
+    gmap = p.group_map(db)
+    return [svc.point_out(pt, p, gmap) for pt in pts]
 
 
 @router.post("/{module}/sources/disabled", summary="子項停用／恢復（two_level 模組）")

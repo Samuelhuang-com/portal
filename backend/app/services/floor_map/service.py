@@ -29,6 +29,8 @@ def point_out(p: FloorMapPoint, provider: FloorMapProvider,
         "label":          p.label,
         "equipment_code": p.equipment_code or "",
         "source_ref":     p.source_ref,
+        "child_ref":      p.child_ref or "",
+        "kind":           "child" if p.child_ref else "parent",
         "group_label":    g.get("label", p.source_ref),
         "system":         g.get("system", ""),
         "shared_label":   g.get("shared_label", ""),
@@ -75,9 +77,15 @@ def floor_status(db: Session, provider: FloorMapProvider, floor_key: str, insp_d
     groups = {k: v for k, v in all_groups.items() if k in used}
     for p in points:
         g = groups.get(p["source_ref"], {})
-        p["status"] = g.get("status", "no_record")
-        # two_level：該層子項全部停用的母項點位，只在編輯模式顯示（前端依 hidden 判斷）
-        p["hidden"] = bool(g.get("all_disabled"))
+        if p.get("child_ref"):
+            # 子項點位：狀態取該子項；子項停用時只在編輯模式顯示
+            c = next((k for k in g.get("children", []) if k["source_ref"] == p["child_ref"]), None)
+            p["status"] = c["status"] if c else "no_record"
+            p["hidden"] = bool(c and c["disabled"])
+        else:
+            p["status"] = g.get("status", "no_record")
+            # two_level：該層子項全部停用的母項點位，只在編輯模式顯示（前端依 hidden 判斷）
+            p["hidden"] = bool(g.get("all_disabled"))
     # 未對應（2026-11-04）：Provider 有實作才有內容；巡檢模組一律回空陣列。
     # 有點位紀錄（含已停用）就不算未對應。
     unmapped = provider.unmapped(db, insp_date, module_known_refs(db, provider.module))
@@ -104,8 +112,52 @@ def _validate(provider: FloorMapProvider, data: dict[str, Any], db: Session | No
             raise FloorMapError(f"attrs 只接受 {sorted(allowed)}，收到 {sorted(extra)}")
 
 
+def create_child_points(db: Session, provider: FloorMapProvider, floor_key: str,
+                        data: dict[str, Any], child_refs: list[str], who: str) -> list[FloorMapPoint]:
+    """
+    two_level（例行維護類）新增點位：必須同時選母項與子項（2026-11-05 裁示）。
+    一次可多選子項，每個子項各建一個點，放在同一個位置（之後可各自拖曳）。
+    單一子項且有填顯示名稱 → 用該名稱；其餘一律用子項名稱。
+    """
+    parent = data.get("source_ref") or ""
+    if not parent or not provider.has_source(parent, db):
+        raise FloorMapError(f"未知的母項：{parent}")
+    if not child_refs:
+        raise FloorMapError("請至少選擇一個子項")
+    if len(set(child_refs)) != len(child_refs):
+        raise FloorMapError("子項重複")
+    valid = set(provider.child_keys(db, parent))
+    bad = [c for c in child_refs if c not in valid]
+    if bad:
+        raise FloorMapError(f"子項不屬於此母項：{bad[0]}")
+    data = {k: v for k, v in data.items() if k != "child_refs"}
+    _validate(provider, data, db)
+    now = twnow()
+    out: list[FloorMapPoint] = []
+    for c in child_refs:
+        label = data.get("label") if (len(child_refs) == 1 and data.get("label")) else c
+        p = FloorMapPoint(
+            module=provider.module, floor_key=floor_key,
+            x=data["x"], y=data["y"], label=label,
+            equipment_code=data.get("equipment_code"),
+            source_ref=parent, child_ref=c,
+            placement=data.get("placement") or "confirmed",
+            attrs=data.get("attrs"), note=data.get("note"),
+            sort_order=0, is_active=True,
+            created_by=who, updated_by=who, created_at=now, updated_at=now,
+        )
+        db.add(p)
+        out.append(p)
+    db.commit()
+    for p in out:
+        db.refresh(p)
+    return out
+
+
 def create_point(db: Session, provider: FloorMapProvider, floor_key: str,
                  data: dict[str, Any], who: str) -> FloorMapPoint:
+    if getattr(provider, "two_level", False):
+        raise FloorMapError("例行維護類新增點位需同時選擇母項與子項")
     _validate(provider, data, db)
     now = twnow()
     p = FloorMapPoint(
@@ -132,6 +184,8 @@ def get_active(db: Session, provider: FloorMapProvider, point_id: int) -> FloorM
 def update_point(db: Session, provider: FloorMapProvider, p: FloorMapPoint,
                  data: dict[str, Any], who: str) -> FloorMapPoint:
     data = {k: v for k, v in data.items() if k in _WRITABLE}
+    if p.child_ref and "source_ref" in data and data["source_ref"] != p.source_ref:
+        raise FloorMapError("子項點位不可變更母項；請停用後重新新增")
     _validate(provider, data, db)
     for k, v in data.items():
         setattr(p, k, v)

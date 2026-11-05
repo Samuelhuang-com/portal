@@ -151,6 +151,15 @@ class PeriodicMaintenanceFloorMapProvider(FloorMapProvider):
             out[ref].add(fk)
         return out
 
+    def _child_point_floors(self, db: Session) -> dict[str, set[str]]:
+        """子項點位所在樓層：child_ref → 樓層（2026-11-05 fmapcc1）"""
+        out: dict[str, set[str]] = defaultdict(set)
+        for ref, fk in (db.query(FloorMapPoint.child_ref, FloorMapPoint.floor_key)
+                        .filter(FloorMapPoint.module == self.module, FloorMapPoint.is_active.is_(True),
+                                FloorMapPoint.child_ref.isnot(None)).all()):
+            out[ref].add(fk)
+        return out
+
     # ── 判定 ─────────────────────────────────────────────────────────────────
     @staticmethod
     def _item_status(it: Any) -> str:
@@ -229,10 +238,13 @@ class PeriodicMaintenanceFloorMapProvider(FloorMapProvider):
         cfloors = child_floors(self.module)
         ccat = child_category(self.module)
         pfloors = self._point_floors(db) if floor_key else {}
+        cpfloors = self._child_point_floors(db) if floor_key else {}
         gmap = self.group_map()
         out: dict[str, dict[str, Any]] = {}
         for parent, kids_all in self._children_of(allx).items():
             def on_floor(c: str) -> bool:
+                if floor_key in cpfloors.get(c, set()):   # 子項點位放在這層
+                    return True
                 fl = cfloors.get(c)
                 return floor_key in (fl if fl else pfloors.get(parent, set()))
             kids = [c for c in kids_all if on_floor(c)] if floor_key else list(kids_all)
@@ -326,6 +338,10 @@ class PeriodicMaintenanceFloorMapProvider(FloorMapProvider):
         for b in self._latest_batches(db):             # 由舊到新
             out += self._entries(db, b)
         return out
+
+    def child_keys(self, db: Session, parent: str) -> list[str]:
+        """母項底下的子項（點位清單＋所有最新批次出現過的；順序同子項清單）"""
+        return list(self._children_of(self._all_entries(db)).get(parent, []))
 
     def dynamic_groups(self, db: Session) -> list[dict[str, Any]]:
         """所有月份最新批次中出現、點位清單沒有的母項（新增點位時可選）"""

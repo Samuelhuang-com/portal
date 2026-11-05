@@ -57,6 +57,8 @@ export interface FloorMapPoint {
   updated_at:     string
   status?:        FloorMapStatus
   hidden?:        boolean   // two_level：該層子項全部停用 → 只在編輯模式顯示
+  child_ref?:     string    // two_level：子項點位才有（此時 source_ref 為母項）
+  kind?:          'parent' | 'child'
 }
 
 export interface FloorMapBatch {
@@ -179,6 +181,35 @@ export async function updateFloorMapPoint(module: string, id: number, body: Part
 /** two_level 模組：子項停用／恢復（需編輯點位權限） */
 export async function setFloorMapSourceDisabled(module: string, sourceRef: string, disabled: boolean): Promise<void> {
   await apiClient.post(`${BASE}/${module}/sources/disabled`, { source_ref: sourceRef, disabled })
+}
+
+/** two_level：母項底下的子項（新增子項點位用） */
+export interface FloorMapChildOption {
+  source_ref: string
+  label:      string
+}
+
+/** two_level：新增子項點位（母項＋一個以上子項；多選時每個子項各一點，同一位置） */
+export interface FloorMapChildPointInput {
+  x:               number
+  y:               number
+  source_ref:      string
+  child_refs:      string[]
+  label?:          string | null
+  equipment_code?: string | null
+  placement?:      FloorMapPlacement
+  attrs?:          Record<string, string | null> | null
+  note?:           string | null
+}
+
+export async function fetchFloorMapChildren(module: string, parent: string): Promise<FloorMapChildOption[]> {
+  const res = await apiClient.get(`${BASE}/${module}/children`, { params: { parent } })
+  return res.data.children
+}
+
+export async function createFloorMapChildPoints(module: string, floorKey: string, body: FloorMapChildPointInput): Promise<FloorMapPoint[]> {
+  const res = await apiClient.post(`${BASE}/${module}/floors/${floorKey}/child-points`, body)
+  return res.data
 }
 
 export async function deleteFloorMapPoint(module: string, id: number): Promise<void> {

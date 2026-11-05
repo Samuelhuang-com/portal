@@ -27,6 +27,7 @@ class FloorMapPoint(Base):
     label          = Column(String(100), nullable=False, comment="顯示名稱")
     equipment_code = Column(String(50),  nullable=True,  comment="設備編號")
     source_ref     = Column(String(200), nullable=False, comment="資料來源參照，格式由 Provider 定義")
+    child_ref      = Column(String(200), nullable=True,  comment="子項參照（子項點位才有；此時 source_ref 為母項）")
     placement      = Column(String(20),  nullable=False, default="confirmed", comment="confirmed／draft／pending")
     attrs          = Column(JSON(none_as_null=True), nullable=True,  comment="模組自訂屬性（如機房位置、供應區域）")
     note           = Column(String(300), nullable=True,  comment="備註")

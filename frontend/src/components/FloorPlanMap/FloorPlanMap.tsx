@@ -24,6 +24,7 @@ function markerIcon(p: FloorMapPoint, selected: boolean, editing: boolean): L.Di
     'fpm-dot',
     selected ? 'fpm-dot--sel' : '',
     p.placement === 'pending' ? 'fpm-dot--pending' : '',
+    p.child_ref ? 'fpm-dot--child' : '',
     editing ? 'fpm-dot--edit' : '',
   ].filter(Boolean).join(' ')
   const draft = p.placement === 'draft' ? '<span class="fpm-draft">草稿</span>' : ''
@@ -80,6 +81,7 @@ export default function FloorPlanMap({
         .fpm-map { background: #fff; border-radius: 6px; }
         .fpm-map .leaflet-container { background: #fff; border-radius: 6px; }
         .fpm-marker { background: transparent; border: none; }
+        .fpm-dot--child { box-shadow: 0 0 0 2px #fff, 0 0 0 4px #1B3A5C; }
         .fpm-dot {
           width: 28px; height: 28px; border-radius: 50%; border: 3px solid #fff;
           box-shadow: 0 1px 4px rgba(0,0,0,.45); color: #fff; font-weight: 700; font-size: 13px;

@@ -98,6 +98,9 @@ CK11_NOTE         = "備註"         # 僅 fetch_one() 才有
 # 2026-07-14 查證時所有樣本均為空字串，尚未實測過有值時的實際格式，若日後發現非純數字
 # 字串（例如帶單位或時分格式），需回頭複核 _to_float() 是否需要調整解析方式。
 CK11_REPAIR_HOURS = "維修工時"
+# 2026-11-05 新增：母子項目分組鍵（2026/11*英週保-003 實測，list API 即回傳，不需 fetch_one）
+CK11_PARENT_NO    = "項目(母)"
+CK11_CHILD_NO     = "項目(子)"
 CK11_IMAGES       = "圖片上傳"     # 僅 fetch_one() 才有
 CK11_START_TIME   = "保養時間啟"   # 僅 fetch_one() 才有，2026-07-14 查證確認已存在（惟實測記錄常為空）
 CK11_END_TIME     = "保養時間迄"   # 僅 fetch_one() 才有，2026-07-14 查證確認已存在（惟實測記錄常為空）
@@ -861,6 +864,8 @@ async def sync_from_sheet11() -> dict:
                 target.end_time          = end_time
                 target.is_completed      = bool(start_time and end_time)
                 target.repair_hours      = repair_hours
+                target.parent_no         = _stringify(raw.get(CK11_PARENT_NO, "")) or None
+                target.child_no          = _stringify(raw.get(CK11_CHILD_NO, "")) or None
                 target.images_json       = json.dumps(images, ensure_ascii=False)
                 target.synced_at         = now
 

@@ -38,7 +38,7 @@ from app.models.periodic_maintenance import (
 )
 from app.models.pm_schedule import PMSchedule
 from app.schemas.periodic_maintenance import (
-    PMBatchOut, PMItemOut, PMBatchKPI, PMBatchDetail,
+    PMBatchOut, PMItemOut, PMBatchKPI, PMBatchDetail, PMParentGroupOut,
     CategoryStat, StatusDistItem, PMStats, PMItemUpdate,
     PMPeriodStats, PMSubPeriodBreakdown, PMIncompleteItem,
     PMYearMatrix, PMYearMatrixMonth,
@@ -248,8 +248,38 @@ def _item_to_out(item: PeriodicMaintenanceItem, check_month: int) -> PMItemOut:
         # （小時，來源 Sheet11「維修工時」欄位，比照 mall_pm Sheet24 語意）
         ragic_url      = f"{_ITEM_RAGIC_BASE}/{item.ragic_id}" if item.ragic_id else "",
         repair_hours   = item.repair_hours,
+        parent_no      = (item.parent_no or None),
+        child_no       = (item.child_no or None),
     )
     return out
+
+
+def _build_parent_groups(items: list[PeriodicMaintenanceItem]) -> list[PMParentGroupOut]:
+    """2026-11-05 以項目(母)分組彙總（比照商場明細頁版型）。
+
+    完成定義（業主 2026-11-05 裁示，飯店專用，商場不變）：
+      子項目完成 ＝ 保養時間啟＋迄皆有值；母項目完成 ＝ 該母項目「全部子項目」皆完成。
+    工時：Σ 維修工時，NULL 不計（missing_hours_count 記錄未計入筆數）。
+    傳入的 items 必須是整批全部項目（未經篩選），且已依 seq_no 排序。
+    """
+    groups: dict[str, list[PeriodicMaintenanceItem]] = {}
+    for it in items:
+        pno = (it.parent_no or "").strip()
+        if pno:
+            groups.setdefault(pno, []).append(it)
+    result: list[PMParentGroupOut] = []
+    for pno, children in groups.items():
+        hours = [c.repair_hours for c in children if c.repair_hours is not None]
+        done = sum(1 for c in children if c.start_time and c.end_time)
+        result.append(PMParentGroupOut(
+            parent_no=pno,
+            child_count=len(children),
+            done_count=done,
+            total_repair_hours=round(sum(hours), 2),
+            missing_hours_count=len(children) - len(hours),
+            is_completed=(done == len(children)),
+        ))
+    return result
 
 
 def _calc_kpi(items: list[PeriodicMaintenanceItem], check_month: int) -> PMBatchKPI:
@@ -911,6 +941,7 @@ def get_batch_detail(
         kpi        = kpi,
         items      = filtered,
         categories = cats,
+        parent_groups = _build_parent_groups(items),
     )
 
 

@@ -33,15 +33,22 @@ import {
   BorderOutlined,
 } from '@ant-design/icons'
 import { Input } from 'antd'
-import type { ColumnsType } from 'antd/es/table'
+import type { ColumnsType, ColumnType } from 'antd/es/table'
 import dayjs from 'dayjs'
 
 import { fetchPMBatchDetail, fetchPMTaskHistory } from '@/api/periodicMaintenance'
 import type {
-  PMBatchDetail, PMItem, PMItemStatus,
+  PMBatchDetail, PMItem, PMItemStatus, PMParentGroup,
   PMTaskHistory, PMItemHistorySummary,
 } from '@/types/periodicMaintenance'
 import PMItemDetailDrawer from '@/components/PMItemDetailDrawer'
+
+/** 批次明細表格列：子項目（PMItem）或母項目分組列（GroupRow） */
+type GroupRow = { __group: true; ragic_id: string; group: PMParentGroup }
+type TableRow = PMItem | GroupRow
+function isGroupRow(r: TableRow): r is GroupRow {
+  return (r as GroupRow).__group === true
+}
 
 const { Title, Text } = Typography
 const { Option } = Select
@@ -85,6 +92,26 @@ function fmtMinutes(mins: number): string {
   if (!mins) return '—'
   if (mins < 60) return `${mins} 分`
   return `${Math.floor(mins / 60)} 時 ${mins % 60} 分`
+}
+
+// 維修工時（小時，Float）→ 「X 時 Y 分」；空值回傳空字串
+function fmtHours(hours: number | null | undefined): string {
+  if (hours == null) return ''
+  const h = Math.floor(hours)
+  const m = Math.round((hours - h) * 60)
+  if (h === 0) return `${m} 分`
+  if (m === 0) return `${h} 時`
+  return `${h} 時 ${m} 分`
+}
+
+// 實際保養日期（取 start_time，缺則取 end_time 的日期部分），格式 MM/DD；尚未執行則 '—'
+// 開發規範：本模組所有含「保養時間」欄位的項目表格，一律在其前面加一欄「保養日期」（2026-07-13 指示，比照 full_bldg_pm）
+function fmtActualDate(item: PMItem): string {
+  const raw = (item.start_time || item.end_time || '').trim()
+  if (!raw) return '—'
+  const datePart = raw.split(' ')[0]
+  const parts = datePart.split('/')
+  return parts.length === 3 ? `${parts[1]}/${parts[2]}` : datePart
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -388,6 +415,20 @@ export default function PeriodicMaintenanceDetailPage() {
       render: (v: number) => <Text type="secondary">{v}</Text>,
     },
     {
+      title: '項目(母)',
+      dataIndex: 'parent_no',
+      width: 80,
+      align: 'center',
+      render: (v: string | null | undefined) => v || <Text type="secondary">—</Text>,
+    },
+    {
+      title: '項目(子)',
+      dataIndex: 'child_no',
+      width: 80,
+      align: 'center',
+      render: (v: string | null | undefined) => v || <Text type="secondary">—</Text>,
+    },
+    {
       title: '類別',
       dataIndex: 'category',
       width: 90,
@@ -421,11 +462,36 @@ export default function PeriodicMaintenanceDetailPage() {
       render: (v: string) => v || '—',
     },
     {
+      title: '執行月份',
+      dataIndex: 'exec_months_raw',
+      width: 130,
+      ellipsis: true,
+      render: (v: string) => v || '—',
+    },
+    {
       title: '預估工時',
       dataIndex: 'estimated_minutes',
       width: 90,
       align: 'center',
       render: (v: number) => fmtMinutes(v),
+    },
+    {
+      title: '維修工時',
+      dataIndex: 'repair_hours',
+      width: 90,
+      align: 'center',
+      render: (v: number | null | undefined, rec: PMItem) => (
+        <Button
+          type="link"
+          size="small"
+          style={{ padding: 0, height: 'auto', fontWeight: 600 }}
+          onClick={() => setSelectedPMItem(rec)}
+        >
+          {v != null
+            ? <Text style={{ color: '#52C41A', fontWeight: 600 }}>{fmtHours(v)}</Text>
+            : <Text type="secondary">明細</Text>}
+        </Button>
+      ),
     },
     {
       title: '排定日期',
@@ -439,6 +505,13 @@ export default function PeriodicMaintenanceDetailPage() {
       dataIndex: 'executor_name',
       width: 90,
       render: (v: string) => v || <Text type="secondary">—</Text>,
+    },
+    {
+      title: '保養日期',
+      key: 'actual_date',
+      width: 80,
+      align: 'center',
+      render: (_: unknown, rec: PMItem) => <Text style={{ fontSize: 12 }}>{fmtActualDate(rec)}</Text>,
     },
     {
       title: '保養時間',
@@ -464,22 +537,6 @@ export default function PeriodicMaintenanceDetailPage() {
           </Button>
         )
       },
-    },
-    {
-      title: '維修工時',
-      dataIndex: 'repair_hours',
-      width: 90,
-      align: 'center',
-      render: (v: number | null | undefined, rec: PMItem) => (
-        <Button
-          type="link"
-          size="small"
-          style={{ padding: 0, height: 'auto' }}
-          onClick={() => setSelectedPMItem(rec)}
-        >
-          {v == null ? <Text type="secondary">—</Text> : `${v} 時`}
-        </Button>
-      ),
     },
     {
       title: '完成',
@@ -508,6 +565,46 @@ export default function PeriodicMaintenanceDetailPage() {
       },
     },
   ]
+
+  // 母項目分組列：插在該母項目第一筆「可見」子項目之前；彙總數字取整批（未經篩選）
+  const parentGroupMap = new Map<string, PMParentGroup>(
+    (detail?.parent_groups ?? []).map((g) => [g.parent_no, g] as [string, PMParentGroup])
+  )
+  const tableRows: TableRow[] = []
+  const groupShown = new Set<string>()
+  for (const it of filteredItems) {
+    const pno = (it.parent_no ?? '').trim()
+    const g = pno ? parentGroupMap.get(pno) : undefined
+    if (g && !groupShown.has(pno)) {
+      groupShown.add(pno)
+      tableRows.push({ __group: true, ragic_id: `group:${pno}`, group: g })
+    }
+    tableRows.push(it)
+  }
+
+  const renderGroupRow = (g: PMParentGroup) => (
+    <Space size={12} wrap>
+      <Tag color="blue" style={{ fontWeight: 600, margin: 0 }}>項目(母) {g.parent_no}</Tag>
+      <Text>子項目完成 {g.done_count}/{g.child_count}</Text>
+      <Text>維修工時 Σ {fmtHours(g.total_repair_hours)}</Text>
+      {g.missing_hours_count > 0 && (
+        <Text type="warning">缺維修工時 {g.missing_hours_count} 筆（未計入）</Text>
+      )}
+      <Tag color={g.is_completed ? 'success' : 'default'} style={{ margin: 0 }}>
+        {g.is_completed ? '母項目已完成' : '母項目未完成'}
+      </Tag>
+    </Space>
+  )
+
+  // 分組列要橫跨整列：第一欄 colSpan = 全部欄數，其餘欄 colSpan = 0
+  const tableColumns: ColumnType<TableRow>[] = (columns as unknown as ColumnType<TableRow>[]).map((col, idx) => ({
+    ...col,
+    onCell: (r: TableRow) => (isGroupRow(r) ? { colSpan: idx === 0 ? columns.length : 0 } : {}),
+    render: (v: unknown, r: TableRow, i: number) => {
+      if (isGroupRow(r)) return idx === 0 ? renderGroupRow(r.group) : null
+      return col.render ? col.render(v, r, i) : (v as React.ReactNode)
+    },
+  }))
 
   // ── KPI Cards ─────────────────────────────────────────────────────────────
   const kpi = detail?.kpi
@@ -716,15 +813,15 @@ export default function PeriodicMaintenanceDetailPage() {
           })}
         </div>
 
-        <Table<PMItem>
+        <Table<TableRow>
           loading={loading}
-          dataSource={filteredItems}
+          dataSource={tableRows}
           rowKey="ragic_id"
-          columns={columns}
+          columns={tableColumns}
           size="small"
-          pagination={{ pageSize: 20, showTotal: (n) => `共 ${n} 筆` }}
+          pagination={{ pageSize: 20, showTotal: () => `共 ${filteredItems.length} 筆` }}
           onRow={(rec) => ({
-            style: { background: STATUS_CFG[rec.status]?.rowBg },
+            style: { background: isGroupRow(rec) ? '#e6f4ff' : STATUS_CFG[rec.status]?.rowBg },
           })}
         />
       </Card>

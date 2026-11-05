@@ -21,10 +21,11 @@ import { useAuthStore } from '@/stores/authStore'
 import FloorPlanMap, { type Ratio } from './FloorPlanMap'
 import CheckRowResult from './CheckRowResult'
 import {
-  createFloorMapPoint, deleteFloorMapPoint, fetchFloorMapMeta, fetchFloorMapMonth,
+  createFloorMapChildPoints, deleteFloorMapPoint, fetchFloorMapChildren, fetchFloorMapMeta, fetchFloorMapMonth,
   fetchFloorMapStatus, fetchFloorPlanImageUrl, fetchFloorPlans, setFloorMapSourceDisabled, updateFloorMapPoint,
   uploadFloorPlanImage,
-  type FloorMapChildDay, type FloorMapDayCell, type FloorMapModuleMeta, type FloorMapPoint, type FloorMapPointInput,
+  type FloorMapChildDay, type FloorMapChildOption, type FloorMapChildPointInput, type FloorMapDayCell,
+  type FloorMapModuleMeta, type FloorMapPoint, type FloorMapPointInput,
   type FloorMapStatusResponse, type FloorPlan,
 } from './api'
 import {
@@ -68,6 +69,8 @@ export default function FloorMapWorkspace({ module, defaultFloor }: FloorMapWork
   const [error,   setError]   = useState<string | null>(null)
   const [selId,   setSelId]   = useState<number | null>(null)
   const [selChildRef, setSelChildRef] = useState<string | null>(null)   // two_level：選中的子項
+  // two_level：每層樓各自的顯示範圍（全部／只母項／只子項），切換樓層時保留各層設定
+  const [viewByFloor, setViewByFloor] = useState<Record<string, 'all' | 'parent' | 'child'>>({})
 
   const [monthDays,    setMonthDays]    = useState<FloorMapDayCell[]>([])
   const [monthLoading, setMonthLoading] = useState(false)
@@ -78,8 +81,13 @@ export default function FloorMapWorkspace({ module, defaultFloor }: FloorMapWork
   // 從「未對應」清單放點時預填的資料來源（2026-11-04）
   const [prefill, setPrefill] = useState<{ source_ref: string; label: string } | null>(null)
   const [saving,  setSaving]  = useState(false)
+  // 新增點位時，點擊圖面的樓層（位置只對該層有效）
+  const [newAtFloor, setNewAtFloor] = useState<string>('')
+  const [addChildOptions, setAddChildOptions] = useState<FloorMapChildOption[]>([])
+  const [addChildLoading, setAddChildLoading] = useState(false)
   const [addForm]  = Form.useForm()
   const [editForm] = Form.useForm()
+  const addParent: string | undefined = Form.useWatch('source_ref', addForm)
 
   // ── 模組設定＋樓層登錄表；日期預設＝資料最後一天（§7.3）──────────────────────
   useEffect(() => {
@@ -168,18 +176,25 @@ export default function FloorMapWorkspace({ module, defaultFloor }: FloorMapWork
   useEffect(() => { load() }, [load])
 
   const twoLevel = !!meta?.two_level
+  const floorView = viewByFloor[floorKey] ?? 'all'
   const points = useMemo(
     // hidden：two_level 母項在該層子項全部停用 → 只在編輯模式顯示
-    () => (data?.points ?? []).filter((p) => (editing || !p.hidden) && (system === '全部' || p.system === system)),
-    [data, system, editing],
+    // two_level 且本層設為只母項／只子項時，只留該類點位（母項點位 child_ref 為空、子項點位有 child_ref）
+    () => (data?.points ?? []).filter((p) =>
+      (editing || !p.hidden) &&
+      (system === '全部' || p.system === system) &&
+      (!twoLevel || floorView === 'all' || (floorView === 'child') === !!p.child_ref)),
+    [data, system, editing, twoLevel, floorView],
   )
   const sel      = data?.points.find((p) => p.id === selId) ?? null
   const selGroup = sel ? data?.groups[sel.source_ref] : undefined
-  const selChild = twoLevel && selChildRef ? selGroup?.children?.find((c) => c.source_ref === selChildRef) : undefined
+  // 子項點位（child_ref）直接對應其子項；母項點位則依右側清單選取的子項
+  const effChildRef = twoLevel ? (sel?.child_ref || selChildRef) : null
+  const selChild = effChildRef ? selGroup?.children?.find((c) => c.source_ref === effChildRef) : undefined
   useEffect(() => { setSelChildRef(null) }, [selId])
 
   // ── 本月每日狀況（two_level：選中子項才查）─────────────────────────────────
-  const monthRef = twoLevel ? selChildRef : (sel?.source_ref ?? null)
+  const monthRef = twoLevel ? effChildRef : (sel?.source_ref ?? null)
   const monthKey = monthRef && date ? `${monthRef}|${date.format('YYYY-MM')}` : ''
   useEffect(() => {
     if (!monthRef || !date) { setMonthDays([]); return }
@@ -200,9 +215,23 @@ export default function FloorMapWorkspace({ module, defaultFloor }: FloorMapWork
     }
   }, [sel?.id, editing]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // 開新增視窗：樓層預設＝點擊時的樓層；從「未對應」放點時預填母項
   useEffect(() => {
-    if (newAt && prefill) addForm.setFieldsValue({ source_ref: prefill.source_ref, label: prefill.label })
+    if (!newAt) return
+    addForm.setFieldsValue({ floor_key: newAtFloor || floorKey, source_ref: prefill?.source_ref, child_refs: [] })
   }, [newAt]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 選了母項 → 載入其子項清單
+  useEffect(() => {
+    if (!addParent) { setAddChildOptions([]); return }
+    let alive = true
+    setAddChildLoading(true)
+    fetchFloorMapChildren(module, addParent)
+      .then((rows) => { if (alive) setAddChildOptions(rows) })
+      .catch(() => { if (alive) { setAddChildOptions([]); message.error('取得子項清單失敗') } })
+      .finally(() => { if (alive) setAddChildLoading(false) })
+    return () => { alive = false }
+  }, [module, addParent])
 
   const changeFloor = (k: string) => { setFloorKey(k); setSelId(null); setPlacing(false); setPrefill(null) }
 
@@ -229,16 +258,34 @@ export default function FloorMapWorkspace({ module, defaultFloor }: FloorMapWork
 
   const handleAdd = async () => {
     const v = await addForm.validateFields()
-    if (!newAt || !floorKey) return
+    if (!newAt) return
+    // 位置是在點擊的那層圖上取得；改選其他樓層時，放在圖中央並標為「待定位」
+    const sameFloor = v.floor_key === newAtFloor
+    const at = sameFloor ? newAt : { x: 0.5, y: 0.5 }
+    const body: FloorMapChildPointInput = {
+      ...at,
+      source_ref:     v.source_ref,
+      child_refs:     v.child_refs ?? [],
+      label:          v.label || null,
+      equipment_code: v.equipment_code || null,
+      placement:      sameFloor ? (v.placement || 'confirmed') : 'pending',
+      attrs:          Object.fromEntries((meta?.attr_fields ?? []).map((k) => [k, v.attrs?.[k] || null])),
+      note:           v.note || null,
+    }
     setSaving(true)
     try {
-      const p = await createFloorMapPoint(module, floorKey, { ...newAt, ...formToInput(v) })
-      message.success('已新增點位')
+      const pts = await createFloorMapChildPoints(module, v.floor_key, body)
+      message.success(`已新增 ${pts.length} 個子項點位`)
       setNewAt(null); setPlacing(false); setPrefill(null); addForm.resetFields()
-      await load()
-      setSelId(p.id)
-    } catch {
-      message.error('新增失敗')
+      if (v.floor_key !== floorKey) {
+        changeFloor(v.floor_key)          // 換層後由 effect 重新載入
+      } else {
+        await load()
+      }
+      setSelId(pts[0]?.id ?? null)
+    } catch (e: any) {
+      const detail = e?.response?.data?.detail
+      message.error(typeof detail === 'string' ? detail : '新增失敗')
     } finally {
       setSaving(false)
     }
@@ -297,6 +344,54 @@ export default function FloorMapWorkspace({ module, defaultFloor }: FloorMapWork
       <Form.Item name="label" label="顯示名稱" rules={[{ required: true, message: '請輸入名稱' }]}>
         <Input maxLength={100} />
       </Form.Item>
+      <Form.Item name="equipment_code" label="設備編號"><Input maxLength={50} /></Form.Item>
+      <Form.Item name="placement" label="位置狀態" initialValue="confirmed">
+        <Select options={(Object.keys(PLACEMENT_LABEL) as FloorMapPlacement[]).map((k) => ({ value: k, label: PLACEMENT_LABEL[k] }))} />
+      </Form.Item>
+      {(meta?.attr_fields ?? []).map((f) => (
+        <Form.Item key={f} name={['attrs', f]} label={f}><Input maxLength={200} /></Form.Item>
+      ))}
+      <Form.Item name="note" label="備註"><Input.TextArea maxLength={300} rows={2} /></Form.Item>
+    </>
+  )
+
+  // 子項點位：母項欄位固定（不可改），其餘同母項點位
+  const childPointFields = (
+    <>
+      <Form.Item name="label" label="顯示名稱" rules={[{ required: true, message: '請輸入名稱' }]}>
+        <Input maxLength={100} />
+      </Form.Item>
+      <Form.Item name="equipment_code" label="設備編號"><Input maxLength={50} /></Form.Item>
+      <Form.Item name="placement" label="位置狀態" initialValue="confirmed">
+        <Select options={(Object.keys(PLACEMENT_LABEL) as FloorMapPlacement[]).map((k) => ({ value: k, label: PLACEMENT_LABEL[k] }))} />
+      </Form.Item>
+      {(meta?.attr_fields ?? []).map((f) => (
+        <Form.Item key={f} name={['attrs', f]} label={f}><Input maxLength={200} /></Form.Item>
+      ))}
+      <Form.Item name="note" label="備註"><Input.TextArea maxLength={300} rows={2} /></Form.Item>
+    </>
+  )
+
+  // 新增子項點位：樓層＋母項＋多選子項（母項必選、子項必選）
+  const parentOptions = (meta?.groups ?? []).map((g) => ({
+    value: g.source_ref,
+    label: `${g.label}${g.shared_label ? `（${g.shared_label}）` : ''}`,
+  }))
+  const addFields = (
+    <>
+      <Form.Item name="floor_key" label="樓層" rules={[{ required: true, message: '請選擇樓層' }]}>
+        <Select options={floorOptions} />
+      </Form.Item>
+      <Form.Item name="source_ref" label="母項" rules={[{ required: true, message: '請選擇母項' }]}>
+        <Select placeholder="請選擇母項" showSearch optionFilterProp="label" options={parentOptions}
+                onChange={() => addForm.setFieldsValue({ child_refs: [] })} />
+      </Form.Item>
+      <Form.Item name="child_refs" label="子項（可多選）" rules={[{ required: true, message: '請選擇至少一個子項' }]}>
+        <Select mode="multiple" showSearch optionFilterProp="label" loading={addChildLoading}
+                placeholder={addParent ? '請選擇子項' : '請先選母項'} disabled={!addParent}
+                options={addChildOptions.map((c) => ({ value: c.source_ref, label: c.label }))} />
+      </Form.Item>
+      <Form.Item name="label" label="顯示名稱（只選一個子項時可填，留空＝子項名稱）"><Input maxLength={100} /></Form.Item>
       <Form.Item name="equipment_code" label="設備編號"><Input maxLength={50} /></Form.Item>
       <Form.Item name="placement" label="位置狀態" initialValue="confirmed">
         <Select options={(Object.keys(PLACEMENT_LABEL) as FloorMapPlacement[]).map((k) => ({ value: k, label: PLACEMENT_LABEL[k] }))} />
@@ -401,10 +496,32 @@ export default function FloorMapWorkspace({ module, defaultFloor }: FloorMapWork
             ))}
           </Space>
         }
-        extra={<Button size="small" type="text" onClick={() => setSelChildRef(null)}>返回母項</Button>}
+        extra={
+          <Button size="small" type="text" onClick={() => (sel?.child_ref ? setSelId(null) : setSelChildRef(null))}>
+            {sel?.child_ref ? '返回清單' : '返回母項'}
+          </Button>
+        }
       >
+        {editing && canEdit && sel?.child_ref && (
+          <Form form={editForm} layout="vertical" size="small" style={{ marginBottom: 8 }}>
+            {childPointFields}
+            <Space>
+              <Button type="primary" icon={<SaveOutlined />} loading={saving} onClick={handleSave}
+                      style={{ background: '#1B3A5C', borderColor: '#1B3A5C' }}>儲存</Button>
+              <Popconfirm title={`停用「${sel.label}」這個點位？`} description="停用後圖上不再顯示（不會刪除紀錄）"
+                          okText="停用" cancelText="取消" onConfirm={handleDelete}>
+                <Button danger icon={<StopOutlined />}>停用點位</Button>
+              </Popconfirm>
+            </Space>
+            <div style={{ marginTop: 6 }}>
+              <Text type="secondary" style={{ fontSize: 11 }}>
+                拖曳圖上的點即可移動（移動後視為已校正）。最後修改：{sel.updated_by} {sel.updated_at}
+              </Text>
+            </div>
+          </Form>
+        )}
         <Space wrap size={[4, 4]} style={{ marginBottom: 8 }}>
-          <Tag>{sel?.label}</Tag>
+          <Tag>{selGroup?.label ?? sel?.label}</Tag>
           {k.system && <Tag color="blue">{k.system}</Tag>}
           {k.frequency && <Tag>{k.frequency}</Tag>}
           {k.schedule_label && <Tag>排定 {k.schedule_label}</Tag>}
@@ -542,7 +659,9 @@ export default function FloorMapWorkspace({ module, defaultFloor }: FloorMapWork
                        style={{ cursor: 'pointer', display: 'flex', justifyContent: 'space-between',
                                 padding: '4px 6px', borderBottom: '1px solid #f0f0f0' }}>
                     <span>
+                      <Tag color={p.child_ref ? 'blue' : 'default'} style={{ marginRight: 6 }}>{p.child_ref ? '子項' : '母項'}</Tag>
                       <span style={{ color: st.color, marginRight: 6 }}>●</span>{p.label}
+                      {p.child_ref && <Text type="secondary" style={{ fontSize: 11, marginLeft: 4 }}>（{p.group_label}）</Text>}
                       {p.placement !== 'confirmed' && <Tag style={{ marginLeft: 6 }}>{p.placement === 'pending' ? '待定位' : '草稿'}</Tag>}
                       {p.hidden && <Tag style={{ marginLeft: 6 }}>子項全停用</Tag>}
                     </span>
@@ -666,6 +785,14 @@ export default function FloorMapWorkspace({ module, defaultFloor }: FloorMapWork
               </Tooltip>
             )}
           </Space>
+          {twoLevel && (
+            <Space>
+              <Text strong>本層顯示</Text>
+              <Segmented size="small" value={floorView}
+                         onChange={(v) => setViewByFloor((prev) => ({ ...prev, [floorKey]: v as 'all' | 'parent' | 'child' }))}
+                         options={[{ value: 'all', label: '全部' }, { value: 'parent', label: '母項' }, { value: 'child', label: '子項' }]} />
+            </Space>
+          )}
           {(meta?.systems.length ?? 0) > 0 && (
             <Space>
               <Text strong>系統</Text>
@@ -748,7 +875,7 @@ export default function FloorMapWorkspace({ module, defaultFloor }: FloorMapWork
       </Modal>
       {editing && (
         <Alert type="info" showIcon style={{ marginBottom: 12 }}
-               message="編輯模式：拖曳點位可移動；點選點位可在右側修改或停用；按「新增點位」後點圖上位置新增。" />
+               message="編輯模式：拖曳點位可移動；點選點位可在右側修改或停用；按「新增點位」後點圖上位置，再選母項與子項（可多選）。" />
       )}
 
       <Row gutter={12}>
@@ -764,7 +891,7 @@ export default function FloorMapWorkspace({ module, defaultFloor }: FloorMapWork
               placing={placing}
               onSelect={(p) => setSelId(p.id)}
               onMove={handleMove}
-              onPlace={(at) => setNewAt(at)}
+              onPlace={(at) => { setNewAt(at); setNewAtFloor(floorKey) }}
             />
           ) : (
             <Card style={{ height: 640 }}><Spin /></Card>
@@ -777,7 +904,7 @@ export default function FloorMapWorkspace({ module, defaultFloor }: FloorMapWork
 
       <Modal
         open={!!newAt}
-        title={`新增點位（${floor?.label ?? ''}）`}
+        title={`新增子項點位（${floor?.label ?? ''}）`}
         okText="新增"
         cancelText="取消"
         confirmLoading={saving}
@@ -785,7 +912,7 @@ export default function FloorMapWorkspace({ module, defaultFloor }: FloorMapWork
         onCancel={() => { setNewAt(null); setPrefill(null); setPlacing(false); addForm.resetFields() }}
         destroyOnClose
       >
-        <Form form={addForm} layout="vertical" size="small">{pointFields}</Form>
+        <Form form={addForm} layout="vertical" size="small">{addFields}</Form>
       </Modal>
     </div>
   )

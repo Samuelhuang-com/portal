@@ -393,6 +393,32 @@ def convert_child_points(conn, module: str, tag: str) -> dict[str, int]:
     return stat
 
 
+def restore_retired_child_points(conn, module: str, tag: str) -> dict[str, Any]:
+    """
+    2026-11-05 修復：convert_child_points 把子項點位設為停用（updated_by 含 fmappm2:retired）後，
+    新版地圖看不到子項。此函數把「對得到母項」的停用子項點位改回子項點位：
+    source_ref＝母項、child_ref＝原子項、is_active＝true；位置與顯示名稱不動。
+    對不到母項者維持停用並回報。改寫後 updated_by 不再符合條件，可重跑。
+    """
+    rows = conn.execute(sa.text(
+        f"SELECT id, source_ref FROM {TABLE} WHERE module = :m AND is_active = false "
+        f"AND child_ref IS NULL AND updated_by LIKE '%:fmappm2:retired' ORDER BY id"
+    ), {"m": module}).mappings().all()
+    restored, skipped = 0, []
+    now = twnow()
+    for r in rows:
+        parent = parent_of(module, r["source_ref"])
+        if not parent:
+            skipped.append(r["source_ref"])
+            continue
+        conn.execute(sa.text(
+            f"UPDATE {TABLE} SET source_ref = :p, child_ref = :c, is_active = true, "
+            f"updated_by = :t, updated_at = :n WHERE id = :id"
+        ), {"p": parent, "c": r["source_ref"], "t": f"{tag}:fmappm2:restored", "n": now, "id": r["id"]})
+        restored += 1
+    return {"restored": restored, "skipped": skipped}
+
+
 def ensure_pm_columns(conn) -> None:
     """
     開發環境（start-dev.bat 不跑 alembic）保底：補 Alembic fmappm2 的欄位與資料表（PostgreSQL，可重跑）。
@@ -412,3 +438,6 @@ def ensure_pm_columns(conn) -> None:
     conn.execute(sa.text(
         f"CREATE UNIQUE INDEX IF NOT EXISTS ux_floor_map_disabled_sources ON {DISABLED_TABLE} (module, source_ref)"
     ))
+    # 2026-11-05 fmapcc1：子項點位（child_ref）
+    if insp.has_table("floor_map_points"):
+        conn.execute(sa.text("ALTER TABLE floor_map_points ADD COLUMN IF NOT EXISTS child_ref VARCHAR(200)"))

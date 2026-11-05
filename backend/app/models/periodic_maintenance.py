@@ -92,6 +92,10 @@ class PeriodicMaintenanceItem(Base):
     # ── Sheet 11「維修工時」欄位（2026-07-14 新增，比照 mall_pm Sheet24 語意：小時，Float）──
     repair_hours = Column(Float, nullable=True, comment="維修工時（小時），來源 Sheet 11「維修工時」欄位")
 
+    # ── 母子項目（2026-11-05 新增，來源 Sheet 11「項目(母)」「項目(子)」；空白＝NULL）──
+    parent_no = Column(String(50), nullable=True, default=None, comment="項目(母)，來源 Sheet 11；同批次內相同者為同一母項目")
+    child_no  = Column(String(50), nullable=True, default=None, comment="項目(子)，來源 Sheet 11，如 20.9")
+
     # ── 附圖（2026-07-14 新增，來源 Ragic Sheet11「圖片上傳」欄位）───────────
     # 格式：JSON list，元素為 {"url": "...", "filename": "..."}（見 ragic_data_service.parse_images）
     images_json = Column(Text, nullable=True, default=None, comment="附圖 JSON，來源 Ragic Sheet11「圖片上傳」欄位")

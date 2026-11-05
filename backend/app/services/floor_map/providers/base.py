@@ -74,6 +74,10 @@ class FloorMapProvider:
                 out.setdefault(g["source_ref"], g)
         return out
 
+    def child_keys(self, db: Session, parent: str) -> list[str]:
+        """two_level 模組：母項底下的子項（預設無）"""
+        return []
+
     def has_source(self, source_ref: str, db: Session | None = None) -> bool:
         return source_ref in self.group_map(db)
 
