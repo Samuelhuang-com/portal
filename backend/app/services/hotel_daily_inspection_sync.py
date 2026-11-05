@@ -334,9 +334,17 @@ async def sync_sheet(sheet_key: str) -> dict:
 
 # ── 全部 Sheet 同步 ───────────────────────────────────────────────────────────
 
+# 2026-11-05：飯店每日巡檢 Sheet 來源設計中（main-project-inspection/17～21 已封存、Ragic 轉址），
+# 暫停同步以免每次都抓失敗。新 Sheet 連結確定後，更新 SHEET_CONFIGS 並改為 False。
+HDI_SYNC_PAUSED = True
+
+
 @register("hotel_daily_inspection")
 async def sync_all() -> dict:
-    """同步所有 5 張飯店每日巡檢 Sheet。"""
+    """同步所有 5 張飯店每日巡檢 Sheet（HDI_SYNC_PAUSED 時略過）。"""
+    if HDI_SYNC_PAUSED:
+        logger.info("[HDISync] 飯店每日巡檢同步已暫停（HDI_SYNC_PAUSED=True），略過")
+        return {"fetched": 0, "upserted": 0, "item_rows": 0, "errors": [], "paused": True}
     results = {}
     for sheet_key in SHEET_CONFIGS:
         results[sheet_key] = await sync_sheet(sheet_key)
