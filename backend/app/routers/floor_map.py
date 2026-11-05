@@ -10,6 +10,7 @@
   GET    /{module}/floors/{floor_key}/status?date= 點位＋當日狀態
   GET    /{module}/month?source_ref&year&month     本月每日狀況
   POST   /{module}/floors/{floor_key}/points       新增點位（編輯權限）
+  POST   /{module}/sources/disabled                子項停用／恢復（編輯權限；two_level 模組，2026-11-05）
   PATCH  /{module}/points/{point_id}               修改／移動（編輯權限）
   DELETE /{module}/points/{point_id}               停用（編輯權限，不硬刪）
 """
@@ -48,6 +49,11 @@ class PointCreate(BaseModel):
     placement:      str   = Field("confirmed", max_length=20)
     attrs:          Optional[dict[str, Optional[str]]] = None
     note:           Optional[str] = Field(None, max_length=300)
+
+
+class SourceDisabledIn(BaseModel):
+    source_ref: str  = Field(..., min_length=1, max_length=200)
+    disabled:   bool
 
 
 class PointUpdate(BaseModel):
@@ -191,7 +197,7 @@ def month_status(
 ):
     p = _provider(module)
     _require(user, db, p.view_permission)
-    if not p.has_source(source_ref, db):
+    if not (p.has_source(source_ref, db) or p.has_detail_source(source_ref, db)):
         raise HTTPException(status_code=422, detail=f"未知的資料來源：{source_ref}")
     return {"year": year, "month": month, "source_ref": source_ref,
             "days": p.month_status(db, source_ref, year, month)}
@@ -207,6 +213,17 @@ def create_point(
     _floor(p, floor_key)
     pt = _call(svc.create_point, db, p, floor_key, body.model_dump(), _who(user))
     return svc.point_out(pt, p, p.group_map(db))
+
+
+@router.post("/{module}/sources/disabled", summary="子項停用／恢復（two_level 模組）")
+def set_source_disabled(
+    module: str, body: SourceDisabledIn,
+    db: Session = Depends(get_db), user: User = Depends(get_current_user),
+):
+    p = _provider(module)
+    _require(user, db, p.edit_permission)
+    disabled = _call(svc.set_source_disabled, db, p, body.source_ref, body.disabled, _who(user))
+    return {"ok": True, "source_ref": body.source_ref, "disabled": disabled}
 
 
 @router.patch("/{module}/points/{point_id}", summary="修改／移動點位")

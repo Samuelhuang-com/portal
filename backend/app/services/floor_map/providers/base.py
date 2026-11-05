@@ -30,6 +30,9 @@ class FloorMapProvider:
     in_war_room:     ClassVar[bool] = True     # False＝不列入戰情 KPI 的巡檢點位（例行維護類模組）
     source_label:    ClassVar[str]  = "對應 Ragic 設備組"   # 新增／修改點位表單的「資料來源」欄位名稱
     empty_day_text:  ClassVar[str]  = "當日無巡檢紀錄"      # 選中點位、當日沒有資料時的提示
+    # 2026-11-05：True＝點位是「母項」，右側先列子項、點子項才看明細與每日狀況（例行維護類）；
+    # GroupDay 另帶 children／all_disabled，並支援子項停用（floor_map_disabled_sources）
+    two_level:       ClassVar[bool] = False
 
     # ── 必須實作 ─────────────────────────────────────────────────────────────
     def groups(self) -> list[dict[str, Any]]:
@@ -50,6 +53,14 @@ class FloorMapProvider:
     def dynamic_groups(self, db: Session) -> list[dict[str, Any]]:
         """除 groups() 寫死的對照表外，從資料本身取得的資料來源（GroupMeta）。預設沒有。"""
         return []
+
+    def day_status_floor(self, db: Session, insp_date: str, floor_key: str) -> dict[str, dict[str, Any]]:
+        """某一層的當日狀態（樓層影響判定時覆寫，例：母項只看該層子項）。預設＝day_status。"""
+        return self.day_status(db, insp_date)
+
+    def has_detail_source(self, source_ref: str, db: Session) -> bool:
+        """two_level 模組：source_ref 是否為子項（本月每日狀況、停用切換用）。預設否。"""
+        return False
 
     def unmapped(self, db: Session, insp_date: str, used_refs: set[str]) -> list[dict[str, Any]]:
         """insp_date 所在期間出現、但模組內沒有任何點位紀錄（含已停用）的資料來源（GroupMeta）。預設沒有。"""
@@ -77,6 +88,7 @@ class FloorMapProvider:
             "edit_permission": self.edit_permission,
             "source_label":    self.source_label,
             "empty_day_text":  self.empty_day_text,
+            "two_level":       self.two_level,
             "groups":          groups,
             "systems":         list(dict.fromkeys(g["system"] for g in groups if g["system"])),
         }

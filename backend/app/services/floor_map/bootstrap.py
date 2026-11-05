@@ -275,11 +275,19 @@ def ensure_floor_map_data(engine) -> dict[str, str]:
         # 2026-11-04 例行維護類（商場／全棟）：模組一筆點位都沒有時寫入待定位點位；
         # 與 Alembic fmappm1 共用 seed_pm_points。不套用 sync_point_list（它以「樓層＋名稱」比對，
         # 使用者在畫面上改名後會被重新種回來）。
-        from app.services.floor_map.pm_seed import PM_ITEMS, seed_pm_points
+        # 2026-11-05：改為母項點位（Alembic fmappm2）：先補欄位／子項停用表，再寫入或轉換
+        from app.services.floor_map.pm_seed import PM_ITEMS, convert_child_points, ensure_pm_columns, seed_pm_points
+        ensure_pm_columns(conn)
         for mod in PM_ITEMS:
             n = seed_pm_points(conn, mod, tag=f"startup:{mod}")
             if n:
-                result[mod] = f"寫入待定位 {n} 筆"
+                result[mod] = f"寫入待定位母項點位 {n} 筆"
+            st = convert_child_points(conn, mod, tag=f"startup:{mod}")
+            if st["parent_points"]:
+                result[f"{mod}:parent"] = (
+                    f"子項點位轉母項：母項點位 {st['parent_points']}、子項停用 {st['disabled_children']}、"
+                    f"原子項點位停用 {st['retired_child_points']} 筆"
+                )
         # 2026-10-05：套用最新點位清單（補缺、更新屬性；不動已校正的位置）
         for mod in _SEED:
             st = sync_point_list(conn, mod)

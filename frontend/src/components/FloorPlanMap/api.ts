@@ -32,6 +32,7 @@ export interface FloorMapModuleMeta {
   edit_permission: string
   source_label?:   string   // 點位表單「資料來源」欄位名稱（2026-11-04；未提供＝對應 Ragic 設備組）
   empty_day_text?: string   // 當日無資料時的提示（2026-11-04；未提供＝當日無巡檢紀錄）
+  two_level?:      boolean  // 2026-11-05：點位＝母項，右側先列子項（例行維護類）
   groups:          FloorMapGroupMeta[]
   systems:         string[]
   data_end:        string | null   // 資料最後一天 YYYY/MM/DD
@@ -55,6 +56,7 @@ export interface FloorMapPoint {
   updated_by:     string
   updated_at:     string
   status?:        FloorMapStatus
+  hidden?:        boolean   // two_level：該層子項全部停用 → 只在編輯模式顯示
 }
 
 export interface FloorMapBatch {
@@ -70,6 +72,25 @@ export interface FloorMapGroupDay extends FloorMapGroupMeta {
   status:         FloorMapStatus
   rows:           CheckRow[]
   batches:        FloorMapBatch[]
+  inspectors:     string[]
+  actual_minutes: number
+  children?:      FloorMapChildDay[]   // two_level：該層子項（含已停用）
+  all_disabled?:  boolean
+}
+
+/** two_level 模組的子項（2026-11-05） */
+export interface FloorMapChildDay {
+  source_ref:     string
+  label:          string
+  system:         string
+  frequency:      string
+  schedule_label: string     // 排定 11/23 或 11/23～11/27
+  in_batch:       boolean    // 本月批次是否有此項
+  disabled:       boolean    // 已停用：顯示但不計入母項狀態
+  status:         FloorMapStatus
+  rows:           CheckRow[]
+  batches:        FloorMapBatch[]
+  ragic_url:      string
   inspectors:     string[]
   actual_minutes: number
 }
@@ -153,6 +174,11 @@ export async function createFloorMapPoint(module: string, floorKey: string, body
 export async function updateFloorMapPoint(module: string, id: number, body: Partial<FloorMapPointInput>): Promise<FloorMapPoint> {
   const res = await apiClient.patch(`${BASE}/${module}/points/${id}`, body)
   return res.data
+}
+
+/** two_level 模組：子項停用／恢復（需編輯點位權限） */
+export async function setFloorMapSourceDisabled(module: string, sourceRef: string, disabled: boolean): Promise<void> {
+  await apiClient.post(`${BASE}/${module}/sources/disabled`, { source_ref: sourceRef, disabled })
 }
 
 export async function deleteFloorMapPoint(module: string, id: number): Promise<void> {

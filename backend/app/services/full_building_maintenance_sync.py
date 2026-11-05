@@ -26,6 +26,7 @@ from app.core.config import settings
 from app.core.database import SessionLocal
 from app.models.full_building_maintenance import FullBldgPMBatch, FullBldgPMItem, FullBldgPMItemWorklog
 from app.models.full_bldg_pm_schedule import FullBldgPMSchedule
+from app.services.floor_map.common import normalize_date
 from app.services.ragic_adapter import RagicAdapter
 from app.services.ragic_data_service import parse_images
 from app.services.sync_dispatcher import register
@@ -95,6 +96,8 @@ CK28L_IMAGES       = "圖片上傳"   # 2026-07-13 新增：只有 fetch_one() �
 CK28L_PARENT_NO    = "項目(母)"       # 2026-10-29 新增（業主 Ragic 實測）：母項目分組鍵
 CK28L_CHILD_NO     = "項目(子)"       # 2026-10-29 新增（業主 Ragic 實測）：子項目編號，如 20.1
 CK28L_PARENT_NAME  = "項目母項名稱"   # 2026-10-29 新增（業主 Ragic 實測）：母項目名稱
+# 2026-11-05 新增（樓層巡檢圖）：Ragic 端需在 Sheet28 加上此欄位（比照 Sheet35）；不存在時存 NULL
+CK28L_END_DATE     = "結束日期"
 
 # ── Sheet 28 每筆記錄底下巢狀子表格「維修記錄」欄位 key（僅 fetch_one 才有，實測驗證）──
 # Ragic 內部子表格 key 為 _subtable_<動態數字>（本帳號實測為 _subtable_1015852，
@@ -963,6 +966,7 @@ async def sync_items_from_sheet28() -> dict:
                 target.parent_no         = _stringify(raw.get(CK28L_PARENT_NO, "")) or None
                 target.child_no          = _stringify(raw.get(CK28L_CHILD_NO, "")) or None
                 target.parent_name       = _stringify(raw.get(CK28L_PARENT_NAME, "")) or None
+                target.schedule_end_date = normalize_date(_stringify(raw.get(CK28L_END_DATE, ""))) or None
                 target.images_json       = json.dumps(images, ensure_ascii=False)
                 target.synced_at         = now
 

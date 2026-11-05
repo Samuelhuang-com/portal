@@ -6,7 +6,8 @@ Create Date: 2026-11-04
 
 新增 TAB「樓層巡檢圖」到 /mall/periodic-maintenance 與 /mall/full-building-maintenance。
 點位清單來自 Samuel 提供的兩份 Excel（services/floor_map/pm_seed.py），全部「待定位」排在圖左上，
-上線後在畫面上拖曳定位。只在該模組一筆點位都沒有時寫入（與啟動步驟 _ensure_floor_map_data 共用
+上線後在畫面上拖曳定位。
+⚠️ 2026-11-05 起 seed_pm_points 寫入的是「母項點位」（見 fmappm2）；fmappm1 尚未執行的環境會直接得到母項點位。只在該模組一筆點位都沒有時寫入（與啟動步驟 _ensure_floor_map_data 共用
 seed_pm_points，兩邊可重跑、不會重複）。不改任何資料表結構。
 """
 from typing import Sequence, Union
@@ -38,6 +39,6 @@ def downgrade() -> None:
         bind.execute(sa.text(
             "DELETE FROM floor_map_points "
             "WHERE module IN ('mall_periodic_maintenance', 'mall_full_building_maintenance') "
-            "AND created_by IN ('migration:fmappm1', 'startup:mall_periodic_maintenance', "
-            "'startup:mall_full_building_maintenance') AND updated_by = created_by"
+            "AND (created_by LIKE 'migration:fmappm1%' OR created_by LIKE 'startup:mall_periodic_maintenance%' "
+            "OR created_by LIKE 'startup:mall_full_building_maintenance%') AND updated_by = created_by"
         ))

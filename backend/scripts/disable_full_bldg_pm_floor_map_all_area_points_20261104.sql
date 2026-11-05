@@ -1,20 +1,33 @@
 -- ============================================================================
--- 全棟例行維護「樓層巡檢圖」：停用 4 個「全區」保養項目的點位（2026-11-04 Samuel 指示）
+-- 全棟例行維護「樓層巡檢圖」：停用 4 個「全區」子項（2026-11-04 Samuel 指示；2026-11-05 改為子項停用）
 -- 頁面：/mall/full-building-maintenance → TAB「樓層巡檢圖」
--- 資料庫：PostgreSQL（正式區、測試區各執行一次；需先 alembic upgrade head 寫入點位）
+-- 資料庫：PostgreSQL（正式區、測試區各執行一次）
 --
--- 停用＝is_active = false（與畫面上「停用點位」相同，不硬刪，資料列保留）
--- 4 項 × 9 層（RF、4F～B4F）＝預期 36 點；停用後全棟例行維護剩 68 個啟用點位
--- 停用的項目不會列入「未對應」（有點位紀錄含已停用＝刻意不放在圖上）
--- 可重複執行：已停用的點不會再被計入
+-- ⚠️ 2026-11-05 改版：點位已改為「母項」，停用改為針對「子項」（floor_map_disabled_sources）。
+--    執行順序：先 alembic upgrade head（含 fmappm2），再執行本 script。
+--    若在 fmappm2 之前已執行過舊版 script（停用子項點位），fmappm2 會自動轉成子項停用，本 script 再跑也不會重複。
+--
+-- 效果：這些子項仍顯示在母項的子項清單（灰色、已停用），但不計入母項當日狀態；
+--       母項 19 客貨梯/扶梯保養、20 倉庫整理、盤點（含工具）、21 工務耗材庫存管理每月盤點出單 的子項全部停用 → 母項點位只在編輯模式顯示；
+--       不會出現在「未對應」。恢復可在畫面上（編輯點位 → 子項清單 → 恢復）或用檔尾還原語法。
+-- 預期：4 個子項
 -- ============================================================================
 
--- ── 1. 先確認（應為 4 項、36 點；尚未停用前 active_points 皆為 9）────────────
-SELECT source_ref,
-       COUNT(*)                                AS points,
-       COUNT(*) FILTER (WHERE is_active)       AS active_points,
-       STRING_AGG(floor_key, ',' ORDER BY floor_key) AS floors
-FROM floor_map_points
+-- ── 1. 停用（可重複執行：已停用的子項不會重複寫入）──────────────────────────
+BEGIN;
+
+INSERT INTO floor_map_disabled_sources (module, source_ref, disabled_by, disabled_at)
+VALUES
+    ('mall_full_building_maintenance', '商場扶梯x4', 'sql:20261105-停用子項', (now() AT TIME ZONE 'Asia/Taipei')),
+    ('mall_full_building_maintenance', '商場客.貨x4', 'sql:20261105-停用子項', (now() AT TIME ZONE 'Asia/Taipei')),
+    ('mall_full_building_maintenance', '倉庫整理、盤點（含工具）', 'sql:20261105-停用子項', (now() AT TIME ZONE 'Asia/Taipei')),
+    ('mall_full_building_maintenance', '工務耗材庫存管理每月盤點出單', 'sql:20261105-停用子項', (now() AT TIME ZONE 'Asia/Taipei'))
+ON CONFLICT (module, source_ref) DO NOTHING;
+-- 第一次執行預期：INSERT 0 4（fmappm2 已自動轉入者會少算，屬正常）
+
+-- ── 2. 驗證（應列出 4 筆）──────────────────────────────────────
+SELECT source_ref, disabled_by, disabled_at
+FROM floor_map_disabled_sources
 WHERE module = 'mall_full_building_maintenance'
   AND source_ref IN (
         '商場扶梯x4',
@@ -22,36 +35,16 @@ WHERE module = 'mall_full_building_maintenance'
         '倉庫整理、盤點（含工具）',
         '工務耗材庫存管理每月盤點出單'
       )
-GROUP BY source_ref
 ORDER BY source_ref;
-
--- ── 2. 停用 ───────────────────────────────────────────────────────────────────
-BEGIN;
-
-UPDATE floor_map_points
-SET is_active  = false,
-    updated_by = 'sql:20261104-停用全棟全區點位',
-    updated_at = (now() AT TIME ZONE 'Asia/Taipei')
-WHERE module = 'mall_full_building_maintenance'
-  AND is_active = true
-  AND source_ref IN (
-        '商場扶梯x4',
-        '商場客.貨x4',
-        '倉庫整理、盤點（含工具）',
-        '工務耗材庫存管理每月盤點出單'
-      );
--- 第一次執行預期顯示：UPDATE 36
--- 數字不對就執行 ROLLBACK; 不要 COMMIT
-
--- ── 3. 驗證（停用後：啟用點位應剩 68）──────────────────────────────────────────
-SELECT COUNT(*) FILTER (WHERE is_active)     AS active_points,
-       COUNT(*) FILTER (WHERE NOT is_active) AS disabled_points
-FROM floor_map_points
-WHERE module = 'mall_full_building_maintenance';
 
 COMMIT;
 
--- ── 還原（如需恢復這 36 點，只還原本 script 停用的）─────────────────────────────
--- UPDATE floor_map_points
--- SET is_active = true, updated_by = 'sql:20261104-還原全棟全區點位', updated_at = (now() AT TIME ZONE 'Asia/Taipei')
--- WHERE module = 'mall_full_building_maintenance' AND updated_by = 'sql:20261104-停用全棟全區點位';
+-- ── 還原（恢復這些子項）────────────────────────────────────────────────────────
+-- DELETE FROM floor_map_disabled_sources
+-- WHERE module = 'mall_full_building_maintenance'
+--   AND source_ref IN (
+--           '商場扶梯x4',
+--           '商場客.貨x4',
+--           '倉庫整理、盤點（含工具）',
+--           '工務耗材庫存管理每月盤點出單'
+--       );

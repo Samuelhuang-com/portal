@@ -2158,7 +2158,7 @@ export default function FullBuildingMaintenancePage() {
             // 2026-11-04 樓層巡檢圖（共用元件，CLAUDE.md §12／docs/DEV_SPEC_floor_plan_map.md；第一次點開才載入）
             {
               key:      'floor-map',
-              label:    <span><EnvironmentOutlined /> 樓層巡檢圖</span>,
+              label:    <span><EnvironmentOutlined /> 樓層維護圖</span>,
               children: floorMapOpened ? <FloorMapWorkspace module="mall_full_building_maintenance" /> : null,
             },
             {

@@ -73,6 +73,9 @@ class MallPeriodicMaintenanceItem(Base):
     sheet24_id     = Column(String(50), nullable=True, comment="Sheet 24 的 Ragic record ID，用於直接比對")
     parent_no      = Column(String(50), nullable=True, default=None, comment="項目(母)，來源 Sheet24；同批次內相同者為同一母項目；空白＝NULL")
     child_no       = Column(String(50), nullable=True, default=None, comment="項目(子)，來源 Sheet24，如 11.1；空白＝NULL")
+    # 2026-11-05 新增（Alembic fmappm2）：Ragic Sheet24 尚未有這兩個欄位時為 NULL，加上欄位並重新同步後才有值
+    parent_name       = Column(String(200), nullable=True, default=None, comment="項目母項名稱，來源 Sheet24「項目母項名稱」；空白＝NULL")
+    schedule_end_date = Column(String(10),  nullable=True, default=None, comment="排定結束日期 YYYY/MM/DD，來源 Sheet24「結束日期」；空白＝NULL")
 
     # ── 附圖（2026-07-13 新增，來源 Ragic Sheet24「圖片上傳」欄位）───────────
     # 格式：JSON list，元素為 {"url": "...", "filename": "..."}（見 ragic_data_service.parse_images）

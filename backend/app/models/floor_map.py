@@ -46,3 +46,24 @@ class FloorMapPoint(Base):
     __table_args__ = (
         Index("ix_floor_map_points_module_floor", "module", "floor_key", "is_active"),
     )
+
+
+class FloorMapDisabledSource(Base):
+    """
+    樓層巡檢圖 — 停用的「子項」資料來源（2026-11-05，例行維護類母項點位用；Alembic fmappm2）
+
+    點位以母項為單位後，「停用」改為針對子項：停用的子項仍顯示在母項的子項清單（灰色），
+    但不計入母項當日狀態；某層的子項全部停用時，該層母項點位只在編輯模式顯示。
+    一個子項停用即全部樓層停用。恢復＝刪除這一列（停用紀錄不另留歷史）。
+    """
+    __tablename__ = "floor_map_disabled_sources"
+
+    id          = Column(Integer, primary_key=True, autoincrement=True)
+    module      = Column(String(50),  nullable=False, comment="模組代碼＝Provider.module")
+    source_ref  = Column(String(200), nullable=False, comment="子項資料來源參照（保養項目名稱，同名加 #n）")
+    disabled_by = Column(String(100), nullable=True)
+    disabled_at = Column(DateTime,    nullable=False, default=twnow)
+
+    __table_args__ = (
+        Index("ux_floor_map_disabled_sources", "module", "source_ref", unique=True),
+    )

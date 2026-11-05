@@ -8,7 +8,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.core.time import twnow
-from app.models.floor_map import PLACEMENTS, FloorMapPoint
+from app.models.floor_map import PLACEMENTS, FloorMapDisabledSource, FloorMapPoint
 from app.services.floor_map.providers.base import FloorMapProvider
 
 
@@ -71,10 +71,13 @@ def floor_status(db: Session, provider: FloorMapProvider, floor_key: str, insp_d
     gmap = provider.group_map(db)
     points = [point_out(p, provider, gmap) for p in active_points(db, provider.module, floor_key)]
     used = {p["source_ref"] for p in points}
-    all_groups = provider.day_status(db, insp_date) if used else {}
+    all_groups = provider.day_status_floor(db, insp_date, floor_key) if used else {}
     groups = {k: v for k, v in all_groups.items() if k in used}
     for p in points:
-        p["status"] = groups.get(p["source_ref"], {}).get("status", "no_record")
+        g = groups.get(p["source_ref"], {})
+        p["status"] = g.get("status", "no_record")
+        # two_level：該層子項全部停用的母項點位，只在編輯模式顯示（前端依 hidden 判斷）
+        p["hidden"] = bool(g.get("all_disabled"))
     # 未對應（2026-11-04）：Provider 有實作才有內容；巡檢模組一律回空陣列。
     # 有點位紀錄（含已停用）就不算未對應。
     unmapped = provider.unmapped(db, insp_date, module_known_refs(db, provider.module))
@@ -137,6 +140,28 @@ def update_point(db: Session, provider: FloorMapProvider, p: FloorMapPoint,
     db.commit()
     db.refresh(p)
     return p
+
+
+def disabled_sources(db: Session, module: str) -> set[str]:
+    """停用的子項（two_level 模組）"""
+    return {r[0] for r in db.query(FloorMapDisabledSource.source_ref).filter(FloorMapDisabledSource.module == module).all()}
+
+
+def set_source_disabled(db: Session, provider: FloorMapProvider, source_ref: str, disabled: bool, who: str) -> bool:
+    """子項停用／恢復（一個子項停用＝全部樓層）。回傳變更後是否停用。"""
+    if not provider.two_level:
+        raise FloorMapError(f"{provider.label} 不支援子項停用")
+    if not provider.has_detail_source(source_ref, db):
+        raise FloorMapError(f"未知的子項：{source_ref}")
+    row = (db.query(FloorMapDisabledSource)
+           .filter(FloorMapDisabledSource.module == provider.module, FloorMapDisabledSource.source_ref == source_ref)
+           .first())
+    if disabled and row is None:
+        db.add(FloorMapDisabledSource(module=provider.module, source_ref=source_ref, disabled_by=who, disabled_at=twnow()))
+    elif not disabled and row is not None:
+        db.delete(row)
+    db.commit()
+    return disabled
 
 
 def deactivate_point(db: Session, p: FloorMapPoint, who: str) -> None:

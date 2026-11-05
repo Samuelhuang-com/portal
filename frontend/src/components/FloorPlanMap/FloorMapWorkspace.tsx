@@ -22,8 +22,9 @@ import FloorPlanMap, { type Ratio } from './FloorPlanMap'
 import CheckRowResult from './CheckRowResult'
 import {
   createFloorMapPoint, deleteFloorMapPoint, fetchFloorMapMeta, fetchFloorMapMonth,
-  fetchFloorMapStatus, fetchFloorPlanImageUrl, fetchFloorPlans, updateFloorMapPoint, uploadFloorPlanImage,
-  type FloorMapDayCell, type FloorMapModuleMeta, type FloorMapPoint, type FloorMapPointInput,
+  fetchFloorMapStatus, fetchFloorPlanImageUrl, fetchFloorPlans, setFloorMapSourceDisabled, updateFloorMapPoint,
+  uploadFloorPlanImage,
+  type FloorMapChildDay, type FloorMapDayCell, type FloorMapModuleMeta, type FloorMapPoint, type FloorMapPointInput,
   type FloorMapStatusResponse, type FloorPlan,
 } from './api'
 import {
@@ -66,6 +67,7 @@ export default function FloorMapWorkspace({ module, defaultFloor }: FloorMapWork
   const [data,    setData]    = useState<FloorMapStatusResponse | null>(null)
   const [error,   setError]   = useState<string | null>(null)
   const [selId,   setSelId]   = useState<number | null>(null)
+  const [selChildRef, setSelChildRef] = useState<string | null>(null)   // two_level：選中的子項
 
   const [monthDays,    setMonthDays]    = useState<FloorMapDayCell[]>([])
   const [monthLoading, setMonthLoading] = useState(false)
@@ -165,19 +167,24 @@ export default function FloorMapWorkspace({ module, defaultFloor }: FloorMapWork
 
   useEffect(() => { load() }, [load])
 
+  const twoLevel = !!meta?.two_level
   const points = useMemo(
-    () => (data?.points ?? []).filter((p) => system === '全部' || p.system === system),
-    [data, system],
+    // hidden：two_level 母項在該層子項全部停用 → 只在編輯模式顯示
+    () => (data?.points ?? []).filter((p) => (editing || !p.hidden) && (system === '全部' || p.system === system)),
+    [data, system, editing],
   )
   const sel      = data?.points.find((p) => p.id === selId) ?? null
   const selGroup = sel ? data?.groups[sel.source_ref] : undefined
+  const selChild = twoLevel && selChildRef ? selGroup?.children?.find((c) => c.source_ref === selChildRef) : undefined
+  useEffect(() => { setSelChildRef(null) }, [selId])
 
-  // ── 本月每日狀況 ──────────────────────────────────────────────────────────
-  const monthKey = sel && date ? `${sel.source_ref}|${date.format('YYYY-MM')}` : ''
+  // ── 本月每日狀況（two_level：選中子項才查）─────────────────────────────────
+  const monthRef = twoLevel ? selChildRef : (sel?.source_ref ?? null)
+  const monthKey = monthRef && date ? `${monthRef}|${date.format('YYYY-MM')}` : ''
   useEffect(() => {
-    if (!sel || !date) { setMonthDays([]); return }
+    if (!monthRef || !date) { setMonthDays([]); return }
     setMonthLoading(true)
-    fetchFloorMapMonth(module, sel.source_ref, date.year(), date.month() + 1)
+    fetchFloorMapMonth(module, monthRef, date.year(), date.month() + 1)
       .then(setMonthDays)
       .catch(() => setMonthDays([]))
       .finally(() => setMonthLoading(false))
@@ -333,6 +340,192 @@ export default function FloorMapWorkspace({ module, defaultFloor }: FloorMapWork
     </Card>
   )
 
+  // ── 本月每日狀況格（一般點位／two_level 的子項共用）────────────────────────────
+  const renderMonthGrid = () => (
+    <div style={{ marginTop: 14 }}>
+      <Text strong style={{ color: '#1B3A5C' }}>{date?.format('YYYY年M月')}每日狀況</Text>
+      <Text type="secondary" style={{ fontSize: 11, marginLeft: 6 }}>點格子切換日期</Text>
+      <Spin spinning={monthLoading}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(8, 1fr)', gap: 3, marginTop: 6 }}>
+          {monthDays.map((d) => {
+            const s  = FLOOR_MAP_STATUS[d.status]
+            const on = !!date && d.day === date.date()
+            return (
+              <Tooltip key={d.day} title={`${d.date}　${s.label}${d.abnormal_rows ? `（${d.abnormal_rows} 項）` : ''}`}>
+                <div onClick={() => date && setDate(date.date(d.day))}
+                     style={{
+                       cursor: 'pointer', height: 22, borderRadius: 3, fontSize: 11,
+                       display: 'flex', alignItems: 'center', justifyContent: 'center',
+                       background: s.color, color: '#fff',
+                       outline: on ? '2px solid #1B3A5C' : 'none', outlineOffset: 1,
+                     }}>
+                  {d.day}
+                </div>
+              </Tooltip>
+            )
+          })}
+        </div>
+      </Spin>
+    </div>
+  )
+
+  // ── two_level（例行維護類，2026-11-05）：母項 → 子項清單 → 子項明細＋每日狀況 ──────────
+  const handleToggleChild = async (k: FloorMapChildDay) => {
+    try {
+      await setFloorMapSourceDisabled(module, k.source_ref, !k.disabled)
+      message.success(k.disabled ? `已恢復「${k.label}」` : `已停用「${k.label}」`)
+      load()
+    } catch {
+      message.error('變更失敗')
+    }
+  }
+
+  const renderChild = (k: FloorMapChildDay) => {
+    const kst  = FLOOR_MAP_STATUS[k.status]
+    const note = k.rows.find((r) => r.abnormal_note)?.abnormal_note
+    const links = k.batches.length > 0
+      ? k.batches.map((b) => ({ key: b.ragic_id, url: b.ragic_url, hint: k.batches.length > 1 ? `（${b.start_hhmm}）` : '' }))
+      : (k.ragic_url ? [{ key: k.source_ref, url: k.ragic_url, hint: '' }] : [])
+    return (
+      <Card
+        size="small"
+        title={
+          <Space wrap size={4}>
+            <Tag color={kst.color}>{kst.label}</Tag>
+            <span>{k.label}</span>
+            {links.map((l) => (
+              <a key={l.key} href={l.url} target="_blank" rel="noreferrer"
+                 style={{ color: '#4BA8E8', fontSize: 12, fontWeight: 400 }}>
+                <LinkOutlined /> 在 Ragic 查看{l.hint}
+              </a>
+            ))}
+          </Space>
+        }
+        extra={<Button size="small" type="text" onClick={() => setSelChildRef(null)}>返回母項</Button>}
+      >
+        <Space wrap size={[4, 4]} style={{ marginBottom: 8 }}>
+          <Tag>{sel?.label}</Tag>
+          {k.system && <Tag color="blue">{k.system}</Tag>}
+          {k.frequency && <Tag>{k.frequency}</Tag>}
+          {k.schedule_label && <Tag>排定 {k.schedule_label}</Tag>}
+          {k.disabled && <Tag color="default">已停用（不計入母項狀態）</Tag>}
+          {!k.in_batch && <Tag color="default">本月批次無此項</Tag>}
+        </Space>
+        <Text type="secondary" style={{ fontSize: 12 }}>
+          {date?.format('YYYY/MM/DD')}
+          {k.inspectors.length ? `　${k.inspectors.join('、')}` : ''}
+          {k.actual_minutes ? `　實際 ${k.actual_minutes} 分` : ''}
+        </Text>
+        <div style={{ marginTop: 6 }}>
+          {k.rows.length > 0 ? (
+            k.rows.map((r, i) => (
+              <div key={i} style={{ padding: '5px 0', borderBottom: '1px solid #f0f0f0' }}>
+                <div style={{ fontSize: 12, marginBottom: 2 }}>{r.check_content}</div>
+                <CheckRowResult row={r} />
+              </div>
+            ))
+          ) : (
+            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={meta?.empty_day_text ?? '當日無巡檢紀錄'} />
+          )}
+          {note && <Alert type="error" style={{ marginTop: 8, whiteSpace: 'pre-wrap' }} message={`異常說明：${note}`} />}
+        </div>
+        {renderMonthGrid()}
+      </Card>
+    )
+  }
+
+  const renderParent = () => {
+    if (!sel) return null
+    const st   = FLOOR_MAP_STATUS[sel.status ?? 'no_record']
+    const kids = selGroup?.children ?? []
+    return (
+      <Card
+        size="small"
+        title={
+          <Space wrap size={4}>
+            <Tag color={st.color}>{st.label}</Tag>
+            <span>{sel.label}</span>
+            {sel.hidden && <Tag>子項全停用</Tag>}
+          </Space>
+        }
+        extra={<Button size="small" type="text" onClick={() => setSelId(null)}>返回清單</Button>}
+      >
+        <Space wrap size={[4, 4]} style={{ marginBottom: 8 }}>
+          {sel.system && <Tag color="blue">{sel.system}</Tag>}
+          {Object.entries(sel.attrs).map(([k, v]) => <Tag key={k}>{k}：{v}</Tag>)}
+        </Space>
+
+        {sel.placement !== 'confirmed' && (
+          <Alert type={sel.placement === 'pending' ? 'warning' : 'info'} showIcon style={{ marginBottom: 8, fontSize: 12 }}
+                 message={sel.note || PLACEMENT_LABEL[sel.placement]} />
+        )}
+
+        {editing && canEdit && (
+          <Form form={editForm} layout="vertical" size="small">
+            {pointFields}
+            <Space>
+              <Button type="primary" icon={<SaveOutlined />} loading={saving} onClick={handleSave}
+                      style={{ background: '#1B3A5C', borderColor: '#1B3A5C' }}>儲存</Button>
+              <Popconfirm title={`停用「${sel.label}」這個點位？`} description="停用後圖上不再顯示（不會刪除紀錄）"
+                          okText="停用" cancelText="取消" onConfirm={handleDelete}>
+                <Button danger icon={<StopOutlined />}>停用點位</Button>
+              </Popconfirm>
+            </Space>
+            <div style={{ marginTop: 6, marginBottom: 8 }}>
+              <Text type="secondary" style={{ fontSize: 11 }}>
+                拖曳圖上的點即可移動（移動後視為已校正）。最後修改：{sel.updated_by} {sel.updated_at}
+              </Text>
+            </div>
+          </Form>
+        )}
+
+        <div>
+          <Text strong style={{ color: '#1B3A5C' }}>{floor?.label} 子項（{kids.length}）</Text>
+          <Text type="secondary" style={{ fontSize: 11, marginLeft: 6 }}>
+            {date?.format('YYYY/MM/DD')}　點子項看明細與每日狀況
+          </Text>
+        </div>
+        {kids.length === 0 ? (
+          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="這個母項沒有子項" />
+        ) : (
+          <Space direction="vertical" style={{ width: '100%', marginTop: 4 }} size={2}>
+            {kids.map((k) => {
+              const kst = FLOOR_MAP_STATUS[k.status]
+              return (
+                <div key={k.source_ref} onClick={() => setSelChildRef(k.source_ref)}
+                     style={{ cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                              gap: 6, padding: '4px 6px', borderBottom: '1px solid #f0f0f0', opacity: k.disabled ? 0.55 : 1 }}>
+                  <span style={{ fontSize: 12 }}>
+                    <span style={{ color: k.disabled ? '#bfbfbf' : kst.color, marginRight: 6 }}>●</span>
+                    {k.label}
+                    {k.disabled && <Tag style={{ marginLeft: 6 }}>已停用</Tag>}
+                    {k.schedule_label && <Text type="secondary" style={{ fontSize: 11, marginLeft: 6 }}>排定 {k.schedule_label}</Text>}
+                  </span>
+                  <Space size={4}>
+                    {!k.disabled && <Text style={{ color: kst.color, fontSize: 12 }}>{kst.label}</Text>}
+                    {editing && canEdit && (
+                      k.disabled ? (
+                        <Button size="small" onClick={(ev) => { ev.stopPropagation(); handleToggleChild(k) }}>恢復</Button>
+                      ) : (
+                        <Popconfirm title={`停用子項「${k.label}」？`}
+                                    description="所有樓層都停用；仍顯示在清單，但不計入母項狀態"
+                                    okText="停用" cancelText="取消"
+                                    onConfirm={(ev) => { ev?.stopPropagation(); handleToggleChild(k) }}
+                                    onCancel={(ev) => ev?.stopPropagation()}>
+                          <Button size="small" danger onClick={(ev) => ev.stopPropagation()}>停用</Button>
+                        </Popconfirm>
+                      )
+                    )}
+                  </Space>
+                </div>
+              )
+            })}
+          </Space>
+        )}
+      </Card>
+    )
+  }
+
   const renderSide = () => {
     if (!sel) {
       return (
@@ -351,6 +544,7 @@ export default function FloorMapWorkspace({ module, defaultFloor }: FloorMapWork
                     <span>
                       <span style={{ color: st.color, marginRight: 6 }}>●</span>{p.label}
                       {p.placement !== 'confirmed' && <Tag style={{ marginLeft: 6 }}>{p.placement === 'pending' ? '待定位' : '草稿'}</Tag>}
+                      {p.hidden && <Tag style={{ marginLeft: 6 }}>子項全停用</Tag>}
                     </span>
                     <Text style={{ color: st.color }}>{st.label}</Text>
                   </div>
@@ -363,6 +557,8 @@ export default function FloorMapWorkspace({ module, defaultFloor }: FloorMapWork
         </>
       )
     }
+
+    if (twoLevel) return selChild ? renderChild(selChild) : renderParent()
 
     const st = FLOOR_MAP_STATUS[sel.status ?? 'no_record']
     const note = selGroup?.rows.find((r) => r.abnormal_note)?.abnormal_note
@@ -438,31 +634,7 @@ export default function FloorMapWorkspace({ module, defaultFloor }: FloorMapWork
           </>
         )}
 
-        <div style={{ marginTop: 14 }}>
-          <Text strong style={{ color: '#1B3A5C' }}>{date?.format('YYYY年M月')}每日狀況</Text>
-          <Text type="secondary" style={{ fontSize: 11, marginLeft: 6 }}>點格子切換日期</Text>
-          <Spin spinning={monthLoading}>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(8, 1fr)', gap: 3, marginTop: 6 }}>
-              {monthDays.map((d) => {
-                const s  = FLOOR_MAP_STATUS[d.status]
-                const on = !!date && d.day === date.date()
-                return (
-                  <Tooltip key={d.day} title={`${d.date}　${s.label}${d.abnormal_rows ? `（${d.abnormal_rows} 項）` : ''}`}>
-                    <div onClick={() => date && setDate(date.date(d.day))}
-                         style={{
-                           cursor: 'pointer', height: 22, borderRadius: 3, fontSize: 11,
-                           display: 'flex', alignItems: 'center', justifyContent: 'center',
-                           background: s.color, color: '#fff',
-                           outline: on ? '2px solid #1B3A5C' : 'none', outlineOffset: 1,
-                         }}>
-                      {d.day}
-                    </div>
-                  </Tooltip>
-                )
-              })}
-            </div>
-          </Spin>
-        </div>
+        {renderMonthGrid()}
       </Card>
     )
   }

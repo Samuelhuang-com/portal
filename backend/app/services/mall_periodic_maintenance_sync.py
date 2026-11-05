@@ -28,6 +28,7 @@ from app.models.mall_periodic_maintenance import (
     MallPeriodicMaintenanceBatch, MallPeriodicMaintenanceItem, MallPMItemWorklog,
 )
 from app.models.mall_pm_schedule import MallPMSchedule
+from app.services.floor_map.common import normalize_date
 from app.services.ragic_adapter import RagicAdapter
 from app.services.ragic_data_service import parse_images
 from app.services.sync_dispatcher import register
@@ -99,6 +100,10 @@ CK24L_REPAIR_HOURS = "維修工時"
 CK24L_IMAGES       = "圖片上傳"   # 2026-07-13 新增：只有 fetch_one() 全量結果才有實際檔名清單
 CK24L_PARENT_NO    = "項目(母)"   # 2026-10-28 新增：母項目分組鍵（同批次內相同者為同一組）
 CK24L_CHILD_NO     = "項目(子)"   # 2026-10-28 新增：子項目編號，如 11.1
+# 2026-11-05 新增（樓層巡檢圖母項點位）：Ragic 端需在 Sheet24 加上這兩個欄位（比照 Sheet28／Sheet35），
+# 欄位不存在時 raw.get 回空字串 → 存 NULL，不影響既有同步。
+CK24L_PARENT_NAME  = "項目母項名稱"
+CK24L_END_DATE     = "結束日期"
 
 # ── Sheet 24 每筆記錄底下巢狀子表格「維修記錄」欄位 key（僅 fetch_one 才有，實測驗證）──
 # Ragic 內部子表格 key 為 _subtable_<動態數字>（本帳號實測為 _subtable_1015821，
@@ -942,6 +947,8 @@ async def sync_items_from_sheet24() -> dict:
                 target.sheet24_id        = item_id
                 target.parent_no         = _stringify(raw.get(CK24L_PARENT_NO, "")) or None
                 target.child_no          = _stringify(raw.get(CK24L_CHILD_NO, "")) or None
+                target.parent_name       = _stringify(raw.get(CK24L_PARENT_NAME, "")) or None
+                target.schedule_end_date = normalize_date(_stringify(raw.get(CK24L_END_DATE, ""))) or None
                 target.images_json       = json.dumps(images, ensure_ascii=False)
                 target.synced_at         = now
 

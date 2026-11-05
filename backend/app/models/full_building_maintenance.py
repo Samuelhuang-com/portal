@@ -77,6 +77,8 @@ class FullBldgPMItem(Base):
     parent_no    = Column(String(50),  nullable=True, default=None, comment="項目(母)，來源 Sheet28；同批次內相同者為同一母項目；空白＝NULL")
     child_no     = Column(String(50),  nullable=True, default=None, comment="項目(子)，來源 Sheet28，如 20.1；空白＝NULL")
     parent_name  = Column(String(200), nullable=True, default=None, comment="項目母項名稱，來源 Sheet28；空白＝NULL")
+    # 2026-11-05 新增（Alembic fmappm2）：Ragic Sheet28 尚未有此欄位時為 NULL
+    schedule_end_date = Column(String(10), nullable=True, default=None, comment="排定結束日期 YYYY/MM/DD，來源 Sheet28「結束日期」；空白＝NULL")
 
     # ── 附圖（2026-07-13 新增，來源 Ragic Sheet 28「圖片上傳」欄位）───────────
     # 格式：JSON list，元素為 {"url": "...", "filename": "..."}（見 ragic_data_service.parse_images）
