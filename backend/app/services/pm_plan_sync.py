@@ -2,9 +2,10 @@
 週期保養預排同步服務：Ragic → SQLite
 
 資料來源（主管排定 Sheets）：
-  Sheet 7  → periodic-maintenance/7  （飯店週期保養主管排定）
-  Sheet 13 → periodic-maintenance/13 （商場週期保養主管排定）
-  Sheet 20 → periodic-maintenance/20 （全棟例行維護主管排定）
+  Sheet 36 → periodic-maintenance/36 （飯店週期保養主管排定）
+  Sheet 35 → periodic-maintenance/35 （商場週期保養日誌主管排定）
+  Sheet 33 → periodic-maintenance/33 （全棟週期保養日誌主管排定）
+  （2026-11-05 由舊編號 7／13／20 改為上列新編號）
 
 這三個 Sheet 的欄位結構與執行端 Sheet（/8、/18、/21）相同，
 差異在於「排定日期」欄位由主管填入完整計畫日期，用於行事曆預排顯示。
@@ -34,18 +35,18 @@ _ACCOUNT  = "soutlet001"
 
 SHEET_CONFIGS = [
     {
-        "sheet_no":    7,
-        "path":        getattr(settings, "RAGIC_PM_PLAN_HOTEL_PATH",   "periodic-maintenance/7"),
+        "sheet_no":    36,
+        "path":        getattr(settings, "RAGIC_PM_PLAN_HOTEL_PATH",   "periodic-maintenance/36"),
         "label":       "飯店",
     },
     {
-        "sheet_no":    13,
-        "path":        getattr(settings, "RAGIC_PM_PLAN_MALL_PATH",    "periodic-maintenance/13"),
+        "sheet_no":    35,
+        "path":        getattr(settings, "RAGIC_PM_PLAN_MALL_PATH",    "periodic-maintenance/35"),
         "label":       "商場",
     },
     {
-        "sheet_no":    20,
-        "path":        getattr(settings, "RAGIC_PM_PLAN_FULL_PATH",    "periodic-maintenance/20"),
+        "sheet_no":    33,
+        "path":        getattr(settings, "RAGIC_PM_PLAN_FULL_PATH",    "periodic-maintenance/33"),
         "label":       "全棟",
     },
 ]
@@ -322,7 +323,7 @@ async def _sync_one_sheet(db, cfg: dict, stats: dict) -> None:
 @register("週期保養預排")
 async def sync_from_ragic() -> dict:
     """
-    同步三個主管排定 Sheet（/7、/13、/20）的預排資料到本地 SQLite。
+    同步三個主管排定 Sheet（/36、/35、/33）的預排資料到本地 SQLite。
 
     Returns:
         {"upserted": N, "errors": N}
@@ -331,6 +332,14 @@ async def sync_from_ragic() -> dict:
 
     db = SessionLocal()
     try:
+        # 清除已不在設定中的舊 Sheet 殘留（舊編號 7／13／20 已於 2026-11-05 改為 36／35／33），
+        # 否則 source_sheet 不會再被全量替換而永久留在 DB。
+        active_sheets = [c["sheet_no"] for c in SHEET_CONFIGS]
+        purged = (db.query(PmPlanItem)
+                    .filter(PmPlanItem.source_sheet.notin_(active_sheets))
+                    .delete(synchronize_session=False))
+        if purged:
+            logger.info("pm_plan_sync: 清除已停用 Sheet 殘留 %d 筆", purged)
         for cfg in SHEET_CONFIGS:
             await _sync_one_sheet(db, cfg, stats)
     except Exception as exc:

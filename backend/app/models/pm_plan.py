@@ -2,9 +2,9 @@
 週期保養預排 SQLAlchemy ORM Model
 
 資料來源（主管排定 Sheets）：
-  Sheet 7  → https://ap12.ragic.com/soutlet001/periodic-maintenance/7  （飯店週期保養主管排定）
-  Sheet 13 → https://ap12.ragic.com/soutlet001/periodic-maintenance/13 （商場週期保養主管排定）
-  Sheet 20 → https://ap12.ragic.com/soutlet001/periodic-maintenance/20 （全棟例行維護主管排定）
+  Sheet 36 → https://ap12.ragic.com/soutlet001/periodic-maintenance/36 （飯店週期保養主管排定）
+  Sheet 35 → https://ap12.ragic.com/soutlet001/periodic-maintenance/35 （商場週期保養日誌主管排定）
+  Sheet 33 → https://ap12.ragic.com/soutlet001/periodic-maintenance/33 （全棟週期保養日誌主管排定）
 
 資料表：
   pm_plan_item — 週期保養預排項目（三個 Sheet 共用，source_sheet 欄位區分來源）
@@ -27,7 +27,7 @@ class PmPlanItem(Base):
 
     # ── 來源識別 ──────────────────────────────────────────────────────────────
     source_sheet = Column(Integer, nullable=False, default=0,
-                          comment="來源 Sheet 編號: 7=飯店、13=商場、20=全棟")
+                          comment="來源 Sheet 編號: 36=飯店、35=商場、33=全棟")
     source_label = Column(String(50), nullable=False, default="",
                           comment="來源中文標籤: 飯店/商場/全棟")
 
