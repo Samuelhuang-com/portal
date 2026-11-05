@@ -1,7 +1,7 @@
 """
 樓層巡檢圖 Provider — 整棟巡檢（full_building_inspection）
 
-資料：rf／b4f／b2f／b1f_inspection_batch／item（Ragic full-building-inspection/1,2,3,4，每層一張 Sheet）
+資料：rf／b4f／b2f／b1f／b1b4_inspection_batch／item（Ragic full-building-inspection/5～12，見 inspection_sources.py）
 版型：#2.3整棟-每日巡檢表.xlsx（services/full_building_inspection_template.py，65 列）
 source_ref：'{樓層 tab}|{設備組}'，例 'b4f|下水塔'
 
@@ -33,7 +33,7 @@ from app.models.b4f_inspection import B4FInspectionBatch, B4FInspectionItem
 from app.models.rf_inspection import RFInspectionBatch, RFInspectionItem
 from app.models.b1b4_inspection import B1B4InspectionBatch, B1B4InspectionItem
 from app.services.floor_map.common import batch_out, hhmm, merge_group_status
-from app.services.inspection_sources import path_for_batch_id, numeric_id
+from app.services.inspection_sources import path_for_batch_id, numeric_id, record_url
 from app.services.floor_map.providers.base import FloorMapProvider
 from app.services.full_building_inspection_template import (
     FULL_BUILDING_DAILY_INSPECTION_TEMPLATE, CONTENT_ALIASES,
@@ -42,10 +42,10 @@ from app.services.inspection_field_rules import is_equipment_field
 
 # tab → (Batch model, Item model, Ragic sheet path, 樓層文字)
 SHEETS: dict[str, tuple[Any, Any, str, str]] = {
-    "rf":  (RFInspectionBatch,  RFInspectionItem,  "full-building-inspection/1", "RF"),
-    "b4f": (B4FInspectionBatch, B4FInspectionItem, "full-building-inspection/2", "B4F"),
-    "b2f": (B2FInspectionBatch, B2FInspectionItem, "full-building-inspection/3", "B2F"),
-    "b1f": (B1FInspectionBatch, B1FInspectionItem, "full-building-inspection/4", "B1F"),
+    "rf":  (RFInspectionBatch,  RFInspectionItem,  "full-building-inspection/5", "RF"),
+    "b4f": (B4FInspectionBatch, B4FInspectionItem, "full-building-inspection/9", "B4F"),
+    "b2f": (B2FInspectionBatch, B2FInspectionItem, "full-building-inspection/7", "B2F"),
+    "b1f": (B1FInspectionBatch, B1FInspectionItem, "full-building-inspection/6", "B1F"),
     # B1~B4：新樓層（獨立表）；項目依 Ragic 實際欄位動態產生，見 _contents_for
     "b1b4": (B1B4InspectionBatch, B1B4InspectionItem, "full-building-inspection/8", "B1~B4"),
 }
@@ -189,6 +189,8 @@ class FullBuildingInspectionProvider(FloorMapProvider):
                     st, text = FullBuildingInspectionProvider._combine(present)
                     results.append({
                         "batch_ragic_id": b.ragic_id,
+                        # 每筆結果直接連到所屬的那張 Sheet（以場次 sheet_key 查登錄檔）
+                        "ragic_url":      record_url(path_for_batch_id(b.ragic_id) or SHEETS[tab][2], numeric_id(b.ragic_id)),
                         "time_label":     hhmm(b.start_time or "") if multi else "",
                         "status":         st,
                         "text":           text,

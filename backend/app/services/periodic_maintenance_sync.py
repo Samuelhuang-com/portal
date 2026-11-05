@@ -150,6 +150,8 @@ def _to_float(val: Any) -> float | None:
 
 
 _JOURNAL_MONTH_RE = re.compile(r"(\d{4})(\d{2})-\d+$")
+# 2026-11-05 新取號格式：「2026/11*英週保-003」（月份為 YYYY/MM，後接 *）
+_JOURNAL_MONTH_SLASH_RE = re.compile(r"^(\d{4})/(\d{2})\*")
 
 
 def _period_month_from_journal_no(journal_no: str) -> str:
@@ -161,13 +163,26 @@ def _period_month_from_journal_no(journal_no: str) -> str:
     """
     if not journal_no:
         return ""
-    m = _JOURNAL_MONTH_RE.search(journal_no.strip())
+    text = journal_no.strip()
+    # 舊格式：英週保202607-001 → 2026/07（保留）
+    m = _JOURNAL_MONTH_RE.search(text)
+    # 新格式：2026/11*英週保-003 → 2026/11
+    if not m:
+        m = _JOURNAL_MONTH_SLASH_RE.search(text)
     if not m:
         return ""
     yyyy, mm = m.group(1), m.group(2)
     if not (1 <= int(mm) <= 12):
         return ""
     return f"{yyyy}/{mm}"
+
+
+def _batch_id_from_journal_no(journal_no: str) -> str:
+    """
+    批次識別碼（ragic_id）。路由 /batches/{batch_id} 無法處理斜線，
+    新格式「2026/11*英週保-003」去除「/」→「2026-11*英週保-003」；舊格式不變。
+    """
+    return journal_no.replace("/", "-")
 
 
 def _parse_exec_months(raw: str) -> list[int]:
@@ -727,7 +742,15 @@ async def sync_from_sheet11() -> dict:
 
         for journal_no in journal_groups:
             period_month = _period_month_from_journal_no(journal_no)
+            new_id = _batch_id_from_journal_no(journal_no)
             batch_ragic_id = journal_to_batch.get(journal_no)
+            if batch_ragic_id and batch_ragic_id != new_id:
+                # 先前版本以含「/」的編號當 ID，無法被路由處理 → 刪除舊列，改以新 ID 重建
+                legacy = db.get(PeriodicMaintenanceBatch, batch_ragic_id)
+                if legacy:
+                    db.delete(legacy)
+                    db.flush()
+                batch_ragic_id = None
             if batch_ragic_id:
                 existing_batch = db.get(PeriodicMaintenanceBatch, batch_ragic_id)
                 if existing_batch:
@@ -735,7 +758,7 @@ async def sync_from_sheet11() -> dict:
                         existing_batch.period_month = period_month
                     existing_batch.synced_at = now
             else:
-                batch_ragic_id = journal_no  # 沒有獨立 Ragic 記錄，直接用「編號」當識別碼
+                batch_ragic_id = new_id  # 沒有獨立 Ragic 記錄，以「編號」（去除「/」）當識別碼
                 db.add(PeriodicMaintenanceBatch(
                     ragic_id=batch_ragic_id,
                     journal_no=journal_no,

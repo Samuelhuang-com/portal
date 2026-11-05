@@ -6,6 +6,7 @@
  * 另補 status = measure（整棟巡檢的量測／程度型欄位，例水位高中低）以中性色顯示、不當異常。
  */
 import { Space, Tag, Tooltip, Typography } from 'antd'
+import { LinkOutlined } from '@ant-design/icons'
 
 const { Text } = Typography
 
@@ -30,6 +31,7 @@ export interface CheckRowReading {
 
 export interface CheckRowBatchResult {
   batch_ragic_id: string
+  ragic_url?:     string      // 該場次所屬 Sheet 的 Ragic 連結（整棟巡檢）
   time_label:     string      // 同日多場次時為開始時間 HH:MM
   status:         string      // normal / abnormal / pending / unchecked / measure / reading
   text:           string
@@ -137,6 +139,12 @@ export default function CheckRowResult({ row }: { row: CheckRow }) {
         <div key={r.batch_ragic_id} style={{ fontSize: 12, lineHeight: '20px' }}>
           {r.time_label && <Text type="secondary" style={{ fontSize: 11, marginRight: 4 }}>{r.time_label}</Text>}
           {row.kind === 'reading' ? <ReadingResult row={row} r={r} /> : <StatusResult row={row} r={r} />}
+          {r.ragic_url && (
+            <a href={r.ragic_url} target="_blank" rel="noreferrer" title="在 Ragic 查看（所屬 Sheet）"
+               style={{ marginLeft: 6, color: '#4BA8E8' }}>
+              <LinkOutlined />
+            </a>
+          )}
         </div>
       ))}
     </Space>

@@ -156,11 +156,14 @@ _MALL_FI_PATHS: dict[str, str] = {
     "1f":      "mall-facility-inspection/5",
     "b1f-b4f": "mall-facility-inspection/7",
 }
+# 樓層備用路徑（2026-11-05 改為新 Sheet；僅 sheet_key 查無時使用，B4F 有四張 Sheet，
+# 此處取 b4f_9，實際路徑一律以場次 sheet_key 查 inspection_sources.SOURCES 為準）
 _FULL_BI_PATHS: dict[str, str] = {
-    "b1f": "full-building-inspection/4",
-    "b2f": "full-building-inspection/3",
-    "b4f": "full-building-inspection/2",
-    "rf":  "full-building-inspection/1",
+    "rf":   "full-building-inspection/5",
+    "b1f":  "full-building-inspection/6",
+    "b2f":  "full-building-inspection/7",
+    "b4f":  "full-building-inspection/9",
+    "b1b4": "full-building-inspection/8",
 }
 # 多 Sheet：場次所屬 Sheet（sheet_key）→ Ragic 路徑；樓層路徑僅作 fallback
 from app.services.inspection_sources import SOURCES as _INSP_SOURCES  # noqa: E402
