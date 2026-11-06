@@ -14,7 +14,7 @@ import { CaretRightOutlined, LeftOutlined, PauseOutlined, ReloadOutlined, RightO
 import dayjs, { type Dayjs } from 'dayjs'
 
 import {
-  fetchWarRoomFloors, fetchWarRoomHotelPlan,
+  fetchWarRoomFloors, fetchWarRoomFloorImageUrl, fetchWarRoomHotelPlan,
   type WrFloor, type WrFloors, type WrPersonStop, type WrPoint, type WrRepair,
 } from '@/api/warRoom'
 import type { HotelFloorPlan } from '@/api/staffPath'
@@ -484,9 +484,29 @@ function FloorPlan2D({ floor, plan, people, onRoom, onPoint }: {
   onPoint: (p: WrPoint) => void
 }) {
   const guest = floor.kind === 'guest' && !!plan
-  const W = guest ? plan!.width : 1000, H = guest ? plan!.height : 620
-  // 客房層：裁到房間範圍，房號才看得清楚
-  let vb = `0 0 ${W} ${H}`
+  // 非客房層：有樓層底圖就疊上去（同樓層維護圖的 webp）；點位為原圖比例，依底圖旋轉換算（2026-11-06）
+  const bgMeta = !guest ? floor.plan : null
+  const hasBg = !!bgMeta
+  const rotDeg = bgMeta?.rotation ?? 0
+  const [bg, setBg] = useState<string | null>(null)
+  useEffect(() => {
+    if (!hasBg) { setBg(null); return }
+    let alive = true, url: string | null = null
+    fetchWarRoomFloorImageUrl(floor.key, rotDeg)
+      .then(u => { url = u; if (alive) setBg(u); else URL.revokeObjectURL(u) })
+      .catch(() => { if (alive) setBg(null) })
+    return () => { alive = false; if (url) URL.revokeObjectURL(url) }
+  }, [floor.key, hasBg, rotDeg])
+  const W0 = bgMeta?.width ?? 1000, H0 = bgMeta?.height ?? 620
+  const rad = ((((rotDeg % 360) + 360) % 360) * Math.PI) / 180
+  const cosR = Math.cos(rad), sinR = Math.sin(rad)
+  const BW = Math.abs(W0 * cosR) + Math.abs(H0 * sinR)
+  const BH = Math.abs(W0 * sinR) + Math.abs(H0 * cosR)
+  const toDisp = (px: number, py: number): [number, number] => {
+    const dx = px * W0 - W0 / 2, dy = py * H0 - H0 / 2
+    return [dx * cosR + dy * sinR + BW / 2, -dx * sinR + dy * cosR + BH / 2]
+  }
+  let vb = `0 0 ${BW} ${BH}`
   if (guest) {
     const xs = plan!.units.flatMap(u => u.poly.map(p => p[0])), ys = plan!.units.flatMap(u => u.poly.map(p => p[1]))
     const x0 = Math.min(...xs) - 10, y0 = Math.min(...ys) - 30
@@ -496,7 +516,7 @@ function FloorPlan2D({ floor, plan, people, onRoom, onPoint }: {
   const roomSet = new Set(floor.rooms), visited = new Set(floor.rooms_visited)
   const reps = new Map<string, number>(), long = new Set<string>()
   floor.repairs.forEach(r => { if (r.room) { reps.set(r.room, (reps.get(r.room) ?? 0) + 1); if ((r.wait_days ?? 0) > 7) long.add(r.room) } })
-  if (!guest && floor.points.length === 0) return null
+  if (!guest && floor.points.length === 0 && !bg) return null
   return (
     <svg viewBox={vb} style={{ width: '100%', height: 'auto', display: 'block', background: 'rgba(255,255,255,0.03)', borderRadius: 6, marginBottom: 4 }}>
       {guest && plan ? (
@@ -525,12 +545,21 @@ function FloorPlan2D({ floor, plan, people, onRoom, onPoint }: {
           })}
         </>
       ) : (
-        floor.points.map(p => (
-          <g key={p.id} style={{ cursor: 'pointer' }} onClick={() => onPoint(p)}>
-            <title>{`${p.label}（${p.module_label}）`}</title>
-            <circle cx={p.x * W} cy={p.y * H} r={14} fill={POINT_COL[p.status] ?? POINT_COL.no_record} stroke="#0b1220" strokeWidth={2} />
-          </g>
-        ))
+        <>
+          {bg && <rect x={0} y={0} width={BW} height={BH} fill="#16263d" rx={6} />}
+          {bg && <image href={bg} x={0} y={0} width={BW} height={BH} preserveAspectRatio="none"
+                        style={{ filter: 'invert(1) hue-rotate(180deg) brightness(0.9)' }} opacity={0.85} />}
+          {floor.points.map(p => {
+            const [cx, cy] = toDisp(p.x, p.y)
+            return (
+              <g key={p.id} style={{ cursor: 'pointer' }} onClick={() => onPoint(p)}>
+                <title>{`${p.label}（${p.module_label}）`}</title>
+                <circle cx={cx} cy={cy} r={BW * 0.014} fill={POINT_COL[p.status] ?? POINT_COL.no_record}
+                        stroke="#0b1220" strokeWidth={BW * 0.002} />
+              </g>
+            )
+          })}
+        </>
       )}
     </svg>
   )

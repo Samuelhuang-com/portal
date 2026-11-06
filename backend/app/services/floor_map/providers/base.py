@@ -27,7 +27,7 @@ class FloorMapProvider:
     default_floor:   ClassVar[str]
     attr_fields:     ClassVar[list[str]] = []  # 點位自訂屬性欄位（表單與 Tag 用），例：['機房位置', '供應區域']
     # ── 以下為 2026-11-04 新增的可選設定（預設值＝既有巡檢模組的行為，不必覆寫）─────────
-    in_war_room:     ClassVar[bool] = True     # False＝不列入戰情 KPI 的巡檢點位（例行維護類模組）
+    in_war_room:     ClassVar[bool] = True     # False＝不列入戰情 KPI 的巡檢點位
     source_label:    ClassVar[str]  = "對應 Ragic 設備組"   # 新增／修改點位表單的「資料來源」欄位名稱
     empty_day_text:  ClassVar[str]  = "當日無巡檢紀錄"      # 選中點位、當日沒有資料時的提示
     # 2026-11-05：True＝點位是「母項」，右側先列子項、點子項才看明細與每日狀況（例行維護類）；

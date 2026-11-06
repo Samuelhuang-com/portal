@@ -46,7 +46,10 @@ LEVEL_LABEL = {"critical": "嚴重", "warning": "警告", "info": "資訊"}
 LEVEL_ORDER = {"critical": 0, "warning": 1, "info": 2}
 VENUE_LABEL = {"hotel": "飯店", "mall": "商場", "both": "整棟"}
 # 巡檢模組 → 館別。整棟巡檢涵蓋兩館 → both（寄給兩館收件人聯集）
-MODULE_VENUE = {"mall_facility_inspection": "mall", "full_building_inspection": "both"}
+MODULE_VENUE = {
+    "mall_facility_inspection": "mall", "full_building_inspection": "both",
+    "mall_periodic_maintenance": "mall", "mall_full_building_maintenance": "both",   # 例行維護（2026-11-06）
+}
 
 DEFAULTS: dict[str, Any] = {
     "enabled": {"A1": True, "A2": True, "A3": True, "A4": True, "A5": True},

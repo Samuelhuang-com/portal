@@ -13,6 +13,7 @@
  *   4. 人員動態          與 exec-work-dashboard 同一個元件（StaffPathTab），兩邊功能完全相同；
  *                        另受 STAFF_PATH_ALLOWED_EMAILS 白名單限制
  *   5. 房間／設備履歷    輸入房號或選設備，看報修、IHG 保養、巡檢紀錄
+ *   6. 人員工作日誌      人員×日期（MM/DD）全月／區間工作，可篩人員（2026-11-06 新增，口徑同工作日誌 TAB）
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AutoComplete, Button, Card, Col, ConfigProvider, Result, Row, Select, Space, Spin, Tabs, Tag, Typography } from 'antd'
@@ -26,6 +27,7 @@ import FloorBoard from './FloorBoard'
 import FloorIso from './FloorIso'
 import AlertsTab from './AlertsTab'
 import OverviewTab from './OverviewTab'
+import PersonJournalTab from './PersonJournalTab'
 import { AssetHistoryPanel, RepairDrawer, type AssetTarget } from './AssetHistory'
 import type { WrRepair } from '@/api/warRoom'
 
@@ -157,6 +159,7 @@ export default function WarRoomPage() {
               { key: 'iso', label: '3D 樓層', children: <FloorIso getContainer={getContainer} /> },
               { key: 'alerts', label: '告警', children: <AlertsTab getContainer={getContainer} /> },
               ...(staffAllowed ? [{ key: 'staff', label: '人員動態', children: <StaffPathTab /> }] : []),
+              { key: 'person-journal', label: '人員工作日誌', children: <PersonJournalTab /> },
               { key: 'history', label: '房間／設備履歷', children: <HistoryTab getContainer={getContainer} /> },
             ]}
           />

@@ -219,7 +219,7 @@ class ApprovedPurchaseRequestItem(Base):
                               comment="產品名稱（品名）—月報表品名欄")
     qty             = Column(String(30),   nullable=True,
                               comment="數量（保留原始字串格式，如 10、10.5）")
-    unit            = Column(String(20),   nullable=True,
+    unit            = Column(String(100),  nullable=True,
                               comment="單位（件/尺/式/小時等）")
     item_remark     = Column(Text,         nullable=True,
                               comment="品項備註")

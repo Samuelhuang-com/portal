@@ -36,6 +36,7 @@ from datetime import date as _date, datetime, timedelta
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -49,11 +50,12 @@ from app.models.luqun_repair import LuqunRepairCase
 from app.models.floor_map import FloorMapPoint
 from app.models.ihg_room_maintenance import IHGRoomMaintenanceMaster, IHGRoomMaintenanceDetail
 from app.routers.ihg_room_maintenance import CANONICAL_ROOM_SET, _calc_record_status
-from app.routers.work_journal import _ragic_url, _SOURCE_PATH
+from app.routers.work_journal import _ragic_url, _SOURCE_PATH, _build_daily
 from app.routers.work_journal_path import get_staff_path_day
 from app.services import dazhi_repair_service as dazhi_svc
 from app.services import luqun_repair_service as luqun_svc
 from app.services.floor_map.providers import PROVIDERS, get_provider
+from app.services.floor_map.registry import FLOOR_MAP, floor_image_path
 from app.services.staff_path.locator import (
     FLOOR_INDEX, building_floors, load_hotel_plan, parse_floors, parse_rooms, room_floor,
 )
@@ -172,10 +174,27 @@ def _point_out(p: FloorMapPoint, group: dict, day: dict) -> dict[str, Any]:
     }
 
 
+# 戰情樓層順序：building_floors()（人員動線共用）不含 B1~B4；整棟巡檢 b1b4 點位在戰情內補一層（2026-11-06）
+_WR_EXTRA_FLOORS = [{"key": "b1b4", "label": "B1~B4", "kind": "none", "rooms": []}]
+_WR_FLOOR_INDEX = {**FLOOR_INDEX, "b1b4": FLOOR_INDEX.get("b4f", 0) + 0.5}
+
+
+def _war_floors() -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for f in building_floors():
+        out.append(f)
+        if f["key"] == "b4f":
+            out += [dict(x) for x in _WR_EXTRA_FLOORS]
+    return out
+
+
 def _all_points(db: Session, insp_date: Optional[str]) -> list[dict[str, Any]]:
+    """戰情點位（只含 in_war_room 模組）。
+    two_level（例行維護）模組：母項狀態依點位所在樓層計算（day_status_floor）；
+    母項底下子項全部停用（all_disabled）→ 不上圖。（2026-11-06）"""
     out: list[dict[str, Any]] = []
     for module, provider in PROVIDERS.items():
-        if not provider.in_war_room:   # 例行維護類模組不列入戰情 KPI 巡檢點位（2026-11-04）
+        if not provider.in_war_room:   # 不列入戰情 KPI 的模組略過
             continue
         pts = (
             db.query(FloorMapPoint)
@@ -185,15 +204,27 @@ def _all_points(db: Session, insp_date: Optional[str]) -> list[dict[str, Any]]:
         )
         if not pts:
             continue
-        day: dict = {}
-        if insp_date:
-            try:
-                day = provider.day_status(db, insp_date)
-            except Exception:
-                db.rollback()
-                day = {}
         gmap = provider.group_map()
-        out += [_point_out(p, gmap.get(p.source_ref, {}), day) for p in pts]
+        cache: dict[Optional[str], dict] = {}
+
+        def day_for(floor_key: str) -> dict:
+            key = floor_key if provider.two_level else None
+            if key not in cache:
+                cache[key] = {}
+                if insp_date:
+                    try:
+                        cache[key] = (provider.day_status_floor(db, insp_date, floor_key)
+                                      if key else provider.day_status(db, insp_date))
+                    except Exception:
+                        db.rollback()
+                        cache[key] = {}
+            return cache[key]
+
+        for p in pts:
+            day = day_for(p.floor_key)
+            if (day.get(p.source_ref) or {}).get("all_disabled"):
+                continue
+            out.append(_point_out(p, gmap.get(p.source_ref, {}), day))
     return out
 
 
@@ -205,7 +236,7 @@ def get_floors(
     db: Session = Depends(get_db),
 ):
     base = _parse_date(date)
-    floors = building_floors()
+    floors = _war_floors()
     keys = [f["key"] for f in floors]
     board: dict[str, dict[str, Any]] = {
         k: {"people": {}, "stops": 0, "work_min": 0, "rooms": set(), "points": [], "repairs": []}
@@ -259,6 +290,7 @@ def get_floors(
             "point_status": cnt,
             "repairs": b["repairs"],
             "repairs_count": len(b["repairs"]),
+            "plan": _plan_meta(f["key"]),
         })
 
     all_pts = [p for f in out_floors for p in f["points"]]
@@ -283,6 +315,76 @@ def get_floors(
 
 
 # ── 設備（巡檢點位）履歷 ──────────────────────────────────────────────────────
+def _plan_meta(floor_key: str) -> Optional[dict[str, Any]]:
+    """樓層底圖尺寸與旋轉（Dashboard 疊底圖與點位換算用）；沒有底圖檔則為 None（2026-11-06）"""
+    f = FLOOR_MAP.get(floor_key)
+    if not f or not floor_image_path(floor_key).is_file():
+        return None
+    return {"width": f["width"], "height": f["height"], "rotation": float(f.get("rotation") or 0)}
+
+
+@router.get("/floor-image/{floor_key}", summary="戰情 KPI — 樓層底圖（rotate＝顯示旋轉角度）",
+            dependencies=[Depends(require_war_room)])
+def get_floor_image(floor_key: str, rotate: float = Query(0, ge=-360, le=360)):
+    if floor_key not in FLOOR_MAP:
+        raise HTTPException(status_code=404, detail=f"未知的樓層：{floor_key}")
+    path = floor_image_path(floor_key)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail=f"找不到底圖檔：{path.name}")
+    deg = round(float(rotate) % 360, 2)
+    headers = {"Cache-Control": "private, no-cache"}
+    if deg == 0:
+        return FileResponse(path, media_type="image/webp", headers=headers)
+    import io
+    from PIL import Image
+    resample = getattr(Image, "Resampling", Image).BICUBIC
+    with Image.open(path) as im:
+        out = im.convert("RGBA").rotate(deg, resample=resample, expand=True)
+        buf = io.BytesIO()
+        out.save(buf, format="WEBP", quality=90)
+    return Response(content=buf.getvalue(), media_type="image/webp", headers=headers)
+
+
+@router.get("/person-journal", summary="戰情 KPI — 人員工作日誌（人員×日期，具名人員，區間最多 31 天）",
+            dependencies=[Depends(require_war_room)])
+def get_person_journal(
+    date_from: str = Query(..., description="YYYY-MM-DD"),
+    date_to: str = Query(..., description="YYYY-MM-DD"),
+    db: Session = Depends(get_db),
+):
+    """與 exec-work-dashboard「工作日誌」TAB 同口徑：_build_daily，person_scope=named（具名人員）、venue=all。"""
+    start, end = _parse_date(date_from), _parse_date(date_to)
+    if end < start:
+        start, end = end, start
+    if (end - start).days > 30:
+        raise HTTPException(status_code=422, detail="區間最多 31 天")
+    days = [start + timedelta(days=i) for i in range((end - start).days + 1)]
+    persons: dict[str, dict[str, Any]] = {}
+    with_data: set[str] = set()
+    for d in days:
+        key = d.isoformat()
+        daily = _build_daily(db, d.year, d.month, d.day, person_scope="named", venue="all")
+        for pd in daily["persons"]:
+            name = pd["person"]
+            if name == "未指定":
+                continue
+            ent = persons.setdefault(name, {"person": name, "total_min": 0, "cells": {}})
+            for r in pd["rows"]:
+                ent["total_min"] += r.get("work_min") or 0
+                ent["cells"].setdefault(key, []).append(r)
+                with_data.add(key)
+    today = twnow().date()
+    data_end = max(with_data) if with_data else min(end, today).isoformat()
+    return {
+        "date_from": start.isoformat(),
+        "date_to": end.isoformat(),
+        "data_end": data_end,
+        "days": [{"date": d.isoformat(), "weekday": "一二三四五六日"[d.weekday()]} for d in days],
+        "persons": sorted(persons.values(), key=lambda x: (-x["total_min"], x["person"])),
+        "generated_at": twnow().strftime("%Y-%m-%d %H:%M"),
+    }
+
+
 @router.get("/hotel-floor-plan", summary="戰情 KPI — 客房標準層向量平面圖（3D 樓層用）",
             dependencies=[Depends(require_war_room)])
 def get_hotel_floor_plan():
@@ -294,7 +396,7 @@ def get_hotel_floor_plan():
             dependencies=[Depends(require_war_room)])
 def list_points(db: Session = Depends(get_db)):
     pts = _all_points(db, None)
-    pts.sort(key=lambda p: (FLOOR_INDEX.get(p["floor_key"], 99), p["module"], p["label"]))
+    pts.sort(key=lambda p: (_WR_FLOOR_INDEX.get(p["floor_key"], 99), p["module"], p["label"]))
     rooms = [r for f in building_floors() for r in f.get("rooms", [])]
     return {"points": pts, "rooms": rooms}
 
@@ -313,7 +415,8 @@ def get_point(
     if not provider:
         raise HTTPException(status_code=404, detail=f"未知的模組：{p.module}")
     base = _parse_date(date)
-    day = provider.day_status(db, base.strftime("%Y/%m/%d"))
+    dstr = base.strftime("%Y/%m/%d")
+    day = provider.day_status_floor(db, dstr, p.floor_key) if provider.two_level else provider.day_status(db, dstr)
     g = day.get(p.source_ref) or {}
     month = provider.month_status(db, p.source_ref, base.year, base.month)
     info = _point_out(p, provider.group_map().get(p.source_ref, {}), day)

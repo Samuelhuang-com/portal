@@ -20,7 +20,7 @@
   - 有「結束日期」者，排定日～結束日每一天都列入（2026-11-05；Ragic 欄位加上並同步後生效）。
   - 當天沒有涵蓋的項目＝no_record；任一項異常旗標＝abnormal；任一項未完成（開始＋結束時間未齊）＝unchecked；其餘＝normal。
 未對應：所選月份批次中，模組內沒有任何點位紀錄（含已停用）的母項；子項全部停用的母項不列入。
-不列入戰情 KPI（in_war_room = False）。
+列入戰情 KPI（in_war_room = True，2026-11-06 裁示）。
 """
 from __future__ import annotations
 
@@ -74,7 +74,7 @@ class PeriodicMaintenanceFloorMapProvider(FloorMapProvider):
     batch_model:    ClassVar[Any]
     item_model:     ClassVar[Any]
     attr_fields     = ["位置說明"]
-    in_war_room     = False
+    in_war_room     = True
     two_level       = True
     source_label    = "對應保養母項"
     empty_day_text  = "當日無排定保養項目"

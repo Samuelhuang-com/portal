@@ -249,7 +249,7 @@ class ApprovedClaimRequestItem(Base):
                               comment="產品名稱（品項/服務/工程項目）")
     quantity        = Column(String(30),   nullable=True,
                               comment="數量（保留原始字串格式）")
-    unit            = Column(String(20),   nullable=True,
+    unit            = Column(String(100),  nullable=True,
                               comment="單位（式/個/月等）")
     item_note       = Column(Text,         nullable=True,
                               comment="品項備註（憑證號碼/付款月份等）")

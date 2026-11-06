@@ -70,6 +70,7 @@ export interface WrFloor {
   point_status:  Record<PointStatus, number>
   repairs:       WrRepair[]
   repairs_count: number
+  plan:          { width: number; height: number; rotation: number } | null
 }
 
 export interface WrFloors {
@@ -293,4 +294,35 @@ export interface WrOverview {
 
 export async function fetchWarRoomOverview(date: string): Promise<WrOverview> {
   return (await apiClient.get<WrOverview>('/war-room/overview', { params: { date } })).data
+}
+
+/** 樓層底圖（需登入；blob → object URL，呼叫端負責 revoke）。rotate＝顯示旋轉角度 */
+export async function fetchWarRoomFloorImageUrl(floorKey: string, rotate = 0): Promise<string> {
+  const res = await apiClient.get(`/war-room/floor-image/${floorKey}`, {
+    responseType: 'blob',
+    params: rotate ? { rotate } : undefined,
+  })
+  return URL.createObjectURL(res.data as Blob)
+}
+
+/** 人員工作日誌（人員×日期）：cells 的 key 為 YYYY-MM-DD，值為工作日誌列（JournalRow） */
+export interface WrPersonJournal {
+  person:    string
+  total_min: number
+  cells:     Record<string, JournalRow[]>
+}
+
+export interface WrPersonJournalResp {
+  date_from:    string
+  date_to:      string
+  data_end:     string
+  days:         { date: string; weekday: string }[]
+  persons:      WrPersonJournal[]
+  generated_at: string
+}
+
+export async function fetchWarRoomPersonJournal(dateFrom: string, dateTo: string): Promise<WrPersonJournalResp> {
+  return (await apiClient.get<WrPersonJournalResp>('/war-room/person-journal', {
+    params: { date_from: dateFrom, date_to: dateTo },
+  })).data
 }
