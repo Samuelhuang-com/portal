@@ -13,7 +13,7 @@ from datetime import datetime
 from typing import Any
 
 from app.services.floor_map.floor_image_convert import convert_to_webp
-from app.services.floor_map.registry import FLOOR_MAP, FLOOR_PLAN_DIR, OVERRIDE_FILE, floor_image_path
+from app.services.floor_map.registry import FLOOR_MAP, FLOOR_PLAN_DIR, OVERRIDE_FILE, ROTATION_FILE, floor_image_path
 
 MAX_BYTES = 40 * 1024 * 1024
 
@@ -58,3 +58,17 @@ def replace_floor_image(
         "key": floor_key, "width": result.width, "height": result.height, "version": version,
         "source_format": result.source_format, "page": result.page, "page_count": result.page_count,
     }
+
+
+def set_floor_rotation(floor_key: str, degrees: float) -> float:
+    """底圖顯示旋轉角度（逆時針、度）。全站共用；只存角度，不動點位座標。"""
+    deg = round(float(degrees) % 360, 2)
+    try:
+        data = json.loads(ROTATION_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        data = {}
+    data[floor_key] = deg
+    FLOOR_PLAN_DIR.mkdir(parents=True, exist_ok=True)
+    ROTATION_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    FLOOR_MAP[floor_key]["rotation"] = deg
+    return deg

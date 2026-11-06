@@ -65,15 +65,36 @@ export interface FloorPlanMapProps {
 export default function FloorPlanMap({
   floor, imageUrl, noImage = false, points, selectedId, editing, placing, height = 640, onSelect, onMove, onPlace,
 }: FloorPlanMapProps) {
-  const W = floor.width
-  const H = floor.height
+  // 底圖旋轉（逆時針，度）：點位座標仍是「原圖」比例，只在畫面上換算位置，資料不動
+  const W0 = floor.width
+  const H0 = floor.height
+  const rot = (((floor.rotation ?? 0) % 360) + 360) % 360
+  const rad = (rot * Math.PI) / 180
+  const cos = Math.cos(rad)
+  const sin = Math.sin(rad)
+  const W = Math.abs(W0 * cos) + Math.abs(H0 * sin)   // 旋轉後畫布寬
+  const H = Math.abs(W0 * sin) + Math.abs(H0 * cos)   // 旋轉後畫布高
   const bounds = useMemo<L.LatLngBoundsExpression>(() => [[0, 0], [H, W]], [H, W])
 
-  const toLatLng = (p: Ratio): L.LatLngExpression => [(1 - p.y) * H, p.x * W]
-  const toRatio  = (ll: L.LatLng): Ratio => ({
-    x: Math.min(1, Math.max(0, ll.lng / W)),
-    y: Math.min(1, Math.max(0, 1 - ll.lat / H)),
-  })
+  // 原圖比例座標 → 畫布座標（以圖心為軸，逆時針旋轉）
+  const toLatLng = (p: Ratio): L.LatLngExpression => {
+    const dx = p.x * W0 - W0 / 2
+    const dy = p.y * H0 - H0 / 2
+    const qx = dx * cos + dy * sin + W / 2
+    const qy = -dx * sin + dy * cos + H / 2
+    return [H - qy, qx]
+  }
+  // 畫布座標 → 原圖比例座標（與 toLatLng 互逆）
+  const toRatio = (ll: L.LatLng): Ratio => {
+    const dx = ll.lng - W / 2
+    const dy = (H - ll.lat) - H / 2
+    const px = dx * cos - dy * sin + W0 / 2
+    const py = dx * sin + dy * cos + H0 / 2
+    return {
+      x: Math.min(1, Math.max(0, px / W0)),
+      y: Math.min(1, Math.max(0, py / H0)),
+    }
+  }
 
   return (
     <div className={`fpm-map${placing ? ' fpm-placing' : ''}`} style={{ height }}>

@@ -14,6 +14,7 @@ export interface FloorPlan {
   width:   number
   height:  number
   version: string
+  rotation?: number
 }
 
 export interface FloorMapGroupMeta {
@@ -146,9 +147,18 @@ export async function fetchFloorPlans(): Promise<FloorPlan[]> {
 }
 
 /** 底圖需登入才能取，以 blob 載入後轉成 object URL（呼叫端負責 revoke） */
-export async function fetchFloorPlanImageUrl(floorKey: string): Promise<string> {
-  const res = await apiClient.get(`${BASE}/floors/${floorKey}/image`, { responseType: 'blob' })
+export async function fetchFloorPlanImageUrl(floorKey: string, rotate = 0): Promise<string> {
+  const res = await apiClient.get(`${BASE}/floors/${floorKey}/image`, {
+    responseType: 'blob',
+    params: rotate ? { rotate } : undefined,
+  })
   return URL.createObjectURL(res.data as Blob)
+}
+
+/** 設定底圖顯示旋轉角度（全站共用；點位座標不變） */
+export async function setFloorRotation(floorKey: string, degrees: number): Promise<{ key: string; rotation: number }> {
+  const res = await apiClient.post(`${BASE}/floors/${floorKey}/rotation`, { degrees })
+  return res.data
 }
 
 export async function fetchFloorMapMeta(module: string): Promise<FloorMapModuleMeta> {

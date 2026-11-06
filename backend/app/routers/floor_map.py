@@ -19,7 +19,7 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.orm import Session
@@ -28,7 +28,7 @@ from app.core.database import get_db
 from app.dependencies import get_current_user, get_user_permissions
 from app.models.user import User
 from app.services.floor_map import service as svc
-from app.services.floor_map.floor_image_store import MAX_BYTES, replace_floor_image
+from app.services.floor_map.floor_image_store import MAX_BYTES, replace_floor_image, set_floor_rotation
 from app.services.floor_map.floor_image_convert import ConverterUnavailable, UnsupportedFormat
 from app.services.floor_map.common import normalize_date
 from app.services.floor_map.providers import PROVIDERS, get_provider
@@ -119,11 +119,16 @@ def _call(fn, *args):
 
 @router.get("/floors", summary="樓層登錄表")
 def list_floors():
-    return {"floors": [{k: f[k] for k in ("key", "label", "width", "height", "version")} for f in FLOORS]}
+    return {"floors": [{k: f[k] for k in ("key", "label", "width", "height", "version", "rotation")} for f in FLOORS]}
 
 
-@router.get("/floors/{floor_key}/image", summary="底圖（需登入且有任一模組檢視權限）")
-def floor_image(floor_key: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+@router.get("/floors/{floor_key}/image", summary="底圖（需登入且有任一模組檢視權限；rotate＝顯示旋轉角度）")
+def floor_image(
+    floor_key: str,
+    rotate: float = Query(0, ge=-360, le=360, description="顯示旋轉角度（逆時針，度）"),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     if floor_key not in FLOOR_MAP:
         raise HTTPException(status_code=404, detail=f"未知的樓層：{floor_key}")
     perms = _perms(user, db)
@@ -132,11 +137,39 @@ def floor_image(floor_key: str, db: Session = Depends(get_db), user: User = Depe
     path = floor_image_path(floor_key)
     if not path.is_file():
         raise HTTPException(status_code=404, detail=f"找不到底圖檔：{path.name}")
+    deg = round(float(rotate) % 360, 2)
     # no-cache：置換底圖後立即生效（仍會驗證權限，不會對外快取）
-    return FileResponse(path, media_type="image/webp", headers={"Cache-Control": "private, no-cache"})
+    if deg == 0:
+        return FileResponse(path, media_type="image/webp", headers={"Cache-Control": "private, no-cache"})
+    # 旋轉後的底圖（逆時針；擴張畫布，角落透明）
+    import io
+    from PIL import Image
+    resample = getattr(Image, "Resampling", Image).BICUBIC
+    with Image.open(path) as im:
+        out = im.convert("RGBA").rotate(deg, resample=resample, expand=True)
+        buf = io.BytesIO()
+        out.save(buf, format="WEBP", quality=90)
+    return Response(content=buf.getvalue(), media_type="image/webp", headers={"Cache-Control": "private, no-cache"})
 
 
 FLOOR_IMAGE_PERM = "floor_map_image_manage"
+
+
+class FloorRotationIn(BaseModel):
+    degrees: float = Field(..., ge=-360, le=360)
+
+
+@router.post("/floors/{floor_key}/rotation", summary="設定底圖顯示旋轉角度（需 floor_map_image_manage；點位座標不變）")
+def set_floor_rotation_endpoint(
+    floor_key: str,
+    body: FloorRotationIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    _require(user, db, FLOOR_IMAGE_PERM)
+    if floor_key not in FLOOR_MAP:
+        raise HTTPException(status_code=404, detail=f"未知的樓層：{floor_key}")
+    return {"key": floor_key, "rotation": set_floor_rotation(floor_key, body.degrees)}
 
 
 @router.post("/floors/{floor_key}/image", summary="置換樓層底圖（需 floor_map_image_manage；WebP／PNG／JPG／PDF）")

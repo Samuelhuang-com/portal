@@ -24,6 +24,7 @@ import {
   createFloorMapChildPoints, deleteFloorMapPoint, fetchFloorMapChildren, fetchFloorMapMeta, fetchFloorMapMonth,
   fetchFloorMapStatus, fetchFloorPlanImageUrl, fetchFloorPlans, setFloorMapSourceDisabled, updateFloorMapPoint,
   uploadFloorPlanImage,
+  setFloorRotation,
   type FloorMapChildDay, type FloorMapChildOption, type FloorMapChildPointInput, type FloorMapDayCell,
   type FloorMapModuleMeta, type FloorMapPoint, type FloorMapPointInput,
   type FloorMapStatusResponse, type FloorPlan,
@@ -108,24 +109,44 @@ export default function FloorMapWorkspace({ module, defaultFloor }: FloorMapWork
     .map((p) => ({ value: p.key, label: p.label }))
 
   // ── 底圖（需登入，blob → object URL，各樓層快取一次）─────────────────────────
+  // 快取鍵＝樓層＋旋轉角度（旋轉後的底圖是另一張圖）
+  const floorRotation = floor?.rotation ?? 0
+  const imageKey = `${floorKey}@${floorRotation}`
   useEffect(() => {
     if (!floorKey) return
     let alive = true
-    const cached = imageCache.current[floorKey]
+    const cached = imageCache.current[imageKey]
     if (cached) { setImageUrl(cached); setNoImage(false); return }
     setImageUrl(null)
     setNoImage(false)
-    fetchFloorPlanImageUrl(floorKey)
-      .then((u) => { imageCache.current[floorKey] = u; if (alive) setImageUrl(u) })
+    fetchFloorPlanImageUrl(floorKey, floorRotation)
+      .then((u) => { imageCache.current[imageKey] = u; if (alive) setImageUrl(u) })
       .catch((e) => {
         if (!alive) return
         if (e?.response?.status === 404) setNoImage(true)
         else setError('取得底圖失敗')
       })
     return () => { alive = false }
-  }, [floorKey])
+  }, [imageKey])
 
   useEffect(() => () => { Object.values(imageCache.current).forEach((u) => URL.revokeObjectURL(u)) }, [])
+
+  // ── 底圖旋轉（全站共用，存於後端；點位座標不變）──────────────────────────
+  const [rotSaving, setRotSaving] = useState(false)
+  const [rotCustom, setRotCustom] = useState<number>(0)
+  const applyRotation = async (deg: number) => {
+    if (!floorKey) return
+    setRotSaving(true)
+    try {
+      const res = await setFloorRotation(floorKey, deg)
+      setPlans((prev) => prev.map((f) => (f.key === floorKey ? { ...f, rotation: res.rotation } : f)))
+      message.success(`底圖已旋轉 ${res.rotation}°`)
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail ?? '設定旋轉失敗')
+    } finally {
+      setRotSaving(false)
+    }
+  }
 
   // ── 置換底圖：上傳成功後清除快取、重新載入底圖與尺寸 ───────────────────────
   const handleReplaceImage = async () => {
@@ -135,10 +156,11 @@ export default function FloorMapWorkspace({ module, defaultFloor }: FloorMapWork
     try {
       const isPdf = /\.pdf$/i.test(replaceFile.name)
       await uploadFloorPlanImage(floorKey, replaceFile, isPdf ? { page: replacePage, dpi: replaceDpi } : {})
-      const old = imageCache.current[floorKey]
-      if (old) { URL.revokeObjectURL(old); delete imageCache.current[floorKey] }
-      const url = await fetchFloorPlanImageUrl(floorKey)
-      imageCache.current[floorKey] = url
+      Object.keys(imageCache.current)
+        .filter((k) => k.startsWith(`${floorKey}@`))
+        .forEach((k) => { URL.revokeObjectURL(imageCache.current[k]); delete imageCache.current[k] })
+      const url = await fetchFloorPlanImageUrl(floorKey, floorRotation)
+      imageCache.current[imageKey] = url
       setImageUrl(url)
       setNoImage(false)
       setPlans(await fetchFloorPlans())
@@ -812,6 +834,21 @@ export default function FloorMapWorkspace({ module, defaultFloor }: FloorMapWork
               <Button size="small" icon={<UploadOutlined />} onClick={() => setReplaceOpen(true)}>
                 置換圖檔
               </Button>
+            )}
+            {canReplaceImage && floor && (
+              <>
+                <Text type="secondary" style={{ fontSize: 12 }}>旋轉</Text>
+                {[0, 45, 90, 180].map((deg) => (
+                  <Button key={deg} size="small" loading={rotSaving}
+                          type={floorRotation === deg ? 'primary' : 'default'}
+                          onClick={() => applyRotation(deg)}>
+                    {deg}°
+                  </Button>
+                ))}
+                <InputNumber size="small" min={-360} max={360} step={1} value={rotCustom}
+                             onChange={(v) => setRotCustom(Number(v ?? 0))} addonAfter="°" style={{ width: 96 }} />
+                <Button size="small" loading={rotSaving} onClick={() => applyRotation(rotCustom)}>套用</Button>
+              </>
             )}
             {canEdit && (
             <>

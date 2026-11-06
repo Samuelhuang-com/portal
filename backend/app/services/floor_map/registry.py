@@ -61,3 +61,22 @@ _apply_image_overrides()
 
 def floor_image_path(floor_key: str) -> Path:
     return FLOOR_PLAN_DIR / f"{floor_key}.webp"
+
+
+ROTATION_FILE = FLOOR_PLAN_DIR / "floor_rotation.json"
+
+
+def _apply_rotations() -> None:
+    import json
+    for f in FLOORS:
+        f.setdefault("rotation", 0)
+    try:
+        data = json.loads(ROTATION_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return
+    for key, deg in data.items():
+        if key in FLOOR_MAP:
+            FLOOR_MAP[key]["rotation"] = float(deg)
+
+
+_apply_rotations()
