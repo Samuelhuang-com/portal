@@ -704,7 +704,7 @@ export default function AuditKpoPeriodEditorPage() {
 
             <Divider orientation="left" plain>明細</Divider>
             {editMode ? (
-              <Form form={editForm} layout="vertical" key={detailLine.id}
+              <Form form={editForm} layout="vertical" key={detailLine.id} preserve={false}
                 initialValues={{ name: detailLine.name, is_key: detailLine.is_key, score: detailLine.score }}>
                 <Form.Item name="name" label="品質項目" rules={[{ required: true, message: '請輸入項目內容' }]}>
                   <Input.TextArea autoSize={{ minRows: 3, maxRows: 10 }} />
