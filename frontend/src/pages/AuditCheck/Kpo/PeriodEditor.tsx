@@ -682,7 +682,11 @@ export default function AuditKpoPeriodEditorPage() {
                 <Button type="primary" icon={<SaveOutlined />} loading={drawerSaving} onClick={saveDetail}>儲存</Button>
               </>
             ) : (
-              <Button type="primary" icon={<EditOutlined />} onClick={() => setEditMode(true)}>編輯（只影響本期）</Button>
+              <Button type="primary" icon={<EditOutlined />} onClick={() => {
+                // 先把本筆值寫進共用 editForm 的 store，避免 antd 沿用上一筆殘留值（preserve 無法單獨保證）
+                editForm.setFieldsValue({ name: detailLine.name, is_key: detailLine.is_key, score: detailLine.score })
+                setEditMode(true)
+              }}>編輯（只影響本期）</Button>
             )}
           </Space>
         ) : null}
