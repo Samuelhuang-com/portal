@@ -5,9 +5,9 @@ import {
 } from 'antd';
 import {
   PlusOutlined, EditOutlined, DeleteOutlined, SearchOutlined, ReloadOutlined,
-  KeyOutlined, CopyOutlined,
+  KeyOutlined,
 } from '@ant-design/icons';
-import { usersApi, type CreateUserPayload, type UpdateUserPayload, type AdminResetPasswordResponse } from '../../api/users';
+import { usersApi, type CreateUserPayload, type UpdateUserPayload } from '../../api/users';
 import { tenantsApi } from '../../api/tenants';
 import { departmentsApi, type DepartmentOption } from '@/api/referenceData';
 import type { User, Tenant } from '../../types';
@@ -40,6 +40,8 @@ const UserManagement: React.FC = () => {
   // 目前登入者是否為系統管理員（permissions 含 * 或持有 system_admin 角色）
   const isSuperAdmin = (me?.permissions?.includes('*') ?? false)
     || (me?.roles?.includes('system_admin') ?? false);
+  // 刪除權限：獨立權限 settings_users_delete（角色管理指派）；系統管理員恆有
+  const canDelete = isSuperAdmin || (me?.permissions?.includes('settings_users_delete') ?? false);
   const [total, setTotal]     = useState(0);
   const [loading, setLoading] = useState(false);
   const [search, setSearch]   = useState('');
@@ -49,10 +51,10 @@ const UserManagement: React.FC = () => {
   const [submitting, setSubmitting] = useState(false);
   const [form] = Form.useForm();
 
-  // ── 管理員重設密碼 Modal ─────────────────────────────────────────────────
-  const [resetTarget,   setResetTarget]   = useState<User | null>(null);
-  const [resetLoading,  setResetLoading]  = useState(false);
-  const [resetResult,   setResetResult]   = useState<AdminResetPasswordResponse | null>(null);
+  // ── 管理員直接設定密碼 Modal（不經 OTP，2026-11-10）──────────────────────
+  const [pwdTarget,     setPwdTarget]     = useState<User | null>(null);
+  const [pwdSubmitting, setPwdSubmitting] = useState(false);
+  const [pwdForm]                         = Form.useForm();
 
   const fetchUsers = useCallback(async () => {
     setLoading(true);
@@ -133,22 +135,25 @@ const UserManagement: React.FC = () => {
   };
 
   // ── 管理員重設密碼 ────────────────────────────────────────────────────────
-  const openReset = (user: User) => {
-    setResetTarget(user);
-    setResetResult(null);
+  const openSetPassword = (user: User) => {
+    setPwdTarget(user);
+    pwdForm.resetFields();
   };
 
-  const handleResetPassword = async () => {
-    if (!resetTarget) return;
-    setResetLoading(true);
+  const handleSetPassword = async () => {
+    if (!pwdTarget) return;
     try {
-      const { data } = await usersApi.resetPassword(resetTarget.id);
-      setResetResult(data);
+      const values = await pwdForm.validateFields();
+      setPwdSubmitting(true);
+      await usersApi.setPassword(pwdTarget.id, values.new_password);
+      message.success(`已更新 ${pwdTarget.full_name} 的密碼`);
+      setPwdTarget(null);
     } catch (err: any) {
-      message.error(err?.response?.data?.detail || '重設密碼失敗');
-      setResetTarget(null);
+      if (err?.response?.data?.detail) {
+        message.error(err.response.data.detail);
+      }
     } finally {
-      setResetLoading(false);
+      setPwdSubmitting(false);
     }
   };
 
@@ -163,7 +168,6 @@ const UserManagement: React.FC = () => {
           is_active:    values.is_active,
           role_names:   values.role_names,
           email:        values.email !== editUser.email ? values.email : undefined,
-          new_password: values.new_password || undefined, // 留空則不傳
           // 沒變就不傳：後端只在值不同時才動 user_roles 的 tenant_id，
           // 少送一個欄位就少一次沒必要的搬移。
           tenant_id:    values.tenant_id !== editUser.tenant_id ? values.tenant_id : undefined,
@@ -294,18 +298,18 @@ const UserManagement: React.FC = () => {
           <Tooltip title="編輯">
             <Button type="text" size="small" icon={<EditOutlined />} onClick={() => openEdit(u)} />
           </Tooltip>
-          {u.id !== me?.id && isAdmin && (
-            <Tooltip title="重設密碼（產生一次性密碼）">
+          {u.id !== me?.id && (
+            <Tooltip title="設定新密碼">
               <Button
                 type="text" size="small"
                 icon={<KeyOutlined />}
                 style={{ color: '#4BA8E8' }}
-                onClick={() => openReset(u)}
+                onClick={() => openSetPassword(u)}
               />
             </Tooltip>
           )}
-          {/* 刪除僅系統管理員（後端 delete_user 限 is_system_admin），其他人整顆隱藏 */}
-          {u.id !== me?.id && isSuperAdmin && (
+          {/* 刪除需 settings_users_delete（系統管理員恆有）；後端另擋對 system_admin 帳號的刪除 */}
+          {u.id !== me?.id && canDelete && (
             <Popconfirm
               title="確認刪除此使用者？"
               onConfirm={() => handleDelete(u.id)}
@@ -477,16 +481,6 @@ const UserManagement: React.FC = () => {
               <Input placeholder="例：john@company.com 或 john（自動補 @portal.local）" />
             </Form.Item>
           )}
-          {editUser && isAdmin && (
-            <Form.Item
-              name="new_password"
-              label="重設密碼"
-              extra="留空表示不修改密碼；至少 8 個字元"
-              rules={[{ min: 8, message: '至少 8 個字元' }]}
-            >
-              <Input.Password placeholder="輸入新密碼（選填）" />
-            </Form.Item>
-          )}
           {editUser && (
             <Form.Item name="is_active" label="帳號狀態" valuePropName="checked">
               <Switch checkedChildren="啟用" unCheckedChildren="停用" />
@@ -495,78 +489,50 @@ const UserManagement: React.FC = () => {
         </Form>
       </Modal>
 
-      {/* ── 管理員重設密碼 Modal ── */}
+      {/* ── 管理員直接設定密碼 Modal（不經 OTP）── */}
       <Modal
-        title={`重設密碼：${resetTarget?.full_name ?? ''}`}
-        open={!!resetTarget}
-        onCancel={() => { setResetTarget(null); setResetResult(null); }}
-        footer={
-          resetResult ? (
-            <Button type="primary" onClick={() => { setResetTarget(null); setResetResult(null); }}
-              style={{ background: '#1B3A5C' }}>
-              完成
-            </Button>
-          ) : [
-            <Button key="cancel" onClick={() => setResetTarget(null)}>取消</Button>,
-            <Button key="ok" type="primary" loading={resetLoading} onClick={handleResetPassword}
-              danger>
-              確認產生一次性密碼
-            </Button>,
-          ]
-        }
+        title={`設定密碼：${pwdTarget?.full_name ?? ''}`}
+        open={!!pwdTarget}
+        onOk={handleSetPassword}
+        onCancel={() => setPwdTarget(null)}
+        confirmLoading={pwdSubmitting}
+        okText="確認設定"
+        cancelText="取消"
         width={440}
         destroyOnClose
       >
-        {resetResult ? (
-          <div>
-            <Alert
-              type="warning"
-              showIcon
-              message="請將以下一次性密碼口頭告知使用者"
-              description={`密碼 ${resetResult.expires_minutes} 分鐘後失效，使用者登入後系統將強制要求設定新密碼。`}
-              style={{ marginBottom: 16 }}
-            />
-            <div style={{
-              textAlign: 'center', background: '#f0f4f8', borderRadius: 8,
-              padding: '20px 24px', border: '2px dashed #4BA8E8',
-            }}>
-              <div style={{ fontSize: 11, color: '#64748b', marginBottom: 6 }}>一次性密碼</div>
-              <div style={{
-                fontSize: 40, fontWeight: 700, letterSpacing: 10,
-                color: '#1B3A5C', fontFamily: 'monospace',
-              }}>
-                {resetResult.otp}
-              </div>
-            </div>
-            <div style={{ textAlign: 'center', marginTop: 10 }}>
-              <Button
-                size="small"
-                icon={<CopyOutlined />}
-                onClick={() => {
-                  navigator.clipboard.writeText(resetResult.otp);
-                  message.success('已複製到剪貼簿');
-                }}
-              >
-                複製 OTP
-              </Button>
-            </div>
-          </div>
-        ) : (
-          <div>
-            <Alert
-              type="info"
-              showIcon
-              message="此操作將為該使用者產生一次性登入密碼"
-              description={
-                <>
-                  <div>• OTP 有效期 15 分鐘</div>
-                  <div>• 使用者以 OTP 登入後，系統將強制要求設定新密碼</div>
-                  <div>• OTP 僅顯示一次，請口頭告知使用者</div>
-                </>
-              }
-            />
-          </div>
-        )}
+        <Alert
+          type="info"
+          showIcon
+          message="直接設定使用者的新密碼，設定後立即生效"
+          description="不會強制使用者再次更改密碼；請另行告知對方新密碼。"
+          style={{ marginBottom: 16 }}
+        />
+        <Form form={pwdForm} layout="vertical">
+          <Form.Item
+            name="new_password"
+            label="新密碼"
+            rules={[{ required: true, message: '請輸入新密碼' }, { min: 8, message: '至少 8 個字元' }]}
+          >
+            <Input.Password placeholder="至少 8 個字元" />
+          </Form.Item>
+          <Form.Item
+            name="confirm_password"
+            label="確認新密碼"
+            dependencies={['new_password']}
+            rules={[
+              { required: true, message: '請再輸入一次' },
+              ({ getFieldValue }) => ({
+                validator(_, value) {
+                  if (!value || getFieldValue('new_password') === value) return Promise.resolve();
+                  return Promise.reject(new Error('兩次輸入的密碼不一致'));
+                },
+              }),
+            ]}
+          >
+            <Input.Password placeholder="再輸入一次" />
+          </Form.Item>
+        </Form>
       </Modal>
     </div>
   );

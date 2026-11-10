@@ -63,6 +63,11 @@ class AdminResetPasswordResponse(BaseModel):
     message: str
 
 
+class AdminSetPasswordRequest(BaseModel):
+    """管理員直接設定指定使用者的新密碼（不經 OTP，2026-11-10）"""
+    new_password: str = Field(min_length=8)
+
+
 class UserListResponse(BaseModel):
     items: List[UserOut]
     total: int

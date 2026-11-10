@@ -53,6 +53,9 @@ export const usersApi = {
     /** 管理員產生 OTP（僅顯示，需口頭告知使用者） */
   resetPassword: (id: string) =>
     client.post<AdminResetPasswordResponse>(`/users/${id}/reset-password`),
+  /** 管理員直接設定指定使用者的新密碼（不經 OTP，2026-11-10） */
+  setPassword: (id: string, newPassword: string) =>
+    client.post(`/users/${id}/set-password`, { new_password: newPassword }),
   /** 目前登入者可指派的角色名稱（非系統管理員不含 system_admin 與超出自身權限的角色） */
   grantableRoles: () =>
     client.get<string[]>('/users/grantable-roles'),

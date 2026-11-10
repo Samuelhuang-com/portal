@@ -31,6 +31,7 @@ from app.schemas.user import (
     UserListResponse,
     ChangePasswordRequest,
     AdminResetPasswordResponse,
+    AdminSetPasswordRequest,
 )
 
 OTP_EXPIRES_MINUTES = 15
@@ -47,6 +48,8 @@ router = APIRouter()
 #    這是必要的 —— 負責建帳號的人在「總公司」，但要管理飯店A／商場A 的使用者。
 #    原本 tenant_admin 只能看自己 tenant 的限制隨之取消（該角色目前 0 人 0 權限）。
 _USER_MANAGE = require_permission("settings_users_manage")
+# 2026-11-10：刪除使用者獨立權限（系統管理員恆有）；對 system_admin 帳號的保護仍由 _assert_can_manage_target 擋
+_USER_DELETE = require_permission("settings_users_delete")
 
 
 def _get_roles(user_id: str, db: Session) -> list[str]:
@@ -419,7 +422,7 @@ def update_user(
 @router.delete("/{user_id}")
 def delete_user(
     user_id: str,
-    current_user: User = Depends(is_system_admin),
+    current_user: User = Depends(_USER_DELETE),
     db: Session = Depends(get_db),
 ):
     user = db.query(User).filter(User.id == user_id).first()
@@ -427,6 +430,10 @@ def delete_user(
         raise HTTPException(status_code=404, detail="使用者不存在")
     if user_id == current_user.id:
         raise HTTPException(status_code=400, detail="不能刪除自己")
+    # 2026-11-10：刪除只保護系統管理員帳號；不套用 _assert_can_manage_target
+    # （那條是防提權的完整比對，會連帶擋掉持有其他角色的一般帳號）
+    if "system_admin" in _get_roles(user.id, db) and "*" not in set(get_user_permissions(current_user.id, db)):
+        raise HTTPException(status_code=403, detail="無法刪除系統管理員帳號")
     db.delete(user)
     db.commit()
     return {"message": "使用者已刪除"}
@@ -506,6 +513,43 @@ def admin_reset_password(
         expires_minutes=OTP_EXPIRES_MINUTES,
         message=f"已為 {user.full_name} 產生一次性密碼，請口頭告知使用者，密碼 {OTP_EXPIRES_MINUTES_MINUTES} 分鐘後失效。",
     )
+
+
+@router.post("/{user_id}/set-password")
+def admin_set_password(
+    user_id: str,
+    data: AdminSetPasswordRequest,
+    current_user: User = Depends(_USER_MANAGE),
+    db: Session = Depends(get_db),
+):
+    """
+    管理員直接設定指定使用者的新密碼（2026-11-10，不經 OTP）。
+    - 不得對自己使用（請用「修改密碼」）
+    - 套用 _assert_can_manage_target：非系統管理員不能改系統管理員帳號的密碼
+    - 管理員已親自設定，清除 OTP 狀態且不強制對方再次更改密碼
+    """
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="使用者不存在")
+    if user_id == current_user.id:
+        raise HTTPException(status_code=400, detail="不能設定自己的密碼（請使用「修改密碼」功能）")
+    _assert_can_manage_target(current_user, user, db)
+
+    user.hashed_password = hash_password(data.new_password)
+    user.must_change_password = False
+    user.otp_code = None
+    user.otp_expires_at = None
+    db.add(
+        AuditLog(
+            user_id=current_user.id,
+            tenant_id=current_user.tenant_id,
+            action="admin_set_password",
+            resource_type="user",
+            resource_id=user_id,
+        )
+    )
+    db.commit()
+    return {"message": f"已更新 {user.full_name} 的密碼"}
 
 
 # ── 人員選單（供合約等模組的 manager/reviewer 下拉使用）────────────────

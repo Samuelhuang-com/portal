@@ -69,6 +69,8 @@ PERMISSION_DEFINITIONS = [
     # 而 filterMenuByPermissions 的規則是「沒設 = 公開」，導致知識庫對所有角色顯示。
     {"key": "wiki_view",                  "label": "知識庫",             "group": "知識庫"},
     {"key": "settings_users_manage",    "label": "人員管理",   "group": "系統設定"},
+    # 2026-11-10：刪除使用者獨立成權限，由角色管理指派（非敏感權限）
+    {"key": "settings_users_delete",    "label": "人員刪除",   "group": "系統設定"},
     {"key": "settings_roles_manage",    "label": "角色管理",   "group": "系統設定"},
     {"key": "settings_menu_manage",     "label": "選單管理",   "group": "系統設定"},
     {"key": "settings_ragic_manage",    "label": "Ragic 設定", "group": "系統設定"},
