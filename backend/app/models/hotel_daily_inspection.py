@@ -15,7 +15,7 @@ DB 架構：
 
 sheet_key（頁籤）：rf / 5f-10f / 4f / b1f-hv / b1f-office / b4f-water / b4f-ac
 """
-from sqlalchemy import Column, String, Integer, DateTime, Boolean, func
+from sqlalchemy import Column, String, Integer, DateTime, Boolean, Text, func
 from app.core.database import Base
 
 
@@ -77,7 +77,7 @@ class HotelDIItem(Base):
     item_name = Column(String(200), nullable=False, default="", comment="設備/項目名稱（Ragic 欄位名）")
 
     # ── 巡檢結果 ──────────────────────────────────────────────────────────────
-    result_raw    = Column(String(50),  nullable=False, default="",          comment="原始值（正常/異常/待處理/空白）")
+    result_raw    = Column(Text,        nullable=False, default="",          comment="原始值（正常/異常/待處理/空白；附件欄位為檔名清單）")
     result_status = Column(String(20),  nullable=False, default="unchecked", comment="正規化：normal/abnormal/pending/unchecked/note")
     abnormal_flag = Column(Boolean,     nullable=False, default=False,        comment="是否有異常旗標")
     is_note       = Column(Boolean,     nullable=False, default=False,        comment="是否為文字備註欄位（非評分項目）")

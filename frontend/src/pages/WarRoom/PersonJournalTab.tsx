@@ -6,7 +6,7 @@
  * 區間：StandardRangePicker（錨點＝資料最後一天），上限 31 天；人員篩選在前端做。（2026-11-06 新增）
  */
 import React, { useEffect, useMemo, useState } from 'react'
-import { Alert, Card, Empty, Select, Space, Spin, Table, Tag, Tooltip, Typography } from 'antd'
+import { Alert, Button, Card, Empty, Select, Space, Spin, Table, Tag, Tooltip, Typography } from 'antd'
 import dayjs from 'dayjs'
 
 import { fetchWarRoomPersonJournal, type WrPersonJournal, type WrPersonJournalResp } from '@/api/warRoom'
@@ -21,18 +21,22 @@ const MAX_SHOWN = 3
 const DAY_W = 104
 const NAME_W = 110
 
-function CellItems({ items, colorOf, onOpen }: {
+function CellItems({ items, colorOf, onOpen, expanded, onToggle }: {
   items: JournalRow[]
   colorOf: (cat: string) => string
   onOpen: (r: JournalRow) => void
+  expanded: boolean
+  onToggle: () => void
 }) {
-  const shown = items.slice(0, MAX_SHOWN)
+  const shown = expanded ? items : items.slice(0, MAX_SHOWN)
+  const hidden = items.length - MAX_SHOWN
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
       {shown.map((r, i) => (
         <Tooltip key={`${r.seq}-${i}`}
                  title={`${r.start_time ? `${r.start_time}${r.end_time ? `～${r.end_time}` : ''} ` : ''}${r.task}（${r.source_label}）${r.work_min != null ? `・${r.work_min} 分` : ''}`}>
-          <div onClick={() => onOpen(r)}
+          <div role="button" tabIndex={0} onClick={() => onOpen(r)}
+               onKeyDown={e => { if (e.key === 'Enter') onOpen(r) }}
                style={{
                  background: colorOf(r.category), color: '#06101f', borderRadius: 3, padding: '1px 4px',
                  fontSize: 11, lineHeight: '16px', whiteSpace: 'nowrap', overflow: 'hidden',
@@ -42,7 +46,12 @@ function CellItems({ items, colorOf, onOpen }: {
           </div>
         </Tooltip>
       ))}
-      {items.length > MAX_SHOWN && <Text type="secondary" style={{ fontSize: 11 }}>+{items.length - MAX_SHOWN} 筆</Text>}
+      {hidden > 0 && (
+        <Button type="link" size="small" onClick={onToggle}
+                style={{ padding: 0, height: 'auto', fontSize: 11, textAlign: 'left' }}>
+          {expanded ? '收合' : `+${hidden} 筆（展開）`}
+        </Button>
+      )}
     </div>
   )
 }
@@ -54,6 +63,9 @@ export default function PersonJournalTab() {
   const [error, setError] = useState<string | null>(null)
   const [pick, setPick] = useState<string[]>([])
   const [row, setRow] = useState<JournalRow | null>(null)
+  // 展開的格子：key＝`${人員}|${日期}`（預設只顯示前 MAX_SHOWN 筆，點 +N 筆 展開全部）
+  const [open, setOpen] = useState<Record<string, boolean>>({})
+  const toggleCell = (key: string) => setOpen(o => ({ ...o, [key]: !o[key] }))
 
   useEffect(() => {
     if (!range) return
@@ -99,7 +111,11 @@ export default function PersonJournalTab() {
         key: d.date, width: DAY_W, align: 'left' as const,
         render: (_: unknown, p: WrPersonJournal) => {
           const items = p.cells[d.date] ?? []
-          return items.length ? <CellItems items={items} colorOf={colorOf} onOpen={setRow} /> : null
+          const key = `${p.person}|${d.date}`
+          return items.length
+            ? <CellItems items={items} colorOf={colorOf} onOpen={setRow}
+                         expanded={!!open[key]} onToggle={() => toggleCell(key)} />
+            : null
         },
       }
     }),
@@ -117,7 +133,7 @@ export default function PersonJournalTab() {
         </Space>
         <Text type="secondary" style={{ fontSize: 12 }}>
           {persons.length} 人・{itemCount} 筆工作・{(totalMin / 60).toFixed(1)} h
-          {data && `　資料至 ${data.data_end}`}
+          {data && `　資料至 ${data.data_end}`}　·　點格子裡的 +N 筆可展開，點工作開明細
         </Text>
       </Space>
 

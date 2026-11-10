@@ -106,10 +106,14 @@ def _best_date(raw: dict, start_raw: str) -> str:
 
 
 def _extract_check_items(row: dict) -> list[str]:
-    """動態取巡檢點欄位：排除場次欄位、系統欄位（底線開頭）、純數字 key、拍照欄位。"""
+    """
+    動態取巡檢點欄位：排除場次欄位、系統欄位（底線開頭）、純數字 key。
+    2026-11-10：「拍照」等附件欄位改為收進 item（result_raw＝檔名），供 /db-images 組出附圖連結
+    （比照整棟巡檢）；判定上一律為 note，不計入巡檢項目與異常。
+    """
     items = []
     for key in row.keys():
-        if key in SESSION_FIELDS or str(key).startswith("_") or "拍照" in str(key):
+        if key in SESSION_FIELDS or str(key).startswith("_"):
             continue
         try:
             int(key)

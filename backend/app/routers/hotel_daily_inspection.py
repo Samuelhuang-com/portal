@@ -108,6 +108,40 @@ class TabLabelsIn(BaseModel):
     labels: dict[str, Optional[str]]
 
 
+# ── GET /db-images/{batch_ragic_id} — 場次附圖（CLAUDE.md §7，照抄 rf_inspection）──────
+# 「拍照」欄同步時收成 item，result_raw 為檔名；這裡不打 Ragic，直接組出 Ragic 下載連結。
+# 附件欄位判定集中在 inspection_field_rules（名稱規則＋副檔名規則），一個欄位可有多張圖。
+
+class InspectionImageOut(BaseModel):
+    url:      str
+    filename: str
+
+
+@router.get(
+    "/db-images/{batch_ragic_id}",
+    response_model=List[InspectionImageOut],
+    summary="取得場次附圖（由已同步的附件欄位值組出 Ragic 下載連結，不打 Ragic）",
+    tags=["飯店每日巡檢"],
+)
+def get_batch_db_images(batch_ragic_id: str, db: Session = Depends(get_db)):
+    from app.services.inspection_field_rules import is_image_field, split_attachment_value
+    from app.services.ragic_data_service import parse_images
+
+    items = (
+        db.query(HotelDIItem)
+        .filter(HotelDIItem.batch_ragic_id == batch_ragic_id)
+        .order_by(HotelDIItem.seq_no)
+        .all()
+    )
+    images: list[dict] = []
+    for it in items:
+        if not is_image_field(it.item_name, it.result_raw):
+            continue
+        for token in split_attachment_value(it.result_raw):
+            images.extend(parse_images(token, server=HDI_SERVER_URL, account=HDI_ACCOUNT))
+    return images
+
+
 @router.get("/tab-labels", summary="取得頁籤名稱（含預設值）", tags=["飯店每日巡檢"])
 def get_tab_labels(db: Session = Depends(get_db)):
     from app.services.hotel_daily_inspection_sources import TAB_LABELS, TABS
@@ -435,6 +469,7 @@ def get_batch_detail(
 ):
     from app.services.hotel_daily_inspection_sheet import item_kpi, item_status
     from app.services.hotel_daily_inspection_sources import record_url as ragic_record_url
+    from app.services.inspection_field_rules import is_image_field
 
     if sheet_key not in VALID_KEYS:
         raise HTTPException(status_code=404, detail=f"未知的 sheet_key: {sheet_key}")
@@ -474,6 +509,7 @@ def get_batch_detail(
                 "item_name":   it.item_name,
                 "result_raw":  it.result_raw,
                 "status":      item_status(sheet_key, it.item_name, it.result_raw, bool(it.is_note)),
+                "is_image":    is_image_field(it.item_name, it.result_raw),
             }
             for it in items
         ],

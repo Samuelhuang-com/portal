@@ -6,12 +6,13 @@
  * 明細 Drawer 依 CLAUDE.md §7 / WORK_JOURNAL_SPEC.md §9（寬 480px、標題列含 Ragic 連結、分基本欄位與明細兩區）。
  * 狀態判定由後端 item_status（services/hotel_daily_inspection_sheet.py）提供，
  * 與每日巡檢表 Drawer、Dashboard 月曆格同一套。
- * 附圖：sync 不收「拍照」欄位，DB 沒有檔名，因此 Drawer 不顯示附圖區（請用 Ragic 連結看照片）。
+ * 附圖（2026-11-10）：sync 收「拍照」欄位檔名，Drawer 以 Image.PreviewGroup 顯示（照抄整棟巡檢
+ *   FloorInspectionList；§7 禁止另開新視窗）；有附圖時 Drawer 寬 640px。
  */
 import { useCallback, useEffect, useState } from 'react'
 import {
-  Alert, Badge, Button, Col, DatePicker, Descriptions, Divider, Drawer, Progress,
-  Row, Space, Table, Tag, Typography, message,
+  Alert, Badge, Button, Col, DatePicker, Descriptions, Divider, Drawer, Image, Progress,
+  Row, Space, Spin, Table, Tag, Typography, message,
 } from 'antd'
 import { LinkOutlined, ReloadOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
@@ -19,7 +20,9 @@ import { HOTEL_DAILY_INSPECTION_SHEETS } from '@/constants/hotelDailyInspection'
 import {
   fetchHotelDailyBatchDetail,
   fetchHotelDailyBatches,
+  fetchHotelDailyBatchImages,
   type HotelDIBatchDetail,
+  type HotelDIImage,
   type HotelDIBatchRow,
 } from '@/api/hotelDailyInspection'
 
@@ -47,6 +50,8 @@ export default function HotelFloorInspectionList({ sheetKey, tabLabel }: { sheet
   const [drawerOpen,    setDrawerOpen]    = useState(false)
   const [detail,        setDetail]        = useState<HotelDIBatchDetail | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
+  const [images,        setImages]        = useState<HotelDIImage[]>([])
+  const [imagesLoading, setImagesLoading] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -67,6 +72,13 @@ export default function HotelFloorInspectionList({ sheetKey, tabLabel }: { sheet
     setDrawerOpen(true)
     setDetailLoading(true)
     setDetail(null)
+    setImages([])
+    // 附圖與明細平行載入；附圖失敗不影響明細
+    setImagesLoading(true)
+    fetchHotelDailyBatchImages(batchId)
+      .then(setImages)
+      .catch(() => setImages([]))
+      .finally(() => setImagesLoading(false))
     try {
       setDetail(await fetchHotelDailyBatchDetail(sheetKey, batchId))
     } catch {
@@ -156,8 +168,9 @@ export default function HotelFloorInspectionList({ sheetKey, tabLabel }: { sheet
   ]
 
   const allItems       = detail?.items ?? []
-  const equipmentItems = allItems.filter((it) => it.status !== 'note')
-  const metaItems      = allItems.filter((it) => it.status === 'note')
+  const equipmentItems = allItems.filter((it) => it.status !== 'note' && !it.is_image)
+  const metaItems      = allItems.filter((it) => it.status === 'note' && !it.is_image)
+  const drawerWidth    = images.length > 0 ? 640 : 480
 
   return (
     <div>
@@ -202,7 +215,7 @@ export default function HotelFloorInspectionList({ sheetKey, tabLabel }: { sheet
       <Drawer
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
-        width={480}
+        width={drawerWidth}
         title={
           <Space size={8} wrap>
             <Tag color={sheet?.color}>{detail?.batch.tab_label || label}</Tag>
@@ -286,6 +299,38 @@ export default function HotelFloorInspectionList({ sheetKey, tabLabel }: { sheet
                     </Descriptions.Item>
                   ))}
                 </Descriptions>
+              </>
+            )}
+
+            {/* ④ 附圖：Image.PreviewGroup（§7：禁止另開新視窗）*/}
+            {(imagesLoading || images.length > 0) && (
+              <>
+                <Divider style={{ margin: '16px 0 8px' }} />
+                <Text strong style={{ display: 'block', marginBottom: 8 }}>
+                  附圖{images.length > 0 ? `（${images.length} 張）` : ''}
+                </Text>
+                {imagesLoading ? (
+                  <div style={{ textAlign: 'center', padding: 16 }}><Spin size="small" /></div>
+                ) : (
+                  <Image.PreviewGroup>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                      {images.map((img, i) => (
+                        <Image
+                          key={img.url}
+                          src={img.url}
+                          alt={img.filename || `圖片 ${i + 1}`}
+                          width={120}
+                          height={90}
+                          style={{
+                            objectFit: 'cover', borderRadius: 4,
+                            border: '1px solid #e8e8e8', cursor: 'pointer',
+                          }}
+                          fallback="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+                        />
+                      ))}
+                    </div>
+                  </Image.PreviewGroup>
+                )}
               </>
             )}
           </>

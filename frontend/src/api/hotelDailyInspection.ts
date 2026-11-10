@@ -94,7 +94,7 @@ export interface HotelDIBatchDetail {
     total: number; checked: number; normal: number; abnormal: number
     pending: number; unchecked: number; measure: number; completion_rate: number
   }
-  items: { ragic_id: string; seq_no: number; item_name: string; result_raw: string; status: HotelDIItemStatus }[]
+  items: { ragic_id: string; seq_no: number; item_name: string; result_raw: string; status: HotelDIItemStatus; is_image?: boolean }[]
 }
 
 export interface HotelDISheetSummary {
@@ -418,6 +418,15 @@ export async function fetchHotelDIDailySheet(date: string): Promise<HotelDIDaily
   const res = await apiClient.get<HotelDIDailySheetResponse>(`${BASE}/daily-sheet`, {
     params: { date },
   })
+  return res.data
+}
+
+// ── 場次附圖（2026-11-10，照抄整棟巡檢 fetchFloorBatchImages）───────────────────
+// url 指向 Ragic file.jsp（外部連結，不經 Portal 後端；瀏覽器需已登入 Ragic 才看得到）
+export interface HotelDIImage { url: string; filename: string }
+
+export async function fetchHotelDailyBatchImages(batchId: string): Promise<HotelDIImage[]> {
+  const res = await apiClient.get<HotelDIImage[]>(`${BASE}/db-images/${encodeURIComponent(batchId)}`)
   return res.data
 }
 

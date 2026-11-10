@@ -7,6 +7,7 @@
  *
  * TAB（第一個固定為 Dashboard）：
  *   1. 值班總覽          每個巡檢模組一張卡：燈號、今日異常／未填、涵蓋率、近 7 日趨勢（2026-10-15 新增，第一位）
+ *   ─  工務營運中控台    大螢幕用：KPI 列＋3D 樓層＋人員即時清單＋模組燈號＋事件日誌，只看今天、自動刷新（2026-11-10 新增，docs/SPEC_ops_control_center.md）
  *   2. Dashboard        整棟戰情圖：各樓層人員工作／巡檢異常・未填／未完成報修，點擊即檢視
  *   ─  3D 樓層          等角整棟模型（客房逐間、巡檢點位、時間軸人員），2026-10-10 新增
  *   ─  告警            異常告警清單 A1～A5＋預覽寄送＋設定（2026-10-10 新增）
@@ -27,6 +28,7 @@ import FloorBoard from './FloorBoard'
 import FloorIso from './FloorIso'
 import AlertsTab from './AlertsTab'
 import OverviewTab from './OverviewTab'
+import ControlCenterTab from './ControlCenterTab'
 import PersonJournalTab from './PersonJournalTab'
 import { AssetHistoryPanel, RepairDrawer, type AssetTarget } from './AssetHistory'
 import type { WrRepair } from '@/api/warRoom'
@@ -108,7 +110,7 @@ function HistoryTab({ getContainer }: { getContainer?: () => HTMLElement }) {
 export default function WarRoomPage() {
   const [allowed, setAllowed] = useState<boolean | null>(null)
   const [staffAllowed, setStaffAllowed] = useState(false)
-  const [tab, setTab] = useState('overview')
+  const [tab, setTab] = useState('control')  // 預設開啟工務營運中控台（2026-11-10 裁示）
 
   useEffect(() => {
     fetchWarRoomAccess().then(setAllowed)
@@ -155,6 +157,7 @@ export default function WarRoomPage() {
             onChange={setTab}
             items={[
               { key: 'overview', label: '值班總覽', children: <OverviewTab getContainer={getContainer} /> },
+              { key: 'control', label: '工務營運中控台', children: tab === 'control' ? <ControlCenterTab getContainer={getContainer} /> : null },  // 只在選中時掛載，離開即停止自動刷新
               { key: 'dashboard', label: 'Dashboard', children: <FloorBoard getContainer={getContainer} /> },
               { key: 'iso', label: '3D 樓層', children: <FloorIso getContainer={getContainer} /> },
               { key: 'alerts', label: '告警', children: <AlertsTab getContainer={getContainer} /> },
