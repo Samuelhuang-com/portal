@@ -175,6 +175,17 @@ if str(_BACKEND) not in sys.path:
 
 _LOG_DIR.mkdir(parents=True, exist_ok=True)
 
+
+def _log_sync_errors(name: str, errors) -> None:
+    """同步結果的 errors 是明細清單時，把前 3 筆寫進 log（2026-11-10：原本只記筆數，看不出原因，
+    例如飯店每日巡檢在 Alembic hdi1 未執行時會回「舊場次 ID 尚未改寫」）。"""
+    if isinstance(errors, (list, tuple)) and errors:
+        _lg = logging.getLogger(__name__)
+        for msg in list(errors)[:3]:
+            _lg.warning("    ↳ %s：%s", name, str(msg)[:300])
+        if len(errors) > 3:
+            _lg.warning("    ↳ %s：……另有 %d 筆錯誤", name, len(errors) - 3)
+
 # ── 同步模組清單（與 main.py _auto_sync 保持一致）────────────────────────────
 MODULES: list[tuple[str, str, str]] = [
     ("客房保養",       "app.services.room_maintenance_sync",          "sync_from_ragic"),
@@ -192,6 +203,8 @@ MODULES: list[tuple[str, str, str]] = [
     ("商場工務報修",   "app.services.luqun_repair_sync",              "sync_from_ragic"),
     ("保全巡檢",       "app.services.security_patrol_sync",           "sync_all"),
     ("商場工務巡檢",   "app.services.mall_facility_inspection_sync",  "sync_all"),
+    # 飯店每日巡檢：2026-11-10 改接 main-project-inspection/17、28～33＋archive-old-data/31～40
+    #   （來源見 app/services/hotel_daily_inspection_sources.py）；Alembic hdi1 未跑時同步會自行拒絕並回報錯誤
     ("飯店每日巡檢",   "app.services.hotel_daily_inspection_sync",    "sync_all"),
     ("每日數值登錄",   "app.services.hotel_meter_readings_sync",      "sync_all"),
     ("IHG客房保養",   "app.services.ihg_room_maintenance_sync",      "sync_from_ragic"),
@@ -778,6 +791,7 @@ class SyncApp(tk.Tk):
             import app.models.ragic_app_directory      # noqa
             import app.models.mall_facility_inspection  # noqa
             import app.models.hotel_daily_inspection   # noqa
+            import app.models.module_tab_label         # noqa  頁籤自訂名稱（2026-11-10，Alembic hdi3）
             import app.models.hotel_meter_readings     # noqa
             import app.models.ihg_room_maintenance     # noqa
             import app.models.menu_config              # noqa
@@ -1036,6 +1050,7 @@ class SyncApp(tk.Tk):
                         f"  ✗ {name}：fetched={fetched}, "
                         f"upserted={upserted}, errors={err_count}, {duration}s"
                     )
+                    _log_sync_errors(name, result.get("errors") if isinstance(result, dict) else None)
                 else:
                     logger.info(
                         f"  ✓ {name}：fetched={fetched}, "
@@ -1279,6 +1294,7 @@ class SyncApp(tk.Tk):
                 err_count = _e if isinstance(_e, int) else len(_e)
                 if err_count > 0:
                     status = "partial"
+                    _log_sync_errors(name, _e)
         except Exception as exc:
             duration  = round((datetime.now() - t0).total_seconds(), 2)
             status    = "error"
@@ -2076,6 +2092,7 @@ class SyncApp(tk.Tk):
                 err_count = _e if isinstance(_e, int) else len(_e)
                 if err_count > 0:
                     status = "partial"
+                    _log_sync_errors(name, _e)
         except Exception as exc:
             duration  = round((datetime.now() - t0).total_seconds(), 2)
             status    = "error"

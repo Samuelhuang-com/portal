@@ -264,6 +264,11 @@ async def sync_all() -> dict:
     if HDI_SYNC_PAUSED:
         logger.info("[HDISync] 飯店每日巡檢同步已暫停（HDI_SYNC_PAUSED=True），略過")
         return {"fetched": 0, "upserted": 0, "item_rows": 0, "errors": [], "paused": True}
+    # 舊場次 ID 未改寫時整個模組只回一筆錯誤（不要每個頁籤各報一次，sync_tool log 才看得清楚）
+    if not _legacy_ids_migrated():
+        msg = "舊場次 ID 尚未改寫（請先執行 alembic upgrade head，revision hdi1），本次不同步"
+        logger.error(f"[HDISync] {msg}")
+        return {"fetched": 0, "upserted": 0, "item_rows": 0, "errors": [msg]}
     results = {}
     for sheet_key in SHEET_CONFIGS:
         results[sheet_key] = await sync_sheet(sheet_key)
