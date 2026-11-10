@@ -266,11 +266,11 @@ const RAGIC_APPS_STATIC: Omit<RagicApp, 'portalName' | 'portalUrl' | 'localTable
   { itemNo: 212, module: '集團專案',         name: '請購單',                               url: 'https://ap12.ragic.com/soutlet001/happy-group-project/2',                        type: '表單/作業', note: '' },
   { itemNo: 213, module: '集團專案',         name: '請購單',                               url: 'https://ap12.ragic.com/soutlet001/happy-group-project/6',                        type: '表單/作業', note: '' },
   { itemNo: 214, module: '集團專案',         name: '預支證明單',                           url: 'https://ap12.ragic.com/soutlet001/happy-group-project/7',                        type: '表單/作業', note: '' },
-  { itemNo: 215, module: '飯店工務每日巡檢', name: '飯店工務每日巡檢 - 1F',                url: 'https://ap12.ragic.com/soutlet001/main-project-inspection/21',                   type: '表單/作業', note: '' },
-  { itemNo: 216, module: '飯店工務每日巡檢', name: '飯店工務每日巡檢 - 2F',                url: 'https://ap12.ragic.com/soutlet001/main-project-inspection/20',                   type: '表單/作業', note: '' },
-  { itemNo: 217, module: '飯店工務每日巡檢', name: '飯店工務每日巡檢 - 4F',                url: 'https://ap12.ragic.com/soutlet001/main-project-inspection/19',                   type: '表單/作業', note: '' },
-  { itemNo: 218, module: '飯店工務每日巡檢', name: '飯店工務每日巡檢 - 4F - 10F',          url: 'https://ap12.ragic.com/soutlet001/main-project-inspection/18',                   type: '表單/作業', note: '' },
-  { itemNo: 219, module: '飯店工務每日巡檢', name: '飯店工務每日巡檢 - RF',                url: 'https://ap12.ragic.com/soutlet001/main-project-inspection/17',                   type: '表單/作業', note: '' },
+  { itemNo: 215, module: '飯店工務每日巡檢', name: '飯店工務每日巡檢 - 1F（封存）',                url: 'https://ap12.ragic.com/soutlet001/archive-old-data/34',                   type: '封存資料',  note: '封存（原 main-project-inspection/21）；Portal 頁籤 4F BAR-D公區' },
+  { itemNo: 216, module: '飯店工務每日巡檢', name: '飯店工務每日巡檢 - 2F（封存）',                url: 'https://ap12.ragic.com/soutlet001/archive-old-data/33',                   type: '封存資料',  note: '封存（原 main-project-inspection/20）；Portal 頁籤 4F BAR-D公區' },
+  { itemNo: 217, module: '飯店工務每日巡檢', name: '飯店工務每日巡檢 - 4F戶外廣場與宴會廳（封存）',                url: 'https://ap12.ragic.com/soutlet001/archive-old-data/32',                   type: '封存資料',  note: '封存（原 main-project-inspection/19）；Portal 頁籤 4F BAR-D公區' },
+  { itemNo: 218, module: '飯店工務每日巡檢', name: '飯店工務每日巡檢 - 10F（封存，原 4F~10F）',          url: 'https://ap12.ragic.com/soutlet001/archive-old-data/31',                   type: '封存資料',  note: '封存（原 main-project-inspection/18）；Portal 頁籤 5-10F 客房公共區域' },
+  { itemNo: 219, module: '飯店工務每日巡檢', name: '飯店工務每日巡檢 - RF 樓層 早班巡檢',                url: 'https://ap12.ragic.com/soutlet001/main-project-inspection/17',                   type: '表單/作業', note: '2026-11-10 改為新 RF 表（舊 RF 資料 Ragic 已無，僅存 Portal）' },
   // ── 核准請購單（9 部門，Master+Detail 雙層同步）─────────────────────────────
   { itemNo: 220, module: '核准請購單',       name: '執董室請購單（清單）',                url: 'https://ap12.ragic.com/soutlet001/lequn-executive-office/10',                   type: '報表/清單', note: 'Portal同步' },
   { itemNo: 221, module: '核准請購單',       name: '執董室請購單（內頁）',                url: 'https://ap12.ragic.com/soutlet001/lequn-executive-office/2',                    type: '表單/作業', note: 'Portal同步' },
@@ -288,6 +288,19 @@ const RAGIC_APPS_STATIC: Omit<RagicApp, 'portalName' | 'portalUrl' | 'localTable
   { itemNo: 233, module: '核准請購單',       name: '財務部請購單（內頁）',                url: 'https://ap12.ragic.com/soutlet001/lequn-finance-department/2',                   type: '表單/作業', note: 'Portal同步' },
   { itemNo: 234, module: '核准請購單',       name: '資訊部請購單（清單）',                url: 'https://ap12.ragic.com/soutlet001/joy-group-it-department/11',                   type: '報表/清單', note: 'Portal同步' },
   { itemNo: 235, module: '核准請購單',       name: '資訊部請購單（內頁）',                url: 'https://ap12.ragic.com/soutlet001/lequn-finance-department/5',                   type: '表單/作業', note: 'Portal同步 / Ragic重導向至lequn-finance-department/5' },
+  // ── 飯店工務每日巡檢新表與封存表（2026-11-10）──────────────────────────────
+  { itemNo: 236, module: '飯店工務每日巡檢', name: '飯店工務每日巡檢 - 5-10F 客房公共區域', url: 'https://ap12.ragic.com/soutlet001/main-project-inspection/28', type: '表單/作業', note: 'Portal同步（2026-11-10）' },
+  { itemNo: 237, module: '飯店工務每日巡檢', name: '飯店工務每日巡檢 - 4F BAR-D公區', url: 'https://ap12.ragic.com/soutlet001/main-project-inspection/29', type: '表單/作業', note: 'Portal同步（2026-11-10）' },
+  { itemNo: 238, module: '飯店工務每日巡檢', name: '飯店工務每日巡檢 - B1F 高壓機房', url: 'https://ap12.ragic.com/soutlet001/main-project-inspection/30', type: '表單/作業', note: 'Portal同步（2026-11-10）' },
+  { itemNo: 239, module: '飯店工務每日巡檢', name: '飯店工務每日巡檢 - B1F 晚班巡檢 辦公室公區、廚房瓦斯設備', url: 'https://ap12.ragic.com/soutlet001/main-project-inspection/31', type: '表單/作業', note: 'Portal同步（2026-11-10）' },
+  { itemNo: 240, module: '飯店工務每日巡檢', name: '飯店工務每日巡檢 - B4F 早班巡檢 下水塔', url: 'https://ap12.ragic.com/soutlet001/main-project-inspection/32', type: '表單/作業', note: 'Portal同步（2026-11-10）' },
+  { itemNo: 241, module: '飯店工務每日巡檢', name: '飯店工務每日巡檢 - B4F 晚班巡檢 空調機房', url: 'https://ap12.ragic.com/soutlet001/main-project-inspection/33', type: '表單/作業', note: 'Portal同步（2026-11-10）' },
+  { itemNo: 242, module: '封存巡檢資料', name: '飯店工務每日巡檢 - 4F（封存）', url: 'https://ap12.ragic.com/soutlet001/archive-old-data/35', type: '封存資料', note: 'Portal 頁籤 4F BAR-D公區（2026-11-10 起同步）' },
+  { itemNo: 243, module: '封存巡檢資料', name: '飯店工務每日巡檢 - 5F（封存）', url: 'https://ap12.ragic.com/soutlet001/archive-old-data/36', type: '封存資料', note: 'Portal 頁籤 5-10F（2026-11-10 起同步）' },
+  { itemNo: 244, module: '封存巡檢資料', name: '飯店工務每日巡檢 - 6F（封存）', url: 'https://ap12.ragic.com/soutlet001/archive-old-data/37', type: '封存資料', note: 'Portal 頁籤 5-10F（2026-11-10 起同步）' },
+  { itemNo: 245, module: '封存巡檢資料', name: '飯店工務每日巡檢 - 7F（封存）', url: 'https://ap12.ragic.com/soutlet001/archive-old-data/38', type: '封存資料', note: 'Portal 頁籤 5-10F（2026-11-10 起同步）' },
+  { itemNo: 246, module: '封存巡檢資料', name: '飯店工務每日巡檢 - 8F（封存）', url: 'https://ap12.ragic.com/soutlet001/archive-old-data/39', type: '封存資料', note: 'Portal 頁籤 5-10F（2026-11-10 起同步）' },
+  { itemNo: 247, module: '封存巡檢資料', name: '飯店工務每日巡檢 - 9F（封存）', url: 'https://ap12.ragic.com/soutlet001/archive-old-data/40', type: '封存資料', note: 'Portal 頁籤 5-10F（2026-11-10 起同步）' },
 ]
 
 // ── 本地 DB 表對應（Ragic sheet 路徑 → 本地 SQLite table name(s)）────────────
@@ -387,7 +400,20 @@ const LOCAL_TABLE_MAP: Record<number, string> = {
   216: 'hotel_di_inspection_batch\nhotel_di_inspection_item',  // main-project-inspection/20 (2F)
   217: 'hotel_di_inspection_batch\nhotel_di_inspection_item',  // main-project-inspection/19 (4F)
   218: 'hotel_di_inspection_batch\nhotel_di_inspection_item',  // main-project-inspection/18 (4F~10F)
-  219: 'hotel_di_inspection_batch\nhotel_di_inspection_item',  // main-project-inspection/17 (RF)
+  219: 'hotel_di_inspection_batch\nhotel_di_inspection_item',  // main-project-inspection/17 (RF 樓層 早班巡檢)
+  // 2026-11-10：215～218 已搬到 archive-old-data/34、33、32、31；新表 236～241、封存 242～247
+  236: 'hotel_di_inspection_batch\nhotel_di_inspection_item',
+  237: 'hotel_di_inspection_batch\nhotel_di_inspection_item',
+  238: 'hotel_di_inspection_batch\nhotel_di_inspection_item',
+  239: 'hotel_di_inspection_batch\nhotel_di_inspection_item',
+  240: 'hotel_di_inspection_batch\nhotel_di_inspection_item',
+  241: 'hotel_di_inspection_batch\nhotel_di_inspection_item',
+  242: 'hotel_di_inspection_batch\nhotel_di_inspection_item',
+  243: 'hotel_di_inspection_batch\nhotel_di_inspection_item',
+  244: 'hotel_di_inspection_batch\nhotel_di_inspection_item',
+  245: 'hotel_di_inspection_batch\nhotel_di_inspection_item',
+  246: 'hotel_di_inspection_batch\nhotel_di_inspection_item',
+  247: 'hotel_di_inspection_batch\nhotel_di_inspection_item',
 
   // 核准請購單（樂群）— 重複列出的 Portal 同步標記版（220-235）
   220: 'approved_purchase_requests\napproved_purchase_request_items',  // 執董室（清單）
@@ -470,6 +496,13 @@ const SYNC_MODULE_MAP: Record<number, string> = {
   215: 'hotel_daily_inspection_sync', 216: 'hotel_daily_inspection_sync',
   217: 'hotel_daily_inspection_sync', 218: 'hotel_daily_inspection_sync',
   219: 'hotel_daily_inspection_sync',
+  236: 'hotel_daily_inspection_sync', 237: 'hotel_daily_inspection_sync',
+  238: 'hotel_daily_inspection_sync', 239: 'hotel_daily_inspection_sync',
+  240: 'hotel_daily_inspection_sync', 241: 'hotel_daily_inspection_sync',
+  242: 'hotel_daily_inspection_sync', 243: 'hotel_daily_inspection_sync',
+  244: 'hotel_daily_inspection_sync', 245: 'hotel_daily_inspection_sync',
+  246: 'hotel_daily_inspection_sync', 247: 'hotel_daily_inspection_sync',
+
 
   // 維春請購（明細 sheets 220-235）
   220: 'purchase_request_sync', 221: 'purchase_request_sync',

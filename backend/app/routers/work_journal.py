@@ -142,12 +142,16 @@ _SOURCE_PATH: dict[str, str] = {
 }
 
 # 多 Sheet 來源：sheet_key → Ragic path
+# 飯店每日巡檢：2026-11-10 改為多來源（現行＋封存），連結一律依場次 ID 由
+# hotel_daily_inspection_sources.record_url 產生（見 _hotel_di_record_url）；此表僅保留相容。
 _HOTEL_DI_PATHS: dict[str, str] = {
-    "rf":     "main-project-inspection/17",
-    "4f-10f": "main-project-inspection/18",
-    "4f":     "main-project-inspection/19",
-    "2f":     "main-project-inspection/20",
-    "1f":     "main-project-inspection/21",
+    "rf":         "main-project-inspection/17",
+    "5f-10f":     "main-project-inspection/28",
+    "4f":         "main-project-inspection/29",
+    "b1f-hv":     "main-project-inspection/30",
+    "b1f-office": "main-project-inspection/31",
+    "b4f-water":  "main-project-inspection/32",
+    "b4f-ac":     "main-project-inspection/33",
 }
 _MALL_FI_PATHS: dict[str, str] = {
     "4f":      "mall-facility-inspection/2",
@@ -174,6 +178,12 @@ _HOTEL_MR_PATHS: dict[str, str] = {
     "tenant-electric":   "hotel-routine-inspection/14",
     "tenant-water":      "hotel-routine-inspection/15",
 }
+
+
+def _hotel_di_record_url(batch_id: str) -> str:
+    """飯店每日巡檢場次 → Ragic 單筆網址（依場次所屬來源；含封存來源，舊 RF 無連結）。"""
+    from app.services.hotel_daily_inspection_sources import record_url
+    return record_url(batch_id)
 
 
 def _mall_fi_record_url(batch_id: str) -> str:
@@ -781,7 +791,7 @@ def _fetch_hotel_di(db: Session, year: int, month: int, day: int) -> list[dict]:
             end_time=b.end_time or "",
             work_min=wm,
             ragic_id=b.ragic_id,
-            ragic_url=_ragic_url(_HOTEL_DI_PATHS.get(b.sheet_key, ""), b.ragic_id),
+            ragic_url=_hotel_di_record_url(b.ragic_id),
             detail={
                 "巡檢表名稱": b.sheet_name or "",
                 "巡檢人員":   b.inspector_name or "",

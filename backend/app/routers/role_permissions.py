@@ -78,6 +78,10 @@ PERMISSION_DEFINITIONS = [
     {"key": "hotel_periodic_maintenance_view",    "label": "飯店週期保養",     "group": "飯店管理"},
     {"key": "hotel_ihg_room_maintenance_view",    "label": "IHG 客房保養",     "group": "飯店管理"},
     {"key": "hotel_daily_inspection_view",        "label": "飯店每日巡檢",     "group": "飯店管理"},
+    # 2026-11-10 飯店每日巡檢「樓層巡檢圖」編輯點位（需明確指派，不進 portal_general 預設清單）
+    {"key": "hotel_daily_inspection_floor_map_edit", "label": "飯店每日巡檢：樓層巡檢圖－編輯點位", "group": "飯店管理"},
+    # 2026-11-10 飯店每日巡檢頁籤名稱在頁面上直接修改（需明確指派）
+    {"key": "hotel_daily_inspection_tab_label_edit", "label": "飯店每日巡檢：編輯頁籤名稱", "group": "飯店管理"},
     {"key": "hotel_meter_readings_view",          "label": "每日數值登錄表",   "group": "飯店管理"},
     {"key": "hotel_other_tasks_view",             "label": "主管交辦／緊急事件","group": "飯店管理"},
     # 2026-07-14：hotel_routine_pm 安全下線（與 hotel_periodic_maintenance_view 重複，

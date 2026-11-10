@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from app.services.floor_map.providers.base import FloorMapProvider
 from app.services.floor_map.providers.full_building_inspection import FullBuildingInspectionProvider
+from app.services.floor_map.providers.hotel_daily_inspection import HotelDailyInspectionProvider
 from app.services.floor_map.providers.mall_facility_inspection import MallFacilityInspectionProvider
 from app.services.floor_map.providers.mall_full_building_maintenance import MallFullBuildingMaintenanceProvider
 from app.services.floor_map.providers.mall_periodic_maintenance import MallPeriodicMaintenanceProvider
@@ -19,6 +20,8 @@ PROVIDERS: dict[str, FloorMapProvider] = {
         # 2026-11-04 例行維護類（不列入戰情 KPI，見 periodic_maintenance_common.py）
         MallPeriodicMaintenanceProvider(),
         MallFullBuildingMaintenanceProvider(),
+        # 2026-11-10 飯店每日巡檢（新 Ragic 表 17、28～33）
+        HotelDailyInspectionProvider(),
     )
 }
 

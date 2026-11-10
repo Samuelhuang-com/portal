@@ -91,6 +91,22 @@ _SEED = {
         ("b4f", None, 7, "WP-3 廢水", "WP-3", "b4f|汙廢水", {"機房位置": "B4停車場302車位"}, "pending"),
         ("b4f", None, 8, "下水塔", None, "b4f|下水塔", {"機房位置": "B4"}, "pending"),
     ],
+    # 2026-11-10 飯店每日巡檢：依 Excel 主項目各一點（5-10F 每層一點）；Alembic hdi2 呼叫同一份
+    "hotel_daily_inspection": [
+        ("rf", 0.57, 0.30, "冷卻水塔", None, "rf|冷卻水塔", {"機房位置": "頂樓"}, "draft"),
+        ("rf", None, 0, "上水塔", None, "rf|上水塔", {"機房位置": "頂樓"}, "pending"),
+        ("rf", None, 1, "熱水系統", None, "rf|熱水系統", {"機房位置": "頂樓"}, "pending"),
+        ("rf", None, 2, "鍋爐設備", None, "rf|鍋爐設備", {"機房位置": "頂樓"}, "pending"),
+        ("rf", None, 3, "RF瓦斯", None, "rf|RF瓦斯", {"機房位置": "頂樓"}, "pending"),
+        *[(f"{n}f", 0.42, 0.23, f"{n}F 客房走道空調箱", None, f"5f-10f|客房公共區域|{n}樓客房走道空調箱",
+           {"機房位置": f"{n}F 客房走道"}, "draft") for n in range(5, 11)],
+        ("4f", 0.29, 0.27, "BAR-D公區", None, "4f|BAR-D公區", {"機房位置": "4F BAR-D"}, "draft"),
+        ("b1f", None, 0, "高壓機房", None, "b1f-hv|高壓機房", {"機房位置": "B1F"}, "pending"),
+        ("b1f", None, 1, "辦公室公區", None, "b1f-office|辦公室公區", {"機房位置": "B1F"}, "pending"),
+        ("b1f", None, 2, "廚房瓦斯設備", None, "b1f-office|廚房瓦斯設備", {"機房位置": "B1F"}, "pending"),
+        ("b4f", None, 0, "下水塔", None, "b4f-water|下水塔", {"機房位置": "B4F"}, "pending"),
+        ("b4f", None, 1, "空調機房", None, "b4f-ac|空調機房", {"機房位置": "B4F"}, "pending"),
+    ],
 }
 
 # 舊清單（v2.10.107～.113，2026-10-04 版）寫入過的值 —— sync_point_list 只覆蓋「還是舊值或空白」的欄位，
@@ -272,6 +288,9 @@ def ensure_floor_map_data(engine) -> dict[str, str]:
                 result["mall_facility_inspection"] = f"寫入草稿 {_seed(conn, 'mall_facility_inspection')} 筆"
         if _count(conn, "full_building_inspection") == 0:
             result["full_building_inspection"] = f"寫入草稿 {_seed(conn, 'full_building_inspection')} 筆"
+        # 2026-11-10 飯店每日巡檢（與 Alembic hdi2 相同；只在一筆點位都沒有時寫入）
+        if _count(conn, "hotel_daily_inspection") == 0:
+            result["hotel_daily_inspection"] = f"寫入草稿 {_seed(conn, 'hotel_daily_inspection')} 筆"
         # 2026-11-04 例行維護類（商場／全棟）：模組一筆點位都沒有時寫入待定位點位；
         # 與 Alembic fmappm1 共用 seed_pm_points。不套用 sync_point_list（它以「樓層＋名稱」比對，
         # 使用者在畫面上改名後會被重新種回來）。
@@ -296,7 +315,7 @@ def ensure_floor_map_data(engine) -> dict[str, str]:
                     f"還原子項點位 {rs['restored']} 筆；對不到母項仍停用 {len(rs['skipped'])} 筆：{'、'.join(rs['skipped'])}"
                 )
         # 2026-10-05：套用最新點位清單（補缺、更新屬性；不動已校正的位置）
-        for mod in _SEED:
+        for mod in ("mall_facility_inspection", "full_building_inspection"):
             st = sync_point_list(conn, mod)
             if any(st.values()):
                 result[f"{mod}:pointlist"] = f"改名 {st['renamed']}、新增 {st['inserted']}、更新屬性 {st['updated']} 筆"

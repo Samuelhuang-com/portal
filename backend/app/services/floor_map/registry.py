@@ -16,6 +16,9 @@ FLOOR_PLAN_DIR = Path(__file__).resolve().parents[3] / "static" / "floor_plans"
 FLOORS: list[dict[str, Any]] = [
     {"key": "rf",  "label": "RF",  "width": 2184, "height": 2527, "version": "建照圖",
      "source": "頂樓平面圖-建照圖.pdf"},
+    # 飯店客房層 5F～10F（2026-11-10 飯店每日巡檢樓層巡檢圖；myDoc/平面圖/全區平面圖_{n}F.pdf）
+    *[{"key": f"{n}f", "label": f"{n}F", "width": 2339, "height": 1654, "version": "全區平面圖",
+       "source": f"全區平面圖_{n}F.pdf"} for n in range(10, 4, -1)],
     # 商場 4F：底圖尚未提供，地圖暫時空白；尺寸為佔位值（2026-10-30）
     {"key": "4f", "label": "4F", "width": 2515, "height": 1427, "version": "未提供",
      "source": "（底圖未提供）"},

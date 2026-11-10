@@ -1,322 +1,164 @@
 /**
  * 飯店每日巡檢 — 統一整合頁面（掛於飯店管理群組）
  *
- * TAB 順序：
- *   1. Dashboard   — 月份彙整 KPI + 各 Sheet 摘要 + 每日狀況月曆格
- *   2. 每日巡檢表  — 標準模板彙整（YYYY+M + 可選日期篩選）
- *   3. RF 巡檢     — 月份篩選 + 場次清單
- *   4. 4F~10F 巡檢 — 同上
- *   5. 4F 巡檢     — 同上
- *   6. 2F 巡檢     — 同上
- *   7. 1F 巡檢     — 同上
+ * 2026-11-10 改版：照抄 pages/MallFacilityInspection/index.tsx（Samuel 裁示：完全照商場模組的程式與架構）。
+ * Ragic：main-project-inspection/17、28～33（新表）＋ archive-old-data/31～40（舊表，掛在最接近的新頁籤）。
+ *   Tab Dashboard   — 月份統計 + 月曆格（點格子開每日巡檢表 Drawer，共用 MallFIDailySheetDrawer）
+ *   Tab 樓層巡檢圖  — 共用元件 FloorMapWorkspace（module=hotel_daily_inspection，CLAUDE.md §12）
+ *   Tab ×7          — RF 樓層 早班巡檢／5-10F 客房公共區域／4F BAR-D公區／B1F 高壓機房／
+ *                     B1F 晚班巡檢 辦公室公區 廚房瓦斯設備／B4F 早班巡檢 下水塔／B4F 晚班巡檢 空調機房
+ * 「每日巡檢表」TAB 比照商場隱藏（每日巡檢表改由 Dashboard 月曆格 Drawer 呈現）。
  *
- * URL query param：?tab=summary|daily-form|rf|4f-10f|4f|2f|1f
+ * URL query param：?tab=summary|floor-map|rf|5f-10f|4f|b1f-hv|b1f-office|b4f-water|b4f-ac
  */
 import { useEffect, useState, useCallback } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
-  Row, Col, Card, Statistic, Table, Button, Space, Tooltip,
+  Row, Col, Card, Statistic, Table, Tag, Button, Space,
   Typography, Breadcrumb, Tabs, Alert, DatePicker, Badge,
-  message, Progress,
+  message, Progress, Tooltip,
 } from 'antd'
 import {
   HomeOutlined, ReloadOutlined,
   WarningOutlined, CheckCircleOutlined, ExclamationCircleOutlined,
-  DashboardOutlined, ToolOutlined, ClockCircleOutlined,
-  CalendarOutlined as CalendarOutlinedIcon, LinkOutlined,
+  DashboardOutlined, ToolOutlined, ClockCircleOutlined, LinkOutlined,
+  CalendarOutlined, EnvironmentOutlined, EditOutlined,
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { NAV_GROUP, NAV_PAGE } from '@/constants/navLabels'
 import {
-  HOTEL_DAILY_INSPECTION_SHEET_LIST,
   HOTEL_DAILY_INSPECTION_SHEETS,
-  type HotelDailyInspectionSheet,
+  HOTEL_DAILY_INSPECTION_TAB_LABELS,
 } from '@/constants/hotelDailyInspection'
+import { useAuthStore } from '@/stores/authStore'
 import {
   fetchHotelDailyMonthlyDashboard,
-  fetchHotelDailyCalendar,
-  fetchHotelDailyBatches,
-  type HotelDISheetSummary,
-  type DailyCalendarSheet,
+  fetchHotelDIDailyCalendar,
+  fetchHotelDIDailySheet,
+  fetchHotelDITabLabels,
+  saveHotelDITabLabels,
+  type HotelDIMonthlySheetSummary,
 } from '@/api/hotelDailyInspection'
-import DailyInspectionFormTab from './DailyInspectionFormTab'
+import TabLabelEditModal from './TabLabelEditModal'
 import MonthlyCalendarGrid from '@/components/MonthlyCalendarGrid'
+import type { CalendarRow } from '@/components/MonthlyCalendarGrid'
+import { renderIssueCell } from '@/components/CalendarIssueCell'
+// 每日巡檢表 Drawer 與商場、整棟巡檢共用同一個元件（回傳格式相同）
+import MallFIDailySheetDrawer from '@/pages/MallFacilityInspection/MallFIDailySheetDrawer'
+import HotelFloorInspectionList from './HotelFloorInspectionList'
+import FloorMapWorkspace from '@/components/FloorPlanMap/FloorMapWorkspace'
 
 const { Title, Text } = Typography
 
-// ── 型別 ─────────────────────────────────────────────────────────────────────
+// Type definitions (SummaryTabContent 使用 HotelDIMonthlySheetSummary)
 
-interface SheetStats extends HotelDailyInspectionSheet, HotelDISheetSummary {}
+// 各頁籤：清單＋明細 Drawer 用 HotelFloorInspectionList（照抄 MallFloorInspectionList）
 
-interface BatchRow {
-  id:              string
-  inspection_date: string
-  inspector_name:  string
-  completion_rate: number
-  total:           number
-  checked:         number
-  abnormal:        number
-  pending:         number
-}
-
-// ── 共用：巡檢場次清單 TAB ───────────────────────────────────────────────────
-
-function FloorListTab({ sheetKey }: { sheetKey: string }) {
-  const [yearMonth, setYearMonth] = useState<string>(dayjs().format('YYYY/MM'))
-  const [loading,   setLoading]   = useState(false)
-  const [batches,   setBatches]   = useState<BatchRow[]>([])
-
-  const load = useCallback(async () => {
-    setLoading(true)
-    try {
-      const data = await fetchHotelDailyBatches(sheetKey, { year_month: yearMonth })
-      setBatches(data)
-    } catch {
-      setBatches([])
-    } finally {
-      setLoading(false)
-    }
-  }, [sheetKey, yearMonth])
-
-  useEffect(() => { load() }, [load])
-
-  const columns = [
-    {
-      title: '巡檢日期',
-      dataIndex: 'inspection_date',
-      width: 110,
-      sorter: (a: BatchRow, b: BatchRow) => a.inspection_date.localeCompare(b.inspection_date),
-      defaultSortOrder: 'descend' as const,
-    },
-    { title: '巡檢人員', dataIndex: 'inspector_name', width: 100 },
-    {
-      title: '狀態',
-      width: 90,
-      render: (_: unknown, row: BatchRow) => {
-        if (row.abnormal > 0)                          return <Badge status="error"   text="有異常" />
-        if (row.pending  > 0)                          return <Badge status="warning" text="待處理" />
-        if (row.checked >= row.total && row.total > 0) return <Badge status="success" text="已完成" />
-        return <Badge status="processing" text="巡檢中" />
-      },
-    },
-    {
-      title: '巡檢進度',
-      width: 200,
-      render: (_: unknown, row: BatchRow) => (
-        <div>
-          <Progress
-            percent={row.completion_rate}
-            size="small"
-            strokeColor={{ from: '#FAAD14', to: '#52C41A' }}
-            format={() => `${row.completion_rate}%`}
-          />
-          <Text type="secondary" style={{ fontSize: 11 }}>
-            {row.checked} / {row.total} 已巡檢
-          </Text>
-        </div>
-      ),
-    },
-    {
-      title: '異常', dataIndex: 'abnormal', width: 65, align: 'center' as const,
-      render: (v: number) =>
-        v > 0 ? <Badge count={v} color="#FF4D4F" /> : <Text type="secondary">—</Text>,
-    },
-    {
-      title: '待處理', dataIndex: 'pending', width: 65, align: 'center' as const,
-      render: (v: number) =>
-        v > 0 ? <Badge count={v} color="#FAAD14" /> : <Text type="secondary">—</Text>,
-    },
-    {
-      title: 'Ragic',
-      key: 'ragic_link',
-      width: 60,
-      align: 'center' as const,
-      render: (_: unknown, row: BatchRow) => {
-        const sheet = HOTEL_DAILY_INSPECTION_SHEETS[sheetKey]
-        if (!sheet || !row.id) return null
-        const baseUrl = sheet.ragicUrl.split('?')[0]
-        return (
-          <Tooltip title="在 Ragic 查看原始記錄">
-            <a
-              href={`${baseUrl}/${row.id}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{ color: '#4BA8E8', fontSize: 16 }}
-              onClick={e => e.stopPropagation()}
-            >
-              <LinkOutlined />
-            </a>
-          </Tooltip>
-        )
-      },
-    },
-  ]
-
-  return (
-    <div>
-      <Row gutter={8} style={{ marginBottom: 16 }} align="middle">
-        <Col>
-          <DatePicker
-            picker="month"
-            value={dayjs(yearMonth, 'YYYY/MM')}
-            format="YYYY/MM"
-            allowClear={false}
-            onChange={(d) => { if (d) setYearMonth(d.format('YYYY/MM')) }}
-          />
-        </Col>
-        <Col>
-          <Button icon={<ReloadOutlined />} onClick={load} loading={loading}>重新整理</Button>
-        </Col>
-      </Row>
-      <Table<BatchRow>
-        dataSource={batches}
-        rowKey="id"
-        columns={columns}
-        loading={loading}
-        size="middle"
-        pagination={{ pageSize: 30, showTotal: (t) => `共 ${t} 筆` }}
-        locale={{ emptyText: '尚無巡檢紀錄（請先執行資料同步）' }}
-      />
-    </div>
-  )
-}
-
-// ── Dashboard TAB 內容 ────────────────────────────────────────────────────────
+// Summary tab — 月份統計版
 
 function SummaryTabContent() {
-  const [yearMonth, setYearMonth] = useState<string>(dayjs().format('YYYY/MM'))
-  const [loading,   setLoading]   = useState(false)
+  const [searchParams, setSearchParams] = useSearchParams()
 
-  const buildEmptyStats = (): SheetStats[] =>
-    HOTEL_DAILY_INSPECTION_SHEET_LIST.map((s) => ({
-      ...s,
-      total_batches:   0,
-      total_items:     0,
-      checked_items:   0,
-      abnormal_items:  0,
-      pending_items:   0,
-      unchecked_items: 0,
-      completion_rate: 0,
-      total_minutes:   0,
-      has_data:        false,
-    }))
+  const initMonth = searchParams.get('month') ?? dayjs().format('YYYY-MM')
+  const [queryMonth, setQueryMonth] = useState<string>(initMonth)
+  const [loading,    setLoading]    = useState(false)
+  const [sheets,     setSheets]     = useState<HotelDIMonthlySheetSummary[]>([])
+  const [error,      setError]      = useState<string | null>(null)
+  const [calRows,    setCalRows]    = useState<CalendarRow[]>([])
+  const [calMaxDay,  setCalMaxDay]  = useState(31)
+  // 月曆格下一層：點「樓層 × 日」開啟該日每日巡檢表（Excel 版型）
+  const [sheetDate,  setSheetDate]  = useState<string | null>(null)
+  const [sheetFocus, setSheetFocus] = useState<string | null>(null)
 
-  const [sheets,    setSheets]    = useState<SheetStats[]>(buildEmptyStats())
-  const [calSheets, setCalSheets] = useState<DailyCalendarSheet[]>([])
-  const [maxDay,    setMaxDay]    = useState<number>(31)
+  const isCurrentMonth = queryMonth === dayjs().format('YYYY-MM')
+  const monthLabel     = dayjs(queryMonth, 'YYYY-MM').format('YYYY年M月')
+
+  const handleMonthChange = (m: string) => {
+    setQueryMonth(m)
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev)
+      next.set('month', m)
+      return next
+    }, { replace: true })
+  }
 
   const loadSummary = useCallback(async () => {
     setLoading(true)
-    const [y, m] = yearMonth.split('/').map(Number)
+    setError(null)
     try {
-      // 月份彙整 + 月曆格 並行取得
-      const [monthData, calData] = await Promise.all([
-        fetchHotelDailyMonthlyDashboard(y, m),
-        fetchHotelDailyCalendar(y, m),
+      const [yr, mo] = queryMonth.split('-').map(Number)
+      const [data, calData] = await Promise.all([
+        fetchHotelDailyMonthlyDashboard(queryMonth),
+        fetchHotelDIDailyCalendar(yr, mo).catch(() => null),
       ])
-
-      const merged: SheetStats[] = HOTEL_DAILY_INSPECTION_SHEET_LIST.map((s) => {
-        const api = monthData.sheets.find((d) => d.key === s.key)
-        return api
-          ? { ...s, ...api }
-          : { ...s, total_batches: 0, total_items: 0, checked_items: 0,
-              abnormal_items: 0, pending_items: 0, unchecked_items: 0,
-              completion_rate: 0, total_minutes: 0, has_data: false }
-      })
-      setSheets(merged)
-      setCalSheets(calData.sheets)
-      setMaxDay(calData.max_day)
+      setSheets(data.sheets)
+      if (calData) {
+        setCalMaxDay(calData.max_day)
+        setCalRows(calData.sheets.map((s) => ({
+          key:   s.key,
+          label: s.floor,
+          daily: s.daily,
+        })))
+      }
     } catch {
-      setSheets(buildEmptyStats())
-      setCalSheets([])
+      setError('取得統計資料失敗，請稍後再試')
+      setSheets([])
     } finally {
       setLoading(false)
     }
-  }, [yearMonth])
+  }, [queryMonth])
 
   useEffect(() => { loadSummary() }, [loadSummary])
 
-  const [y, m]       = yearMonth.split('/').map(Number)
-  const totalBatches = sheets.reduce((s, r) => s + r.total_batches, 0)
-  const checkedAll   = sheets.reduce((s, r) => s + r.checked_items, 0)
-  const totalAll     = sheets.reduce((s, r) => s + r.total_items,   0)
-  const abnormalAll  = sheets.reduce((s, r) => s + r.abnormal_items + r.pending_items, 0)
-  const rateAll      = totalAll > 0 ? Math.round((checkedAll / totalAll) * 100) : 0
-  const totalMinutes = sheets.reduce((s, r) => s + (r.total_minutes ?? 0), 0)
-
-  const sheetCols = [
-    {
-      title: '巡檢區域',
-      dataIndex: 'title',
-      ellipsis: true,
-      render: (v: string) => <Text strong>{v}</Text>,
-    },
-    {
-      title: '場次', dataIndex: 'total_batches', width: 60, align: 'center' as const,
-      render: (v: number) =>
-        v > 0 ? <Badge count={v} color="#1B3A5C" showZero /> : <Text type="secondary">—</Text>,
-    },
-    {
-      title: '完成率', dataIndex: 'completion_rate', width: 130,
-      render: (v: number, row: SheetStats) =>
-        row.has_data ? (
-          <Progress
-            percent={v} size="small"
-            strokeColor={{ from: v < 50 ? '#FF4D4F' : '#FAAD14', to: '#52C41A' }}
-            format={(p) => `${p}%`}
-          />
-        ) : (
-          <Text type="secondary">無資料</Text>
-        ),
-    },
-    {
-      title: '異常', dataIndex: 'abnormal_items', width: 60, align: 'center' as const,
-      render: (v: number) =>
-        v > 0 ? <Badge count={v} color="#FF4D4F" /> : <Text type="secondary">—</Text>,
-    },
-    {
-      title: '待處理', dataIndex: 'pending_items', width: 65, align: 'center' as const,
-      render: (v: number) =>
-        v > 0 ? <Badge count={v} color="#FAAD14" /> : <Text type="secondary">—</Text>,
-    },
-    {
-      title: '未巡檢', dataIndex: 'unchecked_items', width: 65, align: 'center' as const,
-      render: (v: number) =>
-        v > 0 ? <Badge count={v} color="#999" /> : <Text type="secondary">—</Text>,
-    },
-  ]
+  const totalLogged  = sheets.filter((s) => s.has_today).length
+  const totalMissing = sheets.reduce((acc, s) => acc + s.missing_count, 0)
+  const totalCount   = sheets.reduce((acc, s) => acc + s.month_count, 0)
+  const hasAllToday  = sheets.length > 0 && totalLogged === sheets.length
+  const todayLabel   = isCurrentMonth ? '今日已登錄' : '末日已登錄'
 
   return (
     <div>
-      {/* 篩選列 */}
+      {/* ── 操作列 ────────────────────────────────────────────────────────── */}
       <Row style={{ marginBottom: 16 }} align="middle" gutter={8}>
         <Col>
-          <Space wrap>
+          <Space>
             <Text strong>查詢月份：</Text>
             <DatePicker
               picker="month"
-              value={dayjs(yearMonth, 'YYYY/MM')}
+              value={dayjs(queryMonth, 'YYYY-MM')}
               format="YYYY/MM"
               allowClear={false}
-              onChange={(d) => { if (d) setYearMonth(d.format('YYYY/MM')) }}
+              onChange={(d) => { if (d) handleMonthChange(d.format('YYYY-MM')) }}
             />
             <Button icon={<ReloadOutlined />} onClick={loadSummary} loading={loading}>
               重新整理
             </Button>
           </Space>
         </Col>
+        <Col flex="auto" />
+        <Col>
+          <Text type="secondary" style={{ fontSize: 12 }}>{monthLabel}統計</Text>
+        </Col>
       </Row>
 
-      {/* KPI 卡片 */}
+      {error && (
+        <Alert type="error" message={error} style={{ marginBottom: 16 }} closable onClose={() => setError(null)} />
+      )}
+
+      {/* ── 頂部 KPI 卡片 ─────────────────────────────────────────────────── */}
       <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
         {[
-          { title: '本月巡檢場次',  value: totalBatches, color: '#1B3A5C', icon: <DashboardOutlined /> },
-          { title: '已巡檢項目',    value: checkedAll, suffix: `/${totalAll}`, color: '#4BA8E8', icon: <CheckCircleOutlined /> },
-          { title: '異常 + 待處理', value: abnormalAll, color: '#FF4D4F', icon: <WarningOutlined /> },
-          { title: '整體完成率',    value: rateAll, suffix: '%', color: rateAll >= 80 ? '#52C41A' : '#FAAD14', icon: <ExclamationCircleOutlined /> },
+          { title: todayLabel,           value: totalLogged,  suffix: `/ ${sheets.length} 區域`,
+            color: hasAllToday ? '#52C41A' : '#FAAD14',       icon: hasAllToday ? <CheckCircleOutlined /> : <ExclamationCircleOutlined /> },
+          { title: `${monthLabel}累計缺漏`, value: totalMissing, suffix: '天',
+            color: totalMissing > 0 ? '#FF4D4F' : '#52C41A', icon: totalMissing > 0 ? <WarningOutlined /> : <CheckCircleOutlined /> },
+          { title: `${monthLabel}登錄場次`, value: totalCount,  suffix: '筆',
+            color: '#1B3A5C',                                 icon: <DashboardOutlined /> },
+          { title: '監控區域數',            value: sheets.length, suffix: '區',
+            color: '#4BA8E8',                                 icon: <ToolOutlined /> },
         ].map((card) => (
           <Col flex={1} style={{ minWidth: 140 }} key={card.title}>
-            <Card size="small" hoverable style={{ height: '100%' }}>
+            <Card size="small" hoverable loading={loading} style={{ height: '100%' }}>
               <Statistic
                 title={card.title}
                 value={card.value}
@@ -327,60 +169,149 @@ function SummaryTabContent() {
             </Card>
           </Col>
         ))}
-        <Col flex={1} style={{ minWidth: 140 }}>
-          <Card size="small" hoverable style={{ height: '100%' }}>
-            <Statistic
-              title="本月巡檢時間"
-              value={Math.round(totalMinutes / 60 * 10) / 10}
-              suffix="小時"
-              prefix={<span style={{ color: '#4BA8E8' }}><ClockCircleOutlined /></span>}
-              valueStyle={{ color: '#4BA8E8', fontSize: 26 }}
-            />
-          </Card>
-        </Col>
       </Row>
 
-      {/* Sheet 摘要表 */}
-      <Card size="small" style={{ marginBottom: 16 }}>
-        <Table<SheetStats>
-          dataSource={sheets}
-          rowKey="key"
-          columns={sheetCols}
-          loading={loading}
-          size="small"
-          pagination={false}
-          locale={{ emptyText: '尚無資料' }}
-        />
-      </Card>
+      {/* ── 各 Sheet 狀態卡片 ─────────────────────────────────────────────── */}
+      <Row gutter={[16, 16]}>
+        {sheets.map((sheet) => {
+          const sheetCfg = HOTEL_DAILY_INSPECTION_SHEETS[sheet.key]
+          const color    = sheetCfg?.color ?? '#1B3A5C'
 
-      {/* 每日巡檢月曆格 */}
+          return (
+            <Col xs={24} sm={12} md={12} lg={8} key={sheet.key}>
+              <Card
+                size="small"
+                loading={loading}
+                title={
+                  <Space>
+                    <span style={{ color }}>{sheet.title}</span>
+                    {sheet.has_today
+                      ? <Tag color="success">{isCurrentMonth ? '今日已登錄' : '末日已登錄'}</Tag>
+                      : <Tag color="warning">{isCurrentMonth ? '今日未登錄' : '末日未登錄'}</Tag>}
+                  </Space>
+                }
+                extra={
+                  sheetCfg && (
+                    <Tooltip title="前往 Ragic 原始表單">
+                      <a href={sheetCfg.ragicUrl} target="_blank" rel="noreferrer">
+                        <LinkOutlined />
+                      </a>
+                    </Tooltip>
+                  )
+                }
+              >
+                <Row gutter={8}>
+                  <Col span={12}>
+                    <Statistic
+                      title={`${monthLabel}登錄`}
+                      value={sheet.month_count}
+                      suffix="筆"
+                      valueStyle={{ fontSize: 18 }}
+                    />
+                  </Col>
+                  <Col span={12}>
+                    <Statistic
+                      title="缺漏天數"
+                      value={sheet.missing_count}
+                      suffix="天"
+                      valueStyle={{
+                        fontSize: 18,
+                        color: sheet.missing_count > 0 ? '#ff4d4f' : '#52c41a',
+                      }}
+                    />
+                  </Col>
+                </Row>
+
+                {/* 最近登錄日期 */}
+                <div style={{ marginTop: 8, color: '#64748b', fontSize: 12 }}>
+                  最近登錄：{sheet.latest_batch_date || '（無資料）'}
+                </div>
+
+                {/* 缺漏日期列表（最多顯示 5 個） */}
+                {sheet.missing_count > 0 && (
+                  <div style={{ marginTop: 6 }}>
+                    <Text type="danger" style={{ fontSize: 11 }}>
+                      缺漏：{sheet.missing_days.slice(0, 5).join('、')}
+                      {sheet.missing_count > 5 && ` 等 ${sheet.missing_count} 天`}
+                    </Text>
+                  </div>
+                )}
+
+                {/* 近 7 天趨勢點 */}
+                <div style={{ marginTop: 8, display: 'flex', gap: 3 }}>
+                  {sheet.trend_7d.map((t) => (
+                    <Tooltip key={t.date} title={t.date}>
+                      <div
+                        style={{
+                          width: 10, height: 10, borderRadius: '50%',
+                          backgroundColor: t.has_record ? '#52c41a' : '#ff7875',
+                        }}
+                      />
+                    </Tooltip>
+                  ))}
+                  <Text type="secondary" style={{ fontSize: 10, marginLeft: 4 }}>
+                    近 7 天
+                  </Text>
+                </div>
+              </Card>
+            </Col>
+          )
+        })}
+      </Row>
+
+      {/* 月曆格：樓層 × 日期 */}
       <Card
         size="small"
+        style={{ marginTop: 16 }}
         title={
           <Space>
-            <CalendarOutlinedIcon style={{ color: '#4BA8E8' }} />
-            <Text strong style={{ color: '#1B3A5C' }}>
-              {yearMonth} 每日巡檢狀況
+            <CalendarOutlined />
+            <Text strong>飯店每日巡檢狀況</Text>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              （{monthLabel}）
             </Text>
           </Space>
         }
         loading={loading}
       >
-        {calSheets.length > 0 ? (
+        {calRows.length > 0 ? (
           <MonthlyCalendarGrid
-            year={y} month={m} maxDay={maxDay}
-            rows={calSheets.map((s) => ({ key: s.key, label: s.floor, daily: s.daily }))}
+            year={parseInt(queryMonth.split('-')[0])}
+            month={parseInt(queryMonth.split('-')[1])}
+            maxDay={calMaxDay}
+            rows={calRows}
+            rowHeaderLabel="巡檢頁籤"
+            renderCell={renderIssueCell}
+            onCellClick={(day, rowKey) => {
+              setSheetFocus(rowKey)
+              setSheetDate(`${queryMonth}-${String(day).padStart(2, '0')}`)
+            }}
           />
         ) : (
-          <Text type="secondary">尚無資料</Text>
+          <Text type="secondary">尚無月曆資料</Text>
+        )}
+        {calRows.length > 0 && (
+          <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 4 }}>
+            點選有紀錄的格子，可查看當日完整每日巡檢表；滑鼠移到 ⚠ 可直接看是哪幾項異常／待處理
+          </Text>
         )}
       </Card>
 
-      {!loading && totalAll === 0 && (
+      <MallFIDailySheetDrawer
+        open={!!sheetDate}
+        date={sheetDate}
+        focusSheet={sheetFocus}
+        onClose={() => { setSheetDate(null); setSheetFocus(null) }}
+        onDateChange={(d) => { setSheetDate(d); setSheetFocus(null) }}
+        fetchSheet={fetchHotelDIDailySheet}
+        titleText="飯店每日巡檢"
+      />
+
+      {!loading && sheets.length === 0 && !error && (
         <Alert
           style={{ marginTop: 16 }}
           type="info"
-          message={`${yearMonth} 整月尚無任何飯店每日巡檢記錄，請確認資料是否已同步。`}
+          message={`${monthLabel}尚無任何飯店每日巡檢記錄，請確認巡檢是否已執行並同步。`}
           showIcon
         />
       )}
@@ -388,9 +319,11 @@ function SummaryTabContent() {
   )
 }
 
-// ── Main component ────────────────────────────────────────────────────────────
+// Main component
 
-const VALID_TABS = ['summary', 'daily-form', 'rf', '4f-10f', '4f', '2f', '1f']
+// 舊書籤 ?tab=daily-form／4f-10f／2f／1f 會退回 summary，不會停在不存在的分頁
+const TAB_KEYS   = ['rf', '5f-10f', '4f', 'b1f-hv', 'b1f-office', 'b4f-water', 'b4f-ac']
+const VALID_TABS = ['summary', 'floor-map', ...TAB_KEYS]
 
 export default function HotelDailyInspectionDashboard() {
   const [searchParams] = useSearchParams()
@@ -406,6 +339,28 @@ export default function HotelDailyInspectionDashboard() {
   const handleTabChange = (key: string) => {
     setActiveTab(key)
     setOpenedTabs((prev) => new Set([...prev, key]))
+  }
+
+  // ── 頁籤名稱（2026-11-10：有權限者可在頁面上直接修改，套用到整個頁面）──────
+  const [tabLabels,    setTabLabels]    = useState<Record<string, string>>(HOTEL_DAILY_INSPECTION_TAB_LABELS)
+  const [tabDefaults,  setTabDefaults]  = useState<Record<string, string>>(HOTEL_DAILY_INSPECTION_TAB_LABELS)
+  const [editPerm,     setEditPerm]     = useState<string>('hotel_daily_inspection_tab_label_edit')
+  const [labelEditing, setLabelEditing] = useState(false)
+  const [labelVersion, setLabelVersion] = useState(0)   // 改名後重新掛載已開啟的頁籤，讓卡片／月曆格／Drawer 一起換
+  const canEditLabels = useAuthStore((s) => s.hasPermission(editPerm))
+
+  useEffect(() => {
+    fetchHotelDITabLabels()
+      .then((r) => { setTabLabels(r.labels); setTabDefaults(r.defaults); setEditPerm(r.edit_permission) })
+      .catch(() => { /* 取不到就用預設名稱 */ })
+  }, [])
+
+  const handleSaveLabels = async (labels: Record<string, string | null>) => {
+    const r = await saveHotelDITabLabels(labels)
+    setTabLabels(r.labels)
+    setLabelVersion((v) => v + 1)
+    setLabelEditing(false)
+    message.success('頁籤名稱已更新')
   }
 
   return (
@@ -428,9 +383,15 @@ export default function HotelDailyInspectionDashboard() {
       </Row>
 
       <Tabs
+        key={labelVersion}
         type="card"
         activeKey={activeTab}
         onChange={handleTabChange}
+        tabBarExtraContent={canEditLabels ? (
+          <Button size="small" icon={<EditOutlined />} onClick={() => setLabelEditing(true)}>
+            編輯頁籤名稱
+          </Button>
+        ) : null}
         items={[
           {
             key:      'summary',
@@ -438,36 +399,25 @@ export default function HotelDailyInspectionDashboard() {
             children: openedTabs.has('summary') ? <SummaryTabContent /> : null,
           },
           {
-            key:      'daily-form',
-            label:    '每日巡檢表',
-            children: openedTabs.has('daily-form') ? <DailyInspectionFormTab /> : null,
+            key:      'floor-map',
+            label:    <span><EnvironmentOutlined /> 樓層巡檢圖</span>,
+            children: openedTabs.has('floor-map') ? <FloorMapWorkspace module="hotel_daily_inspection" /> : null,
           },
-          {
-            key:      'rf',
-            label:    'RF 巡檢',
-            children: openedTabs.has('rf') ? <FloorListTab sheetKey="rf" /> : null,
-          },
-          {
-            key:      '4f-10f',
-            label:    '4F~10F 巡檢',
-            children: openedTabs.has('4f-10f') ? <FloorListTab sheetKey="4f-10f" /> : null,
-          },
-          {
-            key:      '4f',
-            label:    '4F 巡檢',
-            children: openedTabs.has('4f') ? <FloorListTab sheetKey="4f" /> : null,
-          },
-          {
-            key:      '2f',
-            label:    '2F 巡檢',
-            children: openedTabs.has('2f') ? <FloorListTab sheetKey="2f" /> : null,
-          },
-          {
-            key:      '1f',
-            label:    '1F 巡檢',
-            children: openedTabs.has('1f') ? <FloorListTab sheetKey="1f" /> : null,
-          },
+          ...TAB_KEYS.map((k) => ({
+            key:      k,
+            label:    tabLabels[k] ?? HOTEL_DAILY_INSPECTION_TAB_LABELS[k],
+            children: openedTabs.has(k) ? <HotelFloorInspectionList sheetKey={k} tabLabel={tabLabels[k]} /> : null,
+          })),
         ]}
+      />
+
+      <TabLabelEditModal
+        open={labelEditing}
+        order={TAB_KEYS}
+        labels={tabLabels}
+        defaults={tabDefaults}
+        onCancel={() => setLabelEditing(false)}
+        onSave={handleSaveLabels}
       />
     </div>
   )

@@ -30,7 +30,8 @@ def upgrade() -> None:
     bind = op.get_bind()
     if not sa.inspect(bind).has_table(TABLE):
         return
-    for module in _SEED:
+    # 2026-11-10：_SEED 新增飯店每日巡檢後，這支只套用 1005 清單的兩個模組
+    for module in ("mall_facility_inspection", "full_building_inspection"):
         sync_point_list(bind, module, tag="migration:fmap1005")
 
 

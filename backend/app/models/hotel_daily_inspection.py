@@ -1,26 +1,19 @@
 """
 飯店每日巡檢 SQLAlchemy ORM Models【寬表格 Pivot 架構】
 
-Ragic 來源：ap12.ragic.com/soutlet001/main-project-inspection/{17,18,19,20,21}
-5 張 Sheet 對應 5 個區域，結構相同，以 sheet_key 欄位區分。
+2026-11-10 改版（比照商場工務巡檢）：一個頁籤（sheet_key）可對應多張 Ragic Sheet（現行＋封存），
+來源登錄見 app/services/hotel_daily_inspection_sources.py。
 
 DB 架構：
   hotel_di_inspection_batch — 一筆 = 一次巡檢場次（對應 Ragic 一個 Row）
   hotel_di_inspection_item  — 一筆 = 一個設備欄位結果（Sync 時動態 pivot 產生）
 
-巡檢結果狀態（item.result_status）：
-  normal    — 正常（OK / 正常 / V / v / O）
-  abnormal  — 異常
-  pending   — 待處理 / 待修
-  unchecked — 空白 / 未填
-  note      — 文字備註欄位（非評分項目）
+場次 ID：'{source_key}_{Ragic Row ID}'（例：rf_17_0、4f_a32_12、rf_legacy_5）
 
-sheet_key 對照：
-  rf      → main-project-inspection/17
-  4f-10f  → main-project-inspection/18
-  4f      → main-project-inspection/19
-  2f      → main-project-inspection/20
-  1f      → main-project-inspection/21
+巡檢結果狀態（item.result_status，由 hotel_daily_inspection_sheet.item_status 判定）：
+  normal / abnormal / pending / unchecked / measure（填數字欄）/ note（附註欄）
+
+sheet_key（頁籤）：rf / 5f-10f / 4f / b1f-hv / b1f-office / b4f-water / b4f-ac
 """
 from sqlalchemy import Column, String, Integer, DateTime, Boolean, func
 from app.core.database import Base
@@ -37,7 +30,7 @@ class HotelDIBatch(Base):
     )
 
     # ── Sheet 識別 ────────────────────────────────────────────────────────────
-    sheet_key  = Column(String(20),  nullable=False, default="", comment="rf / 4f-10f / 4f / 2f / 1f")
+    sheet_key  = Column(String(20),  nullable=False, default="", comment="rf / 5f-10f / 4f / b1f-hv / b1f-office / b4f-water / b4f-ac")
     sheet_name = Column(String(100), nullable=False, default="", comment="人類可讀的 Sheet 名稱")
 
     # ── 場次欄位 ──────────────────────────────────────────────────────────────
@@ -46,6 +39,7 @@ class HotelDIBatch(Base):
     start_time      = Column(String(30),  nullable=False, default="", comment="開始巡檢時間（原始值）")
     end_time        = Column(String(30),  nullable=False, default="", comment="巡檢結束時間（原始值）")
     work_hours      = Column(String(20),  nullable=False, default="", comment="工時計算")
+    estimated_minutes = Column(Integer, nullable=True, comment="預估時間（分鐘，Ragic 預排時間）")
 
     # ── 同步時間 ───────────────────────────────────────────────────────────────
     synced_at = Column(

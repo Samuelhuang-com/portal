@@ -1343,6 +1343,7 @@ async def lifespan(app: FastAPI):
     import app.models.ragic_app_directory  # noqa: F401
     import app.models.mall_facility_inspection  # noqa: F401
     import app.models.hotel_daily_inspection  # noqa: F401
+    import app.models.module_tab_label  # noqa: F401  頁籤自訂名稱（2026-11-10，表由 Alembic hdi3 建）
     import app.models.hotel_meter_readings   # noqa: F401
     import app.models.ihg_room_maintenance   # noqa: F401
     import app.models.menu_config  # noqa: F401

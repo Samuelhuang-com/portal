@@ -1,14 +1,17 @@
 """
-飯店每日巡檢 同步服務【統一 Sync + 寬表格 Pivot + 動態欄位偵測】
+飯店每日巡檢 同步服務【逐來源同步 + 寬表格 Pivot + 動態欄位偵測】
 
-支援 5 張 Ragic Sheet（main-project-inspection/17、18、19、20、21）。
-所有 Sheet 結構相同：
-  每一 Row = 一次完整巡檢場次（寬表格格式）
-  場次欄位：巡檢人員、開始/結束巡檢時間、工時計算
-  結果欄位：N 個設備/項目欄，各自儲存 正常/異常 等狀態值
+2026-11-10 改版（比照 mall_facility_inspection_sync.py 的 2026-10-30 架構）：
+  - 來源登錄：app/services/hotel_daily_inspection_sources.py（7 頁籤 × 現行表＋封存表）
+      現行：main-project-inspection/17、28～33
+      封存：archive-old-data/31～40（舊 18～21 與 Portal 以前未同步的 35～40）
+  - 場次 ID ＝ "{source_key}_{Ragic Row ID}"（例：rf_17_0、4f_a32_12）；sheet_key ＝ 頁籤。
+    ⚠️ 新 RF 表沿用表號 17、Row ID 從 0 起算 —— 舊 RF 場次必須先由 migration hdi1 改成
+       rf_legacy_{n}，否則會被新資料覆蓋（舊 RF 在 Ragic 已找不到，Portal 是唯一一份）。
+  - 「預估時間」寫入 hotel_di_inspection_batch.estimated_minutes，不再當成巡檢點。
+  - 異常判定改用 hotel_daily_inspection_sheet.item_status（與畫面、每日巡檢表一致）。
 
-【動態欄位偵測】
-  同步時自動掃描欄位，排除已知 metadata 欄位後，其餘視為巡檢點欄位。
+每一 Row = 一次完整巡檢場次（寬表格）；場次欄位：巡檢人員、開始/結束巡檢時間、工時計算、預估時間。
 """
 import logging
 import re
@@ -21,6 +24,9 @@ from app.models.hotel_daily_inspection import HotelDIBatch, HotelDIItem
 from app.services.ragic_adapter import RagicAdapter
 from app.services.sync_dispatcher import register
 from app.services.sync_result import aggregate_sync_results
+from app.services.hotel_daily_inspection_sources import (
+    SOURCES, TAB_LABELS, TABS, syncable_sources, live_source,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -28,74 +34,32 @@ logger = logging.getLogger(__name__)
 HDI_SERVER_URL = getattr(settings, "RAGIC_HDI_SERVER_URL", "ap12.ragic.com")
 HDI_ACCOUNT    = getattr(settings, "RAGIC_HDI_ACCOUNT",    "soutlet001")
 
-# ── Sheet 設定表 ──────────────────────────────────────────────────────────────
+# ── 頁籤設定（相容舊引用：key → {path: 現行表路徑, name: 顯示名稱}）─────────────
 SHEET_CONFIGS: dict[str, dict] = {
-    "rf": {
-        "path": "main-project-inspection/17",
-        "name": "飯店每日巡檢 - RF",
-    },
-    "4f-10f": {
-        "path": "main-project-inspection/18",
-        "name": "飯店每日巡檢 - 4F-10F",
-    },
-    "4f": {
-        "path": "main-project-inspection/19",
-        "name": "飯店每日巡檢 - 4F",
-    },
-    "2f": {
-        "path": "main-project-inspection/20",
-        "name": "飯店每日巡檢 - 2F",
-    },
-    "1f": {
-        "path": "main-project-inspection/21",
-        "name": "飯店每日巡檢 - 1F",
-    },
+    tab: {
+        "path": (live_source(tab).sheet_path if live_source(tab) else ""),
+        "name": f"飯店每日巡檢 - {TAB_LABELS[tab]}",
+    }
+    for tab in TABS
 }
 
 # ── 場次 metadata 欄位（不視為巡檢點）────────────────────────────────────────
 SESSION_FIELDS = {
-    "巡檢人員",
-    "保全人員",
-    "工務人員",
-    "開始巡檢時間",
-    "開始時間",
-    "巡檢開始時間",
-    "巡檢結束時間",
-    "結束時間",
-    "結束巡檢時間",
+    "巡檢人員", "保全人員", "工務人員",
+    "預估時間",
+    "開始巡檢時間", "開始時間", "巡檢開始時間",
+    "巡檢結束時間", "結束時間", "結束巡檢時間",
     "工時計算",
-    "巡檢日期",
-    "日期",
-    "_ragicId",
-    "_owner",
-    "_create",
-    "_modify",
+    "巡檢日期", "日期",
+    "_ragicId", "_owner", "_create", "_modify",
 }
 
-# 常用的場次欄位 key（候選清單，sync 時逐一嘗試）
 INSPECTOR_CANDIDATES  = ["巡檢人員", "工務人員", "保全人員"]
-# ⚠️  "巡檢日期"/"日期" 只含日期，不能拿來當 start_time → 移到獨立的 DATE_CANDIDATES
+# ⚠️ "巡檢日期"/"日期" 只含日期，不能拿來當 start_time → 獨立的 DATE_CANDIDATES
 START_TIME_CANDIDATES = ["開始巡檢時間", "開始時間", "巡檢開始時間"]
-DATE_CANDIDATES       = ["巡檢日期", "日期"]          # 專用日期欄（YYYY/MM/DD）
+DATE_CANDIDATES       = ["巡檢日期", "日期"]
 END_TIME_CANDIDATES   = ["巡檢結束時間", "結束時間", "結束巡檢時間"]
 WORK_HOURS_CANDIDATES = ["工時計算"]
-
-# ── 巡檢結果 → result_status 對照 ────────────────────────────────────────────
-RESULT_STATUS_MAP: dict[str, str] = {
-    "正常":   "normal",
-    "OK":     "normal",
-    "ok":     "normal",
-    "O":      "normal",
-    "✓":      "normal",
-    "V":      "normal",
-    "v":      "normal",
-    "異常":   "abnormal",
-    "待處理": "pending",
-    "待修":   "pending",
-    "待修繕": "pending",
-    "X":      "abnormal",
-    "x":      "abnormal",
-}
 
 
 # ── 輔助函式 ──────────────────────────────────────────────────────────────────
@@ -110,21 +74,12 @@ def _stringify(value: Any) -> str:
     return str(value).strip()
 
 
-# 允許 2026/8/3、2026-08-03、2026/08/03 三種寫法；後面接不接時間都可以
+# 允許 2026/8/3、2026-08-03、2026/08/03；後面接不接時間都可以
 _DATE_RE = re.compile(r"(\d{4})[/-](\d{1,2})[/-](\d{1,2})")
 
 
 def _extract_date(raw_datetime: str) -> str:
-    """從 '2026/4/14 09:26'、'2026-04-14 09:26'、'2026/8/3 09:26' 萃取 YYYY/MM/DD。
-
-    ⚠️ 不可改回 raw[:10] 的切法（2026-08-24 修正）。
-       月與日**同時**是個位數又帶時間時，前 10 碼會切進時間裡：
-           '2026/8/3 09:26'[:10] == '2026/8/3 0'
-       split('/') 得到 ['2026', '8', '3 0']，int('3 0') 直接 ValueError，
-       於是原樣回傳 '2026/8/3 0' —— 這個值不會 match 任何 LIKE 'YYYY/MM%'，
-       那筆資料總筆數對得上卻永遠落不進任何月份，統計看不到它且不會報錯。
-       解析不出來一律回空字串，與「來源欄位為空」同一種表示法。
-    """
+    """'2026/8/3 09:26' → '2026/08/03'。⚠️ 不可改回 raw[:10]（2026-08-24 修正，見商場同名函式）。"""
     m = _DATE_RE.search(raw_datetime or "")
     if not m:
         return ""
@@ -132,15 +87,7 @@ def _extract_date(raw_datetime: str) -> str:
     return f"{year}/{int(month):02d}/{int(day):02d}"
 
 
-def _normalize_result_status(raw: str) -> tuple[str, bool]:
-    """將原始值轉為正規化狀態與異常旗標。"""
-    raw = (raw or "").strip()
-    status = RESULT_STATUS_MAP.get(raw, "unchecked" if not raw else "abnormal")
-    return status, status in ("abnormal", "pending")
-
-
 def _pick_field(raw: dict, candidates: list[str]) -> str:
-    """從候選欄位清單中挑選第一個存在且有值的欄位。"""
     for key in candidates:
         val = _stringify(raw.get(key, ""))
         if val:
@@ -148,50 +95,24 @@ def _pick_field(raw: dict, candidates: list[str]) -> str:
     return ""
 
 
-def _is_date_str(s: str) -> bool:
-    """判斷字串是否為合法日期格式（YYYY/MM/DD 或 YYYY-MM-DD）。"""
-    parts = (s or "").replace("-", "/").split("/")
-    return len(parts) == 3 and len(parts[0]) == 4
-
-
 def _best_date(raw: dict, start_raw: str) -> str:
-    """
-    優先從 DATE_CANDIDATES（巡檢日期/日期）取日期字串；
-    若無，則嘗試從 start_raw 萃取；都失敗回傳空字串。
-
-    解決問題：某些 Sheet「開始巡檢時間」只存時間 "09:26"（無日期），
-    此時 _extract_date("09:26") 回傳 "09:26"（非合法日期），
-    必須另外從專用日期欄取值。
-    """
-    # 1. 優先從專用日期欄取
+    """優先取專用日期欄（巡檢日期／日期），否則從開始時間萃取；都失敗回空字串。"""
     date_raw = _pick_field(raw, DATE_CANDIDATES)
     if date_raw:
         d = _extract_date(date_raw)
-        if _is_date_str(d):
+        if d:
             return d
-    # 2. 從開始時間萃取（時間含完整日期時間時有效，如 "2026/05/09 09:26"）
-    d = _extract_date(start_raw)
-    if _is_date_str(d):
-        return d
-    return ""
+    return _extract_date(start_raw)
 
 
 def _extract_check_items(row: dict) -> list[str]:
-    """
-    從 Ragic Row dict 動態提取巡檢點欄位清單。
-    排除場次 metadata 欄位、系統欄位（底線開頭）、純數字 key，
-    以及拍照欄位（含「拍照」字樣）。
-    """
+    """動態取巡檢點欄位：排除場次欄位、系統欄位（底線開頭）、純數字 key、拍照欄位。"""
     items = []
     for key in row.keys():
-        if key in SESSION_FIELDS:
-            continue
-        if str(key).startswith("_"):
-            continue
-        if "拍照" in str(key):
+        if key in SESSION_FIELDS or str(key).startswith("_") or "拍照" in str(key):
             continue
         try:
-            int(key)  # 數字型 key 跳過
+            int(key)
             continue
         except (ValueError, TypeError):
             pass
@@ -199,149 +120,147 @@ def _extract_check_items(row: dict) -> list[str]:
     return items
 
 
-# ── 單一 Sheet 同步 ───────────────────────────────────────────────────────────
+def _parse_minutes(raw: str) -> int | None:
+    m = re.search(r"\d+(?:\.\d+)?", raw or "")
+    return int(round(float(m.group()))) if m else None
 
-async def sync_sheet(sheet_key: str) -> dict:
-    """
-    同步指定 sheet_key 的 Ragic Sheet：
-      每個 Row → 1 筆 HotelDIBatch + pivot 成 N 筆 HotelDIItem。
-    """
-    if sheet_key not in SHEET_CONFIGS:
-        return {
-            "fetched": 0, "upserted": 0, "item_rows": 0,
-            "errors": [f"未知的 sheet_key: {sheet_key}"],
-        }
 
-    cfg        = SHEET_CONFIGS[sheet_key]
-    sheet_path = cfg["path"]
-    sheet_name = cfg["name"]
+# ── 單一來源同步 ──────────────────────────────────────────────────────────────
 
-    adapter = RagicAdapter(
-        sheet_path=sheet_path,
-        server_url=HDI_SERVER_URL,
-        account=HDI_ACCOUNT,
-    )
-    logger.info(f"[HDISync:{sheet_key}] 開始同步 {sheet_path}...")
+async def _sync_one_source(src, tab: str, log_tag: str) -> dict:
+    """同步單一 Ragic Sheet（來源）。場次 ID = {source_key}_{Row ID}，sheet_key = 頁籤。"""
+    from app.services.hotel_daily_inspection_sheet import item_status
 
+    adapter = RagicAdapter(sheet_path=src.sheet_path, server_url=HDI_SERVER_URL, account=HDI_ACCOUNT)
+    logger.info(f"[{log_tag}] 開始同步 {src.source_key}（{src.sheet_path}）...")
     try:
         raw_data = await adapter.fetch_all()
     except Exception as exc:
-        logger.error(f"[HDISync:{sheet_key}] 拉取失敗：{exc}")
-        return {"fetched": 0, "upserted": 0, "item_rows": 0, "errors": [str(exc)]}
+        logger.error(f"[{log_tag}] {src.source_key} 拉取失敗：{exc}")
+        return {"source_key": src.source_key, "fetched": 0, "upserted": 0, "item_rows": 0,
+                "errors": [f"{src.source_key} 拉取失敗：{exc}"]}
 
-    fetched   = len(raw_data)
-    upserted  = 0
+    fetched = len(raw_data)
+    upserted = 0
     item_rows = 0
     errors: list[str] = []
     now = twnow()
 
-    # 從第一筆取得巡檢點欄位清單（動態偵測）
     check_items: list[str] = []
     if fetched > 0:
-        first_rec = next(iter(raw_data.values()))
-        check_items = _extract_check_items(first_rec)
-        logger.info(
-            f"[HDISync:{sheet_key}] 偵測到 {len(check_items)} 個巡檢點：{check_items}"
-        )
+        check_items = _extract_check_items(next(iter(raw_data.values())))
 
     db = SessionLocal()
     try:
         for ragic_row_id, raw in raw_data.items():
-            # batch ragic_id = "{sheet_key}_{ragic_row_id}"（避免不同 Sheet 衝突）
-            batch_id = f"{sheet_key}_{ragic_row_id}"
+            batch_id = f"{src.source_key}_{ragic_row_id}"
             try:
                 start_raw = _pick_field(raw, START_TIME_CANDIDATES)
-                batch = HotelDIBatch(
-                    ragic_id        = batch_id,
-                    sheet_key       = sheet_key,
-                    sheet_name      = sheet_name,
-                    inspection_date = _best_date(raw, start_raw),   # ← 修正：優先從日期欄取
-                    inspector_name  = _pick_field(raw, INSPECTOR_CANDIDATES),
-                    start_time      = start_raw,
-                    end_time        = _pick_field(raw, END_TIME_CANDIDATES),
-                    work_hours      = _pick_field(raw, WORK_HOURS_CANDIDATES),
-                    synced_at       = now,
+                fields = dict(
+                    sheet_key         = tab,
+                    sheet_name        = SHEET_CONFIGS[tab]["name"],
+                    inspection_date   = _best_date(raw, start_raw),
+                    inspector_name    = _pick_field(raw, INSPECTOR_CANDIDATES),
+                    start_time        = start_raw,
+                    end_time          = _pick_field(raw, END_TIME_CANDIDATES),
+                    work_hours        = _pick_field(raw, WORK_HOURS_CANDIDATES),
+                    estimated_minutes = _parse_minutes(_pick_field(raw, ["預估時間"])),
+                    synced_at         = now,
                 )
-
                 existing = db.get(HotelDIBatch, batch_id)
                 if existing:
-                    existing.sheet_name      = batch.sheet_name
-                    existing.inspection_date = batch.inspection_date
-                    existing.inspector_name  = batch.inspector_name
-                    existing.start_time      = batch.start_time
-                    existing.end_time        = batch.end_time
-                    existing.work_hours      = batch.work_hours
-                    existing.synced_at       = now
+                    for k, v in fields.items():
+                        setattr(existing, k, v)
                 else:
-                    db.add(batch)
+                    db.add(HotelDIBatch(ragic_id=batch_id, **fields))
 
-                # Pivot：清除舊 items，重新產生
-                db.query(HotelDIItem).filter(
-                    HotelDIItem.batch_ragic_id == batch_id
-                ).delete(synchronize_session=False)
+                db.query(HotelDIItem).filter(HotelDIItem.batch_ragic_id == batch_id).delete(synchronize_session=False)
 
                 row_check_items = check_items or _extract_check_items(raw)
                 for seq, col_name in enumerate(row_check_items, start=1):
                     result_raw = _stringify(raw.get(col_name, ""))
                     is_note = "異常說明" in str(col_name)
-
-                    if is_note:
-                        result_status = "note"
-                        abnormal_flag = False
-                    else:
-                        result_status, abnormal_flag = _normalize_result_status(result_raw)
-
+                    result_status = item_status(tab, col_name, result_raw, is_note)
                     db.add(HotelDIItem(
                         ragic_id       = f"{batch_id}_{seq}",
                         batch_ragic_id = batch_id,
-                        sheet_key      = sheet_key,
+                        sheet_key      = tab,
                         seq_no         = seq,
                         item_name      = col_name,
                         result_raw     = result_raw,
                         result_status  = result_status,
-                        abnormal_flag  = abnormal_flag,
+                        abnormal_flag  = result_status in ("abnormal", "pending"),
                         is_note        = is_note,
                         synced_at      = now,
                     ))
                     item_rows += 1
-
                 upserted += 1
-
             except Exception as exc:
-                errors.append(f"ragic_row_id={ragic_row_id}: {exc}")
-                logger.warning(f"[HDISync:{sheet_key}] 記錄 {ragic_row_id} 失敗：{exc}")
+                errors.append(f"{src.source_key} row={ragic_row_id}: {exc}")
+                logger.warning(f"[{log_tag}] {src.source_key} 記錄 {ragic_row_id} 失敗：{exc}")
 
         db.commit()
-        logger.info(
-            f"[HDISync:{sheet_key}] 完成：fetched={fetched}, "
-            f"batches={upserted}, items={item_rows}, errors={len(errors)}"
-        )
+        logger.info(f"[{log_tag}] {src.source_key} 完成：fetched={fetched}, batches={upserted}, "
+                    f"items={item_rows}, errors={len(errors)}")
     except Exception as exc:
         db.rollback()
-        errors.append(f"DB commit error: {exc}")
-        logger.error(f"[HDISync:{sheet_key}] DB 寫入失敗：{exc}")
+        errors.append(f"{src.source_key} DB commit error: {exc}")
+        logger.error(f"[{log_tag}] {src.source_key} DB 寫入失敗：{exc}")
     finally:
         db.close()
 
-    return {
-        "fetched":          fetched,
-        "upserted":         upserted,
-        "item_rows":        item_rows,
-        "check_item_count": len(check_items),
-        "errors":           errors,
-    }
+    return {"source_key": src.source_key, "fetched": fetched, "upserted": upserted,
+            "item_rows": item_rows, "check_item_count": len(check_items), "errors": errors}
 
 
-# ── 全部 Sheet 同步 ───────────────────────────────────────────────────────────
+def _legacy_ids_migrated() -> bool:
+    """
+    保護：舊 RF 場次還是 'rf_{數字}' 格式（migration hdi1 沒跑）時不同步，
+    否則新 RF 表（同為表號 17、Row ID 從 0 起算）不會覆蓋，但舊場次會留在錯的 ID 格式、
+    且畫面判斷不出它屬於哪個來源。PostgreSQL 正規式。
+    """
+    from sqlalchemy import text
+    db = SessionLocal()
+    try:
+        n = db.execute(text(
+            "SELECT COUNT(*) FROM hotel_di_inspection_batch "
+            "WHERE ragic_id ~ '^(rf|4f-10f|4f|2f|1f)_[0-9]+$'"
+        )).scalar()
+        return not n
+    except Exception as exc:
+        logger.error(f"[HDISync] 檢查舊場次 ID 失敗：{exc}")
+        return False
+    finally:
+        db.close()
 
-# 2026-11-05：飯店每日巡檢 Sheet 來源設計中（main-project-inspection/17～21 已封存、Ragic 轉址），
-# 暫停同步以免每次都抓失敗。新 Sheet 連結確定後，更新 SHEET_CONFIGS 並改為 False。
-HDI_SYNC_PAUSED = True
+
+async def sync_sheet(sheet_key: str) -> dict:
+    """同步指定頁籤下所有有 Ragic 表的來源（現行＋封存）。"""
+    if sheet_key not in SHEET_CONFIGS:
+        return {"fetched": 0, "upserted": 0, "item_rows": 0, "errors": [f"未知的 sheet_key: {sheet_key}"]}
+    if not _legacy_ids_migrated():
+        msg = "舊場次 ID 尚未改寫（請先執行 alembic upgrade head，revision hdi1），本次不同步"
+        logger.error(f"[HDISync] {msg}")
+        return {"fetched": 0, "upserted": 0, "item_rows": 0, "errors": [msg]}
+    summary = {"fetched": 0, "upserted": 0, "item_rows": 0, "check_item_count": 0, "errors": [], "sources": {}}
+    for src in syncable_sources(sheet_key):
+        res = await _sync_one_source(src, sheet_key, "HDISync")
+        summary["sources"][src.source_key] = res
+        for k in ("fetched", "upserted", "item_rows", "check_item_count"):
+            summary[k] += res.get(k, 0)
+        summary["errors"].extend(res.get("errors", []))
+    return summary
+
+
+# ── 全部頁籤同步 ──────────────────────────────────────────────────────────────
+
+# 2026-11-05 暫停（舊表 17～21 已封存）；2026-11-10 新表接上後恢復。
+HDI_SYNC_PAUSED = False
 
 
 @register("hotel_daily_inspection")
 async def sync_all() -> dict:
-    """同步所有 5 張飯店每日巡檢 Sheet（HDI_SYNC_PAUSED 時略過）。"""
+    """同步所有頁籤（每個頁籤包含其現行與封存來源）。"""
     if HDI_SYNC_PAUSED:
         logger.info("[HDISync] 飯店每日巡檢同步已暫停（HDI_SYNC_PAUSED=True），略過")
         return {"fetched": 0, "upserted": 0, "item_rows": 0, "errors": [], "paused": True}
