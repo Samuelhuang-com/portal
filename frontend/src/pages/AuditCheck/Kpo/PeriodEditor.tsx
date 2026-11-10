@@ -29,6 +29,7 @@ import {
   Button, Card, Checkbox, Col, Descriptions, Divider, Drawer, Empty, Form, Input, InputNumber, Modal,
   Popconfirm, Radio, Row, Select, Space, Spin, Statistic, Switch, Table, Tag, Typography, message,
 } from 'antd'
+import type { FormInstance } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import {
   ArrowLeftOutlined, BankOutlined, CheckSquareOutlined, ColumnHeightOutlined, DeleteOutlined, DownOutlined,
@@ -179,6 +180,38 @@ function SubtotalTags({ s }: { s: KpoSubtotal }) {
       <Tag color="geekblue">得分 {s.earned_score}</Tag>
       <Tag color="purple">本期分數 {fmtScore100(s.score100)}</Tag>
     </Space>
+  )
+}
+
+// 明細編輯表單：以 key={line.id} 掛載時各自建立獨立的 Form store（useForm），
+// 不與上一筆共用，避免 antd 沿用前一筆殘留的欄位值（文字暫存問題）。
+function LineEditForm({ line, method, setMethod, remark, setRemark, formRef }: {
+  line: KpoLine
+  method: string
+  setMethod: (v: string) => void
+  remark: string
+  setRemark: (v: string) => void
+  formRef: React.MutableRefObject<FormInstance | null>
+}) {
+  const [form] = Form.useForm()
+  formRef.current = form
+  return (
+    <Form form={form} layout="vertical"
+      initialValues={{ name: line.name, is_key: line.is_key, score: line.score }}>
+      <Form.Item name="name" label="品質項目" rules={[{ required: true, message: '請輸入項目內容' }]}>
+        <Input.TextArea autoSize={{ minRows: 3, maxRows: 10 }} />
+      </Form.Item>
+      <Space size="large">
+        <Form.Item name="is_key" label="★ 重點項" valuePropName="checked"><Switch /></Form.Item>
+        <Form.Item name="score" label="分數" rules={[{ required: true }]}>
+          <InputNumber min={0} max={100} />
+        </Form.Item>
+      </Space>
+      <div style={{ marginBottom: 8 }}><Text strong>備註（查核方式）</Text></div>
+      <RichTextEditor value={method} onChange={setMethod} minHeight={220} placeholder="查核方式、依據文件…" />
+      <div style={{ margin: '16px 0 8px' }}><Text strong>查核備註</Text></div>
+      <RichTextEditor value={remark} onChange={setRemark} minHeight={220} placeholder="查核結果、缺失說明…" />
+    </Form>
   )
 }
 
@@ -387,7 +420,8 @@ export default function AuditKpoPeriodEditorPage() {
   const [method, setMethod] = useState('')
   const [remark, setRemark] = useState('')
   const [drawerSaving, setDrawerSaving] = useState(false)
-  const [editForm] = Form.useForm()
+  // 編輯表單由 LineEditForm 各自持有 Form store；這裡只保留參照供儲存時驗證
+  const editFormRef = useRef<FormInstance | null>(null)
 
   // 從 Dashboard「待改善清單」連進來：?line=<項目 id> → 自動開啟該項目明細 Drawer（只做一次）
   const [searchParams, setSearchParams] = useSearchParams()
@@ -419,7 +453,9 @@ export default function AuditKpoPeriodEditorPage() {
   }
   const saveDetail = async () => {
     if (!detailLine) return
-    const v = await editForm.validateFields()
+    const form = editFormRef.current
+    if (!form) return
+    const v = await form.validateFields()
     setDrawerSaving(true)
     try {
       const res = await kpoPeriodApi.updateLine(periodId, detailLine.id, {
@@ -682,11 +718,7 @@ export default function AuditKpoPeriodEditorPage() {
                 <Button type="primary" icon={<SaveOutlined />} loading={drawerSaving} onClick={saveDetail}>儲存</Button>
               </>
             ) : (
-              <Button type="primary" icon={<EditOutlined />} onClick={() => {
-                // 先把本筆值寫進共用 editForm 的 store，避免 antd 沿用上一筆殘留值（preserve 無法單獨保證）
-                editForm.setFieldsValue({ name: detailLine.name, is_key: detailLine.is_key, score: detailLine.score })
-                setEditMode(true)
-              }}>編輯（只影響本期）</Button>
+              <Button type="primary" icon={<EditOutlined />} onClick={() => setEditMode(true)}>編輯（只影響本期）</Button>
             )}
           </Space>
         ) : null}
@@ -708,22 +740,9 @@ export default function AuditKpoPeriodEditorPage() {
 
             <Divider orientation="left" plain>明細</Divider>
             {editMode ? (
-              <Form form={editForm} layout="vertical" key={detailLine.id} preserve={false}
-                initialValues={{ name: detailLine.name, is_key: detailLine.is_key, score: detailLine.score }}>
-                <Form.Item name="name" label="品質項目" rules={[{ required: true, message: '請輸入項目內容' }]}>
-                  <Input.TextArea autoSize={{ minRows: 3, maxRows: 10 }} />
-                </Form.Item>
-                <Space size="large">
-                  <Form.Item name="is_key" label="★ 重點項" valuePropName="checked"><Switch /></Form.Item>
-                  <Form.Item name="score" label="分數" rules={[{ required: true }]}>
-                    <InputNumber min={0} max={100} />
-                  </Form.Item>
-                </Space>
-                <div style={{ marginBottom: 8 }}><Text strong>備註（查核方式）</Text></div>
-                <RichTextEditor value={method} onChange={setMethod} minHeight={220} placeholder="查核方式、依據文件…" />
-                <div style={{ margin: '16px 0 8px' }}><Text strong>查核備註</Text></div>
-                <RichTextEditor value={remark} onChange={setRemark} minHeight={220} placeholder="查核結果、缺失說明…" />
-              </Form>
+              <LineEditForm key={detailLine.id} line={detailLine}
+                method={method} setMethod={setMethod} remark={remark} setRemark={setRemark}
+                formRef={editFormRef} />
             ) : (
               <>
                 <div style={{ marginBottom: 4 }}><Text strong>品質項目</Text></div>
