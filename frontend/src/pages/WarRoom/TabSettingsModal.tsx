@@ -13,6 +13,8 @@ import { WR_DEFAULT_HIDDEN, WR_TAB_DEFS } from './tabDefs'
 const { Text } = Typography
 const LABEL_MAX = 30
 
+type TabRow = { key: string; defaultLabel: string }
+
 interface Props {
   open: boolean
   onClose: () => void
@@ -80,18 +82,18 @@ export default function TabSettingsModal({ open, onClose, config, staffAllowed, 
       <Text type="secondary" style={{ fontSize: 12 }}>
         名稱留空＝使用預設名稱。關閉「顯示」的頁簽會從戰情 KPI 隱藏（不刪除功能，之後可重新開啟）。至少要保留一個頁簽。
       </Text>
-      <Table
+      <Table<TabRow>
         style={{ marginTop: 10 }}
         size="small"
         pagination={false}
         rowKey="key"
-        dataSource={defs.map(t => ({ ...t }))}
+        dataSource={defs.map(t => ({ key: t.key, defaultLabel: t.defaultLabel }))}
         columns={[
           { title: '預設名稱', dataIndex: 'defaultLabel', width: 170 },
           {
             title: '頁簽名稱',
             key: 'label',
-            render: (_: unknown, t: { key: string; defaultLabel: string }) => (
+            render: (_: unknown, t: TabRow) => (
               <Input
                 size="small"
                 maxLength={LABEL_MAX}
@@ -106,7 +108,7 @@ export default function TabSettingsModal({ open, onClose, config, staffAllowed, 
             key: 'show',
             width: 90,
             align: 'center' as const,
-            render: (_: unknown, t: { key: string }) => (
+            render: (_: unknown, t: TabRow) => (
               <Switch size="small" checked={!hidden.includes(t.key)} onChange={v => toggle(t.key, v)} />
             ),
           },
