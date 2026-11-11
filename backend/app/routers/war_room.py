@@ -31,6 +31,7 @@ Prefix: /api/v1/war-room
 """
 from __future__ import annotations
 
+import json
 import re
 from datetime import date as _date, datetime, timedelta
 from typing import Any, Optional
@@ -43,8 +44,9 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.time import twnow
-from app.dependencies import get_current_user, require_permission
+from app.dependencies import get_current_user, is_system_admin, require_permission
 from app.models.user import User
+from app.models.system_setting import SystemSetting
 from app.models.dazhi_repair import DazhiRepairCase
 from app.models.luqun_repair import LuqunRepairCase
 from app.models.floor_map import FloorMapPoint
@@ -432,6 +434,7 @@ def get_point(
             "batches": g.get("batches", []),
             "inspectors": g.get("inspectors", []),
             "actual_minutes": g.get("actual_minutes", 0),
+            "abnormal_notes": g.get("abnormal_notes", []),
         },
         "month": month,
     }
@@ -730,3 +733,68 @@ def put_alert_recipients(
             db, [x.model_dump() for x in body.recipients], getattr(user, "email", "") or "user")}
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
+
+
+# ── 頁簽設定（2026-11-11）：顯示／隱藏、改名；讀取＝戰情權限，儲存＝僅系統管理員 ─────
+# 存在 system_settings（JSON），不需 migration；沒有紀錄時採預設（中控台隱藏）。
+TAB_CONFIG_KEY = "war_room.tab_config"
+TAB_KEYS = ("overview", "control", "dashboard", "iso", "alerts", "staff", "person-journal", "history")
+TAB_DEFAULT_HIDDEN = ("control",)   # 工務營運中控台：開發中，先隱藏
+TAB_LABEL_MAX = 30
+
+
+def _load_tab_config(db: Session) -> dict[str, Any]:
+    row = db.get(SystemSetting, TAB_CONFIG_KEY)
+    if row is None or not row.value:
+        return {"labels": {}, "hidden": list(TAB_DEFAULT_HIDDEN), "updated_at": None, "updated_by": None}
+    try:
+        data = json.loads(row.value)
+    except Exception:
+        data = {}
+    labels = data.get("labels") or {}
+    updated_at = getattr(row, "updated_at", None)
+    return {
+        "labels": {k: v for k, v in labels.items() if k in TAB_KEYS and isinstance(v, str)},
+        "hidden": [k for k in (data.get("hidden") or []) if k in TAB_KEYS],
+        "updated_at": updated_at.isoformat() if updated_at else None,
+        "updated_by": row.updated_by,
+    }
+
+
+class TabConfigBody(BaseModel):
+    labels: dict[str, Optional[str]] = {}
+    hidden: list[str] = []
+
+
+@router.get("/tab-config", summary="戰情 KPI — 頁簽顯示與名稱設定",
+            dependencies=[Depends(require_war_room)])
+def get_tab_config(db: Session = Depends(get_db)):
+    return _load_tab_config(db)
+
+
+@router.put("/tab-config", summary="戰情 KPI — 儲存頁簽設定（僅系統管理員）",
+            dependencies=[Depends(require_war_room), Depends(is_system_admin)])
+def put_tab_config(
+    body: TabConfigBody,
+    user: User = Depends(require_war_room),
+    db: Session = Depends(get_db),
+):
+    labels: dict[str, str] = {}
+    for k, v in body.labels.items():
+        if k not in TAB_KEYS:
+            continue
+        val = (v or "").strip()[:TAB_LABEL_MAX]
+        if val:
+            labels[k] = val
+    hidden = sorted({k for k in body.hidden if k in TAB_KEYS})
+    if set(TAB_KEYS) <= set(hidden):
+        raise HTTPException(status_code=422, detail="至少需要保留一個頁簽")
+    txt = json.dumps({"labels": labels, "hidden": hidden}, ensure_ascii=False)
+    who = getattr(user, "email", "") or "user"
+    row = db.get(SystemSetting, TAB_CONFIG_KEY)
+    if row:
+        row.value, row.updated_by = txt, who
+    else:
+        db.add(SystemSetting(key=TAB_CONFIG_KEY, value=txt, updated_by=who))
+    db.commit()
+    return _load_tab_config(db)

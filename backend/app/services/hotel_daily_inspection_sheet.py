@@ -70,7 +70,8 @@ FIELD_MAP: dict[tuple[str, str], dict[str, Any]] = {
     ("b4f-ac", "流量 / 壓力值"): {"kind": "status", "fields": [("流量 / 壓力值", "")], "readings": [("壓力值", "Kg2")]},
 }
 
-# 飯店新表沒有「異常說明」欄（2026-11-10 Ragic 欄位確認）；有了再加
+# 「異常說明」是整張表單（場次）共用的欄位，不對應任何檢查項目（2026-11-11 Ragic 表單 33 確認）
+# → 由 build_daily_sheet 的 floors[].abnormal_notes 取出，於設備履歷做成合併欄，不走 NOTE_FIELD
 NOTE_FIELD: dict[tuple[str, str], str] = {}
 REMARK: dict[tuple[str, str], str] = {}
 SHIFT_TIMES: list[dict[str, str]] = []   # 早班／晚班不寫進 Portal（2026-11-10 裁示）
@@ -265,12 +266,20 @@ def build_daily_sheet(batches: Iterable[Any], items_by_batch: dict[str, list[Any
                 "work_hours": b.work_hours or "", "actual_minutes": mins,
                 "estimated_minutes": getattr(b, "estimated_minutes", None),
             })
+        # 「異常說明」是整張表單（場次）共用的一個欄位，不屬於任何檢查項目（2026-11-11）
+        abnormal_notes = []
+        for bo_one in batch_out:
+            txt = "\n".join((it.result_raw or "").strip() for it in items_by_batch.get(bo_one["ragic_id"], [])
+                            if "異常說明" in (it.item_name or "") and (it.result_raw or "").strip())
+            if txt:
+                abnormal_notes.append({"ragic_id": bo_one["ragic_id"], "time_label": bo_one["start_hhmm"], "text": txt})
         src = live_source(key)
         floors.append({
             "key": key, "floor": EXCEL_FLOOR_LABEL[key], "title": TAB_LABELS[key],
             "sheet_url": sheet_url(src) if src else "",
             "has_record": len(bl) > 0, "inspectors": inspectors, "batches": batch_out,
             "actual_minutes": total_min, "estimated_minutes": est_min,
+            "abnormal_notes": abnormal_notes,
         })
 
     multi = {k: len(by_sheet[k]) > 1 for k in SHEET_ORDER}

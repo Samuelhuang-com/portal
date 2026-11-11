@@ -17,11 +17,12 @@
  *   6. 人員工作日誌      人員×日期（MM/DD）全月／區間工作，可篩人員（2026-11-06 新增，口徑同工作日誌 TAB）
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AutoComplete, Button, Card, Col, ConfigProvider, Result, Row, Select, Space, Spin, Tabs, Tag, Typography } from 'antd'
-import { FullscreenExitOutlined, FullscreenOutlined } from '@ant-design/icons'
+import { AutoComplete, Button, Card, Col, ConfigProvider, Empty, Result, Row, Select, Space, Spin, Tabs, Tag, Typography } from 'antd'
+import { FullscreenExitOutlined, FullscreenOutlined, SettingOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 
-import { fetchWarRoomAccess, fetchWarRoomPoints, type WrPoint } from '@/api/warRoom'
+import { fetchWarRoomAccess, fetchWarRoomPoints, fetchWarRoomTabConfig, type WrPoint, type WrTabConfig } from '@/api/warRoom'
+import { useAuthStore } from '@/stores/authStore'
 import { fetchStaffPathAccess } from '@/api/staffPath'
 import StaffPathTab from '@/pages/ExecWorkDashboard/StaffPathTab'
 import FloorBoard from './FloorBoard'
@@ -32,6 +33,8 @@ import ControlCenterTab from './ControlCenterTab'
 import PersonJournalTab from './PersonJournalTab'
 import { AssetHistoryPanel, RepairDrawer, type AssetTarget } from './AssetHistory'
 import type { WrRepair } from '@/api/warRoom'
+import TabSettingsModal from './TabSettingsModal'
+import { WR_DEFAULT_HIDDEN, WR_TAB_DEFS } from './tabDefs'
 
 const { Title, Text } = Typography
 
@@ -107,15 +110,40 @@ function HistoryTab({ getContainer }: { getContainer?: () => HTMLElement }) {
   )
 }
 
+/** 各頁簽內容（工務營運中控台只在選中時掛載，離開即停止自動刷新） */
+function renderTab(key: string, activeKey: string, getContainer?: () => HTMLElement) {
+  switch (key) {
+    case 'overview': return <OverviewTab getContainer={getContainer} />
+    case 'control': return activeKey === 'control' ? <ControlCenterTab getContainer={getContainer} /> : null
+    case 'dashboard': return <FloorBoard getContainer={getContainer} />
+    case 'iso': return <FloorIso getContainer={getContainer} />
+    case 'alerts': return <AlertsTab getContainer={getContainer} />
+    case 'staff': return <StaffPathTab />
+    case 'person-journal': return <PersonJournalTab />
+    case 'history': return <HistoryTab getContainer={getContainer} />
+    default: return null
+  }
+}
+
 export default function WarRoomPage() {
   const [allowed, setAllowed] = useState<boolean | null>(null)
   const [staffAllowed, setStaffAllowed] = useState(false)
-  const [tab, setTab] = useState('control')  // 預設開啟工務營運中控台（2026-11-10 裁示）
+  const [tab, setTab] = useState('')
+  const [config, setConfig] = useState<WrTabConfig | null>(null)
+  const [editOpen, setEditOpen] = useState(false)
+  // 「編輯頁簽」只給系統管理員（後端 PUT 另有 is_system_admin 檢查）
+  const isAdmin = useAuthStore(s => !!s.user?.roles?.includes('system_admin'))
 
   useEffect(() => {
     fetchWarRoomAccess().then(setAllowed)
     fetchStaffPathAccess().then(setStaffAllowed)
+    fetchWarRoomTabConfig().then(setConfig).catch(() => setConfig(null))
   }, [])
+
+  // 頁簽：依設定隱藏／改名；載入前或失敗時採預設隱藏清單
+  const hidden = new Set(config?.hidden ?? WR_DEFAULT_HIDDEN)
+  const visibleTabs = WR_TAB_DEFS.filter(t => (t.key !== 'staff' || staffAllowed) && !hidden.has(t.key))
+  const activeKey = visibleTabs.some(t => t.key === tab) ? tab : (visibleTabs[0]?.key ?? '')
 
   // 全螢幕（整個模組；彈出層掛在容器內，見人員動態 TAB 的同一做法）
   const rootRef = useRef<HTMLDivElement>(null)
@@ -147,24 +175,34 @@ export default function WarRoomPage() {
               <Tag color="blue">春大直</Tag>
               <Text type="secondary" style={{ fontSize: 12 }}>人員工作 × 巡檢點位 × 未完成報修，依樓層整合</Text>
             </Space>
-            <Button size="small" type={isFs ? 'default' : 'primary'} ghost={!isFs}
-                    icon={isFs ? <FullscreenExitOutlined /> : <FullscreenOutlined />} onClick={toggleFs}>
-              {isFs ? '離開全螢幕' : '全螢幕'}
-            </Button>
+            <Space size={8}>
+              {isAdmin && <Button size="small" icon={<SettingOutlined />} onClick={() => setEditOpen(true)}>編輯頁簽</Button>}
+              <Button size="small" type={isFs ? 'default' : 'primary'} ghost={!isFs}
+                      icon={isFs ? <FullscreenExitOutlined /> : <FullscreenOutlined />} onClick={toggleFs}>
+                {isFs ? '離開全螢幕' : '全螢幕'}
+              </Button>
+            </Space>
           </Space>
-          <Tabs
-            activeKey={tab}
-            onChange={setTab}
-            items={[
-              { key: 'overview', label: '值班總覽', children: <OverviewTab getContainer={getContainer} /> },
-              { key: 'control', label: '工務營運中控台', children: tab === 'control' ? <ControlCenterTab getContainer={getContainer} /> : null },  // 只在選中時掛載，離開即停止自動刷新
-              { key: 'dashboard', label: 'Dashboard', children: <FloorBoard getContainer={getContainer} /> },
-              { key: 'iso', label: '3D 樓層', children: <FloorIso getContainer={getContainer} /> },
-              { key: 'alerts', label: '告警', children: <AlertsTab getContainer={getContainer} /> },
-              ...(staffAllowed ? [{ key: 'staff', label: '人員動態', children: <StaffPathTab /> }] : []),
-              { key: 'person-journal', label: '人員工作日誌', children: <PersonJournalTab /> },
-              { key: 'history', label: '房間／設備履歷', children: <HistoryTab getContainer={getContainer} /> },
-            ]}
+          {visibleTabs.length ? (
+            <Tabs
+              activeKey={activeKey}
+              onChange={setTab}
+              items={visibleTabs.map(t => ({
+                key: t.key,
+                label: config?.labels[t.key] || t.defaultLabel,
+                children: renderTab(t.key, activeKey, getContainer),
+              }))}
+            />
+          ) : (
+            <Empty description="目前所有頁簽都已隱藏，請系統管理員按「編輯頁簽」開啟" />
+          )}
+          <TabSettingsModal
+            open={editOpen}
+            onClose={() => setEditOpen(false)}
+            config={config}
+            staffAllowed={staffAllowed}
+            onSaved={setConfig}
+            getContainer={getContainer}
           />
         </div>
       </div>

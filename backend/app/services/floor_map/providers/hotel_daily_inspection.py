@@ -118,6 +118,7 @@ class HotelDailyInspectionProvider(FloorMapProvider):
                 "batches":        fl.get("batches", []),
                 "inspectors":     fl.get("inspectors", []),
                 "actual_minutes": fl.get("actual_minutes", 0),
+                "abnormal_notes": fl.get("abnormal_notes", []),
             }
         return out
 

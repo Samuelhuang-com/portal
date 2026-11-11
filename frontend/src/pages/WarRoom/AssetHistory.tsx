@@ -186,7 +186,25 @@ function PointPanel({ id, date }: { id: number; date: string }) {
               render: (_: unknown, r) => r.results.length
                 ? r.results.map((x, i) => <div key={i}>{x.time_label ? <Text type="secondary">{x.time_label} </Text> : null}{x.text || '—'}</div>)
                 : '—' },
-            { title: '異常說明', dataIndex: 'abnormal_note', render: (v: string) => v ? <Text type="danger">{v}</Text> : '—' },
+            {
+              // 「異常說明」是整張表單共用的一個欄位，不屬於任何檢查項目：做成合併欄，橫跨所有檢查列
+              title: '異常說明', key: 'abnormal_note', width: 240, className: 'wr-note-col',
+              render: (_: unknown, __: unknown, i: number) => {
+                const rows = data.today.rows.length
+                const notes = data.today.abnormal_notes ?? []
+                return {
+                  children: notes.length
+                    ? notes.map((n, k) => (
+                        <div key={k} style={{ marginBottom: notes.length > 1 ? 6 : 0 }}>
+                          {notes.length > 1 && n.time_label ? <Text type="secondary" style={{ fontSize: 12 }}>{n.time_label}　</Text> : null}
+                          <Text type="danger" style={{ whiteSpace: 'pre-wrap' }}>{n.text}</Text>
+                        </div>
+                      ))
+                    : '—',
+                  props: { rowSpan: i === 0 ? rows : 0 },
+                }
+              },
+            },
           ]}
         />
       </div>

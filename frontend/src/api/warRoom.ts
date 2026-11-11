@@ -101,6 +101,8 @@ export interface WrPointDetail {
     batches:        { ragic_url: string; inspector: string; start_hhmm: string; end_hhmm: string }[]
     inspectors:     string[]
     actual_minutes: number
+    /** 整張表單共用的「異常說明」（有值才有；2026-11-11） */
+    abnormal_notes?: { ragic_id: string; time_label: string; text: string }[]
   }
   month: { day: number; date: string; status: PointStatus; abnormal_rows?: number }[]
 }
@@ -325,4 +327,20 @@ export async function fetchWarRoomPersonJournal(dateFrom: string, dateTo: string
   return (await apiClient.get<WrPersonJournalResp>('/war-room/person-journal', {
     params: { date_from: dateFrom, date_to: dateTo },
   })).data
+}
+
+// ── 頁簽設定（顯示／隱藏、改名；讀取＝戰情權限，儲存＝僅系統管理員，2026-11-11）──
+export interface WrTabConfig {
+  labels:     Record<string, string>   // 只含有自訂名稱的頁簽
+  hidden:     string[]
+  updated_at: string | null
+  updated_by: string | null
+}
+
+export async function fetchWarRoomTabConfig(): Promise<WrTabConfig> {
+  return (await apiClient.get<WrTabConfig>('/war-room/tab-config')).data
+}
+
+export async function saveWarRoomTabConfig(body: { labels: Record<string, string | null>; hidden: string[] }): Promise<WrTabConfig> {
+  return (await apiClient.put<WrTabConfig>('/war-room/tab-config', body)).data
 }
