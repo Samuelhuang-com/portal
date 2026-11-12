@@ -4,7 +4,7 @@
  */
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Alert, Button, Card, Checkbox, Col, Descriptions, Drawer, Input, Modal, Radio, Row, Select, Space, Statistic, Switch, Table, Tag, Tooltip, message } from 'antd'
-import { LinkOutlined, ReloadOutlined, SettingOutlined, SyncOutlined } from '@ant-design/icons'
+import { FullscreenExitOutlined, FullscreenOutlined, LinkOutlined, ReloadOutlined, SettingOutlined, SyncOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import StandardRangePicker, { type StandardRange } from '@/components/StandardRangePicker'
 import {
@@ -66,6 +66,7 @@ export default function ReturnRejectStatsPage() {
   const [loading, setLoading] = useState(false)
 
   const [drawerId, setDrawerId] = useState<number | null>(null)
+  const [drawerFull, setDrawerFull] = useState(false)
   const [syncing, setSyncing] = useState(false)
   const [syncResult, setSyncResult] = useState<RRSyncResult | null>(null)
   const [syncOpen, setSyncOpen] = useState(false)
@@ -385,8 +386,8 @@ export default function ReturnRejectStatsPage() {
 
       <Drawer
         open={drawerId !== null}
-        width={480}
-        onClose={() => { setDrawerId(null); setDetail(null) }}
+        width={drawerFull ? '100%' : 480}
+        onClose={() => { setDrawerId(null); setDetail(null); setDrawerFull(false) }}
         title={detail ? (
           <Space>
             <Tag color={OUTCOME_COLOR[detail.outcome]}>{detail.outcome_label}</Tag>
@@ -396,6 +397,11 @@ export default function ReturnRejectStatsPage() {
                 <LinkOutlined /> 在 Ragic 查看
               </a>
             )}
+            <Tooltip title={drawerFull ? '還原寬度' : '全畫面檢視'}>
+              <Button size="small" type="text"
+                icon={drawerFull ? <FullscreenExitOutlined /> : <FullscreenOutlined />}
+                onClick={() => setDrawerFull((v) => !v)} />
+            </Tooltip>
           </Space>
         ) : '載入中…'}
       >

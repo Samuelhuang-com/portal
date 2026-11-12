@@ -236,23 +236,6 @@ function SummaryTabContent() {
                     </Text>
                   </div>
                 )}
-
-                {/* 近 7 天趨勢點 */}
-                <div style={{ marginTop: 8, display: 'flex', gap: 3 }}>
-                  {sheet.trend_7d.map((t) => (
-                    <Tooltip key={t.date} title={t.date}>
-                      <div
-                        style={{
-                          width: 10, height: 10, borderRadius: '50%',
-                          backgroundColor: t.has_record ? '#52c41a' : '#ff7875',
-                        }}
-                      />
-                    </Tooltip>
-                  ))}
-                  <Text type="secondary" style={{ fontSize: 10, marginLeft: 4 }}>
-                    近 7 天
-                  </Text>
-                </div>
               </Card>
             </Col>
           )
