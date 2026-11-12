@@ -414,6 +414,350 @@ def get_period(
     return svc.build_period_detail(db, _get_period(db, period_id))
 
 
+# ── 期別明細 Excel：樣式對齊網頁（字型 Noto Sans TC、antd 色盤與框線、Tag／Statistic 配色）──
+_EXPORT_LINE_HEAD = ["項數", "品質項目", "分數", "備註（查核方式）", "判定", "查核備註"]
+_EXPORT_RESULT = {"pass": "符合", "fail": "不符合"}
+_XL_FONT = "Noto Sans TC"        # 網頁 index.css／main.tsx 的字體堆疊（中文字體）
+_XL_BRAND = "1B3A5C"             # 品牌主色（公司名、本期分數）
+_XL_SECONDARY = "8C8C8C"         # antd Text type=secondary
+_XL_HEAD_BG = "FAFAFA"           # antd 表頭與卡片標題底色
+_XL_SECTION_BG = "EEF3F8"        # 公司卡片標題底色
+_XL_BORDER = "F0F0F0"            # antd Table 框線
+_XL_TAG = {                      # antd Tag 預設色盤：(背景, 文字, 框線)
+    "blue": ("E6F4FF", "0958D9", "91CAFF"),
+    "gold": ("FFFBE6", "D48806", "FFE58F"),
+    "green": ("F6FFED", "389E0D", "B7EB8F"),
+    "red": ("FFF2F0", "CF1322", "FFCCC7"),
+    "geekblue": ("F0F5FF", "1D39C4", "ADC6FF"),
+    "purple": ("F9F0FF", "531DAB", "D3ADF7"),
+    "default": ("FAFAFA", "1F1F1F", "D9D9D9"),
+}
+
+
+def _xl_clean(v):
+    from app.routers.audit_check import _clean
+    return _clean(v) if isinstance(v, str) else v
+
+
+def _xl_font(size: float = 10.5, bold: bool = False, color: str = "1F1F1F"):
+    from openpyxl.styles import Font
+    return Font(name=_XL_FONT, size=size, bold=bold, color=color)
+
+
+def _xl_fill(hex_: str):
+    from openpyxl.styles import PatternFill
+    return PatternFill("solid", fgColor=hex_)
+
+
+def _xl_box(color: str = _XL_BORDER):
+    from openpyxl.styles import Border, Side
+    side = Side(style="thin", color=color)
+    return Border(left=side, right=side, top=side, bottom=side)
+
+
+def _xl_tag(c, kind: str, text: str) -> None:
+    from openpyxl.styles import Alignment
+    bg, fg, border = _XL_TAG[kind]
+    c.value = text
+    c.fill = _xl_fill(bg)
+    c.font = _xl_font(10.5, False, fg)
+    c.border = _xl_box(border)
+    c.alignment = Alignment(horizontal="center", vertical="center")
+
+
+def _xl_tags_row(ws, r: int, s: dict) -> int:
+    """小計標籤列（與網頁 SubtotalTags 同文字、同色）。"""
+    tags = [
+        ("blue", f"選定 {s['item_count']} 項"),
+        ("gold", f"★ {s['key_count']}"),
+        ("default", f"滿分 {s['full_score']}"),
+        ("green", f"符合 {s['pass_count']}"),
+        ("red", f"不符合 {s['fail_count']}"),
+        ("default", f"未查核 {s['pending_count']}"),
+        ("geekblue", f"得分 {s['earned_score']}"),
+        ("purple", f"本期分數 {_kpo_pts(s['score100']) or '—'}"),
+    ]
+    for i, (kind, text) in enumerate(tags):
+        _xl_tag(ws.cell(row=r, column=1 + i), kind, text)
+    ws.row_dimensions[r].height = 22
+    return r + 1
+
+
+def _xl_score_row(ws, r: int, s: dict) -> int:
+    """記分板（與網頁 ScoreRow 的 Statistic 同欄位：灰色標題、大字數值、符合綠／不符合紅／本期分數品牌色）。"""
+    from openpyxl.styles import Alignment
+    labels = ["選定項數", "滿分", "符合", "不符合", "未查核", "得分", "本期分數"]
+    values = [f"{s['item_count']}（★{s['key_count']}）", s["full_score"], s["pass_count"],
+              s["fail_count"], s["pending_count"], s["earned_score"], _kpo_pts(s["score100"]) or "—"]
+    colors = {2: "389E0D", 3: "CF1322", 6: _XL_BRAND}
+    for i, h in enumerate(labels):
+        c = ws.cell(row=r, column=1 + i, value=h)
+        c.font = _xl_font(10.5, False, _XL_SECONDARY)
+        c.fill = _xl_fill(_XL_HEAD_BG)
+        c.border = _xl_box()
+        c.alignment = Alignment(horizontal="center", vertical="center")
+    for i, v in enumerate(values):
+        c = ws.cell(row=r + 1, column=1 + i, value=_xl_clean(v))
+        c.font = _xl_font(18, i == 6, colors.get(i, "1F1F1F"))
+        c.fill = _xl_fill(_XL_HEAD_BG)
+        c.border = _xl_box()
+        c.alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[r + 1].height = 34
+    return r + 3
+
+
+def _xl_rich(html_s, base_color: str = "1F1F1F"):
+    """網頁富文字（備註／查核方式）→ Excel 富文字：保留粗體、斜體、底線、刪除線、文字色、字級。
+    螢光底色（bg）Excel 儲存格富文字不支援，只能保留文字本身。無內容回傳 None。"""
+    from openpyxl.cell.rich_text import CellRichText, TextBlock
+    from openpyxl.cell.text import InlineFont
+    from app.services.audit_check_html import html_to_runs
+    blocks = []
+    for pi, para in enumerate(html_to_runs(html_s)):
+        if pi:
+            blocks.append(TextBlock(InlineFont(rFont=_XL_FONT, sz=10.5, color=base_color), "\n"))
+        for text, fmt in para["runs"]:
+            if not text:
+                continue
+            blocks.append(TextBlock(InlineFont(
+                rFont=_XL_FONT,
+                sz=fmt.get("size") or 10.5,
+                b=bool(fmt.get("bold")),
+                i=bool(fmt.get("italic")),
+                u="single" if fmt.get("underline") else None,
+                strike=bool(fmt.get("strike")),
+                color=fmt.get("color") or base_color,
+            ), _xl_clean(text)))
+    return CellRichText(blocks) if blocks else None
+
+
+def _xl_head_cell(c, text: str) -> None:
+    from openpyxl.styles import Alignment
+    c.value = text
+    c.font = _xl_font(10.5, True)
+    c.fill = _xl_fill(_XL_HEAD_BG)
+    c.border = _xl_box()
+    c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+
+def _xl_paras(html_s):
+    """網頁富文字 → 段落清單（只保留有文字的段落）。"""
+    from app.services.audit_check_html import html_to_runs
+    return [p for p in html_to_runs(html_s) if any(t for t, _ in p["runs"])]
+
+
+def _xl_para_value(c, para, base_color: str) -> None:
+    """一段富文字寫入一格：保留顏色、粗體、斜體、底線、刪除線、字級；
+    螢光底色若出現在此段，整格填入該底色（Excel 無法只標示段內部分文字，故以段為單位）。"""
+    from openpyxl.cell.rich_text import CellRichText, TextBlock
+    from openpyxl.cell.text import InlineFont
+    from openpyxl.styles import Alignment
+    blocks, bgs = [], []
+    for text, fmt in para["runs"]:
+        if not text:
+            continue
+        if fmt.get("bg"):
+            bgs.append(fmt["bg"])
+        blocks.append(TextBlock(InlineFont(
+            rFont=_XL_FONT, sz=fmt.get("size") or 10.5, b=bool(fmt.get("bold")),
+            i=bool(fmt.get("italic")), u="single" if fmt.get("underline") else None,
+            strike=bool(fmt.get("strike")), color=fmt.get("color") or base_color,
+        ), _xl_clean(text)))
+    c.value = CellRichText(blocks)
+    if bgs:
+        c.fill = _xl_fill(bgs[0])
+    c.alignment = Alignment(vertical="center", wrap_text=True)
+
+
+def _xl_text_of(para) -> str:
+    return "".join(t for t, _ in para["runs"])
+
+
+def _xl_line_table(ws, r: int, lines: list) -> int:
+    """項目表格（欄位同網頁 makeColumns）。備註與查核備註「每段一列」；判定為三欄 Radio 群組。"""
+    import math
+    from openpyxl.styles import Alignment
+    # 表頭兩列：項數／品質項目／分數／備註／查核備註 垂直合併；「判定」橫跨三欄
+    for col, text in ((1, "項數"), (2, "品質項目"), (3, "分數"), (4, "備註（查核方式）"), (8, "查核備註")):
+        ws.merge_cells(start_row=r, start_column=col, end_row=r + 1, end_column=col)
+        _xl_head_cell(ws.cell(row=r, column=col), text)
+    ws.merge_cells(start_row=r, start_column=5, end_row=r, end_column=7)
+    _xl_head_cell(ws.cell(row=r, column=5), "判定")
+    for col, text in ((5, "符合"), (6, "不符合"), (7, "—")):
+        _xl_head_cell(ws.cell(row=r + 1, column=col), text)
+    r += 2
+    for ln in lines:
+        mp = _xl_paras(ln["method"])
+        rp = _xl_paras(ln["remark"])
+        n = max(len(mp), len(rp), 1)
+        top, bottom = r, r + n - 1
+        # 其他欄位：多段時垂直合併，整題共用同一組列高
+        if n > 1:
+            for col in (1, 2, 3, 5, 6, 7):
+                ws.merge_cells(start_row=top, start_column=col, end_row=bottom, end_column=col)
+        # 項數：重點項為金色標籤
+        head = ws.cell(row=top, column=1)
+        if ln["is_key"]:
+            _xl_tag(head, "gold", f"★{ln['item_no'] or ''}")
+        else:
+            head.value = ln["item_no"] or ""
+            head.font = _xl_font()
+            head.alignment = Alignment(horizontal="center", vertical="center")
+        # 品質項目
+        c = ws.cell(row=top, column=2)
+        c.value = _xl_clean(ln["name"])
+        c.font = _xl_font()
+        c.alignment = Alignment(vertical="center", wrap_text=True)
+        # 分數
+        c = ws.cell(row=top, column=3)
+        c.value = ln["score"]
+        c.font = _xl_font()
+        c.alignment = Alignment(horizontal="center", vertical="center")
+        # 判定：三顆按鈕（符合 綠／不符合 紅／— ），選中者填色並白字粗體
+        res = ln["result"]
+        for col, key, label in ((5, "pass", "符合"), (6, "fail", "不符合"), (7, "", "—")):
+            c = ws.cell(row=top, column=col)
+            c.value = label
+            c.alignment = Alignment(horizontal="center", vertical="center")
+            if res == key and key == "pass":
+                c.fill, c.font = _xl_fill("389E0D"), _xl_font(10.5, True, "FFFFFF")
+            elif res == key and key == "fail":
+                c.fill, c.font = _xl_fill("CF1322"), _xl_font(10.5, True, "FFFFFF")
+            else:
+                c.font = _xl_font()
+        # 備註（查核方式）與查核備註：每段一列
+        for i in range(n):
+            dc = ws.cell(row=top + i, column=4)
+            if i < len(mp):
+                _xl_para_value(dc, mp[i], "64748B")
+            elif i == 0:
+                dc.value, dc.font = "—", _xl_font(10.5, False, "BFBFBF")
+                dc.alignment = Alignment(vertical="center")
+            hc = ws.cell(row=top + i, column=8)
+            if i < len(rp):
+                _xl_para_value(hc, rp[i], "1F1F1F")
+            elif i == 0:
+                hc.value, hc.font = "—", _xl_font(10.5, False, "BFBFBF")
+                hc.alignment = Alignment(vertical="center")
+        for row in range(top, bottom + 1):
+            for col in range(1, 9):
+                ws.cell(row=row, column=col).border = _xl_box()
+        # 多段時合併格不會自動撐高列，需估算列高（約每 17 字一行、每行 15pt）
+        if n > 1:
+            name_lines = math.ceil(max(len(str(ln["name"] or "")), 1) / 17)
+            total_need = name_lines * 15 + 6
+            for i in range(n):
+                d_text = _xl_text_of(mp[i]) if i < len(mp) else ""
+                h_text = _xl_text_of(rp[i]) if i < len(rp) else ""
+                d_need = math.ceil(max(len(d_text), 1) / 24) * 15 + 6
+                h_need = math.ceil(max(len(h_text), 1) / 24) * 15 + 6
+                ws.row_dimensions[top + i].height = max(18, d_need, h_need, math.ceil(total_need / n))
+        r = bottom + 1
+        # 部門記分板等之後的區塊，由呼叫端決定
+    return r
+
+
+def _xl_header_band(ws, r: int, text: str, bg: str, color: str, last_col: int = 8) -> None:
+    """卡片標題列（網頁 Card header 底色）。"""
+    from openpyxl.styles import Alignment
+    for col in range(1, last_col + 1):
+        ws.cell(row=r, column=col).fill = _xl_fill(bg)
+        ws.cell(row=r, column=col).border = _xl_box()
+    c = ws.cell(row=r, column=1, value=_xl_clean(text))
+    c.font = _xl_font(10.5, True, color)
+    c.alignment = Alignment(vertical="center")
+    ws.row_dimensions[r].height = 22
+
+
+def _xl_summary_sheet(wb, data: dict) -> None:
+    """第一頁「整期合計」：與網頁「整期合計」卡片相同（記分板），另列各公司一列。"""
+    from openpyxl.styles import Alignment
+    ws = wb.active
+    ws.title = "整期合計"
+    ws.sheet_view.showGridLines = False
+    ws.cell(row=1, column=1, value=_xl_clean(f"{data['period']}　{data['title']}")).font = _xl_font(15, True)
+    r = 2
+    if data.get("note"):
+        ws.cell(row=2, column=1, value=_xl_clean(data["note"])).font = _xl_font(10.5, False, _XL_SECONDARY)
+        r = 3
+    n_depts = sum(len(sh["departments"]) for sh in data["sheets"])
+    ws.cell(row=r + 1, column=1, value=f"整期合計　{len(data['sheets'])} 家公司・{n_depts} 個受稽部門").font = _xl_font(10.5, True)
+    r = _xl_score_row(ws, r + 2, data["total"]) + 1
+    heads = ["公司別", "受稽部門數", "選定項數", "符合", "不符合", "未查核", "得分", "本期分數"]
+    for i, h in enumerate(heads):
+        c = ws.cell(row=r, column=1 + i, value=h)
+        c.font = _xl_font(10.5, True)
+        c.fill = _xl_fill(_XL_HEAD_BG)
+        c.border = _xl_box()
+        c.alignment = Alignment(horizontal="center", vertical="center")
+    r += 1
+    for sh in data["sheets"]:
+        t = sh["total"]
+        vals = [sh["company_name"], len(sh["departments"]), t["item_count"], t["pass_count"],
+                t["fail_count"], t["pending_count"], t["earned_score"], _kpo_pts(t["score100"]) or "—"]
+        for i, v in enumerate(vals):
+            c = ws.cell(row=r, column=1 + i, value=_xl_clean(v))
+            c.font = _xl_font(10.5, i == 7, _XL_BRAND if i == 7 else "1F1F1F")
+            c.border = _xl_box()
+            c.alignment = Alignment(horizontal="left" if i == 0 else "center", vertical="center")
+        r += 1
+    if not data["sheets"]:
+        ws.cell(row=r, column=1, value="本期尚無公司稽核單").font = _xl_font(10.5, False, _XL_SECONDARY)
+    for col, w in {"A": 18, "B": 36, "C": 14, "D": 12, "E": 12, "F": 12, "G": 12, "H": 14}.items():
+        ws.column_dimensions[col].width = w
+
+
+def _xl_company_sheet(wb, title: str, period: dict, sh: dict) -> None:
+    """每家公司一張 Sheet：公司卡片（標題＋小計標籤＋記分板）＋各受稽部門（標題、標籤、項目表格、部門記分板）。"""
+    from openpyxl.styles import Alignment
+    ws = wb.create_sheet(title)
+    ws.sheet_view.showGridLines = False
+    ws.cell(row=1, column=1, value=_xl_clean(f"{period['period']}　{period['title']}")).font = _xl_font(15, True)
+    _xl_header_band(ws, 3, f"{sh['company_name']}　{len(sh['departments'])} 個受稽部門", _XL_SECTION_BG, _XL_BRAND)
+    r = _xl_tags_row(ws, 4, sh["total"])
+    r = _xl_score_row(ws, r + 1, sh["total"]) + 1
+    for block in sh["departments"]:
+        _xl_header_band(ws, r, block["department_name"], _XL_HEAD_BG, "1F1F1F")
+        r += 1
+        if block["lines"]:
+            r = _xl_tags_row(ws, r, block["subtotal"])
+            r = _xl_line_table(ws, r, block["lines"])
+            r = _xl_score_row(ws, r + 1, block["subtotal"]) + 1   # 部門記分板：加在每個部門下方
+        else:
+            c = ws.cell(row=r, column=1, value="本期尚未選定項目")
+            c.font = _xl_font(10.5, False, _XL_SECONDARY)
+            c.alignment = Alignment(vertical="center")
+            r += 2
+    for col, w in {"A": 18, "B": 36, "C": 10, "D": 44, "E": 12, "F": 12, "G": 12, "H": 44}.items():
+        ws.column_dimensions[col].width = w
+
+
+@router.get("/periods/{period_id}/export", summary="期別明細匯出 Excel（與網頁相同的資料與版型；公司別一張 Sheet）")
+def export_period(
+    period_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_permission(VIEW)),
+):
+    import re
+    from openpyxl import Workbook
+    from app.routers.audit_check import _clean, _xlsx_response
+
+    p = _get_period(db, period_id)
+    data = svc.build_period_detail(db, p)   # 與 GET /periods/{id} 完全相同的資料來源
+    wb = Workbook()
+    _xl_summary_sheet(wb, data)
+    used = {"整期合計"}
+    for sh in data["sheets"]:
+        # Excel 工作表名稱不可含 []:*?/\ ，且最多 31 字
+        base = re.sub(r"[\[\]:*?/\\]", "", _clean(sh["company_name"]))[:28] or "公司"
+        title, n = base, 2
+        while title in used:
+            title, n = f"{base}{n}", n + 1
+        used.add(title)
+        _xl_company_sheet(wb, title, data, sh)
+    return _xlsx_response(wb, _clean(f"現場稽核-{data['period']}-{data['title']}.xlsx"))
+
+
 @router.put("/periods/{period_id}", response_model=KpoPeriodDetail)
 def update_period(
     period_id: int,

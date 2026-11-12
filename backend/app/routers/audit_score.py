@@ -21,7 +21,12 @@ router = APIRouter()
 VIEW = "audit_check_score_view"
 
 
-@router.get("", summary="稽核檢查統計（合併達標率，公司 → 部門）")
+def _pts(v):
+    """0~1 的比例 → 0~100 分，四捨五入取整數（與畫面 Math.round 一致）"""
+    return int(v * 100 + 0.5)
+
+
+@router.get("", summary="稽核檢查統計（合併分數，公司 → 部門）")
 def get_score(
     year: int = Query(..., ge=2000, le=2100),
     db: Session = Depends(get_db),
@@ -41,7 +46,7 @@ def export_score(
     ws = wb.active
     ws.title = f"{year}年稽核統計"
     headers = ["公司", "部門", "系統檢查子項數", "系統檢查達標數", "現場稽核選定項數", "現場稽核符合項數",
-               "合計項數", "合計達標數", "合併達標率"]
+               "合計項數", "合計達標數", "合併分數"]
     ws.append(headers)
     for c in ws[1]:
         c.font = Font(bold=True, color="FFFFFF")
@@ -53,10 +58,8 @@ def export_score(
             ws.append([xlsx_safe(v) for v in [
                 blk["company_name"], r["department"], r["audit_sub"], r["audit_pass"],
                 r["kpo_sub"], r["kpo_pass"], r["total_sub"], r["total_pass"],
-                r["rate"] if r["rate"] is not None else "本年無",
+                _pts(r["rate"]) if r["rate"] is not None else "本年無",
             ]])
-            if r["rate"] is not None:
-                ws.cell(row=ws.max_row, column=9).number_format = "0.0%"
     for col, w in zip("ABCDEFGHI", [12, 14, 12, 12, 14, 14, 12, 12, 12]):
         ws.column_dimensions[col].width = w
     ws2 = wb.create_sheet("月明細")
@@ -70,17 +73,15 @@ def export_score(
             for m in r["monthly"]:
                 score = m["module_score"]
                 if m["source"] == "稽核檢查" and score is not None:
-                    score_cell = score
+                    score_cell = _pts(score)
                 elif m["source"] == "KPO" and score is not None:
-                    score_cell = score / 100
+                    score_cell = int(score)
                 else:
                     score_cell = "本月無"
                 ws2.append([xlsx_safe(v) for v in [
                     blk["company_name"], r["department"], m["period"], m["source"],
                     m["source_sheet_id"], m["sub"], m["pass"], score_cell, m["module_label"],
                 ]])
-                if isinstance(score_cell, float):
-                    ws2.cell(row=ws2.max_row, column=8).number_format = "0.0%"
     for col, w in zip("ABCDEFGHI", [12, 14, 10, 12, 14, 14, 14, 12, 30]):
         ws2.column_dimensions[col].width = w
 

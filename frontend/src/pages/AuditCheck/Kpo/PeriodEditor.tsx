@@ -33,7 +33,7 @@ import type { FormInstance } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import {
   ArrowLeftOutlined, BankOutlined, CheckSquareOutlined, ColumnHeightOutlined, DeleteOutlined, DownOutlined,
-  EditOutlined, FileWordOutlined, HolderOutlined, PlusOutlined, ReloadOutlined, RightOutlined, SaveOutlined, TeamOutlined,
+  EditOutlined, FileExcelOutlined, FileWordOutlined, HolderOutlined, PlusOutlined, ReloadOutlined, RightOutlined, SaveOutlined, TeamOutlined,
   VerticalAlignMiddleOutlined,
 } from '@ant-design/icons'
 
@@ -537,6 +537,8 @@ export default function AuditKpoPeriodEditorPage() {
           )}
           <Button icon={<ColumnHeightOutlined />} onClick={expandAll}>全部展開</Button>
           <Button icon={<VerticalAlignMiddleOutlined />} onClick={collapseAll}>全部收合</Button>
+          <Button icon={<FileExcelOutlined />}
+            onClick={() => downloadFile(kpoPeriodApi.exportExcelUrl(detail.id), `現場稽核-${detail.period}-${detail.title}.xlsx`)}>匯出 Excel</Button>
           <Button icon={<ReloadOutlined />} onClick={load}>重新整理</Button>
         </Space>
       </Space>

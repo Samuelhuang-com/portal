@@ -184,6 +184,8 @@ export const kpoPeriodApi = {
   setLinesOrder: (id: number, sheetId: number, departmentId: number, lineIds: number[]) =>
     client.put<KpoPeriodDetail>(`${BASE}/periods/${id}/sheets/${sheetId}/lines-order`, { department_id: departmentId, line_ids: lineIds }),
   /** 單一受稽單位「內部稽核報告」Word（給 downloadFile 用，完整路徑） */
+  /** 期別明細 Excel（公司別一張 Sheet，與網頁相同資料與版型） */
+  exportExcelUrl: (id: number) => `/api/v1/audit-check/kpo/periods/${id}/export`,
   inspectionDocxUrl: (id: number, sheetId: number, departmentId: number) =>
     `/api/v1/audit-check/kpo/periods/${id}/sheets/${sheetId}/departments/${departmentId}/inspection-docx`,
   updateLine: (id: number, lineId: number, body: {

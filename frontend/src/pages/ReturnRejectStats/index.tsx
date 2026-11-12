@@ -3,8 +3,8 @@
  * 篩選：公司、部門、表單類型、表單名稱、狀態、期間（StandardRangePicker，anchor=資料最後一天）、簽核人、申請人、關鍵字
  */
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Alert, Button, Card, Checkbox, Col, Descriptions, Drawer, Input, Modal, Radio, Row, Select, Space, Statistic, Table, Tag, Tooltip, message } from 'antd'
-import { LinkOutlined, ReloadOutlined, SyncOutlined } from '@ant-design/icons'
+import { Alert, Button, Card, Checkbox, Col, Descriptions, Drawer, Input, Modal, Radio, Row, Select, Space, Statistic, Switch, Table, Tag, Tooltip, message } from 'antd'
+import { LinkOutlined, ReloadOutlined, SettingOutlined, SyncOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import StandardRangePicker, { type StandardRange } from '@/components/StandardRangePicker'
 import {
@@ -13,8 +13,11 @@ import {
   getReturnStatsFilters,
   getReturnStatsRecords,
   getReturnStatsSummary,
+  getReturnStatsSources,
   refreshReturnApproval,
   runReturnStatsSync,
+  setReturnStatsSourceActive,
+  type RRSourceRow,
   type Outcome,
   type RRDetail,
   type RRSyncResult,
@@ -27,7 +30,7 @@ import {
 const OUTCOME_COLOR: Record<Outcome, string> = {
   rejected: 'red', withdrawn: 'orange', approved: 'green', agreed: 'cyan', pending: 'gold', unknown: 'default',
 }
-const FORM_TYPE_LABEL: Record<string, string> = { purchase: '請購', claim: '請款', seal: '用印' }
+const FORM_TYPE_LABEL: Record<string, string> = { purchase: '請購', claim: '請款', seal: '用印', payable: '應付憑單', memo: '簽呈' }
 const CARD_OUTCOMES: { key: Outcome; label: string }[] = [
   { key: 'rejected', label: '退件' },
   { key: 'withdrawn', label: '退簽' },
@@ -67,6 +70,9 @@ export default function ReturnRejectStatsPage() {
   const [syncResult, setSyncResult] = useState<RRSyncResult | null>(null)
   const [syncOpen, setSyncOpen] = useState(false)
   const [refreshingApproval, setRefreshingApproval] = useState(false)
+  const [sourceOpen, setSourceOpen] = useState(false)
+  const [sources, setSources] = useState<RRSourceRow[]>([])
+  const [sourceLoading, setSourceLoading] = useState(false)
   const [detail, setDetail] = useState<RRDetail | null>(null)
 
   useEffect(() => {
@@ -134,6 +140,49 @@ export default function ReturnRejectStatsPage() {
       message.error('匯出失敗（筆數可能超過上限，或沒有權限）')
     }
   }
+
+  const openSourceSettings = async () => {
+    setSourceOpen(true)
+    setSourceLoading(true)
+    try {
+      const r = await getReturnStatsSources()
+      setSources(r.data)
+    } catch (e) {
+      const d = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      message.error(`讀取表單清單失敗：${d ?? '請確認「退件統計：管理」權限'}`)
+    } finally {
+      setSourceLoading(false)
+    }
+  }
+
+  const onToggleSource = async (row: RRSourceRow, checked: boolean) => {
+    try {
+      await setReturnStatsSourceActive(row.id, checked)
+      setSources((prev) => prev.map((s) => (s.id === row.id ? { ...s, is_active: checked } : s)))
+      // 停用後統計與篩選下拉都要重算
+      const [f] = await Promise.all([getReturnStatsFilters(), load(1, pageSize)])
+      setFilters(f.data)
+      message.success(`${checked ? '已啟用' : '已停用'}：${row.company}／${row.dept_display}／${row.form_name}`)
+    } catch (e) {
+      const d = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      message.error(`切換失敗：${d ?? '請查看後端紀錄'}`)
+    }
+  }
+
+  const sourceColumns: ColumnsType<RRSourceRow> = [
+    { title: '公司', dataIndex: 'company', width: 80 },
+    { title: '類型', dataIndex: 'form_type', width: 80, render: (v: string) => FORM_TYPE_LABEL[v] ?? v },
+    { title: '部門', dataIndex: 'dept_display', width: 110 },
+    { title: '表單名稱', dataIndex: 'form_name', ellipsis: true },
+    { title: '筆數', dataIndex: 'record_count', width: 80, align: 'right' },
+    {
+      title: '統計', dataIndex: 'is_active', width: 90, align: 'center',
+      render: (_: boolean, row) => (
+        <Switch checked={row.is_active} checkedChildren="啟用" unCheckedChildren="停用"
+          onChange={(checked) => onToggleSource(row, checked)} />
+      ),
+    },
+  ]
 
   const onManualSync = async () => {
     setSyncing(true)
@@ -269,10 +318,21 @@ export default function ReturnRejectStatsPage() {
           }}>清除篩選</Button>
           <Button onClick={onExport}>匯出 Excel</Button>
           <Button icon={<ReloadOutlined />} loading={loading} onClick={onRefresh}>重新整理</Button>
+          <Button icon={<SettingOutlined />} onClick={openSourceSettings}>表單啟用設定</Button>
           <Button icon={<SyncOutlined />} loading={syncing} onClick={onManualSync}>重新同步</Button>
           <span style={{ color: '#595959', fontSize: 13 }}>
             上次同步：{summary?.last_synced_at ?? '尚未同步過'}
           </span>
+          <Modal
+            title="表單啟用設定（停用後不同步、不計入統計）"
+            open={sourceOpen}
+            width={820}
+            footer={null}
+            onCancel={() => setSourceOpen(false)}
+          >
+            <Table size="small" rowKey="id" loading={sourceLoading} pagination={false}
+              dataSource={sources} columns={sourceColumns} />
+          </Modal>
           <Modal
             open={syncOpen}
             title={syncResult && syncResult.errors.length > 0 ? '同步完成（有來源失敗）' : '同步完成'}

@@ -138,3 +138,22 @@ export interface RRSyncResult {
 // 同步要抓多個 Ragic 表單，逾時放寬到 5 分鐘（預設 30 秒會誤報失敗）
 export const runReturnStatsSync = () =>
   apiClient.post<RRSyncResult>(`${BASE}/sync`, null, { timeout: 300_000 })
+
+export interface RRSourceRow {
+  id: number
+  source_key: string
+  company: string
+  form_type: string
+  dept_display: string
+  form_name: string
+  ragic_path: string
+  is_active: boolean
+  record_count: number
+}
+
+// 來源啟用設定（需 return_reject_stats_manage）
+export const getReturnStatsSources = () =>
+  apiClient.get<RRSourceRow[]>(`${BASE}/sources`)
+
+export const setReturnStatsSourceActive = (id: number, isActive: boolean) =>
+  apiClient.patch<{ ok: boolean; is_active: boolean }>(`${BASE}/sources/${id}`, { is_active: isActive })

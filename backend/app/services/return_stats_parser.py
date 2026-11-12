@@ -261,8 +261,8 @@ def parse_record(raw: dict, profile: str = PROFILE_STANDARD) -> dict:
         outcome, reason = classify(status, steps)
     last_date = max((s["sign_date"] for s in steps if s["sign_date"]), default=None)
     return {
-        "applicant": as_text(raw.get("申請人") or raw.get("請款人")) or None,
-        "apply_date": parse_date(as_text(raw.get("申請日期") or raw.get("填單日期"))),
+        "applicant": as_text(raw.get("申請人") or raw.get("請款人") or raw.get("申 請 人")) or None,
+        "apply_date": parse_date(as_text(raw.get("申請日期") or raw.get("填單日期") or raw.get("簽呈日期"))),
         "amount": parse_amount(raw.get("總計") or raw.get("應付(繳)款") or raw.get("總金額")),
         "purpose": html_to_text(as_text(raw.get("事由") or raw.get("說明") or raw.get("主旨"))) or None,
         "ragic_status": status or None,

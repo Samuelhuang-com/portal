@@ -1,0 +1,379 @@
+# soutlet001 表單清單（11/12 內建瀏覽器逐一頁籤組擷取）
+# 欄位：路徑<TAB>頁籤組<TAB>名稱。已排除 record 網址、報表中心/新報表等入口頁
+internal/4	home/1	內部文件
+centralized-procurement/1	home/1	中區統購簽呈(台中自由)
+centralized-procurement/2	home/1	北區統購簽呈(大直樂群)
+centralized-procurement/3	home/1	中區工程統購簽呈(台中自由)
+centralized-procurement/4	home/1	北區工程統購簽呈(大直樂群)
+centralized-procurement/5	home/1	集團資訊統購簽呈(大直樂群台中自由)
+centralized-procurement/6	home/1	集團庶物統購簽呈(大直樂群台中自由)
+centralized-procurement/7	home/1	中區統購簽呈 測試單
+public-form/17	home/2	調 班 單
+public-form/36	home/2	資訊報修單
+public-form/42	home/2	維春自由公告
+public-form/44	home/2	資產異動單
+public-form/53	home/2	設計項目需求單
+public-form/59	home/2	行銷需求表
+public-form/57	home/2	維春共用簽呈
+public-form/68	home/2	維春自由樂群簽呈
+public-form/69	home/2	維春自由台中會辦單
+public-form/71	home/2	固定(列管)資產報廢單
+public-form/73	home/2	固定資產異動單
+public-form/74	home/2	POP製作申請單
+free-executive-office/9	home/2	請購單
+free-executive-office/8	home/2	請款單
+free-executive-office/10	home/2	用印申請單
+free-executive-office/11	home/2	請款單(副總簽允)
+free-executive-office/12	home/2	維春自由簽呈(人資獨用版本)
+free-executive-office/16	home/2	預支證明單
+free-executive-office/17	home/2	維春自由簽呈
+free-executive-office/18	home/2	維春自由公告 (公告審核用)
+free-business-division/15	home/2	營業一般文件
+free-business-division/11	home/2	設櫃提案書
+free-business-division/6	home/2	專櫃名單
+free-business-division/8	home/2	檔期活動提案書
+free-business-division/9	home/2	檔期專櫃條件總表
+free-business-division/21	home/2	請購單
+free-business-division/25	home/2	預支證明單
+free-business-division/12	home/2	請款單
+free-business-division/13	home/2	專櫃製作物申請單
+free-business-division/14	home/2	專櫃活動花車擺放申請單
+free-business-division/22	home/2	用印申請表
+free-business-division/24	home/2	維春自由簽呈
+marketing/5	home/2	行銷提案書
+marketing/30	home/2	行銷提案書(上澄)
+marketing/31	home/2	預支證明單
+marketing/40	home/2	請購單
+marketing/41	home/2	採購單
+marketing/32	home/2	請款單
+marketing/38	home/2	用印申請表
+marketing/45	home/2	維春自由簽呈
+marketing/47	home/2	優惠券領用 / 繳回單
+marketing/49	home/2	行銷需求表(受理管理)
+marketing/50	home/2	維春自由簽呈
+freed-management-division/19	home/2	請購單
+freed-management-division/31	home/2	採購單
+freed-management-division/8	home/2	請款單
+freed-management-division/9	home/2	請購單(舊版停用)
+freed-management-division/16	home/2	預支證明單(舊版停用)
+freed-management-division/7	home/2	用印申請表
+freed-management-division/20	home/2	廠商資料表-管理部
+freed-management-division/36	home/2	預支證明單
+freed-management-division/37	home/2	維春自由簽呈
+free-management-department/10	home/2	請購單
+free-management-department/9	home/2	採購單
+free-management-department/11	home/2	預支證明單
+free-management-department/8	home/2	請款單
+free-management-department/12	home/2	用印申請單
+free-management-department/20	home/2	維春自由簽呈
+free-finance-department/6	home/2	應付憑單
+free-finance-department/19	home/2	應付憑單-請款單
+free-finance-department/16	home/2	應付憑單 票貼
+free-finance-department/25	home/2	預支證明單
+free-finance-department/15	home/2	請款單
+free-finance-department/17	home/2	資金調撥單
+free-finance-department/27	home/2	用印申請單
+free-finance-department/28	home/2	維春自由簽呈(封存)
+free-finance-department/32	home/2	維春自由簽呈
+free-design-department/2	home/2	請購單
+free-design-department/6	home/2	採購單
+free-design-department/1	home/2	請款單
+free-design-department/3	home/2	每月製作物請款單 (健豪)
+free-design-department/4	home/2	每月製作物請款單
+free-design-department/5	home/2	設計提案書
+free-design-department/8	home/2	維春自由簽呈
+department-of-free-information/23	home/2	請購單
+department-of-free-information/33	home/2	採購單
+department-of-free-information/22	home/2	請款單
+department-of-free-information/8	home/2	出差申請單
+department-of-free-information/24	home/2	廠商資料表-資訊部
+department-of-free-information/28	home/2	用印申請單
+department-of-free-information/31	home/2	請款單 財務列印
+department-of-free-information/69	home/2	資訊自動化工作項目申請單
+department-of-free-information/59	home/2	小額支出證明單
+department-of-free-information/73	home/2	料號物品檔
+department-of-free-information/74	home/2	採購單 copy
+department-of-free-information/78	home/2	維春自由簽呈
+old-version-deactivation-form/1	home/2	資訊請款單(舊版停用)
+old-version-deactivation-form/2	home/2	資訊請購單(舊版停用)
+old-version-deactivation-form/3	home/2	客服請款單(舊版停用)
+old-version-deactivation-form/4	home/2	正櫃設櫃提案書(舊版停用)
+old-version-deactivation-form/5	home/2	6F臨時櫃設櫃提案書
+old-version-deactivation-form/7	home/2	維春自由簽呈(主表封存)
+old-version-deactivation-form/9	home/2	維春自由公告 copy
+old-version-deactivation-form/10	home/2	忘打卡申請單
+old-version-deactivation-form/11	home/2	出差申請單
+old-version-deactivation-form/12	home/2	固定資產異動單
+public-form-for-group-use/5	home/3	忘打卡申請單
+public-form-for-group-use/6	home/3	調 班 單
+public-form-for-group-use/7	home/3	出差申請單
+public-form-for-group-use/8	home/3	維春樂群簽呈
+public-form-for-group-use/10	home/3	資訊報修單
+public-form-for-group-use/12	home/3	維春自由樂群共用簽呈
+public-form-for-group-use/14	home/3	維春樂群公告
+luqun-public-works-repair-reporting-system/6	home/3	春大直 - 報修清單總表
+luqun-public-works-repair-reporting-system/1	home/3	春大直 - 前端報修
+luqun-public-works-repair-reporting-system/2	home/3	春大直 - 後勤維護
+luqun-public-works-repair-reporting-system/3	home/3	春大直 - 前端驗收
+luqun-public-works-repair-reporting-system/4	home/3	春大直 - 管理結案
+luqun-public-works-repair-reporting-system/5	home/3	春大直 - 財務註記
+luqun-public-works-repair-reporting-system/8	home/3	春大直 - 後勤維護 手機版本
+luqun-public-works-repair-reporting-system/9	home/3	維修記錄登記
+luqun-public-works-repair-reporting-system/10	home/3	春大直零件耗材表
+lequn-executive-office/10	home/3	請購單
+lequn-executive-office/9	home/3	多會科請款單
+lequn-executive-office/2	home/3	用印申請表
+lequn-executive-office/11	home/3	維春樂群簽呈
+lequn-executive-office/14	home/3	預支證明單
+new-tab/4	home/3	營業一般文件
+new-tab/5	home/3	設櫃提案書
+new-tab/6	home/3	檔期活動提案書
+new-tab/10	home/3	請購單
+new-tab/11	home/3	採購單
+new-tab/8	home/3	請款單
+new-tab/9	home/3	用印申請單
+new-tab/12	home/3	預支證明單
+new-tab/13	home/3	維春樂群簽呈
+lequn-marketing-department/2	home/3	行銷提案書
+lequn-marketing-department/11	home/3	用印申請單
+lequn-marketing-department/12	home/3	請購單
+lequn-marketing-department/14	home/3	採購單
+lequn-marketing-department/13	home/3	請款單
+lequn-marketing-department/15	home/3	預支證明單
+lequn-marketing-department/17	home/3	維春樂群簽呈
+lequn-finance-department/5	home/3	用印申請單
+lequn-finance-department/9	home/3	請購單
+lequn-finance-department/11	home/3	採購單
+lequn-finance-department/14	home/3	預支證明單
+lequn-finance-department/6	home/3	請款單
+lequn-finance-department/7	home/3	應付憑單
+lequn-finance-department/10	home/3	應付憑單-請款單
+lequn-finance-department/12	home/3	維春樂群簽呈
+lequn-finance-department/20	home/3	預算管理
+lequn-traffic-management/6	home/3	請購單
+lequn-traffic-management/10	home/3	採購單
+lequn-traffic-management/5	home/3	請款單
+lequn-traffic-management/7	home/3	用印申請單
+community-management-department/15	home/3	廠商資料表
+community-management-department/22	home/3	請購單
+community-management-department/23	home/3	採購單
+community-management-department/24	home/3	請款單
+community-management-department/27	home/3	用印申請單
+community-management-department/53	home/3	用印申請單 (統購案)
+community-management-department/56	home/3	維春樂群簽呈
+community-management-department/37	home/3	預支證明單
+community-management-department/58	home/3	★週期請購單
+community-management-department/57	home/3	★週採採購單
+community-management-department/59	home/3	★週期請款單
+joy-group-it-department/11	home/3	請購單
+joy-group-it-department/12	home/3	採購單
+joy-group-it-department/14	home/3	請款單
+joy-group-it-department/15	home/3	用印申請單
+joy-group-it-department/38	home/3	維春樂群簽呈
+lequn-public-works-department/7	home/3	維春樂群簽呈
+lequn-public-works-department/1	home/3	請購單
+lequn-public-works-department/4	home/3	採購單
+lequn-public-works-department/2	home/3	請款單
+lequn-public-works-department/3	home/3	預支證明單
+lequn-public-works-department/5	home/3	用印申請單
+happy-group-project/2	home/3	請購單
+happy-group-project/5	home/3	採購單
+happy-group-project/1	home/3	請款單
+happy-group-project/4	home/3	用印申請單
+happy-group-project/7	home/3	預支證明單
+happy-group-project/8	home/3	維春樂群簽呈
+taichung-public-form/3	home/4	調 班 單
+taichung-public-form/4	home/4	出差申請單
+taichung-public-form/34	home/4	維春台中簽呈 TXGSR版
+taichung-public-form/7	home/4	請購單
+taichung-public-form/6	home/4	請款單
+taichung-public-form/35	home/4	維春台中簽呈(資產準備金)
+taichung-public-form/37	home/4	預支證明單
+customer-service/7	home/4	維春台中簽呈 客務部
+customer-service/9	home/4	請購單 客務部
+customer-service/10	home/4	採購單 客務部
+customer-service/14	home/4	請款單 客務部
+business/2	home/4	維春台中簽呈 業務部
+business/3	home/4	請購單 業務部
+business/4	home/4	採購單 業務部
+business/5	home/4	請款單 業務部
+info/2	home/4	維春台中簽呈 資訊部
+info/43	home/4	請購單 資訊部
+info/18	home/4	採購單 資訊部
+info/50	home/4	請款單 資訊部
+info/19	home/4	維春台中廠商資料表
+info/44	home/4	維春台中簽呈 資訊部
+info/45	home/4	維春台中簽呈(資產準備金)
+info/46	home/4	預支證明單
+info/61	home/4	預支證明單 測試版
+info/64	home/4	請款單 資訊部 - 項目明細
+hr/1	home/4	維春台中簽呈 行政辦公室
+hr/4	home/4	維春台中簽呈 行政辦公室 極機密
+hr/5	home/4	請購單 行政辦公室
+hr/6	home/4	採購單 行政辦公室
+hr/7	home/4	請款單 行政辦公室
+kitchen/1	home/4	維春台中簽呈 廚房
+kitchen/2	home/4	請購單 廚房
+kitchen/3	home/4	採購單 廚房
+kitchen/4	home/4	請款單 廚房
+food-drink/1	home/4	維春台中簽呈 餐飲部
+food-drink/2	home/4	請購單 餐飲
+food-drink/4	home/4	採購單 餐飲
+food-drink/5	home/4	請款單 餐飲
+housekeeping/1	home/4	維春台中簽呈 房務部
+housekeeping/2	home/4	請購單 房務部
+housekeeping/3	home/4	採購單 房務部
+housekeeping/4	home/4	請款單 房務部
+lequn-public-works/4	home/5	工程維修單
+lequn-public-works/2	home/5	工程報修單
+lequn-public-works/26	home/5	工程維修單-飯店驗收
+lequn-public-works/7	home/5	工程報修單 查閱
+lequn-public-works/8	home/5	工程維修單 房務部查閱用
+lequn-public-works/30	home/5	物件主檔
+dazhi-public-form/1	home/5	維春大直簽呈(資產準備金)
+dazhi-public-form/2	home/5	請購單
+dazhi-public-form/3	home/5	採購單
+dazhi-public-form/4	home/5	請款單
+dazhi-public-form/7	home/5	維春大直簽呈 公版
+dazhi-public-form/8	home/5	用印申請單
+dazhi-public-form/9	home/5	用印申請單 測試用
+decantation/4	home/6	請購單 原澄
+decantation/3	home/6	請款單 原澄
+decantation/19	home/6	預支證明單 原澄
+decantation/6	home/6	原澄簽呈
+decantation/15	home/6	一般文件 原澄
+decantation/2	home/6	請購單 上澄
+decantation/1	home/6	請款單 上澄
+decantation/18	home/6	預支證明單 上澄
+decantation/7	home/6	上澄簽呈
+decantation/17	home/6	一般文件 上澄
+decantation/20	home/6	用印申請表
+decantation/21	home/6	上澄原澄公告
+clear-the-excess-boardroom-interior/1	home/6	請款單 上澄
+clear-the-excess-boardroom-interior/3	home/6	請款單 原澄
+clear-the-excess-boardroom-interior/4	home/6	人資文件 原澄
+clear-the-excess-boardroom-interior/5	home/6	人資文件 上澄
+clearance-financial-office/1	home/6	請款單 上澄
+clearance-financial-office/2	home/6	請款單 原澄
+clearance-financial-office/3	home/6	應付憑單 原澄
+clearance-financial-office/4	home/6	應付憑單 上澄
+wise-mountain/1	home/7	請款單
+wise-mountain/2	home/7	應付憑單
+other-tasks/1	home/8	工務臨時事件單
+main-project-inspection/17	home/8	飯店工務每日巡檢 - RF 樓層 早班巡檢
+main-project-inspection/28	home/8	飯店工務每日巡檢 - 5-10F 客房公共區域
+main-project-inspection/29	home/8	飯店工務每日巡檢 -4F BAR-D公區
+main-project-inspection/30	home/8	飯店工務每日巡檢 -B1F 高壓機房
+main-project-inspection/31	home/8	飯店工務每日巡檢 -B1F 晚班巡檢 辦公室公區、廚房瓦斯設備
+main-project-inspection/32	home/8	飯店工務每日巡檢 -B4F 早班巡檢 下水塔
+main-project-inspection/33	home/8	飯店工務每日巡檢 -B4F 晚班巡檢 空調機房
+mall-facility-inspection/26	home/8	商場工務每日巡檢 - 1F ~ 4F 配電室
+mall-facility-inspection/27	home/8	商場工務每日巡檢 - 4F空調箱
+mall-facility-inspection/28	home/8	商場工務每日巡檢 - 3F(靜電機)
+mall-facility-inspection/29	home/8	商場工務每日巡檢 - 1F-3F(空調箱)
+mall-facility-inspection/30	home/8	商場工務每日巡檢 - 1F(水洗機)
+full-building-inspection/5	home/8	全棟工務每日巡檢 - RF冷卻水塔、上水塔
+full-building-inspection/6	home/8	全棟工務每日巡檢 - B1F發電機、高壓機房、電信、瓦斯設備
+full-building-inspection/7	home/8	全棟工務每日巡檢 - B2F油脂截流槽
+full-building-inspection/9	home/8	全棟工務每日巡檢 - B4F 冰水主機 冰水泵 冷卻水泵
+full-building-inspection/10	home/8	全棟工務每日巡檢 - B4F 連續壁
+full-building-inspection/11	home/8	全棟工務每日巡檢 - B4F 汙廢水
+full-building-inspection/12	home/8	全棟工務每日巡檢 - B4F 下水塔
+full-building-inspection/8	home/8	全棟工務每日巡檢 - B1-B4F抽排風設備
+hotel-routine-inspection/11	home/8	全棟水電錶
+hotel-routine-inspection/12	home/8	商場空調箱電錶
+hotel-routine-inspection/14	home/8	專櫃電錶
+hotel-routine-inspection/15	home/8	專櫃水錶
+periodic-maintenance/4	home/8	客房保養表
+periodic-maintenance/6	home/8	飯店週期保養表(主表單瀏覽)
+periodic-maintenance/36	home/8	飯店週期保養表(主管排定)
+periodic-maintenance/8	home/8	飯店週期保養表(同仁執行)
+periodic-maintenance/11	home/8	飯店週期保養表(同仁執行) - 子表: 項目
+periodic-maintenance/12	home/8	商場週期保養日誌(主表單瀏覽)
+periodic-maintenance/35	home/8	商場週期保養日誌(主管排定)
+periodic-maintenance/18	home/8	商場週期保養日誌(同仁執行)
+periodic-maintenance/24	home/8	商場週期保養日誌(同仁執行) - 子表: 項目
+periodic-maintenance/22	home/8	全棟週期保養日誌(主表單瀏覽)
+periodic-maintenance/33	home/8	全棟週期保養日誌(主管排定)
+periodic-maintenance/21	home/8	全棟週期保養日誌(同仁執行)
+periodic-maintenance/28	home/8	全棟週期保養日誌(同仁執行) - 子表:項目
+archive-old-data/6	home/8	工務巡檢總表
+archive-old-data/7	home/8	飯店巡檢項目設定表
+archive-old-data/8	home/8	飯店巡檢結果表
+archive-old-data/9	home/8	全棟電錶ACB123
+archive-old-data/10	home/8	商場空調箱電錶-2
+archive-old-data/13	home/8	飯店巡檢總表(封存)
+archive-old-data/14	home/8	飯店巡檢 RF(封存)
+archive-old-data/15	home/8	飯店巡檢4F -10F(封存)
+archive-old-data/16	home/8	飯店巡檢 4F(封存)
+archive-old-data/17	home/8	飯店巡檢 2F(封存)
+archive-old-data/18	home/8	飯店巡檢 1F(封存)
+archive-old-data/19	home/8	整棟工務每日巡檢 - RF
+archive-old-data/20	home/8	整棟工務每日巡檢 - B4F
+archive-old-data/21	home/8	整棟工務每日巡檢 - B2F
+archive-old-data/22	home/8	整棟工務每日巡檢 - B1F
+archive-old-data/23	home/8	商場工務每日巡檢 - 4F
+archive-old-data/24	home/8	商場工務每日巡檢 - 3F
+archive-old-data/25	home/8	商場工務每日巡檢 - 1F ~ 3F
+archive-old-data/26	home/8	商場工務每日巡檢 - 1F
+archive-old-data/27	home/8	商場工務每日巡檢 - B1F
+archive-old-data/28	home/8	商場工務每日巡檢 - B2F
+archive-old-data/29	home/8	商場工務每日巡檢 - B3F
+archive-old-data/30	home/8	商場工務每日巡檢 - B4F
+archive-old-data/31	home/8	飯店工務每日巡檢 - 10F
+archive-old-data/32	home/8	飯店工務每日巡檢 - 4F戶外廣場與宴會廳
+archive-old-data/33	home/8	飯店工務每日巡檢 - 2F
+archive-old-data/34	home/8	飯店工務每日巡檢 - 1F
+archive-old-data/35	home/8	飯店工務每日巡檢 - 4F
+archive-old-data/36	home/8	飯店工務每日巡檢 - 5F
+archive-old-data/37	home/8	飯店工務每日巡檢 - 6F
+archive-old-data/38	home/8	飯店工務每日巡檢 - 7F
+archive-old-data/39	home/8	飯店工務每日巡檢 - 8F
+archive-old-data/40	home/8	飯店工務每日巡檢 - 9F
+for-english-use/1	home/8	商場週期保養日誌(同仁執行) - 子表: 項目 資訊補
+for-english-use/2	home/8	全棟週期保養日誌(同仁執行) - 子表:項目 資訊補
+for-english-use/3	home/8	飯店週期保養表(同仁執行) - 子表: 項目 資訊補
+public-form2/1	home/9	請購單
+public-form2/2	home/9	請款單
+public-form2/6	home/9	銀行融資申請單
+public-form2/9	home/9	維春商業總司簽呈
+security-patrol/3	home/10	保全巡檢 - 5F ~ 10F (夜間巡檢)
+security-patrol/4	home/10	保全巡檢 - 4F (夜間巡檢)
+security-patrol/2	home/10	保全巡檢 - 1F ~ 3F (夜間巡檢)
+security-patrol/5	home/10	保全巡檢 - 1F夜間巡檢 (飯店大廳)
+security-patrol/1	home/10	保全每日巡檢 - B1F~B4F夜間巡檢
+security-patrol/6	home/10	保全巡檢 - 1F 閉店巡檢
+security-patrol/9	home/10	保全巡檢 - 1F 開店準備
+security-patrol/10	home/10	保全巡檢總表
+security-patrol/11	home/10	巡檢項目設定表
+security-patrol/12	home/10	巡檢結果表
+security-patrol/22	home/10	巡檢點主檔
+security-patrol/23	home/10	巡檢紀錄
+01-2/1	home/11	週期採購料號主檔
+01-2/3	home/11	週期採購料號對照表
+01-2/5	home/11	週期採購週期設定
+01-2/7	home/11	週期採購批次
+01-2/9	home/11	週期採購請購單
+ragicsales-order-management/20001	root	銷售訂單
+ragicsales-order-management/20002	root	出貨單
+ragicsales-order-management/20004	root	客戶
+ragicsales-order-management/20005	root	銷售商品
+ragicsales-order-management/20006	root	商品單價管理
+ragicsales-order-management/20003	root	郵遞區號
+ragicforms4/20004	root	人事資料表
+ragicforms4/20005	root	工時表
+ragicforms30/20001	root	飯店工務巡檢表
+ragicforms30/20002	root	員工通訊錄
+ragicforms30/20003	root	線上會議紀錄
+ragicforms30/20005	root	遠端工作回報
+ragicforms30/20006	root	公告系統
+wei-chun-public-form/4	root	請購單
+wei-chun-public-form/6	root	廠商資料表
+wei-chun-public-form/7	root	採購單
+wei-chun-public-form/18	root	採購單 copy
+wei-chun-public-form/19	root	請款單
+springboard3/3	root	維春採購簽呈
+springboard3/8	root	全棟週期保養日誌(主管排定)(舊版停用)
+springboard3/9	root	商場週期保養日誌(主管排定)舊版停用)_
+springboard3/10	root	飯店週期保養表(主管排定)(舊版停用)
+security-patrol/8	home/10	保全工時表

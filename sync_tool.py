@@ -258,6 +258,7 @@ MODULES: list[tuple[str, str, str]] = [
     #   嚴重掃描＝每 30 分；每日彙整＝每天 08:30（在本工具「排程設定」裡設定）。
     ("戰情告警-嚴重掃描",  "app.services.war_room_alert_service",       "scan_critical"),
     ("戰情告警-每日彙整",  "app.services.war_room_alert_service",       "daily_digest"),
+    ("Ragic簽核掃描",  "app.services.ragic_signoff_scan_sync",        "sync_from_ragic"),
 ]
 
 # ── 報修報表寄信排程 key（非同步模組，獨立處理）─────────────────────────────
@@ -813,6 +814,7 @@ class SyncApp(tk.Tk):
             import app.models.reference_data           # noqa  Company/RefDepartment（據點鏡像來源）
             import app.models.tenant                   # noqa  據點主檔（Company 鏡像，2026-09-01）
             import app.models.user_department          # noqa  使用者↔部門多對多（2026-09-01）
+            import app.models.ragic_signoff_scan       # noqa  Ragic 簽核掃描（2026-11-12）
 
             # ── PostgreSQL：只建表，跳過底下所有 PRAGMA 補丁 ─────────────────
             #

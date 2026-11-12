@@ -4,7 +4,12 @@
 - 稽核檢查（audit_check）與 KPO 稽核（audit_kpo）各模組的計算「不變」，本服務直接沿用：
   * 稽核檢查：compute_scores() 的 sub_count（子項數）與 pass_count（達標項數）
   * KPO：subtotal() 的 item_count（選定項數）與 pass_count（符合項數）
-- 合併達標率 = (稽核達標項數 + KPO 符合項數) ÷ (稽核子項數 + KPO 選定項數)
+- 合併達標率（2026-11-12 裁示：方案 A）：
+  * 直接讀模組既有的月分數（與模組頁面相同的計分函式，不另行計算）：
+    系統檢查月分數 = compute_scores() 的 score（達標項 ÷ 子項）；現場稽核月分數 = subtotal() 的 score100 ÷ 100
+  * 年度分數 = 各月模組分數的平均（每月等權）
+  * 合併達標率 = (系統檢查年度分數 + 現場稽核年度分數) ÷ 2；某一模組無資料時，只取另一模組的年度分數
+  * 不再把「項」與「點」直接相加
 - 年度 = 期別年份（YYYY-MM）。某部門某月沒有資料（子項數／選定項數為 0）→ 排除不計。
 - 部門比對：公司 + 部門名稱。KPO「客服停管部」對應到「客服部」（2026-11-02 裁示）。
 """
@@ -34,7 +39,8 @@ def build_score(db: Session, year: int) -> dict:
 
     # (company_id, 部門名稱) → 累計
     acc: Dict[Tuple[int, str], Dict[str, object]] = defaultdict(
-        lambda: {"a_sub": 0, "a_pass": 0, "k_sub": 0, "k_pass": 0, "a_months": 0, "k_months": 0, "monthly": []})
+        lambda: {"a_sub": 0, "a_pass": 0, "k_sub": 0, "k_pass": 0, "a_scores": [], "k_scores": [],
+                 "a_months": 0, "k_months": 0, "monthly": []})
 
     # 稽核檢查
     pids = [p.id for p in db.query(AuditPeriod).filter(AuditPeriod.period.like(f"{year}-%")).all()]
@@ -49,6 +55,8 @@ def build_score(db: Session, year: int) -> dict:
                 cell["a_sub"] += row["sub_count"]
                 cell["a_pass"] += row["pass_count"]
                 cell["a_months"] += 1
+                if row["score"] is not None:
+                    cell["a_scores"].append(row["score"])
                 cell["monthly"].append({
                     "period": period, "source": "稽核檢查", "source_sheet_id": sh.id,
                     "sub": row["sub_count"], "pass": row["pass_count"],
@@ -71,6 +79,8 @@ def build_score(db: Session, year: int) -> dict:
                 cell = acc[(sh.company_id, name)]
                 cell["k_sub"] += int(st["item_count"])
                 cell["k_pass"] += int(st["pass_count"])
+                if st["score100"] is not None:
+                    cell["k_scores"].append(st["score100"] / 100)
                 cell["k_months"] += 1
                 cell["monthly"].append({
                     "period": period, "source": "KPO", "source_sheet_id": sh.id,
@@ -85,12 +95,18 @@ def build_score(db: Session, year: int) -> dict:
         for (c, name), v in sorted(((k, v) for k, v in acc.items() if k[0] == cid), key=lambda kv: kv[0][1]):
             total_sub = v["a_sub"] + v["k_sub"]
             total_pass = v["a_pass"] + v["k_pass"]
+            # 年度分數 = 各月模組分數平均（每月等權）；兩模組各佔一半，無資料的模組不參與
+            a_score = (sum(v["a_scores"]) / len(v["a_scores"])) if v["a_scores"] else None
+            k_score = (sum(v["k_scores"]) / len(v["k_scores"])) if v["k_scores"] else None
+            parts = [x for x in (a_score, k_score) if x is not None]
+            rate = (sum(parts) / len(parts)) if parts else None
             rows.append({
                 "department": name,
                 "audit_sub": v["a_sub"], "audit_pass": v["a_pass"],
                 "kpo_sub": v["k_sub"], "kpo_pass": v["k_pass"],
                 "total_sub": total_sub, "total_pass": total_pass,
-                "rate": (total_pass / total_sub) if total_sub else None,
+                "rate": rate,
+                "audit_score": a_score, "kpo_score": k_score,
                 "audit_months": v["a_months"], "kpo_months": v["k_months"],
                 "monthly": sorted(v["monthly"], key=lambda m: (m["period"], m["source"])),
             })

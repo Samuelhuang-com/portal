@@ -14,7 +14,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
-from sqlalchemy import func, or_
+from pydantic import BaseModel
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -56,6 +57,9 @@ def _filtered(
     db: Session, rejection_approver: Optional[str] = None, ragic_rej: bool = False,
 ):
     q = q.filter(ReturnStatsRecord.is_deleted == False)  # noqa: E712
+    # 停用的來源不計入統計（2026-11-12：避免不需要的表單退件被納入）
+    q = q.filter(ReturnStatsRecord.source_key.in_(
+        select(ReturnStatsSource.source_key).where(ReturnStatsSource.is_active == True)))  # noqa: E712
     if company:
         q = q.filter(ReturnStatsRecord.company.in_(company))
     if dept:
@@ -401,6 +405,34 @@ def export_records(
             f'attachment; filename="return_reject_stats_{stamp}.xlsx"; '
             f"filename*=UTF-8''{quote(cn_name, safe='')}")},
     )
+
+
+class SourceUpdate(BaseModel):
+    is_active: bool
+
+
+@router.get("/sources", summary="來源清單（含啟用狀態與筆數，供設定）")
+def list_sources(db: Session = Depends(get_db), _=Depends(require_permission(MANAGE))):
+    rows = db.query(ReturnStatsSource).order_by(ReturnStatsSource.sort_order).all()
+    counts = dict(db.query(ReturnStatsRecord.source_key, func.count(ReturnStatsRecord.id))
+                  .filter(ReturnStatsRecord.is_deleted == False)  # noqa: E712
+                  .group_by(ReturnStatsRecord.source_key).all())
+    return [{
+        "id": s.id, "source_key": s.source_key, "company": s.company, "form_type": s.form_type,
+        "dept_display": s.dept_display, "form_name": s.form_name, "ragic_path": s.ragic_path,
+        "is_active": bool(s.is_active), "record_count": counts.get(s.source_key, 0),
+    } for s in rows]
+
+
+@router.patch("/sources/{source_id}", summary="啟用／停用來源（停用後不同步、不計入統計）")
+def update_source(source_id: int, body: SourceUpdate, db: Session = Depends(get_db),
+                  _=Depends(require_permission(MANAGE))):
+    src = db.get(ReturnStatsSource, source_id)
+    if src is None:
+        raise HTTPException(status_code=404, detail="來源不存在")
+    src.is_active = body.is_active
+    db.commit()
+    return {"ok": True, "source_key": src.source_key, "is_active": bool(src.is_active)}
 
 
 @router.post("/sync", summary="手動同步退件統計")

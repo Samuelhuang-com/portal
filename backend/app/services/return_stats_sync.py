@@ -92,6 +92,14 @@ SCOPE_SHEETS = [
     ("台中", "claim", "房務部", "請款單", "housekeeping/4"),
 ]
 
+# 2026-11-12 裁示新增（應付憑單；維春樂群簽呈待確認）：沒有既有同步表，一律走 Ragic API。
+# 原澄、上澄相關表單不納入。wise-mountain/2、public-form-for-group-use/8 另為獨立公司，公司名稱待確認，暫不登錄。
+NEW_SHEETS = [
+    ("樂群", "payable", "財務部", "應付憑單", "lequn-finance-department/7"),
+    ("日曜", "payable", "財務部", "應付憑單", "free-finance-department/6"),
+    # 維春樂群簽呈 6 張暫不登錄：探測顯示 6 個路徑回傳完全相同的資料（筆數、狀態分布、欄位皆相同），疑為同一張表的不同頁籤路徑，待確認後再加入
+]
+
 # 用印（規格附錄 B.2）：沒有既有同步表，改用 Ragic API
 SEAL_SHEETS = [
     ("樂群", "執董室", "用印申請表", "lequn-executive-office/2"),
@@ -131,6 +139,16 @@ def seed_sources(db) -> int:
         db.add(ReturnStatsSource(
             source_key=key, company=company, form_type=ftype, dept_display=dept,
             form_name=fname, ragic_path=path, origin="ragic_api", origin_table=table,
+            parser_profile="standard_v1", is_active=True, sort_order=order))
+        added += 1
+    for company, ftype, dept, fname, path in NEW_SHEETS:
+        order += 1
+        key = source_key(company, ftype, path)
+        if db.query(ReturnStatsSource).filter_by(source_key=key).first():
+            continue
+        db.add(ReturnStatsSource(
+            source_key=key, company=company, form_type=ftype, dept_display=dept,
+            form_name=fname, ragic_path=path, origin="ragic_api", origin_table=None,
             parser_profile="standard_v1", is_active=True, sort_order=order))
         added += 1
     for company, dept, fname, path in SEAL_SHEETS:

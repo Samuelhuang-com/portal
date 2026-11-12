@@ -1,6 +1,6 @@
 /**
  * 稽核檢查統計（合併計分）
- * 公司 → 部門 → 年度合併達標率；稽核檢查與 KPO 各模組計算不變，合併＝達標項數合計 ÷ 子項數合計。
+ * 公司 → 部門 → 年度合併分數；稽核檢查與 KPO 各模組計算不變，合併＝（系統檢查年度分數＋現場稽核年度分數）÷ 2；年度分數＝各月模組分數平均（2026-11-12 方案 A，計算於後端 audit_score_service）。
  */
 import { useEffect, useState } from 'react'
 import { Button, Card, Empty, InputNumber, Space, Table, Tooltip, message } from 'antd'
@@ -8,7 +8,8 @@ import { DownloadOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { exportAuditScore, getAuditScore, type AuditScoreBlock, type AuditScoreMonthly, type AuditScoreRow } from '@/api/auditScore'
 
-const pct = (v: number | null) => (v == null ? '本年無' : `${(v * 100).toFixed(1)}%`)
+// 2026-11-12 裁示：一律以「分」呈現（與模組的各部門本期稽核分數一致，0～100 取整數）
+const pts = (v: number | null) => (v == null ? '本年無' : `${Math.round(v * 100)} 分`)
 
 // 每個月份一欄：直接顯示原模組的值（稽核：達標數/子項數；KPO：符合數/選定數）
 function monthCell(items: AuditScoreMonthly[]) {
@@ -25,7 +26,7 @@ function monthCell(items: AuditScoreMonthly[]) {
             {m.module_score == null
               ? '（本月無）'
               : m.source === '稽核檢查'
-                ? `（${(m.module_score * 100).toFixed(1)}%）`
+                ? `（${Math.round(m.module_score * 100)} 分）`
                 : `（${m.module_score} 分）`}
           </span>
         </div>
@@ -61,7 +62,7 @@ const monthlyColumns: ColumnsType<AuditScoreMonthly> = [
     title: '原模組分數', dataIndex: 'module_score', width: 130, align: 'right',
     render: (v: number | null, r) => {
       if (v == null) return '本月無'
-      return r.source === '稽核檢查' ? `${(v * 100).toFixed(1)}%` : `${v} 分`
+      return r.source === '稽核檢查' ? `${Math.round(v * 100)} 分` : `${v} 分`
     },
   },
   { title: '原模組顯示', dataIndex: 'module_label', width: 200 },
@@ -123,13 +124,15 @@ export default function AuditScorePage() {
     { title: '合計項數', dataIndex: 'total_sub', width: 110, align: 'right' },
     { title: '合計達標數', dataIndex: 'total_pass', width: 110, align: 'right' },
     {
-      title: '合併達標率', dataIndex: 'rate', width: 130, align: 'right',
+      title: '合併分數', dataIndex: 'rate', width: 130, align: 'right',
       render: (v: number | null, r) => (
         <Tooltip title={`系統檢查 ${r.audit_months} 個月、現場稽核 ${r.kpo_months} 個月有資料（無資料的月份不計）`}>
-          <span style={{ fontWeight: 600, color: v == null ? '#999' : '#1B3A5C' }}>{pct(v)}</span>
+          <span style={{ fontWeight: 600, color: v == null ? '#999' : '#1B3A5C' }}>{pts(v)}</span>
         </Tooltip>
       ),
     },
+    // 2026-11-12 裁示：合併達標率後方新增「平均分數」空白欄位
+    { title: '平均分數', key: 'avg_score', width: 110, align: 'right', render: () => '' },
   ]
 
   return (
@@ -140,6 +143,13 @@ export default function AuditScorePage() {
           <InputNumber value={year} min={2000} max={2100} onChange={(v) => v && setYear(v)} />
           <Button icon={<DownloadOutlined />} onClick={onExport}>匯出 Excel</Button>
         </Space>
+        {/* 2026-11-12 裁示：計算公式顯示於畫面 */}
+        <div style={{ marginTop: 8, color: '#555' }}>
+          合併分數 ＝（系統檢查年度分數＋現場稽核年度分數）÷ 2
+          <span style={{ color: '#999', marginLeft: 8 }}>
+            年度分數 ＝ 各月模組分數平均（每月等權）；無資料的模組不計入
+          </span>
+        </div>
       </Card>
 
       {!loading && blocks.length === 0 && <Empty description="本年度沒有可計分的資料" />}
@@ -151,7 +161,7 @@ export default function AuditScorePage() {
             size="small"
             loading={loading}
             columns={[columns[0], ...monthColumns(year), ...columns.slice(1)]}
-            scroll={{ x: 1600 }}
+            scroll={{ x: 1710 }}
             dataSource={blk.rows}
             pagination={false}
             expandable={{
