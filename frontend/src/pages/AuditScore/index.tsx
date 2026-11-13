@@ -1,6 +1,6 @@
 /**
  * 稽核檢查統計（合併計分）
- * 公司 → 部門 → 年度合併分數；稽核檢查與 KPO 各模組計算不變，合併＝（系統檢查年度分數＋現場稽核年度分數）÷ 2；年度分數＝各月模組分數平均（2026-11-12 方案 A，計算於後端 audit_score_service）。
+ * 公司 → 部門 → 年度合併分數；稽核檢查與 KPO 各模組計算不變，系統平均分、現場平均分為年度分數，合併＝系統平均分 × 30% ＋ 現場平均分 × 70%（一方無資料時只取另一方，2026-11-13 裁示；計算於後端 audit_score_service）。
  */
 import { useEffect, useState } from 'react'
 import { Button, Card, Empty, InputNumber, Space, Table, Tooltip, message } from 'antd'
@@ -105,13 +105,17 @@ export default function AuditScorePage() {
   }
 
   const columns: ColumnsType<AuditScoreRow> = [
-    { title: '部門', dataIndex: 'department', width: 140 },
+    { title: '部門', dataIndex: 'department', width: 140, fixed: 'left' },
     // 2026-11-03：合併群組標題（系統建置稽核／現場營運稽核）
     {
       title: '系統建置稽核', align: 'center',
       children: [
         { title: '系統檢查子項數', dataIndex: 'audit_sub', width: 110, align: 'right' },
         { title: '系統檢查達標數', dataIndex: 'audit_pass', width: 110, align: 'right' },
+        {
+          title: '系統平均分', dataIndex: 'audit_score', width: 110, align: 'right', render: (v: number | null) => pts(v),
+          onHeaderCell: () => ({ style: { background: '#bae0ff' } }), onCell: () => ({ style: { background: '#e6f7ff' } }),
+        },
       ],
     },
     {
@@ -119,9 +123,13 @@ export default function AuditScorePage() {
       children: [
         { title: '現場稽核選定項數', dataIndex: 'kpo_sub', width: 120, align: 'right' },
         { title: '現場稽核符合項數', dataIndex: 'kpo_pass', width: 120, align: 'right' },
+        { title: '現場平均分', dataIndex: 'kpo_score', width: 110, align: 'right', render: (v: number | null) => pts(v) },
       ],
     },
-    { title: '合計項數', dataIndex: 'total_sub', width: 110, align: 'right' },
+    {
+      title: '合計項數', dataIndex: 'total_sub', width: 110, align: 'right',
+      onHeaderCell: () => ({ style: { background: '#d9f7be' } }), onCell: () => ({ style: { background: '#f6ffed' } }),
+    },
     { title: '合計達標數', dataIndex: 'total_pass', width: 110, align: 'right' },
     {
       title: '合併分數', dataIndex: 'rate', width: 130, align: 'right',
@@ -131,8 +139,6 @@ export default function AuditScorePage() {
         </Tooltip>
       ),
     },
-    // 2026-11-12 裁示：合併達標率後方新增「平均分數」空白欄位
-    { title: '平均分數', key: 'avg_score', width: 110, align: 'right', render: () => '' },
   ]
 
   return (
@@ -145,9 +151,9 @@ export default function AuditScorePage() {
         </Space>
         {/* 2026-11-12 裁示：計算公式顯示於畫面 */}
         <div style={{ marginTop: 8, color: '#555' }}>
-          合併分數 ＝（系統檢查年度分數＋現場稽核年度分數）÷ 2
+          合併分數 ＝ 系統平均分 × 30% ＋ 現場平均分 × 70%
           <span style={{ color: '#999', marginLeft: 8 }}>
-            年度分數 ＝ 各月模組分數平均（每月等權）；無資料的模組不計入
+            系統平均分、現場平均分 ＝ 各月模組分數平均（每月等權）；某一模組無資料時，只取另一模組的平均分
           </span>
         </div>
       </Card>
@@ -161,7 +167,7 @@ export default function AuditScorePage() {
             size="small"
             loading={loading}
             columns={[columns[0], ...monthColumns(year), ...columns.slice(1)]}
-            scroll={{ x: 1710 }}
+            scroll={{ x: 1820 }}
             dataSource={blk.rows}
             pagination={false}
             expandable={{

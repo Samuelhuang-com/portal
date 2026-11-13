@@ -78,8 +78,8 @@ def export_score(
     ws = wb.active
     ws.title = f"{year}年稽核統計"
     month_keys = [f"{year}-{i:02d}" for i in range(1, 13)]
-    LAST_COL = 21  # A～U
-    # 欄位：1 部門｜2～13 一～十二月｜14～15 系統建置稽核｜16～17 現場營運稽核｜18 合計項數｜19 合計達標數｜20 合併分數｜21 平均分數
+    LAST_COL = 22  # A～V
+    # 欄位：1 部門｜2～13 一～十二月｜14～16 系統建置稽核（子項數、達標數、系統平均分）｜17～19 現場營運稽核（選定項數、符合項數、現場平均分）｜20 合計項數｜21 合計達標數｜22 合併分數
     ws.column_dimensions["A"].width = 14
     for col in range(2, 14):
         ws.column_dimensions[ws.cell(row=1, column=col).column_letter].width = 18
@@ -97,7 +97,7 @@ def export_score(
 
         h1, h2 = row, row + 1
         # 單欄標題（跨兩列合併）
-        single_headers = {1: "部門", 18: "合計項數", 19: "合計達標數", 20: "合併分數", 21: "平均分數"}
+        single_headers = {1: "部門", 20: "合計項數", 21: "合計達標數", 22: "合併分數"}
         for i, mk in enumerate(month_keys):
             single_headers[2 + i] = f"{i + 1}月"
         for col in range(1, LAST_COL + 1):
@@ -110,13 +110,13 @@ def export_score(
             ws.cell(row=h1, column=col, value=text)
         # 群組標題（橫跨兩欄）
         ws.cell(row=h1, column=14, value="系統建置稽核")
-        ws.cell(row=h1, column=16, value="現場營運稽核")
-        for col, text in {14: "系統檢查子項數", 15: "系統檢查達標數", 16: "現場稽核選定項數", 17: "現場稽核符合項數"}.items():
+        ws.cell(row=h1, column=17, value="現場營運稽核")
+        for col, text in {14: "系統檢查子項數", 15: "系統檢查達標數", 16: "系統平均分", 17: "現場稽核選定項數", 18: "現場稽核符合項數", 19: "現場平均分"}.items():
             ws.cell(row=h2, column=col, value=text)
         for col in list(single_headers.keys()):
             ws.merge_cells(start_row=h1, start_column=col, end_row=h2, end_column=col)
-        ws.merge_cells(start_row=h1, start_column=14, end_row=h1, end_column=15)
-        ws.merge_cells(start_row=h1, start_column=16, end_row=h1, end_column=17)
+        ws.merge_cells(start_row=h1, start_column=14, end_row=h1, end_column=16)
+        ws.merge_cells(start_row=h1, start_column=17, end_row=h1, end_column=19)
         row = h2 + 1
 
         for r in blk["rows"]:
@@ -128,8 +128,9 @@ def export_score(
             values = (
                 [xlsx_safe(r["department"])]
                 + [xlsx_safe(t) for t in month_texts]
-                + [r["audit_sub"], r["audit_pass"], r["kpo_sub"], r["kpo_pass"],
-                   r["total_sub"], r["total_pass"], _pts_text(r["rate"]), None]
+                + [r["audit_sub"], r["audit_pass"], _pts_text(r["audit_score"]),
+                   r["kpo_sub"], r["kpo_pass"], _pts_text(r["kpo_score"]),
+                   r["total_sub"], r["total_pass"], _pts_text(r["rate"])]
             )
             for col, v in enumerate(values, start=1):
                 c = ws.cell(row=row, column=col, value=v)

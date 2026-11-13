@@ -36,6 +36,19 @@ const KIND_W = 92
 const HEAD: React.CSSProperties = { ...CELL, position: 'sticky', top: 0, background: '#fafafa', borderBottom: '1px solid #e8e8e8' }
 const fmt = (v: number | null | undefined) => (v == null ? '—' : Number.isInteger(v) ? String(v) : v.toFixed(1))
 
+// 合併分數（2026-11-13 裁示）：系統平均分 × 30% ＋ 現場平均分 × 70%；一方無資料只取另一方。
+// 年度平均＝各月分數等權平均（與「稽核檢查統計」頁同口徑）；兩者皆為 0~100 分
+const monthEqualAvg = (ln: OverviewLine): number | null => {
+  const vals = Object.values(ln.months).map((m) => m.avg).filter((v): v is number => v != null)
+  return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null
+}
+const mergedScore = (r: OverviewRow): number | null => {
+  const a = monthEqualAvg(r.f3)
+  const k = monthEqualAvg(r.f1)
+  if (a != null && k != null) return Math.round((a * 0.3 + k * 0.7) * 10) / 10
+  return a ?? k ?? null
+}
+
 export default function AuditOverviewDashboard() {
   const navigate = useNavigate()
   const [data, setData] = useState<AuditOverview | null>(null)
@@ -141,9 +154,17 @@ export default function AuditOverviewDashboard() {
     <>
       {MONTHS.map((mo) => <FragmentCell key={mo} node={cell(k, ln.months[String(mo)])} />)}
       <td style={CELL}>{ln.count || ''}</td>
-      <td style={{ ...CELL, fontWeight: 600, color: ln.avg == null ? undefined : scoreColor(ln.avg).fg }}>{ln.avg == null ? '' : fmt(ln.avg)}</td>
     </>
   )
+
+  const mergedCell = (r: OverviewRow, span: number) => {
+    const m = mergedScore(r)
+    return (
+      <td rowSpan={span} style={{ ...CELL, fontWeight: 600, verticalAlign: 'middle', color: m == null ? undefined : scoreColor(m).fg }}>
+        {fmt(m)}
+      </td>
+    )
+  }
 
   const trendData = MONTHS.map((mo, i) => ({ month: `${mo}月`, f3: stat.f3.trend[i], f1: stat.f1.trend[i] }))
 
@@ -204,7 +225,7 @@ export default function AuditOverviewDashboard() {
           </Col>
         </Row>
 
-        <Card size="small" title="分數矩陣（公司 › 部門 × 月份）" style={{ marginBottom: 12 }}>
+        <Card size="small" title="分數矩陣" style={{ marginBottom: 12 }}>
           {byCompany.length === 0 ? (
             <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={`${data?.year ?? ''} 年尚無稽核資料`} />
           ) : (
@@ -216,7 +237,7 @@ export default function AuditOverviewDashboard() {
                     <th style={{ ...HEAD, left: DEPT_W, zIndex: 4, minWidth: KIND_W, width: KIND_W, boxShadow: '2px 0 0 #e8e8e8' }}>稽核類型</th>
                     {MONTHS.map((m) => <th key={m} style={{ ...HEAD, zIndex: 3 }}>{m} 月</th>)}
                     <th style={{ ...HEAD, zIndex: 3 }}>期別數</th>
-                    <th style={{ ...HEAD, zIndex: 3 }}>年度平均</th>
+                    <th style={{ ...HEAD, zIndex: 3 }}>合併分數</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -244,6 +265,7 @@ export default function AuditOverviewDashboard() {
                                 <Tag color={KIND_META[k].tag} style={{ marginRight: 0 }}>{KIND_META[k].short}</Tag>
                               </td>
                               {lineCells(k, r[k])}
+                              {idx === 0 && mergedCell(r, kinds.length)}
                             </tr>
                           ))}
                         </FragmentRows>
@@ -259,7 +281,7 @@ export default function AuditOverviewDashboard() {
               <Text type="secondary" style={{ fontSize: 12 }}>格子＝分數（同月多期取平均，×n 為期數；點格子開啟單據）</Text>
               <Tag style={{ background: '#e6f4ff', color: '#389e0d', border: 0 }}>系統建置</Tag>
               <Tag style={{ background: '#fff7e6', color: '#389e0d', border: 0 }}>現場營運</Tag>
-              <Text type="secondary" style={{ fontSize: 12 }}>月份格：底色＝稽核類型；分數 ≥ 60 綠字、&lt; 60 紅字。年度平均與摘要仍用下列色階：</Text>
+              <Text type="secondary" style={{ fontSize: 12 }}>月份格：底色＝稽核類型；分數 ≥ 60 綠字、&lt; 60 紅字。合併分數與摘要仍用下列色階：</Text>
               <Tag style={{ background: '#d9f7be', color: '#237804', border: 0 }}>≥ 90</Tag>
               <Tag style={{ background: '#fff1b8', color: '#ad6800', border: 0 }}>70 ~ 89</Tag>
               <Tag style={{ background: '#ffccc7', color: '#a8071a', border: 0 }}>&lt; 70</Tag>

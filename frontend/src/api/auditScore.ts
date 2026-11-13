@@ -21,6 +21,8 @@ export interface AuditScoreRow {
   kpo_pass: number
   total_sub: number
   total_pass: number
+  audit_score: number | null   // 系統平均分（0~1）
+  kpo_score: number | null     // 現場平均分（0~1）
   rate: number | null
   audit_months: number
   kpo_months: number

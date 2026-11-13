@@ -4,11 +4,11 @@
 - 稽核檢查（audit_check）與 KPO 稽核（audit_kpo）各模組的計算「不變」，本服務直接沿用：
   * 稽核檢查：compute_scores() 的 sub_count（子項數）與 pass_count（達標項數）
   * KPO：subtotal() 的 item_count（選定項數）與 pass_count（符合項數）
-- 合併達標率（2026-11-12 裁示：方案 A）：
+- 合併達標率（2026-11-13 裁示）：
   * 直接讀模組既有的月分數（與模組頁面相同的計分函式，不另行計算）：
     系統檢查月分數 = compute_scores() 的 score（達標項 ÷ 子項）；現場稽核月分數 = subtotal() 的 score100 ÷ 100
-  * 年度分數 = 各月模組分數的平均（每月等權）
-  * 合併達標率 = (系統檢查年度分數 + 現場稽核年度分數) ÷ 2；某一模組無資料時，只取另一模組的年度分數
+  * 系統平均分 = 系統檢查年度分數（各月分數平均，每月等權）；現場平均分 = 現場稽核年度分數（同上）
+  * 合併分數 = 系統平均分 × 30% ＋ 現場平均分 × 70%；某一模組無資料時，只取另一模組的平均分
   * 不再把「項」與「點」直接相加
 - 年度 = 期別年份（YYYY-MM）。某部門某月沒有資料（子項數／選定項數為 0）→ 排除不計。
 - 部門比對：公司 + 部門名稱。KPO「客服停管部」對應到「客服部」（2026-11-02 裁示）。
@@ -25,6 +25,8 @@ from app.services import audit_kpo_service as kpo
 from app.services.audit_check_service import compute_scores
 
 DEPT_ALIAS = {"客服停管部": "客服部"}  # 2026-11-02 裁示
+AUDIT_WEIGHT = 0.3  # 系統平均分權重（2026-11-13 裁示）
+KPO_WEIGHT = 0.7    # 現場平均分權重（2026-11-13 裁示）
 
 
 def _norm_dept(name: str) -> str:
@@ -95,11 +97,14 @@ def build_score(db: Session, year: int) -> dict:
         for (c, name), v in sorted(((k, v) for k, v in acc.items() if k[0] == cid), key=lambda kv: kv[0][1]):
             total_sub = v["a_sub"] + v["k_sub"]
             total_pass = v["a_pass"] + v["k_pass"]
-            # 年度分數 = 各月模組分數平均（每月等權）；兩模組各佔一半，無資料的模組不參與
+            # 系統平均分 / 現場平均分 = 年度分數（各月模組分數平均，每月等權；無資料為 None）
             a_score = (sum(v["a_scores"]) / len(v["a_scores"])) if v["a_scores"] else None
             k_score = (sum(v["k_scores"]) / len(v["k_scores"])) if v["k_scores"] else None
-            parts = [x for x in (a_score, k_score) if x is not None]
-            rate = (sum(parts) / len(parts)) if parts else None
+            # 合併分數 = 系統平均分 × 30% ＋ 現場平均分 × 70%；某一模組無資料時只取另一模組
+            if a_score is not None and k_score is not None:
+                rate = AUDIT_WEIGHT * a_score + KPO_WEIGHT * k_score
+            else:
+                rate = a_score if a_score is not None else k_score
             rows.append({
                 "department": name,
                 "audit_sub": v["a_sub"], "audit_pass": v["a_pass"],
