@@ -30,7 +30,7 @@ import {
 const OUTCOME_COLOR: Record<Outcome, string> = {
   rejected: 'red', withdrawn: 'orange', approved: 'green', agreed: 'cyan', pending: 'gold', unknown: 'default',
 }
-const FORM_TYPE_LABEL: Record<string, string> = { purchase: '請購', claim: '請款', seal: '用印', payable: '應付憑單', memo: '簽呈' }
+const FORM_TYPE_LABEL: Record<string, string> = { purchase: '請購', claim: '請款', seal: '用印', payable: '應付憑單', memo: '簽呈', advance: '預支證明單', proposal: '行銷提案書' }
 const CARD_OUTCOMES: { key: Outcome; label: string }[] = [
   { key: 'rejected', label: '退件' },
   { key: 'withdrawn', label: '退簽' },

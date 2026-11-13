@@ -92,11 +92,16 @@ SCOPE_SHEETS = [
     ("台中", "claim", "房務部", "請款單", "housekeeping/4"),
 ]
 
-# 2026-11-12 裁示新增（應付憑單；維春樂群簽呈待確認）：沒有既有同步表，一律走 Ragic API。
+# 2026-11-12 裁示新增（應付憑單；維春樂群簽呈待確認，維春樂群＝樂群）：沒有既有同步表，一律走 Ragic API。
 # 原澄、上澄相關表單不納入。wise-mountain/2、public-form-for-group-use/8 另為獨立公司，公司名稱待確認，暫不登錄。
 NEW_SHEETS = [
     ("樂群", "payable", "財務部", "應付憑單", "lequn-finance-department/7"),
     ("日曜", "payable", "財務部", "應付憑單", "free-finance-department/6"),
+    # 2026-11-13 探測（probe_new_types_結果）：簽核步驟 A／N／REJ，以 _approval_steps 為準
+    ("樂群", "advance", "執董室", "預支證明單", "lequn-executive-office/14"),
+    # 2026-11-13 補：財務部的預支證明單（lequn-finance-department/14）原先漏登錄，導致 sync 不會抓取
+    ("樂群", "advance", "財務部", "預支證明單", "lequn-finance-department/14"),
+    ("樂群", "proposal", "行銷部", "行銷提案書", "lequn-marketing-department/2"),
     # 維春樂群簽呈 6 張暫不登錄：探測顯示 6 個路徑回傳完全相同的資料（筆數、狀態分布、欄位皆相同），疑為同一張表的不同頁籤路徑，待確認後再加入
 ]
 
@@ -130,6 +135,10 @@ def seed_sources(db) -> int:
     """冪等植入來源登錄。已存在的 source_key 不覆寫（保留使用者後續修改）。回傳新增筆數。"""
     added = 0
     order = 0
+    # 2026-11-13 裁示：「維春樂群」即「樂群」，先前誤登為獨立公司的來源停用（保留列，不計入統計）
+    for row in db.query(ReturnStatsSource).filter(
+            ReturnStatsSource.company == "維春樂群", ReturnStatsSource.is_active == True).all():  # noqa: E712
+        row.is_active = False
     for company, ftype, dept, fname, path in SCOPE_SHEETS:
         order += 1
         key = source_key(company, ftype, path)
