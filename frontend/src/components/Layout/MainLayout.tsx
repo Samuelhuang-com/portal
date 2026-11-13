@@ -6,6 +6,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import CycleCompanySwitcher from './CycleCompanySwitcher'
 import { Layout, Menu, Typography, Avatar, Dropdown, Space, theme, Skeleton, Modal, Button, Form, Input, Alert } from 'antd'
+import ChangePasswordModal from '@/components/ChangePasswordModal'
 import { useIdleTimeout } from '@/hooks/useIdleTimeout'
 import {
   ApartmentOutlined,
@@ -25,7 +26,7 @@ import {
   NotificationOutlined,
   PlusCircleOutlined,
   UserOutlined,
-  LogoutOutlined,
+  KeyOutlined, LogoutOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
   MenuOutlined,
@@ -1241,9 +1242,12 @@ export default function MainLayout() {
     [visibleMenuItems, cpBadges]
   )
 
+  const [changePwOpen, setChangePwOpen] = useState(false)
+
   const userMenu = {
     items: [
       { key: 'profile', icon: <UserOutlined />, label: '個人資料' },
+      { key: 'change-password', icon: <KeyOutlined />, label: '修改密碼', onClick: () => setChangePwOpen(true) },
       { type: 'divider' as const },
       {
         key: 'logout',
@@ -1455,6 +1459,12 @@ export default function MainLayout() {
           </Button>
         </div>
       </Modal>
+
+      <ChangePasswordModal
+        open={changePwOpen}
+        onClose={() => setChangePwOpen(false)}
+        onDone={() => setChangePwOpen(false)}
+      />
 
       {/* ── 強制改密碼 Modal（OTP 登入後，不可關閉）──────────────────────── */}
       <Modal

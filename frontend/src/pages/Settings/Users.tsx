@@ -180,7 +180,7 @@ const UserManagement: React.FC = () => {
         const payload: CreateUserPayload = {
           email: email.includes('@') ? email : `${email}@portal.local`,
           full_name: values.full_name,
-          password: values.password,
+          password: values.password || undefined,
           tenant_id: values.tenant_id,
           role_names: values.role_names,
           department_ids: values.department_ids ?? [],
@@ -388,9 +388,10 @@ const UserManagement: React.FC = () => {
                 rules={[{ required: true, message: '請輸入帳號' }]}>
                 <Input placeholder="例：john.doe 或 john@company.com" />
               </Form.Item>
-              <Form.Item name="password" label="密碼"
-                rules={[{ required: true, message: '請輸入密碼' }, { min: 8, message: '至少 8 個字元' }]}>
-                <Input.Password placeholder="至少 8 個字元" />
+              <Form.Item name="password" label="密碼（選填）"
+                extra="未填寫時套用系統預設密碼，使用者首次登入時須立即更改"
+                rules={[{ min: 8, message: '至少 8 個字元' }]}>
+                <Input.Password placeholder="留空則使用系統預設密碼" />
               </Form.Item>
             </>
           )}

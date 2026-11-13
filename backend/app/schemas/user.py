@@ -13,7 +13,7 @@ class UserDepartmentOut(BaseModel):
 class UserCreate(BaseModel):
     email: str
     full_name: str
-    password: str = Field(min_length=8)
+    password: Optional[str] = Field(default=None, min_length=8)  # 未填則套用 DEFAULT_USER_PASSWORD
     tenant_id: str
     role_names: List[str] = ["viewer"]
     # 2026-09-01：使用者可屬多公司多部門（user_departments）。公司由部門推導，

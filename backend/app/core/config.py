@@ -56,6 +56,9 @@ class Settings(BaseSettings):
     BUDGET_DB_PATH: str = ""
 
     # ── Ragic — 連線基本設定 ──────────────────────────────────────────────────
+    # 新建使用者未指定密碼時套用的預設密碼；建立後首次登入須強制更改（2026-11-13）
+    DEFAULT_USER_PASSWORD: str = "@12345678"
+
     RAGIC_API_KEY: str = ""
 
     # Server 設定：支援兩種格式

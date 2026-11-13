@@ -5,6 +5,7 @@ from pydantic import BaseModel
 import random
 import string
 from datetime import timedelta
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.security import hash_password, verify_password
 from app.core.time import twnow
@@ -273,10 +274,12 @@ def create_user(
         # 前端欄位名稱也已改成公司別（2026-09-01）。DB 端仍是 tenants 表。
         raise HTTPException(status_code=404, detail="公司別不存在")
 
+    # 2026-11-13：未指定密碼 → 套用系統預設密碼，並強制首次登入更改
     user = User(
         email=email,
         full_name=data.full_name,
-        hashed_password=hash_password(data.password),
+        hashed_password=hash_password(data.password or settings.DEFAULT_USER_PASSWORD),
+        must_change_password=not data.password,
         tenant_id=data.tenant_id,
     )
     db.add(user)

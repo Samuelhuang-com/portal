@@ -16,11 +16,12 @@
  * ⚠️ 這裡必須自己呼叫 /me 補 permissions（見下方註解），
  *    否則非 system_admin 使用者在手機版重新整理後會看到永久空白畫面。
  */
-import { useCallback, useEffect, useMemo } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import { Avatar, Button, Dropdown, Modal, Space, Typography } from 'antd'
 import {
   UserOutlined,
+  KeyOutlined,
   LogoutOutlined,
   DesktopOutlined,
   ExclamationCircleOutlined,
@@ -28,6 +29,7 @@ import {
 
 import { useAuthStore } from '@/stores/authStore'
 import { authApi } from '@/api/auth'
+import ChangePasswordModal from '@/components/ChangePasswordModal'
 import { useIdleTimeout } from '@/hooks/useIdleTimeout'
 import { setUiMode } from '@/utils/uiMode'
 import { mobileNavItems } from '@/components/Layout/mobileMenuItems'
@@ -50,6 +52,7 @@ export default function MobileLayout() {
   const setUser = useAuthStore((s) => s.setUser)
   const logout  = useAuthStore((s) => s.logout)
   const hasPermission = useAuthStore((s) => s.hasPermission)
+  const [changePwOpen, setChangePwOpen] = useState(false)
 
   // ── 登出 ──────────────────────────────────────────────────────────────────
   const handleLogout = useCallback(async () => {
@@ -152,6 +155,13 @@ export default function MobileLayout() {
               },
               { type: 'divider' },
               {
+                key: 'change-password',
+                icon: <KeyOutlined />,
+                label: '修改密碼',
+                onClick: () => setChangePwOpen(true),
+              },
+              { type: 'divider' },
+              {
                 key: 'logout',
                 icon: <LogoutOutlined />,
                 label: '登出',
@@ -222,6 +232,16 @@ export default function MobileLayout() {
       )}
 
       {/* ── 閒置警告（與桌面版同一套規則）───────────────────────────────── */}
+      <ChangePasswordModal
+        open={changePwOpen}
+        onClose={() => setChangePwOpen(false)}
+        onDone={() => setChangePwOpen(false)}
+      />
+      <ChangePasswordModal
+        open={!!user?.must_change_password}
+        forced
+        onDone={handleLogout}
+      />
       <Modal
         open={warningVisible}
         closable={false}

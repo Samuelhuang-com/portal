@@ -1,4 +1,4 @@
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from app.core.database import get_db
@@ -8,7 +8,16 @@ from app.models.user import User
 bearer = HTTPBearer()
 
 
+# 2026-11-13：must_change_password=True 時，只允許改密碼、讀取登入狀態與登出
+_PASSWORD_CHANGE_ALLOWED_PATHS = frozenset({
+    "/api/v1/users/me/change-password",
+    "/api/v1/auth/me",
+    "/api/v1/auth/logout",
+})
+
+
 def get_current_user(
+    request: Request,
     creds: HTTPAuthorizationCredentials = Depends(bearer),
     db: Session = Depends(get_db),
 ) -> User:
@@ -29,6 +38,10 @@ def get_current_user(
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="使用者不存在或已停用"
+        )
+    if user.must_change_password and request.url.path not in _PASSWORD_CHANGE_ALLOWED_PATHS:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="PASSWORD_CHANGE_REQUIRED"
         )
     return user
 

@@ -11,7 +11,7 @@ export interface UserListResponse {
 export interface CreateUserPayload {
   email: string;
   full_name: string;
-  password: string;
+  password?: string;
   tenant_id: string;
   role_names: string[];
   /** 所屬部門（RefDepartment.id 陣列），2026-09-01 多公司多部門 */
