@@ -47,6 +47,8 @@ sheet 57 自此**停用**——程式裡不再有任何地方指向它，既有�
    「全案總計」又依賴那兩欄。少送擬定廠商 → 全案金額整片是空的，
    而且 Ragic 照樣回 SUCCESS。廠商(二)(三) 與對應的單價欄一律留空。
    （2026-09-18 Samuel 裁示：廠商(一)＋子表擬定廠商＋勾選，三個都送。）
+   ⚠️ 2026-11-13 起子表「擬定廠商」不再送（Samuel 裁示，採購人員在 Ragic 58 逐列手動選）；
+      子表「勾選」與單價2／金額2 仍送。
 
 ⚠️ **金額欄位全部是 Ragic 公式，Portal 一律不送**（沿用 2026-09-15 裁示）：
      子表「金額(一)」  = C5*F5（數量 × 單價(一)）
@@ -350,9 +352,8 @@ def build_payload(document: dict[str, Any]) -> dict[str, Any]:
             # 2026-09-20 新增：部門與會計課目逐列帶（Ragic 端已把這兩欄改成自由文字）
             s.RAGIC_CP_SF_DEPT:       _text(line.get("department_name")),
             s.RAGIC_CP_SF_ACCOUNT:    _text(line.get("account_name")),
-            # 擬定廠商＋勾選：全案小計／全案總計的公式靠這兩欄才算得出來，見檔頭第 3 點
-            # 2026-09-28：一張單多家廠商 → 擬定廠商逐列（沒帶就退回文件層級的廠商）
-            s.RAGIC_CP_SF_VENDOR:     _text(line.get("vendor_name") or vendor_name),
+            # 勾選：全案小計／全案總計的公式靠這欄才算得出來，見檔頭第 3 點
+            # 2026-11-13：不再送「擬定廠商」（採購人員在 Ragic 58 逐列手動選）；勾選照送
             s.RAGIC_CP_SF_CHOSEN:     "Yes",
             s.RAGIC_CP_SF_ITEM_CODE:  _text(line.get("item_code")),
             s.RAGIC_CP_SF_SUMMARY_ID: _text(line.get("summary_id")),

@@ -1328,7 +1328,7 @@ def push_summary_to_ragic(
     | 部門 | 主表改名成「期別」自由文字 | **子表逐列**送部門名稱（2026-09-20 起；主表退化成表頭固定值） |
     | 會科 | 沒有 | **子表逐列**送會計課目（來源：料號對照表 公司＋部門＋料號） |
     | 會科 | 沒這個欄位 | 必填單選，固定送 `RAGIC_CP_SUMMARY_ACCOUNT_CODE`（雜項購置） |
-    | 廠商 | 主表「擬定廠商」一欄 | 主表「廠商(一)」＋子表「擬定廠商」＋「勾選=Yes」三處都要送 |
+    | 廠商 | 子表「擬定廠商」（2026-11-13 起不送，採購在 Ragic 手動選）｜子表「勾選=Yes」照送 |
     | 請購人 | 沒這個欄位 | 必填，送該部門的承辦人姓名（查不到退回申請人） |
 
     不變的部分：同一次動作的所有單共用一個 `batch_no`、各自拿到不同的 Ragic 編號
@@ -1413,9 +1413,8 @@ def push_summary_to_ragic(
     pushable: list = []
     not_pushed: list[dict] = []
     for r in candidates:
-        if not r.vendor_id:
-            reason = "料號對照表沒有指定供應商"
-        elif not (r.adjusted_qty or 0):
+        # 2026-11-13：不再以「沒有供應商」擋列，廠商由採購在 Ragic 58 逐列手動選
+        if not (r.adjusted_qty or 0):
             reason = "調整量為 0"
         elif not r.department_id:
             # 2026-07-16 之前產生的歷史彙整列 department_id 是 NULL。部門現在是
@@ -1436,8 +1435,8 @@ def push_summary_to_ragic(
     if not pushable:
         raise SummaryServiceError(
             f"「{period_label}／{company}」沒有任何一筆彙整列可以拋轉"
-            f"（{len(not_pushed)} 筆都缺供應商、調整量為 0，或是沒有部門別的歷史列）。"
-            f"請先到料號主檔／對照表補上供應商再試。"
+            f"（{len(not_pushed)} 筆都是調整量為 0，或是沒有部門別的歷史列）。"
+            f"請先確認調整量與部門別再試。"
         )
     # 2026-09-25：沒單價的列照送，但要讓使用者知道有幾筆要去 Ragic 補單價與金額
     price_blank_count = sum(
@@ -1466,35 +1465,10 @@ def push_summary_to_ragic(
         except Exception as e:  # noqa: BLE001 — 查不到姓名不該擋掉整批拋轉
             logger.warning("[push_summary_to_ragic] 解析部門承辦人姓名失敗，改用預設申請人：%s", e)
 
-    # ── ③-b 廠商防呆（**逐列**）：送出前先問 Ragic「你認得這個廠商嗎」 ────────
-    # ⚠️ 2026-09-20 實測踩到：「擬定廠商」是連結到「廠商資料表」的 Link 欄位，
-    #    只認**完全相符**的既有名稱。Portal 送「北金」而 Ragic 只認
-    #    「北金文具印刷有限公司」時，Ragic **靜默丟掉那一欄、照樣回 SUCCESS**。
-    # 2026-09-28 起一張單含多家廠商，所以改成**逐列**擋：只擋對不上的那幾列，
-    #    其他列照樣進同一張單（舊版是整張單擋下）。
-    # ⚠️ 取不到清單時 fetch 回 None＝「這次無法檢查」，一律放行（fail open）。
-    accepted_vendors = cycle_purchase_ragic_push.fetch_accepted_vendor_names()
-    vendor_check_skipped = accepted_vendors is None
-    deliverable_rows: list = []
-    for r in pushable:
-        reason = cycle_purchase_ragic_push.vendor_rejection_reason(r.vendor_name, accepted_vendors)
-        if reason is None:
-            deliverable_rows.append(r)
-            continue
-        not_pushed.append({
-            "summary_id": r.id,
-            "item_code": r.item_code,
-            "item_name": r.item_name,
-            "department_name": r.department_name,
-            "reason": reason,
-        })
-    if not deliverable_rows:
-        raise SummaryServiceError(
-            f"「{period_label}／{company}」這一批的廠商，Ragic 廠商資料表都認不得，"
-            f"全部沒有拋轉（共 {len(not_pushed)} 筆）。"
-            f"請到「週採 → 供應商主檔」用「對應合約廠商」把廠商接到合約主檔、"
-            f"按一次「自合約模組同步」；Ragic 裡沒有的廠商要先在 Ragic 廠商資料表建檔。"
-        )
+    # ── ③-b 廠商防呆已於 2026-11-13 移除 ─────────────────────────────────
+    # 「擬定廠商」不再由 Portal 送出，改由採購人員在 Ragic 58 逐列手動選（Samuel 裁示）。
+    # 因此不再向 Ragic 核對廠商名稱；沒有廠商的列照樣拋轉（2026-11-13 裁示）。
+    deliverable_rows: list = list(pushable)
     price_blank_count = sum(
         1 for r in deliverable_rows if not r.unit_price or Decimal(str(r.unit_price)) <= 0
     )
@@ -1609,10 +1583,6 @@ def push_summary_to_ragic(
             f"{len(already_rows)} 筆先前已拋轉、本次略過"
             + (f"（已在 Ragic 單 {'、'.join(prev_nos)}）" if prev_nos else "")
         )
-    if vendor_check_skipped:
-        # 這次沒能跟 Ragic 核對廠商名稱（取定義失敗）。不擋拋轉，但要講出來——
-        # 否則「廠商欄是空的」這件事又會靜悄悄發生一次。
-        parts.append("⚠️ 這次無法向 Ragic 核對廠商名稱，若單上廠商欄空白請檢查供應商對照")
 
     return {
         "batch_no": batch_no,
