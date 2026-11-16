@@ -153,6 +153,9 @@ export default function CpItemsPage() {
   // 2026-09-30：「供應商資料回填」TAB 只對有 cycle_purchase_vendor_backfill 權限者顯示
   const hasPermission = useAuthStore((s) => s.hasPermission)
   const canVendorBackfill = hasPermission('cycle_purchase_vendor_backfill')
+  // 2026-11-16：料號新增／編輯／停用／對照維護需 cycle_purchase_admin（後端本來就擋）；
+  // 只有 cycle_purchase_view／cycle_purchase_items_view 的人為唯讀，畫面不顯示這些按鈕。
+  const canEdit = hasPermission('cycle_purchase_admin')
   const [items, setItems] = useState<CpItem[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
@@ -502,7 +505,9 @@ export default function CpItemsPage() {
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
         <Title level={4} style={{ margin: 0 }}>週期採購 — 料號主檔</Title>
         <Space>
-          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新增料號</Button>
+          {canEdit && (
+            <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新增料號</Button>
+          )}
         </Space>
       </div>
 
@@ -663,17 +668,21 @@ export default function CpItemsPage() {
               render: (_: unknown, r: CpItem) => (
                 <Space>
                   <Button size="small" icon={<ApartmentOutlined />} onClick={() => openMappings(r)}>料號對照</Button>
-                  <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(r)}>編輯</Button>
-                  <Popconfirm
-                    title={r.is_active ? '確定停用？' : '確定啟用？'}
-                    onConfirm={() => toggleActive(r)}
-                    okText="確定"
-                    cancelText="取消"
-                  >
-                    <Button size="small" danger={r.is_active} icon={r.is_active ? <StopOutlined /> : <CheckCircleOutlined />}>
-                      {r.is_active ? '停用' : '啟用'}
-                    </Button>
-                  </Popconfirm>
+                  {canEdit && (
+                    <>
+                      <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(r)}>編輯</Button>
+                      <Popconfirm
+                        title={r.is_active ? '確定停用？' : '確定啟用？'}
+                        onConfirm={() => toggleActive(r)}
+                        okText="確定"
+                        cancelText="取消"
+                      >
+                        <Button size="small" danger={r.is_active} icon={r.is_active ? <StopOutlined /> : <CheckCircleOutlined />}>
+                          {r.is_active ? '停用' : '啟用'}
+                        </Button>
+                      </Popconfirm>
+                    </>
+                  )}
                 </Space>
               ),
             },
@@ -957,17 +966,21 @@ export default function CpItemsPage() {
                   key: 'actions',
                   width: 130,
                   render: (_: unknown, r: CpItemMapping) => (
-                    <Space>
-                      <Button size="small" icon={<EditOutlined />} onClick={() => openEditMapping(r)} />
-                      <Popconfirm title="確定刪除此對照？" onConfirm={() => removeMapping(r)}>
-                        <Button size="small" danger icon={<DeleteOutlined />} />
-                      </Popconfirm>
-                    </Space>
+                    canEdit ? (
+                      <Space>
+                        <Button size="small" icon={<EditOutlined />} onClick={() => openEditMapping(r)} />
+                        <Popconfirm title="確定刪除此對照？" onConfirm={() => removeMapping(r)}>
+                          <Button size="small" danger icon={<DeleteOutlined />} />
+                        </Popconfirm>
+                      </Space>
+                    ) : null
                   ),
                 },
               ]}
             />
 
+            {canEdit && (
+              <>
             <Divider />
             <Text strong>{editingMapping ? '編輯對照' : '新增對照'}</Text>
             <Form form={mappingForm} layout="vertical" style={{ marginTop: 12 }}>
@@ -1036,6 +1049,8 @@ export default function CpItemsPage() {
                 )}
               </Space>
             </Form>
+              </>
+            )}
           </>
         )}
       </Modal>

@@ -17,8 +17,8 @@ from sqlalchemy.orm import Session
 
 from app.core.cycle_purchase_database import get_cycle_purchase_db
 from app.core.database import get_db
-from app.dependencies import get_current_user, require_permission
-from app.services.cycle_purchase_company_scope import CompanyContext, company_context, assert_row_visible
+from app.dependencies import get_current_user, require_permission, require_any_permission
+from app.services.cycle_purchase_company_scope import CompanyContext, company_context, assert_row_visible, CP_READ_MASTER_PERMS
 from app.models.user import User
 from app.schemas.cycle_purchase_vendor import (
     VendorCreate, VendorLinkPayload, VendorMergePayload, VendorMergeResult,
@@ -92,7 +92,7 @@ def list_vendors(
     q: str = Query("", description="關鍵字（供應商代碼／名稱）"),
     is_active: Optional[bool] = Query(None),
     unlinked_only: bool = Query(False, description="只列出尚未對照到合約廠商的（找孤兒用）"),
-    _: User = Depends(require_permission("cycle_purchase_view")),
+    _: User = Depends(require_any_permission(*CP_READ_MASTER_PERMS)),
     db: Session = Depends(get_cycle_purchase_db),
     portal_db: Session = Depends(get_db),
     ctx: CompanyContext = Depends(company_context),
@@ -111,7 +111,7 @@ def list_vendors(
 )
 def list_contract_vendors(
     q: str = Query("", description="關鍵字（名稱／統編）"),
-    _: User = Depends(require_permission("cycle_purchase_view")),
+    _: User = Depends(require_any_permission(*CP_READ_MASTER_PERMS)),
     portal_db: Session = Depends(get_db),
 ):
     """⚠️ 這是**合約模組**的廠商（portal.db `vendors`），不是週採自己的供應商。
@@ -294,7 +294,7 @@ def merge_vendor(
 @router.get("/departments", response_model=List[DepartmentOut], summary="部門主檔清單")
 def list_departments(
     is_active: Optional[bool] = Query(None),
-    _: User = Depends(require_permission("cycle_purchase_view")),
+    _: User = Depends(require_any_permission(*CP_READ_MASTER_PERMS)),
     db: Session = Depends(get_cycle_purchase_db),
     portal_db: Session = Depends(get_db),
     ctx: CompanyContext = Depends(company_context),
@@ -433,7 +433,7 @@ def link_department(
 def list_cost_centers(
     department_id: Optional[int] = Query(None),
     is_active: Optional[bool] = Query(None),
-    _: User = Depends(require_permission("cycle_purchase_view")),
+    _: User = Depends(require_any_permission(*CP_READ_MASTER_PERMS)),
     db: Session = Depends(get_cycle_purchase_db),
     ctx: CompanyContext = Depends(company_context),
 ):
@@ -477,7 +477,7 @@ def update_cost_center(
 @router.get("/account-codes", response_model=List[AccountCodeOut], summary="會計科目主檔清單")
 def list_account_codes(
     is_active: Optional[bool] = Query(None),
-    _: User = Depends(require_permission("cycle_purchase_view")),
+    _: User = Depends(require_any_permission(*CP_READ_MASTER_PERMS)),
     db: Session = Depends(get_cycle_purchase_db),
     ctx: CompanyContext = Depends(company_context),
 ):
@@ -527,7 +527,7 @@ def list_categories(
     department_id: Optional[int] = Query(None, description="歸屬部門"),
     q: str = Query("", description="關鍵字（類別／大中細分類名稱）"),
     is_active: Optional[bool] = Query(None),
-    _: User = Depends(require_permission("cycle_purchase_view")),
+    _: User = Depends(require_any_permission(*CP_READ_MASTER_PERMS)),
     db: Session = Depends(get_cycle_purchase_db),
 ):
     company = ctx.code  # 多公司隔離：一律以可見公司為準，忽略前端直接傳入的公司字串
@@ -565,7 +565,7 @@ def create_category(
 )
 def get_category_next_code(
     category_id: int,
-    _: User = Depends(require_permission("cycle_purchase_view")),
+    _: User = Depends(require_any_permission(*CP_READ_MASTER_PERMS)),
     db: Session = Depends(get_cycle_purchase_db),
     ctx: CompanyContext = Depends(company_context),
 ):

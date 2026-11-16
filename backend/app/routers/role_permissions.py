@@ -195,6 +195,10 @@ PERMISSION_DEFINITIONS = [
     # 2026-09-30：料號主檔「供應商資料回填」TAB（同步 Ragic 廠商＋改料號/對照的供應商）。
     # 會批次改動料號對照的叫貨供應商（影響拋轉 Ragic），採「需明確指派」，不包進 portal_general。
     {"key": "cycle_purchase_vendor_backfill", "label": "週期採購供應商資料回填", "group": "週期採購"},
+    # 2026-11-16：填單人／料號查詢角色拆分。request_create＝新增／複製請購單（僅限自己部門，與 cycle_purchase_request 搭配）；
+    # items_view＝料號主檔唯讀（不含 cycle_purchase_view 的全模組檢視範圍）。皆需明確指派，不包進 portal_general。
+    {"key": "cycle_purchase_request_create", "label": "週期採購請購：新增請購單", "group": "週期採購"},
+    {"key": "cycle_purchase_items_view",     "label": "週期採購料號主檔（唯讀）", "group": "週期採購"},
     {"key": "cycle_purchase_company_ch", "label": "週採可見公司：春大直", "group": "週期採購"},
     {"key": "cycle_purchase_company_ou", "label": "週採可見公司：日曜", "group": "週期採購"},
     {"key": "cycle_purchase_company_ho", "label": "週採可見公司：台中", "group": "週期採購"},

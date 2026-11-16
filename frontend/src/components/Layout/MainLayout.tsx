@@ -275,10 +275,12 @@ export const menuItems: MenuItem[] = [
       'cycle_purchase_view', 'cycle_purchase_request', 'cycle_purchase_close',
       'cycle_purchase_buyer', 'cycle_purchase_receive', 'cycle_purchase_finance',
       'cycle_purchase_report', 'cycle_purchase_admin',
+      // 2026-11-16：填單人／料號查詢角色的新權限，沒列在這裡父層群組會整個被隱藏
+      'cycle_purchase_request_create', 'cycle_purchase_items_view',
     ],
     children: [
       { key: '/cycle-purchase/dashboard',            icon: <DashboardOutlined />,  label: NAV_PAGE.cyclePurchaseDashboard,    permissionKey: 'cycle_purchase_view'  },
-      { key: '/cycle-purchase/items',                icon: <DatabaseOutlined />,   label: NAV_PAGE.cyclePurchaseItems,        permissionKey: 'cycle_purchase_view'  },
+      { key: '/cycle-purchase/items',                icon: <DatabaseOutlined />,   label: NAV_PAGE.cyclePurchaseItems,        permissionKeys: ['cycle_purchase_view', 'cycle_purchase_items_view']  },
       { key: '/cycle-purchase/cycles',                icon: <CalendarOutlined />,   label: NAV_PAGE.cyclePurchaseCycles,       permissionKey: 'cycle_purchase_admin' },
       // 2026-07-19：同上，只勾 cycle_purchase_request 的填單人也要能看到「請購單」子項目
       { key: '/cycle-purchase/requests',              icon: <FileTextOutlined />,   label: NAV_PAGE.cyclePurchaseRequests,     permissionKeys: ['cycle_purchase_view', 'cycle_purchase_request']  },
@@ -594,11 +596,11 @@ export function applyMenuConfig(base: any[], configs: MenuConfigItem[]): any[] {
   // 同時保留 permissionKey，避免 reparented 項目因 buildItem 不帶 permissionKey
   // 而被 filterMenuByPermissions 誤判為公開（hasPermission(undefined) → true）
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const baseItemInfo = new Map<string, { label: any; icon?: any; permissionKey?: string | null }>()
+  const baseItemInfo = new Map<string, { label: any; icon?: any; permissionKey?: string | null; permissionKeys?: string[] }>()
   base.forEach((p: any) => {
-    baseItemInfo.set(p.key, { label: p.label, icon: p.icon, permissionKey: p.permissionKey })
+    baseItemInfo.set(p.key, { label: p.label, icon: p.icon, permissionKey: p.permissionKey, permissionKeys: p.permissionKeys })
     ;(p.children ?? []).forEach((c: any) => {
-      baseItemInfo.set(c.key, { label: c.label, icon: c.icon, permissionKey: c.permissionKey })
+      baseItemInfo.set(c.key, { label: c.label, icon: c.icon, permissionKey: c.permissionKey, permissionKeys: c.permissionKeys })
     })
   })
 
@@ -620,6 +622,9 @@ export function applyMenuConfig(base: any[], configs: MenuConfigItem[]): any[] {
       ...(grandchildren.length > 0 ? { children: grandchildren } : {}),
       // 保留 base 原始 permissionKey，讓 filterMenuByPermissions 可在 DB permission_key=null 時 fallback
       ...(baseInfo?.permissionKey !== undefined ? { permissionKey: baseInfo.permissionKey } : {}),
+      // 2026-11-16：OR 多選權限（permissionKeys）也要保留；先前只帶單數 permissionKey，
+      // 被選單管理移到自訂群組的項目（例：週採 › 春大直 底下的彙整單／採購單）會被當成公開而人人可見。
+      ...(baseInfo?.permissionKeys !== undefined ? { permissionKeys: baseInfo.permissionKeys } : {}),
     }
   }
 

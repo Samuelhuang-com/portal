@@ -138,6 +138,34 @@ def _ensure_own_department(
         raise HTTPException(status_code=403, detail="只能編輯自己部門的請購單")
 
 
+# 2026-11-16：「填單人」角色（只有 cycle_purchase_request／_request_create）清單與詳情只能看自己部門。
+# 持有 "*"、cycle_purchase_view、cycle_purchase_buyer、cycle_purchase_close 的人維持原本全公司可見。
+_UNRESTRICTED_LIST_PERMS = ("cycle_purchase_view", "cycle_purchase_buyer", "cycle_purchase_close")
+
+
+def _restricted_dept_ids(current_user: User, db: Session, portal_db: Session):
+    """回傳 None＝不受部門限制；否則為可見部門 id 清單（可能為空）。"""
+    perms = get_user_permissions(current_user.id, portal_db)
+    if "*" in perms or any(k in perms for k in _UNRESTRICTED_LIST_PERMS):
+        return None
+    return svc.get_user_cp_department_ids(db, portal_db, current_user.id)
+
+
+def _ensure_can_create_in_department(
+    department_id: int,
+    current_user: User,
+    db: Session,
+    portal_db: Session,
+) -> None:
+    """新增／複製請購單：只有 cycle_purchase_request_create 的人只能為自己部門建單。
+    持有 "*" 或 cycle_purchase_buyer 者不受限（維持原本行為）。"""
+    perms = get_user_permissions(current_user.id, portal_db)
+    if "*" in perms or "cycle_purchase_buyer" in perms:
+        return
+    if department_id not in svc.get_user_cp_department_ids(db, portal_db, current_user.id):
+        raise HTTPException(status_code=403, detail="只能為自己部門新增請購單")
+
+
 @router.get("/requests", response_model=List[RequestOut], summary="週期採購請購單清單")
 def list_requests(
     cycle_id: Optional[int] = Query(None),
@@ -158,6 +186,9 @@ def list_requests(
     # 2026-09-25：管理者（"*"）的「我的部門」＝全部部門，與「部門本期」卡片一致
     if mine and "*" in get_user_permissions(current_user.id, portal_db):
         dept_ids = None
+    restricted = _restricted_dept_ids(current_user, db, portal_db)
+    if restricted is not None:
+        dept_ids = restricted if dept_ids is None else [d for d in dept_ids if d in restricted]
     try:
         return svc.list_requests(
             db, company_code=ctx.code, cycle_id=cycle_id, period_label=period_label,
@@ -272,7 +303,7 @@ def generate_status(
 )
 def preview_generate_requests(
     cycle_id: int = Query(..., description="週期設定 id"),
-    current_user: User = Depends(require_permission("cycle_purchase_buyer")),
+    current_user: User = Depends(require_any_permission("cycle_purchase_buyer", "cycle_purchase_request_create")),
     db: Session = Depends(get_cycle_purchase_db),
     portal_db: Session = Depends(get_db),
     ctx: CompanyContext = Depends(company_context),
@@ -295,11 +326,13 @@ def preview_generate_requests(
 def list_copy_source_candidates(
     cycle_id: int = Query(...),
     department_id: int = Query(...),
-    _: User = Depends(require_permission("cycle_purchase_buyer")),
+    current_user: User = Depends(require_any_permission("cycle_purchase_buyer", "cycle_purchase_request_create")),
     db: Session = Depends(get_cycle_purchase_db),
+    portal_db: Session = Depends(get_db),
     ctx: CompanyContext = Depends(company_context),
 ):
     assert_row_visible(db, ctx, "cycle_purchase_departments", department_id)
+    _ensure_can_create_in_department(department_id, current_user, db, portal_db)
     """⚠️ 路由順序：這支必須宣告在 /requests/{request_id} 之前，
     否則 "copy-candidates" 會被當成 request_id。"""
     return svc.list_copy_source_candidates(db, cycle_id, department_id)
@@ -314,6 +347,11 @@ def get_request(
     ctx: CompanyContext = Depends(company_context),
 ):
     assert_row_visible(db, ctx, "cycle_purchase_requests", request_id)
+    restricted = _restricted_dept_ids(current_user, db, portal_db)
+    if restricted is not None:
+        row = db.query(CyclePurchaseRequest.department_id).filter(CyclePurchaseRequest.id == request_id).first()
+        if row is None or row[0] not in restricted:
+            raise HTTPException(status_code=404, detail="找不到資料")
     try:
         req = svc.get_request(
             db, request_id, can_see_closed=_can_see_closed(current_user, portal_db)
@@ -343,11 +381,13 @@ def generate_requests(
 @router.post("/requests", response_model=RequestOut, status_code=status.HTTP_201_CREATED, summary="手動新增單一部門的請購單")
 def create_request(
     payload: RequestCreate,
-    _: User = Depends(require_permission("cycle_purchase_buyer")),
+    current_user: User = Depends(require_any_permission("cycle_purchase_buyer", "cycle_purchase_request_create")),
     db: Session = Depends(get_cycle_purchase_db),
+    portal_db: Session = Depends(get_db),
     ctx: CompanyContext = Depends(company_context),
 ):
     assert_row_visible(db, ctx, "cycle_purchase_departments", payload.department_id)
+    _ensure_can_create_in_department(payload.department_id, current_user, db, portal_db)
     return _handle(svc.create_request, db, payload)
 
 
@@ -359,11 +399,15 @@ def create_request(
 )
 def copy_request(
     source_request_id: int,
-    current_user: User = Depends(require_permission("cycle_purchase_buyer")),
+    current_user: User = Depends(require_any_permission("cycle_purchase_buyer", "cycle_purchase_request_create")),
     db: Session = Depends(get_cycle_purchase_db),
+    portal_db: Session = Depends(get_db),
     ctx: CompanyContext = Depends(company_context),
 ):
     assert_row_visible(db, ctx, "cycle_purchase_requests", source_request_id)
+    src = db.query(CyclePurchaseRequest.department_id).filter(CyclePurchaseRequest.id == source_request_id).first()
+    if src is not None:
+        _ensure_can_create_in_department(src[0], current_user, db, portal_db)
     new_req, skipped = _handle(svc.copy_request, db, source_request_id, current_user)
     return CopyRequestResult(
         request=new_req,

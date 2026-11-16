@@ -19,12 +19,12 @@ PUT  /cycles/{id}                         更新週期設定（可帶 delete_orp
 from typing import Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from app.services.cycle_purchase_company_scope import CompanyContext, company_context, assert_row_visible, assert_company_visible_by_name
+from app.services.cycle_purchase_company_scope import CompanyContext, company_context, assert_row_visible, assert_company_visible_by_name, CP_READ_REQUEST_PERMS, CP_READ_MASTER_PERMS
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.cycle_purchase_database import get_cycle_purchase_db
-from app.dependencies import require_permission
+from app.dependencies import require_permission, require_any_permission
 from app.models.cycle_purchase_cycle import CyclePurchaseCycle
 from app.models.user import User
 from app.schemas.cycle_purchase_cycle import (
@@ -49,7 +49,7 @@ def _visible_codes(cp_db, ctx, company_names: list) -> list:
 @router.get("/cycles", response_model=List[CycleOut], summary="週期採購週期設定清單")
 def list_cycles(
     status_: Optional[str] = Query(None, alias="status"),
-    _: User = Depends(require_permission("cycle_purchase_view")),
+    _: User = Depends(require_any_permission(*CP_READ_REQUEST_PERMS)),
     db: Session = Depends(get_cycle_purchase_db),
 ):
     return svc.list_cycles(db, status=status_)
@@ -200,7 +200,7 @@ def _check_cycle_payload(cp_db, ctx, payload) -> None:
 @router.get("/companies", summary="目前使用者可見的週採公司別（給公司切換器用）")
 def list_visible_companies(
     ctx: CompanyContext = Depends(company_context),
-    _: User = Depends(require_permission("cycle_purchase_view")),
+    _: User = Depends(require_any_permission(*CP_READ_MASTER_PERMS)),
     db: Session = Depends(get_cycle_purchase_db),
 ):
     from app.models.cycle_purchase_company import CyclePurchaseCompany

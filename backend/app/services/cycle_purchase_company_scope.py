@@ -20,6 +20,12 @@ from app.dependencies import get_current_user, get_user_permissions
 from app.models.cycle_purchase_company import CyclePurchaseCompany
 
 DEFAULT_COMPANY_CODE = "CH"
+
+# 2026-11-16：唯讀共用資料（週期、部門、成本中心、料號、主檔）的任一權限。
+# 填單人（request／request_create）與料號查詢（items_view）不具 cycle_purchase_view，但仍需讀取這些資料。
+CP_READ_REQUEST_PERMS = ("cycle_purchase_view", "cycle_purchase_request", "cycle_purchase_request_create")
+CP_READ_ITEMS_PERMS = ("cycle_purchase_view", "cycle_purchase_items_view")
+CP_READ_MASTER_PERMS = ("cycle_purchase_view", "cycle_purchase_request", "cycle_purchase_request_create", "cycle_purchase_items_view")
 COMPANY_PERM_PREFIX = "cycle_purchase_company_"
 
 # 既有字串（含歷史別名）→ 公司代碼。與 alembic_cp 的 cpco1 一致。

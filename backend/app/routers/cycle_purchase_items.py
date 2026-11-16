@@ -22,8 +22,8 @@ from sqlalchemy.orm import Session
 
 from app.core.cycle_purchase_database import get_cycle_purchase_db
 from app.core.database import get_db
-from app.dependencies import require_permission
-from app.services.cycle_purchase_company_scope import CompanyContext, company_context, assert_row_visible
+from app.dependencies import require_permission, require_any_permission
+from app.services.cycle_purchase_company_scope import CompanyContext, company_context, assert_row_visible, CP_READ_ITEMS_PERMS
 from app.models.cycle_purchase_item import CyclePurchaseItemMapping
 from app.models.user import User
 from app.schemas.cycle_purchase_item import (
@@ -61,7 +61,7 @@ def list_items(
     vendor_q: str = Query("", max_length=100, description="供應商名稱關鍵字（模糊比對）"),
     sort_by: Optional[str] = Query(None, description="排序欄位"),
     sort_order: str = Query("asc", pattern="^(asc|desc)$"),
-    _: User = Depends(require_permission("cycle_purchase_view")),
+    _: User = Depends(require_any_permission(*CP_READ_ITEMS_PERMS)),
     db: Session = Depends(get_cycle_purchase_db),
     ctx: CompanyContext = Depends(company_context),
 ):
@@ -82,7 +82,7 @@ def list_items(
 # ⚠️ 必須放在 /items/{item_id} 之前，否則 "filter-companies" 會被當成 item_id 解析成 422。
 @router.get("/items/filter-companies", summary="篩選用：有料號對照的公司與部門")
 def list_item_filter_companies(
-    _: User = Depends(require_permission("cycle_purchase_view")),
+    _: User = Depends(require_any_permission(*CP_READ_ITEMS_PERMS)),
     db: Session = Depends(get_cycle_purchase_db),
     ctx: CompanyContext = Depends(company_context),
 ):
@@ -108,7 +108,7 @@ def list_item_filter_companies(
 @router.get("/items/{item_id}", response_model=ItemDetail, summary="料號詳情（含料號對照表）")
 def get_item(
     item_id: int,
-    _: User = Depends(require_permission("cycle_purchase_view")),
+    _: User = Depends(require_any_permission(*CP_READ_ITEMS_PERMS)),
     db: Session = Depends(get_cycle_purchase_db),
     ctx: CompanyContext = Depends(company_context),
 ):
@@ -169,7 +169,7 @@ def update_item(
 )
 def list_item_mappings(
     item_id: int,
-    _: User = Depends(require_permission("cycle_purchase_view")),
+    _: User = Depends(require_any_permission(*CP_READ_ITEMS_PERMS)),
     db: Session = Depends(get_cycle_purchase_db),
     ctx: CompanyContext = Depends(company_context),
 ):

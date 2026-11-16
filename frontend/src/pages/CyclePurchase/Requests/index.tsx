@@ -163,6 +163,9 @@ export default function CpRequestsPage() {
   const hasPermission = useAuthStore((s) => s.hasPermission)
   const canEdit = hasPermission('cycle_purchase_request')
   const canCreate = hasPermission('cycle_purchase_buyer')
+  // 2026-11-16：「新增／複製請購單」另開 cycle_purchase_request_create（僅限自己部門）；
+  // 「產生本期請購單」仍只給 cycle_purchase_buyer。
+  const canCreateOwn = canCreate || hasPermission('cycle_purchase_request_create')
   const canClose = hasPermission('cycle_purchase_close')
   // 後端對「已關閉的單」有硬過濾：沒有 close／view 權限的人清單裡只會有開放中的單。
   // 這種人看到狀態篩選器只會困惑（選了「已關閉」永遠是空的，容易被當成 bug 回報），
@@ -612,10 +615,10 @@ export default function CpRequestsPage() {
           {canCreate && (
             <Button icon={<ThunderboltOutlined />} onClick={openGenerate}>產生本期請購單</Button>
           )}
-          {canCreate && (
+          {canCreateOwn && (
             <Button icon={<CopyOutlined />} onClick={openCopy}>複製上期請購單</Button>
           )}
-          {canCreate && (
+          {canCreateOwn && (
             <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新增請購單</Button>
           )}
         </Space>
@@ -919,12 +922,14 @@ export default function CpRequestsPage() {
         <div style={{ marginBottom: 8 }}>
           <div style={{ marginBottom: 4, display: 'flex', justifyContent: 'space-between' }}>
             <span>部門（只列此週期適用的部門）</span>
+            {canCreate && (
             <Checkbox
               checked={createShowAll}
               onChange={(e) => { setCreateShowAll(e.target.checked); setCreateDeptId(undefined) }}
             >
               顯示全部部門
             </Checkbox>
+            )}
           </div>
           <Select
             style={{ width: '100%' }}
@@ -973,12 +978,14 @@ export default function CpRequestsPage() {
         <div style={{ marginBottom: 8 }}>
           <div style={{ marginBottom: 4, display: 'flex', justifyContent: 'space-between' }}>
             <span>部門（只列此週期適用的部門）</span>
+            {canCreate && (
             <Checkbox
               checked={copyShowAll}
               onChange={(e) => { setCopyShowAll(e.target.checked); setCopyDeptId(undefined) }}
             >
               顯示全部部門
             </Checkbox>
+            )}
           </div>
           <Select
             style={{ width: '100%' }}
