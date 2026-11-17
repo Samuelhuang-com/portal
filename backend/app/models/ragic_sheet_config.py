@@ -12,6 +12,9 @@ module 值：
   nichiyo_claim    — 日曜核准請款單
   taichung_purchase — 台中核准請購單（2026-09-16）
   taichung_claim    — 台中核准請款單（2026-09-16）
+  purchase_po       — 樂群採購單（2026-11-17，庫存管理）
+  nichiyo_po        — 日曜採購單（2026-11-17，庫存管理）
+  taichung_po       — 台中採購單（2026-11-17，庫存管理）
 """
 from datetime import datetime
 
@@ -55,6 +58,10 @@ class RagicSheetConfig(Base):
 
     is_active    = Column(Boolean, default=True)
     # False = 暫停此部門同步（異常時可快速關閉，不必刪除）
+
+    manual_override = Column(Boolean, nullable=False, default=False, server_default="false")
+    # 2026-11-17（Alembic stk2）：True = 路徑由「系統設定 › Ragic 表單關聯」手動修改或新增，
+    # 啟動時 seed_ragic_sheet_config() 不再把 list_path／detail_path 改回 _SEED_DATA 的值。
 
     updated_at   = Column(
         DateTime,

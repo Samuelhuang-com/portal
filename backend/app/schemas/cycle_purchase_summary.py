@@ -332,6 +332,7 @@ class PushToRagicResult(BaseModel):
     documents: list[PushedDocument] = []
     not_pushed: list[NotPushedRow] = []
     failed: list[FailedVendor] = []
+    vendor_warnings: list[dict] = []
     already_pushed_count: int = 0
     is_stub: bool = False
     message: str

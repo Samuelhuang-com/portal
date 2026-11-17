@@ -98,6 +98,7 @@ export const NAV_GROUP = {
   taichungPurchaseReport: '台中請購單報表',    // ← 台中核准請購單月報表（2026-09-16）
   taichungClaimReport:    '台中請款單報表',    // ← 台中核准請款單月報表（2026-09-16）
   returnRejectStats:      '退件統計',          // ← 退件統計（2026-11-02，docs/SPEC_return_reject_stats.md）
+  stock:                  '庫存管理',          // ← 庫存管理（2026-11-17，docs/SPEC_stock_management.md）
   cyclePurchase:          '週採',              // ← 新增：週期採購管理（2026-07-10，獨立資料庫 cycle-purchase.db）
   auditCheck:             '稽核檢查',          // ← 新增：財#3 系統建置稽核（2026-09-20）
 } as const
@@ -213,6 +214,7 @@ export const NAV_PAGE = {
   rolesManage:              '角色管理',
   ragicConnections:         'Ragic 連線',
   ragicAppDirectory:        'Ragic 對應表',
+  ragicForms:               'Ragic 表單關聯',   // ← route /settings/ragic-forms（2026-11-17，原 /stock/ragic-forms）
   companyDepartments:       '公司/部門管理',   // ← route /settings/company-departments（2026-08-17 新增）
   ragicFieldAudit:          'Ragic 欄位比對',  // ← 新增：Ragic 與 Portal 欄位稽核
   devStats:                 '開發統計',        // ← route /settings/dev-stats（2026-11-02）
@@ -242,6 +244,10 @@ export const NAV_PAGE = {
   taichungClaimReportMonthly:    '台中核准請款單月報表',  // ← route /taichung-claim-report/monthly
   returnRejectStatsRecords:      '退件明細',            // ← route /return-reject-stats/records（2026-11-02）
   returnRejectDashboard:         '退件Dashboard',       // ← route /return-reject-stats/dashboard（2026-11-03）
+  stockBalance:                  '庫存',                // ← route /stock/balance（2026-11-17，庫存管理 Phase 2）
+  stockSettings:                 '庫存主檔設定',        // ← route /stock/settings（2026-11-17，庫存管理 Phase 2）
+  stockReceipts:                 '進貨匯入',            // ← route /stock/receipts（2026-11-17，庫存管理 Phase 3）
+  stockIssues:                   '領用單',              // ← route /stock/issues（2026-11-17，庫存管理 Phase 4a：領用／退料／調撥／報廢）
 
   // 飯店班表（本地 SQLite 模組，飯店管理 → 飯店班表）
   // ⚠️ 這裡的顯示名稱必須與 role_permissions.py PERMISSION_DEFINITIONS 的 label 一致，

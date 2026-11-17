@@ -222,6 +222,25 @@ export const menuItems: MenuItem[] = [
       { key: '/return-reject-stats/dashboard', icon: <AuditOutlined />, label: NAV_PAGE.returnRejectDashboard, permissionKey: 'return_reject_stats_view' },
     ],
   },
+  // ── 庫存管理（2026-11-17，docs/SPEC_stock_management.md）──────────────────────
+  // Phase 2：庫存、庫存主檔設定；Phase 3：進貨匯入；之後依 SPEC §12.1 加入 Dashboard／領用單／盤點。
+  // Ragic 表單關聯（Phase 1）已移到「系統設定」。
+  {
+    key: 'stock',
+    icon: <InboxOutlined />,
+    label: NAV_GROUP.stock,
+    permissionKeys: ['stock_balance_view', 'stock_settings_manage', 'stock_opening_manage', 'stock_receipt_view', 'stock_receipt_confirm',
+      'stock_issue_create', 'stock_issue_approve', 'stock_issue_post'],
+    children: [
+      { key: '/stock/balance', icon: <TableOutlined />, label: NAV_PAGE.stockBalance, permissionKey: 'stock_balance_view' },
+      { key: '/stock/receipts', icon: <ShoppingCartOutlined />, label: NAV_PAGE.stockReceipts,
+        permissionKeys: ['stock_receipt_view', 'stock_receipt_confirm'] },
+      { key: '/stock/issues', icon: <SwapOutlined />, label: NAV_PAGE.stockIssues,
+        permissionKeys: ['stock_issue_create', 'stock_issue_approve', 'stock_issue_post'] },
+      { key: '/stock/settings', icon: <SettingOutlined />, label: NAV_PAGE.stockSettings,
+        permissionKeys: ['stock_settings_manage', 'stock_opening_manage'] },
+    ],
+  },
   // ── 稽核檢查（財#3 系統建置稽核，2026-09-20 新增）────────────────────────────
   // 非 Ragic 同步模組，資料由稽核人員人工填寫。
   {
@@ -538,6 +557,7 @@ export const menuItems: MenuItem[] = [
       { key: '/settings/users',               icon: <UserOutlined />,     label: NAV_PAGE.usersManage,       permissionKey: 'settings_users_manage' },
       { key: '/settings/roles',               icon: <SettingOutlined />,  label: NAV_PAGE.rolesManage,       permissionKey: 'settings_roles_manage' },
       { key: '/settings/ragic-app-directory', icon: <DatabaseOutlined />, label: NAV_PAGE.ragicAppDirectory, permissionKey: 'settings_ragic_manage' },
+      { key: '/settings/ragic-forms',         icon: <TableOutlined />,    label: NAV_PAGE.ragicForms,        permissionKeys: ['settings_ragic_forms_view', 'settings_ragic_forms_manage'] },
       { key: '/settings/company-departments', icon: <ApartmentOutlined />, label: NAV_PAGE.companyDepartments, permissionKey: 'settings_departments_manage' },
       { key: '/settings/ragic-connections',   icon: <ApiOutlined />,      label: NAV_PAGE.ragicConnections,  permissionKey: 'settings_ragic_manage' },
       { key: '/settings/ragic-field-audit',   icon: <AuditOutlined />,    label: NAV_PAGE.ragicFieldAudit,   permissionKey: 'ragic_field_audit_view' },

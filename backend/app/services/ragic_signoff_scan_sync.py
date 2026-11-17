@@ -162,6 +162,12 @@ def sync_from_ragic() -> dict:
             prev_fp = {r.record_id: r.fp for r in db.query(RagicScanFingerprint)
                        .filter(RagicScanFingerprint.sheet_path == path)}
             prev_sheet = db.get(RagicScanSheet, path)
+            prev_last_edit = prev_sheet.last_edit_at if prev_sheet else None
+            # 2026-11-17：讀完舊快照就結束交易、把連線還給連線池。
+            # 下面逐筆呼叫 Ragic 歷史 API 可能要十幾分鐘，若交易一直開著，
+            # 會超過 PG idle_in_transaction_session_timeout（PG_IDLE_IN_TX_TIMEOUT_SEC，預設 600 秒）
+            # 被 PG 強制斷線，寫入時出現 server closed the connection unexpectedly。
+            db.rollback()
             baseline = not prev_fp
 
             hits: list[dict] = []
@@ -181,7 +187,7 @@ def sync_from_ragic() -> dict:
                                  "link": f"{BASE_LINK}{path}/{rid}",
                                  "status_values": "；".join(status_vals)[:300], "scanned_at": now})
 
-            last_edit = prev_sheet.last_edit_at if prev_sheet else None
+            last_edit = prev_last_edit
             for rid in changed_ids:
                 try:
                     hist = _get_json(key, f"{path}/{rid}", {"api": "", "v": "3", "history": "true"})
@@ -192,24 +198,31 @@ def sync_from_ragic() -> dict:
                     errors.append(f"{path} 記錄 {rid} 歷史：{str(exc)[:120]}")
 
             # 依表單整批取代快照與命中
-            db.query(RagicScanFingerprint).filter(RagicScanFingerprint.sheet_path == path).delete(synchronize_session=False)
-            if fp_rows:
-                db.execute(pg_insert(RagicScanFingerprint).values(fp_rows))
-            db.query(RagicScanHit).filter(RagicScanHit.sheet_path == path).delete(synchronize_session=False)
-            if hits:
-                db.execute(pg_insert(RagicScanHit).values([{**h, "sheet_name": name} for h in hits]))
+            # 2026-11-17：寫入失敗（例如連線被斷）只記這張表的錯誤，rollback 後繼續下一張；
+            # 先前一張表出錯就跳出整個迴圈，後面的表全部沒掃（當天 377 張只掃了 224 張）。
+            try:
+                db.query(RagicScanFingerprint).filter(RagicScanFingerprint.sheet_path == path).delete(synchronize_session=False)
+                if fp_rows:
+                    db.execute(pg_insert(RagicScanFingerprint).values(fp_rows))
+                db.query(RagicScanHit).filter(RagicScanHit.sheet_path == path).delete(synchronize_session=False)
+                if hits:
+                    db.execute(pg_insert(RagicScanHit).values([{**h, "sheet_name": name} for h in hits]))
 
-            sheet_row = {"sheet_path": path, "sheet_name": name, "sheet_type": typ,
-                         "record_count": len(recs), "changed_count": len(changed_ids),
-                         "last_edit_at": last_edit, "scanned_at": now}
-            stmt = pg_insert(RagicScanSheet).values(sheet_row)
-            stmt = stmt.on_conflict_do_update(
-                index_elements=["sheet_path"],
-                set_={k: stmt.excluded[k] for k in sheet_row if k != "sheet_path"},
-            )
-            db.execute(stmt)
-            db.commit()  # 每張表獨立提交，失敗不影響其他表
-            ok_sheets += 1
+                sheet_row = {"sheet_path": path, "sheet_name": name, "sheet_type": typ,
+                             "record_count": len(recs), "changed_count": len(changed_ids),
+                             "last_edit_at": last_edit, "scanned_at": now}
+                stmt = pg_insert(RagicScanSheet).values(sheet_row)
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["sheet_path"],
+                    set_={k: stmt.excluded[k] for k in sheet_row if k != "sheet_path"},
+                )
+                db.execute(stmt)
+                db.commit()  # 每張表獨立提交，失敗不影響其他表
+                ok_sheets += 1
+            except Exception as exc:
+                db.rollback()
+                logger.exception("Ragic 簽核掃描：%s 寫入失敗", path)
+                errors.append(f"{path} 寫入失敗：{str(exc)[:160]}")
     except Exception as exc:
         db.rollback()
         logger.exception("Ragic 簽核掃描失敗")

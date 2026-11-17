@@ -207,6 +207,10 @@ export const getItems = (params?: {
   sort_order?: 'asc' | 'desc'
 }) => apiClient.get<CpItemListResponse>(`${BASE}/items`, { params })
 
+/** 2026-11-17：匯出料號主檔 Excel（篩選條件同 getItems，後端不分頁、回傳全部符合者） */
+export const exportItems = (params?: Omit<NonNullable<Parameters<typeof getItems>[0]>, 'page' | 'per_page'>) =>
+  apiClient.get<Blob>(`${BASE}/items/export`, { params, responseType: 'blob' })
+
 /** 2026-09-22：料號頁公司/部門篩選用——只回有料號對照的公司（含其部門 id） */
 export const getItemFilterCompanies = () =>
   apiClient.get<{ company: string; department_ids: number[] }[]>(`${BASE}/items/filter-companies`)

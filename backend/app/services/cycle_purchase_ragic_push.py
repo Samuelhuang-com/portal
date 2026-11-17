@@ -353,13 +353,22 @@ def build_payload(document: dict[str, Any]) -> dict[str, Any]:
             s.RAGIC_CP_SF_DEPT:       _text(line.get("department_name")),
             s.RAGIC_CP_SF_ACCOUNT:    _text(line.get("account_name")),
             # 勾選：全案小計／全案總計的公式靠這欄才算得出來，見檔頭第 3 點
-            # 2026-11-13：不再送「擬定廠商」（採購人員在 Ragic 58 逐列手動選）；勾選照送
+            # 2026-11-17：恢復送「擬定廠商」（見下方，有廠商名稱才送，對錯都送）；勾選照送
             s.RAGIC_CP_SF_CHOSEN:     "Yes",
             s.RAGIC_CP_SF_ITEM_CODE:  _text(line.get("item_code")),
             s.RAGIC_CP_SF_SUMMARY_ID: _text(line.get("summary_id")),
             # 項次($SEQ) 是 Ragic 自己算的，不送；
             # 本月預算／上月累計預算是人工填的，Portal 不碰
         }
+    # 2026-11-17 Samuel 裁示：廠商無論對錯都拋，錯的由 service 層列出（不擋拋轉）。
+    # ⚠️ Ragic 對不認得的廠商名稱會靜默丟掉（API 仍回 SUCCESS），所以錯誤清單
+    #    靠 fetch_accepted_vendor_names / vendor_rejection_reason 在 Portal 端比對。
+    for idx, line in enumerate(lines):
+        if line.get("is_subtotal"):
+            continue
+        v = _text(line.get("vendor_name"))
+        if v:
+            rows[f"-{total - idx}"][s.RAGIC_CP_SF_VENDOR] = v
     payload[f"_subtable_{settings.RAGIC_CP_SUBTABLE}"] = rows
     return payload
 

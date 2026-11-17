@@ -140,6 +140,12 @@ import AuditScorePage                  from '@/pages/AuditScore'
 // ── 退件統計（2026-11-02）──────────────────────────────────────────────────────
 import ReturnRejectStatsPage           from '@/pages/ReturnRejectStats'
 import ReturnDashboardPage             from '@/pages/ReturnDashboard'
+// ── 庫存管理（2026-11-17，docs/SPEC_stock_management.md）──────────────────────
+import StockBalancePage                from '@/pages/Stock/Balance'
+import StockSettingsPage               from '@/pages/Stock/Settings'
+import StockReceiptsPage               from '@/pages/Stock/Receipts'
+import StockIssuesPage                 from '@/pages/Stock/Issues'
+import RagicFormsPage                  from '@/pages/Settings/RagicForms'
 
 // ── 知識庫（LLM Wiki）──────────────────────────────────────────────────────────
 import WikiPage                        from '@/pages/Wiki'
@@ -243,6 +249,10 @@ const PERM_DEFAULT_ROUTES: { key: string; route: string }[] = [
   { key: 'taichung_purchase_report_view',     route: '/taichung-purchase-report/monthly' },
   { key: 'taichung_claim_report_view',        route: '/taichung-claim-report/monthly' },
   { key: 'return_reject_stats_view',          route: '/return-reject-stats/records' },
+  { key: 'stock_balance_view',                route: '/stock/balance' },
+  { key: 'stock_receipt_view',                route: '/stock/receipts' },
+  { key: 'stock_issue_create',                route: '/stock/issues' },
+  { key: 'settings_ragic_forms_view',         route: '/settings/ragic-forms' },
   { key: 'audit_check_score_view',            route: '/audit-check/score' },
   { key: 'dev_log_view',                      route: '/settings/dev-stats' },
   { key: 'contract_view',                     route: '/contract' },
@@ -373,9 +383,12 @@ function SettingsGuard({ children }: { children: React.ReactNode }) {
  */
 function PermissionGuard({
   permissionKey,
+  anyOf,
   children,
 }: {
   permissionKey: string
+  /** 2026-11-17：選填；有給時改為「具備其中任一權限即可進入」（OR），permissionKey 仍作為說明顯示用 */
+  anyOf?: string[]
   children: React.ReactNode
 }) {
   const user          = useAuthStore((s) => s.user)
@@ -388,7 +401,7 @@ function PermissionGuard({
     return null  // MainLayout 的 Skeleton 佔位，等 /me 回應後再判斷
   }
 
-  if (!hasPermission(permissionKey)) {
+  if (!(anyOf && anyOf.length ? anyOf.some((k) => hasPermission(k)) : hasPermission(permissionKey))) {
     return (
       <div
         style={{
@@ -680,6 +693,45 @@ export default function AppRouter() {
           <Route index element={<Navigate to="monthly" replace />} />
         </Route>
 
+        {/* ── 庫存管理（2026-11-17，docs/SPEC_stock_management.md）──────────── */}
+        <Route path="stock">
+          <Route
+            path="balance"
+            element={
+              <PermissionGuard permissionKey="stock_balance_view">
+                <StockBalancePage />
+              </PermissionGuard>
+            }
+          />
+          <Route
+            path="receipts"
+            element={
+              <PermissionGuard permissionKey="stock_receipt_view" anyOf={['stock_receipt_view', 'stock_receipt_confirm']}>
+                <StockReceiptsPage />
+              </PermissionGuard>
+            }
+          />
+          <Route
+            path="issues"
+            element={
+              <PermissionGuard permissionKey="stock_issue_create" anyOf={['stock_issue_create', 'stock_issue_approve', 'stock_issue_post']}>
+                <StockIssuesPage />
+              </PermissionGuard>
+            }
+          />
+          <Route
+            path="settings"
+            element={
+              <PermissionGuard permissionKey="stock_settings_manage" anyOf={['stock_settings_manage', 'stock_opening_manage']}>
+                <StockSettingsPage />
+              </PermissionGuard>
+            }
+          />
+          {/* Phase 1 曾放在 /stock/ragic-forms，2026-11-17 搬到系統設定 */}
+          <Route path="ragic-forms" element={<Navigate to="/settings/ragic-forms" replace />} />
+          <Route index element={<Navigate to="balance" replace />} />
+        </Route>
+
         {/* ── 退件統計（2026-11-02）──────────────────────────────────────── */}
         <Route path="return-reject-stats">
           <Route
@@ -932,6 +984,11 @@ export default function AppRouter() {
           <Route path="ragic-app-directory" element={
             <PermissionGuard permissionKey="settings_ragic_manage">
               <RagicAppDirectoryPage />
+            </PermissionGuard>
+          } />
+          <Route path="ragic-forms" element={
+            <PermissionGuard permissionKey="settings_ragic_forms_view" anyOf={['settings_ragic_forms_view', 'settings_ragic_forms_manage']}>
+              <RagicFormsPage />
             </PermissionGuard>
           } />
           <Route path="company-departments" element={

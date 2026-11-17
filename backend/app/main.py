@@ -118,6 +118,8 @@ from app.routers import (
     taichung_purchase_report,
     taichung_claim_report,
     return_stats,
+    stock,
+    ragic_forms,
     taichung_combined_report,
     ragic_sheet_config,
     ragic_field_audit,
@@ -657,6 +659,88 @@ def _seed_menu_config_return_reject_stats():
         print("[Portal] menu_config return-reject-stats seed checked.")
 
 
+def _seed_menu_config_stock():
+    """
+    選單補丁（2026-11-17，docs/SPEC_stock_management.md §12）：第一層「庫存管理」。
+    群組列 permission_key 留 NULL：讓前端沿用 MainLayout 的 permissionKeys（任一子項權限即可看到群組），
+    否則只有其中一種權限的人會整組看不到。只補「沒有記錄」的情況，不覆寫使用者自行調整的設定。冪等。
+    （Phase 1 的 Ragic 表單關聯已移到系統設定，不在此群組。）
+    """
+    from sqlalchemy import text
+
+    CHILDREN = [
+        ("/stock/balance", 10, "stock_balance_view"),
+        # Phase 3（2026-11-17）；permission_key 留 NULL：前端用 permissionKeys（查看 OR 確認入庫）
+        ("/stock/receipts", 20, None),
+        # Phase 4a（2026-11-17）；permission_key 留 NULL：前端用 permissionKeys（開單 OR 核准 OR 倉管）
+        ("/stock/issues", 30, None),
+        # permission_key 留 NULL：前端用 permissionKeys（庫存主檔設定 OR 期初開帳）
+        ("/stock/settings", 80, None),
+    ]
+
+    with engine.connect() as conn:
+        row = conn.execute(text("SELECT menu_key FROM menu_configs WHERE menu_key = 'stock'")).fetchone()
+        if row is None:
+            conn.execute(
+                text(
+                    "INSERT INTO menu_configs "
+                    "(menu_key, parent_key, custom_label, sort_order, is_visible, permission_key, updated_at, updated_by) "
+                    "VALUES ('stock', NULL, NULL, 105, TRUE, NULL, CURRENT_TIMESTAMP, 'system-seed')"
+                )
+            )
+        for menu_key, sort_order, perm in CHILDREN:
+            existing = conn.execute(
+                text("SELECT menu_key FROM menu_configs WHERE menu_key = :k"), {"k": menu_key}
+            ).fetchone()
+            if existing is None:
+                conn.execute(
+                    text(
+                        "INSERT INTO menu_configs "
+                        "(menu_key, parent_key, custom_label, sort_order, is_visible, permission_key, updated_at, updated_by) "
+                        "VALUES (:k, 'stock', NULL, :o, TRUE, :p, CURRENT_TIMESTAMP, 'system-seed')"
+                    ),
+                    {"k": menu_key, "o": sort_order, "p": perm},
+                )
+        conn.commit()
+        print("[Portal] menu_config stock seed checked.")
+
+
+def _fix_stock_menu_phase1_leftover():
+    """
+    選單補丁（2026-11-17）：Phase 1 的「Ragic 表單關聯」原放在 /stock/ragic-forms，
+    同日搬到系統設定（/settings/ragic-forms）。已部署過 Phase 1 的環境會殘留：
+      1. menu_configs 的 /stock/ragic-forms 列 → MainLayout 已無此 key，選單直接顯示路徑字串
+      2. menu_configs 的 stock 群組列 permission_key = 'stock_ragic_forms_view'
+         → 蓋過前端 permissionKeys，只有持有已廢止權限的人看得到「庫存管理」
+      3. 角色已勾的 stock_ragic_forms_view → 轉成 settings_ragic_forms_view 後移除舊鍵
+    冪等：重複執行不會有副作用。
+    """
+    import uuid
+    from sqlalchemy import text
+
+    with engine.connect() as conn:
+        conn.execute(text("DELETE FROM menu_configs WHERE menu_key = '/stock/ragic-forms'"))
+        conn.execute(text(
+            "UPDATE menu_configs SET permission_key = NULL, updated_at = CURRENT_TIMESTAMP, "
+            "updated_by = 'system-fix-20261117' "
+            "WHERE menu_key = 'stock' AND permission_key = 'stock_ragic_forms_view'"
+        ))
+        roles = conn.execute(text(
+            "SELECT role_id FROM role_permissions WHERE permission_key = 'stock_ragic_forms_view'"
+        )).fetchall()
+        for (role_id,) in roles:
+            exists = conn.execute(text(
+                "SELECT 1 FROM role_permissions WHERE role_id = :r AND permission_key = 'settings_ragic_forms_view'"
+            ), {"r": role_id}).fetchone()
+            if exists is None:
+                conn.execute(text(
+                    "INSERT INTO role_permissions (id, role_id, permission_key) VALUES (:id, :r, 'settings_ragic_forms_view')"
+                ), {"id": str(uuid.uuid4()), "r": role_id})
+        conn.execute(text("DELETE FROM role_permissions WHERE permission_key = 'stock_ragic_forms_view'"))
+        conn.commit()
+        print("[Portal] stock menu phase1 leftover fix checked.")
+
+
 def _seed_return_stats_sources():
     """退件統計來源登錄植入（冪等；已存在的來源不覆寫）。"""
     from app.core.database import SessionLocal
@@ -1135,6 +1219,9 @@ async def _auto_sync():
     await _run_loop("日曜核准請款單清單",  sync_nichiyo_claim_list)
     await _run_loop("台中核准請購單清單",  sync_taichung_purchase_list)
     await _run_loop("台中核准請款單清單",  sync_taichung_claim_list)
+    # 庫存管理 Phase 1（2026-11-17）：三家公司 Ragic 採購單（清單 API 已含子表）
+    from app.services.ragic_po_sync import sync_from_ragic as sync_ragic_po
+    await _run_loop("Ragic採購單",         sync_ragic_po)
 
 
 async def _manual_sync():
@@ -1206,6 +1293,7 @@ _SINGLE_MODULE_MAP: dict[str, tuple[str, str]] = {
     "日曜核准請款單清單": ("app.services.nichiyo_claim_request_sync",    "sync_list_only"),
     "台中核准請購單清單": ("app.services.taichung_purchase_request_sync", "sync_list_only"),
     "台中核准請款單清單": ("app.services.taichung_claim_request_sync",    "sync_list_only"),
+    "Ragic採購單":       ("app.services.ragic_po_sync",                 "sync_from_ragic"),
     "主管交辦／緊急事件": ("app.services.other_tasks_sync",              "sync_from_ragic"),
     "廠商資料":          ("app.services.vendor_sync",                   "sync_from_ragic"),
     "週期採購供應商":     ("app.services.cycle_purchase_vendor_sync",    "sync_from_contract"),
@@ -1357,6 +1445,7 @@ async def lifespan(app: FastAPI):
     import app.models.taichung_claim_request     # noqa: F401  台中核准請款單（2026-09-16，表由 Alembic tcpurch 建）
     import app.models.dev_log  # noqa  開發統計（2026-11-02，表由 Alembic devlog1 建）
     import app.models.return_stats  # noqa: F401  退件統計（2026-11-02，表由 Alembic rrs1 建）
+    import app.models.ragic_purchase_order  # noqa: F401  Ragic 採購單（2026-11-17，表由 Alembic stk1 建）
     import app.models.ragic_sheet_config        # noqa: F401
     import app.models.other_tasks               # noqa: F401
     import app.models.pm_plan                   # noqa: F401  週期保養預排（主管排定 Sheet /7 /13 /20）
@@ -1401,6 +1490,7 @@ async def lifespan(app: FastAPI):
     import app.models.cycle_purchase_receiving   # noqa: F401
     import app.models.cycle_purchase_payment      # noqa: F401
     import app.models.cycle_purchase_audit        # noqa: F401
+    import app.models.stock                       # noqa: F401  庫存管理 Phase 2（2026-11-17，表由 alembic_cp cpstk1 建）
     # 2026-07-16：同樣套用重試保護，理由同上（_create_all_tables）。
     _run_startup_migration(
         "_create_cycle_purchase_tables",
@@ -1525,6 +1615,8 @@ async def lifespan(app: FastAPI):
     _run_startup_migration("_seed_menu_config_taichung_claim", _seed_menu_config_taichung_claim)
     _run_startup_migration("_fix_taichung_claim_menu_permission", _fix_taichung_claim_menu_permission)
     _run_startup_migration("_seed_menu_config_return_reject_stats", _seed_menu_config_return_reject_stats)
+    _run_startup_migration("_seed_menu_config_stock", _seed_menu_config_stock)
+    _run_startup_migration("_fix_stock_menu_phase1_leftover", _fix_stock_menu_phase1_leftover)
     _run_startup_migration("_seed_return_stats_sources", _seed_return_stats_sources)
 
     # 稽核檢查（2026-09-20）：模型載入 + 判定類型種子 + 選單 DB 記錄
@@ -2267,6 +2359,17 @@ app.include_router(
     return_stats.router,
     prefix=f"{API_PREFIX}/return-stats",
     tags=["退件統計"],
+)
+# ── 庫存管理（2026-11-17，docs/SPEC_stock_management.md）──────────────────────
+app.include_router(
+    stock.router,
+    prefix=f"{API_PREFIX}/stock",
+    tags=["庫存管理"],
+)
+app.include_router(
+    ragic_forms.router,
+    prefix=f"{API_PREFIX}/settings/ragic-forms",
+    tags=["系統設定：Ragic 表單關聯"],
 )
 app.include_router(
     taichung_combined_report.router,

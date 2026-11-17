@@ -42,10 +42,10 @@ import {
   Switch, Table, Tabs, Tag, Tooltip, Typography, message, Divider,
 } from 'antd'
 import type { SorterResult } from 'antd/es/table/interface'
-import { PlusOutlined, EditOutlined, StopOutlined, CheckCircleOutlined, ApartmentOutlined, DeleteOutlined, ClearOutlined } from '@ant-design/icons'
+import { DownloadOutlined, PlusOutlined, EditOutlined, StopOutlined, CheckCircleOutlined, ApartmentOutlined, DeleteOutlined, ClearOutlined } from '@ant-design/icons'
 import {
   createItem, createItemMapping, deleteItemMapping, getCpAccountCodes, getCpCategories, getCpDepartments,
-  getItem, getItems, getItemFilterCompanies, getVendors, updateItem, updateItemMapping,
+  getItem, getItems, exportItems, getItemFilterCompanies, getVendors, updateItem, updateItemMapping,
 } from '@/api/cyclePurchase'
 import type {
   CpAccountCode, CpCategory, CpDepartment, CpItem, CpItemDetail, CpItemMapping, CpVendor,
@@ -283,15 +283,11 @@ export default function CpItemsPage() {
     }
   }
 
-  const load = () => {
-    setLoading(true)
-    // 每次重載都順便更新「有料號的公司」——新增／編輯料號對照後篩選選項才會跟上
-    getItemFilterCompanies().then((r) => setFilterCompanies(r.data)).catch(() => {})
+  // 列表與匯出共用的篩選／排序條件（2026-11-17 抽出，避免匯出與畫面條件不一致）
+  const buildFilterParams = () => {
     const [cdCompany, cdDept] = fCompanyDept ?? []
-    getItems({
+    return {
       q,
-      page,
-      per_page: perPage,
       category_id: fCategory?.[0] === CATEGORY_UNMAPPED ? 0 : undefined,
       category_ids: fCategory?.length && fCategory[0] !== CATEGORY_UNMAPPED
         ? categoryIdsUnder(categories, fCategory).join(',') || '-1'   // 該層沒有細分類 → 查無資料
@@ -302,7 +298,41 @@ export default function CpItemsPage() {
       vendor_id: fVendor,
       vendor_q: fVendorQ || undefined,
       sort_by: sortOrder ? sortBy : undefined,
-      sort_order: sortOrder === 'descend' ? 'desc' : 'asc',
+      sort_order: (sortOrder === 'descend' ? 'desc' : 'asc') as 'asc' | 'desc',
+    }
+  }
+
+  const [exporting, setExporting] = useState(false)
+  const handleExport = async () => {
+    setExporting(true)
+    try {
+      const res = await exportItems(buildFilterParams())
+      const cd = String(res.headers['content-disposition'] || '')
+      const m = /filename\*=UTF-8''([^;]+)/i.exec(cd)
+      const filename = m ? decodeURIComponent(m[1]) : '週採料號主檔.xlsx'
+      const url = URL.createObjectURL(res.data)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = filename
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+    } catch {
+      message.error('匯出失敗')
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  const load = () => {
+    setLoading(true)
+    // 每次重載都順便更新「有料號的公司」——新增／編輯料號對照後篩選選項才會跟上
+    getItemFilterCompanies().then((r) => setFilterCompanies(r.data)).catch(() => {})
+    getItems({
+      ...buildFilterParams(),
+      page,
+      per_page: perPage,
     })
       .then((r) => {
         setItems(r.data.items)
@@ -505,6 +535,7 @@ export default function CpItemsPage() {
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
         <Title level={4} style={{ margin: 0 }}>週期採購 — 料號主檔</Title>
         <Space>
+          <Button icon={<DownloadOutlined />} loading={exporting} onClick={handleExport}>匯出 Excel</Button>
           {canEdit && (
             <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新增料號</Button>
           )}

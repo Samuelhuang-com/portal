@@ -455,6 +455,7 @@ export default function CpSummaryPage() {
     const docs = r.documents ?? []
     const notPushed = r.not_pushed ?? []
     const failed = r.failed ?? []
+    const vendorWarnings = r.vendor_warnings ?? []
 
     Modal.info({
       title: failed.length > 0 ? '拋轉完成（部分單據失敗）' : '拋轉完成',
@@ -474,6 +475,24 @@ export default function CpSummaryPage() {
             <Descriptions.Item label="批次號">{r.batch_no}</Descriptions.Item>
             <Descriptions.Item label="結果">{r.message}</Descriptions.Item>
           </Descriptions>
+
+          {vendorWarnings.length > 0 && (
+            <Alert
+              type="warning"
+              showIcon
+              style={{ marginBottom: 12 }}
+              message={`${vendorWarnings.length} 家廠商 Ragic 認不得（已照送，請到 Ragic 修正）`}
+              description={
+                <ul style={{ margin: 0, paddingLeft: 18 }}>
+                  {vendorWarnings.map((w) => (
+                    <li key={w.vendor_name}>
+                      <b>{w.vendor_name}</b>（{w.line_count} 筆）：{w.reason}
+                    </li>
+                  ))}
+                </ul>
+              }
+            />
+          )}
 
           {docs.length > 0 && (
             <>

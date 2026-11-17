@@ -65,6 +65,8 @@ def _get_fallback(module: str) -> list[dict]:
     if module == "taichung_purchase":
         from app.models.taichung_purchase_request import TAICHUNG_DEPT_SHEETS
         return list(TAICHUNG_DEPT_SHEETS)
+    # purchase_po / nichiyo_po / taichung_po（採購單，2026-11-17）沒有硬編碼備援：
+    # 啟動時 seed_ragic_sheet_config() 會寫入 DB，DB 讀不到就回空清單（同步不做事、不報錯）。
     if module == "taichung_claim":
         from app.models.taichung_claim_request import TAICHUNG_CLAIM_DEPT_SHEETS
         return list(TAICHUNG_CLAIM_DEPT_SHEETS)
@@ -227,6 +229,51 @@ _SEED_DATA: list[dict] = [
      "list_path": "food-drink/5", "detail_path": "food-drink/5", "extra_json": "{}"},
     {"module": "taichung_claim", "sort_order": 10, "display_name": "房務部", "ragic_dept": "房務部",
      "list_path": "housekeeping/4", "detail_path": "housekeeping/4", "extra_json": "{}"},
+    # ── 採購單（庫存管理 Phase 1，2026-11-17，docs/SPEC_stock_management.md §4.2）──────────
+    # 採購單沒有簽核欄位；清單 API 已含子表，detail_path 與 list_path 相同。
+    # 尚未確認網址的部門（樂群執董室、日曜執董室／營業部／財務部、台中公用表單／工程部／財務部）不列入，待 SPEC D14。
+    {"module": "purchase_po", "sort_order": 1, "display_name": "營業部", "ragic_dept": "營業部",
+     "list_path": "new-tab/11", "detail_path": "new-tab/11", "extra_json": "{}"},
+    {"module": "purchase_po", "sort_order": 2, "display_name": "行銷部", "ragic_dept": "行銷部",
+     "list_path": "lequn-marketing-department/14", "detail_path": "lequn-marketing-department/14", "extra_json": "{}"},
+    {"module": "purchase_po", "sort_order": 3, "display_name": "財務部", "ragic_dept": "財務部",
+     "list_path": "lequn-finance-department/11", "detail_path": "lequn-finance-department/11", "extra_json": "{}"},
+    {"module": "purchase_po", "sort_order": 4, "display_name": "停管部", "ragic_dept": "停管部",
+     "list_path": "lequn-traffic-management/10", "detail_path": "lequn-traffic-management/10", "extra_json": "{}"},
+    {"module": "purchase_po", "sort_order": 5, "display_name": "管理部", "ragic_dept": "管理部",
+     "list_path": "community-management-department/23", "detail_path": "community-management-department/23", "extra_json": "{}"},
+    {"module": "purchase_po", "sort_order": 6, "display_name": "管理部（週採）", "ragic_dept": "管理部",
+     "list_path": "community-management-department/57", "detail_path": "community-management-department/57", "extra_json": "{}"},
+    {"module": "purchase_po", "sort_order": 7, "display_name": "資訊部", "ragic_dept": "資訊部",
+     "list_path": "joy-group-it-department/12", "detail_path": "joy-group-it-department/12", "extra_json": "{}"},
+    {"module": "purchase_po", "sort_order": 8, "display_name": "工務部", "ragic_dept": "工務部",
+     "list_path": "lequn-public-works-department/4", "detail_path": "lequn-public-works-department/4", "extra_json": "{}"},
+    {"module": "purchase_po", "sort_order": 9, "display_name": "專案部", "ragic_dept": "專案部",
+     "list_path": "happy-group-project/5", "detail_path": "happy-group-project/5", "extra_json": "{}"},
+    {"module": "nichiyo_po", "sort_order": 1, "display_name": "行銷部", "ragic_dept": "行銷部",
+     "list_path": "marketing/41", "detail_path": "marketing/41", "extra_json": "{}"},
+    {"module": "nichiyo_po", "sort_order": 2, "display_name": "管理部", "ragic_dept": "管理部",
+     "list_path": "freed-management-division/31", "detail_path": "freed-management-division/31", "extra_json": "{}"},
+    {"module": "nichiyo_po", "sort_order": 3, "display_name": "資訊部", "ragic_dept": "資訊部",
+     "list_path": "department-of-free-information/33", "detail_path": "department-of-free-information/33", "extra_json": "{}"},
+    {"module": "nichiyo_po", "sort_order": 4, "display_name": "客服部", "ragic_dept": "客服部",
+     "list_path": "free-management-department/9", "detail_path": "free-management-department/9", "extra_json": "{}"},
+    {"module": "nichiyo_po", "sort_order": 5, "display_name": "設計部", "ragic_dept": "設計部",
+     "list_path": "free-design-department/6", "detail_path": "free-design-department/6", "extra_json": "{}"},
+    {"module": "taichung_po", "sort_order": 1, "display_name": "客務部", "ragic_dept": "客務部",
+     "list_path": "customer-service/10", "detail_path": "customer-service/10", "extra_json": "{}"},
+    {"module": "taichung_po", "sort_order": 2, "display_name": "業務部", "ragic_dept": "業務部",
+     "list_path": "business/4", "detail_path": "business/4", "extra_json": "{}"},
+    {"module": "taichung_po", "sort_order": 3, "display_name": "資訊部", "ragic_dept": "資訊部",
+     "list_path": "info/18", "detail_path": "info/18", "extra_json": "{}"},
+    {"module": "taichung_po", "sort_order": 4, "display_name": "行政辦公室", "ragic_dept": "行政辦公室",
+     "list_path": "hr/6", "detail_path": "hr/6", "extra_json": "{}"},
+    {"module": "taichung_po", "sort_order": 5, "display_name": "廚房", "ragic_dept": "廚房",
+     "list_path": "kitchen/3", "detail_path": "kitchen/3", "extra_json": "{}"},
+    {"module": "taichung_po", "sort_order": 6, "display_name": "餐飲", "ragic_dept": "餐飲",
+     "list_path": "food-drink/4", "detail_path": "food-drink/4", "extra_json": "{}"},
+    {"module": "taichung_po", "sort_order": 7, "display_name": "房務部", "ragic_dept": "房務部",
+     "list_path": "housekeeping/3", "detail_path": "housekeeping/3", "extra_json": "{}"},
 ]
 
 
@@ -261,6 +308,9 @@ def seed_ragic_sheet_config() -> None:
             if not record:
                 db.add(RagicSheetConfig(**row))
                 inserted += 1
+            elif getattr(record, "manual_override", False):
+                # 2026-11-17：手動修改過的設定（系統設定 › Ragic 表單關聯）不覆寫
+                continue
             else:
                 # 路徑與 _SEED_DATA 不一致時自動修正
                 changed = False

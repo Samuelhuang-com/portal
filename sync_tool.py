@@ -232,6 +232,8 @@ MODULES: list[tuple[str, str, str]] = [
     ("日曜核准請款單", "app.services.nichiyo_claim_request_sync",       "sync_all"),
     ("台中核准請購單", "app.services.taichung_purchase_request_sync",   "sync_from_ragic"),
     ("台中核准請款單", "app.services.taichung_claim_request_sync",      "sync_from_ragic"),
+    # 庫存管理 Phase 1（2026-11-17，docs/SPEC_stock_management.md）：三家公司 Ragic 採購單（清單 API 已含子表）
+    ("Ragic採購單",        "app.services.ragic_po_sync",                "sync_from_ragic"),
     # 退件統計（2026-11-02）：讀取上面六組同步表的 raw_data_json，另抓用印 17 張。必須排在這些之後。
     ("退件統計",           "app.services.return_stats_sync",            "sync_return_stats"),
     ("主管交辦／緊急事件", "app.services.other_tasks_sync",             "sync_from_ragic"),
@@ -803,6 +805,7 @@ class SyncApp(tk.Tk):
             import app.models.nichiyo_purchase_request  # noqa
             import app.models.nichiyo_claim_request    # noqa
             import app.models.taichung_purchase_request  # noqa
+            import app.models.ragic_purchase_order  # noqa  庫存管理 Ragic 採購單（2026-11-17）
             import app.models.taichung_claim_request   # noqa
             import app.models.return_stats             # noqa  退件統計（2026-11-02）
             import app.models.ragic_sheet_config       # noqa

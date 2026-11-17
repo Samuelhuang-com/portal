@@ -482,6 +482,10 @@ const RAGIC_APPS_STATIC: Omit<RagicApp, 'portalName' | 'portalUrl' | 'localTable
   { itemNo: 426, module: '待確認', name: '全棟週期保養日誌(主管排定)(舊版停用)', url: 'https://ap12.ragic.com/soutlet001/springboard3/8', type: '待確認', note: '頁籤組 預設頁籤組（11/12 瀏覽器擷取，模組/類型待確認）' },
   { itemNo: 427, module: '待確認', name: '商場週期保養日誌(主管排定)舊版停用)_', url: 'https://ap12.ragic.com/soutlet001/springboard3/9', type: '待確認', note: '頁籤組 預設頁籤組（11/12 瀏覽器擷取，模組/類型待確認）' },
   { itemNo: 428, module: '待確認', name: '飯店週期保養表(主管排定)(舊版停用)', url: 'https://ap12.ragic.com/soutlet001/springboard3/10', type: '待確認', note: '頁籤組 預設頁籤組（11/12 瀏覽器擷取，模組/類型待確認）' },
+  { itemNo: 429, module: '待確認', name: '請購單 工程部（台中）', url: 'https://ap12.ragic.com/soutlet001/construction/3', type: '待確認', note: 'Portal 台中請購／請款同步設定使用中（ragic_sheet_config）；2026-11-17 SPEC_stock_management 規劃時補登，名稱／模組待確認' },
+  { itemNo: 430, module: '待確認', name: '請款單 工程部（台中）', url: 'https://ap12.ragic.com/soutlet001/construction/5', type: '待確認', note: 'Portal 台中請購／請款同步設定使用中（ragic_sheet_config）；2026-11-17 SPEC_stock_management 規劃時補登，名稱／模組待確認' },
+  { itemNo: 431, module: '待確認', name: '請購單 財務部（台中）', url: 'https://ap12.ragic.com/soutlet001/finance/9', type: '待確認', note: 'Portal 台中請購／請款同步設定使用中（ragic_sheet_config）；2026-11-17 SPEC_stock_management 規劃時補登，名稱／模組待確認' },
+  { itemNo: 432, module: '待確認', name: '請款單 財務部（台中）', url: 'https://ap12.ragic.com/soutlet001/finance/12', type: '待確認', note: 'Portal 台中請購／請款同步設定使用中（ragic_sheet_config）；2026-11-17 SPEC_stock_management 規劃時補登，名稱／模組待確認' },
 ]
 
 // ── 本地 DB 表對應（Ragic sheet 路徑 → 本地 SQLite table name(s)）────────────

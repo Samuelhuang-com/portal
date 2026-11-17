@@ -1473,6 +1473,25 @@ def push_summary_to_ragic(
         1 for r in deliverable_rows if not r.unit_price or Decimal(str(r.unit_price)) <= 0
     )
 
+    # ── ③-b 廠商檢查（2026-11-17 恢復，但**只提醒不擋**）─────────────────
+    # Samuel 裁示：廠商無論對錯都拋，只要告訴他哪些有問題。
+    vendor_warnings: list[dict] = []
+    try:
+        _accepted = cycle_purchase_ragic_push.fetch_accepted_vendor_names()
+        _by_vendor: dict[str, int] = {}
+        for r in deliverable_rows:
+            _n = (r.vendor_name or "").strip()
+            if _n:
+                _by_vendor[_n] = _by_vendor.get(_n, 0) + 1
+        for _n, _cnt in sorted(_by_vendor.items()):
+            _reason = cycle_purchase_ragic_push.vendor_rejection_reason(_n, _accepted)
+            if _reason:
+                vendor_warnings.append({"vendor_name": _n, "line_count": _cnt, "reason": _reason})
+    except Exception as e:  # noqa: BLE001 — 檢查失敗不該擋拋轉
+        logger.warning("[push_summary_to_ragic] 廠商檢查失敗，略過：%s", e)
+    no_vendor_count = sum(1 for r in deliverable_rows if not (r.vendor_name or "").strip())
+    applicant_name = (getattr(user, "full_name", None) or "").strip() or None
+
     documents = _build_vendor_documents(
         deliverable_rows,
         batch_no=batch_no,
@@ -1482,6 +1501,7 @@ def push_summary_to_ragic(
         pushed_at_text=pushed_at_text,
         apply_date_text=apply_date_text,
         owner_names=owner_names,
+        applicant=applicant_name,
     )
 
     # ── ④ 逐張推送 ────────────────────────────────────────────────────────
@@ -1577,6 +1597,13 @@ def push_summary_to_ragic(
         parts.append(f"{price_blank_count} 筆沒有單價，已送空白單價與金額，請到 Ragic 補填（該部門小計也留空）")
     if failed:
         parts.append(f"{len(failed)} 張單失敗")
+    if vendor_warnings:
+        parts.append(
+            f"⚠️ {len(vendor_warnings)} 家廠商 Ragic 認不得（已照送，單上該列廠商可能是空的）："
+            + "、".join(w["vendor_name"] for w in vendor_warnings)
+        )
+    if no_vendor_count:
+        parts.append(f"{no_vendor_count} 筆沒有廠商")
     if already_rows:
         prev_nos = sorted({r.ragic_record_id for r in already_rows if r.ragic_record_id})
         parts.append(
@@ -1590,6 +1617,7 @@ def push_summary_to_ragic(
         "documents": results,
         "not_pushed": not_pushed,
         "failed": failed,
+        "vendor_warnings": vendor_warnings,
         "already_pushed_count": len(already_rows),
         "is_stub": is_stub,
         "message": "，".join(parts),
@@ -1674,6 +1702,7 @@ def _build_vendor_documents(
     pushed_at_text: str,
     apply_date_text: str,
     owner_names: dict | None = None,
+    applicant: str | None = None,
 ) -> list[dict]:
     """把可拋轉的彙整列組成 Ragic 單據文件。
 
@@ -1719,7 +1748,8 @@ def _build_vendor_documents(
             "header_dept": settings.RAGIC_CP_SUMMARY_HEADER_DEPT,
             "account_code": settings.RAGIC_CP_SUMMARY_ACCOUNT_CODE,
             "purpose": f"{period_label} {cycle_name} 匯總請購（{company}）",
-            "applicant": settings.RAGIC_CP_SUMMARY_APPLICANT,
+            # 2026-11-17：申請人＝實際操作拋轉的登入者姓名，空才退回設定預設
+            "applicant": applicant or settings.RAGIC_CP_SUMMARY_APPLICANT,
             "apply_date": apply_date_text,
             "pushed_at": pushed_at_text,
             "portal_note": "由 Portal 週期採購模組自動產生，明細請勿手動修改",

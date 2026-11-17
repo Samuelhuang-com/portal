@@ -797,6 +797,7 @@ export interface CpPushToRagicResult {
   documents?: CpPushedDocument[]
   not_pushed?: CpNotPushedRow[]
   failed?: CpFailedVendor[]
+  vendor_warnings?: { vendor_name: string; line_count: number; reason: string }[]
   already_pushed_count?: number
   is_stub: boolean
   message: string

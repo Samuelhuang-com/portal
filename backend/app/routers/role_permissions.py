@@ -75,6 +75,9 @@ PERMISSION_DEFINITIONS = [
     {"key": "settings_menu_manage",     "label": "選單管理",   "group": "系統設定"},
     {"key": "settings_ragic_manage",    "label": "Ragic 設定", "group": "系統設定"},
     {"key": "settings_departments_manage", "label": "公司/部門管理", "group": "系統設定"},
+    # 2026-11-17：Ragic 請購／採購／請款表單關聯（原 Phase 1 放在庫存管理，同日搬到系統設定）
+    {"key": "settings_ragic_forms_view",   "label": "Ragic 表單關聯", "group": "系統設定"},
+    {"key": "settings_ragic_forms_manage", "label": "Ragic 表單關聯：編輯", "group": "系統設定"},
     {"key": "hotel_view",                        "label": "飯店模組",         "group": "飯店管理"},
     {"key": "hotel_room_maintenance_view",        "label": "客房保養",         "group": "飯店管理"},
     {"key": "hotel_periodic_maintenance_view",    "label": "飯店週期保養",     "group": "飯店管理"},
@@ -162,6 +165,19 @@ PERMISSION_DEFINITIONS = [
     # 退件統計（2026-11-02，docs/SPEC_return_reject_stats.md）
     {"key": "return_reject_stats_view",   "label": "退件統計：查看", "group": "退件統計"},
     {"key": "return_reject_stats_manage", "label": "退件統計：管理", "group": "退件統計"},
+    # 庫存管理（2026-11-17，docs/SPEC_stock_management.md §12.3）
+    {"key": "stock_balance_view",         "label": "庫存",           "group": "庫存管理"},
+    {"key": "stock_settings_manage",      "label": "庫存主檔設定",   "group": "庫存管理"},
+    {"key": "stock_opening_manage",       "label": "庫存管理：期初開帳", "group": "庫存管理"},
+    {"key": "stock_receipt_view",         "label": "進貨匯入",       "group": "庫存管理"},
+    {"key": "stock_receipt_confirm",      "label": "進貨匯入：確認入庫", "group": "庫存管理"},
+    {"key": "stock_issue_create",         "label": "領用單",         "group": "庫存管理"},
+    {"key": "stock_issue_approve",        "label": "領用單：核准",     "group": "庫存管理"},
+    {"key": "stock_issue_post",           "label": "領用單：發料過帳／調撥／報廢", "group": "庫存管理"},
+    # 庫存可見公司（比照週採方案 B：勾哪家看哪家；系統管理員看全部）
+    {"key": "stock_company_ch", "label": "庫存可見公司：春大直", "group": "庫存管理"},
+    {"key": "stock_company_ou", "label": "庫存可見公司：日曜",   "group": "庫存管理"},
+    {"key": "stock_company_ho", "label": "庫存可見公司：台中",   "group": "庫存管理"},
     {"key": "dev_log_view",   "label": "開發統計：查看", "group": "系統設定"},
     {"key": "dev_log_manage", "label": "開發統計：管理（匯入、編輯時間）", "group": "系統設定"},
     {"key": "ragic_field_audit_view",   "label": "Ragic 欄位比對：查看",     "group": "系統設定"},

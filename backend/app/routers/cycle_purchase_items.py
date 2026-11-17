@@ -3,6 +3,7 @@
 Prefix: /api/v1/cycle-purchase
 
 GET    /items                              料號清單（分頁／搜尋）
+GET    /items/export                       匯出 Excel（同清單篩選條件，全部筆數；2026-11-17）
 GET    /items/filter-companies             篩選用：有料號對照的公司／部門（2026-09-22）
 GET    /items/{item_id}                    料號詳情（含料號對照表）
 POST   /items                              新增料號
@@ -14,9 +15,13 @@ DELETE /items/{item_id}/mappings/{id}     刪除料號對照
 POST   /items/vendor-backfill/sync         供應商資料回填：同步 Ragic 廠商＋比對預覽（2026-09-30）
 POST   /items/vendor-backfill/apply        供應商資料回填：套用勾選的對應（2026-09-30）
 """
+import io
+import re
 from typing import Optional
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -75,6 +80,94 @@ def list_items(
         vendor_id=vendor_id, vendor_q=vendor_q, sort_by=sort_by, sort_order=sort_order,
     )
     return ItemListResponse(items=items, total=total, page=page, per_page=per_page)
+
+
+# 2026-11-17：匯出 Excel。篩選條件與 GET /items 完全相同，但不分頁（匯出符合條件的全部料號）。
+# ⚠️ 必須放在 /items/{item_id} 之前，否則 "export" 會被當成 item_id 解析成 422。
+# Ragic 來的品名偶爾夾控制字元，openpyxl 會丟 IllegalCharacterError，寫入前一律清掉。
+_ILLEGAL_XLSX = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+
+
+def _xl(v):
+    return _ILLEGAL_XLSX.sub("", v) if isinstance(v, str) else v
+
+
+@router.get("/items/export", summary="匯出料號主檔 Excel（依目前篩選條件）")
+def export_items(
+    q: str = Query(""),
+    category: Optional[str] = Query(None),
+    category_id: Optional[int] = Query(None, ge=0),
+    category_ids: str = Query(""),
+    is_active: Optional[bool] = Query(None),
+    company: Optional[str] = Query(None),
+    department_id: Optional[int] = Query(None, ge=1),
+    account_code_id: Optional[int] = Query(None, ge=0),
+    vendor_id: Optional[int] = Query(None, ge=0),
+    vendor_q: str = Query("", max_length=100),
+    sort_by: Optional[str] = Query(None),
+    sort_order: str = Query("asc", pattern="^(asc|desc)$"),
+    _: User = Depends(require_any_permission(*CP_READ_ITEMS_PERMS)),
+    db: Session = Depends(get_cycle_purchase_db),
+    ctx: CompanyContext = Depends(company_context),
+):
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+    from app.core.time import twnow
+    from app.models.cycle_purchase_company import CyclePurchaseCompany
+
+    items, total = svc.list_items(
+        db, q=q, company_code=ctx.code, category=category, category_id=category_id,
+        category_ids=[int(x) for x in category_ids.split(",") if x.strip().lstrip("-").isdigit()]
+        if category_ids.strip() else None,
+        is_active=is_active, page=1, per_page=1_000_000,
+        company=company, department_id=department_id, account_code_id=account_code_id,
+        vendor_id=vendor_id, vendor_q=vendor_q, sort_by=sort_by, sort_order=sort_order,
+    )
+    co = db.get(CyclePurchaseCompany, ctx.code)
+    co_name = co.name if co else ctx.code
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "料號主檔"
+    headers = ["集團料號", "品名", "規格", "類別代碼", "類別", "公司/部門", "會計科目", "單位",
+               "預設供應商", "參考單價", "預設數量", "MOQ", "庫存上限", "庫存下限",
+               "週期料號", "狀態", "備註"]
+    widths = [16, 38, 22, 10, 28, 22, 26, 8, 26, 12, 10, 8, 10, 10, 10, 8, 30]
+    ws.append(headers)
+    head_fill = PatternFill("solid", fgColor="1B3A5C")
+    for c in range(1, len(headers) + 1):
+        cell = ws.cell(row=1, column=c)
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = head_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        ws.column_dimensions[get_column_letter(c)].width = widths[c - 1]
+    for it in items:
+        ws.append([_xl(v) for v in [
+            it.item_code, it.item_name, it.spec, it.category_code_prefix, it.category_path or it.category,
+            "、".join(it.company_departments or []), "、".join(it.account_code_labels or []), it.unit,
+            it.default_vendor_name,
+            float(it.unit_price) if it.unit_price is not None else None,
+            it.default_qty, it.moq, it.max_stock, it.min_stock,
+            "是" if it.is_cycle_item else "否", "啟用" if it.is_active else "停用", it.notes,
+        ]])
+    ws.freeze_panes = "A2"
+    ws.auto_filter.ref = ws.dimensions
+    for row in ws.iter_rows(min_row=2, min_col=10, max_col=10):
+        row[0].number_format = "#,##0.00##"
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    stamp = twnow().strftime("%Y%m%d_%H%M")
+    cn = f"週採料號主檔_{co_name}_{stamp}.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": (
+            f'attachment; filename="cp_items_{ctx.code}_{stamp}.xlsx"; '
+            f"filename*=UTF-8''{quote(cn, safe='')}")},
+    )
 
 
 # 2026-09-22（Samuel）：料號頁「公司/部門」篩選只列有料號的公司。
