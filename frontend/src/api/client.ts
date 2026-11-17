@@ -4,6 +4,18 @@
 import axios, { AxiosInstance, InternalAxiosRequestConfig } from 'axios'
 import { useAuthStore } from '@/stores/authStore'
 
+/** 週採目前選的公司代碼（記在 sessionStorage；網址的 co 優先）。 */
+const CP_CO_KEY = 'cp_company'
+export const getCpCompany = (): string | null => {
+  try { return sessionStorage.getItem(CP_CO_KEY) } catch { return null }
+}
+export const setCpCompany = (code: string | null) => {
+  try {
+    if (code) sessionStorage.setItem(CP_CO_KEY, code)
+    else sessionStorage.removeItem(CP_CO_KEY)
+  } catch { /* 無痕或停用儲存時忽略：退回只靠網址 co */ }
+}
+
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1'
 
 const apiClient: AxiosInstance = axios.create({
@@ -24,8 +36,10 @@ apiClient.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   config.headers['Cache-Control'] = 'no-cache'
   config.headers['Pragma'] = 'no-cache'
   // 週採多公司：/cycle-purchase 的請求一律帶上網址的 co（公司代碼），後端以此決定公司範圍
+  // 2026-11-17：網址沒有 co（例如點側邊選單換頁後）改讀記住的公司，避免資料退回預設公司
+  //             而頂部公司下拉仍顯示舊選擇、兩者不同步。
   if (config.url?.startsWith('/cycle-purchase')) {
-    const co = new URLSearchParams(window.location.search).get('co')
+    const co = new URLSearchParams(window.location.search).get('co') || getCpCompany()
     if (co) config.params = { co, ...(config.params || {}) }
   }
   return config
