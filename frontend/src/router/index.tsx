@@ -25,6 +25,7 @@ import MobileLayout from '@/components/Layout/MobileLayout'
 import MobileLuqunRepairDashboard from '@/pages/Mobile/LuqunRepairDashboard'
 import MobileAuditCheckList from '@/pages/Mobile/AuditCheckList'
 import MobileAuditCheckSheet from '@/pages/Mobile/AuditCheckSheet'
+import MobileStockIssue from '@/pages/Mobile/StockIssue'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { shouldUseMobileShell } from '@/utils/uiMode'
 import LoginPage           from '@/pages/Login'
@@ -145,6 +146,10 @@ import StockBalancePage                from '@/pages/Stock/Balance'
 import StockSettingsPage               from '@/pages/Stock/Settings'
 import StockReceiptsPage               from '@/pages/Stock/Receipts'
 import StockIssuesPage                 from '@/pages/Stock/Issues'
+import StockCountsPage                 from '@/pages/Stock/Counts'
+import StockMonthlyReportPage          from '@/pages/Stock/MonthlyReport'
+import StockManualPage                 from '@/pages/Stock/Manual'
+import StockDashboardPage              from '@/pages/Stock/Dashboard'
 import RagicFormsPage                  from '@/pages/Settings/RagicForms'
 
 // ── 知識庫（LLM Wiki）──────────────────────────────────────────────────────────
@@ -252,6 +257,9 @@ const PERM_DEFAULT_ROUTES: { key: string; route: string }[] = [
   { key: 'stock_balance_view',                route: '/stock/balance' },
   { key: 'stock_receipt_view',                route: '/stock/receipts' },
   { key: 'stock_issue_create',                route: '/stock/issues' },
+  { key: 'stock_count_execute',               route: '/stock/counts' },
+  { key: 'stock_count_review',                route: '/stock/counts' },
+  { key: 'stock_period_close',                route: '/stock/settings' },
   { key: 'settings_ragic_forms_view',         route: '/settings/ragic-forms' },
   { key: 'audit_check_score_view',            route: '/audit-check/score' },
   { key: 'dev_log_view',                      route: '/settings/dev-stats' },
@@ -501,6 +509,12 @@ export default function AppRouter() {
             <MobileAuditCheckSheet />
           </PermissionGuard>
         } />
+        {/* 庫存領用（2026-11-17，Phase 4b）：沿用桌面 permission key；料號 QR 標籤掃描後開這頁 */}
+        <Route path="stock/issue" element={
+          <PermissionGuard permissionKey="stock_issue_create" anyOf={['stock_issue_create', 'stock_issue_post']}>
+            <MobileStockIssue />
+          </PermissionGuard>
+        } />
         {/* 手機分支內走錯路徑 → 回手機首頁，不要掉回桌面版 */}
         <Route path="*" element={<Navigate to="/m" replace />} />
       </Route>
@@ -720,10 +734,44 @@ export default function AppRouter() {
             }
           />
           <Route
+            path="counts"
+            element={
+              <PermissionGuard permissionKey="stock_count_execute" anyOf={['stock_count_execute', 'stock_count_review']}>
+                <StockCountsPage />
+              </PermissionGuard>
+            }
+          />
+          <Route
+            path="monthly-report"
+            element={
+              <PermissionGuard permissionKey="stock_balance_view">
+                <StockMonthlyReportPage />
+              </PermissionGuard>
+            }
+          />
+          <Route
             path="settings"
             element={
-              <PermissionGuard permissionKey="stock_settings_manage" anyOf={['stock_settings_manage', 'stock_opening_manage']}>
+              <PermissionGuard permissionKey="stock_settings_manage" anyOf={['stock_settings_manage', 'stock_opening_manage', 'stock_period_close']}>
                 <StockSettingsPage />
+              </PermissionGuard>
+            }
+          />
+          {/* Dashboard（2026-11-17）：任一庫存權限都能看（SPEC §12.1） */}
+          <Route
+            path="dashboard"
+            element={
+              <PermissionGuard permissionKey="stock_balance_view" anyOf={['stock_balance_view', 'stock_settings_manage', 'stock_opening_manage', 'stock_receipt_view', 'stock_receipt_confirm', 'stock_issue_create', 'stock_issue_approve', 'stock_issue_post', 'stock_count_execute', 'stock_count_review', 'stock_period_close']}>
+                <StockDashboardPage />
+              </PermissionGuard>
+            }
+          />
+          {/* 使用須知（2026-11-17）：任一庫存權限都能看 */}
+          <Route
+            path="manual"
+            element={
+              <PermissionGuard permissionKey="stock_balance_view" anyOf={['stock_balance_view', 'stock_settings_manage', 'stock_opening_manage', 'stock_receipt_view', 'stock_receipt_confirm', 'stock_issue_create', 'stock_issue_approve', 'stock_issue_post', 'stock_count_execute', 'stock_count_review', 'stock_period_close']}>
+                <StockManualPage />
               </PermissionGuard>
             }
           />

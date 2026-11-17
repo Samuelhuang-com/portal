@@ -26,6 +26,7 @@ MOVE_TYPES = (
     "receipt", "receipt_void",       # 進貨／作廢（Phase 3）
     "issue", "return", "transfer_in", "transfer_out", "scrap",   # Phase 4
     "return_void", "transfer_in_void", "transfer_out_void", "scrap_void",   # Phase 4 作廢
+    "cost_revalue",                  # Phase 5 月結成本調整（數量 0、只調金額；月加權平均 D3）
     "count_adjust",                  # 盤點調整（Phase 5）
 )
 
@@ -47,6 +48,8 @@ class StockWarehouse(CyclePurchaseBase):
                              comment="active／inactive／counting（盤點中）")
     issue_requires_approval = Column(Boolean, nullable=False, default=False, server_default="false",
                                      comment="領用單是否需部門主管核准（Phase 4，D5 預設不需要）")
+    count_blind     = Column(Boolean, nullable=False, default=True, server_default="true",
+                             comment="盲盤：盤點人看不到帳面數（Phase 5，D8 預設開啟，可依部門關閉）")
     notes           = Column(Text, nullable=True)
     created_by      = Column(String(100), nullable=True)
     created_at      = Column(DateTime, nullable=False, server_default=func.now())
@@ -325,3 +328,128 @@ class StockIssueLine(CyclePurchaseBase):
     ref_line_id  = Column(Integer, ForeignKey("stock_issue_lines.id", ondelete="RESTRICT"), nullable=True,
                           comment="退料單對應的原領用明細")
     note         = Column(Text, nullable=True)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Phase 4b（2026-11-17）常用品領用範本 — docs/SPEC_stock_management.md §7.4
+# ═══════════════════════════════════════════════════════════════════════════
+
+class StockIssueTemplate(CyclePurchaseBase):
+    """領用範本：同一個倉（部門）固定領的東西，開單時一鍵帶出。只是預設清單，不影響庫存。"""
+    __tablename__ = "stock_issue_templates"
+
+    id            = Column(Integer, primary_key=True, autoincrement=True)
+    company_code  = Column(String(10), nullable=False, index=True)
+    warehouse_id  = Column(Integer, ForeignKey("stock_warehouses.id", ondelete="CASCADE"), nullable=False)
+    name          = Column(String(100), nullable=False, comment="範本名稱（如：每週清潔用品）")
+    note          = Column(Text, nullable=True)
+    created_by    = Column(String(100), nullable=True)
+    created_by_user_id = Column(String(36), nullable=True)
+    created_at    = Column(DateTime, nullable=False, server_default=func.now())
+    updated_by    = Column(String(100), nullable=True)
+    updated_at    = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("warehouse_id", "name", name="uq_stock_issue_tpl_wh_name"),
+    )
+
+
+class StockIssueTemplateLine(CyclePurchaseBase):
+    __tablename__ = "stock_issue_template_lines"
+
+    id          = Column(Integer, primary_key=True, autoincrement=True)
+    template_id = Column(Integer, ForeignKey("stock_issue_templates.id", ondelete="CASCADE"), nullable=False, index=True)
+    item_id     = Column(Integer, ForeignKey("cycle_purchase_items.id", ondelete="CASCADE"), nullable=False)
+    qty         = Column(Numeric(14, 4), nullable=False, comment="預設領用數量（庫存單位）")
+    sort_order  = Column(Integer, nullable=False, default=0, server_default="0")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Phase 5（2026-11-17）盤點、盤盈虧、月結 — docs/SPEC_stock_management.md §8.5、§8.6、§9
+# ═══════════════════════════════════════════════════════════════════════════
+
+COUNT_STATUSES = ("counting", "submitted", "approved", "cancelled")
+
+
+class StockCount(CyclePurchaseBase):
+    """盤點表：一個倉一張。產生當下凍結帳面數、倉庫進入「盤點中」暫停過帳（D7）；
+    核准時依差異寫「盤點調整」異動（count_adjust），倉庫恢復啟用。"""
+    __tablename__ = "stock_counts"
+
+    id            = Column(Integer, primary_key=True, autoincrement=True)
+    count_no      = Column(String(30), nullable=False, unique=True, comment="CNT-<公司>-YYYYMM-###")
+    company_code  = Column(String(10), nullable=False, index=True)
+    warehouse_id  = Column(Integer, ForeignKey("stock_warehouses.id", ondelete="RESTRICT"), nullable=False)
+    period        = Column(String(7), nullable=False, comment="盤點所屬月份 YYYY-MM（月結檢查用）")
+    count_date    = Column(Date, nullable=False, comment="盤點日（盤盈虧異動日期）")
+    cutoff_at     = Column(DateTime, nullable=False, comment="帳面數凍結時間")
+    blind         = Column(Boolean, nullable=False, default=True, comment="產生時的盲盤設定")
+    count_type    = Column(String(20), nullable=False, default="full", server_default="full",
+                           comment="full 月底全盤／cycle 循環盤點（只盤指定 ABC 類，Phase 7；不算月結盤點）")
+    abc_classes   = Column(String(10), nullable=True, comment="循環盤點的 ABC 類別（如 A、AB）")
+    status        = Column(String(20), nullable=False, default="counting", server_default="counting")
+    note          = Column(Text, nullable=True)
+    line_count    = Column(Integer, nullable=False, default=0, server_default="0")
+    diff_count    = Column(Integer, nullable=False, default=0, server_default="0", comment="有差異的品項數（核准時）")
+    gain_amount   = Column(Numeric(16, 2), nullable=False, default=0, server_default="0")
+    loss_amount   = Column(Numeric(16, 2), nullable=False, default=0, server_default="0")
+    created_by    = Column(String(100), nullable=True)
+    created_at    = Column(DateTime, nullable=False, server_default=func.now())
+    submitted_by  = Column(String(100), nullable=True)
+    submitted_at  = Column(DateTime, nullable=True)
+    approved_by   = Column(String(100), nullable=True)
+    approved_at   = Column(DateTime, nullable=True)
+    closed_by     = Column(String(100), nullable=True, comment="退回重盤／取消的人")
+    closed_at     = Column(DateTime, nullable=True)
+    close_reason  = Column(Text, nullable=True)
+    updated_at    = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        Index("ix_stock_counts_company_period", "company_code", "period"),
+        Index("ix_stock_counts_wh_status", "warehouse_id", "status"),
+    )
+
+
+class StockCountLine(CyclePurchaseBase):
+    __tablename__ = "stock_count_lines"
+
+    id            = Column(Integer, primary_key=True, autoincrement=True)
+    count_id      = Column(Integer, ForeignKey("stock_counts.id", ondelete="CASCADE"), nullable=False, index=True)
+    item_id       = Column(Integer, ForeignKey("cycle_purchase_items.id", ondelete="RESTRICT"), nullable=False)
+    book_qty      = Column(Numeric(14, 4), nullable=False, default=0, comment="帳面數（產生時快照）")
+    book_avg_cost = Column(Numeric(14, 4), nullable=False, default=0, comment="帳面平均單價（快照）")
+    counted_qty   = Column(Numeric(14, 4), nullable=True, comment="實盤數；NULL＝尚未盤")
+    counted_by    = Column(String(100), nullable=True)
+    counted_at    = Column(DateTime, nullable=True)
+    added_manually = Column(Boolean, nullable=False, default=False, server_default="false", comment="盤點時才加入的料號")
+    unit_cost     = Column(Numeric(14, 4), nullable=True, comment="盤盈虧計價單價（核准時）")
+    adj_qty       = Column(Numeric(14, 4), nullable=True, comment="盤盈虧數量＝實盤−帳面（核准時）")
+    adj_amount    = Column(Numeric(16, 2), nullable=True)
+    note          = Column(Text, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("count_id", "item_id", name="uq_stock_count_line_item"),
+    )
+
+
+class StockPeriod(CyclePurchaseBase):
+    """月結紀錄：公司 × 月份。已月結的月份不能再有任何異動（新增、作廢都不行），更正請在下個月開單。"""
+    __tablename__ = "stock_periods"
+
+    id             = Column(Integer, primary_key=True, autoincrement=True)
+    company_code   = Column(String(10), nullable=False)
+    period         = Column(String(7), nullable=False, comment="YYYY-MM")
+    status         = Column(String(20), nullable=False, default="closed", comment="closed／open（反月結後）")
+    closed_by      = Column(String(100), nullable=True)
+    closed_at      = Column(DateTime, nullable=True)
+    revalue_count  = Column(Integer, nullable=False, default=0, server_default="0", comment="月結時寫入的成本調整筆數")
+    revalue_amount = Column(Numeric(16, 2), nullable=False, default=0, server_default="0", comment="成本調整金額合計")
+    reopen_count   = Column(Integer, nullable=False, default=0, server_default="0")
+    reopened_by    = Column(String(100), nullable=True)
+    reopened_at    = Column(DateTime, nullable=True)
+    reopen_reason  = Column(Text, nullable=True)
+    created_at     = Column(DateTime, nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("company_code", "period", name="uq_stock_period_company"),
+    )

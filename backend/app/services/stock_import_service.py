@@ -536,3 +536,171 @@ def mark_before(cp: Session, *, code: str, before: date, user_name: str) -> int:
         l.status, l.status_reason, l.marked_by = "pre_opening", f"開帳前（{before.isoformat()} 之前）不入庫", user_name
         n += 1
     return n
+
+
+# ── 同步後自動重新產生待匯入清單（2026-11-17）─────────────────────────────────
+# 原本要倉管手動按「從 Ragic 資料重新整理」，sync_tool 同步完卻看不到資料，會被誤認為同步失敗。
+# refresh_candidates() 本來就會保留人工確認過的狀態（已匯入／不入庫／開帳前），不會自動入庫，
+# 所以改成這些模組同步成功後自動跑一次；手動按鈕保留。
+# 名稱同時涵蓋 sync_tool.MODULES 與 main.py 的寫法（兩邊日曜清單名稱不同）。
+STOCK_REFRESH_TRIGGERS = frozenset({
+    "Ragic採購單",
+    "核准請款單清單", "核准請款單",
+    "日曜請款單清單", "日曜核准請款單清單", "日曜核准請款單",
+    "台中核准請款單清單", "台中核准請款單",
+})
+
+
+def refresh_after_sync(module_name: str) -> Optional[dict]:
+    """同步模組跑完後呼叫：模組在 STOCK_REFRESH_TRIGGERS 才重新產生三家公司的待匯入清單。
+
+    每家公司獨立 session、各自 commit；任何錯誤只記 log 不往外丟，不能讓同步本身被判失敗。
+    回傳 {公司代碼: stats 或 {"error": ...}}；不需處理的模組回傳 None。
+    """
+    if module_name not in STOCK_REFRESH_TRIGGERS:
+        return None
+    import logging
+    from app.core.cycle_purchase_database import CyclePurchaseSessionLocal
+    from app.core.database import SessionLocal
+
+    log = logging.getLogger(__name__)
+    out: dict = {}
+    for code in COMPANY_MAIN:
+        main, cp = SessionLocal(), CyclePurchaseSessionLocal()
+        try:
+            out[code] = refresh_candidates(main, cp, code)
+            cp.commit()
+        except Exception as exc:  # noqa: BLE001
+            cp.rollback()
+            out[code] = {"error": str(exc)}
+            log.warning("[StockImport] %s 同步後重新產生待匯入清單失敗（%s）：%s", module_name, code, exc)
+        finally:
+            main.close()
+            cp.close()
+    return out
+
+
+# ── Ragic 來源單據附件（2026-11-17，進貨匯入 Drawer「附件」）──────────────────
+# Ragic 檔案欄位值格式為「10 碼亂數@檔名」（例：je2eCrRqM5@20261105_竣鑫_消防撒水工程報價單.pdf），
+# 欄位名稱各部門不同（檔案上傳／附件上傳／上傳檔案…），所以依值的格式辨識，不寫死欄位名。
+# 下載網址與報修模組相同（ragic_data_service.parse_images）：sims/file.jsp，瀏覽器需已登入 Ragic。
+RAGIC_FILE_URL = "https://ap12.ragic.com/sims/file.jsp"
+_FILE_TOKEN_RE = re.compile(r"^([A-Za-z0-9]{10})@(.+)$")
+_IMAGE_EXT = {"jpg", "jpeg", "png", "gif", "bmp", "webp", "heic", "heif"}
+# 「aaaaaaaaaa@gmail.com」這類 email 也符合「10 碼@…」，@ 後面像網域就排除
+_DOMAIN_RE = re.compile(r"^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.(com|net|org|edu|gov|tw|cn|jp|hk|io|co|biz|info)(\.[a-z]{2})?$", re.I)
+
+
+def extract_attachments(raw: dict) -> list[dict]:
+    """從 Ragic 原始 JSON（含子表）找出附件，回傳 [{field, filename, url, is_image}]（依出現順序、去重）。"""
+    from urllib.parse import quote
+
+    out: list[dict] = []
+    seen: set[str] = set()
+
+    def take(field: str, v: Any) -> None:
+        if isinstance(v, list):
+            for x in v:
+                take(field, x)
+            return
+        if v is None or isinstance(v, dict) or "mail" in field.lower() or "信箱" in field:
+            return
+        for part in str(v).split("\n"):
+            p = part.strip()
+            m = _FILE_TOKEN_RE.match(p)
+            if not m or p in seen:
+                continue
+            seen.add(p)
+            name = m.group(2).strip()
+            if _DOMAIN_RE.match(name):
+                continue
+            ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+            out.append({"field": field, "filename": name, "is_image": ext in _IMAGE_EXT,
+                        "url": f"{RAGIC_FILE_URL}?a=soutlet001&f={quote(p)}"})
+
+    for k, v in (raw or {}).items():
+        if k.startswith("_subtable_") and isinstance(v, dict):
+            for row in v.values():
+                if isinstance(row, dict):
+                    for k2, v2 in row.items():
+                        if not str(k2).startswith("_"):
+                            take(str(k2), v2)
+        elif not k.startswith("_"):
+            take(k, v)
+    return out
+
+
+def _source_model(code: str, source_type: str):
+    return RagicPurchaseOrder if source_type == "ragic_po" else CLAIM_MODELS[code][0]
+
+
+def _pr_model(code: str):
+    from app.models.nichiyo_purchase_request import NichiyoPurchaseRequest
+    from app.models.purchase_request import ApprovedPurchaseRequest
+    from app.models.taichung_purchase_request import TaichungPurchaseRequest
+    return {"CH": ApprovedPurchaseRequest, "OU": NichiyoPurchaseRequest, "HO": TaichungPurchaseRequest}[code]
+
+
+def _raw_attachments(obj, source: str) -> list[dict]:
+    try:
+        return [{**a, "source": source} for a in extract_attachments(json.loads(obj.raw_data_json or "{}"))]
+    except Exception:
+        return []
+
+
+def attachments_for_line(main: Session, code: str, line: StockImportLine) -> list[dict]:
+    """Drawer 用：來源單據本身的附件；採購單若有「來源請購單號」，再附上該請購單的附件（多半是報價單）。
+
+    目前只有台中採購單有來源請購單號；樂群／日曜待 Ragic 補連結欄位（SPEC D21）後自動適用。
+    每筆加 source：「採購單 樂營採00014」「請購單 台資購-…」「請款單 …」。
+    """
+    obj = main.get(_source_model(code, line.source_type), line.source_db_id) if line.source_db_id else None
+    if not obj:
+        return []
+    label = "採購單" if line.source_type == "ragic_po" else "請款單"
+    out = _raw_attachments(obj, f"{label} {line.doc_no or ''}".strip())
+    pr_no = getattr(obj, "source_pr_no", None) if line.source_type == "ragic_po" else None
+    if pr_no:
+        model = _pr_model(code)
+        pr = main.query(model).filter(model.purchase_no == pr_no).first()
+        if pr:
+            seen = {a["url"] for a in out}
+            out += [a for a in _raw_attachments(pr, f"請購單 {pr_no}") if a["url"] not in seen]
+    return out
+
+
+def attachment_counts(main: Session, code: str, lines: list) -> dict[int, int]:
+    """清單用：每列來源單據的附件數（同一張單只解析一次，只讀 raw_data_json 欄）。"""
+    by_type: dict[str, set[int]] = {}
+    for l in lines:
+        if l.source_db_id:
+            by_type.setdefault(l.source_type, set()).add(l.source_db_id)
+    def n_of(raw_json) -> int:
+        try:
+            return len(extract_attachments(json.loads(raw_json or "{}")))
+        except Exception:
+            return 0
+
+    per_src: dict[tuple[str, int], int] = {}
+    po_pr: dict[int, str] = {}                      # 採購單 id → 來源請購單號（與 attachments_for_line 一致，請購單附件也算）
+    for st, ids in by_type.items():
+        model = _source_model(code, st)
+        id_list = list(ids)
+        for i in range(0, len(id_list), 500):
+            chunk = id_list[i:i + 500]
+            if st == "ragic_po":
+                for sid, raw_json, pr_no in (main.query(model.id, model.raw_data_json, model.source_pr_no)
+                                             .filter(model.id.in_(chunk)).all()):
+                    per_src[(st, sid)] = n_of(raw_json)
+                    if pr_no:
+                        po_pr[sid] = pr_no
+            else:
+                for sid, raw_json in main.query(model.id, model.raw_data_json).filter(model.id.in_(chunk)).all():
+                    per_src[(st, sid)] = n_of(raw_json)
+    if po_pr:
+        prm = _pr_model(code)
+        pr_n = {no: n_of(rj) for no, rj in main.query(prm.purchase_no, prm.raw_data_json)
+                .filter(prm.purchase_no.in_(list(set(po_pr.values())))).all()}
+        for sid, no in po_pr.items():
+            per_src[("ragic_po", sid)] = per_src.get(("ragic_po", sid), 0) + pr_n.get(no, 0)
+    return {l.id: per_src.get((l.source_type, l.source_db_id), 0) for l in lines}

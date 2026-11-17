@@ -174,6 +174,9 @@ PERMISSION_DEFINITIONS = [
     {"key": "stock_issue_create",         "label": "領用單",         "group": "庫存管理"},
     {"key": "stock_issue_approve",        "label": "領用單：核准",     "group": "庫存管理"},
     {"key": "stock_issue_post",           "label": "領用單：發料過帳／調撥／報廢", "group": "庫存管理"},
+    {"key": "stock_count_execute",        "label": "盤點",           "group": "庫存管理"},
+    {"key": "stock_count_review",         "label": "盤點：產生／審核盤盈虧", "group": "庫存管理"},
+    {"key": "stock_period_close",         "label": "月結",           "group": "庫存管理"},
     # 庫存可見公司（比照週採方案 B：勾哪家看哪家；系統管理員看全部）
     {"key": "stock_company_ch", "label": "庫存可見公司：春大直", "group": "庫存管理"},
     {"key": "stock_company_ou", "label": "庫存可見公司：日曜",   "group": "庫存管理"},

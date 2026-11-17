@@ -26,7 +26,8 @@ from app.core.time import twnow
 from app.models.cycle_purchase_item import CyclePurchaseItem
 from app.models.cycle_purchase_reference import CyclePurchaseCostCenter, CyclePurchaseDepartment
 from app.models.stock import (
-    RESERVING_STATUSES, StockBalance, StockIssue, StockIssueLine, StockItemSetting, StockWarehouse,
+    RESERVING_STATUSES, StockBalance, StockIssue, StockIssueLine, StockIssueTemplate, StockIssueTemplateLine,
+    StockItemSetting, StockWarehouse,
 )
 from app.services import stock_service as svc
 from app.services.stock_service import StockError, _d
@@ -97,10 +98,14 @@ def _cost_center_snapshot(db: Session, code: str, cc_id: Optional[int]) -> Optio
 
 # ── 可領用量／可退量 ─────────────────────────────────────────────────────────
 
-def available_items(db: Session, warehouse_id: int, keyword: Optional[str] = None, limit: int = 500) -> list[dict]:
+def available_items(db: Session, warehouse_id: int, keyword: Optional[str] = None, limit: int = 500,
+                    include_zero: bool = False) -> list[dict]:
+    """include_zero：連目前可用量為 0 的料號也列出（列印 QR 標籤用，Phase 4b）。"""
     q = (db.query(StockBalance, CyclePurchaseItem)
          .join(CyclePurchaseItem, CyclePurchaseItem.id == StockBalance.item_id)
-         .filter(StockBalance.warehouse_id == warehouse_id, StockBalance.qty - StockBalance.reserved_qty > 0))
+         .filter(StockBalance.warehouse_id == warehouse_id))
+    if not include_zero:
+        q = q.filter(StockBalance.qty - StockBalance.reserved_qty > 0)
     if keyword:
         kw = f"%{keyword.strip()}%"
         q = q.filter((CyclePurchaseItem.item_code.ilike(kw)) | (CyclePurchaseItem.item_name.ilike(kw))
@@ -389,3 +394,54 @@ def void(db: Session, doc: StockIssue, reason: str, user_name: str) -> StockIssu
 
 def is_reserving(doc: StockIssue) -> bool:
     return doc.doc_type == "issue" and doc.status in RESERVING_STATUSES
+
+
+# ── 領用範本（Phase 4b）────────────────────────────────────────────────────────
+
+def template_out(db: Session, t: StockIssueTemplate) -> dict:
+    bal = {b.item_id: b for b in db.query(StockBalance).filter(StockBalance.warehouse_id == t.warehouse_id).all()}
+    lines = []
+    for l, it in (db.query(StockIssueTemplateLine, CyclePurchaseItem)
+                  .join(CyclePurchaseItem, CyclePurchaseItem.id == StockIssueTemplateLine.item_id)
+                  .filter(StockIssueTemplateLine.template_id == t.id)
+                  .order_by(StockIssueTemplateLine.sort_order, StockIssueTemplateLine.id).all()):
+        b = bal.get(it.id)
+        lines.append({"item_id": it.id, "item_code": it.item_code, "item_name": it.item_name, "spec": it.spec,
+                      "unit": it.unit, "qty": float(l.qty),
+                      "available": float(_d(b.qty) - _d(b.reserved_qty)) if b else 0.0})
+    return {"id": t.id, "warehouse_id": t.warehouse_id, "name": t.name, "note": t.note, "lines": lines,
+            "created_by": t.created_by, "created_by_user_id": t.created_by_user_id, "updated_by": t.updated_by,
+            "updated_at": t.updated_at.strftime("%Y-%m-%d %H:%M") if t.updated_at else None}
+
+
+def save_template(db: Session, *, tpl: Optional[StockIssueTemplate], code: str, warehouse: StockWarehouse, name: str,
+                  note: Optional[str], lines: list[tuple[int, Decimal]], user_name: str, user_id: str) -> StockIssueTemplate:
+    name = (name or "").strip()
+    if not name:
+        raise StockError("請輸入範本名稱")
+    if not lines:
+        raise StockError("範本至少要有一筆料號")
+    ids = [i for i, _ in lines]
+    if len(set(ids)) != len(ids):
+        raise StockError("同一個範本不可重複料號")
+    if any(_d(q) <= 0 for _, q in lines):
+        raise StockError("數量必須大於 0")
+    _items(db, code, ids)
+    dup = (db.query(StockIssueTemplate.id).filter(StockIssueTemplate.warehouse_id == warehouse.id,
+                                                  StockIssueTemplate.name == name))
+    if tpl is not None:
+        dup = dup.filter(StockIssueTemplate.id != tpl.id)
+    if dup.first():
+        raise StockError(f"這個倉已有名為「{name}」的範本")
+    if tpl is None:
+        tpl = StockIssueTemplate(company_code=code, warehouse_id=warehouse.id, created_by=user_name,
+                                 created_by_user_id=user_id)
+        db.add(tpl)
+    tpl.name, tpl.note, tpl.updated_by = name, (note or "").strip() or None, user_name
+    tpl.warehouse_id = warehouse.id
+    db.flush()
+    db.query(StockIssueTemplateLine).filter(StockIssueTemplateLine.template_id == tpl.id).delete(synchronize_session=False)
+    for i, (item_id, qty) in enumerate(lines):
+        db.add(StockIssueTemplateLine(template_id=tpl.id, item_id=item_id, qty=_d(qty), sort_order=i))
+    db.flush()
+    return tpl

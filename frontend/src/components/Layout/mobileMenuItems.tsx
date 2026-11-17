@@ -10,7 +10,7 @@
  *    都不需要更動，手機版的可見範圍自動與桌面版一致。
  */
 import React from 'react'
-import { AuditOutlined, ToolOutlined } from '@ant-design/icons'
+import { AuditOutlined, InboxOutlined, ToolOutlined } from '@ant-design/icons'
 
 export interface MobileNavItem {
   /** 路由（必須以 /m 開頭） */
@@ -33,5 +33,12 @@ export const mobileNavItems: MobileNavItem[] = [
     label: '稽核檢查',
     icon: <AuditOutlined />,
     permissionKey: 'audit_check_view',
+  },
+  {
+    // 2026-11-17 庫存管理 Phase 4b：手機領用（沿用桌面 key；倉管走桌面版）
+    key: '/m/stock/issue',
+    label: '領用',
+    icon: <InboxOutlined />,
+    permissionKey: 'stock_issue_create',
   },
 ]

@@ -7,13 +7,14 @@
  *   - 調撥／報廢：倉管開單即過帳（D29），可作廢（反向異動）
  * 資料範圍（D27）：開單者只看所屬部門的倉；倉管（stock_issue_post）看同公司全部
  * 單位成本與金額只給倉管、庫存檢視者看（後端已遮蔽）
+ * Phase 4b（2026-11-17）：領用範本（開單時套用／存成範本）、列印料號 QR 標籤（掃描開手機領用頁 /m/stock/issue）
  */
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Alert, Button, Card, Col, DatePicker, Descriptions, Drawer, Dropdown, Empty, Input, InputNumber, Modal, Row, Select,
   Space, Statistic, Switch, Table, Tag, Typography, message,
 } from 'antd'
-import { DeleteOutlined, DownOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons'
+import { DeleteOutlined, DownOutlined, PlusOutlined, QrcodeOutlined, ReloadOutlined, SaveOutlined, SnippetsOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import dayjs, { type Dayjs } from 'dayjs'
 import StandardRangePicker, { type StandardRange } from '@/components/StandardRangePicker'
@@ -21,8 +22,10 @@ import {
   approveIssue, cancelIssue, createIssue, errMsg, fetchAvailable, fetchIssue, fetchIssueCostCenters, fetchIssueMeta,
   fetchIssueSummary, fetchIssues, fetchReturnable, postIssue, rejectIssue, submitIssue, updateIssue, voidIssue,
   type AvailableItem, type IssueAction, type IssueDoc, type IssueDocType, type IssueInput, type IssueMeta,
-  type IssueSummary, type ReturnableLine,
+  type IssueSummary, type IssueTemplate, type ReturnableLine, fetchIssueTemplates,
 } from '@/api/stock'
+import { SaveTemplateModal, TemplatesModal } from './Templates'
+import QrLabelsModal from './QrLabels'
 import StockCompanySelect, { useStockCompany } from '../StockCompanySelect'
 
 const { Text } = Typography
@@ -65,6 +68,8 @@ function IssueEditor({ code, meta, open, docType, editing, refIssue, onClose, on
   const [returnable, setReturnable] = useState<ReturnableLine[]>([])
   const [ccs, setCcs] = useState<{ id: number; label: string; department_name: string; is_mine: boolean }[]>([])
   const [saving, setSaving] = useState(false)
+  const [templates, setTemplates] = useState<IssueTemplate[]>([])
+  const [saveTplOpen, setSaveTplOpen] = useState(false)
 
   // 初始化
   useEffect(() => {
@@ -88,6 +93,7 @@ function IssueEditor({ code, meta, open, docType, editing, refIssue, onClose, on
     if (!open || !whId || isReturn) { setAvail([]); return }
     fetchAvailable(code, whId).then((r) => setAvail(r.data)).catch((e) => message.error(errMsg(e, '讀取可領料號失敗')))
     if (docType === 'issue') {
+      fetchIssueTemplates(code, whId).then((r) => setTemplates(r.data)).catch(() => setTemplates([]))
       fetchIssueCostCenters(code, whId).then((r) => {
         setCcs(r.data.items)
         if (!editing) setCcId((cur) => cur ?? r.data.default_id ?? undefined)
@@ -109,6 +115,15 @@ function IssueEditor({ code, meta, open, docType, editing, refIssue, onClose, on
   const retMap = useMemo(() => new Map(returnable.map((r) => [r.ref_line_id, r])), [returnable])
   // 草稿修改時，草稿自己的量不算在可用量內（送出才保留）
   const setLine = (key: string, patch: Partial<EditLine>) => setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)))
+
+  const applyTemplate = (id: number) => {
+    const t = templates.find((x) => x.id === id)
+    if (!t) return
+    const ok = t.lines.filter((l) => availMap.has(l.item_id))
+    const miss = t.lines.length - ok.length
+    setLines(ok.map((l) => ({ key: newKey(), item_id: l.item_id, qty: Math.min(l.qty, availMap.get(l.item_id)!.available) })))
+    if (miss) message.warning(`範本中有 ${miss} 筆料號目前沒有可用庫存，已略過`)
+  }
 
   const save = async (then: 'submit' | 'post' | null) => {
     if (!whId) { message.warning('請選擇倉庫'); return }
@@ -178,6 +193,9 @@ function IssueEditor({ code, meta, open, docType, editing, refIssue, onClose, on
       footer={(
         <Space>
           <Button onClick={onClose}>取消</Button>
+          {docType === 'issue' && (
+            <Button icon={<SaveOutlined />} disabled={!whId || !lines.some((l) => l.item_id && (l.qty ?? 0) > 0)}
+              onClick={() => setSaveTplOpen(true)}>存成範本</Button>)}
           <Button loading={saving} onClick={() => save(null)}>存草稿</Button>
           {!keeperOnly && <Button type="primary" loading={saving} onClick={() => save('submit')}>存檔並送出</Button>}
           {keeperOnly && (
@@ -210,6 +228,10 @@ function IssueEditor({ code, meta, open, docType, editing, refIssue, onClose, on
           <Select allowClear showSearch optionFilterProp="label" placeholder="成本中心" style={{ width: 320 }} value={ccId} onChange={setCcId}
             options={ccs.map((c) => ({ value: c.id, label: `${c.label}（${c.department_name}）` }))} />
           <Input placeholder="會科（選填）" style={{ width: 160 }} value={account} onChange={(e) => setAccount(e.target.value)} />
+          {templates.length > 0 && (
+            <Select placeholder="套用領用範本" style={{ width: 200 }} value={null} onChange={(v: number) => applyTemplate(v)}
+              suffixIcon={<SnippetsOutlined />}
+              options={templates.map((t) => ({ value: t.id, label: `${t.name}（${t.lines.length} 項）` }))} />)}
         </Space>
       )}
       <Input.TextArea rows={2} style={{ marginBottom: 12 }} value={purpose} onChange={(e) => setPurpose(e.target.value)}
@@ -224,6 +246,8 @@ function IssueEditor({ code, meta, open, docType, editing, refIssue, onClose, on
             onClick={() => setLines((ls) => [...ls, { key: newKey() }])}>加一筆</Button>
         </>
       )}
+      <SaveTemplateModal code={code} warehouseId={whId} lines={lines} open={saveTplOpen}
+        onClose={() => { setSaveTplOpen(false); if (whId) fetchIssueTemplates(code, whId).then((r) => setTemplates(r.data)).catch(() => undefined) }} />
     </Modal>
   )
 }
@@ -244,6 +268,8 @@ export default function StockIssuesPage() {
   const [reasonFor, setReasonFor] = useState<{ action: 'reject' | 'cancel' | 'void'; doc: IssueDoc } | null>(null)
   const [reason, setReason] = useState('')
   const [postFor, setPostFor] = useState<IssueDoc | null>(null)
+  const [tplOpen, setTplOpen] = useState(false)
+  const [qrOpen, setQrOpen] = useState(false)
   const [postDate, setPostDate] = useState<Dayjs>(dayjs())
   const [busy, setBusy] = useState(false)
 
@@ -348,6 +374,8 @@ export default function StockIssuesPage() {
             <Button type="primary" icon={<PlusOutlined />}>新增 <DownOutlined /></Button>
           </Dropdown>
         )}
+        {meta?.can_create && <Button icon={<SnippetsOutlined />} onClick={() => setTplOpen(true)}>領用範本</Button>}
+        {meta && (meta.can_create || meta.can_post) && <Button icon={<QrcodeOutlined />} onClick={() => setQrOpen(true)}>QR 標籤</Button>}
       </Space>
       {meta && !meta.can_post && meta.my_warehouses.length === 0 && (
         <Alert type="warning" showIcon style={{ marginBottom: 12 }} message="您所屬的部門目前沒有倉庫，無法開領用單。請確認「使用者管理」的部門設定，或請倉管建立部門倉。" />)}
@@ -408,6 +436,8 @@ export default function StockIssuesPage() {
         )}
       </Drawer>
 
+      {meta && <TemplatesModal code={code} meta={meta} open={tplOpen} onClose={() => setTplOpen(false)} />}
+      {meta && <QrLabelsModal code={code} meta={meta} open={qrOpen} onClose={() => setQrOpen(false)} />}
       {meta && editor && (
         <IssueEditor code={code} meta={meta} open docType={editor.type} editing={editor.editing} refIssue={editor.ref}
           onClose={() => setEditor(null)} onDone={(id) => { setEditor(null); afterAction(id) }} />)}

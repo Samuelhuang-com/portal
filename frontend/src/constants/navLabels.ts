@@ -248,6 +248,10 @@ export const NAV_PAGE = {
   stockSettings:                 '庫存主檔設定',        // ← route /stock/settings（2026-11-17，庫存管理 Phase 2）
   stockReceipts:                 '進貨匯入',            // ← route /stock/receipts（2026-11-17，庫存管理 Phase 3）
   stockIssues:                   '領用單',              // ← route /stock/issues（2026-11-17，庫存管理 Phase 4a：領用／退料／調撥／報廢）
+  stockCounts:                   '盤點',                // ← route /stock/counts（2026-11-17，庫存管理 Phase 5）
+  stockMonthlyReport:            '進銷存月報',          // ← route /stock/monthly-report（2026-11-17，庫存管理 Phase 5）
+  stockDashboard:                '儀表板',            // ← route /stock/dashboard（2026-11-17）
+  stockManual:                   '使用須知',            // ← route /stock/manual（2026-11-17，庫存管理使用須知＋流程圖）
 
   // 飯店班表（本地 SQLite 模組，飯店管理 → 飯店班表）
   // ⚠️ 這裡的顯示名稱必須與 role_permissions.py PERMISSION_DEFINITIONS 的 label 一致，

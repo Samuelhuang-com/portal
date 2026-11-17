@@ -3,6 +3,7 @@
  *
  * TAB「待匯入清單」：Ragic 採購單／請款單品項（每一筆都要人工確認才入庫）
  *   - 重新整理：依 Ragic 已同步資料重新產生清單（來源被改／退回會標「來源已異動」，不自動扣庫存，D18）
+ *     2026-11-17 D36：採購單／請款單同步成功後會自動跑一次（stock_import_service.refresh_after_sync），按鈕保留給手動更新
  *   - 勾選 → 確認入庫：選料號（品名對照＋相似度建議）、實收量、單位換算、入庫倉 → 產生進貨單並過帳
  *   - 標記不入庫／開帳前不入庫（D19 可依日期整批）
  * TAB「不入庫」：確認不入庫／開帳前不入庫／已對應採購單的 Ragic 品項（2026-11-17 從待匯入清單拆出），可改回待確認
@@ -11,11 +12,12 @@
  */
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
-  Alert, Button, Card, Checkbox, Col, DatePicker, Descriptions, Drawer, Input, InputNumber, Modal, Popconfirm, Row, Select,
+  Alert, Button, Card, Checkbox, Col, DatePicker, Descriptions, Drawer, Image, Input, InputNumber, Modal, Popconfirm, Row, Select,
   Space, Statistic, Switch, Table, Tabs, Tag, Tooltip, Typography, message,
 } from 'antd'
 import {
-  CheckCircleOutlined, CheckOutlined, FieldTimeOutlined, LinkOutlined, ReloadOutlined, RollbackOutlined, StopOutlined, SyncOutlined,
+  CheckCircleOutlined, CheckOutlined, FieldTimeOutlined, FileOutlined, FilePdfOutlined, LinkOutlined, PaperClipOutlined,
+  ReloadOutlined, RollbackOutlined, StopOutlined, SyncOutlined,
 } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import dayjs, { type Dayjs } from 'dayjs'
@@ -23,7 +25,7 @@ import StandardRangePicker, { type StandardRange } from '@/components/StandardRa
 import {
   ackChange, createReceipt, errMsg, fetchImport, fetchImports, fetchReceipt, fetchReceiptSummary, fetchReceipts,
   fetchStockItems, fetchWarehouses, markBefore, markImports, refreshImports, suggestItems, voidReceipt,
-  type ImportLine, type ImportListResp, type ItemSuggestion, type Receipt, type ReceiptSummary, type StockItem, type Warehouse,
+  type ImportAttachment, type ImportLine, type ImportListResp, type ItemSuggestion, type Receipt, type ReceiptSummary, type StockItem, type Warehouse,
 } from '@/api/stock'
 import { useAuthStore } from '@/stores/authStore'
 import StockCompanySelect, { useStockCompany } from '../StockCompanySelect'
@@ -272,6 +274,12 @@ function ImportsTab({ code, canConfirm, onChanged, mode, version }: {
         <span>{v || '—'}</span>
         <Tooltip title="在 Ragic 開啟"><a href={r.ragic_url} target="_blank" rel="noopener noreferrer" style={{ color: '#4BA8E8' }}
           onClick={(e) => e.stopPropagation()}><LinkOutlined /></a></Tooltip>
+        {!!r.attachment_count && (
+          <Tooltip title={`附件 ${r.attachment_count} 個，點開明細查看`}>
+            <a style={{ color: '#4BA8E8' }} onClick={(e) => { e.stopPropagation(); openDetail(r.id) }}>
+              <PaperClipOutlined />{r.attachment_count > 1 ? <span style={{ fontSize: 11 }}>{r.attachment_count}</span> : null}
+            </a>
+          </Tooltip>)}
       </Space>) },
     { title: '日期', dataIndex: 'doc_date', width: 95, render: (v: string | null) => v || '—' },
     { title: '部門', dataIndex: 'department', width: 90, render: (v: string | null) => v || '—' },
@@ -404,6 +412,15 @@ function ImportsTab({ code, canConfirm, onChanged, mode, version }: {
               <Descriptions.Item label="品名"><b>{detail.product_name || '—'}</b></Descriptions.Item>
               <Descriptions.Item label="金額（未稅）"><b>{money(detail.amount)}</b></Descriptions.Item>
             </Descriptions>
+            {canConfirm && OPEN.includes(detail.status) && detail.source_status === 'ok' && (
+              <Space style={{ marginBottom: 16 }} wrap>
+                <Button type="primary" icon={<CheckCircleOutlined />}
+                  onClick={() => { setDetail(null); setConfirmLines([detail]) }}>確認入庫</Button>
+                <Button danger icon={<StopOutlined />}
+                  onClick={() => { setDetail(null); openMark('non_stock', [detail.id]) }}>確認不入庫</Button>
+                <Button icon={<FieldTimeOutlined />}
+                  onClick={() => { setDetail(null); openMark('pre_opening', [detail.id]) }}>開帳前不入庫</Button>
+              </Space>)}
             <div style={{ fontWeight: 600, marginBottom: 6 }}>明細欄位</div>
             <Descriptions size="small" column={1} bordered style={{ marginBottom: 16 }}>
               {Object.entries(detail.detail ?? {}).map(([k, v]) => (
@@ -411,6 +428,7 @@ function ImportsTab({ code, canConfirm, onChanged, mode, version }: {
                   {!v ? '—' : k.startsWith('金額') || k.startsWith('單價') ? `$${v}` : <span style={{ whiteSpace: 'pre-wrap' }}>{v}</span>}
                 </Descriptions.Item>))}
             </Descriptions>
+            <AttachmentsSection items={detail.attachments ?? []} />
             <div style={{ fontWeight: 600, marginBottom: 6 }}>入庫紀錄</div>
             <Table size="small" rowKey={(r) => `${r.receipt_id}-${r.purchase_qty}`} pagination={false} dataSource={detail.receipts ?? []}
               locale={{ emptyText: '尚未入庫' }}
@@ -542,6 +560,39 @@ export default function StockReceiptsPage() {
           { key: 'receipts', label: '進貨單', children: <ReceiptsTab code={code} canConfirm={canConfirm} version={version} onChanged={changed} /> },
         ]} />
       )}
+    </div>
+  )
+}
+
+/** Drawer「附件」：圖片用 Image.PreviewGroup 燈箱（CLAUDE.md §7），其他檔案（PDF、Word…）另開分頁下載。
+ *  網址是 Ragic sims/file.jsp，瀏覽器需已登入 Ragic 才看得到（與報修模組相同）。 */
+function AttachmentsSection({ items }: { items: ImportAttachment[] }) {
+  const images = items.filter((a) => a.is_image)
+  const files = items.filter((a) => !a.is_image)
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <div style={{ fontWeight: 600, marginBottom: 6 }}><PaperClipOutlined /> 附件（{items.length}）</div>
+      {items.length === 0 ? <Text type="secondary">Ragic 單據沒有附件</Text> : (
+        <>
+          {images.length > 0 && (
+            <Image.PreviewGroup>
+              <Space wrap size={8} style={{ marginBottom: files.length ? 10 : 0 }}>
+                {images.map((a) => (
+                  <Tooltip key={a.url} title={`${a.source}｜${a.filename}`}>
+                    <Image src={a.url} width={96} height={96} style={{ objectFit: 'cover', borderRadius: 4, border: '1px solid #e0e6ed' }}
+                      fallback="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='96' height='96'><rect width='96' height='96' fill='%23f5f5f5'/><text x='48' y='52' font-size='11' text-anchor='middle' fill='%23999'>無法載入</text></svg>" />
+                  </Tooltip>))}
+              </Space>
+            </Image.PreviewGroup>)}
+          {files.map((a) => (
+            <div key={a.url} style={{ padding: '3px 0' }}>
+              <a href={a.url} target="_blank" rel="noopener noreferrer" style={{ color: '#4BA8E8' }}>
+                {a.filename.toLowerCase().endsWith('.pdf') ? <FilePdfOutlined style={{ color: '#e74c3c' }} /> : <FileOutlined />} {a.filename}
+              </a>
+              <Text type="secondary" style={{ fontSize: 12, marginInlineStart: 8 }}>{a.source}</Text>
+            </div>))}
+          <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>需已登入 Ragic 才能開啟</Text>
+        </>)}
     </div>
   )
 }

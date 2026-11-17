@@ -203,6 +203,8 @@ export default function AIAssistant() {
   }, [loading, messages, fetchHistory])
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // 中文輸入法選字時按 Enter 不送出（isComposing / keyCode 229）
+    if (e.nativeEvent.isComposing || e.keyCode === 229) return
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       sendMessage(input)

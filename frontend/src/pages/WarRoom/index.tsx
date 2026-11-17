@@ -79,7 +79,7 @@ function HistoryTab({ getContainer }: { getContainer?: () => HTMLElement }) {
             getPopupContainer={getContainer}
             options={rooms.filter(r => r.startsWith(roomInput.trim())).slice(0, 30).map(r => ({ value: r }))}
             onChange={setRoomInput} onSelect={(v: string) => { setRoomInput(v); goRoom(v) }}
-            onKeyDown={e => { if (e.key === 'Enter') goRoom(roomInput) }}
+            onKeyDown={e => { if (e.key === 'Enter' && !e.nativeEvent.isComposing && e.keyCode !== 229) goRoom(roomInput) }}
           />
           {roomInput && !rooms.includes(roomInput.trim()) && roomInput.trim().length >= 3 && (
             <Text type="secondary" style={{ fontSize: 12 }}>不在 IHG 規範房號清單</Text>

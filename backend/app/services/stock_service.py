@@ -65,15 +65,27 @@ def _apply(bal: StockBalance, qty: Decimal, unit_cost: Optional[Decimal]) -> tup
     return cost, amt
 
 
+def ensure_period_open(db: Session, company_code: str, moved_at: date) -> None:
+    """異動日期所屬月份已月結 → 擋下（Phase 5）。"""
+    from app.models.stock import StockPeriod
+    period = moved_at.strftime("%Y-%m")
+    closed = (db.query(StockPeriod.id).filter(StockPeriod.company_code == company_code, StockPeriod.period == period,
+                                              StockPeriod.status == "closed").first())
+    if closed:
+        raise StockError(f"{period} 已月結，不能再有異動（新增或作廢）；請在下個月開單更正，或請財務反月結")
+
+
 def post_move(
     db: Session, *, warehouse: StockWarehouse, item: CyclePurchaseItem, qty, move_type: str,
     source_type: str, source_id=None, source_no: Optional[str] = None, moved_at: date,
     unit_cost=None, note: Optional[str] = None, user_name: Optional[str] = None,
-    allow_status: Iterable[str] = ("active",), release_reserved=None,
+    allow_status: Iterable[str] = ("active",), release_reserved=None, ignore_reserved: bool = False,
 ) -> StockMove:
     """release_reserved：這筆出庫同時釋放的保留量（領用單發料過帳用，Phase 4）。
     出庫時除了帳上不得為負，扣完後也不得低於「其他單據的保留量」（Phase 4：避免作廢進貨／報廢／調撥
-    把已被領用單保留的數量拿走）。"""
+    把已被領用單保留的數量拿走）。
+    ignore_reserved：盤點調整用（Phase 5）——實物就是這麼多，盤虧可以讓帳上低於保留量（仍不得為負）。
+    已月結的月份不能再有任何異動（Phase 5，§8.6）。"""
     qty = _d(qty).quantize(Q4, ROUND_HALF_UP)
     if qty == 0:
         raise StockError("異動數量不可為 0")
@@ -82,6 +94,7 @@ def post_move(
         raise StockError(f"倉庫「{warehouse.name}」{label}，不能過帳")
     if item.company_code != warehouse.company_code:
         raise StockError(f"料號 {item.item_code} 不屬於倉庫「{warehouse.name}」的公司")
+    ensure_period_open(db, warehouse.company_code, moved_at)
     bal = _lock_balance(db, warehouse.id, item.id)
     if release_reserved is not None:
         rel = _d(release_reserved)
@@ -90,7 +103,7 @@ def post_move(
         bal.reserved_qty = _d(bal.reserved_qty) - rel
     if _d(bal.qty) + qty < 0:
         raise StockError(f"{item.item_code} {item.item_name} 庫存不足：帳上 {_d(bal.qty).normalize():f}，本次扣 {(-qty).normalize():f}")
-    if qty < 0 and _d(bal.qty) + qty < _d(bal.reserved_qty):
+    if qty < 0 and not ignore_reserved and _d(bal.qty) + qty < _d(bal.reserved_qty):
         raise StockError(f"{item.item_code} {item.item_name} 可用量不足：帳上 {_d(bal.qty).normalize():f}，"
                          f"已被領用單保留 {_d(bal.reserved_qty).normalize():f}，本次扣 {(-qty).normalize():f}")
     cost, amt = _apply(bal, qty, None if unit_cost is None else _d(unit_cost))
@@ -102,6 +115,26 @@ def post_move(
         source_id=None if source_id is None else str(source_id), source_no=source_no,
         moved_at=moved_at, period=moved_at.strftime("%Y-%m"), note=note, created_by=user_name,
     )
+    db.add(m)
+    db.flush()
+    return m
+
+
+def post_revalue(db: Session, *, warehouse: StockWarehouse, item: CyclePurchaseItem, amount, moved_at: date,
+                 source_id=None, source_no: Optional[str] = None, note: Optional[str] = None,
+                 user_name: Optional[str] = None) -> Optional[StockMove]:
+    """月結成本調整（Phase 5，D3 月加權平均）：數量 0、只調整金額。不檢查倉庫狀態與月結（由月結流程在標記已月結前呼叫）。"""
+    amt = _d(amount).quantize(Q2, ROUND_HALF_UP)
+    if amt == 0:
+        return None
+    bal = _lock_balance(db, warehouse.id, item.id)
+    bal.amount = _d(bal.amount) + amt
+    q = _d(bal.qty)
+    bal.avg_cost = (_d(bal.amount) / q).quantize(Q4, ROUND_HALF_UP) if q > 0 else _d(bal.avg_cost)
+    m = StockMove(company_code=warehouse.company_code, warehouse_id=warehouse.id, item_id=item.id, qty=0, unit_cost=0,
+                  amount=amt, move_type="cost_revalue", source_type="period_close",
+                  source_id=None if source_id is None else str(source_id), source_no=source_no, moved_at=moved_at,
+                  period=moved_at.strftime("%Y-%m"), note=note, created_by=user_name)
     db.add(m)
     db.flush()
     return m
@@ -152,7 +185,11 @@ def rebuild_balances(db: Session, company_code: str) -> dict:
         if b is None:
             b = acc[key] = StockBalance(warehouse_id=m.warehouse_id, item_id=m.item_id, qty=0, amount=0,
                                         avg_cost=0, reserved_qty=reserved.get(key, 0))
-        _apply(b, _d(m.qty), _d(m.unit_cost) if _d(m.qty) > 0 else None)
+        if _d(m.qty) == 0:   # 月結成本調整：只調金額（Phase 5）
+            b.amount = _d(b.amount) + _d(m.amount)
+            b.avg_cost = (_d(b.amount) / _d(b.qty)).quantize(Q4, ROUND_HALF_UP) if _d(b.qty) > 0 else _d(b.avg_cost)
+        else:
+            _apply(b, _d(m.qty), _d(m.unit_cost) if _d(m.qty) > 0 else None)
         b.last_move_at = m.moved_at if b.last_move_at is None or m.moved_at > b.last_move_at else b.last_move_at
         if _d(b.qty) < 0:
             negative.append(f"倉 {m.warehouse_id} 料號 {m.item_id} 於 {m.moved_at}")

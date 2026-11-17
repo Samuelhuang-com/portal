@@ -19,6 +19,7 @@ export interface Warehouse {
   status: 'active' | 'inactive' | 'counting'
   notes: string | null
   issue_requires_approval: boolean
+  count_blind: boolean
   item_count: number
   amount: number | null
   has_moves: boolean
@@ -30,6 +31,7 @@ export interface WarehouseInput {
   keeper_name?: string | null
   status: 'active' | 'inactive'
   issue_requires_approval?: boolean
+  count_blind?: boolean
   notes?: string | null
 }
 
@@ -194,6 +196,20 @@ export interface ImportLine {
   ragic_id: string
   detail?: Record<string, string>
   receipts?: { receipt_id: number; receipt_no: string; receipt_date: string; status: string; purchase_qty: number; stock_qty: number; unit_cost: number; amount: number; override_reason: string | null }[]
+  /** 清單：來源 Ragic 單據附件數（採購單含來源請購單的附件）（2026-11-17） */
+  attachment_count?: number
+  /** 明細：來源 Ragic 單據附件（2026-11-17） */
+  attachments?: ImportAttachment[]
+}
+
+/** Ragic 單據附件；url 為 Ragic sims/file.jsp，瀏覽器需已登入 Ragic */
+export interface ImportAttachment {
+  field: string
+  filename: string
+  url: string
+  is_image: boolean
+  /** 例：「採購單 樂營採00014」「請購單 台資購-20261030-001」 */
+  source: string
 }
 
 export interface ImportListResp {
@@ -397,8 +413,10 @@ export interface IssueSummary {
 }
 
 export const fetchIssueMeta = (code: string) => apiClient.get<IssueMeta>(`${BASE}/issues/meta`, { params: co(code) })
-export const fetchAvailable = (code: string, warehouse_id: number, keyword?: string) =>
-  apiClient.get<AvailableItem[]>(`${BASE}/issues/available`, { params: { ...co(code), warehouse_id, ...(keyword ? { keyword } : {}) } })
+export const fetchAvailable = (code: string, warehouse_id: number, keyword?: string, include_zero = false) =>
+  apiClient.get<AvailableItem[]>(`${BASE}/issues/available`, {
+    params: { ...co(code), warehouse_id, ...(keyword ? { keyword } : {}), ...(include_zero ? { include_zero: true } : {}) },
+  })
 export const fetchIssueCostCenters = (code: string, warehouse_id?: number) =>
   apiClient.get<{ default_id: number | null; items: { id: number; label: string; department_name: string; is_mine: boolean }[] }>(
     `${BASE}/issues/cost-centers`, { params: { ...co(code), ...(warehouse_id ? { warehouse_id } : {}) } })
@@ -419,8 +437,194 @@ export const cancelIssue = (code: string, id: number, reason?: string) => apiCli
 export const postIssue = (code: string, id: number, post_date?: string) => apiClient.post<IssueRes>(`${BASE}/issues/${id}/post`, { post_date: post_date || null }, { params: co(code) })
 export const voidIssue = (code: string, id: number, reason: string) => apiClient.post<IssueRes>(`${BASE}/issues/${id}/void`, { reason }, { params: co(code) })
 
+// ── Phase 4b（2026-11-17）領用範本 ──────────────────────────────────────────
+export interface IssueTemplate {
+  id: number
+  warehouse_id: number
+  warehouse_name: string
+  name: string
+  note: string | null
+  lines: { item_id: number; item_code: string; item_name: string; spec: string | null; unit: string | null; qty: number; available: number }[]
+  created_by: string | null
+  updated_by: string | null
+  updated_at: string | null
+}
+export interface IssueTemplateInput {
+  warehouse_id: number
+  name: string
+  note?: string | null
+  lines: { item_id: number; qty: number }[]
+}
+export const fetchIssueTemplates = (code: string, warehouse_id?: number) =>
+  apiClient.get<IssueTemplate[]>(`${BASE}/issues/templates`, { params: { ...co(code), ...(warehouse_id ? { warehouse_id } : {}) } })
+export const createIssueTemplate = (code: string, body: IssueTemplateInput) =>
+  apiClient.post<{ id: number; name: string }>(`${BASE}/issues/templates`, body, { params: co(code) })
+export const updateIssueTemplate = (code: string, id: number, body: IssueTemplateInput) =>
+  apiClient.put<{ id: number; name: string }>(`${BASE}/issues/templates/${id}`, body, { params: co(code) })
+export const deleteIssueTemplate = (code: string, id: number) =>
+  apiClient.delete(`${BASE}/issues/templates/${id}`, { params: co(code) })
+
+/** 手機領用頁網址（QR 標籤內容；用手機內建相機掃描即開啟，不需 HTTPS 相機權限） */
+export const mobileIssueUrl = (base: string, code: string, warehouse_id: number, item_code: string) =>
+  `${base.replace(/\/+$/, '')}/m/stock/issue?co=${encodeURIComponent(code)}&wh=${warehouse_id}&item=${encodeURIComponent(item_code)}`
+
+// ── Phase 5（2026-11-17）盤點、月結、進銷存月報 ─────────────────────────────
+export interface StockCountRow {
+  id: number
+  count_no: string
+  warehouse_id: number
+  warehouse_name: string
+  period: string
+  count_date: string
+  cutoff_at: string
+  blind: boolean
+  count_type: 'full' | 'cycle'
+  abc_classes: string | null
+  status: 'counting' | 'submitted' | 'approved' | 'cancelled'
+  status_label: string
+  note: string | null
+  line_count: number
+  counted_count: number | null
+  diff_count: number
+  gain_amount: number | null
+  loss_amount: number | null
+  created_by: string | null
+  created_at: string | null
+  submitted_by: string | null
+  approved_by: string | null
+  approved_at: string | null
+  closed_by: string | null
+  close_reason: string | null
+  can_input: boolean
+  can_review: boolean
+  can_cancel: boolean
+  show_book: boolean
+  lines?: StockCountLineRow[]
+}
+export interface StockCountLineRow {
+  id: number
+  item_id: number
+  item_code: string
+  item_name: string
+  spec: string | null
+  unit: string | null
+  counted_qty: number | null
+  counted_by: string | null
+  note: string | null
+  added_manually: boolean
+  book_qty: number | null
+  diff_qty?: number | null
+  diff_amount?: number | null
+  est_unit_cost?: number
+  needs_recount?: boolean
+  unit_cost?: number | null
+}
+export interface StockPeriodRow {
+  period: string
+  status: 'open' | 'closed'
+  has_moves: boolean
+  closed_by: string | null
+  closed_at: string | null
+  revalue_count: number
+  revalue_amount: number | null
+  reopen_count: number
+  reopened_by: string | null
+  reopen_reason: string | null
+}
+export interface PeriodCheck {
+  ok: boolean
+  problems: string[]
+  warehouses: { warehouse_id: number; warehouse_name: string; need_count: boolean; status: string }[]
+}
+export interface MonthlyReportResp {
+  period: string
+  closed: boolean
+  last_period: string | null
+  columns: { key: string; label: string }[]
+  rows: (Record<string, number | string | null> & {
+    warehouse_id: number; warehouse_name: string; item_id: number; item_code: string; item_name: string; spec: string | null; unit: string | null
+    open_qty: number; open_amt: number; close_qty: number; close_amt: number
+    consume_amt: number; turnover_days: number | null
+  })[]
+}
+type CountRes = { id: number; count_no: string; status: string; status_label: string }
+export const fetchCounts = (code: string, params: { period?: string; status?: string[] } = {}) =>
+  apiClient.get<StockCountRow[]>(`${BASE}/counts`, { params: { ...co(code), ...params }, ...LIST_PARAMS })
+export const createCounts = (code: string, body: { warehouse_ids: number[]; count_date: string; note?: string | null; abc_classes?: string[] | null }) =>
+  apiClient.post<{ created: { id: number; count_no: string; warehouse_name: string; line_count: number }[]; errors: string[] }>(
+    `${BASE}/counts`, body, { params: co(code) })
+export const fetchCount = (code: string, id: number) => apiClient.get<StockCountRow>(`${BASE}/counts/${id}`, { params: co(code) })
+export const saveCountEntries = (code: string, id: number, entries: { item_id: number; counted_qty: number | null; note?: string | null }[]) =>
+  apiClient.put<{ saved: number }>(`${BASE}/counts/${id}/entries`, { entries }, { params: co(code) })
+export const searchCountItems = (code: string, id: number, keyword: string) =>
+  apiClient.get<{ item_id: number; item_code: string; item_name: string; spec: string | null; unit: string | null }[]>(
+    `${BASE}/counts/${id}/item-search`, { params: { ...co(code), keyword } })
+export const addCountItem = (code: string, id: number, item_id: number) =>
+  apiClient.post<{ line_id: number }>(`${BASE}/counts/${id}/items`, { item_id }, { params: co(code) })
+export const submitCount = (code: string, id: number, fill_zero: boolean) =>
+  apiClient.post<CountRes>(`${BASE}/counts/${id}/submit`, { fill_zero }, { params: co(code) })
+export const returnCount = (code: string, id: number, reason: string, item_ids?: number[]) =>
+  apiClient.post<CountRes>(`${BASE}/counts/${id}/return`, { reason, item_ids: item_ids?.length ? item_ids : null }, { params: co(code) })
+export const approveCount = (code: string, id: number) => apiClient.post<CountRes>(`${BASE}/counts/${id}/approve`, null, { params: co(code) })
+export const cancelCount = (code: string, id: number, reason?: string) =>
+  apiClient.post<CountRes>(`${BASE}/counts/${id}/cancel`, { reason: reason || null }, { params: co(code) })
+export const fetchPeriods = (code: string) => apiClient.get<StockPeriodRow[]>(`${BASE}/periods`, { params: co(code) })
+export const checkPeriod = (code: string, period: string) => apiClient.get<PeriodCheck>(`${BASE}/periods/${period}/check`, { params: co(code) })
+export const closePeriod = (code: string, period: string) => apiClient.post<StockPeriodRow>(`${BASE}/periods/${period}/close`, null, { params: co(code) })
+export const reopenPeriod = (code: string, period: string, reason: string) =>
+  apiClient.post<StockPeriodRow>(`${BASE}/periods/${period}/reopen`, { reason }, { params: co(code) })
+export const fetchMonthlyReport = (code: string, period: string, warehouse_id?: number) =>
+  apiClient.get<MonthlyReportResp>(`${BASE}/monthly-report`, { params: { ...co(code), period, ...(warehouse_id ? { warehouse_id } : {}) } })
+
+// ── Phase 7（2026-11-17）ABC 建議、補貨建議 ─────────────────────────────────
+export interface AbcRow {
+  item_id: number; item_code: string; item_name: string; spec: string | null; unit: string | null
+  consume_amount: number; share: number; cum_share: number; current: string | null; suggested: 'A' | 'B' | 'C'
+}
+export interface ReplenishRow {
+  warehouse_id: number; warehouse_name: string; department_name: string | null
+  item_id: number; item_code: string; item_name: string; spec: string | null; unit: string | null
+  qty: number; reserved_qty: number; available: number; min_stock: number; max_stock: number | null
+  suggest_qty: number; purchase_unit: string | null; unit_ratio: number; suggest_purchase_qty: number
+  monthly_use: number; days_left: number | null; avg_cost: number; est_amount: number; vendor_name: string | null
+}
+export const fetchAbcSuggest = (code: string, days = 90) =>
+  apiClient.get<{ days: number; rows: AbcRow[] }>(`${BASE}/items/abc-suggest`, { params: { ...co(code), days } })
+export const applyAbc = (code: string, items: { item_id: number; abc_class: string | null }[]) =>
+  apiClient.post<{ updated: number }>(`${BASE}/items/abc-apply`, { items }, { params: co(code) })
+export const fetchReplenishment = (code: string, warehouse_id?: number, days = 90) =>
+  apiClient.get<{ days: number; rows: ReplenishRow[] }>(`${BASE}/replenishment`, { params: { ...co(code), days, ...(warehouse_id ? { warehouse_id } : {}) } })
+
 /** axios 錯誤 → 後端 detail 字串 */
 export const errMsg = (e: unknown, fallback: string) => {
   const d = (e as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
   return typeof d === 'string' ? d : fallback
 }
+
+
+// ── Dashboard（2026-11-17，SPEC §12.1）─────────────────────────────────────
+export interface StockDashboardResp {
+  company: string
+  anchor: string
+  data_end: string | null
+  filters: { warehouse_id: number | null; department_id: string | null; start: string; end: string }
+  import: { pending: number; changed: number; new_week: { count: number; amount: number | null }; new_month: { count: number; amount: number | null } }
+  receipts: { week: { count: number; stock_qty: number; amount: number | null }; month: { count: number; stock_qty: number; amount: number | null }; period: { count: number; stock_qty: number; amount: number | null } }
+  issues: { week: { count: number; amount: number | null }; month: { count: number; amount: number | null }; period: { count: number; amount: number | null }; pending_approval: number; pending_post: number }
+  categories: { stock_categories: number }
+  counts: { period: string; tables: number; by_status: Record<string, number>; lines: number; diff: number; gain_amount: number | null; loss_amount: number | null }
+  balance: { amount: number | null; items: number; low: number; dead: number; negative: number; dead_days: number }
+  period_close: { prev_period: string; prev_closed: boolean; last_closed: string | null }
+  three_way_diff: number | null
+  meta: { cost_visible: boolean; review_visible: boolean }
+}
+
+export interface StockDashboardParams {
+  start?: string
+  end?: string
+  warehouse_id?: number
+  department_id?: string
+}
+
+export const fetchStockDashboard = (code: string, params: StockDashboardParams = {}) =>
+  apiClient.get<StockDashboardResp>(`${BASE}/dashboard`, { params: { ...co(code), ...params } })

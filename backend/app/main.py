@@ -669,13 +669,20 @@ def _seed_menu_config_stock():
     from sqlalchemy import text
 
     CHILDREN = [
+        # Dashboard（2026-11-17）：放最前；NULL 交前端 permissionKeys（任一庫存權限）
+        ("/stock/dashboard", 5, None),
         ("/stock/balance", 10, "stock_balance_view"),
         # Phase 3（2026-11-17）；permission_key 留 NULL：前端用 permissionKeys（查看 OR 確認入庫）
         ("/stock/receipts", 20, None),
         # Phase 4a（2026-11-17）；permission_key 留 NULL：前端用 permissionKeys（開單 OR 核准 OR 倉管）
         ("/stock/issues", 30, None),
+        # Phase 5（2026-11-17）：盤點（執行 OR 審核，NULL 交前端 permissionKeys）、進銷存月報
+        ("/stock/counts", 40, None),
+        ("/stock/monthly-report", 15, "stock_balance_view"),
         # permission_key 留 NULL：前端用 permissionKeys（庫存主檔設定 OR 期初開帳）
         ("/stock/settings", 80, None),
+        # 使用須知（2026-11-17）：放最下方；NULL 交前端 permissionKeys（任一庫存權限）
+        ("/stock/manual", 90, None),
     ]
 
     with engine.connect() as conn:
@@ -989,6 +996,12 @@ async def _run_and_log(
     else:
         fetched, upserted, errors = _parse_sync_result(result or {})
         status = "success" if not errors else "partial"
+        # 庫存管理（2026-11-17）：採購單／請款單同步成功後自動重新產生進貨匯入待匯入清單（非相關模組直接略過）
+        try:
+            from app.services.stock_import_service import refresh_after_sync
+            await asyncio.to_thread(refresh_after_sync, module_name)
+        except Exception as hook_exc:  # noqa: BLE001
+            print(f"[AutoSync][Stock] {module_name} 重新產生待匯入清單失敗：{hook_exc}")
 
     log_id = None
     db = SessionLocal()

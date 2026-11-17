@@ -230,15 +230,24 @@ export const menuItems: MenuItem[] = [
     icon: <InboxOutlined />,
     label: NAV_GROUP.stock,
     permissionKeys: ['stock_balance_view', 'stock_settings_manage', 'stock_opening_manage', 'stock_receipt_view', 'stock_receipt_confirm',
-      'stock_issue_create', 'stock_issue_approve', 'stock_issue_post'],
+      'stock_issue_create', 'stock_issue_approve', 'stock_issue_post', 'stock_count_execute', 'stock_count_review', 'stock_period_close'],
     children: [
+      // Dashboard（2026-11-17）：任一庫存權限都能看，比照使用須知不另立 key
+      { key: '/stock/dashboard', icon: <DashboardOutlined />, label: NAV_PAGE.stockDashboard,
+        permissionKeys: ['stock_balance_view', 'stock_settings_manage', 'stock_opening_manage', 'stock_receipt_view', 'stock_receipt_confirm', 'stock_issue_create', 'stock_issue_approve', 'stock_issue_post', 'stock_count_execute', 'stock_count_review', 'stock_period_close'] },
       { key: '/stock/balance', icon: <TableOutlined />, label: NAV_PAGE.stockBalance, permissionKey: 'stock_balance_view' },
+      { key: '/stock/monthly-report', icon: <FileSearchOutlined />, label: NAV_PAGE.stockMonthlyReport, permissionKey: 'stock_balance_view' },
       { key: '/stock/receipts', icon: <ShoppingCartOutlined />, label: NAV_PAGE.stockReceipts,
         permissionKeys: ['stock_receipt_view', 'stock_receipt_confirm'] },
       { key: '/stock/issues', icon: <SwapOutlined />, label: NAV_PAGE.stockIssues,
         permissionKeys: ['stock_issue_create', 'stock_issue_approve', 'stock_issue_post'] },
+      { key: '/stock/counts', icon: <FileDoneOutlined />, label: NAV_PAGE.stockCounts,
+        permissionKeys: ['stock_count_execute', 'stock_count_review'] },
       { key: '/stock/settings', icon: <SettingOutlined />, label: NAV_PAGE.stockSettings,
-        permissionKeys: ['stock_settings_manage', 'stock_opening_manage'] },
+        permissionKeys: ['stock_settings_manage', 'stock_opening_manage', 'stock_period_close'] },
+      // 使用須知（2026-11-17）：放最下方，任一庫存權限都能看（比照週採使用手冊，不另立 key）
+      { key: '/stock/manual', icon: <BookOutlined />, label: NAV_PAGE.stockManual,
+        permissionKeys: ['stock_balance_view', 'stock_settings_manage', 'stock_opening_manage', 'stock_receipt_view', 'stock_receipt_confirm', 'stock_issue_create', 'stock_issue_approve', 'stock_issue_post', 'stock_count_execute', 'stock_count_review', 'stock_period_close'] },
     ],
   },
   // ── 稽核檢查（財#3 系統建置稽核，2026-09-20 新增）────────────────────────────

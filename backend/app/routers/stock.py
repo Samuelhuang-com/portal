@@ -14,6 +14,9 @@ Phase 3（2026-11-17）進貨匯入：Ragic 採購單／請款單 → 待匯入�
   stock_issue_create     領用單：開領用／退料單（限所屬部門的倉）（Phase 4a）
   stock_issue_approve    領用單：核准（限所屬部門的倉）
   stock_issue_post       領用單：發料過帳／收退料／開調撥、報廢單（倉管，同公司所有倉）
+  stock_count_execute    盤點（限所屬部門的倉）（Phase 5）
+  stock_count_review     盤點：產生盤點表、審核盤盈虧
+  stock_period_close     月結／反月結；進銷存月報用 stock_balance_view
   （Phase 1 的 Ragic 表單關聯已移到 /api/v1/settings/ragic-forms）
 """
 from datetime import date, timedelta
@@ -48,13 +51,15 @@ _any = require_any_permission(VIEW, MANAGE, OPENING, RECEIPT_VIEW, RECEIPT_CONFI
 _receipt_any = require_any_permission(RECEIPT_VIEW, RECEIPT_CONFIRM)
 # 公司選擇器：只開單領用的人也要能選公司（Phase 4a）；其餘主檔查詢仍用 _any
 _company_any = require_any_permission(VIEW, MANAGE, OPENING, RECEIPT_VIEW, RECEIPT_CONFIRM,
-                                      "stock_issue_create", "stock_issue_approve", "stock_issue_post")
+                                      "stock_issue_create", "stock_issue_approve", "stock_issue_post",
+                                      "stock_count_execute", "stock_count_review", "stock_period_close")
 DEAD_DAYS = 90   # D17：90 天無異動＝呆滯料
 MOVE_TYPE_LABEL = {
     "opening": "期初", "opening_void": "期初作廢", "receipt": "進貨", "receipt_void": "進貨作廢",
     "issue": "領用", "return": "退料", "transfer_in": "調撥入", "transfer_out": "調撥出",
     "scrap": "報廢", "count_adjust": "盤點調整",
     "return_void": "退料作廢", "transfer_in_void": "調撥入作廢", "transfer_out_void": "調撥出作廢", "scrap_void": "報廢作廢",
+    "cost_revalue": "月結成本調整",
 }
 
 
@@ -105,6 +110,7 @@ class WarehouseIn(BaseModel):
     keeper_name: Optional[str] = Field(None, max_length=100)
     status: str = Field("active", pattern="^(active|inactive)$")
     issue_requires_approval: bool = False
+    count_blind: bool = True
     notes: Optional[str] = None
 
 
@@ -139,7 +145,7 @@ def list_warehouses(include_inactive: bool = Query(True), ctx: StockContext = De
     return [{
         "id": w.id, "name": w.name, "department_id": w.department_id, "department_name": w.department_name,
         "keeper_name": w.keeper_name, "status": w.status, "notes": w.notes,
-        "issue_requires_approval": bool(w.issue_requires_approval),
+        "issue_requires_approval": bool(w.issue_requires_approval), "count_blind": bool(w.count_blind),
         "item_count": stats.get(w.id, (0, 0))[0], "amount": _f(stats.get(w.id, (0, 0))[1]),
         "has_moves": w.id in moved,
     } for w in whs]
@@ -154,7 +160,7 @@ def create_warehouse(body: WarehouseIn, ctx: StockContext = Depends(stock_contex
     w = StockWarehouse(company_code=ctx.code, name=name, department_id=body.department_id or None,
                        department_name=_dept_name(db, cp, ctx, body.department_id), keeper_name=body.keeper_name,
                        status=body.status, notes=body.notes, created_by=ctx.user_name,
-                       issue_requires_approval=body.issue_requires_approval)
+                       issue_requires_approval=body.issue_requires_approval, count_blind=body.count_blind)
     cp.add(w)
     cp.flush()
     return {"id": w.id}
@@ -176,6 +182,7 @@ def update_warehouse(wid: int, body: WarehouseIn, ctx: StockContext = Depends(st
             raise HTTPException(status_code=409, detail=f"倉庫還有 {left} 個料號有庫存，不能停用（請先調撥或盤點歸零）")
     w.name, w.keeper_name, w.status, w.notes = name, body.keeper_name, body.status, body.notes
     w.issue_requires_approval = body.issue_requires_approval
+    w.count_blind = body.count_blind
     if (body.department_id or None) != w.department_id:
         w.department_id = body.department_id or None
         w.department_name = _dept_name(db, cp, ctx, body.department_id)
@@ -504,7 +511,8 @@ def list_imports(status: list[str] = Query(default=[]), source_type: Optional[st
                  department: Optional[str] = None, keyword: Optional[str] = Query(None, max_length=100),
                  start: Optional[date] = None, end: Optional[date] = None, only_changed: bool = False,
                  limit: int = Query(3000, ge=1, le=10000),
-                 ctx: StockContext = Depends(stock_context), cp: Session = Depends(get_cycle_purchase_db), _=Depends(_receipt_any)):
+                 ctx: StockContext = Depends(stock_context), cp: Session = Depends(get_cycle_purchase_db),
+                 db: Session = Depends(get_db), _=Depends(_receipt_any)):
     base = cp.query(StockImportLine).filter(StockImportLine.company_code == ctx.code)
     q = base
     if status:
@@ -535,7 +543,9 @@ def list_imports(status: list[str] = Query(default=[]), source_type: Optional[st
     depts = sorted({d for (d,) in base.with_entities(StockImportLine.department).distinct().all() if d})
     last = base.with_entities(func.max(StockImportLine.doc_date)).scalar()
     refreshed = base.with_entities(func.max(StockImportLine.refreshed_at)).scalar()
-    return {"total": total, "rows": [_line_out(l) for l in rows], "status_counts": counts, "changed_count": changed,
+    # 2026-11-17：附件數（來源 Ragic 單據的檔案欄位），清單顯示迴紋針 icon 用
+    att = imp.attachment_counts(db, ctx.code, rows)
+    return {"total": total, "rows": [{**_line_out(l), "attachment_count": att.get(l.id, 0)} for l in rows], "status_counts": counts, "changed_count": changed,
             "departments": depts, "data_end": last.isoformat() if last else None,
             "refreshed_at": refreshed.strftime("%Y-%m-%d %H:%M") if refreshed else None}
 
@@ -551,7 +561,7 @@ def refresh_imports(ctx: StockContext = Depends(stock_context), db: Session = De
 
 @router.get("/imports/{line_id}", summary="待匯入品項明細（含 Ragic 來源單頭）")
 def get_import(line_id: int, ctx: StockContext = Depends(stock_context), cp: Session = Depends(get_cycle_purchase_db),
-               _=Depends(_receipt_any)):
+               db: Session = Depends(get_db), _=Depends(_receipt_any)):
     l = cp.query(StockImportLine).get(line_id)
     if not l or l.company_code != ctx.code:
         raise HTTPException(status_code=404, detail="找不到待匯入品項")
@@ -570,6 +580,8 @@ def get_import(line_id: int, ctx: StockContext = Depends(stock_context), cp: Ses
         "金額（未稅）": "" if l.amount is None else f"{float(l.amount):,.2f}", "已匯入量": f"{float(l.imported_qty or 0):g}",
         "狀態": out["status_label"], "狀態說明": l.status_reason or "", "Ragic 來源狀態": out["source_status_label"] or "正常",
     }
+    # 2026-11-17：來源 Ragic 單據的附件（報價單、發票、照片…），Drawer「附件」區塊
+    out["attachments"] = imp.attachments_for_line(db, ctx.code, l)
     return out
 
 
@@ -746,7 +758,7 @@ def void_receipt(rid: int, body: VoidIn, ctx: StockContext = Depends(stock_conte
 # 調撥／報廢（D29）：倉管開單即過帳，不走核准。
 # 單位成本：只給倉管（stock_issue_post）、庫存檢視（stock_balance_view）與系統管理員看。
 
-from app.models.stock import StockIssue, StockIssueLine
+from app.models.stock import StockIssue, StockIssueLine, StockIssueTemplate
 from app.models.user_department import UserDepartment
 from app.services import stock_issue_service as iss
 from app.services.stock_service import _d
@@ -859,12 +871,13 @@ def issues_meta(ctx: StockContext = Depends(stock_context), db: Session = Depend
 
 @router.get("/issues/available", summary="倉庫可領用的料號（可用量 > 0）")
 def issues_available(warehouse_id: int, keyword: Optional[str] = Query(None, max_length=100),
+                     include_zero: bool = Query(False, description="連可用量 0 的料號也列出（列印 QR 標籤用）"),
                      ctx: StockContext = Depends(stock_context), db: Session = Depends(get_db),
                      cp: Session = Depends(get_cycle_purchase_db), _=Depends(_issue_any)):
     w = _warehouse(cp, ctx, warehouse_id)
     if not _in_scope(ctx, _my_dept_ids(db, ctx.user_id), w):
         raise HTTPException(status_code=403, detail="不能使用這個倉庫（不是您所屬部門的倉）")
-    rows = iss.available_items(cp, w.id, keyword)
+    rows = iss.available_items(cp, w.id, keyword, limit=2000 if include_zero else 500, include_zero=include_zero)
     if not _can_see_cost(ctx):
         for r in rows:
             r["avg_cost"] = None
@@ -878,6 +891,90 @@ def issues_cost_centers(warehouse_id: Optional[int] = None, ctx: StockContext = 
     if warehouse_id:
         dept = _warehouse(cp, ctx, warehouse_id).department_id
     return iss.cost_centers(cp, ctx.code, dept)
+
+
+# ── 領用範本（Phase 4b）：開單者可管理自己所屬部門倉的範本；倉管可管理全部 ─────────────
+
+class TemplateLineIn(BaseModel):
+    item_id: int
+    qty: Decimal = Field(..., gt=0)
+
+
+class TemplateIn(BaseModel):
+    warehouse_id: int
+    name: str = Field(..., min_length=1, max_length=100)
+    note: Optional[str] = Field(None, max_length=500)
+    lines: list[TemplateLineIn] = Field(..., min_length=1, max_length=300)
+
+
+def _tpl_guard(ctx: StockContext, db: Session, w: StockWarehouse):
+    if not (ctx.has(ISSUE_CREATE) or ctx.has(ISSUE_POST)):
+        raise HTTPException(status_code=403, detail="沒有管理領用範本的權限")
+    if not _in_scope(ctx, _my_dept_ids(db, ctx.user_id), w):
+        raise HTTPException(status_code=403, detail="只能管理您所屬部門倉庫的範本")
+
+
+@router.get("/issues/templates", summary="領用範本清單（可見倉庫）")
+def list_issue_templates(warehouse_id: Optional[int] = None, ctx: StockContext = Depends(stock_context),
+                         db: Session = Depends(get_db), cp: Session = Depends(get_cycle_purchase_db),
+                         _=Depends(_issue_any)):
+    depts = _my_dept_ids(db, ctx.user_id)
+    whs = {w.id: w for w in cp.query(StockWarehouse).filter(StockWarehouse.company_code == ctx.code).all()}
+    wids = [wid for wid, w in whs.items() if _in_scope(ctx, depts, w)]
+    if warehouse_id:
+        wids = [x for x in wids if x == warehouse_id]
+    rows = (cp.query(StockIssueTemplate).filter(StockIssueTemplate.company_code == ctx.code,
+                                                StockIssueTemplate.warehouse_id.in_(wids or [0]))
+            .order_by(StockIssueTemplate.warehouse_id, StockIssueTemplate.name).all())
+    out = []
+    for t in rows:
+        o = iss.template_out(cp, t)
+        o["warehouse_name"] = whs[t.warehouse_id].name
+        out.append(o)
+    return out
+
+
+@router.post("/issues/templates", summary="新增領用範本")
+def create_issue_template(body: TemplateIn, ctx: StockContext = Depends(stock_context), db: Session = Depends(get_db),
+                          cp: Session = Depends(get_cycle_purchase_db), _=Depends(_issue_any)):
+    w = _warehouse(cp, ctx, body.warehouse_id)
+    _tpl_guard(ctx, db, w)
+    try:
+        t = iss.save_template(cp, tpl=None, code=ctx.code, warehouse=w, name=body.name, note=body.note,
+                              lines=[(l.item_id, l.qty) for l in body.lines], user_name=ctx.user_name, user_id=ctx.user_id)
+    except svc.StockError as e:
+        _business_error(e)
+    return {"id": t.id, "name": t.name}
+
+
+def _tpl(cp: Session, ctx: StockContext, db: Session, tid: int) -> StockIssueTemplate:
+    t = cp.query(StockIssueTemplate).get(tid)
+    if not t or t.company_code != ctx.code:
+        raise HTTPException(status_code=404, detail="找不到範本")
+    _tpl_guard(ctx, db, cp.query(StockWarehouse).get(t.warehouse_id))
+    return t
+
+
+@router.put("/issues/templates/{tid}", summary="修改領用範本")
+def update_issue_template(tid: int, body: TemplateIn, ctx: StockContext = Depends(stock_context), db: Session = Depends(get_db),
+                          cp: Session = Depends(get_cycle_purchase_db), _=Depends(_issue_any)):
+    t = _tpl(cp, ctx, db, tid)
+    w = _warehouse(cp, ctx, body.warehouse_id)
+    _tpl_guard(ctx, db, w)
+    try:
+        iss.save_template(cp, tpl=t, code=ctx.code, warehouse=w, name=body.name, note=body.note,
+                          lines=[(l.item_id, l.qty) for l in body.lines], user_name=ctx.user_name, user_id=ctx.user_id)
+    except svc.StockError as e:
+        _business_error(e)
+    return {"id": t.id, "name": t.name}
+
+
+@router.delete("/issues/templates/{tid}", summary="刪除領用範本（只刪範本，不影響任何單據與庫存）")
+def delete_issue_template(tid: int, ctx: StockContext = Depends(stock_context), db: Session = Depends(get_db),
+                          cp: Session = Depends(get_cycle_purchase_db), _=Depends(_issue_any)):
+    t = _tpl(cp, ctx, db, tid)
+    cp.delete(t)
+    return {"id": tid}
 
 
 @router.get("/issues/summary", summary="領用單 KPI（期間）")
@@ -1116,3 +1213,428 @@ def void_issue(did: int, body: ReasonIn, ctx: StockContext = Depends(stock_conte
     if not (body.reason or "").strip():
         raise HTTPException(status_code=422, detail="請填寫作廢原因")
     return _act(did, "void", ctx, db, cp, lambda d: iss.void(cp, d, body.reason.strip(), ctx.user_name))
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Phase 5（2026-11-17）盤點、盤盈虧、月結、進銷存月報 — SPEC §8.3～§8.6、§9
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# 權限：stock_count_execute 盤點（限所屬部門的倉）／stock_count_review 產生盤點表、審核盤盈虧（全部倉）
+#       stock_period_close 月結／反月結／stock_balance_view 進銷存月報
+# 盲盤（D8）：盤點表 blind＝True 時，只有審核者看得到帳面數與差異。
+
+from app.models.stock import StockCount, StockCountLine, StockPeriod
+from app.services import stock_count_service as cnt
+
+COUNT_EXEC = "stock_count_execute"
+COUNT_REVIEW = "stock_count_review"
+PERIOD_CLOSE = "stock_period_close"
+_count_any = require_any_permission(COUNT_EXEC, COUNT_REVIEW)
+
+
+def _count_see_all(ctx: StockContext) -> bool:
+    return ctx.has(COUNT_REVIEW)
+
+
+def _count_in_scope(ctx: StockContext, depts: set, w: StockWarehouse) -> bool:
+    return _count_see_all(ctx) or (w.department_id is not None and str(w.department_id) in depts)
+
+
+def _count(cp: Session, ctx: StockContext, db: Session, cid: int) -> tuple[StockCount, StockWarehouse]:
+    c = cp.query(StockCount).get(cid)
+    if not c or c.company_code != ctx.code:
+        raise HTTPException(status_code=404, detail="找不到盤點表")
+    w = cp.query(StockWarehouse).get(c.warehouse_id)
+    if not _count_in_scope(ctx, _my_dept_ids(db, ctx.user_id), w):
+        raise HTTPException(status_code=404, detail="找不到盤點表")
+    return c, w
+
+
+def _count_out(c: StockCount, wname: str, ctx: StockContext, counted: Optional[int] = None) -> dict:
+    review = ctx.has(COUNT_REVIEW)
+    return {
+        "id": c.id, "count_no": c.count_no, "warehouse_id": c.warehouse_id, "warehouse_name": wname, "period": c.period,
+        "count_date": c.count_date.isoformat(), "cutoff_at": c.cutoff_at.strftime("%Y-%m-%d %H:%M"), "blind": bool(c.blind),
+        "count_type": c.count_type or "full", "abc_classes": c.abc_classes,
+        "status": c.status, "status_label": cnt.STATUS_LABEL.get(c.status, c.status), "note": c.note,
+        "line_count": c.line_count, "counted_count": counted, "diff_count": c.diff_count,
+        "gain_amount": _f(c.gain_amount) if review else None, "loss_amount": _f(c.loss_amount) if review else None,
+        "created_by": c.created_by, "created_at": c.created_at.strftime("%Y-%m-%d %H:%M") if c.created_at else None,
+        "submitted_by": c.submitted_by, "approved_by": c.approved_by,
+        "approved_at": c.approved_at.strftime("%Y-%m-%d %H:%M") if c.approved_at else None,
+        "closed_by": c.closed_by, "close_reason": c.close_reason,
+        "can_input": c.status == "counting" and (ctx.has(COUNT_EXEC) or review),
+        "can_review": review and c.status == "submitted", "can_cancel": review and c.status in ("counting", "submitted"),
+        "show_book": review or not c.blind,
+    }
+
+
+@router.get("/counts", summary="盤點表清單")
+def list_counts(period: Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}$"), status: Optional[list[str]] = Query(None),
+                ctx: StockContext = Depends(stock_context), db: Session = Depends(get_db),
+                cp: Session = Depends(get_cycle_purchase_db), _=Depends(_count_any)):
+    depts = _my_dept_ids(db, ctx.user_id)
+    whs = {w.id: w for w in cp.query(StockWarehouse).filter(StockWarehouse.company_code == ctx.code).all()}
+    wids = [i for i, w in whs.items() if _count_in_scope(ctx, depts, w)]
+    q = cp.query(StockCount).filter(StockCount.company_code == ctx.code, StockCount.warehouse_id.in_(wids or [0]))
+    if period:
+        q = q.filter(StockCount.period == period)
+    if status:
+        q = q.filter(StockCount.status.in_(status))
+    rows = q.order_by(StockCount.count_date.desc(), StockCount.id.desc()).limit(1000).all()
+    done = dict(cp.query(StockCountLine.count_id, func.count(StockCountLine.id))
+                .filter(StockCountLine.count_id.in_([c.id for c in rows] or [0]), StockCountLine.counted_qty.isnot(None))
+                .group_by(StockCountLine.count_id).all())
+    return [_count_out(c, whs[c.warehouse_id].name, ctx, done.get(c.id, 0)) for c in rows]
+
+
+class CountCreateIn(BaseModel):
+    warehouse_ids: list[int] = Field(..., min_length=1, max_length=200)
+    count_date: date
+    note: Optional[str] = Field(None, max_length=500)
+    abc_classes: Optional[list[str]] = Field(None, description="循環盤點：只盤這些 ABC 類（Phase 7）；空＝月底全盤")
+
+
+@router.post("/counts", summary="產生盤點表（每個倉一張；倉庫改為盤點中、暫停過帳）")
+def create_counts(body: CountCreateIn, ctx: StockContext = Depends(stock_context), cp: Session = Depends(get_cycle_purchase_db),
+                  _=Depends(require_permission(COUNT_REVIEW))):
+    created, errors = [], []
+    for wid in dict.fromkeys(body.warehouse_ids):
+        w = _warehouse(cp, ctx, wid)
+        sp = cp.begin_nested()
+        try:
+            abc = sorted({x for x in (body.abc_classes or []) if x in ("A", "B", "C")}) or None
+            c = cnt.create_count(cp, warehouse=w, count_date=body.count_date, note=body.note, user_name=ctx.user_name,
+                                 abc_classes=abc)
+            sp.commit()
+            created.append({"id": c.id, "count_no": c.count_no, "warehouse_name": w.name, "line_count": c.line_count})
+        except svc.StockError as e:
+            sp.rollback()
+            errors.append(f"{w.name}：{e}")
+    return {"created": created, "errors": errors}
+
+
+@router.get("/counts/{cid}", summary="盤點表明細（盲盤時盤點人看不到帳面數）")
+def get_count(cid: int, ctx: StockContext = Depends(stock_context), db: Session = Depends(get_db),
+              cp: Session = Depends(get_cycle_purchase_db), _=Depends(_count_any)):
+    c, w = _count(cp, ctx, db, cid)
+    rows = (cp.query(StockCountLine, CyclePurchaseItem).join(CyclePurchaseItem, CyclePurchaseItem.id == StockCountLine.item_id)
+            .filter(StockCountLine.count_id == c.id).order_by(CyclePurchaseItem.item_code).all())
+    out = _count_out(c, w.name, ctx, sum(1 for l, _ in rows if l.counted_qty is not None))
+    show_book, review = out["show_book"], ctx.has(COUNT_REVIEW)
+    lines = []
+    for l, it in rows:
+        r = {"id": l.id, "item_id": it.id, "item_code": it.item_code, "item_name": it.item_name, "spec": it.spec, "unit": it.unit,
+             "counted_qty": _f(l.counted_qty), "counted_by": l.counted_by, "note": l.note, "added_manually": bool(l.added_manually),
+             "book_qty": _f(l.book_qty) if show_book else None}
+        if review:
+            v = cnt.line_view(l, it)
+            if c.status == "approved":
+                v["diff_qty"], v["diff_amount"] = _f(l.adj_qty), _f(l.adj_amount)
+            r.update(v)
+            r["unit_cost"] = _f(l.unit_cost)
+        lines.append(r)
+    out["lines"] = lines
+    return out
+
+
+class CountEntryIn(BaseModel):
+    item_id: int
+    counted_qty: Optional[Decimal] = Field(None, ge=0)
+    note: Optional[str] = Field(None, max_length=500)
+
+
+class CountEntriesIn(BaseModel):
+    entries: list[CountEntryIn] = Field(..., min_length=1, max_length=3000)
+
+
+def _count_act(cid, ctx, db, cp, need, fn):
+    c, w = _count(cp, ctx, db, cid)
+    if not ctx.has(need) and not (need == COUNT_EXEC and ctx.has(COUNT_REVIEW)):
+        raise HTTPException(status_code=403, detail="權限不足")
+    try:
+        res = fn(c)
+    except svc.StockError as e:
+        _business_error(e)
+    return res if isinstance(res, dict) else {"id": c.id, "count_no": c.count_no, "status": c.status,
+                                              "status_label": cnt.STATUS_LABEL.get(c.status, c.status)}
+
+
+@router.put("/counts/{cid}/entries", summary="輸入實盤數（counted_qty 留空＝清除）")
+def save_count_entries(cid: int, body: CountEntriesIn, ctx: StockContext = Depends(stock_context), db: Session = Depends(get_db),
+                       cp: Session = Depends(get_cycle_purchase_db), _=Depends(_count_any)):
+    return _count_act(cid, ctx, db, cp, COUNT_EXEC, lambda c: {"saved": cnt.save_counts(
+        cp, c, [(e.item_id, e.counted_qty, e.note) for e in body.entries], ctx.user_name)})
+
+
+@router.get("/counts/{cid}/item-search", summary="盤點加入料號：搜尋本公司料號")
+def count_item_search(cid: int, keyword: str = Query(..., min_length=1, max_length=100), ctx: StockContext = Depends(stock_context),
+                      db: Session = Depends(get_db), cp: Session = Depends(get_cycle_purchase_db), _=Depends(_count_any)):
+    c, _w = _count(cp, ctx, db, cid)
+    kw = f"%{keyword.strip()}%"
+    rows = (cp.query(CyclePurchaseItem).filter(CyclePurchaseItem.company_code == ctx.code, CyclePurchaseItem.is_active.is_(True),
+                                               or_(CyclePurchaseItem.item_code.ilike(kw), CyclePurchaseItem.item_name.ilike(kw)))
+            .order_by(CyclePurchaseItem.item_code).limit(30).all())
+    return [{"item_id": i.id, "item_code": i.item_code, "item_name": i.item_name, "spec": i.spec, "unit": i.unit} for i in rows]
+
+
+class CountAddIn(BaseModel):
+    item_id: int
+
+
+@router.post("/counts/{cid}/items", summary="盤點加入清單外的料號")
+def count_add_item(cid: int, body: CountAddIn, ctx: StockContext = Depends(stock_context), db: Session = Depends(get_db),
+                   cp: Session = Depends(get_cycle_purchase_db), _=Depends(_count_any)):
+    it = _item(cp, ctx, body.item_id)
+    return _count_act(cid, ctx, db, cp, COUNT_EXEC, lambda c: {"line_id": cnt.add_item(cp, c, it, ctx.user_name).id})
+
+
+class CountSubmitIn(BaseModel):
+    fill_zero: bool = False
+
+
+@router.post("/counts/{cid}/submit", summary="送出盤點（待審核）")
+def submit_count(cid: int, body: CountSubmitIn, ctx: StockContext = Depends(stock_context), db: Session = Depends(get_db),
+                 cp: Session = Depends(get_cycle_purchase_db), _=Depends(_count_any)):
+    return _count_act(cid, ctx, db, cp, COUNT_EXEC, lambda c: cnt.submit_count(cp, c, body.fill_zero, ctx.user_name))
+
+
+class CountReturnIn(BaseModel):
+    reason: str = Field(..., min_length=1, max_length=500)
+    item_ids: Optional[list[int]] = None
+
+
+@router.post("/counts/{cid}/return", summary="退回重盤（可只清指定料號）")
+def return_count(cid: int, body: CountReturnIn, ctx: StockContext = Depends(stock_context), db: Session = Depends(get_db),
+                 cp: Session = Depends(get_cycle_purchase_db), _=Depends(require_permission(COUNT_REVIEW))):
+    return _count_act(cid, ctx, db, cp, COUNT_REVIEW,
+                      lambda c: cnt.return_count(cp, c, body.reason.strip(), body.item_ids, ctx.user_name))
+
+
+@router.post("/counts/{cid}/approve", summary="核准盤盈虧（寫盤點調整異動，倉庫恢復啟用）")
+def approve_count(cid: int, ctx: StockContext = Depends(stock_context), db: Session = Depends(get_db),
+                  cp: Session = Depends(get_cycle_purchase_db), _=Depends(require_permission(COUNT_REVIEW))):
+    return _count_act(cid, ctx, db, cp, COUNT_REVIEW, lambda c: cnt.approve_count(cp, c, ctx.user_name))
+
+
+@router.post("/counts/{cid}/cancel", summary="取消盤點（不寫異動，倉庫恢復啟用）")
+def cancel_count(cid: int, body: ReasonIn, ctx: StockContext = Depends(stock_context), db: Session = Depends(get_db),
+                 cp: Session = Depends(get_cycle_purchase_db), _=Depends(require_permission(COUNT_REVIEW))):
+    return _count_act(cid, ctx, db, cp, COUNT_REVIEW,
+                      lambda c: cnt.cancel_count(cp, c, (body.reason or "").strip() or None, ctx.user_name))
+
+
+# ── 月結 ───────────────────────────────────────────────────────────────────────
+
+def _period_out(p: Optional[StockPeriod], period: str, has_moves: bool) -> dict:
+    return {"period": period, "status": p.status if p else "open", "has_moves": has_moves,
+            "closed_by": p.closed_by if p else None,
+            "closed_at": p.closed_at.strftime("%Y-%m-%d %H:%M") if p and p.closed_at else None,
+            "revalue_count": p.revalue_count if p else 0, "revalue_amount": _f(p.revalue_amount) if p else 0,
+            "reopen_count": p.reopen_count if p else 0, "reopened_by": p.reopened_by if p else None,
+            "reopen_reason": p.reopen_reason if p else None}
+
+
+@router.get("/periods", summary="月結狀態（有異動的月份＋已有月結紀錄的月份）")
+def list_periods(ctx: StockContext = Depends(stock_context), cp: Session = Depends(get_cycle_purchase_db),
+                 _=Depends(require_any_permission(PERIOD_CLOSE, VIEW))):
+    moved = {x for (x,) in cp.query(StockMove.period).filter(StockMove.company_code == ctx.code).distinct()}
+    recs = {p.period: p for p in cp.query(StockPeriod).filter(StockPeriod.company_code == ctx.code).all()}
+    return [_period_out(recs.get(x), x, x in moved) for x in sorted(moved | set(recs), reverse=True)]
+
+
+@router.get("/periods/{period}/check", summary="月結前檢查")
+def check_period(period: str, ctx: StockContext = Depends(stock_context), cp: Session = Depends(get_cycle_purchase_db),
+                 _=Depends(require_permission(PERIOD_CLOSE))):
+    if not __import__("re").fullmatch(r"\d{4}-\d{2}", period):
+        raise HTTPException(status_code=422, detail="月份格式為 YYYY-MM")
+    return cnt.close_checks(cp, ctx.code, period)
+
+
+@router.post("/periods/{period}/close", summary="月結（寫月加權平均成本調整、鎖定該月）")
+def close_period(period: str, ctx: StockContext = Depends(stock_context), cp: Session = Depends(get_cycle_purchase_db),
+                 _=Depends(require_permission(PERIOD_CLOSE))):
+    if not __import__("re").fullmatch(r"\d{4}-\d{2}", period):
+        raise HTTPException(status_code=422, detail="月份格式為 YYYY-MM")
+    try:
+        p = cnt.close_period(cp, ctx.code, period, ctx.user_name)
+    except svc.StockError as e:
+        _business_error(e)
+    return _period_out(p, period, True)
+
+
+@router.post("/periods/{period}/reopen", summary="反月結（每個月份限一次，必填原因）")
+def reopen_period(period: str, body: VoidIn, ctx: StockContext = Depends(stock_context),
+                  cp: Session = Depends(get_cycle_purchase_db), _=Depends(require_permission(PERIOD_CLOSE))):
+    try:
+        p = cnt.reopen_period(cp, ctx.code, period, body.reason.strip(), ctx.user_name)
+    except svc.StockError as e:
+        _business_error(e)
+    return _period_out(p, period, True)
+
+
+# ── 進銷存月報 ─────────────────────────────────────────────────────────────────
+
+@router.get("/monthly-report", summary="進銷存月報（料號一列：期初、各類異動、期末；數量＋金額）")
+def monthly_report(period: str = Query(..., pattern=r"^\d{4}-\d{2}$"), warehouse_id: Optional[int] = None,
+                   ctx: StockContext = Depends(stock_context), cp: Session = Depends(get_cycle_purchase_db),
+                   _=Depends(require_permission(VIEW))):
+    whs = cp.query(StockWarehouse).filter(StockWarehouse.company_code == ctx.code).all()
+    wids = [w.id for w in whs if not warehouse_id or w.id == warehouse_id]
+    p = cp.query(StockPeriod).filter(StockPeriod.company_code == ctx.code, StockPeriod.period == period).first()
+    last = cp.query(func.max(StockMove.period)).filter(StockMove.company_code == ctx.code).scalar()
+    return {"period": period, "closed": bool(p and p.status == "closed"), "last_period": last,
+            "columns": [{"key": k, "label": lbl} for k, _t, lbl in cnt.REPORT_COLS],
+            "rows": cnt.monthly_report(cp, ctx.code, period, wids)}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Phase 7（2026-11-17）ABC 分類建議、補貨建議 — SPEC §10
+# ═══════════════════════════════════════════════════════════════════════════
+
+from app.services import stock_insight_service as ins
+
+
+@router.get("/items/abc-suggest", summary="ABC 分類建議（依近 N 天領用淨額）")
+def abc_suggest(days: int = Query(90, ge=30, le=365), ctx: StockContext = Depends(stock_context),
+                cp: Session = Depends(get_cycle_purchase_db), _=Depends(require_permission(MANAGE))):
+    return {"days": days, "rows": ins.abc_suggest(cp, ctx.code, days)}
+
+
+class AbcApplyIn(BaseModel):
+    items: list[dict] = Field(..., min_length=1, max_length=5000, description="[{item_id, abc_class: A/B/C/null}]")
+
+
+@router.post("/items/abc-apply", summary="套用 ABC 分類")
+def abc_apply(body: AbcApplyIn, ctx: StockContext = Depends(stock_context), cp: Session = Depends(get_cycle_purchase_db),
+              _=Depends(require_permission(MANAGE))):
+    mapping = []
+    for x in body.items:
+        cls = x.get("abc_class")
+        if cls not in ("A", "B", "C", None, ""):
+            raise HTTPException(status_code=422, detail="ABC 類別只能是 A、B、C 或空白")
+        mapping.append((int(x["item_id"]), cls or None))
+    return {"updated": ins.apply_abc(cp, ctx.code, mapping, ctx.user_name)}
+
+
+@router.get("/replenishment", summary="補貨建議（可用量低於安全量；只建議、不開單）")
+def replenishment(warehouse_id: Optional[int] = None, days: int = Query(90, ge=30, le=365),
+                  ctx: StockContext = Depends(stock_context), cp: Session = Depends(get_cycle_purchase_db),
+                  _=Depends(require_permission(VIEW))):
+    wids = [w for (w,) in cp.query(StockWarehouse.id).filter(StockWarehouse.company_code == ctx.code).all()
+            if not warehouse_id or w == warehouse_id]
+    return {"days": days, "rows": ins.replenishment(cp, ctx.code, wids, days)}
+
+
+# ── Dashboard（2026-11-17）：SPEC §12.1 ─────────────────────────────────────────
+# 錨點＝庫存異動最後一天（CLAUDE §8.2，不用今天）；本週／本月固定以錨點為終點；
+# 期間（預設＝本月）、倉庫、部門為可選篩選；待匯入清單是公司層級（清單只記部門名稱，不對倉庫）。
+# 金額依 _can_see_cost；盤盈虧金額依 COUNT_REVIEW（與盤點表 API 相同規則）。
+DASHBOARD_ANY = require_any_permission(VIEW, MANAGE, OPENING, RECEIPT_VIEW, RECEIPT_CONFIRM,
+                                       ISSUE_CREATE, ISSUE_APPROVE, ISSUE_POST, COUNT_EXEC, COUNT_REVIEW)
+
+
+def _prev_month(y: int, m: int) -> tuple[int, int]:
+    return (y, m - 1) if m > 1 else (y - 1, 12)
+
+
+@router.get("/dashboard", summary="庫存 Dashboard（SPEC §12.1）")
+def stock_dashboard(start: Optional[date] = None, end: Optional[date] = None,
+                    warehouse_id: Optional[int] = None, department_id: Optional[str] = None,
+                    ctx: StockContext = Depends(stock_context), db: Session = Depends(get_db),
+                    cp: Session = Depends(get_cycle_purchase_db), _=Depends(DASHBOARD_ANY)):
+    depts = _my_dept_ids(db, ctx.user_id)
+    all_wh = cp.query(StockWarehouse).filter(StockWarehouse.company_code == ctx.code).all()
+    wh = [w for w in all_wh if _in_scope(ctx, depts, w)
+          and (warehouse_id is None or w.id == warehouse_id)
+          and (not department_id or w.department_id == department_id)]
+    wids = [w.id for w in wh] or [0]
+    see_cost, see_review = _can_see_cost(ctx), ctx.has(COUNT_REVIEW)
+
+    last_move = cp.query(func.max(StockMove.moved_at)).filter(StockMove.company_code == ctx.code).scalar()
+    anchor = last_move or date.today()
+    week_start = anchor - timedelta(days=anchor.weekday())
+    month_start = anchor.replace(day=1)
+    py, pm = _prev_month(anchor.year, anchor.month)
+    prev_period = f"{py:04d}-{pm:02d}"
+    p_start, p_end = start or month_start, end or anchor
+    win = {"week": (week_start, anchor), "month": (month_start, anchor), "period": (p_start, p_end)}
+
+    def _rcpt(a: date, b: date) -> dict:
+        rs = cp.query(StockReceipt).filter(StockReceipt.company_code == ctx.code, StockReceipt.status == "posted",
+                                           StockReceipt.warehouse_id.in_(wids),
+                                           StockReceipt.receipt_date >= a, StockReceipt.receipt_date <= b).all()
+        ids = [r.id for r in rs] or [0]
+        qty = cp.query(func.coalesce(func.sum(StockReceiptItem.stock_qty), 0)).filter(StockReceiptItem.receipt_id.in_(ids)).scalar()
+        amt = cp.query(func.coalesce(func.sum(StockReceiptItem.amount), 0)).filter(StockReceiptItem.receipt_id.in_(ids)).scalar()
+        return {"count": len(rs), "stock_qty": float(qty), "amount": float(amt) if see_cost else None}
+
+    def _issued(a: date, b: date) -> dict:
+        ds = cp.query(StockIssue).filter(StockIssue.company_code == ctx.code, StockIssue.warehouse_id.in_(wids),
+                                         StockIssue.status == "posted", StockIssue.doc_type == "issue",
+                                         StockIssue.posted_date >= a, StockIssue.posted_date <= b).all()
+        return {"count": len(ds), "amount": round(sum(float(x.total_amount or 0) for x in ds), 2) if see_cost else None}
+
+    lines = cp.query(StockImportLine).filter(StockImportLine.company_code == ctx.code)
+
+    def _new_lines(a: date, b: date) -> dict:
+        ls = lines.filter(func.date(StockImportLine.created_at) >= a, func.date(StockImportLine.created_at) <= b).all()
+        return {"count": len(ls), "amount": round(sum(float(x.amount or 0) for x in ls), 2) if see_cost else None}
+
+    pending = lines.filter(StockImportLine.status.in_(["pending", "partial"]), StockImportLine.source_status == "ok").count()
+    changed = lines.filter(StockImportLine.source_changed.is_(True)).count()
+
+    issues_base = cp.query(StockIssue).filter(StockIssue.company_code == ctx.code, StockIssue.warehouse_id.in_(wids))
+    pending_approval = issues_base.filter(StockIssue.status == "pending_approval").count()
+    pending_post = issues_base.filter(StockIssue.status == "approved").count()
+
+    cats = (cp.query(CyclePurchaseItem.category_id)
+            .outerjoin(StockItemSetting, StockItemSetting.item_id == CyclePurchaseItem.id)
+            .filter(CyclePurchaseItem.company_code == ctx.code, CyclePurchaseItem.is_active.is_(True),
+                    CyclePurchaseItem.category_id.isnot(None),
+                    or_(StockItemSetting.item_id.is_(None), StockItemSetting.is_stock_item.is_(True)))
+            .distinct().count())
+
+    counts = (cp.query(StockCount).filter(StockCount.warehouse_id.in_(wids), StockCount.period == prev_period,
+                                          StockCount.status != "cancelled").all())
+    by_status = {k: 0 for k in ("counting", "submitted", "approved")}
+    for c in counts:
+        by_status[c.status] = by_status.get(c.status, 0) + 1
+
+    bals = (cp.query(StockBalance, CyclePurchaseItem)
+            .join(CyclePurchaseItem, CyclePurchaseItem.id == StockBalance.item_id)
+            .filter(StockBalance.warehouse_id.in_(wids), or_(StockBalance.qty != 0, StockBalance.reserved_qty != 0)).all())
+    dead_before = date.today() - timedelta(days=DEAD_DAYS)
+    bal_amount = round(sum(float(b.amount or 0) for b, _it in bals), 2)
+    low = sum(1 for b, it in bals if it.min_stock is not None and float(b.qty) < it.min_stock)
+    dead = sum(1 for b, _it in bals if float(b.qty) > 0 and (b.last_move_at is None or b.last_move_at < dead_before))
+    negative = sum(1 for b, _it in bals if float(b.qty) < 0)
+
+    closed_periods = [p.period for p in cp.query(StockPeriod).filter(StockPeriod.company_code == ctx.code,
+                                                                      StockPeriod.status == "closed").all()]
+    prev_closed = prev_period in closed_periods
+
+    return {
+        "company": ctx.code,
+        "anchor": anchor.isoformat(),
+        "data_end": last_move.isoformat() if last_move else None,
+        "filters": {"warehouse_id": warehouse_id, "department_id": department_id,
+                    "start": p_start.isoformat(), "end": p_end.isoformat()},
+        "import": {"pending": pending, "changed": changed,
+                   "new_week": _new_lines(*win["week"]), "new_month": _new_lines(*win["month"])},
+        "receipts": {"week": _rcpt(*win["week"]), "month": _rcpt(*win["month"]), "period": _rcpt(*win["period"])},
+        "issues": {"week": _issued(*win["week"]), "month": _issued(*win["month"]), "period": _issued(*win["period"]),
+                   "pending_approval": pending_approval, "pending_post": pending_post},
+        "categories": {"stock_categories": cats},
+        "counts": {"period": prev_period, "tables": len(counts), "by_status": by_status,
+                   "lines": sum(c.line_count or 0 for c in counts),
+                   "diff": sum(c.diff_count or 0 for c in counts),
+                   "gain_amount": round(sum(float(c.gain_amount or 0) for c in counts), 2) if see_review else None,
+                   "loss_amount": round(sum(float(c.loss_amount or 0) for c in counts), 2) if see_review else None},
+        "balance": {"amount": bal_amount if see_cost else None, "items": len(bals),
+                    "low": low, "dead": dead, "negative": negative, "dead_days": DEAD_DAYS},
+        "period_close": {"prev_period": prev_period, "prev_closed": prev_closed,
+                         "last_closed": max(closed_periods) if closed_periods else None},
+        "three_way_diff": None,
+        "meta": {"cost_visible": see_cost, "review_visible": see_review},
+    }

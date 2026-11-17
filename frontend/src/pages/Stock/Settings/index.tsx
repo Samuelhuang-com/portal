@@ -20,6 +20,8 @@ import {
 } from '@/api/stock'
 import { useAuthStore } from '@/stores/authStore'
 import StockCompanySelect, { useStockCompany } from '../StockCompanySelect'
+import PeriodsTab from './Periods'
+import AbcSuggestModal from './AbcSuggest'
 
 const { Text } = Typography
 const money = (v: number | null | undefined) => (v == null ? '—' : `$${v.toLocaleString(undefined, { maximumFractionDigits: 2 })}`)
@@ -45,8 +47,8 @@ function WarehousesTab({ code, canManage }: { code: string; canManage: boolean }
   const open = (w: Warehouse | 'new') => {
     setEditing(w)
     form.setFieldsValue(w === 'new'
-      ? { name: '', department_id: undefined, keeper_name: '', status: 'active', notes: '', issue_requires_approval: false }
-      : { name: w.name, department_id: w.department_id ?? undefined, keeper_name: w.keeper_name ?? '', status: w.status === 'inactive' ? 'inactive' : 'active', notes: w.notes ?? '', issue_requires_approval: w.issue_requires_approval })
+      ? { name: '', department_id: undefined, keeper_name: '', status: 'active', notes: '', issue_requires_approval: false, count_blind: true }
+      : { name: w.name, department_id: w.department_id ?? undefined, keeper_name: w.keeper_name ?? '', status: w.status === 'inactive' ? 'inactive' : 'active', notes: w.notes ?? '', issue_requires_approval: w.issue_requires_approval, count_blind: w.count_blind })
   }
   const save = async () => {
     const v = await form.validateFields()
@@ -63,6 +65,7 @@ function WarehousesTab({ code, canManage }: { code: string; canManage: boolean }
     { title: '部門', dataIndex: 'department_name', render: (v: string | null) => v || <Text type="secondary">未指定</Text> },
     { title: '倉管', dataIndex: 'keeper_name', render: (v: string | null) => v || '—' },
     { title: '領用核准', dataIndex: 'issue_requires_approval', width: 90, render: (v: boolean) => (v ? <Tag color="gold">需核准</Tag> : '—') },
+    { title: '盤點', dataIndex: 'count_blind', width: 80, render: (v: boolean) => (v ? <Tag>盲盤</Tag> : '明盤') },
     { title: '狀態', dataIndex: 'status', width: 90, render: (v: string) => STATUS_TAG[v] ?? v },
     { title: '有庫存料號', dataIndex: 'item_count', width: 100, align: 'right' },
     { title: '庫存金額', dataIndex: 'amount', width: 120, align: 'right', render: money },
@@ -90,6 +93,10 @@ function WarehousesTab({ code, canManage }: { code: string; canManage: boolean }
             extra="開啟後，這個倉的領用單送出後要由該部門有「領用單：核准」權限的人核准，倉管才能發料（預設不需要）">
             <Switch />
           </Form.Item>
+          <Form.Item name="count_blind" label="盲盤" valuePropName="checked"
+            extra="開啟（預設）：盤點人看不到帳面數，只填實際數量，差異由主管審核時查看（D8）">
+            <Switch />
+          </Form.Item>
           <Form.Item name="status" label="狀態">
             <Select options={[{ value: 'active', label: '啟用' }, { value: 'inactive', label: '停用' }]} />
           </Form.Item>
@@ -109,6 +116,7 @@ function ItemsTab({ code, canManage }: { code: string; canManage: boolean }) {
   const [loading, setLoading] = useState(false)
   const [selected, setSelected] = useState<number[]>([])
   const [editing, setEditing] = useState<StockItem | null>(null)
+  const [abcOpen, setAbcOpen] = useState(false)
   const [form] = Form.useForm<{ is_stock_item: boolean; purchase_unit: string; unit_ratio: number; abc_class: string }>()
 
   const load = useCallback(async () => {
@@ -147,6 +155,7 @@ function ItemsTab({ code, canManage }: { code: string; canManage: boolean }) {
     { title: '納入庫存', dataIndex: 'is_stock_item', width: 90, render: (v: boolean) => (v ? <Tag color="green">是</Tag> : <Tag>否</Tag>) },
     { title: '採購單位換算', key: 'ratio', width: 130,
       render: (_: unknown, r) => (r.purchase_unit ? `1 ${r.purchase_unit} ＝ ${r.unit_ratio} ${r.unit ?? ''}` : '—') },
+    { title: 'ABC', dataIndex: 'abc_class', width: 60, render: (v: string | null) => (v ? <Tag color={v === 'A' ? 'red' : v === 'B' ? 'gold' : 'default'}>{v}</Tag> : '—') },
     { title: '安全量', key: 'minmax', width: 90, render: (_: unknown, r) => (r.min_stock == null && r.max_stock == null ? '—' : `${r.min_stock ?? '—'}～${r.max_stock ?? '—'}`) },
     { title: '目前庫存', dataIndex: 'total_qty', width: 90, align: 'right', render: (v: number | null) => (v ? v.toLocaleString() : '—') },
     ...(canManage ? [{ title: '', key: 'op', width: 50, render: (_: unknown, r: StockItem) => (
@@ -165,6 +174,7 @@ function ItemsTab({ code, canManage }: { code: string; canManage: boolean }) {
             options={categories.map((c) => ({ value: c.id, label: c.label }))} />
           <Input.Search allowClear placeholder="料號／品名／規格" style={{ width: 220 }} value={keyword} onChange={(e) => setKeyword(e.target.value)} onSearch={load} />
           <Button icon={<ReloadOutlined />} onClick={load} loading={loading}>重新整理</Button>
+          {canManage && <Button onClick={() => setAbcOpen(true)}>ABC 分類建議</Button>}
           <Text type="secondary">共 {rows.length} 個料號，納入庫存 {stockCount} 個</Text>
         </Space>
         {canManage && (
@@ -202,6 +212,7 @@ function ItemsTab({ code, canManage }: { code: string; canManage: boolean }) {
           </Form.Item>
         </Form>
       </Modal>
+      <AbcSuggestModal code={code} open={abcOpen} onClose={() => setAbcOpen(false)} onDone={() => { setAbcOpen(false); load() }} />
     </>
   )
 }
@@ -362,6 +373,7 @@ export default function StockSettingsPage() {
   const hasPermission = useAuthStore((s) => s.hasPermission)
   const canManage = hasPermission('stock_settings_manage')
   const canOpen = hasPermission('stock_opening_manage')
+  const canClose = hasPermission('stock_period_close')
   if (error) return <Alert type="error" showIcon message={error} />
   return (
     <div>
@@ -374,6 +386,7 @@ export default function StockSettingsPage() {
           { key: 'wh', label: '倉庫', children: <WarehousesTab code={code} canManage={canManage} /> },
           { key: 'items', label: '料號庫存設定', children: <ItemsTab code={code} canManage={canManage} /> },
           { key: 'opening', label: '期初開帳', children: <OpeningTab code={code} canOpen={canOpen} canManage={canManage} /> },
+          ...(canClose ? [{ key: 'periods', label: '月結', children: <PeriodsTab code={code} canClose={canClose} /> }] : []),
         ]} />
       )}
     </div>

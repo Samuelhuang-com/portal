@@ -7,13 +7,14 @@
  */
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Alert, Button, Card, Col, Descriptions, Drawer, Input, Row, Select, Space, Statistic, Switch, Table, Tag, Typography, message } from 'antd'
-import { ReloadOutlined } from '@ant-design/icons'
+import { ReloadOutlined, ShoppingOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import {
   errMsg, fetchBalance, fetchCategories, fetchStockCard, fetchWarehouses,
   type BalanceResp, type BalanceRow, type StockCardMove, type StockCardResp, type Warehouse,
 } from '@/api/stock'
 import StockCompanySelect, { useStockCompany } from '../StockCompanySelect'
+import ReplenishmentModal from './Replenishment'
 
 const { Text } = Typography
 const num = (v: number | null | undefined, d = 2) => (v == null ? '—' : v.toLocaleString(undefined, { maximumFractionDigits: d }))
@@ -32,6 +33,7 @@ export default function StockBalancePage() {
   const [loading, setLoading] = useState(false)
   const [card, setCard] = useState<StockCardResp | null>(null)
   const [cardOpen, setCardOpen] = useState(false)
+  const [repOpen, setRepOpen] = useState(false)
 
   useEffect(() => {
     if (!code) return
@@ -130,6 +132,7 @@ export default function StockBalancePage() {
           <Space size={4}><Switch size="small" checked={lowOnly} onChange={setLowOnly} /><span>只看低於安全量</span></Space>
           <Space size={4}><Switch size="small" checked={deadOnly} onChange={setDeadOnly} /><span>只看呆滯</span></Space>
           <Button icon={<ReloadOutlined />} onClick={load} loading={loading}>重新整理</Button>
+          <Button icon={<ShoppingOutlined />} onClick={() => setRepOpen(true)}>補貨建議</Button>
           <Text type="secondary">共 {data?.rows.length ?? 0} 列{data?.data_end ? `｜最後異動 ${data.data_end}` : ''}</Text>
         </Space>
       </Card>
@@ -166,6 +169,7 @@ export default function StockBalancePage() {
           </>
         )}
       </Drawer>
+      {code && <ReplenishmentModal code={code} warehouses={warehouses} open={repOpen} onClose={() => setRepOpen(false)} />}
     </div>
   )
 }

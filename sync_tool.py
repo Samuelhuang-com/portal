@@ -176,6 +176,28 @@ if str(_BACKEND) not in sys.path:
 _LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 
+def _stock_refresh_hook(name: str) -> None:
+    """庫存管理（2026-11-17）：採購單／請款單同步成功後，自動重新產生「進貨匯入」待匯入清單。
+
+    只在 stock_import_service.STOCK_REFRESH_TRIGGERS 內的模組才會動作；失敗只記 log，不影響同步結果。
+    """
+    try:
+        from app.services.stock_import_service import refresh_after_sync
+        r = refresh_after_sync(name)
+    except Exception as exc:  # noqa: BLE001
+        logging.getLogger(__name__).warning("  ↳ %s：重新產生待匯入清單失敗：%s", name, exc)
+        return
+    if r is None:
+        return
+    parts = []
+    for code, st in r.items():
+        if "error" in st:
+            parts.append(f"{code} 失敗（{st['error'][:80]}）")
+        else:
+            parts.append(f"{code} 新增 {st.get('inserted', 0)}／更新 {st.get('updated', 0)}")
+    logging.getLogger(__name__).info("  ↳ %s：已重新產生進貨匯入待匯入清單：%s", name, "；".join(parts))
+
+
 def _log_sync_errors(name: str, errors) -> None:
     """同步結果的 errors 是明細清單時，把前 3 筆寫進 log（2026-11-10：原本只記筆數，看不出原因，
     例如飯店每日巡檢在 Alembic hdi1 未執行時會回「舊場次 ID 尚未改寫」）。"""
@@ -1068,6 +1090,9 @@ class SyncApp(tk.Tk):
                 err_count = 1
                 logger.error(f"  ✗ {name} 異常：{exc}", exc_info=True)
 
+            if status != "error":
+                await asyncio.to_thread(_stock_refresh_hook, name)
+
             results.append({
                 "name": name, "status": status,
                 "duration": duration, "fetched": fetched,
@@ -1307,6 +1332,8 @@ class SyncApp(tk.Tk):
             logger.error("單一同步 ✗ %s：%s", name, exc, exc_info=True)
         finally:
             loop.close()
+        if status != "error":
+            _stock_refresh_hook(name)
 
         status_txt = {"success": "✓ 成功", "partial": "~ 部分", "error": "✗ 失敗"}[status]
         start_str  = t0.strftime("%H:%M:%S")
@@ -2105,6 +2132,8 @@ class SyncApp(tk.Tk):
             logger.error("[排程] 同步失敗 %s：%s", name, exc, exc_info=True)
         finally:
             loop.close()
+        if status != "error":
+            _stock_refresh_hook(name)
 
         status_txt = {"success": "✓ 成功", "partial": "~ 部分", "error": "✗ 失敗"}[status]
         logger.info("[排程] 同步完成 %s %s fetched=%d upserted=%d dur=%.1fs",
