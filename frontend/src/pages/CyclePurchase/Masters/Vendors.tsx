@@ -285,6 +285,21 @@ export default function CpVendorsPage() {
                   </Tooltip>
                 )),
             },
+            {
+              title: '公司別',
+              key: 'company',
+              width: 150,
+              render: (_: unknown, r: CpVendor) => (
+                <Space size={2} wrap>
+                  <Tag color="geekblue">{r.company_name || r.company_code}</Tag>
+                  {(r.also_in_companies ?? []).map((c) => (
+                    <Tooltip key={c} title="同統編的廠商在此公司也有">
+                      <Tag>{c}</Tag>
+                    </Tooltip>
+                  ))}
+                </Space>
+              ),
+            },
             { title: '代碼', dataIndex: 'vendor_code', width: 100 },
             { title: '供應商名稱', dataIndex: 'vendor_name' },
             { title: '統編', dataIndex: 'tax_id', width: 110 },

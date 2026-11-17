@@ -6,6 +6,10 @@
 // ── 供應商主檔 ────────────────────────────────────────────────────────────────
 export interface CpVendor {
   id: number
+  /** 2026-11-17：公司別（廠商所屬公司）；also_in_companies＝其他公司統編相同的廠商所屬公司代碼 */
+  company_code?: string
+  company_name?: string
+  also_in_companies?: string[]
   vendor_code: string
   vendor_name: string
   tax_id?: string | null

@@ -1,7 +1,7 @@
 """週期採購 — 供應商主檔 Pydantic Schemas"""
 from __future__ import annotations
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 from pydantic import BaseModel
 
 
@@ -70,6 +70,12 @@ class VendorOut(VendorBase):
     # 非空 = 受同步管控，前端須把 vendor_code/vendor_name/tax_id/contact_* 設唯讀；
     # 為 None = 週採本地自建，全部欄位可編。
     source_vendor_id: Optional[str] = None
+    # 2026-11-17：公司別。company_code / company_name 是這列廠商所屬公司；
+    # also_in_companies＝其他公司「統編相同」的廠商所屬公司代碼（同一廠商多公司別，
+    # 每公司各一列，以統編串連；只回公司代碼，不回其他公司的資料）。
+    company_code: Optional[str] = None
+    company_name: Optional[str] = None
+    also_in_companies: List[str] = []
     # 2026-09-20 新增（衍生欄位，非資料表欄位）：對照到的合約廠商名稱。
     # 合約主檔在 portal.db、這張表在 cycle-purchase.db，跨庫查不到，
     # 由 router 用 portal_db 補上（比照 _attach_owner_names 的做法）。

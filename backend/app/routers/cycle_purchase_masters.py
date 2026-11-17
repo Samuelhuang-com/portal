@@ -88,6 +88,26 @@ def _attach_source_vendor_names(rows, portal_db: Session) -> None:
         r.source_vendor_name = name_map.get(r.source_vendor_id)
 
 
+def _attach_company_info(rows, db: Session) -> None:
+    """補上公司別：company_name、also_in_companies（其他公司統編相同的廠商）。"""
+    from app.models.cycle_purchase_company import CyclePurchaseCompany
+    from app.models.cycle_purchase_vendor import CyclePurchaseVendor
+    names = {c.code: c.name for c in db.query(CyclePurchaseCompany).all()}
+    norm = lambda t: "".join((t or "").split())  # noqa: E731
+    taxes = {norm(r.tax_id) for r in rows if r.tax_id}
+    others: dict = {}
+    if taxes:
+        for tax, co in db.query(CyclePurchaseVendor.tax_id, CyclePurchaseVendor.company_code).filter(
+            CyclePurchaseVendor.tax_id.isnot(None)
+        ).all():
+            others.setdefault(norm(tax), set()).add(co)
+    for r in rows:
+        r.company_name = names.get(r.company_code, r.company_code)
+        r.also_in_companies = sorted(
+            c for c in others.get(norm(r.tax_id), set()) if c != r.company_code
+        ) if r.tax_id else []
+
+
 @router.get("/vendors", response_model=List[VendorOut], summary="供應商主檔清單")
 def list_vendors(
     q: str = Query("", description="關鍵字（供應商代碼／名稱）"),
@@ -102,6 +122,7 @@ def list_vendors(
     if unlinked_only:
         rows = [r for r in rows if not r.source_vendor_id]
     _attach_source_vendor_names(rows, portal_db)
+    _attach_company_info(rows, db)
     return rows
 
 
