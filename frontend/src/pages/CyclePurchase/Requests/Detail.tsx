@@ -100,6 +100,36 @@ interface MergedRow {
   requestItem?: CpRequestItem
 }
 
+/**
+ * 數量輸入框（2026-11-17）
+ * 原本 onChange 每打一個字就存檔，存檔期間輸入框被 disabled、焦點被拿走，
+ * 所以只能輸入 1 位數。改成：輸入時只更新畫面，離開欄位（blur）或按 Enter 才存檔。
+ */
+function QtyInput({ value, disabled, onCommit }: {
+  value: number
+  disabled?: boolean
+  onCommit: (qty: number) => void
+}) {
+  const [draft, setDraft] = useState<number | null>(value)
+  useEffect(() => { setDraft(value) }, [value])
+  const commit = () => {
+    const n = draft || 0
+    if (n !== value) onCommit(n)
+    else setDraft(value)
+  }
+  return (
+    <InputNumber
+      min={0}
+      value={draft}
+      disabled={disabled}
+      onChange={(nv) => setDraft(nv as number | null)}
+      onBlur={commit}
+      onPressEnter={commit}
+      style={{ width: '100%' }}
+    />
+  )
+}
+
 export default function CpRequestDetailPage() {
   const { id } = useParams<{ id: string }>()
   const requestId = Number(id)
@@ -342,12 +372,10 @@ export default function CpRequestDetailPage() {
       width: 110,
       render: (_: unknown, row: MergedRow) =>
         editable ? (
-          <InputNumber
-            min={0}
+          <QtyInput
             value={row.requestItem?.request_qty ?? 0}
             disabled={savingItemId === row.item_id}
-            onChange={(nv) => handleQtyChange(row, nv)}
-            style={{ width: '100%' }}
+            onCommit={(n) => handleQtyChange(row, n)}
           />
         ) : (row.requestItem?.request_qty ?? 0),
     },
