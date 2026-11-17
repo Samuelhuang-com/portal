@@ -13,14 +13,25 @@ class DepartmentBase(BaseModel):
     is_active: bool = True
 
 
-class DepartmentCreate(DepartmentBase):
-    pass
+class DepartmentCreate(BaseModel):
+    """
+    2026-11-17（Samuel 裁示）：週採部門必須從 settings/company-departments 主檔挑選。
+    公司別／部門名稱由主檔帶入，**不接受自填**（多送的 company／dept_name 會被忽略）。
+    """
+    source_department_id: str
+    dept_code: str
+    owner_user_id: Optional[str] = None
+    is_active: bool = True
+
+
+class DepartmentInsert(DepartmentBase):
+    """router 查完主檔後組出的內部寫入物件（service.create_department 吃這個）。"""
+    source_department_id: Optional[str] = None
 
 
 class DepartmentUpdate(BaseModel):
-    company: Optional[str] = None
+    """2026-11-17：公司別／部門名稱／主檔連結由主檔決定，不可在週採端修改。"""
     dept_code: Optional[str] = None
-    dept_name: Optional[str] = None
     owner_user_id: Optional[str] = None
     is_active: Optional[bool] = None
 

@@ -200,6 +200,72 @@ def create_department(
     return resp
 
 
+# ── 2026-11-17：主檔部門改名／搬公司對週採部門的影響（Samuel 裁示：週採部門一律連結主檔）──
+#   - 改名：已連結的週採部門 dept_name 同步成新名稱（只改名稱，id／代碼／承辦人／歷史單據都不動）。
+#   - 搬到不同公司代碼（CH/OU/HO）：週採資料是依 company_code 隔離，搬過去會讓已連結的
+#     週採部門變成「跨公司」，因此直接拒絕，請改建新部門。
+#   - 停用：只在回應中不處理（週採部門保留，不自動停用）。
+#   跨庫（portal ↔ cycle_purchase）無法同交易，主檔先 commit、再寫週採；寫失敗只記 log，
+#   下次改名或 check_cp_departments_linked.py 可補。
+def _cp_linked_departments(dept_id: int):
+    from app.core.cycle_purchase_database import CyclePurchaseSessionLocal
+    from app.models.cycle_purchase_reference import CyclePurchaseDepartment
+    cp_db = CyclePurchaseSessionLocal()
+    rows = cp_db.query(CyclePurchaseDepartment).filter(
+        CyclePurchaseDepartment.source_department_id == str(dept_id)
+    ).all()
+    return cp_db, rows
+
+
+def _assert_move_keeps_company_code(db: Session, obj: RefDepartment, new_company_id: int) -> None:
+    if new_company_id == obj.company_id:
+        return
+    new_company = db.query(Company).filter(Company.id == new_company_id).first()
+    if not new_company:
+        return
+    try:
+        cp_db, rows = _cp_linked_departments(obj.id)
+    except Exception:  # pragma: no cover - 週採庫讀不到不擋主檔
+        import logging
+        logging.getLogger(__name__).exception("[reference_data] 讀取週採部門連結失敗（已忽略）")
+        return
+    try:
+        if not rows:
+            return
+        from app.services.cycle_purchase_company_scope import resolve_company_code
+        new_code = resolve_company_code(cp_db, new_company.name)
+        if any(r.company_code != new_code for r in rows):
+            raise HTTPException(
+                status_code=409,
+                detail=f"部門「{obj.name}」已被週期採購部門連結，搬到「{new_company.name}」會造成週採跨公司，請改為在新公司建立新部門。",
+            )
+    finally:
+        cp_db.close()
+
+
+def _propagate_department_rename(dept_id: int, new_name: str) -> None:
+    try:
+        cp_db, rows = _cp_linked_departments(dept_id)
+    except Exception:  # pragma: no cover
+        import logging
+        logging.getLogger(__name__).exception("[reference_data] 讀取週採部門連結失敗（已忽略）")
+        return
+    try:
+        changed = 0
+        for r in rows:
+            if r.dept_name != new_name:
+                r.dept_name = new_name
+                changed += 1
+        if changed:
+            cp_db.commit()
+    except Exception:  # pragma: no cover
+        cp_db.rollback()
+        import logging
+        logging.getLogger(__name__).exception("[reference_data] 同步週採部門名稱失敗（已忽略）")
+    finally:
+        cp_db.close()
+
+
 @router.put("/departments/{dept_id}", response_model=DepartmentResponse, summary="修改部門別")
 def update_department(
     dept_id: int,
@@ -223,9 +289,13 @@ def update_department(
     if payload.company_id is not None:
         if not db.query(Company).filter(Company.id == payload.company_id).first():
             raise HTTPException(status_code=404, detail="目標公司不存在")
+        _assert_move_keeps_company_code(db, obj, payload.company_id)
         obj.company_id = payload.company_id
+    renamed = payload.name is not None
     db.commit()
     db.refresh(obj)
+    if renamed:
+        _propagate_department_rename(obj.id, obj.name)
     resp = DepartmentResponse.from_orm(obj)
     resp.company_name = obj.company.name if obj.company else ""
     return resp

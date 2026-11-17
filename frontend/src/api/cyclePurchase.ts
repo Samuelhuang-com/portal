@@ -129,10 +129,23 @@ export const getCpCategoryNextCode = (id: number) =>
 export const getCpDepartments = (params?: { is_active?: boolean }) =>
   apiClient.get<CpDepartment[]>(`${BASE}/masters/departments`, { params })
 
-export const createCpDepartment = (data: Omit<CpDepartment, 'id' | 'created_at'>) =>
+// 2026-11-17：新增週採部門一律從 settings/company-departments 主檔挑選，
+// company／dept_name 由後端依主檔帶入，不再接受自填。
+export interface CpDepartmentCreatePayload {
+  source_department_id: string
+  dept_code: string
+  owner_user_id?: string | null
+  is_active: boolean
+}
+
+export const createCpDepartment = (data: CpDepartmentCreatePayload) =>
   apiClient.post<CpDepartment>(`${BASE}/masters/departments`, data)
 
-export const updateCpDepartment = (id: number, data: Partial<CpDepartment>) =>
+// 公司別／部門名稱由主檔決定，不可由週採端修改
+export const updateCpDepartment = (
+  id: number,
+  data: Partial<Pick<CpDepartment, 'dept_code' | 'owner_user_id' | 'is_active'>>,
+) =>
   apiClient.put<CpDepartment>(`${BASE}/masters/departments/${id}`, data)
 
 // ── 手動連結主檔部門（2026-09-01，company 改自行輸入後名稱比對只剩部門名唯一命中）──

@@ -20,12 +20,13 @@ from app.core.database import get_db
 from app.dependencies import get_current_user, require_permission, require_any_permission
 from app.services.cycle_purchase_company_scope import CompanyContext, company_context, assert_row_visible, CP_READ_MASTER_PERMS
 from app.models.user import User
+from app.models.cycle_purchase_reference import CyclePurchaseDepartment
 from app.schemas.cycle_purchase_vendor import (
     VendorCreate, VendorLinkPayload, VendorMergePayload, VendorMergeResult,
     VendorOut, VendorUpdate,
 )
 from app.schemas.cycle_purchase_reference import (
-    DepartmentCreate, DepartmentOut, DepartmentUpdate,
+    DepartmentCreate, DepartmentInsert, DepartmentOut, DepartmentUpdate,
     CostCenterCreate, CostCenterOut, CostCenterUpdate,
     AccountCodeCreate, AccountCodeOut, AccountCodeUpdate,
 )
@@ -291,6 +292,29 @@ def merge_vendor(
 
 # ── 部門主檔 ──────────────────────────────────────────────────────────────────
 
+def _load_master_department(db, portal_db, source_department_id: str, company_code: str):
+    """
+    2026-11-17：驗證「主檔部門」可否作為目前公司的週採部門。
+    回傳 (Company, RefDepartment)；不合格直接丟 HTTPException。
+    規則：主檔部門存在且啟用、所屬公司對得到目前公司代碼（CH/OU/HO）。
+    """
+    from app.models.reference_data import Company, RefDepartment
+    from app.services.cycle_purchase_company_scope import resolve_company_code
+    try:
+        src_pk = int(source_department_id)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=422, detail="source_department_id 必須是主檔部門 id")
+    master = portal_db.query(RefDepartment).filter(RefDepartment.id == src_pk).first()
+    if not master:
+        raise HTTPException(status_code=404, detail="主檔部門不存在（請重新整理清單）")
+    if not master.is_active:
+        raise HTTPException(status_code=400, detail="主檔部門已停用，請先到公司/部門管理啟用")
+    company = portal_db.query(Company).filter(Company.id == master.company_id).first()
+    if not company or resolve_company_code(db, company.name) != company_code:
+        raise HTTPException(status_code=400, detail="主檔部門所屬公司與目前所選公司不一致")
+    return company, master
+
+
 @router.get("/departments", response_model=List[DepartmentOut], summary="部門主檔清單")
 def list_departments(
     is_active: Optional[bool] = Query(None),
@@ -312,8 +336,30 @@ def create_department(
     ctx: CompanyContext = Depends(company_context),
     portal_db: Session = Depends(get_db),
 ):
+    # 2026-11-17：一律從主檔挑選，company／dept_name 由主檔帶入；禁止本地自建未連結部門
+    master_company, master_dept = _load_master_department(
+        db, portal_db, payload.source_department_id, ctx.code,
+    )
+    dup = (
+        db.query(CyclePurchaseDepartment)
+        .filter(CyclePurchaseDepartment.source_department_id == payload.source_department_id)
+        .first()
+    )
+    if dup:
+        raise HTTPException(
+            status_code=409,
+            detail=f"此主檔部門已建立週採部門「{dup.company}／{dup.dept_name}」（id={dup.id}），不能重複建立",
+        )
+    insert = DepartmentInsert(
+        company=master_company.name,
+        dept_name=master_dept.name,
+        dept_code=payload.dept_code,
+        owner_user_id=payload.owner_user_id,
+        is_active=payload.is_active,
+        source_department_id=str(master_dept.id),
+    )
     try:
-        dept = svc.create_department(db, payload, ctx.code)
+        dept = svc.create_department(db, insert, ctx.code)
     except ValueError as exc:
         db.rollback()
         raise HTTPException(status_code=400, detail=str(exc))
@@ -408,21 +454,24 @@ def link_department(
     2026-09-01：company 改自行輸入後，同步的名稱比對只剩「部門名稱唯一命中」，
     重名部門要靠這個端點手動連結，權限鏈（部門成員可編輯請購單）才會生效。
     """
-    # 主檔部門存在性驗證在這裡做（service 拿不到 portal session）
-    if payload.source_department_id is not None:
-        from app.models.reference_data import RefDepartment
-        try:
-            src_pk = int(payload.source_department_id)
-        except ValueError:
-            raise HTTPException(status_code=422, detail="source_department_id 必須是主檔部門 id")
-        if not portal_db.query(RefDepartment).filter(RefDepartment.id == src_pk).first():
-            raise HTTPException(status_code=404, detail="主檔部門不存在（請重新整理清單）")
+    # 2026-11-17：週採部門必須連結主檔，不再允許解除連結
+    if payload.source_department_id is None:
+        raise HTTPException(status_code=400, detail="週採部門必須連結主檔部門，不可解除連結")
+    # 主檔部門存在性／公司一致驗證在這裡做（service 拿不到 portal session）
+    dept_row = db.query(CyclePurchaseDepartment).filter(CyclePurchaseDepartment.id == dept_id).first()
+    master_dept = None
+    if dept_row:
+        _, master_dept = _load_master_department(db, portal_db, payload.source_department_id, dept_row.company_code)
 
     dept, err = svc.link_department_to_source(db, dept_id, payload.source_department_id)
     if dept is None:
         raise HTTPException(status_code=404, detail="部門不存在")
     if err:
         raise HTTPException(status_code=409, detail=err)
+    # 2026-11-17：連結後部門名稱以主檔為準（只改名稱；id／代碼／承辦人／歷史單據不動）
+    if master_dept is not None and dept.dept_name != master_dept.name:
+        dept.dept_name = master_dept.name
+        db.flush()
     _attach_owner_names(portal_db, dept)
     return dept
 
