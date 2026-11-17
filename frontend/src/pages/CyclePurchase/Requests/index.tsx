@@ -317,7 +317,8 @@ export default function CpRequestsPage() {
     if (!cycleSel) return '請先選擇週期'
     if (loadingFlag) return '載入中…'
     if (!preview || preview.departments.length === 0) return '這個週期目前沒有適用的部門'
-    if (!showAll) return '你不屬於這個週期的任何適用部門，請勾選「顯示全部部門」'
+    // 2026-11-16：「顯示全部部門」只給 buyer；填單人看到這句時沒有該勾選框，改提示洽管理員
+    if (!showAll) return canCreate ? '你不屬於這個週期的任何適用部門，請勾選「顯示全部部門」' : '你不屬於這個週期的任何適用部門，請洽管理員確認所屬部門與週期設定'
     return '沒有可選的部門'
   }
 
