@@ -320,6 +320,10 @@ export interface FullBldgPMScheduleMatrixRow {
   frequency_variants: string[]
   month_count:        number
   ragic_url:          string
+  // 2026-11-18 新增：母子項（Sheet28 項目(母)／項目母項名稱／項目(子)）；舊資料為「待定」
+  parent_no:          string
+  parent_name:        string
+  child_no:           string
 }
 
 export interface FullBldgPMScheduleAnnualMatrix {

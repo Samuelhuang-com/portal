@@ -1970,6 +1970,46 @@ export default function FullBuildingMaintenancePage() {
     ? annualMatrix.rows.filter(r => !annualFreq || r.frequency === annualFreq)
     : []
 
+  // ── 年度計劃表：母項／子項分組（2026-11-18）──────────────────────────────
+  // 子項＝原本的每一列（依 task_name 合併）；母項＝Sheet28「項目(母)」，舊資料無母項 → 「待定」。
+  // 母項列的每個月格＝其下子項該月格的彙總（嚴重度規則同後端 _aggregate_status）。
+  const ANNUAL_STATUS_SEVERITY: Record<string, number> = {
+    overdue: 0, scheduled: 1, no_data: 2, unscheduled: 3, future_due: 4, no_frequency: 5, non_month: 6,
+  }
+  const aggregateAnnualStatus = (statuses: string[]): string => {
+    if (statuses.every(s => s === 'completed')) return 'completed'
+    if (statuses.some(s => s === 'completed' || s === 'in_progress')) return 'in_progress'
+    return statuses.reduce((worst, s) =>
+      (ANNUAL_STATUS_SEVERITY[s] ?? 99) < (ANNUAL_STATUS_SEVERITY[worst] ?? 99) ? s : worst)
+  }
+  const [annualCollapsed, setAnnualCollapsed] = useState<string[]>([])
+  const toggleAnnualParent = (key: string) =>
+    setAnnualCollapsed(prev => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key])
+
+  const annualParentGroups = (() => {
+    const map = new Map<string, { key: string; parentNo: string; parentName: string; rows: typeof filteredAnnualRows }>()
+    filteredAnnualRows.forEach(row => {
+      const key = row.parent_no || '待定'
+      if (!map.has(key)) map.set(key, { key, parentNo: key, parentName: row.parent_name || '', rows: [] })
+      map.get(key)!.rows.push(row)
+    })
+    // 「待定」母項固定排在最後
+    const sortedGroups = Array.from(map.values()).sort((a, b) =>
+      Number(a.key === '待定') - Number(b.key === '待定') || a.key.localeCompare(b.key, undefined, { numeric: true }))
+    return sortedGroups.map(g => ({
+      ...g,
+      cells: MONTH_LABELS.map((_, i) => {
+        const hit = g.rows.map(r => r.cells[i]).filter(c => (c.count ?? 0) > 0)
+        return {
+          month: i + 1,
+          status: hit.length ? aggregateAnnualStatus(hit.map(c => c.status)) : 'non_month',
+          done: hit.filter(c => c.status === 'completed').length,
+          total: hit.length,
+        }
+      }),
+    }))
+  })()
+
   const AnnualTab = (
     <div>
       {/* 篩選器 */}
@@ -1987,6 +2027,11 @@ export default function FullBuildingMaintenancePage() {
         </Col>
         <Col>
           <Button icon={<ReloadOutlined />} onClick={loadAnnualMatrix} loading={annualLoading}>重新整理</Button>
+        </Col>
+        <Col>
+          <Button onClick={() => setAnnualCollapsed(annualCollapsed.length ? [] : annualParentGroups.map(g => g.key))}>
+            {annualCollapsed.length ? '全部展開' : '全部合併'}
+          </Button>
         </Col>
       </Row>
 
@@ -2013,13 +2058,43 @@ export default function FullBuildingMaintenancePage() {
               <thead>
                 <tr style={{ background:'#f0f4f8' }}>
                   <th style={{ ...ANNUAL_TH, fontSize:15, width:'1%' }}>類別</th>
-                  <th style={{ ...ANNUAL_TH, fontSize:15, width:'1%' }}>保養項目</th>
+                  <th style={{ ...ANNUAL_TH, fontSize:15, width:'1%' }}>母項</th>
+                  <th style={{ ...ANNUAL_TH, fontSize:15, width:'1%' }}>子項</th>
                   <th style={{ ...ANNUAL_TH, fontSize:15, width:'1%' }}>頻率</th>
                   {MONTH_LABELS.map(m => <th key={m} style={{ ...ANNUAL_TH, fontSize:15, textAlign:'center' }}>{m}</th>)}
                 </tr>
               </thead>
-              <tbody>
-                {filteredAnnualRows.map(row => (
+              {annualParentGroups.map(group => (
+              <tbody key={group.key}>
+                <tr style={{ background:'#f7f9fc' }}>
+                  <td style={{ ...ANNUAL_TD }} />
+                  <td rowSpan={annualCollapsed.includes(group.key) ? 1 : group.rows.length + 1}
+                    onClick={() => toggleAnnualParent(group.key)}
+                    style={{ ...ANNUAL_TD, textAlign:'left', fontWeight:600, color:'#1B3A5C', whiteSpace:'nowrap', cursor:'pointer', userSelect:'none', verticalAlign:'top' }}>
+                    <span style={{ display:'inline-block', width:14 }}>{annualCollapsed.includes(group.key) ? '▸' : '▾'}</span>
+                    {group.parentNo}{group.parentName ? `　${group.parentName}` : ''}
+                    <Text type="secondary" style={{ fontWeight:400, marginLeft:8 }}>（{group.rows.length} 項）</Text>
+                  </td>
+                  <td style={{ ...ANNUAL_TD, color:'#8c8c8c' }}>各月彙總</td>
+                  <td style={{ ...ANNUAL_TD }} />
+                  {group.cells.map(cell => {
+                    const cs = annualCellStyle(cell.status, annualYear, cell.month)
+                    return (
+                      <td key={cell.month}
+                        style={{ ...ANNUAL_TD, textAlign:'center', background:cs.bg, color:cs.color, fontWeight:600, padding:'4px 2px', fontSize:16 }}>
+                        <Tooltip title={`母項彙總：${ANNUAL_TOOLTIP_LABEL[cell.status] ?? cell.status}${cell.total ? `｜子項完成 ${cell.done}/${cell.total}` : ''}`}>
+                          <div style={{ lineHeight:1.2 }}>
+                            {cs.icon}
+                            {cell.total > 1 && (
+                              <div style={{ fontSize:12, fontWeight:500, opacity:0.85 }}>{cell.done}/{cell.total}</div>
+                            )}
+                          </div>
+                        </Tooltip>
+                      </td>
+                    )
+                  })}
+                </tr>
+                {!annualCollapsed.includes(group.key) && group.rows.map(row => (
                   <tr key={row.item_ragic_id} style={{ borderBottom:'1px solid #eee' }}>
                     <td style={{ ...ANNUAL_TD, whiteSpace:'nowrap' }}>
                       <Tag style={{ fontSize:14 }}>{row.category || '—'}</Tag>
@@ -2035,7 +2110,7 @@ export default function FullBuildingMaintenancePage() {
                           ? `本列合併自 ${row.month_count} 個月份${row.location ? `｜${row.location}` : ''}`
                           : (row.location || undefined)
                       }>
-                        <span style={{ fontSize:15 }}>{row.task_name}</span>
+                        <span><span style={{ fontSize:13, color:'#8c8c8c', marginRight:6 }}>{row.child_no}</span><span style={{ fontSize:15 }}>{row.task_name}</span></span>
                       </Tooltip>
                     </td>
                     <td style={{ ...ANNUAL_TD, textAlign:'center', whiteSpace:'nowrap' }}>
@@ -2099,6 +2174,7 @@ export default function FullBuildingMaintenancePage() {
                   </tr>
                 ))}
               </tbody>
+              ))}
             </table>
           </div>
         )}
@@ -2158,7 +2234,7 @@ export default function FullBuildingMaintenancePage() {
             // 2026-11-04 樓層巡檢圖（共用元件，CLAUDE.md §12／docs/DEV_SPEC_floor_plan_map.md；第一次點開才載入）
             {
               key:      'floor-map',
-              label:    <span><EnvironmentOutlined /> 樓層維護圖</span>,
+              label:    <span><EnvironmentOutlined /> 樓層巡檢圖</span>,
               children: floorMapOpened ? <FloorMapWorkspace module="mall_full_building_maintenance" /> : null,
             },
             {

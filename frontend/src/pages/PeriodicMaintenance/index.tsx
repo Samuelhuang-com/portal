@@ -20,7 +20,7 @@ import {
   WarningOutlined, CheckCircleOutlined, ClockCircleOutlined,
   ExclamationCircleOutlined, RightOutlined, BarChartOutlined,
   CalendarOutlined, LineChartOutlined, LinkOutlined,
-  FileExcelOutlined,
+  FileExcelOutlined, EnvironmentOutlined,
 } from '@ant-design/icons'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RcTooltip,
@@ -48,6 +48,7 @@ import { NAV_GROUP, NAV_PAGE } from '@/constants/navLabels'
 import MonthlyCalendarGrid from '@/components/MonthlyCalendarGrid'
 import type { CalendarRow } from '@/components/MonthlyCalendarGrid'
 import PMItemDetailDrawer from '@/components/PMItemDetailDrawer'
+import FloorMapWorkspace from '@/components/FloorPlanMap/FloorMapWorkspace'
 
 const { Title, Text } = Typography
 
@@ -649,6 +650,9 @@ const SHOW_FORM_TAB: boolean = false
 export default function PeriodicMaintenancePage() {
   const navigate = useNavigate()
   const [activeTab, setActiveTab] = useState('dashboard')
+  // 樓層巡檢圖（2026-11-18）：第一次切到該 TAB 才掛載，之後保留狀態
+  const [floorMapOpened, setFloorMapOpened] = useState(false)
+  useEffect(() => { if (activeTab === 'floor-map') setFloorMapOpened(true) }, [activeTab])
   const [stats, setStats] = useState<PMStats | null>(null)
   const [batches, setBatches] = useState<PMBatchListItem[]>([])
   // Dashboard 篩選：年月（預設當月）
@@ -2559,6 +2563,7 @@ export default function PeriodicMaintenancePage() {
         onChange={setActiveTab}
         items={[
           { key: 'dashboard', label: 'Dashboard',  children: DashboardTab },
+          { key: 'floor-map', label: <span><EnvironmentOutlined /> 樓層巡檢圖</span>, children: floorMapOpened ? <FloorMapWorkspace module="hotel_periodic_maintenance" /> : null },
           // 2026-09-10 依使用者指示隱藏「每月保養表」TAB（程式碼保留，改 SHOW_FORM_TAB = true 即可恢復）
           ...(SHOW_FORM_TAB ? [{
             key:   'form',

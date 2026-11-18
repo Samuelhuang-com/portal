@@ -990,6 +990,9 @@ def _get_annual_matrix_rows(module: str, year: int, db) -> list:
                     "category": row.category,
                     "task_name": row.task_name,
                     "frequency": row.frequency or "",
+                    "parent_no": row.parent_no,
+                    "parent_name": row.parent_name,
+                    "child_no": row.child_no,
                     "cells": [
                         {
                             "month": c.month,
@@ -1002,6 +1005,108 @@ def _get_annual_matrix_rows(module: str, year: int, db) -> list:
             )
 
     return results
+
+
+_ANNUAL_SEVERITY = {
+    "overdue": 0, "scheduled": 1, "no_data": 2, "unscheduled": 3,
+    "future_due": 4, "no_frequency": 5, "non_month": 6,
+}
+
+
+def _aggregate_annual_status(statuses: list) -> str:
+    """母項彙總規則，與後端 annual-matrix 的 _aggregate_status 相同。"""
+    if all(s == "completed" for s in statuses):
+        return "completed"
+    if any(s in ("completed", "in_progress") for s in statuses):
+        return "in_progress"
+    return min(statuses, key=lambda s: _ANNUAL_SEVERITY.get(s, 99))
+
+
+def _annual_natural_key(s: str):
+    """母項排序：數字依大小（1、2、10），「待定」固定最後。"""
+    import re
+    if s == "待定":
+        return (2, ())
+    return (0, tuple((0, int(p)) if p.isdigit() else (1, p) for p in re.split(r"(\d+)", s) if p))
+
+
+_ANNUAL_TEXT_KEYS = ("category", "child_text", "task_name", "frequency")
+
+
+def _annual_row_height_pt(row: dict, columns: list) -> float:
+    """依文字換行估算列高（pt），與 renderer 設定的列高一致，供分頁用。"""
+    import math
+    lines = 1
+    for col in columns:
+        key = col["key"]
+        if key not in _ANNUAL_TEXT_KEYS:
+            continue
+        text = str(row.get(key, "") or "")
+        width = sum(0.1667 if ord(ch) > 0x2E80 else 0.092 for ch in text)
+        usable = max(col.get("width", 1.0) - 0.2, 0.2)
+        if width:
+            lines = max(lines, math.ceil(width / usable))
+    if any(c.get("scheduled_date") for c in row.get("cells", [])):
+        lines = max(lines, 2)  # 月格有排定日期時，符號下方還有一行小字
+    return max(26.0, lines * 14.4 + 6.0)
+
+
+def _paginate_annual_rows(rows: list, columns: list, avail_in: float) -> list:
+    """依列高累計分頁：超過可用高度就轉下一頁（不再固定 ROWS_PER_SLIDE 列）。"""
+    avail_pt = avail_in * 72
+    pages, cur, used = [], [], 0.0
+    for r in rows:
+        h = _annual_row_height_pt(r, columns)
+        if cur and used + h > avail_pt:
+            pages.append(cur)
+            cur, used = [], 0.0
+        cur.append(r)
+        used += h
+    if cur or not pages:
+        pages.append(cur)
+    return pages
+
+
+def _group_annual_rows_by_parent(rows: list) -> list:
+    """
+    全棟年度計劃表：依「項目(母)」分組，母項／子項分兩欄顯示。
+    每組先輸出母項彙總列（is_parent=True，各月格＝子項該月狀態彙總），其後接子項列。
+    所有列都帶 _gid（分組鍵）與 parent_label（母項欄文字），分頁後仍能正確合併儲存格。
+    舊資料沒有母項 → 歸入「待定」，並排在最後。
+    """
+    groups: dict = {}
+    for r in rows:
+        key = (r.get("parent_no") or "").strip() or "待定"
+        g = groups.setdefault(key, {"parent_name": "", "children": []})
+        if not g["parent_name"]:
+            g["parent_name"] = (r.get("parent_name") or "").strip()
+        g["children"].append(r)
+    out: list = []
+    for parent_no, g in sorted(groups.items(), key=lambda kv: _annual_natural_key(kv[0])):
+        children = g["children"]
+        head = f"{parent_no}　{g['parent_name']}" if g["parent_name"] else parent_no
+        label = f"{head}（{len(children)} 項）"
+        cells = []
+        for m in range(1, 13):
+            sts = [c["status"] for ch in children for c in ch.get("cells", [])
+                   if c["month"] == m and c["status"] != "non_month"]
+            cells.append({
+                "month": m,
+                "status": _aggregate_annual_status(sts) if sts else "non_month",
+                "scheduled_date": None,
+            })
+        out.append({
+            "is_parent": True, "_gid": parent_no, "parent_label": label,
+            "category": "", "child_text": "各月彙總", "frequency": "", "cells": cells,
+        })
+        for ch in children:
+            child_no = (ch.get("child_no") or "").strip()
+            name = ch.get("task_name", "")
+            out.append(dict(
+                ch, _gid=parent_no, parent_label=label,
+                child_text=f"{child_no}　{name}" if child_no else name,
+            ))
+    return out
 
 
 def _add_annual_matrix_slide(
@@ -1017,6 +1122,7 @@ def _add_annual_matrix_slide(
     task_col_label: str = "項目名稱",
     cell_style: str = "legacy",
     matrix_year: int = 0,
+    grouped: bool = False,
 ):
     """
     年度計劃表矩陣投影片。
@@ -1047,6 +1153,7 @@ def _add_annual_matrix_slide(
     C_DARK = RGBColor(0x1B, 0x3A, 0x5C)
     C_WHITE = RGBColor(0xFF, 0xFF, 0xFF)
     C_ROW_ALT = RGBColor(0xF7, 0xF9, 0xFC)
+    C_PARENT_BG = RGBColor(0xE8, 0xEE, 0xF5)
     C_GRAY = RGBColor(0x88, 0x88, 0x88)
     STYLE = (
         _matrix_status_style_portal()
@@ -1061,25 +1168,40 @@ def _add_annual_matrix_slide(
 
     # 欄位寬度：類別(0.90) + 項目名稱(2.40) + 頻率(0.70) + 12×月份(auto)
     W_CAT = 0.90
-    W_TASK = 2.40
+    W_PARENT = 1.50 if grouped else 0.0
+    W_TASK = 2.00 if grouped else 2.40
     W_FREQ = 0.70
-    W_AVAIL = TABLE_W - W_CAT - W_TASK - W_FREQ
+    W_AVAIL = TABLE_W - W_CAT - W_PARENT - W_TASK - W_FREQ
     W_MON = round(W_AVAIL / 12, 3)  # 每月欄寬（最後一欄 auto）
 
-    columns = [
-        {"key": "category", "label": "類別", "width": W_CAT, "align": "left"},
-        {"key": "task_name", "label": task_col_label, "width": W_TASK, "align": "left"},
-        {"key": "frequency", "label": "頻率", "width": W_FREQ, "align": "center"},
-    ]
+    if grouped:
+        columns = [
+            {"key": "category", "label": "類別", "width": W_CAT, "align": "left"},
+            {"key": "parent_label", "label": "母項", "width": W_PARENT, "align": "left"},
+            {"key": "child_text", "label": "子項", "width": W_TASK, "align": "left"},
+            {"key": "frequency", "label": "頻率", "width": W_FREQ, "align": "center"},
+        ]
+    else:
+        columns = [
+            {"key": "category", "label": "類別", "width": W_CAT, "align": "left"},
+            {"key": "task_name", "label": task_col_label, "width": W_TASK, "align": "left"},
+            {"key": "frequency", "label": "頻率", "width": W_FREQ, "align": "center"},
+        ]
     for m in range(1, 13):
         columns.append(
             {"key": f"m{m}", "label": f"{m}月", "width": W_MON, "align": "center"}
         )
 
-    pages = [
-        matrix_rows[i : i + ROWS_PER_SLIDE]
-        for i in range(0, max(len(matrix_rows), 1), ROWS_PER_SLIDE)
-    ]
+    if grouped:
+        matrix_rows = _group_annual_rows_by_parent(matrix_rows)
+
+    if grouped:
+        pages = _paginate_annual_rows(matrix_rows, columns, TABLE_H - 34 / 72)
+    else:
+        pages = [
+            matrix_rows[i : i + ROWS_PER_SLIDE]
+            for i in range(0, max(len(matrix_rows), 1), ROWS_PER_SLIDE)
+        ]
     total_pages = len(pages)
 
     for pg_idx, pg_rows in enumerate(pages):
@@ -1154,10 +1276,24 @@ def _add_annual_matrix_slide(
             _pptx_cell(tbl, 0, ci, col["label"], bold=True)
         _pptx_header_row(tbl, n_cols, size=CELL_SIZE)
 
+        # 母項欄合併：每組在本頁內的列區間（1-based，對應 tbl 的資料列 index）
+        _gid_span: dict = {}
+        for _i, _r in enumerate(pg_rows, 1):
+            _g = _r.get("_gid")
+            if _g is None:
+                continue
+            if _g not in _gid_span:
+                _gid_span[_g] = [_i, _i]
+            else:
+                _gid_span[_g][1] = _i
+
         # Data rows
         _ALIGN_MAP = {"right": PP_ALIGN.RIGHT, "center": PP_ALIGN.CENTER}
         for ri, row in enumerate(pg_rows, 1):
-            row_bg = C_ROW_ALT if ri % 2 == 0 else None
+            row_bg = (
+                C_PARENT_BG if row.get("is_parent")
+                else (C_ROW_ALT if ri % 2 == 0 else None)
+            )
             for ci, col in enumerate(columns):
                 key = col["key"]
                 align = _ALIGN_MAP.get(col.get("align", "left"))
@@ -1203,21 +1339,31 @@ def _add_annual_matrix_slide(
                         )
                 else:
                     text = _sanitize(row.get(key, ""))
+                    if key == "parent_label":
+                        # 只在組內第一列（本頁）寫母項文字，其餘列留空由合併儲存格覆蓋
+                        _first = _gid_span.get(row.get("_gid"), [0, 0])[0] == ri
+                        text = _sanitize(row.get("parent_label", "")) if _first else ""
                     _pptx_cell(
                         tbl,
                         ri,
                         ci,
                         text,
                         fg=C_DARK,
-                        bg=row_bg,
+                        bg=(C_PARENT_BG if key == "parent_label" else row_bg),
                         size=CELL_SIZE,
                         align=align,
-                        bold=(ci == 0),
+                        bold=(ci == 0) or bool(row.get("is_parent")),
                     )
+
+        if grouped:
+            _pcol = next(ci for ci, col in enumerate(columns) if col["key"] == "parent_label")
+            for _gs, _ge in _gid_span.values():
+                if _ge > _gs:
+                    tbl.cell(_gs, _pcol).merge(tbl.cell(_ge, _pcol))
 
         tbl.rows[0].height = Pt(34)
         for ri in range(1, n_rows):
-            tbl.rows[ri].height = Pt(26)
+            tbl.rows[ri].height = Pt(_annual_row_height_pt(pg_rows[ri - 1], columns) if grouped else 26)
 
 
 # ═══════════════════════════════════════════════════════
@@ -3281,6 +3427,7 @@ def _build_repair_pptx(module: str, year: int, month: int, db: Session) -> Bytes
                         title="全棟例行維護年度計劃表",
                         subtitle=f"{year}年",
                         matrix_rows=src_fb,
+                        grouped=True,
                         now_str=now_str,
                         SW=SW,
                         SH=SH,

@@ -119,6 +119,11 @@ class FullBldgPMScheduleMatrixRow(BaseModel):
     frequency_variants: List[str] = []   # 跨月出現過的所有頻率（顯示值取最近月份）
     month_count:        int = 0          # 本列合併自幾個月份的批次
     ragic_url:          str = ""
+    # 2026-11-18 新增（年度計劃表母子項）：來源 Sheet28「項目(母)／項目母項名稱／項目(子)」。
+    # 舊資料為 NULL → parent_no／child_no 代入「待定」，parent_name 留空。
+    parent_no:          str = "待定"
+    parent_name:        str = ""
+    child_no:           str = "待定"
 
 
 class FullBldgPMScheduleAnnualMatrix(BaseModel):
