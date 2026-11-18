@@ -294,7 +294,7 @@ RK_REPAIR_TYPE = "報修類型"  # 報修類型
 RK_FLOOR = "發生樓層"  # 發生樓層
 RK_OCCURRED_AT = "發生時間"  # 發生時間（日期）
 RK_RESPONSIBLE = "負責單位"  # 負責單位（Ragic 實際欄位：處理工務，優先讀此）
-RK_WORK_HOURS = "花費工時"   # 工時主欄位（HR）；fallback：工務處理天數（天 ×24）
+RK_WORK_HOURS = "維修工時"   # 工時主欄位（HR，Ragic 維修工時；子表格各列時間加總）；fallback：花費工時、工務處理天數（天 ×24）
 RK_STATUS = "處理狀況"  # 處理狀況
 RK_OUTSOURCE_FEE = "委外費用"  # 委外費用
 RK_MAINTENANCE_FEE = "維修費用"  # 維修費用
@@ -323,7 +323,7 @@ RK_ALIASES: dict[str, list[str]] = {
     RK_FLOOR: ["發生樓層", "樓層", "位置"],
     RK_OCCURRED_AT: ["報修日期", "發生時間", "實際報修時間", "報修時間", "申報時間", "建立時間"],  # 報修日期優先，發生時間備用
     RK_RESPONSIBLE: ["處理工務", "負責單位", "負責人", "承辦單位", "交辦主管"],
-    RK_WORK_HOURS: ["花費工時", "工時", "預估工時"],  # 主欄位；fallback 工務處理天數在 __init__ 手動處理
+    RK_WORK_HOURS: ["維修工時", "花費工時", "工時", "預估工時"],  # 主欄位；fallback 工務處理天數在 __init__ 手動處理
     RK_STATUS: ["處理狀況"],
     RK_OUTSOURCE_FEE: ["委外費用", "外包費用"],
     RK_MAINTENANCE_FEE: ["維修費用", "費用"],
@@ -609,8 +609,8 @@ class RepairCase:
         self.floor = _str(_get_field(raw, RK_FLOOR))
         self.occurred_at = _parse_datetime(_get_field(raw, RK_OCCURRED_AT))
         self.responsible_unit = _str(_get_field(raw, RK_RESPONSIBLE))
-        # 工時：① 花費工時（HR，直接使用）→ ② 工務處理天數（天 ×24，上限 365 天防誤植年份）
-        _work_hrs = _float(_get_field(raw, RK_WORK_HOURS))  # 花費工時
+        # 工時：① 維修工時（HR，主表頂層）→ ② 花費工時（HR，舊欄位）→ ③ 工務處理天數（天 ×24，上限 365 天防誤植年份）
+        _work_hrs = _float(_get_field(raw, RK_WORK_HOURS))  # 依 RK_ALIASES：維修工時 → 花費工時 → 工時 → 預估工時
         if _work_hrs <= 0:
             _work_hrs = safe_work_days_to_hours(raw.get("工務處理天數", ""))
         self.work_hours = _work_hrs
