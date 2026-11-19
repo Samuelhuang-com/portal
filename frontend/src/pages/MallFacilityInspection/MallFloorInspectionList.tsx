@@ -43,7 +43,7 @@ const STATUS_TAG: Record<string, { color: string; label: string }> = {
  * 規則同後端 parse_work_hours_minutes：含「分」為分鐘；含「時」或 h 乘 60；無單位視為分鐘。
  * 無法解析或結果 ≤ 0 回 null（顯示「—」）。
  */
-function formatWorkMinutes(raw: string): string | null {
+function formatWorkMinutes(raw: string | null | undefined): string | null {
   if (!raw) return null
   const m = raw.match(/[\d.]+/)
   if (!m) return null
