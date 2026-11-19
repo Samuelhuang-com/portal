@@ -38,6 +38,21 @@ const STATUS_TAG: Record<string, { color: string; label: string }> = {
   measure:   { color: '#4BA8E8', label: '記錄值' },
 }
 
+/**
+ * Ragic「工時計算」原始字串 → 整數分鐘顯示（如「40 分鐘」）。
+ * 規則同後端 parse_work_hours_minutes：含「分」為分鐘；含「時」或 h 乘 60；無單位視為分鐘。
+ * 無法解析或結果 ≤ 0 回 null（顯示「—」）。
+ */
+function formatWorkMinutes(raw: string): string | null {
+  if (!raw) return null
+  const m = raw.match(/[\d.]+/)
+  if (!m) return null
+  let mins = parseFloat(m[0])
+  if (!raw.includes('分') && /時|h/i.test(raw)) mins *= 60
+  const rounded = Math.round(mins)
+  return rounded > 0 ? `${rounded} 分鐘` : null
+}
+
 export default function MallFloorInspectionList({ sheetKey }: { sheetKey: string }) {
   const sheet = MALL_FACILITY_INSPECTION_SHEETS[sheetKey]
   const [yearMonth, setYearMonth] = useState<string>(dayjs().format('YYYY/MM'))
@@ -124,7 +139,7 @@ export default function MallFloorInspectionList({ sheetKey }: { sheetKey: string
     {
       title: '工時',
       width: 90,
-      render: (_: unknown, r: MallFIBatchRow) => r.work_hours || <Text type="secondary">—</Text>,
+      render: (_: unknown, r: MallFIBatchRow) => formatWorkMinutes(r.work_hours) ?? <Text type="secondary">—</Text>,
     },
     {
       title: '異常',
@@ -220,7 +235,7 @@ export default function MallFloorInspectionList({ sheetKey }: { sheetKey: string
               <Descriptions.Item label="巡檢人員">{detail.batch.inspector_name || '—'}</Descriptions.Item>
               <Descriptions.Item label="開始巡檢時間">{detail.batch.start_time || '—'}</Descriptions.Item>
               <Descriptions.Item label="巡檢結束時間">{detail.batch.end_time || '—'}</Descriptions.Item>
-              <Descriptions.Item label="工時計算">{detail.batch.work_hours || '—'}</Descriptions.Item>
+              <Descriptions.Item label="工時計算">{formatWorkMinutes(detail.batch.work_hours) ?? '—'}</Descriptions.Item>
               <Descriptions.Item label="巡檢進度">
                 <b>{detail.kpi.completion_rate}%</b>
                 <Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>

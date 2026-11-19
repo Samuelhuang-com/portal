@@ -7,7 +7,7 @@ GET /api/v1/mall/daily-hours   每日工時彙總（五項工項）
   ② 上級交辦 — 固定 0（模組未開發）
   ③ 緊急事件 — 固定 0（模組未開發）
   ④ 例行維護 — mall_pm_batch_item + full_bldg_pm_batch_item（start_time / end_time 實際保養時間）
-  ⑤ 每日巡檢 — mall_facility_inspection_batch + rf_inspection_batch（start/end_time）
+  ⑤ 每日巡檢 — mall_facility_inspection_batch（工時計算 work_hours）+ rf_inspection_batch（start/end_time）
 
 回傳格式與 work-category-analysis _build_daily 一致，供前端直接套用相同表格元件。
 """
@@ -23,6 +23,7 @@ from app.core.database import get_db
 from app.models.full_building_maintenance import FullBldgPMBatch, FullBldgPMItem
 from app.models.luqun_repair import LuqunRepairCase
 from app.services.time_utils import parse_minutes as _parse_minutes
+from app.services.time_utils import parse_work_hours_minutes as _parse_work_hours_minutes
 from app.models.mall_facility_inspection import MallFIBatch
 from app.models.mall_periodic_maintenance import (
     MallPeriodicMaintenanceBatch,
@@ -197,7 +198,7 @@ def get_mall_daily_hours(
             day = int(b.inspection_date.split("/")[2])
             if 1 <= day <= days_in_month:
                 fi_sheets_by_day[day].add(b.sheet_key)
-                mins = _parse_minutes(b.start_time or "", b.end_time or "")
+                mins = _parse_work_hours_minutes(b.work_hours)
                 bucket["每日巡檢"][day] += mins / 60
         except (ValueError, IndexError):
             pass
@@ -388,7 +389,7 @@ def get_mall_monthly_hours(
             continue
         if 1 <= m <= 12:
             case_bucket["每日巡檢"][m] += 1
-            bucket["每日巡檢"][m] += _parse_minutes(b.start_time or "", b.end_time or "") / 60
+            bucket["每日巡檢"][m] += _parse_work_hours_minutes(b.work_hours) / 60
 
     # ── ⑤ 每日巡檢：rf_inspection ────────────────────────────────────────────
     for b in db.query(RFInspectionBatch).filter(RFInspectionBatch.inspection_date.like(f"{year_prefix}%")).all():
@@ -536,7 +537,7 @@ def get_mall_person_hours(
     for b in db.query(MallFIBatch).filter(MallFIBatch.inspection_date.like(f"{year_prefix}%")).all():
         person = (b.inspector_name or "").strip()
         if person and person != "未指定":
-            mins = _parse_minutes(b.start_time or "", b.end_time or "")
+            mins = _parse_work_hours_minutes(b.work_hours)
             if mins > 0:
                 ph[person]["每日巡檢"] += mins / 60
 

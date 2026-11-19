@@ -35,6 +35,8 @@ from __future__ import annotations
 import re
 from typing import Any, Iterable
 
+from app.services.time_utils import parse_work_hours_minutes
+
 from app.services.mall_daily_inspection_template import MALL_DAILY_INSPECTION_TEMPLATE
 
 RAGIC_BASE = "https://ap12.ragic.com/soutlet001"
@@ -299,7 +301,7 @@ def build_daily_sheet(
             name = (b.inspector_name or "").strip()
             if name and name not in inspectors:
                 inspectors.append(name)
-            mins = _minutes_between(b.start_time or "", b.end_time or "")
+            mins = parse_work_hours_minutes(b.work_hours)
             total_min += mins
             batch_out.append({
                 "ragic_id":       b.ragic_id,

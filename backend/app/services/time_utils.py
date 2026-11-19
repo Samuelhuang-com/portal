@@ -38,3 +38,23 @@ def parse_minutes(start: str, end: str) -> int:
         return 0
     diff = e - s
     return diff + 24 * 60 if diff < 0 else diff
+
+
+def parse_work_hours_minutes(val) -> int:
+    """Ragic「工時計算」欄位文字 → 整數分鐘；解析不到或 ≤ 0 回 0。
+
+    規則（與 work_journal._parse_wm 一致，另補 h／hr）：
+      含「分」→ 分鐘（如 '22.00 分鐘'）
+      含「時」或 h → ×60（如 '2 小時'、'1.5h'）
+      無單位 → 分鐘（巡檢模組欄位儲存純數字分鐘）
+    """
+    if not val:
+        return 0
+    s = str(val).strip()
+    m = re.search(r"[\d.]+", s)
+    if not m:
+        return 0
+    num = float(m.group())
+    if "分" not in s and ("時" in s or re.search(r"h", s, re.IGNORECASE)):
+        num = num * 60
+    return max(0, round(num))

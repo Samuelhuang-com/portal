@@ -22,6 +22,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.models.mall_facility_inspection import MallFIBatch, MallFIItem
+from app.services.time_utils import parse_work_hours_minutes
 from app.services.mall_daily_inspection_template import (
     MALL_DAILY_INSPECTION_TEMPLATE,
     MallDailyInspectionTemplateRow,
@@ -124,10 +125,10 @@ def build_mall_daily_inspection_table(
             inspection_date=inspection_date,
         )
 
-    # 各 tab 實際巡檢時間（所有 batch 的 start→end 加總）
+    # 各 tab 實際巡檢時間（所有 batch 的「工時計算」加總）
     tab_actual_minutes: dict[str, int] = {
         tab: sum(
-            _parse_minutes(b.start_time or "", b.end_time or "")
+            parse_work_hours_minutes(b.work_hours)
             for b, _ in batches
         )
         for tab, batches in sheet_data.items()

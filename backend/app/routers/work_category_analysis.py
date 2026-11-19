@@ -48,6 +48,7 @@ from app.models.dazhi_repair import DazhiRepairCase
 from app.models.ihg_room_maintenance import IHGRoomMaintenanceMaster
 from app.models.hotel_daily_inspection import HotelDIBatch
 from app.models.mall_facility_inspection import MallFIBatch
+from app.services.time_utils import parse_work_hours_minutes
 from app.models.b1f_inspection import B1FInspectionBatch
 from app.models.b2f_inspection import B2FInspectionBatch
 from app.models.b4f_inspection import B4FInspectionBatch
@@ -289,15 +290,8 @@ def _load_all(db: Session, sources: set[str]) -> list[dict]:
                 yd = _parse_hotel_date(b.start_time)
             if not yd:
                 continue
-            mins = _parse_di_minutes(
-                _time_only(b.start_time or ""),
-                _time_only(b.end_time   or ""),
-            )
-            if mins > 0:
-                hours = mins / 60.0
-            else:
-                m = re.search(r"[\d.]+", b.work_hours or "")
-                hours = float(m.group()) if m else 0.0
+            # 工時統一以 Ragic「工時計算」為準（不再用起訖時間差）
+            hours = parse_work_hours_minutes(b.work_hours) / 60.0
             rows.append({
                 "year":       yd[0],
                 "month":      yd[1],
