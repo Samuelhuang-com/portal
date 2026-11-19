@@ -486,6 +486,7 @@ const RAGIC_APPS_STATIC: Omit<RagicApp, 'portalName' | 'portalUrl' | 'localTable
   { itemNo: 430, module: '待確認', name: '請款單 工程部（台中）', url: 'https://ap12.ragic.com/soutlet001/construction/5', type: '待確認', note: 'Portal 台中請購／請款同步設定使用中（ragic_sheet_config）；2026-11-17 SPEC_stock_management 規劃時補登，名稱／模組待確認' },
   { itemNo: 431, module: '待確認', name: '請購單 財務部（台中）', url: 'https://ap12.ragic.com/soutlet001/finance/9', type: '待確認', note: 'Portal 台中請購／請款同步設定使用中（ragic_sheet_config）；2026-11-17 SPEC_stock_management 規劃時補登，名稱／模組待確認' },
   { itemNo: 432, module: '待確認', name: '請款單 財務部（台中）', url: 'https://ap12.ragic.com/soutlet001/finance/12', type: '待確認', note: 'Portal 台中請購／請款同步設定使用中（ragic_sheet_config）；2026-11-17 SPEC_stock_management 規劃時補登，名稱／模組待確認' },
+  { itemNo: 433, module: '週期採購（日曜）', name: '待確認', url: 'https://ap12.ragic.com/soutlet001/freed-management-division/41', type: '待確認', note: '2026-11-19 週採拋轉（日曜 OU）改指此表單；名稱與用途待確認，欄位代號尚未核對' },
 ]
 
 // ── 本地 DB 表對應（Ragic sheet 路徑 → 本地 SQLite table name(s)）────────────

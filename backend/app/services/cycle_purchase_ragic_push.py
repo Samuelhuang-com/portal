@@ -118,11 +118,35 @@ class RagicPushError(Exception):
 # 小工具
 # ───────────────────────────────────────────────────────────────────────────
 
-def _sheet_url() -> str:
+class _FormFields:
+    """依表單取欄位代號：有覆寫用覆寫值，其餘沿用 settings（春大直 sheet 58）。"""
+
+    def __init__(self, overrides: dict):
+        self._overrides = overrides
+
+    def __getattr__(self, name: str):
+        if name in self._overrides:
+            return self._overrides[name]
+        return getattr(settings, name)
+
+
+def field_codes_for(company_code: str | None):
+    overrides = settings.RAGIC_CP_FORM_FIELDS_BY_CODE.get((company_code or "").upper(), {})
+    return _FormFields(overrides) if overrides else settings
+
+
+def sheet_path_for(company_code: str | None) -> str:
+    """依公司代碼取拋轉表單路徑；未設定覆寫的公司沿用 RAGIC_CP_SUMMARY_PATH。"""
+    return settings.RAGIC_CP_SUMMARY_PATH_BY_CODE.get(
+        (company_code or "").upper(), settings.RAGIC_CP_SUMMARY_PATH
+    )
+
+
+def _sheet_url(company_code: str | None = None) -> str:
     return (
         f"https://{settings.RAGIC_CP_SUMMARY_SERVER_URL}"
         f"/{settings.RAGIC_CP_SUMMARY_ACCOUNT}"
-        f"/{settings.RAGIC_CP_SUMMARY_PATH}"
+        f"/{sheet_path_for(company_code)}"
     )
 
 
@@ -173,11 +197,11 @@ def _text(value: Any) -> str:
 #    整批拋轉停擺，比原本的行為更糟。拿不到時回 None，呼叫端就跳過這道檢查
 #    並在 warnings 說明。這是刻意的取捨，要改成 fail closed 只需改這裡的回傳。
 
-_VENDOR_OPTION_CACHE: dict[str, Any] = {"values": None, "fetched_at": 0.0}
+_VENDOR_OPTION_CACHE: dict[str, dict[str, Any]] = {}  # 以拋轉表單網址為 key，各公司表單各自快取
 _VENDOR_OPTION_TTL = 600  # 秒。表單定義很少變，但也不該整個行程都不更新。
 
 
-def fetch_accepted_vendor_names(force: bool = False) -> set[str] | None:
+def fetch_accepted_vendor_names(force: bool = False, company_code: str | None = None) -> set[str] | None:
     """Ragic 主表「廠商(一)」目前接受哪些值（＝廠商資料表裡的名稱）。
 
     Returns:
@@ -187,11 +211,11 @@ def fetch_accepted_vendor_names(force: bool = False) -> set[str] | None:
     import time
 
     now = time.time()
-    if (not force and _VENDOR_OPTION_CACHE["values"] is not None
-            and now - _VENDOR_OPTION_CACHE["fetched_at"] < _VENDOR_OPTION_TTL):
-        return _VENDOR_OPTION_CACHE["values"]
-
-    url = _sheet_url()
+    url = _sheet_url(company_code)
+    cached = _VENDOR_OPTION_CACHE.get(url)
+    if (not force and cached is not None and cached["values"] is not None
+            and now - cached["fetched_at"] < _VENDOR_OPTION_TTL):
+        return cached["values"]
     try:
         resp = httpx.get(
             url,
@@ -204,11 +228,12 @@ def fetch_accepted_vendor_names(force: bool = False) -> set[str] | None:
         fields = (resp.json() or {}).get("fields") or {}
         # 2026-09-28：主表廠商已刪除，改看子表「擬定廠商」的選項（同樣連結廠商資料表）。
         # 設定仍填了主表廠商代號時優先用主表的。
-        if settings.RAGIC_CP_F_VENDOR:
-            field = fields.get(f"fid{settings.RAGIC_CP_F_VENDOR}") or {}
+        s = field_codes_for(company_code)
+        if s.RAGIC_CP_F_VENDOR:
+            field = fields.get(f"fid{s.RAGIC_CP_F_VENDOR}") or {}
         else:
-            subtable = fields.get(f"stid{settings.RAGIC_CP_SUBTABLE}") or {}
-            field = subtable.get(f"fid{settings.RAGIC_CP_SF_VENDOR}") or {}
+            subtable = fields.get(f"stid{s.RAGIC_CP_SUBTABLE}") or {}
+            field = subtable.get(f"fid{s.RAGIC_CP_SF_VENDOR}") or {}
         options = field.get("options")
         if not isinstance(options, list):
             logger.warning(
@@ -218,8 +243,7 @@ def fetch_accepted_vendor_names(force: bool = False) -> set[str] | None:
         values = {str(o.get("v")) for o in options if o.get("v") is not None}
         if not values:
             return None
-        _VENDOR_OPTION_CACHE["values"] = values
-        _VENDOR_OPTION_CACHE["fetched_at"] = now
+        _VENDOR_OPTION_CACHE[url] = {"values": values, "fetched_at": now}
         return values
     except Exception as exc:  # noqa: BLE001
         logger.warning(
@@ -264,7 +288,7 @@ def build_payload(document: dict[str, Any]) -> dict[str, Any]:
     抽成獨立函式是為了可以在沒有網路的情況下單獨測試欄位對應
     （見 backend/tests/test_cycle_purchase_ragic_push.py）。
     """
-    s = settings
+    s = field_codes_for(document.get("company_code"))
     vendor_name = _text(document.get("vendor_name"))
 
     payload: dict[str, Any] = {
@@ -369,7 +393,7 @@ def build_payload(document: dict[str, Any]) -> dict[str, Any]:
         v = _text(line.get("vendor_name"))
         if v:
             rows[f"-{total - idx}"][s.RAGIC_CP_SF_VENDOR] = v
-    payload[f"_subtable_{settings.RAGIC_CP_SUBTABLE}"] = rows
+    payload[f"_subtable_{s.RAGIC_CP_SUBTABLE}"] = rows
     return payload
 
 
@@ -435,7 +459,7 @@ def push_summary_document(document: dict[str, Any]) -> dict[str, Any]:
         }
 
     payload = build_payload(document)
-    url = _sheet_url()
+    url = _sheet_url(document.get("company_code"))
 
     try:
         resp = httpx.post(
@@ -498,7 +522,8 @@ def push_summary_document(document: dict[str, Any]) -> dict[str, Any]:
         raw_id = record.get("_ragicId")
     ragic_record_id = "" if raw_id is None else str(raw_id)
 
-    ragic_no = _text(record.get(settings.RAGIC_CP_F_DOC_NO) or record.get("編號"))
+    _s = field_codes_for(document.get("company_code"))
+    ragic_no = _text(record.get(_s.RAGIC_CP_F_DOC_NO) or record.get("編號"))
 
     # 空殼防呆：帶了 doFormula 還是算不出金額，代表 Ragic 端的公式被動過或
     # 參數被擋掉。這種單在 Ragic 看起來是正常的一張單，只是金額全空，
@@ -511,8 +536,8 @@ def push_summary_document(document: dict[str, Any]) -> dict[str, Any]:
     #      2. 現在還掛在表單上的「小計 1020840」是比價版型的殘留，公式是 `L5`
     #         （子表「上月累計預算」欄，整欄都空），**恆為字串 "0"** ——
     #         "0" 是 truthy，看它反而會被騙過去，等於防呆失效。
-    grand_sub = _text(record.get(settings.RAGIC_CP_F_GRAND_SUB))
-    grand_total = _text(record.get(settings.RAGIC_CP_F_GRAND_TOTAL))
+    grand_sub = _text(record.get(_s.RAGIC_CP_F_GRAND_SUB))
+    grand_total = _text(record.get(_s.RAGIC_CP_F_GRAND_TOTAL))
     if not grand_sub:
         # 全案小計＝子表「金額2(選定)」的加總，而金額2 是
         # `IF(擬定廠商 = 廠商(一), …)`。所以它空白最常見的原因是**廠商對不上**
@@ -539,7 +564,7 @@ def push_summary_document(document: dict[str, Any]) -> dict[str, Any]:
     # 單筆網址用 Ragic 的內部 _ragicId，不是表單上的編號
     # （2026-09-15 在 sheet 57 實測 .../57/2 開出來就是 樂管週採00003）。
     # 在這裡組好一起回傳，service 存進 ragic_record_url，前端就不用再拼一次網址。
-    ragic_record_url = f"{_sheet_url()}/{ragic_record_id}" if ragic_record_id else ""
+    ragic_record_url = f"{_sheet_url(document.get('company_code'))}/{ragic_record_id}" if ragic_record_id else ""
 
     return {
         "ragic_record_id": ragic_record_id,

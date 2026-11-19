@@ -1477,7 +1477,9 @@ def push_summary_to_ragic(
     # Samuel 裁示：廠商無論對錯都拋，只要告訴他哪些有問題。
     vendor_warnings: list[dict] = []
     try:
-        _accepted = cycle_purchase_ragic_push.fetch_accepted_vendor_names()
+        _accepted = cycle_purchase_ragic_push.fetch_accepted_vendor_names(
+            company_code=require_company_code(db, company)
+        )
         _by_vendor: dict[str, int] = {}
         for r in deliverable_rows:
             _n = (r.vendor_name or "").strip()
@@ -1505,6 +1507,11 @@ def push_summary_to_ragic(
     )
 
     # ── ④ 逐張推送 ────────────────────────────────────────────────────────
+    # 每張單帶上公司代碼，push 端據此選拋轉表單（見 config RAGIC_CP_SUMMARY_PATH_BY_CODE）
+    _company_code = require_company_code(db, company)
+    for doc in documents:
+        doc["company_code"] = _company_code
+
     results: list[dict] = []
     failed: list[dict] = []
     for doc in documents:

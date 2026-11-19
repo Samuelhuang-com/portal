@@ -166,6 +166,50 @@ class Settings(BaseSettings):
     RAGIC_CP_SUMMARY_SERVER_URL: str = "ap12.ragic.com"
     RAGIC_CP_SUMMARY_ACCOUNT:    str = "soutlet001"
     RAGIC_CP_SUMMARY_PATH:       str = "community-management-department/58"
+    # 依公司代碼覆寫拋轉表單路徑（2026-11-19）。未列出的公司沿用上面的 RAGIC_CP_SUMMARY_PATH。
+    #   OU＝日曜 → freed-management-division/41（https://ap12.ragic.com/soutlet001/freed-management-division/41）
+    # 欄位代號見下方 RAGIC_CP_FORM_FIELDS_BY_CODE（2026-11-19 於 Ragic 設計模式逐欄核對）。
+    RAGIC_CP_SUMMARY_PATH_BY_CODE: dict = {"OU": "freed-management-division/41"}
+    # 依公司代碼覆寫欄位代號（表單不同時使用）。未列出的代號沿用上面的 RAGIC_CP_F_* / RAGIC_CP_SF_* / RAGIC_CP_SUBTABLE（sheet 58）。
+    RAGIC_CP_FORM_FIELDS_BY_CODE: dict = {
+        "OU": {  # 日曜 → freed-management-division/41
+            "RAGIC_CP_SUBTABLE": "1022489",
+            "RAGIC_CP_F_DOC_NO": "1022431",
+            "RAGIC_CP_F_DEPT": "1022432",
+            "RAGIC_CP_F_ACCOUNT": "1022433",
+            "RAGIC_CP_F_APPLY_DATE": "1022434",
+            "RAGIC_CP_F_APPLICANT": "1022435",
+            "RAGIC_CP_F_PURPOSE": "1022438",
+            "RAGIC_CP_F_REQUESTER": "1022467",
+            "RAGIC_CP_F_COMPANY": "1022483",
+            "RAGIC_CP_F_CYCLE": "1022484",
+            "RAGIC_CP_F_BATCH": "1022485",
+            "RAGIC_CP_F_PUSHED_AT": "1022486",
+            "RAGIC_CP_F_NOTE": "1022487",
+            "RAGIC_CP_F_GRAND_SUB": "1022457",
+            "RAGIC_CP_F_TAX": "1022458",
+            "RAGIC_CP_F_GRAND_TOTAL": "1022459",
+            "RAGIC_CP_F_TOTAL": "1022459",
+            "RAGIC_CP_F_VENDOR": "",
+            "RAGIC_CP_SF_SEQ": "1022439",
+            "RAGIC_CP_SF_ITEM_CODE": "1022440",
+            "RAGIC_CP_SF_ITEM_NAME": "1022441",
+            "RAGIC_CP_SF_QTY": "1022442",
+            "RAGIC_CP_SF_UNIT": "1022443",
+            "RAGIC_CP_SF_NOTE": "1022444",
+            "RAGIC_CP_SF_PRICE": "1022445",
+            "RAGIC_CP_SF_AMOUNT": "1022446",
+            "RAGIC_CP_SF_ACCOUNT": "1022447",
+            "RAGIC_CP_SF_DEPT": "1022448",
+            "RAGIC_CP_SF_BUDGET_M": "1022449",
+            "RAGIC_CP_SF_BUDGET_ACC": "1022450",
+            "RAGIC_CP_SF_VENDOR": "1022451",
+            "RAGIC_CP_SF_PRICE_SEL": "1022452",
+            "RAGIC_CP_SF_AMOUNT_SEL": "1022453",
+            "RAGIC_CP_SF_CHOSEN": "1022454",
+            "RAGIC_CP_SF_SUMMARY_ID": "1022455",
+        },
+    }
     # false ＝ 不真的寫 Ragic，退回 stub 行為（Portal 端狀態照常更新）。
     # 測試區想跑完整流程但不要污染 Ragic 正式資料時設 false。
     RAGIC_CP_SUMMARY_ENABLED:    bool = True

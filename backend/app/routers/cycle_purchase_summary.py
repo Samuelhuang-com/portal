@@ -189,6 +189,7 @@ def ragic_pushed_date_range(
     summary="取得 Ragic「週採匯總請購單」表單連結（彙整單頁右上角「在 Ragic 查看」用）",
 )
 def get_ragic_link(
+    ctx: CompanyContext = Depends(company_context),
     _: User = Depends(require_any_permission("cycle_purchase_view", "cycle_purchase_buyer")),
 ):
     """回傳 Ragic 表單網址，**由後端依 config 組出來，前端不要自己拼**——
@@ -206,7 +207,7 @@ def get_ragic_link(
         "url": (
             f"https://{settings.RAGIC_CP_SUMMARY_SERVER_URL}"
             f"/{settings.RAGIC_CP_SUMMARY_ACCOUNT}"
-            f"/{settings.RAGIC_CP_SUMMARY_PATH}"
+            f"/{settings.RAGIC_CP_SUMMARY_PATH_BY_CODE.get(ctx.code, settings.RAGIC_CP_SUMMARY_PATH)}"
         ),
         "sheet_label": "週採匯總請購單",
         "enabled": settings.RAGIC_CP_SUMMARY_ENABLED,
