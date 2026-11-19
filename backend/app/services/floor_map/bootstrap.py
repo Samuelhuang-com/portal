@@ -314,6 +314,12 @@ def ensure_floor_map_data(engine) -> dict[str, str]:
                 result[f"{mod}:restore"] = (
                     f"還原子項點位 {rs['restored']} 筆；對不到母項仍停用 {len(rs['skipped'])} 筆：{'、'.join(rs['skipped'])}"
                 )
+        # 2026-11-19 飯店例行維護：子項點位待定位種入（已有的子項點位不重種）
+        from app.services.floor_map.pm_seed import CHILD_SEED_MODULES, seed_child_points
+        for mod in CHILD_SEED_MODULES:
+            n = seed_child_points(conn, mod, tag=f"startup:{mod}")
+            if n:
+                result[f"{mod}:child"] = f"寫入待定位子項點位 {n} 筆"
         # 2026-10-05：套用最新點位清單（補缺、更新屬性；不動已校正的位置）
         for mod in ("mall_facility_inspection", "full_building_inspection"):
             st = sync_point_list(conn, mod)
