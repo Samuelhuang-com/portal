@@ -1,5 +1,5 @@
 /**
- * cycle_request41_to_po42.js  v1.2  (2026-11-19)
+ * cycle_request41_to_po42.js  v1.5  (2026-11-20)
  *
  * Ragic 伺服器端 JavaScript Workflow ——日曜「★週期請購單」(freed-management-division/41) 的「拋轉採購單」按鈕
  * 把一張週期請購單拋轉成「★週採採購單」(freed-management-division/42)：
@@ -14,10 +14,14 @@
  *        b. 品項列金額必須 = 數量 × 單價
  *        c. 41 上的「XX部 小計」列（人工輸入）必須等於該部門品項金額加總；
  *           有品項的部門一定要有小計列，小計列的部門也一定要有品項
- *   ⑦ v1.2：拋轉出的 42 編號為「自管購」＋yyyyMM＋5 位流水號（例：自管購20261100001），
- *           流水號接在目前 42 同月份最大號之後；同一次拋轉多張採購單時依序遞增。
+ *   ⑦ 採購編號：由 Ragic 自動編號產生；建立後以新記錄 ID 重新讀取，讀到的若仍是未展開的占位字串會在訊息中警告
+ *   ⑧ 回寫 41「對應週期採購單號」（1022456）：依廠商對應，只寫品項列；寫入後重新讀取核對
  *
- * v1.1-diag：讀不到記錄時，錯誤訊息會列出 id 的型別、路徑與表單 41 可讀取的筆數，方便排查。
+ * v1.5 變更：
+ *   - 回寫修正：改用 src.getSubtableRootNodeId(子表, 列索引) 取得既有列的內部 ID 再寫入（與春大直 v1.7 相同做法），
+ *     v1.4 的列索引寫入會失敗（0/3）。
+ *   - 申請人：41「申請人」為空時，改用 41「請購人」帶入 42「申請人」。
+ *     ⚠️ 申請人在 Ragic 是人員下拉欄，值必須與 Ragic 使用者選項完全一致，否則會被靜默丟棄。
  *
  * 與春大直版（cycle_request58_to_po57.js）的差異：
  *   - 來源表單 41、目標表單 42，欄位代號全部依 41／42 實際表單定義
@@ -32,13 +36,16 @@
  *      原本那顆內建「拋轉採購單」請刪除或改名，避免按錯。
  *
  * ⚠️ Ragic 伺服器端是 ES5（Rhino）：只能用 var／function，不可用箭頭函式、let/const、樣板字串。
- * ⚠️ 42 的「採購編號」欄（1022551）是否接受程式寫入，尚待實測；若被 Ragic 自動編號覆蓋，會回報在結果訊息中。
+ * ⚠️ 本版尚未在正式表單實際拋轉驗證，請先用一張測試單確認。
  */
+
+// 回寫 41「對應週期採購單號」開關（v1.5 起使用 getSubtableRootNodeId 寫入，已與春大直版相同做法）
+var WRITEBACK_41 = true;
 
 var CP41 = {
   path: "/freed-management-division/41",
   F_DOC_NO: 1022431,     // 編號
-  F_APPLICANT: 1022435,  // 申請人
+  F_APPLICANT: 1022435,  // 申請人（人員下拉欄）
   F_PURPOSE: 1022438,    // 說明（開頭是期別 yyyy-MM）
   F_REQUESTER: 1022467,  // 請購人（必填）
   F_COMPANY: 1022483,    // 公司別
@@ -54,15 +61,16 @@ var CP41 = {
   S_AMOUNT: "1022446",   // 金額（公式；小計列為人工輸入的小計）
   S_DEPT: "1022448",     // 部門
   S_VENDOR: "1022451",   // 擬定廠商
-  S_SUMMARY_ID: "1022455" // Portal彙整列ID
+  S_SUMMARY_ID: "1022455", // Portal彙整列ID
+  S_LINK_PO: "1022456"   // 對應週期採購單號（回寫用）
 };
 
 var PO42 = {
   path: "/freed-management-division/42",
-  F_NO: 1022551,         // 採購編號（標題欄；拋轉時寫入「自管購」＋流水號）
+  F_NO: 1022551,         // 採購編號（標題欄；由 Ragic 自動編號）
   F_PERIOD: 1022552,     // 期別（必填）
   F_VENDOR: 1022553,     // 擬定廠商（必填，文字）
-  F_APPLICANT: 1022559,  // 申請人
+  F_APPLICANT: 1022559,  // 申請人（人員下拉欄）
   F_PURPOSE: 1022555,    // 用途說明（必填）
   F_COMPANY: 1022575,    // 公司別
   F_CYCLE: 1022576,      // 週期名稱
@@ -83,7 +91,6 @@ var PO42 = {
 };
 
 var SUBTOTAL_SUFFIX = " 小計";
-var PO_NO_PREFIX = "自管購";
 
 function _trim(v) { return (v === null || v === undefined) ? "" : String(v).replace(/^\s+|\s+$/g, ""); }
 function _num(v) {
@@ -97,25 +104,18 @@ function _fmt(n) {  // 金額到小數 2 位、去掉多餘的 0
   return String(r);
 }
 function _pad(n) { return (n < 10 ? "0" : "") + n; }
-function _padN(n, width) {
-  var s = String(n);
-  while (s.length < width) { s = "0" + s; }
-  return s;
-}
 function _nowText() {
-  var d = new Date();
-  return d.getFullYear() + "/" + _pad(d.getMonth() + 1) + "/" + _pad(d.getDate()) + " " +
-         _pad(d.getHours()) + ":" + _pad(d.getMinutes()) + ":" + _pad(d.getSeconds());
-}
-function _ymText() {  // yyyyMM，例如 202611
-  var d = new Date();
-  return String(d.getFullYear()) + _pad(d.getMonth() + 1);
+  // Ragic 伺服器是 UTC，一律換算成台北時間（UTC+8）
+  var d = new Date(new Date().getTime() + 8 * 3600 * 1000);
+  return d.getUTCFullYear() + "/" + _pad(d.getUTCMonth() + 1) + "/" + _pad(d.getUTCDate()) + " " +
+         _pad(d.getUTCHours()) + ":" + _pad(d.getUTCMinutes()) + ":" + _pad(d.getUTCSeconds());
 }
 function _fail(msg) {
   response.setStatus("ERROR");
   response.setMessage(msg);
 }
 function _same(a, b) { return Math.abs(Math.round(a * 100) - Math.round(b * 100)) <= 1; }  // 容許 0.01 捨入誤差
+function _isPlaceholder(s) { return s === "" || s.indexOf("{") >= 0; }  // 未展開的自動編號占位字串
 
 // 讀不到記錄時的診斷訊息：列出 id 型別、路徑與表單 41 可讀取的筆數
 function _notFoundMessage(recordId) {
@@ -133,22 +133,6 @@ function _notFoundMessage(recordId) {
   return msg;
 }
 
-// 取得同月份「自管購」＋yyyyMM 的最大流水號（沒有則回傳 0）
-function _maxPoSerial(prefix) {
-  var max = 0;
-  var q = db.getAPIQuery(PO42.path);
-  q.addFilter(PO42.F_NO, "like", prefix);
-  var list = q.getAPIResultList();
-  for (var i = 0; list && i < list.length; i++) {
-    var no = _trim(list[i].getFieldValue(PO42.F_NO));
-    if (no.indexOf(prefix) === 0) {
-      var s = parseInt(no.slice(prefix.length), 10);
-      if (!isNaN(s) && s > max) { max = s; }
-    }
-  }
-  return max;
-}
-
 function convertCycleRequestToPO(recordId) {
   var src = db.getAPIQuery(CP41.path).getAPIEntry(recordId);
   if (!src) { return _fail(_notFoundMessage(recordId)); }
@@ -158,7 +142,8 @@ function convertCycleRequestToPO(recordId) {
   var company = _trim(src.getFieldValue(CP41.F_COMPANY));
   var cycleName = _trim(src.getFieldValue(CP41.F_CYCLE));
   var batchNo = _trim(src.getFieldValue(CP41.F_BATCH));
-  var applicant = _trim(src.getFieldValue(CP41.F_APPLICANT));
+  // v1.5：41「申請人」為空時改用「請購人」
+  var applicant = _trim(src.getFieldValue(CP41.F_APPLICANT)) || _trim(src.getFieldValue(CP41.F_REQUESTER));
 
   // 期別：說明開頭的 yyyy-MM；抓不到就從批次號 CPSUM-yyyyMM-… 推
   var period = "";
@@ -223,6 +208,7 @@ function convertCycleRequestToPO(recordId) {
 
     if (dept !== "") { deptItemSum[dept] = (deptItemSum[dept] || 0) + (amount || 0); }
     lines.push({
+      idx: i,
       code: code, name: name, qty: qty, price: price, vendor: vendor, dept: dept,
       unit: _trim(src.getSubtableFieldValue(CP41.SUB, i, CP41.S_UNIT)),
       note: _trim(src.getSubtableFieldValue(CP41.SUB, i, CP41.S_NOTE)),
@@ -265,17 +251,13 @@ function convertCycleRequestToPO(recordId) {
   }
   vendorOrder.sort();
 
-  // ── ⑦ 採購編號：自管購＋yyyyMM＋5 位流水號 ───────────────────────────
-  var poPrefix = PO_NO_PREFIX + _ymText();
-  var poSerial = _maxPoSerial(poPrefix) + 1;
-
   var pushedAt = _nowText();
   var created = [];
+  var warnings = [];
+  var poNoByVendor = {};    // 廠商 → 採購編號（僅當編號已正確產生時才記錄）
   for (var k = 0; k < vendorOrder.length; k++) {
     var vendorName = vendorOrder[k];
     var items = groups[vendorName];
-    var poNo = poPrefix + _padN(poSerial, 5);
-    poSerial++;
 
     // ── ② 部門排序＋部門小計 ─────────────────────────────────────────
     items.sort(function (a, b) {
@@ -300,7 +282,6 @@ function convertCycleRequestToPO(recordId) {
     }
 
     var po = db.getAPIQuery(PO42.path).insertAPIEntry();
-    po.setFieldValue(PO42.F_NO, poNo);
     po.setFieldValue(PO42.F_PERIOD, period);
     po.setFieldValue(PO42.F_PURPOSE, period + " " + cycleName + " 週期採購（" + company + "／" + vendorName + "）");
     po.setFieldValue(PO42.F_VENDOR, vendorName);
@@ -334,12 +315,52 @@ function convertCycleRequestToPO(recordId) {
     }
     po.recalculateAllFormulas();
     po.save();
-    var savedNo = _trim(po.getFieldValue(PO42.F_NO));
-    created.push(vendorName + "：" + (savedNo || poNo) + "（" + items.length + " 項）");
+
+    // ⑦ 以新記錄 ID 重新讀取採購編號（save 之後自動編號才會展開）
+    var newId = po.getRootNodeId();
+    var rr = db.getAPIQuery(PO42.path).getAPIEntry(newId);
+    var savedNo = rr ? _trim(rr.getFieldValue(PO42.F_NO)) : "";
+    if (_isPlaceholder(savedNo)) {
+      warnings.push("⚠️ " + vendorName + "：採購編號未展開（讀到「" + savedNo + "」），請檢查 42 的自動編號格式設定");
+    } else {
+      poNoByVendor[vendorName] = savedNo;
+    }
+    created.push(vendorName + "：" + (savedNo || "（編號未知）") + "（" + items.length + " 項）");
+  }
+
+  // ── ⑧ 回寫 41「對應週期採購單號」（依既有列的內部 ID 寫入）──────────────
+  var wbMsg = "";
+  if (!WRITEBACK_41) {
+    wbMsg = "\n⚠️ 未回寫 41「對應週期採購單號」（回寫功能已停用），請依上方採購編號手動補填";
+  } else {
+    try {
+      var wbCount = 0;
+      for (var w = 0; w < lines.length; w++) {
+        var target = poNoByVendor[lines[w].vendor];
+        if (target) {
+          var nodeId = src.getSubtableRootNodeId(CP41.SUB, lines[w].idx);
+          src.setSubtableFieldValue(CP41.S_LINK_PO, nodeId, target);
+          wbCount++;
+        }
+      }
+      src.save();
+      // 重新讀取 41 核對
+      var chk = db.getAPIQuery(CP41.path).getAPIEntry(recordId);
+      var okCount = 0;
+      for (var c = 0; c < lines.length; c++) {
+        var want = poNoByVendor[lines[c].vendor];
+        if (want && _trim(chk.getSubtableFieldValue(CP41.SUB, lines[c].idx, CP41.S_LINK_PO)) === want) { okCount++; }
+      }
+      wbMsg = "\n回寫 41「對應週期採購單號」：" + okCount + "/" + wbCount + " 列核對成功";
+      if (okCount < wbCount) { wbMsg += "（⚠️ 有列未寫入，請手動補填）"; }
+    } catch (e) {
+      wbMsg = "\n⚠️ 回寫 41「對應週期採購單號」失敗：" + e + "（採購單已建立，請手動補填）";
+    }
   }
 
   response.setStatus("SUCCESS");
-  response.setMessage("已由 " + docNo + " 拋轉 " + created.length + " 張採購單：\n" + created.join("\n"));
+  response.setMessage("已由 " + docNo + " 拋轉 " + created.length + " 張採購單：\n" + created.join("\n") +
+                      (warnings.length ? "\n" + warnings.join("\n") : "") + wbMsg);
 }
 
 /*
