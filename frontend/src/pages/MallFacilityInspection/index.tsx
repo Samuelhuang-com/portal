@@ -278,7 +278,7 @@ function SummaryTabContent() {
             month={parseInt(queryMonth.split('-')[1])}
             maxDay={calMaxDay}
             rows={calRows}
-            rowHeaderLabel="巡檢區域"
+            rowHeaderLabel="巡檢頁籤"
             renderCell={renderIssueCell}
             onCellClick={(day, rowKey) => {
               setSheetFocus(rowKey)
@@ -381,27 +381,27 @@ export default function MallFacilityInspectionDashboard() {
           },
           {
             key:      '1-4f',
-            label:    '1-4F',
+            label:    '1F ~ 4F配電室',
             children: openedTabs.has('1-4f') ? <MallFloorInspectionList sheetKey="1-4f" /> : null,
           },
           {
             key:      '4f',
-            label:    '4F 巡檢',
+            label:    '4F空調箱',
             children: openedTabs.has('4f') ? <MallFloorInspectionList sheetKey="4f" /> : null,
           },
           {
             key:      '3f',
-            label:    '3F 巡檢',
+            label:    '3F靜電機',
             children: openedTabs.has('3f') ? <MallFloorInspectionList sheetKey="3f" /> : null,
           },
           {
             key:      '1f-3f',
-            label:    '1F~3F 巡檢',
+            label:    '1F-3F空調箱',
             children: openedTabs.has('1f-3f') ? <MallFloorInspectionList sheetKey="1f-3f" /> : null,
           },
           {
             key:      '1f',
-            label:    '1F 巡檢',
+            label:    '1F水洗機',
             children: openedTabs.has('1f') ? <MallFloorInspectionList sheetKey="1f" /> : null,
           },
           {

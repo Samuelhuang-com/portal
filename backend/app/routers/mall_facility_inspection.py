@@ -45,36 +45,36 @@ class InspectionSheetConfig(BaseModel):
 SHEET_CONFIGS: List[InspectionSheetConfig] = [
     InspectionSheetConfig(
         key="1-4f",
-        floor="1F ~ 4F",
-        title="商場工務每日巡檢 - 1F ~ 4F",
+        floor="1F ~ 4F配電室",
+        title="商場工務每日巡檢 - 1F ~ 4F配電室",
         ragic_url="https://ap12.ragic.com/soutlet001/mall-facility-inspection/26?PAGEID=i4T",
         description="春大直商場 1F 至 4F 工務設施每日例行巡檢",
     ),
     InspectionSheetConfig(
         key="4f",
-        floor="4F",
-        title="商場工務每日巡檢 - 4F",
+        floor="4F空調箱",
+        title="商場工務每日巡檢 - 4F空調箱",
         ragic_url="https://ap12.ragic.com/soutlet001/mall-facility-inspection/27?PAGEID=i4T",
         description="春大直商場 4 樓工務設施每日例行巡檢",
     ),
     InspectionSheetConfig(
         key="3f",
-        floor="3F",
-        title="商場工務每日巡檢 - 3F",
+        floor="3F靜電機",
+        title="商場工務每日巡檢 - 3F靜電機",
         ragic_url="https://ap12.ragic.com/soutlet001/mall-facility-inspection/28?PAGEID=i4T",
         description="春大直商場 3 樓工務設施每日例行巡檢",
     ),
     InspectionSheetConfig(
         key="1f-3f",
-        floor="1F ~ 3F",
-        title="商場工務每日巡檢 - 1F ~ 3F",
+        floor="1F-3F空調箱",
+        title="商場工務每日巡檢 - 1F-3F空調箱",
         ragic_url="https://ap12.ragic.com/soutlet001/mall-facility-inspection/29?PAGEID=i4T",
         description="春大直商場 1F 至 3F 工務設施每日例行巡檢",
     ),
     InspectionSheetConfig(
         key="1f",
-        floor="1F",
-        title="商場工務每日巡檢 - 1F",
+        floor="1F水洗機",
+        title="商場工務每日巡檢 - 1F水洗機",
         ragic_url="https://ap12.ragic.com/soutlet001/mall-facility-inspection/30?PAGEID=i4T",
         description="春大直商場 1 樓工務設施每日例行巡檢",
     ),
@@ -93,14 +93,25 @@ VALID_KEYS = {c.key for c in SHEET_CONFIGS}
 # ── 業務邏輯輔助 ───────────────────────────────────────────────────────────────
 
 def _calc_kpi(items: list[MallFIItem]) -> dict:
-    """計算一組巡檢項目的 KPI 統計（排除 is_note 項目）"""
-    scored = [it for it in items if not it.is_note]
-    total     = len(scored)
-    normal    = sum(1 for it in scored if it.result_status == "normal")
-    abnormal  = sum(1 for it in scored if it.result_status == "abnormal")
-    pending   = sum(1 for it in scored if it.result_status == "pending")
-    unchecked = sum(1 for it in scored if it.result_status == "unchecked")
-    checked   = normal + abnormal + pending
+    """計算一組巡檢項目的 KPI 統計，判定與每日巡檢表抽屜（item_kpi）相同。
+
+    2026-11-19：原本只排除 is_note、以同步時的 result_status 判定，會把 note 項目算進應檢、
+    量測（數值讀數）不算已檢，造成月曆格完成率低於抽屜。現改為逐項重新判定（item_status）：
+    note 不計入應檢；measure 計為已檢；checked = total − unchecked。
+    """
+    from app.services.mall_daily_inspection_sheet import item_status
+
+    statuses = []
+    for it in items:
+        st = item_status(it.sheet_key or "", it.item_name, it.result_raw, bool(it.is_note))
+        if st != "note":
+            statuses.append(st)
+    total     = len(statuses)
+    normal    = statuses.count("normal")
+    abnormal  = statuses.count("abnormal")
+    pending   = statuses.count("pending")
+    unchecked = statuses.count("unchecked")
+    checked   = total - unchecked
 
     completion_rate = round(checked / total * 100, 1) if total > 0 else 0.0
     return {
