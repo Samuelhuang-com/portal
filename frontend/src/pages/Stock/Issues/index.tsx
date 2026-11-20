@@ -7,6 +7,7 @@
  *   - 調撥／報廢：倉管開單即過帳（D29），可作廢（反向異動）
  * 資料範圍（D27）：開單者只看所屬部門的倉；倉管（stock_issue_post）看同公司全部
  * 單位成本與金額只給倉管、庫存檢視者看（後端已遮蔽）
+ * 雜收（2026-11-20，D37）：倉管開單即過帳、無單入庫；料號可選本公司所有納入庫存的料號；單價＝庫存有量時沿用移動平均，否則用料號參考單價
  * Phase 4b（2026-11-17）：領用範本（開單時套用／存成範本）、列印料號 QR 標籤（掃描開手機領用頁 /m/stock/issue）
  */
 import { useCallback, useEffect, useMemo, useState } from 'react'
@@ -14,7 +15,7 @@ import {
   Alert, Button, Card, Col, DatePicker, Descriptions, Drawer, Dropdown, Empty, Input, InputNumber, Modal, Row, Select,
   Space, Statistic, Switch, Table, Tag, Typography, message,
 } from 'antd'
-import { DeleteOutlined, DownOutlined, PlusOutlined, QrcodeOutlined, ReloadOutlined, SaveOutlined, SnippetsOutlined } from '@ant-design/icons'
+import { DeleteOutlined, DownOutlined, LinkOutlined, PlusOutlined, QrcodeOutlined, ReloadOutlined, SaveOutlined, SnippetsOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import dayjs, { type Dayjs } from 'dayjs'
 import StandardRangePicker, { type StandardRange } from '@/components/StandardRangePicker'
@@ -22,18 +23,20 @@ import {
   approveIssue, cancelIssue, createIssue, errMsg, fetchAvailable, fetchIssue, fetchIssueCostCenters, fetchIssueMeta,
   fetchIssueSummary, fetchIssues, fetchReturnable, postIssue, rejectIssue, submitIssue, updateIssue, voidIssue,
   type AvailableItem, type IssueAction, type IssueDoc, type IssueDocType, type IssueInput, type IssueMeta,
-  type IssueSummary, type IssueTemplate, type ReturnableLine, fetchIssueTemplates,
+  type IssueSummary, type IssueTemplate, type ReturnableLine, type RepairLink, fetchIssueTemplates,
 } from '@/api/stock'
 import { SaveTemplateModal, TemplatesModal } from './Templates'
 import QrLabelsModal from './QrLabels'
 import StockCompanySelect, { useStockCompany } from '../StockCompanySelect'
+import RepairPicker from './RepairPicker'
+import RepairDrawer from './RepairDrawer'
 
 const { Text } = Typography
 const money = (v: number | null | undefined) => (v == null ? '—' : `$${v.toLocaleString(undefined, { maximumFractionDigits: 2 })}`)
 const num = (v: number | null | undefined) => (v == null ? '—' : v.toLocaleString(undefined, { maximumFractionDigits: 4 }))
 
-const TYPE_LABEL: Record<IssueDocType, string> = { issue: '領用單', return: '退料單', transfer: '調撥單', scrap: '報廢單' }
-const TYPE_COLOR: Record<IssueDocType, string> = { issue: 'blue', return: 'cyan', transfer: 'purple', scrap: 'volcano' }
+const TYPE_LABEL: Record<IssueDocType, string> = { issue: '領用單', return: '退料單', transfer: '調撥單', scrap: '報廢單', misc_receipt: '雜收單' }
+const TYPE_COLOR: Record<IssueDocType, string> = { issue: 'blue', return: 'cyan', transfer: 'purple', scrap: 'volcano', misc_receipt: 'geekblue' }
 const STATUS_COLOR: Record<string, string> = {
   draft: 'default', pending_approval: 'gold', approved: 'blue', posted: 'green', cancelled: 'default', rejected: 'red', voided: 'default',
 }
@@ -44,7 +47,7 @@ const STATUS_OPTIONS = [
 ]
 
 // ── 開單／修改 Modal ─────────────────────────────────────────────────────────
-interface EditLine { key: string; item_id?: number; qty?: number; ref_line_id?: number; note?: string }
+interface EditLine { key: string; item_id?: number; qty?: number; ref_line_id?: number; note?: string; unit_cost?: number }
 let seq = 0
 const newKey = () => `n${++seq}`
 
@@ -53,7 +56,8 @@ function IssueEditor({ code, meta, open, docType, editing, refIssue, onClose, on
   onClose: () => void; onDone: (id: number) => void
 }) {
   const isReturn = docType === 'return'
-  const keeperOnly = docType === 'transfer' || docType === 'scrap'
+  const isMisc = docType === 'misc_receipt'
+  const keeperOnly = docType === 'transfer' || docType === 'scrap' || isMisc
   const whOptions = keeperOnly ? meta.all_warehouses : meta.my_warehouses
   const [whId, setWhId] = useState<number | undefined>()
   const [toWhId, setToWhId] = useState<number | undefined>()
@@ -69,6 +73,9 @@ function IssueEditor({ code, meta, open, docType, editing, refIssue, onClose, on
   const [ccs, setCcs] = useState<{ id: number; label: string; department_name: string; is_mine: boolean }[]>([])
   const [saving, setSaving] = useState(false)
   const [templates, setTemplates] = useState<IssueTemplate[]>([])
+  const [repairs, setRepairs] = useState<RepairLink[]>([])
+  const [repairOpen, setRepairOpen] = useState(false)
+  const [repairView, setRepairView] = useState<string | null>(null)
   const [saveTplOpen, setSaveTplOpen] = useState(false)
 
   // 初始化
@@ -78,11 +85,12 @@ function IssueEditor({ code, meta, open, docType, editing, refIssue, onClose, on
       setWhId(editing.warehouse_id); setToWhId(editing.to_warehouse_id ?? undefined); setDocDate(dayjs(editing.doc_date))
       setRequester(editing.requester_name ?? ''); setPurpose(editing.purpose ?? ''); setCcId(editing.cost_center_id ?? undefined)
       setAccount(editing.account_code ?? '')
-      setLines((editing.lines ?? []).map((l) => ({ key: newKey(), item_id: l.item_id, qty: l.qty, ref_line_id: l.ref_line_id ?? undefined, note: l.note ?? undefined })))
+      setRepairs(editing.repairs ?? [])
+      setLines((editing.lines ?? []).map((l) => ({ key: newKey(), item_id: l.item_id, qty: l.qty, ref_line_id: l.ref_line_id ?? undefined, note: l.note ?? undefined, unit_cost: l.unit_cost ?? undefined })))
     } else {
       const first = isReturn && refIssue ? refIssue.warehouse_id : whOptions.length === 1 ? whOptions[0].id : undefined
       setWhId(first); setToWhId(undefined); setDocDate(dayjs()); setRequester(meta.user_name)
-      setPurpose(''); setCcId(undefined); setAccount('')
+      setPurpose(''); setCcId(undefined); setAccount(''); setRepairs([])
       setLines(isReturn ? [] : [{ key: newKey() }])
     }
     setPostDate(dayjs())
@@ -91,9 +99,9 @@ function IssueEditor({ code, meta, open, docType, editing, refIssue, onClose, on
   // 可領量（依倉）＋成本中心
   useEffect(() => {
     if (!open || !whId || isReturn) { setAvail([]); return }
-    fetchAvailable(code, whId).then((r) => setAvail(r.data)).catch((e) => message.error(errMsg(e, '讀取可領料號失敗')))
-    if (docType === 'issue') {
-      fetchIssueTemplates(code, whId).then((r) => setTemplates(r.data)).catch(() => setTemplates([]))
+    fetchAvailable(code, whId, undefined, false, isMisc).then((r) => setAvail(r.data)).catch((e) => message.error(errMsg(e, '讀取可領料號失敗')))
+    if (docType === 'issue' || isMisc) {
+      if (docType === 'issue') fetchIssueTemplates(code, whId).then((r) => setTemplates(r.data)).catch(() => setTemplates([]))
       fetchIssueCostCenters(code, whId).then((r) => {
         setCcs(r.data.items)
         if (!editing) setCcId((cur) => cur ?? r.data.default_id ?? undefined)
@@ -132,13 +140,15 @@ function IssueEditor({ code, meta, open, docType, editing, refIssue, onClose, on
     const use = lines.filter((l) => (l.qty ?? 0) > 0)
     if (!use.length) { message.warning('請至少輸入一筆數量'); return }
     if (!isReturn && use.some((l) => !l.item_id)) { message.warning('有明細尚未選料號'); return }
+    if (isMisc && use.some((l) => l.unit_cost == null)) { message.warning('雜收單每筆都要填單價（可為 0）'); return }
     const body: IssueInput = {
       doc_type: docType, warehouse_id: whId, to_warehouse_id: docType === 'transfer' ? toWhId : null,
-      doc_date: docDate.format('YYYY-MM-DD'), requester_name: docType === 'issue' ? requester : null,
-      purpose: purpose || null, cost_center_id: docType === 'issue' ? ccId ?? null : null, account_code: account || null,
+      doc_date: docDate.format('YYYY-MM-DD'), requester_name: docType === 'issue' || isMisc ? requester : null,
+      purpose: purpose || null, cost_center_id: docType === 'issue' || isMisc ? ccId ?? null : null, account_code: account || null,
       ref_issue_id: isReturn ? refId ?? null : null,
-      lines: use.map((l) => ({ item_id: l.item_id, qty: l.qty!, ref_line_id: l.ref_line_id ?? null, note: l.note || null })),
-      then, post_date: then === 'post' ? postDate.format('YYYY-MM-DD') : null,
+      lines: use.map((l) => ({ item_id: l.item_id, qty: l.qty!, ref_line_id: l.ref_line_id ?? null, note: l.note || null, unit_cost: isMisc ? (l.unit_cost ?? null) : null })),
+      then, post_date: then === 'post' ? (isMisc ? docDate : postDate).format('YYYY-MM-DD') : null,
+      repair_ids: docType === 'issue' || isMisc ? repairs.map((r) => r.ragic_id) : null,
     }
     setSaving(true)
     try {
@@ -152,11 +162,19 @@ function IssueEditor({ code, meta, open, docType, editing, refIssue, onClose, on
     }
   }
 
+  // 雜收單：每筆手填單價（可為 0）；選料號時先帶入料號參考單價
+  const priceCols: ColumnsType<EditLine> = [
+    { title: '單價', key: 'unit_cost', width: 130, render: (_: unknown, l) => (
+      <InputNumber min={0} precision={2} style={{ width: '100%' }} value={l.unit_cost} placeholder="必填（可為 0）"
+        onChange={(v) => setLine(l.key, { unit_cost: v ?? undefined })} />) },
+    { title: '金額', key: 'amount', width: 120, align: 'right', render: (_: unknown, l) => (
+      l.qty != null && l.unit_cost != null ? money(l.qty * l.unit_cost) : '—') },
+  ]
   const itemCols: ColumnsType<EditLine> = [
     { title: '料號', key: 'item', render: (_: unknown, l) => (
       <Select showSearch style={{ width: '100%' }} placeholder={whId ? '輸入料號或品名' : '請先選倉庫'} value={l.item_id}
         optionFilterProp="label" disabled={!whId}
-        onChange={(v) => setLine(l.key, { item_id: v })}
+        onChange={(v) => setLine(l.key, { item_id: v, ...(isMisc ? { unit_cost: availMap.get(v)?.unit_price ?? 0 } : {}) })}
         options={avail.map((a) => ({
           value: a.item_id, label: `${a.item_code} ${a.item_name}${a.spec ? `（${a.spec}）` : ''}`,
           disabled: lines.some((x) => x.key !== l.key && x.item_id === a.item_id),
@@ -168,8 +186,9 @@ function IssueEditor({ code, meta, open, docType, editing, refIssue, onClose, on
     } },
     { title: '數量', key: 'qty', width: 130, render: (_: unknown, l) => {
       const a = l.item_id ? availMap.get(l.item_id) : undefined
-      return <InputNumber min={0} max={a?.available} value={l.qty} style={{ width: '100%' }} onChange={(v) => setLine(l.key, { qty: v ?? undefined })} />
+      return <InputNumber min={0} max={isMisc ? undefined : a?.available} value={l.qty} style={{ width: '100%' }} onChange={(v) => setLine(l.key, { qty: v ?? undefined })} />
     } },
+    ...(isMisc ? priceCols : []),
     { title: '備註', key: 'note', width: 180, render: (_: unknown, l) => <Input value={l.note} onChange={(e) => setLine(l.key, { note: e.target.value })} /> },
     { title: '', key: 'del', width: 40, render: (_: unknown, l) => (
       <Button type="text" danger icon={<DeleteOutlined />} onClick={() => setLines((ls) => ls.filter((x) => x.key !== l.key))} />) },
@@ -198,7 +217,8 @@ function IssueEditor({ code, meta, open, docType, editing, refIssue, onClose, on
               onClick={() => setSaveTplOpen(true)}>存成範本</Button>)}
           <Button loading={saving} onClick={() => save(null)}>存草稿</Button>
           {!keeperOnly && <Button type="primary" loading={saving} onClick={() => save('submit')}>存檔並送出</Button>}
-          {keeperOnly && (
+          {isMisc && <Button type="primary" loading={saving} onClick={() => save('post')}>存檔並過帳</Button>}
+          {keeperOnly && !isMisc && (
             <>
               <DatePicker value={postDate} onChange={(d) => d && setPostDate(d)} allowClear={false} />
               <Button type="primary" loading={saving} onClick={() => save('post')}>存檔並過帳</Button>
@@ -220,22 +240,34 @@ function IssueEditor({ code, meta, open, docType, editing, refIssue, onClose, on
             options={meta.all_warehouses.filter((w) => w.id !== whId).map((w) => ({
               value: w.id, label: w.department_name ? `${w.name}（${w.department_name}）` : w.name, disabled: w.status !== 'active' }))} />)}
         <DatePicker value={docDate} onChange={(d) => d && setDocDate(d)} allowClear={false} />
-        {docType === 'issue' && <Input addonBefore="領用人" style={{ width: 220 }} value={requester} onChange={(e) => setRequester(e.target.value)} />}
+        {(docType === 'issue' || isMisc) && <Input addonBefore="領用人" style={{ width: 220 }} value={requester} onChange={(e) => setRequester(e.target.value)} />}
       </Space>
       {whSel?.issue_requires_approval && docType === 'issue' && <Alert type="info" showIcon style={{ marginBottom: 12 }} message="這個倉的領用單需部門主管核准後才能發料" />}
-      {docType === 'issue' && (
+      {(docType === 'issue' || isMisc) && (
         <Space wrap style={{ marginBottom: 12 }}>
           <Select allowClear showSearch optionFilterProp="label" placeholder="成本中心" style={{ width: 320 }} value={ccId} onChange={setCcId}
             options={ccs.map((c) => ({ value: c.id, label: `${c.label}（${c.department_name}）` }))} />
           <Input placeholder="會科（選填）" style={{ width: 160 }} value={account} onChange={(e) => setAccount(e.target.value)} />
-          {templates.length > 0 && (
+          {docType === 'issue' && templates.length > 0 && (
             <Select placeholder="套用領用範本" style={{ width: 200 }} value={null} onChange={(v: number) => applyTemplate(v)}
               suffixIcon={<SnippetsOutlined />}
               options={templates.map((t) => ({ value: t.id, label: `${t.name}（${t.lines.length} 項）` }))} />)}
         </Space>
       )}
+      {(docType === 'issue' || isMisc) && (
+        <Space wrap style={{ marginBottom: 12 }}>
+          <Button icon={<LinkOutlined />} onClick={() => setRepairOpen(true)}>關聯商場報修單</Button>
+          {repairs.length === 0 && <Text type="secondary">未關聯（選填）</Text>}
+          {repairs.map((r) => (
+            <Tag key={r.ragic_id} color="orange" closable style={{ cursor: 'pointer' }}
+              onClose={() => setRepairs((rs) => rs.filter((x) => x.ragic_id !== r.ragic_id))}
+              onClick={() => setRepairView(r.ragic_id)}>
+              {`${r.case_no ?? r.ragic_id}｜${r.title ?? ''}`}
+            </Tag>))}
+        </Space>
+      )}
       <Input.TextArea rows={2} style={{ marginBottom: 12 }} value={purpose} onChange={(e) => setPurpose(e.target.value)}
-        placeholder={docType === 'scrap' ? '報廢原因（必填）' : docType === 'return' ? '退料原因' : docType === 'transfer' ? '調撥說明' : '用途說明'} />
+        placeholder={docType === 'scrap' ? '報廢原因（必填）' : docType === 'return' ? '退料原因' : docType === 'transfer' ? '調撥說明' : docType === 'misc_receipt' ? '用途說明（必填，無單入庫需寫明原因）' : '用途說明'} />
       {isReturn ? (
         <Table<EditLine> size="small" rowKey="key" pagination={false} dataSource={lines} columns={returnCols}
           locale={{ emptyText: <Empty description="原領用單已無可退品項" /> }} />
@@ -246,6 +278,9 @@ function IssueEditor({ code, meta, open, docType, editing, refIssue, onClose, on
             onClick={() => setLines((ls) => [...ls, { key: newKey() }])}>加一筆</Button>
         </>
       )}
+      <RepairPicker code={code} open={repairOpen} initial={repairs} onClose={() => setRepairOpen(false)}
+        onConfirm={(links) => { setRepairs(links); setRepairOpen(false) }} />
+      <RepairDrawer code={code} ragicId={repairView} onClose={() => setRepairView(null)} />
       <SaveTemplateModal code={code} warehouseId={whId} lines={lines} open={saveTplOpen}
         onClose={() => { setSaveTplOpen(false); if (whId) fetchIssueTemplates(code, whId).then((r) => setTemplates(r.data)).catch(() => undefined) }} />
     </Modal>
@@ -272,6 +307,7 @@ export default function StockIssuesPage() {
   const [qrOpen, setQrOpen] = useState(false)
   const [postDate, setPostDate] = useState<Dayjs>(dayjs())
   const [busy, setBusy] = useState(false)
+  const [repairView, setRepairView] = useState<string | null>(null)
 
   useEffect(() => {
     if (!code) return
@@ -333,7 +369,7 @@ export default function StockIssuesPage() {
   }
   const createMenu = [
     ...(meta?.can_create ? [{ key: 'issue', label: '領用單' }] : []),
-    ...(meta?.can_post ? [{ key: 'transfer', label: '調撥單' }, { key: 'scrap', label: '報廢單' }] : []),
+    ...(meta?.can_post ? [{ key: 'transfer', label: '調撥單' }, { key: 'scrap', label: '報廢單' }, { key: 'misc_receipt', label: '雜收單' }] : []),
   ]
 
   const columns: ColumnsType<IssueDoc> = [
@@ -405,8 +441,8 @@ export default function StockIssuesPage() {
               <Descriptions.Item label={detail.doc_type === 'transfer' ? '調出倉' : '倉庫'}>{detail.warehouse_name}</Descriptions.Item>
               <Descriptions.Item label={detail.doc_type === 'transfer' ? '調入倉' : '部門'}>
                 {detail.doc_type === 'transfer' ? detail.to_warehouse_name : detail.department_name || '—'}</Descriptions.Item>
-              {detail.doc_type === 'issue' && <Descriptions.Item label="領用人">{detail.requester_name || '—'}</Descriptions.Item>}
-              {detail.doc_type === 'issue' && <Descriptions.Item label="成本中心">{detail.cost_center_name || '—'}</Descriptions.Item>}
+              {(detail.doc_type === 'issue' || detail.doc_type === 'misc_receipt') && <Descriptions.Item label="領用人">{detail.requester_name || '—'}</Descriptions.Item>}
+              {(detail.doc_type === 'issue' || detail.doc_type === 'misc_receipt') && <Descriptions.Item label="成本中心">{detail.cost_center_name || '—'}</Descriptions.Item>}
               {detail.doc_type === 'return' && <Descriptions.Item label="原領用單" span={2}>{detail.ref_issue_no ?? '—'}</Descriptions.Item>}
               <Descriptions.Item label={detail.doc_type === 'scrap' ? '報廢原因' : '用途說明'} span={2}>{detail.purpose || '—'}</Descriptions.Item>
               {meta?.can_see_cost && <Descriptions.Item label="過帳金額" span={2}><b>{detail.status === 'posted' || detail.status === 'voided' ? money(detail.total_amount) : '—'}</b></Descriptions.Item>}
@@ -432,10 +468,19 @@ export default function StockIssuesPage() {
                 <Text strong>退料紀錄：</Text>
                 <Space wrap>{detail.returns!.map((r) => <a key={r.id} onClick={() => openDetail(r.id)}>{`${r.doc_no}（${r.status_label}）`}</a>)}</Space>
               </div>)}
+            {(detail.repairs?.length ?? 0) > 0 && (
+              <div style={{ marginTop: 16 }}>
+                <Text strong>關聯商場報修：</Text>
+                <Space wrap>{detail.repairs!.map((r) => (
+                  <Tag key={r.ragic_id} color="orange" style={{ cursor: 'pointer' }} onClick={() => setRepairView(r.ragic_id)}>
+                    {`${r.case_no ?? r.ragic_id}｜${r.title ?? ''}`}
+                  </Tag>))}</Space>
+              </div>)}
           </>
         )}
       </Drawer>
 
+      <RepairDrawer code={code} ragicId={repairView} onClose={() => setRepairView(null)} />
       {meta && <TemplatesModal code={code} meta={meta} open={tplOpen} onClose={() => setTplOpen(false)} />}
       {meta && <QrLabelsModal code={code} meta={meta} open={qrOpen} onClose={() => setQrOpen(false)} />}
       {meta && editor && (

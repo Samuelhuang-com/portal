@@ -26,6 +26,7 @@ MOVE_TYPES = (
     "receipt", "receipt_void",       # 進貨／作廢（Phase 3）
     "issue", "return", "transfer_in", "transfer_out", "scrap",   # Phase 4
     "return_void", "transfer_in_void", "transfer_out_void", "scrap_void",   # Phase 4 作廢
+    "misc_receipt", "misc_receipt_void",   # 雜收／作廢（2026-11-20，D37：無單入庫，倉管開單即過帳）
     "cost_revalue",                  # Phase 5 月結成本調整（數量 0、只調金額；月加權平均 D3）
     "count_adjust",                  # 盤點調整（Phase 5）
 )
@@ -452,4 +453,27 @@ class StockPeriod(CyclePurchaseBase):
 
     __table_args__ = (
         UniqueConstraint("company_code", "period", name="uq_stock_period_company"),
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 2026-11-20 領用／雜收單 ↔ 商場工務報修（D38）
+# ═══════════════════════════════════════════════════════════════════════════
+
+class StockIssueRepairLink(CyclePurchaseBase):
+    """領用／雜收單關聯的報修案件。報修在主庫（luqun_repair_case），這裡只存 ragic_id＋快照（軟關聯）。
+    單據層級：一張單可關聯多筆報修；尚未分攤到料號明細。"""
+    __tablename__ = "stock_issue_repair_links"
+
+    id              = Column(Integer, primary_key=True, autoincrement=True)
+    issue_id        = Column(Integer, ForeignKey("stock_issues.id", ondelete="CASCADE"), nullable=False, index=True)
+    repair_ragic_id = Column(String(50), nullable=False, index=True, comment="luqun_repair_case.ragic_id（主庫，軟關聯）")
+    repair_case_no  = Column(String(100), nullable=True, comment="報修編號快照")
+    repair_title    = Column(Text, nullable=True, comment="標題快照")
+    repair_occurred = Column(Date, nullable=True, comment="發生日期快照")
+    created_by      = Column(String(100), nullable=True)
+    created_at      = Column(DateTime, nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("issue_id", "repair_ragic_id", name="uq_stock_issue_repair"),
     )

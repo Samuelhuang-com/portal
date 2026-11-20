@@ -339,6 +339,7 @@ def reopen_period(db: Session, code: str, period: str, reason: str, user_name: s
 
 REPORT_COLS = [
     ("receipt", ("receipt", "receipt_void"), "進貨"),
+    ("misc_receipt", ("misc_receipt", "misc_receipt_void"), "雜收"),
     ("opening", ("opening", "opening_void"), "期初開帳"),
     ("issue", ("issue",), "領用"),
     ("return", ("return", "return_void"), "退料"),

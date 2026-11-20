@@ -12,6 +12,7 @@
   調撥 transfer：倉管開單 draft ─過帳→ posted（同公司、出倉入倉同時完成，入倉成本＝出倉平均單價）
   報廢 scrap   ：倉管開單 draft ─過帳→ posted（必填原因）
   退料／調撥／報廢已過帳可作廢（反向異動）
+  雜收 misc_receipt（2026-11-20，D37）：倉管開單即過帳（無單入庫）；可作廢（反向異動）
 倉庫「盤點中」不能送出、不能過帳（D7）。
 """
 from dataclasses import dataclass
@@ -19,28 +20,28 @@ from datetime import date
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import func
+from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
 
 from app.core.time import twnow
 from app.models.cycle_purchase_item import CyclePurchaseItem
 from app.models.cycle_purchase_reference import CyclePurchaseCostCenter, CyclePurchaseDepartment
 from app.models.stock import (
-    RESERVING_STATUSES, StockBalance, StockIssue, StockIssueLine, StockIssueTemplate, StockIssueTemplateLine,
-    StockItemSetting, StockWarehouse,
+    RESERVING_STATUSES, StockBalance, StockIssue, StockIssueLine, StockIssueRepairLink, StockIssueTemplate,
+    StockIssueTemplateLine, StockItemSetting, StockWarehouse,
 )
 from app.services import stock_service as svc
 from app.services.stock_service import StockError, _d
 
-DOC_PREFIX = {"issue": "ISU", "return": "RTN", "transfer": "TRF", "scrap": "SCR"}
-DOC_LABEL = {"issue": "領用單", "return": "退料單", "transfer": "調撥單", "scrap": "報廢單"}
+DOC_PREFIX = {"issue": "ISU", "return": "RTN", "transfer": "TRF", "scrap": "SCR", "misc_receipt": "MRC"}
+DOC_LABEL = {"issue": "領用單", "return": "退料單", "transfer": "調撥單", "scrap": "報廢單", "misc_receipt": "雜收單"}
 STATUS_LABEL = {
     "draft": "草稿", "pending_approval": "待核准", "approved": "待發料", "posted": "已過帳",
     "cancelled": "已取消", "rejected": "已退回", "voided": "已作廢",
 }
 EDITABLE = ("draft",)
 CANCELLABLE = ("draft", "pending_approval", "approved")
-VOIDABLE_TYPES = ("return", "transfer", "scrap")
+VOIDABLE_TYPES = ("return", "transfer", "scrap", "misc_receipt")
 
 
 def status_label(doc: StockIssue) -> str:
@@ -55,6 +56,7 @@ class LineIn:
     qty: Decimal
     ref_line_id: Optional[int] = None
     note: Optional[str] = None
+    unit_cost: Optional[Decimal] = None   # 雜收單必填（可為 0）；其他單據忽略
 
 
 # ── 編號 ───────────────────────────────────────────────────────────────────────
@@ -97,6 +99,31 @@ def _cost_center_snapshot(db: Session, code: str, cc_id: Optional[int]) -> Optio
 
 
 # ── 可領用量／可退量 ─────────────────────────────────────────────────────────
+
+def receivable_items(db: Session, warehouse: StockWarehouse, keyword: Optional[str] = None,
+                     limit: int = 500) -> list[dict]:
+    """雜收用（D37）：本公司所有納入庫存的料號，含此倉目前沒有庫存的料號（可用量為 0）。"""
+    q = (db.query(CyclePurchaseItem, StockBalance)
+         .outerjoin(StockBalance, and_(StockBalance.item_id == CyclePurchaseItem.id,
+                                       StockBalance.warehouse_id == warehouse.id))
+         .outerjoin(StockItemSetting, StockItemSetting.item_id == CyclePurchaseItem.id)
+         .filter(CyclePurchaseItem.company_code == warehouse.company_code,
+                 CyclePurchaseItem.is_active.is_(True),
+                 or_(StockItemSetting.item_id.is_(None), StockItemSetting.is_stock_item.is_(True))))
+    if keyword:
+        kw = f"%{keyword.strip()}%"
+        q = q.filter((CyclePurchaseItem.item_code.ilike(kw)) | (CyclePurchaseItem.item_name.ilike(kw))
+                     | (CyclePurchaseItem.spec.ilike(kw)))
+    out = []
+    for it, b in q.order_by(CyclePurchaseItem.item_code).limit(limit).all():
+        qty = _d(b.qty) if b else Decimal(0)
+        rsv = _d(b.reserved_qty) if b else Decimal(0)
+        out.append({"item_id": it.id, "item_code": it.item_code, "item_name": it.item_name, "spec": it.spec,
+                    "unit": it.unit, "qty": float(qty), "reserved_qty": float(rsv),
+                    "available": float(qty - rsv), "avg_cost": float(b.avg_cost) if b else 0.0,
+                    "unit_price": float(it.unit_price or 0)})
+    return out
+
 
 def available_items(db: Session, warehouse_id: int, keyword: Optional[str] = None, limit: int = 500,
                     include_zero: bool = False) -> list[dict]:
@@ -192,6 +219,8 @@ def save_draft(db: Session, *, doc: Optional[StockIssue], doc_type: str, code: s
         to_warehouse = None
     if doc_type == "scrap" and not (purpose or "").strip():
         raise StockError("報廢單必須填寫報廢原因")
+    if doc_type == "misc_receipt" and not (purpose or "").strip():
+        raise StockError("雜收單必須填寫用途說明（無單入庫需寫明原因）")
 
     if doc_type == "return":
         if ref_issue is None:
@@ -218,6 +247,8 @@ def save_draft(db: Session, *, doc: Optional[StockIssue], doc_type: str, code: s
         for l in lines:
             l.ref_line_id = None
     _items(db, code, [l.item_id for l in lines])
+    if doc_type == "misc_receipt" and any(l.unit_cost is None or _d(l.unit_cost) < 0 for l in lines):
+        raise StockError("雜收單每筆都要填單價（可為 0，不可為負）")
 
     if doc is None:
         doc = StockIssue(doc_no=next_doc_no(db, doc_type, code, doc_date), doc_type=doc_type, company_code=code,
@@ -239,7 +270,8 @@ def save_draft(db: Session, *, doc: Optional[StockIssue], doc_type: str, code: s
     db.query(StockIssueLine).filter(StockIssueLine.issue_id == doc.id).delete(synchronize_session=False)
     for l in lines:
         db.add(StockIssueLine(issue_id=doc.id, item_id=l.item_id, qty=_d(l.qty), reserved_qty=0,
-                              ref_line_id=l.ref_line_id, note=(l.note or None)))
+                              ref_line_id=l.ref_line_id, note=(l.note or None),
+                              unit_cost=_d(l.unit_cost) if doc_type == "misc_receipt" else None))
     db.flush()
     return doc
 
@@ -256,7 +288,7 @@ def _wh(db: Session, wid: Optional[int]) -> Optional[StockWarehouse]:
 
 def submit(db: Session, doc: StockIssue, user_name: str) -> StockIssue:
     if doc.doc_type not in ("issue", "return"):
-        raise StockError("調撥／報廢單由倉管直接過帳，不需送出")
+        raise StockError("調撥／報廢／雜收單由倉管直接過帳，不需送出")
     if doc.status != "draft":
         raise StockError(f"這張單已{status_label(doc)}，不能送出")
     wh = _wh(db, doc.warehouse_id)
@@ -353,6 +385,16 @@ def post(db: Session, doc: StockIssue, post_date: date, user_name: str) -> Stock
                           move_type="transfer_in", note=f"由 {wh.name} 調入", **src)
             l.unit_cost, l.amount = out.unit_cost, -_d(out.amount)
             total += -_d(out.amount)
+    elif doc.doc_type == "misc_receipt":
+        # 雜收（D37）：無單入庫；單價＝單據明細填寫的單價（2026-11-20 改為手填，預設帶料號參考單價）
+        for l in lines:
+            it = items[l.item_id]
+            if l.unit_cost is None:
+                raise StockError(f"{it.item_code} 缺少單價")
+            m = svc.post_move(db, warehouse=wh, item=it, qty=_d(l.qty), unit_cost=_d(l.unit_cost),
+                              move_type="misc_receipt", note=doc.purpose, **src)
+            l.unit_cost, l.amount = m.unit_cost, _d(m.amount)
+            total += _d(m.amount)
     else:  # scrap
         for l in lines:
             m = svc.post_move(db, warehouse=wh, item=items[l.item_id], qty=-_d(l.qty), move_type="scrap",
@@ -361,7 +403,7 @@ def post(db: Session, doc: StockIssue, post_date: date, user_name: str) -> Stock
             total += -_d(m.amount)
     doc.status, doc.posted_by, doc.posted_at, doc.posted_date = "posted", user_name, twnow(), post_date
     doc.total_amount = total
-    if doc.doc_type in ("transfer", "scrap") and not doc.submitted_at:
+    if doc.doc_type in ("transfer", "scrap", "misc_receipt") and not doc.submitted_at:
         doc.submitted_by, doc.submitted_at = user_name, doc.posted_at
     return doc
 
@@ -381,6 +423,8 @@ def void(db: Session, doc: StockIssue, reason: str, user_name: str) -> StockIssu
         it = items[l.item_id]
         if doc.doc_type == "return":
             svc.post_move(db, warehouse=wh, item=it, qty=-_d(l.qty), move_type="return_void", **src)
+        elif doc.doc_type == "misc_receipt":
+            svc.post_move(db, warehouse=wh, item=it, qty=-_d(l.qty), move_type="misc_receipt_void", **src)
         elif doc.doc_type == "scrap":
             svc.post_move(db, warehouse=wh, item=it, qty=_d(l.qty), unit_cost=_d(l.unit_cost), move_type="scrap_void", **src)
         else:
@@ -445,3 +489,24 @@ def save_template(db: Session, *, tpl: Optional[StockIssueTemplate], code: str, 
         db.add(StockIssueTemplateLine(template_id=tpl.id, item_id=item_id, qty=_d(qty), sort_order=i))
     db.flush()
     return tpl
+
+
+# ── 報修單關聯（D38，2026-11-20）────────────────────────────────────────────────
+
+def set_repairs(db: Session, doc: StockIssue, rows: list[dict], user_name: str) -> None:
+    """整批取代單據關聯的報修單（rows 由 router 驗證存在後傳入）。已作廢不可再關聯。"""
+    if doc.status == "voided":
+        raise StockError("已作廢的單據不能再關聯報修單")
+    db.query(StockIssueRepairLink).filter(StockIssueRepairLink.issue_id == doc.id).delete(synchronize_session=False)
+    for r in rows:
+        db.add(StockIssueRepairLink(issue_id=doc.id, repair_ragic_id=r["ragic_id"], repair_case_no=r.get("case_no"),
+                                    repair_title=r.get("title"), repair_occurred=r.get("occurred_at"),
+                                    created_by=user_name))
+    db.flush()
+
+
+def repair_links_out(db: Session, doc: StockIssue) -> list[dict]:
+    return [{"ragic_id": l.repair_ragic_id, "case_no": l.repair_case_no, "title": l.repair_title,
+             "occurred_at": l.repair_occurred.isoformat() if l.repair_occurred else None}
+            for l in db.query(StockIssueRepairLink).filter(StockIssueRepairLink.issue_id == doc.id)
+            .order_by(StockIssueRepairLink.id).all()]

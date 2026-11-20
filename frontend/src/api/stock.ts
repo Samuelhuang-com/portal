@@ -298,7 +298,7 @@ export const fetchReceiptSummary = (code: string, month?: string) =>
   apiClient.get<ReceiptSummary>(`${BASE}/receipts-summary`, { params: { ...co(code), ...(month ? { month } : {}) } })
 
 // ── Phase 4a（2026-11-17）領用／退料／調撥／報廢 ─────────────────────────────
-export type IssueDocType = 'issue' | 'return' | 'transfer' | 'scrap'
+export type IssueDocType = 'issue' | 'return' | 'transfer' | 'scrap' | 'misc_receipt'
 export type IssueAction = 'edit' | 'submit' | 'cancel' | 'post' | 'approve' | 'reject' | 'void' | 'return'
 
 export interface IssueMeta {
@@ -321,6 +321,7 @@ export interface AvailableItem {
   reserved_qty: number
   available: number
   avg_cost: number | null
+  unit_price: number | null
 }
 
 export interface ReturnableLine {
@@ -386,6 +387,7 @@ export interface IssueDoc {
   actions: IssueAction[]
   lines?: IssueLine[]
   returns?: { id: number; doc_no: string; status_label: string }[]
+  repairs?: RepairLink[]
 }
 
 export interface IssueInput {
@@ -398,9 +400,10 @@ export interface IssueInput {
   cost_center_id?: number | null
   account_code?: string | null
   ref_issue_id?: number | null
-  lines: { item_id?: number; qty: number; ref_line_id?: number | null; note?: string | null }[]
+  lines: { item_id?: number; qty: number; ref_line_id?: number | null; note?: string | null; unit_cost?: number | null }[]
   then?: 'submit' | 'post' | null
   post_date?: string | null
+  repair_ids?: string[] | null
 }
 
 export interface IssueSummary {
@@ -413,9 +416,12 @@ export interface IssueSummary {
 }
 
 export const fetchIssueMeta = (code: string) => apiClient.get<IssueMeta>(`${BASE}/issues/meta`, { params: co(code) })
-export const fetchAvailable = (code: string, warehouse_id: number, keyword?: string, include_zero = false) =>
+export const fetchAvailable = (code: string, warehouse_id: number, keyword?: string, include_zero = false, all_items = false) =>
   apiClient.get<AvailableItem[]>(`${BASE}/issues/available`, {
-    params: { ...co(code), warehouse_id, ...(keyword ? { keyword } : {}), ...(include_zero ? { include_zero: true } : {}) },
+    params: {
+      ...co(code), warehouse_id, ...(keyword ? { keyword } : {}), ...(include_zero ? { include_zero: true } : {}),
+      ...(all_items ? { all_items: true } : {}),
+    },
   })
 export const fetchIssueCostCenters = (code: string, warehouse_id?: number) =>
   apiClient.get<{ default_id: number | null; items: { id: number; label: string; department_name: string; is_mine: boolean }[] }>(
@@ -425,6 +431,56 @@ export const fetchIssueSummary = (code: string, params: { start?: string; end?: 
 export const fetchIssues = (code: string, params: { doc_type?: IssueDocType; status?: string[]; warehouse_id?: number; start?: string; end?: string; mine?: boolean } = {}) =>
   apiClient.get<IssueDoc[]>(`${BASE}/issues`, { params: { ...co(code), ...params }, ...LIST_PARAMS })
 export const fetchIssue = (code: string, id: number) => apiClient.get<IssueDoc>(`${BASE}/issues/${id}`, { params: co(code) })
+
+// ── 2026-11-20 領用／雜收單 ↔ 商場報修單關聯 ──────────────────────────────
+export interface RepairLink {
+  ragic_id: string
+  case_no: string | null
+  title: string | null
+  occurred_at: string | null
+}
+export interface RepairCase {
+  ragic_id: string
+  case_no: string
+  title: string
+  reporter_name: string | null
+  repair_type: string | null
+  floor: string | null
+  room_no: string | null
+  occurred_at: string | null
+  status: string | null
+  record_status: string | null
+  responsible_unit: string | null
+  is_completed: boolean
+  total_fee: number | string | null
+  ragic_url: string
+  detail: Record<string, string | number | null>
+}
+export interface RepairDocLink {
+  id: number
+  doc_no: string
+  doc_type_label: string
+  status_label: string
+  doc_date: string
+  warehouse_name: string
+  line_count: number
+  total_amount: number | null
+}
+export interface RepairSearchParams {
+  keyword?: string
+  case_no?: string
+  start?: string
+  end?: string
+  limit?: number
+}
+export const fetchRepairSearch = (code: string, params: RepairSearchParams = {}) =>
+  apiClient.get<RepairCase[]>(`${BASE}/repair-search`, { params: { ...co(code), ...params } })
+export const fetchRepairDetail = (code: string, ragicId: string) =>
+  apiClient.get<RepairCase>(`${BASE}/repair/${encodeURIComponent(ragicId)}`, { params: co(code) })
+export const setIssueRepairs = (code: string, id: number, repair_ids: string[]) =>
+  apiClient.put<{ id: number; repairs: RepairLink[] }>(`${BASE}/issues/${id}/repairs`, { repair_ids }, { params: co(code) })
+export const fetchRepairLinks = (code: string, ragicId: string) =>
+  apiClient.get<RepairDocLink[]>(`${BASE}/repair-links`, { params: { ...co(code), ragic_id: ragicId } })
 export const fetchReturnable = (code: string, id: number) =>
   apiClient.get<ReturnableLine[]>(`${BASE}/issues/${id}/returnable`, { params: co(code) })
 type IssueRes = { id: number; doc_no: string; status: string; status_label?: string }

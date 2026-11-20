@@ -20,6 +20,7 @@ Phase 3（2026-11-17）進貨匯入：Ragic 採購單／請款單 → 待匯入�
   （Phase 1 的 Ragic 表單關聯已移到 /api/v1/settings/ragic-forms）
 """
 from datetime import date, timedelta
+from datetime import datetime as _datetime, time as _dtime
 from decimal import Decimal
 from typing import Optional
 
@@ -35,7 +36,8 @@ from app.models.cycle_purchase_category import CyclePurchaseCategory
 from app.models.cycle_purchase_company import CyclePurchaseCompany
 from app.models.cycle_purchase_item import CyclePurchaseItem
 from app.models.reference_data import Company, RefDepartment
-from app.models.stock import StockBalance, StockItemSetting, StockMove, StockOpening, StockWarehouse
+from app.models.luqun_repair import LuqunRepairCase
+from app.models.stock import StockBalance, StockIssue, StockIssueRepairLink, StockItemSetting, StockMove, StockOpening, StockWarehouse
 from app.services.cycle_purchase_company_scope import resolve_company_code
 from app.services.stock_scope import StockContext, stock_context
 from app.services import stock_import_service as imp
@@ -57,7 +59,7 @@ DEAD_DAYS = 90   # D17：90 天無異動＝呆滯料
 MOVE_TYPE_LABEL = {
     "opening": "期初", "opening_void": "期初作廢", "receipt": "進貨", "receipt_void": "進貨作廢",
     "issue": "領用", "return": "退料", "transfer_in": "調撥入", "transfer_out": "調撥出",
-    "scrap": "報廢", "count_adjust": "盤點調整",
+    "scrap": "報廢", "count_adjust": "盤點調整", "misc_receipt": "雜收", "misc_receipt_void": "雜收作廢",
     "return_void": "退料作廢", "transfer_in_void": "調撥入作廢", "transfer_out_void": "調撥出作廢", "scrap_void": "報廢作廢",
     "cost_revalue": "月結成本調整",
 }
@@ -809,7 +811,7 @@ def _actions(ctx: StockContext, depts: set, d: StockIssue, w: StockWarehouse) ->
     if d.status == "draft":
         if d.doc_type in ("issue", "return") and (mine or keeper):
             out += ["edit", "submit", "cancel"]
-        if d.doc_type in ("transfer", "scrap") and keeper:
+        if d.doc_type in ("transfer", "scrap", "misc_receipt") and keeper:
             out += ["edit", "post", "cancel"]
     elif d.status == "pending_approval":
         if _can_approve(ctx, depts, w):
@@ -872,12 +874,18 @@ def issues_meta(ctx: StockContext = Depends(stock_context), db: Session = Depend
 @router.get("/issues/available", summary="倉庫可領用的料號（可用量 > 0）")
 def issues_available(warehouse_id: int, keyword: Optional[str] = Query(None, max_length=100),
                      include_zero: bool = Query(False, description="連可用量 0 的料號也列出（列印 QR 標籤用）"),
+                     all_items: bool = Query(False, description="雜收用：本公司所有納入庫存的料號（倉管限定）"),
                      ctx: StockContext = Depends(stock_context), db: Session = Depends(get_db),
                      cp: Session = Depends(get_cycle_purchase_db), _=Depends(_issue_any)):
     w = _warehouse(cp, ctx, warehouse_id)
     if not _in_scope(ctx, _my_dept_ids(db, ctx.user_id), w):
         raise HTTPException(status_code=403, detail="不能使用這個倉庫（不是您所屬部門的倉）")
-    rows = iss.available_items(cp, w.id, keyword, limit=2000 if include_zero else 500, include_zero=include_zero)
+    if all_items:
+        if not ctx.has(ISSUE_POST):
+            raise HTTPException(status_code=403, detail="只有倉管可以開雜收單")
+        rows = iss.receivable_items(cp, w, keyword, limit=500)
+    else:
+        rows = iss.available_items(cp, w.id, keyword, limit=2000 if include_zero else 500, include_zero=include_zero)
     if not _can_see_cost(ctx):
         for r in rows:
             r["avg_cost"] = None
@@ -1005,7 +1013,7 @@ def issues_summary(start: Optional[date] = None, end: Optional[date] = None, ctx
 
 
 @router.get("/issues", summary="領用／退料／調撥／報廢單清單")
-def list_issues(doc_type: Optional[str] = Query(None, pattern="^(issue|return|transfer|scrap)$"),
+def list_issues(doc_type: Optional[str] = Query(None, pattern="^(issue|return|transfer|scrap|misc_receipt)$"),
                 status: Optional[list[str]] = Query(None), warehouse_id: Optional[int] = None,
                 start: Optional[date] = None, end: Optional[date] = None, mine: bool = False,
                 ctx: StockContext = Depends(stock_context), db: Session = Depends(get_db),
@@ -1053,6 +1061,7 @@ def get_issue(did: int, ctx: StockContext = Depends(stock_context), db: Session 
             "unit_cost": _f(l.unit_cost) if cost else None, "amount": _f(l.amount) if cost else None,
         })
     out["lines"] = lines
+    out["repairs"] = iss.repair_links_out(cp, d)
     if d.ref_issue_id:
         ref = cp.query(StockIssue).get(d.ref_issue_id)
         out["ref_issue_no"] = ref.doc_no if ref else None
@@ -1080,10 +1089,11 @@ class IssueLineIn(BaseModel):
     qty: Decimal = Field(..., gt=0)
     ref_line_id: Optional[int] = None
     note: Optional[str] = Field(None, max_length=500)
+    unit_cost: Optional[Decimal] = Field(None, ge=0, le=Decimal("99999999"))   # 雜收單單價（2026-11-20）
 
 
 class IssueIn(BaseModel):
-    doc_type: str = Field(..., pattern="^(issue|return|transfer|scrap)$")
+    doc_type: str = Field(..., pattern="^(issue|return|transfer|scrap|misc_receipt)$")
     warehouse_id: int
     to_warehouse_id: Optional[int] = None
     doc_date: date
@@ -1093,6 +1103,7 @@ class IssueIn(BaseModel):
     account_code: Optional[str] = Field(None, max_length=50)
     ref_issue_id: Optional[int] = None
     lines: list[IssueLineIn] = Field(..., min_length=1, max_length=300)
+    repair_ids: Optional[list[str]] = Field(None, max_length=50, description="關聯的報修單 ragic_id（None＝不變更）")
     then: Optional[str] = Field(None, pattern="^(submit|post)$", description="存檔後接著送出（領用／退料）或過帳（調撥／報廢）")
     post_date: Optional[date] = None
 
@@ -1113,9 +1124,9 @@ def _today() -> date:
 def _save(body: IssueIn, doc: Optional[StockIssue], ctx: StockContext, db: Session, cp: Session) -> StockIssue:
     depts = _my_dept_ids(db, ctx.user_id)
     w = _warehouse(cp, ctx, body.warehouse_id)
-    if body.doc_type in ("transfer", "scrap"):
+    if body.doc_type in ("transfer", "scrap", "misc_receipt"):
         if not ctx.has(ISSUE_POST):
-            raise HTTPException(status_code=403, detail="調撥／報廢單限倉管（領用單：發料過帳／調撥／報廢）開立")
+            raise HTTPException(status_code=403, detail="調撥／報廢／雜收單限倉管開立")
     else:
         if not (ctx.has(ISSUE_CREATE) or ctx.has(ISSUE_POST)):
             raise HTTPException(status_code=403, detail="沒有開立領用／退料單的權限")
@@ -1132,8 +1143,13 @@ def _save(body: IssueIn, doc: Optional[StockIssue], ctx: StockContext, db: Sessi
             cp, doc=doc, doc_type=body.doc_type, code=ctx.code, warehouse=w, to_warehouse=to_w, doc_date=body.doc_date,
             requester_name=body.requester_name, requester_user_id=ctx.user_id, purpose=body.purpose,
             cost_center_id=body.cost_center_id, account_code=body.account_code, ref_issue=ref,
-            lines=[iss.LineIn(item_id=l.item_id, qty=l.qty, ref_line_id=l.ref_line_id, note=l.note) for l in body.lines],
+            lines=[iss.LineIn(item_id=l.item_id, qty=l.qty, ref_line_id=l.ref_line_id, note=l.note,
+                              unit_cost=l.unit_cost) for l in body.lines],
             user_name=ctx.user_name, user_id=ctx.user_id)
+        if body.repair_ids is not None:
+            if body.repair_ids:
+                _repair_guard(ctx)
+            iss.set_repairs(cp, d, _load_repairs(db, body.repair_ids), ctx.user_name)
         if body.then == "submit":
             iss.submit(cp, d, ctx.user_name)
         elif body.then == "post":
@@ -1638,3 +1654,143 @@ def stock_dashboard(start: Optional[date] = None, end: Optional[date] = None,
         "three_way_diff": None,
         "meta": {"cost_visible": see_cost, "review_visible": see_review},
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 2026-11-20 報修單關聯（D38）：領用／雜收單 ↔ 商場工務報修（luqun_repair_case，主庫）
+# ═══════════════════════════════════════════════════════════════════════════
+# 單據在週採庫、報修在主庫 → 軟關聯（只存 ragic_id＋快照）。
+# 權限：庫存領用權限（_issue_any）＋ 商場工務報修檢視（luqun_repair_view）。
+# 單據層級：一張單可關聯多筆報修，尚未分攤到料號明細。
+
+REPAIR_VIEW = "luqun_repair_view"
+REPAIR_CASE_BASE = "https://ap12.ragic.com/soutlet001/luqun-public-works-repair-reporting-system/6"
+REPAIR_EXCLUDE_STATUS = ("取消", "作廢")
+
+
+def _repair_guard(ctx: StockContext):
+    if not ctx.has(REPAIR_VIEW):
+        raise HTTPException(status_code=403, detail="需要「商場工務報修」檢視權限才能關聯報修單")
+
+
+def _repair_base_query(db: Session):
+    return (db.query(LuqunRepairCase)
+            .filter(LuqunRepairCase.is_ragic_deleted.is_(False),
+                    ~LuqunRepairCase.status.in_(REPAIR_EXCLUDE_STATUS),
+                    ~LuqunRepairCase.record_status.in_(REPAIR_EXCLUDE_STATUS)))
+
+
+def _repair_out(c: LuqunRepairCase, see_cost: bool) -> dict:
+    occ = c.occurred_at.strftime("%Y/%m/%d %H:%M") if c.occurred_at else ""
+    floor = c.floor_normalized or c.floor
+    fee = lambda v: (_f(v) if see_cost else "—")  # noqa: E731
+    return {
+        "ragic_id": c.ragic_id, "case_no": c.case_no, "title": c.title, "reporter_name": c.reporter_name,
+        "repair_type": c.repair_type, "floor": floor, "room_no": c.room_no or None,
+        "occurred_at": c.occurred_at.date().isoformat() if c.occurred_at else None,
+        "status": c.status, "record_status": c.record_status, "responsible_unit": c.responsible_unit,
+        "is_completed": bool(c.is_completed_flag), "total_fee": fee(c.total_fee),
+        "ragic_url": f"{REPAIR_CASE_BASE}/{c.ragic_id}",
+        # CLAUDE.md §7：Drawer 明細欄位以中文為 key
+        "detail": {
+            "報修編號": c.case_no, "標題": c.title, "報修人姓名": c.reporter_name, "報修類型": c.repair_type,
+            "發生樓層": floor, "房號": c.room_no or "—", "發生時間": occ, "負責單位": c.responsible_unit,
+            "處理狀況": c.status, "狀態": c.record_status, "工時(hr)": c.work_hours,
+            "委外費用": fee(c.outsource_fee), "維修費用": fee(c.maintenance_fee), "總費用": fee(c.total_fee),
+            "完工時間": c.completed_at.strftime("%Y/%m/%d") if c.completed_at else "—",
+            "管理單位回應": c.mgmt_response or "—",
+        },
+    }
+
+
+def _load_repairs(db: Session, ids: list[str]) -> list[dict]:
+    """驗證報修單存在（未刪除），回傳快照列；不存在就整批拒絕。"""
+    ids = list(dict.fromkeys(i.strip() for i in ids if i and i.strip()))
+    if not ids:
+        return []
+    found = {c.ragic_id: c for c in db.query(LuqunRepairCase).filter(
+        LuqunRepairCase.ragic_id.in_(ids), LuqunRepairCase.is_ragic_deleted.is_(False)).all()}
+    missing = [i for i in ids if i not in found]
+    if missing:
+        raise HTTPException(status_code=422, detail=f"找不到報修單（或已刪除）：{', '.join(missing[:5])}")
+    return [{"ragic_id": c.ragic_id, "case_no": c.case_no, "title": c.title,
+             "occurred_at": c.occurred_at.date() if c.occurred_at else None}
+            for c in (found[i] for i in ids)]
+
+
+class RepairLinksIn(BaseModel):
+    repair_ids: list[str] = Field(..., max_length=50)
+
+
+@router.get("/repair-search", summary="報修單搜尋（領用／雜收單關聯用）")
+def repair_search(keyword: Optional[str] = Query(None, max_length=100),
+                  case_no: Optional[str] = Query(None, max_length=100),
+                  start: Optional[date] = None, end: Optional[date] = None,
+                  limit: int = Query(100, ge=1, le=300),
+                  ctx: StockContext = Depends(stock_context), db: Session = Depends(get_db),
+                  _=Depends(_issue_any)):
+    _repair_guard(ctx)
+    q = _repair_base_query(db)
+    if case_no and case_no.strip():
+        q = q.filter(LuqunRepairCase.case_no.ilike(f"%{case_no.strip()}%"))
+    if keyword and keyword.strip():
+        kw = f"%{keyword.strip()}%"
+        q = q.filter(or_(LuqunRepairCase.title.ilike(kw), LuqunRepairCase.reporter_name.ilike(kw),
+                         LuqunRepairCase.room_no.ilike(kw), LuqunRepairCase.repair_type.ilike(kw),
+                         LuqunRepairCase.floor_normalized.ilike(kw)))
+    if start:
+        q = q.filter(LuqunRepairCase.occurred_at >= _datetime.combine(start, _dtime.min))
+    if end:
+        q = q.filter(LuqunRepairCase.occurred_at < _datetime.combine(end + timedelta(days=1), _dtime.min))
+    rows = q.order_by(LuqunRepairCase.occurred_at.desc()).limit(limit).all()
+    see = _can_see_cost(ctx)
+    return [_repair_out(c, see) for c in rows]
+
+
+@router.get("/repair/{ragic_id}", summary="單筆報修案件（即時資料，Drawer 用）")
+def repair_one(ragic_id: str, ctx: StockContext = Depends(stock_context), db: Session = Depends(get_db),
+               _=Depends(_issue_any)):
+    _repair_guard(ctx)
+    c = db.query(LuqunRepairCase).get(ragic_id)
+    if not c or c.is_ragic_deleted:
+        raise HTTPException(status_code=404, detail="找不到報修單")
+    return _repair_out(c, _can_see_cost(ctx))
+
+
+@router.put("/issues/{did}/repairs", summary="設定單據關聯的報修單（整批取代；已過帳也可補關聯）")
+def set_issue_repairs(did: int, body: RepairLinksIn, ctx: StockContext = Depends(stock_context),
+                      db: Session = Depends(get_db), cp: Session = Depends(get_cycle_purchase_db),
+                      _=Depends(_issue_any)):
+    _repair_guard(ctx)
+    d = _doc(cp, ctx, _my_dept_ids(db, ctx.user_id), did)
+    if not (ctx.has(ISSUE_POST) or d.created_by_user_id == ctx.user_id):
+        raise HTTPException(status_code=403, detail="只能關聯自己開的單據（或由倉管關聯）")
+    rows = _load_repairs(db, body.repair_ids)
+    try:
+        iss.set_repairs(cp, d, rows, ctx.user_name)
+    except svc.StockError as e:
+        _business_error(e)
+    return {"id": d.id, "repairs": iss.repair_links_out(cp, d)}
+
+
+@router.get("/repair-links", summary="報修單關聯的領用／雜收單（報修明細 Drawer 用）")
+def repair_links(ragic_id: str = Query(..., max_length=50), ctx: StockContext = Depends(stock_context),
+                 db: Session = Depends(get_db), cp: Session = Depends(get_cycle_purchase_db),
+                 _=Depends(_issue_any)):
+    _repair_guard(ctx)
+    depts = _my_dept_ids(db, ctx.user_id)
+    out = []
+    for l in cp.query(StockIssueRepairLink).filter(StockIssueRepairLink.repair_ragic_id == ragic_id).all():
+        d = cp.query(StockIssue).get(l.issue_id)
+        if not d or d.company_code != ctx.code or d.status == "voided":
+            continue
+        w = cp.query(StockWarehouse).get(d.warehouse_id)
+        if not (_in_scope(ctx, depts, w) or d.created_by_user_id == ctx.user_id):
+            continue
+        out.append({
+            "id": d.id, "doc_no": d.doc_no, "doc_type_label": iss.DOC_LABEL[d.doc_type],
+            "status_label": iss.status_label(d), "doc_date": d.doc_date.isoformat(), "warehouse_name": w.name,
+            "line_count": d.line_count,
+            "total_amount": _f(d.total_amount) if (_can_see_cost(ctx) and d.status == "posted") else None,
+        })
+    return out
