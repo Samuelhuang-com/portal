@@ -18,7 +18,7 @@ import {
   CheckCircleOutlined, ClockCircleOutlined, ExclamationCircleOutlined,
   DashboardOutlined, FileTextOutlined, DownloadOutlined, FilePptOutlined,
   WarningOutlined, DollarOutlined, SearchOutlined, ApiOutlined, QuestionCircleOutlined, AuditOutlined,
-  SyncOutlined, LinkOutlined,
+  SyncOutlined, LinkOutlined, ShopOutlined, FullscreenOutlined, FullscreenExitOutlined,
   FileExcelOutlined,
 } from '@ant-design/icons'
 import {
@@ -34,9 +34,10 @@ import {
   fetchDashboard, fetchRepairStats, fetchClosingStats,
   fetchTypeStats, fetchRoomRepairTable, fetchDetail,
   fetchYears, fetchFilterOptions, buildExportUrl,
-  fetchSync, fetchPing, fetchFeeStats, fetchCaseImages,
+  fetchSync, fetchPing, fetchFeeStats, fetchCaseImages, fetchCaseParts,
 } from '@/api/luqunRepair'
 import type { SyncResult, PingResult, SyncFeeTotals } from '@/api/luqunRepair'
+import type { CaseParts, SitePart, CounterPart } from '@/types/luqunRepair'
 import { exportRepairPptx } from '@/api/repairPptExport'
 import type {
   DashboardData, RepairStatsData, ClosingTimeData, TypeStatsData,
@@ -285,6 +286,158 @@ function QueryBar({
   )
 }
 
+// ── 共用：零件區塊（工務零件／專櫃零件，2026-11-20）─────────────────────────
+// 欄寬可拖拉（表頭右緣把手）；寬度存入 localStorage，同一瀏覽器下次開啟仍保留
+const PART_COL_STORAGE_KEY = 'luqun-repair:part-col-widths'
+const PART_COL_DEFAULTS: Record<string, number> = {
+  seq: 50, part_name: 260, part_no: 150, qty: 60, unit_price: 90, issue_date: 110, subtotal: 90,
+}
+const PART_COL_MIN = 48
+
+function usePartColWidths() {
+  const [widths, setWidths] = useState<Record<string, number>>(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(PART_COL_STORAGE_KEY) || '{}')
+      return { ...PART_COL_DEFAULTS, ...saved }
+    } catch {
+      return { ...PART_COL_DEFAULTS }
+    }
+  })
+  const setWidth = useCallback((key: string, w: number) => {
+    setWidths(prev => {
+      const next = { ...prev, [key]: Math.max(PART_COL_MIN, Math.round(w)) }
+      try { localStorage.setItem(PART_COL_STORAGE_KEY, JSON.stringify(next)) } catch { /* 儲存失敗時仍可拖拉，只是不保留 */ }
+      return next
+    })
+  }, [])
+  return { widths, setWidth }
+}
+
+// 表頭儲存格：右緣拖拉把手，拖拉時即時更新該欄寬（拖拉不觸發排序）
+type ResizableHeaderProps = React.ThHTMLAttributes<HTMLTableCellElement> & {
+  width?: number
+  onResize?: (w: number) => void
+}
+
+function ResizableHeaderCell({ width, onResize, style, children, ...rest }: ResizableHeaderProps) {
+  if (!width || !onResize) {
+    return <th {...rest} style={style}>{children}</th>
+  }
+  const startDrag = (e: React.MouseEvent<HTMLSpanElement>) => {
+    e.preventDefault()
+    e.stopPropagation()
+    const startX = e.clientX
+    const startW = width
+    const onMove = (ev: MouseEvent) => onResize(startW + ev.clientX - startX)
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+      document.body.style.cursor = ''
+    }
+    document.body.style.cursor = 'col-resize'
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+  }
+  return (
+    <th {...rest} style={{ ...style, position: 'relative' }}>
+      {children}
+      <span
+        role="separator"
+        aria-orientation="vertical"
+        title="拖拉調整欄寬"
+        onMouseDown={startDrag}
+        style={{ position: 'absolute', top: 0, right: 0, bottom: 0, width: 6, cursor: 'col-resize', userSelect: 'none' }}
+      />
+    </th>
+  )
+}
+
+const PART_TABLE_COMPONENTS = { header: { cell: ResizableHeaderCell } }
+
+// 為欄位加上目前寬度與表頭拖拉回呼
+function withWidths<T>(
+  cols: ColumnsType<T>,
+  widths: Record<string, number>,
+  setWidth: (key: string, w: number) => void,
+): ColumnsType<T> {
+  return cols.map(col => {
+    const key = String(col.key)
+    return {
+      ...col,
+      width: widths[key],
+      onHeaderCell: () => ({
+        width: widths[key],
+        onResize: (w: number) => setWidth(key, w),
+      }) as unknown as React.HTMLAttributes<HTMLTableCellElement>,
+    }
+  })
+}
+
+const sumWidths = (cols: ColumnsType<any>) =>
+  cols.reduce((s, c) => s + (Number(c.width) || 0), 0)
+
+function CasePartsSection({ parts, loading }: { parts: CaseParts | null; loading: boolean }) {
+  const { widths, setWidth } = usePartColWidths()
+
+  const siteCols = withWidths<SitePart>([
+    { title: '零件', key: 'part_name', dataIndex: 'part_name' },
+    { title: '料號', key: 'part_no', dataIndex: 'part_no' },
+    { title: '數量', key: 'qty', dataIndex: 'qty', align: 'right' },
+    { title: '參考單價', key: 'unit_price', dataIndex: 'unit_price', align: 'right',
+      render: (v: number) => v > 0 ? fmtMoney(v) : '-' },
+  ], widths, setWidth)
+
+  const counterCols = withWidths<CounterPart>([
+    { title: '項次', key: 'seq', dataIndex: 'seq' },
+    { title: '零件', key: 'part_name', dataIndex: 'part_name' },
+    { title: '料號', key: 'part_no', dataIndex: 'part_no' },
+    { title: '數量', key: 'qty', dataIndex: 'qty', align: 'right' },
+    { title: '參考單價', key: 'unit_price', dataIndex: 'unit_price', align: 'right',
+      render: (v: number) => v > 0 ? fmtMoney(v) : '-' },
+    { title: '領料日期', key: 'issue_date', dataIndex: 'issue_date', render: (v: string) => v || '-' },
+    { title: '小計成本', key: 'subtotal', dataIndex: 'subtotal', align: 'right',
+      render: (v: number) => v > 0 ? fmtMoney(v) : '-' },
+  ], widths, setWidth)
+
+  if (loading) return <Spin size="small" tip="載入零件…" />
+  if (!parts) return <Text style={{ color: '#bbb', fontSize: 12 }}>無零件資料</Text>
+
+  return (
+    <>
+      <Divider orientation="left" plain style={{ fontSize: 13 }}>
+        <Space size={6}>
+          <ToolOutlined style={{ color: '#1B3A5C' }} />
+          工務零件
+          <Tag color="blue">{parts.site_parts.length} 筆</Tag>
+          <Tag>零件金額 {fmtMoney(parts.site_parts_fee)}</Tag>
+        </Space>
+      </Divider>
+      {parts.site_parts.length > 0
+        ? <Table size="small" pagination={false} tableLayout="fixed" components={PART_TABLE_COMPONENTS}
+            scroll={{ x: sumWidths(siteCols) }} columns={siteCols}
+            rowKey={(_r, i) => String(i)} dataSource={parts.site_parts} />
+        : <Text style={{ color: '#bbb', fontSize: 12 }}>無工務零件</Text>}
+
+      <Divider orientation="left" plain style={{ fontSize: 13 }}>
+        <Space size={6}>
+          <ShopOutlined style={{ color: '#4BA8E8' }} />
+          專櫃零件
+          <Tag color="blue">{parts.counter_parts.length} 筆</Tag>
+          <Tag>零件費用 {fmtMoney(parts.counter_parts_fee)}</Tag>
+        </Space>
+      </Divider>
+      {parts.counter_parts.length > 0
+        ? <Table size="small" pagination={false} tableLayout="fixed" components={PART_TABLE_COMPONENTS}
+            scroll={{ x: sumWidths(counterCols) }} columns={counterCols}
+            rowKey={(_r, i) => String(i)} dataSource={parts.counter_parts} />
+        : <Text style={{ color: '#bbb', fontSize: 12 }}>無專櫃零件</Text>}
+      <div style={{ fontSize: 12, marginTop: 8, color: '#444' }}>
+        專櫃簽名：{parts.counter_sign || '-'}　預估工時：{parts.counter_est_hours || '-'}
+      </div>
+    </>
+  )
+}
+
 // ── 共用：報修詳情 Drawer ─────────────────────────────────────────────────────
 function CaseDetailDrawer({
   caseData, onClose,
@@ -304,6 +457,23 @@ function CaseDetailDrawer({
       .catch(() => setLiveImages([]))
       .finally(() => setImgLoading(false))
   }, [caseData?.ragic_id])
+
+  // 零件明細：Drawer 開啟時按需載入（列表只帶筆數）
+  const [parts, setParts] = useState<CaseParts | null>(null)
+  const [partsLoading, setPartsLoading] = useState(false)
+
+  useEffect(() => {
+    setParts(null)
+    if (!caseData) return
+    setPartsLoading(true)
+    fetchCaseParts(caseData.ragic_id)
+      .then(setParts)
+      .catch(() => setParts(null))
+      .finally(() => setPartsLoading(false))
+  }, [caseData?.ragic_id])
+
+  // Drawer 全螢幕切換（2026-11-20）
+  const [fullscreen, setFullscreen] = useState(false)
 
   if (!caseData) return null
 
@@ -326,10 +496,21 @@ function CaseDetailDrawer({
       }
       open={!!caseData}
       onClose={onClose}
-      width={520}
+      width={fullscreen ? '100%' : 'min(960px, 100vw)'}
       destroyOnClose
+      extra={
+        <Tooltip title={fullscreen ? '還原視窗大小' : '全螢幕檢視'}>
+          <Button
+            type="text"
+            size="small"
+            aria-label={fullscreen ? '還原視窗大小' : '全螢幕檢視'}
+            icon={fullscreen ? <FullscreenExitOutlined /> : <FullscreenOutlined />}
+            onClick={() => setFullscreen(v => !v)}
+          />
+        </Tooltip>
+      }
     >
-      <Descriptions column={1} bordered size="small" labelStyle={{ width: 120, fontWeight: 500, background: '#f8f9fb' }}>
+      <Descriptions column={{ xs: 1, md: 2 }} bordered size="small" labelStyle={{ width: 120, fontWeight: 500, background: '#f8f9fb' }}>
         <Descriptions.Item label="報修編號">{caseData.case_no || '-'}</Descriptions.Item>
         <Descriptions.Item label="標題"><strong>{caseData.title || '-'}</strong></Descriptions.Item>
         <Descriptions.Item label="報修人姓名">{caseData.reporter_name || '-'}</Descriptions.Item>
@@ -403,6 +584,7 @@ function CaseDetailDrawer({
           }
         </Descriptions.Item>
       </Descriptions>
+      <CasePartsSection parts={parts} loading={partsLoading} />
     </Drawer>
   )
 }
@@ -2190,6 +2372,27 @@ function DetailTab({
     {
       title: '扣款費用', dataIndex: 'deduction_fee', width: 90, align: 'right' as const,
       render: (v: number) => v > 0 ? <span style={{ color: '#FA8C16', fontWeight: 600 }}>{fmtMoney(v)}</span> : '-',
+    },
+    {
+      title: '零件', key: 'parts', width: 80, align: 'center' as const,
+      render: (_v: unknown, row: RepairCase) => {
+        const s = row.site_parts_count ?? 0
+        const c = row.counter_parts_count ?? 0
+        return (
+          <Space size={10}>
+            <Badge count={s} showZero={false} size="small" offset={[4, -2]}>
+              <Tooltip title={`工務零件 ${s} 筆`}>
+                <ToolOutlined style={{ fontSize: 16, color: s > 0 ? '#1B3A5C' : '#d9d9d9' }} />
+              </Tooltip>
+            </Badge>
+            <Badge count={c} showZero={false} size="small" offset={[4, -2]}>
+              <Tooltip title={`專櫃零件 ${c} 筆`}>
+                <ShopOutlined style={{ fontSize: 16, color: c > 0 ? '#4BA8E8' : '#d9d9d9' }} />
+              </Tooltip>
+            </Badge>
+          </Space>
+        )
+      },
     },
   ]
 

@@ -36,6 +36,7 @@ import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, HTTPException
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -44,7 +45,7 @@ from app.core.excel_utils import xlsx_safe
 from app.core.security import decode_token
 from app.services.ragic_adapter import RagicAdapter
 from app.dependencies import get_current_user, require_roles
-from app.models.luqun_repair import LuqunRepairCase
+from app.models.luqun_repair import LuqunRepairCase, LuqunRepairSitePart, LuqunRepairCounterPart
 from app.services import luqun_repair_service as svc
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
@@ -66,6 +67,71 @@ def load_cases_from_db(db: Session) -> list[LuqunRepairCase]:
         .filter(LuqunRepairCase.is_ragic_deleted.isnot(True))
         .all()
     )
+
+
+# ── 零件（工務零件／專櫃零件）— 列表計數與 Drawer 明細 ───────────────────────
+
+def _attach_part_counts(db: Session, items: list[dict]) -> None:
+    """替明細列表的每列加上 site_parts_count／counter_parts_count（一次批次查詢，避免 N+1）。"""
+    ids = [it["ragic_id"] for it in items]
+    if not ids:
+        return
+    site = dict(
+        db.query(LuqunRepairSitePart.parent_ragic_id, func.count())
+        .filter(LuqunRepairSitePart.parent_ragic_id.in_(ids))
+        .group_by(LuqunRepairSitePart.parent_ragic_id).all()
+    )
+    counter = dict(
+        db.query(LuqunRepairCounterPart.parent_ragic_id, func.count())
+        .filter(LuqunRepairCounterPart.parent_ragic_id.in_(ids))
+        .group_by(LuqunRepairCounterPart.parent_ragic_id).all()
+    )
+    for it in items:
+        it["site_parts_count"] = site.get(it["ragic_id"], 0)
+        it["counter_parts_count"] = counter.get(it["ragic_id"], 0)
+
+
+def _seq_key(row) -> tuple:
+    """項次依數字排序；非數字排最後，再以 ragic_id 穩定排序。"""
+    s = (row.seq or "").strip()
+    return (0, int(s), row.ragic_id) if s.isdigit() else (1, 0, row.ragic_id)
+
+
+@router.get("/parts/{ragic_id}", summary="單筆報修的工務零件／專櫃零件（報修詳情 Drawer 用）")
+def get_case_parts(ragic_id: str, db: Session = Depends(get_db)):
+    case = db.query(LuqunRepairCase).filter(LuqunRepairCase.ragic_id == ragic_id).first()
+    if case is None:
+        raise HTTPException(status_code=404, detail="找不到此報修案件")
+
+    site_rows = sorted(
+        db.query(LuqunRepairSitePart).filter(LuqunRepairSitePart.parent_ragic_id == ragic_id).all(),
+        key=_seq_key,
+    )
+    counter_rows = sorted(
+        db.query(LuqunRepairCounterPart).filter(LuqunRepairCounterPart.parent_ragic_id == ragic_id).all(),
+        key=_seq_key,
+    )
+    return {
+        "ragic_id": ragic_id,
+        "site_parts_fee": case.site_parts_fee or 0.0,
+        "counter_parts_fee": case.counter_parts_fee or 0.0,
+        "counter_sign": case.counter_sign or "",
+        "counter_est_hours": case.counter_est_hours or "",
+        "site_parts": [
+            {
+                "seq": r.seq, "part_name": r.part_name, "part_no": r.part_no,
+                "qty": r.qty, "unit_price": r.unit_price,
+            } for r in site_rows
+        ],
+        "counter_parts": [
+            {
+                "seq": r.seq, "part_name": r.part_name, "part_no": r.part_no,
+                "qty": r.qty, "unit_price": r.unit_price,
+                "issue_date": r.issue_date.isoformat() if r.issue_date else "",
+                "subtotal": r.subtotal,
+            } for r in counter_rows
+        ],
+    }
 
 
 # ── /db-images/{ragic_id} — 直接從 DB 讀 images_json ────────────────────────
@@ -658,7 +724,7 @@ def get_detail(
     db: Session = Depends(get_db),
 ):
     all_cases = load_cases_from_db(db)
-    return svc.query_detail(
+    result = svc.query_detail(
         all_cases,
         year=year, month=month,
         repair_type=repair_type, floor=floor, status=status,
@@ -667,6 +733,8 @@ def get_detail(
         page=page, page_size=page_size,
         sort_by=sort_by, sort_desc=sort_desc,
     )
+    _attach_part_counts(db, result["items"])
+    return result
 
 
 # ── /export ───────────────────────────────────────────────────────────────────

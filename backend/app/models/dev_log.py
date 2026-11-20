@@ -1,7 +1,7 @@
 """
 開發統計（2026-11-02）：CHANGELOG 條目 → 資料庫。開始／結束時間可於頁面編輯。
 """
-from sqlalchemy import Column, Integer, String, Text, Date, DateTime, Index, UniqueConstraint
+from sqlalchemy import Column, ForeignKey, Integer, String, Text, Date, DateTime, Index, UniqueConstraint
 
 from app.core.database import Base
 
@@ -19,6 +19,8 @@ class DevLogEntry(Base):
     start_at     = Column(DateTime,    nullable=True, comment="開始時間（可手動編輯）")
     end_at       = Column(DateTime,    nullable=True, comment="結束時間（可手動編輯）")
     time_note    = Column(Text,        nullable=True, comment="時間來源／未知原因")
+    requirement_id = Column(Integer, ForeignKey("requirements.id", ondelete="SET NULL"), nullable=True, index=True,
+                            comment="對應需求（一對一；空＝未綁定）")
     updated_by   = Column(String(120), nullable=True)
     updated_at   = Column(DateTime,    nullable=True)
 

@@ -1,10 +1,11 @@
 /**
  * 開發統計（設定 → 開發統計）
  * 資料：CHANGELOG 條目（上傳匯入，只新增）；開始／結束時間可手動編輯。
+ * 2026-11-20：新增「需求」分頁（需求清單、需求×模組矩陣、Jira CSV 匯入）；條目可綁定需求（一對一）。
  */
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from 'react'
 import { Button, Card, Col, DatePicker, Form, Input, Modal, Row, Select, Space, Statistic, Switch, Table, Tabs, Tag, message } from 'antd'
-import { UploadOutlined } from '@ant-design/icons'
+import { PlusOutlined, UploadOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import dayjs from 'dayjs'
 import {
@@ -12,8 +13,10 @@ import {
   ResponsiveContainer, Tooltip as RTooltip, XAxis, YAxis,
 } from 'recharts'
 import {
-  getDevLogEntries, getDevLogStats, importDevLog, patchDevLogEntry, syncDevLogGit,
-  type DevLogItem, type DevLogStats,
+  createRequirement, getDevLogEntries, getDevLogStats, getRequirements, importDevLog, importJiraCsv,
+  patchDevLogEntry, patchRequirement, syncDevLogGit,
+  type DevLogItem, type DevLogStats, type DevRequirement, type RequirementPriority, type RequirementStatus,
+  type RequirementSummary,
 } from '@/api/devLog'
 
 const FMT = 'YYYY-MM-DD HH:mm'
@@ -21,6 +24,10 @@ const FMT = 'YYYY-MM-DD HH:mm'
 // 專案色系：品牌色 #1B3A5C、輔色 #4BA8E8，其餘為同色系延伸
 const PALETTE = ['#1B3A5C', '#4BA8E8', '#7C5CFF', '#22C55E', '#F59E0B', '#EF4444', '#14B8A6', '#EC4899']
 const CAT_LABEL: Record<string, string> = { Added: '新增', Changed: '變更', Fixed: '修復', Known: '已知問題' }
+const REQ_STATUS_OPTIONS = (['待評估', '進行中', '已完成', '退回'] as RequirementStatus[]).map((v) => ({ label: v, value: v }))
+const PRIORITY_OPTIONS = (['高', '中', '低'] as RequirementPriority[]).map((v) => ({ label: v, value: v }))
+const STATUS_COLOR: Record<string, string> = { 待評估: 'default', 進行中: 'processing', 已完成: 'success', 退回: 'error' }
+const PRIORITY_COLOR: Record<string, string> = { 高: 'red', 中: 'orange', 低: 'blue' }
 
 function GlassCard({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -54,16 +61,25 @@ export default function DevStatsPage() {
   const fileRef = useRef<HTMLInputElement>(null)
   const [importing, setImporting] = useState(false)
   const [syncing, setSyncing] = useState(false)
+  const [unboundOnly, setUnboundOnly] = useState(false)
+  const [reqData, setReqData] = useState<RequirementSummary | null>(null)
+  const [reqEditing, setReqEditing] = useState<DevRequirement | 'new' | null>(null)
+  const [reqForm] = Form.useForm()
+  const [savingReq, setSavingReq] = useState(false)
+  const jiraRef = useRef<HTMLInputElement>(null)
+  const [importingJira, setImportingJira] = useState(false)
 
   const load = async () => {
     setLoading(true)
     try {
-      const [s, l] = await Promise.all([
+      const [s, l, r] = await Promise.all([
         getDevLogStats({ module, month }),
-        getDevLogEntries({ module, month, unknown_only: unknownOnly }),
+        getDevLogEntries({ module, month, unknown_only: unknownOnly, unbound_only: unboundOnly }),
+        getRequirements(),
       ])
       setStats(s.data)
       setItems(l.data.items)
+      setReqData(r.data)
     } catch {
       message.error('讀取開發統計失敗（需要「開發統計：查看」權限）')
     } finally {
@@ -71,7 +87,7 @@ export default function DevStatsPage() {
     }
   }
 
-  useEffect(() => { load() /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [module, month, unknownOnly])
+  useEffect(() => { load() /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [module, month, unknownOnly, unboundOnly])
 
   const moduleOptions = useMemo(
     () => (stats?.by_module ?? []).map((m) => ({ label: m.module, value: m.module })), [stats])
@@ -135,6 +151,113 @@ export default function DevStatsPage() {
     }
   }
 
+  const reqItems = reqData?.items ?? []
+  const reqOptions = reqItems.map((r) => ({ label: `${r.req_no}　${r.title}`, value: r.id }))
+
+  const onBindChange = async (it: DevLogItem, requirementId: number | null) => {
+    try {
+      await patchDevLogEntry(it.id, { requirement_id: requirementId })
+      message.success(requirementId ? '已綁定需求' : '已解除綁定')
+      load()
+    } catch (e: unknown) {
+      message.error(errText(e, '綁定失敗（需要「開發統計：管理」權限）'))
+    }
+  }
+
+  const openNewReq = () => {
+    setReqEditing('new')
+    reqForm.resetFields()
+    reqForm.setFieldsValue({ status: '待評估', priority: '中' })
+  }
+
+  const openEditReq = (r: DevRequirement) => {
+    setReqEditing(r)
+    reqForm.setFieldsValue({
+      title: r.title, description: r.description, requester: r.requester,
+      module: r.module, status: r.status, priority: r.priority,
+    })
+  }
+
+  const saveReq = async () => {
+    const v = await reqForm.validateFields()
+    const body = {
+      title: v.title as string,
+      description: v.description ?? null,
+      requester: v.requester ?? null,
+      module: v.module ?? null,
+      status: v.status as RequirementStatus,
+      priority: v.priority as RequirementPriority,
+    }
+    setSavingReq(true)
+    try {
+      if (reqEditing === 'new') await createRequirement(body)
+      else if (reqEditing) await patchRequirement(reqEditing.id, body)
+      message.success('需求已儲存')
+      setReqEditing(null)
+      load()
+    } catch (e: unknown) {
+      message.error(errText(e, '儲存需求失敗（需要「開發統計：管理」權限）'))
+    } finally {
+      setSavingReq(false)
+    }
+  }
+
+  const onPickJira = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    if (!file.name.toLowerCase().endsWith('.csv')) {
+      message.error('請選擇 Jira 匯出的 CSV 檔案')
+      return
+    }
+    setImportingJira(true)
+    try {
+      const d = (await importJiraCsv(file)).data
+      const unmapped = d.unmapped_statuses.length ? `；未對應的狀態已設為「待評估」：${d.unmapped_statuses.join('、')}` : ''
+      message.success(`讀取 ${d.rows} 筆，新增 ${d.added} 筆，既有 ${d.skipped_existing} 筆保留不覆寫，略過 ${d.skipped_invalid} 筆${unmapped}`, 8)
+      load()
+    } catch (err: unknown) {
+      message.error(errText(err, 'Jira CSV 匯入失敗（需要「開發統計：管理」權限）'))
+    } finally {
+      setImportingJira(false)
+    }
+  }
+
+  const reqColumns: ColumnsType<DevRequirement> = [
+    { title: '需求編號', dataIndex: 'req_no', width: 110 },
+    { title: '狀態', dataIndex: 'status', width: 100, render: (v: string) => <Tag color={STATUS_COLOR[v]}>{v}</Tag> },
+    { title: '優先度', dataIndex: 'priority', width: 80, render: (v: string) => <Tag color={PRIORITY_COLOR[v]}>{v}</Tag> },
+    { title: '標題', dataIndex: 'title', ellipsis: true },
+    { title: '提出人', dataIndex: 'requester', width: 110, render: (v: string) => v || '—' },
+    { title: '需求模組', dataIndex: 'module', width: 130, render: (v: string) => v || '—' },
+    { title: '變更數', dataIndex: 'change_count', align: 'right', width: 90 },
+    { title: '涉及模組', dataIndex: 'modules', width: 240,
+      render: (v: string[]) => (v.length ? v.map((m) => <Tag key={m}>{m}</Tag>) : '—') },
+    { title: '已記錄工時（小時）', dataIndex: 'hours', align: 'right', width: 150 },
+    { title: '最後變更', dataIndex: 'last_change_at', width: 150, render: (v: string | null) => v || '—' },
+    { title: '', key: 'op', width: 80, render: (_: unknown, r) => <Button size="small" onClick={() => openEditReq(r)}>編輯</Button> },
+  ]
+
+  const matrixCount = (rid: number, mod: string) =>
+    (reqData?.matrix ?? []).find((m) => m.requirement_id === rid && m.module === mod)?.count ?? 0
+
+  const matrixColumns: ColumnsType<DevRequirement> = [
+    { title: '需求', key: 'req', width: 280, render: (_: unknown, r: DevRequirement) => `${r.req_no}　${r.title}` },
+    ...(reqData?.modules ?? []).map((m) => ({
+      title: m,
+      key: `mod-${m}`,
+      align: 'right' as const,
+      width: 110,
+      render: (_: unknown, r: DevRequirement) => {
+        const n = matrixCount(r.id, m)
+        return n ? n : <span style={{ color: '#bbb' }}>—</span>
+      },
+    })),
+    { title: '合計', key: 'total', align: 'right' as const, width: 90, render: (_: unknown, r: DevRequirement) => <b>{r.change_count}</b> },
+  ]
+
+  const matrixRows = reqItems.filter((r) => r.change_count > 0)
+
   const columns: ColumnsType<DevLogItem> = [
     { title: '版本日期', dataIndex: 'entry_date', width: 110 },
     { title: '類型', dataIndex: 'category', width: 90, render: (v: string) => <Tag>{v}</Tag> },
@@ -146,6 +269,10 @@ export default function DevStatsPage() {
     { title: '開始時間', dataIndex: 'start_at', width: 150, render: (v: string | null) => v || '—' },
     { title: '結束時間', dataIndex: 'end_at', width: 150, render: (v: string | null) => v || '—' },
     { title: '時間說明', dataIndex: 'time_note', ellipsis: true, width: 240, render: (v: string) => v || '—' },
+    { title: '需求', dataIndex: 'requirement_id', width: 210, render: (_: unknown, r: DevLogItem) => (
+      <Select allowClear showSearch size="small" style={{ width: 200 }} placeholder="未綁定"
+        value={r.requirement_id ?? undefined} options={reqOptions} optionFilterProp="label"
+        onChange={(v: number | undefined) => onBindChange(r, v ?? null)} />) },
     { title: '', key: 'op', width: 80, render: (_: unknown, r) => <Button size="small" onClick={() => openEdit(r)}>編輯時間</Button> },
   ]
 
@@ -168,6 +295,7 @@ export default function DevStatsPage() {
           <Select allowClear placeholder="模組" style={{ minWidth: 180 }} value={module} onChange={setModule} options={moduleOptions} />
           <Select allowClear placeholder="月份" style={{ minWidth: 120 }} value={month} onChange={setMonth} options={monthOptions} />
           <Space>只看時間未知<Switch checked={unknownOnly} onChange={setUnknownOnly} /></Space>
+          <Space>只看未綁定需求<Switch checked={unboundOnly} onChange={setUnboundOnly} /></Space>
         </Space>
       </Card>
 
@@ -298,19 +426,81 @@ export default function DevStatsPage() {
             ),
           },
           {
+            key: 'requirements',
+            label: '需求',
+            children: (
+              <>
+                <Card size="small" style={{ marginBottom: 12 }}>
+                  <Space wrap>
+                    <input ref={jiraRef} type="file" accept=".csv,text/csv" style={{ display: 'none' }} onChange={onPickJira} />
+                    <Button type="primary" icon={<PlusOutlined />} onClick={openNewReq}>新增需求</Button>
+                    <Button icon={<UploadOutlined />} loading={importingJira} onClick={() => jiraRef.current?.click()}>匯入 Jira CSV</Button>
+                    <span style={{ color: '#888' }}>建立與編輯限管理者；未綁定需求的變更共 {reqData?.unbound_entries ?? 0} 筆</span>
+                  </Space>
+                </Card>
+                <Row gutter={12} style={{ marginBottom: 12 }}>
+                  <Col span={6}><Card size="small"><Statistic title="需求數" value={reqItems.length} /></Card></Col>
+                  <Col span={6}><Card size="small"><Statistic title="進行中" value={reqData?.status_counts['進行中'] ?? 0} /></Card></Col>
+                  <Col span={6}><Card size="small"><Statistic title="已完成" value={reqData?.status_counts['已完成'] ?? 0} /></Card></Col>
+                  <Col span={6}><Card size="small"><Statistic title="未綁定需求的變更" value={reqData?.unbound_entries ?? 0} /></Card></Col>
+                </Row>
+                <Card size="small" title="需求清單" style={{ marginBottom: 12 }}>
+                  <Table<DevRequirement> rowKey="id" size="small" columns={reqColumns} dataSource={reqItems}
+                    pagination={{ pageSize: 50, showTotal: (t) => `共 ${t} 筆` }} scroll={{ x: 1400 }} />
+                </Card>
+                <Card size="small" title="需求 × 模組（變更數）">
+                  <Table<DevRequirement> rowKey="id" size="small" pagination={false} columns={matrixColumns}
+                    dataSource={matrixRows} scroll={{ x: 'max-content' }} />
+                </Card>
+              </>
+            ),
+          },
+          {
             key: 'entries',
             label: '條目',
             children: (
               <>
         <Card size="small" title="條目（可編輯開始／結束時間）">
           <Table<DevLogItem> rowKey="id" size="small" loading={loading} columns={columns} dataSource={items}
-            pagination={{ pageSize: 50, showTotal: (t) => `共 ${t} 筆` }} scroll={{ x: 1200 }} />
+            pagination={{ pageSize: 50, showTotal: (t) => `共 ${t} 筆` }} scroll={{ x: 1420 }} />
         </Card>
               </>
             ),
           },
         ]}
       />
+
+      <Modal
+        open={reqEditing !== null}
+        title={reqEditing === 'new' ? '新增需求' : reqEditing ? `編輯需求：${reqEditing.req_no}` : ''}
+        onOk={saveReq} onCancel={() => setReqEditing(null)} okText="儲存"
+        confirmLoading={savingReq} destroyOnClose
+      >
+        <Form form={reqForm} layout="vertical">
+          <Form.Item name="title" label="標題" rules={[{ required: true, message: '請輸入標題' }]}>
+            <Input maxLength={300} />
+          </Form.Item>
+          <Form.Item name="description" label="說明">
+            <Input.TextArea rows={4} />
+          </Form.Item>
+          <Row gutter={12}>
+            <Col span={12}>
+              <Form.Item name="requester" label="提出人"><Input maxLength={120} /></Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="module" label="需求模組"><Input maxLength={120} placeholder="例如：商場工務" /></Form.Item>
+            </Col>
+          </Row>
+          <Row gutter={12}>
+            <Col span={12}>
+              <Form.Item name="status" label="狀態" rules={[{ required: true }]}><Select options={REQ_STATUS_OPTIONS} /></Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="priority" label="優先度" rules={[{ required: true }]}><Select options={PRIORITY_OPTIONS} /></Form.Item>
+            </Col>
+          </Row>
+        </Form>
+      </Modal>
 
       <Modal open={editing !== null} title={editing ? `編輯時間：${editing.title}` : ''} onOk={saveEdit} onCancel={() => setEditing(null)} okText="儲存">
         <Form form={form} layout="vertical">

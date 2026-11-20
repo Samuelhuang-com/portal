@@ -90,3 +90,91 @@ def extract_detail_records(raw: dict) -> list[dict]:
 
     records.sort(key=lambda r: (r["start_at"] is None, r["start_at"] or datetime.min))
     return records
+
+
+# ── 零件子表（2026-11-20）：工務零件／專櫃零件 ─────────────────────────────────
+# 工務零件：零件／料號／數量／參考單價（無項次、無列小計；父層「零件金額」為合計）
+# 專櫃零件：項次／零件／料號／數量／參考單價／領料日期／小計成本（父層「零件費用」為合計）
+# 專櫃簽名、預估工時 為專櫃零件區的父層欄位。
+
+def _to_float(v) -> float:
+    """Ragic 金額可能是 "$710"、"1,200" 或數字；無法解析 → 0.0。"""
+    if v is None:
+        return 0.0
+    if isinstance(v, (int, float)):
+        return float(v)
+    s = str(v).replace("$", "").replace(",", "").strip()
+    try:
+        return float(s)
+    except ValueError:
+        return 0.0
+
+
+def _to_date(v):
+    """領料日期（例如 2026/11/20）→ date；無法解析 → None。"""
+    dt = parse_subtable_datetime(v)
+    return dt.date() if dt else None
+
+
+def extract_part_records(raw: dict) -> tuple[list[dict], list[dict]]:
+    """
+    從 Ragic raw row 解析零件子表。回傳 (工務零件 list, 專櫃零件 list)。
+
+    判定：子表任一列同時含「零件」與「參考單價」即為零件子表；
+          含「領料日期」或「小計成本」者為專櫃零件，其餘為工務零件。
+    找不到 → ([], [])。
+    """
+    site: list[dict] = []
+    counter: list[dict] = []
+    if not isinstance(raw, dict):
+        return site, counter
+
+    for key, val in raw.items():
+        if not str(key).startswith("_subtable_") or not isinstance(val, dict):
+            continue
+        rows = [r for r in val.values() if isinstance(r, dict)]
+        if not any("零件" in r and "參考單價" in r for r in rows):
+            continue
+        is_counter = any(("領料日期" in r) or ("小計成本" in r) for r in rows)
+        bucket = counter if is_counter else site
+
+        for rid, row in val.items():
+            if not isinstance(row, dict):
+                continue
+            name = str(row.get("零件", "") or "").strip()
+            part_no = str(row.get("料號", "") or "").strip()
+            qty = str(row.get("數量", "") or "").strip()
+            price = _to_float(row.get("參考單價"))
+            # 全空列（Ragic 偶有空白尾列）→ 略過
+            if not (name or part_no or qty or price):
+                continue
+            rec = {
+                "ragic_id":   str(row.get("_ragicId", rid)),
+                "part_name":  name,
+                "part_no":    part_no,
+                "qty":        qty,
+                "unit_price": price,
+            }
+            if is_counter:
+                seq = str(row.get("項次", "") or "").strip() or str(len(counter) + 1)
+                rec["seq"] = seq
+                rec["issue_date"] = _to_date(row.get("領料日期"))
+                rec["subtotal"] = _to_float(row.get("小計成本"))
+                counter.append(rec)
+            else:
+                rec["seq"] = str(len(site) + 1)
+                site.append(rec)
+
+    return site, counter
+
+
+def extract_parent_fields(raw: dict) -> dict:
+    """父層零件合計與專櫃區欄位（Ragic 原欄位名稱）。"""
+    if not isinstance(raw, dict):
+        raw = {}
+    return {
+        "site_parts_fee":    _to_float(raw.get("零件金額")),
+        "counter_parts_fee": _to_float(raw.get("零件費用")),
+        "counter_sign":      str(raw.get("專櫃簽名", "") or "").strip(),
+        "counter_est_hours": str(raw.get("預估工時", "") or "").strip(),
+    }

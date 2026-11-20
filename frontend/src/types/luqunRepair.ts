@@ -46,6 +46,32 @@ export interface RepairCase {
   images:             RepairImage[]
   is_ragic_deleted:   boolean           // Ragic 端已刪除（本地保留）
   ragic_deleted_at:   string | null     // 偵測到刪除的時間
+  site_parts_count?:    number          // 工務零件筆數（明細列表 Icon 用）
+  counter_parts_count?: number          // 專櫃零件筆數（明細列表 Icon 用）
+}
+
+// ── 零件（2026-11-20）：工務零件／專櫃零件，報修詳情 Drawer 用 ───────────────
+export interface SitePart {
+  seq:        string
+  part_name:  string
+  part_no:    string
+  qty:        string
+  unit_price: number
+}
+
+export interface CounterPart extends SitePart {
+  issue_date: string     // 領料日期（YYYY-MM-DD，空字串＝無）
+  subtotal:   number     // 小計成本
+}
+
+export interface CaseParts {
+  ragic_id:           string
+  site_parts_fee:     number    // 工務零件金額（Ragic 父層「零件金額」）
+  counter_parts_fee:  number    // 專櫃零件費用（Ragic 父層「零件費用」）
+  counter_sign:       string    // 專櫃簽名
+  counter_est_hours:  string    // 預估工時（原文）
+  site_parts:         SitePart[]
+  counter_parts:      CounterPart[]
 }
 
 // ── Dashboard ─────────────────────────────────────────────────────────────────

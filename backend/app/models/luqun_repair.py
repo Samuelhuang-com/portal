@@ -6,9 +6,9 @@
   - deduction_counter（扣款專櫃）
   - occ_year / occ_month（報修月份，4.1 統計用）
 """
-from datetime import datetime
+from datetime import date, datetime
 from app.core.time import twnow
-from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text
+from sqlalchemy import Boolean, Date, DateTime, Float, Integer, String, Text
 from sqlalchemy.orm import mapped_column, Mapped
 from app.core.database import Base
 
@@ -54,6 +54,10 @@ class LuqunRepairCase(Base):
     images_json:       Mapped[str | None] = mapped_column(Text, nullable=True, default=None)  # JSON 序列化圖片列表
     is_ragic_deleted:  Mapped[bool]  = mapped_column(Boolean,     default=False)               # Ragic 端已刪除（本地保留）
     ragic_deleted_at:  Mapped[datetime | None] = mapped_column(DateTime, nullable=True)        # 偵測到刪除的時間
+    site_parts_fee:    Mapped[float] = mapped_column(Float, default=0.0)   # 工務零件金額（Ragic 父層「零件金額」）
+    counter_parts_fee: Mapped[float] = mapped_column(Float, default=0.0)   # 專櫃零件費用（Ragic 父層「零件費用」）
+    counter_sign:      Mapped[str]   = mapped_column(String(100), default="")  # 專櫃簽名（專櫃零件區）
+    counter_est_hours: Mapped[str]   = mapped_column(String(50),  default="")  # 預估工時（專櫃零件區，原文保存）
     synced_at:         Mapped[datetime] = mapped_column(DateTime, default=twnow)
 
     @property
@@ -158,4 +162,40 @@ class LuqunRepairRecord(Base):
     start_at:        Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # 時間開始（含秒）
     end_at:          Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # 時間結束（含秒）
     person:          Mapped[str] = mapped_column(String(100), default="")   # 維修人員
+    synced_at:       Mapped[datetime] = mapped_column(DateTime, default=twnow)
+
+
+class LuqunRepairSitePart(Base):
+    """商場工務報修 — 工務零件子表（Ragic 報修 /6 的零件子表）
+    欄位：零件／料號／數量／參考單價（無「項次」欄，seq 依子表順序補 1,2,3…）
+    同步策略：每次 sync 以 parent_ragic_id 整批 delete + insert。
+    """
+    __tablename__ = "luqun_repair_site_part"
+
+    ragic_id:        Mapped[str]   = mapped_column(String(50), primary_key=True)
+    parent_ragic_id: Mapped[str]   = mapped_column(String(50), index=True, default="")
+    seq:             Mapped[str]   = mapped_column(String(20), default="")      # 列序（顯示用）
+    part_name:       Mapped[str]   = mapped_column(Text,       default="")      # 零件
+    part_no:         Mapped[str]   = mapped_column(String(100), default="")     # 料號
+    qty:             Mapped[str]   = mapped_column(String(50), default="")      # 數量（原文，Ragic 可能含單位）
+    unit_price:      Mapped[float] = mapped_column(Float,      default=0.0)     # 參考單價
+    synced_at:       Mapped[datetime] = mapped_column(DateTime, default=twnow)
+
+
+class LuqunRepairCounterPart(Base):
+    """商場工務報修 — 專櫃零件子表（Ragic 報修 /6 的專櫃零件子表）
+    欄位：項次／零件／料號／數量／參考單價／領料日期／小計成本
+    同步策略：每次 sync 以 parent_ragic_id 整批 delete + insert。
+    """
+    __tablename__ = "luqun_repair_counter_part"
+
+    ragic_id:        Mapped[str]   = mapped_column(String(50), primary_key=True)
+    parent_ragic_id: Mapped[str]   = mapped_column(String(50), index=True, default="")
+    seq:             Mapped[str]   = mapped_column(String(20), default="")      # 項次
+    part_name:       Mapped[str]   = mapped_column(Text,       default="")      # 零件
+    part_no:         Mapped[str]   = mapped_column(String(100), default="")     # 料號
+    qty:             Mapped[str]   = mapped_column(String(50), default="")      # 數量（原文）
+    unit_price:      Mapped[float] = mapped_column(Float,      default=0.0)     # 參考單價
+    issue_date:      Mapped[date | None] = mapped_column(Date, nullable=True)   # 領料日期
+    subtotal:        Mapped[float] = mapped_column(Float,      default=0.0)     # 小計成本（Ragic 計算值）
     synced_at:       Mapped[datetime] = mapped_column(DateTime, default=twnow)

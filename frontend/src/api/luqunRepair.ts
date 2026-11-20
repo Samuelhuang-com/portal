@@ -13,6 +13,7 @@ import type {
   DetailResult,
   FilterOptions,
   FeeStatsData,
+  CaseParts,
 } from '@/types/luqunRepair'
 
 const BASE = '/luqun-repair'
@@ -200,4 +201,10 @@ export async function fetchCaseImages(
 ): Promise<{ images: Array<{ url: string; filename: string }>; ragic_id: string }> {
   const res = await apiClient.get(`${BASE}/db-images/${encodeURIComponent(ragicId)}`)
   return { images: res.data?.images ?? [], ragic_id: ragicId }
+}
+
+// ── 零件（工務零件／專櫃零件）：報修詳情 Drawer 按需載入（2026-11-20）────────
+export async function fetchCaseParts(ragicId: string): Promise<CaseParts> {
+  const res = await apiClient.get(`${BASE}/parts/${encodeURIComponent(ragicId)}`)
+  return res.data
 }

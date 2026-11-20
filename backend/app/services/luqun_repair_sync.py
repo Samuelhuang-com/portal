@@ -14,8 +14,12 @@ from datetime import datetime, timezone
 from app.core.time import twnow
 
 from app.core.database import SessionLocal
-from app.models.luqun_repair import LuqunRepairCase, LuqunRepairRecord
-from app.services.repair_detail_utils import extract_detail_records
+from app.models.luqun_repair import (
+    LuqunRepairCase, LuqunRepairRecord, LuqunRepairSitePart, LuqunRepairCounterPart,
+)
+from app.services.repair_detail_utils import (
+    extract_detail_records, extract_part_records, extract_parent_fields,
+)
 from app.services.sync_dispatcher import register
 
 logger = logging.getLogger(__name__)
@@ -145,6 +149,10 @@ async def sync_from_ragic() -> dict:
                 errors.append(f"ragic_id={case.ragic_id}: {exc}")
                 logger.warning(f"[LuqunRepair Sync] 案件 {case.ragic_id} 失敗：{exc}")
 
+        # ── 零件子表計數（工務零件／專櫃零件，見下方區塊）─────────────────────
+        site_parts_n = 0
+        counter_parts_n = 0
+
         # ── 工單明細子表（維修記錄）：整批 delete + insert ────────────────────
         records = 0
         try:
@@ -168,6 +176,64 @@ async def sync_from_ragic() -> dict:
         except Exception as exc:
             errors.append(f"detail records: {exc}")
             logger.warning(f"[LuqunRepair Sync] 子表同步失敗：{exc}")
+
+        # ── 零件子表（工務零件／專櫃零件）＋父層合計：整批 delete + insert ─────
+        try:
+            raw_by_id = {case.ragic_id: (getattr(case, "_raw", None) or {}) for case in cases}
+            db.flush()   # 新案件需先寫入，下一步才查得到父層列
+            for case_row in db.query(LuqunRepairCase).filter(
+                LuqunRepairCase.ragic_id.in_(all_ragic_ids)
+            ).all():
+                for k, v in extract_parent_fields(raw_by_id.get(case_row.ragic_id, {})).items():
+                    setattr(case_row, k, v)
+
+            db.query(LuqunRepairSitePart).filter(
+                LuqunRepairSitePart.parent_ragic_id.in_(all_ragic_ids)
+            ).delete(synchronize_session=False)
+            db.query(LuqunRepairCounterPart).filter(
+                LuqunRepairCounterPart.parent_ragic_id.in_(all_ragic_ids)
+            ).delete(synchronize_session=False)
+
+            seen_part_ids: set[str] = set()
+            for case in cases:
+                site, counter = extract_part_records(raw_by_id.get(case.ragic_id, {}))
+                for rec in site:
+                    if rec["ragic_id"] in seen_part_ids:
+                        logger.warning(f"[LuqunRepair Sync] 工務零件 ragic_id 重複，略過：{rec['ragic_id']}")
+                        continue
+                    seen_part_ids.add(rec["ragic_id"])
+                    db.add(LuqunRepairSitePart(
+                        ragic_id        = rec["ragic_id"],
+                        parent_ragic_id = case.ragic_id,
+                        seq             = rec["seq"],
+                        part_name       = rec["part_name"],
+                        part_no         = rec["part_no"],
+                        qty             = rec["qty"],
+                        unit_price      = rec["unit_price"],
+                        synced_at       = now,
+                    ))
+                    site_parts_n += 1
+                for rec in counter:
+                    if rec["ragic_id"] in seen_part_ids:
+                        logger.warning(f"[LuqunRepair Sync] 專櫃零件 ragic_id 重複，略過：{rec['ragic_id']}")
+                        continue
+                    seen_part_ids.add(rec["ragic_id"])
+                    db.add(LuqunRepairCounterPart(
+                        ragic_id        = rec["ragic_id"],
+                        parent_ragic_id = case.ragic_id,
+                        seq             = rec["seq"],
+                        part_name       = rec["part_name"],
+                        part_no         = rec["part_no"],
+                        qty             = rec["qty"],
+                        unit_price      = rec["unit_price"],
+                        issue_date      = rec["issue_date"],
+                        subtotal        = rec["subtotal"],
+                        synced_at       = now,
+                    ))
+                    counter_parts_n += 1
+        except Exception as exc:
+            errors.append(f"parts: {exc}")
+            logger.warning(f"[LuqunRepair Sync] 零件子表同步失敗：{exc}")
 
         # ── Ghost 偵測：DB 中有但 Ragic 沒有回傳 → 標記為已刪除 ──────────────
         ghost_deleted = 0
@@ -196,4 +262,8 @@ async def sync_from_ragic() -> dict:
     finally:
         db.close()
 
-    return {"fetched": fetched, "upserted": upserted, "records": records, "ghost_deleted": ghost_deleted, "errors": errors}
+    return {
+        "fetched": fetched, "upserted": upserted, "records": records,
+        "site_parts": site_parts_n, "counter_parts": counter_parts_n,
+        "ghost_deleted": ghost_deleted, "errors": errors,
+    }

@@ -1457,6 +1457,7 @@ async def lifespan(app: FastAPI):
     import app.models.taichung_purchase_request  # noqa: F401  台中核准請購單（2026-09-16，表由 Alembic tcpurch 建）
     import app.models.taichung_claim_request     # noqa: F401  台中核准請款單（2026-09-16，表由 Alembic tcpurch 建）
     import app.models.dev_log  # noqa  開發統計（2026-11-02，表由 Alembic devlog1 建）
+    import app.models.requirement  # noqa  需求管理（2026-11-20，表由 Alembic req1 建）
     import app.models.return_stats  # noqa: F401  退件統計（2026-11-02，表由 Alembic rrs1 建）
     import app.models.ragic_purchase_order  # noqa: F401  Ragic 採購單（2026-11-17，表由 Alembic stk1 建）
     import app.models.ragic_sheet_config        # noqa: F401
