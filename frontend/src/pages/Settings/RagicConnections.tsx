@@ -297,11 +297,11 @@ const RagicConnections: React.FC = () => {
     { key: 'hotel_di',     name: '飯店每日巡檢',      desc: 'main-project-inspection/17~21（5張Sheet加總）', apiPrefix: '/hotel-daily-inspection',     ragicUrl: 'https://ap12.ragic.com/soutlet001/main-project-inspection/17' },
     { key: 'mall_fi',      name: '商場工務巡檢',      desc: 'mall-facility-inspection/2,3,4,5,7（5張Sheet加總）', apiPrefix: '/mall-facility-inspection', ragicUrl: 'https://ap12.ragic.com/soutlet001/mall-facility-inspection/2' },
     { key: 'hotel_mr',     name: '每日數值登錄',      desc: 'hotel-routine-inspection/11,12,14,15（4張Sheet加總）', apiPrefix: '/hotel-meter-readings', ragicUrl: 'https://ap12.ragic.com/soutlet001/hotel-routine-inspection/11' },
-    { key: 'b1f',          name: 'B1F巡檢',          desc: 'full-building-inspection/4',                   apiPrefix: '/mall/b1f-inspection',        ragicUrl: 'https://ap12.ragic.com/soutlet001/full-building-inspection/4' },
+    { key: 'b1f',          name: 'B1F巡檢',          desc: 'full-building-inspection/6（現行）＋archive-old-data/22（封存）',                   apiPrefix: '/mall/b1f-inspection',        ragicUrl: 'https://ap12.ragic.com/soutlet001/full-building-inspection/6' },
     { key: 'b1b4', name: 'B1~B4巡檢', desc: 'full-building-inspection/8（抽排風設備）', apiPrefix: '/mall/b1b4-inspection', ragicUrl: 'https://ap12.ragic.com/soutlet001/full-building-inspection/8' },
-    { key: 'b2f',          name: 'B2F巡檢',          desc: 'full-building-inspection/3',                   apiPrefix: '/mall/b2f-inspection',        ragicUrl: 'https://ap12.ragic.com/soutlet001/full-building-inspection/3' },
-    { key: 'b4f',          name: 'B4F巡檢',          desc: 'full-building-inspection/2',                   apiPrefix: '/mall/b4f-inspection',        ragicUrl: 'https://ap12.ragic.com/soutlet001/full-building-inspection/2' },
-    { key: 'rf',           name: 'RF巡檢',           desc: 'full-building-inspection/1',                   apiPrefix: '/mall/rf-inspection',         ragicUrl: 'https://ap12.ragic.com/soutlet001/full-building-inspection/1' },
+    { key: 'b2f',          name: 'B2F巡檢',          desc: 'full-building-inspection/7（現行）＋archive-old-data/21（封存）',                   apiPrefix: '/mall/b2f-inspection',        ragicUrl: 'https://ap12.ragic.com/soutlet001/full-building-inspection/7' },
+    { key: 'b4f',          name: 'B4F巡檢',          desc: 'full-building-inspection/9～12（現行 4 張）＋archive-old-data/20（封存）',                   apiPrefix: '/mall/b4f-inspection',        ragicUrl: 'https://ap12.ragic.com/soutlet001/full-building-inspection/9' },
+    { key: 'rf',           name: 'RF巡檢',           desc: 'full-building-inspection/5（現行）＋archive-old-data/19（封存）',                   apiPrefix: '/mall/rf-inspection',         ragicUrl: 'https://ap12.ragic.com/soutlet001/full-building-inspection/5' },
     { key: 'other_tasks',  name: '主管交辦／緊急事件', desc: 'other-tasks/1',                               apiPrefix: '/other-tasks',                ragicUrl: 'https://ap12.ragic.com/soutlet001/other-tasks/1' },
   ]
 
