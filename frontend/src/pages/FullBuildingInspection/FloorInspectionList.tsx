@@ -19,7 +19,7 @@ import {
 } from 'antd'
 import { ReloadOutlined, LinkOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
-import { FULL_BUILDING_INSPECTION_SHEETS, ragicRecordUrl } from '@/constants/fullBuildingInspection'
+import { FULL_BUILDING_INSPECTION_SHEETS, FULL_BUILDING_RAGIC_SHEET_LINKS, ragicRecordUrl } from '@/constants/fullBuildingInspection'
 import {
   fetchFloorBatches,
   fetchFloorBatchDetail,
@@ -28,6 +28,29 @@ import {
   type FloorBatchDetail,
   type FloorImage,
 } from '@/api/fullBuildingInspection'
+
+/**
+ * Ragic「工時計算」原始字串 → 整數分鐘顯示（如「40 分鐘」）。
+ * 規則參考商場工務巡檢（MallFloorInspectionList.formatWorkMinutes）：含「分」為分鐘；含「時」或 h 乘 60；無單位視為分鐘。
+ * 差異：同時含「時」與「分」（如「1時30分」）合併計算為 90 分鐘（商場版只取第一個數字）。
+ * 無法解析或結果 ≤ 0 回 null（顯示「—」）。
+ */
+export function formatWorkMinutes(raw: string | null | undefined): string | null {
+  if (!raw) return null
+  const hour = raw.match(/([\d.]+)\s*時/)
+  const min  = raw.match(/([\d.]+)\s*分/)
+  let mins: number
+  if (hour || min) {
+    mins = (hour ? parseFloat(hour[1]) * 60 : 0) + (min ? parseFloat(min[1]) : 0)
+  } else {
+    const m = raw.match(/[\d.]+/)
+    if (!m) return null
+    mins = parseFloat(m[0])
+    if (/h/i.test(raw)) mins *= 60
+  }
+  const rounded = Math.round(mins)
+  return rounded > 0 ? `${rounded} 分鐘` : null
+}
 
 const { Text } = Typography
 
@@ -61,8 +84,12 @@ function isImageField(itemName: string, resultRaw: string): boolean {
 
 const isMetaField = (itemName: string) => META_FIELD_RE.test((itemName ?? '').trim())
 
-export default function FloorInspectionList({ sheetKey }: { sheetKey: string }) {
+export default function FloorInspectionList({ sheetKey, sourceKey }: { sheetKey: string; sourceKey?: string }) {
   const sheet = FULL_BUILDING_INSPECTION_SHEETS[sheetKey]
+  // 子表 TAB（如 b4f_10）：顯示該表的 Ragic 連結
+  const ragicLink = sourceKey
+    ? (FULL_BUILDING_RAGIC_SHEET_LINKS[sheetKey] ?? []).find((l) => l.sourceKey === sourceKey)
+    : undefined
   const [yearMonth, setYearMonth] = useState<string>(dayjs().format('YYYY/MM'))
   const [loading,   setLoading]   = useState(false)
   const [rows,      setRows]      = useState<FloorBatchRow[]>([])
@@ -79,14 +106,14 @@ export default function FloorInspectionList({ sheetKey }: { sheetKey: string }) 
     setLoading(true)
     setError(null)
     try {
-      setRows(await fetchFloorBatches(sheetKey, yearMonth))
+      setRows(await fetchFloorBatches(sheetKey, yearMonth, sourceKey))
     } catch (e) {
       setRows([])
       setError(e instanceof Error ? e.message : '載入失敗')
     } finally {
       setLoading(false)
     }
-  }, [sheetKey, yearMonth])
+  }, [sheetKey, yearMonth, sourceKey])
 
   useEffect(() => { load() }, [load])
 
@@ -163,7 +190,7 @@ export default function FloorInspectionList({ sheetKey }: { sheetKey: string }) 
       title: '工時',
       width: 90,
       render: (_: unknown, r: FloorBatchRow) =>
-        r.batch.work_hours || <Text type="secondary">—</Text>,
+        formatWorkMinutes(r.batch.work_hours) ?? <Text type="secondary">—</Text>,
     },
     {
       title: '異常',
@@ -208,6 +235,13 @@ export default function FloorInspectionList({ sheetKey }: { sheetKey: string }) 
 
   return (
     <div>
+      {ragicLink && (
+        <div style={{ marginBottom: 12 }}>
+          <a href={ragicLink.url} target="_blank" rel="noreferrer" style={{ color: '#4BA8E8', fontSize: 12 }}>
+            <LinkOutlined /> Ragic 表單：{ragicLink.label}
+          </a>
+        </div>
+      )}
       {error && (
         <Alert type="error" message={error} style={{ marginBottom: 16 }}
                closable onClose={() => setError(null)} />
@@ -280,7 +314,7 @@ export default function FloorInspectionList({ sheetKey }: { sheetKey: string }) 
               <Descriptions.Item label="巡檢人員">{detail.batch.inspector_name || '—'}</Descriptions.Item>
               <Descriptions.Item label="開始巡檢時間">{detail.batch.start_time || '—'}</Descriptions.Item>
               <Descriptions.Item label="巡檢結束時間">{detail.batch.end_time || '—'}</Descriptions.Item>
-              <Descriptions.Item label="工時計算">{detail.batch.work_hours || '—'}</Descriptions.Item>
+              <Descriptions.Item label="工時計算">{formatWorkMinutes(detail.batch.work_hours) ?? '—'}</Descriptions.Item>
               <Descriptions.Item label="巡檢進度">
                 <b>{detail.kpi.completion_rate}%</b>
                 <Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>

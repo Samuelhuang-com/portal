@@ -20,9 +20,9 @@ import {
   ExclamationCircleOutlined, SafetyOutlined, BarChartOutlined, LinkOutlined,
 } from '@ant-design/icons'
 import { NAV_GROUP, NAV_PAGE } from '@/constants/navLabels'
-import { FULL_BUILDING_INSPECTION_SHEETS } from '@/constants/fullBuildingInspection'
+import { FULL_BUILDING_INSPECTION_SHEETS, FULL_BUILDING_RAGIC_SHEET_LINKS } from '@/constants/fullBuildingInspection'
 import { fetchFloorStats, type FloorStats } from '@/api/fullBuildingInspection'
-import FloorInspectionList from './FloorInspectionList'
+import FloorInspectionList, { formatWorkMinutes } from './FloorInspectionList'
 
 const { Title, Text } = Typography
 
@@ -33,6 +33,25 @@ interface InspectionFloorPageProps {
 }
 
 // ── 主元件 ────────────────────────────────────────────────────────────────────
+
+function RagicSheetLinksBar({ sheetKey }: { sheetKey: string }) {
+  const links = FULL_BUILDING_RAGIC_SHEET_LINKS[sheetKey] ?? []
+  if (links.length === 0) return null
+  return (
+    <Card size="small" style={{ marginBottom: 16 }}>
+      <Row align="middle" gutter={[16, 8]}>
+        <Col><Text type="secondary">Ragic 表單</Text></Col>
+        {links.map((l) => (
+          <Col key={l.url}>
+            <a href={l.url} target="_blank" rel="noreferrer" style={{ color: '#4BA8E8', fontSize: 12 }}>
+              <LinkOutlined /> {l.label}
+            </a>
+          </Col>
+        ))}
+      </Row>
+    </Card>
+  )
+}
 
 export default function InspectionFloorPage({ sheetKey }: InspectionFloorPageProps) {
   const sheet = FULL_BUILDING_INSPECTION_SHEETS[sheetKey]
@@ -104,6 +123,9 @@ export default function InspectionFloorPage({ sheetKey }: InspectionFloorPagePro
                closable onClose={() => setError(null)} />
       )}
 
+      {/* Ragic 表單連結 */}
+      <RagicSheetLinksBar sheetKey={sheetKey} />
+
       {/* 最新場次資訊 */}
       {hasData && stats?.latest_batch && (
         <Card size="small" style={{ marginBottom: 16 }}>
@@ -122,7 +144,7 @@ export default function InspectionFloorPage({ sheetKey }: InspectionFloorPagePro
             </Col>
             <Col>
               <Text type="secondary">工時</Text>{' '}
-              <Text>{stats.latest_batch.work_hours || '—'}</Text>
+              <Text>{formatWorkMinutes(stats.latest_batch.work_hours) ?? '—'}</Text>
             </Col>
             <Col flex="auto" style={{ textAlign: 'right' }}>
               <a
@@ -305,6 +327,16 @@ export default function InspectionFloorPage({ sheetKey }: InspectionFloorPagePro
 
   // ── 頁面渲染 ──────────────────────────────────────────────────────────────
 
+  // 多子表樓層（B4F）：每張子表一個 TAB
+  const sheetLinks = FULL_BUILDING_RAGIC_SHEET_LINKS[sheetKey] ?? []
+  const subSheetTabs = sheetLinks.length > 1
+    ? sheetLinks.map((l) => ({
+        key:      `sheet:${l.sourceKey}`,
+        label:    l.label,
+        children: <FloorInspectionList sheetKey={sheetKey} sourceKey={l.sourceKey} />,
+      }))
+    : []
+
   return (
     <div style={{ padding: '0 4px' }}>
       {/* Breadcrumb */}
@@ -335,8 +367,14 @@ export default function InspectionFloorPage({ sheetKey }: InspectionFloorPagePro
           {
             key:      'list',
             label:    '巡檢紀錄',
-            children: <FloorInspectionList sheetKey={sheetKey} />,
+            children: (
+              <>
+                <RagicSheetLinksBar sheetKey={sheetKey} />
+                <FloorInspectionList sheetKey={sheetKey} />
+              </>
+            ),
           },
+          ...subSheetTabs,
         ]}
       />
     </div>

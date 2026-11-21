@@ -256,6 +256,7 @@ def list_batches(
     year_month: Optional[str] = Query(None, description="篩選年月，如 2026/04"),
     start_date: Optional[str] = Query(None, description="起始日期 YYYY/MM/DD"),
     end_date:   Optional[str] = Query(None, description="結束日期 YYYY/MM/DD"),
+    sheet_key:  Optional[str] = Query(None, description="來源 Sheet（如 b4f_10），僅回傳該子表場次"),
     db: Session = Depends(get_db),
 ):
     q = db.query(B4FInspectionBatch)
@@ -267,6 +268,8 @@ def list_batches(
         q = q.filter(B4FInspectionBatch.inspection_date <= end_date)
 
     batches = q.order_by(B4FInspectionBatch.inspection_date.desc()).all()
+    if sheet_key:
+        batches = [b for b in batches if b.ragic_id.startswith(f"{sheet_key}_")]
 
     result = []
     for b in batches:

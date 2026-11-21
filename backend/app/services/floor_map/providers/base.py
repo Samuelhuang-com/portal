@@ -87,6 +87,7 @@ class FloorMapProvider:
             "module":          self.module,
             "label":           self.label,
             "floors":          self.floors,
+            "floor_labels":    getattr(self, "floor_labels", {}),
             "default_floor":   self.default_floor,
             "attr_fields":     self.attr_fields,
             "edit_permission": self.edit_permission,

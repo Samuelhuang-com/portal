@@ -22,7 +22,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.services.floor_map.common import batch_out, hhmm
-from app.services.inspection_sources import path_for_batch_id, numeric_id
+from app.services.inspection_sources import path_for_batch_id, numeric_id, source_by_key
 from app.services.floor_map.providers.full_building_inspection import (
     NOTE_FIELD, SHEETS, FullBuildingInspectionProvider,
 )
@@ -162,13 +162,27 @@ def day_issues(sheet: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     return out
 
 
-def build_full_building_month_issues(db: Session, year: int, month: int) -> dict[int, dict[str, list[dict[str, Any]]]]:
-    """{日: {樓層 tab: [異常／待處理項目]}}，一個樓層整月只查一次。"""
+def build_full_building_month_issues(
+    db: Session, year: int, month: int, sheet_key: str | None = None,
+) -> dict[int, dict[str, list[dict[str, Any]]]]:
+    """{日: {樓層 tab: [異常／待處理項目]}}，一個樓層整月只查一次。
+
+    sheet_key（如 b4f_10）有值時只計該張表單的場次（場次 ID 前綴），且只查該表單所屬樓層的 tab；
+    月曆格逐表單判定異常時使用，避免同一樓層的其他子表單混進來。沒有版型的樓層（B1~B4）回傳空。
+    """
+    src = source_by_key(sheet_key) if sheet_key else None
+    if sheet_key and (src is None or src.floor not in _TABS):
+        return {}
     prefix = f"{year}/{month:02d}/"
-    month_loaded = {
-        tab: FullBuildingInspectionProvider._load(db, tab, lambda B: B.inspection_date.like(f"{prefix}%"))
-        for tab in _TABS
-    }
+    month_loaded = {}
+    for tab in _TABS:
+        if src is not None and tab != src.floor:
+            month_loaded[tab] = ([], {})
+            continue
+        batches, values = FullBuildingInspectionProvider._load(db, tab, lambda B: B.inspection_date.like(f"{prefix}%"))
+        if sheet_key:
+            batches = [b for b in batches if b.ragic_id.startswith(f"{sheet_key}_")]
+        month_loaded[tab] = (batches, values)
     out: dict[int, dict[str, list[dict[str, Any]]]] = {}
     for d in range(1, calendar.monthrange(year, month)[1] + 1):
         date_str = f"{prefix}{d:02d}"

@@ -109,6 +109,7 @@ export interface MonthlyCalendarGridProps {
   maxDay:          number
   rows:            CalendarRow[]
   rowHeaderLabel?: string                                                     // 預設「巡檢區域」
+  wrapRowLabel?:   boolean                                                    // 列標題過長時換行（預設不換行；日欄寬度不變）
   renderCell?:     (day: number, data: CalendarCellData | undefined) => React.ReactNode
   cellStyle?:      (day: number, data: CalendarCellData | undefined) => React.CSSProperties
   legend?:         LegendItem[]                                               // 傳 [] 可隱藏圖例
@@ -125,6 +126,7 @@ export default function MonthlyCalendarGrid({
   maxDay,
   rows,
   rowHeaderLabel = '巡檢區域',
+  wrapRowLabel   = false,
   renderCell     = defaultRenderCell,
   cellStyle      = defaultCellStyle,
   legend         = DEFAULT_LEGEND,
@@ -184,7 +186,8 @@ export default function MonthlyCalendarGrid({
                   padding:    '4px 8px',
                   border:     '1px solid #e8e8e8',
                   fontWeight: 500,
-                  whiteSpace: 'nowrap',
+                  whiteSpace: wrapRowLabel ? 'normal' : 'nowrap',
+                  wordBreak:  wrapRowLabel ? 'break-word' : undefined,
                   background: '#fafafa',
                 }}>
                   {row.label}

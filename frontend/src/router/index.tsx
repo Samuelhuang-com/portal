@@ -107,6 +107,7 @@ import FullBuildingInspectionRF        from '@/pages/FullBuildingInspection/RF'
 import FullBuildingInspectionB4F       from '@/pages/FullBuildingInspection/B4F'
 import FullBuildingInspectionB2F       from '@/pages/FullBuildingInspection/B2F'
 import FullBuildingInspectionB1F       from '@/pages/FullBuildingInspection/B1F'
+import FullBuildingInspectionB1B4 from '@/pages/FullBuildingInspection/B1B4'
 import FullBuildingMaintenancePage       from '@/pages/FullBuildingMaintenance'
 import DbErdPage                         from '@/pages/DbErd'
 import FullBuildingMaintenanceDetailPage from '@/pages/FullBuildingMaintenance/Detail'
@@ -976,6 +977,7 @@ export default function AppRouter() {
           <Route path="b4f"        element={<FullBuildingInspectionB4F />} />
           <Route path="b2f"        element={<FullBuildingInspectionB2F />} />
           <Route path="b1f"        element={<FullBuildingInspectionB1F />} />
+          <Route path="b1b4"       element={<FullBuildingInspectionB1B4 />} />
         </Route>
 
         {/* ── 保全管理 ──────────────────────────────────────────────── */}

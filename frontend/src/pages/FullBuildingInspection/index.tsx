@@ -287,13 +287,13 @@ function SummaryTabContent() {
       {/* ── 頂部 KPI 卡片 ─────────────────────────────────────────────────── */}
       <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
         {[
-          { title: todayLabel,              value: totalLogged,  suffix: `/ ${sheets.length} 樓層`,
+          { title: todayLabel,              value: totalLogged,  suffix: `/ ${sheets.length} 表單`,
             color: hasAllToday ? '#52C41A' : '#FAAD14',          icon: hasAllToday ? <CheckCircleOutlined /> : <ExclamationCircleOutlined /> },
           { title: `${monthLabel}累計缺漏`, value: totalMissing, suffix: '天',
             color: totalMissing > 0 ? '#FF4D4F' : '#52C41A',    icon: totalMissing > 0 ? <WarningOutlined /> : <CheckCircleOutlined /> },
           { title: `${monthLabel}登錄場次`, value: totalCount,  suffix: '筆',
             color: '#1B3A5C',                                     icon: <DashboardOutlined /> },
-          { title: '監控樓層數',             value: sheets.length, suffix: '層',
+          { title: '監控表單數',             value: sheets.length, suffix: '張',
             color: '#4BA8E8',                                     icon: <SafetyOutlined /> },
         ].map((card) => (
           <Col flex={1} style={{ minWidth: 140 }} key={card.title}>
@@ -313,7 +313,8 @@ function SummaryTabContent() {
       {/* ── 各 Sheet 狀態卡片 ─────────────────────────────────────────────── */}
       <Row gutter={[16, 16]}>
         {sheets.map((sheet) => {
-          const sheetCfg = FULL_BUILDING_INSPECTION_SHEETS[sheet.key]
+          // 色彩依樓層（floor_key）；連結用後端回傳的表單網址
+          const sheetCfg = FULL_BUILDING_INSPECTION_SHEETS[sheet.floor_key]
           const color    = sheetCfg?.color ?? '#1B3A5C'
 
           return (
@@ -330,9 +331,9 @@ function SummaryTabContent() {
                   </Space>
                 }
                 extra={
-                  sheetCfg && (
+                  sheet.ragic_url && (
                     <Tooltip title="前往 Ragic 原始表單">
-                      <a href={sheetCfg.ragicUrl} target="_blank" rel="noreferrer">
+                      <a href={sheet.ragic_url} target="_blank" rel="noreferrer">
                         <LinkOutlined />
                       </a>
                     </Tooltip>
@@ -404,7 +405,7 @@ function SummaryTabContent() {
             <CalendarOutlined />
             <Text strong>整棟巡檢月曆格</Text>
             <Text type="secondary" style={{ fontSize: 11, fontWeight: 400 }}>
-              （{monthLabel} 各樓層逐日出勤）
+              （{monthLabel} 各表單逐日出勤）
             </Text>
           </Space>
         }
@@ -416,10 +417,12 @@ function SummaryTabContent() {
             month={parseInt(queryMonth.split('-')[1])}
             maxDay={calMaxDay}
             rows={calRows}
-            rowHeaderLabel="樓層"
+            rowHeaderLabel="表單"
+            wrapRowLabel
             renderCell={renderIssueCell}
             onCellClick={(day, rowKey) => {
-              setSheetFocus(rowKey)
+              // 抽屜的樓層 TAB 以樓層鍵定位（子表單歸屬其樓層）
+              setSheetFocus(sheets.find((x) => x.key === rowKey)?.floor_key ?? null)
               setSheetDate(`${queryMonth}-${String(day).padStart(2, '0')}`)
             }}
           />
@@ -452,7 +455,7 @@ function SummaryTabContent() {
 const SHOW_DAILY_FORM_TAB: boolean = false
 
 // 'daily-form' 已從清單移除：舊書籤 ?tab=daily-form 會退回 summary，不會停在不存在的分頁
-const VALID_TABS = ['summary', 'floor-map', 'rf', 'b4f', 'b2f', 'b1f', 'b1b4']
+const VALID_TABS = ['summary', 'floor-map', 'rf', 'b4f', 'b4f_9', 'b4f_10', 'b4f_11', 'b4f_12', 'b2f', 'b1f', 'b1b4']
 
 export default function FullBuildingInspectionDashboard() {
   const [searchParams] = useSearchParams()
@@ -514,27 +517,47 @@ export default function FullBuildingInspectionDashboard() {
           },
           {
             key:      'rf',
-            label:    'RF 巡檢',
+            label:    'RF冷卻水塔、上水塔',
             children: openedTabs.has('rf') ? <FloorInspectionList sheetKey="rf" /> : null,
           },
           {
             key:      'b4f',
-            label:    'B4F 巡檢',
+            label:    'B4F 整棟彙總',
             children: openedTabs.has('b4f') ? <FloorInspectionList sheetKey="b4f" /> : null,
           },
           {
+            key:      'b4f_9',
+            label:    'B4F 冰水主機、冰水泵、冷卻水泵',
+            children: openedTabs.has('b4f_9') ? <FloorInspectionList sheetKey="b4f" sourceKey="b4f_9" /> : null,
+          },
+          {
+            key:      'b4f_10',
+            label:    'B4F 連續壁',
+            children: openedTabs.has('b4f_10') ? <FloorInspectionList sheetKey="b4f" sourceKey="b4f_10" /> : null,
+          },
+          {
+            key:      'b4f_11',
+            label:    'B4F 汙廢水',
+            children: openedTabs.has('b4f_11') ? <FloorInspectionList sheetKey="b4f" sourceKey="b4f_11" /> : null,
+          },
+          {
+            key:      'b4f_12',
+            label:    'B4F 下水塔',
+            children: openedTabs.has('b4f_12') ? <FloorInspectionList sheetKey="b4f" sourceKey="b4f_12" /> : null,
+          },
+          {
             key:      'b2f',
-            label:    'B2F 巡檢',
+            label:    'B2F油脂截流槽',
             children: openedTabs.has('b2f') ? <FloorInspectionList sheetKey="b2f" /> : null,
           },
           {
             key:      'b1f',
-            label:    'B1F 巡檢',
+            label:    'B1F發電機、高壓機房、電信、瓦斯設備',
             children: openedTabs.has('b1f') ? <FloorInspectionList sheetKey="b1f" /> : null,
           },
           {
             key:      'b1b4',
-            label:    'B1~B4 巡檢',
+            label:    'B1-B4F抽排風設備',
             children: openedTabs.has('b1b4') ? <FloorInspectionList sheetKey="b1b4" /> : null,
           },
         ]}

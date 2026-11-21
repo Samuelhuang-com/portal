@@ -66,14 +66,17 @@ def _calc_item_kpi(items) -> dict:
     }
 
 
-from app.services.inspection_sources import SOURCES, sources_for, SERVER_URL, ACCOUNT
+from app.services.inspection_sources import SOURCES, sources_for, source_by_key, SERVER_URL, ACCOUNT
 
 
-def _live_url(floor: str) -> str:
-    """樓層的第一個現行（非封存）Sheet 網址，供 /sheets 的樓層層級連結使用。"""
-    live = [s for s in sources_for(floor) if not s.archived]
-    path = live[0].sheet_path if live else sources_for(floor)[0].sheet_path
-    return f"https://{SERVER_URL}/{ACCOUNT}/{path}"
+def _sheet_url(sheet_key: str) -> str:
+    """單一表單（來源 Sheet）的 Ragic 網址，供 /sheets 與 Dashboard 卡片連結使用。"""
+    return f"https://{SERVER_URL}/{ACCOUNT}/{source_by_key(sheet_key).sheet_path}"
+
+
+def _is_sheet_batch(batch, sheet_key: str) -> bool:
+    """場次是否屬於某張表單：場次 ID 為 {sheet_key}_{Ragic Row ID}（見 inspection_sources.make_batch_id）。"""
+    return batch.ragic_id.startswith(f"{sheet_key}_")
 
 
 # ── Schema ────────────────────────────────────────────────────────────────────
@@ -84,44 +87,85 @@ class InspectionSheetConfig(BaseModel):
     title:       str
     ragic_url:   str
     description: str
+    short_label: str = ""
+    floor_key:   str = ""
 
 
 # ── Sheet 設定（對應 Ragic full-building-inspection 各 Sheet）─────────────────
 
+# 8 張表單（現行來源；封存來源不列入）：每張表單一張 KPI 卡、一列月曆格、一個 TAB。
+# floor_key 只用來對應 MODEL_MAP 與樓層 TAB；場次依 sheet_key 前綴分開計算。
 SHEET_CONFIGS: List[InspectionSheetConfig] = [
     InspectionSheetConfig(
-        key="rf",
+        key="rf_5",
         floor="RF",
-        title="整棟工務每日巡檢 - RF",
-        ragic_url=_live_url("rf"),
-        description="整棟工務 RF 層（屋頂層）設施每日例行巡檢",
+        floor_key="rf",
+        title="整棟工務每日巡檢 - RF冷卻水塔、上水塔",
+        short_label="RF冷卻水塔、上水塔",
+        ragic_url=_sheet_url("rf_5"),
+        description="整棟工務 RF 層（屋頂層）冷卻水塔、上水塔每日例行巡檢",
     ),
     InspectionSheetConfig(
-        key="b4f",
+        key="b4f_9",
         floor="B4F",
-        title="整棟工務每日巡檢 - B4F",
-        ragic_url=_live_url("b4f"),
-        description="整棟工務 B4F 地下 4 樓設施每日例行巡檢",
+        floor_key="b4f",
+        title="整棟工務每日巡檢 - B4F 冰水主機、冰水泵、冷卻水泵",
+        short_label="B4F 冰水主機、冰水泵、冷卻水泵",
+        ragic_url=_sheet_url("b4f_9"),
+        description="整棟工務 B4F 地下 4 樓冰水主機、冰水泵、冷卻水泵每日例行巡檢",
     ),
     InspectionSheetConfig(
-        key="b2f",
+        key="b4f_10",
+        floor="B4F",
+        floor_key="b4f",
+        title="整棟工務每日巡檢 - B4F 連續壁",
+        short_label="B4F 連續壁",
+        ragic_url=_sheet_url("b4f_10"),
+        description="整棟工務 B4F 地下 4 樓連續壁每日例行巡檢",
+    ),
+    InspectionSheetConfig(
+        key="b4f_11",
+        floor="B4F",
+        floor_key="b4f",
+        title="整棟工務每日巡檢 - B4F 汙廢水",
+        short_label="B4F 汙廢水",
+        ragic_url=_sheet_url("b4f_11"),
+        description="整棟工務 B4F 地下 4 樓汙廢水每日例行巡檢",
+    ),
+    InspectionSheetConfig(
+        key="b4f_12",
+        floor="B4F",
+        floor_key="b4f",
+        title="整棟工務每日巡檢 - B4F 下水塔",
+        short_label="B4F 下水塔",
+        ragic_url=_sheet_url("b4f_12"),
+        description="整棟工務 B4F 地下 4 樓下水塔每日例行巡檢",
+    ),
+    InspectionSheetConfig(
+        key="b2f_7",
         floor="B2F",
-        title="整棟工務每日巡檢 - B2F",
-        ragic_url=_live_url("b2f"),
-        description="整棟工務 B2F 地下 2 樓設施每日例行巡檢",
+        floor_key="b2f",
+        title="整棟工務每日巡檢 - B2F油脂截流槽",
+        short_label="B2F油脂截流槽",
+        ragic_url=_sheet_url("b2f_7"),
+        description="整棟工務 B2F 地下 2 樓油脂截流槽每日例行巡檢",
     ),
     InspectionSheetConfig(
-        key="b1f",
+        key="b1f_6",
         floor="B1F",
-        title="整棟工務每日巡檢 - B1F",
-        ragic_url=_live_url("b1f"),
-        description="整棟工務 B1F 地下 1 樓設施每日例行巡檢",
+        floor_key="b1f",
+        title="整棟工務每日巡檢 - B1F發電機、高壓機房、電信、瓦斯設備",
+        short_label="B1F發電機、高壓機房、電信、瓦斯設備",
+        ragic_url=_sheet_url("b1f_6"),
+        description="整棟工務 B1F 地下 1 樓發電機、高壓機房、電信、瓦斯設備每日例行巡檢",
     ),
     InspectionSheetConfig(
-        key="b1b4",
+        key="b1b4_8",
         floor="B1~B4",
-        title="整棟工務每日巡檢 - B1~B4",
-        ragic_url=_live_url("b1b4"),
+        floor_key="b1b4",
+        title="整棟工務每日巡檢 - B1-B4F抽排風設備",
+        short_label="B1-B4F抽排風設備",
+        ragic_url=_sheet_url("b1b4_8"),
         description="整棟工務 B1～B4 抽排風設備每日例行巡檢（新樓層，獨立表）",
     ),
 ]
@@ -214,14 +258,17 @@ def get_dashboard_monthly_summary(
 
     results = []
     for cfg in SHEET_CONFIGS:
-        BatchModel, _ItemModel = MODEL_MAP[cfg.key]
+        BatchModel, _ItemModel = MODEL_MAP[cfg.floor_key]
 
         # ── 查詢月份所有場次 ───────────────────────────────────────────────
-        month_batches = (
-            db.query(BatchModel)
-            .filter(BatchModel.inspection_date.like(f"{year_month}%"))
-            .all()
-        )
+        month_batches = [
+            b for b in (
+                db.query(BatchModel)
+                .filter(BatchModel.inspection_date.like(f"{year_month}%"))
+                .all()
+            )
+            if _is_sheet_batch(b, cfg.key)
+        ]
         month_count = len(month_batches)
 
         # ── 已登錄日期集合 / 月內最近登錄日 ────────────────────────────────
@@ -248,6 +295,8 @@ def get_dashboard_monthly_summary(
             "key":               cfg.key,
             "floor":             cfg.floor,
             "title":             cfg.title,
+            "floor_key":         cfg.floor_key,
+            "ragic_url":         cfg.ragic_url,
             "month_count":       month_count,
             "missing_count":     len(missing_days),
             "missing_days":      missing_days,
@@ -293,20 +342,23 @@ def get_dashboard_calendar(
     import calendar as cal_mod
     from app.services.full_building_daily_sheet import build_full_building_month_issues
 
-    issues_by_day = build_full_building_month_issues(db, year, month)
-
     max_day = cal_mod.monthrange(year, month)[1]
     ym_prefix = f"{year}/{month:02d}/"
 
     rows = []
     for cfg in SHEET_CONFIGS:
-        BatchModel, ItemModel = MODEL_MAP[cfg.key]
+        BatchModel, ItemModel = MODEL_MAP[cfg.floor_key]
+        # 異常判定只計本表單（同一樓層的其他子表單不混入）
+        issues_by_day = build_full_building_month_issues(db, year, month, sheet_key=cfg.key)
 
-        month_batches = (
-            db.query(BatchModel)
-            .filter(BatchModel.inspection_date.like(f"{ym_prefix}%"))
-            .all()
-        )
+        month_batches = [
+            b for b in (
+                db.query(BatchModel)
+                .filter(BatchModel.inspection_date.like(f"{ym_prefix}%"))
+                .all()
+            )
+            if _is_sheet_batch(b, cfg.key)
+        ]
 
         # ── 依「日」分組 ───────────────────────────────────────────────────
         by_day: dict[int, list] = {}
@@ -347,7 +399,7 @@ def get_dashboard_calendar(
                 total    += kpi["total"]
                 checked  += kpi["checked"]
 
-            issues = issues_by_day.get(d, {}).get(cfg.key, [])
+            issues = issues_by_day.get(d, {}).get(cfg.floor_key, [])
             daily[str(d)] = {
                 "has_record":      True,
                 "completion_rate": round(checked / total * 100, 1) if total else 0,
@@ -356,7 +408,7 @@ def get_dashboard_calendar(
                 "issues":          issues,
             }
 
-        rows.append({"key": cfg.key, "label": cfg.floor, "daily": daily})
+        rows.append({"key": cfg.key, "label": cfg.short_label or cfg.floor, "daily": daily})
 
     return {"year": year, "month": month, "max_day": max_day, "rows": rows}
 

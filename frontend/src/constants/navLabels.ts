@@ -175,10 +175,10 @@ export const NAV_PAGE = {
 
   // 整棟巡檢
   fullBuildingDashboard:   '整棟巡檢',
-  fullBuildingRF:          '整棟巡檢 - RF',
+  fullBuildingRF:          '整棟巡檢 - RF冷卻水塔、上水塔',
   fullBuildingB4F:         '整棟巡檢 - B4F',
-  fullBuildingB2F:         '整棟巡檢 - B2F',
-  fullBuildingB1F:         '整棟巡檢 - B1F',
+  fullBuildingB2F:         '整棟巡檢 - B2F油脂截流槽',
+  fullBuildingB1F:         '整棟巡檢 - B1F發電機、高壓機房、電信、瓦斯設備',
 
   // 保全管理
   securityDashboard:     '保全巡檢Dashboard',

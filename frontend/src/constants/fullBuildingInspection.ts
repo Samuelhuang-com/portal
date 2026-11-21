@@ -50,7 +50,7 @@ export const FULL_BUILDING_INSPECTION_SHEETS: Record<string, FullBuildingInspect
   b1b4: {
     key:         'b1b4',
     floor:       'B1~B4',
-    title:       '整棟工務每日巡檢 - B1~B4',
+    title:       '整棟巡檢 - B1-B4F抽排風設備',
     ragicUrl:    'https://ap12.ragic.com/soutlet001/full-building-inspection/8',
     description: '整棟工務 B1～B4 抽排風設備每日例行巡檢（新樓層，獨立表）',
     color:       '#fa8c16',
@@ -58,6 +58,37 @@ export const FULL_BUILDING_INSPECTION_SHEETS: Record<string, FullBuildingInspect
 }
 
 export const FULL_BUILDING_INSPECTION_SHEET_LIST = Object.values(FULL_BUILDING_INSPECTION_SHEETS)
+
+// ── 各樓層對應的 Ragic 表單（「Ragic 表單」連結列、子表 TAB 使用；B4F 含四張子表）──
+
+export interface RagicSheetLink {
+  sourceKey: string  // 來源 Sheet 鍵（同 inspection_sources.py 的 sheet_key，如 b4f_9）
+  label:     string  // 表單名稱（與 Ragic 表單內容一致）
+  url:       string  // Ragic 表單網址
+}
+
+const RAGIC_FBI_BASE = 'https://ap12.ragic.com/soutlet001/full-building-inspection'
+
+export const FULL_BUILDING_RAGIC_SHEET_LINKS: Record<string, RagicSheetLink[]> = {
+  rf: [
+    { sourceKey: 'rf_5', label: 'RF冷卻水塔、上水塔', url: `${RAGIC_FBI_BASE}/5` },
+  ],
+  b1f: [
+    { sourceKey: 'b1f_6', label: 'B1F發電機、高壓機房、電信、瓦斯設備', url: `${RAGIC_FBI_BASE}/6` },
+  ],
+  b2f: [
+    { sourceKey: 'b2f_7', label: 'B2F油脂截流槽', url: `${RAGIC_FBI_BASE}/7` },
+  ],
+  b4f: [
+    { sourceKey: 'b4f_9',  label: 'B4F 冰水主機、冰水泵、冷卻水泵', url: `${RAGIC_FBI_BASE}/9` },
+    { sourceKey: 'b4f_10', label: 'B4F 連續壁',                     url: `${RAGIC_FBI_BASE}/10` },
+    { sourceKey: 'b4f_11', label: 'B4F 汙廢水',                     url: `${RAGIC_FBI_BASE}/11` },
+    { sourceKey: 'b4f_12', label: 'B4F 下水塔',                     url: `${RAGIC_FBI_BASE}/12` },
+  ],
+  b1b4: [
+    { sourceKey: 'b1b4_8', label: 'B1-B4F抽排風設備', url: `${RAGIC_FBI_BASE}/8` },
+  ],
+}
 
 // ── 多 Sheet 來源（與 backend app/services/inspection_sources.py 的 SOURCES 同步維護）──
 // 場次 ID 格式：{sheet_key}_{Ragic Row ID}，例：b4f_9_0

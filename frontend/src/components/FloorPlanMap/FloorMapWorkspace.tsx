@@ -103,10 +103,12 @@ export default function FloorMapWorkspace({ module, defaultFloor }: FloorMapWork
   }, [module, defaultFloor])
 
   const floor = plans.find((f) => f.key === floorKey)
+  // 樓層顯示名稱：模組覆寫（meta.floor_labels）優先，否則用登錄表 label
+  const floorLabel = (key: string) => meta?.floor_labels?.[key] ?? plans.find((p) => p.key === key)?.label ?? key
   const floorOptions = (meta?.floors ?? [])
     .map((k) => plans.find((p) => p.key === k))
     .filter((p): p is FloorPlan => !!p)
-    .map((p) => ({ value: p.key, label: p.label }))
+    .map((p) => ({ value: p.key, label: meta?.floor_labels?.[p.key] ?? p.label }))
 
   // ── 底圖（需登入，blob → object URL，各樓層快取一次）─────────────────────────
   // 快取鍵＝樓層＋旋轉角度（旋轉後的底圖是另一張圖）
@@ -619,7 +621,7 @@ export default function FloorMapWorkspace({ module, defaultFloor }: FloorMapWork
         )}
 
         <div>
-          <Text strong style={{ color: '#1B3A5C' }}>{floor?.label} 子項（{kids.length}）</Text>
+          <Text strong style={{ color: '#1B3A5C' }}>{floorLabel(floorKey)} 子項（{kids.length}）</Text>
           <Text type="secondary" style={{ fontSize: 11, marginLeft: 6 }}>
             {date?.format('YYYY/MM/DD')}　點子項看明細與每日狀況
           </Text>
@@ -669,7 +671,7 @@ export default function FloorMapWorkspace({ module, defaultFloor }: FloorMapWork
     if (!sel) {
       return (
         <>
-        <Card size="small" title={`${floor?.label ?? ''} 點位（${points.length}）`}>
+        <Card size="small" title={`${floorLabel(floorKey)} 點位（${points.length}）`}>
           {points.length === 0 ? (
             <Empty description={editing ? '按「新增點位」後點圖上位置' : '這層還沒有點位'} />
           ) : (
@@ -872,7 +874,7 @@ export default function FloorMapWorkspace({ module, defaultFloor }: FloorMapWork
 
       {error && <Alert type="error" message={error} showIcon closable onClose={() => setError(null)} style={{ marginBottom: 12 }} />}
       <Modal
-        title={`置換底圖：${floor?.label ?? floorKey}`}
+        title={`置換底圖：${floorLabel(floorKey)}`}
         open={replaceOpen}
         onCancel={() => { setReplaceOpen(false); setReplaceFile(null) }}
         onOk={handleReplaceImage}

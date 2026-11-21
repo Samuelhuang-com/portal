@@ -21,6 +21,8 @@ export interface FullBuildingSheetConfig {
 export interface FullBuildingMonthlySheetSummary {
   key:               string
   floor:             string
+  floor_key:         string   // 樓層鍵（rf / b4f / b2f / b1f / b1b4），對應樓層 TAB
+  ragic_url:         string   // 該表單的 Ragic 網址
   title:             string
   month_count:       number
   missing_count:     number
@@ -195,8 +197,11 @@ const floorBase = (sheetKey: string) => `/mall/${sheetKey}-inspection`
 export async function fetchFloorBatches(
   sheetKey: string,
   yearMonth?: string,
+  sourceKey?: string,
 ): Promise<FloorBatchRow[]> {
-  const params = yearMonth ? { year_month: yearMonth } : {}
+  const params: Record<string, string> = {}
+  if (yearMonth) params.year_month = yearMonth
+  if (sourceKey) params.sheet_key = sourceKey   // B4F 子表（b4f_9…b4f_12）
   const res = await apiClient.get<FloorBatchRow[]>(
     `${floorBase(sheetKey)}/batches`, { params },
   )

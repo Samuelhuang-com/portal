@@ -103,6 +103,7 @@ class FullBuildingInspectionProvider(FloorMapProvider):
     view_permission = "mall_full_building_inspection_view"
     edit_permission = "mall_full_building_inspection_floor_map_edit"
     floors          = ["rf", "b1f", "b2f", "b4f", "b1b4"]
+    floor_labels = {"rf": "RF冷卻水塔、上水塔", "b1f": "B1F發電機、高壓機房、電信、瓦斯設備", "b2f": "B2F油脂截流槽", "b4f": "B4F 整棟彙總", "b1b4": "B1-B4F抽排風設備"}
     default_floor   = "b4f"
     attr_fields     = ["機房位置", "供應區域"]
 

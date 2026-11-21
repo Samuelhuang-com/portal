@@ -40,15 +40,23 @@ const STATUS_TAG: Record<string, { color: string; label: string }> = {
 
 /**
  * Ragic「工時計算」原始字串 → 整數分鐘顯示（如「40 分鐘」）。
- * 規則同後端 parse_work_hours_minutes：含「分」為分鐘；含「時」或 h 乘 60；無單位視為分鐘。
+ * 規則同後端 parse_work_hours_minutes 的單位判斷：含「分」為分鐘；含「時」或 h 乘 60；無單位視為分鐘。
+ * 同時含「時」與「分」（如「1時30分」）合併計算為 90 分鐘，與整棟巡檢版本一致（後端尚未同步，見 CHANGELOG 待確認）。
  * 無法解析或結果 ≤ 0 回 null（顯示「—」）。
  */
 function formatWorkMinutes(raw: string | null | undefined): string | null {
   if (!raw) return null
-  const m = raw.match(/[\d.]+/)
-  if (!m) return null
-  let mins = parseFloat(m[0])
-  if (!raw.includes('分') && /時|h/i.test(raw)) mins *= 60
+  const hour = raw.match(/([\d.]+)\s*時/)
+  const min  = raw.match(/([\d.]+)\s*分/)
+  let mins: number
+  if (hour || min) {
+    mins = (hour ? parseFloat(hour[1]) * 60 : 0) + (min ? parseFloat(min[1]) : 0)
+  } else {
+    const m = raw.match(/[\d.]+/)
+    if (!m) return null
+    mins = parseFloat(m[0])
+    if (/h/i.test(raw)) mins *= 60
+  }
   const rounded = Math.round(mins)
   return rounded > 0 ? `${rounded} 分鐘` : null
 }
