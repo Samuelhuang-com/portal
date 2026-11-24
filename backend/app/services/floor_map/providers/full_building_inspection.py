@@ -106,6 +106,25 @@ class FullBuildingInspectionProvider(FloorMapProvider):
     floor_labels = {"rf": "RF冷卻水塔、上水塔", "b1f": "B1F發電機、高壓機房、電信、瓦斯設備", "b2f": "B2F油脂截流槽", "b4f": "B4F 整棟彙總", "b1b4": "B1-B4F抽排風設備"}
     default_floor   = "b4f"
     attr_fields     = ["機房位置", "供應區域"]
+    # 表單模式：下拉列 8 張表單；每張表單指向所屬樓層底圖，只顯示 source_refs（{樓層}|{設備組}）的點位
+    forms = [
+        {"key": "rf_5",    "label": "RF冷卻水塔、上水塔",                 "floor": "rf",
+         "source_refs": ["rf|冷卻水塔", "rf|上水塔"]},
+        {"key": "b4f_9",   "label": "B4F 冰水主機、冰水泵、冷卻水泵",       "floor": "b4f",
+         "source_refs": ["b4f|冰水主機/冰水泵/冷卻水泵"]},
+        {"key": "b4f_10",  "label": "B4F 連續壁",                         "floor": "b4f",
+         "source_refs": ["b4f|連續壁"]},
+        {"key": "b4f_11",  "label": "B4F 汙廢水",                         "floor": "b4f",
+         "source_refs": ["b4f|汙廢水"]},
+        {"key": "b4f_12",  "label": "B4F 下水塔",                         "floor": "b4f",
+         "source_refs": ["b4f|下水塔"]},
+        {"key": "b2f_7",   "label": "B2F油脂截流槽",                      "floor": "b2f",
+         "source_refs": ["b2f|油脂截流槽"]},
+        {"key": "b1f_6",   "label": "B1F發電機、高壓機房、電信、瓦斯設備", "floor": "b1f",
+         "source_refs": ["b1f|發電機", "b1f|電力機房", "b1f|電信設備", "b1f|瓦斯設備"]},
+        {"key": "b1b4_8",  "label": "B1-B4F抽排風設備",                   "floor": "b1b4",
+         "source_refs": ["b1b4|抽排風設備"]},
+    ]
 
     def groups(self) -> list[dict[str, Any]]:
         return [

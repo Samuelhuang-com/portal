@@ -344,3 +344,42 @@ export async function fetchWarRoomTabConfig(): Promise<WrTabConfig> {
 export async function saveWarRoomTabConfig(body: { labels: Record<string, string | null>; hidden: string[] }): Promise<WrTabConfig> {
   return (await apiClient.put<WrTabConfig>('/war-room/tab-config', body)).data
 }
+
+// ── 工作總覽（2026-11-24；規劃 claude/plan_war_room_work_overview.md）──────────
+export interface WrWorkItem {
+  date:           string
+  source:         string
+  source_label:   string
+  category:       string
+  task:           string
+  status:         string | null
+  planned_person: string
+  persons:        string
+  work_min:       number
+  is_estimated:   boolean
+  ragic_url:      string
+  state?:         '逾期' | '今日' | '即將'
+}
+
+export interface WrWorkOverview {
+  month:       string
+  today:       string
+  kpis: {
+    actual_min:        number
+    estimated_min:     number
+    logged_count:      number
+    pending_pm_count:  number
+    open_repairs_count: number
+    overdue_count:     number
+  }
+  rings:    { category: string; done: number; total: number; rate: number | null; logged: number }[]
+  recent:   WrWorkItem[]
+  upcoming: WrWorkItem[]
+  ranking:  { person: string; actual_min: number; estimated_min: number }[]
+  data_end:     string
+  generated_at: string
+}
+
+export async function fetchWarRoomWorkOverview(month?: string): Promise<WrWorkOverview> {
+  return (await apiClient.get<WrWorkOverview>('/war-room/work-overview', { params: month ? { month } : {} })).data
+}

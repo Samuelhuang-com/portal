@@ -30,6 +30,7 @@ export interface FloorMapModuleMeta {
   floors:          string[]
   default_floor:   string
   floor_labels?:   Record<string, string>   // 模組層級樓層顯示名稱覆寫（未提供＝登錄表 label）
+  forms?:          Array<{ key: string; label: string; floor: string; source_refs: string[] }>  // 表單模式（未提供＝依樓層）
   attr_fields:     string[]
   edit_permission: string
   source_label?:   string   // 點位表單「資料來源」欄位名稱（2026-11-04；未提供＝對應 Ragic 設備組）

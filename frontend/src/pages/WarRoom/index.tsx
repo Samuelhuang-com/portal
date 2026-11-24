@@ -29,6 +29,7 @@ import FloorBoard from './FloorBoard'
 import FloorIso from './FloorIso'
 import AlertsTab from './AlertsTab'
 import OverviewTab from './OverviewTab'
+import WorkOverviewTab from './WorkOverviewTab'
 import ControlCenterTab from './ControlCenterTab'
 import PersonJournalTab from './PersonJournalTab'
 import { AssetHistoryPanel, RepairDrawer, type AssetTarget } from './AssetHistory'
@@ -114,6 +115,7 @@ function HistoryTab({ getContainer }: { getContainer?: () => HTMLElement }) {
 function renderTab(key: string, activeKey: string, getContainer?: () => HTMLElement) {
   switch (key) {
     case 'overview': return <OverviewTab getContainer={getContainer} />
+    case 'work-overview': return <WorkOverviewTab />
     case 'control': return activeKey === 'control' ? <ControlCenterTab getContainer={getContainer} /> : null
     case 'dashboard': return <FloorBoard getContainer={getContainer} />
     case 'iso': return <FloorIso getContainer={getContainer} />

@@ -84,6 +84,15 @@ function isImageField(itemName: string, resultRaw: string): boolean {
 
 const isMetaField = (itemName: string) => META_FIELD_RE.test((itemName ?? '').trim())
 
+// 場次 ID（{sheet_key}_{Ragic Row ID}）→ 所屬表單名稱（與 Dashboard TAB 名稱一致）；找不到回 undefined
+const sheetNameOfBatch = (batchId: string): string | undefined => {
+  for (const links of Object.values(FULL_BUILDING_RAGIC_SHEET_LINKS)) {
+    const hit = links.find((l) => batchId.startsWith(`${l.sourceKey}_`))
+    if (hit) return hit.label
+  }
+  return undefined
+}
+
 export default function FloorInspectionList({ sheetKey, sourceKey }: { sheetKey: string; sourceKey?: string }) {
   const sheet = FULL_BUILDING_INSPECTION_SHEETS[sheetKey]
   // 子表 TAB（如 b4f_10）：顯示該表的 Ragic 連結
@@ -288,7 +297,7 @@ export default function FloorInspectionList({ sheetKey, sourceKey }: { sheetKey:
           <Space size={8} wrap>
             <Tag color={sheet?.color}>{sheet?.floor}</Tag>
             <span style={{ fontWeight: 600 }}>
-              {sheet?.title}：{detail?.batch.ragic_id ?? ''}
+              {(detail && sheetNameOfBatch(detail.batch.ragic_id)) ?? sheet?.title}：{detail?.batch.ragic_id ?? ''}
             </span>
             {detail && (
               <a

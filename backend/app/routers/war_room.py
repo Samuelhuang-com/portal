@@ -31,8 +31,10 @@ Prefix: /api/v1/war-room
 """
 from __future__ import annotations
 
+import calendar
 import json
 import re
+import time
 from datetime import date as _date, datetime, timedelta
 from typing import Any, Optional
 
@@ -387,6 +389,182 @@ def get_person_journal(
     }
 
 
+# ── 工作總覽（2026-11-24；規劃見 claude/plan_war_room_work_overview.md）──────────
+# 口徑：工時一律走 _build_daily（具名人員，與工作日誌／矩陣同一份）。
+#   實際工時＝work_min_basis ≠ estimated；預估工時＝work_min_basis = estimated（未來排定或未執行的 PM 預估回填）。
+#   實際＋預估＝/work-journal/matrix named TOTAL（對帳用）。
+#   完成狀況：PM 與報修的「完成狀況」欄（is_completed）；其餘來源無完成狀態，不納入完成率。
+#   未來排定的報修：報修資料表無排定日欄位，故「即將到期」只含 PM 項目；未完成報修以「今日現況」計入待執行。
+WO_CATEGORIES = ["現場報修", "上級交辦", "緊急事件", "例行維護", "每日巡檢"]
+WO_PM_SOURCES = ("hotel_pm", "mall_pm", "full_bldg_pm")
+WO_WINDOW_DAYS = 7
+WO_UPCOMING_MAX = 20
+WO_RECENT_MAX = 10
+WO_RANK_MAX = 5
+WO_CACHE_TTL = 60   # 秒；與前端每 60 秒自動更新對齊
+_wo_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+
+
+def _wo_month(s: Optional[str]) -> tuple[int, int]:
+    if not s:
+        t = twnow().date()
+        return t.year, t.month
+    try:
+        dt = datetime.strptime(s, "%Y-%m")
+    except ValueError:
+        raise HTTPException(status_code=422, detail="month 格式須為 YYYY-MM")
+    return dt.year, dt.month
+
+
+def _wo_day_items(daily: dict[str, Any], d: _date, items: dict[tuple, dict[str, Any]],
+                  per_person: Optional[dict[str, dict[str, int]]]) -> None:
+    """把單日 _build_daily 結果彙整進 items（去重：日期＋來源＋ragic_id）與 per_person（僅具名）。"""
+    for pd in daily["persons"]:
+        name = pd["person"]
+        for r in pd["rows"]:
+            basis = r.get("work_min_basis") or "none"
+            wm = int(r.get("work_min") or 0)
+            if per_person is not None and name != "未指定":
+                pp = per_person.setdefault(name, {"actual": 0, "estimated": 0})
+                pp["estimated" if basis == "estimated" else "actual"] += wm
+            det = r.get("detail") or {}
+            k = (d.isoformat(), r.get("source"), r.get("ragic_id") or r.get("task"))
+            it = items.get(k)
+            if it is None:
+                it = items[k] = {
+                    "date": d.isoformat(),
+                    "source": r.get("source"),
+                    "source_label": r.get("source_label", ""),
+                    "category": r.get("category", ""),
+                    "task": r.get("task", ""),
+                    "status": det.get("完成狀況"),
+                    "planned_person": det.get("排定人員") or "",
+                    "work_min": wm,
+                    "basis": basis,
+                    "ragic_url": r.get("ragic_url", ""),
+                    "persons": set(),
+                }
+            if name != "未指定":
+                it["persons"].add(name)
+
+
+def _wo_finalize_item(it: dict[str, Any], state: Optional[str] = None) -> dict[str, Any]:
+    out = {k: v for k, v in it.items() if k != "persons" and k != "basis"}
+    out["persons"] = ", ".join(sorted(it["persons"])) if it["persons"] else "未指定"
+    out["is_estimated"] = it["basis"] == "estimated"
+    if state:
+        out["state"] = state
+    return out
+
+
+def _wo_compute(db: Session, y: int, m: int, today: _date) -> dict[str, Any]:
+    first = _date(y, m, 1)
+    last = _date(y, m, calendar.monthrange(y, m)[1])
+    per_person: dict[str, dict[str, int]] = {}
+    items: dict[tuple, dict[str, Any]] = {}
+
+    # 1) 整月一次掃描：工時、人員排行、項目（完成狀況）
+    d = first
+    while d <= last:
+        daily = _build_daily(db, d.year, d.month, d.day, person_scope="all", venue="all")
+        _wo_day_items(daily, d, items, per_person)
+        d += timedelta(days=1)
+
+    today_s = today.isoformat()
+    month_items = list(items.values())
+    logged = [it for it in month_items if it["date"] <= today_s and it["basis"] != "estimated"]
+    kpi_actual = sum(v["actual"] for v in per_person.values())
+    kpi_estimated = sum(v["estimated"] for v in per_person.values())
+
+    pm_open = [it for it in month_items if it["source"] in WO_PM_SOURCES and it["status"] == "未完成"]
+    pending_pm = [it for it in pm_open if it["date"] >= today_s]
+    overdue_pm = [it for it in pm_open if it["date"] < today_s]
+    open_repairs = _open_repairs(db)
+
+    # 2) 完成率環：每個工作類別一顆（只計有完成狀況且已到期的項目）＋總計
+    rings = []
+    done_all = total_all = 0
+    for cat in WO_CATEGORIES:
+        scoped = [it for it in month_items if it["category"] == cat and it["status"] is not None and it["date"] <= today_s]
+        done = sum(1 for it in scoped if it["status"] == "已完成")
+        total = len(scoped)
+        done_all += done
+        total_all += total
+        # logged：本月已到期的實際工作筆數（不含預估）。無完成狀態的類別（如每日巡檢）只顯示此數，不算完成率。
+        logged_n = sum(1 for it in month_items
+                       if it["category"] == cat and it["date"] <= today_s and it["basis"] != "estimated")
+        rings.append({"category": cat, "done": done, "total": total,
+                      "rate": round(done / total * 100) if total else None, "logged": logged_n})
+    rings.append({"category": "總計", "done": done_all, "total": total_all,
+                  "rate": round(done_all / total_all * 100) if total_all else None,
+                  "logged": sum(r["logged"] for r in rings)})
+
+    # 3) 最近完成（依日期倒序）
+    completed = [it for it in month_items if it["status"] == "已完成" and it["date"] <= today_s]
+    completed.sort(key=lambda it: (it["date"], it["source"] or ""), reverse=True)
+    recent = [_wo_finalize_item(it) for it in completed[:WO_RECENT_MAX]]
+
+    # 4) 已排定：逾期（本月、未完成、早於今日）＋ 7 日內（含今日）未完成 PM 項目
+    window_items: dict[tuple, dict[str, Any]] = {}
+    for i in range(WO_WINDOW_DAYS + 1):
+        wd = today + timedelta(days=i)
+        daily = _build_daily(db, wd.year, wd.month, wd.day, person_scope="all", venue="all")
+        _wo_day_items(daily, wd, window_items, None)
+    window_open = [it for it in window_items.values()
+                   if it["source"] in WO_PM_SOURCES and it["status"] == "未完成"]
+    upcoming_rows: list[dict[str, Any]] = []
+    for it in sorted(overdue_pm, key=lambda x: (x["date"], x["source"] or "")):
+        upcoming_rows.append(_wo_finalize_item(it, "逾期"))
+    for it in sorted(window_open, key=lambda x: (x["date"], x["source"] or "")):
+        state = "今日" if it["date"] == today_s else "即將"
+        upcoming_rows.append(_wo_finalize_item(it, state))
+    upcoming = upcoming_rows[:WO_UPCOMING_MAX]
+
+    # 5) 人員排行（實際＋預估兩欄）
+    ranking = sorted(
+        ({"person": p, "actual_min": v["actual"], "estimated_min": v["estimated"]} for p, v in per_person.items()),
+        key=lambda x: (-x["actual_min"], -x["estimated_min"], x["person"]),
+    )[:WO_RANK_MAX]
+
+    data_end = max((it["date"] for it in logged), default=min(last, today).isoformat())
+    return {
+        "month": f"{y:04d}-{m:02d}",
+        "today": today_s,
+        "kpis": {
+            "actual_min": kpi_actual,
+            "estimated_min": kpi_estimated,
+            "logged_count": len(logged),
+            "pending_pm_count": len(pending_pm),
+            "open_repairs_count": len(open_repairs),
+            "overdue_count": len(overdue_pm),
+        },
+        "rings": rings,
+        "recent": recent,
+        "upcoming": upcoming,
+        "ranking": ranking,
+        "data_end": data_end,
+        "generated_at": twnow().strftime("%Y-%m-%d %H:%M"),
+    }
+
+
+@router.get("/work-overview", summary="戰情 KPI — 工作總覽（工作日誌＋已排定工作，本月）",
+            dependencies=[Depends(require_war_room)])
+def get_work_overview(
+    month: Optional[str] = Query(None, description="YYYY-MM，預設本月"),
+    db: Session = Depends(get_db),
+):
+    y, m = _wo_month(month)
+    today = twnow().date()
+    key = f"{y:04d}-{m:02d}:{today.isoformat()}"
+    now_ts = time.monotonic()
+    hit = _wo_cache.get(key)
+    if hit and now_ts - hit[0] < WO_CACHE_TTL:
+        return hit[1]
+    payload = _wo_compute(db, y, m, today)
+    _wo_cache[key] = (now_ts, payload)
+    return payload
+
+
 @router.get("/hotel-floor-plan", summary="戰情 KPI — 客房標準層向量平面圖（3D 樓層用）",
             dependencies=[Depends(require_war_room)])
 def get_hotel_floor_plan():
@@ -738,7 +916,7 @@ def put_alert_recipients(
 # ── 頁簽設定（2026-11-11）：顯示／隱藏、改名；讀取＝戰情權限，儲存＝僅系統管理員 ─────
 # 存在 system_settings（JSON），不需 migration；沒有紀錄時採預設（中控台隱藏）。
 TAB_CONFIG_KEY = "war_room.tab_config"
-TAB_KEYS = ("overview", "control", "dashboard", "iso", "alerts", "staff", "person-journal", "history")
+TAB_KEYS = ("overview", "work-overview", "control", "dashboard", "iso", "alerts", "staff", "person-journal", "history")
 TAB_DEFAULT_HIDDEN = ("control",)   # 工務營運中控台：開發中，先隱藏
 TAB_LABEL_MAX = 30
 

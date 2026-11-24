@@ -4,6 +4,7 @@
  */
 export const WR_TAB_DEFS = [
   { key: 'overview', defaultLabel: '值班總覽' },
+  { key: 'work-overview', defaultLabel: '工作總覽' },
   { key: 'control', defaultLabel: '工務營運中控台' },
   { key: 'dashboard', defaultLabel: 'Dashboard' },
   { key: 'iso', defaultLabel: '3D 樓層' },

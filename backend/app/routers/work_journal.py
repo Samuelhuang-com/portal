@@ -437,6 +437,7 @@ def _make_row(
     venue: str = "",
     detail: Optional[dict] = None,
     detail_records: Optional[list] = None,
+    wm_basis: str = "",
 ) -> dict:
     st_full = _full_dt(start_time)
     et_full = _full_dt(end_time)
@@ -445,6 +446,10 @@ def _make_row(
     # 無工時時，由起迄時間自動計算
     if work_min is None:
         work_min = _calc_wm_from_times(st, et)
+        if wm_basis in ("", "none"):
+            wm_basis = "times" if work_min is not None else "none"
+    if not wm_basis:
+        wm_basis = "actual" if work_min is not None else "none"
     return {
         "source":       source,
         "source_label": SOURCE_LABEL.get(source, source),
@@ -465,6 +470,7 @@ def _make_row(
         "venue":        venue,
         "detail":       detail or {},
         "detail_records": detail_records or [],
+        "work_min_basis": wm_basis,
     }
 
 
@@ -540,6 +546,7 @@ def _fetch_dazhi(db: Session, year: int, month: int, day: int) -> list[dict]:
                 "扣款事項":  c.deduction_item or "",
                 "扣款費用":  str(int(c.deduction_fee or 0)),
                 "財務備註":  c.finance_note or "",
+                "完成狀況":  "已完成" if c.is_completed_flag else "未完成",
             },
         )
         if groups is None:
@@ -628,6 +635,7 @@ def _fetch_luqun(db: Session, year: int, month: int, day: int) -> list[dict]:
                 "扣款費用":  str(int(c.deduction_fee or 0)),
                 "管理回應":  c.mgmt_response or "",
                 "財務備註":  c.finance_note or "",
+                "完成狀況":  "已完成" if c.is_completed_flag else "未完成",
             },
         )
         if groups is None:
@@ -675,10 +683,13 @@ def _fetch_hotel_pm(db: Session, year: int, month: int, day: int) -> list[dict]:
         batch = batch_map.get(item.batch_ragic_id)
         task = " ".join(filter(None, [item.task_name, item.location]))
         wm = None
+        wm_basis = "none"
         if item.ragic_work_minutes and item.ragic_work_minutes > 0:
             wm = int(item.ragic_work_minutes)
+            wm_basis = "actual"
         elif item.estimated_minutes and item.estimated_minutes > 0:
             wm = int(item.estimated_minutes)
+            wm_basis = "estimated"
         est = item.estimated_minutes if item.estimated_minutes else None
         for person in _persons(item.executor_name):
             rows.append(_make_row(
@@ -690,6 +701,7 @@ def _fetch_hotel_pm(db: Session, year: int, month: int, day: int) -> list[dict]:
                 start_time=item.start_time or "",
                 end_time=item.end_time or "",
                 work_min=wm,
+                wm_basis=wm_basis,
                 remark=item.result_note or "",
                 ragic_id=item.ragic_id,
                 ragic_url=_ragic_url(_SOURCE_PATH["hotel_pm"], item.ragic_id),
@@ -892,12 +904,14 @@ def _fetch_mall_pm(db: Session, year: int, month: int, day: int) -> list[dict]:
             if item.scheduled_date != sched_day:
                 continue
             wm = int(item.estimated_minutes) if item.estimated_minutes and item.estimated_minutes > 0 else None
+            wm_basis = "estimated" if wm is not None else "none"
             for person in _persons(item.executor_name):
                 rows.append(_make_row(
                     person=person,
                     start_time=item.start_time or "",
                     end_time=item.end_time or "",
                     work_min=wm,
+                    wm_basis=wm_basis,
                     **common,
                 ))
     return rows
@@ -991,12 +1005,14 @@ def _fetch_full_bldg_pm(db: Session, year: int, month: int, day: int) -> list[di
             if item.scheduled_date != sched_day:
                 continue
             wm = int(item.estimated_minutes) if item.estimated_minutes and item.estimated_minutes > 0 else None
+            wm_basis = "estimated" if wm is not None else "none"
             for person in _persons(item.executor_name):
                 rows.append(_make_row(
                     person=person,
                     start_time=item.start_time or "",
                     end_time=item.end_time or "",
                     work_min=wm,
+                    wm_basis=wm_basis,
                     **common,
                 ))
     return rows
@@ -1167,6 +1183,7 @@ def _fetch_other_tasks(db: Session, year: int, month: int, day: int) -> list[dic
                 "維修工時":     f"{rec.work_hours:.2f} hr" if rec.work_hours else "",
                 "問題說明":     rec.description or "",
                 "備註":         rec.notes or "",
+                "完成狀況":     "已完成" if rec.status in ("結案", "已結案", "已完成", "完成") else "未完成",  # 同 services/other_tasks_service.COMPLETED_STATUSES
             },
         )
 

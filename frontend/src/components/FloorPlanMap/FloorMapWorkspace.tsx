@@ -46,6 +46,7 @@ export default function FloorMapWorkspace({ module, defaultFloor }: FloorMapWork
   const [meta,   setMeta]   = useState<FloorMapModuleMeta | null>(null)
   const [plans,  setPlans]  = useState<FloorPlan[]>([])
   const [floorKey, setFloorKey] = useState<string>('')
+  const [formKey,  setFormKey]  = useState<string>('')   // 表單模式下目前選取的表單
   const [date,     setDate]     = useState<Dayjs | null>(null)
   const [system,   setSystem]   = useState<string>('全部')
 
@@ -97,6 +98,7 @@ export default function FloorMapWorkspace({ module, defaultFloor }: FloorMapWork
         setMeta(m)
         setPlans(p)
         setFloorKey(defaultFloor && m.floors.includes(defaultFloor) ? defaultFloor : m.default_floor)
+        if (m.forms?.length) { setFormKey(m.forms[0].key); setFloorKey(m.forms[0].floor) }
         setDate(m.data_end ? dayjs(m.data_end.replace(/\//g, '-')) : dayjs())
       })
       .catch(() => setError('取得樓層巡檢圖設定失敗'))
@@ -105,10 +107,17 @@ export default function FloorMapWorkspace({ module, defaultFloor }: FloorMapWork
   const floor = plans.find((f) => f.key === floorKey)
   // 樓層顯示名稱：模組覆寫（meta.floor_labels）優先，否則用登錄表 label
   const floorLabel = (key: string) => meta?.floor_labels?.[key] ?? plans.find((p) => p.key === key)?.label ?? key
-  const floorOptions = (meta?.floors ?? [])
-    .map((k) => plans.find((p) => p.key === k))
-    .filter((p): p is FloorPlan => !!p)
-    .map((p) => ({ value: p.key, label: meta?.floor_labels?.[p.key] ?? p.label }))
+  // 表單模式（meta.forms）：下拉列表單，選取後沿用所屬樓層底圖，只顯示該表單設備組的點位
+  const formMode    = (meta?.forms?.length ?? 0) > 0
+  const activeForm  = formMode ? (meta?.forms?.find((f) => f.key === formKey) ?? meta?.forms?.[0] ?? null) : null
+  const formRefs    = activeForm?.source_refs ?? null
+  const activeLabel = activeForm ? activeForm.label : floorLabel(floorKey)
+  const floorOptions = formMode
+    ? (meta?.forms ?? []).map((f) => ({ value: f.key, label: f.label }))
+    : (meta?.floors ?? [])
+        .map((k) => plans.find((p) => p.key === k))
+        .filter((p): p is FloorPlan => !!p)
+        .map((p) => ({ value: p.key, label: meta?.floor_labels?.[p.key] ?? p.label }))
 
   // ── 底圖（需登入，blob → object URL，各樓層快取一次）─────────────────────────
   // 快取鍵＝樓層＋旋轉角度（旋轉後的底圖是另一張圖）
@@ -207,8 +216,9 @@ export default function FloorMapWorkspace({ module, defaultFloor }: FloorMapWork
     () => (data?.points ?? []).filter((p) =>
       (editing || !p.hidden) &&
       (system === '全部' || p.system === system) &&
+      (!formRefs || formRefs.includes(p.source_ref)) &&
       (!twoLevel || floorView === 'all' || (floorView === 'child') === !!p.child_ref)),
-    [data, system, editing, twoLevel, floorView],
+    [data, system, editing, twoLevel, floorView, formRefs],
   )
   const sel      = data?.points.find((p) => p.id === selId) ?? null
   const selGroup = sel ? data?.groups[sel.source_ref] : undefined
@@ -257,7 +267,19 @@ export default function FloorMapWorkspace({ module, defaultFloor }: FloorMapWork
     return () => { alive = false }
   }, [module, addParent])
 
-  const changeFloor = (k: string) => { setFloorKey(k); setSelId(null); setPlacing(false); setPrefill(null) }
+  // 表單模式下，k 可能是表單鍵（下拉）或樓層鍵（新增點位換層）；樓層鍵時盡量保留目前表單
+  const changeFloor = (k: string) => {
+    if (formMode) {
+      const cur = meta?.forms?.find((x) => x.key === formKey)
+      const f = cur?.floor === k
+        ? cur
+        : (meta?.forms?.find((x) => x.key === k) ?? meta?.forms?.find((x) => x.floor === k))
+      if (f) { setFormKey(f.key); setFloorKey(f.floor) }
+    } else {
+      setFloorKey(k)
+    }
+    setSelId(null); setPlacing(false); setPrefill(null)
+  }
 
   // ── 編輯 ──────────────────────────────────────────────────────────────────
   const formToInput = (v: Record<string, any>): Omit<FloorMapPointInput, 'x' | 'y'> => ({
@@ -428,7 +450,7 @@ export default function FloorMapWorkspace({ module, defaultFloor }: FloorMapWork
   )
 
   // ── 右側面板 ──────────────────────────────────────────────────────────────
-  const unmapped = data?.unmapped ?? []
+  const unmapped = (data?.unmapped ?? []).filter((g) => !formRefs || formRefs.includes(g.source_ref))
   const renderUnmapped = () => (
     <Card size="small" style={{ marginTop: 12 }}
           title={<span style={{ color: '#d46b08' }}>未對應項目（{unmapped.length}）</span>}
@@ -621,7 +643,7 @@ export default function FloorMapWorkspace({ module, defaultFloor }: FloorMapWork
         )}
 
         <div>
-          <Text strong style={{ color: '#1B3A5C' }}>{floorLabel(floorKey)} 子項（{kids.length}）</Text>
+          <Text strong style={{ color: '#1B3A5C' }}>{activeLabel} 子項（{kids.length}）</Text>
           <Text type="secondary" style={{ fontSize: 11, marginLeft: 6 }}>
             {date?.format('YYYY/MM/DD')}　點子項看明細與每日狀況
           </Text>
@@ -671,7 +693,7 @@ export default function FloorMapWorkspace({ module, defaultFloor }: FloorMapWork
     if (!sel) {
       return (
         <>
-        <Card size="small" title={`${floorLabel(floorKey)} 點位（${points.length}）`}>
+        <Card size="small" title={`${activeLabel} 點位（${points.length}）`}>
           {points.length === 0 ? (
             <Empty description={editing ? '按「新增點位」後點圖上位置' : '這層還沒有點位'} />
           ) : (
@@ -789,7 +811,7 @@ export default function FloorMapWorkspace({ module, defaultFloor }: FloorMapWork
         <Space wrap size={[12, 8]}>
           <Space>
             <Text strong>樓層</Text>
-            <Segmented value={floorKey} onChange={(v) => changeFloor(String(v))} options={floorOptions} />
+            <Segmented value={formMode ? formKey : floorKey} onChange={(v) => changeFloor(String(v))} options={floorOptions} />
           </Space>
           <Space>
             <Text strong>日期</Text>
@@ -874,7 +896,7 @@ export default function FloorMapWorkspace({ module, defaultFloor }: FloorMapWork
 
       {error && <Alert type="error" message={error} showIcon closable onClose={() => setError(null)} style={{ marginBottom: 12 }} />}
       <Modal
-        title={`置換底圖：${floorLabel(floorKey)}`}
+        title={`置換底圖：${activeLabel}`}
         open={replaceOpen}
         onCancel={() => { setReplaceOpen(false); setReplaceFile(null) }}
         onOk={handleReplaceImage}
