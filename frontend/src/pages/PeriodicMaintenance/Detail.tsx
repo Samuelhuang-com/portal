@@ -442,7 +442,7 @@ export default function PeriodicMaintenanceDetailPage() {
           <Button
             type="link"
             size="small"
-            style={{ padding: 0, height: 'auto', fontWeight: 600, textAlign: 'left' }}
+            style={{ padding: 0, height: 'auto', fontWeight: 600, textAlign: 'left', whiteSpace: 'normal', wordBreak: 'break-word' }}
             onClick={() => openHistory(v)}
           >
             {v}

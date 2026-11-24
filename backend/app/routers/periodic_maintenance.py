@@ -916,6 +916,16 @@ def list_batches(
 # ══════════════════════════════════════════════════════════════════════════════
 # GET /batches/{batch_id}
 # ══════════════════════════════════════════════════════════════════════════════
+def _pm_item_sort_key(it: PeriodicMaintenanceItem):
+    """排序：項目(母) 數值由小到大 → 項目(子) 逐段數值（4.9 < 4.10）→ 項次。
+    無項目(母) 者排最後。"""
+    parent = (it.parent_no or "").strip()
+    parent_key = (0, int(parent), "") if parent.isdigit() else (1, 0, parent)
+    child = (it.child_no or "").strip()
+    child_key = tuple(int(x) if x.isdigit() else 0 for x in child.split(".")) if child else ()
+    return (parent_key, child_key, it.seq_no or 0)
+
+
 @router.get("/batches/{batch_id}", summary="取得單筆批次完整資料（含所有項目 + KPI）")
 def get_batch_detail(
     batch_id:          str,
@@ -931,6 +941,7 @@ def get_batch_detail(
     items = db.query(PeriodicMaintenanceItem).filter(
         PeriodicMaintenanceItem.batch_ragic_id == batch_id
     ).order_by(PeriodicMaintenanceItem.seq_no).all()
+    items.sort(key=_pm_item_sort_key)  # 2026-11-24：依項目(母)、項目(子) 數值排序
 
     check_month = _get_check_month(batch.period_month)
     kpi = _calc_kpi(items, check_month)
