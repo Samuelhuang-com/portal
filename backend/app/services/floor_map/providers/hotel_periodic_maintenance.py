@@ -24,6 +24,7 @@ class HotelPeriodicMaintenanceProvider(PeriodicMaintenanceFloorMapProvider):
     edit_permission = "hotel_periodic_maintenance_floor_map_edit"
     floors          = PM_FLOORS["hotel_periodic_maintenance"]
     default_floor   = "1f"
+    parent_name_sheet = 36   # 母項名稱來自主管排定表 Sheet 36（項目母項名稱）
     batch_model     = PeriodicMaintenanceBatch
     item_model      = PeriodicMaintenanceItem
 

@@ -77,6 +77,8 @@ class PeriodicMaintenanceFloorMapProvider(FloorMapProvider):
     in_war_room     = True
     two_level       = True
     source_label    = "對應保養母項"
+    # 母項名稱來源（2026-11-24）：主管排定表 Sheet 編號；設定後母項名稱優先取 pm_plan_item（依批次編號＋項目(母)）
+    parent_name_sheet: int | None = None
     empty_day_text  = "當日無排定保養項目"
 
     # ── 子類別實作 ───────────────────────────────────────────────────────────
@@ -109,6 +111,15 @@ class PeriodicMaintenanceFloorMapProvider(FloorMapProvider):
         I = self.item_model
         items = db.query(I).filter(I.batch_ragic_id == batch.ragic_id).all()
         items.sort(key=lambda it: (it.seq_no or 0, it.ragic_id or ""))
+        plan_names: dict[str, str] = {}
+        if self.parent_name_sheet is not None:
+            from app.models.pm_plan import PmPlanItem
+            rows = db.query(PmPlanItem.parent_no, PmPlanItem.parent_name).filter(
+                PmPlanItem.source_sheet == self.parent_name_sheet,
+                PmPlanItem.batch_no == batch.journal_no,
+                PmPlanItem.parent_name != "",
+            ).distinct().all()
+            plan_names = {r.parent_no: r.parent_name for r in rows if r.parent_no}
         names = [normalize_name(it.task_name) for it in items]
         total: dict[str, int] = defaultdict(int)
         for n in names:
@@ -123,7 +134,9 @@ class PeriodicMaintenanceFloorMapProvider(FloorMapProvider):
                 child = f"{n} #{seen[n]}"
             else:
                 child = n
-            parent = normalize_name(getattr(it, "parent_name", None)) or parent_of(self.module, child) or child
+            pno = (getattr(it, "parent_no", None) or "").strip()
+            parent = (normalize_name(plan_names.get(pno)) or normalize_name(getattr(it, "parent_name", None))
+                      or parent_of(self.module, child) or child)
             start = self._full_date(it.scheduled_date or "", batch.period_month or "")
             end = _parse_ymd(getattr(it, "schedule_end_date", None) or "")
             if start is not None and (end is None or end < start):
@@ -182,7 +195,8 @@ class PeriodicMaintenanceFloorMapProvider(FloorMapProvider):
         span = self._span_label(x)
         extra = "｜".join(v for v in (freq, f"排定 {span}" if span else "") if v)
         return {
-            "check_content":  normalize_name(it.task_name) + (f"（{extra}）" if extra else ""),
+            "check_content":  (f"{it.child_no} " if (self.parent_name_sheet is not None and getattr(it, "child_no", None)) else "")
+                              + normalize_name(it.task_name) + (f"（{extra}）" if extra else ""),
             "result_options": RESULT_OPTIONS,
             "kind":           "status",
             "status":         st,
