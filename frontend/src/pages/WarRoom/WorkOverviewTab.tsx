@@ -202,7 +202,7 @@ export default function WorkOverviewTab() {
                 <Col xs={24} lg={12}>
                   <Card size="small" title="人員排行（實際＋預估）">
                     {data.ranking.length === 0 ? <Empty description="本月尚無具名人員工時" /> : (
-                      <Table
+                      <Table<WrWorkOverview['ranking'][number]>
                         size="small"
                         pagination={false}
                         rowKey="person"
