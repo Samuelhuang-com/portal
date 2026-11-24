@@ -390,7 +390,7 @@ export interface WrWorkOverview {
   thresholds: { overdue: number; minutes: number }
   recent:   WrWorkItem[]
   upcoming: WrWorkItem[]
-  ranking:  { person: string; actual_min: number; estimated_min: number }[]
+  ranking:  { person: string; actual_min: number; estimated_min: number; done: number; open: number }[]
   data_end:     string
   generated_at: string
 }
