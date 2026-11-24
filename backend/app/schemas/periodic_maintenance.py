@@ -102,6 +102,7 @@ class StatusDistItem(BaseModel):
 class PMParentGroupOut(BaseModel):
     """母項目彙總（項目(母)）。完成條件：每個子項目「執行人員非空」且「維修工時 ≥ 0」；NULL 不計。"""
     parent_no:           str
+    parent_name:         str   = ""
     child_count:         int   = 0
     done_count:          int   = 0
     total_repair_hours:  float = 0.0

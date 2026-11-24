@@ -429,7 +429,7 @@ const RAGIC_APPS_STATIC: Omit<RagicApp, 'portalName' | 'portalUrl' | 'localTable
   { itemNo: 373, module: '全棟工務每日巡檢', name: '全棟工務每日巡檢 - B4F 汙廢水', url: 'https://ap12.ragic.com/soutlet001/full-building-inspection/11', type: '待確認', note: '頁籤組 home/8（11/12 瀏覽器擷取，模組/類型待確認）' },
   { itemNo: 374, module: '全棟工務每日巡檢', name: '全棟工務每日巡檢 - B4F 下水塔', url: 'https://ap12.ragic.com/soutlet001/full-building-inspection/12', type: '待確認', note: '頁籤組 home/8（11/12 瀏覽器擷取，模組/類型待確認）' },
   { itemNo: 375, module: '全棟工務每日巡檢', name: '全棟工務每日巡檢 - B1-B4F抽排風設備', url: 'https://ap12.ragic.com/soutlet001/full-building-inspection/8', type: '待確認', note: '頁籤組 home/8（11/12 瀏覽器擷取，模組/類型待確認）' },
-  { itemNo: 376, module: '待確認', name: '飯店週期保養表(主管排定)', url: 'https://ap12.ragic.com/soutlet001/periodic-maintenance/36', type: '待確認', note: '頁籤組 home/8（11/12 瀏覽器擷取，模組/類型待確認）' },
+  { itemNo: 376, module: '週期保養', name: '飯店週期保養表(主管排定)', url: 'https://ap12.ragic.com/soutlet001/periodic-maintenance/36', type: '主管排定', note: '現行主管排定表；pm_plan_sync 來源（行事曆預排）。2026-11-24 確認為現行表單' },
   { itemNo: 377, module: '待確認', name: '商場週期保養日誌(主管排定)', url: 'https://ap12.ragic.com/soutlet001/periodic-maintenance/35', type: '待確認', note: '頁籤組 home/8（11/12 瀏覽器擷取，模組/類型待確認）' },
   { itemNo: 378, module: '待確認', name: '商場週期保養日誌(同仁執行) - 子表: 項目', url: 'https://ap12.ragic.com/soutlet001/periodic-maintenance/24', type: '待確認', note: '頁籤組 home/8（11/12 瀏覽器擷取，模組/類型待確認）' },
   { itemNo: 379, module: '待確認', name: '全棟週期保養日誌(主表單瀏覽)', url: 'https://ap12.ragic.com/soutlet001/periodic-maintenance/22', type: '待確認', note: '頁籤組 home/8（11/12 瀏覽器擷取，模組/類型待確認）' },

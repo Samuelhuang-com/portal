@@ -45,6 +45,10 @@ class PmPlanItem(Base):
                              comment="排定日期 ISO 格式 YYYY-MM-DD（空=尚未排定）")
     scheduler_name  = Column(String(100), nullable=False, default="", comment="排定人員")
     note            = Column(Text,        nullable=False, default="", comment="備註")
+    # ── 母項目識別（2026-11-24 新增）：母項名稱供飯店週期保養母項群組列顯示 ──
+    batch_no    = Column(String(50),  nullable=False, default="", comment="保養日誌編號（Sheet 36「編號」，如 2026/11*英週保-003），對應 pm_batch.journal_no")
+    parent_no   = Column(String(50),  nullable=False, default="", comment="項目(母)")
+    parent_name = Column(String(200), nullable=False, default="", comment="項目母項名稱")
 
     # ── Ragic 連結 ────────────────────────────────────────────────────────────
     ragic_url = Column(String(300), nullable=False, default="",

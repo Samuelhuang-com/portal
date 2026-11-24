@@ -11,7 +11,7 @@ import React, { useCallback, useEffect, useState } from 'react'
 import { Alert, Badge, Button, Card, Col, DatePicker, Drawer, Empty, Row, Space, Spin, Table, Tag, Tooltip, Typography } from 'antd'
 import { LeftOutlined, ReloadOutlined, RightOutlined } from '@ant-design/icons'
 import dayjs, { type Dayjs } from 'dayjs'
-import { Line, LineChart, ResponsiveContainer, Tooltip as RTooltip, XAxis, YAxis } from 'recharts'
+import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip as RTooltip, XAxis, YAxis } from 'recharts'
 
 import { fetchWarRoomOverview, type OverviewLevel, type WrOverview, type WrOverviewModule, type WrOverviewItem } from '@/api/warRoom'
 import { fetchLastUpdated, type LastUpdatedResult } from '@/api/ragic'
@@ -39,24 +39,26 @@ const STATUS_TEXT: Record<string, { text: string; color: string }> = {
   no_record: { text: '無紀錄', color: 'default' },
 }
 
-/** 近 7 日涵蓋率迷你折線（無資料的日子斷線） */
+/** 近 7 日涵蓋率：圓角直條（2026-11-24 改版；今日以深色強調，其餘為 KPI 藍） */
 function Sparkline({ trend }: { trend: WrOverviewModule['trend'] }) {
-  const data = trend.map(t => ({ d: t.date.slice(5), v: t.coverage, abnormal: t.abnormal, unchecked: t.unchecked }))
+  const data = trend.map(t => ({ d: t.date.slice(5), v: t.coverage, abnormal: t.abnormal, unchecked: t.unchecked, today: t.date === trend[trend.length - 1]?.date }))
   if (!data.some(x => x.v !== null)) {
     return <Text type="secondary" style={{ fontSize: 12 }}>近 7 日無巡檢紀錄</Text>
   }
   return (
     <div style={{ width: '100%', height: 56 }}>
       <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={data} margin={{ top: 4, right: 4, bottom: 0, left: 4 }}>
+        <BarChart data={data} margin={{ top: 4, right: 4, bottom: 0, left: 4 }}>
           <XAxis dataKey="d" hide />
           <YAxis domain={[0, 100]} hide />
           <RTooltip
             formatter={v => (v === null || v === undefined ? '—' : `${v}%`)}
             contentStyle={{ fontSize: 12 }}
           />
-          <Line type="monotone" dataKey="v" stroke="#4BA8E8" strokeWidth={2} dot={{ r: 2 }} connectNulls={false} name="涵蓋率" />
-        </LineChart>
+          <Bar dataKey="v" name="涵蓋率" barSize={10} radius={[5, 5, 5, 5]} isAnimationActive={false}>
+            {data.map(x => <Cell key={x.d} fill={x.today ? '#1B3A5C' : '#4BA8E8'} />)}
+          </Bar>
+        </BarChart>
       </ResponsiveContainer>
     </div>
   )

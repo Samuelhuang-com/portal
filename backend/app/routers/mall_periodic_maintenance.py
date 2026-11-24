@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.dependencies import get_current_user, require_roles
+from app.models.pm_plan import PmPlanItem
 from app.models.mall_periodic_maintenance import (
     MallPeriodicMaintenanceBatch, MallPeriodicMaintenanceItem, MallPMItemWorklog,
 )
@@ -354,7 +355,18 @@ def _child_done_for_parent(it: MallPeriodicMaintenanceItem) -> bool:
     return bool((it.executor_name or "").strip()) and it.repair_hours is not None and it.repair_hours >= 0
 
 
-def _build_parent_groups(items: list[MallPeriodicMaintenanceItem]) -> list[PMParentGroupOut]:
+def _mall_parent_name_map(db: Session, batch) -> dict:
+    """商場母項名稱來自主管排定 Sheet 35（項目母項名稱）：同批次編號＋項目(母) 對應。
+    Sheet 24 本身沒有「項目母項名稱」欄位，故不從執行端取值。"""
+    rows = db.query(PmPlanItem.parent_no, PmPlanItem.parent_name).filter(
+        PmPlanItem.source_sheet == 35,
+        PmPlanItem.batch_no == batch.journal_no,
+        PmPlanItem.parent_name != "",
+    ).distinct().all()
+    return {r.parent_no: r.parent_name for r in rows if r.parent_no}
+
+
+def _build_parent_groups(items: list[MallPeriodicMaintenanceItem], name_map: Optional[dict] = None) -> list[PMParentGroupOut]:
     """以項目(母)分組彙總。傳入的 items 必須是整批全部項目（未經篩選），且已依 seq_no 排序。"""
     groups: dict[str, list[MallPeriodicMaintenanceItem]] = {}
     for it in items:
@@ -365,8 +377,10 @@ def _build_parent_groups(items: list[MallPeriodicMaintenanceItem]) -> list[PMPar
     for pno, children in groups.items():
         hours = [c.repair_hours for c in children if c.repair_hours is not None]
         done = sum(1 for c in children if _child_done_for_parent(c))
+        parent_name = (name_map or {}).get(pno, "")
         result.append(PMParentGroupOut(
             parent_no=pno,
+            parent_name=parent_name,
             child_count=len(children),
             done_count=done,
             total_repair_hours=round(sum(hours), 2),
@@ -884,7 +898,7 @@ def get_batch_detail(
         kpi        = kpi,
         items      = filtered,
         categories = cats,
-        parent_groups = _build_parent_groups(items),
+        parent_groups = _build_parent_groups(items, _mall_parent_name_map(db, batch)),
     )
 
 

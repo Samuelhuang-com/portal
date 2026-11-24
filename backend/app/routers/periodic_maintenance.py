@@ -33,6 +33,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.dependencies import get_current_user, require_roles
+from app.models.pm_plan import PmPlanItem
 from app.models.periodic_maintenance import (
     PeriodicMaintenanceBatch, PeriodicMaintenanceItem, PeriodicMaintenanceItemWorklog,
 )
@@ -254,7 +255,17 @@ def _item_to_out(item: PeriodicMaintenanceItem, check_month: int) -> PMItemOut:
     return out
 
 
-def _build_parent_groups(items: list[PeriodicMaintenanceItem]) -> list[PMParentGroupOut]:
+def _parent_name_map(db: Session, batch) -> dict:
+    """母項名稱來自主管排定 Sheet 36：同批次編號（journal_no）＋ 項目(母) 對應。"""
+    rows = db.query(PmPlanItem.parent_no, PmPlanItem.parent_name).filter(
+        PmPlanItem.source_sheet == 36,
+        PmPlanItem.batch_no == batch.journal_no,
+        PmPlanItem.parent_name != "",
+    ).distinct().all()
+    return {r.parent_no: r.parent_name for r in rows if r.parent_no}
+
+
+def _build_parent_groups(items: list[PeriodicMaintenanceItem], name_map: Optional[dict] = None) -> list[PMParentGroupOut]:
     """2026-11-05 以項目(母)分組彙總（比照商場明細頁版型）。
 
     完成定義（業主 2026-11-05 裁示，飯店專用，商場不變）：
@@ -273,6 +284,7 @@ def _build_parent_groups(items: list[PeriodicMaintenanceItem]) -> list[PMParentG
         done = sum(1 for c in children if c.start_time and c.end_time)
         result.append(PMParentGroupOut(
             parent_no=pno,
+            parent_name=(name_map or {}).get(pno, ""),
             child_count=len(children),
             done_count=done,
             total_repair_hours=round(sum(hours), 2),
@@ -941,7 +953,7 @@ def get_batch_detail(
         kpi        = kpi,
         items      = filtered,
         categories = cats,
-        parent_groups = _build_parent_groups(items),
+        parent_groups = _build_parent_groups(items, _parent_name_map(db, batch)),
     )
 
 

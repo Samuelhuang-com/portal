@@ -359,6 +359,18 @@ export interface WrWorkItem {
   is_estimated:   boolean
   ragic_url:      string
   state?:         '逾期' | '今日' | '即將'
+  detail?:        Record<string, string>
+}
+
+export interface WrWorkPerson {
+  person:        string
+  actual_min:    number
+  estimated_min: number
+  done:          number
+  open:          number
+  overdue:       number
+  risk:          boolean
+  items:         WrWorkItem[]
 }
 
 export interface WrWorkOverview {
@@ -373,6 +385,9 @@ export interface WrWorkOverview {
     overdue_count:     number
   }
   rings:    { category: string; done: number; total: number; rate: number | null; logged: number }[]
+  trend:    { date: string; logged: number; done: number; rate: number | null; is_today: boolean }[]
+  people:   WrWorkPerson[]
+  thresholds: { overdue: number; minutes: number }
   recent:   WrWorkItem[]
   upcoming: WrWorkItem[]
   ranking:  { person: string; actual_min: number; estimated_min: number }[]

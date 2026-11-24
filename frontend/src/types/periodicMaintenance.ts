@@ -83,6 +83,7 @@ export interface PMBatchListItem {
 
 export interface PMParentGroup {
   parent_no:           string
+  parent_name:         string
   child_count:         number
   done_count:          number
   total_repair_hours:  number

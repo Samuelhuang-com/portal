@@ -558,6 +558,7 @@ export default function MallPeriodicMaintenanceDetailPage() {
   const renderGroupRow = (g: PMParentGroup) => (
     <Space size={12} wrap>
       <Tag color="blue" style={{ fontWeight: 600, margin: 0 }}>項目(母) {g.parent_no}</Tag>
+      {g.parent_name && <Text strong>{g.parent_name}</Text>}
       <Text>子項目完成 {g.done_count}/{g.child_count}</Text>
       <Text>維修工時 Σ {fmtHours(g.total_repair_hours)}</Text>
       {g.missing_hours_count > 0 && (

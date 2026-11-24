@@ -391,17 +391,22 @@ def get_person_journal(
 
 # ── 工作總覽（2026-11-24；規劃見 claude/plan_war_room_work_overview.md）──────────
 # 口徑：工時一律走 _build_daily（具名人員，與工作日誌／矩陣同一份）。
-#   實際工時＝work_min_basis ≠ estimated；預估工時＝work_min_basis = estimated（未來排定或未執行的 PM 預估回填）。
+#   實際工時＝work_min_basis ≠ estimated；預估工時＝work_min_basis = estimated。
 #   實際＋預估＝/work-journal/matrix named TOTAL（對帳用）。
-#   完成狀況：PM 與報修的「完成狀況」欄（is_completed）；其餘來源無完成狀態，不納入完成率。
-#   未來排定的報修：報修資料表無排定日欄位，故「即將到期」只含 PM 項目；未完成報修以「今日現況」計入待執行。
+#   完成狀況：保養、報修、上級交辦／緊急事件（狀態）；每日巡檢無完成狀態，只計已登錄筆數。
+#   未來排定的報修：報修無排定日欄位，故「即將到期」只含保養；未完成報修計入待執行。
 WO_CATEGORIES = ["現場報修", "上級交辦", "緊急事件", "例行維護", "每日巡檢"]
 WO_PM_SOURCES = ("hotel_pm", "mall_pm", "full_bldg_pm")
 WO_WINDOW_DAYS = 7
 WO_UPCOMING_MAX = 20
 WO_RECENT_MAX = 10
 WO_RANK_MAX = 5
-WO_CACHE_TTL = 60   # 秒；與前端每 60 秒自動更新對齊
+WO_TREND_DAYS = 7
+WO_PERSON_ITEMS_MAX = 60
+# 人員散點圖紅區門檻：逾期件數 ≥ 或 實際工時（分鐘）≥ 即標示為紅區。數值待確認。
+WO_RISK_OVERDUE = 3
+WO_RISK_MINUTES = 6000
+WO_CACHE_TTL = 60   # 秒；與前端 60 秒自動更新對齊
 _wo_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 
 
@@ -416,18 +421,20 @@ def _wo_month(s: Optional[str]) -> tuple[int, int]:
     return dt.year, dt.month
 
 
+def _wo_new_person(name: str) -> dict[str, Any]:
+    return {"person": name, "actual_min": 0, "estimated_min": 0, "done": 0, "open": 0, "overdue": 0, "items": []}
+
+
 def _wo_day_items(daily: dict[str, Any], d: _date, items: dict[tuple, dict[str, Any]],
-                  per_person: Optional[dict[str, dict[str, int]]]) -> None:
-    """把單日 _build_daily 結果彙整進 items（去重：日期＋來源＋ragic_id）與 per_person（僅具名）。"""
+                  per_person: Optional[dict[str, dict[str, Any]]], today: _date) -> None:
+    """把單日 _build_daily 結果彙整進 items（去重：日期＋來源＋ragic_id）與 per_person（僅具名、僅已到期的完成狀態）。"""
     for pd in daily["persons"]:
         name = pd["person"]
         for r in pd["rows"]:
             basis = r.get("work_min_basis") or "none"
             wm = int(r.get("work_min") or 0)
-            if per_person is not None and name != "未指定":
-                pp = per_person.setdefault(name, {"actual": 0, "estimated": 0})
-                pp["estimated" if basis == "estimated" else "actual"] += wm
             det = r.get("detail") or {}
+            status = det.get("完成狀況")
             k = (d.isoformat(), r.get("source"), r.get("ragic_id") or r.get("task"))
             it = items.get(k)
             if it is None:
@@ -437,19 +444,25 @@ def _wo_day_items(daily: dict[str, Any], d: _date, items: dict[tuple, dict[str, 
                     "source_label": r.get("source_label", ""),
                     "category": r.get("category", ""),
                     "task": r.get("task", ""),
-                    "status": det.get("完成狀況"),
+                    "status": status,
                     "planned_person": det.get("排定人員") or "",
                     "work_min": wm,
                     "basis": basis,
                     "ragic_url": r.get("ragic_url", ""),
+                    "detail": {str(a): ("" if b is None else str(b)) for a, b in det.items()},
                     "persons": set(),
                 }
             if name != "未指定":
                 it["persons"].add(name)
+            if per_person is not None and name != "未指定":
+                pp = per_person.setdefault(name, _wo_new_person(name))
+                pp["estimated_min" if basis == "estimated" else "actual_min"] += wm
+                if status is not None and d <= today:
+                    pp["done" if status == "已完成" else "open"] += 1
 
 
 def _wo_finalize_item(it: dict[str, Any], state: Optional[str] = None) -> dict[str, Any]:
-    out = {k: v for k, v in it.items() if k != "persons" and k != "basis"}
+    out = {k: v for k, v in it.items() if k not in ("persons", "basis")}
     out["persons"] = ", ".join(sorted(it["persons"])) if it["persons"] else "未指定"
     out["is_estimated"] = it["basis"] == "estimated"
     if state:
@@ -457,31 +470,60 @@ def _wo_finalize_item(it: dict[str, Any], state: Optional[str] = None) -> dict[s
     return out
 
 
+def _wo_trend(db: Session, y: int, m: int, today: _date, month_items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """近 7 日（含今日）：每日已登錄實際工作筆數、完成數、完成率（無完成狀態者為 None）。"""
+    out = []
+    for i in range(WO_TREND_DAYS - 1, -1, -1):
+        wd = today - timedelta(days=i)
+        if wd.year == y and wd.month == m:
+            day_items = [it for it in month_items if it["date"] == wd.isoformat()]
+        else:
+            tmp: dict[tuple, dict[str, Any]] = {}
+            daily = _build_daily(db, wd.year, wd.month, wd.day, person_scope="all", venue="all")
+            _wo_day_items(daily, wd, tmp, None, today)
+            day_items = list(tmp.values())
+        logged = sum(1 for it in day_items if it["basis"] != "estimated")
+        due = [it for it in day_items if it["status"] is not None]
+        done = sum(1 for it in due if it["status"] == "已完成")
+        out.append({
+            "date": wd.isoformat(),
+            "logged": logged,
+            "done": done,
+            "rate": round(done / len(due) * 100) if due else None,
+            "is_today": i == 0,
+        })
+    return out
+
+
 def _wo_compute(db: Session, y: int, m: int, today: _date) -> dict[str, Any]:
     first = _date(y, m, 1)
     last = _date(y, m, calendar.monthrange(y, m)[1])
-    per_person: dict[str, dict[str, int]] = {}
+    per_person: dict[str, dict[str, Any]] = {}
     items: dict[tuple, dict[str, Any]] = {}
 
-    # 1) 整月一次掃描：工時、人員排行、項目（完成狀況）
+    # 1) 整月一次掃描：工時、人員、項目（完成狀況）
     d = first
     while d <= last:
         daily = _build_daily(db, d.year, d.month, d.day, person_scope="all", venue="all")
-        _wo_day_items(daily, d, items, per_person)
+        _wo_day_items(daily, d, items, per_person, today)
         d += timedelta(days=1)
 
     today_s = today.isoformat()
     month_items = list(items.values())
     logged = [it for it in month_items if it["date"] <= today_s and it["basis"] != "estimated"]
-    kpi_actual = sum(v["actual"] for v in per_person.values())
-    kpi_estimated = sum(v["estimated"] for v in per_person.values())
+    kpi_actual = sum(v["actual_min"] for v in per_person.values())
+    kpi_estimated = sum(v["estimated_min"] for v in per_person.values())
 
     pm_open = [it for it in month_items if it["source"] in WO_PM_SOURCES and it["status"] == "未完成"]
     pending_pm = [it for it in pm_open if it["date"] >= today_s]
     overdue_pm = [it for it in pm_open if it["date"] < today_s]
     open_repairs = _open_repairs(db)
 
-    # 2) 完成率環：每個工作類別一顆（只計有完成狀況且已到期的項目）＋總計
+    for it in overdue_pm:
+        for p in it["persons"]:
+            per_person.setdefault(p, _wo_new_person(p))["overdue"] += 1
+
+    # 2) 完成率環：每個工作類別一顆（只計有完成狀態且已到期的項目）＋總計
     rings = []
     done_all = total_all = 0
     for cat in WO_CATEGORIES:
@@ -490,7 +532,7 @@ def _wo_compute(db: Session, y: int, m: int, today: _date) -> dict[str, Any]:
         total = len(scoped)
         done_all += done
         total_all += total
-        # logged：本月已到期的實際工作筆數（不含預估）。無完成狀態的類別（如每日巡檢）只顯示此數，不算完成率。
+        # logged：本月已到期的實際工作筆數（不含預估）。無完成狀態的類別只顯示此數，不算完成率。
         logged_n = sum(1 for it in month_items
                        if it["category"] == cat and it["date"] <= today_s and it["basis"] != "estimated")
         rings.append({"category": cat, "done": done, "total": total,
@@ -499,17 +541,20 @@ def _wo_compute(db: Session, y: int, m: int, today: _date) -> dict[str, Any]:
                   "rate": round(done_all / total_all * 100) if total_all else None,
                   "logged": sum(r["logged"] for r in rings)})
 
-    # 3) 最近完成（依日期倒序）
+    # 3) 近 7 日趨勢
+    trend = _wo_trend(db, y, m, today, month_items)
+
+    # 4) 最近完成（依日期倒序）
     completed = [it for it in month_items if it["status"] == "已完成" and it["date"] <= today_s]
     completed.sort(key=lambda it: (it["date"], it["source"] or ""), reverse=True)
     recent = [_wo_finalize_item(it) for it in completed[:WO_RECENT_MAX]]
 
-    # 4) 已排定：逾期（本月、未完成、早於今日）＋ 7 日內（含今日）未完成 PM 項目
+    # 5) 已排定：逾期（本月、未完成、早於今日）＋ 7 日內（含今日）未完成保養
     window_items: dict[tuple, dict[str, Any]] = {}
     for i in range(WO_WINDOW_DAYS + 1):
         wd = today + timedelta(days=i)
         daily = _build_daily(db, wd.year, wd.month, wd.day, person_scope="all", venue="all")
-        _wo_day_items(daily, wd, window_items, None)
+        _wo_day_items(daily, wd, window_items, None, today)
     window_open = [it for it in window_items.values()
                    if it["source"] in WO_PM_SOURCES and it["status"] == "未完成"]
     upcoming_rows: list[dict[str, Any]] = []
@@ -520,11 +565,26 @@ def _wo_compute(db: Session, y: int, m: int, today: _date) -> dict[str, Any]:
         upcoming_rows.append(_wo_finalize_item(it, state))
     upcoming = upcoming_rows[:WO_UPCOMING_MAX]
 
-    # 5) 人員排行（實際＋預估兩欄）
-    ranking = sorted(
-        ({"person": p, "actual_min": v["actual"], "estimated_min": v["estimated"]} for p, v in per_person.items()),
-        key=lambda x: (-x["actual_min"], -x["estimated_min"], x["person"]),
-    )[:WO_RANK_MAX]
+    # 6) 人員：每人明細（最近優先）與紅區判定
+    for it in sorted(month_items, key=lambda x: (x["date"], x["source"] or ""), reverse=True):
+        for p in it["persons"]:
+            pp = per_person.get(p)
+            if pp is not None and len(pp["items"]) < WO_PERSON_ITEMS_MAX:
+                pp["items"].append(_wo_finalize_item(it))
+    people = []
+    for p, pp in per_person.items():
+        people.append({
+            "person": p,
+            "actual_min": pp["actual_min"],
+            "estimated_min": pp["estimated_min"],
+            "done": pp["done"],
+            "open": pp["open"],
+            "overdue": pp["overdue"],
+            "risk": pp["overdue"] >= WO_RISK_OVERDUE or pp["actual_min"] >= WO_RISK_MINUTES,
+            "items": pp["items"],
+        })
+    people.sort(key=lambda x: (-x["actual_min"], -x["estimated_min"], x["person"]))
+    ranking = [{k: p[k] for k in ("person", "actual_min", "estimated_min", "done", "open")} for p in people[:WO_RANK_MAX]]
 
     data_end = max((it["date"] for it in logged), default=min(last, today).isoformat())
     return {
@@ -539,9 +599,12 @@ def _wo_compute(db: Session, y: int, m: int, today: _date) -> dict[str, Any]:
             "overdue_count": len(overdue_pm),
         },
         "rings": rings,
+        "trend": trend,
         "recent": recent,
         "upcoming": upcoming,
         "ranking": ranking,
+        "people": people,
+        "thresholds": {"overdue": WO_RISK_OVERDUE, "minutes": WO_RISK_MINUTES},
         "data_end": data_end,
         "generated_at": twnow().strftime("%Y-%m-%d %H:%M"),
     }

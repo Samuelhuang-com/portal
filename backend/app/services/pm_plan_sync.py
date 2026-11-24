@@ -52,7 +52,8 @@ SHEET_CONFIGS = [
 ]
 
 # ── Ragic 中文欄位 key（與執行端 Sheet 相同命名）────────────────────────────
-CK_TASK_NAME   = "項目"
+CK_TASK_NAME   = "項目"          # 舊版：任務名稱（2026-11-24 前）
+CK_TASK_PARENT = "項目母項名稱"  # 新版（2026-11-24 起）：任務名稱；「項目」改為地點
 CK_CATEGORY    = "類別"
 CK_FREQUENCY   = "頻率"
 CK_EXEC_MONTHS = "執行月份"
@@ -60,6 +61,8 @@ CK_SCHED_DATE  = "排定日期"
 CK_SCHEDULER   = "排定人員"
 CK_LOCATION    = "位置"
 CK_NOTE        = "備註"
+CK_JOURNAL_NO  = "編號"        # 主表批次編號（如 2026/11*英週保-003），與 pm_batch.journal_no 對應
+CK_PARENT_NO   = "項目(母)"    # 子表母項編號
 CK_PERIOD_MONTH = "日期"    # 主表批次的月份欄位（YYYY/MM），用於補充日期年份
 
 
@@ -180,6 +183,7 @@ async def _sync_one_sheet(db, cfg: dict, stats: dict) -> None:
 
         # 取主表的 period_month（用於補充 MM/DD 日期格式的年份）
         period_month = _str(batch_data.get(CK_PERIOD_MONTH, ""))
+        batch_no     = _str(batch_data.get(CK_JOURNAL_NO, ""))
         batch_id_str = str(batch_id)
 
         # 抓完整批次資料（含子表格）
@@ -280,7 +284,15 @@ async def _sync_one_sheet(db, cfg: dict, stats: dict) -> None:
 
         # ── Step 3：解析子表格項目 ─────────────────────────────────────────
         for row_key, row_data in sub_rows.items():
-            task_name = _str(row_data.get(CK_TASK_NAME, ""))
+            # 新版表單：任務名稱在「項目母項名稱」，「項目」為地點；
+            # 舊版（無「項目母項名稱」欄）：任務名稱在「項目」，地點在「位置」
+            parent_name = _str(row_data.get(CK_TASK_PARENT, ""))
+            if parent_name:
+                task_name = parent_name
+                location  = _str(row_data.get(CK_TASK_NAME, ""))
+            else:
+                task_name = _str(row_data.get(CK_TASK_NAME, ""))
+                location  = _str(row_data.get(CK_LOCATION, ""))
             sched_raw = _str(row_data.get(CK_SCHED_DATE, ""))
 
             # 沒有排定日期 → 跳過（無法在行事曆顯示）
@@ -303,10 +315,13 @@ async def _sync_one_sheet(db, cfg: dict, stats: dict) -> None:
             item.category       = _str(row_data.get(CK_CATEGORY, ""))
             item.frequency      = _str(row_data.get(CK_FREQUENCY, ""))
             item.exec_months_raw = _str(row_data.get(CK_EXEC_MONTHS, ""))
-            item.location       = _str(row_data.get(CK_LOCATION, ""))
+            item.location       = location
             item.scheduled_date = sched_iso
             item.scheduler_name = _str(row_data.get(CK_SCHEDULER, ""))
             item.note           = _str(row_data.get(CK_NOTE, ""))
+            item.batch_no      = batch_no
+            item.parent_no     = _str(row_data.get(CK_PARENT_NO, ""))
+            item.parent_name   = parent_name
             item.ragic_url      = _ragic_url(sheet_no, batch_id_str)
             item.ragic_created_at = _str(batch_data.get("_ragicCreate", ""))
             item.ragic_updated_at = _str(batch_data.get("_ragicUpdate", ""))
