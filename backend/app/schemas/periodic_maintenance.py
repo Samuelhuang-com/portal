@@ -262,6 +262,9 @@ class PMScheduleMatrixRow(BaseModel):
     location:       str
     frequency:      str
     cells:          List[PMScheduleMatrixCell]   # 12 個月（index 0 = 1月）
+    parent_no:      str = ""   # 項目(母)，無則空字串（前端歸入「待定」）
+    parent_name:    str = ""   # 母項名稱（主管排定 Sheet 36）
+    child_no:       str = ""   # 項目(子)
 
 
 class PMScheduleAnnualMatrix(BaseModel):

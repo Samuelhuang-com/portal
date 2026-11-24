@@ -2325,6 +2325,15 @@ def get_annual_matrix(
     all_items = _get_latest_batch_items(db)
     if category:
         all_items = [it for it in all_items if it.category == category]
+    # 2026-11-24：年度計劃表依項目(母)→項目(子) 排序，母項名稱取主管排定 Sheet 36（同批次）
+    all_items = sorted(all_items, key=_pm_item_sort_key)
+    name_map: dict = {}
+    if all_items:
+        latest_batch = db.query(PeriodicMaintenanceBatch).filter(
+            PeriodicMaintenanceBatch.ragic_id == all_items[0].batch_ragic_id
+        ).first()
+        if latest_batch:
+            name_map = _parent_name_map(db, latest_batch)
 
     year_records = (
         db.query(PMSchedule)
@@ -2461,6 +2470,9 @@ def get_annual_matrix(
             location      = item.location,
             frequency     = item.frequency or "",
             cells         = cells,
+            parent_no     = (item.parent_no or "").strip(),
+            parent_name   = name_map.get((item.parent_no or "").strip(), ""),
+            child_no      = (item.child_no or "").strip(),
         ))
 
     total_cells = sum(

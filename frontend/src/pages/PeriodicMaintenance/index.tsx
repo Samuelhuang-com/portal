@@ -42,7 +42,7 @@ import type {
   PMStats, PMBatchListItem, PMItem, PMItemStatus, PMPeriodStats,
   PMIncompleteItem, PMSubPeriodBreakdown, PMYearMatrix, PMYearMatrixMonth,
   PMScheduleItem, PMScheduleKPI, PMScheduleGenerateResult,
-  PMScheduleAnnualMatrix, PMMatrixCellStatus,
+  PMScheduleAnnualMatrix, PMMatrixCellStatus, PMScheduleMatrixRow,
 } from '@/types/periodicMaintenance'
 import { NAV_GROUP, NAV_PAGE } from '@/constants/navLabels'
 import MonthlyCalendarGrid from '@/components/MonthlyCalendarGrid'
@@ -2137,6 +2137,84 @@ export default function PeriodicMaintenancePage() {
 
   const MONTHS = ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月']
 
+  // 欄寬手動調整（拖曳欄位右邊界；僅本次頁面有效，未存檔）
+  // 第一次拖曳時把目前欄寬鎖成 px 並改用 table-layout: fixed，拖曳過程中其他欄不再重新計算，避免晃動；「子項」為彈性欄不提供把手
+  const [annualColW, setAnnualColW] = useState<Record<string, number>>({})
+  const annualFixed = Object.keys(annualColW).length > 0
+  const ANNUAL_COL_KEYS = ['category', 'parent', 'child', 'freq']
+  const startAnnualColResize = (key: string, e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    const tr = (e.currentTarget as HTMLElement).parentElement?.parentElement
+    if (!tr) return
+    const widthOf = (k: string) => (tr.children[ANNUAL_COL_KEYS.indexOf(k)] as HTMLElement).getBoundingClientRect().width
+    const startW = widthOf(key)
+    if (!annualFixed) {
+      setAnnualColW({ category: widthOf('category'), parent: widthOf('parent'), freq: widthOf('freq') })
+    }
+    const startX = e.clientX
+    const onMove = (ev: MouseEvent) => setAnnualColW(prev =>
+      ({ ...prev, [key]: Math.max(50, Math.round(startW + ev.clientX - startX)) }))
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }
+  const annualTh = (key: string, label: string, resizable = true) => (
+    <th key={key} style={{ ...TH, fontSize:16, position:'relative', whiteSpace:'nowrap', width: annualColW[key] }}>
+      {label}
+      {resizable && (
+        <span onMouseDown={e => startAnnualColResize(key, e)}
+          style={{ position:'absolute', right:0, top:0, bottom:0, width:6, cursor:'col-resize', userSelect:'none' }} />
+      )}
+    </th>
+  )
+
+  // 母項分組（2026-11-24 比照全棟例行維護年度計劃表）
+  const [annualCollapsed, setAnnualCollapsed] = useState<string[]>([])
+  const toggleAnnualParent = (key: string) =>
+    setAnnualCollapsed(prev => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key])
+
+  // 母項彙總格狀態：有逾期 > 進行中 > 應做未排 > 當月待執行 > 未來待執行；全部完成才為已完成
+  const aggregateMatrixStatus = (statuses: string[]): string => {
+    const rel = statuses.filter(s => s !== 'non_month' && s !== 'no_frequency')
+    if (!rel.length) return statuses.includes('no_frequency') ? 'no_frequency' : 'non_month'
+    if (rel.every(s => s === 'completed')) return 'completed'
+    for (const s of ['overdue', 'in_progress', 'no_data', 'unscheduled', 'scheduled', 'future_due']) {
+      if (rel.includes(s)) return s
+    }
+    return 'no_data'
+  }
+
+  const annualParentGroups = (() => {
+    const map = new Map<string, { key: string; parentNo: string; parentName: string; rows: PMScheduleMatrixRow[] }>()
+    filteredAnnualRows.forEach(row => {
+      const key = (row.parent_no || '').trim() || '待定'
+      if (!map.has(key)) map.set(key, { key, parentNo: key, parentName: row.parent_name || '', rows: [] })
+      const g = map.get(key)!
+      if (!g.parentName && row.parent_name) g.parentName = row.parent_name
+      g.rows.push(row)
+    })
+    // 「待定」母項固定排在最後
+    const groups = Array.from(map.values()).sort((a, b) =>
+      Number(a.key === '待定') - Number(b.key === '待定') || a.key.localeCompare(b.key, undefined, { numeric: true }))
+    return groups.map(g => ({
+      ...g,
+      cells: MONTHS.map((_, i) => {
+        const statuses = g.rows.map(r => r.cells[i]?.status ?? 'non_month')
+        const rel = statuses.filter(s => s !== 'non_month' && s !== 'no_frequency')
+        return {
+          month: i + 1,
+          status: aggregateMatrixStatus(statuses),
+          done: rel.filter(s => s === 'completed').length,
+          total: rel.length,
+        }
+      }),
+    }))
+  })()
+
   const AnnualTab = (
     <div>
       <Row gutter={8} align="middle" style={{ marginBottom: 12 }}>
@@ -2153,6 +2231,11 @@ export default function PeriodicMaintenancePage() {
         </Col>
         <Col>
           <Button icon={<ReloadOutlined />} onClick={loadAnnualMatrix} loading={annualLoading}>重新整理</Button>
+        </Col>
+        <Col>
+          <Button onClick={() => setAnnualCollapsed(annualCollapsed.length ? [] : annualParentGroups.map(g => g.key))}>
+            {annualCollapsed.length ? '全部展開' : '全部合併'}
+          </Button>
         </Col>
       </Row>
 
@@ -2175,22 +2258,54 @@ export default function PeriodicMaintenancePage() {
       <Spin spinning={annualLoading}>
         {annualMatrix && (
           <div style={{ overflowX: 'auto' }}>
-            <table style={{ width:'100%', borderCollapse:'collapse', fontSize:16, tableLayout:'auto' }}>
+            <table style={{ width:'100%', borderCollapse:'collapse', fontSize:16, tableLayout: annualFixed ? 'fixed' : 'auto' }}>
               <thead>
                 <tr style={{ background:'#f0f4f8' }}>
-                  <th style={{ ...TH, fontSize:16, width:'1%', whiteSpace:'nowrap' }}>類別</th>
-                  <th style={{ ...TH, fontSize:16, width:'1%', whiteSpace:'nowrap' }}>保養項目</th>
-                  <th style={{ ...TH, fontSize:16, width:'1%', whiteSpace:'nowrap' }}>頻率</th>
-                  {MONTHS.map(m => <th key={m} style={{ ...TH, fontSize:16, textAlign:'center' }}>{m}</th>)}
+                  {annualTh('category', '類別')}
+                  {annualTh('parent', '母項')}
+                  {annualTh('child', '子項', false)}
+                  {annualTh('freq', '頻率')}
+                  {MONTHS.map(m => <th key={m} style={{ ...TH, fontSize:16, textAlign:'center', width:56, padding:'6px 2px' }}>{m}</th>)}
                 </tr>
               </thead>
-              <tbody>
-                {filteredAnnualRows.map(row => (
+              {annualParentGroups.map(group => {
+                const collapsed = annualCollapsed.includes(group.key)
+                return (
+                <tbody key={group.key}>
+                  <tr style={{ background:'#f7f9fc' }}>
+                    <td style={{ ...TD }} />
+                    <td rowSpan={collapsed ? 1 : group.rows.length + 1}
+                      onClick={() => toggleAnnualParent(group.key)}
+                      style={{ ...TD, textAlign:'left', fontWeight:600, color:'#1B3A5C', whiteSpace:'normal', wordBreak:'break-word', cursor:'pointer', userSelect:'none', verticalAlign:'top' }}>
+                      <span style={{ display:'inline-block', width:14 }}>{collapsed ? '▸' : '▾'}</span>
+                      {group.parentNo}{group.parentName ? `　${group.parentName}` : ''}
+                      <Text type="secondary" style={{ fontWeight:400, marginLeft:8 }}>（{group.rows.length} 項）</Text>
+                    </td>
+                    <td style={{ ...TD, color:'#8c8c8c' }}>各月彙總</td>
+                    <td style={{ ...TD }} />
+                    {group.cells.map(cell => {
+                      const cfg = matrixCellCfg(cell.status, annualYear, cell.month)
+                      return (
+                        <td key={cell.month} style={{ ...TD, textAlign:'center', background:cfg.bg, color:cfg.text,
+                          fontWeight:600, padding:'4px 2px', fontSize:16 }}>
+                          <Tooltip title={`母項彙總：${MATRIX_TOOLTIP_LABEL[cell.status] ?? cell.status}${cell.total ? `｜子項完成 ${cell.done}/${cell.total}` : ''}`}>
+                            <div style={{ lineHeight:1.2 }}>
+                              {cfg.label}
+                              {cell.total > 1 && (
+                                <div style={{ fontSize:12, fontWeight:500, opacity:0.85 }}>{cell.done}/{cell.total}</div>
+                              )}
+                            </div>
+                          </Tooltip>
+                        </td>
+                      )
+                    })}
+                  </tr>
+                  {!collapsed && group.rows.map(row => (
                   <tr key={row.item_ragic_id} style={{ borderBottom:'1px solid #eee' }}>
                     <td style={{ ...TD, whiteSpace:'nowrap' }}><Tag style={{ fontSize:14 }}>{row.category || '—'}</Tag></td>
-                    <td style={{ ...TD, whiteSpace:'nowrap' }}>
+                    <td style={{ ...TD, whiteSpace:'normal', wordBreak:'break-word' }}>
                       <Tooltip title={row.location || undefined}>
-                        <span style={{ fontSize:16 }}>{row.task_name}</span>
+                        <span style={{ fontSize:16 }}>{row.child_no ? `${row.child_no}　` : ''}{row.task_name}</span>
                       </Tooltip>
                     </td>
                     <td style={{ ...TD, textAlign:'center', whiteSpace:'nowrap' }}>
@@ -2220,8 +2335,10 @@ export default function PeriodicMaintenancePage() {
                       )
                     })}
                   </tr>
-                ))}
-              </tbody>
+                  ))}
+                </tbody>
+                )
+              })}
             </table>
           </div>
         )}

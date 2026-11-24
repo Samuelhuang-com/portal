@@ -304,6 +304,9 @@ export interface PMScheduleMatrixRow {
   location:      string
   frequency:     string
   cells:         PMScheduleMatrixCell[]
+  parent_no?:    string   // 項目(母)
+  parent_name?:  string   // 母項名稱
+  child_no?:     string   // 項目(子)
 }
 
 export interface PMScheduleAnnualMatrix {
