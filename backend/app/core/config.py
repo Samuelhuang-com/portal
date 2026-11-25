@@ -169,7 +169,7 @@ class Settings(BaseSettings):
     # 依公司代碼覆寫拋轉表單路徑（2026-11-19）。未列出的公司沿用上面的 RAGIC_CP_SUMMARY_PATH。
     #   OU＝日曜 → freed-management-division/41（https://ap12.ragic.com/soutlet001/freed-management-division/41）
     # 欄位代號見下方 RAGIC_CP_FORM_FIELDS_BY_CODE（2026-11-19 於 Ragic 設計模式逐欄核對）。
-    RAGIC_CP_SUMMARY_PATH_BY_CODE: dict = {"OU": "freed-management-division/41"}
+    RAGIC_CP_SUMMARY_PATH_BY_CODE: dict = {"OU": "freed-management-division/41", "HO": "taichung-public-form/38"}
     # 依公司代碼覆寫欄位代號（表單不同時使用）。未列出的代號沿用上面的 RAGIC_CP_F_* / RAGIC_CP_SF_* / RAGIC_CP_SUBTABLE（sheet 58）。
     RAGIC_CP_FORM_FIELDS_BY_CODE: dict = {
         "OU": {  # 日曜 → freed-management-division/41
@@ -208,6 +208,43 @@ class Settings(BaseSettings):
             "RAGIC_CP_SF_AMOUNT_SEL": "1022453",
             "RAGIC_CP_SF_CHOSEN": "1022454",
             "RAGIC_CP_SF_SUMMARY_ID": "1022455",
+        },
+        "HO": {  # 台中 → taichung-public-form/38（2026-11-25 於 Ragic 逐欄讀取，子表 key 1022743）
+            "RAGIC_CP_SUBTABLE": "1022743",
+            "RAGIC_CP_F_DOC_NO": "1022685",
+            "RAGIC_CP_F_DEPT": "1022686",
+            "RAGIC_CP_F_ACCOUNT": "1022687",
+            "RAGIC_CP_F_APPLY_DATE": "1022688",
+            "RAGIC_CP_F_APPLICANT": "1022689",
+            "RAGIC_CP_F_PURPOSE": "1022692",
+            "RAGIC_CP_F_REQUESTER": "1022721",
+            "RAGIC_CP_F_COMPANY": "1022737",
+            "RAGIC_CP_F_CYCLE": "1022738",
+            "RAGIC_CP_F_BATCH": "1022739",
+            "RAGIC_CP_F_PUSHED_AT": "1022740",
+            "RAGIC_CP_F_NOTE": "1022741",
+            "RAGIC_CP_F_GRAND_SUB": "1022711",
+            "RAGIC_CP_F_TAX": "1022712",
+            "RAGIC_CP_F_GRAND_TOTAL": "1022713",
+            "RAGIC_CP_F_TOTAL": "1022713",
+            "RAGIC_CP_F_VENDOR": "",
+            "RAGIC_CP_SF_SEQ": "1022693",
+            "RAGIC_CP_SF_ITEM_CODE": "1022694",
+            "RAGIC_CP_SF_ITEM_NAME": "1022695",
+            "RAGIC_CP_SF_QTY": "1022696",
+            "RAGIC_CP_SF_UNIT": "1022697",
+            "RAGIC_CP_SF_NOTE": "1022698",
+            "RAGIC_CP_SF_PRICE": "1022699",
+            "RAGIC_CP_SF_AMOUNT": "1022700",
+            "RAGIC_CP_SF_ACCOUNT": "1022701",
+            "RAGIC_CP_SF_DEPT": "1022702",
+            "RAGIC_CP_SF_BUDGET_M": "1022703",
+            "RAGIC_CP_SF_BUDGET_ACC": "1022704",
+            "RAGIC_CP_SF_VENDOR": "1022705",
+            "RAGIC_CP_SF_PRICE_SEL": "1022706",
+            "RAGIC_CP_SF_AMOUNT_SEL": "1022707",
+            "RAGIC_CP_SF_CHOSEN": "1022708",
+            "RAGIC_CP_SF_SUMMARY_ID": "1022709",
         },
     }
     # false ＝ 不真的寫 Ragic，退回 stub 行為（Portal 端狀態照常更新）。

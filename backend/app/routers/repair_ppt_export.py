@@ -12,7 +12,7 @@
   0. Cover（封面，更新年月）
   1. 3.1 報修統計
   2. 3.2 結案時間
-  3. 3.3 柏拉圖分析（matplotlib 圖）
+  3. 3.3 報修類型圖：盧群＝類別每月堆疊長條（原生 PowerPoint 圖表）；大直＝柏拉圖（matplotlib 圖）
   4. 3.3 報修類型各類別（表格）
   5. Dashboard 報修類型分布（matplotlib 圓餅）
   6. 3.4 本月客房報修表（≤20 列/頁）
@@ -406,6 +406,151 @@ def _fmt_money(v) -> str:
     return f"${v:,.0f}"
 
 
+def _cut_type_rows_to_month(type_rows: list, month: int) -> list:
+    """盧群 3.3 類別表／分布圓餅：只計 1 月～聚焦月份，不含之後月份。
+
+    monthly 只保留 ≤ month 的件數，row_total 與 monthly_detail 同步截斷，
+    cum_pct 改為「該類件數 ÷ 期間總件數」（期間＝1 月～聚焦月份）。
+    """
+    cut = []
+    for r in type_rows:
+        monthly = {
+            m: ((r.get("monthly", {}).get(m, 0) or 0) if m <= month else 0)
+            for m in range(1, 13)
+        }
+        cut.append({
+            **r,
+            "monthly": monthly,
+            "row_total": sum(monthly.values()),
+            "monthly_detail": {
+                m: v for m, v in r.get("monthly_detail", {}).items() if m <= month
+            },
+        })
+    grand = sum(r["row_total"] for r in cut)
+    for r in cut:
+        r["cum_pct"] = round(r["row_total"] / grand * 100, 1) if grand else 0.0
+    return cut
+
+
+def _add_monthly_category_native_chart(
+    slide, type_rows: list, focus_month: int, x: float, y: float, w: float, h: float, top_n: int = 6
+) -> bool:
+    """在投影片上插入原生 PowerPoint 堆疊直條圖（可於 PowerPoint 內直接編輯資料）。
+
+    - X 軸：1 月～聚焦月份；每根長條依類別堆疊；件數前 top_n 名各一色，其餘合併為「其他」。
+    - 每一個色塊都標示件數（0 不顯示）。
+    - 柱頂合計：加一個隱藏的「合計」系列（值 0、無填色），以自訂文字標示當月總數，
+      並從圖例移除；它高度為 0，不影響堆疊。
+    回傳 False 表示沒有資料，呼叫端改以文字提示。
+    """
+    from pptx.chart.data import CategoryChartData
+    from pptx.enum.chart import XL_CHART_TYPE, XL_LABEL_POSITION, XL_LEGEND_POSITION
+    from pptx.dml.color import RGBColor
+    from pptx.util import Inches, Pt
+    from pptx.oxml.ns import qn
+    from pptx.oxml.xmlchemy import OxmlElement
+
+    rows = sorted(
+        [r for r in type_rows if r.get("row_total", 0) > 0],
+        key=lambda r: -r["row_total"],
+    )
+    if not rows or not focus_month:
+        return False
+
+    months = list(range(1, focus_month + 1))
+    series = [(r["type"], r.get("monthly", {})) for r in rows[:top_n]]
+    rest = rows[top_n:]
+    if rest:
+        series.append((
+            "其他",
+            {m: sum((r.get("monthly", {}).get(m, 0) or 0) for r in rest) for m in range(1, 13)},
+        ))
+
+    def _v(monthly, m):
+        return int(monthly.get(m, 0) or 0)
+
+    totals = [sum(_v(mo, m) for _, mo in series) for m in months]
+
+    cd = CategoryChartData(number_format="0")
+    cd.categories = [f"{m}月" for m in months]
+    for label, monthly in series:
+        cd.add_series(label, [_v(monthly, m) for m in months])
+    cd.add_series("合計", [0] * len(months))
+
+    gf = slide.shapes.add_chart(
+        XL_CHART_TYPE.COLUMN_STACKED, Inches(x), Inches(y), Inches(w), Inches(h), cd
+    )
+    chart = gf.chart
+    chart.has_title = False
+    chart.font.size = Pt(9)
+    chart.has_legend = True
+    chart.legend.position = XL_LEGEND_POSITION.RIGHT
+    chart.legend.include_in_layout = False
+    chart.legend.font.size = Pt(9)
+
+    plot = chart.plots[0]
+    plot.gap_width = 60
+    plot.overlap = 100
+
+    BRAND = "1B3A5C"
+    palette = ["1B3A5C", "4BA8E8", "2E6E9E", "8FC9F0", "5B7A99", "B7D7EE"]
+    dark_text = {"8FC9F0", "B7D7EE", "D9DEE5"}
+
+    for idx, s in enumerate(plot.series):
+        if idx < len(series):
+            is_other = series[idx][0] == "其他"
+            hexclr = "D9DEE5" if is_other else palette[idx % len(palette)]
+            s.format.fill.solid()
+            s.format.fill.fore_color.rgb = RGBColor.from_string(hexclr)
+            s.format.line.fill.background()
+            dl = s.data_labels
+            dl.show_value = True
+            dl.number_format = "0;-0;;"          # 0 不顯示
+            dl.number_format_is_linked = False
+            dl.position = XL_LABEL_POSITION.CENTER
+            dl.font.size = Pt(8)
+            dl.font.color.rgb = RGBColor.from_string(
+                BRAND if hexclr in dark_text else "FFFFFF"
+            )
+        else:  # 隱藏的「合計」系列
+            s.format.fill.background()
+            s.format.line.fill.background()
+            for i, t in enumerate(totals):
+                if t == 0:
+                    continue
+                pdl = s.points[i].data_label
+                pdl.position = XL_LABEL_POSITION.INSIDE_BASE
+                tf = pdl.text_frame
+                tf.text = str(t)
+                f = tf.paragraphs[0].runs[0].font
+                f.size = Pt(9)
+                f.bold = True
+                f.color.rgb = RGBColor.from_string(BRAND)
+
+    # 圖例移除「合計」項目
+    legend_el = chart.legend._element
+    le = OxmlElement("c:legendEntry")
+    ix = OxmlElement("c:idx")
+    ix.set("val", str(len(series)))
+    de = OxmlElement("c:delete")
+    de.set("val", "1")
+    le.append(ix)
+    le.append(de)
+    legend_el.find(qn("c:legendPos")).addnext(le)
+
+    va = chart.value_axis
+    va.minimum_scale = 0
+    va.has_major_gridlines = True
+    va.major_gridlines.format.line.color.rgb = RGBColor.from_string("DDDDDD")
+    va.major_gridlines.format.line.width = Pt(0.5)
+    va.tick_labels.font.size = Pt(8)
+    va.has_title = True
+    va.axis_title.text_frame.text = "件數"
+    va.axis_title.text_frame.paragraphs[0].runs[0].font.size = Pt(8)
+    chart.category_axis.tick_labels.font.size = Pt(9)
+    return True
+
+
 def _add_chart_slide(
     prs,
     template_idx: int,
@@ -416,8 +561,9 @@ def _add_chart_slide(
     SW: float,
     SH: float,
     title_fn=None,
+    native_chart=None,
 ):
-    """Clone template, set title, embed chart image."""
+    """Clone template, set title, embed chart image（或由 native_chart 插入原生圖表）。"""
     from app.routers.hotel_overview import (
         _clone_template_slide,
         _set_slide_title,
@@ -448,15 +594,20 @@ def _add_chart_slide(
             color=C_BLACK,
         )
 
-    if chart_buf:
-        IMG_W = SW - 1.0
-        IMG_H = SH - 1.8
-        IMG_X = 0.5
-        IMG_Y = 1.05
+    IMG_W = SW - 1.0
+    IMG_H = SH - 1.8
+    IMG_X = 0.5
+    IMG_Y = 1.05
+    if native_chart is not None:
+        drawn = native_chart(slide, IMG_X, IMG_Y, IMG_W, IMG_H)
+    elif chart_buf:
         slide.shapes.add_picture(
             chart_buf, Inches(IMG_X), Inches(IMG_Y), Inches(IMG_W), Inches(IMG_H)
         )
+        drawn = True
     else:
+        drawn = False
+    if not drawn:
         _pptx_txt(
             slide,
             "（本期暫無圖表資料）",
@@ -2804,13 +2955,30 @@ def _build_repair_pptx(module: str, year: int, month: int, db: Session) -> Bytes
     # ══════════════════════════════════════════════════════════════════════════
     type_stats = svc.compute_type_stats(all_cases, year)
     type_rows = type_stats.get("rows", [])
-    pareto_buf = _make_pareto_chart(type_rows)
+    # 2026-11-25：3.3 表格、柏拉圖與分布圓餅只計到聚焦月份（選 10 月不得出現 11 月資料）；
+    # 盧群與大直共用此段。
+    type_rows = _cut_type_rows_to_month(type_rows, month)
+    # 2026-11-25：盧群（mall）改為「類別 × 月份」堆疊長條圖（前 6 類 + 其他）；
+    # 大直（飯店）共用此流程，維持原柏拉圖不動（受保護範圍）。
+    if module == "luqun":
+        type_chart_buf = None
+        type_native_chart = lambda s, x, y, w, h: _add_monthly_category_native_chart(
+            s, type_rows, month, x, y, w, h
+        )
+        type_title = "3.3 報修類型 — 類別每月長條圖"
+        type_subtitle = f"{period_str}　色塊＝各類別件數；柱頂＝當月合計；其餘合併為「其他」"
+    else:
+        type_chart_buf = _make_pareto_chart(type_rows)
+        type_native_chart = None
+        type_title = "3.3 報修類型 — 柏拉圖分析"
+        type_subtitle = f"{period_str}　深藍＝累計≤80%重點類別"
     _add_chart_slide(
         prs,
         TMPL,
-        title="3.3 報修類型 — 柏拉圖分析",
-        subtitle=f"{period_str}　深藍＝累計≤80%重點類別",
-        chart_buf=pareto_buf,
+        title=type_title,
+        subtitle=type_subtitle,
+        chart_buf=type_chart_buf,
+        native_chart=type_native_chart,
         now_str=now_str,
         SW=SW,
         SH=SH,

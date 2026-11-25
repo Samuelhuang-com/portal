@@ -46,13 +46,26 @@ def _visible_codes(cp_db, ctx, company_names: list) -> list:
     return sorted(c for c in codes if c and c in ctx.codes)
 
 
+def _cycle_visible_to(cp_db, ctx, cycle) -> bool:
+    """週期的適用公司（applicable_scope）是否包含目前公司。
+    空值或 all＝不限公司，所有公司都看得到；值可能是代碼或名稱，統一轉成代碼比對。"""
+    from app.services.cycle_purchase_company_scope import resolve_company_code
+    raw = (cycle.applicable_scope or "").strip()
+    if not raw or raw.lower() == "all":
+        return True
+    codes = {resolve_company_code(cp_db, t.strip()) for t in raw.split(",") if t.strip()}
+    return ctx.code in codes
+
+
 @router.get("/cycles", response_model=List[CycleOut], summary="週期採購週期設定清單")
 def list_cycles(
     status_: Optional[str] = Query(None, alias="status"),
     _: User = Depends(require_any_permission(*CP_READ_REQUEST_PERMS)),
     db: Session = Depends(get_cycle_purchase_db),
+    ctx: CompanyContext = Depends(company_context),
 ):
-    return svc.list_cycles(db, status=status_)
+    rows = svc.list_cycles(db, status=status_)
+    return [c for c in rows if _cycle_visible_to(db, ctx, c)]
 
 
 @router.get("/cycles/options", response_model=CycleOptionsOut, summary="週期設定表單下拉選項")
